@@ -140,7 +140,7 @@
   wall clock (minutes)   1470.8
   the wall clock above is derived by foundry_state.handoffs_wall_clock_seconds --
   the survivor the deleted helper was superseded by, still on the live path.
-.........s..................................................
+.........s...................................................
 === D-182 — a cycle bucket carrying its own C-6 facts ===
   the five keys `_record_cycle_facts` writes beside the stream
   tranches, in the shape the live archive holds them:
@@ -178,5 +178,5 @@
   the same three keys, from the rule stated once rather than
   hand-typed a third time — which is how the third walker of
   this bucket came to be missing it.
-.            [100%]
-60 passed, 1 skipped, 4 deselected in 4.05s
+.           [100%]
+61 passed, 1 skipped, 4 deselected in 3.18s

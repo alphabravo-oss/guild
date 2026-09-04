@@ -88,6 +88,8 @@ try:  # Installed (uvx/pip) case — package is already importable.
         canonical_defect_source,
         canonical_stream_id,
         defect_tier,
+        escalation_status,
+        escalation_status_is_unknown,
     )
     from foundry_mcp.tools.foundry_report import _baseline_comparison_section
     from foundry_mcp.tools.foundry_state import (
@@ -113,6 +115,8 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
         canonical_defect_source,
         canonical_stream_id,
         defect_tier,
+        escalation_status,
+        escalation_status_is_unknown,
     )
     from foundry_mcp.tools.foundry_report import _baseline_comparison_section
     from foundry_mcp.tools.foundry_state import (
@@ -710,6 +714,30 @@ def _read_escalation(run_dir: Path) -> dict[str, Any] | None:
     structural-pass budget ran out, and "which" is the whole point of recording
     it. A class with no `status` predates this release's fields and is counted
     as ESCALATED — the state it was in when it was written.
+
+    EVERY CLASS IS COUNTED, IN EXACTLY ONE BUCKET (D-215)
+    -----------------------------------------------------
+    This loop opened `if not isinstance(entry, dict): continue`, ONE LINE above
+    its own `unknown_status` counter — so the entries that counter exists for
+    were the entries that never reached it. Driven on classes {"K1":
+    {"status": "ESCALATED"}, "K2": "just a string", "K3": ["ESCALATED"],
+    "K4": null} the CLI printed `{"classes": 4, "by_status": {"CLEARED": 0,
+    "ESCALATED": 1}, "unknown_status": 0}`: three of four classes vanished off
+    the census while `Foundry-Gate('done')` was blocking on all four, so the
+    metric an operator reads and the gate that stops the run disagreed about
+    how many classes the run even had.
+
+    `vocab.escalation_status` is the ONE resolver in the tree now (the
+    structural fix for D-214/D-215 moved it out of `foundry_orchestrator`,
+    which was the only one of `escalation.json`'s three readers that had it),
+    and it is total over `ESCALATION_STATUSES`. So there is no `continue`, no
+    shape test ahead of the resolver and no membership guard on the increment:
+    `classes == sum(by_status.values())` holds for every document that parses.
+    `unknown_status` is `vocab.escalation_status_is_unknown` — the entries the
+    resolver had to DEFAULT (not a mapping, absent, null, empty, or a string
+    outside the vocabulary) — counted beside the buckets rather than instead of
+    them, so it says how many classes never declared a status without hiding
+    any of them from the census.
     """
     data = _load_json(run_dir / "escalation.json")
     classes = data.get("classes") if isinstance(data, dict) else None
@@ -720,16 +748,13 @@ def _read_escalation(run_dir: Path) -> dict[str, Any] | None:
     by_exit_reason = dict.fromkeys(sorted(ESCALATION_EXIT_REASONS), 0)
     unknown_status = 0
     for entry in classes.values():
-        if not isinstance(entry, dict):
-            continue
-        status = entry.get("status")
-        if not isinstance(status, str):
-            status = "ESCALATED"
-        if status in by_status:
-            by_status[status] += 1
-        else:
+        by_status[escalation_status(entry)] += 1
+        if escalation_status_is_unknown(entry):
             unknown_status += 1
-        reason = entry.get("exit_reason")
+        # Every OTHER field, read off the mapping or off nothing. The status is
+        # decided above, on the RAW entry, so this cannot drop a class.
+        fields = entry if isinstance(entry, dict) else {}
+        reason = fields.get("exit_reason")
         if isinstance(reason, str) and reason in by_exit_reason:
             by_exit_reason[reason] += 1
     return {

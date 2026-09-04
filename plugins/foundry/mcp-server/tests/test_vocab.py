@@ -1237,6 +1237,341 @@ def test_escalation_vocabularies_name_both_exit_doors() -> None:
 
 
 # ---------------------------------------------------------------------------
+# D-214 / D-215 — THE CLOSED VOCABULARY, ENFORCED ON EVERY READ OF THE FIELD.
+#
+# `escalation.json` has ONE writer and THREE readers: the orchestrator's two
+# deciding reads behind `Foundry-Gate('done')`,
+# `foundry_report.py#_read_escalated_classes` (report.json / REPORT.md), and
+# `scripts/measure-run.py#_read_escalation` (the CLI census). The resolver was
+# PRIVATE to the first of them, so the other two each carried their own opinion
+# of one field and each was wrong in its own way — the report rendered any
+# string verbatim and counted it in neither bucket (`count` 3, `by_status`
+# summing to 2, a row reading "BOGUS"), and the CLI dropped every non-mapping
+# entry one line above its own `unknown_status` counter (three of four classes
+# off the census while the gate blocked on all four).
+#
+# The class `closed-vocabulary-not-enforced-on-the-deciding-read` recurred for
+# three consecutive cycles (20, 21, 22) because each cycle fixed a copy. These
+# pins are on the STRUCTURE, not on the copies: the resolver is public in
+# vocab.py, the readers are DISCOVERED by AST over the shipped tree rather than
+# listed by hand, and a fourth reader that spells the vocabulary itself fails
+# here.
+# ---------------------------------------------------------------------------
+
+#: The one entry shape that retires a class. CLEARED is terminal — it ends
+#: structural work on the class for the rest of the run — so it is spelled
+#: exactly or it is not spelled.
+_STATUS_SHAPES_RESOLVING_TO_CLEARED = ({"status": "CLEARED"},)
+
+#: Every other shape, and the reason each is in the roster. The first spells
+#: ESCALATED; the rest are the ways an entry can carry no status the vocabulary
+#: knows — a value outside it (D-210), a near-miss spelling, a non-string, an
+#: absent key, or an entry that is not a mapping at all (D-212). One roster, so
+#: the resolver pins, the `is_unknown` pins and the cross-reader pin below all
+#: walk the same shapes: a shape covered by one and not the others is exactly
+#: how D-212 survived D-210's fix.
+_STATUS_SHAPES_RESOLVING_TO_ESCALATED = (
+    {"status": "ESCALATED"},
+    {"status": "BOGUS"},
+    {"status": "cleared"},
+    {"status": "Cleared"},
+    {"status": "CLEARED "},
+    {"status": ""},
+    {"status": None},
+    {"status": 7},
+    {"status": ["CLEARED"]},
+    {},
+    "just a string",
+    ["ESCALATED"],
+    None,
+    7,
+    True,
+    [],
+)
+
+#: The shapes the resolver had to DEFAULT — everything above except the one
+#: that actually spells a member. DERIVED from the roster, so a shape added to
+#: it cannot leave this pin behind.
+_STATUS_SHAPES_DEFAULTED = tuple(
+    shape
+    for shape in _STATUS_SHAPES_RESOLVING_TO_ESCALATED
+    if shape != {"status": "ESCALATED"}
+)
+
+
+def test_the_two_status_names_are_exactly_the_closed_vocabulary() -> None:
+    """The comparands live beside the frozenset, and are pinned to equal it.
+
+    Moved here from `tests/test_escalation.py`, which pinned the pair while it
+    was still `foundry_orchestrator`'s private copy. The names are vocab.py's
+    now, so a member renamed or dropped must fail HERE first; that module's
+    pin still passes because the orchestrator imports both names rather than
+    re-typing them, which is the property this move exists to create.
+    """
+    assert {
+        vocab.ESCALATION_STATUS_ESCALATED,
+        vocab.ESCALATION_STATUS_CLEARED,
+    } == set(vocab.ESCALATION_STATUSES)
+    assert vocab.ESCALATION_STATUS_ESCALATED != vocab.ESCALATION_STATUS_CLEARED
+
+
+@pytest.mark.parametrize("entry", _STATUS_SHAPES_RESOLVING_TO_ESCALATED)
+def test_every_shape_but_an_exact_cleared_resolves_to_escalated(entry) -> None:
+    """Out of vocabulary FAILS CLOSED, and shapelessness is out of vocabulary.
+
+    True positives this keeps: `{"status": "BOGUS"}` (D-210 — a present value
+    the vocabulary does not spell, which used to read as neither ESCALATED nor
+    CLEARED at the two deciding reads), and every non-mapping entry (D-212 —
+    which used to be dropped from the ESCALATED list, and from the report,
+    ahead of the resolver rather than resolved by it).
+    """
+    assert vocab.escalation_status(entry) == vocab.ESCALATION_STATUS_ESCALATED
+
+
+@pytest.mark.parametrize("entry", _STATUS_SHAPES_RESOLVING_TO_CLEARED)
+def test_only_an_exact_cleared_resolves_to_cleared(entry) -> None:
+    assert vocab.escalation_status(entry) == vocab.ESCALATION_STATUS_CLEARED
+
+
+def test_the_resolver_is_total_over_the_closed_vocabulary() -> None:
+    """Whatever it is handed, the answer is a member and nothing else.
+
+    This is what lets every caller drop its own membership guard — the report's
+    `by_status[status] += 1` has no `if status in by_status` above it any more,
+    which is why `count == sum(by_status.values())` cannot drift (D-214).
+    """
+    for entry in (
+        _STATUS_SHAPES_RESOLVING_TO_CLEARED + _STATUS_SHAPES_RESOLVING_TO_ESCALATED
+    ):
+        assert vocab.escalation_status(entry) in vocab.ESCALATION_STATUSES
+
+
+@pytest.mark.parametrize("entry", _STATUS_SHAPES_DEFAULTED)
+def test_a_defaulted_entry_is_reported_as_an_unknown_status(entry) -> None:
+    """`unknown_status` counts the entries the resolver had to default.
+
+    D-215's census printed `unknown_status: 0` while three of four classes were
+    missing from it entirely, because the shape test ran above the counter.
+    """
+    assert vocab.escalation_status_is_unknown(entry) is True
+
+
+def test_a_declared_member_is_never_an_unknown_status() -> None:
+    """And it is NOT the same question as "resolves to ESCALATED".
+
+    A class that genuinely records ESCALATED answers True to that and False to
+    this. Conflating them would report every escalated class as undeclared.
+    """
+    for entry in ({"status": "ESCALATED"}, {"status": "CLEARED"}):
+        assert vocab.escalation_status_is_unknown(entry) is False
+    assert (
+        vocab.escalation_status({"status": "ESCALATED"})
+        == vocab.escalation_status({"status": "BOGUS"})
+    )
+    assert vocab.escalation_status_is_unknown(
+        {"status": "ESCALATED"}
+    ) != vocab.escalation_status_is_unknown({"status": "BOGUS"})
+
+
+def _shipped_readers_of_escalation_json() -> dict[str, "object"]:
+    """Every shipped module naming `escalation.json` as a string constant.
+
+    DISCOVERED, never listed. A hand list is what the three per-instance fixes
+    of this class each amounted to: the fix landed on the readers somebody
+    remembered. The AST walk finds a FOURTH reader the day it is written.
+
+    Tests are excluded — a test builds fixture documents and asserts on the
+    literals by design. `vocab.py` is not excluded by name and does not need to
+    be: it holds the vocabulary, not the filename.
+    """
+    import ast
+
+    root = REPO_ROOT / "plugins" / "foundry"
+    found: dict[str, object] = {}
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        if "/tests/" in rel or "/.venv/" in rel or "/site-packages/" in rel:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if any(
+            isinstance(node, ast.Constant) and node.value == "escalation.json"
+            for node in ast.walk(tree)
+        ):
+            found[rel] = tree
+    return found
+
+
+#: The readers that existed when this pin was written. Asserted as a SUBSET of
+#: what discovery finds, never as an equality: a new reader must be checked by
+#: the assertions below, not merely noticed here. Naming them is what stops a
+#: silently-collapsed discovery from passing forever (the D-202 lesson).
+_KNOWN_ESCALATION_READERS = frozenset({
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_report.py",
+    "plugins/foundry/scripts/measure-run.py",
+})
+
+
+def test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab() -> None:
+    """THE STRUCTURAL PIN. Not "these three readers" — every reader there is.
+
+    Two assertions per discovered module, and they are the two halves of the
+    class:
+
+      * it IMPORTS `escalation_status` from `schemas.vocab`, so the deciding
+        read goes through the closed vocabulary rather than around it;
+      * it holds NO bare `"ESCALATED"` / `"CLEARED"` string constant of its
+        own, so it cannot grow a private opinion of the field beside the
+        import. The roster of forbidden literals is `ESCALATION_STATUSES`
+        itself — derived, so renaming a member cannot leave this behind.
+
+    TRUE POSITIVES THIS KEEPS. `foundry_report.py`'s
+    `status if isinstance(status, str) else "ESCALATED"` (D-214) fails the
+    second assertion. `measure-run.py`'s `if not isinstance(status, str):
+    status = "ESCALATED"` (D-215) fails the second. A fourth reader that
+    reimplements either fails both.
+    """
+    import ast
+
+    readers = _shipped_readers_of_escalation_json()
+    missing = sorted(_KNOWN_ESCALATION_READERS - set(readers))
+    assert not missing, (
+        f"discovery no longer finds {missing} — it reads `escalation.json` by "
+        f"some spelling this AST walk cannot see, so this pin is vouching for "
+        f"a reader it never looked at"
+    )
+
+    for rel, tree in sorted(readers.items()):
+        imported = [
+            alias.asname or alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.endswith("schemas.vocab")
+            for alias in node.names
+            if alias.name == "escalation_status"
+        ]
+        assert imported, (
+            f"{rel} reads escalation.json but does not import "
+            f"`escalation_status` from schemas.vocab. Every reader of that "
+            f"file resolves the status through the ONE resolver — a reader "
+            f"with its own is how D-214 and D-215 happened, three cycles "
+            f"apart, in two different files."
+        )
+        literals = sorted({
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value in vocab.ESCALATION_STATUSES
+        })
+        assert literals == [], (
+            f"{rel} holds the bare status literal(s) {literals}. The two "
+            f"members are named ONCE, in schemas/vocab.py, as "
+            f"ESCALATION_STATUS_ESCALATED and ESCALATION_STATUS_CLEARED; a "
+            f"literal here is a second opinion of the field waiting to drift "
+            f"from the resolver beside it (D-214 / D-215)."
+        )
+
+
+#: The document the class was found on, carrying one of each shape: a class
+#: that cleared, one that is escalated, one whose status is outside the
+#: vocabulary (D-210 / D-214) and one that is not a mapping at all (D-212 /
+#: D-215). Three of the four must read as still-escalated everywhere.
+_FOUR_SHAPE_ESCALATION_DOCUMENT = {
+    "classes": {
+        "clean-class": {"status": "CLEARED", "exit_reason": "clean_cycles"},
+        "live-class": {"status": "ESCALATED"},
+        "bogus-class": {"status": "BOGUS"},
+        "shapeless-class": "just a string",
+    }
+}
+
+
+def _load_measure_run_module():
+    """`scripts/measure-run.py` imported by path — its name has a hyphen.
+
+    Registered in `sys.modules` BEFORE execution: the script defines
+    dataclasses, and `dataclasses` resolves a field's string annotation through
+    `sys.modules[cls.__module__]`, which raises AttributeError for a module
+    that is not there yet.
+    """
+    import importlib.util
+
+    path = REPO_ROOT / "plugins" / "foundry" / "scripts" / "measure-run.py"
+    spec = importlib.util.spec_from_file_location("_measure_run_under_pin", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(spec.name, None)
+        raise
+    return module
+
+
+def test_all_three_readers_account_for_every_class_on_one_document(
+    tmp_path,
+) -> None:
+    """THE OBSERVABLE the structural fix is measured on (AC-004 / ST-010).
+
+    One document, three readers, and every class accounted for in each. Before
+    the fix the same four classes read as four in the gate, three in the report
+    (with a row saying "BOGUS" and buckets summing to 2) and one in the CLI
+    census — three artifacts of one run disagreeing about how many classes the
+    run had, which is the shape an operator cannot detect by reading any one of
+    them.
+
+    Driving all three against ONE fixture is the point: a per-reader pin is
+    what the last three cycles shipped, and each passed while its neighbours
+    were wrong.
+    """
+    from foundry_mcp.tools import foundry_orchestrator as fo
+    from foundry_mcp.tools.foundry_report import _read_escalated_classes
+
+    run_dir = tmp_path / "foundry-archive" / "pin-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "escalation.json").write_text(
+        json.dumps(_FOUR_SHAPE_ESCALATION_DOCUMENT), encoding="utf-8"
+    )
+    still_escalated = ["bogus-class", "live-class", "shapeless-class"]
+
+    # Reader 1 — the deciding read behind Foundry-Gate('done').
+    persisted = fo._persisted_escalations(
+        run_dir, str(tmp_path), _FOUR_SHAPE_ESCALATION_DOCUMENT["classes"]
+    )
+    assert persisted == still_escalated, persisted
+
+    # Reader 2 — report.json's `escalated_classes` section (D-214).
+    section, problem = _read_escalated_classes(run_dir)
+    assert problem is None, problem
+    assert section["count"] == 4, section
+    assert sum(section["by_status"].values()) == section["count"], section
+    assert section["by_status"] == {"CLEARED": 1, "ESCALATED": 3}, section
+    assert {row["class"]: row["status"] for row in section["classes"]} == {
+        "clean-class": "CLEARED",
+        "live-class": "ESCALATED",
+        "bogus-class": "ESCALATED",
+        "shapeless-class": "ESCALATED",
+    }, section["classes"]
+
+    # Reader 3 — measure-run.py's census (D-215).
+    census = _load_measure_run_module()._read_escalation(run_dir)
+    assert census["classes"] == 4, census
+    assert sum(census["by_status"].values()) == census["classes"], census
+    assert census["by_status"] == {"CLEARED": 1, "ESCALATED": 3}, census
+    # `bogus-class` and `shapeless-class` declared no status the vocabulary
+    # spells; the two that did are not counted here.
+    assert census["unknown_status"] == 2, census
+
+    # AND THE THREE AGREE — the property no per-reader pin can state.
+    assert section["by_status"] == census["by_status"]
+    assert sorted(
+        row["class"] for row in section["classes"] if row["status"] != "CLEARED"
+    ) == persisted
+
+
+# ---------------------------------------------------------------------------
 # ST-006 / ST-007 / GI-009 / FR-032 — INSPECT width.
 # ---------------------------------------------------------------------------
 

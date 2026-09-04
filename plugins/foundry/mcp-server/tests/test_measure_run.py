@@ -1977,7 +1977,59 @@ def test_escalation_exit_reasons_are_counted(
     assert escalation["classes"] == 4
     assert escalation["by_status"] == {"CLEARED": 2, "ESCALATED": 2}
     assert escalation["by_exit_reason"] == {"budget": 1, "clean_cycles": 1}
-    assert escalation["unknown_status"] == 0
+    # LEGACY_CLASS declares no status, so the resolver DEFAULTED it — it is
+    # counted as ESCALATED above (the state it was written in) and reported
+    # here as undeclared. This assertion read 0 before D-215: the counter then
+    # meant "a status present, a string, and outside the vocabulary", a
+    # narrower question than the one the column's name asks, and the entries it
+    # most needed to count were the ones a `continue` had already dropped.
+    assert escalation["unknown_status"] == 1
+    assert sum(escalation["by_status"].values()) == escalation["classes"]
+
+
+def test_every_class_is_counted_whatever_shape_its_entry_has(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """D-215 / AC-004 — the census and the gate agree about how many classes.
+
+    THE REPORTED FIXTURE, over the wire. `_read_escalation` opened
+    `if not isinstance(entry, dict): continue`, one line above its own
+    `unknown_status` counter, so on exactly these four classes the CLI printed
+    `{"classes": 4, "by_status": {"CLEARED": 0, "ESCALATED": 1},
+    "unknown_status": 0}` — three of four classes gone from the buckets while
+    `Foundry-Gate('done')` at the same commit blocked on all four. An operator
+    reading the metric saw one escalated class and a run that would not close.
+
+    `classes == sum(by_status.values())` is the property, and it is asserted
+    rather than the three numbers alone: a fix that dropped the classes into
+    some other bucket would satisfy a per-count assertion and still lose them.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "escalation.json").write_text(
+        json.dumps(
+            {
+                "classes": {
+                    "K1": {"status": "ESCALATED"},
+                    "K2": "just a string",
+                    "K3": ["ESCALATED"],
+                    "K4": None,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    assert exit_code == 0, stderr
+    escalation = json.loads(stdout)["escalation"]
+
+    assert escalation["classes"] == 4, escalation
+    assert sum(escalation["by_status"].values()) == 4, escalation
+    assert escalation["by_status"] == {"CLEARED": 0, "ESCALATED": 4}, escalation
+    # K1 declared a member; the other three declared nothing the vocabulary
+    # spells and are reported in the state they were written in.
+    assert escalation["unknown_status"] == 3, escalation
+    assert escalation["by_exit_reason"] == {"budget": 0, "clean_cycles": 0}
 
 
 def test_the_convergence_columns_never_fire_a_token_or_move_a_gate(

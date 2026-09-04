@@ -60,6 +60,7 @@ from foundry_mcp.schemas.vocab import (
     THUNDER_VIPER_BASELINE,
     TIER_UNKNOWN,
     defect_tier,
+    escalation_status,
 )
 from foundry_mcp.tools.foundry_state import (
     derive_cycle_count,
@@ -443,43 +444,56 @@ def _read_escalated_classes(run_dir: Path) -> tuple[dict, str | None]:
     by_status = dict.fromkeys(sorted(ESCALATION_STATUSES), 0)
     by_exit_reason = dict.fromkeys(sorted(ESCALATION_EXIT_REASONS), 0)
     for name, entry in sorted(classes.items()):
-        # D-212: this `continue` DROPPED the class from the report entirely —
-        # no row, and `count` short by one — for exactly the entry shape the
-        # orchestrator's deciding reads now resolve to ESCALATED. Driven at
-        # cdb9322: entry `"just a string"`, entry `["ESCALATED"]` and entry
-        # `null` each produced `escalated_classes` count 0 with no row for the
-        # class, so it disappeared from BOTH terminal artifacts at once while
-        # `{"status": "BOGUS"}` was reported. An entry that is not a mapping
-        # carries no status, and a class with no status is reported in the
-        # state it was written in — ESCALATED, by the default two lines below —
-        # never silently retired by omission.
-        if not isinstance(entry, dict):
-            entry = {}
-        # A class with no `status` predates this release's fields and is
-        # reported in the state it was written in — ESCALATED. Defaulting it
-        # to CLEARED would silently retire a class nobody ever cleared.
-        status = entry.get("status")
-        status = status if isinstance(status, str) else "ESCALATED"
-        reason = entry.get("exit_reason")
+        # D-214 — THE VOCABULARY DECIDES, AND IT DECIDES HERE FIRST.
+        #
+        # This read was `status if isinstance(status, str) else "ESCALATED"`,
+        # which is not the closed vocabulary — it is a shape test wearing the
+        # vocabulary's default. ANY string passed through verbatim, so on
+        # classes {"clean-class": {"status": "CLEARED"}, "bogus-class":
+        # {"status": "BOGUS"}, "live-class": {"status": "ESCALATED"}} the
+        # section reported `count` 3 while `by_status` summed to 2 and the row
+        # read "BOGUS" — a status no writer in this system emits, published in
+        # a terminal artifact, counted in neither bucket.
+        #
+        # `vocab.escalation_status` is the ONE resolver now — the structural
+        # fix closing D-214 and D-215 moved it out of `foundry_orchestrator`,
+        # which was the only one of this file's three readers that had it.
+        # It is total over `ESCALATION_STATUSES`, so the `by_status` increment
+        # below needs no membership guard of its own and `count` is
+        # `sum(by_status.values())` by construction.
+        #
+        # It is called on the RAW entry, BEFORE the normalisation below, so
+        # nothing pre-empts it the way D-212's `continue` did — an entry that
+        # is not a mapping carries no CLEARED and resolves to ESCALATED, and a
+        # class with no `status` predates this release's fields and is reported
+        # in the state it was written in. Defaulting either to CLEARED would
+        # silently retire a class nobody ever cleared.
+        status = escalation_status(entry)
+        # Every OTHER field, read off the mapping or off nothing. The status is
+        # already decided, so this cannot drop a class from the report.
+        fields = entry if isinstance(entry, dict) else {}
+        reason = fields.get("exit_reason")
         rows.append(
             {
                 "class": name,
                 "status": status,
                 "exit_reason": reason if isinstance(reason, str) else None,
-                "escalated_at_cycle": entry.get("escalated_at_cycle"),
-                "cleared_at_cycle": entry.get("cleared_at_cycle"),
-                "structural_packets_dispatched": entry.get(
+                "escalated_at_cycle": fields.get("escalated_at_cycle"),
+                "cleared_at_cycle": fields.get("cleared_at_cycle"),
+                "structural_packets_dispatched": fields.get(
                     "structural_packets_dispatched"
                 ),
-                "structural_packet_cycles": entry.get("structural_packet_cycles"),
-                "live_clean_cycles": entry.get("live_clean_cycles"),
-                "open_latent_defect_ids": entry.get("open_latent_defect_ids"),
-                "defect_ids": entry.get("defect_ids"),
-                "proposal": entry.get("proposal"),
+                "structural_packet_cycles": fields.get("structural_packet_cycles"),
+                "live_clean_cycles": fields.get("live_clean_cycles"),
+                "open_latent_defect_ids": fields.get("open_latent_defect_ids"),
+                "defect_ids": fields.get("defect_ids"),
+                "proposal": fields.get("proposal"),
             }
         )
-        if status in by_status:
-            by_status[status] += 1
+        # No `if status in by_status` guard: the resolver is total over the
+        # frozenset these keys come from, so every row lands in exactly one
+        # bucket and `count == sum(by_status.values())` cannot drift (D-214).
+        by_status[status] += 1
         if isinstance(reason, str) and reason in by_exit_reason:
             by_exit_reason[reason] += 1
     return {

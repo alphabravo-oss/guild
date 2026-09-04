@@ -363,7 +363,106 @@ def reproduction_attempted_problem(statement: object) -> str | None:
 
 # CLOSED VOCABULARY — the two states a defect class can be in once escalation
 # has looked at it. Extend only via phase-level RFC.
-ESCALATION_STATUSES = frozenset({"ESCALATED", "CLEARED"})  # 2 items
+#
+# THE MEMBERS ARE NAMED HERE AND THE FROZENSET IS BUILT FROM THE NAMES, so the
+# vocabulary and the two comparands every reader asks about cannot drift apart:
+# there is no second place in the tree where either string is typed.
+ESCALATION_STATUS_ESCALATED = "ESCALATED"
+ESCALATION_STATUS_CLEARED = "CLEARED"
+ESCALATION_STATUSES = frozenset(
+    {ESCALATION_STATUS_ESCALATED, ESCALATION_STATUS_CLEARED}
+)  # 2 items
+
+
+def _escalation_status_member(entry: object) -> str | None:
+    """The vocabulary member this class entry's ``status`` spells, or None.
+
+    THE ONE MEMBERSHIP TEST IN THE TREE. Both public functions below are thin
+    over it, so "which values are the vocabulary" is decided in exactly one
+    place and `escalation_status` and `escalation_status_is_unknown` cannot
+    answer inconsistently about the same entry.
+
+    None means the entry carries no status the vocabulary spells — because it
+    is not a mapping at all, because the key is absent, or because the value is
+    `null`, `""`, a non-string, or a string such as `"cleared"` or `"BOGUS"`
+    that nothing in this system writes.
+    """
+    if not isinstance(entry, dict):
+        return None
+    raw = entry.get("status")
+    if isinstance(raw, str) and raw in ESCALATION_STATUSES:
+        return raw
+    return None
+
+
+def escalation_status(entry: object) -> str:
+    """One class's persisted status, resolved against the CLOSED vocabulary.
+
+    Returns a member of `ESCALATION_STATUSES` and nothing else, so no caller
+    ever compares a raw persisted value to anything. Three ways in, ONE way
+    out:
+
+      * a member of the vocabulary          -> itself
+      * absent, or `null`                   -> ESCALATED (a class nothing has
+                                               cleared has not been cleared)
+      * present and NOT a member, or an
+        entry that is not a mapping at all  -> ESCALATED (D-210 / D-212)
+
+    WHY IT LIVES IN vocab.py AND NOT BESIDE ONE OF ITS CALLERS (D-214 / D-215)
+    --------------------------------------------------------------------------
+    It lived in `tools/foundry_orchestrator.py`, PRIVATE to that module, while
+    `escalation.json` has THREE readers: the orchestrator's two deciding reads,
+    `tools/foundry_report.py#_read_escalated_classes`, and
+    `scripts/measure-run.py#_read_escalation`. The two the resolver could not
+    reach each grew their own opinion of the same field, and each got it wrong
+    in its own way.
+
+    The report read `status if isinstance(status, str) else "ESCALATED"`, so
+    ANY string rendered verbatim into the row and fell into neither `by_status`
+    bucket: on classes {"clean-class": CLEARED, "bogus-class": "BOGUS",
+    "live-class": ESCALATED} the section's `count` was 3 while `by_status`
+    summed to 2 and the row read "BOGUS" (D-214). measure-run held
+    `if not isinstance(entry, dict): continue` ONE LINE ABOVE its own
+    `unknown_status` counter, so on classes {"K1": {"status": "ESCALATED"},
+    "K2": "just a string", "K3": ["ESCALATED"], "K4": null} the CLI printed
+    `{"classes": 4, "by_status": {"CLEARED": 0, "ESCALATED": 1},
+    "unknown_status": 0}` — three of four classes vanished from the census
+    while `Foundry-Gate('done')` blocked on all of them (D-215).
+
+    That is ONE root cause with three copies, and it recurred for three
+    consecutive cycles (20, 21, 22) as the class
+    `closed-vocabulary-not-enforced-on-the-deciding-read` because each cycle
+    fixed a copy. The fix is the PLACEMENT, not the logic: the resolver is
+    public, it lives with the vocabulary it enforces, every reader imports it,
+    and `tests/test_vocab.py` discovers the readers by AST over the shipped
+    tree — so a FOURTH reader that spells `"ESCALATED"` itself fails a test
+    instead of shipping a fourth opinion.
+
+    OUT OF VOCABULARY FAILS CLOSED. CLEARED is terminal: it retires a class
+    from structural work for the rest of the run, and no value nothing in this
+    system writes should be able to buy that.
+    """
+    member = _escalation_status_member(entry)
+    return ESCALATION_STATUS_ESCALATED if member is None else member
+
+
+def escalation_status_is_unknown(entry: object) -> bool:
+    """True when `escalation_status` had to DEFAULT rather than read a member.
+
+    The census column `measure-run.py` prints as `unknown_status`: how many
+    classes carried no status the vocabulary spells and were therefore reported
+    in the state they were written in rather than in one they declared.
+    Derived from `_escalation_status_member` for exactly the reason the
+    resolver is — a caller answering this by re-testing the field would be the
+    fourth private opinion of it (D-215).
+
+    NOT the same question as `escalation_status(e) == ESCALATION_STATUS_
+    ESCALATED`: a class that genuinely records ESCALATED answers True to that
+    and False to this. Counting the defaults separately is what keeps
+    `classes == sum(by_status.values())` true while still saying how many of
+    those classes never declared anything.
+    """
+    return _escalation_status_member(entry) is None
 
 # CLOSED VOCABULARY — how a class reached CLEARED. Machine-readable per
 # FR-028, so the F6 report can say which door each class left by.

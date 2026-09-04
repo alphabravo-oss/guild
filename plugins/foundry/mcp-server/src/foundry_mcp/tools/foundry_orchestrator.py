@@ -23,7 +23,8 @@ from foundry_mcp.schemas.vocab import (
     DEFECT_SOURCE_IDS,
     DEFECT_TYPES,
     DELTA_CONDITIONAL_STREAMS,
-    ESCALATION_STATUSES,
+    ESCALATION_STATUS_CLEARED,
+    ESCALATION_STATUS_ESCALATED,
     FIX_AUTHORS,
     FULL_ROSTER_STREAMS,
     INSPECT_DELTA_RULE,
@@ -43,6 +44,7 @@ from foundry_mcp.schemas.vocab import (
     TIER_UNKNOWN,
     canonical_defect_type,
     defect_tier,
+    escalation_status as _escalation_status,
     is_test_file,
     is_verifier_path,
 )
@@ -9285,68 +9287,30 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
 # returns (the D-034 ruling), so nothing here can deadlock it.
 
 
-# D-210 — THE CLOSED VOCABULARY, ENFORCED ON THE READS THAT DECIDE.
+# D-210 / D-212 / D-214 / D-215 — THE CLOSED VOCABULARY, ENFORCED ON EVERY READ.
 #
-# `ESCALATION_STATUSES` is casting 1's closed vocabulary and was consulted by
-# `foundry_report.py` and `scripts/measure-run.py` — two REPORT BUILDERS —
-# and by neither deciding read. `_persisted_escalations` tested
-# `(entry.get("status") or "ESCALATED") == "ESCALATED"` and `_escalated_classes`
-# tested `.get("status") == "CLEARED"`, so a value that was NEITHER was not
-# ESCALATED (it blocked nothing) and not CLEARED. The absent-status default was
-# always right — it blocks. It was the PRESENT-but-unknown value that failed
-# open.
+# The resolver and its two comparands were HERE, private to this module, while
+# `escalation.json` has THREE readers: this module's two deciding reads,
+# `foundry_report.py#_read_escalated_classes` and
+# `scripts/measure-run.py#_read_escalation`. D-210 and D-212 fixed this copy of
+# the bug; D-214 and D-215 were the same bug in the other two, and the class
+# `closed-vocabulary-not-enforced-on-the-deciding-read` recurred for three
+# consecutive cycles (20, 21, 22) because every cycle fixed a copy and the
+# resolver could not reach the readers that had none.
 #
-# Driven at `server.call_tool` `Foundry-Gate('done')` at 916c1ca on a run whose
-# class K has every instance fixed: status ESCALATED, `null` and `""` each
-# rendered `escalated_classes_cleared ok:false classes:[K]`; status `"cleared"`
-# (lowercase) and `"BOGUS"` each rendered `ok:true classes:[]`, BYTE-IDENTICAL
-# to a genuine CLEARED, and the report showed the class in neither bucket with
-# count 1. The orchestrator is this file's only writer and writes only the two
-# literals, so the state is reachable only through a hand-edited or
-# foreign-written `escalation.json` — LATENT, and fixed on the read that would
-# have believed it.
+# So `escalation_status` is PUBLIC in `schemas/vocab.py` now, beside the
+# frozenset it enforces and beside `defect_tier`, and all three readers import
+# it. Its docstring carries the full history. `tests/test_vocab.py` discovers
+# the readers by AST over the shipped tree and fails any module holding a bare
+# "ESCALATED"/"CLEARED" literal of its own, so a FOURTH reader cannot grow a
+# fourth opinion of the field.
 #
-# BOTH AXES. WHAT is compared: `ESCALATION_STATUSES` itself, by membership, so
-# the vocabulary is what decides rather than a literal typed beside it. HOW an
-# out-of-vocabulary value reads: as ESCALATED, so an unknown fails CLOSED the
-# way an absent one already did — CLEARED is terminal and retires a class from
-# structural work for the rest of the run, and no value nothing in this system
-# writes should be able to buy that.
-#
-# The two members are named ONCE, here, and `tests/test_escalation.py` pins the
-# pair to equal `ESCALATION_STATUSES`, so a member renamed or dropped in
-# casting 1's vocab.py fails a test in this module instead of quietly matching
-# nothing. Every read and every write of the field below goes through these two
-# names.
-ESCALATION_STATUS_ESCALATED = "ESCALATED"
-ESCALATION_STATUS_CLEARED = "CLEARED"
+# THE IMPORT ALIASES IT TO `_escalation_status`, and deliberately: every call
+# site in this module names it that, and so do the AST pins in
+# `tests/test_escalation.py` that assert both deciding reads CALL it rather
+# than re-deciding inline. The alias binds the same function object, and no
+# logic for this field is left in this file.
 
-
-def _escalation_status(entry: object) -> str:
-    """One class's persisted status, resolved against the CLOSED vocabulary.
-
-    Returns a member of `ESCALATION_STATUSES` and nothing else, so no caller
-    ever compares a raw persisted value to anything. Three ways in, ONE way
-    out:
-
-      * a member of the vocabulary          -> itself
-      * absent, or `null`                   -> ESCALATED (a class nothing has
-                                               cleared has not been cleared)
-      * present and NOT a member, or an
-        entry that is not a mapping at all  -> ESCALATED (D-210)
-
-    The third rung is the fix: `"cleared"`, `""` and `"BOGUS"` all used to read
-    as "not ESCALATED" at one door and "not CLEARED" at the other, which is
-    every door agreeing the class was neither. It now reads exactly as the
-    absent value does, and for the same reason — the only status that retires a
-    class is the one the vocabulary spells.
-    """
-    if not isinstance(entry, dict):
-        return ESCALATION_STATUS_ESCALATED
-    raw = entry.get("status")
-    if isinstance(raw, str) and raw in ESCALATION_STATUSES:
-        return raw
-    return ESCALATION_STATUS_ESCALATED
 
 
 def _persisted_escalations(
