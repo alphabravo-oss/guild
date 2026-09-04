@@ -2206,7 +2206,6 @@ _TWO_SPEC_ID_RE = id_pattern(LEGACY_ID_FAMILIES)
 #: with its own declared set before calling `_unqualified_ids`.
 _CONVERGENCE_IDS = frozenset()  # 0 items
 
-_PIN_SENTINEL = PIN_SENTINEL
 
 
 def _unqualified_ids(text: str) -> list[str]:

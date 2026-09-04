@@ -3662,6 +3662,37 @@ def test_every_orchestrator_entry_point_runs_the_artifact_guard():
 # The subject set is now every .py file the plugin's own source holds — src,
 # scripts and tests alike — with the reference sweep, the derivation guards and
 # the installed-dependency exclusion unchanged.
+#
+# D-202 — AND THEN ONE AXIS OF THE SUBJECT SET WAS WIDENED AND THE OTHER LEFT.
+#
+# D-199 widened the FILE axis to the whole plugin and left the NODE-TYPE axis at
+# `ast.FunctionDef` / `ast.AsyncFunctionDef`, so a superseded BINDING was never
+# a subject and the class kept live instances the pin was structurally unable to
+# see. Two of them at f5b487b: `tests/test_report.py#_DOOR_WRITTEN_DEFECT_FIELDS`,
+# a nine-field frozenset superseded by an inline tuple in the same module and
+# named nowhere in code — its only surviving mention was inside `_scenario_rows`'
+# docstring, which went on narrating it as live, the exact "derive it from
+# CALL-SITE ABSENCE" harm D-196 was filed on — and
+# `tests/test_observations.py#_PIN_SENTINEL`, a bare alias with no reader.
+# Seven more sat in `display.py`'s ANSI palette.
+#
+# A dead frozenset is the same defect as a dead function: a name whose reader
+# was rewired away and which nobody deleted, presented to the next reader as
+# live. So the subject set is now every PRIVATE MODULE-LEVEL BINDING the plugin
+# ships — `ast.Assign` and `ast.AnnAssign` targets and private `ast.ClassDef`s
+# alongside the two function types — over the same file set D-199 established.
+# Both axes at once, because widening either alone is what produced this defect
+# twice: D-197 widened a suffix table and left the question keyed on the suffix,
+# D-199 widened a file set and left the node types, and both were re-filed the
+# following cycle.
+#
+# A BINDING'S OWN STATEMENT DOES NOT VOUCH FOR IT, for the same reason a
+# recursive call does not vouch for a function: the reference sweep counts
+# `ast.Name` loads, and an assignment's own TARGET is an `ast.Name`. So a
+# subject statement contributes its children's names minus its own targets —
+# which is what makes `_PIN_SENTINEL = PIN_SENTINEL` report the public name as
+# referenced and the private one as an orphan, rather than the alias vouching
+# for itself.
 # --------------------------------------------------------------------------- #
 
 #: Private module-level functions some MECHANISM reaches without naming them.
@@ -3719,44 +3750,86 @@ def _named_in_code(tree: ast.AST) -> set[str]:
     return named
 
 
+def _assigned_names(node: ast.AST) -> list[str]:
+    """Every bare name a module-level assignment BINDS, tuple targets included.
+
+    `_a, _b = f()` binds two, and reading only `ast.Name` targets would make
+    both invisible to the pin — the same one-shape-only narrowing D-202 was
+    filed on, one rung down.
+    """
+    if isinstance(node, ast.Assign):
+        stack: list[ast.expr] = list(node.targets)
+    elif isinstance(node, ast.AnnAssign):
+        stack = [node.target]
+    else:
+        return []
+    found: list[str] = []
+    while stack:
+        target = stack.pop()
+        if isinstance(target, ast.Name):
+            found.append(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            stack.extend(target.elts)
+    return found
+
+
+def _private_names_bound(node: ast.AST) -> list[str]:
+    """The PRIVATE module-level names ``node`` declares — the pin's subjects.
+
+    D-202: functions, async functions, classes and bindings alike. A dunder is
+    not a private helper (`__all__`, `__version__` are the module's published
+    surface), so the `__` prefix is excluded exactly as it was for functions.
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        candidates = [node.name]
+    else:
+        candidates = _assigned_names(node)
+    return [
+        name for name in candidates
+        if name.startswith("_") and not name.startswith("__")
+    ]
+
+
 def _is_the_allowlist_statement(node: ast.AST) -> bool:
     """Is ``node`` the ``_MECHANISM_REACHED_HELPERS`` assignment itself?
 
     Excluded from the reference sweep so the allowlist grants exceptions rather
     than manufacturing them — see the comment above the constant.
     """
-    targets: list[ast.expr] = []
-    if isinstance(node, ast.Assign):
-        targets = list(node.targets)
-    elif isinstance(node, ast.AnnAssign):
-        targets = [node.target]
-    return any(
-        isinstance(t, ast.Name) and t.id == "_MECHANISM_REACHED_HELPERS"
-        for t in targets
-    )
+    return "_MECHANISM_REACHED_HELPERS" in _assigned_names(node)
 
 
 def test_every_private_function_the_plugin_ships_is_reachable():
     """FR-032 verbatim: the verifier-path decision is 'derived from one constant
-    rather than typed in several places'. NFR-001. D-196, D-199.
+    rather than typed in several places'. NFR-001. D-196, D-199, D-202.
 
-    Every private module-level function in every Python file the plugin ships —
-    `src/`, `scripts/` and `tests/` alike — must be named in code somewhere
-    OUTSIDE its own body, in any of those files, so a helper reached only from
-    a test still counts. A name nothing names is a helper whose caller was
-    rewired away from it and which nobody deleted.
+    Every private module-level NAME in every Python file the plugin ships —
+    `src/`, `scripts/` and `tests/` alike, and functions, async functions,
+    classes and bindings alike — must be named in code somewhere OUTSIDE its
+    own defining statement, in any of those files, so a helper reached only
+    from a test still counts. A name nothing names was superseded and nobody
+    deleted it.
 
-    THE SUBJECT SET IS THE WHOLE OF WHAT THE PLUGIN SHIPS (D-199). Scoped to
-    `foundry_orchestrator.py`, this pin read every plugin file for CALLERS and
-    only one for SUBJECTS, and three live instances of the class it names sat
-    outside it — one in a shipped script, two in the test corpus. Both sweeps
-    now run over the same file set, so a module added tomorrow is a subject the
-    day it is added.
+    THE SUBJECT SET IS THE WHOLE OF WHAT THE PLUGIN SHIPS, ON BOTH AXES.
+    D-199 widened the FILE axis (three instances sat outside a pin scoped to
+    `foundry_orchestrator.py` — one in a shipped script, two in the test
+    corpus) and left the NODE-TYPE axis at functions, so D-202 found two more
+    in BINDINGS: a nine-field frozenset superseded by an inline tuple whose
+    only surviving mention was a docstring still narrating it as live, and a
+    bare alias with no reader. Widening one axis of a two-axis predicate is
+    what re-filed this class in three consecutive cycles; both are widened
+    here, and the derivation guards below fail loudly if either silently
+    collapses.
+
+    THE NAME SAYS `function` AND THE SUBJECTS ARE WIDER, DELIBERATELY. D-199's
+    closure persisted this locator in `defects.json`; renaming it would leave
+    that record pointing at a test that no longer exists, which costs more than
+    the two words of drift. The docstring is where the scope is stated.
 
     NAME-KEYED, WHICH CAN ONLY MAKE IT MORE PERMISSIVE. Two modules defining a
-    private helper of the same name vouch for each other. That is the same
+    private name of the same spelling vouch for each other. That is the same
     looseness the single-module pin had for its own recursion, it never reports
-    a live helper as dead, and closing it would mean resolving imports rather
+    a live name as dead, and closing it would mean resolving imports rather
     than reading names.
     """
     plugin_root = Path(fo.__file__).resolve().parents[4]  # .../plugins/foundry
@@ -3778,39 +3851,42 @@ def test_every_private_function_the_plugin_ships_is_reachable():
     assert len(trees) >= 50, len(trees)
 
     helpers: dict[str, list[str]] = {}
+    functions = 0
+    bindings = 0
     for path, tree in trees.items():
         for node in tree.body:
-            if (
-                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name.startswith("_")
-                and not node.name.startswith("__")
-            ):
-                helpers.setdefault(node.name, []).append(
+            for name in _private_names_bound(node):
+                helpers.setdefault(name, []).append(
                     f"{path.relative_to(plugin_root)}:{node.lineno}"
                 )
-    assert len(helpers) >= 100, len(helpers)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                functions += len(_private_names_bound(node))
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                bindings += len(_private_names_bound(node))
+    # Derivations that silently found nothing would pass forever — and after
+    # D-202 that has to be asserted PER AXIS. A single `>= 100` over the union
+    # stays green while the binding half collapses to zero, which is exactly
+    # the failure this widening exists to make impossible.
+    assert functions >= 100, functions
+    assert bindings >= 100, bindings
 
     reachable: set[str] = set()
     for tree in trees.values():
-        own = {
-            node
-            for node in tree.body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name.startswith("_")
-            and not node.name.startswith("__")
-        }
-        # A helper's OWN body does not vouch for it: a recursive call is not a
-        # caller. Everything else in the file it is defined in does — except
-        # the allowlist above, whose keys would otherwise vouch for themselves.
+        # A subject's OWN statement does not vouch for it: a recursive call is
+        # not a caller, and an assignment's own TARGET is an `ast.Name` load to
+        # the sweep. Everything else in the file it is declared in does vouch —
+        # except the allowlist above, whose keys would otherwise grant
+        # themselves the exception they are supposed to record.
         for node in tree.body:
             if _is_the_allowlist_statement(node):
                 continue
-            if node in own:
+            own = _private_names_bound(node)
+            if own:
                 reachable |= {
                     name
                     for child in ast.iter_child_nodes(node)
                     for name in _named_in_code(child)
-                } - {node.name}
+                } - set(own)
             else:
                 reachable |= _named_in_code(node)
 
@@ -3820,9 +3896,10 @@ def test_every_private_function_the_plugin_ships_is_reachable():
         if name not in reachable and name not in _MECHANISM_REACHED_HELPERS
     )
     assert orphans == [], (
-        f"private module-level function(s) reachable by nothing: {orphans}. "
-        f"A helper nothing in the plugin names outside its own body was "
-        f"superseded and left behind (D-196, D-199). Delete it, or make it the "
+        f"private module-level name(s) reachable by nothing: {orphans}. "
+        f"A function, class or binding nothing in the plugin names outside its "
+        f"own defining statement was superseded and left behind (D-196, D-199, "
+        f"D-202). Delete it, or make it the "
         f"survivor's helper and call it -- and if some mechanism reaches it "
         f"without naming it, record that mechanism in "
         f"_MECHANISM_REACHED_HELPERS."
@@ -6348,16 +6425,122 @@ def test_a_directory_at_every_run_document_position_is_named(run_env):
     )
 
 
-def test_the_document_suffix_table_covers_every_declared_run_artifact():
-    """FR-026 / D-197: the table is a membership list, so its hole is watched.
+#: Every SUFFIX-LESS name a reader in this package opens under a run directory,
+#: with the reader beside it. Written out rather than read from
+#: `_RUN_MARKER_NAMES`, which the predicate under test is built from: a test
+#: that derived its subjects from the thing it is testing would pass whatever
+#: that thing contained, which is the self-vouching shape the reachability
+#: pin's allowlist comment describes one file over.
+_RUN_MARKER_POSITIONS = (
+    ".last-next-at",           # the CT-012 stall clock, read at every Next
+    ".next-action-called",     # the ordering token a transition consumes
+    ".gate-passed",            # read back by foundry_next_action (ST-011)
+    ".cast-complete",          # _done_preconditions and _compute_next_action
+    ".cast-baseline-sha",      # the "since when" ladder's CAST rung
+    ".inspect-boundary-sha",   # the same ladder's INSPECT-boundary rung
+    ".trace-clean-at",         # _trace_skip_check's clean-TRACE rung
+    ".inspect-clean",          # the gate's INSPECT-clean precondition
+    ".tasks-generated",        # the gate's tasks-generated precondition
+    ".research-skipped",       # the FULL-roster research exemption
+    ".trace-complete",         # _maybe_skip_trace, and the roster check
+    ".prove-complete",         # _prove_findings_clean's marker counts
+    ".validate-passed",        # tools/foundry_validate.py writes and reads it
+    ".f07-intent-clean",       # tools/intent_coverage.py stamps it
+    ".foundry-dir",            # tools/foundry.py's legacy run pointer
+)
 
-    `_RUN_DOCUMENT_SUFFIXES` says which types a reader opens, and a type absent
-    from it is a directory position the guard walks past. That hole is accepted
-    (the inverse refuses on `.dist-info`, of which this repo's virtualenvs hold
-    thirty) — but it is not left unwatched: the expected set is DERIVED from
-    the `*_FILENAME` constants this package declares, so declaring a run
-    artifact of a new type fails here the day it is declared rather than the
-    cycle someone notices a door acting on an empty document.
+
+def test_a_directory_at_every_run_marker_position_is_named(run_env):
+    """D-140 verbatim, held at the suffix-less half: a path OCCUPYING an
+    artifact's name is the guard's business whatever kind of thing it is.
+    CT-012, CT-007, AC-013. D-201.
+
+    D-197 widened the SUFFIX TABLE and left the QUESTION keyed on the suffix.
+    `Path(".last-next-at").suffix` is `""`, `""` is in no table, so every
+    sentinel above was walked past and its door died with `call_tool`'s
+    unhandled-error banner instead of the guard's named refusal — measured at
+    f5b487b, where `_run_artifact_problems` named NONE of these fifteen and
+    named all eight suffixed positions in the same tree.
+
+    The D-195 control sits in the same tree for the same reason it does in the
+    suffixed pin: a predicate can always satisfy one side by sacrificing the
+    other, and a version-number scratch directory named here refuses every MCP
+    door at once.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    for position in _RUN_MARKER_POSITIONS:
+        target = fdir / position
+        if target.exists():
+            target.unlink()
+        target.mkdir()
+    (fdir / "test_observations" / "generated" / ".hypothesis"
+     / "unicode_data" / "14.0.0").mkdir(parents=True)
+
+    problems = fo._run_artifact_problems(fdir)
+    named = {p.split(" could")[0] for p in problems}
+
+    unguarded = sorted(p for p in _RUN_MARKER_POSITIONS if p not in named)
+    assert unguarded == [], (
+        f"marker position(s) a directory occupies and the guard walked past: "
+        f"{unguarded}. Each is a name this package writes and READS BACK, so "
+        f"the read raises out of call_tool as an unhandled error instead of "
+        f"refusing by name — CT-012's Foundry-Next, whose errors cell reads "
+        f"'none; never blocks', among them (D-140, D-197, D-201)."
+    )
+    assert not any("14.0.0" in p for p in problems), (
+        f"D-195's false positive is back: a version-number directory no reader "
+        f"opens was named, and _artifact_guard runs at every MCP entry point, "
+        f"so that refuses every door at once. {problems}"
+    )
+
+
+def test_every_stream_completion_marker_is_a_document_position():
+    """D-201: the completion sentinel family is DERIVED, not enumerated.
+
+    `.trace-complete` and `.prove-complete` are two members of
+    `f".{wire_id}-complete"` over the closed stream vocabulary. Listing the
+    members in `_RUN_MARKER_NAMES` would leave the next wire id unguarded on
+    the day `STREAM_WIRE_IDS` gains it — the hand-kept-list defect D-129 and
+    D-138 were both filed on — so the guard derives the family and this asserts
+    the derivation reaches every member.
+    """
+    from foundry_mcp.schemas.vocab import STREAM_WIRE_IDS
+
+    assert STREAM_WIRE_IDS, "empty vocabulary would make this pass vacuously"
+    unguarded = sorted(
+        marker for wire_id in STREAM_WIRE_IDS
+        if not fo._is_document_position(Path("run") / (marker := f".{wire_id}-complete"))
+    )
+    assert unguarded == [], (
+        f"stream completion marker(s) the guard walks past: {unguarded}. "
+        f"_check_streams_complete opens each of these, so a directory on one "
+        f"raises out of the door instead of refusing by name (D-201)."
+    )
+
+
+def test_the_document_suffix_table_covers_every_declared_run_artifact():
+    """FR-026 / D-197 / D-201: the table is a membership list, so its hole is
+    watched — on BOTH of the axes `_is_document_position` asks.
+
+    `_RUN_DOCUMENT_SUFFIXES` says which TYPES a reader opens and
+    `_RUN_MARKER_NAMES` says which suffix-less NAMES it opens; an artifact
+    absent from the axis its own name falls on is a directory position the
+    guard walks past. That hole is accepted (the inverse refuses on
+    `.dist-info`, of which this repo's virtualenvs hold thirty) — but it is not
+    left unwatched: the expected set is DERIVED from the `*_FILENAME` and
+    `*_MARKER` constants this package declares, so declaring a run artifact
+    fails here the day it is declared rather than the cycle someone notices a
+    door acting on an empty document.
+
+    D-201 — THE GUARD CLAUSE EXEMPTED EXACTLY WHAT WENT WRONG. This read
+    `if (suffix := Path(value).suffix.lower()) and suffix not in ...`, and the
+    leading truthiness test made every suffix-less declared name skip the
+    assertion entirely. So the pin covered the axis that was already fixed and
+    structurally could not see the one that was not: sixteen sentinels the
+    package writes and reads back were exempt from their own coverage test. A
+    guard clause that drops a subject is not a narrower check, it is a blind
+    spot, and it must route to the other axis instead of returning early.
     """
     import ast
 
@@ -6381,23 +6564,45 @@ def test_the_document_suffix_table_covers_every_declared_run_artifact():
                     and isinstance(node.value.value, str)):
                 continue
             for target in node.targets:
-                if isinstance(target, ast.Name) and target.id.endswith("_FILENAME"):
-                    declared[target.id] = node.value.value
-    # A derivation that silently found nothing would pass forever.
+                if not isinstance(target, ast.Name):
+                    continue
+                value = node.value.value
+                # `_FILENAME` means a file, unambiguously, whatever the value.
+                # `_MARKER` does NOT: this package also spells text sentinels
+                # that way (`RESULT_JSON_MARKER`, `_CLASS_RULE_MARKER`,
+                # `_ID_LITERAL_MARKER`), and demanding those be run artifacts
+                # would make the pin fail on things no reader ever opens. What
+                # separates the two is a property of run sentinels rather than
+                # a list of exceptions: every one of them is a DOTFILE BASENAME
+                # -- a leading "." and no path separator -- and no text marker
+                # is. A run artifact that is suffix-less and dot-less is still
+                # covered, because a `_FILENAME` constant is never filtered.
+                is_run_artifact = target.id.endswith("_FILENAME") or (
+                    target.id.endswith("_MARKER")
+                    and value.startswith(".")
+                    and Path(value).name == value
+                )
+                if is_run_artifact:
+                    declared[target.id] = value
+    # Derivations that silently found nothing would pass forever, PER AXIS: a
+    # single total stays green while either half collapses to zero -- which is
+    # D-201's own shape, a guard clause quietly emptying one side of the check.
     assert scanned >= 50, scanned
-    assert len(declared) >= 10, declared
+    suffixed = {n: v for n, v in declared.items() if Path(v).suffix}
+    markers = {n: v for n, v in declared.items() if not Path(v).suffix}
+    assert len(suffixed) >= 10, suffixed
+    assert len(markers) >= 13, markers
 
     unenrolled = sorted(
         f"{name} = {value!r}"
         for name, value in declared.items()
-        if (suffix := Path(value).suffix.lower())
-        and suffix not in fo._RUN_DOCUMENT_SUFFIXES
+        if not fo._is_document_position(Path("run") / value)
     )
     assert unenrolled == [], (
-        f"run artifact filename(s) whose type _RUN_DOCUMENT_SUFFIXES does not "
-        f"know: {unenrolled}. A directory occupying one of those names is "
+        f"run artifact(s) neither _RUN_DOCUMENT_SUFFIXES nor _RUN_MARKER_NAMES "
+        f"knows: {unenrolled}. A directory occupying one of those names is "
         f"walked past by _is_document_position, so every door acts on a "
-        f"fabricated empty document and reports success (D-140, D-197)."
+        f"fabricated empty document and reports success (D-140, D-197, D-201)."
     )
 
 
@@ -6473,6 +6678,85 @@ def test_an_urgent_directive_is_not_silently_lost_to_a_directory_on_its_name(
     occupied = _drive_mcp("Foundry-Next", {})
     assert "Run artifacts cannot be read" in occupied, occupied[:600]
     assert "directives.md" in occupied, occupied[:600]
+
+
+def test_a_directory_on_the_stall_clock_refuses_foundry_next_by_name(
+    run_env, monkeypatch
+):
+    """CT-012's errors cell, verbatim: 'none; never blocks'. D-201.
+
+    THE SENTINEL DOOR, DRIVEN. `.last-next-at` is the stall clock CT-012 reads
+    at every Foundry-Next, and at f5b487b a DIRECTORY on it returned
+    "Foundry-Next failed: IsADirectoryError: [Errno 21] Is a directory: ..."
+    with `corrupt_artifacts` ABSENT. That banner is `call_tool`'s outermost net
+    catching an unhandled exception several frames below the entry point — the
+    very thing this module's house rule forbids ("a tool never raises across
+    the MCP boundary, it returns {error, hint}") — and it is not the guard's
+    refusal, so the operator is handed a traceback rather than the name of the
+    file to repair. The suffixed positions in the same tree were all refused by
+    name, which is what makes the missing axis the finding.
+    """
+    import foundry_mcp.server as srv
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    monkeypatch.setattr(srv, "_project_root", project_root)
+
+    healthy = _drive_mcp("Foundry-Next", {})
+    assert "Run artifacts cannot be read" not in healthy, healthy[:600]
+
+    marker = fdir / ".last-next-at"   # spelled out: a test that read the
+    #                                   constant would follow a rename in
+    #                                   silence, and it is the NAME on disk
+    #                                   that a door opens.
+    if marker.exists():
+        marker.unlink()
+    marker.mkdir()
+
+    occupied = _drive_mcp("Foundry-Next", {})
+    assert "Run artifacts cannot be read" in occupied, occupied[:600]
+    assert ".last-next-at" in occupied, occupied[:600]
+    assert "Foundry-Next failed" not in occupied, (
+        f"the outer unhandled-error banner is back, so the read raised across "
+        f"the MCP boundary instead of the guard refusing by name: {occupied[:600]}"
+    )
+
+
+def test_a_directory_on_the_inspect_boundary_sha_refuses_the_transition_by_name(
+    run_env, monkeypatch
+):
+    """CT-007 / AC-013 / ST-005: the inspect_start transition re-executes the
+    in-scope evidence logs and 'refuses the transition naming any log whose
+    output mismatches'. D-201.
+
+    THE BOUNDARY SWEEP CANNOT PROVE ANYTHING ON A DOCUMENT IT HAD TO GUESS AT.
+    `.inspect-boundary-sha` records the HEAD the next crossing measures "since
+    the last boundary" from, and at f5b487b a DIRECTORY on it was walked past
+    by `_is_document_position`: the transition proceeded on a fabricated empty
+    marker rather than refusing, so the GI-002/ST-005 sweep that exists to
+    prove the committed evidence still reproduces neither swept nor refused by
+    name. The guard now names it before the transition opens.
+    """
+    import foundry_mcp.server as srv
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    monkeypatch.setattr(srv, "_project_root", project_root)
+
+    marker = fdir / ".inspect-boundary-sha"   # the NAME on disk, not the
+    #                                           constant that spells it
+    if marker.exists():
+        marker.unlink()
+    marker.mkdir()
+    _arm_ordering_token(fdir)
+
+    occupied = _drive_mcp("Foundry-Phase", {"phase": "inspect_start"})
+    assert "Run artifacts cannot be read" in occupied, occupied[:600]
+    assert ".inspect-boundary-sha" in occupied, occupied[:600]
+    # The counter is the proof the transition did not happen: a refusal that
+    # advanced it would leave the run one cycle ahead of the sweep that never
+    # ran (CT-007: 'the cycle counter does not advance on refusal').
+    assert fo._current_cycle(fdir) == 1, fo._current_cycle(fdir)
 
 
 # --------------------------------------------------------------------------- #

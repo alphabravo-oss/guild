@@ -32,6 +32,16 @@ def _short_path(p: str) -> str:
 
 
 # ── ANSI colors ──────────────────────────────────────────────────────────────
+#
+# D-202 — THE PALETTE IS WHAT THE RENDERERS USE, NOT A CATALOGUE OF WHAT ANSI
+# OFFERS. Seven names here had no reader anywhere in the plugin — the five
+# background codes, `_BMAGENTA`, and `_BLUE` (which only `_BG_BLUE` mentioned) —
+# and "it is a named colour table, keep it whole" is the same argument that kept
+# `_spec_relative_path` alive after its caller was rewired away (D-196). A
+# private module-level binding nothing names is dead by definition, whether it
+# holds a function or an escape code, and
+# `test_every_private_function_the_plugin_ships_is_reachable` now says so on
+# both node types. Add a code back the moment a renderer needs it.
 
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
@@ -40,23 +50,14 @@ _DIM = "\033[2m"
 _RED = "\033[31m"
 _GREEN = "\033[32m"
 _YELLOW = "\033[33m"
-_BLUE = "\033[34m"
-_MAGENTA = "\033[35m"
 _CYAN = "\033[36m"
 _WHITE = "\033[37m"
-
-_BG_RED = "\033[41m"
-_BG_GREEN = "\033[42m"
-_BG_YELLOW = "\033[43m"
-_BG_BLUE = "\033[44m"
-_BG_CYAN = "\033[46m"
 
 _BRED = f"{_BOLD}{_RED}"
 _BGREEN = f"{_BOLD}{_GREEN}"
 _BYELLOW = f"{_BOLD}{_YELLOW}"
 _BCYAN = f"{_BOLD}{_CYAN}"
 _BWHITE = f"{_BOLD}{_WHITE}"
-_BMAGENTA = f"{_BOLD}{_MAGENTA}"
 
 
 # ── Box drawing helpers ──────────────────────────────────────────────────────

@@ -68,14 +68,15 @@ from foundry_mcp.tools.foundry_state import (
 from foundry_mcp.tools.foundry import ledger_refusals
 from foundry_mcp.tools.display import foundry_hammer, FOUNDRY_SEP
 
-# ANSI colors — shared with display.py
+# ANSI colors — shared with display.py. D-202: `_BLUE` had no reader in either
+# copy, and a name-keyed reachability pin means one dead copy vouches for the
+# other, so both went. Add a code back when a renderer needs it.
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
 _DIM = "\033[2m"
 _RED = "\033[31m"
 _GREEN = "\033[32m"
 _YELLOW = "\033[33m"
-_BLUE = "\033[34m"
 _CYAN = "\033[36m"
 _WHITE = "\033[37m"
 _BCYAN = f"{_BOLD}{_CYAN}"
@@ -677,15 +678,124 @@ def _declared_external_inputs(fdir: Path) -> list[Path]:
 #: locks EVERY door at once — D-195 exactly. What keeps the hole from being a
 #: silent one is
 #: ``test_the_document_suffix_table_covers_every_declared_run_artifact``, which
-#: derives the expected set from the ``*_FILENAME`` constants the package
-#: declares and fails the day a new artifact type is declared without being
-#: enrolled here.
+#: derives the expected set from the ``*_FILENAME`` and ``*_MARKER`` constants
+#: the package declares and fails the day a new artifact is declared without
+#: being enrolled on the axis its name falls on.
 _RUN_DOCUMENT_SUFFIXES = frozenset(_STRICT_ARTIFACT_DECODERS) | {
     ".jsonl",
     ".log",
     ".md",
     ".txt",
 }
+
+
+# --------------------------------------------------------------------------- #
+# D-201 — THE SUFFIX-LESS HALF OF THE SAME QUESTION.
+#
+# D-197 widened the SUFFIX TABLE above and left the QUESTION keyed on the
+# suffix, so ``_is_document_position`` still asked one axis of a two-axis
+# predicate. ``Path(".last-next-at").suffix`` is ``""`` and ``""`` is in no
+# table, so every sentinel this package writes and READS BACK was walked past
+# and its door died with ``call_tool``'s unhandled-error banner instead of the
+# guard's named refusal. Driven at the wire at f5b487b through
+# ``server.call_tool``: a DIRECTORY on ``.last-next-at`` made ``Foundry-Next``
+# return "Foundry-Next failed: IsADirectoryError ..." with ``corrupt_artifacts``
+# ABSENT — while CT-012's errors cell for Foundry-Next reads, verbatim, "none;
+# never blocks"; a directory on ``.inspect-boundary-sha`` let
+# ``Foundry-Phase('inspect_start')`` transition with the GI-002/ST-005 boundary
+# sweep never named. The suffixed controls in the same tree (``spawns.log``,
+# ``directives.md``, ``handoffs.jsonl``, ``shared/global_invariants.txt``) were
+# all correctly named, which is what makes the missing axis the finding rather
+# than the guard as a whole.
+#
+# ONE DECLARATION, WHICH THE READERS ALSO USE. A frozenset of inline literals
+# here would answer the guard and catch nothing: the sixteen sentinel names were
+# spelled as bare literals at thirty-four call sites, so the set could list them
+# all today and drift from the next one silently — the self-vouching shape the
+# pin exists to prevent. Each name is therefore a ``*_MARKER`` constant (the
+# spelling ``INSPECT_BOUNDARY_SHA_MARKER`` already established in this module),
+# every reader in this file spells the constant, and
+# ``test_the_document_suffix_table_covers_every_declared_run_artifact`` derives
+# its expectation from every ``*_FILENAME`` and ``*_MARKER`` constant the
+# package declares — a suffixed value must be in the table above, a suffix-less
+# one must be in the set below.
+#
+# WHY THE STREAM FAMILY IS DERIVED AND NOT LISTED. ``.trace-complete`` and
+# ``.prove-complete`` are two members of ``f".{stream}-complete"`` over
+# ``STREAM_WIRE_IDS``; listing the members would leave the next wire id
+# unguarded on the day the vocabulary gains it, which is the hand-kept-list
+# defect D-129 and D-138 were both filed on.
+#
+# WHY THIS DOES NOT REOPEN D-195. Membership is by exact BASENAME, not by
+# punctuation: ``14.0.0``, ``.hypothesis`` and ``node_modules`` are in neither
+# axis, so the version-number scratch directory stays silent exactly as it does
+# today.
+
+#: The HEAD recorded at each INSPECT boundary, so the next crossing knows what
+#: "since the last boundary" means. A marker rather than a state key because
+#: ``_trace_skip_check``'s ``.trace-clean-at`` is the established shape for
+#: exactly this fact, and the two are read by the same fallback ladder.
+INSPECT_BOUNDARY_SHA_MARKER = ".inspect-boundary-sha"
+
+#: HEAD at the CAST→INSPECT crossing, and at the last clean TRACE — the two
+#: rungs of the "since when" ladder ``INSPECT_BOUNDARY_SHA_MARKER`` heads.
+CAST_BASELINE_SHA_MARKER = ".cast-baseline-sha"
+TRACE_CLEAN_AT_MARKER = ".trace-clean-at"
+
+#: Phase-progress sentinels: written by a transition, read by the gate and by
+#: ``_compute_next_action`` to decide what the lead is told to do next.
+CAST_COMPLETE_MARKER = ".cast-complete"
+INSPECT_CLEAN_MARKER = ".inspect-clean"
+TASKS_GENERATED_MARKER = ".tasks-generated"
+RESEARCH_SKIPPED_MARKER = ".research-skipped"
+
+#: The Foundry-Next handshake pair: the ordering token a transition consumes,
+#: and the stall clock CT-012's detector reads.
+NEXT_ACTION_CALLED_MARKER = ".next-action-called"
+LAST_NEXT_AT_MARKER = ".last-next-at"
+
+#: The passing-gate stamp ``foundry_next_action`` reads back to advance the
+#: guidance state (ST-011: the gate no longer unlinks the ordering token, so
+#: this is how Gate-then-Phase is recognised).
+GATE_PASSED_MARKER = ".gate-passed"
+
+#: Written by sibling modules and read back by their own doors. Declared here
+#: because ``_run_artifact_problems`` is what has to know a directory may not
+#: occupy them; the owning modules still spell the literal (see
+#: `foundry-archive/daring-orca/concerns.md`).
+VALIDATE_PASSED_MARKER = ".validate-passed"          # tools/foundry_validate.py
+INTENT_CLEAN_MARKER = ".f07-intent-clean"            # tools/intent_coverage.py
+LEGACY_RUN_POINTER_MARKER = ".foundry-dir"           # tools/foundry.py
+
+
+def _stream_marker(stream: str) -> str:
+    """The completion sentinel ``stream`` writes, in the ONE spelling.
+
+    Five call sites spelled ``f".{stream}-complete"`` and four more spelled two
+    of its members as bare literals, so the guard's derived family and the
+    readers agreed only by inspection. One function, and they cannot disagree.
+    """
+    return f".{stream}-complete"
+
+
+#: Every suffix-less name a reader in this package opens under a run directory.
+#: The second axis of ``_is_document_position``; the family at the end is
+#: derived so a new stream wire id is covered the day the vocabulary gains it.
+_RUN_MARKER_NAMES = frozenset({
+    INSPECT_BOUNDARY_SHA_MARKER,
+    CAST_BASELINE_SHA_MARKER,
+    TRACE_CLEAN_AT_MARKER,
+    CAST_COMPLETE_MARKER,
+    INSPECT_CLEAN_MARKER,
+    TASKS_GENERATED_MARKER,
+    RESEARCH_SKIPPED_MARKER,
+    NEXT_ACTION_CALLED_MARKER,
+    LAST_NEXT_AT_MARKER,
+    GATE_PASSED_MARKER,
+    VALIDATE_PASSED_MARKER,
+    INTENT_CLEAN_MARKER,
+    LEGACY_RUN_POINTER_MARKER,
+}) | {_stream_marker(stream) for stream in STREAM_WIRE_IDS}
 
 
 def _is_document_position(candidate: Path) -> bool:
@@ -763,8 +873,22 @@ def _is_document_position(candidate: Path) -> bool:
     scratch directories stay silent — and ``.md``, ``.jsonl``, ``.log`` and
     ``.txt`` are types six of this run's seven artifact families are written
     in, so a directory occupying one of those names is named again.
+
+    D-201 — AND THE QUESTION WAS STILL KEYED ON THE SUFFIX.
+    ------------------------------------------------------
+    A widened TABLE is not a widened QUESTION. ``Path(".last-next-at").suffix``
+    is ``""``, ``""`` is in no table, and so every sentinel this package writes
+    and reads back — the sixteen ``*_MARKER`` names declared above — was walked
+    past by the same predicate that had just been fixed for suffixed names.
+    Both axes are asked here now, and they are asked of different things: a
+    SUFFIX for a typed document, an exact BASENAME for a sentinel. Keying the
+    second on punctuation instead would be D-195 again, and keying the first on
+    exact names would be the hand-kept list D-129 was filed on.
     """
-    return candidate.suffix.lower() in _RUN_DOCUMENT_SUFFIXES
+    return (
+        candidate.suffix.lower() in _RUN_DOCUMENT_SUFFIXES
+        or candidate.name in _RUN_MARKER_NAMES
+    )
 
 
 def _run_artifact_problems(fdir: Path) -> list[str]:
@@ -987,7 +1111,7 @@ def _prove_is_clean(fdir: Path, project_root: str) -> bool:
     spec drove the F4 auto-VERIFY path — manufacturing a passing run out of a
     spec nothing had actually been proved against.
     """
-    marker = fdir / ".prove-complete"
+    marker = fdir / _stream_marker("prove")
     if not marker.exists():
         return False
     totals = _rollup_totals(fdir, _current_cycle(fdir), "prove") or _marker_counts(marker)
@@ -2188,7 +2312,7 @@ def foundry_gate(
     # with its own rank and its own remedy; see `_GateLadder` above.
     ladder = _GateLadder()
 
-    nac = fdir / ".next-action-called"
+    nac = fdir / NEXT_ACTION_CALLED_MARKER
     if not nac.exists():
         return {
             "phase": phase,
@@ -2279,7 +2403,7 @@ def foundry_gate(
             checklist.append({"check": "no_file_overlap", "ok": True})
 
     elif phase == "inspect":
-        if not (fdir / ".cast-complete").exists():
+        if not (fdir / CAST_COMPLETE_MARKER).exists():
             ladder.fail(
                 _GATE_RANK_MARKER,
                 "CAST not complete",
@@ -2348,13 +2472,13 @@ def foundry_gate(
         checklist.append({"check": "no_active_teams", "ok": not teams_result["active"],
                          "live_panes": teams_result.get("live_panes", [])})
 
-        if not (fdir / ".tasks-generated").exists():
+        if not (fdir / TASKS_GENERATED_MARKER).exists():
             ladder.fail(
                 _GATE_RANK_MARKER,
                 "defects-to-tasks has not been run",
                 "Call Foundry-Tasks before entering GRIND",
             )
-        checklist.append({"check": "tasks_generated", "ok": (fdir / ".tasks-generated").exists()})
+        checklist.append({"check": "tasks_generated", "ok": (fdir / TASKS_GENERATED_MARKER).exists()})
 
     elif phase == "assay":
         # CT-008 / FR-006: LIVE and unknown-tier defects block ASSAY exactly as
@@ -2476,7 +2600,7 @@ def foundry_gate(
             "ok": assay_width_ok,
         })
 
-        if not (fdir / ".inspect-clean").exists():
+        if not (fdir / INSPECT_CLEAN_MARKER).exists():
             has_fixed = sum(1 for d in defects.get("defects", []) if d.get("status") == "fixed")
             if has_fixed > 0:
                 # D-183 — AND IT DOES NOT DISPLACE THE WIDTH REFUSAL ABOVE IT.
@@ -2697,7 +2821,7 @@ def foundry_gate(
         # transition step instead of re-running this now-satisfied gate.
         # Cleared by _update_phase when the phase actually advances.
         try:
-            (fdir / ".gate-passed").write_text(
+            (fdir / GATE_PASSED_MARKER).write_text(
                 json.dumps({"phase": phase, "at": _now()}),
                 encoding="utf-8",
             )
@@ -2927,7 +3051,7 @@ def _coverage_shortfall(fdir: Path, project_root: str, stream: str, cycle: int) 
     test.
     """
     totals = _rollup_totals(fdir, cycle, stream) or _marker_counts(
-        fdir / f".{stream}-complete"
+        fdir / _stream_marker(stream)
     )
     if totals is None:
         return None
@@ -3135,7 +3259,7 @@ def foundry_mark_stream(
         else "N/A"
     )
 
-    marker = fdir / f".{stream}-complete"
+    marker = fdir / _stream_marker(stream)
     marker.write_text(
         f"{_now()} cycle={server_cycle}\n"
         f"items_checked={totals['items_checked']}\n"
@@ -3158,7 +3282,7 @@ def foundry_mark_stream(
             )
             if rev.returncode == 0 and rev.stdout.strip():
                 import json as _json
-                (fdir / ".trace-clean-at").write_text(
+                (fdir / TRACE_CLEAN_AT_MARKER).write_text(
                     _json.dumps({
                         "head_sha": rev.stdout.strip(),
                         "stamped_at": _now(),
@@ -3211,7 +3335,7 @@ def _trace_skip_check(fdir: Path, project_root: str) -> dict:
 
     Returns {skip: bool, reason: str, details?: {...}}.
     """
-    marker = fdir / ".trace-clean-at"
+    marker = fdir / TRACE_CLEAN_AT_MARKER
     if not marker.exists():
         return {"skip": False, "reason": "no prior clean TRACE to compare against"}
     marker_data, marker_problem = read_document(marker)
@@ -3296,7 +3420,7 @@ def _maybe_skip_trace(fdir: Path, project_root: str) -> dict | None:
     """
     if not fdir or not fdir.exists():
         return None
-    if (fdir / ".trace-complete").exists():
+    if (fdir / _stream_marker("trace")).exists():
         return None
     state = _load_json(fdir / "state.json")
     if state.get("phase") != "F2":
@@ -3335,7 +3459,7 @@ def _maybe_skip_trace(fdir: Path, project_root: str) -> dict | None:
             ),
             "details": {"inspect_mode": "DELTA", "touched_files": []},
         }
-        (fdir / ".trace-complete").write_text(
+        (fdir / _stream_marker("trace")).write_text(
             f"{_now()} cycle=skipped\n"
             f"items_checked=0\n"
             f"items_total=0\n"
@@ -3368,7 +3492,7 @@ def _maybe_skip_trace(fdir: Path, project_root: str) -> dict | None:
     if not decision.get("skip"):
         return decision
 
-    (fdir / ".trace-complete").write_text(
+    (fdir / _stream_marker("trace")).write_text(
         f"{_now()} cycle=skipped\n"
         f"items_checked=0\n"
         f"items_total=0\n"
@@ -3404,11 +3528,11 @@ def _maybe_skip_trace(fdir: Path, project_root: str) -> dict | None:
 # changed, while every FULL rule keeps the gates that matter at full width.
 # --------------------------------------------------------------------------- #
 
-#: The HEAD recorded at each INSPECT boundary, so the next crossing knows what
-#: "since the last boundary" means. A marker rather than a state key because
-#: `_trace_skip_check`'s `.trace-clean-at` is the established shape for exactly
-#: this fact, and the two are read by the same fallback ladder below.
-INSPECT_BOUNDARY_SHA_MARKER = ".inspect-boundary-sha"
+#: ``INSPECT_BOUNDARY_SHA_MARKER`` — the HEAD recorded at each INSPECT boundary,
+#: so the next crossing knows what "since the last boundary" means — is declared
+#: with the other run markers beside ``_RUN_MARKER_NAMES``, because D-201's
+#: guard has to know the whole set BEFORE any of them is written and a set built
+#: from names declared further down the file cannot be evaluated up there.
 
 
 def _head_sha(project_root: str) -> str:
@@ -3444,16 +3568,16 @@ def _boundary_base_sha(fdir: Path) -> tuple[str, str]:
         sha = _read_text(marker).strip()
         if sha:
             return sha, INSPECT_BOUNDARY_SHA_MARKER
-    trace_marker = fdir / ".trace-clean-at"
+    trace_marker = fdir / TRACE_CLEAN_AT_MARKER
     if trace_marker.exists():
         data, problem = read_document(trace_marker)
         if problem is None and data.get("head_sha"):
-            return str(data["head_sha"]), ".trace-clean-at"
-    cast_marker = fdir / ".cast-baseline-sha"
+            return str(data["head_sha"]), TRACE_CLEAN_AT_MARKER
+    cast_marker = fdir / CAST_BASELINE_SHA_MARKER
     if cast_marker.exists():
         sha = _read_text(cast_marker).strip()
         if sha:
-            return sha, ".cast-baseline-sha"
+            return sha, CAST_BASELINE_SHA_MARKER
     return "", ""
 
 
@@ -3570,7 +3694,7 @@ def _research_skipped(fdir: Path) -> bool:
     directory takes. Any of them saying so is enough — a run that recorded the
     skip anywhere recorded it.
     """
-    if (fdir / ".research-skipped").exists():
+    if (fdir / RESEARCH_SKIPPED_MARKER).exists():
         return True
     for document in ("state.json", "castings/manifest.json"):
         if bool(_load_json(fdir / document).get("research_skipped")):
@@ -5963,7 +6087,7 @@ def _check_streams_complete(project_root: str) -> dict:
         inspect_mode = (recorded or {}).get("mode", "")
         inspect_rule = (recorded or {}).get("rule", "")
 
-    missing = [s for s in required if not (fdir / f".{s}-complete").exists()]
+    missing = [s for s in required if not (fdir / _stream_marker(s)).exists()]
 
     cycle = _current_cycle(fdir)
     shortfalls = []
@@ -6055,7 +6179,7 @@ def _update_phase(fdir: Path, new_phase: str) -> None:
     # P4 (ST-002): a real phase advance supersedes any pending gate-passed
     # guidance marker. Clear it so the next Foundry-Next emits the NEW phase's
     # fresh imperative rather than a stale "gate already passed" note.
-    (fdir / ".gate-passed").unlink(missing_ok=True)
+    (fdir / GATE_PASSED_MARKER).unlink(missing_ok=True)
 
 
 # CLOSED VOCABULARY — every phase token ``foundry_mark_phase_complete`` handles,
@@ -6134,7 +6258,7 @@ def foundry_mark_phase_complete(
     if (halted := _halted_refusal(fdir, f"Foundry-Phase(phase='{phase}')")) is not None:
         return halted
 
-    nac = fdir / ".next-action-called"
+    nac = fdir / NEXT_ACTION_CALLED_MARKER
     if not nac.exists():
         return {
             "error": "Must call Foundry-Next before phase transitions",
@@ -6572,7 +6696,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         if not sweep["ok"]:
             return _sweep_refusal(sweep, _current_cycle(fdir), token="cast")
 
-        (fdir / ".cast-complete").write_text(f"{_now()}\n", encoding="utf-8")
+        (fdir / CAST_COMPLETE_MARKER).write_text(f"{_now()}\n", encoding="utf-8")
         # Stamp the CAST baseline HEAD SHA so GRIND cycles can show teammates
         # what has changed since CAST ended. Used by foundry_spawn_teammate
         # (phase='grind') to build a cycle-context block the lead appends to
@@ -6585,7 +6709,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
                 capture_output=True, text=True, timeout=5,
             )
             if _rev.returncode == 0 and _rev.stdout.strip():
-                (fdir / ".cast-baseline-sha").write_text(_rev.stdout.strip(), encoding="utf-8")
+                (fdir / CAST_BASELINE_SHA_MARKER).write_text(_rev.stdout.strip(), encoding="utf-8")
         except (FileNotFoundError, _sp.TimeoutExpired, OSError):
             pass
         _update_phase(fdir, "F2")
@@ -6704,7 +6828,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
                 "inspect_mode": "DELTA",
                 "inspect_rule": recorded_mode.get("rule", ""),
             }
-        (fdir / ".inspect-clean").write_text(f"{_now()}\n", encoding="utf-8")
+        (fdir / INSPECT_CLEAN_MARKER).write_text(f"{_now()}\n", encoding="utf-8")
         _update_phase(fdir, "F4")
         return {"ok": True, "phase": "F4", "message": "INSPECT clean \u2192 phase is now F4 (ASSAY)"}
 
@@ -7019,8 +7143,8 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # Every recordable stream marker is cleared (derived from the canonical
         # stream vocabulary so new streams cannot go stale across GRIND cycles),
         # not just the required subset — completion state must stay honest.
-        stream_markers = [f".{s}-complete" for s in sorted(VALID_STREAMS)]
-        for marker in stream_markers + [".inspect-clean", ".tasks-generated"]:
+        stream_markers = [_stream_marker(s) for s in sorted(VALID_STREAMS)]
+        for marker in stream_markers + [INSPECT_CLEAN_MARKER, TASKS_GENERATED_MARKER]:
             (fdir / marker).unlink(missing_ok=True)
         _update_phase(fdir, "F3")
         return {"ok": True, "phase": "F3",
@@ -7037,8 +7161,8 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # exactly the one --max-cycles exists to bound.
         if (halt := _halt_if_capped(fdir, project_root, "assay_fail")) is not None:
             return halt
-        stream_markers = [f".{s}-complete" for s in sorted(VALID_STREAMS)]
-        for marker in stream_markers + [".inspect-clean", ".tasks-generated"]:
+        stream_markers = [_stream_marker(s) for s in sorted(VALID_STREAMS)]
+        for marker in stream_markers + [INSPECT_CLEAN_MARKER, TASKS_GENERATED_MARKER]:
             (fdir / marker).unlink(missing_ok=True)
         _update_phase(fdir, "F3")
         return {"ok": True, "phase": "F3",
@@ -11560,7 +11684,7 @@ def foundry_defects_to_tasks(
             }
             tasks.append(task)
 
-    (fdir / ".tasks-generated").write_text(f"{_now()} count={len(tasks)}\n", encoding="utf-8")
+    (fdir / TASKS_GENERATED_MARKER).write_text(f"{_now()} count={len(tasks)}\n", encoding="utf-8")
 
     result = {
         "ok": True,
@@ -11622,7 +11746,7 @@ def _stamp_subphases_in(state: dict, fdir: Path) -> None:
     castings_dir = fdir / "castings"
     has_casting_files = castings_dir.exists() and any(castings_dir.glob("casting-*.md"))
     has_manifest = (castings_dir / "manifest.json").exists()
-    validate_passed_marker = fdir / ".validate-passed"
+    validate_passed_marker = fdir / VALIDATE_PASSED_MARKER
 
     def _close(pid: str) -> bool:
         entry = phase_times.get(pid)
@@ -11689,7 +11813,7 @@ def foundry_next_action(
     if fdir_stamp and fdir_stamp.exists():
         expected_gate = _expected_gate_for_action(result.get("action", ""))
         if expected_gate:
-            gp_marker = fdir_stamp / ".gate-passed"
+            gp_marker = fdir_stamp / GATE_PASSED_MARKER
             if gp_marker.exists():
                 gp_data = read_document(gp_marker)[0]
                 if gp_data.get("phase") == expected_gate:
@@ -11721,7 +11845,7 @@ def foundry_next_action(
     stall_warning = None
     fdir_stall = get_run_dir(project_root)
     if fdir_stall and fdir_stall.exists():
-        marker = fdir_stall / ".last-next-at"
+        marker = fdir_stall / LAST_NEXT_AT_MARKER
         if marker.exists():
             try:
                 prev_iso = marker.read_text(encoding="utf-8").strip()
@@ -11964,7 +12088,7 @@ def foundry_next_action(
         # Ordering token: armed here, consumed (unlinked) by foundry_gate /
         # foundry_mark_phase_complete to prove Foundry-Next preceded a gate
         # or phase transition.
-        (fdir / ".next-action-called").write_text(now_stamp, encoding="utf-8")
+        (fdir / NEXT_ACTION_CALLED_MARKER).write_text(now_stamp, encoding="utf-8")
         # Stall timestamp: written on every REAL Foundry-Next, read on the next
         # one to measure the gap. Never unlinked by gate/phase, so the watchdog
         # is decoupled from ordering-token consumption (FR-005 / FR-008).
@@ -11985,7 +12109,7 @@ def foundry_next_action(
         # Foundry-Context does return the full guidance payload. Only the
         # STALL measurement is Foundry-Next's alone.
         if _arm_stall_clock:
-            (fdir / ".last-next-at").write_text(now_stamp, encoding="utf-8")
+            (fdir / LAST_NEXT_AT_MARKER).write_text(now_stamp, encoding="utf-8")
 
     return result
 
@@ -12754,7 +12878,7 @@ def _compute_next_action(project_root: str) -> dict:
         }
 
     elif phase == "F1":
-        if not (fdir / ".cast-complete").exists():
+        if not (fdir / CAST_COMPLETE_MARKER).exists():
             return {
                 "phase": "F1",
                 "action": "build_castings",

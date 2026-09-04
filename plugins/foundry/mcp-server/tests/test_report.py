@@ -117,18 +117,6 @@ def _markdown(run_dir: Path) -> str:
 # run would have done, and several were claims production cannot satisfy.
 # --------------------------------------------------------------------------- #
 
-#: Fields a DOOR fills in, so the scenario must not supply them. `id` is
-#: assigned `highest + 1` by `foundry_add_defect`, which is what makes filing
-#: in the committed order produce D-001..D-006; `cycle` is the SERVER counter
-#: at filing time, never the caller's claim (D-119); the rest are seeded null
-#: at filing and set by the fix door.
-_DOOR_WRITTEN_DEFECT_FIELDS = frozenset(
-    {
-        "id", "cycle", "declared_cycle", "created_at", "status",
-        "fixed_in_cycle", "regression_test", "authored_by", "fix_commit",
-    }
-)  # 9 fields
-
 #: The one row that is NOT driven, and why. D-007's whole point is that it was
 #: written BEFORE the tier axis existed, so it carries neither `tier` nor
 #: `reproduction_attempted` — and no door can produce it, because every door
@@ -152,9 +140,10 @@ def _scenario_rows() -> list[dict]:
 
     Descriptions, classes, tiers, reproduction statements, cycles and the
     fixed/open shape are a human's account of a run that could have happened —
-    that is what a fixture is for. Every field in
-    `_DOOR_WRITTEN_DEFECT_FIELDS` is stripped before the row goes near a door,
-    so the RECORD is production's and only the STORY is the fixture's.
+    that is what a fixture is for. Every field a DOOR fills in is stripped
+    before the row goes near one, so the RECORD is production's and only the
+    STORY is the fixture's. Which fields those are is asserted where they are
+    read back, in `test_the_driven_fixture_leaves_the_pre_change_record_alone`.
     """
     return json.loads(
         (FIXTURE_DIR / "defects.json").read_text(encoding="utf-8")
