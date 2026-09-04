@@ -1585,6 +1585,137 @@ def test_fix_authors_and_lane_limits() -> None:
     assert vocab.HANDOFF_EVENT_LEAD_FIX == "lead_fix"
 
 
+# ---------------------------------------------------------------------------
+# D-194 — the lane's MEASUREMENT rule, pinned where the lane is defined.
+#
+# The block above `LEAD_LANE_MAX_FILES` claimed a LATENT lead fix's fix_commit
+# "is recorded and left alone", i.e. that git never reads it. Driven: a lead
+# fix on a LATENT defect, over two non-test files and 401 added-plus-deleted
+# lines, was accepted through `Foundry-Fix` and the server's own `lead_fix`
+# record carries line_count 401 with a full per-file `files` array. The GRIND
+# cycle 13 ruling on FR-046 / FR-053 / CT-006 / GI-003 / AC-022 settled it: the
+# numstat MEASUREMENT runs on both tiers so every record carries a line count,
+# and the LIMIT is what refuses only on LIVE.
+#
+# WHY A PROSE PIN AND NOT ONLY A BEHAVIOUR TEST. Same reason as D-148 above.
+# The doors were already correct and already tested on both lanes
+# (`test_fix_gate.py`, `test_handoff_records.py`); what was wrong was the
+# DESCRIPTION of them in the module that DEFINES the lane, which no behaviour
+# test can reach. `foundry_handoff.record_lead_fix_handoff` had already been
+# corrected — this is the same class as D-148, stale prose surviving beside
+# new prose, so the corrected sentence is asserted as text rather than trusted
+# to stay.
+# ---------------------------------------------------------------------------
+
+#: The two halves of the ruling. Each is a phrase the corrected block must
+#: carry, because stating one without the other is how the block was wrong in
+#: the first place: it named the LIVE-only fact and let a reader infer that
+#: LATENT is therefore untouched by git.
+_LEAD_LANE_RULING_HALVES = (
+    ("the measurement runs on both tiers", "runs on both tiers"),
+    ("the limit refuses only on LIVE", "only when the defect is LIVE"),
+)
+
+#: The retired spellings, verbatim as they shipped in `vocab.py`. Asserted
+#: ABSENT from every owned surface below. Both say the same false thing — that
+#: the LATENT lane skips git entirely — and both are narrow enough that the
+#: corrected block, which describes the same history in its own words, does not
+#: match either.
+_RETIRED_LEAD_LANE_SPELLINGS = (
+    "A LATENT lead fix is NOT measured",   # D-194, vocab.py's lane block
+    "recorded and left alone",             # D-194, the same sentence's tail
+)
+
+
+def _lead_lane_header() -> str:
+    """The comment block above `LEAD_LANE_MAX_FILES` in schemas/vocab.py.
+
+    Sliced from the source text, not from a docstring, for the D-148 reason:
+    the block IS a `#` comment — the surface D-194 was filed against — so an
+    assertion that read a docstring would leave the filed surface unread.
+    """
+    text = Path(vocab.__file__).read_text(encoding="utf-8")
+    marker = "# ST-004 / CT-006 \u2014 the lane"
+    assert marker in text, (
+        f"schemas/vocab.py no longer opens the lead-lane block with {marker!r}, "
+        f"so this pin reads nothing. Restore the marker or re-slice here; a pin "
+        f"that silently reads an empty string is the D-194 defect with a green "
+        f"suite over it."
+    )
+    start = text.index(marker)
+    end = text.index("LEAD_LANE_MAX_FILES = ", start)
+    return text[start:end]
+
+
+def test_the_lead_lane_header_states_both_halves_of_the_measurement_ruling() -> None:
+    """GI-003 / AC-022 / CT-006, per the GRIND cycle 13 ruling: the numstat
+    measurement runs on both tiers so every lead_fix record carries a line
+    count; the LIMIT is evaluated, and can refuse, only when the defect is
+    LIVE.
+
+    The block must say BOTH. It said only the second, phrased as though the
+    first did not happen, which is the falsehood D-194 filed.
+    """
+    header = _lead_lane_header()
+    for name, phrase in _LEAD_LANE_RULING_HALVES:
+        assert phrase in header, (
+            f"the lead-lane block does not state {name} ({phrase!r} is absent). "
+            f"Both halves or neither: naming the LIVE-only limit alone is what "
+            f"let a reader conclude git never reads a LATENT fix_commit, which "
+            f"it does — the lead_fix record D-194 drove carries line_count 401."
+        )
+    assert "line count" in header, (
+        "the block no longer says the record carries a line count on both "
+        "tiers. That is the half GI-003 and AC-022 require and the half the "
+        "retired sentence denied."
+    )
+
+
+@pytest.mark.parametrize("relpath", _OWNED_PROSE_SURFACES)
+def test_no_casting_1_surface_says_a_latent_lead_fix_goes_unmeasured(
+    relpath: str,
+) -> None:
+    """No owned file restates the retired lane rule.
+
+    Scoped the same way as the D-148 scan and over the same roster, because
+    the failure mode is the same one: the instance was fixed in `vocab.py`
+    while a restatement elsewhere went on asserting it. `test_vocab.py` is the
+    one exclusion — it spells both retired sentences above on purpose.
+    """
+    text = (REPO_ROOT / relpath).read_text(encoding="utf-8")
+    hits = [s for s in _RETIRED_LEAD_LANE_SPELLINGS if s in text]
+    assert not hits, (
+        f"{relpath} says a LATENT lead fix goes unmeasured: {hits}. The numstat "
+        f"measurement runs on BOTH tiers so every lead_fix record carries a "
+        f"file list and a line count; only the LIMIT is LIVE-only. Say that, or "
+        f"say nothing about the LATENT lane here."
+    )
+
+
+def test_the_retired_lead_lane_pin_actually_fires() -> None:
+    """A pin that cannot fail is a comment with an assert in it.
+
+    Each retired spelling is driven through the same containment check the
+    scan above uses, in a sentence shaped like the one that shipped, and must
+    be caught alone — so a later edit that narrows a pattern into uselessness,
+    or lets the two shadow each other, fails here rather than going quiet.
+    """
+    for spelling in _RETIRED_LEAD_LANE_SPELLINGS:
+        sample = f"on the lane: {spelling} (CT-006), so the commit is filed"
+        hits = [s for s in _RETIRED_LEAD_LANE_SPELLINGS if s in sample]
+        assert hits == [spelling], (
+            f"{spelling!r} was not caught alone in {sample!r}; got {hits}"
+        )
+
+    # And the corrected block passes the scan it is pinned by — the positive
+    # arm, so a roster so broad it condemns the fix fails here too.
+    header = _lead_lane_header()
+    assert not [s for s in _RETIRED_LEAD_LANE_SPELLINGS if s in header], (
+        "the corrected lead-lane block matches its own retired roster; narrow "
+        "the spellings rather than reword the ruling"
+    )
+
+
 @pytest.mark.parametrize(
     "path,expected",
     [

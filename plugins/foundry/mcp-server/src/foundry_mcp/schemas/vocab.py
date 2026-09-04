@@ -591,8 +591,24 @@ FIX_AUTHORS = frozenset({"lead", "teammate"})  # 2 items
 
 # ST-004 / CT-006 — the lane a LIVE lead-authored fix must fit inside, measured
 # from `git show --numstat` on the fix commit. One non-test file, at most 20
-# added-plus-deleted lines. A LATENT lead fix is NOT measured (CT-006): its
-# fix_commit is recorded and left alone.
+# added-plus-deleted lines.
+#
+# THE MEASUREMENT AND THE LIMIT ARE DIFFERENT FACTS (D-194; the GRIND cycle 13
+# ruling on FR-046 / FR-053 / CT-006 / GI-003 / AC-022). The numstat
+# measurement runs on both tiers, so every `lead_fix` handoff record carries a
+# file list and a line count, LATENT included. The LIMIT — these two numbers —
+# is evaluated, and can refuse, only when the defect is LIVE; a LATENT lead fix
+# of any size is accepted against it and is still measured for the record.
+#
+# The sentence here used to say the opposite: that a LATENT fix_commit was
+# filed away without git ever reading it. Driven (D-194): a lead fix on a
+# LATENT defect, over two non-test files and 401 added-plus-deleted lines, was
+# accepted, and the `lead_fix` record the server wrote for it carries
+# line_count 401 with a full per-file `files` array. So the one file that
+# DEFINES this lane described behaviour no door has, beside a corrected
+# statement of the same rule one module away in
+# `foundry_handoff.record_lead_fix_handoff`. `tests/test_vocab.py` now pins
+# this block so the two cannot drift apart again.
 LEAD_LANE_MAX_FILES = 1
 LEAD_LANE_MAX_LINES = 20
 
