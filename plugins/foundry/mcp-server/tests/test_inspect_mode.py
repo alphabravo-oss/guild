@@ -823,8 +823,222 @@ def test_delta_mode_requires_test01_when_a_schema_file_is_touched(run_env):
     _write_defects(fdir, [_open_live()])
     _write_manifest(fdir)
     _write_spec(fdir, ["FR-001"])
-    assert fo._test01_scope_touched(project_root, ["src/foundry_mcp/schemas/x.py"])
-    assert not fo._test01_scope_touched(project_root, ["src/handler.py"])
+    schema_hit = fo._test01_scope_touched(
+        project_root, ["src/foundry_mcp/schemas/x.py"]
+    )
+    assert schema_hit["touched"] is True, schema_hit
+    assert "schemas/" in schema_hit["detail"]
+    miss = fo._test01_scope_touched(project_root, ["src/handler.py"])
+    assert miss["touched"] is False, miss
+
+
+# --------------------------------------------------------------------------- #
+# D-204 — WHICH FILES TEST-01 COVERS IS A FACT ABOUT THE REGISTRY, NOT A
+# SUBSTRING OF THE SPEC.
+#
+# `_test01_scope_touched` decided "the diff touched a file TEST-01 covers" by
+# searching the spec's whole `## Contracts` SECTION — 6147 characters of prose —
+# for the touched file's basename or stem, unanchored. Driven at the wire on a
+# GRIND diff touching exactly one file, `src/a.py`: `Foundry-Phase(
+# 'inspect_start')` recorded DELTA with `test01` REQUIRED and the detail "a
+# covered file was touched", because the letter `a` occurs in the section; the
+# following `Foundry-Phase('inspect_clean')` then refused "streams incomplete:
+# test01". Meanwhile `tools/foundry_report.py` — the module that implements
+# CT-014 — read as NOT covered, because the table spells the surface
+# `Foundry-Report`.
+#
+# ST-007 and Locked FR-047 require the conditional streams "only when the diff
+# touches a file they cover". A predicate that says yes for a file named nowhere
+# and no for the file the row is about is not a narrow reading of that; it is a
+# different question, and its answer is persisted into state.json's
+# inspect_modes and stream-rollup.json where the F6 per-cycle scope column reads
+# it back.
+#
+# BOTH AXES ARE PINNED BELOW, because fixing one is how this class returns.
+# WHICH NAMES — the surface COLUMN's cells, parsed as cells, matched against the
+# closed set of tool names the server registers. HOW THEY MAP TO FILES — through
+# `server.py`'s `_DISPATCH` binding. Anchoring the cells alone would have left
+# `src/fix.py` covered, since CT-004/005/006 all spell `Foundry-Fix`; keeping
+# the stem search alone would have left `tools/id.py` covered by the `| ID |`
+# header. The stem-collision fixture below holds one path per surface word the
+# real table contains.
+# --------------------------------------------------------------------------- #
+
+#: A Contracts table whose surface cells collide, by stem, with every path in
+#: `_STEM_COLLIDING_PATHS`. Written as the run's spec so the predicate reads a
+#: REAL table rather than a stub that could not reproduce the defect.
+_CONTRACTS_TABLE = """
+## Contracts
+
+| ID     | surface | input | output | errors | citation |
+|--------|---------|-------|--------|--------|----------|
+| CT-004 | Foundry-Fix (LATENT lane) | defect_id, cycle, authored_by | fixed | refusal | [from A-051] |
+| CT-007 | Foundry-Phase inspect_start (evidence sweep) | HEAD of the tree | counter advanced | refusal | [from A-042] |
+| CT-008 | Foundry-Gate assay, temper, nyquist, done and Foundry-Phase inspect_clean | defects.json | passes | refusal | [from A-054] |
+| CT-012 | Foundry-Next (stall detector) | .last-next-at | waiting notice | none | [from A-021] |
+| CT-013 | Foundry-Spend (new tool) | agent, phase, tokens | per-agent record | none | [from A-022] |
+| CT-014 | Foundry-Report (new tool) | run artifacts | REPORT.md | refusal | [from A-024] |
+| CT-016 | Foundry-Init, Foundry-Phase and Foundry-Next (max_cycles) | the flag | persisted | none | [from A-056] |
+
+## Scope
+"""
+
+#: One path per surface word the table above contains, none of them a module
+#: the registry binds to any surface. Every one of these read as COVERED before
+#: D-204, and the comment on the right is the substring that did it.
+_STEM_COLLIDING_PATHS = (
+    "src/a.py",        # the letter `a`, which occurs in every row
+    "src/fix.py",      # `Foundry-Fix`
+    "src/next.py",     # `Foundry-Next`
+    "n/gate.py",       # `Foundry-Gate`
+    "lib/init.go",     # `Foundry-Init`
+    "x/report.rb",     # `Foundry-Report`
+    "webapp/spend.ts",  # `Foundry-Spend`
+    "tools/id.py",     # the `| ID |` column header
+)
+
+
+def _write_spec_with_contracts(fdir: Path, ids: list[str]) -> None:
+    """The run's spec, carrying a real Contracts table beneath its bullets."""
+    (fdir / "spec.md").write_text(
+        "".join(f"- **{rid}**: the thing works\n" for rid in ids) + _CONTRACTS_TABLE,
+        encoding="utf-8",
+    )
+
+
+def test_test01_scope_is_the_registry_binding_not_a_stem_in_the_contracts_prose(
+    run_env,
+):
+    """ST-007 verbatim: research_audit and test01 'are required by the
+    streams-complete check only when the diff touches a file they cover, and not
+    required otherwise'. FR-047, AC-017, CT-009. D-204.
+
+    The stem-colliding paths are the D-204 evidence set: each one's basename or
+    stem occurs inside the Contracts section, and none of them is a module the
+    server binds to any surface in it. `tools/foundry_report.py` is the
+    converse — named nowhere in the section as a path, and the module
+    `_DISPATCH` binds `Foundry-Report` to, which CT-014 is the row for.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_manifest(fdir)
+    _write_spec_with_contracts(fdir, ["FR-001"])
+
+    for path in _STEM_COLLIDING_PATHS:
+        decision = fo._test01_scope_touched(project_root, [path])
+        assert decision["touched"] is False, (path, decision)
+
+    hit = fo._test01_scope_touched(
+        project_root, ["src/foundry_mcp/tools/foundry_report.py"]
+    )
+    assert hit["touched"] is True, hit
+    # The recorded provenance names the surface AND the file, so a reader of
+    # state.json can check the claim instead of believing it.
+    assert "CT-014" in hit["detail"], hit
+    assert "Foundry-Report" in hit["detail"], hit
+    assert "foundry_report.py" in hit["detail"], hit
+
+
+def test_the_contracts_surface_column_is_read_as_cells_by_its_header(run_env):
+    """The WHICH-NAMES axis on its own: the column is located by its header
+    name, and only that column's text is searched.
+
+    `input`, `output` and `errors` cells of the same rows name tool surfaces
+    too (CT-014's errors column says "Foundry-Phase done refuses"), so a reader
+    that took the whole ROW would re-admit surfaces the table does not declare
+    for that row. Locating the column by header rather than by index is what
+    keeps a table that gains a column ahead of `surface` from silently
+    returning `input`.
+    """
+    project_root, fdir = run_env
+    _write_spec_with_contracts(fdir, ["FR-001"])
+
+    rows = fo._contracts_surface_cells(project_root)
+
+    assert [rid for rid, _ in rows] == [
+        "CT-004", "CT-007", "CT-008", "CT-012", "CT-013", "CT-014", "CT-016",
+    ], rows
+    surfaces = dict(rows)
+    assert surfaces["CT-014"] == "Foundry-Report (new tool)"
+    # The alignment row is not a row, and nothing outside `## Contracts` is.
+    assert all(not set(s) <= set("-: ") for _, s in rows), rows
+
+
+def test_every_contracts_surface_resolves_to_a_module_through_the_registry():
+    """The HOW-THEY-MAP axis on its own: `server.py`'s `_DISPATCH` is what says
+    which module implements a surface, and it is READ, not guessed.
+
+    `"Foundry-Report": lambda args: _dispatch_report()` is the case that makes
+    the hop mandatory — the real handler is named only inside `_dispatch_report`,
+    in a function-local import, so a resolver that stopped at the lambda would
+    map CT-014 to `server.py` and leave `tools/foundry_report.py` uncovered,
+    which is the second half of what D-204 reported.
+    """
+    registry = fo._registry_tool_modules()
+
+    assert registry, "the registry is what the mapping IS; an empty one is the bug"
+    assert len(registry) >= 20, len(registry)
+    report_modules = registry["Foundry-Report"]
+    assert any(m.endswith("tools/foundry_report.py") for m in report_modules), (
+        report_modules
+    )
+    assert any(
+        m.endswith("tools/foundry_orchestrator.py")
+        for m in registry["Foundry-Phase"]
+    ), registry["Foundry-Phase"]
+    # No surface resolves to a file outside the plugin's own package.
+    for tool, modules in registry.items():
+        for module in modules:
+            assert "foundry_mcp" in module, (tool, module)
+
+
+def test_a_stem_colliding_grind_diff_leaves_test01_unrequired_over_mcp(run_env):
+    """D-204 driven where it was reported: `Foundry-Phase('inspect_start')`
+    through the MCP dispatcher, on a GRIND that touched exactly `src/a.py`.
+
+    ST-007's guard is that the conditional streams are required ONLY when the
+    diff touches a file they cover. Before the fix this recorded
+    `required_streams` including `test01` with the detail 'a covered file was
+    touched', and `Foundry-Phase('inspect_clean')` then refused 'streams
+    incomplete: test01' — a stream no rule required, blocking the transition on
+    work that had no reason to be dispatched.
+    """
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1, spec_path="")
+    _write_defects(fdir, [_open_live()])
+    _write_manifest(fdir)
+    _write_spec_with_contracts(fdir, ["FR-001", "FR-002"])
+    _grind_touching(project_root, fdir, "src/a.py")
+    _arm(fdir)
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        result = foundry_server._DISPATCH["Foundry-Phase"]({"phase": "inspect_start"})
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert result["ok"] is True, result
+    recorded = _read_state(fdir)["inspect_modes"][-1]
+    assert recorded["mode"] == "DELTA", recorded
+    assert recorded["touched_files"] == ["src/a.py"], recorded
+    assert "test01" not in recorded["required_streams"], recorded
+    assert recorded["stream_scope"]["test01"]["scope"] == "skipped"
+
+    # And the door that refused: with the roster it was actually given checked,
+    # `inspect_clean` no longer names `test01` at all.
+    cycle = recorded["cycle"]
+    _mark(project_root, "prove", cycle, len(recorded["prove_sample"]),
+          len(recorded["prove_sample"]))
+    for wire in ("trace", "test"):
+        _mark(project_root, wire, cycle, 1, 1)
+    assert _check_streams_complete(project_root)["complete"] is True
+
+    _arm(fdir)
+    clean = foundry_mark_phase_complete("inspect_clean", project_root)
+    assert "test01" not in json.dumps(clean), clean
 
 
 def test_streams_complete_reads_the_recorded_roster_and_never_recomputes_it(run_env):

@@ -3709,16 +3709,30 @@ def _skipped_streams(fdir: Path) -> set[str]:
     return _skipped_stream_ids(fdir)
 
 
-def _research_scope_touched(fdir: Path, touched: list[str]) -> bool:
+def _research_scope_touched(fdir: Path, touched: list[str]) -> dict:
     """Did the GRIND diff touch a file RESEARCH_AUDIT covers (ST-007)?
 
     A casting declaring a `research_context` is a casting whose code was written
     against research recommendations, so its key_files are the files an audit of
     those recommendations reads. A diff touching none of them cannot have
     deviated from research that no longer applies to anything that moved.
+
+    Returns `{"touched": bool, "detail": str}`. The detail is the caller's
+    provenance string for a MATCH — it names WHICH casting and WHICH file
+    matched rather than asserting that one did; see `_test01_scope_touched`'s
+    D-204 note for what an unnamed "a covered file was touched" cost. It is
+    empty when nothing matched, because the skip's provenance is the caller's
+    own sentence and a second, unread one is a second thing that can drift.
+
+    THIS ARM'S TWO AXES WERE ALREADY THE RIGHT ONES, which is why D-204 named
+    only its sibling. WHICH names: the manifest's own `key_files` cells, a
+    declared list, never prose. HOW they map to files: they ARE files, compared
+    by whole-string equality against the diff, so there is no mapping step to
+    get wrong. The sibling had prose on the first axis and a stem search on the
+    second, and both had to move.
     """
     if not touched:
-        return False
+        return {"touched": False, "detail": ""}
     touched_set = set(touched)
     manifest = _load_json(fdir / "castings" / "manifest.json")
     for casting in manifest.get("castings", []) or []:
@@ -3726,46 +3740,237 @@ def _research_scope_touched(fdir: Path, touched: list[str]) -> bool:
             continue
         for f in casting.get("key_files") or []:
             if isinstance(f, str) and f.strip() in touched_set:
-                return True
-    return False
+                return {
+                    "touched": True,
+                    "detail": (
+                        f"casting {casting.get('id', '?')} declares "
+                        f"research_context and the diff touched its key_file "
+                        f"{f.strip()}"
+                    ),
+                }
+    return {"touched": False, "detail": ""}
 
 
-def _test01_scope_touched(project_root: str, touched: list[str]) -> bool:
-    """Did the GRIND diff touch a file TEST-01 covers (ST-007)?
+def _contracts_surface_cells(project_root: str) -> list[tuple[str, str]]:
+    """The spec's Contracts table as `(row id, surface cell)` pairs.
 
-    TEST-01 derives property tests from the spec's Contracts table, so its scope
-    is the surfaces that table names plus the schemas those surfaces validate
-    against. `schemas/` is matched structurally; the Contracts table is matched
-    by asking whether the spec's own Contracts section mentions the touched
-    file's basename or its stem — the table names surfaces in prose
-    ("Foundry-Fix (LATENT lane)", "tools/evidence.py"), so a textual read of the
-    section is what "named in the Contracts table" can mean mechanically.
+    The table is read as CELLS, not as text. Rows are the pipe-delimited lines
+    of the `## Contracts` section, the surface column is located by its header
+    name rather than by index (a table that gains a column ahead of `surface`
+    must not silently start returning `input`), and the alignment row is
+    skipped. Returns `[]` when the spec cannot be read or has no such table —
+    an unreadable spec names no surfaces, so nothing is covered by it.
     """
-    if not touched:
-        return False
-    candidates = [t for t in touched if t]
-    if any("schemas/" in f"/{t}" for t in candidates):
-        return True
-
     spec_path = _resolve_spec_path(project_root)
     if spec_path is None or not spec_path.exists():
-        return False
+        return []
     text, problem = read_text_file(spec_path)
     if problem is not None:
-        return False
-    lowered = text.lower()
-    start = lowered.find("## contracts")
-    if start < 0:
-        return False
-    end = lowered.find("\n## ", start + 1)
-    section = lowered[start : end if end > 0 else len(lowered)]
-    for path in candidates:
-        name = path.replace("\\", "/").rsplit("/", 1)[-1]
-        if not name:
+        return []
+
+    lines = text.splitlines()
+    lowered = [line.strip().lower() for line in lines]
+    start = next(
+        (i for i, line in enumerate(lowered) if line.startswith("## contracts")),
+        None,
+    )
+    if start is None:
+        return []
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lowered[i].startswith("## ")),
+        len(lines),
+    )
+
+    rows: list[tuple[str, str]] = []
+    column: int | None = None
+    for i in range(start + 1, end):
+        line = lines[i].strip()
+        if not line.startswith("|"):
+            # A blank line or prose ends the table; a later table in the same
+            # section starts its own header search.
+            column = None
             continue
-        if name.lower() in section or Path(name).stem.lower() in section:
-            return True
-    return False
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if column is None:
+            header = [c.lower() for c in cells]
+            if "surface" in header:
+                column = header.index("surface")
+            continue
+        if set(line.replace("|", "").strip()) <= set("-: "):
+            continue  # the alignment row
+        if column < len(cells):
+            rows.append((cells[0], cells[column]))
+    return rows
+
+
+def _registry_tool_modules() -> dict[str, list[str]]:
+    """Tool name -> the plugin modules that implement it, from the REGISTRY.
+
+    `server.py`'s `_DISPATCH` IS the tool-name-to-handler binding, so it is the
+    only thing that knows which module answers `Foundry-Report`. The mapping is
+    read out of the dispatch entry's own code object rather than out of prose:
+    a name it loads from the server's globals that resolves to a function of a
+    `foundry_mcp` module contributes that module, and a dotted `foundry_mcp.*`
+    name it names contributes that module directly — which is how a lazy
+    in-function import is followed. Entries that dispatch through a helper
+    defined in `server.py` itself are walked one more hop, because that helper
+    is where the real handler is named: `"Foundry-Report": lambda args:
+    _dispatch_report()` reaches `generate_report` only inside
+    `_dispatch_report`, and stopping at the lambda would map CT-014 to
+    `server.py` and leave `tools/foundry_report.py` uncovered.
+
+    Returns `{}` when the server module cannot be imported. Nothing is claimed
+    as covered in that case, which is the honest answer: without the registry
+    there is no evidence of what implements what, and the alternative — guessing
+    from names — is the D-204 defect itself.
+    """
+    from types import FunctionType
+
+    try:
+        from foundry_mcp import server as _server
+    except Exception:  # pragma: no cover - registry unavailable
+        return {}
+
+    package_root = Path(__file__).resolve().parent.parent  # .../foundry_mcp
+
+    def module_file(dotted: str) -> str | None:
+        if dotted == "foundry_mcp":
+            candidate = package_root / "__init__.py"
+            return str(candidate) if candidate.exists() else None
+        if not dotted.startswith("foundry_mcp."):
+            return None
+        rel = dotted[len("foundry_mcp.") :].replace(".", "/")
+        for candidate in (package_root / f"{rel}.py", package_root / rel / "__init__.py"):
+            if candidate.exists():
+                return str(candidate)
+        return None
+
+    def walk(code, found: set[str], depth: int, seen: set[str]) -> None:
+        if depth > 3:
+            return
+        for name in code.co_names:
+            if name.startswith("foundry_mcp"):
+                found.add(name)
+                continue
+            obj = _server.__dict__.get(name)
+            if not isinstance(obj, FunctionType):
+                continue
+            module = getattr(obj, "__module__", "") or ""
+            if not module.startswith("foundry_mcp"):
+                continue
+            if module == "foundry_mcp.server":
+                if name not in seen:
+                    seen.add(name)
+                    walk(obj.__code__, found, depth + 1, seen)
+            else:
+                found.add(module)
+
+    registry: dict[str, list[str]] = {}
+    dispatch = getattr(_server, "_DISPATCH", None)
+    if not isinstance(dispatch, dict):
+        return {}
+    for tool, handler in dispatch.items():
+        code = getattr(handler, "__code__", None)
+        if code is None:
+            continue
+        modules: set[str] = set()
+        walk(code, modules, 0, set())
+        files = {f for m in modules if (f := module_file(m)) is not None}
+        if files:
+            registry[str(tool)] = sorted(files)
+    return registry
+
+
+def _path_matches(covered: str, candidate: str) -> bool:
+    """Do two path spellings name the same file, one possibly abbreviated?
+
+    Equality, or one being a SEGMENT-ANCHORED suffix of the other. Both
+    directions are needed because the two sides are spelled by different
+    authorities: `git diff --name-only` yields repo-relative paths, and the
+    registry yields the executing package's absolute paths, which are only
+    repo-relative on a self-targeting run. The anchor on `/` is what keeps this
+    from being the substring search D-204 was filed on — `src/a.py` matches no
+    covered path, where an unanchored `in` made `a` match anything.
+    """
+    left = covered.replace("\\", "/").lstrip("./")
+    right = candidate.replace("\\", "/").lstrip("./")
+    if not left or not right:
+        return False
+    return left == right or left.endswith(f"/{right}") or right.endswith(f"/{left}")
+
+
+def _test01_scope_touched(project_root: str, touched: list[str]) -> dict:
+    """Did the GRIND diff touch a file TEST-01 covers (ST-007)?
+
+    TEST-01 derives property tests from the spec's Contracts table and drives
+    the surfaces that table names, so its scope is the modules that IMPLEMENT
+    those surfaces, plus the schemas the surfaces validate against. Returns
+    `{"touched": bool, "detail": str}`; on a match the detail names the surface
+    and the file, so the provenance recorded beside the roster can be checked
+    rather than believed, and it is empty otherwise for the reason
+    `_research_scope_touched` states.
+
+    D-204 — A RULE ABOUT THE FACT IS NOT THE FACT, AND BOTH AXES WERE PROSE.
+    ----------------------------------------------------------------------
+    This asked whether the spec's Contracts SECTION — 6147 characters of prose,
+    read whole — contained the touched file's basename or its stem, unanchored.
+    Driven at the wire on a GRIND diff touching exactly one file, `src/a.py`:
+    `Foundry-Phase('inspect_start')` returned DELTA with `test01` REQUIRED and
+    the detail "a covered file was touched", because the stem `a` occurs in the
+    section; `Foundry-Phase('inspect_clean')` then refused "streams incomplete:
+    test01" for a stream no rule required. `src/fix.py`, `src/next.py`,
+    `n/gate.py`, `lib/init.go`, `x/report.rb`, `webapp/spend.ts` and
+    `tools/id.py` (the `| ID |` header) all read as covered the same way, while
+    `tools/foundry_report.py` — which implements CT-014 — read as NOT covered,
+    because the table spells the surface `Foundry-Report`. A predicate that
+    answers yes for a file named nowhere and no for the file the row is about is
+    not a narrow rule, it is a different question.
+
+    BOTH AXES MOVE, because moving one is how this class returns. WHICH NAMES:
+    the surface COLUMN's cells, parsed as table cells by
+    `_contracts_surface_cells`, matched against the closed set of tool names the
+    server registers — never the section's prose. HOW THEY MAP TO FILES: through
+    `_registry_tool_modules`, the server's own `_DISPATCH` binding, never a stem
+    search. Anchoring the cells alone would have left `src/fix.py` covered,
+    since CT-004/005/006 all spell `Foundry-Fix` and `fix` is that file's stem.
+    """
+    if not touched:
+        return {"touched": False, "detail": ""}
+    candidates = [t for t in touched if t]
+
+    schema_hits = [t for t in candidates if "schemas/" in f"/{t}"]
+    if schema_hits:
+        return {
+            "touched": True,
+            "detail": (
+                f"{schema_hits[0]} is a schemas/ file, which every Contracts "
+                "surface validates against"
+            ),
+        }
+
+    rows = _contracts_surface_cells(project_root)
+    registry = _registry_tool_modules() if rows else {}
+    if not rows or not registry:
+        return {"touched": False, "detail": ""}
+
+    for row_id, surface in rows:
+        for tool in sorted(registry):
+            if not re.search(
+                rf"(?<![A-Za-z0-9_-]){re.escape(tool)}(?![A-Za-z0-9_-])", surface
+            ):
+                continue
+            for module_file in registry[tool]:
+                for candidate in candidates:
+                    if _path_matches(module_file, candidate):
+                        return {
+                            "touched": True,
+                            "detail": (
+                                f"{row_id} names surface {tool}, which "
+                                f"{_repo_relative(project_root, Path(module_file))} "
+                                f"implements, and the diff touched {candidate}"
+                            ),
+                        }
+    return {"touched": False, "detail": ""}
 
 
 def _prove_delta_sample(
@@ -4034,8 +4239,8 @@ def _decide_inspect_mode(
             scope[wire] = {"scope": "full", "detail": "every item in scope"}
         prove_sample: list[str] = []
     else:
-        research_needed = _research_scope_touched(fdir, touched)
-        test01_needed = _test01_scope_touched(project_root, touched)
+        research_scope = _research_scope_touched(fdir, touched)
+        test01_scope = _test01_scope_touched(project_root, touched)
         # The GRIND that just ended is `cycle - 1` on the `inspect_start`
         # boundary, where the counter has already been advanced for the INSPECT
         # this roster is for.
@@ -4049,7 +4254,10 @@ def _decide_inspect_mode(
                 continue
             if wire in DELTA_CONDITIONAL_STREAMS:
                 # ST-007: required ONLY when the diff touches a file they cover.
-                needed = research_needed if wire == "research_audit" else test01_needed
+                decision = (
+                    research_scope if wire == "research_audit" else test01_scope
+                )
+                needed = decision["touched"]
                 if wire == "research_audit" and research_skipped:
                     needed = False
                 if not needed:
@@ -4059,7 +4267,13 @@ def _decide_inspect_mode(
                     }
                     continue
                 required.append(wire)
-                scope[wire] = {"scope": "full", "detail": "a covered file was touched"}
+                # D-204: the provenance NAMES what matched. This recorded the
+                # bare claim "a covered file was touched", which is persisted
+                # into state.json's inspect_modes and stream-rollup.json and
+                # read back by the F6 per-cycle scope column — so when the
+                # predicate answered yes for a file named nowhere in the spec,
+                # nothing downstream could tell that from a real hit.
+                scope[wire] = {"scope": "full", "detail": decision["detail"]}
                 continue
             required.append(wire)
             if wire == "test":
