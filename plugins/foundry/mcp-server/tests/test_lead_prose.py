@@ -216,17 +216,63 @@ def test_readme_badges_agree_with_the_shipped_versions(readme: Path) -> None:
     )
 
 
-def test_root_readme_describes_the_release_it_badges() -> None:
-    """AC-040 / FR-027: the release section names the version it shipped.
+#: The PLUGIN badge a README publishes, as shields.io writes it. ``--`` is
+#: shields' escape for a literal hyphen, so the server badge is written
+#: ``badge/foundry--mcp-1.9.0-`` and cannot match here: the character after
+#: ``foundry-`` must be a digit.
+_PLUGIN_BADGE_RE = re.compile(r"badge/foundry-(\d+\.\d+\.\d+)-")
+
+
+def _badged_plugin_version(readme: Path) -> str:
+    """The plugin version THIS readme's own badge claims.
+
+    D-211 / AC-040: derived from the file under test rather than from the
+    manifest, so the pin below binds each README's release prose to the badge
+    printed at the top of the same file. The manifest-to-badge half of the
+    chain is already pinned per README by
+    ``test_readme_badges_agree_with_the_shipped_versions`` above, so reading
+    the badge here closes the chain manifest -> badge -> prose while leaving
+    exactly one derivation of the version in this module. A typed constant, or
+    a second read of the manifest, would be a copy free to drift from the badge
+    it is supposed to be checking.
+    """
+    found = sorted(set(_PLUGIN_BADGE_RE.findall(_read(readme))))
+    assert len(found) == 1, (
+        f"{_rel(readme)} publishes {len(found)} distinct plugin badge versions "
+        f"{found}; expected exactly one. Zero means the badge row lost its "
+        f"plugin badge or changed shape and this derivation no longer sees it; "
+        f"more than one means a bump moved one badge and left another behind. "
+        f"Fix the badges -- until there is one version, no pin can say which "
+        f"release the prose owes."
+    )
+    return found[0]
+
+
+@pytest.mark.parametrize("readme", (PLUGIN_README, ROOT_README), ids=_rel)
+def test_readme_describes_the_release_it_badges(readme: Path) -> None:
+    """AC-040 / FR-027: the release section names the version it badges.
 
     A badge bump with no release section leaves a reader able to see THAT the
     version moved and unable to see what moved with it.
+
+    D-211: this ran over the ROOT readme only. The plugin README duly carried
+    ``foundry-4.10.0`` and ``foundry--mcp-1.9.0`` shields while its one release
+    section stayed headed "What's new since v4.2.0" and enumerated the
+    v4.2.0-era additions -- EVID-01, EVID-02, TEST-01, INTENT-01 -- so a reader
+    of the badged file learned nothing about the release it badged. The spec's
+    File Change Map names ``plugins/foundry/README.md`` and ``README.md`` in
+    one row for "release section and badges", so both are parametrized here.
+    ``commands/help.md`` shares that row for the flag semantics only: it
+    publishes no badge and carries no release section, so there is no version
+    in it for this derivation to read.
     """
-    heading = f"### foundry {_plugin_version()}"
-    assert heading in _read(ROOT_README), (
-        f"{_rel(ROOT_README)} has no {heading!r} release section. The badge "
-        f"claims {_plugin_version()} shipped; the What's-new block has to say "
-        f"what was in it."
+    version = _badged_plugin_version(readme)
+    heading = f"### foundry {version}"
+    assert heading in _read(readme), (
+        f"{_rel(readme)} has no {heading!r} release section. Its own badge "
+        f"claims {version} shipped; the What's-new block has to say what was "
+        f"in it. Do not narrow this pin back to one README -- the plugin "
+        f"README is exactly where a stale section survived a badge bump."
     )
 
 
