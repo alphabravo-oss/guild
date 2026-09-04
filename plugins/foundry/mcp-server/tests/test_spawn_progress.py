@@ -766,6 +766,143 @@ def test_the_fallback_block_reaches_both_spawn_doors_alike(grind_repo) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# D-239 — the diff comes back in git's C-quoting and nothing can resolve it
+# --------------------------------------------------------------------------- #
+#
+# `git diff --name-only` with `core.quotepath` at its default (true) and no
+# `-z` C-quotes every path carrying a non-ASCII byte. `src/modèle.py` arrives
+# as `"src/mod\303\250le.py"` — the double quotes and the octal escapes are IN
+# the string, not around it. This builder then compares that spelling to a
+# manifest `key_files` entry and misses, so a file the casting OWNS is filed
+# under "Other files changed (may be upstream dependencies)" and the teammate
+# is handed a path no reader can resolve, under prose telling it to read the
+# path first. The lane measures a commit in the TARGET repo, which owes this
+# repo no filename charset. PROVE filed the identical unguarded invocation
+# against `foundry_orchestrator.py#_grind_diff`; this is the sibling call site.
+
+NON_ASCII_KEY_FILE = "src/modèle_owned_by_the_casting.py"
+
+
+@pytest.fixture
+def grind_repo_non_ascii(tmp_path, monkeypatch):
+    """``grind_repo``, except the casting's key_file carries a non-ASCII byte.
+
+    NFC in and NFC expected back: macOS ``git init`` records
+    ``core.precomposeunicode=true`` in the repo config, and every other
+    platform hands back the bytes it was given, so the one spelling written
+    here is the one spelling git reports. A platform that normalised would
+    fail these tests rather than pass them quietly, which is the right answer
+    — the manifest entry is hand-written NFC too, and the whole property under
+    test is that the two spellings meet.
+    """
+    monkeypatch.delenv("FOUNDRY_MODEL", raising=False)
+    env = _git_env(tmp_path)
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+
+    _git(["init", "-q", "-b", "main", "."], cwd=project_root, env=env)
+    target = project_root / NON_ASCII_KEY_FILE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("original = 1\n", encoding="utf-8")
+    _git(["add", NON_ASCII_KEY_FILE], cwd=project_root, env=env)
+    _git(["commit", "-q", "-m", "cast"], cwd=project_root, env=env)
+    baseline = _git(["rev-parse", "HEAD"], cwd=project_root, env=env).stdout.strip()
+
+    target.write_text("original = 2  # changed by an earlier GRIND cycle\n", encoding="utf-8")
+    _git(["add", NON_ASCII_KEY_FILE], cwd=project_root, env=env)
+    _git(["commit", "-q", "-m", "grind cycle 1"], cwd=project_root, env=env)
+
+    fdir = project_root / "foundry-archive" / RUN_NAME
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    # The manifest spells the key_file the way a human types it — the real
+    # name, not git's transport encoding of it. That is the spelling the
+    # builder's membership test has to meet.
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "castings": [{"id": 1, "key_files": [NON_ASCII_KEY_FILE]}],
+                "waves": [{"wave": 1, "casting_ids": [1]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (fdir / "castings" / "casting-1-prompt.md").write_text(
+        "# Casting 1\n\nBuild the thing.\n", encoding="utf-8"
+    )
+    (fdir / ".cast-baseline-sha").write_text(baseline + "\n", encoding="utf-8")
+
+    foundry_state.set_active_run(RUN_NAME)
+    try:
+        yield str(project_root), fdir
+    finally:
+        foundry_state.clear_active_run()
+
+
+@requires_git
+def test_a_non_ascii_changed_path_is_reported_by_its_real_name(
+    grind_repo_non_ascii,
+) -> None:
+    """D-239: the name in the block is the name on disk, unquoted.
+
+    Asserted on the RENDERED block rather than on the subprocess result,
+    because the rendered block is what the teammate reads and the octal
+    escapes were legible right through to it.
+    """
+    project_root, fdir = grind_repo_non_ascii
+
+    block = fs._build_grind_cycle_context(fdir, 1, project_root)
+
+    assert _listed_files(block) == [NON_ASCII_KEY_FILE]
+    # The two halves of git's C-quoting, named separately so a half-fix — the
+    # `-z` without `core.quotepath=false`, or either without the NUL split —
+    # cannot pass by removing only the escapes or only the wrapping quotes.
+    assert "\\303" not in block
+    assert '"src/' not in block
+
+
+@requires_git
+def test_a_non_ascii_key_file_meets_the_manifest_it_is_spelled_in(
+    grind_repo_non_ascii,
+) -> None:
+    """D-239's consequence, which is the part that actually misleads.
+
+    A quoted path is not merely ugly — it is a string that equals no
+    `key_files` entry, so the casting's OWN changed file is filed under "Other
+    files changed (may be upstream dependencies)". The teammate is then told
+    its file is somebody else's, with the block's full authority behind it.
+    """
+    project_root, fdir = grind_repo_non_ascii
+
+    block = fs._build_grind_cycle_context(fdir, 1, project_root)
+
+    assert "### Your casting's key_files that changed:" in block
+    assert "### Other files changed (may be upstream dependencies):" not in block
+
+
+@requires_git
+def test_both_dispatch_doors_hand_over_the_real_non_ascii_name(
+    grind_repo_non_ascii,
+) -> None:
+    """The builder is not the surface; the two doors are.
+
+    An adjacent path to the one above: this drives the real dispatch doors —
+    the callers a teammate is actually spawned through — rather than the
+    builder in isolation, so a fix that lands in the builder and is shadowed
+    at either door cannot pass.
+    """
+    project_root, _fdir = grind_repo_non_ascii
+
+    single = fs.foundry_spawn_teammate(1, "grind", project_root)
+    bulk = fs.foundry_cast_wave(1, "grind", project_root)
+
+    bulk_context = next(
+        c["grind_cycle_context"] for c in bulk["castings"] if c["casting_id"] == 1
+    )
+    assert _listed_files(single["grind_cycle_context"]) == [NON_ASCII_KEY_FILE]
+    assert bulk_context == single["grind_cycle_context"]
+
+
+# --------------------------------------------------------------------------- #
 # D-058 adjacent path — the real spawn WRITERS feed the liveness READER
 # --------------------------------------------------------------------------- #
 #

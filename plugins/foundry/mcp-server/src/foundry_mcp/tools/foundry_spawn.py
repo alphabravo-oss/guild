@@ -181,7 +181,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from foundry_mcp.schemas import vocab
-from foundry_mcp.tools.foundry_orchestrator import agent_model
+from foundry_mcp.tools.foundry_orchestrator import agent_model, git_changed_paths
 from foundry_mcp.tools.foundry_state import (
     document_refusal,
     get_run_dir,
@@ -1932,18 +1932,37 @@ def _build_grind_cycle_context(fdir, casting_id, project_root: str) -> str:
     if not baseline_sha:
         return ""
 
-    import subprocess
-    try:
-        diff = subprocess.run(
-            ["git", "-C", project_root, "diff", "--name-only", baseline_sha, "HEAD"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return ""
-    if diff.returncode != 0:
+    # D-239 — THE DIFF CAME BACK SPELLED THE WAY GIT PRINTS A PATH, NOT THE
+    # WAY THE PATH IS.
+    # ---------------------------------------------------------------------
+    # This ran its own `git diff --name-only` with `core.quotepath` at its
+    # default (true) and no `-z`, and consumed the output lines verbatim. Git
+    # C-quotes any path holding a non-ASCII byte, so `src/modèle.py` arrived
+    # here as `"src/mod\303\250le.py"` — the double quotes and the octal
+    # escapes are IN the string. The membership test below then compared THAT
+    # against the manifest's `key_files` and missed, so a file the casting
+    # OWNS was filed under "Other files changed (may be upstream
+    # dependencies)" and the teammate was handed a path no reader can resolve,
+    # under prose whose whole authority is that the paths beneath it are real.
+    # The lane measures a commit in the TARGET repo, which owes this repo no
+    # filename charset.
+    #
+    # IMPORTED RATHER THAN RE-SPELLED. `_grind_diff` and `_trace_skip_check`
+    # each ran a copy of this invocation and this was the third; a rule fixed
+    # in one copy is this run's repeated failure shape, and PROVE filed the
+    # sibling site under this same defect id. `git_changed_paths` is public
+    # for exactly this import.
+    #
+    # `ok` False is an UNKNOWN diff, which is not an empty one — but both
+    # degrade HERE to the same "no scoped context" an absent baseline gives,
+    # because this helper's standing contract is that it never fails a spawn.
+    # The orchestrator, whose delta roster cannot rest on a diff it does not
+    # know, is the caller that must keep the two apart and forces FULL instead.
+    diff = git_changed_paths(project_root, baseline_sha, "HEAD", timeout=10.0)
+    if not diff["ok"]:
         return ""
 
-    changed = [line.strip() for line in diff.stdout.splitlines() if line.strip()]
+    changed = diff["files"]
     if not changed:
         return ""
 
