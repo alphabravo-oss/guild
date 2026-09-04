@@ -145,8 +145,18 @@ async def list_tools() -> list[Tool]:
                     # Foundry-Phase call that would open GRIND cycle
                     # max_cycles+1 SUCCEEDS into a named HALTED state and
                     # generates the report; it is not a refusal.
+                    # D-225 - `minimum` is the half that makes the accepted
+                    # set equal the HONOURED set. Draft202012Validator applies
+                    # `type: integer` and nothing else, so a NEGATIVE cap was
+                    # accepted here and read as "no cap" by
+                    # `_persisted_max_cycles`: an operator who typed -1 ran
+                    # unbounded and was told nothing. A cap below zero is not a
+                    # cap, and refusing it at the door is where the operator can
+                    # still act on the refusal. 0 stays legal because 0 IS the
+                    # documented spelling of unbounded.
                     "max_cycles": {
                         "type": "integer",
+                        "minimum": 0,
                         "default": 0,
                         "description": (
                             "Halt the run after this many GRIND cycles. 0 (the "
@@ -154,7 +164,7 @@ async def list_tools() -> list[Tool]:
                             "SUCCESSFUL transition into HALTED, not a refusal: "
                             "state.json becomes HALTED and the report is "
                             "generated naming every open LIVE and LATENT defect. "
-                            "HALTED is not DONE."
+                            "HALTED is not DONE. Must not be negative."
                         ),
                     },
                 },

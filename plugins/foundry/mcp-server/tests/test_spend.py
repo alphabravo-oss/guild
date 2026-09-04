@@ -28,6 +28,7 @@ rather than invisible.
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
@@ -647,41 +648,167 @@ def test_a_run_that_dispatched_nothing_matches_no_agent_and_says_so(run_env):
 # --------------------------------------------------------------------------- #
 
 
+def _server_package_modules() -> list[Path]:
+    """Every module of the server package — GI-005's actual subject.
+
+    D-226. This guard's docstring said it was asserted against the source of
+    every module that touches spend, and its body read `inspect.getsource(fo)`
+    — foundry_orchestrator alone. `foundry_report.py`, `foundry_state.py` and
+    `display.py` all touch spend and none was scanned, so a transcript tail
+    added to any of them would not have tripped it.
+
+    The subject here is WIDER than the docstring's old claim on purpose:
+    GI-005 says "Parser stays out of the SERVER", and its violation column
+    names "Server code that tails transcript JSONL or regex-parses the Agent
+    usage block" without qualifying which module. A guard scoped to the
+    spend-touching modules would be the same defect one step out — a parser in
+    `foundry.py` or `evidence.py` is exactly as much a violation and would ship
+    unchallenged.
+    """
+    root = Path(fo.__file__).resolve().parents[1]
+    assert root.name == "foundry_mcp", root
+    modules = sorted(root.rglob("*.py"))
+    assert len(modules) > 10, modules
+    return modules
+
+
+#: Literal spellings only a reader of a harness-owned format carries: the
+#: session transcript's directory and compressed form, and the line the Agent
+#: usage block prints. Scanned over source with comment lines stripped, because
+#: a module's own prose explaining that it deliberately parses nothing is not a
+#: parser and a scan that could not tell those apart would forbid documenting
+#: the requirement it enforces.
+_PARSER_LITERALS = (".claude/projects", ".jsonl.gz", "Total cost")
+
+#: The names a transcript or usage-block reader gives its own helpers. Scanned
+#: over IDENTIFIERS rather than over source, because at package width the bare
+#: word is prose three times over — `server.py`'s Foundry-Intent-Coverage
+#: description says "transcript-in-spec-appendix", its Foundry-Spend
+#: description states this very rule, and `test_deriver.py` reads forge's
+#: `transcript.md`, which is a spec artifact and not a session transcript. A
+#: scan that flagged those would be unusable and would be switched off, which
+#: is a worse outcome than a narrow one.
+_PARSER_IDENTIFIER_TOKENS = ("transcript", "usage_block")
+
+
+def _module_identifiers(source: str) -> set[str]:
+    """Every name a module BINDS or REFERENCES, with no string or comment."""
+    names: set[str] = set()
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        for attribute in ("name", "id", "attr", "arg", "module"):
+            value = getattr(node, attribute, None)
+            if isinstance(value, str):
+                names.add(value)
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add(alias.name)
+                if alias.asname:
+                    names.add(alias.asname)
+    return names
+
+
+def _parser_violations(path: Path) -> list[str]:
+    """The GI-005 violations one module carries; empty when it carries none."""
+    source = path.read_text(encoding="utf-8")
+    code = "\n".join(
+        line for line in source.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    found = [
+        f"{path.name}: literal {literal!r}"
+        for literal in _PARSER_LITERALS
+        if literal in code
+    ]
+    found.extend(
+        f"{path.name}: identifier {name!r}"
+        for name in sorted(_module_identifiers(source))
+        for token in _PARSER_IDENTIFIER_TOKENS
+        if token in name.lower()
+    )
+    return found
+
+
 def test_the_server_parses_no_transcript_and_no_usage_block(run_env):
     """GI-005 verbatim: 'Parser stays out of the server; the fragile block is
     only ever read by the lead.'
 
-    Asserted against the SOURCE of every module that touches spend, because the
-    violation is the EXISTENCE of a parser rather than any particular output.
+    Asserted against the SOURCE of every module in the server package, because
+    the violation is the EXISTENCE of a parser rather than any particular
+    output, and the rule's subject is the server rather than any one module.
     The named violation is "Server code that tails transcript JSONL or
     regex-parses the Agent usage block", and both of those would work fine on
     the day they were written — the failure is that the format is nobody's
     contract, so it drifts and the server then reports a wrong number instead of
     no number.
+
+    D-226 — THE SUBJECT USED TO BE ONE MODULE. This read
+    `inspect.getsource(fo)` while claiming the scope above, so the four other
+    spend-touching modules, and every module beyond them, were unguarded. See
+    `_server_package_modules` for why the fix widens past the modules that
+    touch spend rather than to exactly them.
     """
     import inspect
 
-    # Comment lines are stripped first. The rule is about what the server DOES,
-    # and the module's own prose explaining that it deliberately parses nothing
-    # is not a parser — a scan that could not tell those apart would forbid
-    # documenting the requirement it enforces.
-    source = "\n".join(
-        line for line in inspect.getsource(fo).splitlines()
-        if not line.lstrip().startswith("#")
-    )
-    for forbidden in (
-        "transcript",
-        "Total cost",
-        ".jsonl.gz",
-        "~/.claude/projects",
-    ):
-        assert forbidden not in source, forbidden
+    violations = [
+        finding
+        for module in _server_package_modules()
+        for finding in _parser_violations(module)
+    ]
+    assert violations == [], violations
 
     # The ONE channel: the lead types the numbers into this handler.
     params = inspect.signature(foundry_record_spend).parameters
     assert set(params) == {
         "agent", "phase", "tokens", "duration_ms", "cycle", "project_root",
     }
+
+
+def test_the_parser_guard_covers_the_whole_server_package(run_env):
+    """D-226's first half: the guard's SUBJECT is what its docstring claims.
+
+    Named modules rather than a count alone, because a count passes on any
+    roster of the right size. These five are the ones the defect named as
+    touching spend and going unscanned; `server.py` and `foundry.py` are here
+    because GI-005's subject is the server and neither touches spend at all.
+    """
+    scanned = {path.name for path in _server_package_modules()}
+    for module in (
+        "foundry_orchestrator.py", "foundry_report.py", "foundry_state.py",
+        "display.py", "foundry_spawn.py", "server.py", "foundry.py",
+        "evidence.py", "vocab.py",
+    ):
+        assert module in scanned, (module, sorted(scanned))
+
+
+def test_the_parser_guard_would_catch_a_parser_wherever_it_was_added(tmp_path):
+    """D-226's second half: the guard is not vacuous.
+
+    A widened subject is worth nothing if the detector cannot fire, and this
+    detector deliberately reads literals and identifiers on DIFFERENT surfaces
+    — prose is exempt from the identifier scan and the literal scan is the only
+    reader of strings — so each surface is driven on its own. The negative case
+    is the one that matters most: prose stating the rule must stay legal, or
+    the guard becomes something a future author switches off rather than obeys.
+    """
+    parser = tmp_path / "violator.py"
+    for literal in _PARSER_LITERALS:
+        parser.write_text(f'PATH = "{literal}/x"\n', encoding="utf-8")
+        assert _parser_violations(parser), literal
+    for token in _PARSER_IDENTIFIER_TOKENS:
+        parser.write_text(f"def tail_{token}(path):\n    return path\n",
+                          encoding="utf-8")
+        assert _parser_violations(parser), token
+
+    # ...and PROSE about the rule is not a violation of it.
+    clean = tmp_path / "documented.py"
+    clean.write_text(
+        '"""This server parses no transcript and no Agent usage block, ever."""\n'
+        "# tails no transcript, reads no usage block\n"
+        'DESCRIPTION = "the transcript-in-spec-appendix, not a session transcript"\n',
+        encoding="utf-8",
+    )
+    assert _parser_violations(clean) == []
 
 
 def test_no_dollar_figure_appears_in_any_rendered_output(run_env):

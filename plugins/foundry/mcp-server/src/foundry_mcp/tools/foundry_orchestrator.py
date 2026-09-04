@@ -9,6 +9,7 @@ All operations are local file reads/writes. Zero API calls. Zero cost.
 
 from __future__ import annotations
 
+import difflib
 import fcntl
 import json
 import os
@@ -34,6 +35,9 @@ from foundry_mcp.schemas.vocab import (
     LIVE_CLEAN_CYCLES_TO_CLEAR,
     OBSERVATION_CLASSES,
     PROVE_DELTA_SAMPLE_SIZE,
+    PYTEST_CONFTEST_BASENAME,
+    PYTEST_PYTHON_FILES,
+    PYTEST_TESTPATHS,
     REPORT_JSON_FILENAME,
     REPORT_MD_FILENAME,
     REQUIREMENT_ID_RE,
@@ -5145,6 +5149,49 @@ def _waiting_on_agents(project_root: str) -> dict:
     return result
 
 
+def _persisted_max_cycles(state: dict) -> int:
+    """CT-016 — THE ONE READ of `state.json.max_cycles`, in the door's terms.
+
+    Returns the cap in force: a positive int, or 0 for "no cap", which is the
+    default and means unbounded.
+
+    D-225 — THE DOOR ACCEPTED A CAP THIS READ SILENTLY DISCARDED.
+    ------------------------------------------------------------
+    `Foundry-Init` advertises `max_cycles` as `{"type": "integer"}` and
+    `server.py`'s `_argument_refusal` validates it with Draft202012Validator,
+    in which a zero-fraction float IS an integer — so `2.0` is ACCEPTED at the
+    door and `foundry_init` persists `2.0`. The guard below then read
+    `isinstance(max_cycles, int)`, and `isinstance(2.0, int)` is False, so the
+    cap read as absent. Driven: cap 2.0 persisted, counter at 99,
+    `Foundry-Phase('grind_start')` returned ok True and phase F3 — an operator
+    who asked for a cap of 2 opened GRIND cycle 100 with no notice. The schema
+    had no `minimum` either, so `-1` was accepted at the same door and read
+    here as unbounded by the `<= 0` arm.
+
+    The fix is on BOTH sides and they meet exactly: `server.py` now advertises
+    `minimum: 0`, so a negative cap is refused where the operator can see it
+    rather than discarded here; and this read accepts the zero-fraction float
+    the schema calls an integer, because JSON has no integer type and `2.0` is
+    the integer 2 by the rule the door validated against.
+
+    WHY NORMALISE HERE RATHER THAN ONLY AT THE DISPATCH. `state.json` is not
+    always written by this server's current door — a resumed archive, a
+    hand-edited file, a fixture — and the deciding read is the one place that
+    must never mistake a cap for its absence. Anything that is not a usable cap
+    (a string, a fractional float, a bool, a negative) still reads as 0/no cap,
+    because this function cannot refuse: it is consulted from inside a
+    transition whose only other answer is "proceed".
+    """
+    raw = state.get("max_cycles", 0)
+    if isinstance(raw, bool):
+        return 0
+    if isinstance(raw, int):
+        return raw if raw > 0 else 0
+    if isinstance(raw, float) and raw.is_integer():
+        return int(raw) if raw > 0 else 0
+    return 0
+
+
 def _halted_state(fdir: Path) -> dict | None:
     """The run's HALTED record, or None when the run is not halted.
 
@@ -5162,7 +5209,10 @@ def _halted_state(fdir: Path) -> dict | None:
             str(state.get("halted_reason") or "").strip()
             or "the configured cycle cap was reached"
         ),
-        "max_cycles": state.get("max_cycles", 0),
+        # D-225: the cap this run was HELD to, read the way the halt read it.
+        # Displaying the raw field beside a decision made on a normalised one
+        # is how a refusal comes to name a number no code acted on.
+        "max_cycles": _persisted_max_cycles(state),
         # D-165: what the halt transition's own report generation did. Recorded
         # by `_halt_if_capped` and read here so the refusal cannot promise a
         # document the transition failed to write.
@@ -5307,8 +5357,12 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
     the flag is unaffected.
     """
     state = _load_json(fdir / "state.json")
-    max_cycles = state.get("max_cycles", 0)
-    if not isinstance(max_cycles, int) or isinstance(max_cycles, bool) or max_cycles <= 0:
+    # D-225: through `_persisted_max_cycles`, so the set of values this read
+    # HONOURS is exactly the set the MCP door ACCEPTS. The inline
+    # `isinstance(max_cycles, int)` this replaces rejected the zero-fraction
+    # float the door's own validator calls an integer.
+    max_cycles = _persisted_max_cycles(state)
+    if max_cycles <= 0:
         return None
     cycle = _current_cycle(fdir)
     opening = cycle + 1
@@ -5348,11 +5402,15 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
     # or not its ledgers can be rendered. What changes is that the outcome is
     # RECORDED and SAID: the halt names the failure, and every later refusal
     # names the one call that can still write the report.
-    report = _generate_report(project_root, fdir)
-    report_ok = bool(report.get("ok"))
-    report_error = "" if report_ok else str(
-        report.get("error") or "the report generator returned no reason"
-    )
+    # D-224: through the SAME preserving regeneration both F6 doors run. This
+    # branch carried its own copy of the overwrite, so a run that ended at the
+    # cap lost the lead's appended prose exactly as a run that ended at DONE
+    # did — a rule enforced at one terminal transition and not the other is one
+    # the run walks around by ending the other way.
+    sealed = _regenerate_report_preserving_lead_prose(project_root, fdir)
+    report = sealed["report"]
+    report_ok = sealed["report_generated"]
+    report_error = sealed["report_error"]
     if not report_ok:
         # A second short transaction rather than one around the generator: the
         # report is generated AFTER `phase` is HALTED so that it renders the
@@ -5379,6 +5437,9 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
         "report": report,
         "report_generated": report_ok,
         "report_error": report_error,
+        # D-224: what the halt carried over, named where the operator reads it.
+        "lead_prose_lines": sealed["lead_prose_lines"],
+        "lead_prose_error": sealed["lead_prose_error"],
         "open_live_defects": blocking["live"],
         "open_unknown_tier_defects": blocking["unknown"],
         "open_latent_defects": blocking["latent"],
@@ -5398,6 +5459,231 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
                 "run. HALTED is not DONE: this run stopped with open work."
             )
         ),
+    }
+
+
+def _md_sections(text: str) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    """Split a REPORT.md into ``(header_lines, [(heading, body_lines), ...])``.
+
+    A heading is a whole trimmed line beginning ``"## "`` — the SAME test
+    ``foundry_report._markdown_missing_sections`` applies when it decides which
+    sections a reader can still find. Both halves of GI-006 therefore read the
+    document by one rule: what that function counts as a section present is
+    what this function counts as a block, so the seal can never preserve
+    something the gate would then call a missing section, or drop something it
+    would call present.
+    """
+    header: list[str] = []
+    blocks: list[tuple[str, list[str]]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            blocks.append((stripped, []))
+        elif blocks:
+            blocks[-1][1].append(line)
+        else:
+            header.append(line)
+    return header, blocks
+
+
+def _lead_only_lines(generated: list[str], on_disk: list[str]) -> list[str]:
+    """The lines of ``on_disk`` the freshly ``generated`` body does not account for.
+
+    Line-granular ``difflib`` rather than a common-prefix walk, because the two
+    bodies legitimately differ in the MIDDLE: the whole reason D-218 put a
+    regeneration on the F6 transition is that a ledger moves between
+    ``Foundry-Report`` and ``Foundry-Phase('done')``. A prefix walk would call
+    everything after the first changed row "the lead's", carrying a stale table
+    tail into the sealed document; the opcodes name only what actually differs.
+
+    Leading and trailing blanks are dropped so an unchanged section contributes
+    nothing and the caller can test the result for emptiness.
+
+    WHERE IT IS IMPRECISE, IT PRESERVES. A generated row that changed lands in
+    a ``replace`` opcode and is carried over beside the lead's prose — visible
+    duplication a reader can see and delete. The opposite bias is the defect
+    this function exists to close: silent destruction of an edit the operator
+    was told they could make.
+    """
+    kept: list[str] = []
+    matcher = difflib.SequenceMatcher(None, generated, on_disk, autojunk=False)
+    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+        if tag in ("insert", "replace"):
+            kept.extend(on_disk[j1:j2])
+    while kept and not kept[0].strip():
+        kept.pop(0)
+    while kept and not kept[-1].strip():
+        kept.pop()
+    return kept
+
+
+#: A generated REPORT.md header is a ``# `` title line and one banner sentence
+#: naming the generator. Both are re-emitted fresh on every regeneration — the
+#: banner carries the timestamp — so neither is ever carried over as prose.
+#: Recognised by content rather than by position or line count so a change to
+#: ``_render_markdown``'s header degrades to preserving a stale banner (visible,
+#: and dropped again by the next seal) rather than to dropping lead prose.
+_GENERATED_HEADER_MARKER = " by Foundry-Report."
+
+
+def _lead_header_lines(header: list[str]) -> list[str]:
+    """The lead's own lines from a REPORT.md header block."""
+    return [
+        line
+        for line in header
+        if line.strip()
+        and not line.lstrip().startswith("# ")
+        and _GENERATED_HEADER_MARKER not in line
+    ]
+
+
+def _merge_lead_prose(on_disk: str, generated: str) -> tuple[str, int]:
+    """Carry the lead's additions onto a freshly generated REPORT.md.
+
+    Returns ``(merged_text, preserved_line_count)``. ``preserved_line_count``
+    is 0 when the document on disk was purely generated, and the caller then
+    has nothing to write.
+
+    D-224 — THE TRANSITION DESTROYED THE EDIT THE OPERATOR WAS LICENSED TO MAKE
+    --------------------------------------------------------------------------
+    GI-006 is two clauses — "The lead may append prose but cannot omit a
+    section; `Foundry-Phase('done')` refuses if the report is absent" — and
+    D-218's seal enforced the second by destroying the first.
+    ``_seal_run_report`` regenerated REPORT.md unconditionally from both F6
+    doors, and ``_halt_if_capped`` did the same at the HALTED transition.
+    Driven: a report was generated, a `## Lead notes` section carrying a
+    sentinel was appended below the generated sections, `report_status` still
+    read present True, and `Foundry-Phase('done')` returned ok True, phase F6,
+    with the sentinel and its heading gone from disk. ``clear_active_run()``
+    runs immediately after, so the run was archived with the prose gone and
+    nothing in the response said it had been discarded. The same claim is
+    shipped in commands/start.md ("**You MAY APPEND PROSE BELOW ANY SECTION**"),
+    both READMEs and the generated banner itself.
+
+    THE SEAM IS THE HEADING, and it is the one the reader already uses. The
+    generated headings are taken from the FRESHLY WRITTEN document rather than
+    from ``foundry_report._SECTION_TITLES``: that table is a sibling casting's
+    private name, and the document it just wrote is a better authority for what
+    it generates than a constant this module would have to keep in step.
+
+    So: a block under a heading the generator did NOT just write is the lead's,
+    carried over whole; a block under one it DID write keeps its lead-only
+    lines below the regenerated body, where the lead put them; and a heading
+    the lead deleted is restored by the regeneration, which is GI-006's other
+    clause holding. Prose ABOVE the first section is carried over too, directly
+    below the fresh banner.
+    """
+    old_header, old_blocks = _md_sections(on_disk)
+    new_header, new_blocks = _md_sections(generated)
+
+    generated_bodies: dict[str, list[str]] = {}
+    for heading, body in new_blocks:
+        generated_bodies.setdefault(heading, body)
+
+    # Lead content is keyed on the generated heading it FOLLOWED in the document
+    # the lead edited, so an appended block comes back where it was appended.
+    # `None` is "before the first generated heading".
+    tails: dict[str | None, list[str]] = {}
+    anchor: str | None = None
+    matched: set[str] = set()
+    for heading, body in old_blocks:
+        if heading in generated_bodies and heading not in matched:
+            matched.add(heading)
+            anchor = heading
+            extra = _lead_only_lines(generated_bodies[heading], body)
+            if extra:
+                tails.setdefault(anchor, []).extend(extra)
+        else:
+            # A heading the generator does not own — or a SECOND copy of one it
+            # does, which the generator never emits and the lead therefore
+            # wrote. Either way it is the lead's, and it is carried over whole
+            # rather than used to re-emit a generated body twice.
+            tails.setdefault(anchor, []).extend([heading, *body])
+
+    before_first = _lead_header_lines(old_header) + tails.pop(None, [])
+
+    lines = list(new_header)
+
+    def _append(extra: list[str]) -> None:
+        if not extra:
+            return
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend(extra)
+        lines.append("")
+
+    _append(before_first)
+    emitted: set[str] = set()
+    for heading, body in new_blocks:
+        lines.append(heading)
+        lines.extend(body)
+        if heading not in emitted:
+            emitted.add(heading)
+            _append(tails.get(heading, []))
+
+    preserved = len(before_first) + sum(len(v) for v in tails.values())
+    return "\n".join(lines).rstrip() + "\n", preserved
+
+
+def _regenerate_report_preserving_lead_prose(
+    project_root: str, fdir: Path
+) -> dict:
+    """Regenerate the report without destroying what the lead appended to it.
+
+    Returns ``{"report", "report_generated", "report_error", "lead_prose_lines",
+    "lead_prose_error"}`` — never a refusal and never a raise.
+
+    THE ONE REGENERATION BOTH TERMINAL TRANSITIONS RUN (D-224). ``done`` and
+    ``nyquist_done`` reach it through ``_seal_run_report``; the cap reaches it
+    through ``_halt_if_capped``. Writing the preservation once is the same
+    argument D-043/D-044 made about the two F6 doors: a rule enforced at one
+    terminal transition and not the other is a rule the run can walk around by
+    ending the other way.
+
+    A FAILURE TO PRESERVE IS RECORDED, NOT RAISED, AND NEVER COSTS THE REPORT.
+    If the merged write fails, the freshly generated document stands and
+    ``lead_prose_error`` says the prose could not be carried over — the caller
+    puts that in the operator's message. The alternative, refusing the
+    transition, would leave a run that has already passed every precondition
+    unable to end.
+    """
+    md_path = fdir / REPORT_MD_FILENAME
+    # BEFORE the generator runs, because the generator is what overwrites it.
+    on_disk, _problem = read_text_file(md_path)
+
+    report = _generate_report(project_root, fdir)
+    report_ok = bool(report.get("ok"))
+    report_error = "" if report_ok else str(
+        report.get("error") or "the report generator returned no reason"
+    )
+
+    preserved = 0
+    prose_error = ""
+    if report_ok and on_disk.strip():
+        fresh, fresh_problem = read_text_file(md_path)
+        if fresh_problem is not None or not fresh.strip():
+            prose_error = fresh_problem or (
+                f"{REPORT_MD_FILENAME} carries no generated text to merge onto"
+            )
+        else:
+            merged, preserved = _merge_lead_prose(on_disk, fresh)
+            if preserved:
+                try:
+                    md_path.write_text(merged, encoding="utf-8")
+                except OSError as exc:
+                    prose_error = (
+                        f"{preserved} line(s) of appended prose could not be "
+                        f"written back to {REPORT_MD_FILENAME} "
+                        f"({type(exc).__name__}: {exc})"
+                    )
+                    preserved = 0
+
+    return {
+        "report": report,
+        "report_generated": report_ok,
+        "report_error": report_error,
+        "lead_prose_lines": preserved,
+        "lead_prose_error": prose_error,
     }
 
 
@@ -5457,21 +5743,29 @@ def _seal_run_report(project_root: str, fdir: Path) -> dict:
     in the message, naming the one call that still writes the report. GI-006's
     refusal condition is ABSENCE, and that stays enforced where it belongs, in
     `_done_preconditions`, before this runs at all.
+
+    D-224 — AND IT REGENERATES WITHOUT DESTROYING THE OTHER HALF OF GI-006.
+    ----------------------------------------------------------------------
+    GI-006 is two clauses. This function was written to enforce the second
+    ("`Foundry-Phase('done')` refuses if the report is absent") and, for one
+    cycle, enforced it by destroying the first ("the lead may append prose"):
+    the regeneration below overwrote REPORT.md whole, `clear_active_run()` ran
+    immediately after, and the run was archived with the lead's prose gone and
+    nothing in the response saying so. Driven: a `## Lead notes` section
+    carrying a sentinel, appended below the generated sections, was absent from
+    disk after `Foundry-Phase('done')` returned ok True and phase F6.
+
+    Both clauses now hold, and neither is traded for the other:
+    `_regenerate_report_preserving_lead_prose` writes the fresh document and
+    carries the lead's additions back onto it, and `_sealed_report_sentence`
+    says how many lines it carried.
     """
-    report = _generate_report(project_root, fdir)
-    report_ok = bool(report.get("ok"))
-    report_error = "" if report_ok else str(
-        report.get("error") or "the report generator returned no reason"
-    )
-    if not report_ok:
+    sealed = _regenerate_report_preserving_lead_prose(project_root, fdir)
+    if not sealed["report_generated"]:
         with _document_transaction(fdir / "state.json") as doc:
-            doc["done_report_error"] = report_error
+            doc["done_report_error"] = sealed["report_error"]
             doc["updated_at"] = _now()
-    return {
-        "report": report,
-        "report_generated": report_ok,
-        "report_error": report_error,
-    }
+    return sealed
 
 
 def _sealed_report_sentence(sealed: dict, fdir: Path) -> str:
@@ -5490,11 +5784,23 @@ def _sealed_report_sentence(sealed: dict, fdir: Path) -> str:
             "Foundry-Report, which is not a phase transition and still runs."
         )
     latent = _blocking_defects(fdir)["latent"]
-    return (
+    sentence = (
         f"The report was regenerated as part of this transition, naming "
         f"{len(latent)} open LATENT defect(s) in the F6 backlog"
         + (f": {', '.join(latent)}." if latent else ".")
     )
+    # D-224 / GI-006: a regeneration that moved the lead's own prose SAYS so.
+    # The failure this closes was silent on both halves — the prose went and
+    # the response did not mention it — so the fix reports the outcome either
+    # way rather than only when it went wrong.
+    if sealed.get("lead_prose_error"):
+        sentence += f" WARNING: {sealed['lead_prose_error']}"
+    elif sealed.get("lead_prose_lines"):
+        sentence += (
+            f" {sealed['lead_prose_lines']} line(s) of prose you appended were "
+            "carried onto it (GI-006)."
+        )
+    return sentence
 
 
 # --------------------------------------------------------------------------- #
@@ -10943,6 +11249,26 @@ def _resolve_test_path(path_part: str, project_root: str) -> Path | None:
     return found[0] if found else None
 
 
+#: How rung 2 of `_regression_test_problem` SPELLS the discovery rule it just
+#: applied, DERIVED from the same three constants `vocab.is_test_file` reads
+#: rather than re-typed beside it (FR-034).
+#:
+#: D-222 is why. The recogniser once accepted `*_test.py` and any path segment
+#: spelled `tests`, no `pyproject.toml` in this repo asked for either, and
+#: casting 1 narrowed it to the configured globs. This refusal's message still
+#: read "(test_*.py, *_test.py, conftest.py, or under a tests/ directory)" —
+#: naming two shapes the rung it sits under now REFUSES, so a caller who
+#: followed the message got refused again for doing exactly what it said. A
+#: literal beside a predicate is a copy free to drift from it, which is the
+#: same shape as the enum drift `server.py`'s header block describes.
+_PYTEST_DISCOVERY_PHRASE = (
+    ", ".join(PYTEST_PYTHON_FILES)
+    + " under "
+    + " or ".join(f"{path}/" for path in PYTEST_TESTPATHS)
+    + f", or {PYTEST_CONFTEST_BASENAME}"
+)
+
+
 def _regression_test_problem(ref: str, project_root: str) -> str | None:
     """The named reason a `regression_test` locator is unusable, else None.
 
@@ -11049,9 +11375,9 @@ def _regression_test_problem(ref: str, project_root: str) -> str | None:
     if not is_test_file(path_part):
         return (
             f"{path_part!r} is not a test file — {ref!r} points into production "
-            "code. A regression test lives where pytest collects it "
-            "(test_*.py, *_test.py, conftest.py, or under a tests/ directory); "
-            "name the test that would fail if this gap came back"
+            f"code. A regression test lives where pytest collects it "
+            f"({_PYTEST_DISCOVERY_PHRASE}); name the test that would fail if "
+            "this gap came back"
         )
     # Rung 3 (D-065): the name reads as a test, and is not the defect's own.
     if not _TEST_REF_NAMES_A_TEST.search(name):
@@ -13951,7 +14277,9 @@ def _compute_next_action(project_root: str) -> dict:
             "details": {
                 "halted_at_cycle": state.get("halted_at_cycle"),
                 "halted_reason": state.get("halted_reason", ""),
-                "max_cycles": state.get("max_cycles", 0),
+                # D-225: `_persisted_max_cycles`, the one read, so this display
+                # cannot state a cap the halt did not act on.
+                "max_cycles": _persisted_max_cycles(state),
                 "open_live_defects": blocking["live"],
                 "open_unknown_tier_defects": blocking["unknown"],
                 "open_latent_defects": blocking["latent"],

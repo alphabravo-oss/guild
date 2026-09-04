@@ -14675,3 +14675,455 @@ def test_a_report_that_cannot_be_regenerated_at_f6_is_recorded_and_said(
     state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
     assert state["phase"] == "F6"
     assert "Read-only file system" in state["done_report_error"], state
+
+
+# --------------------------------------------------------------------------- #
+# GI-006 / D-224 — the terminal transition regenerates the report WITHOUT
+# destroying the prose the lead is licensed to append to it
+# --------------------------------------------------------------------------- #
+
+#: The two shapes commands/start.md licenses with "**You MAY APPEND PROSE BELOW
+#: ANY SECTION**": a bare line under a generated section's body, and the lead's
+#: own heading below the generated ones. They fail differently — a bare line has
+#: to be told apart from the generated body it sits under, a lead heading has to
+#: be told apart from a generated one — so both are driven.
+_MID_SENTINEL = "LEAD-APPENDED-PROSE-SENTINEL-42 (below a generated section)"
+_TAIL_HEADING = "## Lead notes"
+_TAIL_SENTINEL = "LEAD-APPENDED-PROSE-SENTINEL-43 (under the lead's own heading)"
+
+
+def _append_lead_prose(fdir: Path) -> None:
+    """Edit REPORT.md exactly as GI-006 licenses the lead to edit it."""
+    path = fdir / "REPORT.md"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    headings = [i for i, line in enumerate(lines) if line.strip().startswith("## ")]
+    assert len(headings) >= 2, headings
+
+    # Below the FIRST generated section's body — i.e. immediately above the
+    # second heading, which is where "below any section" puts it.
+    second = headings[1]
+    lines[second:second] = ["", _MID_SENTINEL, ""]
+    lines.extend(["", _TAIL_HEADING, "", _TAIL_SENTINEL, ""])
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _assert_lead_prose_survived(fdir: Path) -> str:
+    text = (fdir / "REPORT.md").read_text(encoding="utf-8")
+    assert _MID_SENTINEL in text, text[-2000:]
+    assert _TAIL_SENTINEL in text, text[-2000:]
+    assert _TAIL_HEADING in text.splitlines(), text[-2000:]
+    return text
+
+
+@pytest.mark.parametrize(
+    "token,phase,flags",
+    [
+        ("done", "F4", {}),
+        ("nyquist_done", "F5.5", {"temper": True, "nyquist": True}),
+    ],
+)
+def test_the_f6_seal_carries_the_prose_the_lead_appended(run_env, token, phase, flags):
+    """GI-006 verbatim: 'The lead may append prose but cannot omit a section;
+    `Foundry-Phase('done')` refuses if the report is absent.'
+
+    D-224. That is TWO clauses, and the D-218 seal enforced the second by
+    destroying the first. Driven at the real door: the report was generated, a
+    `## Lead notes` section carrying a sentinel was appended below the generated
+    sections, `report_status` still read present True, and
+    `Foundry-Phase('done')` returned ok True and phase F6 with the sentinel and
+    its heading gone from REPORT.md. `clear_active_run()` runs immediately
+    after, so the run was archived with the prose gone and nothing in the
+    response saying it had been discarded.
+
+    BOTH CLAUSES ARE ASSERTED HERE, because a fix that traded the other way
+    would pass an assertion on either one alone: the appended prose is still on
+    disk, AND the document still carries every generated section and the
+    LATENT backlog the regeneration exists to refresh (D-218 / FR-001).
+
+    Parametrized over BOTH F6 doors for D-043/D-044's reason — they are two
+    transitions into the same state and they drifted the first time.
+    """
+    from foundry_mcp.tools.foundry_report import report_status
+
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase=phase, cycle=2, **flags)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+
+    _append_lead_prose(fdir)
+    # The prose does not make a section look missing — the property
+    # test_report.py already pins, restated here as the precondition this test
+    # depends on rather than assumed.
+    assert report_status(fdir)["present"] is True
+
+    # ...and the ledger moves under the document, which is why the transition
+    # regenerates at all.
+    _defect_ledger(fdir, [_latent("D-224")])
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete(token, project_root)
+
+    assert result["ok"] is True, result
+    assert result["phase"] == "F6"
+    assert result["report_generated"] is True, result
+
+    text = _assert_lead_prose_survived(fdir)
+    # GI-006's second clause, unweakened: every section is still findable and
+    # the regeneration really happened.
+    status = report_status(fdir)
+    assert status["present"] is True, status
+    assert status["missing_sections"] == [], status
+    assert "D-224" in text, text[-2000:]
+    assert json.loads(
+        (fdir / "report.json").read_text(encoding="utf-8")
+    )["latent_backlog"]["open_count"] == 1
+
+    # NFR-005: the transition SAYS what it moved. The failure was silent on both
+    # halves — the prose went and the message did not mention it.
+    assert result["lead_prose_lines"] > 0, result
+    assert not result["lead_prose_error"], result
+    assert "GI-006" in result["message"], result["message"]
+
+
+def test_the_cap_transition_carries_the_prose_the_f6_seal_carries(run_env):
+    """THE ADJACENT PATH: the run's OTHER terminal transition.
+
+    ST-008 / FR-045 — `_halt_if_capped` writes the report as part of the HALTED
+    transition, and it carried its own copy of the unconditional overwrite. A
+    rule enforced at one terminal transition and not the other is one a run
+    walks around by ending the other way: this is the door a capped run leaves
+    by, and it archives no differently from DONE.
+
+    Driven through `grind_start`, which is not the transition `_seal_run_report`
+    is reached from at all.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F2", cycle=2, max_cycles=2)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    _generate_report(project_root, fdir)
+    _append_lead_prose(fdir)
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("grind_start", project_root)
+
+    assert result["ok"] is True, result
+    assert result["halted"] is True
+    assert result["report_generated"] is True, result
+    assert result["lead_prose_lines"] > 0, result
+
+    text = _assert_lead_prose_survived(fdir)
+    # FR-045: 'the report is written naming every open LIVE and LATENT defect' —
+    # still true, on the document the prose came back onto.
+    assert "D-001" in text, text[-2000:]
+
+
+def test_a_purely_generated_report_is_left_exactly_as_generated(run_env):
+    """The seal must not INVENT prose either.
+
+    A run whose lead appended nothing has to close with the document
+    `generate_report` writes, byte for byte — a merge that re-appended stale
+    generated rows on every seal would grow the report a section at a time and
+    would be this defect with the sign flipped.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=2)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [_latent("D-100")])
+    _generate_report(project_root, fdir)
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("done", project_root)
+
+    assert result["ok"] is True, result
+    assert result["lead_prose_lines"] == 0, result
+    sealed = (fdir / "REPORT.md").read_text(encoding="utf-8")
+    # Regenerated from the same ledgers, so the only line that may differ is the
+    # banner's timestamp.
+    assert sealed.count("## ") == len(vocab.REPORT_REQUIRED_SECTIONS), sealed[:400]
+
+
+def test_a_section_the_lead_deleted_never_reaches_the_seal_at_all(run_env):
+    """GI-006's other clause: 'cannot omit a section'.
+
+    The two clauses are enforced in different places and this pins which. The
+    preservation added for D-224 does NOT soften the omission rule, because the
+    omission rule fires first: `_done_preconditions` reads `report_status` and
+    refuses the whole transition, so a lead who deleted a heading never reaches
+    the regeneration and their remaining prose is not touched either. A fix that
+    had instead taught the seal to quietly restore the heading would have turned
+    a named refusal into a silent repair.
+    """
+    from foundry_mcp.tools.foundry_report import report_status
+
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=2)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+    _append_lead_prose(fdir)
+
+    path = fdir / "REPORT.md"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    headings = [i for i, line in enumerate(lines) if line.strip().startswith("## ")]
+    generated = [i for i in headings if lines[i].strip() != _TAIL_HEADING]
+    del lines[generated[-1]]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    missing = report_status(fdir)["missing_sections"]
+    assert missing != []
+
+    before = path.read_text(encoding="utf-8")
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("done", project_root)
+
+    assert "ok" not in result, result
+    assert missing[0] in result["error"] or missing[0] in result["hint"], result
+    assert json.loads((fdir / "state.json").read_text())["phase"] == "F4"
+    # Refused BEFORE the regeneration, so the document is exactly as the lead
+    # left it — prose included.
+    assert path.read_text(encoding="utf-8") == before
+    _assert_lead_prose_survived(fdir)
+
+
+def test_the_merge_takes_its_skeleton_from_the_document_just_generated(run_env):
+    """The branch the doors cannot reach, driven on the helper itself.
+
+    `_merge_lead_prose` walks the document the LEAD edited, so "what if a
+    generated heading is not in it" has to have an answer. The answer is that
+    the skeleton comes from the FRESHLY GENERATED document — not from
+    `foundry_report._SECTION_TITLES`, which is a sibling casting's private name
+    this module would then have to keep in step. Asserted directly because
+    `_done_preconditions` refuses that document at the door (see the test
+    above), so the door can never exercise it.
+    """
+    generated = (
+        "# Foundry run report — r\n"
+        "\n"
+        "Generated 2020-01-01T00:00:00+00:00 by Foundry-Report. Every section "
+        "below is generated from the run's own ledgers (GI-006).\n"
+        "\n"
+        "## Alpha\n"
+        "\n"
+        "fresh alpha row\n"
+        "\n"
+        "## Beta\n"
+        "\n"
+        "fresh beta row\n"
+    )
+    edited = (
+        "# Foundry run report — r\n"
+        "\n"
+        "Generated 2019-01-01T00:00:00+00:00 by Foundry-Report. Every section "
+        "below is generated from the run's own ledgers (GI-006).\n"
+        "\n"
+        "lead prose above the first section\n"
+        "\n"
+        "## Alpha\n"
+        "\n"
+        "stale alpha row\n"
+        "\n"
+        "lead prose below Alpha\n"
+        "\n"
+        "## Lead notes\n"
+        "\n"
+        "lead prose under the lead's own heading\n"
+    )
+
+    merged, preserved = fo._merge_lead_prose(edited, generated)
+
+    assert preserved > 0
+    headings = [line for line in merged.splitlines() if line.startswith("## ")]
+    # Beta was absent from the edited document and comes back; Lead notes is
+    # kept; neither generated heading is emitted twice.
+    assert headings == ["## Alpha", "## Lead notes", "## Beta"], headings
+    for kept in (
+        "lead prose above the first section",
+        "lead prose below Alpha",
+        "lead prose under the lead's own heading",
+    ):
+        assert kept in merged, (kept, merged)
+    assert "fresh alpha row" in merged and "fresh beta row" in merged
+    # The stale row is carried over rather than silently dropped — the bias is
+    # towards preserving, because the harm being fixed is destruction.
+    assert "stale alpha row" in merged
+    # ...and the old banner is NOT, because it is regenerated every time.
+    assert "2019-01-01" not in merged, merged
+
+
+def test_the_merge_invents_nothing_when_the_lead_wrote_nothing(run_env):
+    """A document that is purely generated merges to itself, with 0 preserved.
+
+    Asserted on the helper as well as through the door because this is the
+    property that stops the seal GROWING the report: every terminal transition
+    runs the merge, so a merge that preserved even one generated line per pass
+    would accumulate a duplicate section over a long run.
+    """
+    generated = (
+        "# Foundry run report — r\n"
+        "\n"
+        "Generated 2020-01-01T00:00:00+00:00 by Foundry-Report.\n"
+        "\n"
+        "## Alpha\n"
+        "\n"
+        "row\n"
+    )
+    merged, preserved = fo._merge_lead_prose(generated, generated)
+    assert preserved == 0
+    assert merged == generated
+
+
+# --------------------------------------------------------------------------- #
+# CT-016 / D-225 — the cap the door accepts is the cap the halt honours
+# --------------------------------------------------------------------------- #
+
+
+def _init_schema() -> dict:
+    from foundry_mcp import server as srv
+
+    return asyncio.run(srv._tool_schema("Foundry-Init"))
+
+
+def test_a_zero_fraction_cap_halts_the_run_the_door_promised_to_bound(run_env):
+    """CT-016 verbatim: 'max_cycles from the --max-cycles flag, default 0 |
+    persisted in state.json; the Foundry-Phase call that would exceed it
+    succeeds, sets phase HALTED and generates the report as part of that
+    transition'.
+
+    D-225. The door and the deciding read disagreed about what an integer is.
+    `Foundry-Init` advertises `{"type": "integer"}` and `_argument_refusal`
+    validates with Draft202012Validator, in which a zero-fraction float IS an
+    integer — so `2.0` was ACCEPTED and persisted, while `_halt_if_capped`
+    guarded with `isinstance(max_cycles, int)`, which is False for `2.0`.
+    Driven: cap 2.0 persisted, counter at 99, `Foundry-Phase('grind_start')`
+    returned ok True and phase F3 — an operator who asked for a cap of 2 opened
+    GRIND cycle 100 and was told nothing.
+
+    Both halves are asserted, because a fix to either alone leaves the two
+    surfaces disagreeing: the door still accepts the value, and the halt now
+    acts on it.
+    """
+    from foundry_mcp import server as srv
+
+    assert srv._argument_refusal(
+        "Foundry-Init", _init_schema(), {"max_cycles": 2.0}
+    ) is None
+
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F2", cycle=2, max_cycles=2.0)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("grind_start", project_root)
+
+    assert result["ok"] is True, result
+    assert result["halted"] is True, result
+    assert result["phase"] == RUN_PHASE_HALTED, result
+    assert result["max_cycles"] == 2, result
+    assert json.loads((fdir / "state.json").read_text())["phase"] == RUN_PHASE_HALTED
+
+
+def test_the_assay_failure_door_honours_the_same_cap(run_env):
+    """THE ADJACENT PATH: the other transition that opens a GRIND.
+
+    `_halt_if_capped` is reached from `grind_start` — the token D-225 was driven
+    on — and from `assay_fail`, which clears the same markers and calls the same
+    `_update_phase(fdir, "F3")`. The ASSAY loop is exactly the one --max-cycles
+    exists to bound, so a cap honoured on one token and discarded on the other
+    would leave the expensive loop unbounded.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=2, max_cycles=2.0)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("assay_fail", project_root)
+
+    assert result["ok"] is True, result
+    assert result["halted"] is True, result
+    assert result["phase"] == RUN_PHASE_HALTED, result
+
+
+def test_the_init_door_refuses_a_cap_below_zero(run_env):
+    """CT-016's other boundary. D-225.
+
+    The schema carried no `minimum`, so `-1` was ACCEPTED at the door and read
+    as "no cap" by the halt's `<= 0` arm: an operator who typed a negative cap
+    ran unbounded with no notice. A cap below zero is not a cap, and the door is
+    where the operator can still act on being told so.
+    """
+    from foundry_mcp import server as srv
+
+    schema = _init_schema()
+    assert schema["properties"]["max_cycles"]["minimum"] == 0
+    refusal = srv._argument_refusal("Foundry-Init", schema, {"max_cycles": -1})
+    assert refusal is not None
+    assert "max_cycles" in refusal["error"], refusal
+    # 0 is the documented spelling of unbounded and stays legal.
+    assert srv._argument_refusal("Foundry-Init", schema, {"max_cycles": 0}) is None
+
+
+def test_every_reader_of_the_cap_reports_the_number_the_halt_acted_on(run_env):
+    """THE ADJACENT PATH: the DISPLAY readers of the same field.
+
+    `_persisted_max_cycles` is the one read, for `_current_inspect_mode`'s
+    reason — a value each door normalises for itself is a value each door can
+    normalise differently. `_halted_state` feeds every HALTED refusal and
+    `foundry_next_action`'s halt block feeds the operator's screen; both used to
+    print the raw field. A refusal naming `max_cycles 2.0` beside a decision
+    made on `2` is a message about a number no code acted on.
+    """
+    project_root, fdir = run_env
+    _write_state(
+        fdir, phase=RUN_PHASE_HALTED, cycle=2, max_cycles=2.0,
+        halted_at_cycle=2, halted_reason="--max-cycles 2 reached",
+    )
+    _defect_ledger(fdir, [])
+
+    # `2.0 == 2` is True in Python, so equality alone cannot tell the raw field
+    # from the normalised one. The TYPE is what a reader sees: an operator
+    # reading "max_cycles 2.0" is reading a value no code acted on.
+    for surface, value in (
+        ("_halted_state", fo._halted_state(fdir)["max_cycles"]),
+        ("_halted_refusal", fo._halted_refusal(
+            fdir, "Foundry-Phase('grind_start')")["max_cycles"]),
+        ("Foundry-Next", foundry_next_action(project_root)["details"]["max_cycles"]),
+    ):
+        assert value == 2, (surface, value)
+        assert isinstance(value, int), (surface, repr(value))
+
+
+def test_a_cap_that_is_not_a_whole_number_is_no_cap_and_says_so_at_the_door(run_env):
+    """The set the door ACCEPTS and the set the read HONOURS are now the same set.
+
+    `2.5`, `'2'` and `True` are refused at the door — Draft 2020-12 rejects a
+    fractional float, a string and a bool for `type: integer` — and each reads
+    as no cap here, which is the only answer a function consulted from inside a
+    transition can give. What matters is that no value is accepted by one and
+    discarded by the other, which is the whole of D-225's class.
+    """
+    from foundry_mcp import server as srv
+
+    schema = _init_schema()
+    for rejected in (2.5, "2", True, -1):
+        assert srv._argument_refusal(
+            "Foundry-Init", schema, {"max_cycles": rejected}
+        ) is not None, rejected
+        assert fo._persisted_max_cycles({"max_cycles": rejected}) == 0, rejected
+    for accepted in (0, 2, 2.0, 99):
+        assert srv._argument_refusal(
+            "Foundry-Init", schema, {"max_cycles": accepted}
+        ) is None, accepted
+    assert fo._persisted_max_cycles({"max_cycles": 2.0}) == 2
+    assert fo._persisted_max_cycles({}) == 0
