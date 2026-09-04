@@ -45,7 +45,6 @@ from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
 from foundry_mcp.tools.foundry_state import get_run_dir, read_document
 from foundry_mcp.tools.worktree_helpers import (
     _PRUNE_DONE_FOR,
-    _WORKTREE_LOCK,
     _prune_orphaned_worktrees,
     _run_command_with_timeout,
     _setup_worktree,
@@ -1164,10 +1163,16 @@ def _erased_disagreement_problem(
 # (Phase 7 / Plan 07-03 — RESEARCH.md Open Question 1 recommendation).
 #
 # ``_run_command_with_timeout``, ``_setup_worktree``, ``_teardown_worktree``,
-# ``_prune_orphaned_worktrees``, ``_WORKTREE_LOCK``, ``_PRUNE_DONE_FOR``
-# are imported at module-top so identity is preserved across the import
-# boundary — Phase 4/5 callers and Phase 7 callers serialize on the same
-# lock and share the same once-per-session prune guard.
+# ``_prune_orphaned_worktrees`` and ``_PRUNE_DONE_FOR`` are imported at
+# module-top so identity is preserved across the import boundary — Phase 4/5
+# callers and Phase 7 callers share the same once-per-session prune guard.
+#
+# ``_WORKTREE_LOCK`` is NOT imported here (casting 3's unused-import pin, under
+# the D-203 structural packet). It is taken inside ``_setup_worktree``, which
+# is where the `.git/config.lock` race it exists for lives; nothing in this
+# module ever took it, so the name only ever LOOKED like this module shared
+# the lock. It does share it — through the helper that holds it — and the
+# import was the misleading half.
 # ---------------------------------------------------------------------------
 
 
@@ -1412,37 +1417,97 @@ def _strip_leading_header_block(text: str) -> str:
     return _EVIDENCE_HEADER_BLOCK_RE.sub("", text, count=1)
 
 
-# D-200 — the narrowest prefix that is PROVABLY header. A line matching the
-# directive grammar cannot be command output in any log the parser accepts,
-# so a contiguous leading run of them plus the single blank separator is the
-# floor below which stripping cannot erase content. Only the disagreement
-# branch of ``_split_committed_header`` uses it, where the two sides have
-# already been shown to disagree and the job is a legible diff.
-_EVIDENCE_DIRECTIVE_LINE_RE = re.compile(r"^[ \t]*#[ \t]*evidence-[a-z][a-z0-9-]*[ \t]*:")
+# D-205 — THE HEADER GRAMMAR, DEFINED ONCE, AND THE ONLY TEXT EVER DISCARDED.
+#
+# THE STRUCTURAL PRINCIPLE (D-197, D-201, D-205 are one class).
+# ------------------------------------------------------------
+# Three cycles running, a guard here asked a NARROWER question than the harm
+# it names, and the gap between the two questions was the whole defect:
+# D-197/D-201 asked "is this suffix in a table" where the harm was "does a
+# reader open this name"; D-200 asked "is the strip symmetric" where the harm
+# was "did the command emit this"; D-205 asked "is the capture's run a suffix"
+# where the harm is "is every line I am about to discard actually header".
+# The principle all three violate, and the one pinned here:
+#
+#     A GUARD THAT DISCARDS, SKIPS OR EXEMPTS INPUT MUST PROVE EACH DISCARDED
+#     UNIT AGAINST THE RULE THAT NAMES THE EXEMPTION. ANYTHING NOT PROVEN IS
+#     SUBJECT TO THE CHECK.
+#
+# Concretely, for the byte comparator: the accept branch must prove every
+# discarded LINE against the directive grammar, and anything not proven is
+# COMPARED. That is why there is no longer a helper in this module that
+# returns the wide leading ``#``/blank run for the comparator to reason about
+# — a superset computed first and narrowed by a second rule is exactly the
+# shape that failed three times, because the next author reaches for the
+# superset and forgets the narrowing.
+#
+# WHAT THE WRITER'S GRAMMAR ACCOUNTS FOR (the lead's binding ruling, D-205).
+# -------------------------------------------------------------------------
+# The committed leading ``#`` run is INSIDE the byte-identical guarantee. The
+# only text outside it is the header the writers emit BY GRAMMAR: a contiguous
+# leading run of ``# evidence-<directive>:`` lines whose directive is one the
+# parser actually honours, plus the ONE blank separator that follows them.
+# Every other line, ``#``-prefixed or not, is body and must match the capture
+# byte for byte — so a claim the command never emitted can never be made
+# reproducible by prefixing it with ``#``.
+#
+# Driven at the wire at cb77e83, before this change, through
+# ``server.request_handlers[CallToolRequest]`` — three runs identical but for
+# the committed log's body: an honest log accepted; the SAME log with
+# ``# FABRICATED: all 47 assertions passed on a clean tree`` inserted between
+# the directives and the body ALSO accepted, ``mismatches: []``, cycle counter
+# advanced; the identical claim without the leading ``#`` correctly REFUSED.
+# B and C differed by one character, because the accept branch returned the
+# whole committed ``#``/blank run as "header" and never tested a line of it
+# against the grammar ``_provable_header_prefix`` defined ten lines above.
+#
+# WHY THE KNOWN-DIRECTIVE SET AND NOT ANY ``# evidence-*:`` SHAPE.
+# ---------------------------------------------------------------
+# ``_parse_evidence_header`` silently IGNORES a directive it does not know, so
+# an unknown ``# evidence-<word>:`` line is not something a writer emits by
+# grammar — it is unread text, and a fabricator who spells the claim
+# ``# evidence-summary: all 47 assertions passed`` would get it discarded
+# unread all over again, one notch narrower. So the grammar is the CLOSED set
+# the parser honours (``_KNOWN_HEADER_DIRECTIVES``). This fails CLOSED: a
+# future phase that starts writing a new directive into logs before adding it
+# to that set gets a loud refusal naming the log, not a silent discard. That
+# coupling is the point — it is what keeps "text this module does not read is
+# body" true by construction.
+_EVIDENCE_DIRECTIVE_LINE_RE = re.compile(
+    r"^[ \t]*#[ \t]*evidence-([a-z][a-z0-9-]*)[ \t]*:"
+)
 
 
-def _leading_comment_blank_run(text: str) -> list[str]:
-    """The maximal leading run of ``#``/blank lines, as lines with newlines."""
-    match = _EVIDENCE_HEADER_BLOCK_RE.match(text)
-    return match.group(0).splitlines(keepends=True) if match else []
+def _is_directive_line(line: str) -> bool:
+    """True when the WRITER'S grammar accounts for this line as a directive."""
+    match = _EVIDENCE_DIRECTIVE_LINE_RE.match(line)
+    return match is not None and match.group(1) in _KNOWN_HEADER_DIRECTIVES
 
 
-def _provable_header_prefix(text: str) -> str:
-    """The contiguous leading ``# evidence-*:`` directives + one blank line."""
+def _provable_header_lines(text: str) -> list[str]:
+    """The header, and nothing else: known directives + one blank separator.
+
+    Lines keep their newlines, so a caller can ``"".join`` them back into the
+    exact prefix they occupy. The blank separator is consumed only when at
+    least one directive preceded it — which is also what makes the suffix test
+    in ``_split_committed_header`` line-aligned by construction, since a bare
+    ``"\\n"`` can never be a provable header on its own and so can never
+    "match" the tail of a directive line's newline.
+    """
     lines = text.splitlines(keepends=True)
     i = 0
-    while i < len(lines) and _EVIDENCE_DIRECTIVE_LINE_RE.match(lines[i]):
+    while i < len(lines) and _is_directive_line(lines[i]):
         i += 1
     if i and i < len(lines) and not lines[i].strip():
         i += 1  # the single blank separator every writer emits
-    return "".join(lines[:i])
+    return lines[:i]
 
 
 def _split_committed_header(log_text: str, captured: str) -> str:
-    """Return the committed log's header — the leading run the command did NOT emit.
+    """Return the committed log's header — the provable prefix the command did NOT emit.
 
-    WHY THE TWO SIDES ARE DECIDED TOGETHER (FR-010 / D-200)
-    -------------------------------------------------------
+    WHY THE TWO SIDES ARE DECIDED TOGETHER (FR-010 / D-200 / D-205)
+    ---------------------------------------------------------------
     Both comparator call sites used to run ``_strip_leading_header_block``
     independently on each side and hand the two results to
     ``_compare_byte_match``. The comment above them asserted the regex "only
@@ -1464,47 +1529,65 @@ def _split_committed_header(log_text: str, captured: str) -> str:
     The sound definition of the header is not a shape at all: it is the part
     of the committed file the re-execution did not produce. So the captured
     side is NEVER stripped, and the committed side loses exactly the prefix
-    the capture did not emit — computed by asking whether the capture's own
-    leading ``#``/blank run is a LINE-ALIGNED SUFFIX of the committed one:
+    the capture did not emit.
 
-      * capture's run is empty (every log in this run's 74-log corpus whose
-        command output does not begin with ``#`` or a blank): the header is
-        the whole committed run and the capture passes through whole, which
-        is byte-for-byte the verdict the old code reached — the old code
-        stripped nothing from that capture either. Unchanged, by construction.
-      * capture's run equals the committed run (the ``use_cat_replay``
-        harness, whose replay file holds the FULL rewritten evidence so both
-        sides carry the header): the header is empty and the two full texts
-        are compared. Still a match, for the right reason.
-      * capture's run is a proper suffix (the honest log whose captured body
-        legitimately starts with ``#`` lines — D-198's own subject): the
-        header is the committed run minus those lines, so the captured ``#``
-        lines are compared on both sides instead of vanishing from both.
-      * capture's run is NOT a suffix: the two sides disagree about their
-        leading content, which is the D-200 forgery. Strip only the provable
-        header so the unified diff names the first differing line, and let
-        ``_compare_byte_match`` refuse.
+    D-205 NARROWS WHAT "THE PREFIX" MAY EVEN CONTAIN. D-200 fixed the SYMMETRY
+    of that decision and left its GRAMMAR wide: the run it discarded was the
+    whole leading ``#``/blank run, never tested line by line against the
+    directive grammar, so a committed-only ``# FABRICATED: ...`` line inside
+    that run was discarded unread and the forgery ACCEPTED at both doors (see
+    the module comment above ``_provable_header_lines`` for the wire runs).
+    The candidate set is now the PROVABLE HEADER — known directives plus the
+    one blank separator — so every line this function returns has been proven
+    header, and every line it does not return is compared. The four cases:
+
+      * capture emits no provable header (every log whose command output does
+        not begin with a ``# evidence-<known>:`` line — the whole shipped
+        corpus): the header is the committed provable header. Writer prose in
+        the committed leading run is NOT in it, so it is compared, which is
+        the D-205 refusal.
+      * capture's provable header EQUALS the committed one (the
+        ``use_cat_replay`` harness, whose replay file holds the FULL rewritten
+        evidence so both sides carry the directives as output): the header is
+        empty and the two full texts are compared. Still a match, for the
+        right reason.
+      * capture's provable header is a proper suffix of the committed one (a
+        replay that emits from the second directive on): the header is the
+        committed one minus those lines, so the directives the capture really
+        emitted are compared on both sides instead of vanishing from both.
+      * capture's provable header is NOT a suffix: the two sides disagree
+        about their directives. Discard the committed provable header — the
+        most that could ever be header — and let ``_compare_byte_match``
+        refuse with a diff naming the first differing line.
+
+    A committed body that legitimately BEGINS with ``#`` lines — D-198's own
+    subject, a command that shows the source it changed — is untouched by all
+    of this: those lines are not directives, so they are never candidates for
+    the strip, and they are compared on both sides and agree.
 
     Line alignment is load-bearing: a raw ``str.endswith`` would accept a
     capture whose run is ``"\\n"`` against a committed run of
     ``"# evidence-cmd: X\\n"``, splitting mid-line and silently donating the
     directive's own newline to the body. The comparison is over lines, so the
-    suffix test is over lines.
+    suffix test is over lines — and ``_provable_header_lines`` cannot return a
+    lone blank line, so the mid-line split has no shape left to take.
     """
-    committed_run = _leading_comment_blank_run(log_text)
-    captured_run = _leading_comment_blank_run(captured)
-    n = len(captured_run)
-    if n == 0 or (n <= len(committed_run) and committed_run[len(committed_run) - n :] == captured_run):
-        return "".join(committed_run[: len(committed_run) - n])
-    return _provable_header_prefix(log_text)
+    committed_header = _provable_header_lines(log_text)
+    captured_header = _provable_header_lines(captured)
+    n = len(captured_header)
+    if n and n <= len(committed_header) and committed_header[len(committed_header) - n :] == captured_header:
+        return "".join(committed_header[: len(committed_header) - n])
+    return "".join(committed_header)
 
 
 def _header_stripped_pair(log_text: str, captured: str) -> tuple[str, str]:
     """``(committed_body, captured_body)`` for the byte comparator.
 
     The single entry point both comparator call sites use, so the two halves
-    of the strip cannot drift apart again (D-200). The captured side is
-    returned verbatim: a re-execution capture is all output.
+    of the strip cannot drift apart again (D-200), and the ONE place the
+    header grammar is consulted, so the accept branch cannot go wide again
+    (D-205). The captured side is returned verbatim: a re-execution capture is
+    all output.
     """
     header = _split_committed_header(log_text, captured)
     return log_text[len(header) :], captured
@@ -1973,6 +2056,13 @@ def _verify_one_evidence_file(
     # body, and the `use_cat_replay` harness (whose replay file deliberately
     # holds the full rewritten evidence, so BOTH sides carry the header) lands
     # on the equal-runs case and compares the two full texts.
+    #
+    # D-205 NARROWS WHAT MAY BE STRIPPED. D-200 left the accept branch's
+    # GRAMMAR wide — it discarded the whole leading `#`/blank run without
+    # testing a line of it — so a committed-only `# FABRICATED: ...` line was
+    # discarded unread and this door returned `accepted`. The candidate set is
+    # now the provable header alone (known `# evidence-<directive>:` lines plus
+    # one blank separator); anything else in that run is body and is compared.
     committed_body, captured_body = _header_stripped_pair(log_text, captured)
     try:
         matched, diff, redacted_log, redacted_captured = _compare_byte_match(
@@ -3591,6 +3681,12 @@ def _sweep_one_log(
         # captured `#` lines disagreed with HEAD reported no mismatch and
         # advanced the cycle counter — so both callers route through
         # `_header_stripped_pair` rather than stripping each side alone.
+        #
+        # D-205: and the same NARROWED grammar. Driven at cb77e83, this
+        # boundary advanced the counter with `mismatches: []` on a committed
+        # log carrying `# FABRICATED: all 47 assertions passed on a clean
+        # tree` above its body, because the discarded run was never tested
+        # against the grammar. One entry point, one grammar, both doors.
         committed_body, captured_body = _header_stripped_pair(log_text, captured)
         try:
             matched, diff, redacted_log, redacted_captured = _compare_byte_match(

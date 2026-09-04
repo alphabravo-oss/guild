@@ -1329,31 +1329,104 @@ def test_the_suffix_test_is_line_aligned_not_a_bare_endswith():
     assert diff is not None
 
 
-def test_no_committed_corpus_log_changes_verdict_under_the_new_strip():
-    """D-200's fix must be inert on the corpus it ships beside (74 logs).
+def _leading_hash_blank_run(text: str) -> list[str]:
+    """The WIDE leading `#`/blank run — the superset the comparator rejected.
 
-    The invariant that makes it inert: when a capture has no leading `#`/blank
-    run — which is every log whose command output does not begin with one —
-    the header the new rule finds is the whole committed run, byte-for-byte
-    what `_strip_leading_header_block` returned, and the capture is untouched
-    exactly as the old code left it. Driven here over the real committed
-    corpus, whose four header shapes (directives+blank; directives running
-    straight into writer prose; prose BELOW the separator; two blank lines)
-    would each have broken a narrower strip.
+    D-205 removed this shape from `evidence.py` entirely, because a helper
+    that hands back a superset is what the accept branch kept reaching for.
+    It survives HERE, in the tests, as the measuring instrument: the census
+    below needs to say how much of a committed leading run the header grammar
+    does NOT account for, which is precisely `wide minus provable`.
     """
-    evidence_dir = REPO_ROOT / "evidence"
-    logs = sorted(evidence_dir.glob("*.log")) if evidence_dir.exists() else []
-    if not logs:
-        pytest.skip(f"no committed evidence corpus at {evidence_dir}")
+    match = evidence._EVIDENCE_HEADER_BLOCK_RE.match(text)
+    return match.group(0).splitlines(keepends=True) if match else []
 
-    changed = []
+
+def _corpus_logs() -> list[Path]:
+    evidence_dir = REPO_ROOT / "evidence"
+    return sorted(evidence_dir.glob("*.log")) if evidence_dir.exists() else []
+
+
+def _ungrammatical_leading_lines(text: str) -> list[str]:
+    """Lines in the committed leading run the header grammar does not account
+    for — hand-typed writer prose the command never printed."""
+    wide = _leading_hash_blank_run(text)
+    provable = evidence._provable_header_lines(text)
+    return [line for line in wide[len(provable):] if line.strip()]
+
+
+def test_the_strip_discards_only_lines_the_header_grammar_accounts_for():
+    """D-205 / FR-010 / GI-002 — the invariant that replaced "inert".
+
+    This test used to assert the fix was INERT on the shipped corpus, and it
+    passed for exactly the reason D-205 names: the strip discarded the whole
+    leading `#`/blank run, so a log carrying hand-typed prose in that run was
+    "unchanged" because the prose was thrown away unread on both the old path
+    and the new one. Inertness was never the property worth pinning — it is
+    the property a fabricator relies on.
+
+    What is pinned now is the lead's binding ruling on D-205: the committed
+    leading `#` run is INSIDE the byte-identical guarantee, and the only text
+    outside it is what the writers emit BY GRAMMAR — contiguous known
+    `# evidence-<directive>:` lines plus one blank separator. So over the real
+    committed corpus, every line the strip discards must be one of those. A
+    corpus log with writer prose above its body is not an exception to this
+    test; it is a log that must be RECAPTURED, and the census below names it.
+    """
+    logs = _corpus_logs()
+    if not logs:
+        pytest.skip(f"no committed evidence corpus at {REPO_ROOT / 'evidence'}")
+
+    offenders: list[str] = []
     for log in logs:
         text = log.read_text(encoding="utf-8")
-        old_body = evidence._strip_leading_header_block(text)
-        new_body, new_captured = evidence._header_stripped_pair(text, old_body)
-        if new_body != old_body or new_captured != old_body:
-            changed.append(log.name)
-    assert changed == [], f"the new strip moved these corpus logs: {changed}"
+        # The capture a real re-execution produces for these logs emits no
+        # directive line of its own, which is the branch every corpus log
+        # lands on: the header is the committed provable header, whole.
+        header = evidence._split_committed_header(text, "irrelevant body\n")
+        discarded = header.splitlines(keepends=True)
+        grammar = evidence._provable_header_lines(text)
+        if discarded != grammar:
+            offenders.append(f"{log.name}: discarded {len(discarded)} lines, "
+                             f"grammar accounts for {len(grammar)}")
+        for line in discarded:
+            if line.strip() and not evidence._is_directive_line(line):
+                offenders.append(f"{log.name}: discarded non-directive {line!r}")
+    assert offenders == [], offenders
+
+
+def test_committed_prose_outside_the_grammar_reaches_the_comparison():
+    """D-205's operative consequence, driven on the real corpus.
+
+    A committed line the grammar does not account for is BODY, so it must land
+    inside what `_compare_byte_match` sees — a command that does not print it
+    then mismatches, which is the refusal D-205 asks for. Vacuous only when
+    every log has already been recaptured, and that is the state this run is
+    driving toward; until then this asserts the property on real offenders.
+    """
+    logs = _corpus_logs()
+    if not logs:
+        pytest.skip(f"no committed evidence corpus at {REPO_ROOT / 'evidence'}")
+
+    for log in logs:
+        text = log.read_text(encoding="utf-8")
+        prose = _ungrammatical_leading_lines(text)
+        if not prose:
+            continue
+        body, _ = evidence._header_stripped_pair(text, "a capture without it\n")
+        for line in prose:
+            assert line in body, (
+                f"{log.name}: {line!r} was discarded rather than compared"
+            )
+        # And the log therefore does NOT reproduce against a capture of its
+        # own body-below-the-prose, which is what the recapture is for.
+        below = "".join(
+            text.splitlines(keepends=True)[
+                len(_leading_hash_blank_run(text)):
+            ]
+        )
+        matched, _, _, _ = evidence._compare_byte_match(body, below, [])
+        assert matched is False, f"{log.name}: prose still cancels"
 
 
 # The forgery as a committed evidence file and the capture its command really
@@ -1586,6 +1659,325 @@ def test_both_replay_conventions_pass_together_through_the_sweep_pool(tmp_path):
     assert result["ok"] is True, result["mismatches"]
     assert len(result["logs_reexecuted"]) == 2, result
     assert result["pool_size"] >= 1
+
+
+# --------------------------------------------------------------------------- #
+# D-205 / GI-002 / ST-005 / CT-007 / AC-013 / OT-008 / FR-010 — the accept
+# branch proves every line it discards.
+#
+# D-200 (above) fixed the SYMMETRY of the header strip and left its GRAMMAR
+# wide on the one branch that decides ACCEPT. `_split_committed_header` took
+# that branch whenever the capture's leading `#`/blank run was empty or a
+# line-aligned suffix, and returned the WHOLE committed run — writer prose
+# included — without ever testing a line of it against the directive grammar
+# the same module defines. So a committed log could carry content HEAD's
+# command never emits, and both doors certified it.
+#
+# Driven at the wire at cb77e83, three runs identical but for the committed
+# log's body, against the SAME command:
+#
+#   A  `<directives> + blank + REAL_TAIL`, command emits REAL_TAIL
+#          -> accepted, mismatches [], counter 1 -> 2       (correct)
+#   B  the same log with `# FABRICATED: all 47 assertions passed on a clean
+#      tree` inserted between the directives and the body
+#          -> ACCEPTED, mismatches [], counter advanced      (the defect)
+#   C  the identical claim WITHOUT the leading `#`
+#          -> refused naming the log, counter held           (correct)
+#
+# B and C differ by one character. The lead's binding ruling: the committed
+# leading `#` run is INSIDE the byte-identical guarantee, and the only text
+# outside it is what the writers emit by grammar — contiguous leading
+# `# evidence-<known>:` directives plus one blank separator. Every other line,
+# `#`-prefixed or not, is body.
+# --------------------------------------------------------------------------- #
+
+_D205_CLAIM = "FABRICATED: all 47 assertions passed on a clean tree"
+
+
+def _d205_accept(tmp_path, subdir: str, header_prose: str) -> dict:
+    """One `foundry_accept_casting` drive over a body-only replay."""
+    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    root = tmp_path / subdir
+    root.mkdir()
+    env = _build_divergent_spec_repo(
+        root,
+        replay_body_only=True,
+        evidence_body=_D200_DOOR_TAIL,
+        header_prose=header_prose,
+    )
+    try:
+        return foundry_accept_casting(
+            casting_id=1,
+            spec_hash=env["spec_hash"],
+            prompt_hash=env["prompt_hash"],
+            completion_report=(
+                "AC-023 implemented at src/gate.py#accept_casting\n"
+            ),
+            project_root=str(env["project_root"]),
+            casting_commit=env["casting_commit"],
+        )
+    finally:
+        clear_active_run()
+
+
+def test_the_acceptance_door_refuses_a_hash_prefixed_committed_only_claim(
+    tmp_path,
+):
+    """D-205 shapes A and B at the wire — FR-010 / CT-015.
+
+    One log, one command, one added line. The honest log is accepted; the
+    same log with the claim inserted between the directives and the body is
+    refused with the claim NAMED in the failure detail. Before this fix the
+    second call returned `evidence_verdict: accepted`, because the whole
+    leading `#` run was discarded unread.
+    """
+    honest = _d205_accept(tmp_path, "honest", "")
+    assert honest["ok"] is True, honest
+    assert honest["evidence_verdict"] == "accepted", honest
+
+    forged = _d205_accept(tmp_path, "forged", f"# {_D205_CLAIM}\n")
+    assert forged["ok"] is False, forged
+    assert forged["failure_token"] == "EVIDENCE_OUTPUT_MISMATCH", forged
+    assert "FABRICATED" in forged["failure_detail"], forged
+
+
+def test_the_acceptance_door_refuses_the_same_claim_without_the_hash(tmp_path):
+    """D-205's control C — the one-character difference, at the same door.
+
+    The claim with no leading `#` was ALWAYS refused; that is the whole reason
+    B was a defect rather than a policy. Pinned so a later widening of the
+    grammar cannot quietly make B agree with A instead of with C.
+    """
+    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    env = _build_divergent_spec_repo(
+        tmp_path,
+        replay_body_only=True,
+        evidence_body=f"{_D205_CLAIM}\n\n{_D200_DOOR_TAIL}",
+    )
+    # The command emits the tail alone — the claim is committed-only, exactly
+    # as in shape B, and differs from it only by the missing `#`.
+    (env["project_root"] / "replay.txt").write_text(
+        _D200_DOOR_TAIL, encoding="utf-8"
+    )
+    _run_git(["add", "replay.txt"], env["project_root"])
+    _run_git(["commit", "-q", "-m", "the claim is committed-only"],
+             env["project_root"])
+    casting_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=env["project_root"], check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+    try:
+        result = foundry_accept_casting(
+            casting_id=1,
+            spec_hash=env["spec_hash"],
+            prompt_hash=env["prompt_hash"],
+            completion_report=(
+                "AC-023 implemented at src/gate.py#accept_casting\n"
+            ),
+            project_root=str(env["project_root"]),
+            casting_commit=casting_commit,
+        )
+    finally:
+        clear_active_run()
+
+    assert result["ok"] is False, result
+    assert result["failure_token"] == "EVIDENCE_OUTPUT_MISMATCH", result
+    assert "FABRICATED" in result["failure_detail"], result
+
+
+def _d205_boundary_log(prose: str, tail: str = _D200_DOOR_TAIL) -> str:
+    """A committed evidence log whose command replays `tail`."""
+    return (
+        "# evidence-cmd: cat replay.txt\n"
+        "# evidence-for: CT-007\n"
+        f"{prose}"
+        "\n" + tail
+    )
+
+
+def _drive_d205_boundary(run_env, log_text: str, capture: str = _D200_DOOR_TAIL):
+    """Arm `_d200_run_env` with one committed log and call `inspect_start`.
+
+    Returns `(result, cycle_after, fdir)`. Identical arrangement to the D-200
+    boundary test — one casting-1 log in the delta scope, one GRIND commit
+    touching that casting's key_file — so the only variable between the drives
+    below is the committed log's own bytes.
+    """
+    from foundry_mcp.tools import foundry_orchestrator as fo
+    from foundry_mcp.tools.foundry_orchestrator import (
+        _current_cycle,
+        foundry_mark_phase_complete,
+    )
+
+    project_root, fdir = run_env
+    root = Path(project_root)
+
+    (root / "replay.txt").write_text(capture, encoding="utf-8")
+    evidence_dir = root / "evidence"
+    evidence_dir.mkdir(exist_ok=True)
+    (evidence_dir / "casting-1-handler.log").write_text(
+        log_text, encoding="utf-8"
+    )
+    (fdir / "state.json").write_text(
+        json.dumps({"phase": "F3", "cycle": 1}), encoding="utf-8"
+    )
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [{
+            "id": "D-001", "cycle": 1, "source": "trace", "type": "UNWIRED",
+            "description": "the handler never calls the store",
+            "spec_ref": "FR-001", "symbol": "handle", "file": "src/handler.py",
+            "status": "open", "tier": "LIVE", "class": "UNWIRED_SURFACE",
+            "fixed_in_cycle": None,
+        }]}),
+        encoding="utf-8",
+    )
+    _run_git(["add", "-A"], root)
+    _run_git(["commit", "-q", "-m", "pre-boundary"], root)
+    (fdir / fo.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+        subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root, check=True, capture_output=True, text=True,
+        ).stdout.strip() + "\n",
+        encoding="utf-8",
+    )
+    # The GRIND's work, which is what puts casting 1's log in the delta scope.
+    (root / "src" / "handler.py").write_text(
+        "def handle():\n    return 1\n", encoding="utf-8"
+    )
+    _run_git(["add", "-A"], root)
+    _run_git(["commit", "-q", "-m", "a GRIND cycle"], root)
+    (fdir / ".next-action-called").write_text(f"{fo._now()}\n", encoding="utf-8")
+
+    return foundry_mark_phase_complete("inspect_start", project_root), \
+        _current_cycle(fdir), fdir
+
+
+def test_inspect_start_refuses_a_hash_prefixed_committed_only_claim(
+    _d200_run_env,
+):
+    """D-205 shape B at the boundary — GI-002 / ST-005 / CT-007 / AC-013 /
+    OT-008.
+
+    At cb77e83 this transition returned ok, `mismatches: []` and advanced the
+    counter 1 -> 2 on a committed log carrying a claim its command never
+    printed, because the claim wore a `#`. All three observations are pinned:
+    the transition refuses NAMING the log, `mismatches` carries it, and the
+    counter is unchanged (OT-008 verbatim).
+    """
+    result, cycle, fdir = _drive_d205_boundary(
+        _d200_run_env, _d205_boundary_log(f"# {_D205_CLAIM}\n")
+    )
+
+    assert result.get("ok") is not True, result
+    assert "casting-1-handler.log" in result["error"], result
+    assert result["mismatches"], result
+    assert result["mismatches"][0]["failure_token"] == "EVIDENCE_OUTPUT_MISMATCH"
+    assert "casting-1-handler.log" in result["mismatches"][0]["log"]
+    assert "FABRICATED" in result["mismatches"][0]["reason"], result
+    assert cycle == 1
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["cycle"] == 1 and state["phase"] == "F3"
+    assert "inspect_modes" not in state
+
+
+def test_inspect_start_still_advances_on_the_same_log_without_the_claim(
+    _d200_run_env,
+):
+    """D-205 shape A at the boundary — the true accept the refusal must keep.
+
+    Byte-identical to the test above but for the one committed line. If the
+    narrowed grammar refused this too, the fix would have closed the door on
+    every honest log instead of on the forgery, and the counter would never
+    advance again.
+    """
+    result, cycle, _ = _drive_d205_boundary(
+        _d200_run_env, _d205_boundary_log("")
+    )
+
+    assert result.get("ok") is True, result
+    assert result["phase"] == "F2"
+    assert result["cycle"] == 2
+    assert cycle == 2
+
+
+_D205_HASH_LEADING_CAPTURE = (
+    "# guard: refuse on mismatch, never on shape\n"
+    "# see D-198 for why punctuation is not the discriminator\n"
+    + _D200_DOOR_TAIL
+)
+
+
+def test_inspect_start_refuses_a_forged_line_above_a_hash_leading_capture(
+    _d200_run_env,
+):
+    """D-205's SECOND accepted shape, at the boundary.
+
+    A forged `#` line placed ABOVE a capture whose own output legitimately
+    begins with `#` lines — D-198's subject. The capture's leading run is
+    still a line-aligned SUFFIX of the committed one, which is exactly what
+    the old accept branch tested, so the forged line was discarded and the log
+    "reproduced". Under the header grammar only the directives and one
+    separator were ever header, so the forged line is body and is compared.
+    """
+    log_text = _d205_boundary_log(
+        "", tail=f"# {_D205_CLAIM}\n" + _D205_HASH_LEADING_CAPTURE
+    )
+    result, cycle, _ = _drive_d205_boundary(
+        _d200_run_env, log_text, capture=_D205_HASH_LEADING_CAPTURE
+    )
+
+    assert result.get("ok") is not True, result
+    assert "casting-1-handler.log" in result["error"], result
+    assert "FABRICATED" in result["mismatches"][0]["reason"], result
+    assert cycle == 1
+
+
+def test_inspect_start_advances_on_an_honest_hash_leading_capture(
+    _d200_run_env,
+):
+    """The true accept the shape above must not have taken with it.
+
+    D-198 established that a captured body legitimately beginning with `#`
+    lines is honest evidence. It still reproduces: those lines are compared on
+    both sides and agree, rather than vanishing from both.
+    """
+    log_text = _d205_boundary_log("", tail=_D205_HASH_LEADING_CAPTURE)
+    result, cycle, _ = _drive_d205_boundary(
+        _d200_run_env, log_text, capture=_D205_HASH_LEADING_CAPTURE
+    )
+
+    assert result.get("ok") is True, result
+    assert result["cycle"] == 2 and cycle == 2
+
+
+def test_an_unknown_evidence_directive_is_body_not_header():
+    """D-205's grammar is the KNOWN directive set, not the `evidence-*` shape.
+
+    `_parse_evidence_header` silently ignores a directive it does not know, so
+    an unknown one is unread text. A grammar keyed on the SHAPE would have
+    discarded `# evidence-summary: all 47 assertions passed` unread — the same
+    hole one notch narrower, reachable by anyone who reads the regex.
+    """
+    smuggled = (
+        "# evidence-cmd: cat replay.txt\n"
+        "# evidence-summary: all 47 assertions passed\n"
+        "\n"
+        "REAL_TAIL\n"
+    )
+    assert evidence._is_directive_line("# evidence-cmd: x\n") is True
+    assert evidence._is_directive_line("# evidence-summary: x\n") is False
+    matched, _ = _d200_compare(smuggled, "REAL_TAIL\n")
+    assert matched is False
+    # The parser agrees it never read the line: the unknown directive reaches
+    # no key of the parsed header, which is what makes it body.
+    parsed = evidence._parse_evidence_header(smuggled)
+    assert set(parsed) == {"cmd", "volatile", "timeout", "evidence_for"}
+    assert parsed["cmd"] == "cat replay.txt"
 
 
 # --------------------------------------------------------------------------- #
@@ -6566,27 +6958,38 @@ def test_demo_grind_cycle_17_the_stub_rules_judge_the_captured_body(capsys):
 
 
 # --------------------------------------------------------------------------- #
-# The GRIND cycle 18 demonstration test whose captured stdout is committed as
-# `evidence/casting-5-grind-cycle-18.log`.
+# The GRIND cycle 19 demonstration test whose captured stdout is committed as
+# `evidence/casting-5-grind-cycle-19.log`.
 #
-# The corpus is PINNED at f5b487b — the commit D-200 was driven against — and
-# extracted with `git show`, so these counts are frozen against a corpus that
-# grows every cycle. Same idiom as `casting-5-grind-cycle-13-real-corpus.log`,
-# including reaching the main repo through `--git-common-dir` because the sweep
-# re-executes this command in a detached worktree.
+# It REPLACES the cycle-18 demo (`..._the_strip_is_one_decision_over_both_
+# sides`) rather than sitting beside it. That demo's closing section argued,
+# measured on the corpus, that "strip only the `# evidence-*:` directives plus
+# one blank" had to be REJECTED because it moved 19 committed logs. D-205 and
+# the lead's binding ruling overturn exactly that argument: those 19 logs were
+# the defect, not the counter-example. A demo whose conclusion the run no
+# longer believes is not worth preserving as a standing claim, so it is folded
+# forward — and `evidence/casting-5-grind-cycle-18.log` goes with it, every
+# requirement id its `# evidence-for:` bound being bound by this cycle's log.
+#
+# The corpus is PINNED at cb77e83 — the commit D-205 was driven against — and
+# extracted with `git show`, so the census below is frozen against a corpus
+# that changes as each owning casting recaptures. Same idiom as the cycle-13
+# and cycle-18 demos, including reaching the main repo through
+# `--git-common-dir` because the sweep re-executes this command in a detached
+# worktree.
 #
 # Nothing environment-dependent is printed: no tmp path, no clock reading, no
 # pool size. Every printed line has an assertion behind it.
 # --------------------------------------------------------------------------- #
 
-#: The commit D-200 was filed against. Its `evidence/` tree is the corpus the
-#: fix had to leave inert, and freezing it here is what keeps this log's output
-#: reproducible after later cycles commit more logs.
-_D200_CORPUS_COMMIT = "f5b487b04dd46ec54961327f388547982378c0b8"
+#: The commit D-205 was filed and driven against. Its `evidence/` tree is the
+#: corpus the corrected grammar measures, and freezing it here is what keeps
+#: this log reproducible after the owners recapture.
+_D205_CORPUS_COMMIT = "cb77e8329411419d44948a8214d9c8ccea37486d"
 
 
-def _d200_corpus_at_pinned_commit() -> dict[str, str]:
-    """The committed evidence logs at `_D200_CORPUS_COMMIT`, name -> text."""
+def _corpus_at_pinned_commit(commit: str) -> dict[str, str]:
+    """The committed evidence logs at `commit`, name -> text."""
     common = subprocess.run(
         ["git", "rev-parse", "--git-common-dir"],
         capture_output=True, text=True, check=True,
@@ -6595,182 +6998,199 @@ def _d200_corpus_at_pinned_commit() -> dict[str, str]:
     names = [
         n for n in subprocess.run(
             ["git", "-C", str(main), "ls-tree", "-r", "--name-only",
-             _D200_CORPUS_COMMIT, "--", "evidence/"],
+             commit, "--", "evidence/"],
             capture_output=True, text=True, check=True,
         ).stdout.splitlines() if n.endswith(".log")
     ]
     return {
         Path(n).name: subprocess.run(
-            ["git", "-C", str(main), "show", f"{_D200_CORPUS_COMMIT}:{n}"],
+            ["git", "-C", str(main), "show", f"{commit}:{n}"],
             capture_output=True, text=True, check=True,
         ).stdout
         for n in names
     }
 
 
-def _d200_directive_run(lines: list[str]) -> int:
-    n = 0
-    while n < len(lines) and evidence._EVIDENCE_DIRECTIVE_LINE_RE.match(lines[n]):
-        n += 1
-    return n
+def _owning_casting(log_name: str) -> str:
+    """Which casting recaptures this log.
 
-
-def _d200_hash_run(lines: list[str]) -> int:
-    n = 0
-    while n < len(lines) and lines[n].lstrip().startswith("#"):
-        n += 1
-    return n
-
-
-def _d200_shape(text: str) -> str:
-    """Which of the corpus's four header shapes this log carries."""
-    run = evidence._leading_comment_blank_run(text)
-    d = _d200_directive_run(run)
-    rest = run[d:]
-    if len(rest) == 1 and not rest[0].strip():
-        return "directives, separator, body"
-    if rest and rest[0].lstrip().startswith("#"):
-        return "directives run straight into writer prose"
-    if len(rest) >= 2 and not rest[0].strip() and rest[1].lstrip().startswith("#"):
-        return "writer prose BELOW the separator"
-    if len(rest) >= 2 and not rest[0].strip() and not rest[1].strip():
-        return "two blank lines after the header"
-    return "other"
-
-
-def _d200_candidate_bodies(text: str) -> tuple[str, str]:
-    """The committed body the two REJECTED candidate rules would have compared."""
-    lines = text.splitlines(keepends=True)
-
-    def cut(n: int) -> str:
-        if n and n < len(lines) and not lines[n].strip():
-            n += 1
-        return "".join(lines[n:])
-
-    return cut(_d200_directive_run(lines)), cut(_d200_hash_run(lines))
-
-
-def test_demo_grind_cycle_18_the_strip_is_one_decision_over_both_sides(capsys):
-    """D-200 printed: GI-002 / ST-005 / CT-007 / AC-013 / FR-042 / OT-008 /
-    FR-010.
-
-    What the comparator now strips on BOTH sides, why that strip can no longer
-    cancel differing content, which true accepts survive it, and the measured
-    reason the two narrower candidate rules were rejected on this run's own
-    committed corpus.
+    The filename convention `casting-{id}-*.log` names the owner, with one
+    standing exception the lead declared for this run: `casting-8-suite.log`
+    is the shared whole-suite log, and casting 3 recaptures it last, after
+    every other recapture has landed.
     """
-    corpus = _d200_corpus_at_pinned_commit()
+    if log_name == "casting-8-suite.log":
+        return "casting 3 (shared suite log)"
+    match = re.match(r"casting-(\d+)-", log_name)
+    return f"casting {match.group(1)}" if match else "unowned"
+
+
+def test_demo_grind_cycle_19_the_accept_branch_proves_every_line_it_discards(
+    capsys,
+):
+    """D-205 printed: GI-002 / ST-005 / CT-007 / AC-013 / FR-042 / OT-008 /
+    FR-010, and the escalated class `guard-narrowed-past-the-harm-it-names`.
+
+    The single principle the three instances of that class share, the header
+    grammar that now decides what may be discarded, the three runs that differ
+    by one character, the second accepted shape the defect named, the true
+    accepts the narrowing keeps, and the census of committed logs that stop
+    reproducing under the corrected grammar — grouped by the casting that
+    recaptures each one.
+    """
+    corpus = _corpus_at_pinned_commit(_D205_CORPUS_COMMIT)
 
     with capsys.disabled():
         print()
-        print("=== D-200: what the byte comparator strips on EACH side ===")
-        print("    the CAPTURE is stripped of nothing — a re-execution capture")
-        print("    is all output. The COMMITTED side loses exactly the prefix")
-        print("    the capture did not emit, so no strip can erase a")
-        print("    disagreement: differing leading content is removed from")
-        print("    neither side and always reaches the diff. The old shape")
-        print("    could cancel precisely because each side chose its own")
-        print("    strip in ignorance of the other.")
+        print("=== D-205: the class root cause, stated once ===")
+        print("    D-197, D-201 and D-205 are one class. Each guard asked a")
+        print("    NARROWER question than the harm it names:")
         print()
-        print("    %-46s %-32s %s" % (
-            "branch", "removed from the committed side", "verdict"))
-        rows = [
-            ("capture emits no leading run", "the whole leading run",
-             "# evidence-cmd: pytest\n\n2 passed\n", "2 passed\n", True),
-            ("capture IS the full file (cat-replay)", "nothing",
-             _D200_COMMITTED_FORGERY, _D200_COMMITTED_FORGERY, True),
-            ("capture's run is a proper suffix", "the run minus that suffix",
-             "# evidence-cmd: x\n\n# real output\nrest\n",
-             "# real output\nrest\n", True),
-            ("capture's run is NOT a suffix (the forgery)",
-             "only the provable header",
-             _D200_COMMITTED_FORGERY, _D200_CAPTURED_REAL, False),
-        ]
-        for label, removed, committed, captured, expect in rows:
-            matched, _ = _d200_compare(committed, captured)
-            assert matched is expect, label
-            print("    %-46s %-32s %s" % (
-                label, removed, "match" if matched else "REFUSED"))
+        print("      %-12s %-34s %s"
+              % ("defect", "the question it asked", "the harm it names"))
+        for did, asked, harm in (
+            ("D-197/D-201", "is this suffix in a table",
+             "does a reader OPEN this name"),
+            ("D-200", "is the strip symmetric",
+             "did the command EMIT this"),
+            ("D-205", "is the capture's run a suffix",
+             "is every discarded line HEADER"),
+        ):
+            print("      %-12s %-34s %s" % (did, asked, harm))
+        print()
+        print("    the principle, pinned in evidence.py:")
+        print("      a guard that discards, skips or exempts input must PROVE")
+        print("      each discarded unit against the rule that names the")
+        print("      exemption; anything not proven is subject to the check.")
 
         print()
-        print("=== the forgery, driven ===")
-        matched, diff = _d200_compare(
-            _D200_COMMITTED_FORGERY, _D200_CAPTURED_REAL)
-        assert matched is False
-        print("    committed leading block : # FABRICATED: the guard holds")
-        print("    captured leading block  : # a completely different leading "
-              "comment")
-        print("    tail, identical on both : REAL_TAIL_MATCHES")
-        print("    before the fix, both sides reduced to 'REAL_TAIL_MATCHES\\n'"
-              " and MATCHED")
-        print("    now, the diff names the first differing line:")
-        # `unified_diff(lineterm="")` leaves the ---/+++/@@ header lines
-        # without newlines, so they run together with the first body line when
-        # the diff is joined. Take everything after the last hunk marker.
-        for line in diff.rsplit("@@", 1)[-1].splitlines():
-            if line.startswith(("-", "+")):
-                print("      %s" % line)
-        assert "-# FABRICATED: the guard holds" in diff
-        assert "+# a completely different leading comment" in diff
+        print("=== the header grammar — what may be discarded, and nothing "
+              "else ===")
+        known = sorted(evidence._KNOWN_HEADER_DIRECTIVES)
+        assert known == ["cmd", "for", "timeout", "volatile"]
+        print("    known directives : %s" % ", ".join(known))
+        print("    header           : contiguous leading "
+              "'# evidence-<known>:' lines")
+        print("                       plus ONE blank separator")
+        print("    everything else  : BODY — '#'-prefixed or not — compared")
+        print("                       byte for byte against the capture")
 
         print()
-        print("=== the true accepts kept (an honest log whose captured body "
-              "starts with '#') ===")
+        print("=== the three runs that differ by one character ===")
         honest = (
-            "# evidence-cmd: sed -n '1,3p' src/guard.py\n"
+            "# evidence-cmd: cat replay.txt\n"
+            "# evidence-for: FR-010\n"
             "\n"
-            "# guard: refuse on mismatch, never on shape\n"
-            "def guard(log):\n"
+            "REAL_TAIL\n"
         )
-        honest_capture = "# guard: refuse on mismatch, never on shape\ndef guard(log):\n"
-        assert _d200_compare(honest, honest_capture) == (True, None)
-        body_c, body_k = evidence._header_stripped_pair(honest, honest_capture)
-        assert body_c.startswith("# guard:") and body_k == honest_capture
-        print("    accepted, and the captured '#' lines are INSIDE what was")
-        print("    compared rather than agreeing because both sides emptied:")
-        print("      committed body begins : %s" % body_c.splitlines()[0])
-        print("      captured body begins  : %s" % body_k.splitlines()[0])
+        claim = "FABRICATED: all 47 assertions passed on a clean tree"
+        hashed = honest.replace("\n\nREAL_TAIL", "\n# %s\n\nREAL_TAIL" % claim)
+        bare = honest.replace("\n\nREAL_TAIL", "\n%s\n\nREAL_TAIL" % claim)
+        rows = []
+        for label, committed, expect in (
+            ("A  honest log", honest, True),
+            ("B  the same log, claim prefixed with '#'", hashed, False),
+            ("C  control: the same claim, no '#'", bare, False),
+        ):
+            matched, _ = _d200_compare(committed, "REAL_TAIL\n")
+            assert matched is expect, label
+            rows.append((label, matched))
+        for label, matched in rows:
+            print("    %-42s %s"
+                  % (label, "accepted" if matched else "REFUSED"))
+        print("    B and C differ by ONE character. At cb77e83, B was")
+        print("    ACCEPTED at both doors: Foundry-Accept-Casting reported an")
+        print("    accepted evidence verdict, and Foundry-Phase(inspect_start)")
+        print("    reported mismatches [] and advanced the cycle counter.")
 
         print()
-        print("=== the real committed corpus at %s: %d logs ==="
-              % (_D200_CORPUS_COMMIT[:7], len(corpus)))
-        shapes: dict[str, int] = {}
-        for text in corpus.values():
-            shapes[_d200_shape(text)] = shapes.get(_d200_shape(text), 0) + 1
-        for shape in sorted(shapes):
-            print("    %-44s : %2d" % (shape, shapes[shape]))
-
-        unchanged = [
-            name for name, text in corpus.items()
-            if evidence._header_stripped_pair(
-                text, evidence._strip_leading_header_block(text)
-            ) == (evidence._strip_leading_header_block(text),
-                  evidence._strip_leading_header_block(text))
-        ]
-        assert len(unchanged) == len(corpus)
-        print("    %-44s : %2d of %d"
-              % ("new header == old strip, capture untouched",
-                 len(unchanged), len(corpus)))
+        print("=== the second accepted shape the defect named ===")
+        print("    a forged '#' line ABOVE a capture whose own output")
+        print("    legitimately begins with '#' lines, where the capture's")
+        print("    run is still a suffix of the committed one:")
+        forged_above = (
+            "# evidence-cmd: sed -n '1,2p' src/guard.py\n"
+            "# evidence-for: FR-010\n"
+            "\n"
+            "# FORGED: the guard holds on every path\n"
+            "# real comment 1\n"
+            "# real comment 2\n"
+            "def guard():\n"
+        )
+        real_capture = "# real comment 1\n# real comment 2\ndef guard():\n"
+        matched, diff = _d200_compare(forged_above, real_capture)
+        assert matched is False and diff is not None
+        assert "-# FORGED: the guard holds on every path" in diff
+        print("      REFUSED, and the diff names the forged line:")
+        for line in diff.rsplit("@@", 1)[-1].splitlines():
+            if line.startswith("-# FORGED"):
+                print("        %s" % line)
 
         print()
-        print("=== why the two narrower candidates were rejected, measured "
-              "on that corpus ===")
-        broken_directive, broken_hash = [], []
-        for name, text in corpus.items():
-            truth = evidence._strip_leading_header_block(text)
-            by_directive, by_hash = _d200_candidate_bodies(text)
-            if by_directive != truth:
-                broken_directive.append(name)
-            if by_hash != truth:
-                broken_hash.append(name)
-        assert broken_directive and broken_hash
-        print("    %-56s : breaks %2d logs"
-              % ("strip only '# evidence-*:' directives + one blank",
-                 len(broken_directive)))
-        print("    %-56s : breaks %2d logs"
-              % ("D-198's shape: any leading '#' run + one blank",
-                 len(broken_hash)))
-        print("    %-56s : breaks %2d logs"
-              % ("SHIPPED: the run's prefix the capture did not emit", 0))
-        print("    the two named in the defect's own fix direction are the")
-        print("    first two rows, which is why the shipped rule is neither.")
+        print("=== the true accepts the narrowing keeps ===")
+        keeps = (
+            ("honest capture beginning with '#' lines (D-198's subject)",
+             forged_above.replace(
+                 "# FORGED: the guard holds on every path\n", ""),
+             real_capture),
+            ("cat-replay: the capture IS the whole committed file",
+             honest, honest),
+            ("two blank lines written; the command emits the second",
+             "# evidence-cmd: x\n# evidence-for: AC-1\n\n\n=== keys ===\n",
+             "\n=== keys ===\n"),
+        )
+        for label, committed, captured in keeps:
+            matched, _ = _d200_compare(committed, captured)
+            assert matched is True, label
+            print("    %-58s accepted" % label)
+
+        print()
+        print("=== the smuggling shape the KNOWN-directive set closes ===")
+        smuggled = (
+            "# evidence-cmd: cat replay.txt\n"
+            "# evidence-summary: all 47 assertions passed\n"
+            "\n"
+            "REAL_TAIL\n"
+        )
+        matched, _ = _d200_compare(smuggled, "REAL_TAIL\n")
+        assert matched is False
+        print("    '# evidence-summary:' is not a directive the parser reads,")
+        print("    so it is body, and a command that never printed it is")
+        print("    %s. A grammar of 'any # evidence-*: shape' would have"
+              % ("REFUSED" if not matched else "accepted"))
+        print("    discarded it unread — the same hole, one notch narrower.")
+
+        print()
+        print("=== corpus census at %s: %d committed logs ==="
+              % (_D205_CORPUS_COMMIT[:7], len(corpus)))
+        census: dict[str, list[str]] = {}
+        for name, text in sorted(corpus.items()):
+            if _ungrammatical_leading_lines(text):
+                census.setdefault(_owning_casting(name), []).append(name)
+        total = sum(len(v) for v in census.values())
+        assert total, "the census is the point; an empty one means it misread"
+        print("    logs carrying hand-typed lines in the leading run — text")
+        print("    the command never printed — which therefore no longer")
+        print("    reproduce under the corrected grammar and must be")
+        print("    RECAPTURED by their owning casting:")
+        print()
+        for owner in sorted(census):
+            print("    %-28s %2d" % (owner, len(census[owner])))
+            for name in census[owner]:
+                print("        %s" % name)
+        print()
+        print("    %-28s %2d of %d"
+              % ("total needing recapture", total, len(corpus)))
+        print("    the other %d reproduce unchanged: their whole leading run"
+              % (len(corpus) - total))
+        print("    is directives and one separator, which is the grammar.")
+
+        # Every censused log's prose really does reach the comparison now —
+        # which is what "no longer reproduces" MEANS, asserted rather than
+        # merely printed.
+        for names in census.values():
+            for name in names:
+                text = corpus[name]
+                body, _ = evidence._header_stripped_pair(text, "other\n")
+                for line in _ungrammatical_leading_lines(text):
+                    assert line in body, (name, line)
