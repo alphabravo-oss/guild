@@ -142,6 +142,36 @@ def _hash_str(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+def _reserved_event_key(event: object) -> str:
+    """The spelling-insensitive key of a handoff event name.
+
+    Casefolded with every non-alphanumeric character dropped, so ``lead_fix``,
+    ``LEAD_FIX``, ``" lead_fix "``, ``Lead-Fix``, ``lead fix`` and ``leadfix``
+    all key to ``leadfix`` — one key per NAME, not per spelling of it. The
+    equivalence stops at the word: ``lead_fixes`` keys to ``leadfixes`` and
+    ``lead_fix_note`` to ``leadfixnote``, so a genuinely different event name
+    is still a different key and still admitted.
+
+    A non-string keys to ``""``, which is in no reserved set. The comparison
+    this replaced was ``==``, which answered False for a non-string rather
+    than raising, and a rung that starts raising where it used to return would
+    put an exception across the MCP boundary — the one shape a tool never
+    takes.
+    """
+    if not isinstance(event, str):
+        return ""
+    return "".join(ch for ch in event if ch.isalnum()).casefold()
+
+
+#: D-227 / GI-003 — the handoff events only the SERVER writes, keyed by
+#: ``_reserved_event_key`` so the set holds each event's NAME rather than one
+#: chosen spelling of it. Built from the vocab constant, never re-typed: the
+#: token is casting 1's to name and this module's to reserve.
+_SERVER_WRITTEN_EVENT_KEYS: frozenset[str] = frozenset(
+    {_reserved_event_key(HANDOFF_EVENT_LEAD_FIX)}
+)  # 1 event
+
+
 def _append_handoff_record(
     fdir: Path,
     entry: dict,
@@ -477,10 +507,10 @@ def foundry_handoff(
         event: One of spec_to_casting, casting_to_teammate, teammate_to_accepted,
             inspect_to_grind, grind_to_inspect, assay_to_done, spec_reread,
             or a custom short name — with one RESERVED exception.
-            ``HANDOFF_EVENT_LEAD_FIX`` is refused here: that token names a
-            record only the server writes, through
+            ``HANDOFF_EVENT_LEAD_FIX``, in ANY spelling, is refused here:
+            that token names a record only the server writes, through
             ``record_lead_fix_handoff`` on a successful Foundry-Fix. See the
-            D-106 block below.
+            D-106 / D-227 block below.
         source: Path to the source artifact (relative to project root). If the
             path exists, its hash is recorded automatically.
         destination: Path to the destination artifact.
@@ -525,17 +555,47 @@ def foundry_handoff(
     #
     # The rung is FIRST, ahead of the run-dir resolution, because it needs
     # nothing but the argument — the house precondition-ladder shape, cheapest
-    # and most specific rung first. Reserving one token rather than a set:
-    # `lead_fix` is the only event the server writes today, and a frozenset of
-    # one in vocab.py (casting 1's file) would be the same comparison with a
-    # cross-module dependency bolted onto it. When a second server-written
-    # event lands, this becomes a membership test against a named set.
-    if event == HANDOFF_EVENT_LEAD_FIX:
+    # and most specific rung first.
+    #
+    # D-227 — THE RUNG RESERVES THE NAME, NOT ONE SPELLING OF IT.
+    #
+    # It was written as `event == HANDOFF_EVENT_LEAD_FIX`, a bare equality
+    # with no normalisation, on the reasoning that `lead_fix` is the only
+    # event the server writes and a frozenset of one would be the same
+    # comparison with a cross-module dependency bolted on. Both halves of that
+    # were wrong. Driven through this door on a scratch run: `event="lead_fix"`
+    # was refused as reserved while `event="LEAD_FIX"`, `event=" lead_fix "`
+    # and `event="Lead_Fix"` each returned ok=True and were appended, putting
+    # the headings `## LEAD_FIX`, `##  lead_fix ` and `## Lead_Fix` into
+    # handoffs.md beside the server-written ones, indistinguishable from them
+    # to the human who reads that file. report.json stayed honest — the report
+    # reader filters on the exact token — so the bypass reached the
+    # human-readable mirror only, which is the whole of the harm and enough of
+    # it: GI-003's named violation is "a lead fix recorded only as free prose
+    # in a hand-written handoff", and a forged `## LEAD_FIX` block IS that.
+    #
+    # So the comparison is over `_reserved_event_key`, and the reserved side
+    # is the named set the sentence this replaced promised for "when a second
+    # server-written event lands" — brought forward, because the set is also
+    # what closes the spelling gap. The key folds case and every non-
+    # alphanumeric character, so each of the driven spellings plus `lead-fix`
+    # and `lead fix` keys to the reserved `leadfix`. It stops at the word:
+    # `lead_fixes` and `lead_fix_note` key elsewhere and are still admitted,
+    # so the refusal is bounded to exactly the name the server owns rather
+    # than to everything that mentions it. The set stays HERE rather than in
+    # vocab.py because vocab.py names the token and this module reserves it —
+    # two different jobs, and the second is this door's.
+    if _reserved_event_key(event) in _SERVER_WRITTEN_EVENT_KEYS:
+        spelling_note = (
+            ""
+            if event == HANDOFF_EVENT_LEAD_FIX
+            else f" — {event!r} is that same name in another spelling"
+        )
         return {
             "ok": False,
             "error": (
                 f"Refused: {HANDOFF_EVENT_LEAD_FIX!r} is a reserved handoff "
-                f"event. Only the server writes it, through "
+                f"event{spelling_note}. Only the server writes it, through "
                 f"record_lead_fix_handoff, on a successful Foundry-Fix with "
                 f"authored_by=lead."
             ),
@@ -546,7 +606,9 @@ def foundry_handoff(
                 "test it measured from the commit. GI-003 exists so a "
                 "lead-authored fix cannot be a hand-written claim, so writing "
                 "the record by hand is the one thing this door will not do. "
-                "For a note about a lead fix, use a different event name."
+                "For a note about a lead fix, use a different event NAME — a "
+                "different spelling of this one (case, spaces, hyphens) is "
+                "the same name and is refused the same way."
             ),
             "field": "event",
             "reserved_event": HANDOFF_EVENT_LEAD_FIX,

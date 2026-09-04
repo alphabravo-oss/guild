@@ -845,6 +845,55 @@ def test_the_reserved_rung_is_reached_before_the_run_is_resolved(run_env):
     )
 
 
+# --- D-227: the rung reserves the NAME, not one spelling of it ---------------
+@pytest.mark.parametrize(
+    "spelling",
+    ["LEAD_FIX", " lead_fix ", "Lead_Fix", "lead-fix", "lead fix", "leadfix"],
+)
+def test_every_spelling_of_the_reserved_name_is_refused(run_env, spelling):
+    """convergence GI-003 — 'a lead fix recorded only as free prose in a
+    hand-written handoff' is the named violation, and the rung that answers it
+    compared `event == HANDOFF_EVENT_LEAD_FIX` with no normalisation. Driven
+    through this door: 'lead_fix' was refused while 'LEAD_FIX', ' lead_fix '
+    and 'Lead_Fix' each returned ok=True and were appended, putting
+    '## LEAD_FIX', '##  lead_fix ' and '## Lead_Fix' into handoffs.md beside
+    the server-written blocks, indistinguishable to the human who reads that
+    file. The guard's subject was narrower than the harm it names."""
+    root, fdir = run_env
+
+    result = foundry_handoff(
+        event=spelling, summary="hand-written, never measured", project_root=root
+    )
+
+    assert result["ok"] is False, result
+    assert result["field"] == "event"
+    assert result["reserved_event"] == HANDOFF_EVENT_LEAD_FIX
+    assert repr(spelling) in result["error"], (
+        "the refusal must name the spelling that was passed, or a lead who "
+        "typed 'LEAD_FIX' reads an error quoting a token they did not use"
+    )
+
+    # A refusal that had already appended is not a refusal — and the mirror is
+    # the channel this defect actually reached.
+    assert _records(fdir) == []
+    assert not (fdir / "handoffs.md").exists()
+
+
+@pytest.mark.parametrize("name", ["lead_fixes", "lead_fix_note", "inspect_to_grind"])
+def test_a_name_that_merely_contains_the_reserved_word_is_still_admitted(run_env, name):
+    """The converse of the test above, and the reason it is here: a guard
+    widened until it cannot be evaded is worthless if it also swallows the
+    events the log exists to carry. The equivalence stops at the word — only
+    the reserved NAME is reserved, not everything that mentions it."""
+    root, fdir = run_env
+
+    result = foundry_handoff(event=name, summary="ordinary handoff", project_root=root)
+
+    assert result["ok"] is True, result
+    assert [r["event"] for r in _records(fdir)] == [name]
+    assert f"## {name} —" in (fdir / "handoffs.md").read_text(encoding="utf-8")
+
+
 def test_the_server_writer_still_appends_the_reserved_event(run_env):
     """The token is reserved TO the server, not retired. `Foundry-Fix`'s own
     writer must still land the record the F6 report reads, or reserving the
