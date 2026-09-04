@@ -5966,6 +5966,128 @@ def test_a_directory_occupying_an_artifact_name_is_refused_not_skipped(run_env):
 
 
 # --------------------------------------------------------------------------- #
+# D-195 — A VERIFIER'S SCRATCH DIRECTORY LOCKED EVERY DOOR.
+#
+# The rule above was `candidate.is_dir() and not candidate.suffix`: walk past a
+# directory only when its basename holds no dot. `Path("14.0.0").suffix` is
+# ".0", so hypothesis's unicode cache under `test_observations/generated/` was
+# opened as a run document, the read raised IsADirectoryError, and
+# `_artifact_guard` — at the top of all fourteen MCP entry points — named a
+# healthy run corrupt at every door at once. CT-012's errors cell for
+# Foundry-Next is verbatim "none; never blocks" and CT-013's for Foundry-Spend
+# is "none; unreported dispatches are listed, never refused"; both were broken
+# by a directory no reader ever opens.
+#
+# The four shapes below are PROVE's, driven at 4d705a1 and all four refused;
+# the fifth is the no-suffix control that was correctly silent, which is what
+# makes the discriminator the BASENAME rather than anything about the path.
+# --------------------------------------------------------------------------- #
+
+#: A directory name a tool leaves in a run tree that the old rule read as a
+#: document because its version number contains a dot, plus the control.
+_SCRATCH_DIRECTORIES = (
+    "test_observations/generated/.hypothesis/unicode_data/14.0.0",
+    "traces/scratch/v1.2",
+    "proofs/cache/node_modules/pkg-1.0.0",
+    "unicode_data/15.1.0",
+    ".hypothesis/examples",  # the no-suffix control: silent before and after
+)
+
+#: The three doors the lead and PROVE each drove and each found refused. Every
+#: one runs `_artifact_guard` first, so the refusal reached all of them at once.
+_GUARDED_DOORS = (
+    ("Foundry-Next", {}),
+    ("Foundry-Spend", {"agent": "casting-3", "phase": "F3",
+                       "tokens": 1000, "duration_ms": 60000}),
+    ("Foundry-Stream", {"stream": "trace", "cycle": 1, "items_checked": 3}),
+)
+
+
+@pytest.mark.parametrize("scratch", _SCRATCH_DIRECTORIES)
+def test_a_scratch_directory_does_not_make_the_run_unreadable(run_env, scratch):
+    """CT-012 verbatim: 'none; never blocks'. CT-013 verbatim: 'none;
+    unreported dispatches are listed, never refused'. D-195.
+
+    Membership is decided by whether a READER OPENS the path, never by whether
+    the basename carries punctuation. A directory holds no document a reader
+    decodes, so none of these five is a run artifact — and the run around them
+    is entirely valid, which is what makes any refusal here a false one.
+    """
+    project_root, fdir = run_env
+    _seed_run_artifacts(project_root, fdir)
+    (fdir / scratch).mkdir(parents=True)
+
+    assert fo._run_artifact_problems(fdir) == [], (
+        f"{scratch} is a directory; nothing opens it as a document"
+    )
+    assert fo._artifact_guard(fdir) is None
+
+
+@pytest.mark.parametrize("scratch", _SCRATCH_DIRECTORIES)
+@pytest.mark.parametrize("door, arguments", _GUARDED_DOORS)
+def test_a_scratch_directory_does_not_refuse_any_door_over_mcp(
+    run_env, monkeypatch, scratch, door, arguments
+):
+    """CT-012 / CT-013's errors columns, at the transport a client uses.
+
+    The guard-level assertion above is the cause; this is the harm. The lead
+    hit it on the live archive and cleared it by deleting the directory by
+    hand, and PROVE hit it a third time by copying the archive — so the pin is
+    over `request_handlers[CallToolRequest]`, where all three refusals were
+    observed, and not over the handler the SDK wraps.
+    """
+    import foundry_mcp.server as srv
+
+    project_root, fdir = run_env
+    _seed_run_artifacts(project_root, fdir)
+    (fdir / scratch).mkdir(parents=True)
+    monkeypatch.setattr(srv, "_project_root", project_root)
+
+    response = _drive_mcp(door, arguments)
+
+    assert "Run artifacts cannot be read" not in response, response[:600]
+    assert "corrupt_artifacts" not in response, response[:600]
+    assert Path(scratch).name not in response, response[:600]
+
+
+def test_a_directory_at_a_document_position_is_still_named(run_env):
+    """D-140 held against D-195's fix: the answer is not "skip every directory".
+
+    `castings/manifest.json` is a NESTED document position, so depth cannot be
+    the discriminator either — a reader opens that path, and a directory
+    sitting on it is the guard's business exactly as `state.json` is.
+    """
+    project_root, fdir = run_env
+    _seed_run_artifacts(project_root, fdir)
+    (fdir / "castings" / "manifest.json").unlink()
+    (fdir / "castings" / "manifest.json").mkdir()
+    # ...with a scratch directory of the D-195 shape sitting beside it.
+    (fdir / "traces" / "scratch" / "v1.2").mkdir(parents=True)
+
+    problems = fo._run_artifact_problems(fdir)
+    assert any("manifest.json" in p for p in problems), problems
+    assert not any("v1.2" in p for p in problems), problems
+
+
+def test_a_scratch_directory_does_not_silence_a_genuinely_corrupt_document(run_env):
+    """The fix must not have bought its quiet by going soft (D-007's rule).
+
+    A run carrying BOTH a tool's scratch directory and one real document that
+    no longer decodes must name the document and only the document.
+    """
+    project_root, fdir = run_env
+    _seed_run_artifacts(project_root, fdir)
+    (fdir / "unicode_data" / "15.1.0").mkdir(parents=True)
+    (fdir / "defects.json").write_bytes(b"\xe9\x00 not a readable artifact\n")
+    # ...and an in-flight write sidecar, which is still not an artifact.
+    (fdir / "state.json.9.9.tmp").write_bytes(b"\xe9 half a document")
+
+    problems = fo._run_artifact_problems(fdir)
+
+    assert [p.split(" could")[0] for p in problems] == ["defects.json"], problems
+
+
+# --------------------------------------------------------------------------- #
 # D-007 — A WRITE'S OWN SCAFFOLDING IS NOT AN ARTIFACT OF THE RUN.
 #
 # `_run_artifact_problems` listed the whole run dir and then read each entry,

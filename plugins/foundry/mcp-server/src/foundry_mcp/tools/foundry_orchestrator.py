@@ -644,15 +644,73 @@ def _declared_external_inputs(fdir: Path) -> list[Path]:
     return sorted(found)
 
 
+def _is_document_position(candidate: Path) -> bool:
+    """Is ``candidate`` a path a reader OPENS as a document?
+
+    Asked of directories only — every FILE in the run tree is a member, on the
+    text floor at worst, and that derivation is D-138's and is not this
+    function's business.
+
+    D-195 — A DIRECTORY WAS CLASSIFIED BY THE SHAPE OF ITS NAME, AND A VERSION
+    NUMBER HAS THAT SHAPE.
+    -------------------------------------------------------------------------
+    The rule here was ``candidate.is_dir() and not candidate.suffix`` — walk
+    past a directory only when its basename holds no dot. ``Path("14.0.0")
+    .suffix`` is ``".0"``, so hypothesis's unicode cache at
+    ``test_observations/generated/.hypothesis/unicode_data/14.0.0/`` was NOT
+    walked past: it was opened as a run document, the read raised
+    IsADirectoryError, and ``_artifact_guard`` — which runs at the top of all
+    fourteen MCP entry points in this module — named a healthy run corrupt and
+    refused every door at once. Driven over the real transport: Foundry-Next,
+    Foundry-Spend and Foundry-Stream all returned "Run artifacts cannot be
+    read: 14.0.0 could not be read (IsADirectoryError ...)" on a run whose every
+    state document was valid and readable. Hit three times — twice by PROVE, and
+    once by the lead on the live archive, who cleared it by deleting the
+    directory by hand. ``traces/scratch/v1.2``, ``proofs/cache/node_modules/
+    pkg-1.0.0`` and ``unicode_data/15.1.0`` are the same defect; the
+    no-suffix control ``.hypothesis/examples`` was correctly silent, which is
+    what makes the discriminator the basename rather than anything about the
+    path.
+
+    A DOT IS NOT A DOCUMENT TYPE. The guard's own decoder table is its
+    statement of which names a reader opens AS a document — that is what
+    ``_STRICT_ARTIFACT_DECODERS`` is for, and consulting it here is the same
+    D-007 discipline that keeps the sidecar suffixes shared between the writers
+    that create them and the scan that skips them: one declaration, so the two
+    cannot drift. ``.0`` is not a type any reader in this package decodes;
+    ``.json`` is, which is why D-140's ``state.json``-as-a-directory is still
+    named (and ``defects.json``, and ``castings/manifest.json``) through the
+    guarded ``_document_problem`` read that reports the OSError by name.
+
+    WHY NOT EXCLUDE THE STREAM OUTPUT TREES INSTEAD. ``traces/``, ``proofs/``,
+    ``temper/`` and ``test_observations/generated/`` are where all four observed
+    instances sat, and naming them here would close those four and leave the
+    fifth scratch directory outside the rule on the day a stream writes one —
+    the hand-kept list D-129 and D-138 were both filed on. It would also be
+    wrong in the other direction: ``castings/manifest.json`` is a real document
+    position that is nested, so depth says nothing about whether a reader opens
+    a path.
+
+    WHY NOT DROP THE DIRECTORY CHECK ALTOGETHER. "Never classify a directory"
+    fixes all four instances in one line and reopens D-140: a directory named
+    ``state.json`` goes unnamed, ``_load_json`` returns ``{}``, and the doors
+    act on a fabricated all-default state — reported as success, which is the
+    harm the guard exists to prevent.
+    """
+    return candidate.suffix.lower() in _STRICT_ARTIFACT_DECODERS
+
+
 def _run_artifact_problems(fdir: Path) -> list[str]:
     """Named problems for every unreadable run artifact, in stable order.
 
     Membership is the whole tree (``rglob``), not the top level plus one
     hand-named manifest. A DIRECTORY is a container and is walked past — except
-    one occupying a name that carries a suffix, which is a directory sitting
-    where a reader will open a file (D-140: ``state.json`` as a directory
-    passed the old ``is_file()`` filter, so the guard saw nothing and the write
-    raised IsADirectoryError instead of refusing by name).
+    one occupying a path a reader OPENS as a document, which is a directory
+    sitting where a reader will open a file (D-140: ``state.json`` as a
+    directory passed the old ``is_file()`` filter, so the guard saw nothing and
+    the write raised IsADirectoryError instead of refusing by name). Which
+    paths those are is ``_is_document_position``'s question, and D-195 is what
+    answering it from the basename's punctuation cost.
 
     ...plus the run's DECLARED EXTERNAL INPUTS (D-145), because "the artifacts
     this run reads" and "the files under this run's directory" were never the
@@ -663,7 +721,7 @@ def _run_artifact_problems(fdir: Path) -> list[str]:
         return []
     problems: list[str] = []
     for candidate in sorted(fdir.rglob("*")):
-        if candidate.is_dir() and not candidate.suffix:
+        if candidate.is_dir() and not _is_document_position(candidate):
             continue
         # D-007: a write primitive's own scaffolding is not one of this run's
         # artifacts. Nothing reads a `.tmp` sidecar or a `.lock` file back, both
