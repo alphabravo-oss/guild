@@ -13,7 +13,7 @@
 ........................................................................ [ 12%]
 ........................................................................ [ 14%]
 ........................................................................ [ 16%]
-................................
+.....................................
 === select_sweep_scope: which logs the boundary re-executes ===
   FULL rule fired / before ASSAY, NYQUIST or DONE
     touched=['src/alpha.py']
@@ -60,18 +60,46 @@
     declared 300s                       : 300
     undeclared falls back to the default: True
     a caller ceiling wins for every log : 30
-........................................ [ 19%]
-........................................................................ [ 21%]
-........................................................................ [ 23%]
-........................................................................ [ 25%]
-........................................................................ [ 27%]
+.
+=== the block: one declaration whose prose names another casting's requirement ===
+    - **CT-014** [derived from A-024]: the report carries every
+      section, so a run whose AC-036 sections are absent is
+      refused at the done transition.
+=== what the two readers make of it ===
+    REQUIREMENT_ID_RE.findall over the whole block : ['AC-036', 'CT-014']
+    declared_requirement_ids (subject position)    : ['CT-014']
+    AC-036 is DECLARED by casting 3; casting 2 only names it inside CT-014's statement.
+=== the mapping a `# evidence-for:` header is keyed through ===
+    AC-036 -> ['3']
+    CT-007 -> ['1']
+    CT-014 -> ['2']
+=== three readers of one question, on one block (D-180 pinned two; this was the third) ===
+    acceptance gate demands : ['CT-014']
+    F0.9 validator credits  : ['CT-014']
+    evidence sweep keys     : ['CT-014']
+    all three agree         : True
+=== FR-009 — which logs the DELTA boundary re-executes ===
+    wave-report-sections.log is off-convention, so its only key is `# evidence-for: AC-036`
+    diff touches casting 2's key_files  touched=['src/beta.py']
+      keyed by declaration : ['casting-2-beta.log']
+      keyed by the scan    : ['casting-2-beta.log', 'wave-report-sections.log']
+    diff touches casting 3's key_files  touched=['tests/fixtures/gamma/rows.json']
+      keyed by declaration : ['wave-report-sections.log']
+      keyed by the scan    : ['wave-report-sections.log']
+    the extra log satisfies NEITHER FR-009 arm: casting 3's key_files are not in the diff and its command names no touched file.
+    FULL rule fired  scope=['casting-1-alpha.log', 'casting-2-beta.log', 'wave-report-sections.log']
+.................................. [ 18%]
+........................................................................ [ 20%]
+........................................................................ [ 22%]
+........................................................................ [ 24%]
+........................................................................ [ 26%]
 ........................................................................ [ 29%]
 ........................................................................ [ 31%]
 ........................................................................ [ 33%]
-........................................................................ [ 36%]
-........................................................................ [ 38%]
-.........................................................s.............. [ 40%]
-..............................s.s.....
+........................................................................ [ 35%]
+........................................................................ [ 37%]
+...................................................................s.... [ 39%]
+........................................s.s.....
 === D-182 — a cycle bucket carrying its own C-6 facts ===
   the five keys `_record_cycle_facts` writes beside the stream
   tranches, in the shape the live archive holds them:
@@ -109,26 +137,26 @@
   the same three keys, from the rule stated once rather than
   hand-typed a third time — which is how the third walker of
   this bucket came to be missing it.
-.................................. [ 42%]
-........................................................................ [ 44%]
-........................................................................ [ 46%]
-........................................................................ [ 48%]
-........................................................................ [ 50%]
-........................................................................ [ 52%]
-........................................................................ [ 55%]
-........................................................................ [ 57%]
-........................................................................ [ 59%]
-........................................................................ [ 61%]
-........................................................................ [ 63%]
-........................................................................ [ 65%]
-........................................................................ [ 67%]
-........................................................................ [ 69%]
+........................ [ 41%]
+........................................................................ [ 43%]
+........................................................................ [ 45%]
+........................................................................ [ 47%]
+........................................................................ [ 49%]
+........................................................................ [ 51%]
+........................................................................ [ 53%]
+........................................................................ [ 56%]
+........................................................................ [ 58%]
+........................................................................ [ 60%]
+........................................................................ [ 62%]
+........................................................................ [ 64%]
+........................................................................ [ 66%]
+........................................................................ [ 68%]
+........................................................................ [ 70%]
 ........................................................................ [ 72%]
-........................................................................ [ 74%]
-..........................................s..s.s..s..................... [ 76%]
+...............................................................s..s.s..s [ 74%]
+........................................................................ [ 76%]
 ........................................................................ [ 78%]
-........................................................................ [ 80%]
-.........................
+..............................................
 === report.json top-level keys ===
   generated_at
   run
@@ -278,16 +306,17 @@
   the axis is narrowed, not emptied — a stream agent IS stamped, by the roll-up's own cycle bucket:
   one stream pair over two cycles + one teammate pair: total=2  cycle rows={'1': 1, '2': 1}  without a cycle=1
   the cycle column still does not add up to the total, and now the note says why rather than only that it does not.
-............................................. [ 82%]
-........................................................................ [ 84%]
-........................................................................ [ 86%]
+........................ [ 80%]
+........................................................................ [ 83%]
+........................................................................ [ 85%]
+........ss.ss.ssss.ssssssss.ssss.s..ss.sss.............................. [ 87%]
 ........................................................................ [ 89%]
 ........................................................................ [ 91%]
 ........................................................................ [ 93%]
 ........................................................................ [ 95%]
 ........................................................................ [ 97%]
 ........................................................................ [ 99%]
-.............                                                            [100%]
+...........                                                              [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
@@ -298,4 +327,30 @@ SKIPPED [1] tests/test_protocol_prose.py:5309: plugins/foundry/agents/coverage-d
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/agents/teammate.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/skills/trace/SKILL.md states no `target_kind` bullet
-3387 passed, 10 skipped, 3 deselected in 135.89s
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_agent_frontmatter_parse.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_commit_guard.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_escalation.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_evidence.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_findings_schemas.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_fix_gate.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_foundry_init.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_foundry_validate_key_links.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_inspect_mode.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_intent_coverage.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_lead_prose.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_liveness.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_measure_run.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_migrate_archive.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_model_config.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_nyquist_flag.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_orchestrator_gates.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_protocol_prose.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_release_version.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_report.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_spawn_progress.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_spend.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_stream_rollup.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_test_observations_validator.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_validate_report.py is declared unqualified; see UNQUALIFIED_MODULES
+SKIPPED [1] tests/test_spec_id_convention.py:345: test_vocab.py is declared unqualified; see UNQUALIFIED_MODULES
+3431 passed, 36 skipped, 3 deselected in 143.63s
