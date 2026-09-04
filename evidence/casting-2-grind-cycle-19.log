@@ -1,0 +1,20 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_handoff_records.py > /dev/null && echo 'pytest green: tests/test_handoff_records.py' && uv run --quiet python -c "import ast,pathlib;W=lambda s:list(ast.walk(ast.parse(s)));BIND=lambda ns,k:sum((isinstance(n,ast.Name) and n.id==k and isinstance(n.ctx,(ast.Store,ast.Del))) or (isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)) and n.name==k) for n in ns)+sum(1 for n in ns if isinstance(n,(ast.Import,ast.ImportFrom)) for a in n.names if (a.asname or a.name.split('.')[0])==k);READ=lambda ns,k:sum((isinstance(n,ast.Name) and n.id==k and isinstance(n.ctx,ast.Load)) or (isinstance(n,ast.Attribute) and n.attr==k) or (isinstance(n,ast.Constant) and isinstance(n.value,str) and n.value==k) for n in ns);H=pathlib.Path('src/foundry_mcp/tools/foundry_handoff.py');SRC=H.read_text(encoding='utf-8');COMMENT='# D-203 history: the _get_run_dir alias foundry_accept_casting bound was deleted in cycle 19.';DOC=SRC+chr(10)+COMMENT+chr(10);ns=W(SRC);nsd=W(DOC);print('=== D-203 / FR-032 / NFR-001: the superseded _get_run_dir alias, counted from the syntax tree ===');print('  foundry_accept_casting re-imported get_run_dir under a private alias and read it nowhere.');print('  The module already binds the public name at module scope, so the alias was a second');print('  spelling of one resolver with no reader -- the shape NFR-001 pins and FR-032 names.');print('');print('  tools/foundry_handoff.py, _get_run_dir : bindings=%d reads=%d'%(BIND(ns,'_get_run_dir'),READ(ns,'_get_run_dir')));print('  tools/foundry_handoff.py, get_run_dir  : bound at module scope=%s  read by the module=%s'%(BIND(ns,'get_run_dir')==1,READ(ns,'get_run_dir')>=1));print('');print('  THE COUNT IS AST-BASED SO A LATER HISTORY COMMENT CANNOT FALSIFY IT.');print('  The same source with a comment naming the deleted alias appended:');print('    AST reference count            : bindings=%d reads=%d'%(BIND(nsd,'_get_run_dir'),READ(nsd,'_get_run_dir')));print('    a naive text sweep of it counts: %d occurrence(s)  <- what an AST sweep is immune to'%DOC.count('_get_run_dir'));print('');EX=frozenset({'.venv','venv','site-packages','node_modules','__pycache__','.tox','.hypothesis'});files=[p for p in sorted(pathlib.Path('..').rglob('*.py')) if EX.isdisjoint(p.parts)];trees={p:W(p.read_text(encoding='utf-8')) for p in files};print('  plugin-owned .py files scanned (>= 50): %s'%(len(trees)>=50));print('  files binding or reading _get_run_dir : %d'%len([p for p,t in trees.items() if BIND(t,'_get_run_dir') or READ(t,'_get_run_dir')]))"
+# evidence-for: FR-032, NFR-001
+# evidence-timeout: 300
+
+pytest green: tests/test_handoff_records.py
+=== D-203 / FR-032 / NFR-001: the superseded _get_run_dir alias, counted from the syntax tree ===
+  foundry_accept_casting re-imported get_run_dir under a private alias and read it nowhere.
+  The module already binds the public name at module scope, so the alias was a second
+  spelling of one resolver with no reader -- the shape NFR-001 pins and FR-032 names.
+
+  tools/foundry_handoff.py, _get_run_dir : bindings=0 reads=0
+  tools/foundry_handoff.py, get_run_dir  : bound at module scope=True  read by the module=True
+
+  THE COUNT IS AST-BASED SO A LATER HISTORY COMMENT CANNOT FALSIFY IT.
+  The same source with a comment naming the deleted alias appended:
+    AST reference count            : bindings=0 reads=0
+    a naive text sweep of it counts: 1 occurrence(s)  <- what an AST sweep is immune to
+
+  plugin-owned .py files scanned (>= 50): True
+  files binding or reading _get_run_dir : 0
