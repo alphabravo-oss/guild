@@ -1,0 +1,74 @@
+# evidence-cmd: cd plugins/foundry && python3 -c "import ast,pathlib;R=pathlib.Path('.').resolve();EX=frozenset({'.venv','venv','site-packages','node_modules','__pycache__','.tox','.pytest_cache','.ruff_cache'});PY=[p for p in sorted(R.rglob('*.py')) if EX.isdisjoint(p.parts)];T={p:ast.parse(p.read_text(encoding='utf-8')) for p in PY};IM=lambda t:[n for n in ast.walk(t) if isinstance(n,(ast.Import,ast.ImportFrom))];FUT=lambda n:isinstance(n,ast.ImportFrom) and n.module=='__future__';BIND=lambda t:{(a.asname or a.name.split('.')[0]) for n in IM(t) if not FUT(n) for a in n.names if a.name!='*'};REF=lambda t:{x for n in ast.walk(t) if not isinstance(n,(ast.Import,ast.ImportFrom)) for x in ([n.id] if isinstance(n,ast.Name) else [n.attr] if isinstance(n,ast.Attribute) else [n.value] if isinstance(n,ast.Constant) and isinstance(n.value,str) else [])};ATTR={p:{n.attr for n in ast.walk(t) if isinstance(n,ast.Attribute)} for p,t in T.items()};rel=lambda p:str(p.relative_to(R));M=R/'scripts/measure-run.py';S=R/'mcp-server/tests/test_measure_run.py';unref=lambda p:sorted(BIND(T[p])-REF(T[p]));elsewhere=lambda p,n:sorted(rel(q) for q in T if q!=p and n in ATTR[q]);named=lambda p,n:n in REF(T[p]);row=lambda k,v:print('  %-44s %s'%(k,v));print(chr(10)+'=== D-203 / class superseded-helper-left-unreachable: the two names in casting 1 ===');print('  The pin casting 3 ships this cycle takes as SUBJECTS every Import and');print('  ImportFrom alias in every shipped .py, and asks per file whether the bound');print('  name is READ there. The question is AST-shaped -- ast.Name, ast.Attribute,');print('  or an exact string Constant -- and so is blind to comments, which is the');print('  point: measure-run.py names _archive_metrics in two comments that survive');print('  this deletion, and a comment citing an import is history, not a reference.');print('  from __future__ import is exempt by construction: annotations is a compiler');print('  directive no module ever reads back.'+chr(10));row('plugin .py files parsed (floor 50 met)',len(PY)>=50);row('_archive_metrics READ in measure-run.py',named(M,'_archive_metrics'));row('_archive_metrics in its import binds',('_archive_metrics' in BIND(T[M])));row('os READ in test_measure_run.py',named(S,'os'));row('os in its import binds',('os' in BIND(T[S])));print(chr(10)+'=== the same rule over every file this casting owns ===');print('  unreferenced-and-read-by-nothing must be empty on all eight. The one');print('  surviving unreferenced alias is an attribute-read re-export, kept because');print('  a test asserts identity through the module object rather than importing it.'+chr(10));[ (lambda p,u: (row(rel(p)+' unreferenced',u), row('   read as an attribute elsewhere',[n for n in u if elsewhere(p,n)]), row('   read by nothing (must be [])',[n for n in u if not elsewhere(p,n)])))(p,unref(p)) for p in (R/'mcp-server/src/foundry_mcp/schemas/vocab.py',R/'mcp-server/src/foundry_mcp/schemas/findings.py',R/'mcp-server/tests/test_vocab.py',R/'mcp-server/tests/test_findings_schemas.py',R/'scripts/migrate-archive.py',M,R/'mcp-server/tests/test_migrate_archive.py',S)];print(chr(10)+'  the re-export, stated as the assertion that makes it live:');[print('    %s  %s'%(rel(S),l.strip())) for l in S.read_text(encoding='utf-8').splitlines() if 'module.THUNDER_VIPER_BASELINE' in l];print(chr(10)+'=== FR-032: the one constant still decides the mode for THIS diff ===');print('  is_verifier_path is the single derived rule ST-006 consults when a GRIND');print('  diff is judged FULL or DELTA. Both files this cycle touches, answered by it:');[__import__('sys').path.insert(0,str(R/'mcp-server/src'))];import foundry_mcp.schemas.vocab as V;[row(p,V.is_verifier_path(p)) for p in ('plugins/foundry/scripts/measure-run.py','plugins/foundry/mcp-server/tests/test_measure_run.py','plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py')];row('VERIFIER_PATH_PATTERNS (floor 6 met)',len(V.VERIFIER_PATH_PATTERNS)>=6)" && cd mcp-server && python3 ../scripts/measure-run.py tests/fixtures/measure_run/thunder_viper_shape | python3 -c "import json,sys;b=json.load(sys.stdin)['baseline_comparison'];print(chr(10)+'=== AC-039 / NFR-001: the table the two deletions did not disturb ===');print('  Both baseline numbers are READ from vocab.THUNDER_VIPER_BASELINE. The');print('  fixture below carries thunder-viper structural gaps -- cycle counter 0,');print('  untiered records, no rollup, escalation, spend or inspect_modes -- because');print('  the real archive is untracked and a detached worktree cannot see it.'+chr(10));print('  %-22s %s'%('baseline',json.dumps(b['baseline'])));print('  %-22s %s'%('target',json.dumps(b['target'])));print('  %-22s cycles=%s post_verification=%s'%('current',b['current']['grind_cycles'],b['current']['post_verification_cycles']));print('  %-22s %s'%('meets_target',json.dumps(b['meets_target'])));print('  %-22s %s'%('wall clock (minutes)',b['current']['wall_clock_minutes']))" && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_measure_run.py > /dev/null 2>&1 && echo "pytest green: tests/test_measure_run.py"
+# evidence-for: FR-032, NFR-001, AC-039
+# evidence-timeout: 600
+
+
+=== D-203 / class superseded-helper-left-unreachable: the two names in casting 1 ===
+  The pin casting 3 ships this cycle takes as SUBJECTS every Import and
+  ImportFrom alias in every shipped .py, and asks per file whether the bound
+  name is READ there. The question is AST-shaped -- ast.Name, ast.Attribute,
+  or an exact string Constant -- and so is blind to comments, which is the
+  point: measure-run.py names _archive_metrics in two comments that survive
+  this deletion, and a comment citing an import is history, not a reference.
+  from __future__ import is exempt by construction: annotations is a compiler
+  directive no module ever reads back.
+
+  plugin .py files parsed (floor 50 met)       True
+  _archive_metrics READ in measure-run.py      False
+  _archive_metrics in its import binds         False
+  os READ in test_measure_run.py               False
+  os in its import binds                       False
+
+=== the same rule over every file this casting owns ===
+  unreferenced-and-read-by-nothing must be empty on all eight. The one
+  surviving unreferenced alias is an attribute-read re-export, kept because
+  a test asserts identity through the module object rather than importing it.
+
+  mcp-server/src/foundry_mcp/schemas/vocab.py unreferenced []
+     read as an attribute elsewhere            []
+     read by nothing (must be [])              []
+  mcp-server/src/foundry_mcp/schemas/findings.py unreferenced []
+     read as an attribute elsewhere            []
+     read by nothing (must be [])              []
+  mcp-server/tests/test_vocab.py unreferenced  []
+     read as an attribute elsewhere            []
+     read by nothing (must be [])              []
+  mcp-server/tests/test_findings_schemas.py unreferenced []
+     read as an attribute elsewhere            []
+     read by nothing (must be [])              []
+  scripts/migrate-archive.py unreferenced      []
+     read as an attribute elsewhere            []
+     read by nothing (must be [])              []
+  scripts/measure-run.py unreferenced          ['THUNDER_VIPER_BASELINE']
+     read as an attribute elsewhere            ['THUNDER_VIPER_BASELINE']
+     read by nothing (must be [])              []
+  mcp-server/tests/test_migrate_archive.py unreferenced []
+     read as an attribute elsewhere            []
+     read by nothing (must be [])              []
+  mcp-server/tests/test_measure_run.py unreferenced []
+     read as an attribute elsewhere            []
+     read by nothing (must be [])              []
+
+  the re-export, stated as the assertion that makes it live:
+    mcp-server/tests/test_measure_run.py  assert module.THUNDER_VIPER_BASELINE is vocab.THUNDER_VIPER_BASELINE
+
+=== FR-032: the one constant still decides the mode for THIS diff ===
+  is_verifier_path is the single derived rule ST-006 consults when a GRIND
+  diff is judged FULL or DELTA. Both files this cycle touches, answered by it:
+  plugins/foundry/scripts/measure-run.py       False
+  plugins/foundry/mcp-server/tests/test_measure_run.py False
+  plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py True
+  VERIFIER_PATH_PATTERNS (floor 6 met)         True
+
+=== AC-039 / NFR-001: the table the two deletions did not disturb ===
+  Both baseline numbers are READ from vocab.THUNDER_VIPER_BASELINE. The
+  fixture below carries thunder-viper structural gaps -- cycle counter 0,
+  untiered records, no rollup, escalation, spend or inspect_modes -- because
+  the real archive is untracked and a detached worktree cannot see it.
+
+  baseline               {"run": "thunder-viper", "grind_cycles": 22, "post_verification_cycles": 8}
+  target                 {"grind_cycles": 12, "post_verification_cycles": 3}
+  current                cycles=6 post_verification=None
+  meets_target           {"grind_cycles": true, "post_verification_cycles": null}
+  wall clock (minutes)   1470.8
+pytest green: tests/test_measure_run.py

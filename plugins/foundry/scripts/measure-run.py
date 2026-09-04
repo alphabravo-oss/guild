@@ -89,10 +89,7 @@ try:  # Installed (uvx/pip) case — package is already importable.
         canonical_stream_id,
         defect_tier,
     )
-    from foundry_mcp.tools.foundry_report import (
-        _archive_metrics,
-        _baseline_comparison_section,
-    )
+    from foundry_mcp.tools.foundry_report import _baseline_comparison_section
     from foundry_mcp.tools.foundry_state import (
         derive_cycle_count,
         handoffs_wall_clock_seconds,
@@ -117,10 +114,7 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
         canonical_stream_id,
         defect_tier,
     )
-    from foundry_mcp.tools.foundry_report import (
-        _archive_metrics,
-        _baseline_comparison_section,
-    )
+    from foundry_mcp.tools.foundry_report import _baseline_comparison_section
     from foundry_mcp.tools.foundry_state import (
         derive_cycle_count,
         handoffs_wall_clock_seconds,

@@ -1,4 +1,4 @@
-# evidence-cmd: python3 plugins/foundry/scripts/migrate-archive.py --dry-run plugins/foundry/mcp-server/tests/fixtures/migrate_archive/pre_change
+# evidence-cmd: printf '%s\n' '# --dry-run writes nothing, so the committed fixture is read in place and' '# the tree is byte-identical afterwards. The '"'"'defect_tier'"'"' step is the new' '# one; tier_unknown=6 is FR-051 -- six records with no tier read as' '# unknown, and unknown blocks like LIVE. Not one of them becomes LATENT.' '' && python3 plugins/foundry/scripts/migrate-archive.py --dry-run plugins/foundry/mcp-server/tests/fixtures/migrate_archive/pre_change
 # evidence-for: FR-051, US-002
 
 # --dry-run writes nothing, so the committed fixture is read in place and
