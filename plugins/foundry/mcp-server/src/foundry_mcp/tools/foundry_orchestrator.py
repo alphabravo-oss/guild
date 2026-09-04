@@ -2980,14 +2980,40 @@ def _clear_stream_completion_markers(fdir: Path) -> list[str]:
     the thresholds too. Clearing the markers closes both halves — a missing
     stream is never coverage-checked.
 
-    THE TWO REMAINING INSPECT-OPENING DOORS DO NOT CALL THIS, and that is a
-    statement about reachable state rather than an omission. `cast` enters F2
-    from F1, which is entered by `start_cast` before any stream can have
+    D-221 — EVERY DOOR THAT OPENS AN INSPECT CALLS THIS, UNCONDITIONALLY.
+    ---------------------------------------------------------------------
+    This paragraph used to argue the opposite for two of the four doors, and
+    the argument is what the next defect was made of. It read: "`cast` enters
+    F2 from F1, which is entered by `start_cast` before any stream can have
     reported; `inspect_start` enters F2 from F3, and F3 is entered ONLY by the
-    two doors below, both of which clear on the way in. Those two INSPECTs
-    therefore open on a cleared state by construction, and a call here would
-    have no reachable state behind it. `temper` is the one door that opens an
-    INSPECT from a phase — F4 — that nothing on the path from F2 ever cleared.
+    two doors below, both of which clear on the way in ... a call here would
+    have no reachable state behind it." Both halves are false at the doors
+    themselves. `inspect_start` admits **F2** as a source — the F2->F2 widening
+    re-open, which advances the counter, records FULL / final_gate with the
+    five-stream roster and sweeps the whole corpus. `start_cast` carries no
+    entry-source precondition at all (it is `_update_phase(fdir, "F1")` under
+    the halted guard alone), so F1 is reachable from a phase that has markers.
+
+    Driven at the widening door: a DELTA cycle 2 with `.trace-complete`,
+    `.prove-complete` and `.test-complete` recorded at 40/40, then a second
+    `inspect_start` returning ok at cycle 3 with mode FULL, rule final_gate and
+    the five-stream roster — with all three markers still on disk.
+    `_check_streams_complete` answered missing "research_audit test01" only, so
+    trace, prove and test were COMPLETE for a FULL INSPECT in which none of
+    them ran; `_rollup_totals` had nothing for cycle 3, so `_coverage_shortfall`
+    fell back to `_marker_counts` on the stale cycle-2 marker and cleared the
+    0.95 threshold too. Driven at the `cast` door on the same terms: F2 with
+    five markers -> `start_cast` -> `cast` -> ok, FULL, five-stream roster,
+    markers untouched, four of five reported complete.
+
+    So the call is the guarantee and the reachability argument is retired. A
+    door standing on genuinely cleared state gets an empty return, and that
+    empty return is the PROOF there was nothing stale — not a reason to omit
+    the call and re-derive the proof in prose. `test_inspect_mode.py`'s
+    `test_every_inspect_opening_door_clears_the_previous_inspects_completion_state`
+    derives the obligation from this module's own AST: any branch of
+    `_phase_transition` that calls `_decide_inspect_mode` must call this too,
+    so a fifth door inherits the rule the day it is written.
     """
     markers = [_stream_marker(stream) for stream in sorted(VALID_STREAMS)] + [
         INSPECT_CLEAN_MARKER,
@@ -7686,6 +7712,24 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         if not sweep["ok"]:
             return _sweep_refusal(sweep, _current_cycle(fdir), token="cast")
 
+        # D-221 / GI-009 / AC-016 — AND THE COMPLETION HALF HERE TOO.
+        #
+        # This door was ruled safe by construction: F1 is entered by
+        # `start_cast`, "before any stream can have reported". `start_cast`
+        # carries NO entry-source precondition — it is `_update_phase(fdir,
+        # "F1")` under the halted guard alone — so F1 is reachable from any
+        # live phase, markers and all. Driven: from F2 with five markers on
+        # disk, `start_cast` -> `cast` returned ok with the five-stream FULL
+        # roster and every marker untouched, and `_check_streams_complete`
+        # answered four of five complete for an INSPECT that had not begun.
+        #
+        # Cleared here rather than guarded upstream: the width this branch just
+        # recorded and the completion state it opens on are one rule, and a rule
+        # enforced at the door needs no argument about how the door was reached.
+        # AFTER the sweep refusal above, so a refused crossing leaves the run's
+        # completion state exactly as it found it.
+        cleared = _clear_stream_completion_markers(fdir)
+
         (fdir / CAST_COMPLETE_MARKER).write_text(f"{_now()}\n", encoding="utf-8")
         # Stamp the CAST baseline HEAD SHA so GRIND cycles can show teammates
         # what has changed since CAST ended. Used by foundry_spawn_teammate
@@ -7714,6 +7758,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
             "inspect_rule": entry["rule"],
             "required_streams": entry["required_streams"],
             "evidence_sweep": sweep["record"],
+            "cleared_markers": cleared,
             "message": (
                 f"CAST complete \u2192 phase is now F2 (INSPECT), mode {entry['mode']} "
                 f"(rule {entry['rule']}). Required streams: "
@@ -7991,6 +8036,38 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         if not sweep["ok"]:
             return _sweep_refusal(sweep, completed_cycle)
 
+        # D-221 / GI-009 / AC-016 / AC-017 — THIS DOOR OPENS AN INSPECT, SO IT
+        # CLEARS THE PREVIOUS ONE'S COMPLETION STATE. BOTH ARMS.
+        #
+        # The F2->F2 widening re-open is the arm the defect was driven on. It
+        # is the FINAL GATE: it advances the counter, records FULL / final_gate
+        # and requires the five-stream roster — over the completion markers the
+        # DELTA cycle wrote. Driven at cycle 2 DELTA with trace, prove and test
+        # recorded at 40/40, the widening crossing returned ok at cycle 3 with
+        # the FULL roster and left all three markers on disk;
+        # `_check_streams_complete` then named only research_audit and test01,
+        # so the gate US-004 says "still runs everything at full width" was
+        # satisfied by three streams that never ran at that width. The coverage
+        # arm could not catch it either: cycle 3 has no roll-up yet, so
+        # `_coverage_shortfall` falls back to `_marker_counts` on the stale
+        # cycle-2 marker and reads 40/40.
+        #
+        # UNCONDITIONAL, not `if widening`. The F3 arm inherits a cleared state
+        # from `grind_start`/`assay_fail` today, and that inheritance is exactly
+        # the kind of by-construction argument that licensed this defect and
+        # D-219 before it. Clearing on both arms makes "opening an INSPECT
+        # clears the previous one" a property of the door instead of a property
+        # of the path taken to it; on the F3 arm the call returns an empty list,
+        # which is the proof there was nothing stale rather than a reason to
+        # skip it. Anything a stream reported DURING the GRIND belongs to no
+        # INSPECT and is stale here by definition.
+        #
+        # Placed after the sweep refusal and before the state transaction —
+        # the ordering the `temper` branch already holds — so a refused crossing
+        # leaves the run's completion state exactly as it found it, and the
+        # clear does not run under the state.json flock.
+        cleared_markers = _clear_stream_completion_markers(fdir)
+
         # D-103: read-phase, advance-phase and increment are ONE critical
         # section. They used to be three separate read-modify-writes over the
         # same file (the increment re-read state.json AFTER _update_phase had
@@ -8109,6 +8186,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
             "required_streams": entry["required_streams"],
             "evidence_sweep": sweep["record"],
             "widened": widening,
+            "cleared_markers": cleared_markers,
             "message": (
                 (
                     "INSPECT re-opened at full width → "

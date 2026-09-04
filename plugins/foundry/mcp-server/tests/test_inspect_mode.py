@@ -4863,3 +4863,278 @@ def test_no_phase_branch_spells_the_marker_family_by_hand():
         f"{spelled} — clear through _clear_stream_completion_markers so every "
         "door that opens an INSPECT clears the same family"
     )
+
+
+# --------------------------------------------------------------------------- #
+# D-221 — THE OTHER TWO INSPECT-OPENING DOORS, AND THE RULE THAT BINDS ALL FOUR.
+#
+# D-219 closed the `temper` door and RULED THE REMAINING TWO SAFE IN PROSE:
+# "`cast` enters F2 from F1, which is entered by `start_cast` before any stream
+# can have reported; `inspect_start` enters F2 from F3, and F3 is entered ONLY
+# by the two doors below, both of which clear on the way in." Both halves are
+# false at the doors themselves — `inspect_start` admits F2 as a source (the
+# widening re-open, which is the FINAL GATE), and `start_cast` carries no
+# entry-source precondition at all — so the class came back one cycle later at
+# the one crossing US-004 calls "every final gate still runs everything at full
+# width".
+#
+# The tests below drive both doors, and the last one retires the argument: the
+# obligation is derived from `_phase_transition`'s own AST, so a fifth door
+# inherits it the day it is written rather than the cycle after it ships.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_widening_re_open_clears_the_delta_inspects_completion_markers(run_env):
+    """US-004 verbatim: 'every final gate still runs everything at full width.'
+    AC-017 verbatim: 'In FULL mode the streams-complete check requires trace,
+    prove, test, research_audit and test01'.
+
+    D-221, driven end to end. A DELTA cycle 2 runs its roster and comes back
+    clean; `inspect_start` from F2 is the widening re-open, which advances the
+    counter to 3, records FULL / final_gate and names the five-stream roster —
+    and left the DELTA cycle's markers on disk, so `_check_streams_complete`
+    reported trace, prove and test COMPLETE for a FULL INSPECT in which none of
+    them had run at that width. The roster a transition records and the
+    completion state it opens on are one rule; this door recorded the first and
+    skipped the second.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [{**_open_live(), "status": "fixed", "fixed_in_cycle": 1}])
+    _write_manifest(fdir)
+    _grind_touching(project_root, fdir, "src/handler.py")
+    _arm(fdir)
+
+    delta = foundry_mark_phase_complete("inspect_start", project_root)
+    assert delta["inspect_mode"] == "DELTA", delta
+    assert delta["cycle"] == 2, delta
+
+    # The DELTA roster runs and reports — this is the state the widening
+    # crossing is genuinely reached from, not a synthetic marker plant.
+    for stream in delta["required_streams"]:
+        foundry_mark_stream(stream, 2, items_checked=40, items_total=40,
+                            project_root=project_root)
+        assert (fdir / fo._stream_marker(stream)).exists(), stream
+
+    _arm(fdir)
+    widened = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert widened["ok"] is True, widened
+    assert widened["inspect_mode"] == "FULL", widened
+    assert widened["inspect_rule"] == "final_gate", widened
+    assert widened["widened"] is True, widened
+    assert widened["cycle"] == 3, widened
+
+    # Every marker the DELTA cycle wrote is gone, and the transition says so.
+    for stream in delta["required_streams"]:
+        assert not (fdir / fo._stream_marker(stream)).exists(), (
+            f"{stream}'s DELTA marker survived the widening re-open"
+        )
+    assert set(widened["cleared_markers"]) >= {
+        fo._stream_marker(s) for s in delta["required_streams"]
+    }, widened
+
+    # ...and the harm those markers did: the roster the final gate just
+    # recorded is now genuinely outstanding, all five of it.
+    streams = _check_streams_complete(project_root)
+    assert streams["complete"] is False, streams
+    assert set(widened["required_streams"]) <= set(streams["missing"].split()), streams
+
+
+def test_the_f2_entry_clears_completion_markers_an_earlier_inspect_left(run_env):
+    """AC-016 verbatim: 'The phase-entry transition into F2 and into F5 records
+    FULL with rule first_of_phase'. GI-009 verbatim: 'whichever Foundry-Phase
+    transition opens an INSPECT ... records the mode'.
+
+    D-221's second door. `cast` was ruled safe because F1 "is entered by
+    `start_cast` before any stream can have reported" — but `start_cast` has no
+    entry-source precondition, so F1 is reachable from a phase whose INSPECT
+    already ran. Driven exactly as the reproduction did: a run at F2 with all
+    five markers, `start_cast` back to F1, then `cast`. The transition returned
+    ok with the five-stream FULL roster and every marker untouched, so four of
+    the five read COMPLETE for the run's FIRST INSPECT.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=4)
+    _write_manifest(fdir)
+    _mark_streams_complete(fdir)
+    (fdir / fo.TASKS_GENERATED_MARKER).write_text("x\n", encoding="utf-8")
+
+    _arm(fdir)
+    assert foundry_mark_phase_complete("start_cast", project_root)["phase"] == "F1"
+    for stream in _F2_STREAM_MARKERS:
+        assert (fdir / fo._stream_marker(stream)).exists(), (
+            f"{stream}'s marker was cleared by start_cast, which opens no INSPECT"
+        )
+
+    _arm(fdir)
+    result = foundry_mark_phase_complete("cast", project_root)
+
+    assert result["ok"] is True, result
+    assert result["phase"] == "F2"
+    assert result["inspect_rule"] == "first_of_phase", result
+    assert set(_F2_STREAM_MARKERS) <= set(result["required_streams"]), result
+
+    for stream in _F2_STREAM_MARKERS:
+        assert not (fdir / fo._stream_marker(stream)).exists(), (
+            f"{stream}'s marker survived the F2 entry"
+        )
+    assert not (fdir / fo.TASKS_GENERATED_MARKER).exists()
+
+    streams = _check_streams_complete(project_root)
+    assert streams["complete"] is False, streams
+    assert set(_F2_STREAM_MARKERS) <= set(streams["missing"].split()), streams
+
+
+def test_the_grind_to_inspect_crossing_clears_what_the_grind_left(run_env):
+    """THE ADJACENT PATH: the OTHER arm of the door the defect was found on.
+
+    D-221 was driven on `inspect_start`'s F2->F2 widening arm. The F3->F2 arm
+    is a different transition through the same changed lines, and it is the
+    ordinary GRIND->INSPECT crossing every cycle takes — so the clear had to be
+    proved harmless there before it could be made unconditional. It is also the
+    arm whose safety was argued rather than enforced ("F3 is entered ONLY by
+    the two doors below, both of which clear on the way in"): a marker written
+    at any point DURING the GRIND belongs to no INSPECT, and this crossing is
+    where it dies.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [{**_open_live(), "status": "fixed", "fixed_in_cycle": 1}])
+    _write_manifest(fdir)
+    _grind_touching(project_root, fdir, "src/handler.py")
+    # Reported while the run was in GRIND — after `grind_start` cleared, which
+    # is the window the by-construction argument did not cover.
+    foundry_mark_stream("test", 1, items_checked=9, items_total=9,
+                        project_root=project_root)
+    assert (fdir / fo._stream_marker("test")).exists()
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert result["ok"] is True, result
+    assert result["widened"] is False, result
+    assert result["cycle"] == 2, result
+    assert fo._stream_marker("test") in result["cleared_markers"], result
+    assert not (fdir / fo._stream_marker("test")).exists()
+
+    # The ordinary crossing is otherwise untouched: it still decides its own
+    # width and still names its own roster as outstanding.
+    assert result["inspect_mode"] == "DELTA", result
+    streams = _check_streams_complete(project_root)
+    assert streams["complete"] is False, streams
+    assert "test" in streams["missing"].split(), streams
+
+
+def test_a_refused_inspect_start_leaves_completion_state_alone(run_env):
+    """AC-013 verbatim: 'refuses the transition naming any log whose output
+    mismatches; the cycle counter does not advance on refusal.'
+
+    THE ORDERING, on the door D-221 changed. The clear sits after the sweep
+    refusal for the same reason the `temper` branch's does: a crossing the
+    server refused must leave the run exactly as it found it, or a mismatched
+    evidence log would cost the INSPECT its completion state as well as its
+    transition — and the lead would be left in F2 unable to say what had
+    already run.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [{**_open_live(), "status": "fixed", "fixed_in_cycle": 1}])
+    _write_manifest(fdir)
+    _evidence_log(
+        project_root, "casting-1-handler.log",
+        "echo the-handler-calls-the-store", "the-handler-does-not\n",
+    )
+    _grind_touching(project_root, fdir, "src/handler.py")
+    _mark_streams_complete(fdir)
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert result.get("ok") is not True, result
+    assert _current_cycle(fdir) == 1, "a refused crossing advanced the counter"
+    for stream in _F2_STREAM_MARKERS:
+        assert (fdir / fo._stream_marker(stream)).exists(), (
+            f"{stream}'s marker was cleared by a transition that was refused"
+        )
+
+
+def test_every_inspect_opening_door_clears_the_previous_inspects_completion_state():
+    """GI-009 verbatim: 'One rule: whichever Foundry-Phase transition opens an
+    INSPECT ... records the mode.' AC-017 verbatim: 'In FULL mode the
+    streams-complete check requires trace, prove, test, research_audit and
+    test01'.
+
+    THE CLASS, not the instance. D-219 and D-221 are the same defect at two
+    different doors, and what carried it from one to the other was that the
+    obligation lived in a docstring paragraph arguing which doors could safely
+    omit it. Prose cannot be evaluated when a door is added, so the second
+    instance was already latent when the first was closed.
+
+    Derived here from the module's own AST instead. A branch of
+    `_phase_transition` that calls `_decide_inspect_mode` IS a door that opens
+    an INSPECT — that call is what makes it one — and every such branch must
+    also call `_clear_stream_completion_markers`. The width a transition
+    records and the completion state it opens on are one rule; this test is the
+    only thing that makes them one rule for a door nobody has written yet.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    source = textwrap.dedent(inspect.getsource(fo._phase_transition))
+    tree = ast.parse(source)
+
+    def _called_names(nodes: list[ast.stmt]) -> set[str]:
+        names: set[str] = set()
+        for statement in nodes:
+            for node in ast.walk(statement):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    names.add(node.func.id)
+        return names
+
+    # The if/elif chain: each branch's token is its `phase == "<literal>"` test
+    # and its body is its own, because an elif lives in `orelse`.
+    branches: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if (
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and test.left.id == "phase"
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.Eq)
+            and isinstance(test.comparators[0], ast.Constant)
+            and isinstance(test.comparators[0].value, str)
+        ):
+            branches[test.comparators[0].value] = _called_names(node.body)
+
+    # The guard is only worth what its subject is.
+    assert {"cast", "temper", "inspect_start", "grind_start"} <= set(branches), (
+        "_phase_transition no longer holds the phase branches this guard reads "
+        f"— found {sorted(branches)}"
+    )
+
+    opens_inspect = {
+        token for token, calls in branches.items()
+        if "_decide_inspect_mode" in calls
+    }
+    assert opens_inspect >= {"cast", "temper", "inspect_start"}, (
+        "the doors that open an INSPECT are no longer the ones that decide a "
+        f"width — found {sorted(opens_inspect)}"
+    )
+
+    silent = sorted(
+        token for token in opens_inspect
+        if "_clear_stream_completion_markers" not in branches[token]
+    )
+    assert not silent, (
+        f"Foundry-Phase(phase={silent!r}) opens an INSPECT — it calls "
+        "_decide_inspect_mode and records a roster — without clearing the "
+        "previous INSPECT's completion markers, so that roster is satisfied "
+        "on arrival by streams that never ran at this width (D-219, D-221). "
+        "Call _clear_stream_completion_markers after the sweep refusal and "
+        "before the phase write."
+    )
