@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -2054,11 +2055,26 @@ def test_the_retired_lead_lane_pin_actually_fires() -> None:
 @pytest.mark.parametrize(
     "path,expected",
     [
+        # Collected by the declared configuration: `test_*.py` under `tests`.
         ("plugins/foundry/mcp-server/tests/test_vocab.py", True),
+        ("tests/test_real.py", True),
+        ("packages/api/tests/test_sweeper.py", True),
+        # pytest's own fixed filename, loaded from the rootdir down.
         ("tests/conftest.py", True),
         ("conftest.py", True),
-        ("pkg/thing_test.py", True),
-        ("tests/fixtures/measure_run/state_cycle_3.json", True),
+        # D-222, escape 1: no pyproject.toml in this repo names `*_test.py`,
+        # and the driven commit shipped 400 lines of it beside a 5-line source
+        # file through a lane bounded at one file and twenty lines.
+        ("pkg/thing_test.py", False),
+        ("src/helpers_test.py", False),
+        # D-222, escape 2: a `tests` segment is not a licence over every file
+        # beneath it. `python_files` still has to match the basename.
+        ("src/tests/production_helper.py", False),
+        ("src/tests/__init__.py", False),
+        ("mypkg/tests/big_module.py", False),
+        ("tests/fixtures/measure_run/state_cycle_3.json", False),
+        # `test_*.py` OUTSIDE every declared testpath is not collected either.
+        ("test_sample.py", False),
         ("plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py", False),
         ("src/latest/handler.py", False),   # `latest` is not `tests`
         ("src/tests_helper.py", False),     # nor is `tests_helper`
@@ -2072,28 +2088,194 @@ def test_is_test_file_matches_pytest_discovery(path: str, expected: bool) -> Non
     direction is a real refusal: calling a source file a test lets a lead ship
     two source files in one lane, and calling a test file source spends the
     whole budget on the regression test the fix is required to carry.
+
+    D-223: this table used to PIN the first of those harms as correct
+    behaviour — `("pkg/thing_test.py", True)` and
+    `("tests/fixtures/measure_run/state_cycle_3.json", True)` asserted that
+    two files no declared configuration collects were tests, so the sentence
+    above named a harm its own rows caused. The rows now answer the way
+    `pytest --collect-only` does, and
+    `test_is_test_file_agrees_with_real_pytest_in_both_directions` drives that
+    agreement against real pytest rather than against this table.
     """
     assert vocab.is_test_file(path) is expected
 
 
-def test_the_repos_own_pytest_discovery_setting_is_covered() -> None:
-    """FR-034 says "the repo's pytest discovery patterns" — read the setting.
+#: The pytest configuration sources the FR-034 pins read. Every
+#: `pyproject.toml` under the repo that declares `[tool.pytest.ini_options]` is
+#: a source; the interpreter's own virtualenvs and vendored packages are not
+#: this repo's configuration and are excluded by segment.
+_NON_REPO_SEGMENTS = frozenset({".venv", "venv", "node_modules", "site-packages", ".git"})
 
-    mcp-server/pyproject.toml declares `python_files`; every glob it names must
-    be recognised here, or the lane counts a file pytest collects as source.
+
+def _declared_pytest_discovery() -> dict[str, dict[str, tuple[str, ...]]]:
+    """`{relpath: {"python_files": (...), "testpaths": (...)}}`, parsed.
+
+    Read with `tomllib` rather than grepped: the previous guard matched
+    `python_files\\s*=\\s*\\[([^\\]]*)\\]` with a regex, which sees one legal
+    spelling of the setting and silently reads nothing from the others. The
+    configured source is TOML, so it is parsed as TOML.
     """
-    text = (REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "pyproject.toml").read_text(
-        encoding="utf-8"
-    )
-    match = re.search(r"python_files\s*=\s*\[([^\]]*)\]", text)
-    assert match is not None, "pyproject.toml no longer declares python_files"
-    for glob in re.findall(r'"([^"]+)"', match.group(1)):
-        sample = glob.replace("*", "sample")
-        assert vocab.is_test_file(sample), (
-            f"pytest collects {glob} (sample: {sample}) but is_test_file calls "
-            f"it a source file, so it would consume the lead lane's one-file "
-            f"budget"
+    found: dict[str, dict[str, tuple[str, ...]]] = {}
+    for path in sorted(REPO_ROOT.rglob("pyproject.toml")):
+        rel = path.relative_to(REPO_ROOT)
+        if _NON_REPO_SEGMENTS.intersection(rel.parts):
+            continue
+        section = (
+            tomllib.loads(path.read_text(encoding="utf-8"))
+            .get("tool", {})
+            .get("pytest", {})
+            .get("ini_options")
         )
+        if not isinstance(section, dict):
+            continue
+        found[rel.as_posix()] = {
+            "python_files": tuple(section.get("python_files", ())),
+            "testpaths": tuple(section.get("testpaths", ())),
+        }
+    return found
+
+
+def test_vocab_mirrors_every_declared_pytest_discovery_setting() -> None:
+    """FR-034 verbatim: "provided it matches the repo's pytest discovery
+    patterns" — EQUALITY against the configured source, not coverage of it.
+
+    D-222 / D-223. The guard this replaces read `python_files` out of ONE
+    pyproject.toml and asserted only that every glob pytest collects answers
+    `is_test_file` True. That is the safe direction alone, so it passed
+    unchanged however broad the recogniser became: `_TEST_BASENAME_RES` also
+    matched `*_test.py`, and `TEST_DIRECTORY_SEGMENT` matched any path segment
+    spelled `tests` whatever the file inside it was, and neither surplus could
+    fail here. Both surpluses are SUBTRACTED from the lead lane's file and line
+    counts, which is how a `fix_commit` over `src/tiny.py` plus a 400-line
+    `src/helpers_test.py` cleared a lane bounded at one non-test file and 20
+    lines.
+
+    So the pin is equality, in both directions, against every declared source:
+    a glob the repo adds that vocab does not mirror fails here, and a glob
+    vocab carries that no `pyproject.toml` asks for fails here too.
+    """
+    declared = _declared_pytest_discovery()
+    assert declared, (
+        "no pyproject.toml in this repo declares [tool.pytest.ini_options] — "
+        "the pin has no source, and a pin with no source proves nothing"
+    )
+    for relpath, config in sorted(declared.items()):
+        assert set(config["python_files"]) == set(vocab.PYTEST_PYTHON_FILES), (
+            f"{relpath} declares python_files={list(config['python_files'])} but "
+            f"vocab.PYTEST_PYTHON_FILES is {list(vocab.PYTEST_PYTHON_FILES)}. The "
+            f"lane's recogniser MIRRORS the configured source; update the "
+            f"constant to match the config rather than widening it past one."
+        )
+        assert set(config["testpaths"]) == set(vocab.PYTEST_TESTPATHS), (
+            f"{relpath} declares testpaths={list(config['testpaths'])} but "
+            f"vocab.PYTEST_TESTPATHS is {list(vocab.PYTEST_TESTPATHS)}. A "
+            f"testpath vocab does not know about is a test tree the lane counts "
+            f"as source; one it invents is a source tree the lane waves through."
+        )
+
+
+#: The shapes D-222 was driven on, plus the one file the driven
+#: `pytest --collect-only` actually collected. Materialised into a throwaway
+#: repo below and judged against real pytest, so the corpus is not a
+#: restatement of the predicate under test.
+_FR034_CANDIDATE_FILES = (
+    "tests/test_real.py",
+    "tests/__init__.py",
+    "tests/conftest.py",
+    "tests/helpers_test.py",
+    "tests/fixtures/state_cycle_3.json",
+    "src/tiny.py",
+    "src/helpers_test.py",
+    "src/tests/__init__.py",
+    "src/tests/production_helper.py",
+    "src/tests/big_module.py",
+)
+
+
+def _pytest_ini_options_block() -> str:
+    """mcp-server's `[tool.pytest.ini_options]` table, re-emitted as TOML.
+
+    Round-tripped through `tomllib` + `json.dumps` so the throwaway repo below
+    is configured by THIS repo's own settings rather than by a second copy of
+    them typed into a test.
+    """
+    parsed = tomllib.loads(
+        (REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "pyproject.toml")
+        .read_text(encoding="utf-8")
+    )
+    options = parsed["tool"]["pytest"]["ini_options"]
+    lines = ["[tool.pytest.ini_options]"]
+    for key, value in options.items():
+        lines.append(f"{key} = {json.dumps(value)}")
+    return "\n".join(lines) + "\n"
+
+
+def test_is_test_file_agrees_with_real_pytest_in_both_directions(tmp_path) -> None:
+    """FR-034 — the converse assertion D-223 says was missing.
+
+    The predicate is judged against `pytest --collect-only` itself, run in a
+    throwaway repo configured by mcp-server's own
+    `[tool.pytest.ini_options]` table, over a candidate set that spans every
+    shape D-222 was driven on. Both directions are asserted: a file pytest
+    collects must answer True, and — the direction no previous guard had — a
+    file pytest does NOT collect must answer False.
+
+    That second direction is the whole defect. `pytest --collect-only` against
+    this configuration collects ONLY `tests/test_real.py`, while the shipped
+    recogniser answered True for `src/helpers_test.py`,
+    `src/tests/production_helper.py`, `src/tests/__init__.py` and
+    `tests/fixtures/state_cycle_3.json` — four files whose lines the lead lane
+    then subtracted from its own bound.
+
+    `conftest.py` is the one deliberate exception and it is asserted as one:
+    pytest hardcodes the name and loads it from the rootdir down, so it never
+    appears as a collected node id even though it is unambiguously pytest's.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        _pytest_ini_options_block(), encoding="utf-8"
+    )
+    for rel in _FR034_CANDIDATE_FILES:
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if rel == "tests/test_real.py":
+            target.write_text("def test_real():\n    assert True\n", encoding="utf-8")
+        elif rel.endswith(".json"):
+            target.write_text("{}\n", encoding="utf-8")
+        else:
+            target.write_text("VALUE = 1\n", encoding="utf-8")
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+         "--collect-only"],
+        cwd=str(tmp_path), capture_output=True, text=True, timeout=300,
+    )
+    collected = {
+        line.strip().split("::", 1)[0]
+        for line in proc.stdout.splitlines()
+        if "::" in line and not line.startswith(" ")
+    }
+    assert collected == {"tests/test_real.py"}, (
+        "the throwaway repo did not collect what this repo's configuration "
+        f"says it should (rc={proc.returncode}); collected={sorted(collected)}\n"
+        f"{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}"
+    )
+
+    disagreements = []
+    for rel in _FR034_CANDIDATE_FILES:
+        expected = rel in collected or rel.rsplit("/", 1)[-1] == "conftest.py"
+        if vocab.is_test_file(rel) is not expected:
+            verdict = "collects" if expected else "does not collect"
+            disagreements.append(
+                f"{rel}: pytest {verdict} it, is_test_file says "
+                f"{vocab.is_test_file(rel)}"
+            )
+    assert not disagreements, (
+        "is_test_file disagrees with the pytest configuration it mirrors:\n  "
+        + "\n  ".join(disagreements)
+        + "\nEvery disagreement in the False->True direction is a source file "
+          "the lead lane subtracts from its own one-file, twenty-line bound."
+    )
 
 
 # ---------------------------------------------------------------------------

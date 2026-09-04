@@ -86,6 +86,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from fnmatch import fnmatchcase
 from types import MappingProxyType
 
 # ---------------------------------------------------------------------------
@@ -711,38 +712,94 @@ FIX_AUTHORS = frozenset({"lead", "teammate"})  # 2 items
 LEAD_LANE_MAX_FILES = 1
 LEAD_LANE_MAX_LINES = 20
 
-#: FR-034 — the basenames pytest itself collects, plus the shared fixture
-#: module. `python_files = ["test_*.py"]` in mcp-server/pyproject.toml is the
-#: repo's own discovery setting; `*_test.py` and `conftest.py` are carried too
-#: because the lane counts NON-TEST files, and a file the repo would not
-#: collect today but every reader calls a test must not silently consume the
-#: one-file budget.
-_TEST_BASENAME_RES: tuple[re.Pattern[str], ...] = (
-    re.compile(r"^test_[^/]*\.py$"),
-    re.compile(r"^[^/]*_test\.py$"),
-    re.compile(r"^conftest\.py$"),
-)
+#: FR-034 — the repo's OWN pytest discovery configuration, mirrored key for
+#: key. Every `pyproject.toml` in this repo that declares
+#: `[tool.pytest.ini_options]` (mcp-server, plugins/forge, plugins/webster)
+#: spells these two lists identically, and `tests/test_vocab.py` parses those
+#: files with `tomllib` and asserts EQUALITY against the two constants below —
+#: so a config change fails there rather than drifting silently past this
+#: module, which is the only anti-staleness mechanism the PURITY RULE leaves
+#: available (same shape as the VERIFIER_PATH_PATTERNS note above).
+#:
+#: MIRRORED, NOT INVENTED — AND NEVER A SUPERSET (D-222)
+#: ----------------------------------------------------
+#: These were a hand-written regex roster that ADDED `*_test.py` and treated
+#: ANY path segment spelled `tests` as a test tree whatever the file inside it
+#: was called. Every extra member is SUBTRACTED from the lane's file and line
+#: counts, so the roster widened exactly the bound FR-016 / CT-006 exist to
+#: hold. Driven at the Foundry-Fix door with `authored_by=lead` on a LIVE
+#: defect: a `fix_commit` over `src/tiny.py` (5 lines) plus
+#: `src/helpers_test.py` (400 lines) returned ok True, and so did one over
+#: `src/tiny2.py` (5 lines) plus `src/tests/production_helper.py` (400 lines).
+#: Both commits changed two source files and 405 added-plus-deleted lines
+#: through a lane bounded at one non-test file and 20 lines, and each
+#: `lead_fix` audit record named only the small half (`line_count` 5).
+#: `pytest --collect-only` against this configuration collects NEITHER file.
+#:
+#: The alternative shape — reading the TARGET repo's `pyproject.toml` from
+#: here, so the predicate is per-repo rather than a mirror of this one — was
+#: rejected twice over: the PURITY RULE at the top of this module forbids the
+#: filesystem, and the caller that actually holds the target root
+#: (`_numstat_measurement`) would have to thread it in, which is a different
+#: casting's file. It is recorded in the run's concerns.md, not built here.
+PYTEST_PYTHON_FILES: tuple[str, ...] = ("test_*.py",)  # 1 glob
+PYTEST_TESTPATHS: tuple[str, ...] = ("tests",)  # 1 path
 
-#: Any path segment spelled exactly this is a test tree, whatever the file
-#: inside it is called — fixtures, __init__.py and data files included.
-TEST_DIRECTORY_SEGMENT = "tests"
+#: pytest's OWN fixed filename. `conftest.py` is hardcoded inside pytest and is
+#: not reachable from `python_files`, so mirroring it here substitutes for no
+#: configured value — there is none to read. The collector loads it from the
+#: rootdir downwards, which is why it is matched wherever it sits rather than
+#: only under a testpath.
+PYTEST_CONFTEST_BASENAME = "conftest.py"
+
+#: `PYTEST_TESTPATHS` as segment runs, so a multi-segment testpath is matched
+#: as a contiguous run of directories rather than as unrelated segment names.
+_PYTEST_TESTPATH_RUNS: tuple[tuple[str, ...], ...] = tuple(
+    tuple(s for s in _normalise_path(testpath).split("/") if s)
+    for testpath in PYTEST_TESTPATHS
+)
 
 
 def is_test_file(path: str) -> bool:
-    """True when `path` is a test file for the FR-034 lane count.
+    """True when this repo's pytest configuration collects `path` (FR-034).
 
-    Matches the repo's pytest discovery (`test_*.py`), the two conventional
-    spellings beside it (`*_test.py`, `conftest.py`), and anything under a
-    `tests` directory segment. Pure and never raises.
+    Exactly what the declared configuration reaches: a basename matching a
+    `PYTEST_PYTHON_FILES` glob, somewhere under a `PYTEST_TESTPATHS` run of
+    directories, plus pytest's own `conftest.py`. Everything else is a SOURCE
+    file for the lane count — a `*_test.py` no declared config names, an
+    `__init__.py` or a JSON fixture sitting beside the tests, a production
+    module under some directory that merely happens to be called `tests`.
+    Pure and never raises.
+
+    The glob is MATCHED WITH `fnmatch`, which is the matcher pytest itself
+    applies to `python_files`, so the pattern is consumed from the mirrored
+    config rather than re-typed as a regex beside it — that re-typing is how
+    `*_test.py` came to be in a roster no `pyproject.toml` in this repo asks
+    for (D-222).
+
+    The testpath is matched anywhere in the directory part rather than
+    anchored, deliberately: a caller hands in a path relative to the REPO
+    root (`plugins/foundry/mcp-server/tests/test_vocab.py`) while `testpaths`
+    is relative to each package's own rootdir, and the PURITY RULE forbids
+    resolving rootdirs from here. Unanchored is the honest approximation and
+    it errs toward calling a file source, which is the direction the lane
+    bound survives.
     """
     normalised = _normalise_path(path)
     if not normalised:
         return False
     segments = normalised.split("/")
-    if TEST_DIRECTORY_SEGMENT in segments[:-1]:
-        return True
     basename = segments[-1]
-    return any(pattern.match(basename) for pattern in _TEST_BASENAME_RES)
+    if basename == PYTEST_CONFTEST_BASENAME:
+        return True
+    directories = segments[:-1]
+    if not any(
+        tuple(directories[i : i + len(run)]) == run
+        for run in _PYTEST_TESTPATH_RUNS
+        for i in range(len(directories) - len(run) + 1)
+    ):
+        return False
+    return any(fnmatchcase(basename, glob) for glob in PYTEST_PYTHON_FILES)
 
 
 #: GI-003 — the handoff event the SERVER appends when it accepts a lead fix.
