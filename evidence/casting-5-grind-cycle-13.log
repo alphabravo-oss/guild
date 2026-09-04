@@ -54,4 +54,4 @@
     the extra log satisfies NEITHER FR-009 arm: casting 3's key_files are not in the diff and its command names no touched file.
     FULL rule fired  scope=['casting-1-alpha.log', 'casting-2-beta.log', 'wave-report-sections.log']
 .
-1 passed, 266 deselected in 0.49s
+1 passed, 277 deselected in 2.98s
