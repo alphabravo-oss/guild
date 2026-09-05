@@ -432,10 +432,19 @@ def drive_finer_boundary_run(tmp_path: Path) -> dict[str, object]:
         _ledger(("D-002", "D-003"))
         _cross("inspect_start")
 
-        # cycles 3 and 4 — ordinary GRINDs. Both touch TEST files, because
-        # `is_verifier_path` matches every `.py` under `foundry_mcp/`: in this
-        # repo a DELTA cycle is one that moved tests, docs or evidence and
-        # nothing else. That is a fact about the run, so the fixture carries it.
+        # cycles 3 and 4 — ordinary GRINDs. Both touch TEST files, which are
+        # deliberately outside the verifier set: they are the pins, not the
+        # judgement, and the TEST stream re-runs them at every width.
+        #
+        # THIS COMMENT USED TO SAY "`is_verifier_path` matches every `.py`
+        # under `foundry_mcp/`", which was D-033's package rule. FR-003 / AC-012
+        # narrowed the rule to the four deciders, the evidence sweep,
+        # `schemas/`, `vocab.py` and the verifying streams' contract prose, so
+        # a DELTA cycle in this repo is no longer only "tests, docs or
+        # evidence" — a GRIND confined to `display.py`, the report seal or the
+        # lead's protocol earns one too. The fixture's own delta files are
+        # tests either way, so the drive is unchanged; the sentence describing
+        # WHY is not, and prose that contradicts the rule is worse than none.
         for delta_file, still_open in zip(_DELTA_FILES, (("D-003",), ("D-004",))):
             _cross("grind_start")
             _grind(delta_file)

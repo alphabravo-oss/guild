@@ -598,96 +598,115 @@ PROVE_DELTA_SAMPLE_SIZE = 10
 # `foundry-archive/{run}/spec.md`) — a static pattern would either miss it or
 # sweep in every unrelated spec.md in the tree.
 #
-# WHY THE SERVER PACKAGE IS MATCHED WHOLE AND NOT MODULE BY MODULE (D-033)
-# ------------------------------------------------------------------------
-# This pattern was an alternation of five `foundry_mcp/tools/` basenames, and
-# an enumeration of the modules that judge the build is a list that goes stale
-# the first time one is added. Driven: `is_verifier_path` over all 55 key_files
-# of this run's own manifest returned False for `foundry_mcp/tools/`
-# foundry_report.py — whose `report_status` IS the DONE precondition —
-# foundry_spawn.py (`_manifest_shape_problem`, called by `foundry_gate`),
-# foundry_state.py, display.py and citation.py. Every one of those is imported
-# by a gate path, so a GRIND diff moving the DONE precondition itself would
-# have been judged by a DELTA roster.
+# WHY THE PACKAGE RULE IS GONE, AND WHAT REPLACED IT (FR-003 / GI-009 / AC-012)
+# ------------------------------------------------------------------------------
+# D-033 WIDENED this to the whole `foundry_mcp/` package. The reasoning was
+# sound for the tree it was written against: the pattern had been an alternation
+# of five `tools/` basenames, `is_verifier_path` answered False for
+# `foundry_report.py` — whose `report_status` IS the DONE precondition —
+# `foundry_spawn.py`, `foundry_state.py`, `display.py` and `citation.py`, and
+# naming the five misses would have fixed the instance and kept the class. With
+# one 15,000-line module holding every gate, every transition, the width
+# decision, the spend roll-up, the report seal and the halt door, "everything in
+# the package is a gate or something a gate imports" was TRUE.
 #
-# Naming the five misses would have fixed the instance and kept the class, so
-# the rule is now the PACKAGE: every module under a `foundry_mcp/` segment is
-# verifier machinery, because everything in it is a gate, an orchestrator, a
-# stream, or something one of those imports. The alternative shapes were both
-# rejected: matching all of `plugins/foundry/` sweeps in README.md and the
-# plugin manifest (a README edit is not the verifier moving) and would delete
-# DELTA outright for a self-targeting run; deriving the set from the
-# orchestrator's import graph is exact but needs filesystem and AST work,
-# which the PURITY RULE at the top of this module forbids.
+# It stopped being true when that module was split. A-005 states the
+# replacement verbatim: "Narrow to: the gate/transition module(s), the width
+# decision, `schemas/`, `vocab.py`, the evidence sweep, and the loaded prose of
+# the VERIFYING agents (assayer, tracer, research-auditor, spec-test-deriver,
+# skills prove/trace/sight/temper). Display, report seal, spend, halt,
+# directives, teams, `commands/*.md`, `teammate.md` and `references/` earn
+# DELTA."
 #
-# The cost is bounded and deliberate. A run building anything other than
-# foundry never has `foundry_mcp/` in its diff, so the saving DELTA exists for
-# is untouched there; in a self-targeting run the verifier genuinely is
-# moving. The server's own tests are NOT swept in: they are the
-# pins, not the judgement, the TEST stream re-runs them at every width, and
-# leaving them out keeps a real DELTA case in the run that edits this file
-# most.
+# THE COST THE PACKAGE RULE WAS ACTUALLY CHARGING. A self-targeting run has
+# `foundry_mcp/` in almost every diff, so `verifier_touched` fired on a GRIND
+# that moved a colour constant in `display.py` or a sentence in
+# `commands/start.md`, and the next INSPECT paid for five streams. AC-046 puts a
+# ceiling on that — FULL cycles under half of all INSPECT cycles — and the
+# package rule made the ceiling unreachable on the one run type this server is
+# built to run against itself.
 #
-# WHY THE PROSE RULE IS "LOADED CONTRACT", NOT A ROSTER OF DIRECTORIES (D-118)
-# ----------------------------------------------------------------------------
-# D-033 above replaced a basename roster with a package rule on the CODE side
-# and stopped there; the PROSE side went on naming its members one directory
-# at a time (`agents/`, `skills/`, `commands/`) and went stale exactly the same
-# way. Driven: `is_verifier_path` returned False for
-# `plugins/foundry/references/verification-patterns.md` and for
-# `references/lead-discipline.md` — both loaded as binding contracts, the first
-# by `agents/tracer.md` and `agents/assayer.md` via
-# `@${CLAUDE_PLUGIN_ROOT}/references/…`, the second by `commands/start.md` —
-# and False for `plugins/foundry/scripts/validate-test-observations.py`, which
-# the TEST-01 adjudicator EXECUTES as its Layer 1 and halts on. A GRIND whose
-# only touched file was the tracer's own verification contract therefore
-# recorded DELTA, and a change to the verifier was judged by a narrow INSPECT.
+# WHAT THE NARROWED SET IS FOR, WHICH IS THE WHOLE TEST OF MEMBERSHIP. The rule
+# exists so that a GRIND diff which moved the machinery that JUDGES the build
+# cannot be judged by a narrow roster (ST-006). So the question for any path is
+# not "is it important" but "could a previous cycle's VERDICT be wrong because
+# this moved". A gate, a transition, the width decision, the evidence sweep, a
+# schema, the vocabulary and a verifying stream's own loaded contract can each
+# make an earlier verdict wrong. A renderer, a spend ledger, a halt door, a
+# directive writer, a team registry, the lead's protocol and the teammate
+# contract cannot: they act on verdicts, or they describe them, and moving them
+# leaves every verdict already reached exactly as sound as it was.
 #
-# So the prose rule is now ONE rule over the directories that hold loaded
-# contracts, and the discriminator is not the directory name but what the
-# document IS: something an agent or the lead is instructed to read as binding,
-# or a validator a stream shells out to. That boundary is what keeps the
-# no-answers honest — a README documents the plugin to a human, the setup and
-# update shells install it, `measure-run.py` and `migrate-archive.py` read a
-# finished archive and print, and `hooks/pre-commit-guard.sh` constrains what
-# may be COMMITTED rather than judging whether the build is right. None of
-# those moving can make a previous cycle's verdict wrong, which is the only
-# thing `verifier_touched` is for.
+# `references/` IS ON THE DELTA SIDE, AND THAT IS A DELIBERATE NARROWING OF
+# D-118. That defect widened the prose rule to `agents|commands|references`
+# because `references/verification-patterns.md` is loaded as a binding contract
+# by `agents/tracer.md` and `agents/assayer.md`, and a GRIND touching it was
+# recording DELTA. A-005 and AC-012 both put `references/` back on the delta
+# side, and OT-013 states it a third time, so the narrowing is what the
+# requirements ask for rather than an oversight — the mitigation now covers the
+# agent and skill files themselves, which is where a stream's contract is
+# stated, and not the shared documents they cite. `tests/test_vocab.py`'s
+# anti-staleness pin is re-scoped to match (AC-017): it asserts over the
+# verifying streams' OWN contract prose, derived from the shipped tree rather
+# than listed, so a seventh verifying agent fails it the day it ships.
 #
-# An enumeration is still an enumeration, though, so the anti-staleness
-# mechanism does not live here at all: `tests/test_vocab.py` harvests every
-# `${CLAUDE_PLUGIN_ROOT}/….md` load target out of the shipped prose and
-# asserts each one answers True. A new contract file — in `references/` or in
-# a directory nobody has invented yet — fails that pin the moment an agent
-# names it. Deriving the set here instead would need filesystem and AST work,
-# which the PURITY RULE at the top of this module forbids.
+# THE `orchestration/` MODULES DO NOT EXIST YET, AND A REGEX MATCHES A STRING.
+# Casting 2 creates `gates.py`, `transitions.py`, `width.py` and
+# `evidence_boundary.py` in wave 2. The rule below is correct today because it
+# is a pattern, not a directory walk; what cannot be asserted today is
+# EXISTENCE, which is why `tests/test_vocab.py` holds those four paths in a
+# tuple whose existence assertion arms itself the moment the package appears.
+#
+# WHAT STAYS. The `scripts/validate[-_]…` rule D-118 added: a stream shells out
+# to those validators and halts on a non-zero exit, so they are stream-contract
+# surface and an edit to one changes what a stream will accept. The SPEC is
+# still absent from this tuple and still matched by the `spec_path` argument,
+# for the reason below. And the server's own tests are still out: they are the
+# pins, not the judgement, and the TEST stream re-runs them at every width.
+#
+# An enumeration is an enumeration, so the anti-staleness mechanism is not here:
+# `tests/test_vocab.py` asserts the set in BOTH directions — every member
+# answers True, every named non-member answers False — and derives the verifying
+# streams' contract corpus from the shipped tree. Deriving the code half here
+# would need filesystem and AST work, which the PURITY RULE forbids.
 # Extend only via phase-level RFC.
 VERIFIER_PATH_PATTERNS: tuple[str, ...] = (
-    # The canonical vocabulary itself, wherever it sits.
+    # The canonical vocabulary itself, wherever it sits. Every closed
+    # vocabulary a stream validates against is declared here, so a diff moving
+    # one can change what any stream will accept.
     r"(?:^|/)vocab\.py$",
     # Any schema module — the finding/report shapes every stream validates on.
     r"(?:^|/)schemas/",
-    # The whole server package: gates, orchestrator, streams, parsers, and
-    # every module those import. See the D-033 note above for why this is one
-    # segment rule and not a roster of basenames.
-    r"(?:^|/)foundry_mcp/(?:[^/]+/)*[^/]+\.py$",
-    # LOADED CONTRACT PROSE — the documents a stream or the lead is instructed
-    # to read as binding: stream contracts (`agents/`), run protocol
-    # (`commands/`), and the shared references both of those pull in
-    # (`references/`). One rule over the three flat directories, per the D-118
-    # note above; a README is not in it because a README is not loaded.
-    r"(?:^|/)(?:agents|commands|references)/[^/]+\.md$",
-    # Skills sit one segment deeper and the non-SKILL files beside them (a
-    # skill's own README) are not contracts, so this one keeps its own shape
-    # rather than folding into the alternation above.
-    r"(?:^|/)skills/[^/]+/SKILL\.md$",
-    # The validators a stream SHELLS OUT TO. `foundry_mcp/` already covers the
-    # in-package twin (`foundry_mcp/scripts/validate_intent_coverage.py`); this
-    # is the standalone plugin CLI the adjudicator agents actually invoke
-    # through `${CLAUDE_PLUGIN_ROOT}/scripts/`. Both spellings, because the two
-    # halves of that pair disagree about hyphen versus underscore already.
+    # THE FOUR MODULES THAT DECIDE. The gate ladder, the phase transitions, the
+    # INSPECT width decision and the evidence-sweep boundary: a diff moving any
+    # of them can make a verdict already reached wrong, which is the only thing
+    # `verifier_touched` is for. Named as an alternation under one directory
+    # rather than as a `orchestration/` segment rule, because that package also
+    # holds the halt door, the report seal, spend, directives and teams — every
+    # one of which A-005 puts on the delta side.
+    r"(?:^|/)foundry_mcp/tools/orchestration/"
+    r"(?:gates|transitions|width|evidence_boundary)\.py$",
+    # The evidence corpus itself. GI-006 keeps it re-executable at every
+    # crossing, and the module that re-executes it decides whether a log
+    # passes.
+    r"(?:^|/)foundry_mcp/tools/evidence\.py$",
+    # LOADED CONTRACT PROSE — the six VERIFYING streams' own agent files. A
+    # stream's contract is what it will and will not report, so an edit to one
+    # changes what the next INSPECT means. `teammate.md` is deliberately absent:
+    # a teammate BUILDS, and a build instruction moving cannot make a verdict
+    # already reached wrong.
+    r"(?:^|/)agents/(?:assayer|tracer|flow-tracer|research-auditor"
+    r"|coverage-diff|spec-test-deriver)\.md$",
+    # The four verification skills, one segment deeper. The non-SKILL files
+    # beside them (a skill's own README) are not contracts.
+    r"(?:^|/)skills/(?:prove|trace|sight|temper)/SKILL\.md$",
+    # The validators a stream SHELLS OUT TO (D-118). The adjudicator agents
+    # invoke these through `${CLAUDE_PLUGIN_ROOT}/scripts/` and halt on a
+    # non-zero exit, so what they accept is stream-contract surface. Both
+    # spellings, because the two halves of that pair disagree about hyphen
+    # versus underscore already.
     r"(?:^|/)scripts/validate[-_][^/]+\.py$",
-)  # 6 patterns
+)  # 7 patterns
 
 _VERIFIER_PATH_RES: tuple[re.Pattern[str], ...] = tuple(
     re.compile(pattern) for pattern in VERIFIER_PATH_PATTERNS

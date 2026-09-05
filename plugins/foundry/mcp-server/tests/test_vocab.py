@@ -1720,56 +1720,75 @@ def test_the_full_roster_is_ordered_and_every_member_is_a_real_stream() -> None:
     assert vocab.PROVE_DELTA_SAMPLE_SIZE == 10
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        "plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/schemas/findings.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_handoff.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/server.py",
-        # D-033 — the five gate-path modules the old basename alternation
-        # missed. `report_status` in foundry_report.py IS the DONE
-        # precondition and `_manifest_shape_problem` in foundry_spawn.py is
-        # called by `foundry_gate`, so a diff moving either was being judged
-        # by a DELTA roster.
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_report.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/citation.py",
-        # And the modules no report has named yet, which is the point of
-        # matching the package rather than a roster of basenames.
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/validation.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/intent_coverage.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/worktree_helpers.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/parsers/spec.py",
-        "plugins/foundry/agents/assayer.md",
-        "plugins/foundry/agents/tracer.md",
-        "plugins/foundry/skills/prove/SKILL.md",
-        "plugins/foundry/skills/trace/SKILL.md",
-        "plugins/foundry/commands/start.md",
-        # D-118 — the prose the streams LOAD, which the directory-by-directory
-        # roster missed for the same reason D-033's basename roster missed the
-        # gate modules. `verification-patterns.md` is pulled in as a binding
-        # contract by `agents/tracer.md` and `agents/assayer.md`;
-        # `lead-discipline.md` by `commands/start.md`. A GRIND whose only
-        # touched file was the tracer's own verification contract was
-        # recording DELTA.
-        "plugins/foundry/references/verification-patterns.md",
-        "plugins/foundry/references/lead-discipline.md",
-        # D-118 — the validators a stream shells out to. The TEST-01
-        # adjudicator runs the first as its Layer 1 and halts on a non-zero
-        # exit; `Foundry-Intent-Coverage` runs the second's in-package twin.
-        "plugins/foundry/scripts/validate-test-observations.py",
-        "plugins/foundry/scripts/validate-intent-coverage.py",
-    ],
+#: FR-003 / AC-012 — the post-split verifier set, spelled as REAL repo paths.
+#:
+#: A-005 verbatim: "the gate/transition module(s), the width decision,
+#: `schemas/`, `vocab.py`, the evidence sweep, and the loaded prose of the
+#: VERIFYING agents (assayer, tracer, research-auditor, spec-test-deriver,
+#: skills prove/trace/sight/temper)". A pattern that matches a synthetic path
+#: and not the one git actually prints in a diff is a `verifier_touched` rule
+#: that never fires, which is why these are the paths and not fixtures.
+VERIFIER_SET = (
+    "plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/schemas/findings.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py",
+    "plugins/foundry/agents/assayer.md",
+    "plugins/foundry/agents/tracer.md",
+    "plugins/foundry/agents/flow-tracer.md",
+    "plugins/foundry/agents/research-auditor.md",
+    "plugins/foundry/agents/coverage-diff.md",
+    "plugins/foundry/agents/spec-test-deriver.md",
+    "plugins/foundry/skills/prove/SKILL.md",
+    "plugins/foundry/skills/trace/SKILL.md",
+    "plugins/foundry/skills/sight/SKILL.md",
+    "plugins/foundry/skills/temper/SKILL.md",
+    "plugins/foundry/scripts/validate-test-observations.py",
+    "plugins/foundry/scripts/validate-intent-coverage.py",
 )
+
+#: The four modules casting 2 carves out of the monolith in WAVE 2. They are
+#: members of the verifier set TODAY — a regex matches a string, and the rule is
+#: correct the moment it is written — but they do not exist on disk yet, so the
+#: existence half of the pin below cannot be asserted for them and must not be
+#: faked.
+#:
+#: A SELF-CLOSING TRANSITIONAL PIN, NOT A FAIL-OPEN ONE. The existence
+#: assertion is skipped only while `foundry_mcp/tools/orchestration/` itself is
+#: absent; the moment casting 2 lands the package, every row here becomes a real
+#: existence assertion with no edit. A row that never existed and a row whose
+#: package arrived and whose module did not are then different outcomes, which
+#: is the property a bare `pytest.skip` on the whole group would have thrown
+#: away.
+POST_SPLIT_VERIFIER_MODULES = (
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/gates.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/transitions.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/width.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/evidence_boundary.py",
+)
+
+ORCHESTRATION_PACKAGE = (
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration"
+)
+
+#: GI-009's violation column, as paths. "a display, report-seal, spend, halt,
+#: directives or teams module (or `commands/*.md`, `teammate.md`,
+#: `references/`) still matching a verifier pattern after the split". Each one
+#: acts on a verdict or describes it; none of them moving can make a verdict
+#: already reached wrong, which is the only thing `verifier_touched` is for.
+POST_SPLIT_DELTA_MODULES = (
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/display.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/report_seal.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/spend.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/halt.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/directives.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/teams.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py",
+)
+
+
+@pytest.mark.parametrize("path", VERIFIER_SET)
 def test_every_path_fr_032_names_is_a_verifier_path(path: str) -> None:
-    """FR-032's minimum match set, path by path.
+    """FR-032 / AC-012's positive half, path by path.
 
     These are REAL repo paths, not synthetic ones: a pattern that matches
     `schemas/vocab.py` but not the path git actually prints in a diff is a
@@ -1782,6 +1801,63 @@ def test_every_path_fr_032_names_is_a_verifier_path(path: str) -> None:
     assert (REPO_ROOT / path).exists(), (
         f"{path} no longer exists, so this row proves nothing about a real "
         f"diff. Point it at the file that replaced it."
+    )
+
+
+@pytest.mark.parametrize("path", POST_SPLIT_VERIFIER_MODULES)
+def test_every_post_split_gate_module_is_a_verifier_path(path: str) -> None:
+    """AC-012's four deciders, whose files casting 2 creates in wave 2.
+
+    THE RULE IS ASSERTABLE TODAY AND THE EXISTENCE IS NOT, so the two halves
+    are asserted separately rather than the whole row being skipped. A regex
+    matches a string: `is_verifier_path` answers True for these paths the
+    moment the pattern names them, and that is the property AC-012 states.
+
+    The existence half ARMS ITSELF. While `foundry_mcp/tools/orchestration/`
+    does not exist the assertion is skipped and says so; the moment casting 2
+    lands the package, this becomes a real existence assertion with no edit
+    here — so a module the split renamed fails this pin rather than passing it
+    quietly, which is exactly what a fail-open transitional pin would not do.
+    """
+    assert vocab.is_verifier_path(path), (
+        f"{path} is a gate, a transition, the width decision or the evidence "
+        f"boundary — the four modules that DECIDE. A GRIND diff moving one can "
+        f"make a verdict already reached wrong (ST-006)."
+    )
+    if not (REPO_ROOT / ORCHESTRATION_PACKAGE).is_dir():
+        pytest.skip(
+            f"{ORCHESTRATION_PACKAGE} does not exist yet — casting 2 creates "
+            f"it in wave 2. The RULE is asserted above; the existence "
+            f"assertion arms itself the moment the package appears."
+        )
+    assert (REPO_ROOT / path).exists(), (
+        f"{ORCHESTRATION_PACKAGE} exists but {path} does not. The split landed "
+        f"and this module was renamed or never created, so the narrowed "
+        f"verifier rule names a path no diff can ever carry — point this row "
+        f"at the file that replaced it, and fix VERIFIER_PATH_PATTERNS with it."
+    )
+
+
+@pytest.mark.parametrize("path", POST_SPLIT_DELTA_MODULES)
+def test_every_post_split_lifecycle_module_earns_delta(path: str) -> None:
+    """GI-009's violation column, asserted before the modules exist.
+
+    "a display, report-seal, spend, halt, directives or teams module ... still
+    matching a verifier pattern after the split". Each acts on a verdict or
+    renders one; none of them moving can make a verdict already reached wrong.
+
+    Asserted on the PATH rather than on the file, and deliberately so: this is
+    the half of the narrowing that is easiest to undo by accident. A future
+    edit that reaches for a `orchestration/` segment rule — which reads like
+    the tidy generalisation of the four-module alternation — turns every row
+    here red at once, which is the whole reason they are spelled out.
+    """
+    assert not vocab.is_verifier_path(path), (
+        f"{path} is a lifecycle or presentation module: it ACTS on verdicts or "
+        f"renders them, and moving it leaves every verdict already reached as "
+        f"sound as it was. A GRIND diff confined to it earns rule `delta` "
+        f"(AC-012 / OT-013). Widening to a `orchestration/` segment rule is the "
+        f"regression this row exists to catch."
     )
 
 
@@ -1800,11 +1876,10 @@ def test_every_path_fr_032_names_is_a_verifier_path(path: str) -> None:
         "plugins/foundry/scripts/setup-foundry.sh",
         "plugins/foundry/scripts/update-mcp.sh",
         "plugins/foundry/hooks/pre-commit-guard.sh",
-        # The server's OWN tests. D-033 widened the rule to the whole
-        # `foundry_mcp/` package and stopped there on purpose: these are the
-        # pins, not the judgement, and the TEST stream re-runs them at every
-        # width. They are also the file a self-targeting GRIND cycle touches
-        # most, so keeping them out is what leaves that run a real DELTA case.
+        # The server's OWN tests. They are the pins, not the judgement, and the
+        # TEST stream re-runs them at every width. They are also the file a
+        # self-targeting GRIND cycle touches most, so keeping them out is what
+        # leaves that run a real DELTA case.
         "plugins/foundry/mcp-server/tests/test_vocab.py",
         "plugins/foundry/mcp-server/tests/conftest.py",
         "README.md",
@@ -1814,6 +1889,48 @@ def test_every_path_fr_032_names_is_a_verifier_path(path: str) -> None:
         "skills/README.md",          # a skill dir's non-SKILL file
         "src/myfoundry_mcp/tools/x.py",  # `foundry_mcp` inside a name, again
         "",
+        # ------------------------------------------------------------------
+        # AC-012 / GI-009 — THE NARROWING'S OWN NEGATIVES.
+        #
+        # A-005 verbatim: "Display, report seal, spend, halt, directives,
+        # teams, `commands/*.md`, `teammate.md` and `references/` earn DELTA."
+        # Every row below was a verifier path before this change, and each one
+        # is a GRIND cycle that used to pay for a five-stream INSPECT.
+        # ------------------------------------------------------------------
+        # The whole-package rule's cost, module by module. These are renderers,
+        # ledgers and readers: they act on verdicts, and moving one leaves
+        # every verdict already reached as sound as it was.
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_report.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_handoff.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/citation.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/server.py",
+        # The lead's protocol and the teammate contract. `commands/*.md` tells
+        # the LEAD what to do next and `teammate.md` tells a BUILDER how to
+        # build; neither is a stream contract, and D-118's widening swept both
+        # in as collateral of the `agents|commands|references` rule.
+        "plugins/foundry/commands/start.md",
+        "plugins/foundry/commands/resume.md",
+        "plugins/foundry/agents/teammate.md",
+        # The shared references. `verification-patterns.md` IS loaded by
+        # `agents/tracer.md` and `agents/assayer.md` as a binding contract —
+        # that is D-118's own instance — and A-005, AC-012 and OT-013 each put
+        # `references/` on the delta side anyway. The mitigation now covers the
+        # agent and skill files where a stream's contract is STATED, and not
+        # the documents they cite. The anti-staleness pin below is re-scoped to
+        # the loaders to match (AC-017).
+        "plugins/foundry/references/verification-patterns.md",
+        "plugins/foundry/references/lead-discipline.md",
+        # The non-verifying agents. A codebase mapper, a pattern mapper, a
+        # researcher and a nyquist auditor produce INPUTS to the build or act
+        # after it; none of them judges it, so none of them moving can make a
+        # verdict already reached wrong.
+        "plugins/foundry/agents/codebase-mapper.md",
+        "plugins/foundry/agents/pattern-mapper.md",
+        "plugins/foundry/agents/researcher.md",
+        "plugins/foundry/agents/nyquist-auditor.md",
     ],
 )
 def test_an_ordinary_path_is_not_a_verifier_path(path: str) -> None:
@@ -1821,42 +1938,120 @@ def test_an_ordinary_path_is_not_a_verifier_path(path: str) -> None:
 
     DELTA exists to cut the ~1M-token cost of a five-stream INSPECT; a
     predicate that over-matches quietly deletes that saving while still
-    reporting DELTA as available.
+    reporting DELTA as available. AC-046 puts a number on it — FULL cycles
+    under half of all INSPECT cycles — and on a self-targeting run the
+    whole-package rule made that ceiling unreachable.
     """
     assert not vocab.is_verifier_path(path)
 
 
-def test_the_whole_server_package_is_verifier_machinery() -> None:
-    """D-033, driven over the package as it stands rather than over a roster.
+def test_the_verifier_rule_answers_in_both_directions() -> None:
+    """AC-012 — the narrowing, asserted as the two-way statement it is.
 
-    The reported defect was an ENUMERATION going stale: five `tools/`
-    basenames, so `foundry_report.py` — whose `report_status` is the DONE
-    precondition — answered False. A parametrized list of the five that were
-    missing would pass while the sixth module added next week misses again, so
-    the pin walks the real package and asserts every module in it answers True.
+    WHAT THIS PIN USED TO SAY, AND WHY IT COULD NOT SURVIVE THE SPLIT
+    -----------------------------------------------------------------
+    It was `test_the_whole_server_package_is_verifier_machinery`, and it walked
+    every `.py` under `foundry_mcp/` asserting each answered True. That was the
+    right assertion for a tree where one 15,000-line module held every gate,
+    every transition, the width decision, the spend roll-up, the report seal and
+    the halt door: "everything in the package is a gate or something a gate
+    imports" was simply TRUE, and D-033's basename roster had gone stale for
+    exactly that reason.
+
+    The split makes it false. A-005 narrows the rule to the four deciders, the
+    evidence sweep, `schemas/`, `vocab.py` and the verifying streams' contract
+    prose, and puts display, report seal, spend, halt, directives, teams,
+    `commands/*.md`, `teammate.md` and `references/` on the delta side. A
+    one-directional pin cannot state that: it can only say what must answer
+    True, and the whole content of the narrowing is what must now answer False.
+
+    So the pin is REWRITTEN, not deleted — the D-033 property it protects (an
+    enumeration going stale unnoticed) is real, and it is protected here by
+    asserting the set in BOTH directions and by keeping the empty-set guard
+    below, so a derived roster that stops finding anything fails loudly instead
+    of going quietly green.
     """
-    package = (
-        REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "src" / "foundry_mcp"
-    )
-    assert package.is_dir(), f"{package} is gone; point this pin at the server"
+    assert VERIFIER_SET, "an empty positive set proves nothing"
+    assert POST_SPLIT_DELTA_MODULES, "an empty negative set proves nothing"
 
-    modules = sorted(
-        p for p in package.rglob("*.py") if "__pycache__" not in p.parts
-    )
-    assert len(modules) >= 20, (
-        f"only {len(modules)} modules found under {package}; the walk is not "
-        f"reaching the package, so this pin would prove nothing"
-    )
-
-    missed = [
-        str(p.relative_to(REPO_ROOT))
-        for p in modules
-        if not vocab.is_verifier_path(str(p.relative_to(REPO_ROOT)))
-    ]
+    missed = [p for p in VERIFIER_SET if not vocab.is_verifier_path(p)]
     assert not missed, (
-        f"{missed} sit inside the server package and answer False, so a GRIND "
-        f"diff moving one would be judged by a DELTA roster (ST-006). That is "
-        f"D-033: widen VERIFIER_PATH_PATTERNS, do not add rows here."
+        f"{missed} are the machinery that JUDGES the build and answer False, "
+        f"so a GRIND diff moving one would be judged by a DELTA roster "
+        f"(ST-006). Widen VERIFIER_PATH_PATTERNS; do not add rows here."
+    )
+
+    swept = [p for p in POST_SPLIT_DELTA_MODULES if vocab.is_verifier_path(p)]
+    assert not swept, (
+        f"{swept} act on verdicts or render them and still match a verifier "
+        f"pattern (GI-009's violation column). Every GRIND cycle that touches "
+        f"one then pays for a five-stream INSPECT, which is the cost AC-046 "
+        f"puts a ceiling on."
+    )
+
+
+def test_the_server_package_is_no_longer_matched_whole() -> None:
+    """AC-017's first clause: "no longer contains the whole-package rule".
+
+    Driven as a PROPERTY of the predicate rather than as a scan of the constant,
+    because a whole-package rule can be spelled several ways and a substring
+    check for the old regex would miss every one of them but the retired
+    spelling. The test is a module inside `foundry_mcp/` that is not verifier
+    machinery: under the package rule such a path could not exist, and under
+    the narrowed rule it must.
+    """
+    lifecycle = (
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_report.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/citation.py",
+    )
+    for path in lifecycle:
+        assert (REPO_ROOT / path).exists(), f"{path} is gone; re-point this row"
+        assert not vocab.is_verifier_path(path), (
+            f"{path} sits inside `foundry_mcp/` and answers True, so the "
+            f"whole-package rule (or something equivalent to it) is back. "
+            f"AC-017's first clause is that it is not."
+        )
+
+    # And `schemas/` is still matched WHOLE, which is the one package-shaped
+    # rule A-005 keeps: every finding and report shape a stream validates on
+    # lives there, so any module in it can change what a stream will accept.
+    assert vocab.is_verifier_path(
+        "plugins/foundry/mcp-server/src/foundry_mcp/schemas/findings.py"
+    )
+
+
+def test_the_monolith_earns_delta_until_the_split_lands() -> None:
+    """ST-013's wave-1/wave-2 window, stated rather than discovered.
+
+    From the commit that narrows the rule until casting 2 lands the split,
+    `tools/foundry_orchestrator.py` is not a verifier path — so a GRIND diff
+    confined to the monolith records rule `delta` even though the monolith
+    still holds every gate. That is the price of the plan's file ownership: the
+    narrowed rule names the modules the split WILL create, and it cannot also
+    name the module they are carved out of without re-admitting the whole
+    package on the very cycle the narrowing is meant to end.
+
+    Asserted rather than left implicit, because a window nobody wrote down is a
+    window nobody closes. When casting 2 deletes the monolith this row's
+    existence assertion is what turns it red, and the correct edit is then to
+    delete the row — not to widen the rule.
+    """
+    monolith = (
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py"
+    )
+    if not (REPO_ROOT / monolith).exists():
+        pytest.skip(
+            "the monolith is gone, so the wave-1/wave-2 window has closed and "
+            "this row has nothing left to describe — delete it"
+        )
+    assert not vocab.is_verifier_path(monolith), (
+        "the monolith answers True, so either the narrowing was reverted or a "
+        "rule was added for it. Neither is the plan: the four deciders are "
+        "named individually so that the modules which are NOT deciders stop "
+        "forcing FULL."
     )
 
 
@@ -1873,40 +2068,81 @@ _SHIPPED_PROSE_GLOBS = ("agents/*.md", "commands/*.md", "skills/*/SKILL.md", "re
 #: in the prose is a citation, not a load.
 _PLUGIN_ROOT_MD_LOAD = re.compile(r"CLAUDE_PLUGIN_ROOT\}/([A-Za-z0-9_./-]+\.md)")
 
+#: AC-017's re-scoping, as a PREDICATE over the corpus rather than a roster.
+#:
+#: A-005 names the verifying streams: "the assayer, tracer, research-auditor,
+#: spec-test-deriver ... and the prove/trace/sight/temper skills", plus the two
+#: FLOW/COVERAGE agents the same sentence's "loaded prose of the VERIFYING
+#: agents" reaches. `is_verifier_path` is the shipped statement of that set, so
+#: the corpus is DERIVED from it: a seventh verifying agent added to
+#: `VERIFIER_PATH_PATTERNS` joins this harvest with no edit here, and a
+#: document that leaves the set drops out of it the same way.
+#:
+#: Deriving it from the predicate under test is deliberate and is not circular,
+#: because the harvest asserts something the predicate does not: that every
+#: document these contracts LOAD is itself in the set. The predicate cannot
+#: make that true by construction — it knows nothing about load instructions —
+#: and the guards below fail the pin if the derivation ever selects nothing.
+def _verifying_stream_contracts() -> list["Path"]:
+    plugin_root = REPO_ROOT / "plugins" / "foundry"
+    return sorted(
+        doc
+        for glob in ("agents/*.md", "skills/*/SKILL.md")
+        for doc in plugin_root.glob(glob)
+        if vocab.is_verifier_path(str(doc.relative_to(REPO_ROOT)))
+    )
+
 
 def test_every_prose_file_the_shipped_agents_load_is_a_verifier_path() -> None:
-    """D-118, derived from the load instructions rather than from a roster.
+    """AC-017 — "the anti-staleness pin still passes for every loaded contract
+    of a verifying stream".
 
-    The reported defect was the PROSE half of D-033's enumeration problem.
+    WHAT D-118 FILED, AND WHY THE PIN SURVIVES THE NARROWING
+    --------------------------------------------------------
     `VERIFIER_PATH_PATTERNS` named `agents/`, `skills/` and `commands/` one
     directory at a time, so `references/verification-patterns.md` — which
     `agents/tracer.md` and `agents/assayer.md` load as a binding contract —
-    and `references/lead-discipline.md` — which `commands/start.md` loads —
-    both answered False. Driven: a GRIND whose only touched file was the
-    tracer's own verification contract recorded mode DELTA, rule delta, and a
-    roster of trace/prove/test. The machinery that judges the build had moved
-    and a narrow INSPECT judged the move.
+    answered False, and a GRIND whose only touched file was the tracer's own
+    verification contract recorded mode DELTA. Adding two rows to a
+    parametrized list would have fixed those two files and kept the class, so
+    this pin does not name files: it reads what the prose TELLS an agent to
+    load and asserts every target answers True.
 
-    Adding two rows to the parametrized list above would fix those two files
-    and keep the class, so this pin does not name files at all: it reads what
-    the shipped prose TELLS an agent to load and asserts every target answers
-    True. A contract file added to `references/` — or to a directory nobody has
-    invented yet — fails here the moment an agent names it, which is the
-    property the constant itself cannot have while the PURITY RULE forbids it
-    the filesystem.
+    THE RE-SCOPING, WHICH IS THE WHOLE OF AC-017'S SECOND CLAUSE
+    ------------------------------------------------------------
+    The harvest used to run over EVERY shipped prose document, including
+    `commands/start.md`. A-005 puts `commands/*.md` and `references/` on the
+    delta side, so the old harvest would now assert that
+    `references/lead-discipline.md` — loaded by the LEAD's protocol, not by any
+    stream — is a verifier path, which the requirements say it is not.
+
+    So the corpus is the VERIFYING STREAMS' own contract prose, derived from
+    `is_verifier_path` rather than listed. `references/verification-patterns.md`
+    is the one target that leaves the assertion with it, and that is a decision
+    the requirements make three times over (A-005, AC-012, OT-013): the
+    mitigation covers the documents where a stream's contract is STATED, and
+    not the shared documents those contracts cite. The pin's own property is
+    untouched — a contract file added to a directory nobody has invented yet
+    still fails here the moment a VERIFYING stream names it — and that is the
+    property, not the particular targets it happened to catch in 2026.
     """
     plugin_root = REPO_ROOT / "plugins" / "foundry"
     assert plugin_root.is_dir(), f"{plugin_root} is gone; point this pin at the plugin"
 
-    corpus = sorted(
-        p for glob in _SHIPPED_PROSE_GLOBS for p in plugin_root.glob(glob)
+    corpus = _verifying_stream_contracts()
+    assert len(corpus) >= 4, (
+        f"only {[str(p.relative_to(plugin_root)) for p in corpus]} derived as "
+        f"verifying-stream contracts; A-005 names ten (six agents and four "
+        f"skills), so `is_verifier_path` has stopped matching the prose half "
+        f"and this pin would pass while proving nothing"
     )
-    assert len(corpus) >= 20, (
-        f"only {len(corpus)} prose files found under {plugin_root}; the walk is "
-        f"not reaching the corpus, so this pin would prove nothing"
+    assert any("skills/" in str(p) for p in corpus), (
+        "no skill file derived; the four verification skills are half the "
+        "corpus and a harvest without them cannot witness a skill's contract "
+        "changing"
     )
 
-    # {loaded repo-relative path: the documents that load it}
+    # {loaded repo-relative path: the verifying contracts that load it}
     loaded: dict[str, set[str]] = {}
     for doc in corpus:
         for rel in _PLUGIN_ROOT_MD_LOAD.findall(doc.read_text(encoding="utf-8")):
@@ -1917,26 +2153,70 @@ def test_every_prose_file_the_shipped_agents_load_is_a_verifier_path() -> None:
                 str(target.resolve().relative_to(REPO_ROOT)), set()
             ).add(str(doc.relative_to(plugin_root)))
 
-    assert len(loaded) >= 4, (
-        f"only {sorted(loaded)} harvested; the shipped prose loads more than "
-        f"that, so the regex has stopped matching the spelling the prose uses "
-        f"and this pin would pass while proving nothing"
-    )
-    assert any(p.startswith("plugins/foundry/references/") for p in loaded), (
-        f"no references/ target harvested from {sorted(loaded)}; those two "
-        f"files are the D-118 instance, so a harvest without them cannot "
-        f"witness the regression"
+    # THE "NO TARGET HARVESTED" GUARD, WHICH THE RE-SCOPING MAKES SHARPER
+    # RATHER THAN WEAKER. The old harvest ran over every shipped document and
+    # required four targets; this one runs over ten and requires that the
+    # regex still matches the spelling the prose uses at all. A harvest that
+    # found nothing would make the assertion below vacuously true, which is the
+    # one way a re-scoped pin can go quietly green.
+    assert loaded, (
+        f"no `${{CLAUDE_PLUGIN_ROOT}}/….md` load target harvested from the "
+        f"{len(corpus)} verifying-stream contracts. Either the prose stopped "
+        f"loading documents that way, or the regex stopped matching the "
+        f"spelling it uses — and either way this pin is now asserting nothing."
     )
 
-    missed = {p: sorted(by) for p, by in sorted(loaded.items()) if not vocab.is_verifier_path(p)}
+    missed = {
+        p: sorted(by) for p, by in sorted(loaded.items())
+        if not vocab.is_verifier_path(p) and not p.startswith(
+            "plugins/foundry/references/"
+        )
+    }
     assert not missed, (
-        f"{missed} are loaded as binding contracts by the documents listed "
-        f"beside them, yet answer False — so a GRIND diff moving one would be "
-        f"judged by a DELTA roster (ST-006). Widen VERIFIER_PATH_PATTERNS. If "
-        f"a target here is genuinely NOT a contract (a README an agent merely "
-        f"cites), say so in the D-118 note in vocab.py and narrow this harvest "
-        f"deliberately — do not silence it by dropping the row."
+        f"{missed} are loaded as binding contracts by the VERIFYING streams "
+        f"listed beside them, yet answer False — so a GRIND diff moving one "
+        f"would be judged by a DELTA roster (ST-006). Widen "
+        f"VERIFIER_PATH_PATTERNS. The one exemption is `references/`, which "
+        f"A-005, AC-012 and OT-013 each place on the delta side by name; "
+        f"anything else here is a real gap."
     )
+
+
+def test_the_references_exemption_is_the_only_one_and_it_is_real() -> None:
+    """AC-012 / AC-017 — the exemption above, driven rather than asserted.
+
+    The pin's exemption clause is the one place the re-scoping could hide a
+    regression, so it is checked from the other side: `references/` must
+    actually be a live load target of a verifying stream (or the exemption is
+    dead prose covering nothing), and it must actually answer False (or the
+    exemption is silently unnecessary and the narrowing did not land).
+
+    Both halves matter. An exemption that covers nothing is a comment; an
+    exemption whose subject already passes is a hole waiting for the day it
+    does not.
+    """
+    plugin_root = REPO_ROOT / "plugins" / "foundry"
+    referenced: dict[str, set[str]] = {}
+    for doc in _verifying_stream_contracts():
+        for rel in _PLUGIN_ROOT_MD_LOAD.findall(doc.read_text(encoding="utf-8")):
+            if rel.startswith("references/") and (plugin_root / rel).is_file():
+                referenced.setdefault(rel, set()).add(
+                    str(doc.relative_to(plugin_root))
+                )
+
+    assert referenced, (
+        "no verifying stream loads a `references/` document any more, so the "
+        "exemption in the pin above covers nothing — delete it, and the "
+        "harvest becomes unconditional again"
+    )
+    for rel, loaders in sorted(referenced.items()):
+        assert not vocab.is_verifier_path(f"plugins/foundry/{rel}"), (
+            f"plugins/foundry/{rel} answers True while A-005, AC-012 and "
+            f"OT-013 each put `references/` on the delta side. It is loaded by "
+            f"{sorted(loaders)}, so if the requirements have changed, change "
+            f"the pin above with them — do not leave an exemption that no "
+            f"longer describes the rule."
+        )
 
 
 def test_every_validator_a_stream_shells_out_to_is_a_verifier_path() -> None:
