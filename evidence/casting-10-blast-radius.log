@@ -12,7 +12,7 @@
 
 ============================= test session starts ==============================
 platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
-rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10z/plugins/foundry/mcp-server
+rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10w/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
 collected 1112 items
@@ -89,9 +89,9 @@ tests/test_lead_prose.py ............................................... [ 85%]
 ..................                                                       [100%]
 
 =========================== short test summary info ============================
-SKIPPED [1] tests/test_measure_run.py:632: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10z/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:1507: grand-vulture archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10z/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2236: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10z/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2295: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10z/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2364: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10z/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-======================= 1107 passed, 5 skipped in 57.54s =======================
+SKIPPED [1] tests/test_measure_run.py:632: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10w/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:1507: grand-vulture archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10w/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2236: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10w/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2295: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10w/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2364: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10w/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+======================= 1107 passed, 5 skipped in 54.92s =======================

@@ -11,7 +11,7 @@
 ........................................................................ [ 61%]
 ........................................................................ [ 74%]
 ........................................................................ [ 86%]
-...............................
+................................
 === report.json top-level keys ===
   generated_at
   run
@@ -205,6 +205,6 @@
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-...................................... [ 99%]
-.....                                                                    [100%]
-581 passed in 4.51s
+..................................... [ 98%]
+......                                                                   [100%]
+582 passed in 3.68s
