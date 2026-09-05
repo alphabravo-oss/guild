@@ -27,12 +27,12 @@ than sharing one through ``conftest.py``, which is this suite's per-concern
 convention.
 
 WHAT IS ACTUALLY AT RISK HERE, and it is not the logic. These bodies are the
-monolith's bodies, moved unchanged; what a move can break is the SEAM — a name
-that resolved through the old module's globals and now does not, an import the
-new home lacks, a lock filename that drifted and stopped excluding the copy
-still standing in the monolith. So the tests below are anchored on the seam:
-what each primitive does with a malformed document, what it writes, what it
-names its lock, and what the module reaches for at import time.
+orchestrator's bodies, moved unchanged; what a move can break is the SEAM — a
+name that resolved through the old module's globals and now does not, an import
+the new home lacks, a sidecar filename that drifted away from the scan that has
+to skip it. So the tests below are anchored on the seam: what each primitive
+does with a malformed document, what it writes, what it names its lock, and what
+the module reaches for at import time.
 """
 
 from __future__ import annotations
@@ -50,6 +50,7 @@ from foundry_mcp.tools.artifacts import (
     _artifact_guard,
     _document_problem,
     _document_transaction,
+    _is_write_sidecar,
     _load_json,
     _resolve_spec_path,
     _run_artifact_problems,
@@ -290,15 +291,15 @@ def test_a_nested_transaction_on_one_path_yields_the_same_document(run_env):
 
 
 def test_the_lock_sidecar_is_the_document_name_plus_the_declared_suffix(run_env):
-    """The lock FILENAME is load-bearing across module boundaries, not an
+    """The lock FILENAME is load-bearing across process boundaries, not an
     implementation detail.
 
-    While the monolith still carries its own copy of this primitive, the two
-    copies exclude each other only because both open the SAME on-disk lock:
-    ``path.with_name(path.name + _TX_LOCK_SUFFIX)``. A renamed or "improved"
-    sidecar would leave two writers believing they were serialized when they
-    were not. Read off disk while the transaction is open, and the suffix is
-    read from the declaration rather than typed here.
+    Two server processes on one repository exclude each other ONLY through this
+    file: ``path.with_name(path.name + _TX_LOCK_SUFFIX)``. A renamed or
+    "improved" sidecar leaves two writers believing they were serialized when
+    they were not, and nothing in either process would notice. Read off disk
+    while the transaction is open, and the suffix is read from the declaration
+    rather than typed here.
     """
     _, fdir = run_env
     path = fdir / "state.json"
@@ -310,18 +311,72 @@ def test_the_lock_sidecar_is_the_document_name_plus_the_declared_suffix(run_env)
     assert _TX_LOCK_SUFFIX == ".lock"
 
 
-def test_the_lock_name_the_leaf_opens_is_the_one_the_monolith_opens():
-    """The transient-duplicate window's whole safety property, pinned.
+def test_the_scan_skips_exactly_the_sidecars_the_writers_really_create(run_env):
+    """The scan's idea of what is scaffolding, checked against what the writers
+    actually put on disk.
 
-    Two definitions of this primitive are live in one process until the carve
-    lands. They exclude each other through ``flock`` on a sidecar whose name
-    each computes independently, so the two spellings are compared here as
-    OBJECTS rather than trusted to be the same by inspection.
+    THIS REPLACED A TEST WHOSE SUBJECT WAS DELETED. While the orchestrator
+    still carried its own copy of these primitives, the test here compared the
+    two modules' ``_TX_LOCK_SUFFIX`` and ``_TX_TMP_SUFFIX`` as objects: the
+    duplicate window's whole safety property was that both writers computed the
+    same lock path. The carve landed, there is no second copy to compare
+    against, and that half is now
+    ``tests/orchestration/test_module_boundaries.py::test_the_helpers_group_zero_consolidated_have_exactly_one_definition``'s
+    to hold.
+
+    WHAT SURVIVES THE WINDOW is the reason those two suffixes were declared as
+    shared constants in the first place, and it is stated in the source above
+    them: they are consumed by BOTH the writers that create the sidecars and by
+    ``_run_artifact_problems``'s exclusion, "so the scan's idea of what is
+    scaffolding cannot drift from what the writers actually create". That is a
+    permanent property of this module and nothing else in this file asserts it:
+    the sidecars in
+    ``test_a_write_primitive_s_own_scaffolding_is_not_a_run_artifact`` are
+    spelled BY HAND, so a writer that changed its suffix would leave that test
+    green on the old spelling while the guard began reporting live sidecars and
+    refusing every door.
+
+    So both names are taken from the writers themselves — the lock from the
+    directory while a transaction holds it, the tmp from the rename that
+    commits it — and it is those names, not typed ones, that the scan must skip.
     """
-    from foundry_mcp.tools import foundry_orchestrator as fo
+    _, fdir = run_env
+    path = fdir / "state.json"
 
-    assert artifacts._TX_LOCK_SUFFIX == fo._TX_LOCK_SUFFIX
-    assert artifacts._TX_TMP_SUFFIX == fo._TX_TMP_SUFFIX
+    before = {p.name for p in fdir.iterdir()}
+    with _document_transaction(path) as doc:
+        doc["cycle"] = 1
+        lock_names = sorted({p.name for p in fdir.iterdir()} - before)
+
+    committed: list[str] = []
+    original = Path.rename
+
+    def _watch(self, target):
+        committed.append(self.name)
+        return original(self, target)
+
+    Path.rename = _watch
+    try:
+        _save_json(path, {"cycle": 2})
+    finally:
+        Path.rename = original
+
+    created = lock_names + committed
+    assert len(created) == 2, created
+
+    # Each one, under the name its WRITER chose, and holding bytes that would
+    # be named on any artifact — the guard must still be silent, because these
+    # are not artifacts.
+    for name in created:
+        sidecar = fdir / name
+        sidecar.write_bytes(b"\xff\xfe half a document")
+        assert _is_write_sidecar(sidecar), name
+    assert _run_artifact_problems(fdir) == []
+
+    # The control, or the assertion above proves only that the scan is asleep:
+    # the same bytes under a name no writer creates ARE named.
+    (fdir / "verdicts.json").write_bytes(b"\xff\xfe half a document")
+    assert any("verdicts.json" in p for p in _run_artifact_problems(fdir))
 
 
 # --------------------------------------------------------------------------- #

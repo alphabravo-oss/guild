@@ -27,18 +27,28 @@ THE ONE EXCEPTION TO THE IMPORT RULE, AND WHY IT IS NOT ONE.
 edge, not a load-time one, so this module still loads with nothing above the
 leaf layer in scope.
 
-THE TRANSIENT DUPLICATE, STATED SO NOBODY MISTAKES IT FOR THE FINISHED SHAPE.
-Until the casting that carves the orchestrator lands its first commit, the
-monolith keeps its own copy of every symbol here and BOTH copies are live in one
-process. They exclude each other correctly across threads, modules and processes
-because both open the SAME on-disk lock — ``path.with_name(path.name +
-_TX_LOCK_SUFFIX)``, byte-identical spelling and suffix — and ``flock`` is what
-binds across modules; the in-process re-entrancy map (``_ARTIFACT_TX``) is NOT
-shared, so a leaf transaction nested inside a monolith transaction on the SAME
-document on the SAME thread would block on a lock that thread already holds.
-No such nesting is reachable: the only caller that opens a transaction through
-this module is ``forge_spec``, and only on ``foundry-planning/<project>/
-state.json``, which no orchestrator transaction ever opens.
+THE DUPLICATE WINDOW IS CLOSED, AND THIS RECORDS WHAT IT WAS. For one wave this
+module and the orchestrator both defined every symbol here, and BOTH copies were
+live in one process. They excluded each other correctly across threads, modules
+and processes because both opened the SAME on-disk lock —
+``path.with_name(path.name + _TX_LOCK_SUFFIX)``, byte-identical spelling and
+suffix — and ``flock`` is what binds across modules. What they did NOT share was
+the in-process re-entrancy map (``_ARTIFACT_TX``), so a transaction opened here
+inside one opened there, on the same document on the same thread, would have
+blocked on a lock that thread already held; no such nesting was reachable,
+because the only caller that opens a transaction through this module is
+``forge_spec``, and only on ``foundry-planning/<project>/state.json``, which no
+orchestrator transaction ever opened.
+
+The carve has landed and the orchestrator is gone: these are the only
+definitions now, which
+``tests/orchestration/test_module_boundaries.py::test_the_helpers_group_zero_consolidated_have_exactly_one_definition``
+holds for ``_save_json``, ``_document_transaction``, ``_resolve_spec_path``,
+``_declared_external_inputs`` and ``_run_artifact_problems`` by name. The
+paragraph above stays because the lock filename is still load-bearing for the
+reason it names — two processes on one repository contend through that file —
+and because a reader who finds a second copy one day should know this was
+already paid for once.
 """
 
 from __future__ import annotations
