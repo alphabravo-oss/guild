@@ -54,7 +54,6 @@ from foundry_mcp.schemas.vocab import (
     REPORT_JSON_FILENAME,
     REPORT_MD_FILENAME,
     REPORT_REQUIRED_SECTIONS,
-    REQUIREMENT_ID_RE,
     RUN_PHASE_HALTED,
     SPEND_LEDGER_FILENAME,
     TEMPER_CANDIDATE,
@@ -1077,37 +1076,10 @@ def _read_dispatch_summary(run_dir: Path) -> tuple[dict, str | None]:
 MANIFEST_RELPATH = "castings/manifest.json"
 
 
-def _spec_text_for_span(project_root: Path, run_dir: Path, state: dict) -> str:
-    """The run's spec, as text, by the ladder F0.9 climbs. Never raises.
-
-    `run_dir/spec.md` first, then `state.json`'s recorded `spec_path` resolved
-    against the project root — the same two rungs `validate_castings` uses, in
-    the same order, because a report whose span table read a different document
-    than the gate would name a different set of requirement ids and the two
-    tables AC-044 calls one table would differ in their rows.
-
-    NOT a fourth spec-path resolver (Holmes `share-7`): this is two rungs of a
-    ladder over a run directory, not the general resolution that belongs in
-    `tools/artifacts.py`. An unreadable spec yields "" — the span is then
-    computed over the ids the castings themselves declare, which is a smaller
-    table and an honest one, rather than a refusal on a document this section
-    only needs in order to name requirements nobody owns.
-    """
-    text, problem = read_text_file(run_dir / "spec.md")
-    if problem is None and text:
-        return text
-    recorded = state.get("spec_path")
-    if isinstance(recorded, str) and recorded:
-        text, problem = read_text_file(Path(project_root) / recorded)
-        if problem is None:
-            return text
-    return ""
-
-
 def _read_requirement_span(
-    project_root: Path, run_dir: Path, state: dict
+    project_root: Path, run_dir: Path
 ) -> tuple[dict, str | None]:
-    """AC-044 / GI-018 / CT-011 — the F6 half of the span table.
+    """fallout AC-044 / GI-018 / CT-011 — the F6 half of the span table.
 
     Returns ``(section, problem)``::
 
@@ -1120,105 +1092,57 @@ def _read_requirement_span(
          "text": str,               # the same markdown block F0.9 prints
          "note": str}
 
-    ONE COMPUTATION, TWO SURFACES. `_requirement_span_rows` is the function
-    `Foundry-Validate-Castings` refuses on, called here with the same inputs
-    assembled the same way, so the table a lead reads at F0.9 and the table
-    they read at F6 cannot name different owners. This section REPORTS and
-    never refuses on the span itself: F0.9 is the gate, and a run that was
-    waived past a wide span at F0.9 must still be able to reach DONE.
+    ONE COMPUTATION, TWO SURFACES, AND ONE PUBLIC NAME FOR IT.
+    ----------------------------------------------------------
+    `foundry_validate.requirement_span_table` is the table the F0.9 gate
+    refuses on, and this section prints it. They must be the same table: a
+    second assembly anywhere would be a second answer to "who owns this
+    requirement", free to disagree with the answer a run was passed or refused
+    on — which is exactly what D-039 filed, since `_render_span_table`'s
+    docstring had promised this consumer while no such consumer existed.
 
-    FR-054 TOLERANCE, ON BOTH SHAPES IT CAN MEET.
-    ---------------------------------------------
-    An ABSENT manifest is an empty section, not a refusal — the same rule every
-    other section here follows, and a run halted before F0.5 legitimately has
-    none. An archive below `REQUIREMENT_IDS_SCHEMA_FLOOR` whose castings carry
-    no `requirement_ids` is NOT COMPUTABLE, and says so in the same sentence
-    F0.9 prints rather than rendering an empty table: an empty table reads as
-    "no requirements", which is a different and alarming claim.
+    This reached five privates there and re-spelled both the not-computable
+    rule and the two-rung spec ladder, which is the drift wearing the fix's
+    clothes; concern C-011 asked for one public entry point and casting 7
+    landed it. Everything below the call is RENDERING: the two id lists and the
+    note are this section's, and no row, threshold or sentence is derived here.
+
+    BODY-LEVEL, and that is this module's rule rather than a hedge: a
+    module-level `foundry_mcp` import here beyond its declared few risks
+    closing a cycle in the import graph, while a body-level one runs when every
+    module in the chain is already built and closes nothing (D-013).
+
+    REPORTS, NEVER REFUSES ON THE SPAN ITSELF. F0.9 is the gate; a run waived
+    past a wide span there must still be able to reach DONE, so the only
+    refusal here is an unreadable or wrongly-shaped manifest — which is the
+    generator's rule for every ledger, not a judgement about ownership.
     """
-    # fallout D-039 / AC-044 — ONE COMPUTATION, REACHED AT CALL TIME.
-    #
-    # BODY-LEVEL, and that is this module's rule rather than a hedge: a
-    # module-level `foundry_mcp` import here beyond the two leaves risks
-    # closing a cycle in the import graph, while a body-level one runs when
-    # every module in the chain is already built and closes nothing. D-013
-    # ruled on exactly this trade — it had forced a hand-typed copy of
-    # `foundry_spawn`'s agent-id spelling, and the copy then disagreed in
-    # production. The same ruling applies here: mirroring the span computation
-    # would be a second answer to "who owns this requirement", free to disagree
-    # with the answer F0.9 refused on, which is precisely what AC-044's "the
-    # same table" forbids. `_render_span_table`'s own docstring already
-    # promised this consumer; it just did not exist (D-039).
-    #
-    # It is a wide reach into another module's privates. The narrower shape —
-    # ONE public entry point there, called by both surfaces — is raised as a
-    # cross-casting concern rather than taken by editing a file this casting
-    # does not own.
-    from foundry_mcp.tools.foundry_validate import (
-        REQUIREMENT_IDS_SCHEMA_FLOOR,
-        REQUIREMENT_SPAN_MAX,
-        _archive_schema_version,
-        _owned_requirement_ids,
-        _recorded_split_reasons,
-        _render_span_table,
-        _requirement_span_rows,
-    )
+    from foundry_mcp.tools.foundry_validate import requirement_span_table
 
-    manifest, problem = read_document(run_dir / MANIFEST_RELPATH)
-    if problem is not None:
-        return {}, problem
+    table = requirement_span_table(project_root, run_dir)
+    if table.get("problem") is not None:
+        return {}, table["problem"]
 
-    castings = manifest.get("castings")
-    castings = castings if isinstance(castings, list) else []
-    ownership = {
-        str(c.get("id", "?")): _owned_requirement_ids(c)
-        for c in castings
-        if isinstance(c, dict)
-    }
-    schema_version = _archive_schema_version(state)
-    # NOT COMPUTABLE IS A CLAIM ABOUT A MANIFEST, so it needs one. F0.9's rule
-    # is "no casting carries `requirement_ids` AND the archive is below the
-    # floor", which reads as vacuously true over an EMPTY castings list — and
-    # the sentence it prints then blames a schema floor for what is really an
-    # absent decomposition. A run with no manifest gets the empty-table line
-    # instead, which is what is actually true of it.
-    not_computable = bool(castings) and (
-        not any(present for present, _ in ownership.values())
-        and schema_version < REQUIREMENT_IDS_SCHEMA_FLOOR
-    )
-
-    rows: list[dict] = []
-    if castings and not not_computable:
-        spec_ids = set(
-            REQUIREMENT_ID_RE.findall(
-                _spec_text_for_span(project_root, run_dir, state)
-            )
-        )
-        rows = _requirement_span_rows(
-            spec_ids,
-            [c for c in castings if isinstance(c, dict)],
-            ownership,
-            _recorded_split_reasons(manifest, castings),
-        )
-
+    rows = table.get("rows") or []
+    threshold = table.get("threshold")
     over = [r["id"] for r in rows
-            if r["span"] > REQUIREMENT_SPAN_MAX and not r["split_reason"]]
+            if r["span"] > threshold and not r["split_reason"]]
     recorded = [r["id"] for r in rows
-                if r["span"] > REQUIREMENT_SPAN_MAX and r["split_reason"]]
+                if r["span"] > threshold and r["split_reason"]]
     return {
-        "threshold": REQUIREMENT_SPAN_MAX,
-        "not_computable": not_computable,
+        "threshold": threshold,
+        "not_computable": table.get("not_computable", False),
         "rows": rows,
         "over_threshold": over,
         "recorded": recorded,
         "count": len(rows),
-        "text": _render_span_table(rows, not_computable),
+        "text": table.get("text", ""),
         "note": (
             f"The span is how many castings owned each requirement. F0.9 "
-            f"refuses above {REQUIREMENT_SPAN_MAX} without a recorded reason "
-            f"(GI-018); this section REPORTS the same table from the same "
-            f"records and refuses nothing, so a span waived at F0.9 is visible "
-            f"here rather than re-litigated. A requirement split across many "
+            f"refuses above {threshold} without a recorded reason (GI-018); "
+            f"this section REPORTS the same table from the same computation "
+            f"and refuses nothing, so a span waived at F0.9 is visible here "
+            f"rather than re-litigated. A requirement split across many "
             f"castings is one no single teammate saw whole."
         ),
     }, None
@@ -2613,9 +2537,7 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
     if problem is not None:
         return _refusal(DEFECTS_FILENAME, problem)
 
-    requirement_span, problem = _read_requirement_span(
-        project_root, run_dir, state
-    )
+    requirement_span, problem = _read_requirement_span(project_root, run_dir)
     if problem is not None:
         return _refusal(MANIFEST_RELPATH, problem)
 
