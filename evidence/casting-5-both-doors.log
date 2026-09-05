@@ -1,0 +1,218 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_evidence.py tests/test_commit_guard.py --deselect tests/test_evidence.py::test_every_declared_grammar_has_a_live_witness
+# evidence-for: US-008, FR-001, FR-002, FR-037, FR-051, AC-035, AC-036, CT-014, CT-015, GI-006, GI-019, NFR-005, OT-033, OT-034, OT-035
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \(\d+:\d{2}:\d{2}\)
+# evidence-timeout: 600
+
+........................................................................ [ 20%]
+........................................................................ [ 41%]
+........................................................................ [ 62%]
+........................................................................ [ 83%]
+.............
+=== select_sweep_scope: which logs the boundary re-executes ===
+  FULL rule fired / before ASSAY, NYQUIST or DONE
+    touched=['src/alpha.py']
+    scope=['casting-1-alpha.log', 'casting-2-beta.log', 'wave-report-sections.log']
+  DELTA, diff touches casting 1's key_files
+    touched=['src/alpha.py']
+    scope=['casting-1-alpha.log']
+  DELTA, diff touches casting 2's key_files
+    touched=['src/beta.py']
+    scope=['casting-2-beta.log']
+  DELTA, diff touches a file under casting 3's key_files DIRECTORY
+    touched=['tests/fixtures/gamma/rows.json']
+    scope=['wave-report-sections.log']
+  DELTA, diff touches nothing any casting or command names
+    touched=['docs/README.md']
+    scope=[]
+=== the empty DELTA scope costs no worktree and no subprocess ===
+    ok=True  scope_count=0  logs_reexecuted=[]
+    head_commit=None  pool_size=0
+=== a FULL sweep re-executes the whole committed corpus at HEAD ===
+    ok=True  scope_count=3
+    reexecuted evidence/casting-1-alpha.log
+    reexecuted evidence/casting-2-beta.log
+    reexecuted evidence/wave-report-sections.log
+    mismatches=[]
+=== FR-009: a command reaches a touched file by glob too (D-045) ===
+    in scope      'cat src/*.py' vs src/mod.py
+    in scope      'pytest tests/*.py' vs tests/test_x.py
+    in scope      'grep foo src/**/*.py' vs src/a/b.py
+    in scope      'wc -l evidence/*.log' vs evidence/casting-5-x.log
+    in scope      'uv run pytest tests/test_*.py' vs plugins/foundry/mcp-server/tests/test_vocab.py
+    in scope      'ruff check src/*.py' vs src/mod.py
+    out of scope  'cat src/*.py' vs src/a/b.py
+    out of scope  'cat src/*.py' vs src/mod.txt
+    out of scope  'cat src/*.py' vs docs/README.md
+=== FR-031: the pool size is derived from the corpus ===
+    ceiling (measured from the committed corpus) = 8
+    pool([])            == 0            : True
+    pool(1 log)         == 1            : True
+    pool(3 logs)        <= 3            : True
+    pool(200 logs)      <= ceiling      : True
+    pool(200, override=1) == 1          : True
+=== FR-031: the per-log timeout is the log's own measurement ===
+    declared 300s                       : 300
+    undeclared falls back to the default: True
+    a caller ceiling wins for every log : 30
+.
+=== the block: one declaration whose prose names another casting's requirement ===
+    - **CT-014** [derived from A-024]: the report carries every
+      section, so a run whose AC-036 sections are absent is
+      refused at the done transition.
+=== what the two readers make of it ===
+    REQUIREMENT_ID_RE.findall over the whole block : ['AC-036', 'CT-014']
+    declared_requirement_ids (subject position)    : ['CT-014']
+    AC-036 is DECLARED by casting 3; casting 2 only names it inside CT-014's statement.
+=== the mapping a `# evidence-for:` header is keyed through ===
+    AC-036 -> ['3']
+    CT-007 -> ['1']
+    CT-014 -> ['2']
+=== three readers of one question, on one block (D-180 pinned two; this was the third) ===
+    acceptance gate demands : ['CT-014']
+    F0.9 validator credits  : ['CT-014']
+    evidence sweep keys     : ['CT-014']
+    all three agree         : True
+=== FR-009 — which logs the DELTA boundary re-executes ===
+    wave-report-sections.log is off-convention, so its only key is `# evidence-for: AC-036`
+    diff touches casting 2's key_files  touched=['src/beta.py']
+      keyed by declaration : ['casting-2-beta.log']
+      keyed by the scan    : ['casting-2-beta.log', 'wave-report-sections.log']
+    diff touches casting 3's key_files  touched=['tests/fixtures/gamma/rows.json']
+      keyed by declaration : ['wave-report-sections.log']
+      keyed by the scan    : ['wave-report-sections.log']
+    the extra log satisfies NEITHER FR-009 arm: casting 3's key_files are not in the diff and its command names no touched file.
+    FULL rule fired  scope=['casting-1-alpha.log', 'casting-2-beta.log', 'wave-report-sections.log']
+.=== D-198: two runs identical but for three characters ===
+    command in both: sed -n '1,3p' src/guard.py && printf '<three ISO stamps>'
+    run A — three captured comment lines, then three stamps
+        old strip: body lines  3 -> EVIDENCE_STUB_TIMESTAMP_CLUSTER
+        shipped  : body lines  6 -> None
+    run B — the same, leading '# ' removed, nothing else changed
+        old strip: body lines  6 -> None
+        shipped  : body lines  6 -> None
+    the bare-ack arm — nine captured comment lines, then PASS
+        old strip: body lines  1 -> EVIDENCE_STUB_BARE_PASS
+        shipped  : body lines 10 -> None
+=== the true positives the narrowing keeps ===
+    a genuine bare ack — header, then PASS
+        old strip: EVIDENCE_STUB_BARE_PASS
+        shipped  : EVIDENCE_STUB_BARE_PASS
+    a genuine cluster — header, then timestamps only
+        old strip: EVIDENCE_STUB_TIMESTAMP_CLUSTER
+        shipped  : EVIDENCE_STUB_TIMESTAMP_CLUSTER
+=== the run's own corpus at d872362 ===
+    committed evidence logs                             : 70
+    whose body was a minority of the file, old strip    : 15
+        casting-1-gi-007-no-throttling.log             17 of   21 dropped
+        casting-1-rollup-preservation.log              55 of   66 dropped
+        casting-1-verifier-paths.log                   36 of   62 dropped
+        casting-2-defect-tier.log                       6 of    9 dropped
+        casting-2-handoff-records.log                   6 of    8 dropped
+        casting-2-no-narrowing.log                      6 of    8 dropped
+        casting-2-observations-migration.log            6 of    9 dropped
+        casting-2-self-target.log                       6 of    8 dropped
+        casting-5-grind-cycle-10.log                   63 of   88 dropped
+        casting-5-grind-cycle-12.log                   69 of  104 dropped
+        casting-5-grind-cycle-15.log                   45 of   72 dropped
+        casting-5-grind-cycle-9.log                    43 of   80 dropped
+        casting-5-null-prose.log                       26 of   47 dropped
+        casting-7-lead-prose.log                        4 of    7 dropped
+        casting-8-mcp-version.log                       2 of    3 dropped
+    carrying `#` lines BELOW the separator (captured)   : 10
+        casting-1-rollup-preservation.log              11 ->   63
+        casting-1-verifier-paths.log                   26 ->   59
+        casting-1-baseline-comparison.log              74 ->  100
+        casting-1-convergence-columns.log             177 ->  194
+        casting-1-gi-007-no-throttling.log              4 ->   19
+        casting-5-report-generator.log                162 ->  173
+        casting-5-report-sections.log                  74 ->   85
+        casting-8-suite.log                           354 ->  365
+        casting-1-migration-round-trip.log             43 ->   53
+        casting-1-migration-tier-unknown.log           59 ->   63
+    stub hits over the corpus, old strip                : {}
+    stub hits over the corpus, shipped strip            : {}
+    None trips a pattern today, which is why this had not fired
+    in production and not why it could not.
+.
+=== D-205: the class root cause, stated once ===
+    D-197, D-201 and D-205 are one class. Each guard asked a
+    NARROWER question than the harm it names:
+
+      defect       the question it asked              the harm it names
+      D-197/D-201  is this suffix in a table          does a reader OPEN this name
+      D-200        is the strip symmetric             did the command EMIT this
+      D-205        is the capture's run a suffix      is every discarded line HEADER
+
+    the principle, pinned in evidence.py:
+      a guard that discards, skips or exempts input must PROVE
+      each discarded unit against the rule that names the
+      exemption; anything not proven is subject to the check.
+
+=== the header grammar — what may be discarded, and nothing else ===
+    known directives : cmd, for, timeout, volatile
+    header           : contiguous leading '# evidence-<known>:' lines
+                       plus ONE blank separator
+    everything else  : BODY — '#'-prefixed or not — compared
+                       byte for byte against the capture
+
+=== the three runs that differ by one character ===
+    A  honest log                              accepted
+    B  the same log, claim prefixed with '#'   REFUSED
+    C  control: the same claim, no '#'         REFUSED
+    B and C differ by ONE character. At cb77e83, B was
+    ACCEPTED at both doors: Foundry-Accept-Casting reported an
+    accepted evidence verdict, and Foundry-Phase(inspect_start)
+    reported mismatches [] and advanced the cycle counter.
+
+=== the second accepted shape the defect named ===
+    a forged '#' line ABOVE a capture whose own output
+    legitimately begins with '#' lines, where the capture's
+    run is still a suffix of the committed one:
+      REFUSED, and the diff names the forged line:
+        -# FORGED: the guard holds on every path
+
+=== the true accepts the narrowing keeps ===
+    honest capture beginning with '#' lines (D-198's subject)  accepted
+    cat-replay: the capture IS the whole committed file        accepted
+    two blank lines written; the command emits the second      accepted
+
+=== the smuggling shape the KNOWN-directive set closes ===
+    '# evidence-summary:' is not a directive the parser reads,
+    so it is body, and a command that never printed it is
+    REFUSED. A grammar of 'any # evidence-*: shape' would have
+    discarded it unread — the same hole, one notch narrower.
+
+=== corpus census at cb77e83: 76 committed logs ===
+    logs carrying hand-typed lines in the leading run — text
+    the command never printed — which therefore no longer
+    reproduce under the corrected grammar and must be
+    RECAPTURED by their owning casting:
+
+    casting 1                     8
+        casting-1-baseline-comparison.log
+        casting-1-convergence-columns.log
+        casting-1-gi-007-no-throttling.log
+        casting-1-grind-cycle-17.log
+        casting-1-migration-round-trip.log
+        casting-1-migration-tier-unknown.log
+        casting-1-rollup-preservation.log
+        casting-1-verifier-paths.log
+    casting 4                     1
+        casting-4-grind-cycle-17.log
+    casting 5                     9
+        casting-5-grind-cycle-10.log
+        casting-5-grind-cycle-12.log
+        casting-5-grind-cycle-13-real-corpus.log
+        casting-5-grind-cycle-13.log
+        casting-5-grind-cycle-15.log
+        casting-5-grind-cycle-17.log
+        casting-5-grind-cycle-18.log
+        casting-5-grind-cycle-9.log
+        casting-5-null-prose.log
+
+    total needing recapture      18 of 76
+    the other 58 reproduce unchanged: their whole leading run
+    is directives and one separator, which is the grammar.
+.........................................                [100%]
+345 passed, 1 deselected in 76.32s (0:01:16)

@@ -69,6 +69,7 @@ KNOWN_EVIDENCE_FAILURE_TOKENS: tuple[str, ...] = (
     "EVIDENCE_NETWORK_VIOLATION",        # Phase 4 / EVID-01 reserved; never fires; activated by future per-evidence network-deny opt-in
     "EVIDENCE_REQUIREMENT_UNBOUND",      # Phase 5 / EVID-02 addition
     "EVIDENCE_FOR_MALFORMED",            # Phase 5 / EVID-02 addition
+    "EVIDENCE_COMMAND_SYNTAX",           # fallout / US-008 — CT-015 parse-before-execute
 )
 
 # Sanity-bounded timeout discipline. Default fires when an evidence file omits
@@ -3587,6 +3588,62 @@ def _sweep_submission_order(
     return sorted(logs, key=_weight)
 
 
+#: The shell every `# evidence-cmd:` is parsed with AND executed by, named once.
+#
+# `worktree_helpers._run_command_with_timeout` launches the command through
+# `Popen(shell=True)` with no `executable=` argument — there is none anywhere in
+# the plugin — which on POSIX is `['/bin/sh', '-c', cmd]`. The lint below has to
+# parse with the shell that will run the command or it would be judging a
+# dialect nobody executes, so the path is one constant both halves read rather
+# than a literal spelled twice that can drift.
+_EVIDENCE_SHELL: str = "/bin/sh"
+
+
+def _shell_parse_problem(cmd: str) -> str | None:
+    """The shell's own complaint when ``cmd`` will not parse; None when it will.
+
+    ``-n`` READS AND PARSES WITHOUT EXECUTING. Nothing in ``cmd`` runs here, at
+    any size, under any content — that is the whole of the check, and it is the
+    only reason handing an unreviewed command to a shell is safe at all.
+
+    NOT A CONTRADICTION OF ``_shell_tokens``, which returns None on an unlexable
+    command so that the log still RUNS. The two answer different questions and
+    fail in opposite directions on purpose. ``_shell_tokens`` decides whether a
+    GRIND diff INVALIDATES a log — a question about relevance, where rejecting a
+    command nobody can lex would discard evidence for a reason unrelated to
+    whether it still reproduces, so it fails OPEN. This decides whether the
+    command CAN RUN AT ALL, where "I cannot parse this" is the same sentence the
+    shell about to execute it is going to say, so it fails CLOSED. Neither
+    rationale is weakened by the other; changing one does not license changing
+    the other.
+
+    The command is an ARGUMENT to ``-c``, never written to the child's stdin:
+    ``sh -n`` abandons a broken script without draining its input, so a pipe
+    would race the writer against a reader that has already gone.
+
+    Never raises. A shell that cannot be spawned at all is reported AS a problem
+    rather than swallowed, because a sweep that cannot answer this question must
+    not answer it with silence — the caller's whole contract is that a command
+    reaching the runner has been parsed.
+    """
+    try:
+        proc = subprocess.run(
+            [_EVIDENCE_SHELL, "-n", "-c", cmd],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        return f"{_EVIDENCE_SHELL} -n could not run: {type(exc).__name__}: {exc}"
+    if proc.returncode == 0:
+        return None
+    return (proc.stderr or proc.stdout or "").strip() or (
+        f"{_EVIDENCE_SHELL} -n exited {proc.returncode} without a message"
+    )
+
+
 def _sweep_one_log(
     log: Path,
     *,
@@ -3653,6 +3710,30 @@ def _sweep_one_log(
                 log_name=log_name,
                 reason=f"no `# evidence-cmd:` header in {log.name}",
                 failure_token="EVIDENCE_COMMAND_MISSING",
+            )
+
+        # CT-015 / FR-002 — PARSED BEFORE IT IS EXECUTED, and refused here if it
+        # will not parse. Until this rung a command with a syntax error was
+        # discovered by RUNNING it: the shell exited non-zero, the sweep called
+        # that EVIDENCE_EXIT_NONZERO, and the operator read "your command
+        # failed" for what was a typo the shell had already diagnosed in full.
+        # Worse, everything before the syntax error in a partially-valid script
+        # ran first — `rm -rf x && (` executes the `rm` — so "it only failed to
+        # parse" was never the same as "it had no effect".
+        #
+        # The refusal is a per-log mismatch like every other, so the boundary and
+        # terminal crossings that read this result name the log and the token
+        # without a new path: nothing downstream of here is re-decided.
+        parse_problem = _shell_parse_problem(cmd)
+        if parse_problem is not None:
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=(
+                    f"`# evidence-cmd:` in {log.name} does not parse under "
+                    f"`{_EVIDENCE_SHELL} -n`, so it was NOT executed: "
+                    f"{parse_problem}"
+                ),
+                failure_token="EVIDENCE_COMMAND_SYNTAX",
             )
 
         timeout = _sweep_log_timeout(header, timeout_seconds)
@@ -3773,8 +3854,11 @@ def sweep_evidence_at_head(
 
     ONE detached worktree at HEAD of ``project_root`` for the whole sweep, torn
     down on the success path and on every failure path. Each log's
-    ``# evidence-cmd:`` runs inside it in a bounded thread pool, and each
-    capture goes through the SAME comparison `verify_evidence` uses —
+    ``# evidence-cmd:`` is PARSED with `_shell_parse_problem` before it is run —
+    a command that will not parse is refused as EVIDENCE_COMMAND_SYNTAX and
+    never reaches the runner (CT-015) — then runs inside the worktree in a
+    bounded thread pool, and each capture goes through the SAME comparison
+    `verify_evidence` uses —
     `_compare_byte_match`, with the same declared-volatile redaction, the same
     D-126 residue floor and the same D-135 disagreement guard. None of those
     rules is re-decided here.

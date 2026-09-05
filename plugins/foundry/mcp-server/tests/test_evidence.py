@@ -53,6 +53,7 @@ RED-or-SKIP discipline:
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 import os
 import re
@@ -162,6 +163,33 @@ def test_failure_tokens_are_in_allowlist():
         f"Phase 4 token allowlist regression — these Phase 4 tokens disappeared "
         f"from KNOWN_EVIDENCE_FAILURE_TOKENS: {sorted(missing_phase_4)}"
     )
+
+
+def test_the_syntax_refusal_names_a_token_in_the_closed_allowlist():
+    """CT-015's output half, and the reason it is a NAMED token at all.
+
+    The contract asks the sweep to refuse an unparseable command "with
+    EVIDENCE_COMMAND_SYNTAX before executing it". A refusal token that is not a
+    member of this tuple is not a refusal an operator can read: every renderer
+    downstream of the sweep prints the token it was handed, and one absent from
+    the allowlist arrives as an unexplained failure beside ten explained ones.
+
+    The tuple is a CLOSED vocabulary, so this membership is also what makes the
+    addition code-edit forced rather than something a caller can spell into
+    existence — the same discipline
+    ``test_failure_tokens_are_in_allowlist`` holds for Phase 4's eight.
+    """
+    assert "EVIDENCE_COMMAND_SYNTAX" in evidence.KNOWN_EVIDENCE_FAILURE_TOKENS, (
+        "the sweep's parse-before-execute refusal names a token the closed "
+        "allowlist does not carry, so an operator reading the sweep result "
+        "sees an unnamed reason"
+    )
+    # Appended, not inserted: every earlier member keeps its position, which is
+    # the ordering CONTEXT.md documents and the two prior extensions preserved.
+    assert evidence.KNOWN_EVIDENCE_FAILURE_TOKENS[-1] == "EVIDENCE_COMMAND_SYNTAX"
+    assert len(set(evidence.KNOWN_EVIDENCE_FAILURE_TOKENS)) == len(
+        evidence.KNOWN_EVIDENCE_FAILURE_TOKENS
+    ), "a token is spelled twice in the allowlist"
 
 
 # ---------------------------------------------------------------------------
@@ -6082,6 +6110,236 @@ def test_a_committed_log_that_no_longer_reproduces_is_named(tmp_path):
     assert "2 passed, 1 failed" in mismatch["reason"]
     # The other two logs still reproduced and are not implicated.
     assert len(result["logs_reexecuted"]) == 3
+
+
+def test_the_sweep_refuses_an_unparseable_command_before_running_it(
+    tmp_path, monkeypatch
+):
+    """OT-034 verbatim: 'The sweep refuses an unparseable command with
+    EVIDENCE_COMMAND_SYNTAX before executing it.'
+
+    CT-015's error column, and the word BEFORE is the whole of it. Both halves
+    are asserted, because only one of them is visible in the result:
+
+      * the token is EVIDENCE_COMMAND_SYNTAX and not EVIDENCE_EXIT_NONZERO.
+        That distinction is the observable difference between parsing first and
+        running first — a shell handed a broken script exits 2, so a sweep that
+        executed would have refused this same log under the exit-code token and
+        told the operator "your command failed" for what the shell had already
+        diagnosed as a typo, in a sentence it printed and the sweep discarded.
+      * the runner was never reached. Spied rather than inferred: a command that
+        `_run_command_with_timeout` never sees is a command nothing could have
+        executed, at any content. The spy is the only way to tell "parsed first"
+        from "ran and happened to fail the same way".
+
+    And the refusal is PER LOG. The good log in the same corpus still runs and
+    still matches, so one unparseable command cannot take down a sweep — which
+    matters because this sweep gates a phase transition for the whole run.
+    """
+    env = _build_sweep_repo(tmp_path, logs={
+        "casting-1-alpha.log": _sweep_log("casting-1-alpha", for_ids="CT-007"),
+        # `(` opens a subshell nothing closes. Chosen because a shell REPORTS
+        # this one clearly on every implementation, and because the `touch`
+        # before it would have run had anything executed the script at all.
+        "casting-2-beta.log": _sweep_log(
+            "casting-2-beta",
+            for_ids="CT-015",
+            cmd="touch never-created.txt && (",
+        ),
+    })
+
+    real_runner = evidence._run_command_with_timeout
+    ran: list[str] = []
+
+    def _spy(*, cmd, cwd, timeout):
+        ran.append(cmd)
+        return real_runner(cmd=cmd, cwd=cwd, timeout=timeout)
+
+    monkeypatch.setattr(evidence, "_run_command_with_timeout", _spy)
+
+    result = _sweep(env, full=True)
+
+    assert result["ok"] is False, result
+    assert result["error"] is None, "this is a per-log refusal, not a dead sweep"
+    assert [m["log"] for m in result["mismatches"]] == ["evidence/casting-2-beta.log"]
+
+    mismatch = result["mismatches"][0]
+    assert mismatch["failure_token"] == "EVIDENCE_COMMAND_SYNTAX", (
+        "the sweep executed the command and reported the shell's exit code "
+        "instead of parsing it first"
+    )
+    assert mismatch["failure_token"] in evidence.KNOWN_EVIDENCE_FAILURE_TOKENS
+    # The refusal carries the shell's own complaint, not a rewrite of it.
+    assert "casting-2-beta.log" in mismatch["reason"]
+    assert "/bin/sh -n" in mismatch["reason"]
+    assert "NOT executed" in mismatch["reason"]
+
+    # BEFORE: the runner never saw it.
+    assert "touch never-created.txt && (" not in ran, (
+        "the unparseable command reached _run_command_with_timeout — the parse "
+        "check is running after execution, not before it"
+    )
+    assert not (env["project_root"] / "never-created.txt").exists()
+
+    # ...and the neighbouring log in the same corpus was unaffected.
+    assert "cat replay-casting-1-alpha.txt" in ran
+    assert sorted(result["logs_reexecuted"]) == [
+        "evidence/casting-1-alpha.log", "evidence/casting-2-beta.log",
+    ]
+
+
+def test_the_syntax_check_never_executes_what_it_parses(tmp_path):
+    """The property `-n` is carried for, driven directly on the helper.
+
+    The sweep test above proves an UNPARSEABLE command does not run, which a
+    check that forgot `-n` would also satisfy — a broken script exits without
+    executing anything either way, so that drive alone cannot tell a parse from
+    a run. This one hands the helper a command that is perfectly VALID and whose
+    entire purpose is a side effect. `-n` is the only reason the side effect
+    does not happen, so dropping the flag turns this test red immediately.
+    """
+    witness = tmp_path / "the-lint-executed-it"
+    problem = evidence._shell_parse_problem(f"touch {witness}")
+
+    assert problem is None, f"a valid command was reported unparseable: {problem}"
+    assert not witness.exists(), (
+        "_shell_parse_problem EXECUTED the command it was asked to parse — the "
+        "`-n` flag is missing, and the lint is now running unreviewed commands "
+        "at every crossing and at every commit"
+    )
+
+
+def test_every_committed_evidence_command_parses_under_the_host_shell():
+    """AC-038 verbatim, over the corpus as it actually stands.
+
+    'The lint passes on both fleet hosts for the existing corpus, including the
+    `set -o pipefail` log, because `sh -n` judges syntax only.'
+
+    Asserted LOG BY LOG over whatever `evidence/` holds, not against a
+    remembered list: the corpus grows every casting, and a test naming the logs
+    it knew about would go green over a corpus it had stopped reading. A log
+    added tomorrow is judged the day it lands.
+
+    Run on the host, so "both fleet hosts" is a property this suite re-decides
+    wherever it runs rather than a claim about somebody else's machine.
+    """
+    evidence_dir = REPO_ROOT / "evidence"
+    if not evidence_dir.exists():
+        pytest.skip("no committed evidence corpus")
+
+    logs = sorted(evidence_dir.glob("*.log"))
+    assert logs, "the corpus is empty, so this rule is reading nothing"
+
+    checked, failures = [], []
+    for log in logs:
+        header = evidence._parse_evidence_header(
+            log.read_text(encoding="utf-8", errors="replace")
+        )
+        cmd = header.get("cmd")
+        if cmd is None:
+            continue
+        checked.append(log.name)
+        problem = evidence._shell_parse_problem(cmd)
+        if problem is not None:
+            failures.append(f"{log.name}: {problem}")
+
+    assert checked, (
+        "no committed log declared a `# evidence-cmd:` — the header parse is "
+        "reading nothing and this rule would pass over any corpus at all"
+    )
+    assert failures == [], (
+        f"committed evidence commands do not parse under "
+        f"{evidence._EVIDENCE_SHELL} -n, so the boundary sweep will refuse "
+        f"them at the next crossing: {failures}"
+    )
+
+
+def test_the_lint_judges_syntax_only_so_a_pipefail_command_survives():
+    """AC-038's 'because `sh -n` judges syntax only', as its own property.
+
+    The corpus sweep above passes today for two different reasons that it
+    cannot tell apart: the lint is genuinely syntax-only, or no committed log
+    currently uses a construct that would expose the difference. That second
+    world is real — `set -o pipefail` is the one dialect-sensitive construct in
+    Foundry's history of this corpus (it opened the shared suite log), and there
+    are runs where no log in the tree carries it.
+
+    So the property is driven directly, on strings, rather than left to depend
+    on which logs happen to be committed the day this runs. `-n` never reaches
+    the `set`, which is exactly why a shell that would REJECT `pipefail` at run
+    time still parses it — and why the lint may not be swapped for a dialect
+    grep or a shellcheck that would have an opinion about it.
+    """
+    assert evidence._shell_parse_problem(
+        "set -o pipefail; cd plugins/foundry/mcp-server && pytest -q 2>&1 | sed -E 's/a/b/'"
+    ) is None, (
+        "a `set -o pipefail` command was rejected — the lint has acquired an "
+        "opinion about dialect, which AC-036 forbids and which would make the "
+        "shared suite log uncapturable"
+    )
+    # The other side of the same coin: it still catches a real parse error, so
+    # the test above is not passing because the lint accepts everything.
+    assert evidence._shell_parse_problem("if [ 1 ; then") is not None
+
+
+def test_the_sweeps_lint_reaches_for_the_host_shell_and_nothing_else():
+    """AC-036 verbatim: '`/bin/sh -n` on the host' — the lint uses the host's
+    `/bin/sh` and nothing else; no shellcheck, no bashism grep.
+
+    Read off the shipped source, because the behavioural tests above cannot see
+    the difference: a lint that shelled out to `shellcheck` and fell back to
+    `/bin/sh` would pass every one of them on a machine with no shellcheck
+    installed, and change its verdict on a machine that has one.
+    """
+    source = inspect.getsource(evidence._shell_parse_problem)
+    assert evidence._EVIDENCE_SHELL == "/bin/sh"
+    assert "-n" in source and "-c" in source
+
+    for second_opinion in ("shellcheck", "bash -n", "zsh", "checkbashisms"):
+        assert second_opinion not in source, (
+            f"the lint consults {second_opinion!r}. The shell that JUDGES an "
+            f"evidence command has to be the shell that RUNS it, and the runner "
+            f"is Popen(shell=True) — /bin/sh -c on POSIX."
+        )
+
+
+def test_the_runner_states_the_shell_the_lint_models():
+    """OT-035's second clause and the File Change Map's '`executable` left as
+    `/bin/sh` (documented)'.
+
+    The lint's choice of shell is only verifiable if the LAUNCH says which shell
+    it launches. `Popen(shell=True)` names no shell anywhere in its call, so a
+    reader of `_run_command_with_timeout` had to know a CPython implementation
+    detail to check that the guard and the sweep parse with the right one. The
+    statement is pinned here and the absence of `executable=` is pinned with it,
+    because the sentence is only true while that argument stays absent.
+    """
+    from foundry_mcp.tools import worktree_helpers
+
+    fn = ast.parse(
+        inspect.getsource(worktree_helpers._run_command_with_timeout)
+    ).body[0]
+    documentation = ast.get_docstring(fn) or ""
+    # The docstring DISCUSSES `executable=` by name, so that a reader knows what
+    # is deliberately absent — the same split
+    # `test_commit_guard.py#_executable_lines` makes for the same reason. Only
+    # what Python actually executes is scanned for it.
+    executed = "\n".join(ast.unparse(node) for node in fn.body[1:])
+
+    assert "shell=True" in executed
+    assert "executable=" not in executed, (
+        "an `executable=` argument now pins the shell at the launch, so the "
+        "documented `/bin/sh` fact — and the two lints that model it — are "
+        "describing a shell this call no longer uses"
+    )
+    assert "/bin/sh" in documentation, (
+        "the launch does not state which shell it hands the command to, so the "
+        "guard's and the sweep's `/bin/sh -n` is an assumption rather than a "
+        "documented agreement"
+    )
+    assert "Popen(shell=True)" in documentation, (
+        "the statement no longer says WHICH call the /bin/sh fact is about"
+    )
 
 
 def test_a_mismatch_record_carries_both_hash_vocabularies(tmp_path):

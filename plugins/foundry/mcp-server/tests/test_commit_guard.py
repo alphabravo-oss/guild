@@ -538,6 +538,231 @@ def test_guard_exempts_binary_blobs_from_the_text_checks(
     )
 
 
+# ---------------------------------------------------------------------------
+# AC-035 / AC-036 / OT-033 — Check 4, the `/bin/sh -n` lint on staged evidence
+# ---------------------------------------------------------------------------
+
+
+def _evidence_log(cmd: str, *, body: str = "some captured output\n") -> str:
+    """One evidence log, in the shape the server's own parser reads.
+
+    The leading comment block is the header, and the first `# evidence-cmd:` in
+    it is the command — `evidence.py#_parse_evidence_header`'s grammar, which
+    the guard's Check 4 reads the same way so that the two doors cannot disagree
+    about which text they are judging.
+    """
+    return f"# evidence-cmd: {cmd}\n# evidence-for: FR-001\n\n{body}"
+
+
+def test_guard_blocks_a_staged_evidence_log_whose_command_does_not_parse(
+    guarded_repo: Path, env: dict[str, str]
+):
+    """OT-033 verbatim: 'A staged evidence log whose command fails `/bin/sh -n`
+    is BLOCKED at commit naming the log.'
+
+    CT-014's output column asks for two things in the message and both are
+    asserted: the log, so the teammate knows WHICH of the several files in a
+    commit is wrong, and the shell's own complaint, so they do not have to
+    re-run the shell by hand to find out what it objected to. A block that
+    said only "an evidence command did not parse" would be a worse outcome
+    than no block, because the teammate would reach for --no-verify.
+    """
+    _write(guarded_repo, "evidence/broken.log", _evidence_log("if [ 1 ; then"))
+    _git(["add", "evidence/broken.log"], cwd=guarded_repo, env=env)
+    head_before = _git(["rev-parse", "HEAD"], cwd=guarded_repo, env=env).stdout
+
+    result = _git(
+        ["commit", "-m", "bad evidence", "--", "evidence/broken.log"],
+        cwd=guarded_repo,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode != 0, "the guard let an unparseable command through"
+    combined = result.stdout + result.stderr
+    assert "evidence/broken.log" in combined, (
+        "a blocked commit must name the offending log; with several evidence "
+        "files in one commit an unnamed block says nothing actionable"
+    )
+    assert "/bin/sh -n" in combined, (
+        "the message does not name the check that fired, so the teammate "
+        "cannot tell this block from the conflict-marker or size checks"
+    )
+    # The shell's own words, forwarded rather than replaced by a summary.
+    assert "syntax error" in combined.lower() or "unexpected" in combined.lower(), (
+        "the shell's message was discarded, so the teammate has to re-run the "
+        "shell by hand to learn what it objected to"
+    )
+    assert head_before == _git(
+        ["rev-parse", "HEAD"], cwd=guarded_repo, env=env
+    ).stdout
+
+
+def test_guard_lints_the_command_without_running_it(
+    guarded_repo: Path, env: dict[str, str], tmp_path: Path
+):
+    """`-n` reads and parses. It does not execute — and that is the only reason
+    handing an unreviewed staged command to a shell is safe at all.
+
+    A broken command proves nothing here: a shell abandons a script it cannot
+    parse without executing any of it, so the BLOCKED case above would look
+    identical whether or not `-n` were present. This stages a command that is
+    perfectly VALID and whose whole purpose is a side effect. The guard must
+    pass it, and the side effect must not have happened — so a Check 4 that
+    lost its `-n` fails here immediately, which is where it must fail, because
+    the alternative is a hook that executes whatever anyone stages.
+    """
+    witness = tmp_path / "the-guard-executed-it"
+    _write(guarded_repo, "evidence/side-effect.log", _evidence_log(f"touch {witness}"))
+    _git(["add", "evidence/side-effect.log"], cwd=guarded_repo, env=env)
+
+    result = _git(
+        ["commit", "-m", "valid", "--", "evidence/side-effect.log"],
+        cwd=guarded_repo,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, (
+        f"a valid command was blocked: {result.stdout + result.stderr}"
+    )
+    assert not witness.exists(), (
+        "the guard EXECUTED a staged evidence command. Check 4 is missing its "
+        "`-n`, and every commit now runs whatever the staged header says."
+    )
+
+
+def test_guard_allows_an_evidence_log_whose_command_parses(
+    guarded_repo: Path, env: dict[str, str]
+):
+    """AC-036's consequence, and AC-038's: the lint judges SYNTAX and nothing
+    else, so the dialect-sensitive constructs a real corpus uses still commit.
+
+    `set -o pipefail` is the case with history: it opens the shared whole-suite
+    log, it is the one construct in this corpus a researcher once claimed a
+    fleet host would reject, and `sh -n` accepts it on every host because
+    parsing never reaches the `set`. A lint that grepped for bashisms — or ran
+    shellcheck, which has opinions about far more than this — would block the
+    single log every FULL sweep re-executes.
+
+    The guard is also silent, not merely non-blocking: a check that printed a
+    warning on every well-formed evidence log would train teammates to ignore
+    its output, which is how the conflict-marker block gets ignored too.
+    """
+    _write(
+        guarded_repo,
+        "evidence/fine.log",
+        _evidence_log("set -o pipefail; ls | sort 2>&1 | sed -E 's/a/b/'"),
+    )
+    _git(["add", "evidence/fine.log"], cwd=guarded_repo, env=env)
+
+    result = _git(
+        ["commit", "-m", "good evidence", "--", "evidence/fine.log"],
+        cwd=guarded_repo,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, (
+        f"a well-formed command was blocked: {result.stdout + result.stderr}"
+    )
+    assert "evidence/fine.log" in _tree_paths(guarded_repo, env)
+    assert "foundry-guard" not in (result.stdout + result.stderr), (
+        "the guard spoke about a file it had no complaint over"
+    )
+
+
+def test_guard_lints_only_what_declares_an_evidence_command(
+    guarded_repo: Path, env: dict[str, str]
+):
+    """The lint's membership rule, from the other side.
+
+    Check 4 identifies an evidence log by CONTENT — a `# evidence-cmd:`
+    directive in the leading comment block — and never by path, because this
+    file is a template installed into repositories that have no `evidence/`
+    directory and never will. Three files that would break a careless
+    recogniser are staged together:
+
+      * a shell script whose leading block is a shebang and prose;
+      * a Markdown document that QUOTES an unparseable evidence command inside
+        a fenced block, well past its own leading block — the shape every
+        casting prompt and `agents/teammate.md` actually have;
+      * a Python module whose leading comment mentions evidence at all.
+
+    None of them declares a command, so none is linted, and the commit lands.
+    """
+    _write(guarded_repo, "run.sh", "#!/bin/sh\n# a normal script\nset -e\nls\n")
+    _write(
+        guarded_repo,
+        "docs/protocol.md",
+        "# Evidence protocol\n\nAuthors write a header:\n\n"
+        "```\n# evidence-cmd: if [ 1 ; then\n```\n\n...and it is documented.\n",
+    )
+    _write(
+        guarded_repo,
+        "reader.py",
+        "# Reads evidence logs and their evidence-cmd headers.\nX = 1\n",
+    )
+    paths = ["run.sh", "docs/protocol.md", "reader.py"]
+    _git(["add", *paths], cwd=guarded_repo, env=env)
+
+    result = _git(
+        ["commit", "-m", "not evidence", "--", *paths],
+        cwd=guarded_repo,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, (
+        f"Check 4 fired on a file that declares no evidence command: "
+        f"{result.stdout + result.stderr}"
+    )
+    assert set(paths) <= set(_tree_paths(guarded_repo, env))
+
+
+def test_guard_lint_reaches_for_the_host_shell_and_nothing_else():
+    """AC-036 verbatim: '`/bin/sh -n` on the host' — the lint uses the host's
+    `/bin/sh` and nothing else; no shellcheck, no bashism grep.
+
+    Source-level, because the behavioural tests cannot see this. A guard that
+    ran `shellcheck` when it was installed and `/bin/sh -n` otherwise would
+    pass every drive above on a machine without shellcheck and change its
+    verdict on a machine with one — a hook whose answer depends on what the
+    teammate happens to have on PATH is worse than one that is merely strict.
+
+    The Out of Scope line is the rule: 'A bashism grep or shellcheck in the
+    lint; `/bin/sh -n` only.'
+    """
+    code = "\n".join(_executable_lines(GUARD_SRC.read_text(encoding="utf-8")))
+
+    assert "/bin/sh -n" in code, (
+        "the guard does not parse staged evidence commands with the host shell"
+    )
+    for second_opinion in ("shellcheck", "bash -n", "checkbashisms", "zsh -n"):
+        assert second_opinion not in code, (
+            f"the guard consults {second_opinion!r}. The shell that JUDGES an "
+            f"evidence command must be the shell that RUNS it, and the server "
+            f"runs it under Popen(shell=True) — /bin/sh -c on POSIX."
+        )
+
+
+def test_guard_lint_never_executes_the_staged_command_by_construction():
+    """The `-n` flag, pinned at the source so it cannot be lost in a refactor.
+
+    The behavioural test above catches this the moment it happens, but only if
+    someone runs the suite. This states the property where a reviewer reading a
+    diff to the guard will see it: every invocation of a shell on staged
+    content carries `-n`, and none of them is a bare `-c`.
+    """
+    for line in _executable_lines(GUARD_SRC.read_text(encoding="utf-8")):
+        if "/bin/sh" not in line:
+            continue
+        assert "-n" in line, (
+            f"the guard invokes a shell on staged content without `-n`, so it "
+            f"EXECUTES what it was asked to parse:\n  {line.strip()}"
+        )
+
+
 def test_guard_never_pipes_blob_content_into_an_early_exiting_matcher():
     """Source-level lock on the D-014 root cause.
 

@@ -200,6 +200,68 @@ for path in "${STAGED[@]}"; do
   if LC_ALL=C grep -Eq -- "$CONFLICT_RE" "$SCRATCH"; then
     violation "${path} — staged content contains unresolved merge-conflict markers."
   fi
+
+  # ── Check 4: does a staged evidence log's command PARSE? ───────────────────
+  # An evidence log declares, in a `# evidence-cmd:` header, the command that
+  # reproduces its body, and Foundry's server re-executes that command at every
+  # crossing. Until this check a command with a syntax error was discovered only
+  # by RUNNING it, a crossing later, as an opaque non-zero exit — by which time
+  # the teammate who wrote it was gone and the refusal named a failure mode
+  # rather than a typo. This is the commit-time half of one rule; the other half
+  # is the server's, which now parses before executing and refuses with
+  # EVIDENCE_COMMAND_SYNTAX (evidence.py#_sweep_one_log).
+  #
+  # WHICH text is the command is not re-decided here. The block scanned is the
+  # leading run of comment-or-blank lines, and the first `evidence-cmd`
+  # directive in it wins — the same grammar the server's own parser reads
+  # (evidence.py#_parse_evidence_header). A file whose leading block carries no
+  # such directive is not an evidence log and is not linted, so this stays the
+  # repo-agnostic template the header above promises: no corpus path is
+  # hardcoded and nothing here knows what Foundry calls its evidence directory.
+  #
+  # awk reads the scratch FILE, so its `exit` at the first match is free for
+  # Check 3's reason: there is no upstream process left to take SIGPIPE, and the
+  # exit status is awk's own.
+  evidence_cmd="$(
+    awk '
+      /^[[:space:]]*$/ { next }
+      /^[[:space:]]*#/ {
+        if (match($0, /^[[:space:]]*#[[:space:]]*evidence-cmd[[:space:]]*:[[:space:]]*/)) {
+          line = substr($0, RSTART + RLENGTH)
+          sub(/[[:space:]]+$/, "", line)
+          print line
+          exit
+        }
+        next
+      }
+      { exit }
+    ' "$SCRATCH"
+  )"
+
+  if [ -n "$evidence_cmd" ]; then
+    # `-n` READS AND PARSES WITHOUT EXECUTING. Nothing in the staged command
+    # runs here — at any size, under any content — and that is the whole of the
+    # lint. It is also the only reason handing an unreviewed command to a shell
+    # is safe at all, so `-n` is not a flag to drop while debugging this check.
+    #
+    # The command is an ARGUMENT to `-c`, never piped in. `sh -n` abandons a
+    # broken script without draining its input, so `printf … | /bin/sh -n` is
+    # exactly the early-exiting-reader shape this file's header forbids by name.
+    #
+    # The host's own `/bin/sh` and nothing else. No shellcheck, no `bash -n`, no
+    # grep for dialect constructs: the shell that JUDGES the command must be the
+    # shell that RUNS it, and the server runs it through `Popen(shell=True)`,
+    # which on POSIX with no `executable=` is `['/bin/sh', '-c', cmd]`. A second
+    # opinion about which constructs are allowed would block commands that work
+    # — a `set -o pipefail` opens a log in Foundry's own corpus, and `sh -n`
+    # passes it precisely because parsing never reaches the `set`.
+    #
+    # An `if` condition is exempt from `set -e`, so a failed parse becomes a
+    # named violation rather than tripping the ERR trap as an internal error.
+    if ! sh_message="$(/bin/sh -n -c "$evidence_cmd" 2>&1)"; then
+      violation "${path} — staged evidence command does not parse under /bin/sh -n: ${sh_message}"
+    fi
+  fi
 done
 
 if [ "$VIOLATIONS" -gt 0 ]; then

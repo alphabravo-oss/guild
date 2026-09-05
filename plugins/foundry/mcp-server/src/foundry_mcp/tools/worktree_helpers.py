@@ -194,6 +194,18 @@ def _run_command_with_timeout(
     Discipline (per CONTEXT.md + RESEARCH.md Pitfalls 3 & 4):
       - ``shell=True`` so users can write pipelines / multi-token cmds in
         the ``# evidence-cmd:`` header.
+      - THE SHELL IS ``/bin/sh``, and that is a fact, not a preference. On
+        POSIX, ``Popen(shell=True)`` with no ``executable=`` argument runs
+        ``['/bin/sh', '-c', cmd]``; there is no ``executable=`` anywhere in this
+        plugin and none is wanted here. Stated at the launch because two other
+        places have to agree with it and neither can see this call: the commit
+        guard (``hooks/pre-commit-guard.sh`` Check 4) and the sweep's own
+        pre-execution lint (``evidence.py#_shell_parse_problem``, whose
+        ``_EVIDENCE_SHELL`` constant is this same path) both parse an evidence
+        command with ``/bin/sh -n``. A lint that parsed with one shell while the
+        command ran under another would pass constructs that fail and block
+        constructs that work — so if this call ever DOES pin ``executable=``,
+        both of those must be repointed in the same change.
       - ``stderr=subprocess.STDOUT`` merges streams (single-string compare).
       - ``text=True, encoding='utf-8', errors='replace'`` makes binary or
         non-UTF-8 output survive comparator entry.
