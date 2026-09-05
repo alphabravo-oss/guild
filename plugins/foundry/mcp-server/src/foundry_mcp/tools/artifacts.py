@@ -50,18 +50,30 @@ reason it names — two processes on one repository contend through that file �
 and because a reader who finds a second copy one day should know this was
 already paid for once.
 
-AND ONE SECOND COPY IS STILL STANDING, WHICH THIS SAYS OUT LOUD RATHER THAN
-LEAVING A READER TO INFER IT FROM AN ABSENCE. ``tools/foundry.py`` holds a
+AND THE OTHER SECOND COPY IS CLOSED TOO, WHICH THIS SAYS OUT LOUD RATHER THAN
+LEAVING A READER TO INFER IT FROM AN ABSENCE. ``tools/foundry.py`` held a
 parallel stack over the SAME documents: a byte-identical tolerant read
-(fallout D-011) and a second lock domain of its own (fallout D-010). THIS
-module is the one home both close onto — the read under ``_load_json`` and the
-lock domain under ``_ARTIFACT_LOCK`` / ``_ARTIFACT_TX`` / ``_TX_LOCK_SUFFIX``,
-which is why those names are a package-wide contract and not this module's
-private business. What is left to do is a deletion in ``foundry.py`` and an
-import from here; both copies are inventoried by name, with the casting that
-owns the deletion, in ``tests/test_artifacts.py#_SECOND_READ_LAYER`` and
-``#_SECOND_LOCK_DOMAINS``, and each inventory FAILS the day its row stops
-accounting for anything.
+(fallout D-011) and a lock domain of its own, ``_LEDGER_LOCK`` / ``_LEDGER_TX``
+(fallout D-010). Both closed onto this module — it imports ``_load_json``,
+``_read_document`` and ``_document_problem`` from here, binds
+``_ARTIFACT_LOCK`` / ``_ARTIFACT_TX``, and derives its lock sidecar from
+``_TX_LOCK_SUFFIX``. So those names are a package-wide contract and not this
+module's private business, and there is now ONE in-flight map keyed on
+``str(path)``: a ledger transaction and a document transaction on the same file
+on the same thread compose into one write instead of blocking on a flock the
+thread already holds.
+
+ONE NAME IS STILL SHARED, AND IT IS NOT A SHARED RULE. ``foundry.py`` also
+defines ``_artifact_guard``, and it is a DIFFERENT function from this module's:
+that one takes ``*names`` and is scoped to the artifacts the calling tool
+touches, so a corrupt roll-up cannot block a filing that never opens it, and it
+runs a ledger-container rung that may not move into a leaf (GI-033 — a leaf
+that knows what a ledger is has stopped being one). This module's takes a run
+dir and scans the whole run. A sweep keyed on names cannot tell those apart, so
+the collision is recorded rather than closed by deleting a guard the package
+needs: ``tests/test_artifacts.py#_SECOND_READ_LAYER`` carries the row, and
+``#_SECOND_LOCK_DOMAINS`` is empty. Each inventory FAILS the day its row stops
+accounting for anything, which is what took the other rows out.
 """
 
 from __future__ import annotations
@@ -126,39 +138,46 @@ from foundry_mcp.tools.foundry_state import (
 #                               nests a state.json RMW inside ``_update_phase``'s
 #                               (that nesting was itself a latent lost update).
 #
-# TWO LOCK DOMAINS OVER ONE DOCUMENT SET, AND WHY THAT IS A DEFECT AND NOT A
-# DESIGN (fallout D-010). ``foundry.py``'s ``_locked_document`` /
-# ``ledger_transaction`` is a SECOND stack over these same paths, with its own
-# ``_LEDGER_LOCK`` and its own ``_LEDGER_TX``. The projection genuinely differs
-# — that primitive yields a list under a collection key, which fits defects.json
-# and observations.json but not state.json / stream-rollup.json /
-# escalation.json, whose payload is the document itself — and that difference is
-# why the two FUNCTIONS are not one function. It is not why the two LOCKS are
-# not one lock.
+# THERE WERE TWO LOCK DOMAINS OVER ONE DOCUMENT SET, AND THIS IS WHY THAT WAS A
+# DEFECT AND NOT A DESIGN (fallout D-010, closed). ``foundry.py``'s
+# ``_locked_document`` / ``ledger_transaction`` was a SECOND stack over these
+# same paths, with its own ``_LEDGER_LOCK`` and its own ``_LEDGER_TX``. The
+# projection genuinely differs — that primitive yields a list under a collection
+# key, which fits defects.json and observations.json but not state.json /
+# stream-rollup.json / escalation.json, whose payload is the document itself —
+# and that difference is why the two FUNCTIONS are not one function. It was
+# never why the two LOCKS were not one lock, and that distinction is exactly
+# what the fix acted on: the functions stayed two, the domain became one.
 #
-# What excludes, and what does not. The flock — not the RLock — is what binds
-# across MODULES: two separate open() calls contend even inside one process, and
-# verdicts.json really does have a writer in each domain
+# What excluded, and what did not — kept because it is the reasoning that
+# closed this, and because the next module tempted to open a domain of its own
+# needs it. The flock — not the RLock — is what binds across MODULES: two
+# separate open() calls contend even inside one process, and verdicts.json
+# really does have a writer in each function
 # (``orchestration/gates.py#_synthesize_clean_prove_verdicts`` opens
-# ``_document_transaction`` here; ``foundry.py#foundry_add_verdict`` opens
-# ``_locked_document`` there). So writes in the two domains DO serialize today —
-# but only because two independent spellings of the lock filename happen to
-# agree, one of them a bare ``".lock"`` literal. Two things the shared flock
-# does not give: the RLock is per module, so nothing but the flock orders
-# threads across the two; and the in-flight maps are different
-# ``threading.local()`` objects, so a transaction opened in one domain INSIDE a
-# transaction open in the other, on the same document on the same thread, is not
-# recognised as re-entrant and blocks forever on a lock that thread already
-# holds. No caller reaches that nesting today, which is why D-010 is LATENT
-# rather than a hang — and a hazard that is one call away from reachable is not
-# a convention.
+# ``_document_transaction``; ``foundry.py#foundry_add_verdict`` opens
+# ``_locked_document``). So writes DID serialize — but only because two
+# independent spellings of the lock filename happened to agree, one of them a
+# bare ``".lock"`` literal. Two things that shared flock did not give: the
+# RLock was per module, so nothing but the flock ordered threads across the
+# two; and the in-flight maps were different ``threading.local()`` objects, so
+# a transaction opened in one domain INSIDE a transaction open in the other, on
+# the same document on the same thread, was not recognised as re-entrant and
+# blocked forever on a lock that thread already held. No caller reached that
+# nesting, which is why D-010 was LATENT rather than a hang — and a hazard one
+# call away from reachable is not a convention.
 #
-# THIS module is the domain the consolidation lands on: ``_ARTIFACT_LOCK``,
-# ``_ARTIFACT_TX`` and ``_TX_LOCK_SUFFIX`` are what a second locked writer
-# anywhere in this package must bind to rather than re-declare. What the leaf
-# must NOT do is grow the other half: ``LedgerShapeError``, ``_dict_records``
-# and the collection-key projection are ledger knowledge, and a leaf that knows
-# what a ledger is has stopped being one (GI-033).
+# THIS module is the domain, singular. ``foundry.py`` binds ``_ARTIFACT_LOCK``
+# and ``_ARTIFACT_TX`` from here and derives its sidecar from
+# ``_TX_LOCK_SUFFIX``, so both stacks share one RLock, one in-flight map keyed
+# on ``str(path)``, and one spelling of the lock filename — the nesting above
+# now composes into a single write at the outermost exit. A locked writer added
+# anywhere in this package binds these rather than re-declaring them, and
+# ``tests/test_artifacts.py::test_the_leaf_is_the_one_run_artifact_lock_domain``
+# fails on the next module that forgets. What the leaf must NOT do is grow the
+# other half: ``LedgerShapeError``, ``_dict_records`` and the collection-key
+# projection are ledger knowledge, and a leaf that knows what a ledger is has
+# stopped being one (GI-033).
 # --------------------------------------------------------------------------- #
 
 # Threads inside one server process; the flock sidecar covers a second server
@@ -184,10 +203,11 @@ _ARTIFACT_TX = threading.local()
 #: the import graph)". That was true of the ORCHESTRATOR this block was carved
 #: out of. It is false here: the leaf imports ``foundry.py`` nowhere and must
 #: not, ``foundry.py`` sits above this layer, and an import running from there
-#: to here closes no cycle — which is exactly what makes ``foundry.py``'s
+#: to here closes no cycle — which is exactly what made ``foundry.py``'s
 #: ``_read_document`` / ``_document_problem`` / ``_load_json`` a duplicate with
-#: no reason left rather than an exception with one. THIS module is the one
-#: home of the tolerant read for the whole package.
+#: no reason left rather than an exception with one. That module now imports
+#: all three from here, so THIS module is the one home of the tolerant read for
+#: the whole package in fact and not only by declaration.
 _read_document = read_document
 
 
@@ -234,12 +254,12 @@ def _read_text(path: Path) -> str:
 # THE SCOPE IS THE PACKAGE, NOT THIS MODULE (fallout D-010). "The writers
 # below" is where the drift was FOUND, not how far the rule reaches: every
 # locked run-artifact writer anywhere in this package spells the lock name
-# through ``_TX_LOCK_SUFFIX``, because the flock is what orders two domains
-# against each other and two domains that agree on the name by coincidence
-# agree on it only until one of them is edited. ``foundry.py#_locked_document``
-# and ``#write_document`` currently spell a bare ``".lock"`` literal instead;
-# that is the open half of D-010, inventoried in
-# ``tests/test_artifacts.py#_SECOND_LOCK_DOMAINS``.
+# through ``_TX_LOCK_SUFFIX``, because the flock is what orders two writers
+# against each other and two that agree on the name by coincidence agree on it
+# only until one of them is edited. That rule now holds without exception:
+# ``foundry.py#_locked_document`` and ``#write_document`` spelled a bare
+# ``".lock"`` literal until D-010 closed and now build the name from this
+# constant like everything else.
 _TX_TMP_SUFFIX = ".tmp"
 _TX_LOCK_SUFFIX = ".lock"
 

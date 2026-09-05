@@ -715,7 +715,10 @@ _SECOND_READ_LAYER: dict[str, str] = {
 
 
 #: The four names that ARE the tolerant-read layer. A module defining any of
-#: them is keeping a second copy of it, whatever it calls the file.
+#: them is answering the same question this module answers under the same name
+#: — which is a finding either way, but not always the SAME finding: three of
+#: the four were byte-identical bodies and were deleted, and the fourth is one
+#: name over two contracts. `_SECOND_READ_LAYER`'s row says which.
 _READ_LAYER_SYMBOLS = ("_read_document", "_document_problem", "_load_json",
                        "_artifact_guard")
 
@@ -765,8 +768,10 @@ def _declares_lock_domain(path: Path) -> bool:
     A domain is the PAIR — a re-entrant lock ordering threads and a
     thread-local map making the critical section re-entrant per path. Detected
     by shape rather than by name, which is the whole reason this guard exists
-    beside the name-collision sweep: `_ARTIFACT_LOCK` and `_LEDGER_LOCK` are
-    two names for one rule and no sweep keyed on names will ever pair them.
+    beside the name-collision sweep: `_ARTIFACT_LOCK` and `_LEDGER_LOCK` were
+    two names for one rule, and no sweep keyed on names would ever have paired
+    them. That pair is gone (concern C-003) and the rationale is not: the next
+    module to open a domain of its own will not be named after this one either.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
     found: set[str] = set()
