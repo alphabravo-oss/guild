@@ -4,12 +4,15 @@ Requirements: ``forge-specs/foundry-run-fallout/spec.md``. The rows this module
 proves are named, with the symbol each lands on, in casting 7's completion
 report and in the ``# evidence-for:`` header of
 ``evidence/casting-7-artifact-leaf.log``. They are deliberately absent from the
-prose here: ``tests/test_spec_id_convention.py`` demands that every three-digit
-requirement id in a docstring or comment in this directory carry one of two
-qualifications, ``process-fixes`` or ``convergence``, and a third spec is
-installed now with no legal qualification of its own — so the only spellings
-that would pass this directory's pin name a DIFFERENT spec's requirement.
-Recorded in ``foundry-archive/foundry-run-fallout/concerns.md``.
+prose here: ``tests/test_spec_id_convention.py`` demanded that every
+three-digit requirement id in a docstring or comment in this directory carry
+one of two qualifications, ``process-fixes`` or ``convergence``, and this run's
+spec was installed with no legal qualification of its own — so the only
+spellings that would have passed this directory's pin named a DIFFERENT spec's
+requirement. Recorded in ``foundry-archive/foundry-run-fallout/concerns.md``,
+and since closed: ``QUALIFIERS`` now carries ``fallout ``, so the guards added
+at the foot of this module cite ``fallout GI-033`` under its own spec's name
+rather than staying silent to stay green.
 
 The answer this module is built from, verbatim:
 
@@ -647,3 +650,223 @@ def test_the_only_edge_above_the_leaf_is_the_declared_lazy_one():
     assert lazy == [
         "_manifest_shape_problem_lazy -> foundry_mcp.tools.foundry_spawn"
     ], lazy
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-033 — THE LEAF IS THE ONE HOME, AND THE INVENTORY IS HOW THAT GETS
+# TRUE RATHER THAN MERELY ASSERTED.
+#
+# Two second copies of this module's rules are still standing in
+# ``tools/foundry.py``: a byte-identical tolerant read (fallout D-011) and a
+# lock domain of its own (fallout D-010). Neither is this casting's to delete —
+# that file belongs to another casting — so the guards below take the shape this
+# package already uses for exactly this situation
+# (``tests/orchestration/test_module_boundaries.py#_KNOWN_DUPLICATION``): an
+# INVENTORY, not an exemption list. It behaves one way in each direction, and
+# the two directions are the whole point:
+#
+#   - a NEW second home fails immediately, so the class cannot grow while
+#     nobody is looking;
+#   - a row that has stopped accounting for anything ALSO fails, so the day the
+#     deletion lands the inventory has to shrink with it. An allowlist that
+#     outlives the thing it excuses is how an exception becomes the rule.
+#
+# The name-collision sweep in ``test_module_boundaries`` already covers the READ
+# layer, because those four names collide. It is BLIND to the lock domain: one
+# module spells it ``_ARTIFACT_LOCK`` and the other ``_LEDGER_LOCK``, so a sweep
+# keyed on names sees two different symbols where there is one rule. That blind
+# spot is why the second guard below is keyed on the SHAPE — a module-top
+# ``threading.RLock()`` / ``threading.local()`` pair — rather than on a name.
+# --------------------------------------------------------------------------- #
+
+
+#: A shipped module keeping its own copy of the tolerant-read layer beside this
+#: one, with the reason it is still there. fallout D-011.
+_SECOND_READ_LAYER: dict[str, str] = {
+    "foundry.py": (
+        "a byte-identical `_read_document` / `_document_problem` / `_load_json` "
+        "and its own `_artifact_guard`. The comment that used to excuse it said "
+        "the leaf imports foundry.py and reading back would close a cycle; the "
+        "leaf imports foundry.py nowhere, so the deletion is a delete-and-import "
+        "with nothing standing in its way. Owned by the casting that owns "
+        "tools/foundry.py."
+    ),
+}
+
+
+#: The four names that ARE the tolerant-read layer. A module defining any of
+#: them is keeping a second copy of it, whatever it calls the file.
+_READ_LAYER_SYMBOLS = ("_read_document", "_document_problem", "_load_json",
+                       "_artifact_guard")
+
+
+#: A shipped module declaring its own run-artifact lock domain beside this
+#: module's, with the reason it is still there. fallout D-010.
+_SECOND_LOCK_DOMAINS: dict[str, str] = {
+    "foundry.py": (
+        "`_LEDGER_LOCK` / `_LEDGER_TX`, guarding the same documents this "
+        "module's domain guards — verdicts.json has one writer in each. They "
+        "exclude on disk today only because two independent spellings of the "
+        "lock filename agree, one of them a bare \".lock\" literal at "
+        "`_locked_document` and `write_document`; and the two in-flight maps "
+        "are different objects, so a cross-domain nesting on one document on "
+        "one thread would block on a lock that thread already holds. Owned by "
+        "the casting that owns tools/foundry.py."
+    ),
+}
+
+
+def _shipped_modules() -> list[Path]:
+    """Every shipped ``.py`` under the installed package, tests excluded."""
+    package = Path(artifacts.__file__).resolve().parent.parent
+    return sorted(
+        path for path in package.rglob("*.py") if "__pycache__" not in path.parts
+    )
+
+
+def _top_level_bindings(path: Path) -> set[str]:
+    """Names ``path`` DEFINES at module top — ``def``, ``class``, assignment.
+
+    An IMPORT is not a definition. A module that imports a name is reaching the
+    one definition, which is the outcome these guards exist to produce rather
+    than to forbid.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+    return names
+
+
+def _declares_lock_domain(path: Path) -> bool:
+    """True when ``path`` opens a lock domain of its own at module top.
+
+    A domain is the PAIR — a re-entrant lock ordering threads and a
+    thread-local map making the critical section re-entrant per path. Detected
+    by shape rather than by name, which is the whole reason this guard exists
+    beside the name-collision sweep: `_ARTIFACT_LOCK` and `_LEDGER_LOCK` are
+    two names for one rule and no sweep keyed on names will ever pair them.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+            continue
+        func = node.value.func
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "threading"
+            and func.attr in {"RLock", "local"}
+        ):
+            found.add(func.attr)
+    return found == {"RLock", "local"}
+
+
+def test_the_leaf_is_the_one_home_of_the_tolerant_read():
+    """fallout GI-033 — one tolerant read for the package, and the inventory.
+
+    `_load_json` has been defined twice in this package before, the two bodies
+    were byte-identical until they were not, and the divergence was found by a
+    defect rather than by a guard. This is that guard, written from the leaf's
+    side: the leaf defines the layer, everyone else imports it, and any module
+    that keeps its own copy is named here with the casting that deletes it.
+    """
+    modules = _shipped_modules()
+    assert len(modules) >= 15, [str(m) for m in modules]
+
+    leaf = Path(artifacts.__file__).resolve()
+    leaf_bindings = _top_level_bindings(leaf)
+    assert set(_READ_LAYER_SYMBOLS) <= leaf_bindings, sorted(leaf_bindings)
+
+    elsewhere = {
+        path.name: sorted(set(_READ_LAYER_SYMBOLS) & _top_level_bindings(path))
+        for path in modules
+        if path != leaf and set(_READ_LAYER_SYMBOLS) & _top_level_bindings(path)
+    }
+
+    unaccounted = {
+        name: symbols
+        for name, symbols in elsewhere.items()
+        if name not in _SECOND_READ_LAYER
+    }
+    assert unaccounted == {}, (
+        "module(s) keeping a second copy of the tolerant-read layer beside "
+        "tools/artifacts.py, which is its one home. Delete the copy and import "
+        "from the leaf, or — if the copy genuinely cannot go yet — record it in "
+        f"_SECOND_READ_LAYER with the casting that deletes it: {unaccounted}"
+    )
+
+    stale = sorted(name for name in _SECOND_READ_LAYER if name not in elsewhere)
+    assert stale == [], (
+        f"_SECOND_READ_LAYER entr(y/ies) accounting for nothing: {stale}. The "
+        "second copy is gone; take the row with it, or this table outlives what "
+        "it was written to record."
+    )
+
+
+def test_the_leaf_is_the_one_run_artifact_lock_domain():
+    """fallout GI-033 — one lock domain for the package, and the inventory.
+
+    A second domain over the same documents is not a second implementation of a
+    convenience; it is a second answer to "who may write this file now". Today
+    the two agree, and they agree because two independently-typed spellings of
+    one lock filename happen to match — which is a coincidence with a
+    maintenance schedule, not an invariant. Keyed on the SHAPE of a domain
+    rather than on the names of one, because the names are exactly what differ.
+    """
+    modules = _shipped_modules()
+    leaf = Path(artifacts.__file__).resolve()
+    assert _declares_lock_domain(leaf), "the leaf must hold the one domain"
+
+    elsewhere = sorted(
+        path.name
+        for path in modules
+        if path != leaf and _declares_lock_domain(path)
+    )
+
+    unaccounted = [name for name in elsewhere if name not in _SECOND_LOCK_DOMAINS]
+    assert unaccounted == [], (
+        "module(s) declaring a run-artifact lock domain of their own beside "
+        "tools/artifacts.py, which holds the one. Bind to _ARTIFACT_LOCK / "
+        "_ARTIFACT_TX and spell the sidecar through _TX_LOCK_SUFFIX, or — if "
+        "the second domain genuinely cannot go yet — record it in "
+        f"_SECOND_LOCK_DOMAINS with the casting that closes it: {unaccounted}"
+    )
+
+    stale = sorted(name for name in _SECOND_LOCK_DOMAINS if name not in elsewhere)
+    assert stale == [], (
+        f"_SECOND_LOCK_DOMAINS entr(y/ies) accounting for nothing: {stale}. The "
+        "second domain is gone; take the row with it."
+    )
+
+
+def test_the_lock_sidecar_suffix_has_one_spelling_for_every_domain():
+    """fallout GI-033 — the constant every locked writer spells the sidecar by.
+
+    The flock on `<name>.lock` is the only thing ordering two lock domains
+    against each other, so the FILENAME is the contract between them and a bare
+    literal in one of them is the drift waiting to happen. Asserted from the
+    leaf's side: this module builds the name from `_TX_LOCK_SUFFIX` and never
+    from a literal, and the modules that still type one are the inventoried
+    second domains and nobody else.
+    """
+    leaf = Path(artifacts.__file__).resolve()
+    tree = ast.parse(leaf.read_text(encoding="utf-8"))
+
+    literals = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and node.value == _TX_LOCK_SUFFIX
+    ]
+    # Exactly one: the declaration itself. Any second occurrence is a writer
+    # that typed the suffix instead of reaching the constant beside it.
+    assert len(literals) == 1, literals
+
+    for path in _shipped_modules():
+        if path == leaf or not _declares_lock_domain(path):
+            continue
+        assert path.name in _SECOND_LOCK_DOMAINS, path.name

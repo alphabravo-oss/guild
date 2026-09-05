@@ -40,8 +40,8 @@ because the only caller that opens a transaction through this module is
 ``forge_spec``, and only on ``foundry-planning/<project>/state.json``, which no
 orchestrator transaction ever opened.
 
-The carve has landed and the orchestrator is gone: these are the only
-definitions now, which
+The carve has landed and the orchestrator is gone. Of the write primitives
+these are now the only definitions, which
 ``tests/orchestration/test_module_boundaries.py::test_the_helpers_group_zero_consolidated_have_exactly_one_definition``
 holds for ``_save_json``, ``_document_transaction``, ``_resolve_spec_path``,
 ``_declared_external_inputs`` and ``_run_artifact_problems`` by name. The
@@ -49,6 +49,19 @@ paragraph above stays because the lock filename is still load-bearing for the
 reason it names — two processes on one repository contend through that file —
 and because a reader who finds a second copy one day should know this was
 already paid for once.
+
+AND ONE SECOND COPY IS STILL STANDING, WHICH THIS SAYS OUT LOUD RATHER THAN
+LEAVING A READER TO INFER IT FROM AN ABSENCE. ``tools/foundry.py`` holds a
+parallel stack over the SAME documents: a byte-identical tolerant read
+(fallout D-011) and a second lock domain of its own (fallout D-010). THIS
+module is the one home both close onto — the read under ``_load_json`` and the
+lock domain under ``_ARTIFACT_LOCK`` / ``_ARTIFACT_TX`` / ``_TX_LOCK_SUFFIX``,
+which is why those names are a package-wide contract and not this module's
+private business. What is left to do is a deletion in ``foundry.py`` and an
+import from here; both copies are inventoried by name, with the casting that
+owns the deletion, in ``tests/test_artifacts.py#_SECOND_READ_LAYER`` and
+``#_SECOND_LOCK_DOMAINS``, and each inventory FAILS the day its row stops
+accounting for anything.
 """
 
 from __future__ import annotations
@@ -113,14 +126,39 @@ from foundry_mcp.tools.foundry_state import (
 #                               nests a state.json RMW inside ``_update_phase``'s
 #                               (that nesting was itself a latent lost update).
 #
-# This mirrors ``foundry.py``'s ``ledger_transaction`` BY CONVENTION, not by
-# import: that primitive yields a list under a collection key, which fits
-# defects.json and observations.json but not state.json / stream-rollup.json /
-# escalation.json, whose payload is the document itself. The refusal shape and
-# locking discipline are deliberately identical so a later consolidation is
-# mechanical. The flock — not the RLock — is what binds across MODULES: two
-# separate open() calls contend even inside one process, and verdicts.json has
-# a writer in each module.
+# TWO LOCK DOMAINS OVER ONE DOCUMENT SET, AND WHY THAT IS A DEFECT AND NOT A
+# DESIGN (fallout D-010). ``foundry.py``'s ``_locked_document`` /
+# ``ledger_transaction`` is a SECOND stack over these same paths, with its own
+# ``_LEDGER_LOCK`` and its own ``_LEDGER_TX``. The projection genuinely differs
+# — that primitive yields a list under a collection key, which fits defects.json
+# and observations.json but not state.json / stream-rollup.json /
+# escalation.json, whose payload is the document itself — and that difference is
+# why the two FUNCTIONS are not one function. It is not why the two LOCKS are
+# not one lock.
+#
+# What excludes, and what does not. The flock — not the RLock — is what binds
+# across MODULES: two separate open() calls contend even inside one process, and
+# verdicts.json really does have a writer in each domain
+# (``orchestration/gates.py#_synthesize_clean_prove_verdicts`` opens
+# ``_document_transaction`` here; ``foundry.py#foundry_add_verdict`` opens
+# ``_locked_document`` there). So writes in the two domains DO serialize today —
+# but only because two independent spellings of the lock filename happen to
+# agree, one of them a bare ``".lock"`` literal. Two things the shared flock
+# does not give: the RLock is per module, so nothing but the flock orders
+# threads across the two; and the in-flight maps are different
+# ``threading.local()`` objects, so a transaction opened in one domain INSIDE a
+# transaction open in the other, on the same document on the same thread, is not
+# recognised as re-entrant and blocks forever on a lock that thread already
+# holds. No caller reaches that nesting today, which is why D-010 is LATENT
+# rather than a hang — and a hazard that is one call away from reachable is not
+# a convention.
+#
+# THIS module is the domain the consolidation lands on: ``_ARTIFACT_LOCK``,
+# ``_ARTIFACT_TX`` and ``_TX_LOCK_SUFFIX`` are what a second locked writer
+# anywhere in this package must bind to rather than re-declare. What the leaf
+# must NOT do is grow the other half: ``LedgerShapeError``, ``_dict_records``
+# and the collection-key projection are ledger knowledge, and a leaf that knows
+# what a ledger is has stopped being one (GI-033).
 # --------------------------------------------------------------------------- #
 
 # Threads inside one server process; the flock sidecar covers a second server
@@ -138,10 +176,18 @@ _ARTIFACT_TX = threading.local()
 #: bodies, and the second copy is the shape four prior fixes in this file left
 #: behind every time. It is now the CANONICAL primitive in ``foundry_state``,
 #: the package's leaf module, imported here under the same private name so
-#: every existing caller and test keeps resolving. ``foundry.py`` keeps its own
-#: body because THIS module imports THAT one (reading back would close a cycle
-#: in the import graph) — and it passes the package-wide decode scan on its own
-#: merits, which is the only reason it is allowed to stay.
+#: every existing caller and test keeps resolving.
+#:
+#: fallout D-011 — THE REASON THIS COMMENT USED TO GIVE FOR THE SECOND COPY
+#: DOES NOT SURVIVE THE MOVE. It read that ``foundry.py`` keeps its own body
+#: "because THIS module imports THAT one (reading back would close a cycle in
+#: the import graph)". That was true of the ORCHESTRATOR this block was carved
+#: out of. It is false here: the leaf imports ``foundry.py`` nowhere and must
+#: not, ``foundry.py`` sits above this layer, and an import running from there
+#: to here closes no cycle — which is exactly what makes ``foundry.py``'s
+#: ``_read_document`` / ``_document_problem`` / ``_load_json`` a duplicate with
+#: no reason left rather than an exception with one. THIS module is the one
+#: home of the tolerant read for the whole package.
 _read_document = read_document
 
 
@@ -184,6 +230,16 @@ def _read_text(path: Path) -> str:
 # and ``_run_artifact_problems``'s exclusion, so the scan's idea of what is
 # scaffolding cannot drift from what the writers actually create — which is the
 # drift ``_STRICT_ARTIFACT_DECODERS``'s D-138 note describes on the other axis.
+#
+# THE SCOPE IS THE PACKAGE, NOT THIS MODULE (fallout D-010). "The writers
+# below" is where the drift was FOUND, not how far the rule reaches: every
+# locked run-artifact writer anywhere in this package spells the lock name
+# through ``_TX_LOCK_SUFFIX``, because the flock is what orders two domains
+# against each other and two domains that agree on the name by coincidence
+# agree on it only until one of them is edited. ``foundry.py#_locked_document``
+# and ``#write_document`` currently spell a bare ``".lock"`` literal instead;
+# that is the open half of D-010, inventoried in
+# ``tests/test_artifacts.py#_SECOND_LOCK_DOMAINS``.
 _TX_TMP_SUFFIX = ".tmp"
 _TX_LOCK_SUFFIX = ".lock"
 
