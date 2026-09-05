@@ -3567,9 +3567,18 @@ def test_foundry_report_imports_only_the_two_leaf_modules():
     # each reads a spelling from the module that WRITES the record, which is
     # the trade D-013 ruled on and which no amount of consolidation removes —
     # the writer is the owner.
+    #
+    # fallout D-039 — `foundry_mcp.tools.foundry_validate` joins them on the
+    # same ground. AC-044 puts ONE span table on two surfaces, and the surface
+    # that computes it is the gate that refuses on it; a copy here would be a
+    # second answer to "who owns this requirement", available to disagree with
+    # the answer F0.9 passed or refused on. Body-level for this test's own
+    # stated reason and no other: `foundry_validate` imports `foundry_spawn`,
+    # which is already one of the two deferred reaches below.
     assert nested == {
         "foundry_mcp.tools.foundry_handoff",
         "foundry_mcp.tools.foundry_spawn",
+        "foundry_mcp.tools.foundry_validate",
     }, sorted(nested)
 
     # And the deletion is asserted directly, not only as a set difference: a
@@ -5641,7 +5650,201 @@ def test_all_four_new_sections_reach_both_documents(report_env) -> None:
         assert key in REPORT_REQUIRED_SECTIONS, key
         assert f"## {title}" in markdown, title
 
-    assert len(REPORT_REQUIRED_SECTIONS) == 15
+    assert len(REPORT_REQUIRED_SECTIONS) == 16
     status = report_status(report_env)
     assert status["present"] is True
     assert status["missing_sections"] == []
+
+
+# --------------------------------------------------------------------------- #
+# fallout AC-044 / D-039 — the span table's F6 half.
+#
+# "The span table appears in the F0.9 output AND in the F6 report." The F0.9
+# half shipped and was driven; the F6 half did not exist, while
+# `foundry_validate._render_span_table`'s own docstring asserted that "the F6
+# report draws the same table from the same records" — a producing side
+# documenting a consumer nobody had written.
+#
+# Every register below drives `generate_report` and reads BOTH documents back,
+# because the property is what it WROTE: `report_status` reads the JSON keys
+# AND the markdown headings, and the DONE gate refuses on the union.
+# --------------------------------------------------------------------------- #
+
+
+def _with_manifest(run_dir: Path, castings: list, *, spec: str = "",
+                   schema_version: int = 4, top_reason: dict | None = None) -> Path:
+    """Give a run dir a manifest, a spec and an archive schema marker."""
+    (run_dir / "castings").mkdir(parents=True, exist_ok=True)
+    manifest: dict = {"castings": castings, "waves": []}
+    if top_reason is not None:
+        manifest["split_reason"] = top_reason
+    (run_dir / "castings" / "manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+    if spec:
+        (run_dir / "spec.md").write_text(spec, encoding="utf-8")
+    state = _read_json(run_dir, "state.json")
+    state["archive_schema_version"] = schema_version
+    (run_dir / "state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
+    return run_dir
+
+
+def test_the_span_table_reaches_both_documents(report_env) -> None:
+    """fallout AC-044 — the F6 half exists, with the F0.9 half's own rows.
+
+    The section carries `rows` for a reader that will render them and `text`
+    for the markdown, and `text` IS `_render_span_table`'s block: one
+    computation, two surfaces, so the owners a lead reads at F0.9 and the
+    owners they read at F6 cannot differ.
+    """
+    _with_manifest(
+        report_env,
+        [
+            {"id": 1, "requirement_ids": ["FR-001", "FR-002"], "spec_text": ""},
+            {"id": 2, "requirement_ids": ["FR-002"], "spec_text": ""},
+        ],
+        spec="- **FR-001** a thing\n- **FR-002** another\n- **FR-003** unowned\n",
+    )
+    _generate(report_env)
+    document = _document(report_env)
+    markdown = _markdown(report_env)
+
+    assert "requirement_span" in REPORT_REQUIRED_SECTIONS
+    section = document["requirement_span"]
+    assert section["threshold"] == 2
+    assert section["not_computable"] is False
+    assert {r["id"]: r["span"] for r in section["rows"]} == {
+        "FR-001": 1, "FR-002": 2, "FR-003": 0,
+    }
+    assert {r["id"]: r["owners"] for r in section["rows"]}["FR-002"] == [1, 2]
+    assert section["over_threshold"] == []
+
+    assert "## Requirement span" in markdown
+    assert "| requirement | owners | span | recorded reason |" in markdown
+    assert "| FR-002 | #1, #2 | 2 |" in markdown
+    # The JSON's `text` is the block the markdown carries — not a second
+    # rendering of the same rows, which is how two columns come to differ
+    # while the data agrees.
+    assert section["text"] in markdown
+
+
+def test_the_span_section_names_a_requirement_over_the_threshold(report_env) -> None:
+    """fallout GI-018 — above two owners with no recorded reason, named.
+
+    REPORTED, never refused. F0.9 is the gate; a run waived past a wide span
+    there must still reach DONE, and this section is where the waiver stays
+    visible instead of being re-litigated at F6.
+    """
+    _with_manifest(
+        report_env,
+        [
+            {"id": 1, "requirement_ids": ["FR-001"]},
+            {"id": 2, "requirement_ids": ["FR-001"]},
+            {"id": 3, "requirement_ids": ["FR-001", "FR-002"]},
+            {"id": 4, "requirement_ids": ["FR-002"]},
+            {"id": 5, "requirement_ids": ["FR-002"]},
+        ],
+        spec="- **FR-001** wide\n- **FR-002** wide but explained\n",
+        top_reason={"FR-002": "two surfaces the spec names separately"},
+    )
+    result = _generate(report_env)
+    assert result["ok"] is True, "the span is reported, never refused (GI-018)"
+
+    section = _document(report_env)["requirement_span"]
+    assert section["over_threshold"] == ["FR-001"]
+    assert section["recorded"] == ["FR-002"]
+
+    markdown = _markdown(report_env)
+    assert "above the threshold with no recorded reason:** FR-001" in markdown
+    assert "two surfaces the spec names separately" in markdown
+
+
+def test_the_span_section_says_not_computable_rather_than_empty(report_env) -> None:
+    """fallout FR-054 — an archive below the schema floor is NOT COMPUTABLE.
+
+    An empty table reads as "no requirements", which is a different and
+    alarming claim than "this archive predates the field the span is computed
+    from". The sentence is `_render_span_table`'s own, so F0.9 and F6 say it
+    the same way.
+    """
+    _with_manifest(
+        report_env,
+        [{"id": 1, "spec_text": "- **FR-001** a thing"}],
+        spec="- **FR-001** a thing\n",
+        schema_version=3,
+    )
+    _generate(report_env)
+    section = _document(report_env)["requirement_span"]
+
+    assert section["not_computable"] is True
+    assert section["rows"] == []
+    assert "not computable" in section["text"]
+    assert "not computable" in _markdown(report_env)
+
+
+def test_the_span_section_renders_a_run_with_no_manifest_at_all(report_env) -> None:
+    """fallout FR-054 — an ABSENT manifest is an empty section, not a refusal.
+
+    The generator's rule everywhere else: absent means an empty section,
+    present-and-undecodable means a named refusal. A run halted before F0.5
+    legitimately has no manifest, and refusing its report would make
+    `Foundry-Phase('done')` unreachable for it.
+    """
+    assert not (report_env / "castings" / "manifest.json").exists()
+    result = _generate(report_env)
+    assert result["ok"] is True
+
+    section = _document(report_env)["requirement_span"]
+    assert section["rows"] == []
+    assert section["count"] == 0
+    assert section["not_computable"] is False
+    assert "## Requirement span" in _markdown(report_env)
+    assert report_status(report_env)["missing_sections"] == []
+
+
+def test_an_undecodable_manifest_refuses_by_name(report_env) -> None:
+    """The other half of the same rule: present-and-broken is a refusal.
+
+    Named, so a lead knows which artifact to repair — the house shape every
+    other `_read_*` in this module follows.
+    """
+    (report_env / "castings").mkdir(parents=True, exist_ok=True)
+    (report_env / "castings" / "manifest.json").write_text("{ not json",
+                                                           encoding="utf-8")
+    result = generate_report(report_env.parent.parent, report_env)
+    assert result["ok"] is False
+    assert "manifest.json" in result["error"]
+    assert "castings/manifest.json" in result["hint"]
+
+
+def test_the_span_rows_are_the_f0_9_gates_own_computation(report_env) -> None:
+    """fallout AC-044 — "the same table", asserted as the same CALL.
+
+    Driven rather than compared field by field: the section's rows must equal
+    what `foundry_validate._requirement_span_rows` returns for the same
+    manifest. A mirrored computation here would have to reproduce that
+    function exactly to pass — which is the drift, not an escape from it.
+    """
+    from foundry_mcp.tools.foundry_validate import (
+        _owned_requirement_ids,
+        _recorded_split_reasons,
+        _requirement_span_rows,
+    )
+
+    castings = [
+        {"id": 1, "requirement_ids": ["AC-044", "FR-013"]},
+        {"id": 7, "requirement_ids": ["AC-044"]},
+    ]
+    _with_manifest(report_env, castings, spec="- **AC-044** the span table\n")
+    _generate(report_env)
+
+    manifest = json.loads(
+        (report_env / "castings" / "manifest.json").read_text(encoding="utf-8")
+    )
+    expected = _requirement_span_rows(
+        {"AC-044"},
+        castings,
+        {str(c["id"]): _owned_requirement_ids(c) for c in castings},
+        _recorded_split_reasons(manifest, castings),
+    )
+    assert _document(report_env)["requirement_span"]["rows"] == expected

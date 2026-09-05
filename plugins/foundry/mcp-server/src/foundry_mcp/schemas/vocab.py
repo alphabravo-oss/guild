@@ -1044,9 +1044,20 @@ REPORT_JSON_FILENAME = "report.json"
 #                              and before the two closing sections that
 #                              describe the machine rather than the run.
 #
+# fallout D-039 — THE SIXTEENTH IS AC-044's OTHER HALF. "The span table appears
+# in the F0.9 output AND in the F6 report"; the F0.9 half shipped and the F6
+# half did not, while `foundry_validate._render_span_table`'s own docstring
+# asserted that "the F6 report draws the same table from the same records" —
+# a producing side documenting a consumer nobody had written. `requirement_span`
+# sits immediately after `verdict_matrix` because the two are the same table
+# read along its two axes: the matrix says whether each requirement was
+# VERIFIED, the span says how many castings had to build it, and a reader
+# asking why a requirement came out thin reads them together.
+#
 # Extend only via phase-level RFC.
 REPORT_REQUIRED_SECTIONS = (
     "verdict_matrix",
+    "requirement_span",
     "defects_by_tier_and_status",
     "latent_backlog",
     "hardening_backlog",
@@ -1061,7 +1072,7 @@ REPORT_REQUIRED_SECTIONS = (
     "halt_and_co_dispatch",
     "executing_versions",
     "baseline_comparison",
-)  # 15 sections
+)  # 16 sections
 
 # ---------------------------------------------------------------------------
 # NFR-001 / AC-039 / OT-030 — the convergence comparison.

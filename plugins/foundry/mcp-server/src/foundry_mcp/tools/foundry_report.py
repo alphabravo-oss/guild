@@ -54,6 +54,7 @@ from foundry_mcp.schemas.vocab import (
     REPORT_JSON_FILENAME,
     REPORT_MD_FILENAME,
     REPORT_REQUIRED_SECTIONS,
+    REQUIREMENT_ID_RE,
     RUN_PHASE_HALTED,
     SPEND_LEDGER_FILENAME,
     TEMPER_CANDIDATE,
@@ -1056,6 +1057,156 @@ def _read_dispatch_summary(run_dir: Path) -> tuple[dict, str | None]:
     ), None
 
 
+MANIFEST_RELPATH = "castings/manifest.json"
+
+
+def _spec_text_for_span(project_root: Path, run_dir: Path, state: dict) -> str:
+    """The run's spec, as text, by the ladder F0.9 climbs. Never raises.
+
+    `run_dir/spec.md` first, then `state.json`'s recorded `spec_path` resolved
+    against the project root — the same two rungs `validate_castings` uses, in
+    the same order, because a report whose span table read a different document
+    than the gate would name a different set of requirement ids and the two
+    tables AC-044 calls one table would differ in their rows.
+
+    NOT a fourth spec-path resolver (Holmes `share-7`): this is two rungs of a
+    ladder over a run directory, not the general resolution that belongs in
+    `tools/artifacts.py`. An unreadable spec yields "" — the span is then
+    computed over the ids the castings themselves declare, which is a smaller
+    table and an honest one, rather than a refusal on a document this section
+    only needs in order to name requirements nobody owns.
+    """
+    text, problem = read_text_file(run_dir / "spec.md")
+    if problem is None and text:
+        return text
+    recorded = state.get("spec_path")
+    if isinstance(recorded, str) and recorded:
+        text, problem = read_text_file(Path(project_root) / recorded)
+        if problem is None:
+            return text
+    return ""
+
+
+def _read_requirement_span(
+    project_root: Path, run_dir: Path, state: dict
+) -> tuple[dict, str | None]:
+    """AC-044 / GI-018 / CT-011 — the F6 half of the span table.
+
+    Returns ``(section, problem)``::
+
+        {"threshold": int,          # REQUIREMENT_SPAN_MAX
+         "not_computable": bool,    # archive predates `requirement_ids`
+         "rows": [{"id", "owners", "span", "split_reason"}],
+         "over_threshold": [id],    # span above the threshold, no reason
+         "recorded": [id],          # span above it WITH a recorded reason
+         "count": int,
+         "text": str,               # the same markdown block F0.9 prints
+         "note": str}
+
+    ONE COMPUTATION, TWO SURFACES. `_requirement_span_rows` is the function
+    `Foundry-Validate-Castings` refuses on, called here with the same inputs
+    assembled the same way, so the table a lead reads at F0.9 and the table
+    they read at F6 cannot name different owners. This section REPORTS and
+    never refuses on the span itself: F0.9 is the gate, and a run that was
+    waived past a wide span at F0.9 must still be able to reach DONE.
+
+    FR-054 TOLERANCE, ON BOTH SHAPES IT CAN MEET.
+    ---------------------------------------------
+    An ABSENT manifest is an empty section, not a refusal — the same rule every
+    other section here follows, and a run halted before F0.5 legitimately has
+    none. An archive below `REQUIREMENT_IDS_SCHEMA_FLOOR` whose castings carry
+    no `requirement_ids` is NOT COMPUTABLE, and says so in the same sentence
+    F0.9 prints rather than rendering an empty table: an empty table reads as
+    "no requirements", which is a different and alarming claim.
+    """
+    # fallout D-039 / AC-044 — ONE COMPUTATION, REACHED AT CALL TIME.
+    #
+    # BODY-LEVEL, and that is this module's rule rather than a hedge: a
+    # module-level `foundry_mcp` import here beyond the two leaves risks
+    # closing a cycle in the import graph, while a body-level one runs when
+    # every module in the chain is already built and closes nothing. D-013
+    # ruled on exactly this trade — it had forced a hand-typed copy of
+    # `foundry_spawn`'s agent-id spelling, and the copy then disagreed in
+    # production. The same ruling applies here: mirroring the span computation
+    # would be a second answer to "who owns this requirement", free to disagree
+    # with the answer F0.9 refused on, which is precisely what AC-044's "the
+    # same table" forbids. `_render_span_table`'s own docstring already
+    # promised this consumer; it just did not exist (D-039).
+    #
+    # It is a wide reach into another module's privates. The narrower shape —
+    # ONE public entry point there, called by both surfaces — is raised as a
+    # cross-casting concern rather than taken by editing a file this casting
+    # does not own.
+    from foundry_mcp.tools.foundry_validate import (
+        REQUIREMENT_IDS_SCHEMA_FLOOR,
+        REQUIREMENT_SPAN_MAX,
+        _archive_schema_version,
+        _owned_requirement_ids,
+        _recorded_split_reasons,
+        _render_span_table,
+        _requirement_span_rows,
+    )
+
+    manifest, problem = read_document(run_dir / MANIFEST_RELPATH)
+    if problem is not None:
+        return {}, problem
+
+    castings = manifest.get("castings")
+    castings = castings if isinstance(castings, list) else []
+    ownership = {
+        str(c.get("id", "?")): _owned_requirement_ids(c)
+        for c in castings
+        if isinstance(c, dict)
+    }
+    schema_version = _archive_schema_version(state)
+    # NOT COMPUTABLE IS A CLAIM ABOUT A MANIFEST, so it needs one. F0.9's rule
+    # is "no casting carries `requirement_ids` AND the archive is below the
+    # floor", which reads as vacuously true over an EMPTY castings list — and
+    # the sentence it prints then blames a schema floor for what is really an
+    # absent decomposition. A run with no manifest gets the empty-table line
+    # instead, which is what is actually true of it.
+    not_computable = bool(castings) and (
+        not any(present for present, _ in ownership.values())
+        and schema_version < REQUIREMENT_IDS_SCHEMA_FLOOR
+    )
+
+    rows: list[dict] = []
+    if castings and not not_computable:
+        spec_ids = set(
+            REQUIREMENT_ID_RE.findall(
+                _spec_text_for_span(project_root, run_dir, state)
+            )
+        )
+        rows = _requirement_span_rows(
+            spec_ids,
+            [c for c in castings if isinstance(c, dict)],
+            ownership,
+            _recorded_split_reasons(manifest, castings),
+        )
+
+    over = [r["id"] for r in rows
+            if r["span"] > REQUIREMENT_SPAN_MAX and not r["split_reason"]]
+    recorded = [r["id"] for r in rows
+                if r["span"] > REQUIREMENT_SPAN_MAX and r["split_reason"]]
+    return {
+        "threshold": REQUIREMENT_SPAN_MAX,
+        "not_computable": not_computable,
+        "rows": rows,
+        "over_threshold": over,
+        "recorded": recorded,
+        "count": len(rows),
+        "text": _render_span_table(rows, not_computable),
+        "note": (
+            f"The span is how many castings owned each requirement. F0.9 "
+            f"refuses above {REQUIREMENT_SPAN_MAX} without a recorded reason "
+            f"(GI-018); this section REPORTS the same table from the same "
+            f"records and refuses nothing, so a span waived at F0.9 is visible "
+            f"here rather than re-litigated. A requirement split across many "
+            f"castings is one no single teammate saw whole."
+        ),
+    }, None
+
+
 def _unreported_dispatches_section(summary: dict) -> dict:
     """The `unreported_dispatches` section, rendered from the shared summary.
 
@@ -1760,6 +1911,7 @@ def _baseline_comparison_section(
 #: the assertion below instead of rendering a blank heading.
 _SECTION_TITLES: dict[str, str] = {
     "verdict_matrix": "Verdict matrix",
+    "requirement_span": "Requirement span",
     "defects_by_tier_and_status": "Defects by tier and status",
     "latent_backlog": "LATENT backlog",
     "hardening_backlog": "HARDENING backlog",
@@ -1914,6 +2066,32 @@ def _render_markdown(run_name: str, generated_at: str, sections: dict) -> str:
 
 
 def _render_section(key: str, value: dict) -> list[str]:
+    if key == "requirement_span":
+        # `text` IS `_render_span_table`'s block — the same markdown F0.9
+        # prints, not a second rendering of the same rows. AC-044 asks for one
+        # table on two surfaces, and two renderers over one row set is how the
+        # columns come to differ while the data agrees.
+        lines = [value.get("text") or "_None recorded._", ""]
+        over = value.get("over_threshold") or []
+        recorded = value.get("recorded") or []
+        if over:
+            lines.append(
+                f"**{len(over)} requirement(s) above the threshold with no "
+                f"recorded reason:** {', '.join(over)}."
+            )
+        if recorded:
+            lines.append(
+                f"{len(recorded)} above it with a recorded reason: "
+                f"{', '.join(recorded)}."
+            )
+        if not over and not recorded and not value.get("not_computable"):
+            lines.append(
+                f"No requirement is owned by more than "
+                f"{value.get('threshold', '?')} castings."
+            )
+        if value.get("note"):
+            lines.extend(["", f"_{value['note']}_"])
+        return lines
     if key == "verdict_matrix":
         # D-167, D-150's class one renderer over. `cycle` is `verdicts.json`'s
         # own key, read through `.get`, and this sentence interpolated it raw
@@ -2418,6 +2596,12 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
     if problem is not None:
         return _refusal(DEFECTS_FILENAME, problem)
 
+    requirement_span, problem = _read_requirement_span(
+        project_root, run_dir, state
+    )
+    if problem is not None:
+        return _refusal(MANIFEST_RELPATH, problem)
+
     escalated, problem = _read_escalated_classes(run_dir)
     if problem is not None:
         return _refusal(ESCALATION_FILENAME, problem)
@@ -2479,6 +2663,7 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
 
     sections: dict[str, Any] = {
         "verdict_matrix": verdict_matrix,
+        "requirement_span": requirement_span,
         "defects_by_tier_and_status": defect_sections["defects_by_tier_and_status"],
         "latent_backlog": defect_sections["latent_backlog"],
         "hardening_backlog": hardening,

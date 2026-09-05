@@ -2778,6 +2778,7 @@ def test_report_required_sections_is_the_fifteen_gi_006_names_in_order() -> None
     """
     assert vocab.REPORT_REQUIRED_SECTIONS == (
         "verdict_matrix",
+        "requirement_span",
         "defects_by_tier_and_status",
         "latent_backlog",
         "hardening_backlog",
@@ -2793,7 +2794,7 @@ def test_report_required_sections_is_the_fifteen_gi_006_names_in_order() -> None
         "executing_versions",
         "baseline_comparison",
     )
-    assert len(set(vocab.REPORT_REQUIRED_SECTIONS)) == 15, "no duplicate section"
+    assert len(set(vocab.REPORT_REQUIRED_SECTIONS)) == 16, "no duplicate section"
 
 
 def test_the_hardening_backlog_sits_beside_the_latent_backlog() -> None:
@@ -2916,6 +2917,19 @@ def test_the_palette_display_publishes_is_the_palette_it_renders_with() -> None:
     ):
         assert getattr(display, public) == getattr(display, private), public
         assert getattr(display, public).startswith("\033["), public
+
+
+def test_the_span_section_sits_beside_the_verdict_matrix() -> None:
+    """fallout AC-044 / D-039 — the placement, and the count it grew to.
+
+    The two are the same table read along its two axes: the matrix says whether
+    each requirement came out VERIFIED, the span says how many castings had to
+    build it. A reader asking why a requirement came out thin reads them
+    together, and the tuple's order is where the document puts them.
+    """
+    order = list(vocab.REPORT_REQUIRED_SECTIONS)
+    assert order.index("requirement_span") == order.index("verdict_matrix") + 1
+    assert len(vocab.REPORT_REQUIRED_SECTIONS) == 16
 
 
 def test_run_artifact_filenames_and_the_halted_state() -> None:
