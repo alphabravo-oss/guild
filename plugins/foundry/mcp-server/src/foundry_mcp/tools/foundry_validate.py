@@ -89,6 +89,26 @@ _SPAN_EXITS_HINT = (
 )
 
 
+def _owner_sort_key(owner: object) -> tuple:
+    """Order casting ids so a lead reads them in the order they think in.
+
+    Casting ids are integers in every manifest this package writes, and sorting
+    them by their printed form puts #10 between #1 and #2 — a table a reader
+    has to re-sort in their head, in the F0.9 output AND in the F6 report that
+    renders the same records. So integers order numerically and everything else
+    orders after them by its printed form, which keeps the ordering TOTAL
+    (a manifest is free to spell an id as a string) without ever comparing an
+    int to a str.
+
+    ``bool`` is excluded from the numeric arm for the same reason
+    ``_archive_schema_version`` excludes it: it is a subclass of ``int`` and
+    would sort as 0 or 1 beside real ids.
+    """
+    if isinstance(owner, bool) or not isinstance(owner, int):
+        return (1, str(owner))
+    return (0, owner)
+
+
 def _recorded_split_reasons(manifest: dict, castings: list) -> dict[str, str]:
     """``{requirement id: the reason recorded for it}`` across the manifest.
 
@@ -153,8 +173,10 @@ def _requirement_span_rows(
     also a row, even one the spec does not declare, because the span rule is
     about ownership: an id could otherwise carry three owners and no row.
 
-    Owners are ordered by their printed form, so the table and the refusal are
-    byte-stable across runs whether casting ids are integers or strings.
+    Owners are ordered by ``_owner_sort_key``, so the table and the refusal are
+    byte-stable across runs whether casting ids are integers or strings — and
+    are in the order a lead reads them in rather than in the order that puts
+    #10 between #1 and #2.
     """
     owners: dict[str, list] = {}
     for casting in castings:
@@ -172,7 +194,7 @@ def _requirement_span_rows(
                 held.append(cid)
     rows = []
     for rid in sorted(set(spec_req_ids) | set(owners)):
-        held = sorted(owners.get(rid, []), key=str)
+        held = sorted(owners.get(rid, []), key=_owner_sort_key)
         rows.append({
             "id": rid,
             "owners": held,

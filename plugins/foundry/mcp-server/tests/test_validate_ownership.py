@@ -1158,3 +1158,50 @@ def test_the_real_archives_in_this_repository_report_not_computable(
         i.get("dimension") in ("requirement_ownership", "requirement_span")
         for i in result["issues"]
     )
+
+
+def test_owners_are_ordered_the_way_a_lead_reads_them(tmp_path: Path):
+    """Casting ids are integers, and ordering them by their printed form puts
+    #10 between #1 and #2 — in the F0.9 table AND in the F6 report that renders
+    the same records.
+
+    Driven at the only width where the two orderings differ, which is why this
+    needs twelve castings and not three: with single digits the wrong ordering
+    is indistinguishable from the right one.
+    """
+    castings = [
+        _casting(cid, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])
+        for cid in range(1, 13)
+    ]
+    castings[0]["split_reason"] = {
+        "US-001": "twelve surfaces, no shared owner",
+        "FR-009": "twelve surfaces, no shared owner",
+    }
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert _row(result, "FR-009")["owners"] == list(range(1, 13))
+    assert (
+        "| FR-009 | #1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12 | 12 |"
+        in result["requirement_span"]["text"]
+    )
+
+
+def test_an_id_spelled_as_a_string_still_orders_and_does_not_raise(tmp_path: Path):
+    """The ordering has to be TOTAL: a manifest is free to spell a casting id
+    as a string, and a sort that compared one to an integer would raise out of
+    F0.9 rather than render the table.
+    """
+    castings = [
+        _casting(2, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+        _casting("alpha", excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+        _casting(10, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+    ]
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert _row(result, "FR-009")["owners"] == [2, 10, "alpha"]
