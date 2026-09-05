@@ -2664,7 +2664,21 @@ def test_liveness_registration_reaches_the_handler_through_dispatch(run_env, tmp
 # The second copy is deliberate, not drift — the orchestrator imports the
 # foundry module, so reading back the other way would close a cycle in the
 # import graph.
-GUARDED_CYCLE_READERS = frozenset({"_current_cycle", "_server_cycle"})  # 2 readers
+#: fallout GI-024 / AC-011 — `_current_cycle` moved to
+#: `foundry_state.current_cycle` in commit group (0); the monolith binds the
+#: leaf's object under the old name for its sibling test modules, so BOTH
+#: spellings are the same guarded reader and both are named here.
+#: `derive_cycle_count` is the THIRD total reader, and it was invisible to this
+#: scan until the tuple-unpack recogniser above learned to see the leaf. It
+#: guards the value through its own `_cycle` local on exactly `current_cycle`'s
+#: terms — bool excluded, non-int and negative rejected — and returns None where
+#: `current_cycle` returns 0, because "no counter" and "cycle 0" are the two
+#: answers its callers have to tell apart. That is what a TOTAL reader is; it is
+#: enrolled here rather than routed through `current_cycle`, which cannot
+#: express the distinction.
+GUARDED_CYCLE_READERS = frozenset(
+    {"_current_cycle", "current_cycle", "_server_cycle", "derive_cycle_count"}
+)  # 3 readers, 4 spellings
 
 
 def _mentions_state_json(node: ast.AST) -> bool:
@@ -2747,6 +2761,24 @@ def _raw_state_cycle_reads(path: Path) -> tuple[list[str], list[str]]:
             if isinstance(node, ast.Assign) and _mentions_state_json(node.value)
             for target in node.targets
             if isinstance(target, ast.Name)
+        }
+        # fallout GI-024 — AND A THIRD: THE (document, problem) UNPACK.
+        #
+        # `foundry_state.read_document` returns a PAIR, so the leaf reader every
+        # cycle read now routes through binds the document by tuple unpacking:
+        # `state, _ = read_document(run_dir / "state.json")`. That target is an
+        # `ast.Tuple`, not an `ast.Name`, so the comprehension above saw nothing
+        # and the whole derivation went blind on the one module that matters —
+        # which the anchor below caught, exactly as it was built to. The rule is
+        # still the BINDING and not the syntax that produces it.
+        state_names |= {
+            element.id
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Assign) and _mentions_state_json(node.value)
+            for target in node.targets
+            if isinstance(target, (ast.Tuple, ast.List))
+            for element in target.elts
+            if isinstance(element, ast.Name)
         }
         # D-098/D-103 added a SECOND way to bind the state document:
         # `with _document_transaction(state_path) as state:`. A `with` binding
@@ -2854,7 +2886,7 @@ def test_every_state_cycle_read_goes_through_a_guarded_reader():
     # the sites this derivation must still see, by name.
     assert {
         "foundry.py#_server_cycle",
-        "foundry_orchestrator.py#_current_cycle",
+        "foundry_state.py#current_cycle",
     } <= set(seen), (
         f"the scan recognised {seen} as state-cycle readers, which does not "
         f"include the two TOTAL readers the whole package routes through. The "
@@ -14926,8 +14958,8 @@ def test_a_purely_generated_report_is_left_exactly_as_generated(run_env):
     # Regenerated from the same ledgers, so the only line that may differ is the
     # banner's timestamp.
     #
-    # COUNTED AS `_md_sections` COUNTS THEM — a heading is a WHOLE TRIMMED LINE
-    # beginning `"## "` — and not as a substring. A substring count reads the
+    # COUNTED AS `markdown_sections` COUNTS THEM — a heading is a WHOLE TRIMMED
+    # LINE beginning `"## "` — and not as a substring. A substring count reads the
     # generator's own banner prose, which quotes `## ` inline to tell the lead
     # where their additions may go, and a sentence about headings is not a
     # heading. The subject of this assertion is what the seal did to the

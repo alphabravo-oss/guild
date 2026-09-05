@@ -49,12 +49,44 @@ from foundry_mcp.schemas.vocab import (
 )
 from foundry_mcp.tools.citation import iter_symbol_cites
 from foundry_mcp.tools.foundry_state import (
+    DISPATCH_PHASE_TO_RUN_PHASE,
     clear_active_run,
+    current_cycle,
     get_run_dir,
     is_stream_record,
+    markdown_sections,
+    now_iso,
+    overlay_unreported,
+    prove_is_clean,
     read_document,
     read_text_file,
+    spend_bucket,
 )
+
+# fallout GI-024 / AC-011 / OT-011 — ONE DEFINITION, AND THE OLD NAMES ARE
+# BINDINGS TO IT.
+#
+# `_now`, `_current_cycle`, `_overlay_unreported` and the two this comment can
+# no longer name (the markdown-section splitter and the empty spend bucket)
+# were second implementations of readers casting 10 consolidated into
+# `tools/foundry_state.py` as `now_iso`, `current_cycle`, `overlay_unreported`,
+# `markdown_sections` and `spend_bucket`. The `def`s are gone and every call
+# site in this module now names the leaf's function directly, so there is
+# exactly one implementation of each and the group (4) AST test can say so.
+#
+# THREE of the five names survive as BINDINGS, not definitions: six sibling
+# test modules
+# this casting may not edit reach them by attribute (`fo._now()`,
+# `fo._current_cycle(fdir)`, `fo._overlay_unreported(...)`) or import them from
+# here. A binding makes `fo._now is foundry_state.now_iso` TRUE, which is a
+# stronger statement than the two copies ever supported, and it costs nothing:
+# the names die with this module at the carve, and the readers repoint at the
+# symbol map then. The other two get NO binding: nothing outside this module
+# ever named them, and a binding nothing reads is the dead-name shape
+# `test_every_private_function_the_plugin_ships_is_reachable` refuses.
+_now = now_iso
+_current_cycle = current_cycle
+_overlay_unreported = overlay_unreported
 
 # fallout FR-004 / GI-010 / AC-011 — THE ARTIFACT PRIMITIVES ARE READ FROM THE
 # LEAF, NOT DEFINED HERE.
@@ -219,8 +251,6 @@ def agent_model(subagent_type: str, baseline: str = "") -> dict:
     return {"model": resolved} if resolved else {}
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 # --------------------------------------------------------------------------- #
@@ -240,26 +270,6 @@ def _now() -> str:
 # --------------------------------------------------------------------------- #
 
 
-def _current_cycle(fdir: Path) -> int:
-    """Return the server-owned cycle counter. Never caller-supplied.
-
-    Returns 0 for a missing, absent, or malformed value so every reader gets a
-    usable integer rather than having to guard the state file's shape.
-
-    "Every reader" is enforced, not aspirational: no other function in this
-    package may read ``state.json["cycle"]`` directly. Four once did (D-059),
-    and a raw read hands on whatever the file holds — a str/None/list/dict
-    raised an unhandled TypeError out of Foundry-Next, the mandatory handshake
-    before every phase transition and gate, while -3 and 2.5 propagated
-    silently into responses and onto every row of a synthesized verdict.
-    ``test_orchestrator_gates.test_every_state_cycle_read_goes_through_a_
-    guarded_reader`` derives the reader set from the source and fails on the
-    next one added.
-    """
-    value = _load_json(fdir / "state.json").get("cycle", 0)
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return 0
-    return value
 
 
 # Single compiled source of truth for the requirement-ID grammar. Used by
@@ -355,17 +365,23 @@ def _prove_is_clean(fdir: Path, project_root: str) -> bool:
     marker = fdir / _stream_marker("prove")
     if not marker.exists():
         return False
-    totals = _rollup_totals(fdir, _current_cycle(fdir), "prove") or _marker_counts(marker)
-    if totals is None:
-        return False
-    if totals.get("findings") is None or totals["findings"] != 0:
-        return False
-    spec_count = _count_spec_requirements(project_root)
-    if spec_count <= 0:
-        return False
-    if totals["items_checked"] < spec_count * 0.95:
-        return False
-    return True
+    # fallout GI-024 / AC-011 — THE RULE IS THE LEAF'S; THE INPUTS ARE THIS
+    # MODULE'S.
+    #
+    # What this function is FOR is gathering the two facts the decision needs
+    # off THIS run: the cycle's roll-up totals (falling back to the marker's
+    # aggregate on an archive that predates the roll-up) and the number of
+    # requirement ids the run's spec declares. The decision it used to make
+    # inline — findings absent is not findings zero, a zero-requirement spec is
+    # never clean, coverage at 95% — is one implementation in
+    # `foundry_state.prove_is_clean` now, and `tools/foundry_report.py` reaches
+    # the same one. Two readers of one threshold is how a run gets called clean
+    # at one door and unclean at the next.
+    return prove_is_clean(
+        totals=_rollup_totals(fdir, current_cycle(fdir), "prove")
+        or _marker_counts(marker),
+        spec_requirement_count=_count_spec_requirements(project_root),
+    )
 
 
 # CLOSED VOCABULARY — the verdict axis (FR-013 / CT-002). A requirement's
@@ -396,7 +412,7 @@ def _synthesize_clean_prove_verdicts(
     if not ids:
         return 0
     verdicts_path = fdir / "verdicts.json"
-    now = _now()
+    now = now_iso()
     synthesized = 0
     # D-103: verdicts.json is read-modify-written here AND by
     # foundry.py#foundry_add_verdict. Serializing this side removes the
@@ -604,7 +620,7 @@ def _escalation_exit_distances(
         recorded = {}
     buckets = _class_buckets(_load_json(fdir / "defects.json").get("defects", []))
     derived = _escalated_classes(fdir, project_root)
-    next_completed = _current_cycle(fdir)
+    next_completed = current_cycle(fdir)
     crossing = crossing or _CLEAN_CYCLE_CROSSING_DEFAULT
     parts: list[str] = []
     for key in classes:
@@ -2111,7 +2127,7 @@ def foundry_gate(
         # Cleared by _update_phase when the phase actually advances.
         try:
             (fdir / GATE_PASSED_MARKER).write_text(
-                json.dumps({"phase": phase, "at": _now()}),
+                json.dumps({"phase": phase, "at": now_iso()}),
                 encoding="utf-8",
             )
         except OSError:
@@ -2321,7 +2337,7 @@ def _record_stream_rollup(
 
         entry["records"].append(
             {
-                "recorded_at": _now(),
+                "recorded_at": now_iso(),
                 "items_checked": items_checked,
                 "items_total": items_total,
                 "findings": findings_count,
@@ -2332,7 +2348,7 @@ def _record_stream_rollup(
         entry["items_total"] = max(entry.get("items_total", 0), items_total)
         entry["findings"] = entry.get("findings", 0) + findings_count
 
-        data["updated_at"] = _now()
+        data["updated_at"] = now_iso()
     return {
         "items_checked": entry["items_checked"],
         "items_total": entry["items_total"],
@@ -2573,7 +2589,7 @@ def foundry_mark_stream(
 
     # The roll-up is keyed by the SERVER counter, never by the caller's `cycle`
     # (FR-005). The caller's value is kept on the record for audit only.
-    server_cycle = _current_cycle(fdir)
+    server_cycle = current_cycle(fdir)
     prev_totals = _rollup_totals(fdir, server_cycle - 1, stream) if server_cycle > 0 else None
     totals = _record_stream_rollup(
         fdir, server_cycle, stream, items_checked, items_total, findings_count, cycle
@@ -2635,7 +2651,7 @@ def foundry_mark_stream(
 
     marker = fdir / _stream_marker(stream)
     marker.write_text(
-        f"{_now()} cycle={server_cycle}\n"
+        f"{now_iso()} cycle={server_cycle}\n"
         f"items_checked={totals['items_checked']}\n"
         f"items_total={totals['items_total']}\n"
         f"coverage={coverage_pct}\n"
@@ -2659,7 +2675,7 @@ def foundry_mark_stream(
                 (fdir / TRACE_CLEAN_AT_MARKER).write_text(
                     _json.dumps({
                         "head_sha": rev.stdout.strip(),
-                        "stamped_at": _now(),
+                        "stamped_at": now_iso(),
                         "cycle": server_cycle,
                         "items_checked": totals["items_checked"],
                     }),
@@ -2972,7 +2988,7 @@ def _maybe_skip_trace(fdir: Path, project_root: str) -> dict | None:
             "details": {"inspect_mode": "DELTA", "touched_files": []},
         }
         (fdir / _stream_marker("trace")).write_text(
-            f"{_now()} cycle=skipped\n"
+            f"{now_iso()} cycle=skipped\n"
             f"items_checked=0\n"
             f"items_total=0\n"
             f"coverage=SKIPPED\n"
@@ -3005,7 +3021,7 @@ def _maybe_skip_trace(fdir: Path, project_root: str) -> dict | None:
         return decision
 
     (fdir / _stream_marker("trace")).write_text(
-        f"{_now()} cycle=skipped\n"
+        f"{now_iso()} cycle=skipped\n"
         f"items_checked=0\n"
         f"items_total=0\n"
         f"coverage=SKIPPED\n"
@@ -4060,7 +4076,7 @@ def _decide_inspect_mode(
     uncomputable diff, then the scan), then DELTA. An uncomputable diff still
     yields FULL; it just no longer speaks over a rule that fired.
     """
-    now = _now()
+    now = now_iso()
     diff = _grind_diff(fdir, project_root)
     touched = diff["files"]
     skips = _skipped_streams(fdir)
@@ -4293,7 +4309,7 @@ def _record_cycle_rollup(fdir: Path, cycle: int, *, sub: str = "", **fields) -> 
     ``sub`` NESTS THE WRITE, AND EXISTS FOR EXACTLY ONE CALLER (D-070).
     ------------------------------------------------------------------
     This keyed the bucket by `str(cycle)` and did `bucket.update(fields)`, and
-    the F5 entry decides its mode with `cycle=_current_cycle(fdir)` — a counter
+    the F5 entry decides its mode with `cycle=current_cycle(fdir)` — a counter
     that does NOT advance entering F5. So the temper decision landed in the
     same bucket as the last `inspect_start` and OVERWROTE it. Driven:
     `inspect_start` recorded cycle 2 as DELTA/delta; after
@@ -4326,7 +4342,7 @@ def _record_cycle_rollup(fdir: Path, cycle: int, *, sub: str = "", **fields) -> 
                 nested = bucket[sub] = {}
             bucket = nested
         bucket.update(fields)
-        data["updated_at"] = _now()
+        data["updated_at"] = now_iso()
 
 
 #: FR-036 (Flexible) — how long a gap between Foundry-Next calls has to be
@@ -4681,7 +4697,7 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
     max_cycles = _persisted_max_cycles(state)
     if max_cycles <= 0:
         return None
-    cycle = _current_cycle(fdir)
+    cycle = current_cycle(fdir)
     opening = cycle + 1
     if opening <= max_cycles:
         return None
@@ -4694,7 +4710,7 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
         doc["phase"] = RUN_PHASE_HALTED
         doc["halted_at_cycle"] = cycle
         doc["halted_reason"] = reason
-        doc["updated_at"] = _now()
+        doc["updated_at"] = now_iso()
 
     # FR-045: "the report is written naming every open LIVE and LATENT defect".
     # Generated as PART of this transition rather than left to the lead, because
@@ -4735,7 +4751,7 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
         # section that must not be held across it.
         with _document_transaction(fdir / "state.json") as doc:
             doc["halted_report_error"] = report_error
-            doc["updated_at"] = _now()
+            doc["updated_at"] = now_iso()
     blocking = _blocking_defects(fdir)
 
     counts = (
@@ -4788,28 +4804,6 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
     }
 
 
-def _md_sections(text: str) -> tuple[list[str], list[tuple[str, list[str]]]]:
-    """Split a REPORT.md into ``(header_lines, [(heading, body_lines), ...])``.
-
-    A heading is a whole trimmed line beginning ``"## "`` — the SAME test
-    ``foundry_report._markdown_missing_sections`` applies when it decides which
-    sections a reader can still find. Both halves of GI-006 therefore read the
-    document by one rule: what that function counts as a section present is
-    what this function counts as a block, so the seal can never preserve
-    something the gate would then call a missing section, or drop something it
-    would call present.
-    """
-    header: list[str] = []
-    blocks: list[tuple[str, list[str]]] = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("## "):
-            blocks.append((stripped, []))
-        elif blocks:
-            blocks[-1][1].append(line)
-        else:
-            header.append(line)
-    return header, blocks
 
 
 #: A generated REPORT.md header is a ``# `` title line and one banner sentence
@@ -4889,8 +4883,8 @@ def _carried_lead_prose(on_disk: str, generated: str) -> list[str]:
     appends under their own ``## `` heading, or above the first section, and the
     seal carries it verbatim.
     """
-    old_header, old_blocks = _md_sections(on_disk)
-    _new_header, new_blocks = _md_sections(generated)
+    old_header, old_blocks = markdown_sections(on_disk)
+    _new_header, new_blocks = markdown_sections(generated)
     generated_headings = {heading for heading, _body in new_blocks}
 
     carried: list[str] = list(_lead_header_lines(old_header))
@@ -5092,7 +5086,7 @@ def _seal_run_report(project_root: str, fdir: Path) -> dict:
     if not sealed["report_generated"]:
         with _document_transaction(fdir / "state.json") as doc:
             doc["done_report_error"] = sealed["report_error"]
-            doc["updated_at"] = _now()
+            doc["updated_at"] = now_iso()
     return sealed
 
 
@@ -5189,8 +5183,6 @@ def _lead_prose_clause(sealed: dict) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def _empty_spend_bucket() -> dict:
-    return {"tokens": 0, "duration_ms": 0, "agents": 0, "unreported": 0}
 
 
 def _spend_ledger_rows(fdir: Path) -> list[dict]:
@@ -5234,7 +5226,6 @@ def _spend_ledger_rows(fdir: Path) -> list[dict]:
 # the verbs and this module maps them. `foundry_report` READS this constant
 # through a function-local import rather than re-typing the mapping, so both
 # surfaces bucket identically or neither does.
-DISPATCH_PHASE_TO_RUN_PHASE = {"cast": "F1", "grind": "F3"}
 
 
 def _spawn_rows(fdir: Path) -> list[dict]:
@@ -5435,121 +5426,6 @@ def _dispatch_summary(fdir: Path) -> dict:
     )
 
 
-def _overlay_unreported(spend: dict, summary: dict) -> dict:
-    """Write the DERIVED unreported counts onto the C-4 buckets (D-031).
-
-    ``summary`` is `_dispatch_summary`' output — casting 5's
-    `unreported_dispatch_summary`. This distributes its counts across
-    `by_phase`, `by_cycle` and `total`, and returns the same document it was
-    handed.
-
-    D-162 — TWO DERIVATIONS OF ONE NUMBER, AND THE PAIR WAS THE RIGHT ONE.
-    ---------------------------------------------------------------------
-    This took `_unreported_dispatches`' ROW list and incremented `by_phase`
-    once per row, with `total["unreported"] = len(rows)`. `_dispatched_agents`
-    re-expands the pair set into one row per cycle stamp for every F2 stream
-    agent, so a stream agent unreported across nine cycles was NINE rows and
-    ONE pair — and `_dispatched_agents`' own docstring states the intended rule
-    as "by_cycle carry a per-cycle count while by_phase and the F6 report read
-    the pair". Driven through the real doors on a copy of this run's archive:
-    `foundry_next_action` returned `spend.unreported_count 51` and rendered
-    "Unreported: 51", with `by_phase unreported {F1 8, F3 6, F2 37}`, while
-    `foundry_report._read_unreported_dispatches` on the same archive returned
-    `count 19` with `by_phase {F1 8, F2 5, F3 6}`. Two surfaces, one run, one
-    question, two numbers — and `commands/start.md`'s SPEND ACCOUNTING section
-    describes them as one set ("Foundry-Next shows the count and the F6 report
-    lists each unreported agent by name and phase"). The trigger is any F2
-    stream agent unreported across more than one cycle, which is the normal
-    shape of a real run.
-
-    So the counts are READ off the one deriver: `total` and each `by_phase`
-    bucket count PAIRS, `by_cycle` counts the per-cycle appearances, and
-    nothing here re-derives either axis.
-
-    D-031 — A FIELD THAT IS INITIALISED AND NORMALISED BUT NEVER WRITTEN.
-    --------------------------------------------------------------------
-    `_empty_spend_bucket` has carried an `unreported` key since C-4 named it,
-    `foundry_record_spend` re-coerced it to an int on every call, and NOTHING
-    in the tree ever incremented it. It was permanently 0, so a consumer
-    reading a per-bucket unreported count read a number that could not be
-    distinguished from "every dispatch in this phase reported" — the exact
-    reading FR-022 exists to make available, returning the exact opposite of
-    the truth on a run where nobody called `Foundry-Spend` at all.
-
-    DERIVED HERE, NOT ACCUMULATED AT THE DOOR. An unreported dispatch is the
-    ABSENCE of a record, so it cannot be counted when a record arrives: the
-    number changes when an agent is DISPATCHED, which is a different tool's
-    call, and a counter incremented at the spend door would be wrong from the
-    next spawn onward. One derivation, applied both to the summary a reader
-    gets and to the persisted document, so state.json holds the count C-4 names
-    instead of a zero that means nothing.
-
-    A phase with unreported dispatches and NO recorded spend gets a bucket
-    created for it. That is the whole point: the run where the lead forgot
-    every `Foundry-Spend` call is the one where the gap most needs a line, and
-    a bucket that only exists once someone reports would hide exactly that run.
-    """
-    for section in ("by_phase", "by_cycle"):
-        if not isinstance(spend.get(section), dict):
-            spend[section] = {}
-    if not isinstance(spend.get("total"), dict):
-        spend["total"] = _empty_spend_bucket()
-
-    for bucket in (
-        *spend["by_phase"].values(), *spend["by_cycle"].values(), spend["total"],
-    ):
-        if isinstance(bucket, dict):
-            bucket["unreported"] = 0
-
-    for phase, agents in (summary.get("by_phase") or {}).items():
-        bucket = spend["by_phase"].setdefault(str(phase), _empty_spend_bucket())
-        bucket["unreported"] = len(agents)
-    for cycle, agents in (summary.get("by_cycle") or {}).items():
-        bucket = spend["by_cycle"].setdefault(str(cycle), _empty_spend_bucket())
-        bucket["unreported"] = len(agents)
-    spend["total"]["unreported"] = int(summary.get("count") or 0)
-
-    # D-229 — A BUCKET WITH NOTHING IN IT IS NOT A MEASUREMENT, IT IS A CLAIM.
-    #
-    # The seeding above cannot retract what it seeds. A cycle named by the
-    # unreported summary gets a bucket; the summary's cycle axis then clears the
-    # moment the (agent, phase) PAIR reports spend, which for an F2 stream agent
-    # is EVERY cycle stamp that agent carried, at once — and the bucket left
-    # behind holds 0/0/0/0. Driven on this run: `Foundry-Next` returned 23
-    # all-zero `by_cycle` buckets and rendered "By Cycle: 0: 0tok/0m 1: 0tok/0m
-    # ... 22: 0tok/0m", and `generate_report` wrote 23 rows reading
-    # `| cycle | 5 | 0 | 0.0 | 0 | 0 | 0 |` while stream-rollup.json records the
-    # full five-stream roster running in cycle 5. AC-033 makes this the line the
-    # lead reads tokens and minutes per cycle on, and it stated that 23 of 27
-    # cycles cost nothing and ran nobody. An ABSENT row is honest where a zero
-    # row is a claim.
-    #
-    # THE CYCLE AXIS IS THE ONE THAT CAN REACH ALL-ZERO, and that asymmetry is
-    # why only it is pruned. `foundry_record_spend` buckets a spend row under
-    # its phase AND under the SERVER cycle at the time it is recorded, setting
-    # `agents` to a distinct count that is always at least 1. So a phase bucket
-    # whose unreported clears was written by the very call that cleared it and
-    # can never be all-zero; a CYCLE bucket can, because the cycle a stream was
-    # dispatched in and the cycle its spend is recorded in are different
-    # numbers. Pruning `by_phase` here would delete nothing and would suggest a
-    # symmetry the two axes do not have.
-    #
-    # RUN ON BOTH SIDES BY THE ONE CALLER SET: `_spend_summary` overlays a deep
-    # copy, so the display is honest on the next read, and `foundry_record_spend`
-    # overlays the persisted document inside its transaction, so state.json is
-    # repaired in place by the next spend call rather than by hand.
-    spend["by_cycle"] = {
-        key: bucket
-        for key, bucket in spend["by_cycle"].items()
-        if not (
-            isinstance(bucket, dict)
-            and all(
-                not bucket.get(field)
-                for field in ("tokens", "duration_ms", "agents", "unreported")
-            )
-        )
-    }
-    return spend
 
 
 def _spend_summary(fdir: Path) -> dict:
@@ -5562,7 +5438,7 @@ def _spend_summary(fdir: Path) -> dict:
     summary = _dispatch_summary(fdir)
     # Overlaid on a COPY of what state.json holds: this is a read, and a reader
     # that mutated the document it read would make every display call a write.
-    spend = _overlay_unreported(json.loads(json.dumps(spend)), summary)
+    spend = overlay_unreported(json.loads(json.dumps(spend)), summary)
     return {
         "by_phase": spend["by_phase"],
         "by_cycle": spend["by_cycle"],
@@ -5703,7 +5579,7 @@ def foundry_record_spend(
             )
         return max(0, int(value))
 
-    server_cycle = _current_cycle(fdir)
+    server_cycle = current_cycle(fdir)
     # D-048: the LEDGER STORES A RUN PHASE ID. A lead typing the dispatch verb
     # they can see in `spawns.log` — `cast`, `grind` — used to have it recorded
     # verbatim, which grew a `by_phase` bucket keyed by a verb that is not a
@@ -5779,7 +5655,7 @@ def foundry_record_spend(
         "declared_cycle": cycle,
         "tokens": _count(tokens, "tokens"),
         "duration_ms": _count(duration_ms, "duration_ms"),
-        "recorded_at": _now(),
+        "recorded_at": now_iso(),
     }
 
     try:
@@ -5823,18 +5699,18 @@ def foundry_record_spend(
             if not isinstance(spend.get(section), dict):
                 spend[section] = {}
         if not isinstance(spend.get("total"), dict):
-            spend["total"] = _empty_spend_bucket()
+            spend["total"] = spend_bucket(persisted=True)
 
         for bucket, agent_count in (
             (
-                spend["by_phase"].setdefault(row["phase"], _empty_spend_bucket()),
+                spend["by_phase"].setdefault(row["phase"], spend_bucket(persisted=True)),
                 _distinct_agents(
                     lambda r: str(r.get("phase", "")) == row["phase"]
                 ),
             ),
             (
                 spend["by_cycle"].setdefault(
-                    str(server_cycle), _empty_spend_bucket()
+                    str(server_cycle), spend_bucket(persisted=True)
                 ),
                 _distinct_agents(lambda r: r.get("cycle") == server_cycle),
             ),
@@ -5851,11 +5727,11 @@ def foundry_record_spend(
 
         # D-031: the persisted document carries the unreported counts C-4 names,
         # refreshed from the dispatch record on every spend call, instead of the
-        # permanent zero `_empty_spend_bucket` used to leave there.
-        _overlay_unreported(spend, _dispatch_summary(fdir))
+        # permanent zero `spend_bucket` used to leave there.
+        overlay_unreported(spend, _dispatch_summary(fdir))
 
         state["spend"] = spend
-        state["updated_at"] = _now()
+        state["updated_at"] = now_iso()
 
     summary = _spend_summary(fdir)
     result = {
@@ -5926,7 +5802,7 @@ def _note_fix_after_inspect_decision(fdir: Path, defect_id: str) -> None:
             superseded.append(defect_id)
         current["fixes_after_decision"] = superseded
         state["inspect_modes"] = modes
-        state["updated_at"] = _now()
+        state["updated_at"] = now_iso()
 
 
 def _record_inspect_mode(fdir: Path, entry: dict) -> None:
@@ -5948,7 +5824,7 @@ def _record_inspect_mode(fdir: Path, entry: dict) -> None:
             modes = []
         modes.append(entry)
         state["inspect_modes"] = modes
-        state["updated_at"] = _now()
+        state["updated_at"] = now_iso()
     _record_cycle_rollup(
         fdir,
         entry["cycle"],
@@ -6064,7 +5940,7 @@ def _sweep_evidence_at_boundary(
         ],
         "elapsed_seconds": outcome.get("elapsed_seconds", 0.0),
         "pool_size": outcome.get("pool_size", 0),
-        "swept_at": _now(),
+        "swept_at": now_iso(),
     }
     return {
         "ok": bool(outcome.get("ok")),
@@ -6275,7 +6151,7 @@ def _terminal_evidence_sweep(fdir: Path, project_root: str) -> dict:
             "corpus_size": max(
                 corpus_size, int((corpus_seen or {}).get("corpus_size") or 0)
             ),
-            "seen_at": _now(),
+            "seen_at": now_iso(),
         }
         # D-149: a PASS over a NON-EMPTY corpus is what earns the durable
         # record the strip then spends. A pass over nothing earns nothing —
@@ -6284,7 +6160,7 @@ def _terminal_evidence_sweep(fdir: Path, project_root: str) -> dict:
             prior_pass = {
                 "head": head,
                 "corpus_size": corpus_size,
-                "swept_at": _now(),
+                "swept_at": now_iso(),
             }
     result = {
         "ok": sweep["ok"],
@@ -6306,7 +6182,7 @@ def _terminal_evidence_sweep(fdir: Path, project_root: str) -> dict:
             "head": head,
             "ok": True,
             "record": sweep["record"],
-            "swept_at": _now(),
+            "swept_at": now_iso(),
         }
     if prior_pass is not None:
         memo_out["last_full_pass"] = prior_pass
@@ -6610,7 +6486,7 @@ def _current_inspect_mode(fdir: Path, cycle: int | None = None) -> dict | None:
     stamped = entry.get("cycle")
     if isinstance(stamped, bool) or not isinstance(stamped, int):
         return None
-    if stamped != (_current_cycle(fdir) if cycle is None else cycle):
+    if stamped != (current_cycle(fdir) if cycle is None else cycle):
         return None
     return entry
 
@@ -6695,7 +6571,7 @@ def _unrecorded_width_problem(fdir: Path) -> dict | None:
     """
     if _current_inspect_mode(fdir) is not None:
         return None
-    cycle = _current_cycle(fdir)
+    cycle = current_cycle(fdir)
     return {
         "reason": (
             f"this INSPECT (cycle {cycle}) has no recorded width — "
@@ -6819,7 +6695,7 @@ def _check_streams_complete(project_root: str) -> dict:
 
     missing = [s for s in required if not (fdir / _stream_marker(s)).exists()]
 
-    cycle = _current_cycle(fdir)
+    cycle = current_cycle(fdir)
     shortfalls = []
     for s in required:
         if s in missing:
@@ -6871,7 +6747,7 @@ def _update_phase(fdir: Path, new_phase: str) -> None:
     even though those sub-phases did elapse in wall time.
     """
     state_path = fdir / "state.json"
-    now = _now()
+    now = now_iso()
 
     with _document_transaction(state_path) as state:
         phase_times = state.get("phase_times", {})
@@ -7416,7 +7292,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # width \u2014 recorded here, before any Foundry-Next is called (OT-012).
         entry = _decide_inspect_mode(
             fdir, project_root, decided_by="cast", phase="F2",
-            cycle=_current_cycle(fdir),
+            cycle=current_cycle(fdir),
         )
         # D-014 / FR-009 / GI-002 \u2014 THE FULL RULE FIRES HERE, SO THE SWEEP RUNS
         # HERE. Decided and swept BEFORE the first marker is written, so a
@@ -7424,7 +7300,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # ordering `inspect_start` holds against its state transaction.
         sweep = _sweep_evidence_at_boundary(fdir, project_root, entry, full=True)
         if not sweep["ok"]:
-            return _sweep_refusal(sweep, _current_cycle(fdir), token="cast")
+            return _sweep_refusal(sweep, current_cycle(fdir), token="cast")
 
         # D-221 / GI-009 / AC-016 — AND THE COMPLETION HALF HERE TOO.
         #
@@ -7444,7 +7320,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # completion state exactly as it found it.
         cleared = _clear_stream_completion_markers(fdir)
 
-        (fdir / CAST_COMPLETE_MARKER).write_text(f"{_now()}\n", encoding="utf-8")
+        (fdir / CAST_COMPLETE_MARKER).write_text(f"{now_iso()}\n", encoding="utf-8")
         # Stamp the CAST baseline HEAD SHA so GRIND cycles can show teammates
         # what has changed since CAST ended. Used by foundry_spawn_teammate
         # (phase='grind') to build a cycle-context block the lead appends to
@@ -7463,7 +7339,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         _update_phase(fdir, "F2")
         _record_inspect_mode(fdir, entry)
         _record_cycle_rollup(
-            fdir, _current_cycle(fdir), evidence_sweep=sweep["record"]
+            fdir, current_cycle(fdir), evidence_sweep=sweep["record"]
         )
         return {
             "ok": True,
@@ -7577,7 +7453,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
                 "inspect_mode": "DELTA",
                 "inspect_rule": recorded_mode.get("rule", ""),
             }
-        (fdir / INSPECT_CLEAN_MARKER).write_text(f"{_now()}\n", encoding="utf-8")
+        (fdir / INSPECT_CLEAN_MARKER).write_text(f"{now_iso()}\n", encoding="utf-8")
         _update_phase(fdir, "F4")
         return {"ok": True, "phase": "F4", "message": "INSPECT clean \u2192 phase is now F4 (ASSAY)"}
 
@@ -7595,7 +7471,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # consults none. Only F3 -> F2 advances it — the F1 -> F2 entry from
         # CAST is the run's first INSPECT, not a new cycle.
         state_path = fdir / "state.json"
-        completed_cycle = _current_cycle(fdir)
+        completed_cycle = current_cycle(fdir)
 
         # D-113 / D-114 / D-116 — THE SOURCE PHASE IS A PRECONDITION.
         # ----------------------------------------------------------
@@ -7813,8 +7689,8 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
                 # transaction has not flushed, so disk still holds the
                 # pre-increment counter. Keeping the read on the ONE guarded
                 # reader is what D-059's derived-membership test requires.
-                state["cycle"] = _current_cycle(fdir) + 1
-                state["updated_at"] = _now()
+                state["cycle"] = current_cycle(fdir) + 1
+                state["updated_at"] = now_iso()
             modes = state.get("inspect_modes")
             if not isinstance(modes, list):
                 modes = []
@@ -7822,7 +7698,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
             modes.append(entry)
             state["inspect_modes"] = modes
 
-        cycle = _current_cycle(fdir)
+        cycle = current_cycle(fdir)
         _record_cycle_rollup(
             fdir,
             cycle,
@@ -7970,7 +7846,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # mode".
         entry = _decide_inspect_mode(
             fdir, project_root, decided_by="temper", phase="F5",
-            cycle=_current_cycle(fdir),
+            cycle=current_cycle(fdir),
         )
         # D-014 — AND HERE, ON THE SAME TERMS.
         #
@@ -7984,7 +7860,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # not checking that the run's committed evidence still reproduces.
         sweep = _sweep_evidence_at_boundary(fdir, project_root, entry, full=True)
         if not sweep["ok"]:
-            return _sweep_refusal(sweep, _current_cycle(fdir), token="temper")
+            return _sweep_refusal(sweep, current_cycle(fdir), token="temper")
 
         # D-219 / GI-009 / AC-016 — AND THE OTHER HALF OF "ONE RULE, TWO DOORS".
         #
@@ -8015,7 +7891,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # INSPECT cycle whose number it happens to share.
         _record_cycle_rollup(
             fdir,
-            _current_cycle(fdir),
+            current_cycle(fdir),
             sub=TEMPER_ENTRY_ROLLUP_KEY,
             evidence_sweep=sweep["record"],
         )
@@ -8082,7 +7958,7 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         _update_phase(fdir, "F5.5")
         _record_cycle_rollup(
             fdir,
-            _current_cycle(fdir),
+            current_cycle(fdir),
             sub=NYQUIST_ENTRY_ROLLUP_KEY,
             evidence_sweep=nyq_sweep["record"],
         )
@@ -9412,8 +9288,8 @@ def _record_escalation_proposals(fdir: Path, escalated: dict[str, dict]) -> None
             # report names has to be the CURRENT set of never-reproduced
             # instances, not the set as of whenever the class first escalated.
             entry["open_latent_defect_ids"] = info.get("open_latent_defect_ids", [])
-            entry["recorded_at"] = _now()
-        data["updated_at"] = _now()
+            entry["recorded_at"] = now_iso()
+        data["updated_at"] = now_iso()
 
 
 # D-043 — THE EXIT ARMS WALK THE LEDGER THAT RECORDS ESCALATION, NOT THE
@@ -9592,7 +9468,7 @@ def _spend_structural_budget(
                     entry["structural_packets_dispatched"] + 1
                 )
                 counted.append(key)
-        data["updated_at"] = _now()
+        data["updated_at"] = now_iso()
     return counted
 
 
@@ -9739,7 +9615,7 @@ def _clean_arm_crossings_left(
     """How many more crossings ST-001's clean arm needs, WALKED not computed.
 
     `next_completed_cycle` is the cycle the NEXT crossing will close — which is
-    `_current_cycle(fdir)`, since `inspect_start` reads the counter before it
+    `current_cycle(fdir)`, since `inspect_start` reads the counter before it
     advances. `escalated_at` is the cycle the class escalated on, taken from the
     persisted entry when it has one and from the ledger derivation when it does
     not (a class with no `escalation.json` record yet has that value latched by
@@ -9910,7 +9786,7 @@ def _advance_escalation_exits(
                 lambda c, _key=key: _class_drew_live_in_cycle(defects, _key, c),
             ):
                 _clear("clean_cycles")
-        data["updated_at"] = _now()
+        data["updated_at"] = now_iso()
     return cleared
 
 
@@ -11347,7 +11223,7 @@ def foundry_mark_defect_fixed(
     author = (authored_by or "").strip()
     regression_ref = (regression_test or "").strip()
     commit = (fix_commit or "").strip()
-    server_cycle = _current_cycle(fdir)
+    server_cycle = current_cycle(fdir)
 
     # --- Tool-wide rungs that need no ledger read, evaluated before the lock --
     #
@@ -11807,7 +11683,7 @@ def foundry_mark_defect_fixed(
         with open(forge_log, "a", encoding="utf-8") as f:
             f.write(
                 f"\n**{defect_id} FIXED** ({tier}, by {author}) in cycle "
-                f"{server_cycle} ({_now()})\n"
+                f"{server_cycle} ({now_iso()})\n"
             )
             if latent_lane:
                 f.write(f"- **Regression test:** {regression_ref}\n")
@@ -11972,7 +11848,7 @@ def new_defect_record(
         "regression_test": None,
         "authored_by": None,
         "fix_commit": None,
-        "created_at": created_at if created_at is not None else _now(),
+        "created_at": created_at if created_at is not None else now_iso(),
     }
     if target_kind:
         record["target_kind"] = target_kind
@@ -12326,7 +12202,7 @@ def foundry_sync_defects(
                 record_denylist_tripwire(
                     fdir,
                     tripwire_finding(findings[refused["index"]]),
-                    cycle=_current_cycle(fdir),
+                    cycle=current_cycle(fdir),
                     source=normalized[refused["index"]]["source"],
                 )
         return {
@@ -12345,7 +12221,7 @@ def foundry_sync_defects(
     # The cycle a defect is stamped with is the SERVER's (FR-005). A
     # caller-asserted cycle cannot be trusted for persistence: the whole
     # three-cycle escalation rule reads these numbers back.
-    server_cycle = _current_cycle(fdir)
+    server_cycle = current_cycle(fdir)
 
     reopened = 0
     added = 0
@@ -12585,7 +12461,7 @@ def foundry_sync_defects(
                 # so a Sync-filed defect could not be audited for a declaration
                 # the same finding preserves when it is filed one door over.
                 target_kind=finding.get("target_kind") or "",
-                created_at=_now(),
+                created_at=now_iso(),
             )
             records.append(defect)
             added += 1
@@ -12690,7 +12566,7 @@ def foundry_defects_to_tasks(
     # same call that emitted its packet, so a second `Foundry-Tasks` in the same
     # cycle — which a lead may make, and which is why `structural_packet_cycles`
     # exists — reported structural_tasks 0 for work still being done.
-    packet_cycle = _current_cycle(fdir)
+    packet_cycle = current_cycle(fdir)
     packets_counted = _spend_structural_budget(
         fdir, project_root, escalated, packet_cycle
     )
@@ -12747,7 +12623,7 @@ def foundry_defects_to_tasks(
             }
             tasks.append(task)
 
-    (fdir / TASKS_GENERATED_MARKER).write_text(f"{_now()} count={len(tasks)}\n", encoding="utf-8")
+    (fdir / TASKS_GENERATED_MARKER).write_text(f"{now_iso()} count={len(tasks)}\n", encoding="utf-8")
 
     result = {
         "ok": True,
@@ -12803,7 +12679,7 @@ def _stamp_subphases_in(state: dict, fdir: Path) -> None:
     phase_times = state.get("phase_times", {})
     if not isinstance(phase_times, dict):
         phase_times = {}
-    now = _now()
+    now = now_iso()
     changed = False
 
     castings_dir = fdir / "castings"
@@ -13147,7 +13023,7 @@ def foundry_next_action(
 
     fdir = get_run_dir(project_root)
     if fdir and fdir.exists():
-        now_stamp = f"{_now()}\n"
+        now_stamp = f"{now_iso()}\n"
         # Ordering token: armed here, consumed (unlinked) by foundry_gate /
         # foundry_mark_phase_complete to prove Foundry-Next preceded a gate
         # or phase transition.
@@ -13436,7 +13312,7 @@ def _format_status_display(project_root: str) -> str:
     phase = state.get("phase", "F0")
     phase_times = state.get("phase_times", {})
     started = state.get("started_at", "")
-    cycle = _current_cycle(fdir)
+    cycle = current_cycle(fdir)
 
     elapsed = ""
     if started:
@@ -14277,7 +14153,7 @@ def _compute_next_action(project_root: str) -> dict:
         # requirement ID BEFORE emitting the auto-pass so the two gates agree.
         if _prove_is_clean(fdir, project_root):
             _synthesize_clean_prove_verdicts(
-                fdir, project_root, cycle=_current_cycle(fdir)
+                fdir, project_root, cycle=current_cycle(fdir)
             )
 
         temper = state.get("temper", False)
@@ -14548,7 +14424,7 @@ def foundry_inject_directive(
 
     with open(directives_path, "a", encoding="utf-8") as f:
         header = _DIRECTIVE_HEADER_URGENT if priority == "urgent" else _DIRECTIVE_HEADER_NORMAL
-        f.write(f"\n{header} {_now()}\n\n{directive}\n")
+        f.write(f"\n{header} {now_iso()}\n\n{directive}\n")
 
     result = {
         "ok": True,
@@ -14627,7 +14503,7 @@ def foundry_clear_directives(
                 encoding="utf-8",
             )
         with open(archive, "a", encoding="utf-8") as f:
-            f.write(f"\n## Cleared {_now()}\n\n")
+            f.write(f"\n## Cleared {now_iso()}\n\n")
             for text in urgent:
                 f.write(f"- **[URGENT]** {text}\n")
             for text in normal:
@@ -14747,7 +14623,7 @@ def foundry_get_context(
         "initialized": True,
         "state": {
             "phase": state.get("phase", "unknown"),
-            "cycle": _current_cycle(fdir),
+            "cycle": current_cycle(fdir),
             "spec_path": state.get("spec_path", ""),
             "temper": state.get("temper", False),
             "nyquist": state.get("nyquist", False),
