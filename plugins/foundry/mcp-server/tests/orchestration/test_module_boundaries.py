@@ -4894,18 +4894,6 @@ _KNOWN_DUPLICATION: dict[str, str] = {
         "tools/evidence.py and tools/test_deriver.py each bind their own alias "
         "to it rather than importing the declaration"
     ),
-    "ROLLUP_FILENAME": (
-        "casting 7 — the `stream-rollup.json` name is moving to "
-        "tools/artifacts.py beside the `*_MARKER` filenames (concern C-018 / "
-        "C-019). This row accounts for the WINDOW between the leaf declaring "
-        "it and the readers repointing: the leaf and "
-        "tools/orchestration/streams.py both declare it for exactly as long as "
-        "that takes, and without the row the single-definition guard refuses "
-        "the leaf's commit — which would make casting 7's half unlandable and "
-        "deliver nothing, because the two ('evidence_boundary','streams') and "
-        "('width','streams') layering rows only close when the READERS move. "
-        "Delete this row in the same commit that repoints them."
-    ),
     "_normalise_path": (
         "casting 1 — tools/concerns.py and schemas/vocab.py spell one rule twice"
     ),
@@ -5127,15 +5115,6 @@ _VERIFIER_TO_LIFECYCLE_SEAM = frozenset({("transitions", "halt")})
 #: `Foundry-Next`, whose whole job is to render what the gates and the width
 #: decision concluded. Recorded in concerns.md as approach-altering.
 _LAYERING_DEBT: dict[tuple[str, str], str] = {
-    ("evidence_boundary", "streams"): (
-        "ROLLUP_FILENAME — the name of the artifact the sweep record is written "
-        "into. A filename constant belongs in a leaf; `artifacts.py` is casting "
-        "7's file and this casting may not add to it."
-    ),
-    ("width", "streams"): (
-        "ROLLUP_FILENAME again, for the cycle roll-up the width decision writes "
-        "(survey block N, placed with the crossing that produces it)."
-    ),
     ("gates", "escalation"): (
         "_escalated_classes, _persisted_escalations, _escalation_exit_distances "
         "— AC-011: the run cannot reach DONE while an escalated class is open, "

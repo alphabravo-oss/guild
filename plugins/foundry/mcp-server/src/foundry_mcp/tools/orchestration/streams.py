@@ -10,6 +10,7 @@ from pathlib import Path
 from foundry_mcp.schemas.vocab import STREAM_WIRE_IDS
 from foundry_mcp.tools.artifacts import (
     INSPECT_CLEAN_MARKER,
+    ROLLUP_FILENAME,
     TASKS_GENERATED_MARKER,
     TRACE_CLEAN_AT_MARKER,
     _artifact_guard,
@@ -234,7 +235,19 @@ def _clear_stream_completion_markers(fdir: Path) -> list[str]:
 #                                    denominator; summing would multiply it)
 # --------------------------------------------------------------------------- #
 
-ROLLUP_FILENAME = "stream-rollup.json"
+# fallout GI-033 / FR-063 / AC-061 (concern C-018 / C-019) — THE NAME IS LEAF
+# MATERIAL AND IT LIVES IN THE LEAF NOW.
+#
+# `stream-rollup.json`'s name was declared here, in a LIFECYCLE module, and read
+# by two VERIFIER modules — `evidence_boundary.py` for the sweep record and
+# `width.py` for the cycle roll-up — which is two rows of the layering debt for
+# one string. `tools/artifacts.py` already holds every `*_MARKER` filename;
+# a run-artifact name beside them is exactly what that leaf is for, and a
+# verifier reaching a leaf is legal by GI-033 with no exception needed.
+#
+# Re-exported by name here, NOT re-declared: this module is still where the
+# roll-up is written, so a reader that reaches `streams.ROLLUP_FILENAME` keeps
+# working, and there is one definition of the string.
 
 
 

@@ -22,6 +22,7 @@ from foundry_mcp.tools.artifacts import (
     CAST_BASELINE_SHA_MARKER,
     INSPECT_BOUNDARY_SHA_MARKER,
     RESEARCH_SKIPPED_MARKER,
+    ROLLUP_FILENAME,
     TRACE_CLEAN_AT_MARKER,
     _document_problem,
     _document_transaction,
@@ -38,7 +39,6 @@ from foundry_mcp.tools.foundry_state import (
     read_text_file,
 )
 from pathlib import Path
-from foundry_mcp.tools.orchestration.streams import ROLLUP_FILENAME
 from foundry_mcp.tools.orchestration.teams import (
     _check_active_teams,
     _check_sight_required,
