@@ -1,43 +1,49 @@
-# evidence-cmd: printf '%s\n' '== casting 1 / FR-037: the two new modules under tools/ degrade nothing ==' '' '  This log was re-captured because the suites it names MOVED. The casting' '  prompt Verification section reads "also run the modules that could be' '  disturbed by a new module under tools/ (a package-wide AST or import scan' '  lives in these)" and names two files. One of them is gone:' '    tests/test_vocab.py                -> unchanged, still at this path' '    tests/test_orchestrator_gates.py   -> carved by casting 2 into tests/orchestration/' '  The package-wide AST and import scans that parenthetical is about now live' '  in tests/orchestration/test_module_boundaries.py, so that is the file this' '  log drives in its place. The claim is unchanged; only its address moved.' '' '  THREE NODES ARE DESELECTED. Each is another casting open work at this' '  tree and none of them names a casting-1 file, so none is a degradation this' '  casting caused or can close:' '    test_every_private_function_the_plugin_ships_is_reachable' '      _new_spend_bucket, src/foundry_mcp/tools/foundry_report.py' '    test_no_shipped_module_holds_an_unused_import' '      inspect_decisions, twice, in scripts/measure-run.py' '    test_the_package_marker_re_exports_nothing' '      ten test modules recorded as importing the monolith that already repointed' '  A deselect of a node that does not exist is tolerated by pytest and exits 0,' '  so a peer closing any of these does not turn this log red again.' '' '  What remains selected still judges casting 1 in full: every other rung of' '  the boundary guard (GI-025 import-graph acyclicity, one definition per' '  symbol, the verifier-layer rule), the D-128 raw-ledger-iteration scan that' '  already caught concerns.py once, the vocabulary pins, and this casting own' '  two test modules.' '' && cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -rN -p no:cacheprovider --deselect tests/orchestration/test_module_boundaries.py::test_every_private_function_the_plugin_ships_is_reachable --deselect tests/orchestration/test_module_boundaries.py::test_no_shipped_module_holds_an_unused_import --deselect tests/orchestration/test_module_boundaries.py::test_the_package_marker_re_exports_nothing tests/test_vocab.py tests/orchestration/test_module_boundaries.py tests/test_concerns.py tests/test_rosters.py
+# evidence-cmd: printf '%s\n' '== casting 1 / FR-037: what this casting touched, and what the tree shows ==' '' '  ADDRESS NOTE. The casting prompt Verification section names' '  tests/test_orchestrator_gates.py, which casting 2 carved into' '  tests/orchestration/. The package-wide AST and import scans that' '  parenthetical is about now live in' '  tests/orchestration/test_module_boundaries.py, so that is the file this log' '  drives in its place. The claim is unchanged; only its address moved.' '' '  THE THREE DESELECTS ARE GONE, AND THAT IS THE POINT OF SAYING SO. An' '  earlier capture deselected three boundary nodes, each recorded as another' '  casting open work at that tree:' '    test_every_private_function_the_plugin_ships_is_reachable' '    test_no_shipped_module_holds_an_unused_import' '    test_the_package_marker_re_exports_nothing' '  All three PASS now. Nothing is deselected below, so this selection is whole' '  and the count is the count.' '' '  BOTH HALVES OF THE RULING ARE IN THIS TREE. The lead ruling' '  lead_ruling_gi_033_leaf_moves item (3), on concern C-030, put the ONE body' '  of the cross-casting concern filter in foundry_state (the leaf) and told' '  casting 1 to delete its second body and delegate; concern C-033 carried the' '  other half -- three call sites -- to casting 2. Casting 1 landed the' '  delegation and casting 2 landed the repoint, and the selection below runs' '  over both, which is why nothing here is red and nothing is excused.' '' '  WHAT FR-037 CLAIMS HERE, precisely. This casting touched no file outside' '  its key_files -- concerns.py, rosters.py, test_concerns.py,' '  test_rosters.py -- and every other rung of the boundary guard is green at' '  this commit: the GI-025 import-graph acyclicity, the verifier-layer rule,' '  the unused-import scan, the D-128 raw-ledger-iteration scan that caught' '  concerns.py once before, the vocabulary pins, and this casting own two test' '  modules. The one-definition-per-symbol rung' '  (test_no_top_level_symbol_is_defined_in_two_shipped_modules) was RED on' '  open_cross_casting_concerns before this commit and is GREEN at it.' '' && cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -rN -p no:cacheprovider tests/test_vocab.py tests/orchestration/test_module_boundaries.py tests/test_concerns.py tests/test_rosters.py
 # evidence-for: FR-037
 # evidence-volatile: [0-9]+\.[0-9]+s
 # evidence-timeout: 300
 
-== casting 1 / FR-037: the two new modules under tools/ degrade nothing ==
+== casting 1 / FR-037: what this casting touched, and what the tree shows ==
 
-  This log was re-captured because the suites it names MOVED. The casting
-  prompt Verification section reads "also run the modules that could be
-  disturbed by a new module under tools/ (a package-wide AST or import scan
-  lives in these)" and names two files. One of them is gone:
-    tests/test_vocab.py                -> unchanged, still at this path
-    tests/test_orchestrator_gates.py   -> carved by casting 2 into tests/orchestration/
-  The package-wide AST and import scans that parenthetical is about now live
-  in tests/orchestration/test_module_boundaries.py, so that is the file this
-  log drives in its place. The claim is unchanged; only its address moved.
+  ADDRESS NOTE. The casting prompt Verification section names
+  tests/test_orchestrator_gates.py, which casting 2 carved into
+  tests/orchestration/. The package-wide AST and import scans that
+  parenthetical is about now live in
+  tests/orchestration/test_module_boundaries.py, so that is the file this log
+  drives in its place. The claim is unchanged; only its address moved.
 
-  THREE NODES ARE DESELECTED. Each is another casting open work at this
-  tree and none of them names a casting-1 file, so none is a degradation this
-  casting caused or can close:
+  THE THREE DESELECTS ARE GONE, AND THAT IS THE POINT OF SAYING SO. An
+  earlier capture deselected three boundary nodes, each recorded as another
+  casting open work at that tree:
     test_every_private_function_the_plugin_ships_is_reachable
-      _new_spend_bucket, src/foundry_mcp/tools/foundry_report.py
     test_no_shipped_module_holds_an_unused_import
-      inspect_decisions, twice, in scripts/measure-run.py
     test_the_package_marker_re_exports_nothing
-      ten test modules recorded as importing the monolith that already repointed
-  A deselect of a node that does not exist is tolerated by pytest and exits 0,
-  so a peer closing any of these does not turn this log red again.
+  All three PASS now. Nothing is deselected below, so this selection is whole
+  and the count is the count.
 
-  What remains selected still judges casting 1 in full: every other rung of
-  the boundary guard (GI-025 import-graph acyclicity, one definition per
-  symbol, the verifier-layer rule), the D-128 raw-ledger-iteration scan that
-  already caught concerns.py once, the vocabulary pins, and this casting own
-  two test modules.
+  BOTH HALVES OF THE RULING ARE IN THIS TREE. The lead ruling
+  lead_ruling_gi_033_leaf_moves item (3), on concern C-030, put the ONE body
+  of the cross-casting concern filter in foundry_state (the leaf) and told
+  casting 1 to delete its second body and delegate; concern C-033 carried the
+  other half -- three call sites -- to casting 2. Casting 1 landed the
+  delegation and casting 2 landed the repoint, and the selection below runs
+  over both, which is why nothing here is red and nothing is excused.
+
+  WHAT FR-037 CLAIMS HERE, precisely. This casting touched no file outside
+  its key_files -- concerns.py, rosters.py, test_concerns.py,
+  test_rosters.py -- and every other rung of the boundary guard is green at
+  this commit: the GI-025 import-graph acyclicity, the verifier-layer rule,
+  the unused-import scan, the D-128 raw-ledger-iteration scan that caught
+  concerns.py once before, the vocabulary pins, and this casting own two test
+  modules. The one-definition-per-symbol rung
+  (test_no_top_level_symbol_is_defined_in_two_shipped_modules) was RED on
+  open_cross_casting_concerns before this commit and is GREEN at it.
 
 ........................................................................ [ 15%]
-........................................................................ [ 31%]
-........................................................................ [ 47%]
-........................................................................ [ 63%]
-........................................................................ [ 79%]
-........................................................................ [ 94%]
-.......................                                                  [100%]
-455 passed, 3 deselected in 8.34s
+........................................................................ [ 30%]
+........................................................................ [ 46%]
+........................................................................ [ 61%]
+........................................................................ [ 76%]
+........................................................................ [ 92%]
+.....................................                                    [100%]
+469 passed in 10.60s
