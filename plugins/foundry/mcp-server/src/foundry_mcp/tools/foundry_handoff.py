@@ -29,7 +29,13 @@ from pathlib import Path
 
 from foundry_mcp.schemas.vocab import HANDOFF_EVENT_LEAD_FIX, REQUIREMENT_ID_RE
 from foundry_mcp.tools.citation import CITATION_PATTERN, unresolved_symbol_cites
-from foundry_mcp.tools.foundry_orchestrator import _artifact_guard, _load_json
+# The artifact leaf, `tools/artifacts.py`: the house door guard and the total,
+# tolerant document read. Both were reached at the top of the stack until the
+# leaf existed — this module wanted two utilities and imported a 15,000-line
+# state machine to get them, which is what made the orchestrator the package's
+# de-facto persistence layer. The bodies are the same bodies; only the module
+# that defines them changed.
+from foundry_mcp.tools.artifacts import _artifact_guard, _load_json
 from foundry_mcp.tools.foundry_state import (
     document_refusal,
     get_run_dir,
