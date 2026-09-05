@@ -1,9 +1,10 @@
-"""GI-024 / FR-008 / AC-011 / OT-010 — the consolidated run-table readers.
+"""fallout GI-024 / FR-008 / AC-011 / OT-010 — the consolidated run-table readers.
 
 A-026: "All of the survey's duplication inventory, into `foundry_state`
 readers (Recommended)."
 
-OT-010 states the property this module pins: "Spend, inspect modes, unreported
+fallout OT-010 states the property this module pins: "Spend, inspect modes,
+unreported
 dispatches, escalated classes and md-section splitting each have exactly one
 implementation, in `foundry_state`."
 
@@ -463,7 +464,7 @@ def test_inspect_decisions_is_total_over_a_malformed_section() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The stream-coverage rows (CT-003 / AC-030 / OT-028).
+# The stream-coverage rows (fallout CT-003 / AC-030 / OT-028).
 # ---------------------------------------------------------------------------
 
 
@@ -482,7 +483,7 @@ def _tranche(checked: int, total: int, findings: int, records: int) -> dict:
 
 
 def test_stream_rollup_rows_names_what_was_replaced(run_env) -> None:
-    """CT-003 / ST-009 — a second record for one (stream, cycle) REPLACES the first.
+    """fallout CT-003 / ST-009 — a second record for one (stream, cycle) REPLACES it.
 
     The first record replaced nothing and every later one replaced exactly the
     record before it, so `replaced_count` is `len(records) - 1` and a bucket
@@ -515,7 +516,7 @@ def test_stream_rollup_rows_names_what_was_replaced(run_env) -> None:
 def test_stream_rollup_rows_renders_an_over_total_bucket_and_names_it(
     run_env,
 ) -> None:
-    """FR-054 — a bucket that reads above 100% is what daring-orca contains.
+    """fallout FR-054 — a bucket that reads above 100% is what daring-orca has.
 
     Render what is there and name it; do not silently normalise. A coverage
     figure quietly clamped to its total is a measurement replaced by an
@@ -797,7 +798,8 @@ def test_markdown_sections_and_headings_are_one_rule() -> None:
     """Holmes `share-10` — "same effective rule, coded independently".
 
     The seal split REPORT.md on a line that STARTS a block and the DONE gate's
-    presence check built a set of every trimmed line. Both halves of GI-006 now
+    presence check built a set of every trimmed line. Both halves of
+    convergence GI-006 now
     read the document by ONE rule, so the seal can never preserve something the
     gate would then call a missing section.
     """
@@ -817,7 +819,8 @@ def test_markdown_sections_and_headings_are_one_rule() -> None:
 def test_markdown_sections_match_a_whole_trimmed_line() -> None:
     """A prefix match would count `## Verdict matrix (see below)` as the section.
 
-    GI-006 licenses the lead to APPEND, so the match is on the whole trimmed
+    convergence GI-006 licenses the lead to APPEND, so the match is on the whole
+    trimmed
     line: a lead's own `## Appendix` never counts as a generated section, and a
     generated heading with a suffix bolted on reads as the edit it is.
     """
@@ -842,7 +845,7 @@ def test_markdown_sections_keep_prose_that_precedes_the_first_heading() -> None:
 
 
 # ---------------------------------------------------------------------------
-# `prove_is_clean` (FR-020 / AC-025).
+# `prove_is_clean` (process-fixes FR-020 / AC-025).
 # ---------------------------------------------------------------------------
 
 
@@ -855,7 +858,7 @@ def test_prove_is_clean_on_a_full_clean_tranche_set() -> None:
 
 
 def test_prove_is_clean_refuses_a_spec_that_parses_to_zero_requirements() -> None:
-    """FR-020 / AC-025 — the >=95% check used to be SKIPPED at zero.
+    """process-fixes FR-020 / AC-025 — the >=95% check used to be SKIPPED at zero.
 
     So any `.prove-complete` with `findings=0` on an unresolvable or
     unparseable spec drove the F4 auto-VERIFY path, manufacturing a passing run
@@ -950,7 +953,7 @@ def test_no_fourth_spec_path_resolver_grew_here() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-011 / OT-010 — THE CROSS-SURFACE ASSERTION.
+# fallout AC-011 / OT-010 — THE CROSS-SURFACE ASSERTION.
 #
 # The point of the consolidation is not that the readers exist; it is that the
 # surfaces which used to answer a question twice now read ONE object. So each
@@ -1064,7 +1067,7 @@ def test_the_report_inspect_section_is_the_leafs_census(report_run) -> None:
 
 
 def test_the_full_cycle_ratio_is_derived_once(report_run) -> None:
-    """AC-046 — `measure-run.py` and the report publish the same figure.
+    """fallout AC-046 — `measure-run.py` and the report publish the same figure.
 
     Two derivations of one acceptance criterion is the one place a
     disagreement is unarguable: the archive either meets the target or it does
@@ -1127,7 +1130,7 @@ def test_the_report_dispatch_inputs_are_the_leafs_assembly(report_run) -> None:
 
 
 def test_the_report_stream_coverage_is_the_leafs_rollup_rows(report_run) -> None:
-    """CT-003 — the section renders what the reader derived, and adds prose."""
+    """fallout CT-003 — the section renders what the reader derived, adds prose."""
     section = _generated(report_run)["stream_coverage_per_cycle"]
     table = fs.stream_rollup_rows(report_run)
 
@@ -1141,7 +1144,7 @@ def test_the_report_stream_coverage_is_the_leafs_rollup_rows(report_run) -> None
 
 
 def test_the_report_fallout_section_is_the_leafs_rows(report_run) -> None:
-    """FR-025 — `measure-run.py` counts the same field per cycle (casting 3).
+    """fallout FR-025 — `measure-run.py` counts the same field per cycle (casting 3).
 
     The axis is `derive_cycle_count`'s index, which is the SAME reading
     `inspect_modes_per_cycle` and `baseline_comparison` sit on, so the three
