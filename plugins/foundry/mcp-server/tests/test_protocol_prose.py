@@ -4131,9 +4131,35 @@ _TIER_RULE_CLAUSES = (
         "stream that trips it cannot tell which rule it broke.",
     ),
     (
-        "Both tiers are defects, both get fixed",
-        "the rule no longer says both tiers are defects. A tier that excuses "
-        "one of its values from being fixed IS the abolished axis.",
+        "Every tier is a defect, every tier gets fixed",
+        "the rule no longer says every tier is a defect. A tier that excuses "
+        "one of its values from being fixed IS the abolished axis. The clause "
+        "is quantified over the vocabulary rather than counted (D-023: the "
+        "counted spelling said `two` for as long as DEFECT_TIERS had three "
+        "members).",
+    ),
+    (
+        "`HARDENING` means you drove a probe of your own devising and observed "
+        "a wrong result no requirement asks about",
+        "the rule no longer says what HARDENING means (GI-014 / AC-022). A "
+        "stream that cannot read the member's meaning here files its off-spec "
+        "probe as LIVE, which holds every gate shut over behaviour no "
+        "requirement asks for, or drops it.",
+    ),
+    (
+        "carries no `spec_ref` (one that sets a `spec_ref` is refused at both "
+        "doors)",
+        "the rule no longer names the mechanical discriminator (GI-028). "
+        "Unstated, HARDENING reads as a place to put a requirement failure "
+        "that is inconvenient to fix, which is the demotion the tier exists "
+        "to prevent.",
+    ),
+    (
+        "and never `HARDENING` either",
+        "the rule no longer rules out a HARDENING security-property claim "
+        "(GI-004). The denylist rung reads NON_BLOCKING_TIERS, so the door "
+        "refuses it -- and a stream told only that LATENT is closed to the "
+        "claim routes it to the other non-blocking tier.",
     ),
     (
         "buys you no discretion over anything else",
@@ -4149,6 +4175,54 @@ _TIER_RULE_CLAUSES = (
 def test_each_stream_agent_states_the_tier_rule(path: Path, clause: str, why: str) -> None:
     """GI-001 / AC-009 / FR-004 / CT-003, one claim at a time."""
     assert clause in _flat(path), f"{_rel(path)}: {why}"
+
+
+#: DERIVED from the vocabulary, never re-typed: a member added to DEFECT_TIERS
+#: fails here until every filing surface describes it. GI-014 added HARDENING
+#: and the seven copies of this rule went on describing two members (D-023),
+#: which is the failure a hand-typed roster here could not have caught.
+_DECLARED_TIERS = tuple(sorted(vocab.DEFECT_TIERS))
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("member", _DECLARED_TIERS)
+def test_the_tier_rule_names_every_declared_member(path: Path, member: str) -> None:
+    """GI-014 / AC-022: prose describing fewer tiers than the doors accept."""
+    span = _tier_rule(path)
+    assert span, (
+        f"{_rel(path)} carries no tier rule to sweep -- see "
+        f"test_stream_agents_share_one_tier_rule_verbatim."
+    )
+    assert f"`{member}`" in span, (
+        f"{_rel(path)}'s tier rule never names `{member}`, a member "
+        f"`Foundry-Defect` and `Foundry-Sync` accept "
+        f"({sorted(vocab.DEFECT_TIERS)}). The rule is the only place a filing "
+        f"stream learns the member exists and when to set it, so an undescribed "
+        f"member is one no stream ever files."
+    )
+
+
+#: The count is the half that rots silently: the members carry their own names
+#: into the prose, but a number beside them is a second copy of len() that no
+#: door reads. GI-014 made it wrong in seven files at once (D-023..D-029).
+_MEMBER_COUNT_RE = re.compile(r"\b(?:one|two|three|four|five|six|\d+)[- ]member\b", re.I)
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
+def test_the_tier_rule_states_no_member_count(path: Path) -> None:
+    """GI-014's absence half: a counted vocabulary is a re-typed vocabulary."""
+    span = _tier_rule(path)
+    assert span, (
+        f"{_rel(path)} carries no tier rule to sweep -- see "
+        f"test_stream_agents_share_one_tier_rule_verbatim."
+    )
+    hit = _MEMBER_COUNT_RE.search(span)
+    assert hit is None, (
+        f"{_rel(path)}'s tier rule counts its members ({hit.group(0)!r}) "
+        f"instead of citing DEFECT_TIERS, which declares "
+        f"{len(vocab.DEFECT_TIERS)}. Cite the vocabulary and describe the "
+        f"members; a count is a copy that no door reads and nothing updates."
+    )
 
 
 #: FR-007 replaced an OPTIONAL class with a required one. The clauses that
