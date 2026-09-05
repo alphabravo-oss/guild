@@ -1,0 +1,33 @@
+# evidence-cmd: /bin/sh -n plugins/foundry/scripts/setup-foundry.sh && bash plugins/foundry/scripts/setup-foundry.sh --spec forge-specs/foundry-run-fallout/spec.md --temper --no-ui --max-cycles 5 --skip-start-backend "self-target run" 2>&1 | grep -v Serena
+# evidence-for: AC-052, AC-057, FR-033, FR-055, FR-059, GI-015, US-012
+# evidence-volatile: FOUNDRY_SERENA_HEALTH=\w+
+
+Foundry — Build-Verify-Fix Loop
+
+Scope: self-target run
+Spec: forge-specs/foundry-run-fallout/spec.md
+Temper: enabled
+Max Cycles: 5
+UI: disabled
+
+FOUNDRY_SCOPE=self-target run
+FOUNDRY_SPEC=forge-specs/foundry-run-fallout/spec.md
+FOUNDRY_URL=
+FOUNDRY_TEMPER=true
+FOUNDRY_NYQUIST=false
+FOUNDRY_MAX_CYCLES=5
+FOUNDRY_NO_UI=true
+FOUNDRY_TICKET=
+FOUNDRY_DESC=
+FOUNDRY_SKIP_BACKEND=true
+FOUNDRY_SERENA_HEALTH=HEALTHY
+
+Use MCP tool Foundry-Init to create the run, then follow the phase guide.
+Thread the invocation flags into that call: url=, temper=true, nyquist=false, max_cycles=5, no_ui=true
+  — the FOUNDRY_URL, FOUNDRY_TEMPER, FOUNDRY_NYQUIST, FOUNDRY_MAX_CYCLES and FOUNDRY_NO_UI values above.
+  max_cycles 0 is unbounded; reaching the cap ends the run in HALTED, which is NOT DONE.
+  temper defaults off; a temper-off run still gets PROVE's adversarial half at INSPECT.
+  no_ui declares that this run has no browsable UI, so the SIGHT browser audit is not part of it.
+Call Foundry-Next at every step to get specific instructions.
+
+Forge plans. Foundry builds.

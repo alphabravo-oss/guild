@@ -15,7 +15,6 @@ TEMPER=false
 NYQUIST=false
 MAX_CYCLES=0
 NO_UI=false
-OUTPUT_DIR=""
 TICKET=""
 DESCRIPTION=""
 SKIP_START_BACKEND=false
@@ -41,9 +40,14 @@ Forge plans. Foundry builds.
 
 USAGE:
   /foundry:start <SCOPE> [OPTIONS]
-  /foundry:resume
+  /foundry:resume [--max-cycles N]
   /foundry:status
   /foundry:stop
+
+  --max-cycles N is the one flag /foundry:resume takes. This script does not
+  parse it there — the resume subcommand exits before the argument loop — so
+  the command reads N from its own invocation and threads it into
+  Foundry-Init(resume=..., max_cycles=N), which REWRITES the persisted cap.
 
 ARGUMENTS:
   SCOPE             Description of what to build (required)
@@ -51,14 +55,16 @@ ARGUMENTS:
 OPTIONS:
   --spec <path>            Spec file for spec-aware decomposition
   --url <url>              Browser audit URL for SIGHT verification
-  --output-dir <dir>       Output directory (default: auto-generated)
   --temper                 Enable micro-domain stress testing (F5)
   --nyquist                Enable regression test generation (F5.5)
   --max-cycles <n>         Cap verify-fix cycles (default: 0 = unlimited). Reaching
                            the cap ends the run in HALTED — a named terminal state
                            that is NOT DONE; the report is generated naming every
                            open LIVE and LATENT defect
-  --no-ui                  Skip browser audit (SIGHT)
+  --no-ui                  Declares that this run has no browsable UI, so the
+                           SIGHT browser audit is not part of it. It does NOT
+                           suppress banners and it is not a refusal — one
+                           meaning, threaded to Foundry-Init as no_ui=
   --ticket <id>            Ticket ID for commit messages
   --desc <text>            Run description
   --skip-start-backend     Don't auto-start dev servers
@@ -103,10 +109,6 @@ HELP_EOF
       ;;
     --url)
       URL="$2"
-      shift 2
-      ;;
-    --output-dir)
-      OUTPUT_DIR="$2"
       shift 2
       ;;
     --temper)
@@ -356,7 +358,6 @@ echo ""
 echo "Scope: $SCOPE"
 if [[ -n "$SPEC_PATH" ]]; then echo "Spec: $SPEC_PATH"; fi
 if [[ -n "$URL" ]]; then echo "URL: $URL"; fi
-if [[ -n "$OUTPUT_DIR" ]]; then echo "Output: $OUTPUT_DIR"; fi
 if [[ "$TEMPER" == "true" ]]; then echo "Temper: enabled"; fi
 if [[ "$NYQUIST" == "true" ]]; then echo "Nyquist: enabled"; fi
 if [[ "$MAX_CYCLES" -gt 0 ]]; then echo "Max Cycles: $MAX_CYCLES"; fi
@@ -368,7 +369,6 @@ echo ""
 echo "FOUNDRY_SCOPE=$SCOPE"
 echo "FOUNDRY_SPEC=$SPEC_PATH"
 echo "FOUNDRY_URL=$URL"
-echo "FOUNDRY_OUTPUT=$OUTPUT_DIR"
 echo "FOUNDRY_TEMPER=$TEMPER"
 echo "FOUNDRY_NYQUIST=$NYQUIST"
 echo "FOUNDRY_MAX_CYCLES=$MAX_CYCLES"
@@ -379,9 +379,11 @@ echo "FOUNDRY_SKIP_BACKEND=$SKIP_START_BACKEND"
 echo "FOUNDRY_SERENA_HEALTH=$SERENA_HEALTH"
 echo ""
 echo "Use MCP tool Foundry-Init to create the run, then follow the phase guide."
-echo "Thread the invocation flags into that call: url=$URL, nyquist=$NYQUIST, max_cycles=$MAX_CYCLES"
-echo "  — the FOUNDRY_URL, FOUNDRY_NYQUIST and FOUNDRY_MAX_CYCLES values above."
+echo "Thread the invocation flags into that call: url=$URL, temper=$TEMPER, nyquist=$NYQUIST, max_cycles=$MAX_CYCLES, no_ui=$NO_UI"
+echo "  — the FOUNDRY_URL, FOUNDRY_TEMPER, FOUNDRY_NYQUIST, FOUNDRY_MAX_CYCLES and FOUNDRY_NO_UI values above."
 echo "  max_cycles 0 is unbounded; reaching the cap ends the run in HALTED, which is NOT DONE."
+echo "  temper defaults off; a temper-off run still gets PROVE's adversarial half at INSPECT."
+echo "  no_ui declares that this run has no browsable UI, so the SIGHT browser audit is not part of it."
 echo "Call Foundry-Next at every step to get specific instructions."
 echo ""
 echo "Forge plans. Foundry builds."

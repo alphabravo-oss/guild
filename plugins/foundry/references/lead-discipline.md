@@ -38,6 +38,22 @@ If you find yourself wanting to "just add a note" or "clarify scope" in a teamma
 
 This file is rationale. The mechanical rule — which tier, how many files, how many lines, which arguments every lead fix carries — is lead rule 2 in `commands/start.md`, and the numbers there are the numbers the server measures against.
 
+## Why a named backlog is a successful end
+
+**The failure mode.** A lead that believes `DONE` is the only acceptable ending will grind cycles against a target it has already met. The previous run is the shape of it: TEMPER did not converge, and the response was more cycles rather than a ruling, because nothing on the surface the lead read before every call said what the run was heading for or what the backlog already was. The same belief bends the streams. If a clean PROVE is the goal, then a PROVE that keeps finding things is a problem to be managed, and the cheapest way to manage it is to narrow what PROVE looks at until it stops finding them — at which point the run has bought its ending by deleting the verification that was earning it.
+
+**The fix.** Say what the run is heading for, on the surface the lead already reads. Every `Foundry-Next` response carries `heading_for`, `open_by_tier` and `cycles_to_cap`, so the backlog and the distance to the cap are visible before every call rather than in a report read once at the end; `Foundry-Phase(phase='halt', reason, text)` makes ending on a ruling an ordinary successful transition; and the F6 report has named sections — `latent_backlog`, `hardening_backlog`, `unknown_tier_defects` — whose whole job is to carry open work forward under its own name. **A run that reaches `HALTED` with every open finding written down and tiered has succeeded.** It stopped with work outstanding, which is a different thing from stopping without knowing what was outstanding. And an empty PROVE is not the goal: adversarial verification is mandatory on every run, so a stream that finds nothing because it was narrowed has not verified anything — it has only stopped reporting.
+
+This file is rationale. The mechanical rule — the halt door, its four-member reason vocabulary, and the three fields every guidance response carries — is in `commands/start.md`, and the section names the done gate refuses by are the rows it lists.
+
+## Why a self-hosting run carries a residual risk
+
+**The failure mode.** On a run whose target is the verifier itself, a GRIND fix changes a gate — and every verdict an earlier cycle recorded THROUGH that gate was recorded by a gate that no longer exists. Those verdicts are not re-derived and nothing marks them stale, so the run carries forward conclusions produced by code it has since replaced. It is not a hypothetical: this run's own castings move the gates, the vocabularies and the stream contracts, and each of them invalidates some earlier cycle's evidence about itself.
+
+**The fix.** There is not one, and recording that is the deliverable. The only thing standing against it is width: a GRIND whose diff touched `vocab.py`, anything under `schemas/`, gate or orchestrator code, agent or skill prose or the spec closes into a `FULL` INSPECT under the `verifier_touched` rule, so the NEXT cycle re-runs every stream over the whole corpus instead of a delta. That re-verifies FORWARD. It does not re-verify the cycles already banked, and nothing does. **Nothing mitigates this beyond `FULL` width on `verifier_touched`, and that is an accepted residual risk of self-hosting rather than a gap someone is going to close later.** Read it as a bound on what a self-targeting run's early verdicts are worth, not as a task.
+
+This file is rationale. The mechanical rule — which GRIND diffs force `FULL` width, and which rule label the transition records beside the mode — is the INSPECT-width paragraph in `commands/start.md`.
+
 ## Why no worktrees
 
 Teammates work in the main directory, no `isolation: "worktree"` when spawning agents. Castings have non-overlapping file boundaries so teammates can safely share the working directory. Worktree lifecycle + merge-back adds complexity with no benefit when file ownership is already disjoint.

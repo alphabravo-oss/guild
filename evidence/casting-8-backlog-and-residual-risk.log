@@ -1,0 +1,11 @@
+# evidence-cmd: cd plugins/foundry && for p in "## Why a named backlog is a successful end" "## Why a self-hosting run carries a residual risk" "A run that reaches \`HALTED\` with every open finding written down and tiered has succeeded." "an empty PROVE is not the goal" "Nothing mitigates this beyond \`FULL\` width on \`verifier_touched\`" "accepted residual risk of self-hosting"; do printf "%s\t%s\n" "$(grep -c -F -- "$p" references/lead-discipline.md)" "$p"; done; printf "%s\tThe failure mode. markers\n" "$(grep -c -F -- "**The failure mode.**" references/lead-discipline.md)"; printf "%s\tThe fix. markers\n" "$(grep -c -F -- "**The fix.**" references/lead-discipline.md)"
+# evidence-for: FR-036, FR-047, OT-027, US-006
+
+1	## Why a named backlog is a successful end
+1	## Why a self-hosting run carries a residual risk
+1	A run that reaches `HALTED` with every open finding written down and tiered has succeeded.
+1	an empty PROVE is not the goal
+1	Nothing mitigates this beyond `FULL` width on `verifier_touched`
+1	accepted residual risk of self-hosting
+5	The failure mode. markers
+6	The fix. markers
