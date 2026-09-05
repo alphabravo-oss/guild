@@ -1,7 +1,7 @@
 ---
 name: research-auditor
 description: F2 INSPECT 5th stream. Audits the built code against the recommendations in foundry-archive/{run}/research/*.md files. Catches deviations early so they enter F3 GRIND before F4 ASSAY.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, mcp__plugin_foundry_foundry__*, mcp__foundry__*
 model: haiku
 ---
 

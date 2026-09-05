@@ -5,7 +5,7 @@ description: "F2 INSPECT 8th stream. Source-blind: reads spec only, never implem
 min_spec_format_version: v2.1
 model: opus
 effort: high
-tools: Read, Write, Bash, Grep, Glob
+tools: Read, Write, Bash, Grep, Glob, mcp__plugin_foundry_foundry__Foundry-Next, mcp__plugin_foundry_foundry__Foundry-Roster, mcp__plugin_foundry_foundry__Foundry-Stream, mcp__foundry__Foundry-Next, mcp__foundry__Foundry-Roster, mcp__foundry__Foundry-Stream
 ---
 
 # spec-test-deriver — Phase 7 / TEST-01

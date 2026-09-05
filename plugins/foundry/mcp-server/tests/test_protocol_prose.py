@@ -6904,6 +6904,76 @@ def test_the_non_prove_stream_agent_roster_is_derived() -> None:
     )
 
 
+#: Every stream-producing AGENT file, PROVE included. The roster above answers
+#: "which files must STATE that they record"; this one answers "which files
+#: must be ABLE to", which is a property of all of them and of the harness
+#: rather than of the prose.
+STREAM_RECORDING_AGENTS = tuple(
+    sorted((p for p in AGENTS.glob("*.md") if _declared_stream_wire_ids(p)), key=_rel)
+)
+
+#: A `tools:` line is an ALLOWLIST: an agent declaring one can call nothing it
+#: omits. Foundry declares its own MCP server (`.claude-plugin/plugin.json` ->
+#: `mcpServers.foundry`), and the tool prefix that server's doors arrive under
+#: differs by how it was registered -- `plugin_foundry_foundry` for the
+#: plugin-declared server since 4.7.0, `foundry` for the project-scope
+#: `.mcp.json` entry earlier versions installed (README "Upgrading from <
+#: 4.7.0"). So the match is on the SERVER SUBSTRING rather than on either
+#: spelling: a roster naming one prefix is correct on one deployment and grants
+#: nothing on the other, and both failures look identical from here.
+_FOUNDRY_MCP_TOOL_RE = re.compile(r"mcp__\w*foundry\w*__\S+")
+
+
+def _declared_tools(path: Path) -> str | None:
+    """The frontmatter `tools:` value, or None when the file declares none.
+
+    None and "" are different answers: no line at all means the agent inherits
+    every tool the harness has, while an empty allowlist would grant nothing.
+    """
+    front = re.match(r"\A---\s*\n(.*?)\n---\s*\n", _read(path), re.DOTALL)
+    if not front:
+        return None
+    declared = re.search(r"^tools:\s*(.+?)\s*$", front.group(1), re.MULTILINE)
+    return declared.group(1) if declared else None
+
+
+def test_the_stream_recording_agent_roster_is_derived() -> None:
+    """Floor check: the tool-roster pin below is vacuous on an empty sweep."""
+    expected = {ASSAYER, TRACER, FLOW_TRACER, RESEARCH_AUDITOR, COVERAGE_DIFF, SPEC_TEST_DERIVER}
+    missing = sorted(_rel(p) for p in expected - set(STREAM_RECORDING_AGENTS))
+    assert not missing, (
+        f"{missing} no longer derive into STREAM_RECORDING_AGENTS. Membership "
+        f"is the declared wire id, exactly as NON_PROVE_STREAM_AGENTS above; "
+        f"fix the file rather than hard-coding this roster."
+    )
+
+
+@pytest.mark.parametrize("path", STREAM_RECORDING_AGENTS, ids=lambda p: p.name)
+def test_a_stream_agent_can_call_the_door_its_prose_requires(path: Path) -> None:
+    """fallout GI-016 / AC-031: an allowlist that denies the door it demands.
+
+    D-006 drove it: the RESEARCH_AUDIT stream completed a full 42-item audit,
+    reached the recording step its own file makes mandatory, and reported that
+    it could not invoke `Foundry-Stream` or `Foundry-Defect` -- the frontmatter
+    granted four native tools and no MCP door. The prose pins in this module
+    all check that a file SAYS it records; none of them could see that the
+    agent reading it has no way to. Two rosters satisfy this: no `tools:` line
+    at all (the assayer, tracer and flow-tracer shape -- inherit everything),
+    or an allowlist that names the doors.
+    """
+    declared = _declared_tools(path)
+    if declared is None:
+        return  # No allowlist: every tool is inherited, the doors among them.
+    assert _FOUNDRY_MCP_TOOL_RE.search(declared), (
+        f"{_rel(path)} declares a `tools:` allowlist granting no foundry MCP "
+        f"door ({declared!r}), while its own Stream Recording section requires "
+        f"it to call `Foundry-Stream` itself. An allowlist omitting the door "
+        f"does not degrade the stream -- it deletes it, and the agent finds out "
+        f"only after doing the whole audit. Name the doors (either prefix, or "
+        f"a `mcp__..foundry..__*` wildcard) or drop the line."
+    )
+
+
 #: The clauses every non-PROVE stream agent states BYTE-IDENTICALLY. Each is
 #: the load-bearing fragment of the ruling and never a whole sentence: the body
 #: around it is each file's own voice, which is required -- pasting one
