@@ -1512,8 +1512,16 @@ def _d200_run_env(tmp_path, monkeypatch):
     run, the same `_check_active_teams` patch so nothing depends on an ambient
     tmux session, and the same `/foundry-archive/` ignore rule, without which
     the run's own artifacts would land in every GRIND diff.
+
+    The patch goes through `tests/orchestration/_env.py#patch_everywhere`
+    rather than `monkeypatch.setattr` on one module. Before the carve there was
+    ONE module, so patching it patched the only binding; after it the symbol is
+    imported BY NAME into `orchestration/transitions.py`, `orchestration/
+    gates.py`, `orchestration/width.py` and `orchestration/guidance.py`, and a
+    patch reaching some of those and not others exercises a state no run can be
+    in. That helper is the post-split spelling of the fact the monolith used to
+    make true by construction.
     """
-    from foundry_mcp.tools import foundry_orchestrator as fo
     from foundry_mcp.tools import foundry_state
 
     run_name = "d200-run"
@@ -1536,8 +1544,10 @@ def _d200_run_env(tmp_path, monkeypatch):
         json.dumps({"castings": [{"id": 1, "key_files": ["src/handler.py"]}]}),
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        fo,
+    from tests.orchestration._env import patch_everywhere
+
+    patch_everywhere(
+        monkeypatch,
         "_check_active_teams",
         lambda _pr: {"active": False, "teams": [], "live_panes": []},
     )
@@ -1559,9 +1569,15 @@ def test_inspect_start_refuses_a_fabricated_leading_comment_block(_d200_run_env)
     here: the transition refuses NAMING the log, `evidence_sweep` carries the
     mismatch, and the counter is unchanged.
     """
-    from foundry_mcp.tools import foundry_orchestrator as fo
-    from foundry_mcp.tools.foundry_orchestrator import (
-        _current_cycle,
+    # The carve put these three in three different places, so they are imported
+    # from three different modules rather than through one alias standing for
+    # the monolith: `INSPECT_BOUNDARY_SHA_MARKER` and `now_iso` are LEAF facts
+    # (`tools/artifacts.py`, `tools/foundry_state.py`), `current_cycle` is the
+    # consolidated reader in `tools/foundry_state.py`, and the transition is
+    # `tools/orchestration/transitions.py#foundry_mark_phase_complete`.
+    from foundry_mcp.tools.artifacts import INSPECT_BOUNDARY_SHA_MARKER
+    from foundry_mcp.tools.foundry_state import current_cycle, now_iso
+    from foundry_mcp.tools.orchestration.transitions import (
         foundry_mark_phase_complete,
     )
 
@@ -1594,7 +1610,7 @@ def test_inspect_start_refuses_a_fabricated_leading_comment_block(_d200_run_env)
     )
     _run_git(["add", "-A"], root)
     _run_git(["commit", "-q", "-m", "pre-boundary"], root)
-    (fdir / fo.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+    (fdir / INSPECT_BOUNDARY_SHA_MARKER).write_text(
         subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=root, check=True, capture_output=True, text=True,
@@ -1607,7 +1623,7 @@ def test_inspect_start_refuses_a_fabricated_leading_comment_block(_d200_run_env)
     )
     _run_git(["add", "-A"], root)
     _run_git(["commit", "-q", "-m", "a GRIND cycle"], root)
-    (fdir / ".next-action-called").write_text(f"{fo._now()}\n", encoding="utf-8")
+    (fdir / ".next-action-called").write_text(f"{now_iso()}\n", encoding="utf-8")
 
     result = foundry_mark_phase_complete("inspect_start", project_root)
 
@@ -1619,7 +1635,7 @@ def test_inspect_start_refuses_a_fabricated_leading_comment_block(_d200_run_env)
     assert "casting-1-handler.log" in result["mismatches"][0]["log"]
     # AC-013's second clause, and OT-008 verbatim: the counter is unchanged and
     # no INSPECT mode was recorded for a transition that did not happen.
-    assert _current_cycle(fdir) == 1
+    assert current_cycle(fdir) == 1
     state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
     assert state["cycle"] == 1 and state["phase"] == "F3"
     assert "inspect_modes" not in state
@@ -1808,9 +1824,15 @@ def _drive_d205_boundary(run_env, log_text: str, capture: str = _D200_DOOR_TAIL)
     touching that casting's key_file — so the only variable between the drives
     below is the committed log's own bytes.
     """
-    from foundry_mcp.tools import foundry_orchestrator as fo
-    from foundry_mcp.tools.foundry_orchestrator import (
-        _current_cycle,
+    # The carve put these three in three different places, so they are imported
+    # from three different modules rather than through one alias standing for
+    # the monolith: `INSPECT_BOUNDARY_SHA_MARKER` and `now_iso` are LEAF facts
+    # (`tools/artifacts.py`, `tools/foundry_state.py`), `current_cycle` is the
+    # consolidated reader in `tools/foundry_state.py`, and the transition is
+    # `tools/orchestration/transitions.py#foundry_mark_phase_complete`.
+    from foundry_mcp.tools.artifacts import INSPECT_BOUNDARY_SHA_MARKER
+    from foundry_mcp.tools.foundry_state import current_cycle, now_iso
+    from foundry_mcp.tools.orchestration.transitions import (
         foundry_mark_phase_complete,
     )
 
@@ -1838,7 +1860,7 @@ def _drive_d205_boundary(run_env, log_text: str, capture: str = _D200_DOOR_TAIL)
     )
     _run_git(["add", "-A"], root)
     _run_git(["commit", "-q", "-m", "pre-boundary"], root)
-    (fdir / fo.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+    (fdir / INSPECT_BOUNDARY_SHA_MARKER).write_text(
         subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=root, check=True, capture_output=True, text=True,
@@ -1851,10 +1873,10 @@ def _drive_d205_boundary(run_env, log_text: str, capture: str = _D200_DOOR_TAIL)
     )
     _run_git(["add", "-A"], root)
     _run_git(["commit", "-q", "-m", "a GRIND cycle"], root)
-    (fdir / ".next-action-called").write_text(f"{fo._now()}\n", encoding="utf-8")
+    (fdir / ".next-action-called").write_text(f"{now_iso()}\n", encoding="utf-8")
 
     return foundry_mark_phase_complete("inspect_start", project_root), \
-        _current_cycle(fdir), fdir
+        current_cycle(fdir), fdir
 
 
 def test_inspect_start_refuses_a_hash_prefixed_committed_only_claim(
@@ -4257,9 +4279,10 @@ def _package_modules(root: Path) -> list:
     Membership is derived on BOTH axes — the files in a directory and the
     directories in the package — so neither a new module nor a new subpackage
     has to be remembered anywhere. Same derivation the D-137 family uses in
-    ``test_orchestrator_gates.py``; that file's ``_scan`` docstring records the
-    ``(seen, offenders)`` tuple as the agreed contract ACROSS test modules, so
-    the shape is re-declared here rather than imported across test files.
+    ``tests/orchestration/test_module_boundaries.py``; that file's ``_scan``
+    docstring records the ``(seen, offenders)`` tuple as the agreed contract
+    ACROSS test modules, so the shape is re-declared here rather than imported
+    across test files.
     """
     return sorted(root.rglob("*.py"))
 
@@ -4272,8 +4295,8 @@ def _scan(modules: list, rule) -> tuple:
     ``assert not offenders`` is green in two different worlds: the one where
     the corpus is clean, and the one where the derivation has quietly stopped
     recognising the corpus's spelling. Callers assert against ``seen`` to tell
-    the two apart by name. ``test_orchestrator_gates`` records this tuple as
-    the agreed contract across test modules.
+    the two apart by name. ``tests/orchestration/test_module_boundaries.py``
+    records this tuple as the agreed contract across test modules.
     """
     seen: list = []
     offenders: list = []
@@ -4313,7 +4336,10 @@ def _resolves_to_stdout(node: ast.AST, namespace: dict) -> bool:
     ``subprocess`` result's ``.stdout`` resolves to nothing and stays quiet,
     which is the false-positive family the literal was protecting against.
     """
-    from tests.test_orchestrator_gates import _UNRESOLVED, _resolve_dotted
+    from tests.orchestration.test_module_boundaries import (
+        _UNRESOLVED,
+        _resolve_dotted,
+    )
 
     if isinstance(node, ast.Call):
         callee, _ = _resolve_dotted(node.func, namespace)
@@ -4341,7 +4367,10 @@ def _writes_to_stdout(node: ast.AST, namespace: dict) -> bool:
     resolved through the namespace so ``import os as o`` is the same call.
     A ``logging.StreamHandler(<stdout expr>)`` is caught by its argument.
     """
-    from tests.test_orchestrator_gates import _UNRESOLVED, _resolve_dotted
+    from tests.orchestration.test_module_boundaries import (
+        _UNRESOLVED,
+        _resolve_dotted,
+    )
 
     if isinstance(node, ast.Call):
         callee, _ = _resolve_dotted(node.func, namespace)
@@ -4373,7 +4402,7 @@ def _loud_functions(path: Path) -> set:
 
     ``"<module>"`` stands for module-level statements, which run on import.
     """
-    from tests.test_orchestrator_gates import _module_namespace
+    from tests.orchestration.test_module_boundaries import _module_namespace
 
     tree = ast.parse(path.read_text(encoding="utf-8"))
     namespace = _module_namespace(path, tree)
@@ -4861,9 +4890,16 @@ def test_no_module_declares_its_own_requirement_id_grammar():
     # see while it started from `_SERVER_PKG` alone.
     from tests.test_spawn_progress import _scanned_modules
 
+    # `foundry_orchestrator.py` was one of the seven, and the carve deleted it.
+    # The entry is REPOINTED, not dropped: the two modules that now hold the
+    # code D-150 was filed against are `orchestration/gates.py` (which carries
+    # the `_REQ_ID_RE = REQUIREMENT_ID_RE` alias the monolith's copy became) and
+    # `orchestration/directives.py` (the `REQUIREMENT_ID_RE.findall(directive)`
+    # site). A dropped entry would let the scan stop reaching them and still
+    # report a clean zero, which is the exact failure this list exists to name.
     filed_on = [
         "foundry_handoff.py", "evidence.py", "foundry_validate.py",
-        "foundry_orchestrator.py", "foundry.py", "vocab.py",
+        "gates.py", "directives.py", "foundry.py", "vocab.py",
         "validate-test-observations.py",
     ]
     modules = _scanned_modules()
@@ -4913,9 +4949,12 @@ def test_the_canonical_grammar_never_narrows_what_was_counted_before():
     The pre-D-150 literal is reproduced here EXACTLY as it stood in all five
     wide copies. The canonical pattern must be a strict superset of it: every
     ID any consumer counted, cited or bound before this change must still be
-    counted, cited and bound. Written against the exported pattern, so
-    casting 2's swap of foundry_validate and foundry_orchestrator is checked by
-    this test too -- neither of us can narrow the shared seam alone.
+    counted, cited and bound. Written against the exported pattern, so the swap
+    of `foundry_validate.py` and of what was then the orchestrator monolith is
+    checked by this test too -- neither of us can narrow the shared seam alone.
+    The monolith's own copy is now `orchestration/gates.py#_REQ_ID_RE` and the
+    `findall` site in `orchestration/directives.py`; the seam they read through
+    is `foundry_mcp.schemas.vocab#REQUIREMENT_ID_RE`, unchanged by the carve.
     """
     old = re.compile(r"\b(?:US|FR|NFR|AC|VC|IR|TR)-\d+(?:\.\d+)?\b")
     corpus = (
