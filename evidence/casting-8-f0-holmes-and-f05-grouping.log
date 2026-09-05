@@ -1,0 +1,10 @@
+# evidence-cmd: cd plugins/foundry && for p in '/holmes:review' 'research/holmes-orchestrator.md' 'RESEARCH_AUDIT roster' 'Group by BEHAVIOUR, and record what each casting owns' 'the requirement ids that casting owns' 'REFUSES a span above two without one' 'requirement span table'; do printf '%s\t%s\n' "$(grep -c -F "$p" commands/start.md)" "$p"; done
+# evidence-for: AC-016, AC-043, FR-009, FR-031, FR-052, FR-056, OT-017, US-003
+
+1	/holmes:review
+1	research/holmes-orchestrator.md
+1	RESEARCH_AUDIT roster
+1	Group by BEHAVIOUR, and record what each casting owns
+1	the requirement ids that casting owns
+1	REFUSES a span above two without one
+1	requirement span table

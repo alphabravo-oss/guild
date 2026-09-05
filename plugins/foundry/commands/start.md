@@ -96,6 +96,12 @@ Investigate HOW to build before decomposing. Spawn 2-4 researcher agents in para
 
 Before F0.5, if the codebase is unfamiliar or has strict patterns: spawn one `codebase-mapper` agent. Agent writes seven files under `foundry-archive/{run}/codebase/`: STACK, ARCHITECTURE, STRUCTURE, CONVENTIONS, INTEGRATIONS, CONCERNS, MANDATORY_RULES. Returns `top_conventions` (3 rules) and `mandatory_rules` (full CLAUDE.md imperatives) — both get injected into every casting prompt at F0.5.
 
+### F0 (conditional): HOLMES REVIEW
+
+**Reviewing the orchestrator before decomposing a split of it (F0):** on a self-targeting run whose spec names a module split, run `/holmes:review` on the orchestrator and save the report as `foundry-archive/{run}/research/holmes-orchestrator.md`. Saving it there is what puts it on the RESEARCH_AUDIT roster — that stream audits the build against every `research/*.md` file the run carries, so a review written anywhere else is a review no stream ever reads. Run it before F0.6 PATTERN MAPPING, so F0.5 DECOMPOSE can cite it. **A split decomposed without a design review is a split decided from the module's own headings.** Whatever shape the file already had becomes the shape the castings reproduce, one boundary per casting, and nothing downstream ever asks whether that boundary was the right one — the streams verify that the code matches the decomposition, never that the decomposition was worth matching.
+
+**Both conditions, never one.** The run's target is foundry itself (see **Starting a run whose target is foundry itself (F0)** above) AND the spec names a module split. A run that is not self-targeting has no orchestrator of its own for the review to read, and a self-targeting run that moves no module has no boundary for it to judge. When either is false, skip the step and write nothing under `research/` — an empty or speculative review on the roster is a document RESEARCH_AUDIT will hold the build against.
+
 ### F0.6: PATTERN MAPPING
 
 After codebase-mapping (or F0 RESEARCH if codebase-mapping was skipped), and before F0.5 DECOMPOSE: spawn ONE `pattern-mapper` agent (`subagent_type: "general-purpose"` with prompt = full content of `${CLAUDE_PLUGIN_ROOT}/agents/pattern-mapper.md`). **Model: take the pin from the `model:` line of that same agent file** — a `general-purpose` spawn hands the file over as prompt text, so its frontmatter is not applied for you. `pattern-mapper` is not steerable by the `model` option and no `agent_config` is returned for this step, so that agent file is the only source of truth: never name its model in this prose, and never re-derive one from the allocation table.
@@ -198,7 +204,16 @@ After codebase-mapping (or F0 RESEARCH if codebase-mapping was skipped), and bef
 4. Identify 2-5 domains. Spawn parallel **background** Agents (1 per domain, max 5; `subagent_type='general-purpose'`, `run_in_background=true`, `mode='bypassPermissions'`). No team needed — these are short-lived file writers and don't need `TeamCreate`/shutdown coordination. Each agent writes:
    - An entry in `castings/manifest.json`
    - A complete prompt file at `castings/casting-{id}-prompt.md`
-5. **Each casting manifest entry MUST have:** `id`, `title`, `spec_text` (verbatim extract), `observable_truths` (min 3 user-facing), `key_files` (max 8, no overlap), `must_haves` (`truths`, `artifacts` with `min_lines`, `key_links`, and `coverage_list` for MIGRATION specs), `research_context`.
+5. **Each casting manifest entry MUST have:** `id`, `title`, `spec_text` (verbatim extract), `observable_truths` (min 3 user-facing), `key_files` (max 8, no overlap), `must_haves` (`truths`, `artifacts` with `min_lines`, `key_links`, and `coverage_list` for MIGRATION specs), `requirement_ids`, `research_context`.
+
+5a. **Group by BEHAVIOUR, and record what each casting owns.** A door and every surface that states its rule belong to ONE casting — the door itself, its report row, its display line, its command prose and its README row. Those five are five statements of one behaviour, and a decomposition that scatters them gives one sentence five owners and gives the agreement between them none: each casting builds its own surface correctly and the run ships five spellings of one rule. Take a LAYER split — every door here, every piece of prose there — **only where those surfaces genuinely cannot share an owner**, and when you take one, record why.
+
+   Two manifest fields carry that decision forward, and F0.5 is the only place either can be written. There is no decompose tool: `castings/manifest.json` and every `casting-{id}-prompt.md` are authored here, by the agents this step spawns, so nothing downstream can derive what this step does not record.
+
+   - **`requirement_ids` on every casting** — the requirement ids that casting owns, persisted beside its `key_files`. `Foundry-Tasks` reads the persisted list to compute a co-dispatch set; it never re-derives ownership from `spec_text` prose at dispatch time, because prose that merely quotes an id is not a claim to own it. A casting without the field is a casting whose ownership is a guess, and F0.9 refuses on the absence.
+   - **`split_reason`** — a `{requirement id: why}` map, on the casting or at the top level of the manifest, naming every id that lands on MORE THAN TWO castings and stating why those surfaces cannot share an owner. **F0.9 REFUSES a span above two without one**, so an unrecorded three-way split stops the run at VALIDATE rather than surfacing as five disagreeing surfaces at INSPECT.
+
+   `Foundry-Validate-Castings` prints the span table at F0.9 — one row per requirement id, its owners, its span and the recorded reason. That table is the CHECK on this step, never a second place to make the decision: a span it reports as three with no reason is this step's output being read back, not a new fact.
 6. **Each `casting-{id}-prompt.md` MUST have this structure (stable-first ordering for wave-level prompt caching; teammate methodology lives in `foundry:teammate`'s system prompt, NOT inlined here):**
 
    ```markdown
@@ -450,7 +465,7 @@ on intent-coverage pass to transition to F0.9.
 
 Call `Foundry-Validate-Castings` — runs 10 dimensions:
 
-1. Requirement Coverage (every spec req ID in some casting)
+1. **Requirement Coverage** — every spec req ID in some casting, and every casting carrying the `requirement_ids` F0.5 step 5a wrote. This dimension also prints the **requirement span table**: one row per requirement id, the castings that own it, its span and the recorded reason. A span above two REFUSES unless `split_reason` names that id — the recorded exits are to regroup the surfaces under one owner, or to write the reason. The table is computed from the persisted `requirement_ids` and never from prompt prose, so an id a prompt merely quotes does not silently become a third owner.
 2. Casting Completeness (must_haves populated)
 3. Dependency Correctness (no file overlap)
 4. Key Links Planned (artifacts wired)
