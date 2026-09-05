@@ -1214,11 +1214,12 @@ _SECOND_CYCLE_READERS: dict[str, str] = {}
 #: ledgers, by module and symbol. `foundry_report._read_dispatch_summary`
 #: closed its half by calling the leaf; these four survived the split and each
 #: still re-spells `read_jsonl`'s line loop or walks the roll-up again.
+#: SHRINKING AS DESIGNED: `_spawn_rows` and `_stream_dispatch_cycles` were
+#: rows here and are gone from the tree, so their rows went with them — which
+#: is the whole rule, and the reason a stale row fails as loudly as a new copy.
 _SECOND_DISPATCH_ASSEMBLIES: dict[str, str] = {
-    "orchestration/spend.py#_spawn_rows": "spawns.log, re-spelling read_jsonl",
-    "orchestration/spend.py#_spend_ledger_rows": "spend.jsonl, likewise",
-    "orchestration/spend.py#_stream_dispatch_cycles": "a second roll-up walk",
-    "orchestration/spend.py#_dispatch_pairs": "the assembly those three feed",
+    "orchestration/spend.py#_spend_ledger_rows": "spend.jsonl, re-spelling read_jsonl",
+    "orchestration/spend.py#_dispatch_pairs": "the assembly it feeds",
 }
 
 

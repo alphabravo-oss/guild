@@ -95,11 +95,28 @@ from foundry_mcp.tools.foundry_state import (
 # ---------------------------------------------------------------------------
 VERDICTS_FILENAME = "verdicts.json"
 DEFECTS_FILENAME = "defects.json"
-ESCALATION_FILENAME = "escalation.json"
 HANDOFFS_FILENAME = "handoffs.jsonl"
 SPAWNS_FILENAME = "spawns.log"
 STATE_FILENAME = "state.json"
-ROLLUP_FILENAME = "stream-rollup.json"
+
+# fallout D-034 / concern C-014 — TWO OF THEM ARE THE WRITER'S TO NAME.
+#
+# `escalation.json` and `stream-rollup.json` were re-typed here as literals
+# beside the modules that WRITE them, and `_KNOWN_DUPLICATION` carried both as
+# named debt. The writer's declaration is canonical and this module is a
+# reader, so the name is imported rather than spelled a second time — one
+# rename in the writer now reaches every reader, which is what a filename
+# constant is for.
+#
+# MODULE LEVEL, and the pin that used to forbid it is what makes that safe.
+# `test_foundry_report_imports_only_the_two_leaf_modules` allowed only the two
+# leaves because `foundry_orchestrator` imported this module and a third
+# module-level edge could close a cycle. That premise is gone with the
+# orchestrator: NOTHING in the package imports `foundry_report` at module
+# level, so no module-level import here can close one. The pin now asserts
+# that directly instead of standing in for it with a fixed roster.
+from foundry_mcp.tools.orchestration.escalation import ESCALATION_FILENAME
+from foundry_mcp.tools.orchestration.streams import ROLLUP_FILENAME
 
 #: What a defect row prints where its filing recorded no location. D-103.
 #:

@@ -3537,10 +3537,47 @@ def test_foundry_report_imports_only_the_two_leaf_modules():
     module_level: set[str] = set()
     for node in tree.body:
         module_level |= _imported(node)
+    # fallout D-034 / concern C-014 — THE ROSTER GREW, AND THE PROPERTY IT
+    # STOOD IN FOR IS NOW ASSERTED DIRECTLY.
+    #
+    # The two leaves were the whole allowlist because `foundry_orchestrator`
+    # imported this module, so a third module-level edge could close a cycle.
+    # That premise died with the orchestrator, and an allowlist outliving its
+    # premise is a rule nobody can evaluate: it says "these two" and cannot say
+    # why. `escalation.py` and `streams.py` WRITE the two artifacts whose names
+    # this module reads, both are lifecycle modules like this one, and
+    # `_KNOWN_DUPLICATION` carried both re-typed literals as named debt.
+    #
+    # So the roster is stated AND the acyclicity is computed below. A future
+    # edge that really would close a cycle fails on the computation, not on
+    # somebody remembering to keep the roster short.
     assert module_level == {
         "foundry_mcp.schemas.vocab",
         "foundry_mcp.tools.foundry_state",
+        "foundry_mcp.tools.orchestration.escalation",
+        "foundry_mcp.tools.orchestration.streams",
     }, sorted(module_level)
+
+    # THE PROPERTY: nothing imports this module at module level, so nothing
+    # this module imports at module level can reach back to it.
+    import foundry_mcp
+
+    pkg = Path(foundry_mcp.__file__).resolve().parent
+    importers = []
+    for module in sorted(pkg.rglob("*.py")):
+        if "__pycache__" in module.parts or module.name == "foundry_report.py":
+            continue
+        for node in ast.parse(module.read_text(encoding="utf-8")).body:
+            if "foundry_mcp.tools.foundry_report" in _imported(node):
+                importers.append(module.name)
+    assert importers == [], (
+        f"{importers} import(s) foundry_report at MODULE level. The roster "
+        f"above is safe only while nothing does: with an importer, a "
+        f"module-level import here can close a cycle and the extra edges must "
+        f"go back to the body-level seam."
+    )
+    # The walk must SEE something, or the emptiness above proves nothing.
+    assert len(list(pkg.rglob("*.py"))) >= 15
 
     nested: set[str] = set()
     for node in ast.walk(tree):

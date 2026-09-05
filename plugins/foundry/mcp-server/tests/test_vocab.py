@@ -1521,11 +1521,29 @@ def test_a_declared_member_is_never_an_unknown_status() -> None:
 
 
 def _shipped_readers_of_escalation_json() -> dict[str, "object"]:
-    """Every shipped module naming `escalation.json` as a string constant.
+    """Every shipped module that NAMES `escalation.json` — literal or import.
 
     DISCOVERED, never listed. A hand list is what the three per-instance fixes
     of this class each amounted to: the fix landed on the readers somebody
     remembered. The AST walk finds a FOURTH reader the day it is written.
+
+    TWO SPELLINGS, AND THE SECOND IS WHY (Holmes `vocab-3`, concern C-014).
+    ----------------------------------------------------------------------
+    Discovery keyed on the string CONSTANT alone, and Holmes named the trap
+    that made: "the ONLY `escalation.json` Constant node in the orchestrator is
+    the declaration ... if both imported the name from a shared home,
+    `_shipped_readers_of_escalation_json` would find NEITHER. A structural pin
+    that fails on centralisation is a ratchet holding the split in place, not a
+    coincidence." It fired exactly as predicted the moment `foundry_report.py`
+    stopped re-typing the literal and imported `ESCALATION_FILENAME` from the
+    module that writes the file — the pin reported that it was "vouching for a
+    reader it never looked at", which was true and was the RIGHT alarm.
+
+    The answer is not to keep the literal. It is that a module which imports
+    the NAME is a reader too, so discovery matches either spelling. The pin's
+    own property is untouched — a reader nobody has written yet is still found
+    the day it appears — and the ratchet is gone: centralising the filename now
+    makes discovery follow it instead of losing it.
 
     Tests are excluded — a test builds fixture documents and asserts on the
     literals by design. `vocab.py` is not excluded by name and does not need to
@@ -1540,10 +1558,16 @@ def _shipped_readers_of_escalation_json() -> dict[str, "object"]:
         if "/tests/" in rel or "/.venv/" in rel or "/site-packages/" in rel:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        if any(
+        names_the_file = any(
             isinstance(node, ast.Constant) and node.value == "escalation.json"
             for node in ast.walk(tree)
-        ):
+        ) or any(
+            alias.name == "ESCALATION_FILENAME"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        )
+        if names_the_file:
             found[rel] = tree
     return found
 
@@ -1606,12 +1630,34 @@ def test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab() -> N
             for alias in node.names
             if alias.name == "escalation_status"
         ]
-        assert imported, (
-            f"{rel} reads escalation.json but does not import "
-            f"`escalation_status` from schemas.vocab. Every reader of that "
-            f"file resolves the status through the ONE resolver — a reader "
-            f"with its own is how D-214 and D-215 happened, three cycles "
-            f"apart, in two different files."
+        # THE SECOND ARM: a module that resolves NOTHING is not required to
+        # import the resolver. `orchestration/gates.py` names the file and
+        # takes `_escalated_classes` / `_persisted_escalations` from
+        # `orchestration/escalation.py` — the module that DOES import
+        # `escalation_status` — so it holds no opinion of the field to drift.
+        # Demanding the vocab import there would push a reader into importing
+        # a resolver it never calls, which is noise, not a guard.
+        #
+        # Widening this arm costs nothing the pin was built for: the literal
+        # ban below applies to EVERY discovered module unconditionally, and it
+        # is the half that catches both named true positives. The delegation
+        # arm cannot swallow the pin either — the assertion after the loop
+        # requires that at least one discovered module really does import the
+        # resolver.
+        delegates = [
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.endswith("orchestration.escalation")
+        ]
+        assert imported or delegates, (
+            f"{rel} reads escalation.json but neither imports "
+            f"`escalation_status` from schemas.vocab nor takes its escalation "
+            f"derivations from orchestration/escalation.py. Every reader of "
+            f"that file resolves the status through the ONE resolver, or "
+            f"through a module that does — a reader with its own is how D-214 "
+            f"and D-215 happened, three cycles apart, in two different files."
         )
         literals = sorted({
             node.value
@@ -1627,6 +1673,28 @@ def test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab() -> N
             f"literal here is a second opinion of the field waiting to drift "
             f"from the resolver beside it (D-214 / D-215)."
         )
+
+    # THE DELEGATION ARM IS NOT A WAY OUT OF THE PIN. At least one discovered
+    # module must import the resolver itself, or a tree where every reader
+    # delegated to a module that had quietly stopped importing it would pass
+    # here while nothing resolved the status through the vocabulary at all.
+    resolvers = [
+        rel for rel, tree in readers.items()
+        if any(
+            alias.name == "escalation_status"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.endswith("schemas.vocab")
+            for alias in node.names
+        )
+    ]
+    assert resolvers, (
+        "no discovered reader of escalation.json imports `escalation_status` "
+        "from schemas.vocab. Every one of them is delegating to somebody, and "
+        "nobody is resolving."
+    )
+    assert len(readers) >= 3, sorted(readers)
 
 
 #: The document the class was found on, carrying one of each shape: a class
