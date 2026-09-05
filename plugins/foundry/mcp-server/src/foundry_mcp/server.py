@@ -68,6 +68,9 @@ from foundry_mcp.tools.orchestration.gates import (
     foundry_gate,
 )
 from foundry_mcp.tools.orchestration.guidance import (
+    LEAD_CALLER,
+    SUBAGENT_CALLER,
+    SUBAGENT_CALLER_INSTRUCTION,
     foundry_get_context,
     foundry_next_action,
 )
@@ -196,7 +199,8 @@ async def list_tools() -> list[Tool]:
                 "Every response carries `heading_for` (DONE or HALTED), the open "
                 "defect counts per tier that would form the backlog, and "
                 "`cycles_to_cap` (null on an unbounded run) — a named backlog is "
-                "a successful end, not a failure to reach DONE."
+                "a successful end, not a failure to reach DONE. "
+                + SUBAGENT_CALLER_INSTRUCTION
             ),
             inputSchema={
                 "type": "object",
@@ -210,11 +214,10 @@ async def list_tools() -> list[Tool]:
                     # "subagent" and the lead's own call arms nothing.
                     "caller": {
                         "type": "string",
-                        "enum": ["lead", "subagent"],
+                        "enum": [LEAD_CALLER, SUBAGENT_CALLER],
                         "description": (
-                            "Who is calling. Defaults to lead. A sub-agent MUST "
-                            "pass 'subagent': its read then arms neither the "
-                            "ordering token nor the stall clock."
+                            "Who is calling. Defaults to lead. "
+                            + SUBAGENT_CALLER_INSTRUCTION
                         ),
                     },
                 },
@@ -1491,7 +1494,7 @@ _DISPATCH = {
         url=args.get("url", ""), max_cycles=args.get("max_cycles", 0),
         project_root=_project_root),
     "Foundry-Next": lambda args: foundry_next_action(
-        project_root=_project_root, caller=args.get("caller", "lead")),
+        project_root=_project_root, caller=args.get("caller", LEAD_CALLER)),
     "Foundry-Context": lambda args: foundry_get_context(project_root=_project_root),
     "Foundry-Gate": lambda args: foundry_gate(
         phase=args["phase"], reason=args.get("reason", ""),

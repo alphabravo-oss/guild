@@ -718,8 +718,37 @@ def _progress_protocol_block(
             "file in append mode — never rewrite it. A failed append must NEVER block your "
             "work: swallow the error and carry on.",
             "",
+            # fallout FR-034 / FR-055 / AC-053 — THE ONE SURFACE EVERY SPAWNED
+            # AGENT PROVABLY READS.
+            #
+            # The `caller` argument that keeps a sub-agent's orienting read out
+            # of the lead's ordering token was published on the wire and told to
+            # nobody: it defaults to the lead value, and no shipped agent, skill
+            # or command file names it, so every spawned agent took the default
+            # and armed the handshake the lead owes. This block is appended
+            # verbatim to every spawn this module makes, which makes it the one
+            # place the instruction reaches an agent MECHANICALLY rather than by
+            # someone remembering to write it into that agent's prose. Quoted
+            # from the constant, so the sentence here and the sentence in the
+            # tool description cannot drift.
+            "### Foundry-Next is a READ for you, not a protocol step",
+            "",
+            _subagent_caller_instruction(),
+            "",
         ]
     )
+
+
+def _subagent_caller_instruction() -> str:
+    """guidance.py's one spelling of the sub-agent caller rule.
+
+    LAZY, in the shape this module's other cross-package seams use: the
+    orchestration package imports `foundry_spawn`, so a module-top import here
+    closes a cycle that takes every tool in this server down at once.
+    """
+    from foundry_mcp.tools.orchestration.guidance import SUBAGENT_CALLER_INSTRUCTION
+
+    return SUBAGENT_CALLER_INSTRUCTION
 
 
 def _parse_progress_timestamp(value: object) -> datetime | None:

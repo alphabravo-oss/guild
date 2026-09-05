@@ -1389,3 +1389,128 @@ def test_no_lead_imperative_tells_the_lead_to_record_a_stream():
         "no imperative mentions Foundry-Stream at all, so this sweep asserts "
         "nothing — the scan has gone blind"
     )
+
+
+
+
+def test_the_status_banner_declares_no_palette_and_no_phase_ladder_of_its_own():
+    """fallout research/holmes-orchestrator.md#coh-8 (D-014) / GI-024 / D-015.
+
+    `_format_status_display` is a RENDERER, and it lived beside its own copy of
+    two things another module owns: eight ANSI codes and the ten-row run-phase
+    ladder. Two declarations of one palette drift into two colour schemes in one
+    terminal; two declarations of one ladder mean a phase added to the
+    vocabulary renders as a run with a step missing, and the two agree only by
+    inspection until they do not.
+
+    Both are read now — `display`'s public spellings and
+    `schemas.vocab.PHASE_LADDER` / `PHASE_NAMES` — and this asserts the reading
+    on the SOURCE, because the harm is a second declaration and a behavioural
+    drive over agreeing copies proves nothing about which module owns them.
+    """
+    source = inspect.getsource(_guidance)
+
+    # No escape literal of any kind. The palette is display.py's, whole.
+    assert "\\x1b[" not in source and "\\033[" not in source, (
+        "guidance.py spells an ANSI escape of its own. The palette is "
+        "display.py's; import the public name."
+    )
+
+    # ...and no second phase ladder. A tuple pairing a run-phase id with that
+    # id's LABEL is the vocabulary's own row, wherever it is typed. A tuple of
+    # two phase IDS is a different thing — a source/destination pair — and is
+    # left alone, which is why the second element is judged against the labels
+    # rather than merely against "is a string".
+    tree = ast.parse(source)
+    typed_rows = [
+        ast.unparse(node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Tuple)
+        and len(node.elts) == 2
+        and all(
+            isinstance(e, ast.Constant) and isinstance(e.value, str)
+            for e in node.elts
+        )
+        and vocab.PHASE_NAMES.get(node.elts[0].value) == node.elts[1].value
+    ]
+    assert typed_rows == [], (
+        f"guidance.py types run-phase ladder row(s) of its own: {typed_rows}. "
+        "The ladder is schemas/vocab.py#PHASE_LADDER."
+    )
+
+    # The positive half: the renderer reaches both declarations.
+    banner = inspect.getsource(_guidance._format_status_display)
+    assert "PHASE_LADDER" in banner and "PHASE_NAMES" in banner, banner[:400]
+
+
+
+
+def test_the_subagent_caller_instruction_reaches_a_subagent_mechanically():
+    """fallout FR-034 / FR-055 / AC-053 — D-047: a published argument nobody
+    is told to pass.
+
+    The guard is correct — `is_lead = caller == LEAD_CALLER` gates both the
+    ordering token and the stall clock — and it was unreachable. `caller`
+    defaults to the lead value at the server boundary, and a driven grep across
+    `agents/`, `skills/` and `commands/` returned zero files naming it, so every
+    shipped sub-agent took the default and armed the handshake the LEAD owes.
+    Nine stream surfaces are pinned to take the cycle from Foundry-Next with no
+    caller argument beside it.
+
+    The two surfaces a sub-agent provably reads are the tool description it
+    loads with the tool list and the protocol block the lead appends to its
+    prompt verbatim. Both carry the instruction, and both QUOTE the one
+    constant rather than re-wording it, which is what keeps a prose sweep in
+    one of them from silently diverging from the other.
+    """
+    from foundry_mcp import server as foundry_server
+    from foundry_mcp.tools.foundry_spawn import _progress_protocol_block
+    from foundry_mcp.tools.orchestration.guidance import (
+        LEAD_CALLER,
+        SUBAGENT_CALLER,
+        SUBAGENT_CALLER_INSTRUCTION,
+    )
+
+    # The sentence names the argument and the value, so an agent reading only
+    # this line knows what to type.
+    assert f"caller='{SUBAGENT_CALLER}'" in SUBAGENT_CALLER_INSTRUCTION
+    assert SUBAGENT_CALLER != LEAD_CALLER
+
+    tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
+    next_tool = tools["Foundry-Next"]
+    assert SUBAGENT_CALLER_INSTRUCTION in next_tool.description, next_tool.description
+    caller_property = next_tool.inputSchema["properties"]["caller"]
+    assert SUBAGENT_CALLER_INSTRUCTION in caller_property["description"]
+    # The wire enum is DERIVED from the two constants, so a third caller kind
+    # cannot reach the guard without appearing here.
+    assert caller_property["enum"] == [LEAD_CALLER, SUBAGENT_CALLER]
+
+    # ...and every spawn this server makes appends it, which is the half that
+    # does not depend on an agent file being rewritten.
+    block = _progress_protocol_block("a-run", "casting-1")
+    assert SUBAGENT_CALLER_INSTRUCTION in block, block[-600:]
+
+
+def test_only_the_leads_next_arms_the_ordering_token_and_the_stall_clock(run_env):
+    """fallout AC-053 — the guard the instruction above exists to make reachable.
+
+    Driven at the door rather than read: a sub-agent's call must leave the
+    ordering token absent and the stall clock untouched, and the lead's call
+    must arm both. This is what the argument BUYS, and it is why publishing a
+    default that says 'lead' and telling nobody was the whole defect.
+    """
+    from foundry_mcp.tools.orchestration.guidance import (
+        LEAD_CALLER,
+        SUBAGENT_CALLER,
+    )
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    token = fdir / artifacts.NEXT_ACTION_CALLED_MARKER
+    token.unlink(missing_ok=True)
+
+    foundry_next_action(project_root, caller=SUBAGENT_CALLER)
+    assert not token.exists(), "a sub-agent's read armed the lead's ordering token"
+
+    foundry_next_action(project_root, caller=LEAD_CALLER)
+    assert token.exists(), "the lead's own call did not arm the ordering token"

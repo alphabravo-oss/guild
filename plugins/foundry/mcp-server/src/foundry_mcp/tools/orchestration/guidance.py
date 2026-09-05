@@ -13,6 +13,8 @@ from datetime import (
     timezone,
 )
 from foundry_mcp.schemas.vocab import (
+    PHASE_LADDER,
+    PHASE_NAMES,
     REPORT_MD_FILENAME,
     RUN_PHASE_HALTED,
     STREAM_WIRE_IDS,
@@ -28,16 +30,26 @@ from foundry_mcp.tools.artifacts import (
     _load_json,
     _read_text,
 )
+# fallout research/holmes-orchestrator.md#coh-8 (D-014) / GI-024 — THE PALETTE
+# AND THE PHASE VOCABULARY ARE READ, NOT DECLARED.
+#
+# `_format_status_display` renders the lead's status banner, and a renderer that
+# declares its own colours and its own phase labels is a second display module
+# wearing a guidance module's name. Casting 10 owns both declarations and has
+# published them: `display` names the eight codes this banner uses under their
+# public spellings, and `schemas.vocab.PHASE_LADDER` is the ordered run-phase
+# ladder with `PHASE_NAMES` derived from it. Both are imported here and neither
+# is re-typed, so a colour or a phase label changes in one place.
 from foundry_mcp.tools.display import (
+    BCYAN,
+    BGREEN,
+    BRED,
+    BWHITE,
+    BYELLOW,
+    DIM,
     FOUNDRY_SEP,
-    _BCYAN,
-    _BGREEN,
-    _BRED,
-    _BWHITE,
-    _BYELLOW,
-    _DIM,
-    _GREEN,
-    _RESET,
+    GREEN,
+    RESET,
     foundry_hammer,
 )
 from foundry_mcp.tools.foundry_state import (
@@ -249,6 +261,29 @@ def _stamp_subphases_in(state: dict, fdir: Path) -> None:
 #: Foundry-Next from a sub-agent's read. Only the LEAD's call arms the ordering
 #: token and resets the stall clock; a sub-agent orienting itself does neither.
 LEAD_CALLER = "lead"
+
+#: The other member, and the value every sub-agent must pass. Named rather than
+#: typed at each surface for the reason `_TEAMS_DOWN_HINT` is named: the wire
+#: enum, the tool description, the spawn-time instruction and the guard all say
+#: this word, and four spellings of one token is four chances to drift.
+SUBAGENT_CALLER = "subagent"
+
+#: fallout FR-034 / FR-055 / AC-053 — THE SENTENCE THAT HAS TO REACH A SUB-AGENT.
+#:
+#: The guard is correct and was unreachable: `caller` defaults to the lead value
+#: at the server boundary, and a sub-agent that never learns the argument exists
+#: takes the default and arms the lead's ordering token and stall clock on every
+#: orienting read. Publishing the argument in the schema is not the same as
+#: telling anyone to pass it, so the instruction is stated ONCE here and quoted
+#: by every surface a sub-agent actually reads: the Foundry-Next tool
+#: description it loads with the tool list, and the spawn-time protocol block
+#: the lead appends to its prompt.
+SUBAGENT_CALLER_INSTRUCTION = (
+    f"If you are a SUB-AGENT rather than the lead, pass caller='{SUBAGENT_CALLER}' "
+    "on every Foundry-Next call. The lead's call is a protocol step — it arms "
+    "the ordering token the next Foundry-Gate requires and resets the stall "
+    "clock; yours is a read, and passing the argument keeps it one."
+)
 
 
 
@@ -1064,12 +1099,11 @@ def _format_status_display(project_root: str) -> str:
         except ValueError:
             pass
 
-    phases = [
-        ("F0", "RESEARCH"), ("F0.5", "DECOMPOSE"), ("F0.9", "VALIDATE"),
-        ("F1", "CAST"), ("F2", "INSPECT"),
-        ("F3", "GRIND"), ("F4", "ASSAY"), ("F5", "TEMPER"),
-        ("F5.5", "NYQUIST"), ("F6", "DONE"),
-    ]
+    # fallout D-014 / D-015 — ONE LADDER, DECLARED IN THE VOCABULARY.
+    # This was a second hand-typed copy of the ten rows `schemas.vocab`
+    # declares, so a phase added there and not here would render as a run with
+    # a step missing — and the two would agree only by inspection.
+    phases = PHASE_LADDER
 
     # NFR-005 / CT-016 — HALTED IS IN THE DISPLAY VOCABULARY. D-137.
     #
@@ -1087,14 +1121,14 @@ def _format_status_display(project_root: str) -> str:
     # marks the current one, and HALTED is not a step on that path — it is
     # where a run stops instead of continuing along it. It is rendered as its
     # own line under the ladder for the same reason.
-    phase_names = dict(phases)
+    phase_names = PHASE_NAMES
     halted_display = phase == RUN_PHASE_HALTED
     phase_name = phase_names.get(phase, "")
     header_label = f"{phase} {phase_name}".strip() if phase_name else phase
-    header_colour = _BRED if halted_display else _BCYAN
+    header_colour = BRED if halted_display else BCYAN
     run_name = fdir.name
 
-    lines = [foundry_hammer(f"F O U N D R Y  {header_colour}{header_label}{_RESET}  Cycle: {cycle}  {elapsed}")]
+    lines = [foundry_hammer(f"F O U N D R Y  {header_colour}{header_label}{RESET}  Cycle: {cycle}  {elapsed}")]
 
     # Phase list
     for pid, pname in phases:
@@ -1102,22 +1136,22 @@ def _format_status_display(project_root: str) -> str:
         dur = timing.get("duration", "")
 
         if pid == phase:
-            icon = f"{_BGREEN}\u25b6{_RESET}"
-            label = f"{_BWHITE}{pid} {pname}{_RESET}"
-            right = f"  {_BGREEN}\u25c0 {elapsed}{_RESET}"
+            icon = f"{BGREEN}\u25b6{RESET}"
+            label = f"{BWHITE}{pid} {pname}{RESET}"
+            right = f"  {BGREEN}\u25c0 {elapsed}{RESET}"
         elif dur or timing.get("started_at"):
-            icon = f"{_GREEN}\u2713{_RESET}"
-            label = f"{_DIM}{pid} {pname}{_RESET}"
-            right = f"  {_DIM}{dur}{_RESET}" if dur else ""
+            icon = f"{GREEN}\u2713{RESET}"
+            label = f"{DIM}{pid} {pname}{RESET}"
+            right = f"  {DIM}{dur}{RESET}" if dur else ""
         elif (pid == "F5" and not state.get("temper", False)) or (
             pid == "F5.5" and not state.get("nyquist", False)
         ):
-            icon = f"{_DIM}\u2500{_RESET}"
-            label = f"{_DIM}{pid} {pname}{_RESET}"
-            right = f"  {_DIM}skip{_RESET}"
+            icon = f"{DIM}\u2500{RESET}"
+            label = f"{DIM}{pid} {pname}{RESET}"
+            right = f"  {DIM}skip{RESET}"
         else:
-            icon = f"{_DIM}\u25cb{_RESET}"
-            label = f"{_DIM}{pid} {pname}{_RESET}"
+            icon = f"{DIM}\u25cb{RESET}"
+            label = f"{DIM}{pid} {pname}{RESET}"
             right = ""
 
         lines.append(f"  {icon} {label}{right}")
@@ -1135,9 +1169,9 @@ def _format_status_display(project_root: str) -> str:
     regressed = sum(1 for d in all_d if d.get("regression"))
 
     if all_d:
-        defect_line = f"  {_BWHITE}Defects:{_RESET} {_BYELLOW}{open_d} open{_RESET}  {_BGREEN}{fixed_d} fixed{_RESET}"
+        defect_line = f"  {BWHITE}Defects:{RESET} {BYELLOW}{open_d} open{RESET}  {BGREEN}{fixed_d} fixed{RESET}"
         if regressed:
-            defect_line += f"  {_BRED}{regressed} regressed{_RESET}"
+            defect_line += f"  {BRED}{regressed} regressed{RESET}"
         lines.append(defect_line)
 
     # Verdicts
@@ -1147,8 +1181,8 @@ def _format_status_display(project_root: str) -> str:
         verified = sum(1 for r in reqs if r.get("verdict") == "VERIFIED")
         v_bar_len = 15
         v_filled = int((verified / len(reqs)) * v_bar_len) if reqs else 0
-        v_bar = f"{_BGREEN}{'\u2588' * v_filled}{_DIM}{'\u2591' * (v_bar_len - v_filled)}{_RESET}"
-        lines.append(f"  {_BWHITE}Verdicts:{_RESET} {v_bar} {verified}/{len(reqs)}")
+        v_bar = f"{BGREEN}{'\u2588' * v_filled}{DIM}{'\u2591' * (v_bar_len - v_filled)}{RESET}"
+        lines.append(f"  {BWHITE}Verdicts:{RESET} {v_bar} {verified}/{len(reqs)}")
 
     # Streams
     streams = _check_streams_complete(project_root)
@@ -1162,11 +1196,11 @@ def _format_status_display(project_root: str) -> str:
         for s in sorted(STREAM_WIRE_IDS):
             if s in req_streams:
                 if s not in missing_s:
-                    stream_icons.append(f"[{_GREEN}\u2713{_RESET}]{s}")
+                    stream_icons.append(f"[{GREEN}\u2713{RESET}]{s}")
                 else:
-                    stream_icons.append(f"[{_DIM} {_RESET}]{s}")
+                    stream_icons.append(f"[{DIM} {RESET}]{s}")
         if stream_icons:
-            lines.append(f"  {_BWHITE}Streams:{_RESET}  {' '.join(stream_icons)}")
+            lines.append(f"  {BWHITE}Streams:{RESET}  {' '.join(stream_icons)}")
 
     # D-018 — THE INSPECT / SPEND / SERVER / HALTED LINES ARE NOT DRAWN HERE.
     #
@@ -1194,7 +1228,7 @@ def _format_status_display(project_root: str) -> str:
         team_str = ", ".join(teams["teams"])
         if len(team_str) > 40:
             team_str = team_str[:37] + "..."
-        lines.append(f"  {_BWHITE}Teams:{_RESET}    {_BCYAN}{team_str}{_RESET}")
+        lines.append(f"  {BWHITE}Teams:{RESET}    {BCYAN}{team_str}{RESET}")
 
     lines.append(FOUNDRY_SEP)
 

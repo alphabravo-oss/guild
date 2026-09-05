@@ -1494,9 +1494,19 @@ def _dispatched_orchestrator_handlers() -> list[str]:
         if isinstance(t, ast.Name) and t.id == "_DISPATCH"
     )
     referenced = {n.id for n in ast.walk(dispatch) if isinstance(n, ast.Name)}
+    # fallout FR-034 — CALLABLES ONLY, AND THAT IS PART OF THE DERIVATION.
+    #
+    # A dispatch entry names more than its handler: `args.get("caller",
+    # LEAD_CALLER)` puts a vocabulary CONSTANT inside the map, and a constant
+    # this package also carries would otherwise be enrolled as an entry point
+    # and looked up in a table of function bodies it can never be in. The
+    # question this derivation asks is "which of this package's FUNCTIONS does
+    # the wire reach", so the callable test is the question, not a filter
+    # softening it.
     return sorted(
         name for name in referenced
         if orchestration_has(name)
+        and callable(getattr(owning_module(name), name, None))
     )
 
 
