@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -q tests/test_stream_rollup.py tests/test_nyquist_flag.py tests/test_model_config.py tests/test_spend.py 2>&1 | tail -3
+# evidence-for: FR-005, AC-014, AC-030, OT-016, OT-028, US-003, US-007
+# evidence-volatile: [0-9]+\.[0-9]+s
+# evidence-timeout: 300
+
+........................................................................ [ 86%]
+...................................                                      [100%]
+251 passed in 2.20s
