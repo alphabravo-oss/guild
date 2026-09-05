@@ -66,6 +66,7 @@ from foundry_mcp.tools.foundry_validate import (
     REQUIREMENT_SPAN_EXCEEDED,
     REQUIREMENT_SPAN_MAX,
     foundry_validate_castings,
+    requirement_span_table,
 )
 
 
@@ -1205,3 +1206,151 @@ def test_an_id_spelled_as_a_string_still_orders_and_does_not_raise(tmp_path: Pat
     )
 
     assert _row(result, "FR-009")["owners"] == [2, 10, "alpha"]
+
+
+# ── The public span entry point: one table, two surfaces ──────────────────
+#
+# fallout AC-044 / CT-011 — the F0.9 gate refuses on this table and the F6
+# report prints it, and they have to be the SAME table. A second assembly on
+# the reporting side would be a second answer to "who owns this requirement",
+# free to disagree with the answer a run was passed or refused on, which is
+# exactly what "the span table appears in the F0.9 output AND in the F6 report"
+# forbids. `requirement_span_table` is the one public entry point that makes
+# that structural rather than a matter of two implementations agreeing.
+#
+# The tests below drive it the way the reporting surface does — with a run
+# directory and nothing else in hand — and drive the gate over the SAME run,
+# then compare. They also drive every shape the reporting surface can meet that
+# the gate never does, because the report must render where the gate refuses.
+
+
+def _span_table_for(project_root: Path, run_name: str = "ownership-test") -> dict:
+    """`requirement_span_table` the way a renderer calls it: paths only."""
+    fdir = project_root / ARCHIVE_DIR / run_name
+    return requirement_span_table(str(project_root), fdir)
+
+
+def test_the_entry_point_returns_the_gate_s_own_table(tmp_path: Path):
+    """The property the whole entry point exists for: a renderer that never
+    ran the gate still gets the gate's answer, key for key.
+
+    Driven over a manifest with a real over-threshold span, so the comparison
+    is over a table with something IN it — two empty tables matching proves
+    nothing about who owns what.
+    """
+    result = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+    gate_table = result["requirement_span"]
+    assert gate_table["rows"], "the drive must produce a non-empty table"
+
+    table = _span_table_for(tmp_path)
+
+    assert table["problem"] is None
+    assert {k: v for k, v in table.items() if k != "problem"} == gate_table
+    # And the refusal the gate raised names the owners this table prints, so a
+    # lead reading the report sees what the gate acted on.
+    assert _row(result, "FR-009")["owners"] == next(
+        r for r in table["rows"] if r["id"] == "FR-009"
+    )["owners"]
+
+
+def test_the_entry_point_finds_the_run_when_it_is_given_no_directory(
+    tmp_path: Path,
+):
+    """`fdir=None` resolves the active run, for a caller that has only a root."""
+    _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+    set_active_run("ownership-test")
+    try:
+        table = requirement_span_table(str(tmp_path))
+    finally:
+        clear_active_run()
+
+    assert table["rows"] == _span_table_for(tmp_path)["rows"]
+
+
+def test_an_absent_manifest_renders_an_empty_table_rather_than_refusing(
+    tmp_path: Path,
+):
+    """The reporting surface must not refuse. A run halted before decompose
+    legitimately has no manifest, and an empty table is what is true of it —
+    NOT "not computable", which would blame a schema floor for an absent
+    decomposition.
+    """
+    fdir = tmp_path / ARCHIVE_DIR / "no-manifest"
+    fdir.mkdir(parents=True)
+
+    table = requirement_span_table(str(tmp_path), fdir)
+
+    assert table["rows"] == []
+    assert table["not_computable"] is False
+    assert table["threshold"] == REQUIREMENT_SPAN_MAX
+    assert "no requirement ids" in table["text"].lower()
+
+
+def test_an_unreadable_manifest_is_named_rather_than_read_as_empty(
+    tmp_path: Path,
+):
+    """A corrupt manifest and an absent one are different claims, and a
+    renderer that could not tell them apart would print "no requirements" over
+    a file it simply failed to parse.
+    """
+    fdir = tmp_path / ARCHIVE_DIR / "corrupt"
+    (fdir / "castings").mkdir(parents=True)
+    (fdir / "castings" / "manifest.json").write_text('{"castings":', encoding="utf-8")
+
+    table = requirement_span_table(str(tmp_path), fdir)
+
+    assert table["problem"] is not None
+    assert "manifest.json" in table["problem"]
+    assert table["rows"] == []
+
+
+def test_a_castings_key_of_the_wrong_type_renders_empty_rather_than_raising(
+    tmp_path: Path,
+):
+    """`castings` is a claim the manifest makes and it can be malformed. The
+    gate refuses on this shape; the report has to survive it.
+    """
+    fdir = tmp_path / ARCHIVE_DIR / "wrong-type"
+    (fdir / "castings").mkdir(parents=True)
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({"castings": "not a list"}), encoding="utf-8"
+    )
+
+    table = requirement_span_table(str(tmp_path), fdir)
+
+    assert table["problem"] is None
+    assert table["rows"] == []
+    assert table["not_computable"] is False
+
+
+def test_the_entry_point_reports_not_computable_on_a_legacy_archive(
+    tmp_path: Path,
+):
+    """fallout FR-054 — an archive predating the persisted ownership field
+    answers with the sentence the gate prints, not with an empty table, and the
+    two surfaces spell it the same because they share one rule.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_casting(1, excerpt=CLEAN_EXCERPT, include_owns=False)],
+        spec_text=CLEAN_EXCERPT,
+        state={"archive_schema_version": REQUIREMENT_IDS_SCHEMA_FLOOR - 1},
+    )
+    table = _span_table_for(tmp_path)
+
+    assert table["not_computable"] is True
+    assert result["requirement_span"]["not_computable"] is True
+    assert table["text"] == result["requirement_span"]["text"]
+    assert "not computable" in table["text"].lower()

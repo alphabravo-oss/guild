@@ -215,9 +215,15 @@ def _render_span_table(rows: list[dict], not_computable: bool) -> str:
 
     `Foundry-Validate-Castings` returns a payload and has no display module of
     its own, so the table ships BOTH ways: `rows` for a reader that will render
-    it (the F6 report draws the same table from the same records) and this
-    block for the lead reading F0.9's output directly. Both come from the one
-    computation, so they cannot disagree about who owns what.
+    it and this block for the lead reading F0.9's output directly. Both come
+    from the one computation, so they cannot disagree about who owns what.
+
+    THE OTHER READER NOW EXISTS, and it did not when this said so. The sentence
+    "the F6 report draws the same table from the same records" was written here
+    as a promise and D-039 was filed on its being false — the report had no such
+    section. It has one now, and it reaches this computation through
+    `requirement_span_table` rather than mirroring it, which is what makes the
+    promise a fact instead of a plan (fallout AC-044).
 
     An archive that predates the persisted ownership field gets a sentence
     saying so rather than an empty table, because an empty table reads as "no
@@ -282,6 +288,177 @@ def _owned_requirement_ids(casting: dict) -> tuple[bool, set[str]]:
     if not isinstance(raw, list):
         return True, set()
     return True, {v for v in raw if isinstance(v, str) and v}
+
+
+def _spec_requirement_ids(
+    project_root, fdir: Path, state: dict
+) -> tuple[str, set, Path, str | None]:
+    """``(spec text, the ids it declares, the path read, a named problem)``.
+
+    THE TWO-RUNG LADDER, SPELLED ONCE. A run's spec is the copy in the run
+    directory, and failing that the ``spec_path`` the run recorded, resolved
+    against the project root. Both surfaces that need the requirement ids climb
+    it — F0.9's dimensions here and the F6 span section — and a second climb
+    somewhere else is a second answer to "which spec is this run's", free to
+    read a different file than the gate refused on.
+
+    D-145: this is the read that leaves the run directory, so it is total.
+    ``_artifact_guard``'s rglob cannot reach a spec resolved against the project
+    root, and an unguarded ``read_text`` here raised UnicodeDecodeError across
+    the MCP boundary. ``read_text_file`` answers "" for an absent file — which
+    is what the old ``if exists()`` produced — and NAMES the file it cannot
+    decode.
+    """
+    spec_path = fdir / "spec.md"
+    if not spec_path.exists():
+        sp = state.get("spec_path", "")
+        if sp:
+            candidate = Path(project_root) / sp
+            if candidate.exists():
+                spec_path = candidate
+    spec_text, problem = read_text_file(spec_path)
+    if problem is not None:
+        return "", set(), spec_path, problem
+    return spec_text, set(REQUIREMENT_ID_RE.findall(spec_text)), spec_path, None
+
+
+def _ownership_and_computability(
+    castings: list, schema_version: int
+) -> tuple[dict, bool]:
+    """``({casting id: (field present, ids owned)}, not computable)``.
+
+    ONE DERIVATION OF BOTH, because the two travel together: every rung that
+    reads ownership also has to know whether ownership is knowable for this
+    archive, and a surface that recomputed one without the other would report a
+    manifest as inconsistent for lacking a field its release never wrote.
+
+    NOT COMPUTABLE, AND ONLY FOR AN ARCHIVE THAT PREDATES THE FIELD (FR-054).
+    Three conditions, each carrying its own weight: there ARE castings, NO
+    casting carries the list, and the run is below the schema floor. A run
+    created under the current release is refused for the same manifest, which
+    is what "fail closed only for new runs" means. A partially-filled manifest
+    is evaluated whatever the schema — somebody has started populating it and
+    the gaps are real.
+
+    ``bool(castings)`` is the rung F0.9 never reaches and the F6 report does:
+    the gate refuses an empty manifest before it gets here, while the report
+    renders one, and without this the "no casting carries it" clause is
+    vacuously true over an empty list and the sentence blames a schema floor
+    for what is really an absent decomposition.
+    """
+    ownership: dict[str, tuple[bool, set[str]]] = {
+        str(c.get("id", "?")): _owned_requirement_ids(c)
+        for c in castings
+        if isinstance(c, dict)
+    }
+    not_computable = bool(castings) and (
+        not any(present for present, _ in ownership.values())
+        and schema_version < REQUIREMENT_IDS_SCHEMA_FLOOR
+    )
+    return ownership, not_computable
+
+
+def _requirement_span_payload(
+    manifest: dict,
+    castings: list,
+    spec_req_ids: set,
+    ownership: dict,
+    not_computable: bool,
+) -> dict:
+    """The span table as data plus text, assembled from documents already read.
+
+    ``{"threshold", "not_computable", "rows", "text"}``. The inner half of
+    ``requirement_span_table``: this one takes what a caller has already read,
+    so the F0.9 gate — which has the manifest, the spec and the schema marker
+    in hand — reaches the computation without opening any of them a second
+    time. A reader that holds only paths calls the public entry point below,
+    which reads them once and arrives here.
+
+    ``rows`` and ``text`` come from the same list, so the records a surface
+    renders and the block it prints cannot name different owners; and because
+    the refusal reads these same rows, neither can disagree with the gate.
+    """
+    reasons = _recorded_split_reasons(manifest, castings)
+    rows = (
+        []
+        if not_computable
+        else _requirement_span_rows(
+            spec_req_ids,
+            [c for c in castings if isinstance(c, dict)],
+            ownership,
+            reasons,
+        )
+    )
+    return {
+        "threshold": REQUIREMENT_SPAN_MAX,
+        "not_computable": not_computable,
+        "rows": rows,
+        "text": _render_span_table(rows, not_computable),
+    }
+
+
+def requirement_span_table(project_root=".", fdir: Path | None = None) -> dict:
+    """AC-044 — THE requirement span table, for any surface that renders it.
+
+    ``{"threshold", "not_computable", "rows", "text", "problem"}``. ``rows`` is
+    one record per requirement id — ``{"id", "owners", "span", "split_reason"}``
+    — covering every id the spec declares and every id a casting owns, ordered
+    deterministically. ``problem`` is the named reason the manifest could not be
+    read, or None; on a problem the other keys carry the empty table rather than
+    a half-built one.
+
+    ONE COMPUTATION, TWO SURFACES (fallout AC-044, D-039). The F0.9 gate refuses
+    on this table and the F6 report prints it, and they must be the SAME table:
+    a second assembly anywhere would be a second answer to "who owns this
+    requirement", free to disagree with the answer a run was passed or refused
+    on. This is the one public entry point for the second surface — it exists so
+    a renderer imports ONE name instead of reaching five privates and re-
+    spelling the not-computable rule and the spec ladder, which is how the two
+    answers drift apart. ``foundry_validate_castings`` reaches the same
+    computation through ``_requirement_span_payload`` with the documents it has
+    already read, so neither surface reads anything twice.
+
+    TOTAL, ON EVERY SHAPE IT CAN MEET, because the F6 report must not refuse.
+    No active run, no manifest, an unreadable manifest and a manifest whose
+    ``castings`` is not a list each answer with the empty table — and an archive
+    that predates ``requirement_ids`` answers NOT COMPUTABLE, with the sentence
+    saying so rather than an empty table, because an empty table reads as "no
+    requirements" and that is a different and alarming claim.
+    """
+    if fdir is None:
+        fdir = get_run_dir(project_root)
+    if not fdir:
+        return {
+            "threshold": REQUIREMENT_SPAN_MAX,
+            "not_computable": False,
+            "rows": [],
+            "text": _render_span_table([], False),
+            "problem": None,
+        }
+
+    manifest, problem = read_document(Path(fdir) / "castings" / "manifest.json")
+    if problem is not None:
+        return {
+            "threshold": REQUIREMENT_SPAN_MAX,
+            "not_computable": False,
+            "rows": [],
+            "text": _render_span_table([], False),
+            "problem": problem,
+        }
+
+    castings = manifest.get("castings")
+    castings = castings if isinstance(castings, list) else []
+    state = _load_json(Path(fdir) / "state.json")
+    ownership, not_computable = _ownership_and_computability(
+        castings, _archive_schema_version(state)
+    )
+    _text, spec_req_ids, _path, _problem = _spec_requirement_ids(
+        project_root, Path(fdir), state
+    )
+    payload = _requirement_span_payload(
+        manifest, castings, spec_req_ids, ownership, not_computable
+    )
+    return {**payload, "problem": None}
 
 
 def _fingerprint_inputs(fdir: Path, manifest: dict, schema_version: int = 0) -> dict:
@@ -449,26 +626,14 @@ def foundry_validate_castings(
             "cache": {"hit": True, "cached_at": cached_result.get("cached_at")},
         }
 
-    # Load spec to extract requirements
-    spec_path = fdir / "spec.md"
-    if not spec_path.exists():
-        sp = state.get("spec_path", "")
-        if sp:
-            candidate = Path(project_root) / sp
-            if candidate.exists():
-                spec_path = candidate
-
-    # D-145: this read is the one that leaves the run directory. When the run
-    # dir holds no spec.md the fallback above resolves `state["spec_path"]`
-    # against the project root — which is the LIVE shape of this very run — and
-    # `_artifact_guard`'s rglob could not reach the result, so an unguarded
-    # `read_text` here raised UnicodeDecodeError across the MCP boundary.
-    # `read_text_file` is total ("" for an absent file, which is what the old
-    # `if exists()` produced) and NAMES the file when it cannot be read.
-    spec_text, spec_problem = read_text_file(spec_path)
+    # Load spec to extract requirements, through the one ladder the F6 span
+    # section climbs too — see `_spec_requirement_ids`, which carries D-145's
+    # tolerance and the reason this read is the one that leaves the run dir.
+    spec_text, spec_req_ids, spec_path, spec_problem = _spec_requirement_ids(
+        project_root, fdir, state
+    )
     if spec_problem is not None:
         return {"passed": False, **document_refusal(spec_path, spec_problem)}
-    spec_req_ids = set(REQUIREMENT_ID_RE.findall(spec_text))
 
     # Check for research artifacts
     research_dir = fdir / "research"
@@ -1371,18 +1536,13 @@ def foundry_validate_castings(
     # credit a casting with ids another casting owns; that is D-180 exactly,
     # and re-introducing it here would be the same defect twice.
     dim11_issues: list[dict] = []
-    ownership: dict[str, tuple[bool, set[str]]] = {
-        str(c.get("id", "?")): _owned_requirement_ids(c) for c in castings
-    }
-    # NOT COMPUTABLE, AND ONLY FOR AN ARCHIVE THAT PREDATES THE FIELD. Both
-    # halves are required: a manifest where NO casting carries the list at all,
-    # AND a run below the schema floor. A run created under the current release
-    # is refused for the same manifest, which is what "fail closed only for new
-    # runs" means. A partially-filled manifest is evaluated whatever the
-    # schema: somebody has started populating it, and the gaps are real.
-    ownership_not_computable = (
-        not any(present for present, _ in ownership.values())
-        and schema_version < REQUIREMENT_IDS_SCHEMA_FLOOR
+    # ONE DERIVATION, shared with the F6 span section — see
+    # `_ownership_and_computability`, which carries the FR-054 rule about which
+    # archives the ownership checks are knowable for. This gate has already
+    # refused an empty manifest above, so its `bool(castings)` rung is always
+    # true here and the answer is the one this dimension always gave.
+    ownership, ownership_not_computable = _ownership_and_computability(
+        castings, schema_version
     )
     if ownership_not_computable:
         dim11_issues.append({
@@ -1507,12 +1667,15 @@ def foundry_validate_castings(
     # refusal read `span_rows` — ONE computation — so the printed owners and
     # the refused owners can never disagree.
     dim12_issues: list[dict] = []
-    span_rows: list[dict] = []
-    split_reasons = _recorded_split_reasons(manifest, castings)
+    # THE one assembly, shared with `requirement_span_table` and therefore with
+    # the F6 report: this gate refuses on `span_table["rows"]` and every surface
+    # renders those same records, so what a lead is shown and what the gate
+    # acted on cannot name different owners.
+    span_table = _requirement_span_payload(
+        manifest, castings, spec_req_ids, ownership, ownership_not_computable
+    )
+    span_rows: list[dict] = span_table["rows"]
     if not ownership_not_computable:
-        span_rows = _requirement_span_rows(
-            spec_req_ids, castings, ownership, split_reasons
-        )
         for row in span_rows:
             if row["span"] <= REQUIREMENT_SPAN_MAX:
                 continue
@@ -1603,12 +1766,7 @@ def foundry_validate_castings(
         # `requirement_span` dimension holds — one computation, so a reader
         # that renders the records and a reader that reads the block below can
         # never disagree with the refusal about who owns what.
-        "requirement_span": {
-            "threshold": REQUIREMENT_SPAN_MAX,
-            "not_computable": ownership_not_computable,
-            "rows": span_rows,
-            "text": _render_span_table(span_rows, ownership_not_computable),
-        },
+        "requirement_span": span_table,
         "summary": {
             "castings": len(castings),
             "spec_requirements": len(spec_req_ids),
