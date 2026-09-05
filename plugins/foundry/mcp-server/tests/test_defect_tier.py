@@ -604,7 +604,7 @@ def test_the_batch_door_fires_the_tripwire_on_the_same_filing(run_env, earlier_r
     fire the audit record off the same returned ``denylist_class``, which is
     why the reorder had to happen inside the shared validator rather than at
     either call site (D-061)."""
-    from foundry_mcp.tools.foundry_orchestrator import foundry_sync_defects
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
 
     project_root, fdir = run_env
 
@@ -710,7 +710,7 @@ def test_both_doors_audit_the_same_unknown_source_security_filing(run_env):
     stream being able to observe it. That is what makes it a LATENT defect and
     not a reason to leave the doors disagreeing.
     """
-    from foundry_mcp.tools.foundry_orchestrator import foundry_sync_defects
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
 
     project_root, fdir = run_env
     shared = {
@@ -1142,21 +1142,21 @@ def test_the_single_door_retier_clears_the_blocking_bucket(run_env):
     """THE ADJACENT PATH: the gate reader, one module over.
 
     convergence FR-051's exit is only worth having if it MOVES something.
-    ``_blocking_defects`` in ``foundry_orchestrator.py`` buckets by
+    ``orchestration/gates.py#_blocking_defects`` buckets by
     ``vocab.defect_tier`` and treats
     TIER_UNKNOWN exactly like LIVE, and D-077's whole complaint is that through
     this door the blocking count stayed at 1. This drives that reader before
     and after."""
-    from foundry_mcp.tools import foundry_orchestrator as fo
+    from foundry_mcp.tools.orchestration.gates import _blocking_defects
 
     project_root, fdir = run_env
     _seed_untiered(fdir)
-    assert fo._blocking_defects(fdir)["unknown"] == ["D-001"]
-    assert fo._blocking_defects(fdir)["blocking"] == 1
+    assert _blocking_defects(fdir)["unknown"] == ["D-001"]
+    assert _blocking_defects(fdir)["blocking"] == 1
 
     _refile(project_root)
 
-    after = fo._blocking_defects(fdir)
+    after = _blocking_defects(fdir)
     assert after["unknown"] == [], after
     assert after["blocking"] == 0, "the LATENT classification must unblock the gate"
 
@@ -1168,7 +1168,7 @@ def test_the_batch_door_still_classifies_the_same_untiered_record(run_env):
     Lifting a rule out of one door and into a helper both call is only safe if
     the door it came FROM still behaves identically. Same seeded record, same
     finding, driven through the batch door."""
-    from foundry_mcp.tools.foundry_orchestrator import foundry_sync_defects
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
 
     project_root, fdir = run_env
     _seed_untiered(fdir)
@@ -1495,7 +1495,7 @@ def test_the_batch_door_refuses_and_audits_a_claim_in_an_invented_key(run_env):
     `description` key at all, the sentence in `failure`. Refused whole,
     nothing persisted, and the audit record written under the class the
     refusal named."""
-    from foundry_mcp.tools.foundry_orchestrator import foundry_sync_defects
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
 
     project_root, fdir = run_env
 
@@ -1749,7 +1749,7 @@ def test_both_real_doors_accept_the_negative_space_statement(run_env, matched, c
     D-158 shipped on both and the batch door is the one a whole INSPECT stream
     files through. Persisted, and the audit ledger untouched — a tripwire for
     an accepted filing would be the refusal's other half surviving alone."""
-    from foundry_mcp.tools.foundry_orchestrator import foundry_sync_defects
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
 
     project_root, fdir = run_env
 
@@ -1930,7 +1930,7 @@ def test_every_documented_latent_example_is_accepted_by_both_real_doors(run_env)
     `agents/research-auditor.md` or `skills/sight/SKILL.md` publishes fails
     with that surface named, and so does one that fires an audit record for a
     filing the doors accepted."""
-    from foundry_mcp.tools.foundry_orchestrator import foundry_sync_defects
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
 
     project_root, fdir = run_env
 

@@ -1196,7 +1196,7 @@ def test_an_absent_counter_stamps_zero_and_keeps_the_callers_claim(
     caller's number, on the reasoning that the server had "no better answer".
     It does: 0. Trusting the caller in the degraded case is precisely what
     process-fixes ST-001 exists to remove,
-    ``foundry_orchestrator._current_cycle`` has resolved this input to 0 since
+    ``foundry_state.py#current_cycle`` has resolved this input to 0 since
     D-059, and a filing door that disagrees with its sibling about WHICH cycle
     a record belongs to breaks escalation's
     consecutive-cycle count no matter which door is "right".
@@ -1239,7 +1239,7 @@ def test_a_malformed_counter_stamps_zero_not_the_callers_cycle(
     """D-119, the single door's half of the cross-door contract.
 
     ``foundry.py`` used to read a malformed counter as "no counter" and stamp
-    the caller's 8, while ``foundry_orchestrator.py`` read the identical file
+    the caller's 8, while ``orchestration/fix_gate.py`` read the identical file
     and stamped 0. Identical findings filed through Foundry-Defect and
     Foundry-Sync therefore landed in different cycles: mixed filing persisted
     [1,0,3] where one door alone would have persisted [1,2,3], the longest
@@ -1583,7 +1583,7 @@ def test_a_malformed_record_does_not_brick_the_queries(
 def test_ledger_transaction_refuses_a_non_list_container(run: Path) -> None:
     """D-096 at the primitive. The backstop for a caller that skips the guard:
     it raises and writes NOTHING, rather than coercing the container to ``[]``
-    and reporting success. ``foundry_orchestrator``'s two ledger writers import
+    and reporting success. ``orchestration/fix_gate.py``'s two ledger writers import
     this primitive, so the refusal has to live here and not only at this
     module's entry points."""
     from foundry_mcp.tools.foundry import LedgerShapeError
@@ -1818,7 +1818,7 @@ def test_every_ledger_writing_door_answers_in_band() -> None:
     discovered inside the locked primitive, frames below the entry point, and
     the old arrangement trusted each entry point to remember a pre-flight check
     for it. D-127 is what that costs: this module's doors remembered,
-    ``foundry_orchestrator``'s did not, and Foundry-Sync and Foundry-Fix
+    ``orchestration/fix_gate.py``'s did not, and Foundry-Sync and Foundry-Fix
     surfaced ``call_tool``'s unhandled-error banner instead of a refusal.
 
     The member set is not typed here. It is computed: the tools ``server.py``
@@ -2041,7 +2041,7 @@ def test_a_verdict_and_a_peer_writer_do_not_discard_each_other(
 ) -> None:
     """The D-125 pairing exactly as it occurs in a run.
 
-    ``foundry_orchestrator._synthesize_clean_prove_verdicts`` writes
+    ``orchestration/gates.py#_synthesize_clean_prove_verdicts`` writes
     verdicts.json through the locked transaction; ``foundry_add_verdict`` did
     not. One writer holding the lock is not a lock — it is a coincidence — so
     an F4 auto-VERIFY synthesis interleaving with a real Foundry-Verdict call

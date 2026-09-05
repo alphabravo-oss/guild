@@ -37,7 +37,7 @@ import pytest
 
 from foundry_mcp.tools.foundry import foundry_init
 from foundry_mcp.tools.foundry_state import clear_active_run, set_active_run
-from foundry_mcp.tools.foundry_orchestrator import _check_sight_required
+from foundry_mcp.tools.orchestration.teams import _check_sight_required
 
 
 # tests/test_foundry_init.py -> parents: [0]=tests, [1]=mcp-server, [2]=foundry.
@@ -230,7 +230,7 @@ def test_seeded_directive_parses_as_a_normal_directive(tmp_path):
     Priority matters: the ruling is seeded NORMAL, which is why the
     Foundry-Next renderer must show normal directives alongside urgent ones.
     A directive written in any other shape parses as no directive at all."""
-    from foundry_mcp.tools.foundry_orchestrator import _read_directives
+    from foundry_mcp.tools.orchestration.directives import _read_directives
 
     result = foundry_init(project_root=str(tmp_path))
     set_active_run(result["run_name"])
@@ -247,9 +247,9 @@ def test_seeded_directive_survives_an_urgent_injection(tmp_path):
     an urgent one is injected — both lists are populated independently.
 
     (Whether the Foundry-Next renderer then DISPLAYS both is the other half of
-    FR-019 and lives in foundry_orchestrator.py; this test pins the parse so
+    FR-019 and lives in orchestration/directives.py; this test pins the parse so
     that half has something correct to render.)"""
-    from foundry_mcp.tools.foundry_orchestrator import (
+    from foundry_mcp.tools.orchestration.directives import (
         _read_directives,
         foundry_inject_directive,
     )

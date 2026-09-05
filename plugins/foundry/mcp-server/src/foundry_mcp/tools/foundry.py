@@ -79,7 +79,7 @@ tool calls inside ONE MCP server process) and an ``fcntl.flock`` (separate
 server processes on the same repo). Ids come from ``allocate_record_id``, which
 is max-suffix+1 rather than the positional ``len+1`` that made two simultaneous
 filings collide. Both are exported: the second positional site lives in
-``foundry_orchestrator.foundry_sync_defects`` and must call these rather than
+``orchestration/fix_gate.py#foundry_sync_defects`` and must call these rather
 re-derive them.
 """
 
@@ -181,12 +181,15 @@ def _format_init_display(run_name: str, temper: bool = False, nyquist: bool = Fa
 # to find out which file to repair. The query path was holed identically, which
 # is what removed the last way to diagnose it.
 #
-# The split mirrors ``foundry_orchestrator``'s BY CONVENTION rather than by
-# import — same four names, same refusal shape, same tolerance contract — so
-# the two copies can later be folded into one shared loader mechanically. It is
-# not an import because that module imports THIS one, and reading back would
-# close a cycle in the import graph (the same reason ``_server_cycle`` is a
-# deliberate second copy).
+# The split mirrors ``tools/artifacts.py``'s BY CONVENTION rather than by
+# import — same four names, same refusal shape — and the two copies STAY two.
+# Holmes `helper-1` records the policy difference as deliberate: THIS module
+# fails CLOSED on a corrupt document (``LedgerShapeError``; D-096 / D-127)
+# while the leaf fails OPEN with ``{}``, so folding them would have to pick one
+# failure direction for callers that need both. The leaf is where Block B was
+# copied verbatim; nothing here is migrated onto it, for the same reason
+# ``_server_cycle`` is a deliberate second copy of
+# ``foundry_state.py#current_cycle``.
 #
 #   ``_read_document``   — the tolerant core: (data, named problem).
 #   ``_document_problem``— the problem alone.
@@ -398,7 +401,7 @@ def _atomic_rename_write(path: Path, data: dict) -> None:
 #
 # D-125 is the same race reached through the LAST unlocked door. verdicts.json
 # has two writers — this module's `foundry_add_verdict` and
-# `foundry_orchestrator._synthesize_clean_prove_verdicts` — and only the second
+# `orchestration/gates.py#_synthesize_clean_prove_verdicts` — and only that one
 # held a lock, so an F4 auto-VERIFY synthesis interleaving with a real
 # Foundry-Verdict call silently discarded whichever row renamed first. One
 # writer holding the lock is not a lock; it is a coincidence that has not
@@ -438,7 +441,7 @@ class LedgerShapeError(RuntimeError):
     success. It fails CLOSED — nothing is written — rather than open.
 
     CARRIES ITS OWN REFUSAL (D-127). The claim that "no production path reaches
-    this raise" was false: it was reached by both of ``foundry_orchestrator``'s
+    this raise" was false: it was reached by both of ``orchestration/fix_gate.py``'s
     ledger writers, whose own pre-flight guard inspects only the top-level
     object, and what the operator saw was ``call_tool``'s unhandled-error
     banner rather than the house ``{error, hint}`` refusal. A raise that
@@ -463,7 +466,7 @@ def ledger_refusals(fn):
     discovered inside the locked primitive, several frames below the entry
     point, and D-127 is what happens when each entry point is trusted to
     remember a pre-flight check for it — the ones in this module remembered,
-    the ones in ``foundry_orchestrator`` did not, and the difference was
+    the ones in ``orchestration/fix_gate.py`` did not, and the difference was
     invisible until it was driven.
 
     Wrapping is the binding that cannot be forgotten per-branch: every path
@@ -623,7 +626,7 @@ def ledger_transaction(path: Path, collection_key: str) -> Iterator[list[dict]]:
         ``LedgerShapeError`` and writes NOTHING. It is not coerced to ``[]``,
         because that coercion is what discarded a populated ledger and reported
         success. Bound here, not at each entry point, because it WAS bound at
-        each entry point and ``foundry_orchestrator``'s two writers were not
+        each entry point and ``orchestration/fix_gate.py``'s two writers were
         among them.
       - The non-dict record filter (D-097). One malformed historical record
         made ``d.get("status")`` raise mid-scan — and it raised AFTER the new
@@ -641,7 +644,7 @@ def ledger_transaction(path: Path, collection_key: str) -> Iterator[list[dict]]:
     them to a bad record.
 
     This is the write discipline every ledger writer must use — including
-    ``foundry_orchestrator``'s, which import it rather than re-deriving one.
+    ``orchestration/fix_gate.py``'s, which import it rather than re-deriving one.
     """
     with _locked_document(path) as data:
         records = _ledger_records(data, path, collection_key)
@@ -994,11 +997,12 @@ def record_denylist_tripwire(
         ``validate_defect_filing`` returns a refusal carrying
         ``denylist_class``, so the ATTEMPT is audited even though nothing is
         written to either ledger.
-      * ``foundry_sync_defects``'s refusal loop in ``foundry_orchestrator.py``
+      * ``foundry_sync_defects``'s refusal loop in
+        ``orchestration/fix_gate.py``
         — the same rung at the batch door, over every refused finding in the
         batch.
       * ``foundry_sync_defects``'s declared-comment branch in
-        ``foundry_orchestrator.py`` — audit only: the finding stays a defect
+        ``orchestration/fix_gate.py`` — audit only: the finding stays a defect
         either way, and the record captures that a denylist entry is what
         rescued it.
       * ``server.py``'s ``_audit_security_claim_on_refusal`` — the PRE-DISPATCH
@@ -1311,7 +1315,7 @@ def tripwire_finding(finding: Mapping[str, object]) -> dict:
     record now quotes the sentence rather than the empty description the
     smuggling filing carried. Both doors pass this shape; `foundry_add_defect`
     below and `foundry_sync_defects`' refusal loop in
-    `foundry_orchestrator.py` are the two call sites.
+    `orchestration/fix_gate.py` are the two call sites.
 
     Returns the finding unchanged when it carries no prose at all: nothing
     matched the security predicate in that case, and the tripwire is firing
@@ -1339,7 +1343,7 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
     -----------------------------------------------------------------
     There are two filing doors and they live in different modules:
     ``foundry_add_defect`` here, ``foundry_sync_defects`` in
-    ``foundry_orchestrator.py``. Every check those two doors were each trusted
+    ``orchestration/fix_gate.py``. Every check those two doors were each trusted
     to remember has eventually diverged — D-119 is the shipped instance (the
     two doors disagreed about which cycle a record belonged to, so identical
     findings filed through different doors produced different cycle runs and a
@@ -1717,7 +1721,7 @@ def _server_cycle(fdir: Path) -> int:
     """Return the server-owned cycle counter. Never caller-supplied.
 
     ``state.json['cycle']`` is maintained by the F3 GRIND -> F2 INSPECT
-    boundary handler (``foundry_orchestrator.foundry_mark_phase_complete``,
+    boundary handler (``orchestration/transitions.py#foundry_mark_phase_complete``,
     the ``inspect_start`` token). Per ST-001 it is the authority, and a
     caller-supplied ``cycle`` is not trusted against it: every cycle number in
     grand-vulture's data model was an integer the lead asserted, which is why
@@ -1728,7 +1732,7 @@ def _server_cycle(fdir: Path) -> int:
     Missing, absent, or malformed resolves to 0 rather than to the caller's
     value (D-119). This function used to return None there and its callers took
     that as licence to stamp the number they were handed, while the counterpart
-    reader ``foundry_orchestrator._current_cycle`` resolved the identical input
+    reader ``foundry_state.py#current_cycle`` resolved the identical input
     to 0 — so the SAME finding filed through Foundry-Defect and through
     Foundry-Sync landed in different cycles, and a class that recurred three
     straight cycles evaded ST-002 escalation because mixed-door filing broke
@@ -2061,8 +2065,10 @@ def foundry_init(
         description: Short description for name generation.
         url: Target URL for the SIGHT audit. Persisted to
             ``castings/manifest.json`` as ``target_url`` (the store of
-            record the inspect gate readers load — foundry_orchestrator.py
-            :531 / :1033), mirroring the bash init write at foundry.sh:176.
+            record the inspect gate readers load —
+            ``orchestration/streams.py#_check_streams_complete`` and
+            ``orchestration/teams.py#_check_sight_required``), mirroring the
+            bash init write at foundry.sh:176.
             NOT written into state.json.
         nyquist: Enable the optional F5.5 NYQUIST phase. Persisted to BOTH
             state.json and castings/manifest.json, mirroring ``temper`` and
@@ -2252,8 +2258,8 @@ def foundry_init(
     files_created.append("state.json")
 
     # castings/manifest.json — the store of record for target_url.
-    # The inspect gate readers (_check_streams_complete / _check_sight_required
-    # in foundry_orchestrator.py:531 / :1033) load target_url from HERE, not
+    # The inspect gate readers (orchestration/streams.py#_check_streams_complete
+    # and orchestration/teams.py#_check_sight_required) load target_url from HERE, not
     # from state.json. Mirrors the bash init write shape at foundry.sh:168-182
     # so the Python and bash init paths produce byte-compatible manifests.
     # `castings: []` at init keeps the F0 guidance engine emitting DECOMPOSE
@@ -3134,7 +3140,7 @@ def foundry_add_verdict(
             the same cycle, which is the whole point of stamping it.
 
     D-125: this ran as an UNLOCKED load / mutate / save while
-    ``foundry_orchestrator._synthesize_clean_prove_verdicts`` wrote the SAME
+    ``orchestration/gates.py#_synthesize_clean_prove_verdicts`` wrote the SAME
     file through a locked transaction — so verdicts.json was the one shared run
     artifact whose read-modify-write window was still open, and an F4
     auto-VERIFY synthesis interleaving with a real Foundry-Verdict call
