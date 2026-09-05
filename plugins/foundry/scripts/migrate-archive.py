@@ -124,19 +124,7 @@ try:  # Installed (uvx/pip) case — package is already importable.
         canonical_stream_id,
         defect_tier,
     )
-    # Steps 11 and 12 write two artifacts casting 1 owns, so their names come
-    # from the modules that own them and never from a literal here: a ledger
-    # whose filename or collection key is spelled twice is a ledger two readers
-    # can disagree about the shape of. Both modules reach only stdlib plus
-    # `vocab`, `foundry_state`, `citation` and `tools.foundry`, and every one of
-    # those is stdlib-backed — this script's "no runtime deps" contract is
-    # unchanged, on the same terms as `foundry_state`'s (D-141).
-    from foundry_mcp.tools.concerns import (
-        CONCERNS_COLLECTION_KEY,
-        CONCERNS_FILENAME,
-    )
     from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
-    from foundry_mcp.tools.rosters import ROSTERS_DIRNAME
     from foundry_mcp.tools.foundry_state import (
         derive_cycle_count,
         is_stream_record,
@@ -154,19 +142,7 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
         canonical_stream_id,
         defect_tier,
     )
-    # Steps 11 and 12 write two artifacts casting 1 owns, so their names come
-    # from the modules that own them and never from a literal here: a ledger
-    # whose filename or collection key is spelled twice is a ledger two readers
-    # can disagree about the shape of. Both modules reach only stdlib plus
-    # `vocab`, `foundry_state`, `citation` and `tools.foundry`, and every one of
-    # those is stdlib-backed — this script's "no runtime deps" contract is
-    # unchanged, on the same terms as `foundry_state`'s (D-141).
-    from foundry_mcp.tools.concerns import (
-        CONCERNS_COLLECTION_KEY,
-        CONCERNS_FILENAME,
-    )
     from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
-    from foundry_mcp.tools.rosters import ROSTERS_DIRNAME
     from foundry_mcp.tools.foundry_state import (
         derive_cycle_count,
         is_stream_record,
@@ -1018,10 +994,28 @@ def _migrate_concerns(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, Any]
     a shape and claims nothing — unlike `spend.jsonl`, whose empty form would
     assert a run cost nothing.
 
-    The collection key is the module constant's, not a literal: `concerns.py`
-    spells it once and a second spelling here is a ledger two readers disagree
-    about the shape of.
+    The filename and the collection key are `concerns.py`'s, not literals: it
+    spells them once and a second spelling here is a ledger two readers can
+    disagree about the shape of.
+
+    WHY THE IMPORT IS INSIDE THE FUNCTION. `concerns.py` reaches
+    `tools/foundry.py` — the package's MCP-facing surface, and by a long way its
+    largest module — so a module-level import here would put every one of this
+    tool's twelve steps behind it. That is a real cost on a script whose header
+    states a narrow one and whose whole job is repairing archives, sometimes
+    from a checkout mid-change: the ten steps that need none of it should not
+    stop running because a module they do not use will not load. A call-time
+    import runs when the step runs, so the constants stay this module's ONE
+    source for those two names and the coupling stays the width of the step
+    that has it. (`foundry_state`'s package-free leaf contract is the same
+    argument one layer down — it exists so this script and `measure-run.py` can
+    read a derivation without buying a package.)
     """
+    from foundry_mcp.tools.concerns import (
+        CONCERNS_COLLECTION_KEY,
+        CONCERNS_FILENAME,
+    )
+
     path = run_dir / CONCERNS_FILENAME
     if path.exists():
         return "no-op", {"reason": f"{CONCERNS_FILENAME} already present"}
@@ -1039,7 +1033,12 @@ def _migrate_rosters(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, Any]]
     measurement nobody took — and `Foundry-Roster` would then refuse the real
     derivation with ``ROSTER_EXISTS`` on the strength of it. Step 5 makes the
     same call for ``progress/`` and for the same reason.
+
+    The directory name is `rosters.py`'s, imported at call time for the reason
+    stated on the step above it.
     """
+    from foundry_mcp.tools.rosters import ROSTERS_DIRNAME
+
     path = run_dir / ROSTERS_DIRNAME
     if path.is_dir():
         return "no-op", {"reason": f"{ROSTERS_DIRNAME}/ already present"}
