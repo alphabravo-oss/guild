@@ -2146,11 +2146,16 @@ _PLUGIN_ROOT_MD_LOAD = re.compile(r"CLAUDE_PLUGIN_ROOT\}/([A-Za-z0-9_./-]+\.md)"
 #: make that true by construction — it knows nothing about load instructions —
 #: and the guards below fail the pin if the derivation ever selects nothing.
 def _verifying_stream_contracts() -> list["Path"]:
-    plugin_root = REPO_ROOT / "plugins" / "foundry"
+    # The walk starts from the WHOLE shipped prose corpus and narrows by the
+    # predicate, rather than pre-restricting to the two globs that happen to
+    # survive it today. That is the difference between deriving the set and
+    # asserting a hunch about it: `commands/*.md` and `references/*.md` drop
+    # out because `is_verifier_path` says so, and the day a verifying stream's
+    # contract lands in a fifth directory the corpus grows with no edit here.
     return sorted(
         doc
-        for glob in ("agents/*.md", "skills/*/SKILL.md")
-        for doc in plugin_root.glob(glob)
+        for glob in _SHIPPED_PROSE_GLOBS
+        for doc in (REPO_ROOT / "plugins" / "foundry").glob(glob)
         if vocab.is_verifier_path(str(doc.relative_to(REPO_ROOT)))
     )
 
