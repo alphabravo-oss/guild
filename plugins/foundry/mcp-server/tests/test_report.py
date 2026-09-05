@@ -15,6 +15,48 @@ nothing here ever writes into `tests/fixtures/`.
 Shape follows `tests/test_escalation.py`: a fixture that yields the run
 directory, small builders beside it, and one docstring per test quoting the
 requirement it proves.
+
+GI-010 / GI-026 — THE WAVE-2 REPOINT, AND THE TESTS IT LEAVES RED
+-----------------------------------------------------------------
+This module reached `foundry_orchestrator` lazily, inside test bodies and
+fixtures. GI-010 is "No facade: rewrite every import" and GI-026 puts the
+repoint "in the same casting as the source move" — but the source move is
+casting 2's, in wave 2, and this module is casting 10's. So the imports are
+written against the destination the module contract names, and the tests below
+are RED from that commit until casting 2 lands the split. Every one of them
+fails on `ModuleNotFoundError: No module named 'foundry_mcp.tools.orchestration'`
+and nothing else:
+
+    orchestration/transitions.py   foundry_mark_phase_complete
+    orchestration/streams.py       foundry_mark_stream
+    orchestration/fix_gate.py      foundry_mark_defect_fixed
+    orchestration/teams.py         _check_active_teams
+    orchestration/width.py         _current_inspect_mode,
+                                   INSPECT_BOUNDARY_SHA_MARKER
+    orchestration/gates.py         _open_defects_by_tier
+    orchestration/directives.py    foundry_defects_to_tasks
+    orchestration/spend.py         _spend_summary
+    orchestration/report_seal.py   _lead_header_lines, _carried_lead_prose
+
+    test_the_fixture_state_is_what_production_writes
+    test_the_driven_fixture_leaves_the_pre_change_record_alone
+    test_the_fixture_escalation_record_is_what_production_writes
+    test_the_agents_field_means_distinct_agents_exactly_as_the_rollup_does
+    test_a_halted_runs_report_states_the_grind_cycles_its_halt_reason_states
+    test_a_closed_untiered_record_is_not_listed_under_the_blocking_note
+    test_demo_grind_cycle_9_filings_at_the_real_door
+    test_demo_grind_cycle_10_filings_at_the_real_door
+    test_the_report_and_foundry_next_publish_the_same_cycle_axis
+    test_the_generated_banner_is_absorbed_by_the_seal_never_carried_as_prose
+
+Four reaches went GREEN immediately instead, because casting 10's own group 1
+put their symbols in the leaf: `_now` (as `foundry_state.now_iso`),
+`DISPATCH_PHASE_TO_RUN_PHASE`, `_md_sections` (as
+`foundry_state.markdown_sections`) and the unreported-dispatch walk (as
+`unreported_dispatch_inputs` plus `unreported_dispatch_summary`).
+
+A RED test in this module that is NOT on the list above is a defect in casting
+10, not a wave-2 wait.
 """
 
 from __future__ import annotations
@@ -192,28 +234,48 @@ class _FrozenClock:
 def _frozen_clock(start: datetime):
     """Drive both timestamp surfaces off one clock, then put them back.
 
-    Two surfaces, because the doors do not share one: `foundry_orchestrator`
-    stamps through its own `_now()`, while `tools/foundry.py` calls
+    Two surfaces, because the doors do not share one: the transition doors
+    stamp through `foundry_state.now_iso()`, while `tools/foundry.py` calls
     `datetime.now(timezone.utc)` inline. Patching one and not the other is how
     a fixture ends up with a defects ledger and a state file on different days.
+
+    GI-010 / GI-024 — THE TIMESTAMP SURFACE IS `foundry_state.now_iso` NOW.
+    This patched `foundry_orchestrator._now`, which was one of two `_now`
+    definitions in the package. Casting 10's group 1 hosted the one
+    implementation in the leaf; casting 2's group 0 replaces the monolith's
+    copy with an import from it. Until that lands, the doors this fixture
+    drives still stamp through the monolith's own copy, so the drive produces
+    live timestamps and the fixture-equality registers below are RED — named
+    in casting 10's completion report, and turned green by casting 2's group 0
+    rather than by an edit here.
+
+    The replacement takes `**_` because `now_iso`'s precision is a keyword
+    argument (`timespec`), and a stub that refused it would fail at the first
+    caller that passes one rather than at the assertion under test.
     """
     from foundry_mcp.tools import foundry as ft
-    from foundry_mcp.tools import foundry_orchestrator as fo
+    from foundry_mcp.tools import foundry_state
 
     clock = _FrozenClock(start)
-    original_now, original_datetime = fo._now, ft.datetime
-    fo._now = clock.iso
+    original_now, original_datetime = foundry_state.now_iso, ft.datetime
+    foundry_state.now_iso = lambda **_: clock.iso()
     ft.datetime = clock
     try:
         yield clock
     finally:
-        fo._now, ft.datetime = original_now, original_datetime
+        foundry_state.now_iso, ft.datetime = original_now, original_datetime
 
 
 def _drive_defect_ledger(tmp_path: Path) -> list[dict]:
     """File and fix the scenario through the real doors; return the ledger."""
     from foundry_mcp.tools import foundry as ft
-    from foundry_mcp.tools import foundry_orchestrator as fo
+    # GI-010 / GI-026 — the wave-2 destinations. Casting 2's split defines
+    # these symbols in the modules named below and its completion report's
+    # `## Symbol map` is the authority; where the map and this differ, the
+    # map wins and this is the edit.
+    from foundry_mcp.tools.orchestration.fix_gate import (
+        foundry_mark_defect_fixed,
+    )
     from foundry_mcp.tools import foundry_state
 
     run_name = "finer-boundary-ledger"
@@ -278,7 +340,7 @@ def _drive_defect_ledger(tmp_path: Path) -> list[dict]:
             if row["status"] != "fixed" or row["id"] == _PRE_CHANGE_ROW_ID:
                 continue
             _counter(row["fixed_in_cycle"])
-            fixed = fo.foundry_mark_defect_fixed(
+            fixed = foundry_mark_defect_fixed(
                 defect_id=row["id"],
                 cycle=row["fixed_in_cycle"],
                 adjacent_path_statement=(
@@ -313,7 +375,20 @@ def drive_finer_boundary_run(tmp_path: Path) -> dict[str, object]:
     first, in its own directory, and the transition drive is handed per-cycle
     slices of its result.
     """
-    from foundry_mcp.tools import foundry_orchestrator as fo
+    # GI-010 / GI-026 — the wave-2 destinations. Casting 2's split defines
+    # these symbols in the modules named below and its completion report's
+    # `## Symbol map` is the authority; where the map and this differ, the
+    # map wins and this is the edit.
+    from foundry_mcp.tools.foundry_state import now_iso
+    from foundry_mcp.tools.orchestration.streams import foundry_mark_stream
+    from foundry_mcp.tools.orchestration.teams import _check_active_teams
+    from foundry_mcp.tools.orchestration.transitions import (
+        foundry_mark_phase_complete,
+    )
+    from foundry_mcp.tools.orchestration.width import (
+        INSPECT_BOUNDARY_SHA_MARKER,
+        _current_inspect_mode,
+    )
     from foundry_mcp.tools import foundry_state
 
     rows = _drive_defect_ledger(tmp_path / "ledger")
@@ -361,11 +436,11 @@ def drive_finer_boundary_run(tmp_path: Path) -> dict[str, object]:
         )
 
     def _arm() -> None:
-        (fdir / ".next-action-called").write_text(f"{fo._now()}\n", encoding="utf-8")
+        (fdir / ".next-action-called").write_text(f"{now_iso()}\n", encoding="utf-8")
 
     def _cross(token: str) -> dict:
         _arm()
-        result = fo.foundry_mark_phase_complete(token, str(root))
+        result = foundry_mark_phase_complete(token, str(root))
         assert result.get("ok") is True, (token, result)
         return result
 
@@ -373,7 +448,7 @@ def drive_finer_boundary_run(tmp_path: Path) -> dict[str, object]:
         """Pin the boundary at HEAD, then commit the GRIND's work on top."""
         _git(root, "add", "-A")
         _git(root, "commit", "-q", "--allow-empty", "-m", "pre-boundary")
-        (fdir / fo.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+        (fdir / INSPECT_BOUNDARY_SHA_MARKER).write_text(
             _git(root, "rev-parse", "HEAD") + "\n", encoding="utf-8"
         )
         for rel in paths:
@@ -387,16 +462,16 @@ def drive_finer_boundary_run(tmp_path: Path) -> dict[str, object]:
 
     def _streams_done(cycle: int) -> None:
         """Every stream the RECORDED roster requires, through the real door."""
-        recorded = fo._current_inspect_mode(fdir) or {}
+        recorded = _current_inspect_mode(fdir) or {}
         for wire in recorded.get("required_streams", []):
-            marked = fo.foundry_mark_stream(
+            marked = foundry_mark_stream(
                 wire, cycle, items_checked=100, items_total=100,
                 findings_count=0, project_root=str(root),
             )
             assert not marked.get("error"), (wire, marked)
 
-    original_scan = fo._check_active_teams
-    fo._check_active_teams = lambda _pr: {
+    original_scan = _check_active_teams
+    _check_active_teams = lambda _pr: {
         "active": False, "teams": [], "live_panes": []
     }
     foundry_state.set_active_run(run_name)
@@ -789,7 +864,18 @@ def test_the_fixture_escalation_record_is_what_production_writes(tmp_path):
         LIVE_CLEAN_CYCLES_TO_CLEAR,
         STRUCTURAL_PASS_BUDGET,
     )
-    from foundry_mcp.tools import foundry_orchestrator as fo
+    # GI-010 / GI-026 — the wave-2 destinations. Casting 2's split defines
+    # these symbols in the modules named below and its completion report's
+    # `## Symbol map` is the authority; where the map and this differ, the
+    # map wins and this is the edit.
+    from foundry_mcp.tools.foundry_state import now_iso
+    from foundry_mcp.tools.orchestration.directives import (
+        foundry_defects_to_tasks,
+    )
+    from foundry_mcp.tools.orchestration.teams import _check_active_teams
+    from foundry_mcp.tools.orchestration.transitions import (
+        foundry_mark_phase_complete,
+    )
     from foundry_mcp.tools import foundry_state
 
     klass = "FALSE_DOCUMENTED_CONTRACT"
@@ -815,12 +901,12 @@ def test_the_fixture_escalation_record_is_what_production_writes(tmp_path):
 
     def _cross() -> dict:
         (run_dir / ".next-action-called").write_text(
-            f"{fo._now()}\n", encoding="utf-8"
+            f"{now_iso()}\n", encoding="utf-8"
         )
-        return fo.foundry_mark_phase_complete("inspect_start", project_root)
+        return foundry_mark_phase_complete("inspect_start", project_root)
 
-    original_scan = fo._check_active_teams
-    fo._check_active_teams = lambda _pr: {
+    original_scan = _check_active_teams
+    _check_active_teams = lambda _pr: {
         "active": False, "teams": [], "live_panes": []
     }
     foundry_state.set_active_run("finer-boundary-run")
@@ -829,7 +915,7 @@ def test_the_fixture_escalation_record_is_what_production_writes(tmp_path):
         # Foundry-Tasks dispatches structural packet 1.
         _ledger(["D-001", "D-002", "D-003"], ["D-006", "D-007"])
         _state("F2", 3)
-        assert fo.foundry_defects_to_tasks(project_root)["structural_tasks"] == 1
+        assert foundry_defects_to_tasks(project_root)["structural_tasks"] == 1
 
         # The GRIND closes two instances; the boundary closes cycle 3.
         _ledger(["D-003"], ["D-001", "D-002", "D-006", "D-007"])
@@ -839,7 +925,7 @@ def test_the_fixture_escalation_record_is_what_production_writes(tmp_path):
         # Cycle 4: PROVE files one LATENT instance at a finer boundary, and
         # Foundry-Tasks dispatches packet 2 — the last the budget allows.
         _ledger(["D-003", "D-004"], ["D-001", "D-002", "D-006", "D-007"])
-        assert fo.foundry_defects_to_tasks(project_root)["structural_tasks"] == 1
+        assert foundry_defects_to_tasks(project_root)["structural_tasks"] == 1
 
         # The boundary that closes cycle 4 CLOSES that packet, and the budget
         # arm applies the exit there (ST-002: "second structural packet
@@ -854,12 +940,12 @@ def test_the_fixture_escalation_record_is_what_production_writes(tmp_path):
         (run_dir / "defects.json").write_text(
             json.dumps({"defects": list(by_id.values())}), encoding="utf-8"
         )
-        assert fo.foundry_defects_to_tasks(project_root)["structural_tasks"] == 0
+        assert foundry_defects_to_tasks(project_root)["structural_tasks"] == 0
 
         produced = _read_json(run_dir, "escalation.json")["classes"][klass]
     finally:
         foundry_state.clear_active_run()
-        fo._check_active_teams = original_scan
+        _check_active_teams = original_scan
 
     committed = _read_json(FIXTURE_DIR, "escalation.json")["classes"][klass]
 
@@ -1767,7 +1853,7 @@ def test_the_agents_field_means_distinct_agents_exactly_as_the_rollup_does(
 ):
     """D-090 — one field name, two meanings, side by side in one document.
 
-    CT-013 / AC-033 / FR-021. `foundry_orchestrator._spend_summary` publishes
+    CT-013 / AC-033 / FR-021. The orchestrator's spend roll-up publishes
     `agents` as a count of DISTINCT agents — D-038 made it so, over a set, from
     this same ledger — and this reader published the same key as a count of
     RECORDS. So `report.json` carried `by_phase.F3 {tokens 240000, agents 3}`
@@ -1780,7 +1866,7 @@ def test_the_agents_field_means_distinct_agents_exactly_as_the_rollup_does(
     Driven exactly as the filing describes it: three spend calls in one phase
     from two agents.
     """
-    from foundry_mcp.tools.foundry_orchestrator import _spend_summary
+    from foundry_mcp.tools.orchestration.spend import _spend_summary
 
     (report_env / SPEND_LEDGER_FILENAME).write_text(
         "\n".join(
@@ -2005,7 +2091,7 @@ def test_an_unreported_dispatch_is_shown_and_no_gate_refuses_on_it(report_env):
     F1/F2/F3. This section used to bucket under `cast` and `grind`, so the
     report carried two keys that are not phases and could not be lined up
     against the roll-up beside them."""
-    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+    from foundry_mcp.tools.foundry_state import DISPATCH_PHASE_TO_RUN_PHASE
 
     _generate(report_env)
     section = _document(report_env)["unreported_dispatches"]
@@ -2026,7 +2112,7 @@ def test_an_unreported_dispatch_is_shown_and_no_gate_refuses_on_it(report_env):
     )
 
     # The DERIVED count agrees with the roll-up the run RECORDED beside it.
-    # `foundry_orchestrator._overlay_unreported` writes the derived number onto
+    # `foundry_state.overlay_unreported` writes the derived number onto
     # the C-4 buckets, so on a real run these two cannot part; pinning them
     # against each other rather than each against a literal is what stops this
     # section drifting away from the state.json a lead reads next to it. (The
@@ -2078,7 +2164,7 @@ def test_a_live_spawn_row_is_keyed_by_the_canonical_spelling(report_env):
     )
     (report_env / SPEND_LEDGER_FILENAME).write_text("", encoding="utf-8")
 
-    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+    from foundry_mcp.tools.foundry_state import DISPATCH_PHASE_TO_RUN_PHASE
 
     _generate(report_env)
     section = _document(report_env)["unreported_dispatches"]
@@ -2101,7 +2187,7 @@ def test_the_documented_spend_phase_clears_the_dispatch_verb_it_maps_to(report_e
     the thing that should always have carried it: the two vocabularies are
     reconciled through `DISPATCH_PHASE_TO_RUN_PHASE`, and a lead who spends the
     documented spelling clears the dispatch it names."""
-    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+    from foundry_mcp.tools.foundry_state import DISPATCH_PHASE_TO_RUN_PHASE
 
     (report_env / "spawns.log").write_text(
         json.dumps({"timestamp": "2026-09-03T00:55:14+00:00", "casting_id": 9,
@@ -2137,7 +2223,7 @@ def test_a_gap_at_one_phase_is_visible_though_the_agent_reported_at_another(
     appeared nowhere at all — the per-phase gap the requirement names was the
     one thing the section could not show. A pair is unreported when no spend
     row carries that exact `(agent, phase)`, and nothing else clears it."""
-    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+    from foundry_mcp.tools.foundry_state import DISPATCH_PHASE_TO_RUN_PHASE
 
     (report_env / "spawns.log").write_text(
         json.dumps({"timestamp": "2026-09-03T00:55:14+00:00", "casting_id": 9,
@@ -2177,7 +2263,7 @@ def test_the_unreported_rule_is_hosted_once_in_the_leaf_module(report_env):
     module both readers already import, and this asserts the report really
     delegates: feed the helper the same three inputs the report reads and the
     answers are identical, pair for pair."""
-    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+    from foundry_mcp.tools.foundry_state import DISPATCH_PHASE_TO_RUN_PHASE
     from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting as spelling
     from foundry_mcp.tools.foundry_state import (
         read_document,
@@ -2218,11 +2304,25 @@ def test_the_report_and_foundry_next_name_the_same_unreported_agents(report_env)
     """D-013 stated as the property that was violated: two derivations of one
     fact must not disagree.
 
-    `Foundry-Next` renders `foundry_orchestrator._unreported_dispatches` and
-    the report renders `_read_unreported_dispatches`; they read the same two
-    ledgers and must answer the same question the same way, or the operator has
-    no spelling that satisfies both."""
-    from foundry_mcp.tools.foundry_orchestrator import _unreported_dispatches
+    `Foundry-Next` and the report render the SAME pair set; they read the same
+    two ledgers and must answer the same question the same way, or the operator
+    has no spelling that satisfies both.
+
+    GI-024 — AND THE OTHER SURFACE IS NOW THE LEAF, WHICH IS THE POINT. This
+    drove `foundry_orchestrator._unreported_dispatches`, one of two walks of
+    the two ledgers. The RULE moved to `foundry_state.unreported_dispatch_pairs`
+    at D-047/D-048 and the INPUT ASSEMBLY moved to
+    `foundry_state.unreported_dispatch_inputs` in casting 10's group 1, so the
+    comparison is now between the report's rendering and the derivation itself
+    rather than between two walks — which is a stronger statement than the one
+    this register used to make, and it is green today.
+    """
+    from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting
+    from foundry_mcp.tools.foundry_state import (
+        DISPATCH_PHASE_TO_RUN_PHASE,
+        unreported_dispatch_inputs,
+        unreported_dispatch_summary,
+    )
 
     _generate(report_env)
     section = _document(report_env)["unreported_dispatches"]
@@ -2231,8 +2331,18 @@ def test_the_report_and_foundry_next_name_the_same_unreported_agents(report_env)
         for phase, agents in section["by_phase"].items()
         for agent in agents
     }
+    inputs = unreported_dispatch_inputs(report_env)
+    assert inputs["problem"] is None
     from_next = {
-        (row["agent"], row["phase"]) for row in _unreported_dispatches(report_env)
+        (pair["agent"], pair["phase"])
+        for pair in unreported_dispatch_summary(
+            dispatch_rows=inputs["dispatch_rows"],
+            stream_roster=inputs["stream_roster"],
+            spend_rows=inputs["spend_rows"],
+            phase_of_dispatch=DISPATCH_PHASE_TO_RUN_PHASE,
+            agent_id_of=_agent_id_for_casting,
+            cycles_of_agent=inputs["cycles_of_agent"],
+        )["pairs"]
     }
     assert from_report == from_next, sorted(from_report ^ from_next)
 
@@ -2822,7 +2932,15 @@ def _halted_at_the_real_door(
     another — needs two run directories; the second call would otherwise land
     in the first's archive.
     """
-    from foundry_mcp.tools import foundry_orchestrator as fo
+    # GI-010 / GI-026 — the wave-2 destinations. Casting 2's split defines
+    # these symbols in the modules named below and its completion report's
+    # `## Symbol map` is the authority; where the map and this differ, the
+    # map wins and this is the edit.
+    from foundry_mcp.tools.foundry_state import now_iso
+    from foundry_mcp.tools.orchestration.teams import _check_active_teams
+    from foundry_mcp.tools.orchestration.transitions import (
+        foundry_mark_phase_complete,
+    )
     from foundry_mcp.tools import foundry_state
 
     run_dir = tmp_path / "foundry-archive" / name
@@ -2844,18 +2962,18 @@ def _halted_at_the_real_door(
          "fixed_in_cycle": None},
     ]})
     (run_dir / ".tasks-generated").write_text("x\n", encoding="utf-8")
-    (run_dir / ".next-action-called").write_text(f"{fo._now()}\n",
+    (run_dir / ".next-action-called").write_text(f"{now_iso()}\n",
                                                  encoding="utf-8")
 
-    original = fo._check_active_teams
-    fo._check_active_teams = lambda _pr: {
+    original = _check_active_teams
+    _check_active_teams = lambda _pr: {
         "active": False, "teams": [], "live_panes": []
     }
     foundry_state.set_active_run(name)
     try:
-        result = fo.foundry_mark_phase_complete("grind_start", str(tmp_path))
+        result = foundry_mark_phase_complete("grind_start", str(tmp_path))
     finally:
-        fo._check_active_teams = original
+        _check_active_teams = original
         foundry_state.clear_active_run()
     return (_read_json(run_dir, "state.json"), _document(run_dir),
             _markdown(run_dir), result)
@@ -2951,7 +3069,7 @@ def test_the_cycle_rows_cover_only_agents_whose_dispatch_record_stamps_a_cycle(
     were dispatched in' — false for 14 of 19 pairs. Driven here on the filed
     synthetic shape: three teammates dispatched, one reporting spend, so two
     unreported pairs that the phase axis carries and no cycle row can."""
-    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+    from foundry_mcp.tools.foundry_state import DISPATCH_PHASE_TO_RUN_PHASE
 
     cast = DISPATCH_PHASE_TO_RUN_PHASE["cast"]
     run_dir, doc, md = _demo_run(
@@ -2993,7 +3111,7 @@ def test_a_stream_agent_is_the_one_thing_the_cycle_axis_does_carry(tmp_path):
     stamped and reaches the cycle rows; the teammate beside it is not. A fix
     that emptied the axis rather than scoping it would lose the one real
     per-cycle measurement the archive can make."""
-    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+    from foundry_mcp.tools.foundry_state import DISPATCH_PHASE_TO_RUN_PHASE
 
     cast = DISPATCH_PHASE_TO_RUN_PHASE["cast"]
     run_dir = tmp_path / "foundry-archive" / "d172-stream"
@@ -3505,7 +3623,8 @@ def test_the_unreported_count_is_derived_not_copied_from_the_rollup(report_env):
 
     `_read_spend` copied `unreported` verbatim out of `state.json.spend`, on
     the stated premise that the roll-up is "the orchestrator's derivation and
-    the only one". It is not: `foundry_orchestrator._overlay_unreported` runs
+    the only one". It is not: `overlay_unreported` — now
+    `foundry_state.overlay_unreported`, then the orchestrator's — runs
     inside `_spend_summary` against a throwaway deep copy, so the derived count
     never reaches the persisted document, and the only writer of the key there
     is `_empty_spend_bucket`, which seeds 0 and never increments.
@@ -3552,7 +3671,7 @@ def test_a_report_cannot_publish_zero_unreported_beside_a_list_of_one(report_env
     is visible". The filing observed `spend_per_phase_and_cycle.total.unreported
     = 0` and `by_phase {"F1": {"unreported": 0}}` in the same document as
     `unreported_dispatches {"count": 1, "by_phase": {"F1": ["casting-2"]}}`."""
-    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+    from foundry_mcp.tools.foundry_state import DISPATCH_PHASE_TO_RUN_PHASE
 
     cast_phase = DISPATCH_PHASE_TO_RUN_PHASE["cast"]
     (report_env / "spawns.log").write_text(
@@ -3637,7 +3756,7 @@ def test_a_closed_untiered_record_is_not_listed_under_the_blocking_note(
     claim and a remedy, both false for every row. The gate disagreed:
     `_open_defects_by_tier` skips any record whose status is not open, so the
     true blocking count was 0."""
-    from foundry_mcp.tools.foundry_orchestrator import _open_defects_by_tier
+    from foundry_mcp.tools.orchestration.gates import _open_defects_by_tier
 
     _generate(report_env)
     doc = _document(report_env)
@@ -4012,10 +4131,10 @@ _DEMO_VERSIONS = {
 def _dispatch_phase(verb: str) -> str:
     """`spawns.log`'s dispatch VERB mapped to the run phase id spend rows use.
 
-    Read from `foundry_orchestrator`, never re-typed: a local copy of that
+    Read from `foundry_state`, never re-typed: a local copy of that
     mapping is the drift D-048 closed.
     """
-    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+    from foundry_mcp.tools.foundry_state import DISPATCH_PHASE_TO_RUN_PHASE
 
     return DISPATCH_PHASE_TO_RUN_PHASE[verb]
 
@@ -4058,7 +4177,7 @@ def test_demo_grind_cycle_9_filings_at_the_real_door(tmp_path, capsys):
 
     AC-034 / FR-022 / CT-013 (D-163), FR-051 / AC-008 (D-166), AC-036 /
     FR-023 (D-167, D-168)."""
-    from foundry_mcp.tools.foundry_orchestrator import _open_defects_by_tier
+    from foundry_mcp.tools.orchestration.gates import _open_defects_by_tier
 
     def _section(md: str, heading: str) -> str:
         return md.split(f"## {heading}", 1)[1].split("\n## ", 1)[0]
@@ -4212,7 +4331,7 @@ def test_demo_grind_cycle_10_filings_at_the_real_door(tmp_path, capsys):
 
     FR-023 / FR-024 / FR-045 / NFR-001 / OT-026 / GI-006 (D-175);
     AC-034 / FR-022 / CT-013 / AC-036 (D-172)."""
-    from foundry_mcp.tools.foundry_orchestrator import DISPATCH_PHASE_TO_RUN_PHASE
+    from foundry_mcp.tools.foundry_state import DISPATCH_PHASE_TO_RUN_PHASE
     from foundry_mcp.tools.foundry_state import derive_cycle_count
 
     cast = DISPATCH_PHASE_TO_RUN_PHASE["cast"]
@@ -4445,7 +4564,7 @@ def test_a_zero_cycle_bucket_the_ledger_never_named_is_not_a_report_row(
     """AC-033 / AC-036 / FR-037 / CT-013 — an absent row is honest where a zero
     row is a claim (D-229), and this reader re-created every row D-229 pruned.
 
-    D-229 closed the zero rows in `foundry_orchestrator._overlay_unreported`,
+    D-229 closed the zero rows in `foundry_state.overlay_unreported`,
     which the DISPLAY runs on a deep copy and `foundry_record_spend` runs on the
     persisted document — so `state.json` is repaired by the NEXT spend call and
     not before. A run can reach DONE without one. This reader seeded a bucket
@@ -4525,7 +4644,7 @@ def test_the_report_and_foundry_next_publish_the_same_cycle_axis(report_env):
     measured nothing and one that did — so a fix that repaired only one surface
     fails here.
     """
-    from foundry_mcp.tools.foundry_orchestrator import _spend_summary
+    from foundry_mcp.tools.orchestration.spend import _spend_summary
 
     state = _read_json(report_env, "state.json")
     state["spend"]["by_cycle"]["7"] = {
@@ -4632,7 +4751,7 @@ def test_the_banner_tells_the_lead_where_prose_actually_survives(report_env):
     assert "under your OWN `## ` heading" in banner, banner
     assert "above the first generated section" in banner, banner
     # Named WITHOUT the `## ` prefix — the spelling both READMEs use. In full
-    # it would be `foundry_orchestrator._LEAD_NOTES_HEADING` verbatim, and two
+    # it would be the seal's `_LEAD_NOTES_HEADING` verbatim, and two
     # seal tests read "the seal appended nothing" as that constant being absent
     # from the whole document; a banner carrying it would make a purely
     # generated report look sealed to them.
@@ -4668,7 +4787,7 @@ def test_the_generated_banner_is_absorbed_by_the_seal_never_carried_as_prose(
 ):
     """The adjacent path: the F6 / HALTED seal, not the lead reading the file.
 
-    `foundry_orchestrator._lead_header_lines` drops a header line carrying
+    The seal's `_lead_header_lines` drops a header line carrying
     ` by Foundry-Report.` and keeps every other non-blank one AS THE LEAD'S. So
     the banner must be ONE rendered line containing that marker — split it and
     the half without the marker is carried into
@@ -4678,22 +4797,30 @@ def test_the_generated_banner_is_absorbed_by_the_seal_never_carried_as_prose(
     `_md_sections` matches a whole trimmed line, and this asserts it stays that
     way.
     """
-    from foundry_mcp.tools import foundry_orchestrator as fo
+    # GI-010 / GI-026 — the wave-2 destinations. Casting 2's split defines
+    # these symbols in the modules named below and its completion report's
+    # `## Symbol map` is the authority; where the map and this differ, the
+    # map wins and this is the edit.
+    from foundry_mcp.tools.foundry_state import markdown_sections
+    from foundry_mcp.tools.orchestration.report_seal import (
+        _carried_lead_prose,
+        _lead_header_lines,
+    )
 
     _generate(report_env)
     generated = _markdown(report_env)
 
-    header, blocks = fo._md_sections(generated)
+    header, blocks = markdown_sections(generated)
     assert len(blocks) == len(REPORT_REQUIRED_SECTIONS), [h for h, _ in blocks]
     assert sum(1 for ln in header if " by Foundry-Report." in ln) == 1, header
-    assert fo._lead_header_lines(header) == []
-    assert fo._carried_lead_prose(generated, generated) == []
+    assert _lead_header_lines(header) == []
+    assert _carried_lead_prose(generated, generated) == []
 
     # And a lead's own line above the first section still survives beside it.
     edited = generated.replace(
         "\n## ", "\n\nthe lead's own line\n\n## ", 1
     )
-    assert fo._carried_lead_prose(edited, generated) == ["the lead's own line"]
+    assert _carried_lead_prose(edited, generated) == ["the lead's own line"]
 
 
 # --------------------------------------------------------------------------- #

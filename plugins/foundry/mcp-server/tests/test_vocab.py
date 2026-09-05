@@ -13,6 +13,44 @@ Two guarantees carry the most weight:
     re-typed here, so the assertions track the surfaces rather than a copy.
   * AC-002 (never weaken) — the denylist outranks the observation classes.
     A finding matching both is a DEFECT.
+
+GI-010 / GI-026 — THE WAVE-2 REPOINT, AND THE TESTS IT LEAVES RED
+-----------------------------------------------------------------
+This module reached ``foundry_orchestrator`` lazily, inside test bodies and one
+fixture. GI-010 is "No facade: rewrite every import" and GI-026 puts the
+repoint "in the same casting as the source move" — but the source move is
+casting 2's, in wave 2, and this module is casting 10's. So the imports are
+written against the destination the module contract names, and the tests below
+are RED from that commit until casting 2 lands the split:
+
+    orchestration/streams.py     VALID_STREAMS
+    orchestration/gates.py       BLOCKING_TIERS
+    orchestration/teams.py       _check_active_teams  (the ``run_env`` fixture)
+    orchestration/escalation.py  _persisted_escalations, and the shipped-reader
+                                 roster row that names the module reading
+                                 ``escalation.json``
+
+    test_stream_wire_ids_never_narrows_valid_streams
+    test_hardening_is_a_defect_tier_and_is_not_in_the_blocking_set
+    test_all_three_readers_account_for_every_class_on_one_document
+    test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab
+    test_the_defect_door_audits_under_the_class_it_refuses  (4 parametrisations)
+    test_the_sync_door_audits_under_the_class_it_refuses    (4 parametrisations)
+
+THE EIGHT PARAMETRISED ROWS ARE THE FIXTURE'S BLAST RADIUS, not eight separate
+repoints: ``run_env`` patches ``_check_active_teams``, so every test that takes
+that fixture goes red with it. They are enumerated rather than summarised
+because casting 2 closes this list against a roster, not against a grep.
+
+``test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab`` is
+red for a different reason worth stating: its roster is asserted as a SUBSET of
+what an AST walk discovers, and the row now names a module that does not exist
+yet. Leaving the row on the monolith would have made the pin red the moment
+casting 2 deleted it — a surprise — where naming the destination makes it red
+now, on a list somebody wrote down.
+
+A RED test in this module that is NOT on the list above is a defect in casting
+10, not a wave-2 wait.
 """
 
 from __future__ import annotations
@@ -74,10 +112,14 @@ def test_canonical_stream_ids_is_the_15_id_roster() -> None:
 
 def test_stream_wire_ids_never_narrows_valid_streams() -> None:
     """NFR-002 — every stream Foundry-Stream accepts today keeps working."""
-    from foundry_mcp.tools import foundry_orchestrator as fo
+    # GI-010 / GI-026 — the wave-2 destination. Casting 2's split defines
+    # this symbol in the module named below and its completion report's
+    # `## Symbol map` is the authority; where the map and this differ, the
+    # map wins and this is the edit.
+    from foundry_mcp.tools.orchestration.streams import VALID_STREAMS
 
-    assert fo.VALID_STREAMS <= vocab.STREAM_WIRE_IDS, (
-        f"narrowed: {fo.VALID_STREAMS - vocab.STREAM_WIRE_IDS}"
+    assert VALID_STREAMS <= vocab.STREAM_WIRE_IDS, (
+        f"narrowed: {VALID_STREAMS - vocab.STREAM_WIRE_IDS}"
     )
 
 
@@ -729,8 +771,12 @@ def run_env(tmp_path, monkeypatch):
     doors read is written: a state.json for the server-side cycle, and the
     castings/ directory the run layout expects.
     """
-    from foundry_mcp.tools import foundry_orchestrator as fo
+    # GI-010 / GI-026 — the wave-2 destination. Casting 2's split defines
+    # this symbol in the module named below and its completion report's
+    # `## Symbol map` is the authority; where the map and this differ, the
+    # map wins and this is the edit.
     from foundry_mcp.tools import foundry_state
+    from foundry_mcp.tools.orchestration import teams as _teams
 
     run_name = "vocab-denylist-run"
     fdir = tmp_path / "foundry-archive" / run_name
@@ -740,7 +786,7 @@ def run_env(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(
-        fo,
+        _teams,
         "_check_active_teams",
         lambda _pr: {"active": False, "teams": [], "live_panes": []},
     )
@@ -1055,7 +1101,7 @@ def test_defect_tiers_is_the_three_member_closed_vocabulary() -> None:
 def test_hardening_is_a_defect_tier_and_is_not_in_the_blocking_set() -> None:
     """AC-022 — the whole of HARDENING's gate semantics, stated as an assertion.
 
-    `BLOCKING_TIERS` is a literal tuple in `foundry_orchestrator`, so adding
+    `BLOCKING_TIERS` is a literal tuple in the gate module, so adding
     the member changes nothing there and the CORRECT outcome is that nothing
     changed. That is exactly what makes this pin worth having: the day someone
     derives `BLOCKING_TIERS` from `DEFECT_TIERS` — which reads like a tidy-up
@@ -1066,7 +1112,11 @@ def test_hardening_is_a_defect_tier_and_is_not_in_the_blocking_set() -> None:
     defects; those are driven at the doors themselves (casting 4's file). What
     is asserted here is the vocabulary fact the doors read.
     """
-    from foundry_mcp.tools.foundry_orchestrator import BLOCKING_TIERS
+    # GI-010 / GI-026 — the wave-2 destination. Casting 2's split defines
+    # this symbol in the module named below and its completion report's
+    # `## Symbol map` is the authority; where the map and this differ, the
+    # map wins and this is the edit.
+    from foundry_mcp.tools.orchestration.gates import BLOCKING_TIERS
 
     assert vocab.TIER_HARDENING not in BLOCKING_TIERS, (
         "HARDENING is a driven failure that no requirement asks about "
@@ -1514,7 +1564,15 @@ def _shipped_readers_of_escalation_json() -> dict[str, "object"]:
 #: the assertions below, not merely noticed here. Naming them is what stops a
 #: silently-collapsed discovery from passing forever (the D-202 lesson).
 _KNOWN_ESCALATION_READERS = frozenset({
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py",
+    # GI-010 / GI-026 — the escalation reader is `orchestration/escalation.py`
+    # after casting 2's split. Repointed here rather than left naming a module
+    # that will not exist: this roster is asserted as a SUBSET of what the walk
+    # discovers, so a stale row makes the pin red the moment the monolith goes
+    # and a row that never existed makes it red until the split lands. The
+    # second is the honest RED — it is named in casting 10's completion report
+    # and closed by casting 2, where the first would be a surprise nobody wrote
+    # down.
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/escalation.py",
     "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_report.py",
     "plugins/foundry/scripts/measure-run.py",
 })
@@ -1634,8 +1692,12 @@ def test_all_three_readers_account_for_every_class_on_one_document(
     what the last three cycles shipped, and each passed while its neighbours
     were wrong.
     """
-    from foundry_mcp.tools import foundry_orchestrator as fo
+    # GI-010 / GI-026 — the wave-2 destination. Casting 2's split defines
+    # this symbol in the module named below and its completion report's
+    # `## Symbol map` is the authority; where the map and this differ, the
+    # map wins and this is the edit.
     from foundry_mcp.tools.foundry_report import _read_escalated_classes
+    from foundry_mcp.tools.orchestration.escalation import _persisted_escalations
 
     run_dir = tmp_path / "foundry-archive" / "pin-run"
     run_dir.mkdir(parents=True)
@@ -1645,7 +1707,7 @@ def test_all_three_readers_account_for_every_class_on_one_document(
     still_escalated = ["bogus-class", "live-class", "shapeless-class"]
 
     # Reader 1 — the deciding read behind Foundry-Gate('done').
-    persisted = fo._persisted_escalations(
+    persisted = _persisted_escalations(
         run_dir, str(tmp_path), _FOUR_SHAPE_ESCALATION_DOCUMENT["classes"]
     )
     assert persisted == still_escalated, persisted
