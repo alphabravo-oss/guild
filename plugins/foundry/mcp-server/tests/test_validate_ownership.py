@@ -1316,21 +1316,32 @@ def test_an_unreadable_manifest_is_named_rather_than_read_as_empty(
     assert table["rows"] == []
 
 
-def test_a_castings_key_of_the_wrong_type_renders_empty_rather_than_raising(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "castings",
+    ["not a list", [1, 2], [None]],
+    ids=["a-string", "a-list-of-ints", "a-list-of-nulls"],
+)
+def test_a_manifest_of_the_wrong_shape_is_named_rather_than_indexed(
+    tmp_path: Path, castings
 ):
-    """`castings` is a claim the manifest makes and it can be malformed. The
-    gate refuses on this shape; the report has to survive it.
+    """D-132's shapes, at this door. Each is valid JSON that parses cleanly and
+    then meets `.get()` one rung in — an AttributeError across the MCP boundary
+    from a surface whose whole contract is a named answer.
+
+    Named rather than rendered empty, for the same reason the corrupt manifest
+    above is: an empty table reads as "no requirements", which is a different
+    and alarming claim about a file that is simply not a manifest.
     """
     fdir = tmp_path / ARCHIVE_DIR / "wrong-type"
     (fdir / "castings").mkdir(parents=True)
     (fdir / "castings" / "manifest.json").write_text(
-        json.dumps({"castings": "not a list"}), encoding="utf-8"
+        json.dumps({"castings": castings}), encoding="utf-8"
     )
 
     table = requirement_span_table(str(tmp_path), fdir)
 
-    assert table["problem"] is None
+    assert table["problem"] is not None
+    assert "castings" in table["problem"]
     assert table["rows"] == []
     assert table["not_computable"] is False
 

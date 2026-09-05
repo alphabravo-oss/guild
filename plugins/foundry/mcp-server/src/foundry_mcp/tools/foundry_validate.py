@@ -404,8 +404,8 @@ def requirement_span_table(project_root=".", fdir: Path | None = None) -> dict:
     one record per requirement id — ``{"id", "owners", "span", "split_reason"}``
     — covering every id the spec declares and every id a casting owns, ordered
     deterministically. ``problem`` is the named reason the manifest could not be
-    read, or None; on a problem the other keys carry the empty table rather than
-    a half-built one.
+    read OR is not shaped like a manifest, or None; on a problem the other keys
+    carry the empty table rather than a half-built one.
 
     ONE COMPUTATION, TWO SURFACES (fallout AC-044, D-039). The F0.9 gate refuses
     on this table and the F6 report prints it, and they must be the SAME table:
@@ -444,6 +444,24 @@ def requirement_span_table(project_root=".", fdir: Path | None = None) -> dict:
             "rows": [],
             "text": _render_span_table([], False),
             "problem": problem,
+        }
+
+    # D-132 / D-134 — THE SHAPE BEFORE THE RECORDS, at this door too. A
+    # manifest that is valid JSON of the wrong shape (`castings` a string, or a
+    # list of ints or nulls) parses cleanly and then meets `.get()` inside
+    # `_recorded_split_reasons`, which is an AttributeError raised across the
+    # MCP boundary from a surface whose whole contract is a named answer. The
+    # gate runs this check in its prelude; this entry point is a SECOND door
+    # onto the same document and owes the same check rather than inheriting it.
+    # An absent manifest reads as `{}` here and is not a shape problem, so the
+    # empty-table path above is unaffected.
+    if (records := _manifest_shape_problem(manifest)) is not None:
+        return {
+            "threshold": REQUIREMENT_SPAN_MAX,
+            "not_computable": False,
+            "rows": [],
+            "text": _render_span_table([], False),
+            "problem": records,
         }
 
     castings = manifest.get("castings")
