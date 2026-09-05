@@ -1199,19 +1199,16 @@ def test_the_done_gate_and_the_seal_apply_one_heading_rule(report_run) -> None:
 # table admits by name.
 # ---------------------------------------------------------------------------
 
-#: fallout D-012 — the second reader of `state.json["cycle"]`, by module and
-#: symbol. Byte-equivalent to `current_cycle`: same read, same coercion, same
-#: 0 for missing/absent/malformed. Its docstring's justification ("importing
-#: back would close a cycle in the import graph") is stale — the orchestrator
-#: is deleted and `tools/foundry.py` imports this module at module top — so
-#: the row is a deletion waiting on the casting that owns that file.
-_SECOND_CYCLE_READERS: dict[str, str] = {
-    "foundry.py#_server_cycle": (
-        "tools/foundry.py is another casting's file. The deletion is a "
-        "substitution onto `foundry_state.current_cycle`, whose docstring now "
-        "states the contract it must be deleted onto."
-    ),
-}
+#: fallout D-012 — EMPTY, which is the state this table was written to reach.
+#: `tools/foundry.py#_server_cycle` was the second reader of
+#: `state.json["cycle"]`: byte-equivalent to `current_cycle` — same read, same
+#: coercion, same 0 for missing/absent/malformed — kept by a justification
+#: ("importing back would close a cycle in the import graph") that stopped
+#: being true when the orchestrator was deleted and `tools/foundry.py` began
+#: importing this module at module top. It is deleted and its six call sites
+#: call `current_cycle` (concern C-008). The row goes with it; the guard below
+#: stays, and fails on the next second reader whoever writes it.
+_SECOND_CYCLE_READERS: dict[str, str] = {}
 
 #: fallout D-013 — the second assembly of `unreported_dispatch_inputs`' three
 #: ledgers, by module and symbol. `foundry_report._read_dispatch_summary`

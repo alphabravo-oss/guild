@@ -69,7 +69,9 @@ Records are stamped with the SERVER's cycle counter (``state.json['cycle']``,
 advanced by the GRIND -> INSPECT boundary handler), never the caller's argument
 — not even when the counter is missing or unusable, which resolves to 0. The
 caller's assertion survives beside the stamp as ``declared_cycle`` so the
-divergence is auditable rather than silent. See ``_server_cycle``.
+divergence is auditable rather than silent. The one reader is
+``foundry_mcp/tools/foundry_state.py#current_cycle``, which states that
+contract; this module holds no second copy of it (fallout D-012).
 
 CONCURRENCY (FR-020 / AC-025)
 -----------------------------
@@ -117,6 +119,7 @@ from foundry_mcp.schemas.vocab import (
 from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
 from foundry_mcp.tools.foundry_state import (
     ARCHIVE_DIR,
+    current_cycle,
     document_refusal,
     get_run_dir,
     read_document,
@@ -131,18 +134,25 @@ from foundry_mcp.tools.artifacts import (
     _load_json,
     _read_document,
 )
-from foundry_mcp.tools.display import foundry_hammer, FOUNDRY_SEP
+from foundry_mcp.tools.display import (
+    FOUNDRY_SEP,
+    _BCYAN,
+    _BGREEN,
+    _BWHITE,
+    _DIM,
+    _RESET,
+    foundry_hammer,
+)
 
-# ANSI colors
-_RESET = "\033[0m"
-_BOLD = "\033[1m"
-_DIM = "\033[2m"
-_GREEN = "\033[32m"
-_CYAN = "\033[36m"
-_WHITE = "\033[37m"
-_BCYAN = f"{_BOLD}{_CYAN}"
-_BWHITE = f"{_BOLD}{_WHITE}"
-_BGREEN = f"{_BOLD}{_GREEN}"
+# fallout D-034 — THE PALETTE IS ``display.py``'s, AND ONLY THE FIVE THIS
+# MODULE ACTUALLY PRINTS ARE BOUND. Nine ANSI codes were re-declared here, a
+# third copy of the same nine; ``display.py`` owns them and composes the bold
+# variants there from the same base codes, so the two sets were identical right
+# up until one of them was edited. Four of the nine — ``_BOLD``, ``_CYAN``,
+# ``_GREEN``, ``_WHITE`` — existed ONLY to build ``_BCYAN`` / ``_BGREEN`` /
+# ``_BWHITE``, and composing the bold variants HERE is what made the third copy
+# look load-bearing. They are composed at their one home and imported already
+# composed, so nothing in this module names a base code again.
 
 
 def _format_init_display(run_name: str, temper: bool = False, nyquist: bool = False) -> str:
@@ -2014,42 +2024,6 @@ def retier_matching_untiered(
     return None
 
 
-def _server_cycle(fdir: Path) -> int:
-    """Return the server-owned cycle counter. Never caller-supplied.
-
-    ``state.json['cycle']`` is maintained by the F3 GRIND -> F2 INSPECT
-    boundary handler (``orchestration/transitions.py#foundry_mark_phase_complete``,
-    the ``inspect_start`` token). Per ST-001 it is the authority, and a
-    caller-supplied ``cycle`` is not trusted against it: every cycle number in
-    grand-vulture's data model was an integer the lead asserted, which is why
-    its defects span cycles 0-17 while its state.json reads 0. Every writer of
-    a cycle-stamped record in this module goes through this one reader, so
-    "which cycle was this?" has one answer per run instead of one per caller.
-
-    Missing, absent, or malformed resolves to 0 rather than to the caller's
-    value (D-119). This function used to return None there and its callers took
-    that as licence to stamp the number they were handed, while the counterpart
-    reader ``foundry_state.py#current_cycle`` resolved the identical input
-    to 0 — so the SAME finding filed through Foundry-Defect and through
-    Foundry-Sync landed in different cycles, and a class that recurred three
-    straight cycles evaded ST-002 escalation because mixed-door filing broke
-    the consecutive run. Trusting the caller in the degraded case is exactly
-    what ST-001 exists to remove, so the degraded case resolves to the same
-    deterministic 0 both doors already agreed on for a corrupt CONTAINER. What
-    the caller claimed is not discarded: both doors persist it beside the stamp
-    as ``declared_cycle``.
-
-    Read directly rather than through the orchestrator's private
-    ``_current_cycle``: the orchestrator imports THIS module, so importing back
-    would close a cycle in the import graph. The two are a deliberate second
-    copy, held to one contract by ``test_escalation``'s cross-door parity pins.
-    """
-    value = _load_json(fdir / "state.json").get("cycle", 0)
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return 0
-    return value
-
-
 _ADJECTIVES = [
     "ambitious", "blazing", "bold", "brave", "calm", "clever", "cosmic",
     "daring", "deft", "eager", "fierce", "flying", "golden", "grand",
@@ -2898,7 +2872,9 @@ def foundry_add_defect(
             coerced onto a known one (CT-002).
         cycle: the caller's assertion. NEVER what is persisted as the record's
             ``cycle`` — ``state.json``'s counter is, resolving to 0 when it is
-            absent or unusable (see ``_server_cycle``). Kept on the record as
+            absent or unusable (see
+            ``foundry_mcp/tools/foundry_state.py#current_cycle``). Kept on the
+            record as
             ``declared_cycle`` so the claim is auditable.
         target_kind: what the finding is ABOUT. Pass "comment" when the
             subject is a code comment \u2014 that declaration is what allows the
@@ -3140,7 +3116,7 @@ def foundry_add_defect(
             # NON_COMMENT — which is D-083 returning one field along. The
             # batch door passes the same shape at its own refusal loop.
             record_denylist_tripwire(
-                fdir, tripwire_finding(finding), cycle=_server_cycle(fdir), source=source
+                fdir, tripwire_finding(finding), cycle=current_cycle(fdir), source=source
             )
         # D-128: a filing that failed ONE rung gets that rung's dict unchanged,
         # so every refusal this door returned before this change is
@@ -3161,7 +3137,7 @@ def foundry_add_defect(
     defect = {
         "id": "",  # assigned inside the transaction
         # ST-001: the server's counter is the authority, full stop.
-        "cycle": _server_cycle(fdir),
+        "cycle": current_cycle(fdir),
         # D-119: the caller's asserted cycle is persisted beside the server's,
         # never instead of it — the same field, in the same position, that
         # `foundry_sync_defects` writes on the batch door. The two doors used
@@ -3454,7 +3430,7 @@ def foundry_add_observation(
     tripwire = record_denylist_tripwire(
         fdir,
         finding,
-        cycle=_server_cycle(fdir),
+        cycle=current_cycle(fdir),
         source=source,
         # CT-017 / GI-027 — the one class whose subject is CODE. Keyed on the
         # classification the caller DECLARED, before `observation_class` has
@@ -3529,7 +3505,7 @@ def foundry_add_observation(
         "id": "",  # assigned inside the transaction
         # Same authority as a defect's — the two ledgers must agree about which
         # cycle a finding belongs to or the per-cycle roll-up cannot join them.
-        "cycle": _server_cycle(fdir),
+        "cycle": current_cycle(fdir),
         "source": source,
         "classification": resolved,
         "description": description,
@@ -3653,7 +3629,7 @@ def foundry_drive_temper_candidate(
             "field": "observation_id",
         }
 
-    cycle = _server_cycle(fdir)
+    cycle = current_cycle(fdir)
     finding = filed.strip()
     result: dict = {}
     closed = False
@@ -3878,7 +3854,7 @@ def foundry_add_verdict(
 
     # Read outside the critical section: it opens state.json, not this ledger,
     # and the stamp does not depend on anything the transaction reads.
-    stamped_cycle = _server_cycle(fdir)
+    stamped_cycle = current_cycle(fdir)
     entry = {
         "id": requirement_id,
         "verdict": verdict,
