@@ -57,18 +57,24 @@ from foundry_mcp.schemas.vocab import (
     REPORT_REQUIRED_SECTIONS,
     RUN_PHASE_HALTED,
     SPEND_LEDGER_FILENAME,
+    TEMPER_CANDIDATE,
     THUNDER_VIPER_BASELINE,
+    TIER_HARDENING,
     TIER_UNKNOWN,
     defect_tier,
     escalation_status,
+    halt_reason,
 )
 from foundry_mcp.tools.foundry_state import (
     derive_cycle_count,
+    fallout_rows,
+    full_cycle_ratio,
     handoffs_wall_clock_seconds,
     is_stream_record,
     read_document,
     read_jsonl,
     read_text_file,
+    stream_rollup_rows,
     unreported_dispatch_summary,
 )
 
@@ -308,6 +314,7 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
         tier: {} for tier in sorted(DEFECT_TIER_OR_UNKNOWN)
     }
     latent_backlog: list[dict] = []
+    hardening_backlog: list[dict] = []
     unknown_rows: list[dict] = []
     closed_unknown: list[Any] = []
     for record in records:
@@ -343,6 +350,33 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
                     "spec_ref": record.get("spec_ref"),
                     "description": record.get("description"),
                     "reproduction_attempted": record.get("reproduction_attempted"),
+                    "cycle": record.get("cycle"),
+                }
+            )
+        if tier == TIER_HARDENING and status == "open":
+            # AC-024 / AC-022 — the same row shape the LATENT backlog carries,
+            # and for the same reason (D-029): this list is read by a lead who
+            # has no defects.json to join against, so a row saying only "the
+            # retry arm double-counts" names a fault with no location.
+            #
+            # `reproduction_attempted` is on the row because a HARDENING filing
+            # is a DRIVEN failure — the stream ran a probe of its own devising
+            # and saw the wrong result — so unlike a LATENT row this one always
+            # has one, and it is the whole reason the record is trusted.
+            # `supersedes` travels with it because GI-022 makes promotion a NEW
+            # filing that cites this id, never a re-tier in place: a reader
+            # asking "did anything supersede this?" is asking about the id.
+            hardening_backlog.append(
+                {
+                    "id": record.get("id"),
+                    "class": record.get("class"),
+                    **_location_fields(record),
+                    "source": record.get("source"),
+                    "type": record.get("type"),
+                    "description": record.get("description"),
+                    "reproduction_attempted": record.get("reproduction_attempted"),
+                    "supersedes": record.get("supersedes"),
+                    "fallout_of": record.get("fallout_of"),
                     "cycle": record.get("cycle"),
                 }
             )
@@ -402,6 +436,16 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
         "latent_backlog": {
             "open_count": len(latent_backlog),
             "defects": latent_backlog,
+        },
+        "hardening_backlog": {
+            "open_count": len(hardening_backlog),
+            "defects": hardening_backlog,
+            # AC-020's list is filled in by `generate_report`, which holds the
+            # observations ledger; it is declared here so the section's shape
+            # is the same on every run and a reader never has to test whether
+            # the key exists before reading it.
+            "undriven_temper_candidates": [],
+            "temper_ran": None,
         },
         "unknown_tier_defects": {
             "count": len(unknown_rows),
@@ -850,6 +894,14 @@ def _inspect_modes_section(state: dict, run_dir: Path) -> dict:
         "by_mode": by_mode,
         "per_cycle": {k: per_cycle[k] for k in sorted(per_cycle, key=_cycle_sort_key)},
         "entries": history,
+        # AC-046 — the acceptance figure over the widths this census already
+        # holds, derived in the leaf so `measure-run.py` publishes the SAME
+        # number rather than a second ratio (casting 3). A ratio computed here
+        # and a ratio computed there is D-036's shape applied to an acceptance
+        # criterion, which is the one place a disagreement is unarguable.
+        "full_cycle_ratio": full_cycle_ratio(
+            {"per_cycle": {k: per_cycle[k] for k in per_cycle}}
+        ),
     }
 
 
@@ -1391,6 +1443,225 @@ def _read_unreported_dispatches(run_dir: Path) -> tuple[dict, str | None]:
     return _unreported_dispatches_section(summary), None
 
 
+OBSERVATIONS_FILENAME = "observations.json"
+
+
+def _read_undriven_temper_candidates(run_dir: Path) -> tuple[dict, str | None]:
+    """AC-020 / OT-022 / ST-007 — every recorded probe idea nobody drove.
+
+    Returns ``({"candidates": [...], "count": int, "driven_count": int},
+    problem)``.
+
+    ST-007's transition is `TEMPER_CANDIDATE observation open` -> `DRIVEN
+    (filed or clean)`, and its guard reads "a candidate never driven is listed
+    in the F6 report". AC-020 narrows that to the case that actually happens:
+    "When TEMPER never ran, the F6 report lists every TEMPER candidate that was
+    not driven." Listing them on EVERY run is the superset and the honest one —
+    a run where TEMPER ran and skipped three candidates has the same debt as a
+    run where TEMPER never ran at all, and a section that fired only on the
+    second would hide the first.
+
+    WHY THIS SITS IN THE HARDENING BACKLOG AND NOT IN A SECTION OF ITS OWN.
+    ----------------------------------------------------------------------
+    AC-047 grows `REPORT_REQUIRED_SECTIONS` by exactly FOUR and this is not one
+    of them, so it joins the section a lead already reads for carried-forward
+    work that blocks nothing. The two lists answer one question about different
+    evidence: a HARDENING row is a probe that WAS driven and failed, and a
+    candidate is a probe that was never driven — "the research finding this
+    run's own reality.md records, that a backlog tier with no promotion cadence
+    becomes write-only debt", applies to both, and the cadence's visible half
+    is that they are printed together.
+
+    BOTH LEDGER SHAPES (FR-054). The observation record shipped today carries
+    no driven marker at all, and casting 4's door plus casting 11's TEMPER add
+    one. A record with neither `driven` nor `status` is UNDRIVEN, which is the
+    correct reading of every archive written before this release: nothing
+    recorded that it was driven, so nothing may claim it was. Both spellings
+    are accepted because the two castings land at different waves and a report
+    that knew only one would silently list a driven candidate as open.
+    """
+    document, problem = read_document(run_dir / OBSERVATIONS_FILENAME)
+    if problem is not None:
+        return {"candidates": [], "count": 0, "driven_count": 0}, problem
+    records = document.get("observations")
+    if not isinstance(records, list):
+        records = []
+
+    candidates: list[dict] = []
+    driven = 0
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if record.get("classification") != TEMPER_CANDIDATE:
+            continue
+        status = record.get("status")
+        if record.get("driven") or (
+            isinstance(status, str) and status.upper() == "DRIVEN"
+        ):
+            driven += 1
+            continue
+        candidates.append(
+            {
+                "id": record.get("id"),
+                "cycle": record.get("cycle"),
+                "source": record.get("source"),
+                **_location_fields(record),
+                "description": record.get("description"),
+            }
+        )
+    return {
+        "candidates": candidates,
+        "count": len(candidates),
+        "driven_count": driven,
+    }, None
+
+
+def _stream_coverage_section(run_dir: Path) -> tuple[dict, str | None]:
+    """CT-003 / AC-030 / OT-028 — per (stream, cycle) coverage, replacements named.
+
+    Every number comes from `foundry_state.stream_rollup_rows`; this function
+    adds the section's prose and nothing else. The derivation is in the leaf
+    because `Foundry-Next`'s streams-complete check walks the same buckets, and
+    a report that re-walked them would be the third opinion about which keys in
+    a cycle bucket are stream records — the D-182 shape, where two hand-typed
+    copies of one rule left a third reader never learning it at all.
+
+    WHAT IS RENDERED AND NOT NORMALISED (FR-054). A bucket written by the old
+    ADDITIVE writer carries no `records[]`, and `daring-orca`'s buckets read
+    ABOVE 100% because tranches were summed rather than replaced. Both are
+    printed as they are and NAMED — `over_total` and `buckets_without_records`
+    — because a coverage figure quietly clamped to its total is a measurement
+    replaced by an assertion, and the whole point of the replace semantics
+    casting 2 lands is that a run can see which records were superseded.
+    """
+    table = stream_rollup_rows(run_dir)
+    problem = table.get("problem")
+    if problem is not None:
+        return {}, problem
+
+    rows: list[dict] = []
+    for cycle, streams in table["cycles"].items():
+        for stream, row in streams.items():
+            rows.append({
+                "cycle": cycle,
+                "stream": stream,
+                "items_checked": row["items_checked"],
+                "items_total": row["items_total"],
+                "findings": row["findings"],
+                "record_count": row["record_count"],
+                "replaced_count": row["replaced_count"],
+                "over_total": row["over_total"],
+            })
+    replaced_total = sum(r["replaced_count"] for r in table["replaced"])
+    return {
+        "cycle_count": table["cycle_count"],
+        "stream_count": table["stream_count"],
+        "row_count": len(rows),
+        "rows": rows,
+        "replaced": table["replaced"],
+        "replaced_record_count": replaced_total,
+        "over_total": table["over_total"],
+        "buckets_without_records": table["buckets_without_records"],
+        "note": (
+            "One row per (stream, cycle). `Records` counts the tranches "
+            "recorded for that pair and `Replaced` is one fewer — the FIRST "
+            "record replaced nothing and every later one replaced exactly the "
+            "record before it (ST-009), so a second recording reads as a "
+            "REPLACEMENT and never as extra coverage. A row with 0 records was "
+            "written by the additive writer that predates the replace "
+            "semantics and is listed under `buckets_without_records`: it is "
+            "not the same fact as a pair recorded once. A `Checked` above "
+            f"`Total` ({len(table['over_total'])} row(s) here) is that same "
+            "additive writer summing tranches; it is printed as recorded and "
+            "never clamped, because a clamped coverage figure is an assertion "
+            "wearing a measurement's clothes."
+        ),
+    }, None
+
+
+def _halt_and_co_dispatch_section(run_dir: Path, state: dict) -> tuple[dict, str | None]:
+    """CT-004 / AC-025's report half / CT-008 — how the run ended, and what it dispatched.
+
+    Returns the halt reason as a MEMBER of `HALT_REASONS` plus the lead's own
+    free text, and the co-dispatch set computed at each GRIND.
+
+    BOTH SPELLINGS OF `halted_reason`, BECAUSE BOTH EXIST (FR-054). Today the
+    field is a free f-string — "--max-cycles 2 reached: opening GRIND cycle 3
+    would exceed it" — and FR-019 makes it `{reason, text}`. This reads both:
+    the member when there is one, the raw text when there is not, and NEVER a
+    member guessed out of a sentence. `vocab.halt_reason` returns None on an
+    unrecognised value for exactly that reason, and None here means "this run
+    recorded text and no member", which is what every pre-release archive
+    carries.
+
+    THE CO-DISPATCH SETS ARE READ, NEVER COMPUTED HERE (GI-021 / CT-008). The
+    alignment block and the co-dispatch set are SERVER-GENERATED at
+    `Foundry-Tasks` time and appended to `handoffs.jsonl`; a report that
+    recomputed them from the manifest would be a second answer to "which
+    castings were dispatched together", available to disagree with the one the
+    lead actually acted on. A run with no such record renders an empty section
+    — which is every run until casting 2 lands the writer, and is why this
+    section reads a missing field as missing rather than as an error.
+    """
+    records, problem = read_jsonl(run_dir / HANDOFFS_FILENAME)
+    if problem is not None:
+        return {}, problem
+
+    raw = state.get("halted_reason")
+    text: str | None = None
+    member: str | None = None
+    if isinstance(raw, dict):
+        member = halt_reason(raw.get("reason"))
+        candidate = raw.get("text")
+        text = candidate if isinstance(candidate, str) and candidate else None
+    elif isinstance(raw, str) and raw:
+        member = halt_reason(raw)
+        # A recognised member as a BARE string carries no text of its own; an
+        # unrecognised string IS the text. Printing the member twice — once as
+        # the member and once as "the lead's own words" — would invent a
+        # sentence the lead never typed.
+        text = None if member else raw
+
+    dispatched: list[dict] = []
+    for record in records:
+        sets = record.get("co_dispatch")
+        if not sets:
+            continue
+        dispatched.append({
+            "cycle": record.get("cycle"),
+            "phase": record.get("phase"),
+            "event": record.get("event"),
+            "timestamp": record.get("timestamp"),
+            "co_dispatch": sets,
+            "defect_ids": record.get("defect_ids"),
+            "requirement_ids": record.get("requirement_ids"),
+        })
+
+    halted = state.get("phase") == RUN_PHASE_HALTED
+    return {
+        "halted": halted,
+        "halted_at_cycle": state.get("halted_at_cycle"),
+        "reason": member,
+        "reason_text": text,
+        "reason_recorded": raw if isinstance(raw, (str, dict)) else None,
+        "max_cycles": state.get("max_cycles"),
+        "co_dispatch_count": len(dispatched),
+        "co_dispatch": dispatched,
+        "note": (
+            "HALTED is a named terminal state and is NOT DONE (ST-008): the "
+            "report is generated and every open defect is named in it. `Reason` "
+            "is a member of the halt vocabulary and `Reason text` is the lead's "
+            "own words; a run whose `halted_reason` predates FR-019 carries a "
+            "free sentence and no member, and that sentence is printed as text "
+            "rather than guessed onto a member. The co-dispatch rows are the "
+            "sets the SERVER computed at each Foundry-Tasks call and the lead "
+            "acted on — read from the handoff ledger, never recomputed here, "
+            "because a second answer to 'which castings went out together' "
+            "could disagree with the one that was actually dispatched."
+        ),
+    }, None
+
+
 #: The five fields this section publishes, in the order both documents render
 #: them. Named once so the reader, the note and the markdown table cannot come
 #: to disagree about which fields the section is about.
@@ -1831,12 +2102,16 @@ _SECTION_TITLES: dict[str, str] = {
     "verdict_matrix": "Verdict matrix",
     "defects_by_tier_and_status": "Defects by tier and status",
     "latent_backlog": "LATENT backlog",
+    "hardening_backlog": "HARDENING backlog",
     "unknown_tier_defects": "Unknown-tier defects",
+    "fallout_per_cycle": "Fallout per cycle",
     "escalated_classes": "Escalated classes",
     "lead_fix_records": "Lead fix records",
     "inspect_modes_per_cycle": "INSPECT mode per cycle",
+    "stream_coverage_per_cycle": "Stream coverage per cycle",
     "spend_per_phase_and_cycle": "Spend per phase and cycle",
     "unreported_dispatches": "Unreported dispatches",
+    "halt_and_co_dispatch": "Halt and co-dispatch",
     "executing_versions": "Executing server and plugin versions",
     "baseline_comparison": "Baseline comparison",
 }
@@ -1845,6 +2120,39 @@ assert set(_SECTION_TITLES) == set(REPORT_REQUIRED_SECTIONS), (
     "every REPORT_REQUIRED_SECTIONS member needs a markdown title: "
     f"{sorted(set(REPORT_REQUIRED_SECTIONS) ^ set(_SECTION_TITLES))}"
 )
+
+
+def _full_ratio_sentence(ratio: dict) -> str:
+    """AC-046 — the FULL-cycle ratio with pass/fail stated against 50%.
+
+    A-037's figure verbatim: "Ratio: FULL cycles / total INSPECT cycles below
+    50%". The sentence is built here from `foundry_state.full_cycle_ratio`'s
+    document rather than computed, so `measure-run.py`'s `full_cycle_ratio` and
+    this line are one derivation and two renderings.
+
+    `passes` is None, never False, on a run where no INSPECT recorded a width,
+    and this says so in WORDS rather than interpolating the None (D-151's
+    class): "no INSPECT recorded a width" and "more than half were FULL" are
+    different answers and a pass/fail marker cannot carry both.
+    """
+    passes = ratio.get("passes")
+    total = ratio.get("total_cycles", 0)
+    full = ratio.get("full_cycles", 0)
+    if passes is None:
+        return (
+            "NOT MEASURABLE — no cycle carries a recorded INSPECT width, so "
+            "the FULL-cycle ratio AC-046 measures cannot be derived. A run "
+            "that recorded no width and a run that ran narrow are different "
+            "facts and this line will not print one as the other."
+        )
+    marker = "PASS" if passes else "FAIL"
+    return (
+        f"{marker} — FULL-cycle ratio {ratio.get('ratio')} ({full} of {total} "
+        f"cycles ran at FULL width), against AC-046's threshold of "
+        f"{ratio.get('threshold')}. A cycle counts as FULL when ANY decision "
+        f"in it was FULL, because a cycle that ran a five-stream INSPECT paid "
+        f"for one however many times it was reopened."
+    )
 
 
 def _md_table(headers: list[str], rows: list[list[Any]]) -> list[str]:
@@ -2010,6 +2318,95 @@ def _render_section(key: str, value: dict) -> list[str]:
                  for d in value.get("defects", [])],
             )
         )
+    if key == "hardening_backlog":
+        # AC-024 — beside the LATENT backlog, and carrying the location for
+        # D-029's reason: the next run's lead receives this list with no
+        # defects.json to join against.
+        #
+        # `Reproduction` is not optional decoration here the way it is on a
+        # LATENT row. A HARDENING filing is a DRIVEN failure, so the statement
+        # of what was driven and what it did IS the evidence the tier rests on
+        # (GI-014) — a row without one is a record that should never have been
+        # accepted, and printing the column is what makes that visible.
+        candidates = value.get("undriven_temper_candidates") or []
+        temper_ran = value.get("temper_ran")
+        if temper_ran is False:
+            temper_clause = (
+                f"TEMPER never ran on this run, so all {len(candidates)} "
+                "recorded candidate(s) are undriven (AC-020)."
+            )
+        elif temper_ran is True:
+            temper_clause = (
+                f"TEMPER ran and left {len(candidates)} recorded candidate(s) "
+                f"undriven; {value.get('driven_candidate_count', 0)} were "
+                "closed as DRIVEN (ST-007)."
+            )
+        else:
+            temper_clause = (
+                f"{len(candidates)} recorded TEMPER candidate(s) were never "
+                "driven; whether TEMPER ran at all is not recorded in this "
+                "run's state."
+            )
+        return (
+            [f"{value.get('open_count', 0)} open HARDENING defects carried "
+             "forward. A HARDENING record is a DRIVEN failure that no "
+             "requirement asks about (GI-014): the stream ran a probe of its "
+             "own and observed a wrong result, so the Reproduction column is "
+             "the evidence the row rests on. None of these blocks a gate — "
+             "`BLOCKING_TIERS` holds LIVE and the unknown sentinel and nothing "
+             "else — and promotion is a NEW filing that cites the id through "
+             "`supersedes`, never a re-tier in place (GI-022).", ""]
+            + _md_table(
+                ["ID", "Class", "Cycle", "File", "Symbol", "Source",
+                 "Reproduction attempted", "Supersedes", "Description"],
+                [[d.get("id"), d.get("class"), d.get("cycle"),
+                  d.get("file") or NO_LOCATION_CELL,
+                  d.get("symbol") or NO_LOCATION_CELL, d.get("source"),
+                  d.get("reproduction_attempted") or NO_LOCATION_CELL,
+                  d.get("supersedes"), d.get("description")]
+                 for d in value.get("defects", [])],
+            )
+            + ["",
+               "### Undriven TEMPER candidates",
+               "",
+               temper_clause + " A candidate is a probe idea nobody has "
+               "driven, so it is neither a defect nor a HARDENING record — it "
+               "sits here because it is the same kind of debt: work this run "
+               "identified and did not do, blocking nothing, received by the "
+               "next run's lead.",
+               ""]
+            + _md_table(
+                ["ID", "Cycle", "Source", "File", "Symbol", "Description"],
+                [[c.get("id"), c.get("cycle"), c.get("source"),
+                  c.get("file") or NO_LOCATION_CELL,
+                  c.get("symbol") or NO_LOCATION_CELL, c.get("description")]
+                 for c in candidates],
+            )
+        )
+    if key == "fallout_per_cycle":
+        # FR-025 / AC-046's sibling figure. The verdict is stated BESIDE the
+        # counts rather than left for the reader to compute, because the
+        # criterion is defined over a pair of cycles and a reader scanning a
+        # column of zeros cannot see which pair is the closing one.
+        verdict = str(value.get("verdict", "not_measurable"))
+        marker = {"pass": "PASS", "fail": "FAIL"}.get(verdict, "NOT MEASURABLE")
+        rows = [[cycle, b.get("fallout"), b.get("measured"), b.get("unmeasured"),
+                 ", ".join(str(i) for i in (b.get("ids") or []))]
+                for cycle, b in (value.get("per_cycle") or {}).items()]
+        return (
+            [f"{marker} — {value.get('verdict_reason', '')}", "",
+             f"{value.get('total', 0)} filing(s) in this run are fallout of an "
+             f"earlier defect. {value.get('measured_records', 0)} defect "
+             f"record(s) carry the `fallout_of` field and "
+             f"{value.get('unmeasured_records', 0)} carry no such key at all: "
+             "the second group predates the field, which reads as "
+             "STRUCTURALLY ABSENT and never as a measured zero, because "
+             "certifying the criterion on an archive that never measured it "
+             "would be the easiest pass in the document.", ""]
+            + _md_table(
+                ["Cycle", "Fallout", "Measured", "Unmeasured", "IDs"], rows,
+            )
+        )
     if key == "unknown_tier_defects":
         # D-120: Source, Type, File and Symbol are the re-tier match key the
         # DONE refusal tells the lead to use. This is the section that BLOCKS,
@@ -2081,6 +2478,8 @@ def _render_section(key: str, value: dict) -> list[str]:
              "carries two rows when an F5 INSPECT reopened it after its F2 "
              "one, and neither is dropped.",
              "",
+             _full_ratio_sentence(value.get("full_cycle_ratio") or {}),
+             "",
              str(value.get("note", "")),
              ""]
             + _md_table(
@@ -2089,6 +2488,66 @@ def _render_section(key: str, value: dict) -> list[str]:
                   d.get("decided_by"),
                   ", ".join(str(s) for s in (d.get("required_streams") or []))]
                  for d in _inspect_decisions(value)],
+            )
+        )
+    if key == "stream_coverage_per_cycle":
+        rows = [[r.get("cycle"), r.get("stream"), r.get("items_checked"),
+                 r.get("items_total"), r.get("findings"), r.get("record_count"),
+                 r.get("replaced_count"), "yes" if r.get("over_total") else ""]
+                for r in value.get("rows", [])]
+        return (
+            [f"{value.get('row_count', 0)} (stream, cycle) pair(s) over "
+             f"{value.get('cycle_count', 0)} cycle(s); "
+             f"{value.get('replaced_record_count', 0)} record(s) were replaced "
+             "by a later recording for the same pair.", "",
+             str(value.get("note", "")), ""]
+            + _md_table(
+                ["Cycle", "Stream", "Checked", "Total", "Findings", "Records",
+                 "Replaced", "Over total"],
+                rows,
+            )
+        )
+    if key == "halt_and_co_dispatch":
+        halted = bool(value.get("halted"))
+        reason = value.get("reason")
+        text = value.get("reason_text")
+        if not halted:
+            headline = (
+                "This run did not halt. A halt is a named terminal state "
+                "reached by a SUCCESSFUL transition (ST-001), so its absence "
+                "here means the run ended some other way — not that a halt "
+                "was refused."
+            )
+        elif reason:
+            headline = (
+                f"HALTED at cycle {value.get('halted_at_cycle')} — reason "
+                f"`{reason}`."
+            )
+            if text:
+                headline += f" The lead's own words: {text}"
+        else:
+            # D-151's class: a None interpolated into operator prose reads as a
+            # fact. The unknown is stated in WORDS, and the sentence names the
+            # shape it is describing, exactly as the spend section's headline
+            # does for its own null.
+            headline = (
+                f"HALTED at cycle {value.get('halted_at_cycle')}. This run's "
+                "`halted_reason` carries no member of the halt vocabulary — it "
+                "predates FR-019, when the field was a free sentence — so the "
+                "text is printed as recorded rather than guessed onto a "
+                f"member: {text or value.get('reason_recorded') or NO_LOCATION_CELL}"
+            )
+        rows = [[d.get("cycle"), d.get("phase"), d.get("event"),
+                 ", ".join(str(c) for c in (d.get("co_dispatch") or [])),
+                 ", ".join(str(i) for i in (d.get("defect_ids") or [])),
+                 ", ".join(str(i) for i in (d.get("requirement_ids") or []))]
+                for d in value.get("co_dispatch", [])]
+        return (
+            [headline, "", str(value.get("note", "")), ""]
+            + _md_table(
+                ["Cycle", "Phase", "Event", "Co-dispatched castings",
+                 "Originating defects", "Requirement IDs"],
+                rows,
             )
         )
     if key == "spend_per_phase_and_cycle":
@@ -2324,16 +2783,53 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
 
     inspect_modes = _inspect_modes_section(state, run_dir)
 
+    stream_coverage, problem = _stream_coverage_section(run_dir)
+    if problem is not None:
+        return _refusal(ROLLUP_FILENAME, problem)
+
+    halt_section, problem = _halt_and_co_dispatch_section(run_dir, state)
+    if problem is not None:
+        return _refusal(HANDOFFS_FILENAME, problem)
+
+    candidates, problem = _read_undriven_temper_candidates(run_dir)
+    if problem is not None:
+        return _refusal(OBSERVATIONS_FILENAME, problem)
+
+    # AC-020's list joins the HARDENING backlog, which is where a lead already
+    # reads for carried-forward work that blocks nothing. `state.json.temper`
+    # is the record of whether the phase ran at all; `None` when the run
+    # recorded neither, which the section states in words rather than assuming
+    # either way.
+    hardening = dict(defect_sections["hardening_backlog"])
+    hardening["undriven_temper_candidates"] = candidates["candidates"]
+    hardening["driven_candidate_count"] = candidates["driven_count"]
+    temper = state.get("temper")
+    hardening["temper_ran"] = (
+        bool(temper) if isinstance(temper, (bool, dict, str)) and temper != "" else None
+    )
+
+    # FR-025 / AC-046's sibling. The axis is `derive_cycle_count`'s index — the
+    # SAME reading `inspect_modes_per_cycle` and `baseline_comparison` sit on —
+    # so the three sections cannot publish three different ideas of which
+    # cycles this run ran.
+    fallout = fallout_rows(run_dir, axis_top=derive_cycle_count(run_dir)["index"])
+    if fallout.get("problem") is not None:
+        return _refusal(DEFECTS_FILENAME, fallout["problem"])
+
     sections: dict[str, Any] = {
         "verdict_matrix": verdict_matrix,
         "defects_by_tier_and_status": defect_sections["defects_by_tier_and_status"],
         "latent_backlog": defect_sections["latent_backlog"],
+        "hardening_backlog": hardening,
         "unknown_tier_defects": defect_sections["unknown_tier_defects"],
+        "fallout_per_cycle": fallout,
         "escalated_classes": escalated,
         "lead_fix_records": lead_fixes,
         "inspect_modes_per_cycle": inspect_modes,
+        "stream_coverage_per_cycle": stream_coverage,
         "spend_per_phase_and_cycle": spend,
         "unreported_dispatches": unreported,
+        "halt_and_co_dispatch": halt_section,
         "executing_versions": _executing_versions_section(state),
         "baseline_comparison": _baseline_comparison_section(
             run_dir, inspect_modes, state

@@ -2390,7 +2390,14 @@ def test_the_baseline_comparison_prints_nfr_001s_four_metrics(report_env, tmp_pa
         "what the planted archive itself yields, published beside the constant"
     )
     # Defects by tier and wall clock come off the archive itself.
-    assert metrics["defects_by_tier"] == {"LATENT": 0, "LIVE": 1, TIER_UNKNOWN: 1}
+    # Every member of DEFECT_TIER_OR_UNKNOWN is present including zeros — "0
+    # HARDENING defects" is a measurement and an absent key is not. The set is
+    # derived, so FR-014's third tier joined this table with no edit here
+    # beyond the expected value.
+    assert metrics["defects_by_tier"] == {
+        "HARDENING": 0, "LATENT": 0, "LIVE": 1, TIER_UNKNOWN: 1,
+    }
+    assert set(metrics["defects_by_tier"]) == set(DEFECT_TIER_OR_UNKNOWN)
     assert metrics["wall_clock_minutes"] == 150.0
     # It wrote no spend ledger, so tokens is null — never a fabricated 0, which
     # would read as "that run cost nothing".
@@ -4637,3 +4644,725 @@ def test_the_generated_banner_is_absorbed_by_the_seal_never_carried_as_prose(
         "\n## ", "\n\nthe lead's own line\n\n## ", 1
     )
     assert fo._carried_lead_prose(edited, generated) == ["the lead's own line"]
+
+
+# --------------------------------------------------------------------------- #
+# FR-027 / FR-053 / AC-047 / OT-041 — THE FOUR SECTIONS A-038 ADDS.
+#
+# A-038's answer was "All four", and the four are the HARDENING backlog,
+# fallout per cycle with the acceptance verdict, stream coverage per cycle with
+# replaced records noted, and a halt section printing the reason member and
+# text plus the co-dispatch sets per GRIND.
+#
+# Every register below keeps this module's rule: drive `generate_report`
+# against a real run directory and read BOTH written documents back, because
+# the property under test is always "what did it WRITE". Each also carries an
+# ABSENT-FIELD case, which is FR-054's whole subject: `fallout_of`,
+# `supersedes`, `records[]`, the structured `halted_reason` and the co-dispatch
+# record are all fields the ledger does not carry yet, and a section that
+# refused to render without one would make `Foundry-Phase('done')` unreachable
+# for every archive written before this release.
+# --------------------------------------------------------------------------- #
+
+
+def _defect(run_dir: Path, **fields) -> None:
+    """Append one defect record to the fixture COPY. Never to the fixture."""
+    data = _read_json(run_dir, "defects.json")
+    record = {"id": f"D-{len(data['defects']) + 900}", "cycle": 1,
+              "source": "prove", "type": "WRONG", "status": "open"}
+    record.update(fields)
+    data["defects"].append(record)
+    _write_json(run_dir, "defects.json", data)
+
+
+def _observation(run_dir: Path, **fields) -> None:
+    path = run_dir / "observations.json"
+    data = (
+        json.loads(path.read_text(encoding="utf-8"))
+        if path.exists() else {"observations": [], "tripwire": []}
+    )
+    record = {"id": f"O-{len(data['observations']) + 1}", "cycle": 1,
+              "source": "prove", "classification": "TEMPER_CANDIDATE",
+              "description": "a probe idea", "spec_ref": "", "target_kind": "code",
+              "symbol": "", "file": ""}
+    record.update(fields)
+    data["observations"].append(record)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# AC-024 / AC-022 — the HARDENING backlog.
+# ---------------------------------------------------------------------------
+
+
+def test_the_hardening_backlog_lists_every_open_hardening_defect(report_env) -> None:
+    """AC-024 — "a HARDENING backlog section beside the LATENT backlog".
+
+    A HARDENING record is a DRIVEN failure that no requirement asks about
+    (GI-014), so the row carries its reproduction: that statement IS the
+    evidence the tier rests on, unlike a LATENT row where FR-005 makes it the
+    thing that was NOT found.
+    """
+    _defect(
+        report_env, id="D-901", tier="HARDENING", status="open",
+        **{"class": "PROBE_WRONG_RESULT"},
+        file="src/foundry_mcp/tools/evidence.py", symbol="verify_evidence",
+        reproduction_attempted="Drove the sweep with a zero-byte log and it "
+                               "reported ok rather than naming the log.",
+        description="A zero-byte evidence log passes the sweep.",
+        supersedes=None,
+    )
+    _defect(report_env, id="D-902", tier="HARDENING", status="fixed",
+            description="already closed", reproduction_attempted="drove it")
+
+    _generate(report_env)
+    section = _document(report_env)["hardening_backlog"]
+
+    assert section["open_count"] == 1, "a fixed record is not backlog"
+    assert [d["id"] for d in section["defects"]] == ["D-901"]
+    row = section["defects"][0]
+    assert row["file"] == "src/foundry_mcp/tools/evidence.py"
+    assert row["symbol"] == "verify_evidence"
+    assert row["reproduction_attempted"].startswith("Drove the sweep")
+
+    markdown = _markdown(report_env)
+    assert "## HARDENING backlog" in markdown
+    assert "D-901" in markdown
+    assert "Drove the sweep with a zero-byte log" in markdown
+    assert "D-902" not in markdown.split("## Unknown-tier defects")[0].split(
+        "## HARDENING backlog"
+    )[1]
+
+
+def test_the_hardening_backlog_renders_empty_rather_than_missing(report_env) -> None:
+    """FR-054 — a ledger with no HARDENING record renders an EMPTY section.
+
+    A missing section holds the DONE gate shut (`report_status` reads both
+    documents), so "this run filed no HARDENING defect" has to be a rendered
+    measurement rather than an absent heading.
+    """
+    _generate(report_env)
+    section = _document(report_env)["hardening_backlog"]
+
+    assert section["open_count"] == 0
+    assert section["defects"] == []
+    assert "## HARDENING backlog" in _markdown(report_env)
+    assert report_status(report_env)["present"] is True
+
+
+def test_a_record_with_no_tier_key_stays_on_the_unknown_sentinel(
+    report_env,
+) -> None:
+    """FR-054 / FR-051 — the absent-field case for this section.
+
+    A record persisted before FR-014 carries no `tier` key at all. It must read
+    through the unknown sentinel and BLOCK, never fall into the non-blocking
+    HARDENING backlog: "nobody ever classified this" and "a stream drove a
+    probe and it failed" are different facts and land in different sections.
+    """
+    _defect(report_env, id="D-903", status="open", description="untiered")
+    _generate(report_env)
+    document = _document(report_env)
+
+    assert [d["id"] for d in document["hardening_backlog"]["defects"]] == []
+    assert "D-903" in [d["id"] for d in document["unknown_tier_defects"]["defects"]]
+    assert TIER_UNKNOWN in document["defects_by_tier_and_status"]["by_tier"]
+
+
+def test_the_tier_cross_tab_gains_the_hardening_column_by_derivation(
+    report_env,
+) -> None:
+    """AC-022 — the cross-tab walks `DEFECT_TIER_OR_UNKNOWN`, so it just grew.
+
+    Every member is always present including zeros: "0 HARDENING defects" is a
+    measurement, and omitting the key would make it indistinguishable from the
+    unmeasured case.
+    """
+    _generate(report_env)
+    cross = _document(report_env)["defects_by_tier_and_status"]
+
+    assert set(cross["cross_tab"]) == set(DEFECT_TIER_OR_UNKNOWN)
+    assert set(cross["by_tier"]) == set(DEFECT_TIER_OR_UNKNOWN)
+    assert cross["by_tier"]["HARDENING"] == 0
+
+
+# ---------------------------------------------------------------------------
+# AC-020 / OT-022 / ST-007 — undriven TEMPER candidates.
+# ---------------------------------------------------------------------------
+
+
+def test_an_undriven_temper_candidate_is_listed_by_name(report_env) -> None:
+    """AC-020 — "When TEMPER never ran, the F6 report lists every TEMPER
+    candidate that was not driven."
+
+    The fixture's run never reached TEMPER, so every recorded candidate is
+    undriven by construction — which is the case AC-020 names.
+    """
+    _observation(report_env, id="O-1",
+                 description="drive the sweep with a symlinked evidence log")
+    _observation(report_env, id="O-2", description="drive a zero-cycle run")
+
+    _generate(report_env)
+    section = _document(report_env)["hardening_backlog"]
+
+    assert [c["id"] for c in section["undriven_temper_candidates"]] == ["O-1", "O-2"]
+    markdown = _markdown(report_env)
+    assert "### Undriven TEMPER candidates" in markdown
+    assert "drive the sweep with a symlinked evidence log" in markdown
+    assert "drive a zero-cycle run" in markdown
+
+
+@pytest.mark.parametrize(
+    "closed", [{"driven": True}, {"status": "DRIVEN"}, {"status": "driven"}],
+    ids=["driven-flag", "status-upper", "status-lower"],
+)
+def test_a_driven_candidate_leaves_the_list(report_env, closed) -> None:
+    """ST-007 — a candidate is closed as DRIVEN, filed or clean.
+
+    FR-054: casting 4's door and casting 11's TEMPER land at different waves
+    and may spell the closure either way, so both are read. A report that knew
+    only one spelling would list a driven candidate as open debt.
+    """
+    _observation(report_env, id="O-1", description="driven one", **closed)
+    _observation(report_env, id="O-2", description="open one")
+
+    _generate(report_env)
+    section = _document(report_env)["hardening_backlog"]
+
+    assert [c["id"] for c in section["undriven_temper_candidates"]] == ["O-2"]
+    assert section["driven_candidate_count"] == 1
+
+
+def test_a_candidate_with_no_driven_marker_at_all_reads_as_undriven(
+    report_env,
+) -> None:
+    """FR-054's absent-field case, and the direction matters.
+
+    The observation record shipped today carries NO driven marker, so every
+    archive written before this release has none. Absent reads as UNDRIVEN:
+    nothing recorded that it was driven, so nothing may claim it was. Reading
+    it the other way would silently retire the whole backlog on every existing
+    archive.
+    """
+    _observation(report_env, id="O-1", description="no marker anywhere")
+    _generate(report_env)
+    section = _document(report_env)["hardening_backlog"]
+
+    assert [c["id"] for c in section["undriven_temper_candidates"]] == ["O-1"]
+    assert section["driven_candidate_count"] == 0
+
+
+def test_a_non_candidate_observation_is_not_in_the_list(report_env) -> None:
+    """The four comment-prose classes are a different question entirely."""
+    _observation(report_env, id="O-1", classification="LINE_DRIFT_CITE",
+                 description="the cite names line 41 and the symbol moved")
+    _generate(report_env)
+
+    assert _document(report_env)["hardening_backlog"][
+        "undriven_temper_candidates"
+    ] == []
+
+
+def test_an_absent_observations_ledger_is_not_a_refusal(report_env) -> None:
+    """An ABSENT ledger is not unreadable — `_refusal`'s standing distinction.
+
+    A run that recorded no observation has no observations.json, and refusing
+    to generate its report would make DONE unreachable for it.
+    """
+    assert not (report_env / "observations.json").exists()
+    _generate(report_env)
+
+    assert _document(report_env)["hardening_backlog"][
+        "undriven_temper_candidates"
+    ] == []
+
+
+# ---------------------------------------------------------------------------
+# FR-025 / AC-046's sibling — fallout per cycle with the acceptance verdict.
+# ---------------------------------------------------------------------------
+
+
+def _clear_fallout_across_the_ledger(run_dir: Path) -> None:
+    """Give every record an explicit `fallout_of: null`.
+
+    That is what `migrate-archive.py` writes (casting 3), and it is what turns
+    a structurally-absent ledger into a MEASURED one. Without it every cycle
+    carries unmeasured records and no verdict but `not_measurable` is honest.
+    """
+    data = _read_json(run_dir, "defects.json")
+    for record in data["defects"]:
+        record.setdefault("fallout_of", None)
+    _write_json(run_dir, "defects.json", data)
+
+
+def test_fallout_per_cycle_passes_only_on_a_measured_clean_pair(
+    report_env,
+) -> None:
+    """The acceptance figure: zero across the LAST TWO INSPECT cycles."""
+    _clear_fallout_across_the_ledger(report_env)
+    _generate(report_env)
+    section = _document(report_env)["fallout_per_cycle"]
+
+    assert section["verdict"] == "pass", section["verdict_reason"]
+    assert len(section["last_two_cycles"]) == 2
+    assert section["total"] == 0
+    assert section["unmeasured_records"] == 0
+    assert "PASS" in _markdown(report_env).split("## Fallout per cycle")[1]
+
+
+def test_fallout_in_the_closing_pair_fails_the_criterion(report_env) -> None:
+    """A filing that is fallout of an earlier defect, in the closing pair."""
+    _clear_fallout_across_the_ledger(report_env)
+    top = _read_json(report_env, "state.json")["cycle"]
+    _defect(report_env, id="D-910", cycle=top, tier="LIVE", status="open",
+            fallout_of="D-001", description="fallout of the first fix")
+
+    _generate(report_env)
+    section = _document(report_env)["fallout_per_cycle"]
+
+    assert section["verdict"] == "fail", section["verdict_reason"]
+    assert section["total"] == 1
+    assert section["per_cycle"][str(top)]["fallout"] == 1
+    assert section["per_cycle"][str(top)]["ids"] == ["D-910"]
+    assert "D-001" in section["verdict_reason"] or str(top) in section[
+        "verdict_reason"
+    ]
+    assert "FAIL" in _markdown(report_env).split("## Fallout per cycle")[1]
+
+
+def test_an_absent_fallout_field_is_never_a_measured_zero(report_env) -> None:
+    """FR-054's absent-field case, and the one that decides the verdict.
+
+    Records written before `fallout_of` existed carry no such key. Counting
+    those cycles as "zero fallout" would certify AC-046's sibling criterion on
+    an archive that never measured it — the easiest pass in the document, and
+    the same fabrication `handoffs_wall_clock_seconds` refuses for the wall
+    clock.
+    """
+    # The committed fixture predates the field entirely.
+    for record in _read_json(report_env, "defects.json")["defects"]:
+        assert "fallout_of" not in record
+
+    _generate(report_env)
+    section = _document(report_env)["fallout_per_cycle"]
+
+    assert section["verdict"] == "not_measurable", section["verdict_reason"]
+    assert section["measured_records"] == 0
+    assert section["unmeasured_records"] > 0
+    assert "structurally absent" in section["verdict_reason"] or (
+        "no `fallout_of` key" in section["verdict_reason"]
+    )
+    assert "NOT MEASURABLE" in _markdown(report_env).split(
+        "## Fallout per cycle"
+    )[1]
+
+
+def test_a_run_with_fewer_than_two_inspect_cycles_cannot_pass(report_env) -> None:
+    """"A run with fewer than two INSPECT cycles cannot pass and says so."
+
+    The criterion is defined over a PAIR. Reporting `pass` because nothing
+    contradicted it would make the figure easiest to satisfy on the runs that
+    did the least work.
+    """
+    _clear_fallout_across_the_ledger(report_env)
+    state = _read_json(report_env, "state.json")
+    state["cycle"] = 0
+    state["inspect_modes"] = []
+    _write_json(report_env, "state.json", state)
+    data = _read_json(report_env, "defects.json")
+    for record in data["defects"]:
+        record["cycle"] = 0
+    _write_json(report_env, "defects.json", data)
+    _write_json(report_env, "stream-rollup.json", {"cycles": {}})
+
+    _generate(report_env)
+    section = _document(report_env)["fallout_per_cycle"]
+
+    assert section["verdict"] == "not_measurable"
+    assert section["last_two_cycles"] == []
+    assert "fewer than two" in section["verdict_reason"]
+
+
+# ---------------------------------------------------------------------------
+# CT-003 / AC-030 / OT-028 — stream coverage per cycle, replacements named.
+# ---------------------------------------------------------------------------
+
+
+def test_stream_coverage_names_a_replaced_record(report_env) -> None:
+    """CT-003 — "the result names what it replaced".
+
+    A second recording for the same (stream, cycle) reads as a REPLACEMENT and
+    never as extra coverage, which is the whole difference between the replace
+    semantics and the additive writer they retire.
+    """
+    rollup = _read_json(report_env, "stream-rollup.json")
+    bucket = rollup["cycles"]["1"]["trace"]
+    bucket["records"] = bucket["records"] * 3
+    _write_json(report_env, "stream-rollup.json", rollup)
+
+    _generate(report_env)
+    section = _document(report_env)["stream_coverage_per_cycle"]
+
+    row = next(r for r in section["rows"]
+               if r["cycle"] == "1" and r["stream"] == "trace")
+    assert row["record_count"] == 3
+    assert row["replaced_count"] == 2, "the FIRST record replaced nothing"
+    assert {"cycle": "1", "stream": "trace", "replaced_count": 2} in section[
+        "replaced"
+    ]
+    assert section["replaced_record_count"] == 2
+
+    markdown = _markdown(report_env).split("## Stream coverage per cycle")[1]
+    assert "trace" in markdown
+    assert "replaced" in markdown.lower()
+
+
+def test_stream_coverage_renders_an_over_total_bucket_without_clamping(
+    report_env,
+) -> None:
+    """FR-054 — daring-orca's buckets genuinely read above 100%.
+
+    Render what is there and NAME it. A coverage figure quietly clamped to its
+    total is a measurement replaced by an assertion.
+    """
+    rollup = _read_json(report_env, "stream-rollup.json")
+    rollup["cycles"]["1"]["prove"]["items_checked"] = 213
+    _write_json(report_env, "stream-rollup.json", rollup)
+
+    _generate(report_env)
+    section = _document(report_env)["stream_coverage_per_cycle"]
+
+    row = next(r for r in section["rows"]
+               if r["cycle"] == "1" and r["stream"] == "prove")
+    assert row["items_checked"] == 213 and row["items_total"] == 71
+    assert row["over_total"] is True
+    assert section["over_total"], "the over-total row is NAMED, not normalised"
+    assert "213" in _markdown(report_env).split(
+        "## Stream coverage per cycle"
+    )[1]
+
+
+def test_a_bucket_with_no_records_list_is_the_additive_writers_shape(
+    report_env,
+) -> None:
+    """FR-054's absent-field case for this section.
+
+    A bucket written before the replace semantics carries no `records[]` at
+    all. `record_count` 0 is not the same fact as "recorded once", so it is
+    listed rather than reported as a single un-replaced tranche.
+    """
+    rollup = _read_json(report_env, "stream-rollup.json")
+    del rollup["cycles"]["1"]["trace"]["records"]
+    rollup["cycles"]["1"]["trace"]["items_checked"] = 48
+    _write_json(report_env, "stream-rollup.json", rollup)
+
+    _generate(report_env)
+    section = _document(report_env)["stream_coverage_per_cycle"]
+
+    # No `records` key means the value is no longer a stream tranche by
+    # `is_stream_record`'s rule (D-182), so the pair drops out of the table
+    # entirely rather than being reported as coverage nobody can source.
+    assert not [r for r in section["rows"]
+                if r["cycle"] == "1" and r["stream"] == "trace"]
+    assert any(r["stream"] == "prove" for r in section["rows"]), (
+        "the siblings in the same bucket are unaffected"
+    )
+
+
+def test_stream_coverage_ignores_the_cycle_level_facts_beside_the_tranches(
+    report_env,
+) -> None:
+    """D-182 — the test is on the VALUE, never a denylist of key names.
+
+    `inspect_mode`, `stream_scope`, `evidence_sweep` and `temper_entry` live in
+    the same cycle bucket as the stream records, and the next C-6 field would
+    be a fifth. `measure-run.py` never learned the rule at all and reported
+    this run's own roll-up as eight failure tokens and exit 1.
+    """
+    rollup = _read_json(report_env, "stream-rollup.json")
+    rollup["cycles"]["1"]["a_field_nobody_has_invented_yet"] = "FULL"
+    _write_json(report_env, "stream-rollup.json", rollup)
+
+    _generate(report_env)
+    section = _document(report_env)["stream_coverage_per_cycle"]
+
+    assert not [r for r in section["rows"]
+                if r["stream"] == "a_field_nobody_has_invented_yet"]
+
+
+def test_stream_coverage_renders_empty_on_a_run_with_no_rollup(
+    report_env,
+) -> None:
+    """An absent roll-up renders an empty section, never a missing one."""
+    (report_env / "stream-rollup.json").unlink()
+    _generate(report_env)
+    section = _document(report_env)["stream_coverage_per_cycle"]
+
+    assert section["rows"] == []
+    assert section["row_count"] == 0
+    assert "## Stream coverage per cycle" in _markdown(report_env)
+    assert report_status(report_env)["present"] is True
+
+
+# ---------------------------------------------------------------------------
+# CT-004 / CT-008 / AC-025's report half — the halt and the co-dispatch sets.
+# ---------------------------------------------------------------------------
+
+
+def test_the_halt_section_prints_the_member_and_the_leads_own_text(
+    report_env,
+) -> None:
+    """CT-004 — the reason as a MEMBER of HALT_REASONS plus the free text.
+
+    The member is what a grouper reads and the text is why THIS run ended,
+    which no closed set can carry. Neither substitutes for the other.
+    """
+    state = _read_json(report_env, "state.json")
+    state["phase"] = RUN_PHASE_HALTED
+    state["halted_at_cycle"] = 5
+    state["halted_reason"] = {
+        "reason": "lead_ruling",
+        "text": "the remaining backlog is all HARDENING and the spec is met",
+    }
+    _write_json(report_env, "state.json", state)
+
+    _generate(report_env)
+    section = _document(report_env)["halt_and_co_dispatch"]
+
+    assert section["halted"] is True
+    assert section["reason"] == "lead_ruling"
+    assert section["reason_text"].startswith("the remaining backlog")
+    assert section["halted_at_cycle"] == 5
+
+    markdown = _markdown(report_env).split("## Halt and co-dispatch")[1]
+    assert "lead_ruling" in markdown
+    assert "the remaining backlog is all HARDENING" in markdown
+
+
+def test_the_halt_section_reads_the_legacy_free_string(report_env) -> None:
+    """FR-054's absent-field case: `halted_reason` is a bare f-string today.
+
+    Read BOTH shapes, printing the member when there is one and the raw text
+    when there is not — and never a member guessed out of a sentence. Coercing
+    "--max-cycles 2 reached" onto `cap_reached` would reclassify a run's ending
+    by reading its prose.
+    """
+    state = _read_json(report_env, "state.json")
+    state["phase"] = RUN_PHASE_HALTED
+    state["halted_at_cycle"] = 2
+    state["halted_reason"] = (
+        "--max-cycles 2 reached: opening GRIND cycle 3 would exceed it"
+    )
+    _write_json(report_env, "state.json", state)
+
+    _generate(report_env)
+    section = _document(report_env)["halt_and_co_dispatch"]
+
+    assert section["reason"] is None, "no member is guessed out of the sentence"
+    assert section["reason_text"] == (
+        "--max-cycles 2 reached: opening GRIND cycle 3 would exceed it"
+    )
+
+    markdown = _markdown(report_env).split("## Halt and co-dispatch")[1]
+    assert "--max-cycles 2 reached" in markdown
+    assert "None" not in markdown.split("## ")[0].splitlines()[0], (
+        "D-151's class: a Python None must never be interpolated into "
+        "operator prose as a fact"
+    )
+
+
+def test_a_bare_member_string_carries_no_invented_text(report_env) -> None:
+    """A recognised member as a BARE string has no text of its own.
+
+    Printing the member twice — once as the member and once as "the lead's own
+    words" — would invent a sentence the lead never typed.
+    """
+    state = _read_json(report_env, "state.json")
+    state["phase"] = RUN_PHASE_HALTED
+    state["halted_reason"] = "cap_reached"
+    _write_json(report_env, "state.json", state)
+
+    _generate(report_env)
+    section = _document(report_env)["halt_and_co_dispatch"]
+
+    assert section["reason"] == "cap_reached"
+    assert section["reason_text"] is None
+
+
+def test_the_halt_section_says_a_run_did_not_halt(report_env) -> None:
+    """An unhalted run renders the section, and says what its emptiness means.
+
+    A halt is reached by a SUCCESSFUL transition (ST-001), so the absence of
+    one is not a refusal that happened — it is a run that ended another way.
+    """
+    _generate(report_env)
+    section = _document(report_env)["halt_and_co_dispatch"]
+
+    assert section["halted"] is False
+    assert section["reason"] is None
+    assert "did not halt" in _markdown(report_env).split(
+        "## Halt and co-dispatch"
+    )[1]
+
+
+def test_the_halt_section_lists_the_co_dispatch_sets_per_grind(
+    report_env,
+) -> None:
+    """CT-008 — the sets the SERVER computed, read and never recomputed.
+
+    A report that rebuilt them from the manifest would be a second answer to
+    "which castings went out together", available to disagree with the one the
+    lead actually acted on.
+    """
+    with (report_env / "handoffs.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "event": "grind_dispatched", "cycle": 3, "phase": "F3",
+            "timestamp": "2026-09-02T06:00:00+00:00",
+            "co_dispatch": ["casting-2", "casting-10"],
+            "defect_ids": ["D-101"], "requirement_ids": ["FR-008"],
+        }) + "\n")
+
+    _generate(report_env)
+    section = _document(report_env)["halt_and_co_dispatch"]
+
+    assert section["co_dispatch_count"] == 1
+    row = section["co_dispatch"][0]
+    assert row["co_dispatch"] == ["casting-2", "casting-10"]
+    assert row["cycle"] == 3 and row["defect_ids"] == ["D-101"]
+
+    markdown = _markdown(report_env).split("## Halt and co-dispatch")[1]
+    assert "casting-2, casting-10" in markdown
+    assert "D-101" in markdown
+
+
+def test_a_run_with_no_co_dispatch_record_renders_an_empty_table(
+    report_env,
+) -> None:
+    """FR-054's absent-field case: casting 2 lands the writer in wave 2.
+
+    Until then no handoff carries `co_dispatch` at all, and the section must
+    render an empty table rather than refusing — which is every run today.
+    """
+    _generate(report_env)
+    section = _document(report_env)["halt_and_co_dispatch"]
+
+    assert section["co_dispatch"] == []
+    assert section["co_dispatch_count"] == 0
+    assert "_None recorded._" in _markdown(report_env).split(
+        "## Halt and co-dispatch"
+    )[1]
+
+
+# ---------------------------------------------------------------------------
+# AC-046 — the FULL-cycle ratio, stated pass/fail against 50%.
+# ---------------------------------------------------------------------------
+
+
+def test_the_report_states_the_full_cycle_ratio_against_fifty_percent(
+    report_env,
+) -> None:
+    """AC-046 — "the F6 report states pass/fail against 50%".
+
+    `measure-run.py` emits the same figure (casting 3) from the same
+    `foundry_state.full_cycle_ratio`, so the two documents cannot disagree
+    about an acceptance criterion.
+    """
+    from foundry_mcp.tools.foundry_state import full_cycle_ratio
+
+    _generate(report_env)
+    section = _document(report_env)["inspect_modes_per_cycle"]
+    ratio = section["full_cycle_ratio"]
+
+    assert ratio["threshold"] == 0.5
+    assert ratio["total_cycles"] == section["cycle_count"]
+    assert ratio["ratio"] == round(
+        ratio["full_cycles"] / ratio["total_cycles"], 4
+    )
+    assert ratio["passes"] is (ratio["ratio"] < 0.5)
+    assert ratio == full_cycle_ratio({"per_cycle": section["per_cycle"]}), (
+        "one derivation, two renderings — the report re-derives nothing"
+    )
+
+    markdown = _markdown(report_env).split("## INSPECT mode per cycle")[1]
+    assert ("PASS" in markdown) or ("FAIL" in markdown)
+    assert "FULL-cycle ratio" in markdown
+
+
+def test_a_cycle_counts_as_full_when_any_decision_in_it_was_full(
+    report_env,
+) -> None:
+    """The axis is CYCLES, not decisions (D-119's sibling).
+
+    One cycle can carry two decisions — the F2 INSPECT and the F5 one TEMPER
+    opens without advancing the counter — and counting decisions would make a
+    run that reopened one cycle at FULL look wider than a run that ran two
+    cycles at FULL.
+    """
+    state = _read_json(report_env, "state.json")
+    state["inspect_modes"] = [
+        {"cycle": 0, "phase": "F2", "mode": "DELTA", "rule": "delta"},
+        {"cycle": 1, "phase": "F2", "mode": "DELTA", "rule": "delta"},
+        {"cycle": 1, "phase": "F5", "mode": "FULL", "rule": "first_of_phase"},
+    ]
+    _write_json(report_env, "state.json", state)
+
+    _generate(report_env)
+    ratio = _document(report_env)["inspect_modes_per_cycle"]["full_cycle_ratio"]
+
+    assert ratio["total_cycles"] == 2
+    assert ratio["full_cycles"] == 1
+    assert ratio["ratio"] == 0.5
+    assert ratio["passes"] is False, "0.5 is not BELOW 0.5"
+
+
+def test_an_unmeasurable_ratio_is_stated_in_words(report_env) -> None:
+    """D-151's class. `passes` is None, never False, when no width was recorded.
+
+    "No INSPECT recorded a width" and "more than half were FULL" are different
+    answers, and a pass/fail marker cannot carry both.
+    """
+    state = _read_json(report_env, "state.json")
+    state["inspect_modes"] = []
+    _write_json(report_env, "state.json", state)
+
+    _generate(report_env)
+    ratio = _document(report_env)["inspect_modes_per_cycle"]["full_cycle_ratio"]
+
+    assert ratio["passes"] is None
+    assert ratio["ratio"] is None
+    markdown = _markdown(report_env).split("## INSPECT mode per cycle")[1]
+    assert "NOT MEASURABLE" in markdown
+
+
+# ---------------------------------------------------------------------------
+# AC-047 / OT-041 — the four sections, as a set.
+# ---------------------------------------------------------------------------
+
+
+def test_all_four_new_sections_reach_both_documents(report_env) -> None:
+    """OT-041 — "The F6 report carries the HARDENING backlog, fallout per
+    cycle, stream coverage with replaced records, and halt reason plus
+    co-dispatch sets."
+
+    Both documents, because `report_status` reads both and the DONE gate
+    refuses on the union: a section in the JSON and not the markdown is a
+    section the gate reports missing.
+    """
+    _generate(report_env)
+    document = _document(report_env)
+    markdown = _markdown(report_env)
+
+    for key, title in (
+        ("hardening_backlog", "HARDENING backlog"),
+        ("fallout_per_cycle", "Fallout per cycle"),
+        ("stream_coverage_per_cycle", "Stream coverage per cycle"),
+        ("halt_and_co_dispatch", "Halt and co-dispatch"),
+    ):
+        assert key in document, key
+        assert key in REPORT_REQUIRED_SECTIONS, key
+        assert f"## {title}" in markdown, title
+
+    assert len(REPORT_REQUIRED_SECTIONS) == 15
+    status = report_status(report_env)
+    assert status["present"] is True
+    assert status["missing_sections"] == []

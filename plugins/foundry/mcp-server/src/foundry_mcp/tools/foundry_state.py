@@ -1379,6 +1379,190 @@ def stream_rollup_rows(run_dir: Path) -> dict:
     }
 
 
+def full_cycle_ratio(inspect_modes: dict, *, full_mode: str = "FULL") -> dict:
+    """AC-046 / FR-053 — FULL cycles divided by total INSPECT cycles.
+
+    Returns, and never raises::
+
+        {"full_cycles": int,        # cycles carrying at least one FULL decision
+         "total_cycles": int,       # cycles carrying any decision
+         "ratio": float | None,     # None when no cycle carries a decision
+         "threshold": 0.5,
+         "passes": bool | None}     # None when the ratio cannot be derived
+
+    ``inspect_modes`` is ``inspect_mode_rows``' document. A-037's figure is a
+    RATIO and not a count, so it is derived from the recorded widths rather
+    than from anything a lead asserts.
+
+    THE AXIS IS CYCLES, NOT DECISIONS. One cycle can carry two decisions — the
+    F2 INSPECT and the F5 one TEMPER opens without advancing the counter
+    (D-119) — and counting decisions would make a run that reopened one cycle
+    at FULL look wider than a run that ran two cycles at FULL. A cycle counts
+    as FULL when ANY decision in it was FULL, because a cycle that ran a
+    five-stream INSPECT paid for one however many times it was reopened.
+
+    ``passes`` is None, never False, when the ratio cannot be derived: "no
+    INSPECT recorded a width" and "more than half of them were FULL" are
+    different answers, and a caller stating a pass/fail line has to be able to
+    tell them apart. This is `handoffs_wall_clock_seconds`' rule applied to the
+    second acceptance figure.
+
+    ``measure-run.py`` reads THIS (casting 3) rather than deriving a second
+    ratio, which is why the derivation is hosted in the leaf module and not in
+    the report: AC-046 puts the same number in two documents, and two
+    derivations of one acceptance figure is the shape §3.2 inventories.
+    """
+    per_cycle = inspect_modes.get("per_cycle") if isinstance(inspect_modes, dict) else None
+    per_cycle = per_cycle if isinstance(per_cycle, dict) else {}
+    total = len(per_cycle)
+    full = sum(
+        1
+        for group in per_cycle.values()
+        if any(
+            isinstance(d, dict) and d.get("mode") == full_mode
+            for d in (group or [])
+        )
+    )
+    ratio = (full / total) if total else None
+    return {
+        "full_cycles": full,
+        "total_cycles": total,
+        "ratio": None if ratio is None else round(ratio, 4),
+        "threshold": 0.5,
+        "passes": None if ratio is None else ratio < 0.5,
+    }
+
+
+def fallout_rows(run_dir: Path, *, axis_top: int | None = None) -> dict:
+    """AC-046's sibling, FR-025 — filings that are FALLOUT of an earlier defect.
+
+    Returns, and never raises::
+
+        {"per_cycle": {str(cycle): {"fallout": int, "measured": int,
+                                    "unmeasured": int, "ids": [str]}},
+         "total": int,
+         "measured_records": int,      # records carrying the `fallout_of` KEY
+         "unmeasured_records": int,    # records with no such key at all
+         "last_two_cycles": [int],
+         "verdict": "pass" | "fail" | "not_measurable",
+         "verdict_reason": str,
+         "problem": str | None}
+
+    A-020: "Optional `fallout_of: D-NNN` on the defect record, set by the
+    filing stream; measure-run counts it per cycle." The acceptance figure is
+    zero across the last two INSPECT cycles, and this returns the verdict
+    rather than the caller computing it — `measure-run.py` publishes the same
+    two numbers (casting 3) and two derivations of one acceptance figure is
+    exactly what §3.2 inventories.
+
+    AN ABSENT FIELD IS NOT A MEASURED ZERO (FR-054). Every record written
+    before `fallout_of` existed carries no such key, and counting those cycles
+    as "zero fallout" would certify the acceptance criterion on an archive that
+    never measured it — the same fabrication `handoffs_wall_clock_seconds`
+    refuses for the wall clock. So the KEY's presence is what makes a record
+    measured (`fallout_of: null` counts, because `migrate-archive.py` fills
+    that default deliberately), and a cycle containing an unmeasured record
+    cannot contribute to a pass.
+
+    A RUN WITH FEWER THAN TWO INSPECT CYCLES CANNOT PASS, AND SAYS SO. The
+    criterion is defined over a PAIR of cycles; a one-cycle run has no pair,
+    and reporting `pass` because nothing contradicted it would make the figure
+    easiest to satisfy on the runs that did the least work.
+
+    ``axis_top`` is ``derive_cycle_count``'s ``index`` — the counter's own
+    highest value — passed in so this reader and the inspect-mode census sit on
+    ONE axis. Omitted, the axis falls back to the highest cycle the defect
+    ledger names, which is honest for a count and is stated in
+    ``verdict_reason`` when it changes the answer.
+    """
+    document, problem = read_document(run_dir / "defects.json")
+    records = document.get("defects")
+    records = records if isinstance(records, list) else []
+
+    per_cycle: dict[str, dict] = {}
+    total = 0
+    measured_records = 0
+    unmeasured_records = 0
+    ledger_top: int | None = None
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        cycle = record.get("cycle")
+        cycle = cycle if isinstance(cycle, int) and not isinstance(cycle, bool) else None
+        if cycle is not None and cycle >= 0:
+            ledger_top = cycle if ledger_top is None else max(ledger_top, cycle)
+        key = str(cycle) if cycle is not None else "unrecorded"
+        bucket = per_cycle.setdefault(
+            key, {"fallout": 0, "measured": 0, "unmeasured": 0, "ids": []}
+        )
+        if "fallout_of" in record:
+            measured_records += 1
+            bucket["measured"] += 1
+            parent = record.get("fallout_of")
+            if isinstance(parent, str) and parent.strip():
+                total += 1
+                bucket["fallout"] += 1
+                bucket["ids"].append(record.get("id"))
+        else:
+            unmeasured_records += 1
+            bucket["unmeasured"] += 1
+
+    top = axis_top if isinstance(axis_top, int) and not isinstance(axis_top, bool) else ledger_top
+    if top is None or top < 1:
+        return {
+            "per_cycle": {k: per_cycle[k] for k in sorted(per_cycle, key=cycle_sort_key)},
+            "total": total,
+            "measured_records": measured_records,
+            "unmeasured_records": unmeasured_records,
+            "last_two_cycles": [],
+            "verdict": "not_measurable",
+            "verdict_reason": (
+                "the acceptance figure is defined over the LAST TWO INSPECT "
+                "cycles and this run records fewer than two, so there is no "
+                "pair to measure; a pass here would be easiest to earn on the "
+                "runs that did the least work"
+            ),
+            "problem": problem,
+        }
+
+    pair = [top - 1, top]
+    unmeasured_in_pair = [
+        c for c in pair if per_cycle.get(str(c), {}).get("unmeasured", 0)
+    ]
+    fallout_in_pair = [c for c in pair if per_cycle.get(str(c), {}).get("fallout", 0)]
+    if unmeasured_in_pair:
+        verdict = "not_measurable"
+        reason = (
+            f"cycle(s) {unmeasured_in_pair} carry defect records with no "
+            f"`fallout_of` key at all, which is structurally absent and not a "
+            f"measured zero — run `migrate-archive.py` to fill the default, "
+            f"then the pair can be measured"
+        )
+    elif fallout_in_pair:
+        verdict = "fail"
+        reason = (
+            f"cycle(s) {fallout_in_pair} of the closing pair {pair} recorded a "
+            f"filing that is fallout of an earlier defect; the criterion is "
+            f"zero across BOTH"
+        )
+    else:
+        verdict = "pass"
+        reason = (
+            f"cycles {pair} — the last two INSPECT cycles — each recorded zero "
+            f"filings carrying `fallout_of`"
+        )
+    return {
+        "per_cycle": {k: per_cycle[k] for k in sorted(per_cycle, key=cycle_sort_key)},
+        "total": total,
+        "measured_records": measured_records,
+        "unmeasured_records": unmeasured_records,
+        "last_two_cycles": pair,
+        "verdict": verdict,
+        "verdict_reason": reason,
+        "problem": problem,
+    }
+
+
 def unreported_dispatch_inputs(run_dir: Path) -> dict:
     """The three ledgers ``unreported_dispatch_summary`` runs over, assembled ONCE.
 

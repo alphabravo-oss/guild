@@ -239,21 +239,60 @@ FINDING_CLASSES = frozenset({"DEFECT", "OBSERVATION"})  # 2 items
 # `additionalProperties: False`. `tier` measures something else entirely: NOT
 # how much the defect matters, but WHAT THE FILING STREAM ACTUALLY DID.
 #
-#   LIVE    the stream drove the door and observed the wrong result. The
-#           description carries the reproduction.
-#   LATENT  the stream looked for the failure and did not find one — a gap
-#           reasoned about, not reproduced. The filing must carry a
-#           `reproduction_attempted` statement naming what was driven and what
-#           it found (`reproduction_attempted_problem` below is the check).
+#   LIVE       the stream drove the door and observed the wrong result. The
+#              description carries the reproduction.
+#   LATENT     the stream looked for the failure and did not find one — a gap
+#              reasoned about, not reproduced. The filing must carry a
+#              `reproduction_attempted` statement naming what was driven and
+#              what it found (`reproduction_attempted_problem` below is the
+#              check).
+#   HARDENING  the stream DROVE a probe of its own devising and observed a
+#              wrong result that no requirement asks about. Same evidence
+#              standard as LIVE — a reproduction, not a worry — and a
+#              different SUBJECT: nothing in the spec is unmet, so nothing is
+#              owed before the run may move.
 #
-# Both tiers are DEFECTS and both get fixed. FR-006 and CT-008 give ONE gate
-# rule and it has no per-door exception in it: INSPECT-clean, ASSAY, TEMPER,
-# NYQUIST and DONE ALL pass when the only open defects are LATENT, and all five
-# refuse on an open LIVE or unknown-tier defect (FR-051). So the tier does not
-# select a gate. What it decides is TASKING — which defects a GRIND cycle must
-# clear before the run can move, and which escalation-clearing cycles count
-# (ST-001: a LATENT instance does not reset the clean-cycle counter) — and
-# REPORTING: a LATENT defect stays open, tracked, and named in the F6 backlog.
+# All three tiers are DEFECTS and all three get fixed. FR-006 and CT-008 give
+# ONE gate rule and it has no per-door exception in it: INSPECT-clean, ASSAY,
+# TEMPER, NYQUIST and DONE ALL pass when the only open defects are LATENT, and
+# all five refuse on an open LIVE or unknown-tier defect (FR-051). HARDENING
+# joins LATENT on the passing side of that same rule — `BLOCKING_TIERS` is
+# untouched by this member, which is the whole of its gate semantics. So the
+# tier does not select a gate. What it decides is TASKING — which defects a
+# GRIND cycle must clear before the run can move, and which escalation-clearing
+# cycles count (ST-001: a LATENT instance does not reset the clean-cycle
+# counter) — and REPORTING: a LATENT defect stays open, tracked, and named in
+# the F6 backlog, and so does a HARDENING one, in a backlog section of its own
+# beside it (AC-024).
+#
+# WHY HARDENING IS NOT THE GRADE RETURNING UNDER A NEW NAME EITHER (GI-014)
+# -------------------------------------------------------------------------
+# The paragraph below forbids "a third value that means 'less important than
+# LIVE'", and that is the right test to apply — so apply it. HARDENING does not
+# say a finding matters less. It says the finding is OFF-SPEC: GI-030 gives
+# PROVE an adversarial half at INSPECT on a TEMPER-off run, and a probe that
+# finds a real wrong result outside the requirements matrix has, until now, had
+# two homes and both are wrong. Filed LIVE, it holds every gate shut over
+# behaviour no requirement asks for, which is how a run learns to stop driving
+# probes. Dropped, it is the finding nobody records.
+#
+# THE DISCRIMINATOR IS `spec_ref`, AND IT IS MECHANICAL (GI-028 / CT-012). A
+# HARDENING filing carrying ANY `spec_ref` is REFUSED at both doors — not
+# down-ranked, refused — because a spec reference is the statement that a
+# requirement IS at stake, and a record that makes that statement while sitting
+# in the non-blocking tier is the downgrade this axis exists to prevent. That
+# is a door rule and lives at the doors; what lives here is the member.
+#
+# AND THE DENYLIST STILL OUTRANKS IT (GI-004). `never_demote_class` is checked
+# before the tier and is unchanged by this member: a reachable raise, a forged
+# evidence log or a security-property claim filed as HARDENING is refused and
+# the audit tripwire fires, exactly as it is when filed as LATENT. A tier is
+# never a route around the never-weaken guarantee.
+#
+# PROMOTION IS A NEW FILING, NEVER A RE-TIER IN PLACE (GI-022 / ST-006). A
+# HARDENING record that turns out to break a requirement is superseded by a
+# filing that cites it through `supersedes` and carries its own tier and its own
+# reproduction. Re-tiering in place would rewrite what a stream said it saw.
 #
 # D-148 — this paragraph used to hand ASSAY an exception, saying it blocked on
 # either tier while the other doors passed on LATENT. No shipped gate ever did
@@ -273,7 +312,14 @@ FINDING_CLASSES = frozenset({"DEFECT", "OBSERVATION"})  # 2 items
 # ---------------------------------------------------------------------------
 
 # CLOSED VOCABULARY — the evidence tier a filing stream sets on every defect.
-DEFECT_TIERS = frozenset({"LIVE", "LATENT"})  # 2 items
+DEFECT_TIERS = frozenset({"LIVE", "LATENT", "HARDENING"})  # 3 items
+
+#: FR-014 / GI-014 — the off-spec driven failure's own name, so a door, a
+#: report section and a filing stream spell it identically. A member of
+#: DEFECT_TIERS above; declared separately for the same reason the observation
+#: class names are, which is that a consumer naming the tier in a refusal or a
+#: section key must read it rather than re-type it.
+TIER_HARDENING = "HARDENING"
 
 #: READ-SIDE SENTINEL ONLY — never written by a filing door, and deliberately
 #: NOT a member of DEFECT_TIERS. A record persisted before this release has no
@@ -284,8 +330,11 @@ DEFECT_TIERS = frozenset({"LIVE", "LATENT"})  # 2 items
 TIER_UNKNOWN = "unknown"
 
 # The full READ vocabulary: what a reader may see, as opposed to what a door
-# may write. Derived from DEFECT_TIERS so adding a tier needs one edit.
-DEFECT_TIER_OR_UNKNOWN = frozenset(DEFECT_TIERS | {TIER_UNKNOWN})  # 3 items
+# may write. Derived from DEFECT_TIERS so adding a tier needs one edit — which
+# is what FR-014 just proved: HARDENING joined the set above and every reader
+# that walks this one, including the report's tier cross-tab, gained the column
+# without a second edit.
+DEFECT_TIER_OR_UNKNOWN = frozenset(DEFECT_TIERS | {TIER_UNKNOWN})  # 4 items
 
 
 def defect_tier(record: Mapping[str, object]) -> str:
@@ -837,6 +886,68 @@ HANDOFF_EVENT_LEAD_FIX = "lead_fix"
 #: named in it.
 RUN_PHASE_HALTED = "HALTED"
 
+# CLOSED VOCABULARY — FR-019 / CT-005 / ST-001: why a run ended on a ruling.
+#
+#   cap_reached           the GRIND door found the persisted `max_cycles`
+#                         below the cycle it was about to open. The ONLY
+#                         member a transition writes on its own.
+#   lead_ruling           the lead stopped the run deliberately.
+#   spec_change_required  the run cannot converge without a spec change, so
+#                         continuing would grind against a target that is
+#                         itself wrong.
+#   user_stop             the user asked for it.
+#
+# A HALTED run carries the member AND the lead's own free text (CT-004): the
+# member is what `measure-run.py` and the report group on, and the text is why
+# THIS run ended, which no closed set can carry. Neither substitutes for the
+# other — `halted_reason` was a bare f-string before this release, which is
+# readable and ungroupable, and every reader must still accept that shape
+# (FR-054).
+#
+# Extend only via phase-level RFC.
+HALT_REASONS = frozenset(
+    {"cap_reached", "lead_ruling", "spec_change_required", "user_stop"}
+)  # 4 items
+
+#: The member the cap path writes. Named rather than spelled at the door, so
+#: the transition that halts on the cap and the report section that groups by
+#: reason cannot come to disagree about which member that is (CT-005).
+HALT_REASON_CAP_REACHED = "cap_reached"
+
+
+def halt_reason(value: object) -> str | None:
+    """The HALT_REASONS member a persisted `halted_reason` READS as, or None.
+
+    Total and never raises. Mirrors `defect_tier` above one rung along: a value
+    outside the closed set resolves to None rather than being coerced onto a
+    member, because the pre-release spelling of this field is a free f-string
+    ("--max-cycles 2 reached: opening GRIND cycle 3 would exceed it") and
+    guessing which member that sentence meant is how a run's ending gets
+    reclassified by a reader.
+
+    None is therefore a REAL answer and not an error: it says "this record
+    carries text and no member", which is exactly what every archive written
+    before FR-019 carries. A reader prints the text; a grouper skips the row.
+    Accepting `{reason, text}` as well as the bare string is the caller's job —
+    this resolves one value, and the PURITY RULE keeps it doing only that.
+    """
+    if isinstance(value, str) and value in HALT_REASONS:
+        return value
+    return None
+
+
+def halt_reason_phrase() -> str:
+    """The four members, comma-joined, for a refusal that names the set.
+
+    Derived from the constant rather than re-typed at the door, following
+    `_PYTEST_DISCOVERY_PHRASE`'s shape: the door that refuses an unknown reason
+    has to print the set it accepts, and a hand-typed copy of a closed
+    vocabulary in a refusal message is the drift this module exists to end.
+    Sorted so the sentence is stable across runs.
+    """
+    return ", ".join(sorted(HALT_REASONS))
+
+
 #: CT-013 — the per-agent spend ledger, one JSON object per line under
 #: `foundry-archive/{run}/`.
 SPEND_LEDGER_FILENAME = "spend.jsonl"
@@ -851,20 +962,48 @@ REPORT_JSON_FILENAME = "report.json"
 # `Foundry-Phase('done')` refuses when a section is missing. `report.json`'s
 # top-level keys are exactly these plus `generated_at` and `run`; REPORT.md
 # carries one `## ` heading per member in this order.
+#
+# THE TUPLE IS ORDERED AND THE ORDER IS THE DOCUMENT'S (FR-027 / AC-047).
+# `_render_markdown` walks this tuple to emit one `## ` heading per member, so
+# a member's position here IS where its section sits in the report a lead
+# reads. The four members A-038 adds are placed beside the section each one is
+# read WITH rather than appended at the end:
+#
+#   hardening_backlog          beside `latent_backlog`, which AC-024 asks for
+#                              by name. The two are the same question about
+#                              different subjects — what stays open and why —
+#                              and a reader comparing them should not have to
+#                              scroll past nine sections to do it.
+#   fallout_per_cycle          after the defect sections it is derived from:
+#                              it counts records carrying `fallout_of`, so it
+#                              belongs where the defect ledger is being
+#                              reported and not beside the spend tables.
+#   stream_coverage_per_cycle  beside `inspect_modes_per_cycle`. Both are
+#                              per-cycle facts about the same INSPECTs — the
+#                              width the transition chose, and what the streams
+#                              actually covered at it.
+#   halt_and_co_dispatch       after the dispatch sections whose sets it names,
+#                              and before the two closing sections that
+#                              describe the machine rather than the run.
+#
 # Extend only via phase-level RFC.
 REPORT_REQUIRED_SECTIONS = (
     "verdict_matrix",
     "defects_by_tier_and_status",
     "latent_backlog",
+    "hardening_backlog",
     "unknown_tier_defects",
+    "fallout_per_cycle",
     "escalated_classes",
     "lead_fix_records",
     "inspect_modes_per_cycle",
+    "stream_coverage_per_cycle",
     "spend_per_phase_and_cycle",
     "unreported_dispatches",
+    "halt_and_co_dispatch",
     "executing_versions",
     "baseline_comparison",
-)  # 11 sections
+)  # 15 sections
 
 # ---------------------------------------------------------------------------
 # NFR-001 / AC-039 / OT-030 — the convergence comparison.
@@ -959,12 +1098,40 @@ PROSE_COUNT = "PROSE_COUNT"
 DIRECTION_WORD = "DIRECTION_WORD"
 ENUMERATION = "ENUMERATION"
 
+# FR-017 / GI-027 / CT-017 — the fifth class, and the one that is not about
+# comment prose at all.
+#
+# A PROVE probe idea that is worth DRIVING and that PROVE did not drive. The
+# four classes above are all "this comment no longer agrees with the code";
+# this one is "here is a question nobody has asked yet", and it is an
+# observation for the same structural reason they are: it is not a defect,
+# because nothing has been shown to be wrong. What makes it worth a ledger
+# entry is that TEMPER's roster is exactly the open candidates plus its own
+# micro-domains, and each is closed as DRIVEN — filed or clean.
+#
+# GI-027's violation column names the harm on BOTH sides, and they are
+# different harms: TEMPER ignoring recorded candidates loses the work of
+# noticing, and PROVE filing a candidate as a DEFECT blocks a run over a
+# question rather than a finding. A candidate is neither a defect nor a
+# HARDENING record — HARDENING is a probe that was DRIVEN and failed, and a
+# candidate is a probe that has not been driven at all.
+#
+# AC-020 is the other half: on a run where TEMPER never ran, the F6 report
+# lists every candidate that was not driven, by name. A backlog tier with no
+# promotion cadence becomes write-only debt, and the report section is the
+# cadence's visible half.
+TEMPER_CANDIDATE = "TEMPER_CANDIDATE"
+
 # CLOSED VOCABULARY — findings of these classes are recordable in the
 # observations ledger instead of the defect ledger, UNLESS a denylist entry
-# also matches. Extend only via phase-level RFC.
+# also matches. The never-demote denylist below is UNCHANGED by the fifth
+# member and still outranks every one of them (AC-002 / GI-004): a probe idea
+# whose description makes a security-property claim is a DEFECT, and the
+# tripwire fires naming the entry that matched.
+# Extend only via phase-level RFC.
 OBSERVATION_CLASSES = frozenset(
-    {LINE_DRIFT_CITE, PROSE_COUNT, DIRECTION_WORD, ENUMERATION}
-)  # 4 items
+    {LINE_DRIFT_CITE, PROSE_COUNT, DIRECTION_WORD, ENUMERATION, TEMPER_CANDIDATE}
+)  # 5 items
 
 # The four never-demote denylist classes named by AC-002.
 SECURITY_PROPERTY_CLAIM = "SECURITY_PROPERTY_CLAIM"

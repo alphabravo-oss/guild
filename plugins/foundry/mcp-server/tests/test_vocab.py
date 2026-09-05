@@ -255,8 +255,56 @@ OBSERVATION_PREDICATES = {
 
 
 def test_observation_classes_names_the_four_ac_001_classes() -> None:
-    assert vocab.OBSERVATION_CLASSES == frozenset(OBSERVATION_PREDICATES)
-    assert len(vocab.OBSERVATION_CLASSES) == 4
+    """The four comment-prose classes each still have their own predicate.
+
+    `TEMPER_CANDIDATE` is deliberately absent from `OBSERVATION_PREDICATES`:
+    the four above are DETECTED from a finding's prose, and a candidate is
+    RECORDED by the stream that thought of the probe. A prose predicate for it
+    would be a regex guessing whether a sentence is a good idea.
+    """
+    assert frozenset(OBSERVATION_PREDICATES) < vocab.OBSERVATION_CLASSES
+    assert len(OBSERVATION_PREDICATES) == 4
+
+
+def test_observation_classes_admits_the_temper_candidate(  # FR-017 / GI-027
+) -> None:
+    """CT-017 — the fifth member, and the one that is not comment prose.
+
+    GI-027: "TEMPER's roster = open candidates + its own micro-domains; each is
+    closed as DRIVEN (filed or clean)". A candidate is neither a defect nor a
+    HARDENING record — HARDENING is a probe that was DRIVEN and failed, and a
+    candidate is a probe nobody has driven at all.
+    """
+    assert vocab.TEMPER_CANDIDATE == "TEMPER_CANDIDATE"
+    assert vocab.TEMPER_CANDIDATE in vocab.OBSERVATION_CLASSES
+    assert vocab.OBSERVATION_CLASSES == frozenset(
+        {vocab.LINE_DRIFT_CITE, vocab.PROSE_COUNT, vocab.DIRECTION_WORD,
+         vocab.ENUMERATION, vocab.TEMPER_CANDIDATE}
+    )
+    assert len(vocab.OBSERVATION_CLASSES) == 5
+
+
+def test_the_denylist_still_outranks_the_new_observation_class() -> None:
+    """AC-002 / GI-004 — the never-weaken guarantee is untouched by the member.
+
+    A tier or a class is never a route around the denylist. A probe idea whose
+    description makes a security-property claim is a DEFECT, and the audit
+    tripwire names the entry that matched — the same answer the four
+    comment-prose classes get.
+    """
+    assert vocab.TEMPER_CANDIDATE not in vocab.NEVER_DEMOTE_CLASSES
+    assert len(vocab.NEVER_DEMOTE_CLASSES) == 4
+    assert not (vocab.OBSERVATION_CLASSES & vocab.NEVER_DEMOTE_CLASSES)
+
+    claim = {
+        "description": "probe idea: the auth check can be bypassed by a "
+                       "crafted header, worth driving",
+        "target_kind": "code",
+    }
+    assert vocab.never_demote_class(claim) is not None, (
+        "a probe idea that makes a security-property claim is a DEFECT; the "
+        "denylist outranks every observation class, this one included"
+    )
 
 
 @pytest.mark.parametrize("class_name", sorted(OBSERVATION_CASES))
@@ -996,9 +1044,68 @@ def test_the_two_comparison_dicts_are_json_serializable() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_defect_tiers_is_the_two_member_closed_vocabulary() -> None:
-    assert vocab.DEFECT_TIERS == frozenset({"LIVE", "LATENT"})
+def test_defect_tiers_is_the_three_member_closed_vocabulary() -> None:
+    """FR-014 / GI-014 / AC-022 — HARDENING is the third member."""
+    assert vocab.DEFECT_TIERS == frozenset({"LIVE", "LATENT", "HARDENING"})
     assert isinstance(vocab.DEFECT_TIERS, frozenset)
+    assert vocab.TIER_HARDENING == "HARDENING"
+    assert vocab.TIER_HARDENING in vocab.DEFECT_TIERS
+
+
+def test_hardening_is_a_defect_tier_and_is_not_in_the_blocking_set() -> None:
+    """AC-022 — the whole of HARDENING's gate semantics, stated as an assertion.
+
+    `BLOCKING_TIERS` is a literal tuple in `foundry_orchestrator`, so adding
+    the member changes nothing there and the CORRECT outcome is that nothing
+    changed. That is exactly what makes this pin worth having: the day someone
+    derives `BLOCKING_TIERS` from `DEFECT_TIERS` — which reads like a tidy-up
+    and is the obvious next refactor — every gate starts blocking on the
+    non-blocking tier and this fails first.
+
+    AC-022 also names the four doors that must pass with open HARDENING
+    defects; those are driven at the doors themselves (casting 4's file). What
+    is asserted here is the vocabulary fact the doors read.
+    """
+    from foundry_mcp.tools.foundry_orchestrator import BLOCKING_TIERS
+
+    assert vocab.TIER_HARDENING not in BLOCKING_TIERS, (
+        "HARDENING is a driven failure that no requirement asks about "
+        "(GI-014): it is REPORTED in its own backlog and blocks no gate. A "
+        "blocking HARDENING tier holds a run shut over behaviour nobody "
+        "specified, which is how a run learns to stop driving probes."
+    )
+    assert set(BLOCKING_TIERS) == {"LIVE", vocab.TIER_UNKNOWN}, (
+        f"{BLOCKING_TIERS} — LIVE is a reachable failure and unknown is a "
+        f"record nobody classified. Neither LATENT nor HARDENING joins them."
+    )
+
+
+def test_defect_tier_reads_a_hardening_record_as_hardening() -> None:
+    """The read side of the same member: no coercion, in either direction."""
+    assert vocab.defect_tier({"tier": "HARDENING"}) == "HARDENING"
+    assert vocab.defect_tier({"tier": "hardening"}) == vocab.TIER_UNKNOWN
+    assert vocab.TIER_HARDENING in vocab.DEFECT_TIER_OR_UNKNOWN
+
+
+def test_the_wire_enums_widen_by_derivation_and_never_by_a_second_list() -> None:
+    """GI-014 — `sorted(DEFECT_TIERS)` is what the three wire surfaces spell.
+
+    `server.py`'s two Foundry-Defect / Foundry-Sync input schemas and
+    `schemas/findings.py` all derive their `tier` enum from the constant, so
+    the member added above reaches the wire with no edit of theirs. A surface
+    that re-typed the two old names would have silently refused every HARDENING
+    filing while the vocabulary declared it legal — the exact seventh-copy
+    shape D-071 filed.
+    """
+    from foundry_mcp.schemas import findings
+
+    schema_tier = _foundry_defect_schema()["tier"]
+    assert schema_tier["enum"] == sorted(vocab.DEFECT_TIERS)
+    assert vocab.TIER_HARDENING in schema_tier["enum"]
+
+    finding_tier = findings._FINDING_ITEM["properties"]["tier"]
+    assert finding_tier["enum"] == sorted(vocab.DEFECT_TIERS)
+    assert vocab.TIER_HARDENING in finding_tier["enum"]
 
 
 def test_tier_unknown_is_a_read_sentinel_and_not_a_writable_tier() -> None:
@@ -1011,7 +1118,7 @@ def test_tier_unknown_is_a_read_sentinel_and_not_a_writable_tier() -> None:
     assert vocab.TIER_UNKNOWN == "unknown"
     assert vocab.TIER_UNKNOWN not in vocab.DEFECT_TIERS
     assert vocab.DEFECT_TIER_OR_UNKNOWN == vocab.DEFECT_TIERS | {vocab.TIER_UNKNOWN}
-    assert len(vocab.DEFECT_TIER_OR_UNKNOWN) == 3
+    assert len(vocab.DEFECT_TIER_OR_UNKNOWN) == 4
 
 
 @pytest.mark.parametrize(
@@ -2352,27 +2459,53 @@ def test_is_test_file_agrees_with_real_pytest_in_both_directions(tmp_path) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_report_required_sections_is_the_eleven_gi_006_names_in_order() -> None:
+def test_report_required_sections_is_the_fifteen_gi_006_names_in_order() -> None:
     """A TUPLE — GI-006 fixes the ORDER as well as the membership.
 
     report.json's top-level keys are these plus generated_at and run, and
     REPORT.md carries one `## ` heading per member in this sequence, so a
     frozenset here would leave the order undefined at both surfaces.
+
+    AC-047 / FR-027 grow it by FOUR, and each one is placed beside the section
+    it is read WITH rather than appended at the end: the HARDENING backlog
+    beside the LATENT backlog (AC-024 asks for that by name), fallout after the
+    defect sections it counts, stream coverage beside the INSPECT widths it
+    measures, and the halt after the dispatch sections whose sets it lists.
     """
     assert vocab.REPORT_REQUIRED_SECTIONS == (
         "verdict_matrix",
         "defects_by_tier_and_status",
         "latent_backlog",
+        "hardening_backlog",
         "unknown_tier_defects",
+        "fallout_per_cycle",
         "escalated_classes",
         "lead_fix_records",
         "inspect_modes_per_cycle",
+        "stream_coverage_per_cycle",
         "spend_per_phase_and_cycle",
         "unreported_dispatches",
+        "halt_and_co_dispatch",
         "executing_versions",
         "baseline_comparison",
     )
-    assert len(set(vocab.REPORT_REQUIRED_SECTIONS)) == 11, "no duplicate section"
+    assert len(set(vocab.REPORT_REQUIRED_SECTIONS)) == 15, "no duplicate section"
+
+
+def test_the_hardening_backlog_sits_beside_the_latent_backlog() -> None:
+    """AC-024 names the placement, not just the membership.
+
+    "`report.json` and `REPORT.md` carry a HARDENING backlog section BESIDE the
+    LATENT backlog". The tuple is what `_render_markdown` walks, so a member's
+    index here IS where the section sits in the document a lead reads — and a
+    reader comparing the two backlogs should not have to scroll past nine
+    sections to do it.
+    """
+    order = list(vocab.REPORT_REQUIRED_SECTIONS)
+    assert order.index("hardening_backlog") == order.index("latent_backlog") + 1
+    assert order.index("stream_coverage_per_cycle") == (
+        order.index("inspect_modes_per_cycle") + 1
+    ), "both are per-cycle facts about the same INSPECTs"
 
 
 def test_run_artifact_filenames_and_the_halted_state() -> None:
@@ -2383,6 +2516,62 @@ def test_run_artifact_filenames_and_the_halted_state() -> None:
     # deliberately not "DONE".
     assert vocab.RUN_PHASE_HALTED == "HALTED"
     assert vocab.RUN_PHASE_HALTED != "DONE"
+
+
+# ---------------------------------------------------------------------------
+# FR-019 / CT-005 / ST-001 — the halt reason vocabulary.
+# ---------------------------------------------------------------------------
+
+
+def test_halt_reasons_is_the_four_member_closed_vocabulary() -> None:
+    """FR-019 verbatim: "{cap_reached, lead_ruling, spec_change_required,
+    user_stop}"."""
+    assert vocab.HALT_REASONS == frozenset(
+        {"cap_reached", "lead_ruling", "spec_change_required", "user_stop"}
+    )
+    assert isinstance(vocab.HALT_REASONS, frozenset)
+    assert len(vocab.HALT_REASONS) == 4
+    assert vocab.HALT_REASON_CAP_REACHED == "cap_reached"
+    assert vocab.HALT_REASON_CAP_REACHED in vocab.HALT_REASONS
+
+
+@pytest.mark.parametrize("member", sorted(
+    {"cap_reached", "lead_ruling", "spec_change_required", "user_stop"}
+))
+def test_halt_reason_resolves_every_member_by_identity(member: str) -> None:
+    assert vocab.halt_reason(member) == member
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, "", "CAP_REACHED", "cap reached", "budget", 1, True, [], {},
+     "--max-cycles 2 reached: opening GRIND cycle 3 would exceed it"],
+    ids=repr,
+)
+def test_halt_reason_never_guesses_a_member_out_of_a_sentence(value) -> None:
+    """CT-005 — None is a REAL answer and not an error.
+
+    `halted_reason` was a bare f-string before FR-019, and every archive
+    written then carries one. Coercing that sentence onto `cap_reached`
+    because it contains "max-cycles" would reclassify a run's ending by
+    reading its prose, which is the guess `defect_tier` refuses one axis over.
+    A reader prints the text; a grouper skips the row.
+    """
+    assert vocab.halt_reason(value) is None
+
+
+def test_halt_reason_phrase_is_derived_from_the_constant() -> None:
+    """The `_PYTEST_DISCOVERY_PHRASE` shape: a refusal that names a set reads it.
+
+    The door that refuses an unknown reason has to print the set it accepts,
+    and a hand-typed copy of a closed vocabulary in a refusal message is the
+    drift this whole module exists to end. Sorted, so the sentence is stable.
+    """
+    phrase = vocab.halt_reason_phrase()
+    assert phrase == ", ".join(sorted(vocab.HALT_REASONS))
+    for member in vocab.HALT_REASONS:
+        assert member in phrase
+    assert phrase == "cap_reached, lead_ruling, spec_change_required, user_stop"
 
 
 def test_the_baseline_and_target_carry_nfr_001s_four_numbers() -> None:
