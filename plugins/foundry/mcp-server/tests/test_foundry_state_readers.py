@@ -1214,12 +1214,27 @@ _SECOND_CYCLE_READERS: dict[str, str] = {}
 #: ledgers, by module and symbol. `foundry_report._read_dispatch_summary`
 #: closed its half by calling the leaf; these four survived the split and each
 #: still re-spells `read_jsonl`'s line loop or walks the roll-up again.
-#: SHRINKING AS DESIGNED: `_spawn_rows` and `_stream_dispatch_cycles` were
-#: rows here and are gone from the tree, so their rows went with them — which
-#: is the whole rule, and the reason a stale row fails as loudly as a new copy.
+#: KEYED ON THE MODULE, NOT ON EACH SYMBOL, and that is a correction rather
+#: than a convenience. This table was written with one row per function and
+#: shrunk against the SHARED WORKING TREE, where the casting that owns
+#: `orchestration/spend.py` had already deleted two of the four — uncommitted.
+#: Driven from a clean worktree at the same commit, the two rows I had removed
+#: were still needed and the pin failed. A pin keyed on a sibling's in-flight
+#: edits measures a tree no gate will ever see; the only state that is real is
+#: the committed one, and a module row is the same claim at a grain that does
+#: not flicker while the other casting lands its functions one at a time.
+#:
+#: The row goes stale — and this test fails — when that module assembles
+#: NOTHING any more, which is the moment the concern closes. It lives in THIS
+#: casting's file, so removing it is this casting's last step on the concern,
+#: not the repointing casting's: they cannot edit here.
 _SECOND_DISPATCH_ASSEMBLIES: dict[str, str] = {
-    "orchestration/spend.py#_spend_ledger_rows": "spend.jsonl, re-spelling read_jsonl",
-    "orchestration/spend.py#_dispatch_pairs": "the assembly it feeds",
+    "orchestration/spend.py": (
+        "the ledger walks feeding `_dispatch_pairs` — each re-spelling "
+        "`read_jsonl`'s splitlines/json.loads loop or walking the roll-up a "
+        "second time. Another casting's file; raised as a concern, and this "
+        "row is deleted here once it reports the repoint landed."
+    ),
 }
 
 
@@ -1294,12 +1309,12 @@ def test_the_dispatch_input_assembly_has_one_home_and_any_second_is_named() -> N
         "_dispatch_pairs",
     }
     found = {
-        f"{_module_key(module, pkg_root)}#{name}"
+        _module_key(module, pkg_root)
         for module in _package_modules()
-        for name in _defined_functions(module) & watched
+        if _defined_functions(module) & watched
     }
 
-    assert "foundry_state.py#unreported_dispatch_inputs" not in found
+    assert "foundry_state.py" not in found
     assert hasattr(fs, "unreported_dispatch_inputs"), (
         "the leaf no longer hosts the assembly the rule runs over"
     )
