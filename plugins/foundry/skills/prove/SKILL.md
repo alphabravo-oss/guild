@@ -224,6 +224,42 @@ coverage for the cycle at all. Take `cycle` from `Foundry-Next`, and take `items
 and `items_total` from the width Step 0.5 read — on a `DELTA` cycle they are counted
 against `inspect_mode.prove_sample`, not against the spec.
 
+**Which INSPECT filing arm is live is a READ, not a call you make.** `Foundry-Context`
+returns `state.temper` — the run's persisted `--temper` setting, written once at
+`Foundry-Init` and false unless the lead passed the flag. Take it in the same breath as
+the Step 0.5 width read, because it decides what happens to a finding that Step 1.5 or
+Step 1.7 turned up OFF your checklist: something you drove, that came back wrong, and
+that no VC-N row in Step 0 ever claimed would come back right.
+
+- **TEMPER on.** A defect filed at INSPECT MUST cite the matrix row whose stated
+  behaviour failed — the VC-N row's requirement id in `spec_ref`, and the behaviour that
+  row states named in the description beside what the code did instead. Everything else
+  is a probe idea, and a probe idea is recorded rather than filed: `Foundry-Observation`
+  with `cycle`, `source: "prove"`, `description` and
+  `classification: "TEMPER_CANDIDATE"`. That is the one observation class whose subject
+  is code rather than comment prose, so declaring it lifts the `target_kind: "comment"`
+  rung the other four carry. F5 TEMPER reads the recorded candidates before it builds
+  its own roster, so a recorded idea is a probe deferred to the phase built for it — not
+  a finding dropped.
+- **TEMPER off.** F5 never runs, so this step is the whole of the adversarial half and a
+  PROVE pass narrowed to checklist rows leaves the cycle with no novel probe driven
+  anywhere. Drive the novel probes at INSPECT. A probe you DROVE that failed on a path
+  no requirement states is filed as `HARDENING` — never `LIVE` unless the never-demote
+  denylist fires — which holds no gate shut and is carried into the F6 backlog. It owes
+  the same evidence a `LIVE` filing owes: a `reproduction_attempted` naming the probe
+  you ran and the wrong result you saw, without which `Foundry-Defect` and
+  `Foundry-Sync` refuse it. Any `spec_ref` on a `HARDENING` filing is refused
+  `TIER_NOT_ALLOWED` — citing a requirement is what makes a failure on-row, and an
+  on-row failure is `LIVE`.
+
+Neither arm reaches the never-demote denylist, and neither is allowed to. A
+security-property claim and a spec-required-behaviour claim can never be parked in a
+non-blocking tier and can never be recorded as an observation: the filing is refused
+naming the class that matched, the tripwire fires, and the finding stays a blocking
+defect. `HARDENING` is a home for a driven failure on a path the spec never stated,
+never a quieter rung for one it did. No exceptions, no deferrals, no "the spec never
+mentioned it, so it cannot have mattered."
+
 **Foundry F4 ASSAY:** return report path, finding counts, and verification %
 via the `Foundry-Verdict` MCP tool. Four parallel `foundry:assayer` agents each
 verify a domain slice with `effort: max`. SP-N patterns become single fix items
@@ -305,8 +341,8 @@ the `foundry_add_verdict` MCP tool for defect tracking.
             "description": "DEFECT_TYPES member. MISPLACED is accepted as an alias and folds onto ARCHITECTURAL_PLACEMENT."},
           "class": {"type": "string",
             "description": "Required root-cause group, non-empty on every filing and spelled identically on every instance that shares it. Not a tier — it is what lets three cycles of one root cause escalate to a single structural fix. Foundry-Defect and Foundry-Sync refuse a filing without it, and one classless finding refuses the whole Foundry-Sync batch."},
-          "tier": {"type": "string", "enum": ["LIVE", "LATENT"],
-            "description": "Evidence axis, never a work-effort grade. LIVE: the stream drove the door and observed the wrong result. LATENT: the stream derived the finding and found no reachable instance. Closed vocabulary, source of truth schemas/vocab.py#DEFECT_TIERS."},
+          "tier": {"type": "string", "enum": ["LIVE", "LATENT", "HARDENING"],
+            "description": "Evidence axis, never a work-effort grade. LIVE: the stream drove the door and observed the wrong result. LATENT: the stream derived the finding and found no reachable instance. HARDENING: the stream drove a probe that failed on a path no requirement states, and the record blocks no gate. Closed vocabulary, source of truth schemas/vocab.py#DEFECT_TIERS."},
           "reproduction_attempted": {"type": "string",
             "description": "Required on a LATENT finding: what was driven and what it found. The server refuses a LATENT filing without one."},
           "file": {"type": "string", "description": "Bare path. Never carries a line number."},
