@@ -163,7 +163,7 @@ from foundry_mcp.tools.orchestration.gates import (  # noqa: F401
     _done_preconditions,
     _generate_report,
     _open_defects_by_tier,
-    _spec_requirement_ids,
+    _sorted_spec_requirement_ids,
     _synthesize_clean_prove_verdicts,
     foundry_gate,
 )
@@ -339,7 +339,7 @@ def test_count_spec_requirements_dedups_after_refactor(run_env):
         encoding="utf-8",
     )
     assert _count_spec_requirements(project_root) == 3
-    assert _spec_requirement_ids(project_root) == ["FR-1", "NFR-3", "US-2"]
+    assert _sorted_spec_requirement_ids(project_root) == ["FR-1", "NFR-3", "US-2"]
 
 
 
@@ -554,7 +554,8 @@ def test_the_external_input_reader_is_total_on_its_own_merits(tmp_path, monkeypa
 
     The path the defect was found on is Foundry-Validate-Castings reaching the
     external spec through `_artifact_guard`. The ADJACENT path this drives is
-    the same file through a DIFFERENT caller — `_spec_requirement_ids`, which
+    the same file through a DIFFERENT caller — the leaf ladder
+    `_sorted_spec_requirement_ids` takes its ids off, which
     the DONE gate's requirement count and P3 verdict synthesis both run through,
     and which never calls the artifact guard at all. It read the spec under
     `except OSError`, which does not name UnicodeDecodeError. Both readers must
@@ -564,7 +565,7 @@ def test_the_external_input_reader_is_total_on_its_own_merits(tmp_path, monkeypa
     root, fdir = _external_spec_run(tmp_path, "forge-specs/probe/spec.md", _BAD_UTF8_SPEC)
     try:
         patch_everywhere(monkeypatch, "_resolve_spec_path", lambda pr: Path(root) / "forge-specs/probe/spec.md")
-        assert _spec_requirement_ids(root) == []
+        assert _sorted_spec_requirement_ids(root) == []
         assert _count_spec_requirements(root) == 0
     finally:
         foundry_state.clear_active_run()
@@ -582,7 +583,7 @@ def test_the_orchestrator_counts_every_declared_requirement_family(run_env):
     project_root, fdir = run_env
     expected = _spec_with_every_family(fdir)
 
-    found = set(_spec_requirement_ids(project_root))
+    found = set(_sorted_spec_requirement_ids(project_root))
     old_half = {i for i in expected if i.split("-")[0] in _OLD_ID_FAMILIES}
     assert old_half <= found, f"NFR-002 narrowing: {sorted(old_half - found)}"
     assert expected <= found, f"still unseen: {sorted(expected - found)}"
@@ -599,7 +600,7 @@ def test_verdict_synthesis_covers_the_widened_families(run_env):
     it writes one row per requirement id, and `verdict_coverage` is measured
     against the count. If the two ever read different families the run reports
     coverage over a denominator that does not match its own rows — which is
-    the drift `_spec_requirement_ids` exists to prevent, now restated one
+    the drift the one leaf ladder exists to prevent, now restated one
     vocabulary wider.
     """
     project_root, fdir = run_env

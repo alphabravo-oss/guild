@@ -4894,22 +4894,20 @@ _KNOWN_DUPLICATION: dict[str, str] = {
         "tools/evidence.py and tools/test_deriver.py each bind their own alias "
         "to it rather than importing the declaration"
     ),
+    "ROLLUP_FILENAME": (
+        "casting 7 — the `stream-rollup.json` name is moving to "
+        "tools/artifacts.py beside the `*_MARKER` filenames (concern C-018 / "
+        "C-019). This row accounts for the WINDOW between the leaf declaring "
+        "it and the readers repointing: the leaf and "
+        "tools/orchestration/streams.py both declare it for exactly as long as "
+        "that takes, and without the row the single-definition guard refuses "
+        "the leaf's commit — which would make casting 7's half unlandable and "
+        "deliver nothing, because the two ('evidence_boundary','streams') and "
+        "('width','streams') layering rows only close when the READERS move. "
+        "Delete this row in the same commit that repoints them."
+    ),
     "_normalise_path": (
         "casting 1 — tools/concerns.py and schemas/vocab.py spell one rule twice"
-    ),
-    "_spec_requirement_ids": (
-        "casting 7 — ONE NAME, TWO ANSWERS TO ONE QUESTION, and this one is a "
-        "real fork rather than a name-alike. `foundry_validate`'s returns "
-        "(text, ids, path, problem) and says in its own docstring that a second "
-        "climb of the spec ladder elsewhere is 'a second answer to which spec "
-        "is this run's'; `gates`' returns the sorted ids off "
-        "`_resolve_spec_path`. Both feed a refusal — F0.9's dimensions and the "
-        "DONE gate's requirement count — so the two may not disagree about "
-        "which file the run's spec IS. It cannot be closed by an import: "
-        "gates.py is a VERIFIER and foundry_validate.py is lifecycle, so "
-        "GI-033 forbids the edge in that direction. The ladder belongs in a "
-        "LEAF, which is casting 7's artifacts.py or casting 10's "
-        "foundry_state.py; see concerns.md."
     ),
 }
 

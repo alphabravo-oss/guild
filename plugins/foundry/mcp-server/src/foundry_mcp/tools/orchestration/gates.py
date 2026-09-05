@@ -25,12 +25,11 @@ from foundry_mcp.tools.artifacts import (
     _artifact_guard,
     _document_transaction,
     _load_json,
-    _resolve_spec_path,
+    _spec_requirement_ids,
 )
 from foundry_mcp.tools.foundry_state import (
     get_run_dir,
     now_iso,
-    read_text_file,
 )
 from pathlib import Path
 from foundry_mcp.tools.orchestration.escalation import (
@@ -91,39 +90,38 @@ _REQ_ID_RE = REQUIREMENT_ID_RE
 
 
 
-def _spec_requirement_ids(project_root: str) -> list[str]:
-    """Return the sorted unique requirement IDs the vocabulary declares.
+def _sorted_spec_requirement_ids(project_root: str) -> list[str]:
+    """The run's requirement ids, sorted — the leaf's climb, shaped for here.
 
-    The id source for P3 verdict synthesis. Uses the SAME path resolution
-    and regex as ``_count_spec_requirements`` (which now delegates here) so
-    synthesizing one VERIFIED row per id keeps ``verdict_coverage`` in
-    lock-step with the DONE gate's ``_count_spec_requirements`` read.
+    fallout GI-033 / FR-063 / AC-061 / AC-011 (concern C-018) — ONE LADDER,
+    AND IT IS LEAF MATERIAL.
+    ---------------------------------------------------------------------
+    This module used to climb the spec itself: resolve the path, read the
+    text, run the regex. `tools/foundry_validate.py` climbed it too, so one
+    question — "which spec is this run's" — had two answers, free to read
+    different files, and the two surfaces that asked it sit in layers GI-033
+    forbids from importing each other. Casting 7 put the climb in the leaf
+    where both may reach it (`artifacts._spec_requirement_ids`), and this is
+    the whole of what is left here: take the ids off the leaf's answer and
+    sort them.
 
-    D-150: which FAMILIES count is no longer decided here. It was a literal
-    naming seven of them, and this spec has 71 IDs of which 15 are the two it
-    did not name — so an observable truth could not be counted, could not be
-    verified, and could not have evidence bound to it. The families are one
-    declaration in ``schemas.vocab`` now, and it is a strict superset of what
-    this copy matched (NFR-002: nothing counted before stops being counted).
+    NAMED DIFFERENTLY ON PURPOSE. A wrapper that kept the leaf symbol's own
+    name would be a second top-level definition of it, which the package-wide
+    single-definition guard refuses and which would make "where is
+    `_spec_requirement_ids` defined" have two answers again — the shape this
+    change exists to end.
+
+    D-150's ruling is unchanged and now lives one layer down: which FAMILIES
+    count is `schemas.vocab`'s declaration, not a literal here.
     """
-    spec_path = _resolve_spec_path(project_root)
-    if spec_path is None:
-        return []
-    # D-137's residual, one rung out from the loads: `except OSError` does not
-    # name UnicodeDecodeError, so one non-UTF-8 byte in the spec raised out of
-    # the DONE gate's requirement count. The spec is the external input D-145
-    # brings inside the artifact guard, and this is its second reader.
-    text, problem = read_text_file(spec_path)
-    if problem is not None:
-        return []
-    return sorted(set(_REQ_ID_RE.findall(text)))
+    return sorted(_spec_requirement_ids(project_root)[1])
 
 
 
 
 def _count_spec_requirements(project_root: str) -> int:
     """Count requirement IDs (US-N, FR-N, NFR-N, AC-N, VC-N) in the spec file."""
-    return len(_spec_requirement_ids(project_root))
+    return len(_sorted_spec_requirement_ids(project_root))
 
 
 
@@ -154,7 +152,7 @@ def _synthesize_clean_prove_verdicts(
     duplicated — so a real ASSAY verdict is preserved and ``verdict_coverage``
     never double-counts (analog note 7: preserve id-dedup).
     """
-    ids = _spec_requirement_ids(project_root)
+    ids = _sorted_spec_requirement_ids(project_root)
     if not ids:
         return 0
     verdicts_path = fdir / "verdicts.json"

@@ -1370,10 +1370,13 @@ def _prove_delta_sample(
     # close a cycle that takes every tool in this server down at once.
     # Unguarded, so a wiring break fails loudly at the one call site that
     # needs the symbol rather than hiding behind a silent fallback.
-    from foundry_mcp.tools.orchestration.gates import _REQ_ID_RE, _spec_requirement_ids
+    from foundry_mcp.tools.orchestration.gates import (
+        _REQ_ID_RE,
+        _sorted_spec_requirement_ids,
+    )
     import random
 
-    all_rows = sorted(set(_spec_requirement_ids(project_root)))
+    all_rows = sorted(set(_sorted_spec_requirement_ids(project_root)))
     if not all_rows:
         return {"rows": [], "tied": [], "sampled": []}
 
