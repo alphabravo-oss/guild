@@ -248,8 +248,8 @@ def test_items_that_are_not_a_list_are_refused(run_env):
 
 
 # --------------------------------------------------------------------------- #
-# fallout CT-003 / OT-031 / AC-032 — the reader Foundry-Stream calls (AC-032's
-# second half)
+# fallout CT-003 / OT-031 / AC-032 — the reader Foundry-Stream calls
+# (fallout AC-032's second half)
 # --------------------------------------------------------------------------- #
 
 

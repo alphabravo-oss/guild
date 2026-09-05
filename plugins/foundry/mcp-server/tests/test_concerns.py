@@ -172,8 +172,8 @@ def test_the_rendered_file_names_the_status_vocabulary_from_the_constant(run_env
 
 
 # --------------------------------------------------------------------------- #
-# fallout AC-005 / CT-001 — target resolution (AC-005's second half, CT-001's
-# error column)
+# fallout AC-005 / CT-001 — target resolution
+# (fallout AC-005's second half, fallout CT-001's error column)
 # --------------------------------------------------------------------------- #
 
 
