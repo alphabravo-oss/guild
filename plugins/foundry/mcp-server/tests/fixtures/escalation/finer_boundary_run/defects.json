@@ -18,6 +18,8 @@
       "regression_test": "tests/test_report.py::test_d_001",
       "authored_by": "teammate",
       "fix_commit": null,
+      "fallout_of": null,
+      "supersedes": null,
       "created_at": "2026-09-02T04:00:00.318204+00:00",
       "declared_fixed_cycle": 2,
       "adjacent_path_statement": "verify_evidence is also reached by the report's own reader for this section and by the boundary transition that records the cycle, and it shares the run directory with the sweep running beside it.",
@@ -41,6 +43,8 @@
       "regression_test": "tests/test_report.py::test_d_002",
       "authored_by": "teammate",
       "fix_commit": null,
+      "fallout_of": null,
+      "supersedes": null,
       "created_at": "2026-09-02T04:00:47.318341+00:00",
       "declared_fixed_cycle": 3,
       "adjacent_path_statement": "sweep_evidence_at_head is also reached by the report's own reader for this section and by the boundary transition that records the cycle, and it shares the run directory with the sweep running beside it.",
@@ -64,6 +68,8 @@
       "regression_test": "tests/test_report.py::test_d_003",
       "authored_by": "teammate",
       "fix_commit": null,
+      "fallout_of": null,
+      "supersedes": null,
       "created_at": "2026-09-02T04:01:34.318478+00:00",
       "declared_fixed_cycle": 4,
       "adjacent_path_statement": "generate_report is also reached by the report's own reader for this section and by the boundary transition that records the cycle, and it shares the run directory with the sweep running beside it.",
@@ -87,6 +93,8 @@
       "regression_test": null,
       "authored_by": null,
       "fix_commit": null,
+      "fallout_of": null,
+      "supersedes": null,
       "created_at": "2026-09-02T04:02:21.318615+00:00"
     },
     {
@@ -107,6 +115,8 @@
       "regression_test": null,
       "authored_by": null,
       "fix_commit": null,
+      "fallout_of": null,
+      "supersedes": null,
       "created_at": "2026-09-02T04:03:08.318752+00:00"
     },
     {
@@ -127,6 +137,8 @@
       "regression_test": "tests/test_report.py::test_d_006",
       "authored_by": "teammate",
       "fix_commit": null,
+      "fallout_of": null,
+      "supersedes": null,
       "created_at": "2026-09-02T04:03:55.318889+00:00",
       "declared_fixed_cycle": 3,
       "adjacent_path_statement": "foundry_record_spend is also reached by the report's own reader for this section and by the boundary transition that records the cycle, and it shares the run directory with the sweep running beside it.",

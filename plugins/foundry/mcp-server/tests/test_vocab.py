@@ -14,43 +14,30 @@ Two guarantees carry the most weight:
   * AC-002 (never weaken) — the denylist outranks the observation classes.
     A finding matching both is a DEFECT.
 
-GI-010 / GI-026 — THE WAVE-2 REPOINT, AND THE TESTS IT LEAVES RED
------------------------------------------------------------------
-This module reached ``foundry_orchestrator`` lazily, inside test bodies and one
-fixture. GI-010 is "No facade: rewrite every import" and GI-026 puts the
-repoint "in the same casting as the source move" — but the source move is
-casting 2's, in wave 2, and this module is casting 10's. So the imports are
-written against the destination the module contract names, and the tests below
-are RED from that commit until casting 2 lands the split:
+GI-010 / GI-026 — THE WAVE-2 REPOINT, NOW LANDED
+------------------------------------------------
+This module reached the monolith lazily, inside test bodies and one fixture.
+GI-010 is "No facade: rewrite every import" and GI-026 puts the repoint "in the
+same casting as the source move" — but the source move was casting 2's, in wave
+2, so the imports were written here against the destinations the module
+contract named and twelve registers stood RED until that casting landed:
 
     orchestration/streams.py     VALID_STREAMS
     orchestration/gates.py       BLOCKING_TIERS
     orchestration/teams.py       _check_active_teams  (the ``run_env`` fixture)
     orchestration/escalation.py  _persisted_escalations, and the shipped-reader
-                                 roster row that names the module reading
+                                 roster row naming the module that reads
                                  ``escalation.json``
 
-    test_stream_wire_ids_never_narrows_valid_streams
-    test_hardening_is_a_defect_tier_and_is_not_in_the_blocking_set
-    test_all_three_readers_account_for_every_class_on_one_document
-    test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab
-    test_the_defect_door_audits_under_the_class_it_refuses  (4 parametrisations)
-    test_the_sync_door_audits_under_the_class_it_refuses    (4 parametrisations)
+All four destinations now exist and all twelve are green, so the list is kept
+as the record of what the repoint cost rather than as a live exception. Nothing
+in this module is expected to fail; a red register here is a defect, not a wait.
 
-THE EIGHT PARAMETRISED ROWS ARE THE FIXTURE'S BLAST RADIUS, not eight separate
-repoints: ``run_env`` patches ``_check_active_teams``, so every test that takes
-that fixture goes red with it. They are enumerated rather than summarised
-because casting 2 closes this list against a roster, not against a grep.
-
-``test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab`` is
-red for a different reason worth stating: its roster is asserted as a SUBSET of
-what an AST walk discovers, and the row now names a module that does not exist
-yet. Leaving the row on the monolith would have made the pin red the moment
-casting 2 deleted it — a surprise — where naming the destination makes it red
-now, on a list somebody wrote down.
-
-A RED test in this module that is NOT on the list above is a defect in casting
-10, not a wave-2 wait.
+``test_the_monolith_earns_delta_until_the_split_lands`` was deleted when the
+split landed, on its own instruction — it skipped with "the monolith is gone,
+so the wave-1/wave-2 window has closed and this row has nothing left to
+describe — delete it", and a row that describes nothing is worse than absent
+because it reads as coverage.
 """
 
 from __future__ import annotations
@@ -2082,38 +2069,6 @@ def test_the_server_package_is_no_longer_matched_whole() -> None:
     # lives there, so any module in it can change what a stream will accept.
     assert vocab.is_verifier_path(
         "plugins/foundry/mcp-server/src/foundry_mcp/schemas/findings.py"
-    )
-
-
-def test_the_monolith_earns_delta_until_the_split_lands() -> None:
-    """ST-013's wave-1/wave-2 window, stated rather than discovered.
-
-    From the commit that narrows the rule until casting 2 lands the split,
-    `tools/foundry_orchestrator.py` is not a verifier path — so a GRIND diff
-    confined to the monolith records rule `delta` even though the monolith
-    still holds every gate. That is the price of the plan's file ownership: the
-    narrowed rule names the modules the split WILL create, and it cannot also
-    name the module they are carved out of without re-admitting the whole
-    package on the very cycle the narrowing is meant to end.
-
-    Asserted rather than left implicit, because a window nobody wrote down is a
-    window nobody closes. When casting 2 deletes the monolith this row's
-    existence assertion is what turns it red, and the correct edit is then to
-    delete the row — not to widen the rule.
-    """
-    monolith = (
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py"
-    )
-    if not (REPO_ROOT / monolith).exists():
-        pytest.skip(
-            "the monolith is gone, so the wave-1/wave-2 window has closed and "
-            "this row has nothing left to describe — delete it"
-        )
-    assert not vocab.is_verifier_path(monolith), (
-        "the monolith answers True, so either the narrowing was reverted or a "
-        "rule was added for it. Neither is the plan: the four deciders are "
-        "named individually so that the modules which are NOT deciders stop "
-        "forcing FULL."
     )
 
 

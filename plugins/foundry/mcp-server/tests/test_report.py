@@ -16,16 +16,11 @@ Shape follows `tests/test_escalation.py`: a fixture that yields the run
 directory, small builders beside it, and one docstring per test quoting the
 requirement it proves.
 
-GI-010 / GI-026 — THE WAVE-2 REPOINT, AND THE TESTS IT LEAVES RED
------------------------------------------------------------------
-This module reached `foundry_orchestrator` lazily, inside test bodies and
-fixtures. GI-010 is "No facade: rewrite every import" and GI-026 puts the
-repoint "in the same casting as the source move" — but the source move is
-casting 2's, in wave 2, and this module is casting 10's. So the imports are
-written against the destination the module contract names, and the tests below
-are RED from that commit until casting 2 lands the split. Every one of them
-fails on `ModuleNotFoundError: No module named 'foundry_mcp.tools.orchestration'`
-and nothing else:
+GI-010 / GI-026 — THE WAVE-2 REPOINT, NOW LANDED
+------------------------------------------------
+This module reached the monolith lazily, inside test bodies and fixtures. The
+imports were written against the destinations casting 2's split would define,
+and ten registers stood RED until it landed:
 
     orchestration/transitions.py   foundry_mark_phase_complete
     orchestration/streams.py       foundry_mark_stream
@@ -38,25 +33,22 @@ and nothing else:
     orchestration/spend.py         _spend_summary
     orchestration/report_seal.py   _lead_header_lines, _carried_lead_prose
 
-    test_the_fixture_state_is_what_production_writes
-    test_the_driven_fixture_leaves_the_pre_change_record_alone
-    test_the_fixture_escalation_record_is_what_production_writes
-    test_the_agents_field_means_distinct_agents_exactly_as_the_rollup_does
-    test_a_halted_runs_report_states_the_grind_cycles_its_halt_reason_states
-    test_a_closed_untiered_record_is_not_listed_under_the_blocking_note
-    test_demo_grind_cycle_9_filings_at_the_real_door
-    test_demo_grind_cycle_10_filings_at_the_real_door
-    test_the_report_and_foundry_next_publish_the_same_cycle_axis
-    test_the_generated_banner_is_absorbed_by_the_seal_never_carried_as_prose
+Four reaches were green immediately, because casting 10's own group 1 put their
+symbols in the leaf: ``_now`` (as ``foundry_state.now_iso``),
+``DISPATCH_PHASE_TO_RUN_PHASE``, ``_md_sections`` (as
+``foundry_state.markdown_sections``) and the unreported-dispatch walk.
 
-Four reaches went GREEN immediately instead, because casting 10's own group 1
-put their symbols in the leaf: `_now` (as `foundry_state.now_iso`),
-`DISPATCH_PHASE_TO_RUN_PHASE`, `_md_sections` (as
-`foundry_state.markdown_sections`) and the unreported-dispatch walk (as
-`unreported_dispatch_inputs` plus `unreported_dispatch_summary`).
+All of them are green now, so the list is the record of what the repoint cost
+and not a live exception: a red register in this module is a defect, not a wait.
 
-A RED test in this module that is NOT on the list above is a defect in casting
-10, not a wave-2 wait.
+WHAT THE LANDING ITSELF COST, which is the part worth carrying forward. The
+mechanical ``fo.X`` -> ``X`` rewrite silently broke three monkeypatch sites —
+rebinding a bare name in THIS module patches no production code — and the split
+made the target a consumer module's binding rather than the definition's. That
+is what ``_no_active_teams`` exists for. Two registers also asserted the
+pre-FR-019 ``halted_reason`` string and one asserted a fixture happened to
+predate ``fallout_of``; both now state the shape they are about instead of
+borrowing it from something with no obligation to keep it.
 """
 
 from __future__ import annotations
@@ -82,6 +74,7 @@ from foundry_mcp.schemas.vocab import (
     SPEND_LEDGER_FILENAME,
     THUNDER_VIPER_BASELINE,
     TIER_UNKNOWN,
+    halt_reason,
 )
 from foundry_mcp.tools import foundry_report as fr
 from foundry_mcp.tools import foundry_state as fs
@@ -114,6 +107,41 @@ def report_env(tmp_path):
     for src in FIXTURE_DIR.iterdir():
         (run_dir / src.name).write_bytes(src.read_bytes())
     return run_dir
+
+
+@contextlib.contextmanager
+def _no_active_teams():
+    """Silence the active-team scan for a drive, patching the CONSUMER module.
+
+    THE SPLIT MOVED THE PATCH TARGET, AND A BARE REBIND PATCHES NOTHING.
+    ------------------------------------------------------------------
+    Before casting 2's split these fixtures did `setattr(fo,
+    "_check_active_teams", ...)`, and it worked for every caller because the
+    monolith held the definition AND its callers in one namespace. Casting 10's
+    group-5 repoint rewrote `fo._check_active_teams` to a bare
+    `_check_active_teams` — which rebinds a name in THIS module and reaches no
+    production code at all. One site kept a leftover `fo` and raised
+    `NameError`; the other two failed SILENTLY, restoring a local they had
+    patched nothing with, and passed only because the real scan happens to find
+    no team in a `tmp_path` run.
+
+    `orchestration/transitions.py` FROM-IMPORTS the symbol
+    (`from ...orchestration.teams import _check_active_teams`), so patching
+    `teams._check_active_teams` would not reach it either — the binding a
+    from-import makes is the consumer's own. `foundry_mark_phase_complete` is
+    the door all three fixtures drive, so `transitions` is the module whose
+    binding has to move, and this states that once instead of three times.
+    """
+    from foundry_mcp.tools.orchestration import transitions as _transitions
+
+    original = _transitions._check_active_teams
+    _transitions._check_active_teams = lambda _pr: {
+        "active": False, "teams": [], "live_panes": []
+    }
+    try:
+        yield
+    finally:
+        _transitions._check_active_teams = original
 
 
 def _read_json(run_dir: Path, name: str) -> dict:
@@ -380,8 +408,10 @@ def drive_finer_boundary_run(tmp_path: Path) -> dict[str, object]:
     # `## Symbol map` is the authority; where the map and this differ, the
     # map wins and this is the edit.
     from foundry_mcp.tools.foundry_state import now_iso
+    from foundry_mcp.tools.orchestration.directives import (
+        foundry_defects_to_tasks,
+    )
     from foundry_mcp.tools.orchestration.streams import foundry_mark_stream
-    from foundry_mcp.tools.orchestration.teams import _check_active_teams
     from foundry_mcp.tools.orchestration.transitions import (
         foundry_mark_phase_complete,
     )
@@ -440,6 +470,19 @@ def drive_finer_boundary_run(tmp_path: Path) -> dict[str, object]:
 
     def _cross(token: str) -> dict:
         _arm()
+        if token == "grind_start":
+            # CT-008 / GI-023 — casting 2's split gave `grind_start` a
+            # tasks-generated rung: a GRIND may not open until Foundry-Tasks
+            # has packeted the open defects. This driver crossed straight from
+            # INSPECT to GRIND, which a real run never does, so the door
+            # refused with rank _GATE_RANK_MARKER.
+            #
+            # The CALL is what satisfies it, not the marker. Writing
+            # TASKS_GENERATED_MARKER by hand would make this fixture green
+            # against a door it never walked, and the fixture's whole contract
+            # (D-130) is that it "is regenerated by driving production through
+            # these transitions rather than hand-typed".
+            foundry_defects_to_tasks(str(root))
         result = foundry_mark_phase_complete(token, str(root))
         assert result.get("ok") is True, (token, result)
         return result
@@ -470,13 +513,9 @@ def drive_finer_boundary_run(tmp_path: Path) -> dict[str, object]:
             )
             assert not marked.get("error"), (wire, marked)
 
-    original_scan = _check_active_teams
-    _check_active_teams = lambda _pr: {
-        "active": False, "teams": [], "live_panes": []
-    }
     foundry_state.set_active_run(run_name)
     with contextlib.ExitStack() as stack:
-        stack.callback(setattr, fo, "_check_active_teams", original_scan)
+        stack.enter_context(_no_active_teams())
         stack.callback(foundry_state.clear_active_run)
         stack.enter_context(_frozen_clock(_RUN_STARTED_AT))
         versions = _executing_version_fields()
@@ -681,6 +720,13 @@ _ISO_STAMP_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}T[\d:]+(?:\.\d+)?\+00:00\Z")
 _DURATION_RE = re.compile(r"\A\d+m \d+s\Z")
 
 
+#: The two release numbers a checkout supplies, blanked by `_without_volatile`
+#: for the reason its docstring gives. `server_commit` is deliberately NOT
+#: here: it is already a git SHA and already blanked, and `self_target` is a
+#: recorded answer about the run rather than about the release.
+_RELEASE_FIELDS = frozenset({"server_version", "plugin_version"})  # 2 fields
+
+
 def _without_volatile(value):
     """Blank the values a committed artifact cannot pin, at any depth.
 
@@ -701,12 +747,29 @@ def _without_volatile(value):
       `phase_times` durations — rendered FROM two timestamps, so pinning them
         pins the timestamps by another name.
 
+      the RELEASE numbers (`server_version`, `plugin_version`) — read from
+        `foundry_mcp.__version__` and the plugin manifest by whatever checkout
+        is executing. They are the same kind of fact as the git SHA above: a
+        property of the tree the drive ran in, not of the scenario the fixture
+        freezes. Driven: casting 9's release commit moved plugin 4.10.0 ->
+        4.11.0 and server 1.9.0 -> 1.10.0, and this equality went red on a
+        change that says nothing about a single INSPECT decision, defect row or
+        cycle — which is the same "demand regeneration on changes that say
+        nothing about its shape" the timestamp clause above refuses. The
+        fields are not unpinned: `test_executing_versions_names_the_server_that
+        _ran` asserts the report publishes exactly what `state.json` recorded,
+        which is the question they actually answer.
+
     What the timestamps are still held to is their SHAPE, asserted separately:
     every one carries microseconds, which is the tell D-130 was filed on.
     """
     if isinstance(value, dict):
         return {
-            k: "<SHA>" if k == "diff_base" else _without_volatile(v)
+            k: (
+                "<SHA>" if k == "diff_base"
+                else "<RELEASE>" if k in _RELEASE_FIELDS
+                else _without_volatile(v)
+            )
             for k, v in value.items()
         }
     if isinstance(value, list):
@@ -788,11 +851,27 @@ def test_the_fixture_state_is_what_production_writes(tmp_path):
 
     from foundry_mcp.tools.foundry import _executing_server_version
 
-    assert committed["server_version"] == _executing_server_version()
+    # D-130's claim is that these are TWO numbers from TWO files — the fixture
+    # used to carry the plugin's version in both slots. That is asserted on the
+    # committed pair, below, and on what the DRIVE writes, here.
+    #
+    # What is deliberately NOT asserted is `committed["server_version"] ==
+    # _executing_server_version()`. That pinned the committed artifact to
+    # whichever release was checked out, so casting 9's bump to server 1.10.0
+    # turned it red on a change that moved no INSPECT decision, defect row or
+    # cycle — the same "demand regeneration on changes that say nothing about
+    # its shape" `_without_volatile` refuses for timestamps and SHAs. The
+    # PRODUCED value is the one that must be current, because that one is a
+    # statement about the drive rather than about the commit it was captured at.
+    assert produced["state.json"]["server_version"] == _executing_server_version()
     assert committed["plugin_version"] != committed["server_version"], (
         "two numbers, from two files; the fixture used to carry the plugin's "
         "in both slots"
     )
+    assert (
+        produced["state.json"]["plugin_version"]
+        != produced["state.json"]["server_version"]
+    ), "the drive must write two numbers too, not one twice"
 
     # Not one round second anywhere in the artifact. This is the half of the
     # timestamp claim the equality above deliberately drops: the OFFSETS are
@@ -872,7 +951,6 @@ def test_the_fixture_escalation_record_is_what_production_writes(tmp_path):
     from foundry_mcp.tools.orchestration.directives import (
         foundry_defects_to_tasks,
     )
-    from foundry_mcp.tools.orchestration.teams import _check_active_teams
     from foundry_mcp.tools.orchestration.transitions import (
         foundry_mark_phase_complete,
     )
@@ -905,12 +983,8 @@ def test_the_fixture_escalation_record_is_what_production_writes(tmp_path):
         )
         return foundry_mark_phase_complete("inspect_start", project_root)
 
-    original_scan = _check_active_teams
-    _check_active_teams = lambda _pr: {
-        "active": False, "teams": [], "live_panes": []
-    }
     foundry_state.set_active_run("finer-boundary-run")
-    try:
+    with _no_active_teams():
         # Cycle 3: the third consecutive LIVE filing escalates the class, and
         # Foundry-Tasks dispatches structural packet 1.
         _ledger(["D-001", "D-002", "D-003"], ["D-006", "D-007"])
@@ -943,9 +1017,7 @@ def test_the_fixture_escalation_record_is_what_production_writes(tmp_path):
         assert foundry_defects_to_tasks(project_root)["structural_tasks"] == 0
 
         produced = _read_json(run_dir, "escalation.json")["classes"][klass]
-    finally:
         foundry_state.clear_active_run()
-        _check_active_teams = original_scan
 
     committed = _read_json(FIXTURE_DIR, "escalation.json")["classes"][klass]
 
@@ -2937,7 +3009,6 @@ def _halted_at_the_real_door(
     # `## Symbol map` is the authority; where the map and this differ, the
     # map wins and this is the edit.
     from foundry_mcp.tools.foundry_state import now_iso
-    from foundry_mcp.tools.orchestration.teams import _check_active_teams
     from foundry_mcp.tools.orchestration.transitions import (
         foundry_mark_phase_complete,
     )
@@ -2965,15 +3036,11 @@ def _halted_at_the_real_door(
     (run_dir / ".next-action-called").write_text(f"{now_iso()}\n",
                                                  encoding="utf-8")
 
-    original = _check_active_teams
-    _check_active_teams = lambda _pr: {
-        "active": False, "teams": [], "live_panes": []
-    }
     foundry_state.set_active_run(name)
     try:
-        result = foundry_mark_phase_complete("grind_start", str(tmp_path))
+        with _no_active_teams():
+            result = foundry_mark_phase_complete("grind_start", str(tmp_path))
     finally:
-        _check_active_teams = original
         foundry_state.clear_active_run()
     return (_read_json(run_dir, "state.json"), _document(run_dir),
             _markdown(run_dir), result)
@@ -3001,7 +3068,19 @@ def test_a_halted_runs_report_states_the_grind_cycles_its_halt_reason_states(
 
     assert result["ok"] is True and result["halted"] is True, result
     assert state["phase"] == RUN_PHASE_HALTED
-    assert "opening GRIND cycle 3 would exceed it" in state["halted_reason"]
+    # FR-019 landed the structured `{reason, text}` while this register was
+    # written against the free f-string, and `in` on a mapping tests its KEYS —
+    # so the old assertion did not merely go stale, it started asking a
+    # question with no relation to the sentence it names. `halt_reason` is the
+    # resolver both shapes go through; the text is where the sentence lives in
+    # either, which is exactly what `_halt_and_co_dispatch_section` reads.
+    _reason = state["halted_reason"]
+    assert halt_reason(
+        _reason.get("reason") if isinstance(_reason, dict) else _reason
+    ) == "cap_reached", _reason
+    assert "opening GRIND cycle 3 would exceed it" in (
+        _reason["text"] if isinstance(_reason, dict) else _reason
+    ), _reason
     # The counter is untouched by the halt: it is the INSPECT count, and the
     # GRIND that would have opened at counter + 1 is the one refused.
     assert state["cycle"] == 2 and state["halted_at_cycle"] == 2
@@ -4434,7 +4513,19 @@ def test_demo_grind_cycle_10_filings_at_the_real_door(tmp_path, capsys):
         tmp_path, max_cycles=2, cycle=2, name="halt-run-assert"
     )
     assert result["ok"] is True and result["halted"] is True
-    assert "opening GRIND cycle 3 would exceed it" in state["halted_reason"]
+    # FR-019 landed the structured `{reason, text}` while this register was
+    # written against the free f-string, and `in` on a mapping tests its KEYS —
+    # so the old assertion did not merely go stale, it started asking a
+    # question with no relation to the sentence it names. `halt_reason` is the
+    # resolver both shapes go through; the text is where the sentence lives in
+    # either, which is exactly what `_halt_and_co_dispatch_section` reads.
+    _reason = state["halted_reason"]
+    assert halt_reason(
+        _reason.get("reason") if isinstance(_reason, dict) else _reason
+    ) == "cap_reached", _reason
+    assert "opening GRIND cycle 3 would exceed it" in (
+        _reason["text"] if isinstance(_reason, dict) else _reason
+    ), _reason
     assert doc["baseline_comparison"]["current"]["grind_cycles"] == 2
     assert doc["run"]["max_cycles"] == 2
     assert _row(md, "| GRIND cycles |").rstrip().endswith("| 2 |")
@@ -5115,8 +5206,19 @@ def test_an_absent_fallout_field_is_never_a_measured_zero(report_env) -> None:
     an archive that never measured it — the easiest pass in the document, and
     the same fabrication `handoffs_wall_clock_seconds` refuses for the wall
     clock.
+
+    THE PRE-CHANGE LEDGER IS BUILT HERE, NOT BORROWED FROM THE FIXTURE. This
+    used to assert that the committed fixture happened to predate the field,
+    and then rely on that. It was true when written and stopped being true the
+    moment casting 4 landed `fallout_of` on the filing doors and the fixture
+    was regenerated from them — so a register about a ledger shape was resting
+    on a fixture that had no obligation to keep it. Stripping the key here
+    states the shape the test is actually about, and cannot go stale behind it.
     """
-    # The committed fixture predates the field entirely.
+    ledger = _read_json(report_env, "defects.json")
+    for record in ledger["defects"]:
+        record.pop("fallout_of", None)
+    _write_json(report_env, "defects.json", ledger)
     for record in _read_json(report_env, "defects.json")["defects"]:
         assert "fallout_of" not in record
 

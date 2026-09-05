@@ -80,7 +80,6 @@ from foundry_mcp.tools.foundry_state import (
     read_document,
     read_jsonl,
     read_text_file,
-    spend_bucket,
     spend_rollup,
     stream_rollup_rows,
     unreported_dispatch_inputs,
@@ -829,26 +828,6 @@ _inspect_decisions = inspect_decisions
 #: cannot order a cycle axis three ways again (D-220).
 _cycle_sort_key = cycle_sort_key
 _as_count = as_count
-
-
-def _new_spend_bucket() -> dict[str, Any]:
-    """A ledger bucket. ``records`` counts ROWS; ``agents`` counts AGENTS.
-
-    D-090: these were one key. ``agents`` was incremented once per ledger row
-    here while `foundry_orchestrator._spend_summary` published the same key as
-    a count of DISTINCT agent ids, so report.json carried
-    ``by_phase.F3.agents: 3`` beside ``state_rollup.agents: 2`` for the same
-    phase — one field name, two meanings, side by side in one document, and
-    they disagreed BY CONSTRUCTION on every run where any agent reported twice.
-    ``agents`` is filled from the roll-up in `_read_spend`; nothing in this
-    module counts it a second way.
-
-    ``unreported`` seeds 0 rather than None because, unlike ``agents``, it is
-    DERIVED here — `_read_spend` fills every bucket from the shared dispatch
-    summary (D-163), so there is no run on which it is unknown. A run with no
-    dispatch record at all has no unreported dispatch, and 0 is that fact.
-    """
-    return spend_bucket()
 
 
 def _read_spend(
@@ -2258,8 +2237,9 @@ def _render_section(key: str, value: dict) -> list[str]:
                 for d in disagreements
             ]
         # D-151's class on this section's own headline (D-150). `agents` is the
-        # ROLL-UP's number or it is nothing — `_new_spend_bucket` seeds it None
-        # and `_read_spend` fills it only from `state.json.spend`, on the
+        # ROLL-UP's number or it is nothing — `foundry_state.spend_bucket`
+        # seeds it None and the roll-up fills it only from
+        # `state.json.spend`, on the
         # stated ground that "nobody recorded how many agents" and "no agents
         # ran" are different facts. This sentence interpolated that None raw
         # while the adjacent `records` used `.get('records', 0)`, so at the
