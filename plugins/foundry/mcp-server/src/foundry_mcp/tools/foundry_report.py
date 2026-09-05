@@ -1276,6 +1276,52 @@ def _read_undriven_temper_candidates(run_dir: Path) -> tuple[dict, str | None]:
     }, None
 
 
+#: The TEMPER phase's own id on `vocab.PHASE_LADDER` (`("F5", "TEMPER")`).
+#: Named rather than spelled at the two reads below, because "did this run
+#: enter TEMPER" is a question about the ladder and not about a string this
+#: module invented.
+TEMPER_PHASE_ID = "F5"
+
+
+def _temper_phase_ran(state: dict) -> bool | None:
+    """AC-020 / ST-007 — did this run ENTER F5, as opposed to opting in?
+
+    Returns True when `phase_history` carries an F5 row, False when the
+    history is there and carries none, and None when the run recorded no
+    history at all — the third answer the HARDENING section states in words
+    rather than assuming either way.
+
+    fallout D-055 — WHY NOT `state.json.temper`. That key is the `--temper`
+    OPT-IN FLAG: `Foundry-Init` writes it once from the command line and no
+    transition touches it again, so it records what the lead ASKED FOR and
+    never what the run did. A run that opted in and stopped at F2 carries
+    `temper: true` with a history that ends three phases earlier, and reading
+    the flag printed "TEMPER ran and left N recorded candidate(s) undriven"
+    over it — so the "never ran" branch fired only for a run that DECLINED
+    temper, and never once for the population AC-020 is actually written
+    about ("When TEMPER never ran, the F6 report lists every TEMPER candidate
+    that was not driven"). ST-007's guard says "TEMPER ran on this run"; the
+    flag cannot answer that question. This run's own archive and
+    `daring-orca` are both that shape: `temper: true`, no F5 anywhere.
+
+    `phase_history` is the record of TRANSITIONS —
+    `orchestration/transitions.py#_update_phase` is its one writer and appends
+    a row on every crossing, the halt included — which is what "ran" means
+    here. `phase_times` is deliberately NOT the source even though it is
+    written in the same transaction: its keys are also opened by the passive
+    sub-phase stamping in `orchestration/guidance.py#_stamp_subphases_in`,
+    from file-state signals rather than from a transition, so a key there is
+    not by itself evidence that a phase was entered.
+    """
+    history = state.get("phase_history")
+    if not isinstance(history, list):
+        return None
+    return any(
+        isinstance(row, dict) and row.get("phase") == TEMPER_PHASE_ID
+        for row in history
+    )
+
+
 def _stream_coverage_section(run_dir: Path) -> tuple[dict, str | None]:
     """CT-003 / AC-030 / OT-028 — per (stream, cycle) coverage, replacements named.
 
@@ -1590,7 +1636,7 @@ def _archive_metrics(
             {
                 decision.get("cycle")
                 for decision in _inspect_decisions(inspect_modes)
-                if decision.get("phase") == "F5"
+                if decision.get("phase") == TEMPER_PHASE_ID
             }
         )
 
@@ -2588,17 +2634,13 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
         return _refusal(OBSERVATIONS_FILENAME, problem)
 
     # AC-020's list joins the HARDENING backlog, which is where a lead already
-    # reads for carried-forward work that blocks nothing. `state.json.temper`
-    # is the record of whether the phase ran at all; `None` when the run
-    # recorded neither, which the section states in words rather than assuming
-    # either way.
+    # reads for carried-forward work that blocks nothing. Whether the phase
+    # RAN is read from the phase history and not from the `--temper` opt-in
+    # flag — see `_temper_phase_ran` for what reading the flag printed.
     hardening = dict(defect_sections["hardening_backlog"])
     hardening["undriven_temper_candidates"] = candidates["candidates"]
     hardening["driven_candidate_count"] = candidates["driven_count"]
-    temper = state.get("temper")
-    hardening["temper_ran"] = (
-        bool(temper) if isinstance(temper, (bool, dict, str)) and temper != "" else None
-    )
+    hardening["temper_ran"] = _temper_phase_ran(state)
 
     # FR-025 / AC-046's sibling. The axis is `derive_cycle_count`'s index — the
     # SAME reading `inspect_modes_per_cycle` and `baseline_comparison` sit on —

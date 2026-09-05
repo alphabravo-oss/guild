@@ -5115,8 +5115,12 @@ def test_an_undriven_temper_candidate_is_listed_by_name(report_env) -> None:
     """AC-020 — "When TEMPER never ran, the F6 report lists every TEMPER
     candidate that was not driven."
 
-    The fixture's run never reached TEMPER, so every recorded candidate is
-    undriven by construction — which is the case AC-020 names.
+    Listing them on EVERY run is the superset `_read_undriven_temper_candidates`
+    gives its reason for, and the fixture is the other half of that argument:
+    its run DID cross into F5 (`phase_history` carries the row, and `phase` is
+    F5.5) and still left both candidates undriven. That is the same debt
+    AC-020 names, and a section that fired only on the never-ran case would
+    hide it. The never-ran case itself is driven two tests below.
     """
     _observation(report_env, id="O-1",
                  description="drive the sweep with a symlinked evidence log")
@@ -5195,6 +5199,116 @@ def test_an_absent_observations_ledger_is_not_a_refusal(report_env) -> None:
     assert _document(report_env)["hardening_backlog"][
         "undriven_temper_candidates"
     ] == []
+
+
+# ---------------------------------------------------------------------------
+# fallout D-055 — "TEMPER ran" is a phase history, not a command-line flag.
+#
+# `state.json.temper` is the `--temper` OPT-IN FLAG: Foundry-Init writes it
+# once from the command line and no transition touches it again. Reading it as
+# "did TEMPER run" put "TEMPER ran and left 1 recorded candidate(s) undriven"
+# on a run whose history stops at F2 — so the "never ran" branch fired only
+# for a run that DECLINED temper, and never once for the population AC-020 is
+# written about. The three tests below are the three branches the renderer
+# already carried and the derivation could not reach.
+# ---------------------------------------------------------------------------
+
+
+def _stop_the_run_before_temper(run_dir: Path) -> None:
+    """Rewrite the fixture into the shape D-055 was driven on.
+
+    `temper: true` — the lead did pass `--temper` — with a phase, a history
+    and a timing map that all stop at the INSPECT: a run that opted in and
+    never crossed into F5. This run's own archive and `daring-orca` are both
+    that shape, which is why it is worth building rather than asserting the
+    flag read in isolation.
+    """
+    state = _read_json(run_dir, "state.json")
+    assert state["temper"] is True, "the fixture must be an OPTED-IN run"
+    before_assay = {"F0", "F0.5", "F0.9", "F1", "F2", "F3"}
+    state["phase"] = "F2"
+    state["phase_history"] = [
+        row for row in state["phase_history"] if row["phase"] in before_assay
+    ]
+    state["phase_times"] = {
+        pid: entry
+        for pid, entry in state["phase_times"].items()
+        if pid in before_assay
+    }
+    _write_json(run_dir, "state.json", state)
+
+
+def test_temper_ran_reads_the_phase_history_and_not_the_opt_in_flag(
+    report_env,
+) -> None:
+    """fallout D-055 / AC-020 — opted in, stopped short, so TEMPER never ran.
+
+    This is the exact population AC-020 is about, and the flag read answered
+    it backwards: `temper: true` survives on a run that halted at F2, so the
+    report asserted a phase history it had never looked at. The candidate list
+    beside the sentence was right the whole time; only the sentence was wrong,
+    which is why this asserts BOTH — a fix that reached the flag and not the
+    prose would leave the same claim on screen.
+    """
+    _stop_the_run_before_temper(report_env)
+    _observation(report_env, id="O-1", description="drive a zero-cycle run")
+
+    _generate(report_env)
+    section = _document(report_env)["hardening_backlog"]
+
+    assert section["temper_ran"] is False
+    assert [c["id"] for c in section["undriven_temper_candidates"]] == ["O-1"]
+
+    markdown = _markdown(report_env)
+    assert "TEMPER never ran on this run, so all 1 recorded candidate(s)" in markdown
+    assert "TEMPER ran and left" not in markdown
+
+
+def test_a_run_that_crossed_into_f5_reads_as_ran(report_env) -> None:
+    """ST-007's other branch — the guard is "TEMPER ran on this run".
+
+    The fixture crossed F4 into F5 and on into F5.5, so its history carries
+    the row the derivation reads. Stated as an assertion rather than left to
+    the reader, because the whole defect was a claim about this run's history
+    made without reading it.
+    """
+    assert any(
+        row["phase"] == fr.TEMPER_PHASE_ID
+        for row in _read_json(report_env, "state.json")["phase_history"]
+    )
+    _observation(report_env, id="O-1", description="drive a symlinked log")
+    _observation(report_env, id="O-2", description="already driven", driven=True)
+
+    _generate(report_env)
+    section = _document(report_env)["hardening_backlog"]
+
+    assert section["temper_ran"] is True
+    markdown = _markdown(report_env)
+    assert "TEMPER ran and left 1 recorded candidate(s) undriven; 1 were" in markdown
+
+
+def test_a_run_with_no_recorded_history_says_so_rather_than_guessing(
+    report_env,
+) -> None:
+    """FR-054 — an archive that recorded no history gets the third branch.
+
+    "Cannot say" and "did not run" are different answers and the section has
+    words for both. Reading an absent history as "never ran" would print a
+    finding about every pre-release archive; reading it as "ran" would print
+    the defect's own sentence again.
+    """
+    state = _read_json(report_env, "state.json")
+    del state["phase_history"]
+    _write_json(report_env, "state.json", state)
+    _observation(report_env, id="O-1", description="drive a zero-cycle run")
+
+    _generate(report_env)
+
+    assert _document(report_env)["hardening_backlog"]["temper_ran"] is None
+    assert (
+        "whether TEMPER ran at all is not recorded in this run's state"
+        in _markdown(report_env)
+    )
 
 
 # ---------------------------------------------------------------------------
