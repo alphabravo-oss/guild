@@ -1,10 +1,11 @@
 """READ THIS BEFORE WRITING A REQUIREMENT ID IN ANY TEST MODULE HERE.
 
-This run has TWO specs installed side by side, and they number their rows
+This run has THREE specs installed side by side, and they number their rows
 identically:
 
   * ``forge-specs/foundry-run-process-fixes/spec.md``
   * ``forge-specs/foundry-run-convergence/spec.md``
+  * ``forge-specs/foundry-run-fallout/spec.md``
 
 87 requirement ids exist in BOTH, across all eight families this suite cites
 (``US GI AC OT FR CT ST NFR``) -- every id the earlier spec numbers, the later
@@ -18,8 +19,9 @@ spec.
 
     process-fixes AC-001     cites forge-specs/foundry-run-process-fixes
     convergence AC-006       cites forge-specs/foundry-run-convergence
+    fallout AC-056           cites forge-specs/foundry-run-fallout
 
-Two spellings, no third, and no default. A ``/``-joined run inherits the
+Three spellings, no fourth, and no default. A ``/``-joined run inherits the
 qualification of its head -- ``convergence CT-002 / AC-019 / OT-008`` qualifies
 all three -- which is how section headers are written. Ids in CODE are not
 citations and are never scanned: a ``spec_ref=`` fixture literal, a
@@ -67,9 +69,30 @@ ID_FAMILIES = frozenset(
 #: declares the data it applies to.
 LEGACY_ID_FAMILIES = frozenset({"AC", "OT", "FR", "CT", "ST", "NFR"})  # 6 items
 
-#: The two legal qualifications. Order is irrelevant; membership is the whole
-#: contract. A third spelling is a convention change, not a local decision.
-QUALIFIERS = ("process-fixes ", "convergence ")
+#: The three legal qualifications. Order is irrelevant; membership is the whole
+#: contract. A fourth spelling is a convention change, not a local decision.
+#:
+#: `fallout ` joined them for the foundry-run-fallout release. The tuple pins
+#: every requirement-id citation under `tests/` to a spec NAME, and this run's
+#: teammates qualify theirs `fallout FR-NNN`; without the member every casting
+#: of the run fails the pin for writing the citation the convention asks for.
+QUALIFIERS = ("process-fixes ", "convergence ", "fallout ")
+
+#: Which spec each qualification names. Derived from `QUALIFIERS` at import so
+#: the refusal below cannot advertise a narrower set than the scan enforces --
+#: the `_PYTEST_DISCOVERY_PHRASE` shape, applied to the one message a teammate
+#: reads when this pin refuses. A qualification with no row here is a bug in
+#: this table, not a licence to print two of three.
+QUALIFIER_SPECS = {
+    "process-fixes ": "forge-specs/foundry-run-process-fixes/spec.md",
+    "convergence ": "forge-specs/foundry-run-convergence/spec.md",
+    "fallout ": "forge-specs/foundry-run-fallout/spec.md",
+}
+
+#: The accepted spellings, one per line, as the refusal prints them.
+QUALIFIER_PHRASE = "\n".join(
+    f"    {q.strip()!r:<22} -> {QUALIFIER_SPECS[q]}" for q in QUALIFIERS
+)
 
 PIN_SENTINEL = "# D-178 — THE TWO-SPEC ID CONVENTION IS PINNED, NOT MERELY DOCUMENTED."
 
@@ -349,10 +372,9 @@ def test_every_requirement_id_in_this_module_names_its_spec(module: str) -> None
         f"tests/{module}: unqualified requirement id(s) -- D-178/D-181/D-185 "
         f"again, in a module this pin holds to the full convention.\n"
         f"THE EDIT: in tests/{module}, at each line below, put a spec in front "
-        f"of the id. Exactly two spellings are accepted:\n"
-        f"    'process-fixes <id>'  -> forge-specs/foundry-run-process-fixes/spec.md\n"
-        f"    'convergence <id>'    -> forge-specs/foundry-run-convergence/spec.md\n"
-        f"There is no bare form and no per-file default; open both specs and "
+        f"of the id. Exactly {len(QUALIFIERS)} spellings are accepted:\n"
+        f"{QUALIFIER_PHRASE}\n"
+        f"There is no bare form and no per-file default; open the specs and "
         f"cite the one the surrounding prose actually describes. A `/`-joined "
         f"run inherits its head's qualification, so one prefix covers "
         f"'convergence CT-002 / AC-019 / OT-008'.\n"
@@ -539,3 +561,21 @@ def test_a_module_docstring_is_scanned_unless_it_carries_the_sentinel() -> None:
     with pytest.raises(AssertionError, match="sentinel"):
         prose_blocks(plain, require_sentinel=True)
     prose_blocks(legend, require_sentinel=True)
+
+
+def test_every_qualification_names_the_spec_it_cites() -> None:
+    """fallout AC-013's shape, applied to this module's own refusal.
+
+    ``QUALIFIER_PHRASE`` is what a teammate reads when the pin refuses, and it
+    is BUILT from ``QUALIFIERS`` rather than typed beside it -- the
+    ``_PYTEST_DISCOVERY_PHRASE`` pattern. This asserts the two halves cannot
+    come apart: a qualification added to the tuple with no row in
+    ``QUALIFIER_SPECS`` would raise at import, and one added to the table with
+    no place in the tuple would advertise a spelling the scan rejects.
+    """
+    assert set(QUALIFIER_SPECS) == set(QUALIFIERS)
+    for qualification, spec in QUALIFIER_SPECS.items():
+        assert qualification.endswith(" "), qualification
+        assert spec.startswith("forge-specs/"), spec
+        assert qualification.strip() in QUALIFIER_PHRASE
+        assert spec in QUALIFIER_PHRASE
