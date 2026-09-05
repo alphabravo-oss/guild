@@ -1,7 +1,6 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_evidence.py tests/test_commit_guard.py --deselect tests/test_evidence.py::test_every_declared_grammar_has_a_live_witness
-# evidence-for: US-008, FR-001, FR-002, FR-037, FR-051, AC-035, AC-036, CT-014, CT-015, GI-006, GI-019, NFR-005, OT-033, OT-034, OT-035
+# evidence-cmd: set -o pipefail; cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_evidence.py tests/test_commit_guard.py --deselect tests/test_evidence.py::test_every_declared_grammar_has_a_live_witness 2>&1 | sed -E 's/ \([0-9]+:[0-9]{2}:[0-9]{2}\)//'
+# evidence-for: US-008, FR-001, FR-002, FR-037, FR-051, AC-035, AC-036, AC-038, CT-014, CT-015, GI-006, GI-019, NFR-005, OT-033, OT-034, OT-035
 # evidence-volatile: \d+\.\d+s
-# evidence-volatile: \(\d+:\d{2}:\d{2}\)
 # evidence-timeout: 600
 
 ........................................................................ [ 20%]
@@ -215,4 +214,4 @@
     the other 58 reproduce unchanged: their whole leading run
     is directives and one separator, which is the grammar.
 .........................................                [100%]
-345 passed, 1 deselected in 76.32s (0:01:16)
+345 passed, 1 deselected in 76.11s
