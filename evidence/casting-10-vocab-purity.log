@@ -1,19 +1,11 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -q --tb=no -p no:cacheprovider tests/test_vocab.py -k 'purity or imports_without_pulling or verifier or report_required or halt_reason or hardening or temper_candidate or observation_classes or defect_tiers or ordinary_path or monolith_earns_delta or references_exemption' --deselect tests/test_vocab.py::test_hardening_is_a_defect_tier_and_is_not_in_the_blocking_set
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q --tb=no -p no:cacheprovider tests/test_vocab.py -k 'purity or imports_without_pulling or verifier or report_required or halt_reason or hardening or temper_candidate or observation_classes or defect_tiers or ordinary_path or monolith_earns_delta or references_exemption or prefix_partition' --deselect tests/test_vocab.py::test_hardening_is_a_defect_tier_and_is_not_in_the_blocking_set
 # evidence-for: FR-003, FR-014, FR-017, FR-019, FR-027, AC-012, AC-017, AC-022
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: \d+\.\d+ seconds
 # evidence-timeout: 600
-#
-# The narrowed verifier rule in BOTH directions, the four new vocabularies,
-# and the PURITY RULE's subprocess pin. One node is deselected and named
-# rather than silently filtered: `test_hardening_is_a_defect_tier_and_is_not
-# _in_the_blocking_set` imports BLOCKING_TIERS from
-# `orchestration/gates.py`, which casting 2 creates in wave 2, so it is on
-# casting 10's group-5 RED list and appears in
-# `casting-10-suites-after-group-5.log` with the other twenty-one.
 
-........................ssss............................................ [ 85%]
-............                                                             [100%]
+........................ssss............................................ [ 84%]
+.............                                                            [100%]
 =========================== short test summary info ============================
 SKIPPED [4] tests/test_vocab.py:1890: plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration does not exist yet — casting 2 creates it in wave 2. The RULE is asserted above; the existence assertion arms itself the moment the package appears.
-80 passed, 4 skipped, 236 deselected in 0.07s
+81 passed, 4 skipped, 235 deselected in 0.07s
