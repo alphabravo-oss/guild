@@ -126,6 +126,7 @@ try:  # Installed (uvx/pip) case — package is already importable.
     )
     from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
     from foundry_mcp.tools.foundry_state import (
+        ARCHIVE_SCHEMA_VERSION,
         derive_cycle_count,
         is_stream_record,
         read_json,
@@ -144,6 +145,7 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
     )
     from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
     from foundry_mcp.tools.foundry_state import (
+        ARCHIVE_SCHEMA_VERSION,
         derive_cycle_count,
         is_stream_record,
         read_json,
@@ -151,32 +153,40 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
     )
 
 
-# The schema generation this tool brings an archive to. Bump when a migration
-# step is added (add it to MIGRATION_STEPS below) or when a step's OUTPUT shape
-# changes — v1 wrote a stream-rollup.json its own consumer could not read.
+# `ARCHIVE_SCHEMA_VERSION` — the generation this tool brings an archive TO — is
+# imported above and no longer declared here. `foundry_state.py` is its one home
+# (fallout C-023): it was spelled independently in four files, which is the shape
+# where a writer bumps and a reader does not and the archive a run just wrote
+# reads as one generation to the tool that made it and another to the tool that
+# migrates it. The leaf is reachable from every consumer and imports nothing from
+# the package, so reading it here closes no cycle.
 #
-# v3: the evidence-tier step. A pre-change defect record has no `tier` key, and
-# every gate in this release branches on one.
+# WHAT THIS MODULE STILL OWNS IS THE MAP FROM A GENERATION TO ITS STEP, because
+# that is migration knowledge and not a number:
 #
-# v4: replace semantics for the roll-up, and the fields this release adds to a
-# defect record and a casting entry. The OUTPUT shape of step 4 is unchanged;
-# what changed is what step 8 then makes the top-level totals MEAN, which is a
-# generation an archive has to be able to declare — `foundry_validate` reads
-# this marker to tell an archive that predates `requirement_ids` from a run
-# created under the schema that mandates it.
+#   v1: wrote a stream-rollup.json its own consumer could not read — the reason
+#       a changed step OUTPUT shape is a bump and not just a new step.
+#   v3: the evidence-tier step. A pre-change defect record has no `tier` key,
+#       and every gate in this release branches on one.
+#   v4: replace semantics for the roll-up, and the fields this release adds to
+#       a defect record and a casting entry. The OUTPUT shape of step 4 is
+#       unchanged; what changed is what step 8 makes the top-level totals MEAN.
 #
-# BUMPING THIS ALONE IS NOT ENOUGH. Since D-052 this tool is no longer the only
-# writer of `state.json`'s marker: `foundry_init` stamps a run with the current
-# generation at creation, because the fail-closed half of FR-054 fires only on
-# runs that can say what they are. So the number lives in more than one file,
-# and a bump applied here and nowhere else leaves every newly created run
-# claiming the previous generation — silently, since nothing about such a run
-# looks wrong until the F0.9 door goes quiet on it. The join that catches that
-# lives in `plugins/foundry/mcp-server/tests/test_migrate_archive.py`, under
-# `test_the_two_writers_of_the_schema_marker_agree_and_the_reader_accepts_it`.
-# It drives both writers and asks the reader rather than comparing constants,
-# so run it with the bump.
-ARCHIVE_SCHEMA_VERSION = 4
+# SO A BUMP IS TWO EDITS, NEITHER OF THEM SUFFICIENT ALONE. Raise the generation
+# in `foundry_state.py`, and add the step here that carries a schema-N archive to
+# N+1 (registering it in `MIGRATION_STEPS` below). Raising it without the step
+# leaves this tool claiming a generation it cannot produce; adding the step
+# without raising it leaves the tool unable to say it ran.
+#
+# AND THIS TOOL IS NOT THE ONLY WRITER OF THE MARKER. Since D-052 `foundry_init`
+# stamps a new run with the current generation at creation, because the
+# fail-closed half of FR-054 fires only on runs that can say what they are. Both
+# writers now read the one leaf, so they cannot disagree by a stale copy — the
+# join that proves they do not, and that the F0.9 floor is still at or below what
+# they write, lives in `plugins/foundry/mcp-server/tests/test_migrate_archive.py`
+# under `test_the_two_writers_of_the_schema_marker_agree_and_the_reader_accepts_it`.
+# It drives both writers and asks the reader rather than comparing constants, so
+# run it with the bump.
 
 # CLOSED VOCABULARY — the twelve migration steps, in execution order. The
 # summary reports one outcome per step under exactly these names.
