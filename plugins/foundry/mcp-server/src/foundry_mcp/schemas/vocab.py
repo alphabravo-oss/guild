@@ -1387,8 +1387,23 @@ NON_REQUIREMENT_ID_PREFIXES: frozenset[str] = frozenset(
         "INTV", "TYPE", "PROBE", "INTENT",   # the remaining numbered streams
         "D",        # defect ids in the run ledger
         "P",        # phase/packet ids in planning documents
+        # Both observed in `forge-specs/foundry-run-fallout/spec.md` and
+        # reported by `test_every_id_prefix_in_a_real_spec_is_classified`,
+        # which is the mechanism this partition exists for: a new family falls
+        # into the gap between the two sets and the sweep NAMES it rather than
+        # silently ignoring it. Neither is a requirement, so neither may be
+        # swept into a requirement count.
+        "OBS",      # observation ids in the run's observations ledger (A-000:
+                    #   "TEST-01 ... caught the D-222 fix over-correcting
+                    #   (OBS-026 -> D-231)"). A finding nobody has to fix is
+                    #   not a requirement anybody has to meet.
+        "RA",       # RESEARCH_AUDIT roster ITEM ids (A-019: "RESEARCH_AUDIT
+                    #   re-derives RA-1..RA-n from the spec's Informational
+                    #   lines each cycle"). A roster row is a thing to CHECK,
+                    #   not a thing the build owes — and FR-020's persisted
+                    #   `rosters/<stream>.json` is where they live.
     }
-)  # 11 non-requirement namespaces
+)  # 13 non-requirement namespaces
 
 #: The requirement-ID grammar. Built FROM the prefix set above rather than
 #: re-typed beside it, so the families are the single axis: add a prefix and

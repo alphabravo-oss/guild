@@ -2936,3 +2936,35 @@ def test_the_baseline_and_target_carry_nfr_001s_four_numbers() -> None:
     # The target must actually be an improvement, or "meets_target" is noise.
     for key in ("grind_cycles", "post_verification_cycles"):
         assert vocab.CONVERGENCE_TARGET[key] < vocab.THUNDER_VIPER_BASELINE[key]
+
+
+def test_the_prefix_partition_covers_this_runs_own_spec() -> None:
+    """Every `XX-NNN` namespace in a shipped spec is on exactly one side.
+
+    `tests/test_evidence.py::test_every_id_prefix_in_a_real_spec_is_classified`
+    sweeps the real specs and reports a prefix belonging to NEITHER set. It
+    named `OBS` and `RA` in `forge-specs/foundry-run-fallout/spec.md`, which is
+    the partition doing its job: a new family falls into the gap and the sweep
+    says so rather than letting it through.
+
+    Both are NON-requirements, and the direction matters in one direction only.
+    Adding them to `REQUIREMENT_ID_PREFIXES` would make an observation and a
+    research-audit roster row into things the DONE gate counts and the verdict
+    synthesis writes a row for — a run could then never reach DONE, because
+    `OBS-026` is a finding and not a promise. Adding them here costs nothing:
+    the two sets are disjoint by construction, asserted below.
+    """
+    assert {"OBS", "RA"} <= vocab.NON_REQUIREMENT_ID_PREFIXES
+    assert not (vocab.NON_REQUIREMENT_ID_PREFIXES
+                & vocab.REQUIREMENT_ID_PREFIXES), (
+        "a prefix on both sides makes the partition meaningless — the sweep "
+        "would report it as classified while two readers disagree about "
+        "whether it is a requirement"
+    )
+    assert not vocab.REQUIREMENT_ID_RE.findall("OBS-026 and RA-1"), (
+        "the requirement grammar is built FROM the requirement set, so a "
+        "non-requirement prefix must not match it"
+    )
+    assert vocab.REQUIREMENT_ID_RE.findall("FR-014 and AC-024") == [
+        "FR-014", "AC-024",
+    ]
