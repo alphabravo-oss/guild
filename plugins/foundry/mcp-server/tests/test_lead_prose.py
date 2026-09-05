@@ -2425,6 +2425,56 @@ def test_the_f07_step_calls_a_gate_token_the_schema_accepts() -> None:
     )
 
 
+def test_the_f09_step_gates_the_transition_that_actually_opens_cast() -> None:
+    """fallout AC-059 / GI-031: membership is not the property; the MAPPING is.
+
+    D-042 moved the `cast` gate token off `start_cast` and onto the same-name
+    `cast` transition, which is what `GATE_TO_TRANSITION` says today. The F0.9
+    step went on calling `Foundry-Gate(phase='cast')` -- and that token is
+    still a perfectly valid enum member, so the F0.7 check above, which tests
+    only membership, stayed GREEN while the lead was being handed the
+    F1-COMPLETE checklist (streams, sight, defects) instead of the manifest,
+    oversize and file-overlap rungs the CAST wave depends on. A lead following
+    the step literally reads the wrong checklist and very likely a refusal.
+
+    Derived from the mapping table rather than pinned to the replacement
+    token, in the `_PYTEST_DISCOVERY_PHRASE` shape: move `start_cast` to a
+    different gate again and this fails beside the prose instead of one cycle
+    after it.
+    """
+    from foundry_mcp.tools.orchestration.gates import GATE_TO_TRANSITION
+
+    gates_for_start_cast = sorted(
+        gate for gate, transitions in GATE_TO_TRANSITION.items()
+        if "start_cast" in transitions
+    )
+    # Floor: with nothing mapping to `start_cast` the membership test below is
+    # vacuous -- every token would satisfy an expectation of nothing.
+    assert gates_for_start_cast, (
+        "No gate token maps to `start_cast` in GATE_TO_TRANSITION, so the "
+        "transition that opens CAST has no gate at all. That is a GI-031 "
+        "violation in the table; fix the table, not this assertion."
+    )
+
+    section = _section(START_MD, "### F0.9: VALIDATE")
+    called = re.findall(r"Foundry-Gate\(phase='([a-z_]+)'\)", section)
+    assert called, (
+        f"{_rel(START_MD)}'s F0.9 step names no `Foundry-Gate(phase='...')` "
+        f"call at all. F0.9 closes into F1 CAST, and the token it closes with "
+        f"is the thing this checks."
+    )
+    wrong = sorted(
+        token for token in called
+        if "start_cast" not in GATE_TO_TRANSITION.get(token, ())
+    )
+    assert not wrong, (
+        f"{_rel(START_MD)}'s F0.9 step calls Foundry-Gate with {wrong}, which "
+        f"maps to {[GATE_TO_TRANSITION.get(t) for t in wrong]} rather than to "
+        f"`start_cast` -- the transition that opens CAST. The gate token(s) "
+        f"that evaluate `_start_cast_preconditions` are {gates_for_start_cast}."
+    )
+
+
 def test_the_gate_token_set_the_protocol_describes_is_the_mapping_table() -> None:
     """fallout GI-031 / CT-020: the protocol points at the table, not at a copy.
 

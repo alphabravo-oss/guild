@@ -538,7 +538,7 @@ Skip Dimension 11 entirely if `patterns/PATTERNS.md` does not exist (F0.6 was no
 
 **Revision loop:** auto-revise on failures (max 3 iterations), then proceed with warnings.
 
-Call `Foundry-Gate(phase='cast')`.
+Call `Foundry-Gate(phase='validate')`.
 
 ### F1: CAST
 
@@ -660,6 +660,7 @@ Shut down all teammates → `Foundry-Report` → `Foundry-Gate(phase="done")` �
 | Section | What it carries |
 |---|---|
 | `verdict_matrix` | Every requirement's ASSAY verdict with its evidence |
+| `requirement_span` | Each requirement id's owning castings and span, with any recorded `split_reason` — the SAME table `Foundry-Validate-Castings` prints at F0.9, from the same computation, so the two surfaces cannot name different owners. Here it REPORTS and never refuses: F0.9 is the gate, and a run waived past a wide span there must still be able to reach DONE |
 | `defects_by_tier_and_status` | The whole ledger, split `LIVE` / `LATENT` / `HARDENING` / unknown against open / fixed |
 | `latent_backlog` | Every open `LATENT` defect, named — the run's deliberate carry-forward |
 | `hardening_backlog` | Every open `HARDENING` defect, named — the off-spec findings the run carried rather than blocked on |
@@ -780,6 +781,7 @@ When either says stop — a cycle's measured spend climbing with cycles still to
 | `Foundry-Defect` | Log findings — every filing carries `tier`, `class` and `target_kind` |
 | `Foundry-Observation` | Record a comment-prose finding in the observations ledger (the non-blocking half of the split) |
 | `Foundry-Observations` | Query the observations ledger, with the denylist tripwire log returned alongside |
+| `Foundry-Drive-Candidate` | Close an open `TEMPER_CANDIDATE` observation as DRIVEN — TEMPER's write half of ST-007, naming the `D-NNN` in `filed` when the probe produced one and OMITTING it when the probe was driven and found sound, because clean is a closure and not a blank |
 | `Foundry-Defects` | Query the defect ledger with optional filters (status, cycle, source, spec_ref) |
 | `Foundry-Fix` | Mark defect fixed — requires `authored_by`; a lead fix also requires `fix_commit` and is measured against the lane |
 | `Foundry-Sync` | Merge findings; refuses the whole batch when any finding fails the filing checks |
