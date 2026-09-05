@@ -34,6 +34,7 @@ MCP_SRC = FOUNDRY_ROOT / "mcp-server" / "src" / "foundry_mcp"
 AGENTS = FOUNDRY_ROOT / "agents"
 
 START_MD = COMMANDS / "start.md"
+RESUME_MD = COMMANDS / "resume.md"
 HELP_MD = COMMANDS / "help.md"
 LEAD_DISCIPLINE = REFERENCES / "lead-discipline.md"
 TEMPER_SKILL = SKILLS / "temper" / "SKILL.md"
@@ -1062,6 +1063,260 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         START_MD,
         "and into the `#### Filing rules` block of `skills/sight/SKILL.md`",
     ),
+    # --- D16: the F0 Holmes review (fallout AC-016 / FR-031 / FR-056 / OT-017)
+    # The command and the report path are both LITERAL: the RESEARCH_AUDIT
+    # stream reads `research/*.md`, so a review saved anywhere else is a review
+    # no stream ever opens, and a step that names no path leaves where to save
+    # it to the lead's judgement at the one moment judgement is not wanted.
+    (
+        "holmes-step-names-the-command-and-the-path",
+        "FR-031",
+        START_MD,
+        "run `/holmes:review` on the orchestrator and save the report as "
+        "`foundry-archive/{run}/research/holmes-orchestrator.md`",
+    ),
+    (
+        "holmes-step-names-the-roster",
+        "AC-016",
+        START_MD,
+        "Saving it there is what puts it on the RESEARCH_AUDIT roster",
+    ),
+    # Both conditions, stated as both: a self-targeting run that moves no
+    # module has no boundary to judge, and a review of nothing on the roster is
+    # a document RESEARCH_AUDIT then holds the build against.
+    (
+        "holmes-step-is-conditional-on-two-facts",
+        "FR-056",
+        START_MD,
+        "**Both conditions, never one.**",
+    ),
+    # --- D17: F0.5 groups by behaviour and records ownership -----------------
+    # fallout AC-043 / FR-009 / FR-052. Holmes flow-7's skeptic section records
+    # that there is no decompose tool -- `castings/manifest.json` is authored
+    # by the agents F0.5 spawns -- so this instruction is the ONLY place
+    # `requirement_ids` can be created. F0.9 can validate the span afterwards;
+    # it cannot invent the ownership the manifest never recorded.
+    (
+        "f05-groups-by-behaviour",
+        "AC-043",
+        START_MD,
+        "Group by BEHAVIOUR, and record what each casting owns",
+    ),
+    (
+        "f05-names-the-five-surfaces-of-one-behaviour",
+        "AC-043",
+        START_MD,
+        "the door itself, its report row, its display line, its command prose "
+        "and its README row",
+    ),
+    (
+        "f05-layer-split-is-the-exception",
+        "AC-043",
+        START_MD,
+        "only where those surfaces genuinely cannot share an owner",
+    ),
+    (
+        "f05-writes-requirement-ids",
+        "FR-009",
+        START_MD,
+        "the requirement ids that casting owns, persisted beside its `key_files`",
+    ),
+    (
+        "f05-records-split-reason-above-two",
+        "FR-052",
+        START_MD,
+        "naming every id that lands on MORE THAN TWO castings",
+    ),
+    (
+        "f09-refuses-an-unrecorded-span",
+        "FR-052",
+        START_MD,
+        "**F0.9 REFUSES a span above two without one**",
+    ),
+    # --- D18: the two flags that were parsed and read by nothing -------------
+    # fallout FR-044 / GI-015 (temper) and AC-052 / FR-033 / FR-055 (no_ui).
+    # GI-015 is a global invariant rather than a preference: a paragraph that
+    # defaults `--temper` on, or that reads as though a TEMPER-off run does no
+    # adversarial verification, violates it and GI-005 together.
+    (
+        "temper-threading",
+        "FR-044",
+        START_MD,
+        "thread the `--temper` invocation flag through by passing "
+        "`temper=<FOUNDRY_TEMPER>`",
+    ),
+    ("temper-defaults-off", "GI-015", START_MD, "**`--temper` DEFAULTS OFF.**"),
+    (
+        "temper-off-keeps-prove-adversarial",
+        "GI-015",
+        START_MD,
+        "On a TEMPER-off run PROVE keeps its adversarial half AT INSPECT",
+    ),
+    (
+        "temper-decides-the-phase-not-the-existence",
+        "GI-015",
+        START_MD,
+        "The adversarial work happens on every run; the flag decides WHICH "
+        "PHASE does it",
+    ),
+    (
+        "no-ui-threading",
+        "FR-055",
+        START_MD,
+        "thread the `--no-ui` invocation flag through by passing "
+        "`no_ui=<FOUNDRY_NO_UI>`",
+    ),
+    # --- D19: the halt door and where the run is heading (fallout FR-047) ----
+    (
+        "halt-door-is-the-same-door-the-cap-reaches",
+        "FR-047",
+        START_MD,
+        "`Foundry-Phase(phase='halt', reason=…, text=…)` is the door",
+    ),
+    (
+        "halt-door-refuses-exactly-three-things",
+        "FR-047",
+        START_MD,
+        "a reason that is not a member, a team still registered, and a run "
+        "that is already `HALTED`",
+    ),
+    (
+        "halt-is-terminal",
+        "FR-047",
+        START_MD,
+        "**`HALTED` is terminal and there is no second halt:**",
+    ),
+    (
+        "every-next-names-the-ending",
+        "FR-047",
+        START_MD,
+        "**Every `Foundry-Next` response names where the run is heading**",
+    ),
+    # `null` and `0` are opposite facts and a reader that conflates them halts
+    # a run that had no cap at all -- `_terminal_outlook`'s own docstring says
+    # so, and the prose has to carry it or the field is a trap.
+    (
+        "cycles-to-cap-null-is-not-zero",
+        "FR-047",
+        START_MD,
+        "**`cycles_to_cap` is `null` on an unbounded run, and `null` and `0` "
+        "are opposite facts:**",
+    ),
+    # --- D20: the agent records, the lead confirms (fallout OT-029 / FR-049) -
+    (
+        "lead-does-not-record-a-stream",
+        "OT-029",
+        START_MD,
+        "**YOU DO NOT RECORD A STREAM. THE AGENT DOES.**",
+    ),
+    (
+        "lead-confirms-the-record-exists",
+        "OT-029",
+        START_MD,
+        "CONFIRM ITS RECORD EXISTS",
+    ),
+    (
+        "stream-record-replaces-rather-than-sums",
+        "FR-049",
+        START_MD,
+        "a second record for the same `(stream, cycle)` REPLACES the first",
+    ),
+    (
+        "a-missing-record-is-a-finding-not-a-gap",
+        "FR-049",
+        START_MD,
+        "**If a stream finished and no record exists, that is a finding about "
+        "the stream**",
+    ),
+    # --- D21: the F0.7 call the schema accepts (fallout AC-051 / FR-032) -----
+    (
+        "f07-is-not-a-gated-transition",
+        "AC-051",
+        START_MD,
+        "**F0.7 is not a gated phase transition, and `intent_coverage` is not "
+        "a gate token.**",
+    ),
+    # --- D22: --max-cycles on a resume (fallout FR-020 / FR-047) -------------
+    # `setup-foundry.sh` exits on the `resume` subcommand BEFORE its argument
+    # loop and resume.md never runs it, so there is no echoed value to copy
+    # here. A paragraph that told the lead to read one would send it looking
+    # for a line that is never printed.
+    (
+        "resume-takes-n-from-the-invocation",
+        "FR-020",
+        RESUME_MD,
+        "**Take N from the invocation itself.**",
+    ),
+    (
+        "resume-rewrites-the-persisted-cap",
+        "FR-020",
+        RESUME_MD,
+        "REWRITES `state.json.max_cycles`",
+    ),
+    ("resume-zero-is-unbounded", "FR-020", RESUME_MD, "`0` is unbounded, and the default"),
+    (
+        "resume-below-the-cycle-halts-at-the-grind-door",
+        "FR-047",
+        RESUME_MD,
+        "**A value BELOW the cycle the run is on halts it at the next GRIND "
+        "door**, with reason `cap_reached`",
+    ),
+    (
+        "resume-halt-is-a-transition-not-a-refusal",
+        "FR-047",
+        RESUME_MD,
+        "That is a SUCCESSFUL `Foundry-Phase` transition and never a refusal",
+    ),
+    # --- D23: the rationale sections (fallout OT-027 / FR-047 / FR-036) ------
+    (
+        "named-backlog-is-a-successful-end",
+        "OT-027",
+        LEAD_DISCIPLINE,
+        "**A run that reaches `HALTED` with every open finding written down "
+        "and tiered has succeeded.**",
+    ),
+    (
+        "empty-prove-is-not-the-goal",
+        "FR-047",
+        LEAD_DISCIPLINE,
+        "an empty PROVE is not the goal",
+    ),
+    # FR-036 is Locked as a RECORD: "Nothing beyond FULL width; record it as a
+    # documented residual risk." The deliverable is the written record, so the
+    # pin is on the sentence that refuses to promise a mitigation.
+    (
+        "self-hosting-residual-risk-is-recorded",
+        "FR-036",
+        LEAD_DISCIPLINE,
+        "**Nothing mitigates this beyond `FULL` width on `verifier_touched`, "
+        "and that is an accepted residual risk of self-hosting rather than a "
+        "gap someone is going to close later.**",
+    ),
+    # --- D24: the setup script threads what it echoes (fallout FR-055) ------
+    # The echo block and the threading sentence disagreed: FOUNDRY_TEMPER and
+    # FOUNDRY_NO_UI were printed and then not named as things to thread, which
+    # is how a flag ends up parsed, echoed and read by nothing.
+    (
+        "script-threads-every-echoed-flag",
+        "FR-055",
+        SETUP_SH,
+        "url=$URL, temper=$TEMPER, nyquist=$NYQUIST, max_cycles=$MAX_CYCLES, "
+        "no_ui=$NO_UI",
+    ),
+    (
+        "script-names-every-echoed-value",
+        "FR-055",
+        SETUP_SH,
+        "the FOUNDRY_URL, FOUNDRY_TEMPER, FOUNDRY_NYQUIST, FOUNDRY_MAX_CYCLES "
+        "and FOUNDRY_NO_UI values above",
+    ),
+    ("script-echoes-no-ui", "AC-052", SETUP_SH, "FOUNDRY_NO_UI=$NO_UI"),
+    (
+        "script-usage-names-the-resume-flag",
+        "FR-020",
+        SETUP_SH,
+        "/foundry:resume [--max-cycles N]",
+    ),
 )
 
 
@@ -1168,6 +1423,20 @@ _RETIRED_START_MD_SPELLINGS: tuple[tuple[str, str, str], ...] = (
         "both doors test the recorded WIDTH: every member of "
         "INSPECT_FULL_RULES opens ASSAY, and the rule beside the mode is a "
         "label on how FULL was reached rather than a second test",
+    ),
+    # fallout AC-051 / FR-032: the call the SCHEMA rejects. `Foundry-Gate`'s
+    # enum is `sorted(GATE_TO_TRANSITION)` and F0.7 guards no transition, so it
+    # has no token -- the call was refused at the transport, before any handler
+    # or checklist could say why, and the step it was meant to open never
+    # opened. This is the only retired spelling here whose replacement is a
+    # DIFFERENT NUMBER of calls rather than different words, so a positive pin
+    # on the new sentence cannot see the old one surviving beside it.
+    (
+        "Foundry-Gate(phase='intent_coverage')",
+        "AC-051",
+        "F0.7 is not a gated phase transition: run the check with "
+        "Foundry-Intent-Coverage, then Foundry-Gate(phase='validate') to "
+        "cross into F0.9",
     ),
 )
 
@@ -1660,7 +1929,16 @@ def test_the_f6_evidence_rung_names_every_terminal_crossing_in_order() -> None:
 
 @pytest.mark.parametrize(
     "heading",
-    ("## Why the lead-fix lane is bounded", "## Why dispatch is a pointer"),
+    (
+        "## Why the lead-fix lane is bounded",
+        "## Why dispatch is a pointer",
+        # fallout OT-027 / FR-047 and FR-036 -- the two sections this release
+        # added. They join the parametrize rather than getting a test of their
+        # own, because the property is the FILE's and a section with its own
+        # bespoke check is a section free to drift into its own shape.
+        "## Why a named backlog is a successful end",
+        "## Why a self-hosting run carries a residual risk",
+    ),
 )
 def test_new_rationale_sections_keep_the_house_shape(heading: str) -> None:
     """D13: every section of lead-discipline.md is Why -> failure mode -> fix.
@@ -1976,3 +2254,267 @@ def test_no_owned_prose_promises_the_pre_ruling_seal() -> None:
                 f"regenerated away. Say where prose survives, not where it "
                 f"used to be merged back to."
             )
+
+
+# ---------------------------------------------------------------------------
+# The flag that was parsed, echoed and read by nothing (fallout AC-057 / FR-059)
+# ---------------------------------------------------------------------------
+#
+# `--output-dir` was accepted by the argument loop, stored in `OUTPUT_DIR`,
+# printed twice (`Output: ...` and `FOUNDRY_OUTPUT=...`) and then read by
+# nothing at all: no tool took the value, no archive moved because of it, and
+# an operator who passed it got a flag that did nothing and confirmed it twice.
+# The deliverable is a DELETION, and a deletion is invisible to every positive
+# test -- nothing else in this module would notice the flag coming back.
+#
+# SCOPED TO THE TWO FILES THIS CASTING OWNS, ON PURPOSE. Both READMEs carry the
+# flag too (`plugins/foundry/README.md`'s options table and the repo-root
+# `README.md`), and their rows are CASTING 9's to remove -- it owns both README
+# paths because `test_readme_badges_agree_with_the_shipped_versions` and
+# `test_readme_describes_the_release_it_badges` pin their badges and release
+# headings against `plugin.json` / `pyproject.toml`, so a README can only move
+# in the same commit as those manifests. A sweep that also covered the READMEs
+# would be RED for the whole of wave 4 for a reason nobody in wave 4 could fix.
+#
+# WHEN CASTING 9 LANDS, WIDEN `_OUTPUT_DIR_FREE` TO THE TWO README PATHS. Do
+# not delete this test to make room for a broader one; the two files below are
+# the ones that would silently regain the flag on a future edit.
+_OUTPUT_DIR_FREE: tuple[Path, ...] = (START_MD, SETUP_SH)
+
+#: Every spelling the flag reached a surface under. Three, because deleting the
+#: user-facing `--output-dir` while leaving `OUTPUT_DIR="$2"` in the argument
+#: loop is a flag that is still parsed and merely undocumented, which is worse
+#: than the state this replaced.
+_OUTPUT_DIR_SPELLINGS = ("--output-dir", "OUTPUT_DIR", "FOUNDRY_OUTPUT")
+
+
+@pytest.mark.parametrize("path", _OUTPUT_DIR_FREE, ids=lambda p: p.name)
+def test_the_output_dir_flag_is_gone_from_the_surfaces_this_casting_owns(
+    path: Path,
+) -> None:
+    """fallout AC-057 / FR-059: deleted from every surface, not just documented away."""
+    text = _read(path)
+    # Floor first: an absence assertion over an empty string forbids nothing,
+    # and both of these files are load-bearing enough that "it read as empty"
+    # would otherwise pass silently.
+    assert len(text) > 1000, (
+        f"{_rel(path)} read as {len(text)} characters. An absence assertion "
+        f"over a file this short is vacuous -- check the path constant before "
+        f"trusting the result below."
+    )
+    for spelling in _OUTPUT_DIR_SPELLINGS:
+        assert spelling not in text, (
+            f"{_rel(path)} contains {spelling!r} again (AC-057 / FR-059). The "
+            f"flag was parsed, echoed and read by NOTHING; deleting it is the "
+            f"requirement. Archives stay under `foundry-archive/`."
+        )
+
+
+def test_the_output_dir_sweep_still_has_something_to_sweep() -> None:
+    """Floor: the two paths exist and are the two this casting owns.
+
+    A tuple that silently emptied -- a renamed constant, a moved file -- would
+    parametrize zero cases and report success while forbidding nothing.
+    """
+    assert len(_OUTPUT_DIR_FREE) == 2, _OUTPUT_DIR_FREE
+    for path in _OUTPUT_DIR_FREE:
+        assert path.is_file(), f"{_rel(path)} does not exist"
+
+
+# ---------------------------------------------------------------------------
+# Vocabularies the prose states and the server enforces
+# ---------------------------------------------------------------------------
+#
+# Each check below derives its expected set from the CODE constant rather than
+# re-typing it here, in the `_PYTEST_DISCOVERY_PHRASE` shape: a vocabulary that
+# changes then fails on both sides at once instead of leaving the protocol
+# advertising a set the server no longer holds.
+
+
+def _section(path: Path, heading: str, level: str = "### ") -> str:
+    """The named section's text, heading to the next heading of that level."""
+    text = _read(path)
+    start = text.find(heading)
+    assert start != -1, f"{_rel(path)} has no {heading!r} section."
+    end = text.find("\n" + level, start + 1)
+    return text[start : end if end != -1 else len(text)]
+
+
+def test_start_md_names_every_halt_reason_the_door_accepts() -> None:
+    """fallout FR-047 / CT-004 / CT-005: the four members, derived from vocab.
+
+    ``_halt_preconditions`` refuses a reason outside ``HALT_REASONS`` and
+    prints the accepted set from the constant. A lead reading start.md has to
+    be able to pick a member BEFORE the refusal, so the protocol carries the
+    same four -- derived here, so a fifth member added to the vocabulary fails
+    this instead of shipping a door the protocol cannot name a reason for.
+    """
+    from foundry_mcp.schemas import vocab
+
+    assert len(vocab.HALT_REASONS) >= 4, sorted(vocab.HALT_REASONS)
+    flat = _flat(START_MD)
+    missing = [r for r in sorted(vocab.HALT_REASONS) if f"`{r}`" not in flat]
+    assert not missing, (
+        f"{_rel(START_MD)} does not name the halt reason(s) {missing}. Every "
+        f"member of HALT_REASONS is a value the lead may have to pass at "
+        f"`Foundry-Phase(phase='halt')`; a member the protocol never mentions "
+        f"is one the lead discovers from a refusal."
+    )
+
+
+def test_the_f07_step_calls_a_gate_token_the_schema_accepts() -> None:
+    """fallout AC-051 / FR-032: the F0.7 step named a token the enum rejects.
+
+    ``Foundry-Gate``'s schema is ``{"enum": sorted(GATE_TO_TRANSITION)}``, so a
+    call naming ``intent_coverage`` is rejected at the MCP boundary before any
+    handler runs -- not refused with a checklist, REJECTED, which is why the
+    step it was supposed to open simply never opened and nothing said why.
+
+    Derived from the mapping table rather than pinned to the replacement token:
+    hard-coding the token here would go green the day someone updated the test
+    instead of the prose, which is the exact failure this requirement exists to
+    close.
+    """
+    from foundry_mcp.tools.orchestration.gates import GATE_TO_TRANSITION
+
+    # Floor: an empty or tiny mapping makes every membership test below pass.
+    assert len(GATE_TO_TRANSITION) >= 10, sorted(GATE_TO_TRANSITION)
+    assert "intent_coverage" not in GATE_TO_TRANSITION, (
+        "`intent_coverage` is now a gate token. If a transition was really "
+        "added for F0.7, rewrite the F0.7 step to call it -- do not delete "
+        "this assertion, rewrite the prose it guards."
+    )
+
+    section = _section(START_MD, "### F0.7: INTENT-CARRIER")
+    called = re.findall(r"Foundry-Gate\(phase='([a-z_]+)'\)", section)
+    assert called, (
+        f"{_rel(START_MD)}'s F0.7 step names no `Foundry-Gate(phase='...')` "
+        f"call at all. The step still has to cross into F0.9, and the token it "
+        f"crosses with is the thing this checks."
+    )
+    invalid = sorted({t for t in called if t not in GATE_TO_TRANSITION})
+    assert not invalid, (
+        f"{_rel(START_MD)}'s F0.7 step calls Foundry-Gate with {invalid}, "
+        f"which the schema enum rejects. Accepted tokens are "
+        f"{sorted(GATE_TO_TRANSITION)}."
+    )
+
+
+def test_the_gate_token_set_the_protocol_describes_is_the_mapping_table() -> None:
+    """fallout GI-031 / CT-020: the protocol points at the table, not at a copy.
+
+    A hand-typed list of gate tokens in start.md would be a second closed
+    vocabulary free to drift from the first. The tools table names
+    ``GATE_TO_TRANSITION`` instead, which is the derivation this suite can
+    check without the protocol carrying a copy at all.
+    """
+    flat = _flat(START_MD)
+    assert "`GATE_TO_TRANSITION`" in flat, (
+        f"{_rel(START_MD)} no longer names `GATE_TO_TRANSITION` as the source "
+        f"of the gate token set. Without it the protocol either says nothing "
+        f"about which tokens exist or grows a second list to drift."
+    )
+    assert "`halt`" in flat, (
+        f"{_rel(START_MD)} never names the `halt` token. It is a full member "
+        f"of PHASE_TOKENS with its own gate token, so a protocol that omits "
+        f"it documents a door the lead cannot find."
+    )
+
+
+def test_the_no_ui_meaning_is_the_servers_sentence_on_both_owned_surfaces() -> None:
+    """fallout AC-052 / FR-033 / FR-055: one meaning, spelled once.
+
+    ``survey/surface.md`` FI-2 found ``--no-ui`` meaning three different things
+    at once -- "skip the browser audit", "suppress orchestrator banners", and a
+    SIGHT check treating it as a hard block -- and the three disagree about the
+    DIRECTION of the effect, not merely its wording. The server now spells the
+    meaning once in ``NO_UI_MEANING``; every surface quotes that sentence
+    rather than re-wording it, and this derives the expected text from the
+    constant so a re-worded constant fails here instead of leaving a fourth
+    reading in the protocol.
+
+    Both READMEs state the same sentence, and casting 9 owns them -- their
+    halves are checked there, on the tree that carries them.
+    """
+    from foundry_mcp.tools.foundry import NO_UI_MEANING
+
+    assert NO_UI_MEANING.startswith("`--no-ui` "), NO_UI_MEANING
+    tail = NO_UI_MEANING.split("` ", 1)[1]
+
+    assert NO_UI_MEANING in _flat(START_MD), (
+        f"{_rel(START_MD)} does not carry NO_UI_MEANING verbatim: "
+        f"{NO_UI_MEANING!r}. The protocol paragraph that threads `no_ui=` must "
+        f"quote the server's sentence, not re-word it -- a re-wording is how "
+        f"the flag came to mean three things."
+    )
+    assert tail in _flat(SETUP_SH), (
+        f"{_rel(SETUP_SH)} does not carry the meaning {tail!r}. The script is "
+        f"where an operator reads the flag before ever seeing the protocol; if "
+        f"it says something else, the two surfaces disagree at the first door."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The lead confirms a stream record; it never writes one (fallout OT-029)
+# ---------------------------------------------------------------------------
+#
+# `_ACTION_IMPERATIVES["run_streams"]` told the lead to call `Foundry-Stream`
+# while four agent files told the agent to call it too, so a cycle could carry
+# two accounts of one run -- and the second was numbers the lead never
+# measured. GI-016 settles it: the AGENT records, per (stream, cycle), and a
+# later record REPLACES the earlier one rather than summing with it.
+#
+# SCOPED TO THE FOUR SURFACES THIS CASTING OWNS. `plugins/foundry/README.md`
+# still carries the old `Foundry-Stream` row ("Mark verification stream
+# complete"), and that file is CASTING 9's -- see the `_OUTPUT_DIR_FREE`
+# comment above for why a README cannot move in this casting's commit. Widen
+# `_OWNED_LEAD_SURFACES` to it in casting 9's commit rather than deleting this.
+_OWNED_LEAD_SURFACES: tuple[Path, ...] = (
+    START_MD,
+    RESUME_MD,
+    LEAD_DISCIPLINE,
+    SETUP_SH,
+)
+
+#: Spellings that tell the LEAD to record a stream. The first is the exact row
+#: start.md carried; the rest are the ways the same instruction re-enters as a
+#: rewrite rather than as a copy.
+_LEAD_RECORDS_A_STREAM = (
+    "Mark verification stream complete",
+    "Mark a verification stream complete",
+    "record the stream yourself",
+    "record each stream",
+)
+
+
+@pytest.mark.parametrize("path", _OWNED_LEAD_SURFACES, ids=lambda p: p.name)
+def test_no_owned_lead_prose_tells_the_lead_to_record_a_stream(path: Path) -> None:
+    """fallout OT-029 / FR-049 / GI-016: the agent records; the lead confirms."""
+    flat = _flat(path)
+    for spelling in _LEAD_RECORDS_A_STREAM:
+        assert spelling not in flat, (
+            f"{_rel(path)} tells the lead to {spelling!r} (OT-029). The "
+            f"verifying AGENT calls `Foundry-Stream` with the counts it "
+            f"measured; a lead that records on its behalf asserts numbers it "
+            f"did not measure, and the cycle then carries two accounts of one "
+            f"run. The lead CONFIRMS the record exists."
+        )
+
+
+def test_the_owned_lead_surface_roster_is_the_four_files_this_casting_owns() -> None:
+    """Floor: a roster that silently emptied sweeps nothing.
+
+    Named apart from the sweep above because a parametrize over an empty tuple
+    collects zero cases and reports success -- the failure mode this module's
+    tool-name derivation carries the same guard against.
+    """
+    assert len(_OWNED_LEAD_SURFACES) == 4, _OWNED_LEAD_SURFACES
+    for path in _OWNED_LEAD_SURFACES:
+        assert path.is_file(), f"{_rel(path)} does not exist"
+    # start.md must still NAME the tool, or the sweep above is passing because
+    # the subject left the file rather than because the rule is stated.
+    assert "`Foundry-Stream`" in _flat(START_MD), (
+        f"{_rel(START_MD)} no longer names `Foundry-Stream` at all. The rule "
+        f"is that the AGENT records it -- a protocol that stops mentioning the "
+        f"tool satisfies the absence sweep while telling the lead nothing."
+    )
