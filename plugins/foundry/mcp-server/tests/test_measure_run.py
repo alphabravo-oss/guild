@@ -3221,3 +3221,88 @@ def test_the_rollup_reader_takes_the_last_record_as_the_total_on_schema_4(
         "items_checked": 542, "items_total": 542, "findings": 4,
     }
     assert payload["failure_tokens"] == []
+
+
+def test_demo_the_two_acceptance_figures_on_one_archive(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """FR-026 / FR-025 / NFR-008 / NFR-006 / OT-040 / OT-039 — both figures.
+
+    A demonstration, printed, because these two numbers are what the release is
+    measured BY: NFR-007 asks for "a terminal state in materially fewer
+    FULL-width cycles" and NFR-006 for "zero filings across its last two INSPECT
+    cycles", and neither existed anywhere in the tree before this casting —
+    `survey/infra.md` §9: "There is no 'fallout' column, metric, or concept
+    anywhere in the codebase."
+
+    Driven through the real CLI on one archive, twice: a run that fails both,
+    and then the same archive rewritten to a converging shape. Everything
+    printed is read out of the emitted payload; the assertions are the ones the
+    non-demo tests above make.
+    """
+    run_dir = make_run_dir()
+
+    def _drive() -> dict[str, Any]:
+        exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+        assert exit_code == 0, (stdout, stderr)
+        return json.loads(stdout)
+
+    def _report(payload: dict[str, Any], heading: str) -> None:
+        ratio = payload["full_cycle_ratio"]
+        fallout = payload["fallout_per_cycle"]
+        print(f"\n=== {heading} ===")
+        print(f"  full_cycle_ratio: {ratio['full_cycles']}/{ratio['total_cycles']}"
+              f" = {ratio['ratio']}  (threshold {ratio['threshold']}, "
+              f"passes={ratio['passes']})")
+        print(f"    verdict: {payload['gate_verdicts']['full_cycle_ratio']}")
+        print(f"  fallout per cycle: "
+              f"{ {c: b['fallout'] for c, b in fallout['per_cycle'].items()} }")
+        print(f"    closing pair {fallout['last_two_cycles']}, "
+              f"total {fallout['total']}, verdict {fallout['verdict']}")
+        print(f"    reason: {fallout['verdict_reason']}")
+        print(f"    verdict: {payload['gate_verdicts']['fallout']}")
+        print(f"  process exit: 0 — NFR-001, the numbers are the target and "
+              f"not a gate")
+
+    # A run that met neither: every INSPECT ran FULL, and the closing cycle
+    # filed a defect that is fallout of an earlier one.
+    _with_inspect_modes(
+        run_dir,
+        _decision(1, "FULL"), _decision(2, "FULL"), _decision(3, "FULL"),
+    )
+    (run_dir / "defects.json").write_text(
+        _defects(
+            _defect("D-001", cycle=1, fallout_of=None),
+            _defect("D-002", cycle=2, fallout_of=None),
+            _defect("D-003", cycle=3, fallout_of="D-001"),
+        ),
+        encoding="utf-8",
+    )
+    failing = _drive()
+    _report(failing, "a run that met neither figure")
+    assert failing["gate_verdicts"]["full_cycle_ratio"] == "FAIL"
+    assert failing["gate_verdicts"]["fallout"] == "FAIL"
+
+    # The converging shape: most INSPECTs narrowed to DELTA, and the last two
+    # cycles filed nothing that is fallout of anything.
+    _with_inspect_modes(
+        run_dir,
+        _decision(1, "FULL"), _decision(2, "DELTA"), _decision(3, "DELTA"),
+    )
+    (run_dir / "defects.json").write_text(
+        _defects(
+            _defect("D-001", cycle=1, fallout_of="D-000"),
+            _defect("D-002", cycle=2, fallout_of=None),
+            _defect("D-003", cycle=3, fallout_of=None),
+        ),
+        encoding="utf-8",
+    )
+    passing = _drive()
+    _report(passing, "the same archive, converged")
+    assert passing["gate_verdicts"]["full_cycle_ratio"] == "PASS"
+    assert passing["gate_verdicts"]["fallout"] == "PASS"
+
+    print("\n  both figures are read from `foundry_state` — `full_cycle_ratio`")
+    print("  and `fallout_rows` — so the F6 report publishes the SAME two")
+    print("  numbers rather than a second derivation of an acceptance")
+    print("  criterion, which is the one place a disagreement is unarguable.")

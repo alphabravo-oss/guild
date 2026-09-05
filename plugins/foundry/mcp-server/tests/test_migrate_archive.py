@@ -1618,3 +1618,157 @@ def test_the_schema_4_migration_is_idempotent_on_every_named_archive(
         "the real archive was opened for writing — it is a published baseline "
         "and this suite never touches it"
     )
+
+
+def test_demo_ot_032_the_row_before_and_after_migration(archive: Path) -> None:
+    """AC-034 / OT-032 / GI-006 — the acceptance row, printed either side.
+
+    A demonstration rather than another assertion of the same fact: the
+    criterion is stated as a before-and-after ("a row that read 1084/542 reads
+    542/542 with two records retained"), and a log that shows only the after
+    cannot be checked against it. Mirrors this suite's other `test_demo_*`
+    narratives — everything printed is derived from the run, and the assertions
+    below are the same ones the non-demo tests make.
+    """
+    (archive / "stream-rollup.json").write_text(
+        json.dumps({"cycles": {
+            "29": {
+                "inspect_mode": "FULL",
+                "trace": _rollup_bucket(1084, 542, 8, OT_032_RECORDS),
+            },
+        }}),
+        encoding="utf-8",
+    )
+
+    def _row() -> dict:
+        return json.loads(
+            (archive / "stream-rollup.json").read_text()
+        )["cycles"]["29"]["trace"]
+
+    before = _row()
+    print("\n=== daring-orca cycle 29, stream trace (AC-034 / OT-032) ===")
+    print(f"  before: items_checked={before['items_checked']} "
+          f"items_total={before['items_total']} "
+          f"findings={before['findings']} records={len(before['records'])}")
+    print("  the additive writer added each record's numbers INTO the totals,")
+    print("  so a stream that recorded twice reads as checking twice the items")
+    print(f"  that exist: {before['items_checked']}/{before['items_total']} is "
+          f"{before['items_checked'] * 100 // before['items_total']}%.")
+
+    summary = _migrate(archive)
+    after = _row()
+    print(f"\n  step 8 outcome: {_outcomes(summary)['rollup_totals']}")
+    print(f"  after:  items_checked={after['items_checked']} "
+          f"items_total={after['items_total']} "
+          f"findings={after['findings']} records={len(after['records'])}")
+    print("  the totals are the LAST record's values and every earlier record")
+    print("  is still under records[] — GI-006 names dropping history as the")
+    print("  violation, and the superseded record is the evidence that")
+    print("  explains the number that was wrong.")
+    for index, record in enumerate(after["records"]):
+        print(f"    records[{index}]: {record['items_checked']}/"
+              f"{record['items_total']} findings={record['findings']}")
+
+    second = _migrate(archive)
+    print(f"\n  second run: migrated={second['migrated']} "
+          f"step 8 outcome={_outcomes(second)['rollup_totals']}")
+    print("  idempotent (CT-018 'none new; idempotent', NFR-010).")
+
+    assert after["items_checked"] == 542
+    assert after["items_total"] == 542
+    assert after["records"] == OT_032_RECORDS
+    assert second["migrated"] is False
+    assert "inspect_mode" in json.loads(
+        (archive / "stream-rollup.json").read_text()
+    )["cycles"]["29"], "the cycle-level fact is not a tranche and was not touched"
+
+
+def test_demo_the_f0_9_door_reads_a_migrated_manifest(archive: Path) -> None:
+    """AC-049 / FR-054 — the door's verdict on a manifest before and after.
+
+    Printed because the claim is a TRANSITION and the failure it guards against
+    is silent: step 7 raises the schema marker past the floor at which
+    `requirement_ids` becomes mandatory, so an archive migrated without step 10
+    would go from one informational line to one error per casting and nothing
+    in the migration summary would say so.
+    """
+    from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
+    from foundry_mcp.tools.foundry_validate import (
+        REQUIREMENT_IDS_SCHEMA_FLOOR,
+        REQUIREMENT_SPAN_MAX,
+        _owned_requirement_ids,
+        _recorded_split_reasons,
+        _requirement_span_rows,
+    )
+
+    manifest_path = archive / "castings"
+    manifest_path.mkdir()
+    (manifest_path / "manifest.json").write_text(
+        json.dumps(_manifest(
+            _casting(1, "FR-001", "AC-001"),
+            _casting(2, "FR-001"),
+            _casting(3, "FR-001", "AC-002"),
+        )),
+        encoding="utf-8",
+    )
+
+    def _door() -> tuple[int, list[str], int]:
+        manifest = json.loads((manifest_path / "manifest.json").read_text())
+        castings = manifest["castings"]
+        state = json.loads((archive / "state.json").read_text())
+        schema = state.get("archive_schema_version", 0)
+        ownership = {str(c["id"]): _owned_requirement_ids(c) for c in castings}
+        not_computable = (
+            not any(present for present, _ in ownership.values())
+            and schema < REQUIREMENT_IDS_SCHEMA_FLOOR
+        )
+        missing = [] if not_computable else [
+            str(c["id"]) for c in castings
+            if not ownership[str(c["id"])][0]
+        ]
+        spec_ids = {
+            rid for c in castings
+            for rid in declared_requirement_ids(c["spec_text"])
+        }
+        rows = (
+            [] if not_computable else
+            _requirement_span_rows(
+                spec_ids, castings, ownership,
+                _recorded_split_reasons(manifest, castings),
+            )
+        )
+        refused = [
+            row["id"] for row in rows
+            if row["span"] > REQUIREMENT_SPAN_MAX and not row["split_reason"]
+        ]
+        return schema, missing, len(refused)
+
+    schema, missing, refused = _door()
+    print("\n=== F0.9 ownership + span, before migration (AC-049) ===")
+    print(f"  archive_schema_version={schema} "
+          f"(floor is {REQUIREMENT_IDS_SCHEMA_FLOOR})")
+    print(f"  castings reported missing requirement_ids: {len(missing)}")
+    print(f"  requirement spans refused for want of a reason: {refused}")
+    print("  below the floor the door reports `not computable` and checks")
+    print("  neither dimension — which is what 'fail closed only for new runs'")
+    print("  means, and what the schema bump would otherwise take away.")
+
+    _migrate(archive)
+    schema, missing, refused = _door()
+    castings = json.loads((manifest_path / "manifest.json").read_text())["castings"]
+    print("\n=== after migration ===")
+    print(f"  archive_schema_version={schema}")
+    for casting in castings:
+        print(f"  casting {casting['id']}: "
+              f"requirement_ids={casting['requirement_ids']} "
+              f"split_reason keys={sorted(casting['split_reason'])}")
+    print(f"  castings reported missing requirement_ids: {len(missing)}")
+    print(f"  requirement spans refused for want of a reason: {refused}")
+    print("  step 10 transcribed ownership from each casting's own")
+    print("  <spec_requirements> block through the SAME derivation the door")
+    print("  uses, and recorded a reason on every shared id — so the marker")
+    print("  moved and the door still passes.")
+
+    assert schema >= REQUIREMENT_IDS_SCHEMA_FLOOR
+    assert missing == []
+    assert refused == 0
