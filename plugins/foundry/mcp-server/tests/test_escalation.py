@@ -2360,16 +2360,22 @@ def test_two_cycles_of_a_mixed_cluster_still_do_not_fire(run_env):
 # D-119 — the two filing doors agree on WHICH cycle a record belongs to
 #
 # TV-E-01: two independent derivations of one rule diverged on a malformed
-# counter. plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py#_server_cycle
-# returned None, and the caller-side wrapper around it — named _stamp_cycle at
-# the time, deleted in 6453159 which folded it back into _server_cycle — took
-# that as licence to fall back to the CALLER's cycle; while
-# plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py#current_cycle
-# returned 0 on the same input. (It was the orchestrator's `_current_cycle`
-# when D-119 was filed; casting 10 consolidated the two byte-identical copies
-# into the leaf, which is where the symbol — and any fix to it — now lives.) That wrapper's docstring claimed "Every writer
-# goes through this, so 'which cycle was this?' has one answer per run" — it
-# had two.
+# counter. `foundry.py`'s own reader returned None, and the caller-side wrapper
+# around it — named _stamp_cycle at the time, deleted in 6453159 which folded
+# it back into that reader — took that as licence to fall back to the CALLER's
+# cycle; while the orchestrator's second reader returned 0 on the same input.
+# That wrapper's docstring claimed "Every writer goes through this, so 'which
+# cycle was this?' has one answer per run" — it had two.
+#
+# Neither of those two symbols survives, and this comment names neither: the
+# `foundry.py` reader was `_server_cycle`, deleted by casting 4's f2bbce0 as a
+# byte-equivalent second copy, and the orchestrator's was `_current_cycle`,
+# consolidated by casting 10 (GI-024). Both are now
+# plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py#current_cycle,
+# which is the live symbol, the only derivation left, and where any fix to
+# either half goes. One reader is what makes the divergence below
+# unrepeatable rather than merely fixed — and it is why the cites here name
+# the leaf and the history names the deleted symbols as history.
 #
 # The harm is not cosmetic. Identical run, identical findings, identical class,
 # caller cycles 1/2/3, only the DOOR differs: Foundry-Defect stamped [1,2,3]
@@ -2459,16 +2465,24 @@ def _stamped_via_add(project_root: str, cycle: int) -> dict:
     return json.loads((fdir / "defects.json").read_text())["defects"][-1]
 
 
-# The parity assertions below are a JOINT pin: the batch door is casting 2's
-# and the single door is casting 3's
-# (plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py#_server_cycle).
-# Both halves have landed, so red here is a REGRESSION in one of them, and the
-# messages name which — never misread these as a regression in the orchestrator.
+# The parity assertions below are a JOINT pin: the batch door and the single
+# door in `plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py`, which
+# stamp through `foundry_state.py#current_cycle`. Both halves have landed, so
+# red here is a REGRESSION in one of them, and the messages name which — never
+# misread these as a regression in the orchestrator.
+#
+# The cite named `foundry.py#_server_cycle` until casting 4's f2bbce0 deleted
+# that symbol as a byte-equivalent second copy of the leaf reader (C-008 /
+# C-015, GI-024) and pointed its six call sites at `current_cycle`. The
+# symbol is authoritative, so the cite moves with it: a message naming a
+# deleted symbol sends a reader looking for a file that answers nothing, which
+# is the whole of what a stale cite costs.
 _OWNER = (
-    "casting 3 owns "
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py#_server_cycle: "
+    "the filing doors in "
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py stamp through "
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py#current_cycle: "
     "on a malformed counter it must resolve to 0 (not fall back to the "
-    "caller's value) and persist declared_cycle on the record"
+    "caller's value) and the door must persist declared_cycle on the record"
 )
 
 

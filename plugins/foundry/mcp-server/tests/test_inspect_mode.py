@@ -2598,7 +2598,7 @@ def test_every_log_in_scope_gets_a_per_log_row_not_only_the_mismatches(run_env):
     assert all("elapsed_seconds" in row for row in sweep["per_log"])
 
 
-def test_the_sweep_runs_before_the_state_transaction_opens(run_env):
+def test_the_sweep_runs_before_the_state_transaction_opens():
     """The ordering that keeps the run from serialising on itself.
 
     The counter advance lives inside `_document_transaction(state.json)`, an
@@ -2610,21 +2610,54 @@ def test_the_sweep_runs_before_the_state_transaction_opens(run_env):
 
     Asserted against the SOURCE, because the property is an ORDER and the only
     way to observe it at runtime is a race.
+
+    fallout FR-058 / GI-029 / AC-056 — THE ORDER NOW SPANS TWO FUNCTIONS.
+    -------------------------------------------------------------------
+    D-032 moved the width decision and the sweep out of this branch and into
+    `_inspect_start_preconditions`, via `transitions.py#_boundary_evidence_rung`,
+    so that `Foundry-Gate('inspect_start')` refuses the mismatch the transition
+    used to refuse alone. The ordering is untouched and is now stated across
+    the call: the routine takes both reads, and the branch consults it and
+    returns its refusal BEFORE it opens the transaction.
+
+    So the assertion follows the reads rather than pinning the offsets they
+    used to occupy — three offsets inside one body became one offset inside
+    the routine and two inside the branch, and both halves are asserted where
+    each now lives. What is protected is the same thing: nothing that spawns
+    a worktree full of subprocesses runs under the state.json flock, and a
+    refused crossing takes no lock at all.
     """
     import inspect
+    import textwrap
 
-    # D-067 moved the branch chain into `_phase_transition` so the ordering
-    # token is consumed only by a transition that succeeded; the branches, and
-    # therefore this order, live there now.
+    # Half one — the routine is where the decision and the sweep are taken, so
+    # both are complete before the branch this ordering is about is entered.
+    routine_source = textwrap.dedent(
+        inspect.getsource(_transitions._inspect_start_preconditions)
+    )
+    assert "_decide_inspect_mode(" in routine_source, (
+        "the inspect_start routine no longer decides the width — this "
+        "ordering guard reads it there since D-032"
+    )
+    assert "_boundary_evidence_rung(" in routine_source, (
+        "the inspect_start routine no longer sweeps the corpus — this "
+        "ordering guard reads it there since D-032"
+    )
+
+    # Half two — the branch consults that routine and returns its refusal
+    # before it opens the transaction. Bounded to the branch itself (the next
+    # `elif phase ==` ends it), so every offset compared below is one this
+    # branch really holds rather than one a later branch supplied.
     source = inspect.getsource(_transitions._phase_transition)
-    body = source[source.index('elif phase == "inspect_start"'):]
-    sweep_at = body.index("_sweep_evidence_at_boundary")
-    decide_at = body.index("_decide_inspect_mode")
+    rest = source[source.index('elif phase == "inspect_start"'):]
+    body = rest[:rest.index("\n    elif phase == ", 1)]
+    precondition_at = body.index("_inspect_start_preconditions(")
+    refusal_at = body.index("return _transition_refusal(")
     transaction_at = body.index("_document_transaction(state_path)")
-    assert decide_at < sweep_at < transaction_at, (
-        "decide, then sweep, then transact — the refusal must be returned "
-        "before the lock is taken, so a refused transition leaves the counter "
-        "untouched and no mode recorded"
+    assert precondition_at < refusal_at < transaction_at, (
+        "decide-and-sweep, then refuse, then transact — the refusal must be "
+        "returned before the lock is taken, so a refused transition leaves "
+        "the counter untouched and no mode recorded"
     )
 
 
@@ -2753,18 +2786,38 @@ def test_both_phase_entries_sweep_the_whole_corpus_and_record_it(run_env):
     assert rollup["cycles"]["0"]["evidence_sweep"]["scope"] == "full"
 
 
-def test_every_transition_that_opens_an_inspect_sweeps(run_env):
+def test_every_transition_that_opens_an_inspect_sweeps():
     """The property, rather than three separate call sites that happen to
     agree today. GI-009 names one rule — "whichever Foundry-Phase transition
     opens an INSPECT" — and the sweep belongs to the same set as the width
-    decision, so the two are asserted against ONE derivation of that set."""
+    decision, so the two are asserted against ONE derivation of that set.
+
+    fallout FR-058 / GI-029 / AC-056 — D-032 MOVED THE READS, NOT THE RULE.
+    ----------------------------------------------------------------------
+    Both reads stood inside `_phase_transition`'s `cast`, `inspect_start` and
+    `temper` branches, so the three gates answered `passed: True` over a corpus
+    the matching `Foundry-Phase` calls refused — a check the transition made
+    and its gate could not. They are rungs of `_cast_preconditions`,
+    `_inspect_start_preconditions` and `_temper_preconditions` now, via
+    `transitions.py#_boundary_evidence_rung`, and the branches consume
+    `outcome["inspect_entry"]` and `outcome["evidence_sweep"]` instead of
+    reading either again.
+
+    So the DERIVATION follows the reads to the routines. Pinning the branch
+    bodies would pin where the reads used to live, which is not what GI-009
+    says; the set equality below is the rule, and it is what has to survive
+    the move intact.
+
+    Derived over every `PHASE_TOKENS` member rather than over the three tokens
+    the answer happens to be: a fourth door that decides a width and does not
+    sweep is exactly what a hardcoded roster of three cannot see, and the doors
+    are the thing this file has twice watched grow by one.
+    `tests/orchestration/test_transitions.py#test_the_boundary_sweep_is_a_rung_of_the_routine_not_an_arm_in_the_branch`
+    walks those three by name and is the other half of the claim.
+    """
     import ast
     import inspect
     import textwrap
-
-    tree = ast.parse(textwrap.dedent(
-        inspect.getsource(_transitions._phase_transition)
-    ))
 
     def _calls(node) -> set[str]:
         return {
@@ -2772,22 +2825,30 @@ def test_every_transition_that_opens_an_inspect_sweeps(run_env):
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
         }
 
+    # GI-031: one preconditions routine per TRANSITION token. Resolved from the
+    # declared token set rather than scanned out of the module, so a token
+    # whose routine was renamed away fails HERE instead of quietly shrinking
+    # the subject — the empty-derivation failure every derived pin in this
+    # suite carries a guard against. (A scan would also collect
+    # `_token_preconditions`, which is the dispatch table, not a door.)
+    routines = {}
+    for token in _transitions.PHASE_TOKENS:
+        routine = getattr(_transitions, f"_{token}_preconditions", None)
+        assert routine is not None, (
+            f"PHASE_TOKENS names {token!r} and transitions.py defines no "
+            f"_{token}_preconditions — this guard reads the routines, so a "
+            "token without one is a door it cannot see"
+        )
+        routines[token] = routine
+    assert {"cast", "inspect_start", "temper"} <= set(routines), sorted(routines)
+
     opens_inspect: list[str] = []
     sweeps: list[str] = []
-    for branch in ast.walk(tree):
-        if not isinstance(branch, ast.If):
-            continue
-        test = branch.test
-        if not (isinstance(test, ast.Compare)
-                and isinstance(test.comparators[0], ast.Constant)):
-            continue
-        token = test.comparators[0].value
-        body_calls = set()
-        for stmt in branch.body:
-            body_calls |= _calls(stmt)
-        if "_decide_inspect_mode" in body_calls:
+    for token, routine in routines.items():
+        calls = _calls(ast.parse(textwrap.dedent(inspect.getsource(routine))))
+        if "_decide_inspect_mode" in calls:
             opens_inspect.append(token)
-        if "_sweep_evidence_at_boundary" in body_calls:
+        if "_boundary_evidence_rung" in calls:
             sweeps.append(token)
 
     assert sorted(opens_inspect) == ["cast", "inspect_start", "temper"]
@@ -2795,6 +2856,28 @@ def test_every_transition_that_opens_an_inspect_sweeps(run_env):
         "every transition that opens an INSPECT must sweep the evidence "
         "corpus: FR-009 sweeps 'whenever the FULL rule fires', and a phase "
         "entry always records FULL"
+    )
+
+    # One hop, asserted rather than assumed. `_boundary_evidence_rung` stands
+    # for the corpus read above, and it is that rung only while it still makes
+    # the read — a rung that stopped sweeping would leave the equality above
+    # true and the property false, which is the silent pass this suite spends
+    # its empty-set guards on.
+    assert "_sweep_evidence_at_boundary(" in inspect.getsource(
+        _transitions._boundary_evidence_rung
+    ), "the boundary rung no longer sweeps the corpus"
+
+    # The other direction of this test's own derivation: a branch that took
+    # either read BACK would put the check somewhere the gate cannot make it,
+    # which is D-032 returning.
+    branch_source = inspect.getsource(_transitions._phase_transition)
+    assert "_decide_inspect_mode(" not in branch_source, (
+        "a branch decides a width again — the gate for that token cannot see "
+        "a decision taken inside the transition (FR-058 / GI-029)"
+    )
+    assert "_sweep_evidence_at_boundary(" not in branch_source, (
+        "a branch sweeps the corpus again — the gate for that token cannot "
+        "refuse a mismatch it never reads (FR-058 / GI-029)"
     )
 
 
@@ -5166,8 +5249,10 @@ def test_no_phase_branch_spells_the_marker_family_by_hand():
 # width".
 #
 # The tests below drive both doors, and the last one retires the argument: the
-# obligation is derived from `_phase_transition`'s own AST, so a fifth door
-# inherits it the day it is written rather than the cycle after it ships.
+# obligation is derived from the module's own AST — which door opens an INSPECT
+# read off `_<token>_preconditions`, what it then owes read off the matching
+# branch of `_phase_transition` — so a fifth door inherits it the day it is
+# written rather than the cycle after it ships.
 # --------------------------------------------------------------------------- #
 
 
@@ -5358,12 +5443,29 @@ def test_every_inspect_opening_door_clears_the_previous_inspects_completion_stat
     omit it. Prose cannot be evaluated when a door is added, so the second
     instance was already latent when the first was closed.
 
-    Derived here from the module's own AST instead. A branch of
-    `_phase_transition` that calls `_decide_inspect_mode` IS a door that opens
-    an INSPECT — that call is what makes it one — and every such branch must
-    also call `_clear_stream_completion_markers`. The width a transition
-    records and the completion state it opens on are one rule; this test is the
-    only thing that makes them one rule for a door nobody has written yet.
+    Derived here from the module's own AST instead. A transition that calls
+    `_decide_inspect_mode` IS a door that opens an INSPECT — that call is what
+    makes it one — and every such door must also call
+    `_clear_stream_completion_markers`. The width a transition records and the
+    completion state it opens on are one rule; this test is the only thing that
+    makes them one rule for a door nobody has written yet.
+
+    fallout FR-058 / GI-029 / AC-056 — THE TWO HALVES NOW SIT IN TWO
+    FUNCTIONS, WHICH IS WHY THIS TEST JOINS THEM.
+    ---------------------------------------------------------------
+    D-032 moved `_decide_inspect_mode` into `_cast_preconditions`,
+    `_inspect_start_preconditions` and `_temper_preconditions`, so a door is
+    identified by its ROUTINE now. The clearing did NOT move and must not: it
+    is an EFFECT, and an effect belongs below the refusal, inside the branch,
+    where it runs only on a crossing that was allowed — clearing the previous
+    INSPECT's markers on a transition the server went on to refuse is the
+    harm's mirror image.
+
+    So membership is derived from the routine and the obligation is asserted
+    on the matching branch. That join IS the repointed claim: it is the one
+    assertion in the suite that says the door that decides a width and the
+    door that clears the markers are the same door, now that the two halves
+    are written in two places.
     """
     import ast
     import inspect
@@ -5404,14 +5506,31 @@ def test_every_inspect_opening_door_clears_the_previous_inspects_completion_stat
         f"— found {sorted(branches)}"
     )
 
-    opens_inspect = {
-        token for token, calls in branches.items()
-        if "_decide_inspect_mode" in calls
-    }
+    # The doors, read off the routines — `_<token>_preconditions` is where the
+    # width decision lives since D-032, and GI-031 puts exactly one routine
+    # behind every transition token. Resolved from `PHASE_TOKENS` rather than
+    # scanned, so a token whose routine went missing fails here instead of
+    # narrowing the set this test is about.
+    opens_inspect = set()
+    for token in _transitions.PHASE_TOKENS:
+        routine = getattr(_transitions, f"_{token}_preconditions", None)
+        assert routine is not None, (
+            f"PHASE_TOKENS names {token!r} and transitions.py defines no "
+            f"_{token}_preconditions — the door this guard reads has no routine"
+        )
+        routine_calls = _called_names(
+            ast.parse(textwrap.dedent(inspect.getsource(routine))).body
+        )
+        if "_decide_inspect_mode" in routine_calls:
+            opens_inspect.add(token)
     assert opens_inspect >= {"cast", "temper", "inspect_start"}, (
         "the doors that open an INSPECT are no longer the ones that decide a "
         f"width — found {sorted(opens_inspect)}"
     )
+    # ...and every one of them has a branch here to be judged. A door whose
+    # routine decides a width and whose token has no branch would drop out of
+    # the obligation below without failing anything.
+    assert opens_inspect <= set(branches), sorted(opens_inspect - set(branches))
 
     silent = sorted(
         token for token in opens_inspect

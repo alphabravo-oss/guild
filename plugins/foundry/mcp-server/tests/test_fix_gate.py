@@ -1968,9 +1968,16 @@ def test_every_spelling_of_the_defects_location_reaches_the_same_verdict(run_env
 # change that is thirty minutes of apparatus buying nothing, because there is no
 # reachable failure whose blast radius it is protecting.
 #
-# The tier is an EVIDENCE grade and never a severity (GI-001). Both tiers are
-# defects, both get fixed, and a LIVE fix keeps every declaration it ever had —
-# unweakened, which several tests below assert directly.
+# The tier is an EVIDENCE grade and never a severity (GI-001). Every tier is a
+# defect, every tier gets fixed, and a LIVE fix keeps every declaration it ever
+# had — unweakened, which several tests below assert directly.
+#
+# "Every tier", not "both": `schemas/vocab.py#DEFECT_TIERS` names LIVE, LATENT
+# and HARDENING. Counting the vocabulary in prose is how a section comment goes
+# stale the day a member is added, so this states the rule without the count —
+# the wording every one of the shared filing bullets now carries. HARDENING's
+# own lane is pinned in `tests/test_defect_tier.py`; what this module measures
+# is the ceremony each tier's fix owes.
 # --------------------------------------------------------------------------- #
 
 LATENT_REPRODUCTION = "AST sweep of every call site finds 0 reachable paths"
