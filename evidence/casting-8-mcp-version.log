@@ -1,4 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --project . foundry-mcp --version
-# evidence-for: FR-027, AC-040, US-008
-
-foundry-mcp 1.9.0

@@ -1,9 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_self_target.py tests/test_foundry_init.py
-# evidence-for: US-006, US-008, GI-004, ST-009, CT-010, CT-016, AC-025, AC-026, AC-027, AC-028, AC-029, FR-017, FR-018, FR-024, FR-035, FR-050, OT-017, OT-018
-# evidence-volatile: \d+\.\d+s
-# evidence-volatile: \(\d+:\d\d:\d\d\)
-# evidence-volatile: in <VOLATILE>(?: <VOLATILE>)?
-# evidence-timeout: 300
-
-......................................                                   [100%]
-38 passed in 0.52s
