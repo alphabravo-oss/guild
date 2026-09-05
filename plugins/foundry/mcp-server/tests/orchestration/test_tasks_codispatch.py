@@ -115,6 +115,7 @@ from tests.orchestration._env import (  # noqa: F401
 )
 
 from foundry_mcp.tools.orchestration.directives import (  # noqa: F401
+    _annotate_co_dispatch,
     foundry_defects_to_tasks,
     foundry_inject_directive,
 )
@@ -220,3 +221,93 @@ def test_a_directive_naming_a_requirement_prints_the_castings_that_own_it(run_en
     assert plain["ok"] is True, plain
     assert plain["co_dispatch"] == [], plain
     assert plain["requirement_ids"] == [], plain
+
+
+
+
+def test_the_alignment_block_is_named_by_a_surface_that_reaches_the_prompt(run_env):
+    """fallout FR-038 / GI-021 / CT-008 / AC-002 — D-040: computed, published,
+    consumed by nothing.
+
+    FR-038 ends "the lead pastes it verbatim into the dispatch prompt", and a
+    grep over src/, tests/, commands/ and agents/ found exactly three
+    references to the block: its definition, the one assignment inside
+    `foundry_defects_to_tasks`, and one test assertion. No consumer, and no
+    instruction anywhere naming it — so a correctly computed block reached a
+    dispatch prompt only if the lead had happened to read the JSON and
+    remembered which field to copy.
+
+    The two surfaces that hand a lead its GRIND dispatch now name it: the
+    `transition_to_grind` imperative, which is the sequence the lead follows
+    literally and already the way `grind_cycle_context` and
+    `progress_protocol` reach a teammate, and the Foundry-Tasks result the
+    block itself arrives on. Both quote one constant, so a reword of either
+    cannot leave them saying different things.
+    """
+    from foundry_mcp.tools.orchestration.directives import (
+        ALIGNMENT_APPEND_INSTRUCTION,
+    )
+    from foundry_mcp.tools.orchestration.guidance import _ACTION_IMPERATIVES
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _manifest_with_requirement_ids(fdir, {
+        3: (["FR-007"], ["src/three.py"]),
+        5: (["FR-007"], ["src/five.py"]),
+    })
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/three.py", spec_ref="FR-007"),
+    ])
+
+    result = foundry_defects_to_tasks(project_root)
+    assert result["ok"] is True, result
+    # The response that carries the block says what to do with it.
+    assert result["alignment_instructions"] == ALIGNMENT_APPEND_INSTRUCTION
+    assert "VERBATIM" in ALIGNMENT_APPEND_INSTRUCTION
+
+    task = next(t for t in result["tasks"] if "D-900" in t["defect_ids"])
+    # The owning casting is published beside the co-dispatch set, so a consumer
+    # can tell whose block this is without parsing the rendered prose.
+    assert task["owning_casting"] == 3, task
+    assert task["co_dispatch"] == [5], task
+
+    # ...and the sequence the lead follows names the block as its own step.
+    grind = _ACTION_IMPERATIVES["transition_to_grind"]
+    assert "`alignment_block`" in grind, grind
+    assert "VERBATIM" in grind
+    # Named in the ORDER, so a lead following the append list reaches it.
+    assert "defects → alignment" in grind, grind
+
+
+def test_asking_for_the_alignment_block_records_no_dispatch(run_env):
+    """The adjacent path the extraction exists to keep safe.
+
+    `_annotate_co_dispatch` computes the co-dispatch set, the owning casting
+    and the block, and writes NOTHING; `_append_grind_dispatch` stays at the
+    door that dispatches. Two writers of one `grind_dispatched` record would
+    make `Foundry-Team-Down` refuse over a defect nobody dispatched twice, and
+    the annotation is the half a reader wants.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _manifest_with_requirement_ids(fdir, {3: (["FR-007"], ["src/three.py"])})
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/three.py", spec_ref="FR-007"),
+    ])
+
+    tasks = [{
+        "structural": False,
+        "defect_ids": ["D-900"],
+        "description": "d",
+        "files": ["src/three.py"],
+        "symbols": [],
+        "spec_refs": ["FR-007"],
+        "regression": False,
+        "source": "prove",
+    }]
+    assert _annotate_co_dispatch(fdir, tasks) is True
+    assert tasks[0]["alignment_block"], tasks[0]
+    assert tasks[0]["owning_casting"] == 3, tasks[0]
+    assert not (fdir / "handoffs.jsonl").exists(), (
+        "annotating a task appended a dispatch handoff record"
+    )

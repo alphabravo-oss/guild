@@ -5186,6 +5186,15 @@ _LAYERING_DEBT: dict[tuple[str, str], str] = {
         "_finalize_open_phase_entry — the sub-phase stamper closes the same "
         "phase_times entries `_update_phase` does, through one implementation."
     ),
+    ("transitions", "concerns"): (
+        "open_cross_casting_concerns — GI-023's CONCERN_OPEN rung, which "
+        "`inspect_start` refuses on. `tools/concerns.py` is NOT a leaf: it "
+        "imports `tools/foundry.py` at module top, so this edge pulls the "
+        "largest lifecycle module into the verifier layer transitively. "
+        "Invisible until the scan below stopped stopping at the orchestration "
+        "package (D-036). Closing it means the concern READER in a leaf, which "
+        "is casting 1's and casting 10's ground."
+    ),
     ("guidance", "width"): (
         "_current_inspect_mode, _maybe_skip_trace, _waiting_on_agents, "
         "STALL_NOTICE_SECONDS — the status display names the recorded width and "
@@ -5239,6 +5248,40 @@ def _module_top_imports(path: Path) -> set[str]:
             continue
         if node.module.startswith("foundry_mcp.tools.orchestration."):
             out.add(node.module.rsplit(".", 1)[-1])
+    return out
+
+
+def _module_top_package_imports(path: Path) -> set[str]:
+    """The NON-orchestration package modules `path` imports AT MODULE TOP.
+
+    fallout AC-014 / D-036 — THE WINDOW WAS NARROWER THAN THE RULE.
+
+    `_module_top_imports` above answers only about `tools.orchestration.*`, so
+    an edge that left the package was invisible to the layering scan however
+    plainly it broke the rule: `transitions.py` (verifier) imports
+    `tools/concerns.py` at module top, and `concerns.py` imports
+    `tools/foundry.py`, so the verifier layer reaches the largest lifecycle
+    module in the tree through an edge no assertion looked at.
+
+    LEAF MODULES ARE EXCLUDED, because they are the layer every module may
+    import — that is what makes them leaves — and the existence of each one is
+    asserted beside the layering rule so this cannot be stated over a name that
+    has moved. Everything else under `foundry_mcp.tools` and
+    `foundry_mcp.parsers` is lifecycle by elimination.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    out: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom) or not node.module:
+            continue
+        if node.module.startswith("foundry_mcp.tools.orchestration"):
+            continue
+        if not node.module.startswith(("foundry_mcp.tools.", "foundry_mcp.parsers.")):
+            continue
+        stem = node.module.rsplit(".", 1)[-1]
+        if stem in _LEAF_MODULES:
+            continue
+        out.add(stem)
     return out
 
 
@@ -5343,7 +5386,9 @@ def test_the_three_layers_hold_with_exactly_one_named_seam():
     checked = 0
     for path in modules:
         home = path.stem
-        for imported in sorted(_module_top_imports(path)):
+        for imported in sorted(
+            _module_top_imports(path) | _module_top_package_imports(path)
+        ):
             checked += 1
             if (home, imported) in _VERIFIER_TO_LIFECYCLE_SEAM:
                 continue
@@ -5371,7 +5416,8 @@ def test_the_three_layers_hold_with_exactly_one_named_seam():
     # an exemption list.
     live = {
         (p.stem, imported)
-        for p in modules for imported in _module_top_imports(p)
+        for p in modules
+        for imported in _module_top_imports(p) | _module_top_package_imports(p)
     }
     stale = sorted(edge for edge in _LAYERING_DEBT if edge not in live)
     assert stale == [], (
@@ -5428,6 +5474,82 @@ def test_no_verifier_module_reaches_a_lifecycle_module_lazily_either():
     )
 
 
+#: fallout AC-014 — SHIPPED MODULES NO TEST MODULE IMPORTS, with the reason.
+#:
+#: AC-014's assertion is over EVERY shipped module, not over the thirteen this
+#: casting carved, and widening the window is what found this one. Same
+#: shrink-only discipline as the tables above: a NEW unimported module fails
+#: immediately, and an entry whose module has gained an importer ALSO fails.
+_SHIPPED_WITHOUT_A_TEST_MODULE: dict[str, str] = {
+    "parsers/report.py": (
+        "the report parser. `tools/validation.py` imports `extract_last_json` "
+        "from it and `Validate-Report` runs through that, so the module is "
+        "REACHED over MCP and named by no test module. In no casting's "
+        "key_files this run."
+    ),
+    "parsers/prove.py": (
+        "the PROVE report parser. `tools/citation.py` imports `Verdict` and "
+        "`parse_prove_report` from it, and no test module in this suite names "
+        "the module at all — so the parser that reads a verification stream's "
+        "own report is driven by nothing. It is in no casting's key_files this "
+        "run; recorded here rather than left invisible."
+    ),
+}
+
+
+def test_every_shipped_module_is_imported_by_some_test_module():
+    """fallout AC-014 / OT-015 — EVERY shipped module, not just the carved ones.
+
+    "the boundary guard asserts every shipped module has a test module
+    importing it" is a claim about the package. The assertion below it runs
+    over `orchestration/*.py` — thirteen modules of the forty-three that ship —
+    so a module outside that directory could carry no test at all and be
+    reported as fine. This is the package-wide half.
+
+    IMPORTED BY SOME TEST MODULE is the rule AC-014 states, and it is weaker
+    than the companion rule below on purpose: GI-026's "each NEW module gets
+    its own test module" is about the modules this split created, and holding
+    forty-three shipped modules to a `test_<name>.py` naming convention the
+    suite never adopted would be a different requirement.
+    """
+    pkg = Path(foundry_mcp.__file__).resolve().parent
+    tests_dir = Path(__file__).resolve().parents[1]
+    modules = [
+        m for m in _package_source_modules() if m.name != "__init__.py"
+    ]
+    assert len(modules) >= 30, [str(m) for m in modules]
+
+    # PARSED, not substring-matched: `from foundry_mcp.tools import forge_spec`
+    # names the module without ever spelling its dotted path, and a scan that
+    # only looked for the dotted form would report three modules as untested
+    # that the suite drives directly. Both `import a.b.c` and
+    # `from a.b import c` are resolved to the same dotted name.
+    imported: set[str] = set()
+    test_modules = sorted(tests_dir.rglob("test_*.py"))
+    assert len(test_modules) >= 20, [p.name for p in test_modules]
+    for path in test_modules:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+                imported.update(f"{node.module}.{a.name}" for a in node.names)
+
+    unimported = []
+    for module in modules:
+        rel = module.relative_to(pkg).as_posix()
+        dotted = "foundry_mcp." + rel[:-3].replace("/", ".")
+        if dotted not in imported:
+            unimported.append(rel)
+
+    named = sorted(_SHIPPED_WITHOUT_A_TEST_MODULE)
+    assert sorted(unimported) == named, {
+        "shipped_and_untested": sorted(set(unimported) - set(named)),
+        "entry_excusing_nothing": sorted(set(named) - set(unimported)),
+    }
+
+
 def test_every_shipped_orchestration_module_has_a_test_module_that_imports_it():
     """fallout GI-026 / FR-005 / AC-014 / OT-015.
 
@@ -5435,6 +5557,10 @@ def test_every_shipped_orchestration_module_has_a_test_module_that_imports_it():
     suite merely touches through something else: the pin is that a file named
     for it exists AND names it, so a module carved out and never driven is
     visible on the day it lands rather than on the day it breaks.
+
+    The COMPANION rule, which is GI-026's, and it applies to the modules this
+    casting carved. `test_every_shipped_module_is_imported_by_some_test_module`
+    above carries AC-014's weaker package-wide half.
     """
     here = Path(__file__).resolve().parent
     for module in _shipped_orchestration_modules():
@@ -5506,3 +5632,90 @@ def test_the_package_marker_re_exports_nothing():
             set(_SIBLING_SUITES_AWAITING_REPOINT) - set(outstanding)
         ),
     }
+
+
+
+
+#: fallout FR-043 / GI-033 — THE ORCHESTRATOR-TO-SPAWN CYCLE, AS EDGES.
+#:
+#: FR-043 requires the two lazy-import cycles to be "preserved or removed
+#: deliberately". The orchestrator-to-report one is genuinely removed. This one
+#: is preserved, and preserved means every edge of it is a NAMED lazy seam that
+#: does not exist at import time — not that the back edges happen to be lazy
+#: while the forward ones are module-top.
+_SPAWN_SEAM_MODULES = ("teams", "spend", "width", "transitions")
+
+
+def test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions():
+    """fallout FR-043 / GI-033 / AC-061 — D-043.
+
+    `foundry_spawn.py` imported `orchestration.teams` and `orchestration.width`
+    at MODULE TOP while four orchestration modules reached back into it lazily,
+    so the cycle was live in one direction and documented in neither — and the
+    `width` edge was additionally a lifecycle module importing a VERIFIER, which
+    GI-033 refuses outright.
+
+    Both halves are asserted, because either alone is satisfiable by the wrong
+    tree: a scan of the forward edges alone passes on a module that reaches
+    nothing, and a scan of the back edges alone passes on the shape the defect
+    was filed on.
+    """
+    spawn = Path(foundry_mcp.__file__).resolve().parent / "tools" / "foundry_spawn.py"
+    tree = ast.parse(spawn.read_text(encoding="utf-8"))
+
+    module_top = {
+        node.module
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and node.module
+        and node.module.startswith("foundry_mcp.tools.orchestration")
+    }
+    assert module_top == set(), (
+        f"foundry_spawn.py imports {sorted(module_top)} at module top. Every "
+        "edge of this cycle is a lazy seam; a module-top one closes the cycle "
+        "at import time and, for a verifier module, breaks GI-033 outright."
+    )
+
+    # ...and it DOES reach them, lazily, or the assertion above is vacuous.
+    lazy = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+        and node.module.startswith("foundry_mcp.tools.orchestration")
+    }
+    assert lazy, "foundry_spawn.py reaches no orchestration module at all"
+
+    # The back edges are lazy too, and every one of them is inside a function.
+    for name in _SPAWN_SEAM_MODULES:
+        path = _orchestration_dir() / f"{name}.py"
+        peer = ast.parse(path.read_text(encoding="utf-8"))
+        top = {
+            node.module
+            for node in peer.body
+            if isinstance(node, ast.ImportFrom) and node.module
+            and node.module.endswith("foundry_spawn")
+        }
+        assert top == set(), (
+            f"{name}.py imports foundry_spawn at module top, which closes the "
+            "cycle this seam set exists to keep open"
+        )
+        anywhere = {
+            node.module
+            for node in ast.walk(peer)
+            if isinstance(node, ast.ImportFrom) and node.module
+            and node.module.endswith("foundry_spawn")
+        }
+        assert anywhere, (
+            f"{name}.py is named as a spawn seam and reaches foundry_spawn "
+            "nowhere; the seam roster has outlived the coupling it records"
+        )
+
+    # The cycle is WRITTEN DOWN. FR-043's own sentence says the seams are "kept
+    # in teams.py and guidance.py"; guidance.py holds no reference to spawn and
+    # needs none, and a resolution that does not describe the tree is the half
+    # of this defect that no import scan can catch.
+    source = spawn.read_text(encoding="utf-8")
+    assert "FR-043" in source, "the seam carries no citation of the rule it keeps"
+    for name in _SPAWN_SEAM_MODULES:
+        assert f"`{name}.py`" in source, (
+            f"the seam comment does not name {name}.py as one of the back edges"
+        )

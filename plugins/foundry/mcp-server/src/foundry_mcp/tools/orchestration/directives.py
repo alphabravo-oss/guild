@@ -144,6 +144,18 @@ def _co_dispatch_for(
 
 
 
+#: fallout FR-038 / GI-021 / CT-008 / AC-002 — what the lead DOES with the
+#: block, said once and quoted by both surfaces that hand it over.
+ALIGNMENT_APPEND_INSTRUCTION = (
+    "Each task's `alignment_block` is server-generated and goes into that "
+    "casting's GRIND dispatch prompt VERBATIM, appended below the defect "
+    "block. Do not summarise it and do not compose your own: it names the "
+    "sibling files that carry the same rule, which is how one fix reaches "
+    "every surface of its requirement in the same GRIND instead of coming "
+    "back as next cycle's finding."
+)
+
+
 def _alignment_block(
     fdir: Path,
     *,
@@ -184,6 +196,55 @@ def _alignment_block(
     return "\n".join(lines)
 
 
+
+
+def _annotate_co_dispatch(fdir: Path, tasks: list[dict]) -> bool:
+    """Put `co_dispatch`, `owning_casting` and `alignment_block` on each task.
+
+    Returns whether the manifest declares `requirement_ids` at all.
+
+    fallout FR-011 / FR-038 / GI-021 / CT-008 / AC-002 / AC-006 / OT-002 /
+    OT-006. Extracted from `foundry_defects_to_tasks` so there is ONE
+    computation of the co-dispatch set and the block that carries it, and so a
+    READER can have it: FR-038 ends "the lead pastes it verbatim into the
+    dispatch prompt", which means `Foundry-Spawn-Teammate` has to be able to
+    ask for the block — and it must not append a `grind_dispatched` handoff
+    record by asking. WRITES NOTHING; the recording stays at the door that
+    dispatches.
+    """
+    owned, ids_declared = _casting_requirement_ids(fdir)
+    for task in tasks:
+        requirement_ids = {r for r in task.get("spec_refs", []) if r}
+        if not ids_declared:
+            # AC-006 / OT-006: NOT COMPUTABLE, never an empty set. A lead
+            # reading "no other casting owns this" when the truth is "nobody
+            # recorded who owns anything" dispatches one casting for a rule that
+            # lives in four.
+            task["co_dispatch"] = None
+            task["co_dispatch_problem"] = (
+                "castings/manifest.json declares no requirement_ids, so which "
+                "castings own this defect's requirements is not computable. "
+                "Re-run F0.5 DECOMPOSE, or accept that the fix reaches one "
+                "casting only."
+            )
+            continue
+        owning = _owning_casting(fdir, task.get("files") or [])
+        co_dispatch = _co_dispatch_for(owned, requirement_ids, exclude=owning)
+        task["co_dispatch"] = co_dispatch
+        # fallout FR-038 — PUBLISHED, because the block names it and a consumer
+        # has to know which castings the block is FOR. `co_dispatch` excludes
+        # the owner by construction, so without this the owning casting is
+        # readable only out of the rendered prose.
+        task["owning_casting"] = owning
+        task["alignment_block"] = _alignment_block(
+            fdir,
+            defect_ids=list(task.get("defect_ids") or []),
+            requirement_ids=requirement_ids,
+            owning_casting=owning,
+            owning_files=list(task.get("files") or []),
+            co_dispatch=co_dispatch,
+        )
+    return ids_declared
 
 
 def _append_grind_dispatch(
@@ -418,38 +479,22 @@ def foundry_defects_to_tasks(
 
     # fallout FR-011 / FR-038 / GI-021 / CT-008 / AC-002 / AC-006 / OT-002 /
     # OT-006 — THE CO-DISPATCH SET, PER TASK, AND THE BLOCK THAT CARRIES IT.
-    owned, ids_declared = _casting_requirement_ids(fdir)
+    ids_declared = _annotate_co_dispatch(fdir, tasks)
     open_by_id = {d["id"]: d for d in open_defects}
     for task in tasks:
-        requirement_ids = {r for r in task.get("spec_refs", []) if r}
-        if not ids_declared:
-            # AC-006 / OT-006: NOT COMPUTABLE, never an empty set. A lead
-            # reading "no other casting owns this" when the truth is "nobody
-            # recorded who owns anything" dispatches one casting for a rule that
-            # lives in four.
-            task["co_dispatch"] = None
-            task["co_dispatch_problem"] = (
-                "castings/manifest.json declares no requirement_ids, so which "
-                "castings own this defect's requirements is not computable. "
-                "Re-run F0.5 DECOMPOSE, or accept that the fix reaches one "
-                "casting only."
-            )
-            continue
-        owning = _owning_casting(fdir, task.get("files") or [])
-        co_dispatch = _co_dispatch_for(owned, requirement_ids, exclude=owning)
-        task["co_dispatch"] = co_dispatch
-        task["alignment_block"] = _alignment_block(
-            fdir,
-            defect_ids=list(task.get("defect_ids") or []),
-            requirement_ids=requirement_ids,
-            owning_casting=owning,
-            owning_files=list(task.get("files") or []),
-            co_dispatch=co_dispatch,
-        )
         # fallout FR-048 / GI-017 / ST-011 — the dispatch RECORD, written by the
         # call that dispatches. `Foundry-Team-Down` reads these back and refuses
         # to tear a GRIND team down with one of them still open and a commit
         # since the cycle baseline touching its file.
+        #
+        # Written HERE and not inside `_annotate_co_dispatch`, which is what
+        # makes that function safe for a reader. `Foundry-Spawn-Teammate` needs
+        # the same alignment blocks to put them in the dispatch prompt (FR-038)
+        # and must not record a dispatch by asking for them: two writers of one
+        # handoff record is a Team-Down refusal naming a defect nobody
+        # dispatched twice.
+        if task.get("co_dispatch") is None:
+            continue
         for did in task.get("defect_ids") or []:
             defect = open_by_id.get(did) or {}
             _append_grind_dispatch(
@@ -457,7 +502,7 @@ def foundry_defects_to_tasks(
                 defect_id=did,
                 file_path=str(defect.get("file") or ""),
                 cycle=packet_cycle,
-                casting=owning,
+                casting=task.get("owning_casting"),
             )
 
     # fallout GI-023 / FR-012 / ST-003 / AC-004 — a concern whose target is in
@@ -475,6 +520,16 @@ def foundry_defects_to_tasks(
         "structural_tasks": sum(1 for t in tasks if t["structural"]),
         "co_dispatch_computable": ids_declared,
         "concerns_dispatched": dispatched_concerns,
+        # fallout FR-038 / GI-021 / CT-008 — SAID ON THE RESULT THAT CARRIES IT.
+        #
+        # The block was computed correctly and named to nobody: its definition,
+        # one assignment and one test assertion were its only references in the
+        # tree, so "the lead pastes it verbatim into the dispatch prompt" rested
+        # on the lead noticing a field. The `transition_to_grind` imperative now
+        # names it as step (c) of the append order, and this says the same thing
+        # on the response the block arrives on, so a lead reading either surface
+        # is told the same thing.
+        "alignment_instructions": ALIGNMENT_APPEND_INSTRUCTION,
     }
     if packets_counted:
         # AC-004: what this call SPENT, reported where it happened. A lead that

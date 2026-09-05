@@ -913,8 +913,27 @@ _ACTION_IMPERATIVES = {
         "teammate must read that file to obtain; the `prompt` field is null by default and is NOT what "
         "you pass. Then APPEND (a) the `grind_cycle_context` block from the spawn "
         "response if present \u2014 lists files changed in prior cycles so the teammate reads current state "
-        "before acting, then (b) the defect list in a '## Defects to fix this cycle:' block. Order: dispatch \u2192 "
-        "cycle_context \u2192 defects. Both appended BELOW the dispatch block, never inside it.>). "
+        "before acting, then (b) the defect list in a '## Defects to fix this cycle:' block, "
+        # fallout FR-038 / GI-021 / CT-008 / AC-002 \u2014 THE ALIGNMENT BLOCK REACHES
+        # THE PROMPT THROUGH THE STEP THAT BUILDS IT.
+        #
+        # `Foundry-Tasks` computes the block correctly and named it to
+        # nobody: grep over src/, tests/, commands/ and agents/ returned
+        # its definition, its one assignment and one test assertion, and
+        # no consumer at all. FR-038 ends "the lead pastes it verbatim
+        # into the dispatch prompt", and the lead pastes what THIS
+        # imperative names \u2014 which is how `grind_cycle_context` and
+        # `progress_protocol` already reach a teammate. Step (1) of this
+        # same sequence is the Foundry-Tasks call the block comes back on,
+        # so nothing has to be remembered between calls.
+        "then (c) that task's `alignment_block` from the Foundry-Tasks result of step (1), "
+        "VERBATIM, whenever the task carries one \u2014 it is server-generated and names the "
+        "originating defects, the requirement ids, the owning casting and file of the fix, and "
+        "the sibling files THIS casting owns that cite those ids, which is how one fix reaches "
+        "every surface of its rule in the same GRIND. Do not summarise it and do not compose "
+        "your own. "
+        "Order: dispatch \u2192 cycle_context \u2192 defects \u2192 alignment. "
+        "All appended BELOW the dispatch block, never inside it.>). "
         "Same foreground rule as CAST \u2014 never background-spawn GRIND teammates. "
         "For the model: obey the model clause in the `instructions` Foundry-Spawn-Teammate "
         "returned \u2014 pass the model it names, or no model parameter when it names none. This "

@@ -182,8 +182,58 @@ from pathlib import Path
 
 from foundry_mcp.schemas import vocab
 # fallout FR-004 / GI-010: each symbol from the module that defines it.
-from foundry_mcp.tools.orchestration.teams import agent_model
-from foundry_mcp.tools.orchestration.width import git_changed_paths
+# fallout FR-043 / GI-033 / AC-061 — THE ORCHESTRATOR-TO-SPAWN CYCLE, NAMED.
+#
+# This module and `tools/orchestration/` reach each other, and FR-043 requires
+# that cycle to be preserved or removed DELIBERATELY rather than left to be
+# rediscovered. It is preserved, and this is where it is written down:
+#
+#   forward — this module needs `agent_model` (the model policy) and
+#             `git_changed_paths` (the one git invocation);
+#   back    — `teams.py`, `spend.py`, `width.py` and `transitions.py` each
+#             reach `_manifest_shape_problem`, `_agent_id_for_casting` or
+#             `_skipped_stream_ids` out of this module.
+#
+# EVERY EDGE OF IT IS LAZY, in both directions, which is what keeps the cycle
+# from existing at import time. The back edges were already written that way;
+# these two were not, and `orchestration.width` is additionally a VERIFIER
+# module, so a module-top import here was a lifecycle-to-verifier edge GI-033
+# refuses outright. A call-time import runs when every module in the chain is
+# already built, so nothing is deferred except the coupling.
+#
+# The spec's own sentence says the seams are "kept in teams.py and guidance.py".
+# `guidance.py` holds no reference to this module and needs none; the seam set
+# is the four named above, and saying so here is the deliberate part.
+
+
+# Named with the leading underscore the other seams in this package use, and
+# NOT with the wrapped symbol's own name: a seam that shadows its target is a
+# second top-level definition of that name, which the package-wide
+# single-definition guard refuses and which would make "where is agent_model
+# defined" have two answers.
+
+
+def _agent_model(subagent_type: str, baseline: str = "") -> dict:
+    """`orchestration.teams`' model policy, reached through the named seam."""
+    from foundry_mcp.tools.orchestration.teams import agent_model
+
+    return agent_model(subagent_type, baseline)
+
+
+def _git_changed_paths(
+    project_root: str, base: str, head: str = "HEAD", **kw
+) -> dict:
+    """`orchestration.width`' one git diff invocation, through the same seam.
+
+    Thin, so the lazy import is written ONCE rather than at each call site, and
+    so nothing here re-decides what that helper already decided about quoting,
+    NUL separation or the unknown-diff answer.
+    """
+    from foundry_mcp.tools.orchestration.width import git_changed_paths
+
+    return git_changed_paths(project_root, base, head, **kw)
+
+
 from foundry_mcp.tools.foundry_state import (
     document_refusal,
     get_run_dir,
@@ -375,7 +425,7 @@ TEAMMATE_DISPATCH_PHASES = {"F1": "cast", "F3": "grind"}  # 2 items
 
 def _teammate_model() -> str:
     """Return the model to spawn ``foundry:teammate`` with, or ``""``."""
-    return agent_model(TEAMMATE_SUBAGENT_TYPE).get("model", "")
+    return _agent_model(TEAMMATE_SUBAGENT_TYPE).get("model", "")
 
 
 def _progress_dir(fdir: Path) -> Path:
@@ -1989,7 +2039,7 @@ def _build_grind_cycle_context(fdir, casting_id, project_root: str) -> str:
     # because this helper's standing contract is that it never fails a spawn.
     # The orchestrator, whose delta roster cannot rest on a diff it does not
     # know, is the caller that must keep the two apart and forces FULL instead.
-    diff = git_changed_paths(project_root, baseline_sha, "HEAD", timeout=10.0)
+    diff = _git_changed_paths(project_root, baseline_sha, "HEAD", timeout=10.0)
     if not diff["ok"]:
         return ""
 
