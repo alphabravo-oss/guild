@@ -12,10 +12,10 @@
 
 ============================= test session starts ==============================
 platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
-rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10w/plugins/foundry/mcp-server
+rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/63e61095-cb3b-43cb-bb65-154e0cd4fdb2/scratchpad/recap-wt/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
-collected 1112 items
+collected 1114 items
 
 tests/test_inspect_mode.py ............................................. [  4%]
 ........................................................................ [ 10%]
@@ -24,7 +24,7 @@ tests/orchestration/test_directives.py ................................. [ 18%]
 ............................                                             [ 20%]
 tests/orchestration/test_escalation.py ............                      [ 21%]
 tests/orchestration/test_evidence_boundary.py ..                         [ 21%]
-tests/orchestration/test_fix_gate.py ................................... [ 25%]
+tests/orchestration/test_fix_gate.py ................................... [ 24%]
 ............................                                             [ 27%]
 tests/orchestration/test_gates.py ...................................... [ 30%]
 ..................................................                       [ 35%]
@@ -37,13 +37,13 @@ tests/orchestration/test_report_seal.py ..........                       [ 51%]
 tests/orchestration/test_spend.py ....                                   [ 51%]
 tests/orchestration/test_streams.py .....................                [ 53%]
 tests/orchestration/test_tasks_codispatch.py .....                       [ 54%]
-tests/orchestration/test_teams.py ......                                 [ 54%]
+tests/orchestration/test_teams.py ........                               [ 54%]
 tests/orchestration/test_transitions.py ................................ [ 57%]
 ........................................................................ [ 64%]
 ........................................................................ [ 70%]
 ...........................                                              [ 73%]
 tests/orchestration/test_width.py .........                              [ 73%]
-tests/test_measure_run.py .........s..........................s......... [ 77%]
+tests/test_measure_run.py .........s..........................s......... [ 78%]
 ..........ss.s.....
 === D-182 — a cycle bucket carrying its own C-6 facts ===
   the five keys `_record_cycle_facts` writes beside the stream
@@ -89,9 +89,9 @@ tests/test_lead_prose.py ............................................... [ 85%]
 ..................                                                       [100%]
 
 =========================== short test summary info ============================
-SKIPPED [1] tests/test_measure_run.py:632: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10w/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:1507: grand-vulture archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10w/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2236: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10w/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2295: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10w/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2364: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/c10w/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-======================= 1107 passed, 5 skipped in 54.92s =======================
+SKIPPED [1] tests/test_measure_run.py:632: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/63e61095-cb3b-43cb-bb65-154e0cd4fdb2/scratchpad/recap-wt/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:1507: grand-vulture archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/63e61095-cb3b-43cb-bb65-154e0cd4fdb2/scratchpad/recap-wt/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2236: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/63e61095-cb3b-43cb-bb65-154e0cd4fdb2/scratchpad/recap-wt/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2295: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/63e61095-cb3b-43cb-bb65-154e0cd4fdb2/scratchpad/recap-wt/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2364: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/63e61095-cb3b-43cb-bb65-154e0cd4fdb2/scratchpad/recap-wt/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+======================= 1109 passed, 5 skipped in 59.34s =======================
