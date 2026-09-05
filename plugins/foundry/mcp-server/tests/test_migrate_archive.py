@@ -61,7 +61,10 @@ GRAND_VULTURE = REPO_ROOT / "foundry-archive" / "grand-vulture"
 # v2: step 4's output shape changed — v1 wrote a stream-rollup.json that its
 # own consumer (orchestration.streams._rollup_totals) could not read (D-029).
 # v3: the evidence-tier step joined the list (GI-001 / FR-051).
-ARCHIVE_SCHEMA_VERSION = 3
+# v4: replace semantics for the roll-up totals, `fallout_of` / `supersedes` on
+# every defect record, `requirement_ids` / `split_reason` on every casting, and
+# the concern ledger and roster directory (FR-028 / FR-054 / CT-018).
+ARCHIVE_SCHEMA_VERSION = 4
 
 
 def _invoke_migrate(*args: str) -> tuple[int, str, str]:
@@ -522,11 +525,31 @@ def test_step_4_never_rebuilds_over_c6_cycle_facts(c6_archive: Path) -> None:
 
 
 def test_a_c6_archive_migrates_as_a_whole_no_op(c6_archive: Path) -> None:
-    """NFR-003 on an archive this release itself wrote: nothing to do at all.
+    """NFR-003 / NFR-010 — the SECOND run changes not one byte, on any archive.
 
-    Every step no-ops and ``migrated`` is False, so a resume that runs this
-    tool against a current run changes not one byte of it.
+    THE CLAIM MOVED ONE RUN LATER, AND THE FIXTURE IS WHY. This asserted that
+    every step no-ops on the FIRST run against a C-6 archive, on the ground that
+    such an archive was written by "this release" and had nothing left to do.
+    That was true while C-6 was the current schema and stopped being true the
+    moment schema 4 added five steps: the fixture is a schema-3 archive, its
+    defect records carry no `fallout_of`, its manifest carries no
+    `requirement_ids`, and it has no concern ledger — so a first run that
+    no-op'd on it would mean the new steps do not work, which is the opposite of
+    the property this test exists to hold.
+
+    Idempotency is the property, and it is asserted where it lives: migrate
+    once, hash the tree, migrate again, and require `migrated` False, every step
+    `no-op`, and a byte-identical tree. That is strictly stronger than the old
+    reading — it covers the five new steps as well as the seven — and it is the
+    assertion CT-018 ("none new; idempotent") and NFR-010 both name.
+
+    What has NOT moved is D-188: step 4 must still leave this fixture's roll-up
+    untouched, and the test below this one asserts exactly that against the
+    first run.
     """
+    first = _migrate(c6_archive)
+    assert first["archive_schema_version"] == ARCHIVE_SCHEMA_VERSION
+
     before = _tree_hash(c6_archive)
     summary = _migrate(c6_archive)
     assert set(_outcomes(summary).values()) == {"no-op"}, _outcomes(summary)
@@ -1035,3 +1058,563 @@ def test_grand_vulture_migration(tmp_path: Path) -> None:
     # --- and the real archive was never touched ---
     assert json.loads((GRAND_VULTURE / "state.json").read_text())["cycle"] == 0
     assert not (GRAND_VULTURE / "observations.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# SCHEMA 4 — steps 8 to 12 (FR-028 / FR-054 / CT-018 / AC-034 / AC-049).
+#
+# The five new steps join the existing four-fixture register rather than
+# getting one of their own: the synthetic pre-change archive is the ordinary
+# case, the C-6 archive is the one written under a release whose roll-up must
+# survive contact with them, and the two real archives are the acceptance
+# fixtures NFR-010 names — migrated on COPIES, never opened for writing.
+#
+# WHAT MAKES THESE STEPS DIFFERENT FROM THE SEVEN ABOVE, and what the tests
+# therefore have to hold down: steps 1-7 CREATE what is absent, while step 8
+# REWRITES what is present. A rewrite can destroy, and GI-006 names the way it
+# would — "a replace-semantics write that drops history" — so every assertion
+# below that moves a total also asserts the records are still there.
+# ---------------------------------------------------------------------------
+
+
+def _rollup_bucket(checked: int, total: int, findings: int, records: list) -> dict:
+    return {
+        "items_checked": checked, "items_total": total,
+        "findings": findings, "records": records,
+    }
+
+
+#: The OT-032 row, verbatim from daring-orca's cycle 29: two records a minute
+#: apart, each 542/542, accumulated by the additive writer into 1084/542.
+OT_032_RECORDS = [
+    {"recorded_at": "2026-09-05T01:03:47.428012+00:00", "items_checked": 542,
+     "items_total": 542, "findings": 4, "declared_cycle": 29},
+    {"recorded_at": "2026-09-05T01:04:52.960145+00:00", "items_checked": 542,
+     "items_total": 542, "findings": 4, "declared_cycle": 29},
+]
+
+
+def test_step_8_rewrites_the_ot_032_row_and_keeps_both_records(
+    archive: Path,
+) -> None:
+    """AC-034 / OT-032 — "1084/542 reads 542/542 with two records retained".
+
+    The acceptance criterion names one row and this is that row, transcribed
+    from daring-orca's own stream-rollup.json. The additive writer appended a
+    record AND added its numbers into the totals, so a stream that recorded
+    twice in one cycle reads as having checked twice as many items as exist.
+
+    BOTH HALVES ARE THE ASSERTION. Moving the totals is the easy half; GI-006's
+    named violation is "a replace-semantics write that drops history", and the
+    superseded record is the only evidence that the row was recorded twice —
+    the thing that makes the over-100% figure explicable rather than merely
+    wrong. `foundry_state.stream_rollup_rows` publishes `replaced_count` off
+    exactly that list, so a repair that tidied it away would fix one number by
+    blinding the reader that explains it.
+    """
+    (archive / "stream-rollup.json").write_text(
+        json.dumps({
+            "schema_version": 3,
+            "cycles": {
+                "29": {"trace": _rollup_bucket(1084, 542, 8, OT_032_RECORDS)},
+            },
+        }),
+        encoding="utf-8",
+    )
+    summary = _migrate(archive)
+    assert _outcomes(summary)["rollup_totals"] == "upgraded"
+
+    entry = json.loads(
+        (archive / "stream-rollup.json").read_text()
+    )["cycles"]["29"]["trace"]
+    assert entry["items_checked"] == 542, "the LAST record's value, not the sum"
+    assert entry["items_total"] == 542
+    assert entry["findings"] == 4
+    assert entry["records"] == OT_032_RECORDS, (
+        "every earlier record stays under records[] — GI-006 names dropping "
+        "history as the violation, and the superseded record is the evidence "
+        "that explains the number that was wrong"
+    )
+
+    row = summary["steps"]["rollup_totals"]["rows"][0]
+    assert row["cycle"] == "29" and row["stream"] == "trace"
+    assert row["from"] == {"items_checked": 1084, "items_total": 542, "findings": 8}
+    assert row["to"] == {"items_checked": 542, "items_total": 542, "findings": 4}
+    assert row["records_kept"] == 2
+
+
+def test_step_8_leaves_cycle_level_facts_and_recordless_tranches_alone(
+    archive: Path,
+) -> None:
+    """D-182 / D-188 — this is the fifth walker of the cycle bucket.
+
+    Four readers before it assumed every key in a cycle bucket was a stream, and
+    the last one to get it wrong destroyed 45 keys of a real archive. So the
+    key's value decides, through the ONE definition in
+    `foundry_state.is_stream_record` — never a denylist of the C-6 names, which
+    would need an edit at every new cycle-level field and already misses
+    `temper_entry`.
+
+    A tranche with no `records[]` is left alone for a different reason: there is
+    nothing to take a total FROM. Inventing one would be this step asserting a
+    measurement, in the step whose whole purpose is to stop the totals asserting
+    one.
+    """
+    document = {
+        "cycles": {
+            "7": {
+                "inspect_mode": "FULL",
+                "inspect_rule": "verifier_touched",
+                "stream_scope": {"trace": {"scope": "full"}},
+                "evidence_sweep": {"scope": "full", "corpus_size": 94},
+                "temper_entry": {"opened": True},
+                # No records at all — the additive writer before histories.
+                "prove": {"items_checked": 30, "items_total": 20, "findings": 1},
+                # Records present and the totals already the last one's.
+                "trace": _rollup_bucket(12, 12, 0, [
+                    {"items_checked": 12, "items_total": 12, "findings": 0},
+                ]),
+            },
+        },
+    }
+    (archive / "stream-rollup.json").write_text(
+        json.dumps(document), encoding="utf-8"
+    )
+    summary = _migrate(archive)
+    assert _outcomes(summary)["rollup_totals"] == "no-op"
+    assert json.loads((archive / "stream-rollup.json").read_text()) == document, (
+        "not one byte: no stream tranche had a history to rewrite from, and "
+        "the five cycle-level facts are not tranches at all"
+    )
+
+
+def test_step_8_takes_only_the_keys_the_last_record_states(archive: Path) -> None:
+    """A rewrite transcribes; it does not fill in.
+
+    A record carrying `items_checked` and no `findings` rewrites the first and
+    leaves the second exactly as found. Writing 0 for the key the record does
+    not mention would put a number in the document that nothing in the archive
+    ever measured — which is the lie this tool's own header exists to name.
+    """
+    (archive / "stream-rollup.json").write_text(
+        json.dumps({
+            "cycles": {
+                "2": {"prove": _rollup_bucket(99, 50, 7, [
+                    {"items_checked": 50, "items_total": 50},
+                ])},
+            },
+        }),
+        encoding="utf-8",
+    )
+    _migrate(archive)
+    entry = json.loads(
+        (archive / "stream-rollup.json").read_text()
+    )["cycles"]["2"]["prove"]
+    assert entry["items_checked"] == 50
+    assert entry["items_total"] == 50
+    assert entry["findings"] == 7, "the last record states no findings count"
+
+
+def test_step_9_stamps_fallout_and_supersedes_without_touching_a_value(
+    archive: Path,
+) -> None:
+    """FR-025 / FR-054 — the KEY's presence is what makes a cycle measurable.
+
+    `foundry_state.fallout_rows` counts a record as measured when it carries the
+    `fallout_of` KEY, because an absent key is a record written before anyone
+    asked and a null is a stream answering "no parent". A cycle holding one
+    un-keyed record cannot be measured at all, so NFR-006's acceptance figure is
+    unreachable on an un-migrated archive — which is what this step is for.
+
+    An EXISTING value is never touched, including an existing null: `_add_missing`
+    is per field, so a ledger half-stamped by an interrupted run converges on the
+    next pass rather than being skipped whole or overwritten whole.
+    """
+    (archive / "defects.json").write_text(
+        json.dumps({"defects": [
+            {"id": "D-001", "cycle": 0, "source": "prove", "type": "THIN"},
+            {"id": "D-002", "cycle": 1, "source": "trace", "type": "THIN",
+             "fallout_of": "D-001"},
+            {"id": "D-003", "cycle": 1, "source": "trace", "type": "THIN",
+             "fallout_of": None, "supersedes": "D-000"},
+        ]}),
+        encoding="utf-8",
+    )
+    summary = _migrate(archive)
+    step = summary["steps"]["defect_fallout"]
+    assert step["outcome"] == "upgraded"
+    assert step["upgraded"] == 2, "D-003 already carries both keys"
+    assert step["fallout_named"] == 1, "only D-002 names a parent"
+    assert step["fields"] == ["fallout_of", "supersedes"]
+
+    records = json.loads((archive / "defects.json").read_text())["defects"]
+    by_id = {r["id"]: r for r in records}
+    assert by_id["D-001"]["fallout_of"] is None
+    assert by_id["D-001"]["supersedes"] is None
+    assert by_id["D-002"]["fallout_of"] == "D-001", "an existing value is kept"
+    assert by_id["D-002"]["supersedes"] is None
+    assert by_id["D-003"]["supersedes"] == "D-000"
+
+
+def test_a_migrated_ledger_is_measurable_and_an_unmigrated_one_is_not(
+    archive: Path,
+) -> None:
+    """AC-045 / NFR-006 end to end — the two tools on one archive.
+
+    Before the migration the closing pair holds records with no `fallout_of` key
+    and `measure-run.py` reports `not_measurable`, naming the cycles and telling
+    the operator to run this tool. After it, the same pair is a MEASURED zero
+    and the acceptance figure has an answer. That transition is the whole reason
+    step 9 stamps a default rather than leaving the field off, and it is the
+    only place in this suite where both halves of the pair are driven together.
+    """
+    (archive / "state.json").write_text(
+        json.dumps({"phase": "F3", "cycle": 2}), encoding="utf-8"
+    )
+    (archive / "defects.json").write_text(
+        json.dumps({"defects": [
+            {"id": "D-001", "cycle": 1, "source": "prove", "type": "THIN"},
+            {"id": "D-002", "cycle": 2, "source": "trace", "type": "THIN"},
+        ]}),
+        encoding="utf-8",
+    )
+
+    before = _measure(archive)["fallout_per_cycle"]
+    assert before["verdict"] == "not_measurable"
+    assert before["unmeasured_records"] == 2
+    assert "migrate-archive.py" in before["verdict_reason"]
+
+    _migrate(archive)
+
+    after = _measure(archive)["fallout_per_cycle"]
+    assert after["unmeasured_records"] == 0
+    assert after["measured_records"] == 2
+    assert after["verdict"] == "pass"
+    # The pair is `derive_cycle_count`'s axis, not this fixture's defect
+    # stamps, and step 6 raises the recorded cycle to what the archive's own
+    # markers and verdicts prove it reached. So the closing pair is asserted as
+    # a PAIR at the top of that axis rather than as two literals — hard-coding
+    # them here would be this test carrying its own idea of how many cycles the
+    # run ran, which is the second-derivation shape the axis argument exists to
+    # prevent.
+    pair = after["last_two_cycles"]
+    assert len(pair) == 2 and pair[1] == pair[0] + 1
+    for cycle in pair:
+        bucket = after["per_cycle"].get(str(cycle), {})
+        assert bucket.get("fallout", 0) == 0
+        assert bucket.get("unmeasured", 0) == 0
+
+
+def _manifest(*castings: dict) -> dict:
+    return {"spec_type": "GREENFIELD", "castings": list(castings)}
+
+
+def _casting(cid: int, *ids: str) -> dict:
+    """A casting entry whose `spec_text` DECLARES exactly `ids`.
+
+    The block is written in F0.5's own bold-bullet shape, because
+    `declared_requirement_ids` reads position and not merely the family — an id
+    in subject position on its own line is a declaration and one quoted inside
+    another requirement's prose is not (D-180). A fixture that faked the shape
+    would be testing a regex this tool does not use.
+    """
+    lines = "\n".join(f"- **{rid}** [from A-001]: statement text" for rid in ids)
+    return {"id": cid, "title": f"Casting {cid}", "spec_text": lines}
+
+
+def test_step_10_transcribes_ownership_from_the_castings_own_blocks(
+    archive: Path,
+) -> None:
+    """FR-054 / AC-049 — the field is filled from the archive, not computed.
+
+    `foundry_handoff.declared_requirement_ids` is the ONE derivation in the tree
+    of which ids a `<spec_requirements>` block declares, and it is the same
+    function F0.9's ownership dimension uses to decide what a casting declared.
+    Reading the archive's own answer into the archive's own field is
+    transcription; computing one would be manufacturing, and the door would then
+    be checking this tool's opinion against the prose instead of the prose
+    against itself.
+    """
+    (archive / "castings").mkdir()
+    (archive / "castings" / "manifest.json").write_text(
+        json.dumps(_manifest(
+            _casting(1, "FR-001", "AC-001"),
+            _casting(2, "FR-001", "FR-002"),
+        )),
+        encoding="utf-8",
+    )
+    summary = _migrate(archive)
+    step = summary["steps"]["casting_ownership"]
+    assert step["outcome"] == "upgraded"
+    assert step["requirement_ids_filled"] == 2
+    assert step["shared_requirement_ids"] == ["FR-001"]
+
+    castings = json.loads(
+        (archive / "castings" / "manifest.json").read_text()
+    )["castings"]
+    assert castings[0]["requirement_ids"] == ["AC-001", "FR-001"]
+    assert castings[1]["requirement_ids"] == ["FR-001", "FR-002"]
+    # The reason is recorded ONLY where ownership is shared. A waiver on
+    # something nobody would refuse is noise in a table a lead reads.
+    assert set(castings[0]["split_reason"]) == {"FR-001"}
+    assert set(castings[1]["split_reason"]) == {"FR-001"}
+    assert "AC-001" not in castings[0]["split_reason"]
+
+
+def test_step_10_never_fills_an_empty_list_or_leaves_the_field_absent(
+    archive: Path,
+) -> None:
+    """FR-054's negative — the two fills that would trip the door it must not.
+
+    Step 7 raises the schema marker to 4, and `foundry_validate` reads a missing
+    `requirement_ids` as "predates the field" only BELOW 4. So after this tool
+    runs there are exactly two ways to fail the door, and both are shapes a
+    naive "fill the default" would produce:
+
+      * ABSENT (or null, which `_owned_requirement_ids` reads as absent) — an
+        un-migrated record at a schema that says otherwise, reported as
+        `missing_requirement_ids` per casting;
+      * `[]` — a casting positively CLAIMING it owns nothing, which the door
+        checks against the casting's own prose and refuses id by id as
+        `declared_but_not_owned`.
+
+    A casting whose block genuinely declares nothing DOES get `[]`, and that is
+    not the same claim: it is the transcription of an empty declaration, and the
+    door agrees with it because `declared` is empty too.
+    """
+    (archive / "castings").mkdir()
+    (archive / "castings" / "manifest.json").write_text(
+        json.dumps(_manifest(
+            _casting(1, "FR-001"),
+            {"id": 2, "title": "Docs only", "spec_text": "No requirements here."},
+        )),
+        encoding="utf-8",
+    )
+    _migrate(archive)
+    castings = json.loads(
+        (archive / "castings" / "manifest.json").read_text()
+    )["castings"]
+
+    assert castings[0]["requirement_ids"] == ["FR-001"], "not empty, not absent"
+    assert castings[1]["requirement_ids"] == [], (
+        "a block that declares nothing transcribes to nothing, and the door "
+        "compares that against a declared set that is also empty"
+    )
+    for casting in castings:
+        assert casting["requirement_ids"] is not None
+
+
+def test_step_10_leaves_a_recorded_split_reason_whole(archive: Path) -> None:
+    """A recorded decision is not a schema gap.
+
+    `split_reason` present is somebody's answer to "why can these surfaces not
+    share an owner", and adding entries to it would be this tool editing a
+    decision rather than migrating a schema. Guarded on the KEY, like every
+    other default here.
+    """
+    kept = {"FR-001": "the door and its report cannot share an owner"}
+    (archive / "castings").mkdir()
+    (archive / "castings" / "manifest.json").write_text(
+        json.dumps(_manifest(
+            {**_casting(1, "FR-001", "FR-002"), "split_reason": dict(kept)},
+            _casting(2, "FR-001"),
+        )),
+        encoding="utf-8",
+    )
+    _migrate(archive)
+    castings = json.loads(
+        (archive / "castings" / "manifest.json").read_text()
+    )["castings"]
+    assert castings[0]["split_reason"] == kept, "untouched"
+    assert set(castings[1]["split_reason"]) == {"FR-001"}, "filled where absent"
+
+
+def test_the_migrated_manifest_does_not_trip_the_f0_9_ownership_or_span_door(
+    archive: Path,
+) -> None:
+    """AC-049 / FR-054 — "a migrated archive does not trip it".
+
+    Driven through the door's OWN helpers rather than a restatement of its
+    rules: `_owned_requirement_ids` decides presence, `_recorded_split_reasons`
+    collects the waivers from both the manifest and the castings, and
+    `_requirement_span_rows` computes the spans. If casting 7 changes any of the
+    three, this test changes with it instead of quietly asserting a rule the
+    door no longer applies.
+
+    The fixture is the shape that makes both dimensions bite: FR-001 owned by
+    three castings, which is above `REQUIREMENT_SPAN_MAX` and would be refused
+    with no reason recorded against it.
+    """
+    from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
+    from foundry_mcp.tools.foundry_validate import (
+        REQUIREMENT_IDS_SCHEMA_FLOOR,
+        REQUIREMENT_SPAN_MAX,
+        _owned_requirement_ids,
+        _recorded_split_reasons,
+        _requirement_span_rows,
+    )
+
+    (archive / "castings").mkdir()
+    (archive / "castings" / "manifest.json").write_text(
+        json.dumps(_manifest(
+            _casting(1, "FR-001", "AC-001"),
+            _casting(2, "FR-001"),
+            _casting(3, "FR-001", "AC-002"),
+        )),
+        encoding="utf-8",
+    )
+    _migrate(archive)
+
+    manifest = json.loads((archive / "castings" / "manifest.json").read_text())
+    castings = manifest["castings"]
+    state = json.loads((archive / "state.json").read_text())
+    assert state["archive_schema_version"] >= REQUIREMENT_IDS_SCHEMA_FLOOR, (
+        "the schema bump is what makes this door bite at all"
+    )
+
+    ownership = {str(c["id"]): _owned_requirement_ids(c) for c in castings}
+    assert all(present for present, _ in ownership.values()), (
+        "no casting reports `missing_requirement_ids`"
+    )
+    for casting in castings:
+        _present, owned = ownership[str(casting["id"])]
+        declared = set(declared_requirement_ids(casting["spec_text"]))
+        assert owned == declared, (
+            "neither `declared_but_not_owned` nor `owned_but_not_declared`"
+        )
+
+    spec_ids = {
+        rid for c in castings for rid in declared_requirement_ids(c["spec_text"])
+    }
+    rows = _requirement_span_rows(
+        spec_ids, castings, ownership, _recorded_split_reasons(manifest, castings)
+    )
+    over = [row for row in rows if row["span"] > REQUIREMENT_SPAN_MAX]
+    assert [row["id"] for row in over] == ["FR-001"], "the fixture's shared id"
+    assert all(row["split_reason"] for row in over), (
+        "a span above the maximum with no recorded reason is what F0.9 refuses"
+    )
+
+
+def test_steps_11_and_12_create_the_containers_and_claim_no_measurement(
+    archive: Path,
+) -> None:
+    """CT-001 / CT-002 — an empty ledger and an empty directory, and no files.
+
+    An empty `concerns.json` asserts that no concern was RECORDED, which is true
+    of every archive written before `Foundry-Concern` existed, and its reader
+    answers a missing file and an empty list the same way. An empty `rosters/`
+    asserts that no roster was persisted, likewise.
+
+    A `rosters/<stream>.json` holding zero items would be the lie the header
+    names: it asserts a stream DERIVED its item list and found nothing, and
+    `Foundry-Roster` would then refuse the real derivation with `ROSTER_EXISTS`
+    on the strength of a file this tool invented. So the directory is created
+    and nothing is put in it.
+    """
+    from foundry_mcp.tools.concerns import CONCERNS_COLLECTION_KEY, CONCERNS_FILENAME
+    from foundry_mcp.tools.rosters import ROSTERS_DIRNAME
+
+    summary = _migrate(archive)
+    assert _outcomes(summary)["concerns"] == "created"
+    assert _outcomes(summary)["rosters"] == "created"
+
+    ledger = json.loads((archive / CONCERNS_FILENAME).read_text())
+    assert ledger == {CONCERNS_COLLECTION_KEY: []}
+
+    rosters = archive / ROSTERS_DIRNAME
+    assert rosters.is_dir()
+    assert list(rosters.iterdir()) == [], (
+        "a roster file holding zero items would assert a derivation nobody made"
+    )
+
+    # And the reader casting 1 ships agrees the ledger is empty rather than
+    # broken — the container is a shape its consumer already expects.
+    from foundry_mcp.tools.concerns import read_concerns
+
+    records, problem = read_concerns(archive)
+    assert problem is None and records == []
+
+
+def test_dry_run_writes_none_of_the_five_new_steps(archive: Path) -> None:
+    """`--dry-run` reports what would change and writes nothing at all.
+
+    The five new steps include the only two that REWRITE rather than create, so
+    the honest-dry-run rule matters more to them than to the seven above: an
+    operator inspecting an archive before committing to a rewrite of its
+    coverage totals must be able to see the rows without moving them.
+    """
+    (archive / "castings").mkdir()
+    (archive / "castings" / "manifest.json").write_text(
+        json.dumps(_manifest(_casting(1, "FR-001"))), encoding="utf-8"
+    )
+    (archive / "stream-rollup.json").write_text(
+        json.dumps({"cycles": {
+            "29": {"trace": _rollup_bucket(1084, 542, 8, OT_032_RECORDS)},
+        }}),
+        encoding="utf-8",
+    )
+
+    before = _tree_hash(archive)
+    summary = _migrate(archive, "--dry-run")
+    assert summary["dry_run"] is True
+    assert summary["migrated"] is True, "it reports what it WOULD do"
+    assert _outcomes(summary)["rollup_totals"] == "upgraded"
+    assert _outcomes(summary)["casting_ownership"] == "upgraded"
+    assert _outcomes(summary)["concerns"] == "created"
+    assert _outcomes(summary)["rosters"] == "created"
+    assert _tree_hash(archive) == before, "and writes not one byte of it"
+
+
+#: NFR-010's three named archives. `foundry-archive/` is git-ignored, so each
+#: is present in a working checkout and absent from a clean clone — the same
+#: skipif discipline the grand-vulture test above uses, one archive wider.
+REAL_ARCHIVES = {
+    "daring-orca": REPO_ROOT / "foundry-archive" / "daring-orca",
+    "thunder-viper": REPO_ROOT / "foundry-archive" / "thunder-viper",
+    "grand-vulture": REPO_ROOT / "foundry-archive" / "grand-vulture",
+}
+
+
+@pytest.mark.parametrize("name", sorted(REAL_ARCHIVES))
+def test_the_schema_4_migration_is_idempotent_on_every_named_archive(
+    name: str, tmp_path: Path
+) -> None:
+    """NFR-010 / CT-018 — "idempotent, verified against the three archives".
+
+    THE COPY IS THE TEST'S FIRST ASSERTION, not its setup. The real archives are
+    NEVER opened for writing — that is the fixture register's own rule and it is
+    load-bearing here, because two of these three are the published baselines
+    NFR-001 compares every run against and the third is this effort's own
+    predecessor run. A migration that mutated one would destroy the numbers the
+    release is measured by, and no later test could tell.
+
+    The three cover three different shapes: daring-orca is the schema-3 archive
+    with the nine over-100% rows and the eight-casting manifest carrying no
+    `requirement_ids`; thunder-viper ran on the 4.7.3 cache and has no
+    escalation ledger, no spend ledger and a counter that stayed at 0 for all 22
+    cycles; grand-vulture is the AC-026 acceptance fixture. Idempotency has to
+    hold on all three or it is a property of one fixture.
+    """
+    source = REAL_ARCHIVES[name]
+    if not source.exists():
+        pytest.skip(f"{name} not present in this checkout: {source}")
+
+    source_hash = _tree_hash(source)
+    dest = tmp_path / name
+    shutil.copytree(source, dest)
+
+    first = _migrate(dest)
+    assert first["failure_tokens"] == []
+    assert first["archive_schema_version"] == ARCHIVE_SCHEMA_VERSION
+
+    after_first = _tree_hash(dest)
+    second = _migrate(dest)
+    assert second["migrated"] is False, _outcomes(second)
+    assert set(_outcomes(second).values()) == {"no-op"}, _outcomes(second)
+    assert _tree_hash(dest) == after_first, "the second run writes not one byte"
+
+    assert _tree_hash(source) == source_hash, (
+        "the real archive was opened for writing — it is a published baseline "
+        "and this suite never touches it"
+    )
