@@ -26,7 +26,7 @@ All foundry runs live under ARCHIVE_DIR at the project root.
 # instance of the class it was written to close.
 #
 # So the primitive lives HERE, in the package's leaf module -- the one thing
-# both ``foundry.py`` and ``foundry_orchestrator.py`` already import, and which
+# both ``foundry.py`` and the orchestration package already import, and which
 # imports nothing from the package itself. Every module can reach it with no
 # risk of closing a cycle in the import graph, which is the reason the two
 # tolerant loaders were separate copies in the first place.
@@ -788,6 +788,32 @@ def unreported_dispatch_summary(
 #: degradation to get at it. A constant behind a `getattr` default is a
 #: constant that can silently go missing; a constant in the leaf both readers
 #: already import cannot.
+#:
+#: fallout D-013 — ITS HOME IS `schemas/vocab.py`, AND THE MOVE IS NOT THIS
+#: COMMIT'S. This is a closed vocabulary (the two dispatch verbs `spawns.log`
+#: records, and the run phase each maps onto), and the module convention is
+#: that closed vocabularies live in `schemas/vocab.py` and every consumer
+#: derives from them. It cannot move from here in isolation, for a reason that
+#: is structural rather than a preference:
+#:
+#:   * this module may not import it back. The leaf contract is `json` and
+#:     `pathlib` and nothing from the package — `scripts/measure-run.py`
+#:     depends on that being true — and the contract's own rule for exactly
+#:     this case is that "a name from `vocab` or a `tools/` module is passed
+#:     IN", which is what `unreported_dispatch_summary(phase_of_dispatch=...)`
+#:     already does. Nothing in this module reads the mapping.
+#:   * deleting it here is not additive. `orchestration/spend.py` imports the
+#:     name FROM this module, so a declaration in `vocab.py` and a deletion
+#:     here is an ImportError for the whole package until that import is
+#:     repointed — and re-declaring it in `vocab.py` while leaving this
+#:     binding is a second definition of one name, which the package-wide
+#:     single-definition guard refuses by construction.
+#:
+#: So the move is ONE commit that declares it in `vocab.py` and repoints both
+#: consumers at once, and that commit belongs to the casting that owns
+#: `orchestration/spend.py`. It is raised as a cross-casting concern rather
+#: than half-done here; `tests/test_foundry_state_readers.py` carries the
+#: shrink-only inventory of the assembly still derived outside this module.
 DISPATCH_PHASE_TO_RUN_PHASE = {"cast": "F1", "grind": "F3"}
 
 
@@ -874,6 +900,33 @@ def current_cycle(run_dir: Path) -> int:
     2.5 propagated silently into responses and onto every row of a synthesized
     verdict. ``bool`` is excluded for ``derive_cycle_count``'s reason: ``True``
     is not cycle 1.
+
+    fallout D-012 — THIS IS THE ONE READER, AND THE REASON THERE WERE TWO IS
+    GONE. ``tools/foundry.py#_server_cycle`` is a byte-equivalent second copy:
+    same read, same coercion, same 0 for missing/absent/malformed. Its own
+    docstring stated the justification — "the orchestrator imports THIS module,
+    so importing back would close a cycle in the import graph" — and that
+    justification no longer holds: ``foundry_orchestrator`` is deleted, and
+    ``tools/foundry.py`` already imports this module at module top. A second
+    copy costs exactly what D-119 cost when the two disagreed: the SAME finding
+    filed through Foundry-Defect and through Foundry-Sync landed in different
+    cycles, and a class that recurred three straight cycles evaded ST-002
+    escalation because mixed-door filing broke the consecutive run.
+
+    THE CONTRACT THE SECOND COPY MUST BE DELETED ONTO, stated here so the
+    repoint is a substitution and not a re-decision:
+
+      * the stamp is SERVER-OWNED. A caller-supplied ``cycle`` is never trusted
+        against it, and the degraded case resolves to the same deterministic 0
+        both filing doors already agreed on for a corrupt CONTAINER — trusting
+        the caller there is exactly what ST-001 exists to remove.
+      * what the caller CLAIMED is not discarded. Both doors persist it beside
+        the stamp as ``declared_cycle``; that is the door's field to write, not
+        this reader's, and nothing here reads it.
+
+    The deletion itself is `tools/foundry.py`'s, which is another casting's
+    file; `tests/test_foundry_state_readers.py` carries the shrink-only
+    inventory that names the one remaining copy and fails on a second.
     """
     state, _ = read_document(run_dir / "state.json")
     return as_count(state.get("cycle"))
@@ -1575,11 +1628,24 @@ def unreported_dispatch_inputs(run_dir: Path) -> dict:
          "problem": str | None}             # the FIRST unreadable ledger
 
     ``unreported_dispatch_summary`` above was already the consolidated RULE; what
-    was still derived twice was this ASSEMBLY — `foundry_orchestrator` built it
-    from `_spawn_rows` / `_stream_roster` / `_stream_dispatch_cycles` /
+    was still derived twice was this ASSEMBLY — the orchestrator built it from
+    `_spawn_rows` / `_stream_roster` / `_stream_dispatch_cycles` /
     `_spend_ledger_rows` and `foundry_report._read_dispatch_summary` built it
     again from three inline walks. Hosting it beside the rule is what makes
     "one derivation, two renderings" true of the INPUT as well as the output.
+
+    fallout D-013 — ONE HALF IS CLOSED AND THE OTHER IS NAMED.
+    ----------------------------------------------------------
+    `foundry_report._read_dispatch_summary` calls THIS function now and walks
+    no ledger of its own. The orchestrator's four helpers survived the split
+    into `orchestration/spend.py#_spawn_rows`, `#_spend_ledger_rows`,
+    `#_stream_dispatch_cycles` and `#_dispatch_pairs`, each still re-spelling
+    `read_jsonl`'s splitlines/json.loads/isinstance loop and its own walk of
+    the roll-up. That module is another casting's file, so the second copy is
+    RAISED rather than reached into: one derivation of the answer over two
+    derivations of the question is the same defect whichever module holds the
+    duplicate. `tests/test_foundry_state_readers.py` carries the shrink-only
+    inventory that names it and fails the moment a third appears.
 
     THE ROSTER AND THE CYCLE MAP COME OFF ONE WALK, because they are the same
     fact one key up — the roll-up's cycle bucket — and walking the document

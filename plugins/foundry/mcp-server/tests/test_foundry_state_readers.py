@@ -1181,3 +1181,163 @@ def test_the_done_gate_and_the_seal_apply_one_heading_rule(report_run) -> None:
     assert fs.markdown_headings(text) == {
         heading for heading, _ in fs.markdown_sections(text)[1]
     }
+
+
+# ---------------------------------------------------------------------------
+# fallout D-012 / D-013 — the two derivations still held OUTSIDE this module.
+#
+# Both are shrink-only inventories, the shape the package's own boundary guard
+# already uses (`_LAYERING_DEBT`, `_KNOWN_DUPLICATION`): every row is a REAL
+# second derivation of a rule this module hosts, named with the module that
+# holds it and why this casting could not remove it. A NEW second derivation
+# fails immediately, and a row whose duplicate is GONE fails too — so the table
+# shrinks and never grows quietly, and the casting that owns the named file
+# closes its row by deleting both the copy and the row.
+#
+# They are not exemptions. The rule they stand in for is asserted right beside
+# them: exactly one implementation, in `foundry_state`, plus whatever this
+# table admits by name.
+# ---------------------------------------------------------------------------
+
+#: fallout D-012 — the second reader of `state.json["cycle"]`, by module and
+#: symbol. Byte-equivalent to `current_cycle`: same read, same coercion, same
+#: 0 for missing/absent/malformed. Its docstring's justification ("importing
+#: back would close a cycle in the import graph") is stale — the orchestrator
+#: is deleted and `tools/foundry.py` imports this module at module top — so
+#: the row is a deletion waiting on the casting that owns that file.
+_SECOND_CYCLE_READERS: dict[str, str] = {
+    "foundry.py#_server_cycle": (
+        "tools/foundry.py is another casting's file. The deletion is a "
+        "substitution onto `foundry_state.current_cycle`, whose docstring now "
+        "states the contract it must be deleted onto."
+    ),
+}
+
+#: fallout D-013 — the second assembly of `unreported_dispatch_inputs`' three
+#: ledgers, by module and symbol. `foundry_report._read_dispatch_summary`
+#: closed its half by calling the leaf; these four survived the split and each
+#: still re-spells `read_jsonl`'s line loop or walks the roll-up again.
+_SECOND_DISPATCH_ASSEMBLIES: dict[str, str] = {
+    "orchestration/spend.py#_spawn_rows": "spawns.log, re-spelling read_jsonl",
+    "orchestration/spend.py#_spend_ledger_rows": "spend.jsonl, likewise",
+    "orchestration/spend.py#_stream_dispatch_cycles": "a second roll-up walk",
+    "orchestration/spend.py#_dispatch_pairs": "the assembly those three feed",
+}
+
+
+def _package_modules() -> list[Path]:
+    """Every shipped `.py` under the installed package, `__pycache__` aside."""
+    pkg = Path(fs.__file__).resolve().parent.parent
+    return sorted(p for p in pkg.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+def _module_key(path: Path, pkg_root: Path) -> str:
+    rel = path.relative_to(pkg_root)
+    return "/".join(rel.parts[1:]) if rel.parts[0] == "tools" else str(rel)
+
+
+def _defined_functions(path: Path) -> set[str]:
+    import ast
+
+    return {
+        node.name for node in ast.parse(path.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+
+def test_the_cycle_counter_has_one_reader_and_any_second_is_named() -> None:
+    """fallout GI-024 / OT-010 — `current_cycle` is the implementation.
+
+    The subject is the SYMBOL, not the behaviour: two readers that agree today
+    are two readers that can disagree tomorrow, and D-119 is what that cost
+    when they did — the same finding filed at two doors landed in two cycles
+    and a class that recurred three straight cycles evaded process-fixes
+    ST-002 escalation.
+    So the pin counts definitions rather than comparing outputs.
+    """
+    pkg_root = Path(fs.__file__).resolve().parent.parent
+    found: dict[str, str] = {}
+    for module in _package_modules():
+        for name in _defined_functions(module):
+            if name in ("current_cycle", "_server_cycle", "server_cycle"):
+                found[f"{_module_key(module, pkg_root)}#{name}"] = name
+
+    assert "foundry_state.py#current_cycle" in found, (
+        "the leaf no longer defines `current_cycle`; it is the implementation "
+        "every other reader is repointed ONTO, so its absence is the defect "
+        "and not the fix."
+    )
+    second = {k for k in found if k != "foundry_state.py#current_cycle"}
+
+    unnamed = second - set(_SECOND_CYCLE_READERS)
+    assert not unnamed, (
+        f"{sorted(unnamed)} reads the cycle counter beside "
+        f"`foundry_state.current_cycle` and is named nowhere. Call the leaf, "
+        f"or add a row to _SECOND_CYCLE_READERS saying why you could not."
+    )
+    stale = set(_SECOND_CYCLE_READERS) - second
+    assert not stale, (
+        f"{sorted(stale)} is named in _SECOND_CYCLE_READERS and no longer "
+        f"exists. The table only shrinks: delete the row with the copy."
+    )
+
+
+def test_the_dispatch_input_assembly_has_one_home_and_any_second_is_named() -> None:
+    """fallout GI-024 / FR-008 — `unreported_dispatch_inputs` is the assembly.
+
+    The RULE has been shared since D-047/D-048; what was derived twice was the
+    QUESTION — which ledgers, walked how, into which roster and cycle map. One
+    derivation of the answer over two derivations of its inputs is the same
+    defect, and the report's half is closed by calling the leaf.
+    """
+    pkg_root = Path(fs.__file__).resolve().parent.parent
+    watched = {
+        "_spawn_rows", "_spend_ledger_rows", "_stream_dispatch_cycles",
+        "_dispatch_pairs",
+    }
+    found = {
+        f"{_module_key(module, pkg_root)}#{name}"
+        for module in _package_modules()
+        for name in _defined_functions(module) & watched
+    }
+
+    assert "foundry_state.py#unreported_dispatch_inputs" not in found
+    assert hasattr(fs, "unreported_dispatch_inputs"), (
+        "the leaf no longer hosts the assembly the rule runs over"
+    )
+
+    unnamed = found - set(_SECOND_DISPATCH_ASSEMBLIES)
+    assert not unnamed, (
+        f"{sorted(unnamed)} assembles the dispatch inputs beside "
+        f"`foundry_state.unreported_dispatch_inputs` and is named nowhere. "
+        f"Call the leaf, or add a row saying why you could not."
+    )
+    stale = set(_SECOND_DISPATCH_ASSEMBLIES) - found
+    assert not stale, (
+        f"{sorted(stale)} is named in _SECOND_DISPATCH_ASSEMBLIES and no "
+        f"longer exists. The table only shrinks: delete the row with the copy."
+    )
+
+
+def test_the_report_assembles_no_dispatch_inputs_of_its_own() -> None:
+    """fallout D-013 — the half this casting owns, asserted as a property.
+
+    `_read_dispatch_summary` supplies the run's inputs and judges nothing; the
+    walk is the leaf's. Driven rather than read: the summary the report builds
+    must equal the one built straight off the leaf's assembly, so a walk
+    re-inlined into the report would have to reproduce the leaf byte for byte
+    to pass — which is the drift, not an escape from it.
+    """
+    import inspect
+
+    from foundry_mcp.tools import foundry_report as fr
+
+    source = inspect.getsource(fr._read_dispatch_summary)
+    assert "unreported_dispatch_inputs(" in source, (
+        "the report assembles the dispatch inputs itself again (D-013)"
+    )
+    for walked in ("splitlines()", 'read_jsonl(', 'read_document('):
+        assert walked not in source, (
+            f"{walked!r} in `_read_dispatch_summary`: the ledger walk is "
+            f"`foundry_state.unreported_dispatch_inputs`', not this module's."
+        )
