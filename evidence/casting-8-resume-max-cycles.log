@@ -1,0 +1,15 @@
+# evidence-cmd: cd plugins/foundry && for p in "argument-hint: [[--max-cycles N]]" "STEP 5: THREAD" "REWRITES \`state.json.max_cycles\`" "is unbounded, and the default" "Omitting the flag changes nothing" "\`grind_start\` and \`assay_fail\`" "A value BELOW the cycle the run is on halts it at the next GRIND door" "reason \`cap_reached\`" "never a refusal" "named terminal state distinct from \`DONE\`" "STEP 6: RESUME SELECTED RUN" "SAME self-target preflight"; do q=$(printf "%s" "$p" | sed "s/\[\[/\"[/; s/\]\]/]\"/"); printf "%s\t%s\n" "$(grep -c -F -- "$q" commands/resume.md)" "$q"; done
+# evidence-for: FR-020, FR-047, US-006
+
+1	argument-hint: "[--max-cycles N]"
+1	STEP 5: THREAD
+1	REWRITES `state.json.max_cycles`
+1	is unbounded, and the default
+1	Omitting the flag changes nothing
+1	`grind_start` and `assay_fail`
+1	A value BELOW the cycle the run is on halts it at the next GRIND door
+1	reason `cap_reached`
+1	never a refusal
+1	named terminal state distinct from `DONE`
+1	STEP 6: RESUME SELECTED RUN
+1	SAME self-target preflight
