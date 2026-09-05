@@ -1342,7 +1342,34 @@ _SECURITY_RE = re.compile(
       # --- D-093: trusting unchecked input -----------------------------
       | untrusted \s+ (?:input|data|user|source|value)
       | unvalidated | input \s+ validation
-      | validat (?:e|es|ed|ing|ion|or)
+
+      # --- fallout D-056: the verb form, BOUND to a credential document --
+      #
+      # `validat (?:e|es|ed|ing|ion|or)` sat BARE in the group directly above
+      # and matched the ordinary English words validate / validated /
+      # validator wherever they appeared, with no phrase binding at all. That
+      # contradicted this block's own discipline four paragraphs up ("terms
+      # that are ordinary English on their own are required to appear in their
+      # security sense as a phrase"), and the intended phrase form
+      # `input \s+ validation` already sat on the line before it — so the bare
+      # form added only false positives. It refused two TEMPER_CANDIDATE
+      # observations whose prose named a validator and fired the audit
+      # tripwire for both, on a package whose entire subject is doors that
+      # validate filings: CT-017 admits exactly ONE error on that door and
+      # this was not it, so the only channel a TEMPER-on PROVE has for an
+      # off-row probe idea (AC-018 / FR-017) had nowhere to land.
+      #
+      # THE ONE SENSE THE BARE FORM CARRIED THAT NO OTHER MEMBER DOES is a
+      # claim that a credential DOCUMENT is validated — "the certificate is
+      # validated", "the JWT is validated" — because neither noun is a member
+      # on its own and the TLS line above wants the noun phrase
+      # (`certificate validation`), not the verb. Driven both ways before the
+      # narrowing: with the bare form removed the D-093 battery's
+      # input-validation case still matches (on `untrusted input`), and those
+      # two claims stopped matching. So that sense is kept HERE, as a phrase,
+      # which is what the discipline asks for. The gap is at most two words so
+      # "is/are/was/never" reach the verb and a sentence away does not.
+      | (?:certificates?|jwts?) \s+ (?:\w+ \s+){0,2}? validat\w*
 
       # --- D-093: availability and origin controls ---------------------
       | rate [-\s]? limit\w* | throttl\w*

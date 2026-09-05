@@ -716,6 +716,161 @@ def test_a_security_term_inside_an_identifier_does_not_match() -> None:
 
 
 # ---------------------------------------------------------------------------
+# fallout D-056 — the bare `validat*` alternation, and the floor it broke.
+#
+# CT-017 admits exactly ONE error on Foundry-Observation with classification
+# TEMPER_CANDIDATE: "classification not in OBSERVATION_CLASSES". Two filings
+# carrying a VALID classification were refused naming SECURITY_PROPERTY_CLAIM
+# and the audit tripwire fired for both, because `_SECURITY_RE` carried
+# `validat (?:e|es|ed|ing|ion|or)` BARE — matching the ordinary English words
+# wherever they appeared, with no phrase binding, against the pattern block's
+# own stated discipline.
+#
+# The impact is not one refused filing. AC-018 / FR-017 make TEMPER_CANDIDATE
+# the ONLY channel a TEMPER-on PROVE has for an off-row probe idea, and
+# GI-027 makes those candidates TEMPER's roster; this package's whole subject
+# is doors that validate filings, so a probe idea about a validator could not
+# be written in English without tripping the predicate.
+#
+# The two strings below are VERBATIM from the D-056 ledger record — the prose
+# a stream actually filed — for the reason the D-090/D-093 battery gives about
+# itself: a keyword probe would have been written around the pattern.
+# ---------------------------------------------------------------------------
+
+TEMPER_CANDIDATE_PROBE_PROSE = [
+    (
+        "names-a-validator",
+        "Probe idea: the F0.9 corrupt-artifact guard judges some manifest "
+        "member shapes and not others. Driven incidentally while building a "
+        "harness — a manifest whose casting carries `must_haves` as a LIST "
+        "rather than a mapping raises an uncaught AttributeError ('list' "
+        "object has no attribute 'get') out of foundry_validate_castings, "
+        "while the same call refuses cleanly with a named corrupt_artifacts "
+        "entry when `waves[0]` is a list instead of an object. Worth a "
+        "systematic pass: enumerate every manifest member the validator "
+        "dereferences by key and check which ones the shape guard actually "
+        "covers, since the guard's whole promise is that a document it had "
+        "to guess at is refused rather than acted on.",
+    ),
+    (
+        "says-the-fields-are-validated",
+        "Probe idea: the two provenance fields on a defect record are "
+        "validated asymmetrically, deliberately and with a documented "
+        "rationale. One is refused at both doors when it names an id the "
+        "ledger does not carry; the sibling field is accepted and persisted "
+        "verbatim in the same case, and also when it names a record of the "
+        "wrong tier, with the door reporting that nothing was closed. "
+        "Driven: both doors accepted the dangling value and stored it on the "
+        "record. The abstention is defensible against the contract's errors "
+        "column, so this is not filed as a verdict — the probe worth driving "
+        "is downstream: sweep every reader of that field in the report "
+        "generator and in the measurement script and check whether any of "
+        "them counts a stored value as evidence a promotion happened, rather "
+        "than reading the closed record's own status.",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "label,description",
+    TEMPER_CANDIDATE_PROBE_PROSE,
+    ids=[c[0] for c in TEMPER_CANDIDATE_PROBE_PROSE],
+)
+def test_a_probe_idea_about_a_validator_is_not_a_security_claim(
+    label: str, description: str
+) -> None:
+    """fallout D-056 — the bare `validat*` alternation is gone.
+
+    Both strings were refused by `is_security_property_claim` before the
+    narrowing: `_SECURITY_RE.search` returned 'validator' at offset 509 for
+    the first and 'validated' at offset 61 for the second, and each filing
+    came back naming SECURITY_PROPERTY_CLAIM with the tripwire fired. Neither
+    asserts a security property at all; each names a validator the way any
+    engineering prose in this package names one.
+
+    Asserted through the SECURITY predicate specifically, and not through
+    `never_demote_class` for both, because the first string also carries the
+    literal `must_haves` — a deliberate member of `_SPEC_CLAIM_RE`, since a
+    finding that a casting's must_haves are unmet IS a spec-required-behaviour
+    claim. That is a different predicate with a different rationale, filed
+    separately in concerns.md and NOT narrowed here; this test is about the
+    security entry and says so rather than asserting a floor it does not own.
+    """
+    finding = {"description": description}
+    assert not vocab.is_security_property_claim(finding), (
+        f"{label}: the security denylist still matches a probe idea that "
+        f"asserts no security property — {description[:80]!r}..."
+    )
+    assert not vocab.is_security_property_text(description), label
+    assert vocab.never_demote_class(finding) != vocab.SECURITY_PROPERTY_CLAIM, (
+        f"{label}: the dispatcher still answers SECURITY_PROPERTY_CLAIM, so "
+        f"the refusal and the audit tripwire both still name it (AC-007)"
+    )
+
+
+def test_the_probe_naming_only_a_validator_is_demotable_end_to_end() -> None:
+    """fallout D-056 / CT-017 — the whole point: the candidate is ACCEPTED.
+
+    The second string carries no spec vocabulary of any kind, so once the
+    security entry stops matching, `never_demote_class` returns None and the
+    observation door has nothing left to refuse on — which is what AC-018
+    needs, TEMPER_CANDIDATE being the only channel an off-row probe idea has.
+    """
+    description = TEMPER_CANDIDATE_PROBE_PROSE[1][1]
+    assert vocab.never_demote_class({"description": description}) is None
+
+
+GENUINE_VALIDATION_CLAIMS = [
+    (
+        "input-validation-phrase",
+        "The handler's input validation is claimed in the docstring and "
+        "absent from the code.",
+    ),
+    (
+        "unvalidated",
+        "The unvalidated path segment reaches open() directly.",
+    ),
+    (
+        "certificate-verb-form",
+        "The comment says the certificate is validated, but the chain is "
+        "never checked.",
+    ),
+    (
+        "jwt-verb-form",
+        "The docstring claims the JWT is validated before use; nothing "
+        "validates it.",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "label,description",
+    GENUINE_VALIDATION_CLAIMS,
+    ids=[c[0] for c in GENUINE_VALIDATION_CLAIMS],
+)
+def test_a_genuine_validation_security_claim_is_still_refused(
+    label: str, description: str
+) -> None:
+    """fallout D-056's ceiling — GI-004 is not traded for the floor.
+
+    Narrowing a never-demote pattern is the direction the module calls its own
+    unacceptable failure mode, so the removal owes this list as much as it
+    owes the two probe strings. Each case is a claim that a validation
+    property is broken, and each reaches the denylist through a PHRASE:
+    `input validation` and `unvalidated` were already members on the line
+    above the bare form, and the credential-document verb form
+    (`certificate`/`JWT` ... `validated`) is the one sense the bare
+    alternation carried that no other member did, kept as a bounded phrase.
+    """
+    finding = {"description": description}
+    assert vocab.is_security_property_claim(finding), (
+        f"{label}: the narrowing dropped a genuine security claim — "
+        f"{description!r}"
+    )
+    assert vocab.never_demote_class(finding) == vocab.SECURITY_PROPERTY_CLAIM, label
+
+
+# ---------------------------------------------------------------------------
 # D-083 — the audit record names the class the refusal names (AC-007 / OT-005
 # / CT-003).
 #
