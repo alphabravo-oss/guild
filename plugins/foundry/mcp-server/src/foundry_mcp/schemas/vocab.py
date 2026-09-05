@@ -899,6 +899,45 @@ HANDOFF_EVENT_LEAD_FIX = "lead_fix"
 # Run artifacts and terminal states (ST-008 / CT-013 / CT-014 / CT-016 / GI-006).
 # ---------------------------------------------------------------------------
 
+# CLOSED VOCABULARY — GI-001's loop, as the ids a run passes through and the
+# name each id is printed under. The ORDER is the ladder's: a renderer walks
+# this tuple to draw the phase list, so a phase inserted here appears in the
+# right place in every rendering rather than in whichever hand-typed copy the
+# author remembered.
+#
+# fallout D-015 — WHY IT IS HERE AND NOT BESIDE A RENDERER. It was hand-typed
+# twice: `display.py#_PHASE_NAMES` as a mapping and
+# `orchestration/guidance.py#_format_status_display` as a list of pairs, each
+# knowing the same ten rows and neither knowing the other. Holmes `share-8`
+# names the shape ("phase ladder table and ANSI palette are hand-typed in three
+# modules"), and the module convention answers it: closed vocabularies live
+# here and every consumer derives from them.
+#
+# HALTED IS NOT A ROW, DELIBERATELY. This ladder enumerates the phases a run
+# passes THROUGH; `RUN_PHASE_HALTED` below is where a run stops instead of
+# continuing along it, which is why the status renderer draws it as its own
+# line and not as an eleventh step (D-137).
+#
+# Extend only via phase-level RFC.
+PHASE_LADDER: tuple[tuple[str, str], ...] = (
+    ("F0", "RESEARCH"),
+    ("F0.5", "DECOMPOSE"),
+    ("F0.9", "VALIDATE"),
+    ("F1", "CAST"),
+    ("F2", "INSPECT"),
+    ("F3", "GRIND"),
+    ("F4", "ASSAY"),
+    ("F5", "TEMPER"),
+    ("F5.5", "NYQUIST"),
+    ("F6", "DONE"),
+)  # 10 phases
+
+#: The same ladder as a lookup, for a renderer that has an id and wants the
+#: name. DERIVED from `PHASE_LADDER` so adding a phase needs one edit and the
+#: two shapes cannot come to disagree — which is exactly what the two
+#: hand-typed copies did.
+PHASE_NAMES: dict[str, str] = dict(PHASE_LADDER)
+
 #: ST-008 — a run that hits `max_cycles` reaches this phase by a SUCCESSFUL
 #: transition, not a refusal. HALTED is a named terminal state and is NOT
 #: DONE: the report is generated and every open LIVE and LATENT defect is

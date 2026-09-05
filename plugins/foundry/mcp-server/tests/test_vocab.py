@@ -1023,6 +1023,8 @@ C1_CONTRACT_EXPORTS = (
     ("FIX_AUTHORS", frozenset),
     ("is_test_file", "callable"),
     ("HANDOFF_EVENT_LEAD_FIX", str),
+    ("PHASE_LADDER", tuple),
+    ("PHASE_NAMES", dict),
     ("RUN_PHASE_HALTED", str),
     ("SPEND_LEDGER_FILENAME", str),
     ("REPORT_MD_FILENAME", str),
@@ -2808,6 +2810,112 @@ def test_the_hardening_backlog_sits_beside_the_latent_backlog() -> None:
     assert order.index("stream_coverage_per_cycle") == (
         order.index("inspect_modes_per_cycle") + 1
     ), "both are per-cycle facts about the same INSPECTs"
+
+
+# ---------------------------------------------------------------------------
+# fallout D-015 — the run-phase ladder, declared once.
+# ---------------------------------------------------------------------------
+
+
+def test_the_phase_ladder_is_the_loop_gi_001_names_in_order() -> None:
+    """fallout GI-001's loop, as the ids a run passes through.
+
+    ORDER IS THE ASSERTION, not membership: a renderer walks this tuple to draw
+    the ladder, so a phase inserted in the wrong place is drawn in the wrong
+    place. HALTED is deliberately not a row — it is where a run stops instead
+    of continuing along the ladder, and the status renderer draws it as its own
+    line (D-137).
+    """
+    assert vocab.PHASE_LADDER == (
+        ("F0", "RESEARCH"),
+        ("F0.5", "DECOMPOSE"),
+        ("F0.9", "VALIDATE"),
+        ("F1", "CAST"),
+        ("F2", "INSPECT"),
+        ("F3", "GRIND"),
+        ("F4", "ASSAY"),
+        ("F5", "TEMPER"),
+        ("F5.5", "NYQUIST"),
+        ("F6", "DONE"),
+    )
+    assert len(vocab.PHASE_LADDER) == 10
+    assert vocab.RUN_PHASE_HALTED not in dict(vocab.PHASE_LADDER)
+
+
+def test_the_phase_name_lookup_is_derived_from_the_ladder() -> None:
+    """One declaration, two shapes — a renderer holding an id gets a name.
+
+    DERIVED, so adding a phase is one edit. The two hand-typed copies D-015
+    filed against were a mapping in `display.py` and a list of pairs in
+    `orchestration/guidance.py`, each knowing the same ten rows with nothing
+    comparing them; deriving one from the other is what makes that
+    unrepresentable rather than merely fixed.
+    """
+    assert vocab.PHASE_NAMES == dict(vocab.PHASE_LADDER)
+    assert vocab.PHASE_NAMES["F2"] == "INSPECT"
+    assert vocab.PHASE_NAMES.get("HALTED") is None
+
+
+def test_display_reads_the_phase_vocabulary_and_declares_none_of_its_own() -> None:
+    """fallout D-015 — the rendering module IMPORTS the ladder.
+
+    The defect is a second DECLARATION, so the pin is on the declaration and
+    not on the values: no top-level container in `display.py` may spell a run
+    phase id. Before this change it held `_PHASE_NAMES`, ten rows re-typed
+    beside the renderers that used them, and this failed naming it.
+
+    Scoped to the RUN ladder's ids on purpose. `_FORGE_PHASE_ICONS` is Forge's
+    spec phases (S0..S3, READY) — a different vocabulary for a different
+    machine, sharing only the word "phase", and folding it in here would make
+    the pin fire on a table that duplicates nothing.
+    """
+    import ast
+    from foundry_mcp.tools import display
+
+    ladder_ids = {pid for pid, _ in vocab.PHASE_LADDER}
+    source = Path(display.__file__).read_text(encoding="utf-8")
+    offenders = []
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign):
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names = [node.target.id]
+        else:
+            continue
+        spelled = {
+            n.value for n in ast.walk(node.value)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        }
+        if spelled & ladder_ids:
+            offenders.extend(names)
+
+    assert not offenders, (
+        f"display.py declares a run-phase table of its own again ({offenders}); "
+        f"the ladder is `vocab.PHASE_LADDER` and the lookup "
+        f"`vocab.PHASE_NAMES` (D-015)."
+    )
+    assert display.PHASE_NAMES is vocab.PHASE_NAMES
+
+
+def test_the_palette_display_publishes_is_the_palette_it_renders_with() -> None:
+    """fallout D-014 — the cross-module palette is a PUBLIC contract.
+
+    `orchestration/guidance.py#_format_status_display` renders the status
+    banner and the ladder with this palette. It reached the underscore
+    spellings across a module boundary, which is a published contract written
+    as if it were internal. The public names are the definitions now and the
+    private ones are aliases, so the two cannot drift while that module
+    repoints.
+    """
+    from foundry_mcp.tools import display
+
+    for public, private in (
+        ("RESET", "_RESET"), ("DIM", "_DIM"), ("GREEN", "_GREEN"),
+        ("BRED", "_BRED"), ("BGREEN", "_BGREEN"), ("BYELLOW", "_BYELLOW"),
+        ("BCYAN", "_BCYAN"), ("BWHITE", "_BWHITE"),
+    ):
+        assert getattr(display, public) == getattr(display, private), public
+        assert getattr(display, public).startswith("\033["), public
 
 
 def test_run_artifact_filenames_and_the_halted_state() -> None:

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 
-from foundry_mcp.schemas.vocab import STREAM_WIRE_IDS
+from foundry_mcp.schemas.vocab import PHASE_NAMES, STREAM_WIRE_IDS
 
 
 def _short_path(p: str) -> str:
@@ -59,16 +59,42 @@ _BYELLOW = f"{_BOLD}{_YELLOW}"
 _BCYAN = f"{_BOLD}{_CYAN}"
 _BWHITE = f"{_BOLD}{_WHITE}"
 
+# fallout D-014 — THE EIGHT CODES ANOTHER MODULE RENDERS WITH ARE PUBLISHED.
+#
+# `orchestration/guidance.py#_format_status_display` draws the status banner,
+# the phase ladder and the defect/verdict/stream lines with THIS palette, and
+# it reached the underscore spellings across a module boundary — a published
+# contract written as if it were internal, which is half of what D-014 files
+# against the split status renderer.
+#
+# ALIASES, NOT A SECOND PALETTE: each name below IS the binding above, so the
+# public and private spellings cannot drift the way `display.py`'s copy and
+# `tools/foundry.py`'s third copy already did (`_KNOWN_DUPLICATION`). Exactly
+# the eight `guidance.py` imports are published — a public name for a code
+# nobody outside renders with would be surface nothing asked for. When that
+# module repoints onto these, the private spellings keep their in-module
+# readers and nothing else changes.
+RESET = _RESET
+DIM = _DIM
+GREEN = _GREEN
+BRED = _BRED
+BGREEN = _BGREEN
+BYELLOW = _BYELLOW
+BCYAN = _BCYAN
+BWHITE = _BWHITE
+
 
 # ── Box drawing helpers ──────────────────────────────────────────────────────
 
 _W = 60  # default box width (inner)
 
-_PHASE_NAMES = {
-    "F0": "RESEARCH", "F0.5": "DECOMPOSE", "F0.9": "VALIDATE",
-    "F1": "CAST", "F2": "INSPECT", "F3": "GRIND", "F4": "ASSAY",
-    "F5": "TEMPER", "F5.5": "NYQUIST", "F6": "DONE",
-}
+# fallout D-015 — THE PHASE VOCABULARY IS `vocab.PHASE_NAMES` AND IS IMPORTED.
+# The ten rows were typed here AND again in
+# `orchestration/guidance.py#_format_status_display` as a list of pairs, so one
+# ladder had two declarations and nothing compared them. `schemas/vocab.py`
+# declares `PHASE_LADDER` (ordered, for a renderer walking the ladder) and
+# derives `PHASE_NAMES` from it (for a renderer holding an id); both readers
+# now derive from the one tuple.
 
 
 def _box(title: str, lines: list[str], width: int = _W, color: str = _BCYAN) -> str:
@@ -472,7 +498,7 @@ def _fmt_foundry_gate(r: dict) -> str:
         ])
     passed = r.get("passed", False)
     phase = r.get("phase", "?")
-    phase_name = _PHASE_NAMES.get(phase.upper(), phase)
+    phase_name = PHASE_NAMES.get(phase.upper(), phase)
 
     # Hide failed gate checks — the lead retries automatically, no need to surface
     if not passed:
@@ -497,7 +523,7 @@ def _fmt_foundry_mark_phase_complete(r: dict) -> str:
         reason = r.get("error", "")
         return f"{_DIM}Phase transition blocked: {reason}{_RESET}"
     phase = r.get("phase", "?")
-    phase_name = _PHASE_NAMES.get(phase, phase)
+    phase_name = PHASE_NAMES.get(phase, phase)
     return _foundry_display(f"F O U N D R Y  \u2192 {phase} {phase_name}", [
         f"  {r.get('message', '')}",
     ])
@@ -1097,7 +1123,7 @@ def _fmt_foundry_get_context(r: dict) -> str:
     verdicts = r.get("verdicts", {})
 
     phase = state.get("phase", "?")
-    phase_name = _PHASE_NAMES.get(phase, "")
+    phase_name = PHASE_NAMES.get(phase, "")
 
     lines = [
         f"  {_BWHITE}Spec:{_RESET}     {_short_path(state.get('spec_path', '')) or 'none'}",
