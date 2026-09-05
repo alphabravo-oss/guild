@@ -57,12 +57,14 @@ from foundry_mcp.tools import foundry_state
 # shim standing in for it. Everything this module drives —
 # `foundry_mark_defect_fixed`, `_PYTEST_DISCOVERY_PHRASE`,
 # `_split_pytest_node_id`, `_lead_lane_problem`, `_regression_test_problem`,
-# `_numstat_measurement` — is `orchestration/fix_gate.py`. The one exception is
-# `_decode_git_path`: `fix_gate.py` imports it, but `orchestration/width.py`
-# DEFINES it, so the unit test below names width — a failure there belongs in
-# the module that owns the decoder, not in the module that calls it.
+# `_numstat_measurement` — is `orchestration/fix_gate.py`. So, now, is
+# `_decode_git_path`: it used to be DEFINED in `orchestration/width.py` and
+# only ever READ from here, and GI-033 refuses a lifecycle-to-verifier read
+# with no exception in that direction, so it moved to its sole consumer rather
+# than keeping a `_LAYERING_DEBT` row excusing the edge. The unit test below
+# names fix_gate for the same reason it once named width — a failure there
+# belongs in the module that owns the decoder.
 from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
-from foundry_mcp.tools.orchestration import width as _width
 from foundry_mcp.tools.orchestration.fix_gate import (
     _PYTEST_DISCOVERY_PHRASE,
     foundry_mark_defect_fixed as _mark_defect_fixed,
@@ -4351,4 +4353,4 @@ def test_the_git_path_decoder_undoes_exactly_what_git_does(printed, names):
     is not something the repo fixtures above should be creating, and it is
     precisely the form quotepath cannot switch off.
     """
-    assert _width._decode_git_path(printed) == names
+    assert _fix_gate._decode_git_path(printed) == names

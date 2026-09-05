@@ -49,7 +49,7 @@ from foundry_mcp.schemas.vocab import (
 from foundry_mcp.tools import foundry_state
 
 # fallout FR-005 / AC-014 / GI-010 / GI-026 — THE WIDTH DECISION HAS A MODULE,
-# AND THE SIX CONCERNS THIS FILE DRIVES HAVE SIX.
+# AND THE SEVEN CONCERNS THIS FILE DRIVES HAVE SEVEN.
 #
 # The `fo` alias reached all of them through one name. The single orchestrator
 # module it named is gone and GI-010 forbids a re-export shim standing in for
@@ -61,6 +61,14 @@ from foundry_mcp.tools import foundry_state
 # the evidence sweep is `orchestration/evidence_boundary.py`; and the marker
 # names and the document transaction are the leaf `tools/artifacts.py`.
 #
+# The seventh is `orchestration/fix_gate.py`, and it is here because a symbol
+# MOVED rather than because this file grew a subject. GI-033 refuses a
+# lifecycle-to-verifier read outright, so `_note_fix_after_inspect_decision` —
+# the stamp `foundry_mark_defect_fixed` writes when a fix lands after a width
+# was decided — left the verifier-set width module for its sole consumer. The
+# fixture below reaches it there, and the width read it stamps ONTO is still
+# width's.
+#
 # `_current_cycle` is none of them. Casting 10 consolidated the two
 # byte-identical copies into `foundry_state.current_cycle` (GI-024, Holmes
 # `share-2`), so reaching a split module for that leaf fact would recreate the
@@ -68,6 +76,7 @@ from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools import artifacts as _artifacts
 from foundry_mcp.tools.foundry_state import current_cycle as _current_cycle
 from foundry_mcp.tools.orchestration import evidence_boundary as _evidence_boundary
+from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
 from foundry_mcp.tools.orchestration import gates as _gates
 from foundry_mcp.tools.orchestration import guidance as _guidance
 from foundry_mcp.tools.orchestration import streams as _streams
@@ -2208,8 +2217,18 @@ def test_compute_next_action_contains_no_width_decision(run_env):
     assert "_record_inspect_mode" not in source
 
     # And the reporting path reads the recorded entry through the ONE reader.
+    #
+    # That reader is now `_recorded_inspect_mode`, guidance's own thin read of
+    # `foundry_state.current_inspect_mode` (casting 10's leaf), and NOT
+    # `width._current_inspect_mode`: GI-033 refuses this lifecycle module the
+    # verifier set with no exception, and a module that can call the width
+    # decider is a module that can take one. The pinned name moved with that
+    # read; the claim did not. The leaf's own spelling is deliberately not
+    # pinned here — it is one hop further in, inside the wrapper rather than in
+    # the source this reads, and the boundary guard already refuses the edge
+    # that would let a decision hide in that hop.
     reporter = inspect.getsource(_guidance.foundry_next_action)
-    assert "_current_inspect_mode" in reporter
+    assert "_recorded_inspect_mode" in reporter
     assert "_decide_inspect_mode" not in reporter
 
 
@@ -4273,7 +4292,7 @@ def _fix_landed_mid_inspect(fdir: Path, did: str = "D-001") -> None:
     the reason `_generate_report` states one helper over: an artifact a fixture
     made up can clear a door that no real run in the same state could.
     """
-    _width._note_fix_after_inspect_decision(fdir, did)
+    _fix_gate._note_fix_after_inspect_decision(fdir, did)
 
 
 def _gate_over_the_wire(project_root: str, fdir: Path, monkeypatch) -> dict:
