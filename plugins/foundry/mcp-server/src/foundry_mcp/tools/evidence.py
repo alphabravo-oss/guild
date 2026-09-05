@@ -819,7 +819,7 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         varies_in="text",
         key=re.compile(r"(?:^|\s)platform \S+ -- Python \S+.* --$"),
         witness_kind="corpus",
-        witness="casting-5-protocol-prose.log",
+        witness="casting-5-platform-witness.log",
         witness_pair=(
             "platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 --",
             "/Users/rayjanoka/.cache/uv/builds-v0/.tmphgnUSu/bin/python",
@@ -832,11 +832,27 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         ),
         note=(
             "the interpreter pytest -v reports, which under uv is a per-build "
-            "temp directory: 6 of the 16 path disagreements, one per log that "
-            "declares the whole `platform … --` line. The varying segment is "
-            "INTERIOR (`.tmphgnUSu` against `.tmpvRAwWQ`), which is why the "
-            "bound is this key and not a rule about where in the path the "
-            "disagreement sits — see the block comment."
+            "temp directory. The varying segment is INTERIOR (`.tmphgnUSu` "
+            "against `.tmpvRAwWQ`), which is why the bound is this key and not "
+            "a rule about where in the path the disagreement sits — see the "
+            "block comment.\n\n"
+            "D-003/D-045/D-019: only `pytest -v` prints the interpreter at "
+            "all, and for a while no committed log ran `-v` — the logs that "
+            "once witnessed this entry were recaptured at `-q` or deferred, "
+            "and the entry outlived every one of them while still naming a "
+            "log the tree no longer holds. It is kept rather than retired "
+            "because the field it admits is not hypothetical: the same "
+            "declaration a `-q` log already carries "
+            "(`casting-10-blast-radius.log`'s `(?:^|\\s)platform \\S+ -- "
+            "Python \\S+.*`) swallows this path the moment anyone adds `-v`, "
+            "and a sweep re-executes in a detached worktree with no project "
+            "`.venv`, where uv builds a FRESH `builds-v0/.tmpXXXXXX` env every "
+            "run. So a `-v` log's interpreter disagrees on every honest "
+            "verification, and without this entry the sweep would refuse it. "
+            "The witness is now a log that actually runs `-v` and declares "
+            "the whole line — captured inside such a worktree so the pytest, "
+            "pluggy and Python versions beside the path agree across runs and "
+            "the path is the ONE token left disagreeing."
         ),
     ),
     "planning_root": _EnvironmentalGrammar(

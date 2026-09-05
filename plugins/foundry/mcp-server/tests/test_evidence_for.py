@@ -99,14 +99,20 @@ def test_evidence_for_malformed_raises_token(load_fixture):
 
 def test_failure_tokens_includes_unbound_and_malformed():
     """``KNOWN_EVIDENCE_FAILURE_TOKENS`` extends from 8 tokens (Phase 4) to
-    10 (Phase 5). Two new tokens: EVIDENCE_REQUIREMENT_UNBOUND,
-    EVIDENCE_FOR_MALFORMED.
+    10 (Phase 5) to 11 (fallout / US-008). The Phase 5 pair is
+    EVIDENCE_REQUIREMENT_UNBOUND + EVIDENCE_FOR_MALFORMED; the eleventh is
+    EVIDENCE_COMMAND_SYNTAX, the parse-before-execute refusal CT-015 / FR-051
+    add to the sweep.
 
     Closed-vocabulary discipline mirrors Phase 4's
-    ``test_failure_tokens_are_in_allowlist``: any 11th token = code-edit
+    ``test_failure_tokens_are_in_allowlist``: any TWELFTH token = code-edit
     forced through this test.
 
-    RED until Plan 05-02 ships.
+    D-002/D-018/D-044: the pin, not the code, was the obsolete side when
+    EVIDENCE_COMMAND_SYNTAX landed. The count is raised rather than deleted —
+    deleting it is what an accreting vocabulary wants, and the whole value of
+    this assertion is that a new member cannot arrive quietly. Each token is
+    named here so the next raise has to say which member it is admitting.
     """
     actual = frozenset(evidence.KNOWN_EVIDENCE_FAILURE_TOKENS)
     assert "EVIDENCE_REQUIREMENT_UNBOUND" in actual, (
@@ -117,9 +123,19 @@ def test_failure_tokens_includes_unbound_and_malformed():
         "Plan 05-02 must add EVIDENCE_FOR_MALFORMED to "
         "KNOWN_EVIDENCE_FAILURE_TOKENS"
     )
-    assert len(evidence.KNOWN_EVIDENCE_FAILURE_TOKENS) == 10, (
-        f"Plan 05-02 must extend tuple to exactly 10 tokens; "
-        f"got {len(evidence.KNOWN_EVIDENCE_FAILURE_TOKENS)}"
+    assert "EVIDENCE_COMMAND_SYNTAX" in actual, (
+        "US-008 / FR-051 must add EVIDENCE_COMMAND_SYNTAX to "
+        "KNOWN_EVIDENCE_FAILURE_TOKENS — the sweep's parse-before-execute "
+        "refusal names it, and a token outside this closed allowlist reaches "
+        "the operator as an unexplained failure"
+    )
+    assert len(evidence.KNOWN_EVIDENCE_FAILURE_TOKENS) == 11, (
+        f"the closed allowlist stands at exactly 11 tokens (Phase 4's 8, "
+        f"Phase 5's EVIDENCE_REQUIREMENT_UNBOUND + EVIDENCE_FOR_MALFORMED, "
+        f"and US-008's EVIDENCE_COMMAND_SYNTAX); got "
+        f"{len(evidence.KNOWN_EVIDENCE_FAILURE_TOKENS)}. A new member is a "
+        f"code edit HERE as well as in evidence.py — name it above and raise "
+        f"this count, never delete the count"
     )
 
 
