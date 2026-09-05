@@ -81,7 +81,11 @@ import contextlib
 import io
 from pathlib import Path
 
-from foundry_mcp.tools.foundry_orchestrator import _resolve_spec_path, _save_json
+# The artifact leaf, `tools/artifacts.py`: the canonical spec-path resolver
+# (run-dir copy first, state.json's declaration second) and the atomic write.
+# Both were reached at the top of the stack until the leaf existed. The
+# bodies are the same bodies; only the module that defines them changed.
+from foundry_mcp.tools.artifacts import _resolve_spec_path, _save_json
 from foundry_mcp.tools.foundry_state import get_run_dir, read_document, read_json
 
 
