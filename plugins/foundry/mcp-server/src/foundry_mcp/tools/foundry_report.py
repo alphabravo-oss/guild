@@ -107,6 +107,14 @@ STATE_FILENAME = "state.json"
 # rename in the writer now reaches every reader, which is what a filename
 # constant is for.
 #
+# AND `ROLLUP_FILENAME` HAS MOVED ON AGAIN, TO THE ARTIFACT LEAF (C-019).
+# `stream-rollup.json`'s name now sits in `tools/artifacts.py` beside the
+# `*_MARKER` names — which is what that leaf is for — and the writer's own
+# declaration goes away with it. A run-artifact filename is not the writing
+# module's property; it is the run layout's, and the layout has one home.
+# Reading it from the leaf is a lifecycle-to-leaf edge, which the layering
+# permits unconditionally.
+#
 # MODULE LEVEL, and the pin that used to forbid it is what makes that safe.
 # `test_foundry_report_imports_only_the_two_leaf_modules` allowed only the two
 # leaves because `foundry_orchestrator` imported this module and a third
@@ -114,8 +122,8 @@ STATE_FILENAME = "state.json"
 # orchestrator: NOTHING in the package imports `foundry_report` at module
 # level, so no module-level import here can close one. The pin now asserts
 # that directly instead of standing in for it with a fixed roster.
+from foundry_mcp.tools.artifacts import ROLLUP_FILENAME
 from foundry_mcp.tools.orchestration.escalation import ESCALATION_FILENAME
-from foundry_mcp.tools.orchestration.streams import ROLLUP_FILENAME
 
 #: What a defect row prints where its filing recorded no location. D-103.
 #:

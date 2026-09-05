@@ -3544,18 +3544,24 @@ def test_foundry_report_imports_only_the_two_leaf_modules():
     # imported this module, so a third module-level edge could close a cycle.
     # That premise died with the orchestrator, and an allowlist outliving its
     # premise is a rule nobody can evaluate: it says "these two" and cannot say
-    # why. `escalation.py` and `streams.py` WRITE the two artifacts whose names
-    # this module reads, both are lifecycle modules like this one, and
-    # `_KNOWN_DUPLICATION` carried both re-typed literals as named debt.
+    # why. `escalation.py` WRITES the artifact whose name this module reads and
+    # is a lifecycle module like this one; `artifacts.py` is a LEAF, which the
+    # layering lets anything reach unconditionally. `_KNOWN_DUPLICATION`
+    # carried both re-typed literals as named debt.
+    #
+    # `stream-rollup.json`'s name moved from its writer to the artifact leaf
+    # under concern C-019, beside the `*_MARKER` names — a run-artifact
+    # filename is the run LAYOUT's property, not the writing module's — so it
+    # is read from there and survives the writer's declaration going away.
     #
     # So the roster is stated AND the acyclicity is computed below. A future
     # edge that really would close a cycle fails on the computation, not on
     # somebody remembering to keep the roster short.
     assert module_level == {
         "foundry_mcp.schemas.vocab",
+        "foundry_mcp.tools.artifacts",
         "foundry_mcp.tools.foundry_state",
         "foundry_mcp.tools.orchestration.escalation",
-        "foundry_mcp.tools.orchestration.streams",
     }, sorted(module_level)
 
     # THE PROPERTY: nothing imports this module at module level, so nothing
