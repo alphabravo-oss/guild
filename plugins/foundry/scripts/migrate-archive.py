@@ -164,6 +164,18 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
 # generation an archive has to be able to declare — `foundry_validate` reads
 # this marker to tell an archive that predates `requirement_ids` from a run
 # created under the schema that mandates it.
+#
+# BUMPING THIS ALONE IS NOT ENOUGH. Since D-052 this tool is no longer the only
+# writer of `state.json`'s marker: `foundry_init` stamps a run with the current
+# generation at creation, because the fail-closed half of FR-054 fires only on
+# runs that can say what they are. So the number lives in more than one file,
+# and a bump applied here and nowhere else leaves every newly created run
+# claiming the previous generation — silently, since nothing about such a run
+# looks wrong until the F0.9 door goes quiet on it. The join that catches that
+# lives in `plugins/foundry/mcp-server/tests/test_migrate_archive.py`, under
+# `test_the_two_writers_of_the_schema_marker_agree_and_the_reader_accepts_it`.
+# It drives both writers and asks the reader rather than comparing constants,
+# so run it with the bump.
 ARCHIVE_SCHEMA_VERSION = 4
 
 # CLOSED VOCABULARY — the twelve migration steps, in execution order. The

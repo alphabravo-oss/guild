@@ -1496,6 +1496,122 @@ def test_the_migrated_manifest_does_not_trip_the_f0_9_ownership_or_span_door(
     )
 
 
+# ---------------------------------------------------------------------------
+# D-052 — this tool is no longer the ONLY writer of the schema marker.
+#
+# FR-054 ends "F0.9 fails closed on missing `requirement_ids` only for new
+# runs", and `foundry_validate` tells a new run from a legacy archive by one
+# integer in one key. Until D-052, `migrate-archive.py` was the only thing that
+# ever wrote it, so a run the server had created minutes earlier answered 0 and
+# read as indistinguishable from `daring-orca`. `foundry_init` is now the second
+# writer of the same key in the same document, and two writers of one generation
+# number are two places for it to drift.
+# ---------------------------------------------------------------------------
+
+
+def test_the_two_writers_of_the_schema_marker_agree_and_the_reader_accepts_it(
+    tmp_path: Path,
+) -> None:
+    """FR-054 / D-052 — one integer, four spellings, joined here by behaviour.
+
+    THE INTEGER IS SPELLED FOUR TIMES AND NOTHING DECLARES IT ONCE.
+    `migrate-archive.py#ARCHIVE_SCHEMA_VERSION` writes it into a migrated
+    archive; `foundry.py#ARCHIVE_SCHEMA_VERSION` writes it into a new one;
+    `foundry_validate.py#REQUIREMENT_IDS_SCHEMA_FLOOR` is the number the reader
+    compares against; and this module restates it at the top as the independent
+    literal every pin needs. None of the four files may edit the other three,
+    and the one leaf all four can already reach does not declare it yet — that
+    move is filed as a cross-casting concern, and until it lands THIS is the
+    join. A bump applied to any one of them and not the rest fails here.
+
+    JOINED THROUGH THE VALUES, NOT THE NAMES. The assertions read what each side
+    PRODUCES — the marker `foundry_init` actually stamps, the version the
+    migration tool publishes in its own summary, the answer the reader returns —
+    so a rename that changes no behaviour does not break this, and a constant
+    that exists while nothing writes it does not pass it. That distinction is
+    the whole of D-052: its class is a published mechanism no caller reaches,
+    and a test comparing two constants to each other would have been green on
+    the tree that had the defect.
+
+    THE READER IS ASKED, NOT RESTATED. `_archive_schema_version` coerces every
+    non-`int` spelling to 0, so a marker written as the string "4" reads as an
+    archive predating the field and F0.9 goes quiet again with nothing on the
+    surface looking wrong. Rather than re-typing that type rule here, the reader
+    itself answers, which is the only answer that decides anything.
+    """
+    from foundry_mcp.tools.foundry import foundry_init
+    from foundry_mcp.tools.foundry_validate import (
+        REQUIREMENT_IDS_SCHEMA_FLOOR,
+        _archive_schema_version,
+    )
+
+    spec = tmp_path / "spec.md"
+    spec.write_text("# spec\n\n- **FR-007**: a requirement\n", encoding="utf-8")
+    created = foundry_init(spec_path=str(spec), project_root=str(tmp_path))
+    run_dir = tmp_path / "foundry-archive" / created["run_name"]
+    state = json.loads((run_dir / "state.json").read_text())
+
+    # 1. The producer exists at all. This is the D-052 assertion.
+    assert "archive_schema_version" in state, (
+        "a run created by this server carries no schema marker, so F0.9 cannot "
+        "tell it from an archive written before `requirement_ids` existed"
+    )
+
+    # 2. The reader accepts what was written — the int/str distinction, decided
+    #    by the function that decides it rather than restated here.
+    reader_answer = _archive_schema_version(state)
+    assert reader_answer == state["archive_schema_version"], (
+        "the reader coerced the stamped marker, which it does to every spelling "
+        "that is not a plain int"
+    )
+    assert reader_answer >= REQUIREMENT_IDS_SCHEMA_FLOOR, (
+        "a run born under this release must sit at or above the floor at which "
+        "`requirement_ids` became mandatory, or fail-closed never fires"
+    )
+
+    # 3. The two writers agree. The migration tool publishes its own constant in
+    #    every summary, so this compares the values, not the symbol names.
+    summary = _migrate(run_dir)
+    assert summary["archive_schema_version"] == state["archive_schema_version"], (
+        "the two writers of one generation number disagree: init stamped "
+        f"{state['archive_schema_version']}, the migration writes "
+        f"{summary['archive_schema_version']}"
+    )
+    assert summary["archive_schema_version"] == ARCHIVE_SCHEMA_VERSION, (
+        "and neither matches this module's independent restatement"
+    )
+
+    # 4. The migration has nothing to RAISE on a run born at the current
+    #    generation. Asserted as the whole step set rather than the marker
+    #    alone, because init writes four of the schema-4 artifacts itself —
+    #    `concerns.json`, `rosters/`, and the two defect/casting field sets are
+    #    all already in the shape steps 8-12 would produce — and a drift in any
+    #    of them would show up here as a step that suddenly has work to do.
+    #    `stream-rollup.json` and `progress/` are the two init does not write,
+    #    so they are CREATED, and `migrated` is True on this first pass for that
+    #    reason alone. Neither is a restamp: an empty roll-up records that no
+    #    cycle was measured, which is what is true of a run that has not run.
+    outcomes = _outcomes(summary)
+    assert outcomes["archive_schema_version"] == "no-op", (
+        f"step 7 reports {outcomes['archive_schema_version']} on an archive "
+        "that was born at the current version"
+    )
+    working = sorted(name for name, out in outcomes.items() if out != "no-op")
+    assert working == ["progress", "stream_rollup"], (
+        "the migration found work to do on a run created under this release "
+        f"beyond the two artifacts init does not write: {working}"
+    )
+
+    # 5. And the ordinary idempotency rule still holds on this shape, which no
+    #    other test in the register covers: every fixture here is either a
+    #    pre-change archive or one this tool migrated, never one born current.
+    hash_after_first = _tree_hash(run_dir)
+    second = _migrate(run_dir)
+    assert _tree_hash(run_dir) == hash_after_first, "second run changed the tree"
+    assert second["migrated"] is False
+    assert set(_outcomes(second).values()) == {"no-op"}
+
+
 def test_steps_11_and_12_create_the_containers_and_claim_no_measurement(
     archive: Path,
 ) -> None:
