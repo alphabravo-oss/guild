@@ -5151,9 +5151,14 @@ _LAYERING_DEBT: dict[tuple[str, str], str] = {
         "teammates were still running."
     ),
     ("guidance", "gates"): (
-        "_blocking_defects, _open_defects_by_tier, "
-        "_synthesize_clean_prove_verdicts — Foundry-Next's whole job is to "
-        "render what the gates concluded."
+        "_blocking_defects, _synthesize_clean_prove_verdicts — NARROWED. The "
+        "tier buckets now come from `foundry_state.open_defects_by_tier`, the "
+        "leaf. `_blocking_defects` cannot follow them while `BLOCKING_TIERS` — "
+        "the rule saying WHICH tiers block — is declared in `gates.py`: this "
+        "module needs the count, and building one from a second copy of that "
+        "tuple would fork the blocking rule rather than move it. It closes "
+        "when `BLOCKING_TIERS` sits in `vocab.py`, which is where GI-014's own "
+        "applies-to column already puts it."
     ),
     ("guidance", "transitions"): (
         "_finalize_open_phase_entry — the sub-phase stamper closes the same "

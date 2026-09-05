@@ -13,12 +13,15 @@ from datetime import (
     timezone,
 )
 from foundry_mcp.schemas.vocab import (
+    DEFECT_TIERS,
     INSPECT_MODES,
     PHASE_LADDER,
     PHASE_NAMES,
     REPORT_MD_FILENAME,
     RUN_PHASE_HALTED,
     STREAM_WIRE_IDS,
+    TIER_UNKNOWN,
+    defect_tier,
 )
 from foundry_mcp.tools.artifacts import (
     CAST_COMPLETE_MARKER,
@@ -56,6 +59,7 @@ from foundry_mcp.tools.display import (
 from foundry_mcp.tools.foundry_state import (
     current_cycle,
     current_inspect_mode,
+    open_defects_by_tier,
     get_run_dir,
     now_iso,
     read_document,
@@ -88,7 +92,6 @@ from foundry_mcp.tools.orchestration.halt import (
 )
 from foundry_mcp.tools.orchestration.gates import (
     _blocking_defects,
-    _open_defects_by_tier,
     _synthesize_clean_prove_verdicts,
 )
 from foundry_mcp.tools.orchestration.transitions import _finalize_open_phase_entry
@@ -307,7 +310,14 @@ def _terminal_outlook(fdir: Path) -> dict:
     reader that conflates them halts a run that had no cap at all.
     """
     state = _load_json(fdir / "state.json")
-    buckets = _open_defects_by_tier(fdir)
+    # fallout GI-033 / AC-061 (D-021 / D-035) — THE BUCKETS COME FROM THE LEAF.
+    # `gates._open_defects_by_tier` is the same read behind a verifier-set
+    # module, and Foundry-Next reports recorded decisions rather than reaching
+    # into the gate that made them. The three closed-set values are supplied
+    # because a leaf may not know a vocabulary.
+    buckets = open_defects_by_tier(
+        fdir, tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN, tier_of=defect_tier
+    )
     open_by_tier = {tier: len(rows) for tier, rows in sorted(buckets.items())}
 
     max_cycles = _persisted_max_cycles(state)
