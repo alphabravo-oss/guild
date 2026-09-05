@@ -350,7 +350,7 @@ the `foundry_add_verdict` MCP tool for defect tracking.
           "class": {"type": "string",
             "description": "Required root-cause group, non-empty on every filing and spelled identically on every instance that shares it. Not a tier — it is what lets three cycles of one root cause escalate to a single structural fix. Foundry-Defect and Foundry-Sync refuse a filing without it, and one classless finding refuses the whole Foundry-Sync batch."},
           "tier": {"type": "string", "enum": ["LIVE", "LATENT", "HARDENING"],
-            "description": "Evidence axis, never a work-effort grade. LIVE: the stream drove the door and observed the wrong result. LATENT: the stream derived the finding and found no reachable instance. HARDENING: the stream drove a probe that failed on a path no requirement states, and the record blocks no gate. Closed vocabulary, source of truth schemas/vocab.py#DEFECT_TIERS."},
+            "description": "Evidence axis, never a work-effort grade. LIVE: the stream drove the door and observed the wrong result. LATENT: the stream derived the finding and found no reachable instance. HARDENING: the stream drove a probe that failed on a path no requirement states, and the record blocks no gate. Closed vocabulary, source of truth plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS."},
           "reproduction_attempted": {"type": "string",
             "description": "Required on a LATENT finding: what was driven and what it found. The server refuses a LATENT filing without one."},
           "file": {"type": "string", "description": "Bare path. Never carries a line number."},
