@@ -5142,14 +5142,6 @@ _LAYERING_DEBT: dict[tuple[str, str], str] = {
         "_check_active_teams, _check_sight_required — the cast transition's own "
         "two preconditions, one of which is D-243."
     ),
-    ("width", "teams"): (
-        "_check_active_teams, _check_sight_required — the required-stream "
-        "roster depends on whether SIGHT is earnable."
-    ),
-    ("fix_gate", "width"): (
-        "_decode_git_path, _note_fix_after_inspect_decision — a fix landing "
-        "mid-INSPECT is recorded against the width decision it invalidates."
-    ),
     ("guidance", "gates"): (
         "_blocking_defects, _open_defects_by_tier, "
         "_synthesize_clean_prove_verdicts — Foundry-Next's whole job is to "
@@ -5169,9 +5161,14 @@ _LAYERING_DEBT: dict[tuple[str, str], str] = {
         "is casting 1's and casting 10's ground."
     ),
     ("guidance", "width"): (
-        "_current_inspect_mode, _maybe_skip_trace, _waiting_on_agents, "
-        "STALL_NOTICE_SECONDS — the status display names the recorded width and "
-        "the roster it implies."
+        "_maybe_skip_trace — ALL THAT IS LEFT OF THIS ROW. The recorded width "
+        "now comes from `foundry_state.current_inspect_mode`, and "
+        "`_waiting_on_agents` and `STALL_NOTICE_SECONDS` have moved into "
+        "`guidance.py` beside their only caller. `_maybe_skip_trace` cannot "
+        "follow them: it is built on `_trace_skip_check` and "
+        "`_unrecorded_width_problem`, which are width contract symbols, so "
+        "moving it would drag the whole width read into the presentation "
+        "layer. It closes when the TRACE-skip decision answers from a leaf."
     ),
 }
 

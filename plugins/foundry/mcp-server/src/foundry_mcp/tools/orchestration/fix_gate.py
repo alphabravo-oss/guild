@@ -23,7 +23,7 @@ from foundry_mcp.schemas.vocab import (
     defect_tier,
     is_test_file,
 )
-from foundry_mcp.tools.artifacts import _artifact_guard
+from foundry_mcp.tools.artifacts import _artifact_guard, _document_transaction
 from foundry_mcp.tools.citation import iter_symbol_cites
 # fallout FR-025 / CT-019 / ST-006 — the three rules casting 4 exported so this
 # door could apply them without a second spelling. `defect_provenance` builds the
@@ -46,10 +46,6 @@ from foundry_mcp.tools.foundry_state import (
 )
 from pathlib import Path
 from foundry_mcp.tools.orchestration.escalation import DEFECT_CLASS_FIELD
-from foundry_mcp.tools.orchestration.width import (
-    _decode_git_path,
-    _note_fix_after_inspect_decision,
-)
 
 
 
@@ -2955,3 +2951,128 @@ def foundry_sync_defects(
     if tripwires:
         result["denylist_tripwires"] = tripwires
     return result
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-033 / AC-061 / FR-063 (D-021 / D-035) — MOVED HERE FROM
+# `orchestration/width.py`, WHERE THEY WERE LODGERS.
+#
+# `width.py` is in the VERIFIER set and this module is not, so every import of
+# a width symbol from here was a lifecycle-to-verifier edge — the direction
+# GI-033's violation column refuses with NO exception at all — excused by a
+# `_LAYERING_DEBT` row instead of removed. Neither symbol is a width fact:
+# `_decode_git_path` is git's own quoting grammar and is reached only by the
+# `git show --numstat` parse below, and `_note_fix_after_inspect_decision` is
+# what `foundry_mark_defect_fixed` stamps when a fix lands mid-INSPECT. Their
+# SOLE consumer is this module, so they move to it and the edge goes with them.
+# --------------------------------------------------------------------------- #
+
+#: D-238 — git's C-quote escapes, for the one place the quoted form survives.
+#:
+#: `core.quotepath=false` stops git escaping non-ASCII bytes, and that is the
+#: whole of the common case. It does NOT stop git quoting a path that contains a
+#: double quote, a backslash or a control character: those are quoted whatever
+#: `quotepath` says, because the quoting is what keeps such a path on ONE line.
+#: So a parse that reads git's LINE-oriented output still meets the quoted form
+#: and still has to undo it.
+_C_QUOTE_ESCAPES = {
+    "a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t",
+    "v": "\v", "\\": "\\", '"': '"',
+}
+
+
+
+
+def _decode_git_path(field: str) -> str:
+    """One path as git PRINTS it, back to the path it NAMES (D-238).
+
+    A field that is not quoted is returned unchanged, so this is safe to apply
+    to every path git hands back rather than only to the ones a caller guessed
+    might need it. A quoted field is unwrapped and its escapes are undone —
+    octal escapes accumulate as BYTES and are decoded as UTF-8 at the end,
+    because git emits one escape per byte and a multi-byte character therefore
+    arrives as several (`\\303\\251` is one `é`, not two characters).
+
+    WHY THIS EXISTS RATHER THAN A SECOND FLAG (D-238 / D-239's shared class).
+    Where git can be asked for NUL-separated output it is (`git_changed_paths`),
+    and then nothing is ever quoted and this is never reached. `git show
+    --numstat` is the one consumer that cannot take that route without changing
+    its record grammar — with `-z` a rename becomes three NUL-separated tokens
+    rather than one tab field — so it keeps the line grammar
+    `_numstat_rename_paths` parses, passes `core.quotepath=false`, and undoes
+    the residual quoting here.
+    """
+    if not isinstance(field, str):
+        return ""
+    if len(field) < 2 or not (field.startswith('"') and field.endswith('"')):
+        return field
+    body = field[1:-1]
+    out = bytearray()
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch != "\\":
+            out.extend(ch.encode("utf-8"))
+            i += 1
+            continue
+        i += 1
+        if i >= len(body):
+            # A trailing lone backslash is not an escape git would emit; keep
+            # it rather than dropping a byte the path may really carry.
+            out.extend(b"\\")
+            break
+        esc = body[i]
+        if esc in "01234567":
+            digits = ""
+            while i < len(body) and len(digits) < 3 and body[i] in "01234567":
+                digits += body[i]
+                i += 1
+            out.append(int(digits, 8) & 0xFF)
+            continue
+        out.extend(_C_QUOTE_ESCAPES.get(esc, esc).encode("utf-8"))
+        i += 1
+    return out.decode("utf-8", errors="replace")
+
+
+
+
+def _note_fix_after_inspect_decision(fdir: Path, defect_id: str) -> None:
+    """Mark the open INSPECT's recorded width as superseded by a fix (D-035).
+
+    D-035 — A DELTA-SWEPT INSPECT COULD OPEN ASSAY.
+    ----------------------------------------------
+    `foundry_mark_defect_fixed` has no phase guard, so a fix landing while the
+    run sits in F2 flips the blocking count to zero AFTER the width was already
+    decided and the sweep already taken. `inspect_clean` then passes and ASSAY
+    opens on a cycle whose sweep never covered the surface that fix changed —
+    the one crossing GI-002 exists to make honest.
+
+    Recorded rather than refused. The fix itself is legitimate work and
+    refusing it would push the lead to fix the defect and not say so, which is
+    strictly worse. What is not legitimate is CARRYING that cycle's decision
+    forward as though it still described the tree, so the entry is stamped and
+    `inspect_clean` refuses until a fresh `inspect_start` re-decides the width
+    and re-sweeps at the new HEAD.
+
+    A no-op outside F2: in F3 GRIND, which is where fixes normally land, the
+    next `inspect_start` decides a width that already accounts for them.
+    """
+    state_path = fdir / "state.json"
+    with _document_transaction(state_path) as state:
+        if state.get("phase") != "F2":
+            return
+        modes = state.get("inspect_modes")
+        if not isinstance(modes, list) or not modes:
+            return
+        current = modes[-1]
+        if not isinstance(current, dict):
+            return
+        superseded = current.get("fixes_after_decision")
+        if not isinstance(superseded, list):
+            superseded = []
+        if defect_id not in superseded:
+            superseded.append(defect_id)
+        current["fixes_after_decision"] = superseded
+        state["inspect_modes"] = modes
+        state["updated_at"] = now_iso()
+

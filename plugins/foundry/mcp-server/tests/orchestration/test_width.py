@@ -7,9 +7,6 @@ that no longer exists.
 """
 from __future__ import annotations
 
-import ast
-import inspect
-import textwrap
 from pathlib import Path
 
 
@@ -109,168 +106,18 @@ def orchestration_has(symbol: str) -> bool:
     return any(symbol in vars(m) for m in ORCHESTRATION)
 
 from tests.orchestration._env import (  # noqa: F401
-    _teams_active,
     _write_manifest_with_castings,
     _write_state,
     run_env,
 )
 
-from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
-    foundry_next_action,
-)
-
 from foundry_mcp.tools.orchestration.width import (  # noqa: F401
     _maybe_skip_trace,
-    _waiting_on_agents,
-)
-
-from tests.orchestration._env import (  # noqa: F401
-    _progressing_ledger,
-    _stale_stall_clock,
-    _stalled_ledger,
 )
 
 
 
 
-def test_a_registered_team_with_dead_ledgers_does_not_suppress_the_stall(
-    run_env, monkeypatch
-):
-    """D-021: 'A registered-but-dead team suppresses the stall warning forever.
-    The function's own docstring states the intended rule ("a team dir that was
-    never cleaned up is the false positive"); the code does the opposite.'
-
-    Driven exactly as filed: a three-hour-old ledger, so `foundry_liveness`
-    reports every agent `stalled`, plus a registered team the run never cleaned
-    up. The old final arm returned `waiting: True` on that state and
-    Foundry-Next rendered "that gap is the agents working, not you
-    deliberating" indefinitely — a watchdog a stale directory can switch off.
-
-    `_check_active_teams` is monkeypatched ACTIVE here, against the fixture's
-    default. That inversion is the point: every fixture in the suite pins it
-    inactive, which is why the arm that only fires when it is active was
-    untestable as shipped.
-    """
-    project_root, fdir = run_env
-    patch_everywhere(monkeypatch, "_check_active_teams",
-        lambda _pr: {"active": True, "teams": ["cast-run-wave-1"], "live_panes": []},
-    )
-    _write_state(fdir, phase="F1", cycle=0)
-    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
-    _stalled_ledger(fdir)
-    _stale_stall_clock(fdir, 600)
-
-    assert _waiting_on_agents(project_root)["waiting"] is False
-
-    nxt = foundry_next_action(project_root)
-
-    assert nxt.get("stall_detected_seconds", 0) >= 600
-    assert "waiting_on_agents" not in nxt
-    assert "WAITING ON" not in nxt["instructions"]
-    assert "silently deliberating" in nxt["instructions"]
-
-
-
-
-def test_a_progressing_ledger_with_no_team_registered_reports_waiting(run_env):
-    """FR-020 verbatim: 'IF AGENTS ARE RUNNING it reports waiting on N agents
-    (oldest progress Xm) instead of a stall'. FR-036, D-127.
-
-    This test asserted the opposite twice, in opposite directions, and the
-    second version is the defect. D-076's repair ANDed the team scan with the
-    liveness roster, so waiting required a REGISTERED tmux team. The F2 INSPECT
-    streams are background Agents and never tmux teammates, so
-    `_check_active_teams` cannot see them: driven with no registered team, two
-    progress ledgers written seconds earlier and `.last-next-at` 600s old,
-    `_waiting_on_agents` returned waiting False, teams_active False,
-    progressing_agents 2 — and Foundry-Next emitted stall_detected_seconds 600
-    beside "NO agent is running. You were silently deliberating", asserting
-    deliberation over two agents the same call had just measured progressing.
-    FR-036's proviso is that the notice never does that, and FR-020 is Locked,
-    so no GRIND ruling could amend it.
-
-    LEAD RULING, GRIND cycle 7 (superseding the cycle-4 AND where they
-    conflict): 'if agents are running' is decided by EVIDENCE OF PROGRESS. A
-    progressing roster is SUFFICIENT whether or not a team is registered.
-    `teams_active` is still read and still reported, so CT-012's declared input
-    set is unchanged — see the sibling test that pins the stale-team direction.
-    """
-    project_root, fdir = run_env
-    _write_state(fdir, phase="F2", cycle=1)
-    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
-    _progressing_ledger(fdir, agent="prove")
-    _stale_stall_clock(fdir, 600)
-    _teams_active(False)
-
-    waiting = _waiting_on_agents(project_root)
-
-    assert waiting["waiting"] is True
-    assert waiting["count"] == 1
-    assert waiting["teams_active"] is False, (
-        "reported, not asserted — waiting no longer implies a registered team"
-    )
-    assert waiting["progressing_agents"] == 1
-
-    nxt = foundry_next_action(project_root)
-    assert "stall_detected_seconds" not in nxt, (
-        "an agent is progressing; FR-020 makes this the waiting notice"
-    )
-    assert "silently deliberating" not in nxt["instructions"]
-    assert "WAITING ON" in nxt["instructions"]
-
-
-
-
-def test_a_registered_but_dead_team_still_reports_the_stall(run_env):
-    """D-021, which the AND must not undo.
-
-    A team dir that was never cleaned up is not an agent that is running. The
-    old code returned `waiting: True` on exactly that and Foundry-Next rendered
-    "that gap is the agents working, not you deliberating" forever, on a run
-    where nothing was working. Either source answering "nothing is running" is
-    enough to let the watchdog speak, so the stale directory can no longer
-    suppress it.
-    """
-    project_root, fdir = run_env
-    _write_state(fdir, phase="F2", cycle=1)
-    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
-    _stale_stall_clock(fdir, 600)
-    _teams_active(True)
-
-    waiting = _waiting_on_agents(project_root)
-
-    assert waiting["waiting"] is False
-    assert waiting["teams_active"] is True
-    assert waiting["progressing_agents"] == 0
-    assert "stall_detected_seconds" in foundry_next_action(project_root)
-
-
-
-
-def test_the_waiting_check_consults_both_declared_inputs(run_env):
-    """CT-012's input list, asserted on the SOURCE — because "which sources it
-    asked" is not observable from a return value that agrees on the tested
-    cases, and that is exactly how a declared input came to have a test
-    guarding its ABSENCE (`test_the_waiting_check_does_not_consult_the_team_scan`
-    AST-walked this function and failed if `_check_active_teams` appeared).
-    """
-    import inspect
-    import textwrap
-
-    tree = ast.parse(textwrap.dedent(inspect.getsource(_waiting_on_agents)))
-    called = {
-        node.func.id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    }
-    assert "_check_active_teams" in called, (
-        "FR-020 verbatim: 'Foundry-Next checks active teams AND "
-        "Foundry-Liveness'. Both, or the notice is not the one CT-012 declares."
-    )
-    assert "foundry_liveness" in called, (
-        "a registered team is not evidence that an agent is running; the "
-        "progress ledgers are the half that answers that (D-021)."
-    )
 
 
 

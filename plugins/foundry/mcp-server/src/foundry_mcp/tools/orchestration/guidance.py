@@ -13,6 +13,7 @@ from datetime import (
     timezone,
 )
 from foundry_mcp.schemas.vocab import (
+    INSPECT_MODES,
     PHASE_LADDER,
     PHASE_NAMES,
     REPORT_MD_FILENAME,
@@ -54,6 +55,7 @@ from foundry_mcp.tools.display import (
 )
 from foundry_mcp.tools.foundry_state import (
     current_cycle,
+    current_inspect_mode,
     get_run_dir,
     now_iso,
     read_document,
@@ -77,10 +79,7 @@ from foundry_mcp.tools.orchestration.teams import (
     agent_model,
 )
 from foundry_mcp.tools.orchestration.width import (
-    STALL_NOTICE_SECONDS,
-    _current_inspect_mode,
     _maybe_skip_trace,
-    _waiting_on_agents,
 )
 from foundry_mcp.tools.orchestration.spend import _spend_summary
 from foundry_mcp.tools.orchestration.halt import (
@@ -611,7 +610,7 @@ def foundry_next_action(
         # transition that opened this INSPECT already decided the width and
         # recorded it; this reads that record back and would return None rather
         # than derive one.
-        recorded_mode = _current_inspect_mode(fdir_spend)
+        recorded_mode = _recorded_inspect_mode(fdir_spend)
         if recorded_mode:
             result["inspect_mode"] = {
                 "mode": recorded_mode.get("mode", ""),
@@ -1287,6 +1286,29 @@ def _escalation_notice(fdir: Path, project_root: str) -> str:
 
 
 
+def _recorded_inspect_mode(fdir: Path) -> dict | None:
+    """The width the last INSPECT-opening transition RECORDED, from the leaf.
+
+    fallout GI-033 / AC-061 / FR-063 (D-021 / D-035) — READ FROM THE LEAF,
+    NOT FROM THE VERIFIER.
+    ---------------------------------------------------------------------
+    `Foundry-Next` reports recorded decisions; the server DECIDES at the
+    transition. So the width this module prints is a read of `state.json`, and
+    `foundry_state.current_inspect_mode` is the one reader of it — casting 10's
+    leaf, which every consumer of the recorded width now comes through.
+    Importing `width._current_inspect_mode` instead made this lifecycle module
+    reach the verifier set, which GI-033 refuses with no exception, and a module
+    that can call the width decider is a module that can take one.
+
+    The vocabulary is supplied because a leaf may not know one: `INSPECT_MODES`
+    is `schemas/vocab.py`'s, and passing it in is what keeps the set of values
+    this HONOURS identical to the set the transitions WRITE.
+    """
+    return current_inspect_mode(fdir, modes=INSPECT_MODES)
+
+
+
+
 def _still_escalated_classes(fdir: Path, project_root: str) -> list[str]:
     """The class keys ST-010 still holds DONE open for (D-129).
 
@@ -1747,7 +1769,7 @@ def _compute_next_action(project_root: str) -> dict:
         # transition that opened this INSPECT, and this branch reads it back to
         # name the crossing that actually works. Naming inspect_clean here would
         # send the lead into the refusal the transition now returns.
-        f2_mode = _current_inspect_mode(fdir) or {}
+        f2_mode = _recorded_inspect_mode(fdir) or {}
         carried = (
             f" {len(latent_backlog)} LATENT defect(s) stay open, tracked and "
             "named in the F6 backlog; they block nothing."
@@ -1851,7 +1873,7 @@ def _compute_next_action(project_root: str) -> dict:
             # state DELTA is reachable from. So it names the recorded width of
             # the cycle just verified and defers the next one to the crossing
             # that decides it.
-            f3_mode = _current_inspect_mode(fdir) or {}
+            f3_mode = _recorded_inspect_mode(fdir) or {}
             return {
                 "phase": "F3",
                 "action": "fix_defects",
@@ -2135,3 +2157,161 @@ def foundry_get_context(
         "lessons_excerpt": lessons_excerpt,
         "next_action": next_act,
     }
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-033 / AC-061 / FR-063 (D-021 / D-035) — MOVED HERE FROM
+# `orchestration/width.py`, WHERE THEY WERE LODGERS.
+#
+# `width.py` is in the VERIFIER set and this module is not, so importing them
+# from there was a lifecycle-to-verifier edge — the direction GI-033's violation
+# column refuses with NO exception — excused by a `_LAYERING_DEBT` row rather
+# than removed. Neither is a width fact: "is the lead waiting on live agents or
+# deliberating" is the watchdog line this module prints, and the threshold is
+# how long a gap has to be before it prints it. Their SOLE consumer is
+# `_compute_next_action` below, so they move to it and the edge goes with them.
+#
+# The move also closes ('width','teams'): `_waiting_on_agents` was the only
+# reason the verifier-set width module reached `orchestration/teams.py` for the
+# team scan, and reaching it from HERE is lifecycle-to-lifecycle, which the rule
+# has never had anything to say about.
+# --------------------------------------------------------------------------- #
+
+#: FR-036 (Flexible) — how long a gap between Foundry-Next calls has to be
+#: before the watchdog says anything at all. Unchanged from the 180 seconds this
+#: has always used: the threshold was never the defect, the accusation was.
+#: A gap this long is worth REMARKING on either way; what changed is that the
+#: remark now depends on whether an agent is actually running.
+STALL_NOTICE_SECONDS = 180
+
+
+
+
+def _waiting_on_agents(project_root: str) -> dict:
+    """Is the lead waiting on live agents, or is it deliberating (FR-020)?
+
+    Returns ``{"waiting": bool, "count": int, "detail": str, "agents": [...]}``.
+
+    BOTH DECLARED INPUTS ARE READ; PROGRESS IS WHAT DECIDES (D-076, D-127).
+    ----------------------------------------------------------------------
+    CT-012 declares this check's inputs as ".last-next-at, ACTIVE TEAMS,
+    Foundry-Liveness roster"; FR-020 (Locked, verbatim) reads "Before accusing,
+    Foundry-Next checks ACTIVE TEAMS AND Foundry-Liveness ... IF AGENTS ARE
+    RUNNING it reports 'waiting on N agents'". Both sources are read. What they
+    are read FOR is the question the two defects here disagreed about.
+
+    D-076 removed the team scan entirely and the suite asserted its own absence
+    with an AST walk, so a declared contract input had a test guarding the fact
+    that nothing consulted it. The GRIND cycle-4 repair restored the scan and
+    ANDed it: waiting required a registered ACTIVE team **and** a progressing
+    ledger.
+
+    D-127 — THE AND ACCUSED THE LEAD WHILE ITS OWN LIVENESS READ SHOWED AGENTS
+    WORKING. The F2 INSPECT streams are background Agents, never tmux
+    teammates, so `_check_active_teams` cannot see them — the cycle-4 comment
+    recorded that as a "known consequence" and the consequence is the defect.
+    Driven: no registered team, two progress ledgers written seconds earlier,
+    `.last-next-at` 600s old -> `waiting` False, `progressing_agents` 2, and
+    Foundry-Next emitted `stall_detected_seconds` 600 beside the notice "NO
+    agent is running. You were silently deliberating" — asserting deliberation
+    over two agents the same call had just measured progressing. FR-020 is
+    Locked and FR-036's proviso is that the notice NEVER asserts deliberation
+    while an agent is progressing.
+
+    LEAD RULING, GRIND cycle 7 (state.json `spec_ambiguities` entry 7,
+    superseding the cycle-4 AND where they conflict): "if agents are running"
+    is decided by EVIDENCE OF PROGRESS.
+
+      * a progressing ledger, no registered team  -> WAITING   (D-127)
+      * a registered but DEAD team, no ledger     -> STALL     (D-021)
+      * neither                                    -> STALL     (AC-032 arm 2)
+
+    So a progressing roster is SUFFICIENT whether or not a team is registered,
+    and a registered team is never sufficient on its own. AC-032's "with no
+    active teams it reports the stall" means no RUNNING AGENTS by either input,
+    which is what the roster measures. D-021's cause stays closed for the same
+    reason it was closed: a stale team directory alone still cannot suppress
+    the warning, because the ledgers are what answer.
+
+    `teams_active` is still read and still REPORTED on the result, so CT-012's
+    input set is unchanged and a caller can still tell a registered team from a
+    progressing one.
+
+    NEVER RAISES AND NEVER BLOCKS (CT-012). Every failure path answers "not
+    waiting", which degrades to the pre-change behaviour — the watchdog warns —
+    rather than to silence. A liveness reader that cannot answer must not be
+    able to suppress a real stall warning.
+    """
+    result = {"waiting": False, "count": 0, "detail": "", "agents": []}
+
+    # CT-012's second declared input. Read FIRST and never raised through: a
+    # scan that cannot answer must not be able to suppress a stall warning
+    # either, so an unusable answer reads as "no active team".
+    try:
+        teams = _check_active_teams(project_root)
+    except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
+        teams = {"active": False, "teams": []}
+    teams_active = bool(teams.get("active"))
+
+    try:
+        from foundry_mcp.tools.foundry_spawn import (
+            STATUS_NO_PROGRESS,
+            STATUS_PROGRESSING,
+            foundry_liveness,
+        )
+
+        liveness = foundry_liveness(None, None, project_root=project_root)
+    except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
+        liveness = {"ok": False}
+
+    live_agents = []
+    if liveness.get("ok"):
+        for row in liveness.get("agents", []) or []:
+            if not isinstance(row, dict):
+                continue
+            # PROGRESSING and NO_PROGRESS both mean lines are still ARRIVING;
+            # they differ only in whether the `step` field moved. STALLED means
+            # no line at all for the threshold, DONE means finished, and
+            # NO_LEDGER / UNKNOWN mean there is no evidence — none of which is
+            # an agent to wait for.
+            if row.get("status") in (STATUS_PROGRESSING, STATUS_NO_PROGRESS):
+                live_agents.append(row)
+
+    # D-127 / FR-020, stated once: PROGRESS decides. An EMPTY roster is the one
+    # answer that lets the watchdog speak. A registered team with nothing
+    # progressing is D-021's stale directory rather than an agent to wait for,
+    # and it can no longer suppress the warning because it never reaches past
+    # this line on its own.
+    if not live_agents:
+        result["teams_active"] = teams_active
+        result["progressing_agents"] = 0
+        return result
+
+    # FR-036: the oldest progress age is what the lead actually needs — the
+    # agent least recently heard from is the one that decides whether this
+    # wait is healthy.
+    ages = [
+        row.get("last_progress_age_seconds", 0)
+        for row in live_agents
+        if isinstance(row.get("last_progress_age_seconds"), int)
+    ]
+    oldest = max(ages) if ages else 0
+    result.update({
+        "waiting": True,
+        # D-127: REPORTED, not asserted. This used to be the literal `True` the
+        # AND had already proved; waiting no longer implies a registered team,
+        # so the field carries what the scan actually answered and CT-012's
+        # input set stays visible to every reader.
+        "teams_active": teams_active,
+        "progressing_agents": len(live_agents),
+        "count": len(live_agents),
+        "detail": f"oldest progress {oldest // 60}m {oldest % 60}s ago",
+        "agents": [
+            {"agent": r.get("agent"), "status": r.get("status"),
+             "step": r.get("step")}
+            for r in live_agents
+        ],
+        "oldest_progress_seconds": oldest,
+    })
+    return result
+

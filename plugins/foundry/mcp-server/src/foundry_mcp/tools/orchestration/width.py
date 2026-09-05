@@ -37,81 +37,11 @@ from foundry_mcp.tools.foundry_state import (
     now_iso,
     read_document,
     read_text_file,
+    sight_required,
 )
 from pathlib import Path
-from foundry_mcp.tools.orchestration.teams import (
-    _check_active_teams,
-    _check_sight_required,
-)
 
 
-
-
-#: D-238 — git's C-quote escapes, for the one place the quoted form survives.
-#:
-#: `core.quotepath=false` stops git escaping non-ASCII bytes, and that is the
-#: whole of the common case. It does NOT stop git quoting a path that contains a
-#: double quote, a backslash or a control character: those are quoted whatever
-#: `quotepath` says, because the quoting is what keeps such a path on ONE line.
-#: So a parse that reads git's LINE-oriented output still meets the quoted form
-#: and still has to undo it.
-_C_QUOTE_ESCAPES = {
-    "a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t",
-    "v": "\v", "\\": "\\", '"': '"',
-}
-
-
-
-
-def _decode_git_path(field: str) -> str:
-    """One path as git PRINTS it, back to the path it NAMES (D-238).
-
-    A field that is not quoted is returned unchanged, so this is safe to apply
-    to every path git hands back rather than only to the ones a caller guessed
-    might need it. A quoted field is unwrapped and its escapes are undone —
-    octal escapes accumulate as BYTES and are decoded as UTF-8 at the end,
-    because git emits one escape per byte and a multi-byte character therefore
-    arrives as several (`\\303\\251` is one `é`, not two characters).
-
-    WHY THIS EXISTS RATHER THAN A SECOND FLAG (D-238 / D-239's shared class).
-    Where git can be asked for NUL-separated output it is (`git_changed_paths`),
-    and then nothing is ever quoted and this is never reached. `git show
-    --numstat` is the one consumer that cannot take that route without changing
-    its record grammar — with `-z` a rename becomes three NUL-separated tokens
-    rather than one tab field — so it keeps the line grammar
-    `_numstat_rename_paths` parses, passes `core.quotepath=false`, and undoes
-    the residual quoting here.
-    """
-    if not isinstance(field, str):
-        return ""
-    if len(field) < 2 or not (field.startswith('"') and field.endswith('"')):
-        return field
-    body = field[1:-1]
-    out = bytearray()
-    i = 0
-    while i < len(body):
-        ch = body[i]
-        if ch != "\\":
-            out.extend(ch.encode("utf-8"))
-            i += 1
-            continue
-        i += 1
-        if i >= len(body):
-            # A trailing lone backslash is not an escape git would emit; keep
-            # it rather than dropping a byte the path may really carry.
-            out.extend(b"\\")
-            break
-        esc = body[i]
-        if esc in "01234567":
-            digits = ""
-            while i < len(body) and len(digits) < 3 and body[i] in "01234567":
-                digits += body[i]
-                i += 1
-            out.append(int(digits, 8) & 0xFF)
-            continue
-        out.extend(_C_QUOTE_ESCAPES.get(esc, esc).encode("utf-8"))
-        i += 1
-    return out.decode("utf-8", errors="replace")
 
 
 
@@ -1403,6 +1333,39 @@ def _prove_delta_sample(
 
 
 
+def _sight_required(fdir: Path) -> dict:
+    """Whether SIGHT is part of this run, read through the LEAF (GI-033).
+
+    fallout GI-033 / AC-061 / FR-063 (D-021 / D-035) — WHY THIS SEAM EXISTS.
+    ----------------------------------------------------------------------
+    This module is in the VERIFIER set: its diff is what makes `verifier_touched`
+    fire, and GI-033 says a verifier module reaches leaf modules and nothing in
+    the lifecycle layer. `orchestration/teams.py` is named lifecycle by GI-033's
+    own violation column, so `from ...teams import _check_sight_required` was a
+    layering violation that `_LAYERING_DEBT` excused rather than closed.
+
+    `foundry_state.sight_required` is casting 10's leaf reader and holds the
+    whole rule, `--no-ui` declaration and all — this is a repoint, not a second
+    implementation, and `teams._check_sight_required` delegates to the same
+    reader for its own callers.
+
+    THE TWO CLOSED-SET VALUES ARE IMPORTED LAZILY AND THAT IS NOT THE LAYERING
+    DODGE IT LOOKS LIKE. `foundry_spawn` and `tools/foundry.py` both import from
+    this package, so a module-top import here closes an import cycle that takes
+    every tool in the server down at load. It is the `Lazy cross-module seam`
+    house pattern, written ONCE per symbol, and `teams.py` reaches the same two
+    names the same way for the same reason.
+    """
+    from foundry_mcp.tools.foundry import NO_UI_MEANING
+    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+
+    return sight_required(
+        fdir, shape_problem=_manifest_shape_problem, no_ui_meaning=NO_UI_MEANING
+    )
+
+
+
+
 def _base_required_streams(project_root: str) -> list[str]:
     """`sight` and `probe`, which are per-run facts rather than width facts.
 
@@ -1414,7 +1377,7 @@ def _base_required_streams(project_root: str) -> list[str]:
     """
     fdir = get_run_dir(project_root)
     extra: list[str] = []
-    if fdir and _check_sight_required(project_root).get("required"):
+    if fdir and _sight_required(fdir).get("required"):
         extra.append("sight")
     if fdir and _load_json(fdir / "castings" / "manifest.json").get("target_url"):
         extra.append("probe")
@@ -1812,186 +1775,14 @@ def _record_cycle_rollup(fdir: Path, cycle: int, *, sub: str = "", **fields) -> 
 
 
 
-#: FR-036 (Flexible) — how long a gap between Foundry-Next calls has to be
-#: before the watchdog says anything at all. Unchanged from the 180 seconds this
-#: has always used: the threshold was never the defect, the accusation was.
-#: A gap this long is worth REMARKING on either way; what changed is that the
-#: remark now depends on whether an agent is actually running.
-STALL_NOTICE_SECONDS = 180
 
 
 
 
-def _waiting_on_agents(project_root: str) -> dict:
-    """Is the lead waiting on live agents, or is it deliberating (FR-020)?
-
-    Returns ``{"waiting": bool, "count": int, "detail": str, "agents": [...]}``.
-
-    BOTH DECLARED INPUTS ARE READ; PROGRESS IS WHAT DECIDES (D-076, D-127).
-    ----------------------------------------------------------------------
-    CT-012 declares this check's inputs as ".last-next-at, ACTIVE TEAMS,
-    Foundry-Liveness roster"; FR-020 (Locked, verbatim) reads "Before accusing,
-    Foundry-Next checks ACTIVE TEAMS AND Foundry-Liveness ... IF AGENTS ARE
-    RUNNING it reports 'waiting on N agents'". Both sources are read. What they
-    are read FOR is the question the two defects here disagreed about.
-
-    D-076 removed the team scan entirely and the suite asserted its own absence
-    with an AST walk, so a declared contract input had a test guarding the fact
-    that nothing consulted it. The GRIND cycle-4 repair restored the scan and
-    ANDed it: waiting required a registered ACTIVE team **and** a progressing
-    ledger.
-
-    D-127 — THE AND ACCUSED THE LEAD WHILE ITS OWN LIVENESS READ SHOWED AGENTS
-    WORKING. The F2 INSPECT streams are background Agents, never tmux
-    teammates, so `_check_active_teams` cannot see them — the cycle-4 comment
-    recorded that as a "known consequence" and the consequence is the defect.
-    Driven: no registered team, two progress ledgers written seconds earlier,
-    `.last-next-at` 600s old -> `waiting` False, `progressing_agents` 2, and
-    Foundry-Next emitted `stall_detected_seconds` 600 beside the notice "NO
-    agent is running. You were silently deliberating" — asserting deliberation
-    over two agents the same call had just measured progressing. FR-020 is
-    Locked and FR-036's proviso is that the notice NEVER asserts deliberation
-    while an agent is progressing.
-
-    LEAD RULING, GRIND cycle 7 (state.json `spec_ambiguities` entry 7,
-    superseding the cycle-4 AND where they conflict): "if agents are running"
-    is decided by EVIDENCE OF PROGRESS.
-
-      * a progressing ledger, no registered team  -> WAITING   (D-127)
-      * a registered but DEAD team, no ledger     -> STALL     (D-021)
-      * neither                                    -> STALL     (AC-032 arm 2)
-
-    So a progressing roster is SUFFICIENT whether or not a team is registered,
-    and a registered team is never sufficient on its own. AC-032's "with no
-    active teams it reports the stall" means no RUNNING AGENTS by either input,
-    which is what the roster measures. D-021's cause stays closed for the same
-    reason it was closed: a stale team directory alone still cannot suppress
-    the warning, because the ledgers are what answer.
-
-    `teams_active` is still read and still REPORTED on the result, so CT-012's
-    input set is unchanged and a caller can still tell a registered team from a
-    progressing one.
-
-    NEVER RAISES AND NEVER BLOCKS (CT-012). Every failure path answers "not
-    waiting", which degrades to the pre-change behaviour — the watchdog warns —
-    rather than to silence. A liveness reader that cannot answer must not be
-    able to suppress a real stall warning.
-    """
-    result = {"waiting": False, "count": 0, "detail": "", "agents": []}
-
-    # CT-012's second declared input. Read FIRST and never raised through: a
-    # scan that cannot answer must not be able to suppress a stall warning
-    # either, so an unusable answer reads as "no active team".
-    try:
-        teams = _check_active_teams(project_root)
-    except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
-        teams = {"active": False, "teams": []}
-    teams_active = bool(teams.get("active"))
-
-    try:
-        from foundry_mcp.tools.foundry_spawn import (
-            STATUS_NO_PROGRESS,
-            STATUS_PROGRESSING,
-            foundry_liveness,
-        )
-
-        liveness = foundry_liveness(None, None, project_root=project_root)
-    except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
-        liveness = {"ok": False}
-
-    live_agents = []
-    if liveness.get("ok"):
-        for row in liveness.get("agents", []) or []:
-            if not isinstance(row, dict):
-                continue
-            # PROGRESSING and NO_PROGRESS both mean lines are still ARRIVING;
-            # they differ only in whether the `step` field moved. STALLED means
-            # no line at all for the threshold, DONE means finished, and
-            # NO_LEDGER / UNKNOWN mean there is no evidence — none of which is
-            # an agent to wait for.
-            if row.get("status") in (STATUS_PROGRESSING, STATUS_NO_PROGRESS):
-                live_agents.append(row)
-
-    # D-127 / FR-020, stated once: PROGRESS decides. An EMPTY roster is the one
-    # answer that lets the watchdog speak. A registered team with nothing
-    # progressing is D-021's stale directory rather than an agent to wait for,
-    # and it can no longer suppress the warning because it never reaches past
-    # this line on its own.
-    if not live_agents:
-        result["teams_active"] = teams_active
-        result["progressing_agents"] = 0
-        return result
-
-    # FR-036: the oldest progress age is what the lead actually needs — the
-    # agent least recently heard from is the one that decides whether this
-    # wait is healthy.
-    ages = [
-        row.get("last_progress_age_seconds", 0)
-        for row in live_agents
-        if isinstance(row.get("last_progress_age_seconds"), int)
-    ]
-    oldest = max(ages) if ages else 0
-    result.update({
-        "waiting": True,
-        # D-127: REPORTED, not asserted. This used to be the literal `True` the
-        # AND had already proved; waiting no longer implies a registered team,
-        # so the field carries what the scan actually answered and CT-012's
-        # input set stays visible to every reader.
-        "teams_active": teams_active,
-        "progressing_agents": len(live_agents),
-        "count": len(live_agents),
-        "detail": f"oldest progress {oldest // 60}m {oldest % 60}s ago",
-        "agents": [
-            {"agent": r.get("agent"), "status": r.get("status"),
-             "step": r.get("step")}
-            for r in live_agents
-        ],
-        "oldest_progress_seconds": oldest,
-    })
-    return result
 
 
 
 
-def _note_fix_after_inspect_decision(fdir: Path, defect_id: str) -> None:
-    """Mark the open INSPECT's recorded width as superseded by a fix (D-035).
-
-    D-035 — A DELTA-SWEPT INSPECT COULD OPEN ASSAY.
-    ----------------------------------------------
-    `foundry_mark_defect_fixed` has no phase guard, so a fix landing while the
-    run sits in F2 flips the blocking count to zero AFTER the width was already
-    decided and the sweep already taken. `inspect_clean` then passes and ASSAY
-    opens on a cycle whose sweep never covered the surface that fix changed —
-    the one crossing GI-002 exists to make honest.
-
-    Recorded rather than refused. The fix itself is legitimate work and
-    refusing it would push the lead to fix the defect and not say so, which is
-    strictly worse. What is not legitimate is CARRYING that cycle's decision
-    forward as though it still described the tree, so the entry is stamped and
-    `inspect_clean` refuses until a fresh `inspect_start` re-decides the width
-    and re-sweeps at the new HEAD.
-
-    A no-op outside F2: in F3 GRIND, which is where fixes normally land, the
-    next `inspect_start` decides a width that already accounts for them.
-    """
-    state_path = fdir / "state.json"
-    with _document_transaction(state_path) as state:
-        if state.get("phase") != "F2":
-            return
-        modes = state.get("inspect_modes")
-        if not isinstance(modes, list) or not modes:
-            return
-        current = modes[-1]
-        if not isinstance(current, dict):
-            return
-        superseded = current.get("fixes_after_decision")
-        if not isinstance(superseded, list):
-            superseded = []
-        if defect_id not in superseded:
-            superseded.append(defect_id)
-        current["fixes_after_decision"] = superseded
-        state["inspect_modes"] = modes
-        state["updated_at"] = now_iso()
 
 
 
