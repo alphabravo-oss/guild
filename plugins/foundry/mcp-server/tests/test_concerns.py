@@ -49,6 +49,7 @@ from foundry_mcp.tools.concerns import (
     TARGET_KIND_SYMBOL,
     foundry_concern,
     mark_concerns_dispatched,
+    open_concerns_for_other_castings,
     open_cross_casting_concerns,
     read_concerns,
 )
@@ -331,6 +332,80 @@ def test_closing_without_a_reason_is_refused(run_env):
 # --------------------------------------------------------------------------- #
 
 
+def test_the_cross_casting_filter_has_one_body_and_it_is_the_leafs(run_env):
+    """fallout GI-024 / GI-033 — concern C-030, ruling ``lead_ruling_gi_033_leaf_moves``.
+
+    THE FAILING-THEN-PASSING TEST FOR THE DELEGATION. Before this change
+    ``tools/concerns.py`` defined its own body of the cross-casting filter
+    beside ``foundry_state``'s, so this identity was False and
+    ``test_no_top_level_symbol_is_defined_in_two_shipped_modules`` named
+    ``open_cross_casting_concerns`` as defined in two shipped modules. Two
+    bodies of one rule drift; there is one now, and it is the leaf's, so a
+    VERIFIER module can read it without reaching through this module into
+    ``tools/foundry.py``.
+    """
+    _project_root, fdir = run_env
+
+    assert open_cross_casting_concerns is foundry_state.open_cross_casting_concerns
+
+    # ...and it is the LEAF's contract that arrives, not a local function
+    # wearing the leaf's name. The leaf declines to TYPE a status member, so
+    # the bare call has none to read and refuses rather than guessing one.
+    # Every caller either names the member or asks through the wrapper below.
+    with pytest.raises(TypeError):
+        open_cross_casting_concerns(fdir)
+
+
+def test_this_module_supplies_its_own_open_status_to_the_leafs_read(run_env):
+    """fallout GI-023 / ST-005 / FR-039 — what is left on this side of the delegation.
+
+    The leaf takes its status member as an argument on the rule that a
+    closed-set value belongs to the module that DECLARES the set, and
+    ``CONCERN_STATUSES`` is declared here. So this is the one place the read
+    meets the vocabulary, and the door never respells "open".
+
+    The ledger is hand-built rather than driven through ``Foundry-Concern``:
+    the expected ids below are written out, so this pins the ANSWER rather than
+    agreeing with whatever the two implementations happen to say together.
+    """
+    _project_root, fdir = run_env
+    (fdir / CONCERNS_FILENAME).write_text(
+        json.dumps(
+            {
+                "concerns": [
+                    # open, lands elsewhere, cycle 7 — the door's subject.
+                    {"id": "C-001", "cycle": 7, "source_casting": 1,
+                     "target_casting_id": 2, "status": "open"},
+                    # dispatched: addressed by definition (FR-039).
+                    {"id": "C-002", "cycle": 7, "source_casting": 1,
+                     "target_casting_id": 2, "status": "dispatched"},
+                    {"id": "C-003", "cycle": 7, "source_casting": 1,
+                     "target_casting_id": 2, "status": "closed"},
+                    # open, but lands on the casting that filed it.
+                    {"id": "C-004", "cycle": 7, "source_casting": 3,
+                     "target_casting_id": 3, "status": "open"},
+                    # open, lands elsewhere, a LATER cycle.
+                    {"id": "C-005", "cycle": 8, "source_casting": 1,
+                     "target_casting_id": 2, "status": "open"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert [c["id"] for c in open_concerns_for_other_castings(fdir)] == ["C-001", "C-005"]
+    assert [c["id"] for c in open_concerns_for_other_castings(fdir, cycle=7)] == ["C-001"]
+    assert open_concerns_for_other_castings(fdir, cycle=9) == []
+
+    # The member supplied really is `open` and not "whatever the leaf defaults
+    # to": the same read asking for another member of THIS module's vocabulary
+    # answers with the other records.
+    assert [
+        c["id"]
+        for c in open_cross_casting_concerns(fdir, status_open=CONCERN_STATUS_DISPATCHED)
+    ] == ["C-002"]
+
+
 def test_dispatching_moves_the_status_and_the_reader_stops_returning_it(run_env):
     """fallout FR-039: 'Foundry-Tasks marks dispatched.' fallout GI-023 / ST-005: the
     inspect_start rung asks for the OPEN cross-casting concerns, and a
@@ -338,13 +413,13 @@ def test_dispatching_moves_the_status_and_the_reader_stops_returning_it(run_env)
     project_root, fdir = run_env
     opened = _open_one(project_root)["concern"]
 
-    assert [c["id"] for c in open_cross_casting_concerns(fdir)] == [opened["id"]]
+    assert [c["id"] for c in open_concerns_for_other_castings(fdir)] == [opened["id"]]
 
     result = mark_concerns_dispatched(fdir, [opened["id"]])
 
     assert result["dispatched"] == [opened["id"]]
     assert _ledger(fdir)[0]["status"] == CONCERN_STATUS_DISPATCHED
-    assert open_cross_casting_concerns(fdir) == []
+    assert open_concerns_for_other_castings(fdir) == []
     rendered = _file(fdir, CONCERNS_MARKDOWN_FILENAME).read_text(encoding="utf-8")
     assert f"## {opened['id']} — {CONCERN_STATUS_DISPATCHED}" in rendered
 
@@ -376,7 +451,7 @@ def test_a_self_targeted_concern_is_not_cross_casting(run_env):
         text="my own file",
     )
 
-    assert open_cross_casting_concerns(fdir) == []
+    assert open_concerns_for_other_castings(fdir) == []
 
 
 def test_the_cross_casting_reader_scopes_to_a_cycle_when_asked(run_env):
@@ -386,8 +461,8 @@ def test_the_cross_casting_reader_scopes_to_a_cycle_when_asked(run_env):
     _open_one(project_root, cycle=3, text="from cycle 3")
     _open_one(project_root, cycle=4, text="from cycle 4")
 
-    assert len(open_cross_casting_concerns(fdir)) == 2
-    scoped = open_cross_casting_concerns(fdir, cycle=4)
+    assert len(open_concerns_for_other_castings(fdir)) == 2
+    scoped = open_concerns_for_other_castings(fdir, cycle=4)
     assert [c["text"] for c in scoped] == ["from cycle 4"]
 
 

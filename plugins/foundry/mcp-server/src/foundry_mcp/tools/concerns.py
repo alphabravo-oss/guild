@@ -47,6 +47,16 @@ writes through it and defines no lock of its own. For the same reason target
 resolution reaches ``castings/manifest.json`` through ``foundry_state``'s
 tolerant read rather than opening a fifth read-and-validate prelude of its own
 (Holmes ``share-5``).
+
+And the cross-casting READ is the leaf's, not this module's — concern C-030 and
+the lead's ruling ``lead_ruling_gi_033_leaf_moves``. The INSPECT door refuses on
+that list and ``orchestration/transitions.py`` is a VERIFIER module, so an edge
+from there into this one pulled ``tools/foundry.py`` — the largest lifecycle
+module in the tree — across the layer boundary with it (GI-033). The WRITERS
+stay here with the transaction and the render; the filter is
+``foundry_state.open_cross_casting_concerns`` and this module imports it, so
+there is exactly one body of it (GI-024). See
+``open_concerns_for_other_castings`` for the one thing left on this side.
 """
 
 from __future__ import annotations
@@ -64,6 +74,7 @@ from foundry_mcp.tools.foundry import (
 )
 from foundry_mcp.tools.foundry_state import (
     get_run_dir,
+    open_cross_casting_concerns,
     read_document,
     read_text_file,
 )
@@ -573,37 +584,44 @@ def read_concerns(fdir: Path) -> tuple[list[dict], str | None]:
     return [r for r in records if isinstance(r, dict)], None
 
 
-def open_cross_casting_concerns(
+def open_concerns_for_other_castings(
     fdir: Path,
     *,
     cycle: int | None = None,
 ) -> list[dict]:
     """Open concerns whose target is a casting OTHER than the source casting.
 
-    CALLER: casting 2's ``_inspect_start_preconditions`` — the CONCERN_OPEN
-    rung that refuses to open INSPECT while a cross-casting concern from the
-    closing GRIND is unaddressed (GI-023, ST-005). Pass ``cycle`` to scope the
-    answer to that GRIND; omit it for every open cross-casting concern.
+    CALLERS: ``orchestration/transitions.py``'s ``_inspect_start_preconditions``
+    — the CONCERN_OPEN rung that refuses to open INSPECT while a cross-casting
+    concern from the closing GRIND is unaddressed (GI-023, ST-005) — and
+    ``orchestration/directives.py``'s co-dispatch join, which widens the set a
+    task carries so ``Foundry-Tasks`` can mark the concern dispatched (CT-008,
+    FR-039). Pass ``cycle`` to scope the answer to that GRIND; omit it for every
+    open cross-casting concern.
 
-    "Unaddressed" is ``status == open`` and nothing else: FR-039 makes
+    THE FILTER IS NOT HERE, AND THAT IS THE POINT (concern C-030, ruling
+    ``lead_ruling_gi_033_leaf_moves`` item 3). This module used to carry its own
+    copy of it beside the leaf's, which is two bodies of one rule — the shape
+    GI-024 names and the package-wide single-definition guard is red on. The
+    body now lives once, in ``foundry_state.open_cross_casting_concerns``, and a
+    verifier module may read it there without reaching through this module into
+    ``tools/foundry.py`` (GI-033).
+
+    WHAT IS LEFT FOR THIS FUNCTION TO DO, which is why it is not merely the
+    re-export. The leaf takes its status member as an ARGUMENT rather than
+    typing one, on the rule that a closed-set value belongs to the module that
+    declares the set — and ``CONCERN_STATUSES`` is declared here. So this is the
+    one place the leaf's read meets this module's vocabulary, and no caller
+    respells "open" to ask the question.
+
+    "Unaddressed" is ``CONCERN_STATUS_OPEN`` and nothing else: FR-039 makes
     ``dispatched`` the mark Foundry-Tasks leaves when the concern reaches the
     casting that owns it, and a dispatched concern has been addressed by
     definition.
     """
-    records, _ = read_concerns(fdir)
-    out: list[dict] = []
-    for record in records:
-        if record.get("status") != CONCERN_STATUS_OPEN:
-            continue
-        if cycle is not None and record.get("cycle") != cycle:
-            continue
-        target_casting = record.get("target_casting_id")
-        if target_casting is None:
-            continue
-        if str(target_casting) == str(record.get("source_casting")):
-            continue
-        out.append(record)
-    return out
+    return open_cross_casting_concerns(
+        fdir, status_open=CONCERN_STATUS_OPEN, cycle=cycle
+    )
 
 
 @ledger_refusals
