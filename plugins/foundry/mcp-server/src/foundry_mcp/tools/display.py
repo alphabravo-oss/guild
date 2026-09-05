@@ -675,21 +675,28 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
         # exists to show.
         #
         # THE KEY FUNCTION IS IMPORTED, NOT RE-TYPED. `foundry_report` renders
-        # the SAME mapping through `_cycle_sort_key` at both `by_cycle` and
-        # `per_cycle`, and `measure-run.py` at the same two axes, so one
-        # document had two orderings depending on which surface printed it —
-        # which is the whole class. A third copy here would make it three. The
-        # import is function-local for the reason `foundry_report` gives where
-        # it imports `_agent_id_for_casting` from `foundry_spawn`: it runs at
-        # call time, when every module is loaded, and closes no cycle in the
-        # import graph.
+        # the SAME mapping through it at both `by_cycle` and `per_cycle`, and
+        # `measure-run.py` at the same two axes, so one document had two
+        # orderings depending on which surface printed it — which is the whole
+        # class. A third copy here would make it three.
+        #
+        # GI-024 — AND THE DESTINATION IS THE LEAF NOW, NOT `foundry_report`.
+        # This read the spelling out of the report module, which is a
+        # RENDERER: two renderers agreeing because one imports the other is a
+        # sharing arrangement that survives only while the report keeps a
+        # helper it does not itself need. The ordering is a derived-table rule,
+        # so it lives in `foundry_state` with the rest of them, and all three
+        # surfaces — this one, the report, and `measure-run.py` — reach the
+        # same object. The import is function-local for the reason
+        # `foundry_report` gives where it imports `_agent_id_for_casting` from
+        # `foundry_spawn`: it runs at call time and closes no cycle.
         #
         # `by_phase` is UNCHANGED by it. Its keys are phase tokens ("F1",
-        # "F5.5"), which `_cycle_sort_key` maps to `(1, raw)` — after every
+        # "F5.5"), which `cycle_sort_key` maps to `(1, raw)` — after every
         # numeric key, and among themselves in exactly the lexicographic order
         # `sorted()` gave them. One key function over both axes, and only the
         # axis that was wrong moves.
-        from foundry_mcp.tools.foundry_report import _cycle_sort_key
+        from foundry_mcp.tools.foundry_state import cycle_sort_key as _cycle_sort_key
 
         for label, section in (("by phase", "by_phase"), ("by cycle", "by_cycle")):
             buckets = spend.get(section) or {}
@@ -737,6 +744,46 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
         lines.append(
             f"  {_BWHITE}Waiting:{_RESET}  {waiting.get('count', 0)} agent(s) "
             f"{_DIM}({waiting.get('detail', '')}){_RESET}"
+        )
+
+    # FR-021 / AC-028 / CT-007 — WHERE THE RUN IS HEADING, beside the facts it
+    # already prints.
+    #
+    # `Foundry-Next` is the mandatory handshake before every transition, and
+    # until now it told the lead everything about where the run IS and nothing
+    # about where it ENDS. CT-007 makes `heading_for` carry DONE or HALTED on
+    # every response, with the open counts that would form the backlog and the
+    # cycles left to the cap, so "a named backlog is a successful end" is a
+    # sentence the lead can act on rather than one they read afterwards.
+    #
+    # THE VALUE IS COMPUTED BY `_compute_next_action` AND RENDERED HERE. This
+    # module's rule is that the display never derives (D-179): a formatter that
+    # worked out where the run was heading would be a second answer to a
+    # question the handler already answers, free to disagree with the gate that
+    # acts on it. The key is ABSENT until that computation lands, and an absent
+    # key contributes no line — which is what lets this render correctly in a
+    # tree where the field does not exist yet, and light up the moment it does.
+    heading = r.get("heading_for")
+    if isinstance(heading, str) and heading:
+        colour = _BRED if heading == "HALTED" else _BGREEN
+        backlog = r.get("open_by_tier")
+        parts: list[str] = []
+        if isinstance(backlog, dict) and backlog:
+            parts.append(
+                "backlog " + ", ".join(
+                    f"{tier} {count}" for tier, count in sorted(backlog.items())
+                )
+            )
+        cycles = r.get("cycles_to_cap")
+        if isinstance(cycles, int) and not isinstance(cycles, bool):
+            parts.append(f"{cycles} cycle(s) to cap")
+        elif "cycles_to_cap" in r and r.get("cycles_to_cap") is None:
+            # `null` is a MEASUREMENT here — an unbounded run — and saying so
+            # is the difference between "no cap" and "nobody looked".
+            parts.append("no cap")
+        tail = f" {_DIM}({'; '.join(parts)}){_RESET}" if parts else ""
+        lines.append(
+            f"  {_BWHITE}Heading:{_RESET}  {colour}{heading}{_RESET}{tail}"
         )
 
     if r.get("phase") == "HALTED":

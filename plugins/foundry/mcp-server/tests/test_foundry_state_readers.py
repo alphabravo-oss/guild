@@ -947,3 +947,234 @@ def test_no_fourth_spec_path_resolver_grew_here() -> None:
     assert not {n for n in defined if "spec_path" in n or "spec_dir" in n}, (
         "a spec-path resolver in the leaf module is Holmes share-7's fourth copy"
     )
+
+
+# ---------------------------------------------------------------------------
+# AC-011 / OT-010 — THE CROSS-SURFACE ASSERTION.
+#
+# The point of the consolidation is not that the readers exist; it is that the
+# surfaces which used to answer a question twice now read ONE object. So each
+# register below drives `generate_report` against a real run directory and
+# asserts the section it wrote is what the leaf reader returns — not "a number
+# that matches", but the same derivation, so a future edit cannot make them
+# agree by coincidence.
+#
+# WHAT THIS CAN AND CANNOT PIN AT WAVE 1. `foundry_orchestrator` still holds
+# its own copies of these rules; that is deliberate and named — the monolith is
+# casting 2's file, and its group 0 replaces those copies with imports from
+# here. So the assertions below are on the half that exists now: the REPORT
+# reads through the leaf. Casting 2's own report closes the other half, and the
+# AST no-second-definition pin lands with it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def report_run(tmp_path):
+    """A copy of the report fixture archive; yields the run dir.
+
+    The same `tests/fixtures/escalation/finer_boundary_run/` the report suite
+    drives, because a cross-surface assertion is only worth making against the
+    ledger shapes a real archive carries — a synthetic run with one clean row
+    in each ledger would pass however the two surfaces derived it.
+    """
+    fixture = Path(__file__).parent / "fixtures" / "escalation" / "finer_boundary_run"
+    run_dir = tmp_path / "foundry-archive" / "finer-boundary-run"
+    run_dir.mkdir(parents=True)
+    for src in fixture.iterdir():
+        (run_dir / src.name).write_bytes(src.read_bytes())
+    return run_dir
+
+
+def _generated(run_dir: Path) -> dict:
+    from foundry_mcp.tools.foundry_report import generate_report
+
+    result = generate_report(run_dir.parent.parent, run_dir)
+    assert result["ok"] is True, result
+    return json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+
+
+def test_the_report_spend_table_is_the_leafs_spend_rollup(report_run) -> None:
+    """§3.2's live row: three copies of the spend arithmetic, now one.
+
+    `_read_spend`'s own docstring documents FOUR defects caused by the two live
+    copies disagreeing — D-038, D-090, D-162, D-163. The section is asserted
+    field by field against the reader rather than only on the total, because
+    every one of those four was a single field parting company.
+    """
+    from foundry_mcp.tools import foundry_report as fr
+
+    section = _generated(report_run)["spend_per_phase_and_cycle"]
+
+    spend_rows, _ = fs.read_jsonl(report_run / "spend.jsonl")
+    state, _ = fs.read_document(report_run / "state.json")
+    summary, problem = fr._read_dispatch_summary(report_run)
+    assert problem is None
+    table = fs.spend_rollup(
+        spend_rows=spend_rows,
+        state_rollup=state.get("spend"),
+        dispatch_summary=summary,
+    )
+
+    for field in ("records", "by_phase", "by_cycle", "total", "state_rollup",
+                  "disagreements", "unreported_without_cycle"):
+        assert section[field] == table[field], field
+    # The section adds prose and NOTHING else.
+    assert set(section) == set(table) | {"note"}
+
+
+def test_the_spend_unreported_column_and_the_dispatch_section_are_one_object(
+    report_run,
+) -> None:
+    """D-163 — `total.unreported` IS the `unreported_dispatches` count.
+
+    One report published `total.unreported: 0` beside its own
+    `unreported_dispatches {"count": 1}` because the two reached the number
+    two ways. They are the same integer by construction now, not by agreement.
+    """
+    document = _generated(report_run)
+
+    assert (
+        document["spend_per_phase_and_cycle"]["total"]["unreported"]
+        == document["unreported_dispatches"]["count"]
+    )
+
+
+def test_the_report_inspect_section_is_the_leafs_census(report_run) -> None:
+    """D-119 / D-193 — one census, and the axis it is measured against.
+
+    `cycle_count` counts the cycles this ledger has a decision for and
+    `cycle_axis_length` counts the cycles the run RAN; publishing the first as
+    the second is what put two numbers for one axis in one document.
+    """
+    from foundry_mcp.schemas.vocab import INSPECT_MODES as MODES
+
+    section = _generated(report_run)["inspect_modes_per_cycle"]
+    state, _ = fs.read_document(report_run / "state.json")
+    table = fs.inspect_mode_rows(
+        state=state, derived=fs.derive_cycle_count(report_run), modes=MODES
+    )
+
+    for field in ("count", "cycle_count", "cycle_axis_length",
+                  "cycles_without_decision", "by_mode", "per_cycle", "entries"):
+        assert section[field] == table[field], field
+    # The section adds the disclosure sentence and the acceptance ratio; the
+    # axis numbers the sentence is built from came back WITH the rows, so the
+    # prose and the table cannot describe two different axes.
+    assert set(section) - set(table) == {"note", "full_cycle_ratio"}
+
+
+def test_the_full_cycle_ratio_is_derived_once(report_run) -> None:
+    """AC-046 — `measure-run.py` and the report publish the same figure.
+
+    Two derivations of one acceptance criterion is the one place a
+    disagreement is unarguable: the archive either meets the target or it does
+    not, and it cannot do both depending on which command printed it.
+    """
+    section = _generated(report_run)["inspect_modes_per_cycle"]
+
+    assert section["full_cycle_ratio"] == fs.full_cycle_ratio(
+        {"per_cycle": section["per_cycle"]}
+    )
+    assert section["full_cycle_ratio"]["total_cycles"] == section["cycle_count"]
+
+
+def test_the_report_escalated_rows_are_the_leafs_rows(report_run) -> None:
+    """D-214 / D-215 — one resolver, and now one row builder over it.
+
+    `count == sum(by_status.values())` is the property the resolver buys, and
+    it is asserted here as well as inside the reader because the report is the
+    surface where the two were observed to disagree.
+    """
+    from foundry_mcp.schemas.vocab import (
+        ESCALATION_EXIT_REASONS as REASONS,
+        ESCALATION_STATUSES as STATUSES,
+        escalation_status as resolver,
+    )
+
+    section = _generated(report_run)["escalated_classes"]
+    document, _ = fs.read_document(report_run / "escalation.json")
+    table = fs.escalated_class_rows(
+        document, statuses=STATUSES, exit_reasons=REASONS, status_of=resolver
+    )
+
+    assert section == table
+    assert section["count"] == sum(section["by_status"].values())
+
+
+def test_the_report_dispatch_inputs_are_the_leafs_assembly(report_run) -> None:
+    """D-047 / D-048 / D-163 — the RULE was shared; now the INPUTS are too.
+
+    The roster and the cycle map come off ONE walk of the roll-up, so the two
+    surfaces cannot disagree about which cycles a stream ran in — which is the
+    disagreement `by_cycle` is keyed on.
+    """
+    from foundry_mcp.tools import foundry_report as fr
+
+    summary, problem = fr._read_dispatch_summary(report_run)
+    assert problem is None
+
+    inputs = fs.unreported_dispatch_inputs(report_run)
+    assert inputs["problem"] is None
+    rebuilt = fs.unreported_dispatch_summary(
+        dispatch_rows=inputs["dispatch_rows"],
+        stream_roster=inputs["stream_roster"],
+        spend_rows=inputs["spend_rows"],
+        phase_of_dispatch=fs.DISPATCH_PHASE_TO_RUN_PHASE,
+        agent_id_of=fr._agent_id_for_casting,
+        cycles_of_agent=inputs["cycles_of_agent"],
+    )
+    assert summary == rebuilt
+
+
+def test_the_report_stream_coverage_is_the_leafs_rollup_rows(report_run) -> None:
+    """CT-003 — the section renders what the reader derived, and adds prose."""
+    section = _generated(report_run)["stream_coverage_per_cycle"]
+    table = fs.stream_rollup_rows(report_run)
+
+    assert section["cycle_count"] == table["cycle_count"]
+    assert section["stream_count"] == table["stream_count"]
+    assert section["replaced"] == table["replaced"]
+    assert section["over_total"] == table["over_total"]
+    assert section["row_count"] == sum(
+        len(streams) for streams in table["cycles"].values()
+    )
+
+
+def test_the_report_fallout_section_is_the_leafs_rows(report_run) -> None:
+    """FR-025 — `measure-run.py` counts the same field per cycle (casting 3).
+
+    The axis is `derive_cycle_count`'s index, which is the SAME reading
+    `inspect_modes_per_cycle` and `baseline_comparison` sit on, so the three
+    sections cannot publish three different ideas of which cycles ran.
+    """
+    section = _generated(report_run)["fallout_per_cycle"]
+    table = fs.fallout_rows(
+        report_run, axis_top=fs.derive_cycle_count(report_run)["index"]
+    )
+
+    assert section == table
+
+
+def test_the_done_gate_and_the_seal_apply_one_heading_rule(report_run) -> None:
+    """Holmes `share-10` — the presence check is DERIVED from the splitter.
+
+    `_markdown_missing_sections` decides which sections a reader can still
+    find and `_md_sections` decides which blocks the seal preserves. They were
+    "the same effective rule, coded independently", so the gate could call a
+    section present that the seal did not treat as one.
+    """
+    from foundry_mcp.tools import foundry_report as fr
+
+    _generated(report_run)
+    text = (report_run / "REPORT.md").read_text(encoding="utf-8")
+
+    missing, problem = fr._markdown_missing_sections(report_run)
+    assert problem is None and missing == []
+    assert fs.markdown_headings(text) >= {
+        f"## {fr._SECTION_TITLES[key]}" for key in fr.REPORT_REQUIRED_SECTIONS
+    }
+    # And the two really are one walk: every heading the splitter starts a
+    # block on is a heading the presence check sees, and nothing else is.
+    assert fs.markdown_headings(text) == {
+        heading for heading, _ in fs.markdown_sections(text)[1]
+    }

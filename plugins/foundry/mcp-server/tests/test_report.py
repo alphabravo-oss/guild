@@ -42,6 +42,7 @@ from foundry_mcp.schemas.vocab import (
     TIER_UNKNOWN,
 )
 from foundry_mcp.tools import foundry_report as fr
+from foundry_mcp.tools import foundry_state as fs
 from foundry_mcp.tools.foundry_report import generate_report, report_status
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "escalation" / "finer_boundary_run"
@@ -3340,34 +3341,42 @@ def test_foundry_report_imports_only_the_two_leaf_modules():
         if node in tree.body:
             continue
         nested |= _imported(node)
-    # `foundry_mcp.tools` is `from foundry_mcp.tools import foundry_orchestrator`
-    # — the D-047/D-048 read of `DISPATCH_PHASE_TO_RUN_PHASE`. It is the second
-    # body-level import and it is body-level for the SAME reason as the first:
-    # `foundry_orchestrator` imports this module, so naming it at module level
-    # is the cycle the rule above is actually about.
-    # `foundry_mcp.tools.foundry_handoff` is the third, added by D-078: the
-    # `lead_fix` renderer reads MEASUREMENT_UNAVAILABLE and `_numstat_count`
-    # from the module that WRITES the record rather than re-typing either. A
-    # second spelling of the sentinel drifts the day the writer's wording
-    # changes, and a second numstat parser is how the audit row comes to
-    # disagree with the lane measurement it exists to make re-derivable —
-    # which is the same trade D-013 already ruled on, one module along.
-    # `foundry_mcp.tools.foundry_orchestrator` is the fourth, added by
-    # D-232/D-235: `_read_spend` seeds its per-cycle buckets from
-    # `_overlay_unreported`'s pruned view instead of restating that function's
-    # "nothing was measured" test. A mirrored predicate agrees with the display
-    # until the day one side is edited, which is precisely the defect — two
-    # surfaces of one rule — so the rule is READ. Body-level for the same
-    # reason as the three above, and the same reason it is spelled with the
-    # module path rather than folded into the `foundry_mcp.tools` entry: this
-    # pin is the record of what this module imports and why, and an import
-    # hidden behind an entry already here would be one the pin stopped seeing.
+    # GI-024 — TWO OF THE FOUR BODY-LEVEL IMPORTS ARE GONE, AND THAT IS THE
+    # POINT OF THE CONSOLIDATION.
+    #
+    # `foundry_mcp.tools` (`from foundry_mcp.tools import foundry_orchestrator`,
+    # the D-047/D-048 read of `DISPATCH_PHASE_TO_RUN_PHASE`) and
+    # `foundry_mcp.tools.foundry_orchestrator` (D-232/D-235's read of
+    # `_overlay_unreported`) were both reaches BACK INTO the module that
+    # imports this one. `survey/architecture.md` §3.2 names that trade for what
+    # it was: the previous fix for the spend duplication "was to import
+    # `_overlay_unreported` back out of the orchestrator, closing the import
+    # cycle rather than sharing the rule". Both symbols live in
+    # `foundry_state` now, so the rule is genuinely shared and this module
+    # reaches only the two leaves its own header promises.
+    #
+    # `foundry_mcp.tools.foundry_spawn` (D-013's agent-id spelling) and
+    # `foundry_mcp.tools.foundry_handoff` (D-078's MEASUREMENT_UNAVAILABLE and
+    # `_numstat_count`) stay, and stay body-level. Neither is a derived TABLE:
+    # each reads a spelling from the module that WRITES the record, which is
+    # the trade D-013 ruled on and which no amount of consolidation removes —
+    # the writer is the owner.
     assert nested == {
-        "foundry_mcp.tools",
         "foundry_mcp.tools.foundry_handoff",
-        "foundry_mcp.tools.foundry_orchestrator",
         "foundry_mcp.tools.foundry_spawn",
     }, sorted(nested)
+
+    # And the deletion is asserted directly, not only as a set difference: a
+    # module-path string reappearing anywhere in the source is the facade
+    # GI-010 forbids, whether it is imported at module level or inside a body.
+    assert "import _overlay_unreported" not in source, (
+        "the overlay is `foundry_state.overlay_unreported` now; a back-import "
+        "here is the import cycle §3.2 filed, wearing the fix's clothes"
+    )
+    assert 'DISPATCH_PHASE_TO_RUN_PHASE", {}' not in source, (
+        "the `getattr(..., {})` degradation went with the back-import: a "
+        "constant behind a default is a constant that can silently go missing"
+    )
 
 
 def test_the_lazy_spawn_import_works_from_a_cold_interpreter():
@@ -4533,22 +4542,54 @@ def test_the_report_and_foundry_next_publish_the_same_cycle_axis(report_env):
 def test_the_prune_predicate_is_not_restated_in_this_module(report_env):
     """D-232's class is two surfaces of one rule, so the rule is READ.
 
-    `_read_spend` calls `foundry_orchestrator._overlay_unreported` rather than
-    mirroring its "nothing was measured" test. A mirrored predicate agrees
-    until the day one side is edited, which is the defect. The import is
-    function-local because `foundry_orchestrator` imports this module at its
-    own cross-casting seam and a module-level import back would close the
-    cycle this file's header names.
+    The predicate that decides an all-zero cycle bucket is a leftover rather
+    than a measurement (D-229) is stated ONCE, in
+    `foundry_state.overlay_unreported`, and `foundry_state.spend_rollup` seeds
+    its per-cycle buckets from that function's pruned view rather than
+    mirroring the test. A mirrored predicate agrees until the day one side is
+    edited, which is the defect.
+
+    GI-024 MOVED WHERE THE RULE LIVES, NOT WHETHER IT IS SHARED. It used to be
+    read back OUT of `foundry_orchestrator` through a function-local import —
+    `survey/architecture.md` §3.2: "closing the import cycle rather than
+    sharing the rule". Now the rule is in the leaf both surfaces already
+    import, so this module restates nothing AND reaches nothing above it.
     """
     import inspect as _inspect
 
     source = _inspect.getsource(fr._read_spend)
-    assert "_overlay_unreported" in source, source[-2000:]
-    assert "from foundry_mcp.tools.foundry_orchestrator import" in source
-    # That it is FUNCTION-local is pinned once, by depth, in
-    # `test_foundry_report_imports_only_the_two_leaf_modules` above — which is
-    # also where the fourth body-level import is recorded and justified. Not
-    # restated here; two spellings of one rule is the class under test.
+    assert "spend_rollup(" in source, source[-2000:]
+    for reach in ("from foundry_mcp.tools.foundry_orchestrator import",
+                  "from foundry_mcp.tools import foundry_orchestrator"):
+        assert reach not in source, (
+            f"{reach!r} — the reach back into the monolith is gone; the "
+            f"shared rule is in `foundry_state` and this module reaches only "
+            f"the leaves. (The docstring still CITES the orchestrator's old "
+            f"reader by name, which is history and not an import.)"
+        )
+
+    rollup_source = _inspect.getsource(fs.spend_rollup)
+    assert "overlay_unreported(" in rollup_source, rollup_source[-2000:]
+    for restatement in ('"tokens", "duration_ms", "agents", "unreported"',
+                        "not bucket.get("):
+        assert restatement not in rollup_source, (
+            f"{restatement!r} is `overlay_unreported`'s prune test restated in "
+            f"its caller — the mirrored predicate D-232 filed"
+        )
+
+    # And the two really do produce one answer: a cycle the roll-up names with
+    # nothing in it reaches neither the display's view nor the report's table.
+    table = fs.spend_rollup(
+        spend_rows=[],
+        state_rollup={"by_cycle": {
+            "0": {"tokens": 0, "duration_ms": 0, "agents": 0, "unreported": 0},
+            "1": {"tokens": 5, "duration_ms": 0, "agents": 1, "unreported": 0},
+        }},
+    )
+    assert sorted(table["by_cycle"]) == ["1"], (
+        "the all-zero cycle bucket was re-created by the seeding loop — "
+        "D-232/D-235's exact regression"
+    )
 
 
 # --------------------------------------------------------------------------- #
