@@ -86,7 +86,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from foundry_mcp.schemas.vocab import STREAM_WIRE_IDS
+from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE, STREAM_WIRE_IDS
 from foundry_mcp.tools.foundry_state import (
     ARCHIVE_DIR,
     get_run_dir,
@@ -1028,23 +1028,85 @@ def _artifact_guard(fdir: Path) -> dict | None:
         "corrupt_artifacts": problems,
     }
 
-def _resolve_spec_path(project_root: str) -> Path | None:
-    """Resolve the active run's spec.md path, or None if unresolvable.
+def _spec_path_from(project_root, fdir: Path, state: dict) -> Path | None:
+    """THE two rungs, over a run dir and a state document already read.
 
-    Prefers ``<run_dir>/spec.md``; falls back to ``state.json['spec_path']``
-    resolved against ``project_root``. Single code path shared by the
-    requirement COUNT and the requirement-ID LIST so the two never drift.
+    Rung one is ``<run_dir>/spec.md``, the copy the run took for itself. Rung
+    two is the ``spec_path`` the run recorded, resolved against
+    ``project_root`` — the LIVE file, outside the run directory, which is why
+    every reader of it owes D-145's tolerance.
+
+    THE CLIMB IS HERE AND NOWHERE ELSE. "Which file is this run's spec" must
+    have one answer: a surface that resolved it differently could count
+    requirements the gate never saw, or refuse over a file the report never
+    read. It takes the documents rather than reading them so a caller that has
+    already opened ``state.json`` — the F0.9 gate has, in its prelude — reaches
+    the one ladder without opening it twice.
     """
-    fdir = get_run_dir(project_root)
-    if not fdir:
-        return None
     spec_path = fdir / "spec.md"
     if spec_path.exists():
         return spec_path
-    state = _load_json(fdir / "state.json")
     sp = state.get("spec_path", "")
     if sp:
         candidate = Path(project_root) / sp
         if candidate.exists():
             return candidate
     return None
+
+
+def _resolve_spec_path(project_root: str) -> Path | None:
+    """Resolve the active run's spec.md path, or None if unresolvable.
+
+    Prefers ``<run_dir>/spec.md``; falls back to ``state.json['spec_path']``
+    resolved against ``project_root``. Single code path shared by the
+    requirement COUNT and the requirement-ID LIST so the two never drift — now
+    literally so: the rungs are ``_spec_path_from``, which this reads the run
+    dir and the state document for.
+    """
+    fdir = get_run_dir(project_root)
+    if not fdir:
+        return None
+    return _spec_path_from(project_root, fdir, _load_json(fdir / "state.json"))
+
+
+def _spec_requirement_ids(
+    project_root, fdir: Path | None = None, state: dict | None = None
+) -> tuple[str, set, Path | None, str | None]:
+    """``(spec text, the ids it declares, the path read, a named problem)``.
+
+    THE ONE CLIMB, AND WHAT IT IS FOR. Three surfaces need the ids the run's
+    spec declares — F0.9's ownership dimensions, the F6 span section, and the
+    DONE gate's requirement count and P3 verdict synthesis — and a second climb
+    anywhere is a second answer to "which spec is this run's", free to read a
+    different file than the gate refused on. Those surfaces sit in layers that
+    may not import each other (GI-033: a verifier module and a lifecycle module
+    have no legal edge between them), which is exactly what makes the ladder
+    LEAF material rather than either one's private helper.
+
+    ``fdir`` and ``state`` are optional: pass them when you have already read
+    them and no second read happens, omit them for the active run. Both arms
+    reach the same rungs.
+
+    TOTAL, LIKE EVERY OTHER READ HERE. An absent spec answers ``("", set(),
+    <the path tried>, None)`` rather than raising or refusing — a run legitimately
+    has no spec before F0, and "no requirements declared" is what is true of it.
+    The PATH TRIED comes back rather than ``None`` so a caller shaping a refusal
+    out of ``problem`` has a file to name; ``_resolve_spec_path`` answers the
+    narrower question "is there a spec at all" and keeps its ``None``.
+
+    D-145: the second rung leaves the run directory, so ``_artifact_guard``'s
+    rglob cannot reach the file and an unguarded ``read_text`` here raised
+    UnicodeDecodeError across the MCP boundary. ``read_text_file`` is total and
+    NAMES the file it cannot decode.
+    """
+    if fdir is None:
+        fdir = get_run_dir(project_root)
+        if not fdir:
+            return "", set(), None, None
+    if state is None:
+        state = _load_json(fdir / "state.json")
+    spec_path = _spec_path_from(project_root, fdir, state) or (fdir / "spec.md")
+    spec_text, problem = read_text_file(spec_path)
+    if problem is not None:
+        return "", set(), spec_path, problem
+    return spec_text, set(REQUIREMENT_ID_RE.findall(spec_text)), spec_path, None

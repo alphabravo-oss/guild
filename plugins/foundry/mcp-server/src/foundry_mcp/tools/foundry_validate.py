@@ -33,7 +33,17 @@ from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
 # 15,000-line state machine to get them, which is what made the orchestrator
 # the package's de-facto persistence layer. The bodies are the same bodies;
 # only the module that defines them changed.
-from foundry_mcp.tools.artifacts import _artifact_guard, _load_json
+from foundry_mcp.tools.artifacts import (
+    _artifact_guard,
+    _load_json,
+    # fallout GI-033 / concern C-018 — the two-rung spec ladder is LEAF
+    # material, not this module's. `orchestration/gates.py` needs the same
+    # climb for the DONE gate's requirement count and P3 verdict
+    # synthesis, and a verifier module and a lifecycle module have no legal
+    # edge between them — so neither can import the other's copy and the
+    # answer to "which file is this run's spec" has to live below both.
+    _spec_requirement_ids,
+)
 # D-134: the SHARED nested-shape validator, so "unusable manifest" means one
 # thing in every module that reads castings/manifest.json. A module-top import
 # is safe here — nothing in the chain below this module imports it back —
@@ -288,38 +298,6 @@ def _owned_requirement_ids(casting: dict) -> tuple[bool, set[str]]:
     if not isinstance(raw, list):
         return True, set()
     return True, {v for v in raw if isinstance(v, str) and v}
-
-
-def _spec_requirement_ids(
-    project_root, fdir: Path, state: dict
-) -> tuple[str, set, Path, str | None]:
-    """``(spec text, the ids it declares, the path read, a named problem)``.
-
-    THE TWO-RUNG LADDER, SPELLED ONCE. A run's spec is the copy in the run
-    directory, and failing that the ``spec_path`` the run recorded, resolved
-    against the project root. Both surfaces that need the requirement ids climb
-    it — F0.9's dimensions here and the F6 span section — and a second climb
-    somewhere else is a second answer to "which spec is this run's", free to
-    read a different file than the gate refused on.
-
-    D-145: this is the read that leaves the run directory, so it is total.
-    ``_artifact_guard``'s rglob cannot reach a spec resolved against the project
-    root, and an unguarded ``read_text`` here raised UnicodeDecodeError across
-    the MCP boundary. ``read_text_file`` answers "" for an absent file — which
-    is what the old ``if exists()`` produced — and NAMES the file it cannot
-    decode.
-    """
-    spec_path = fdir / "spec.md"
-    if not spec_path.exists():
-        sp = state.get("spec_path", "")
-        if sp:
-            candidate = Path(project_root) / sp
-            if candidate.exists():
-                spec_path = candidate
-    spec_text, problem = read_text_file(spec_path)
-    if problem is not None:
-        return "", set(), spec_path, problem
-    return spec_text, set(REQUIREMENT_ID_RE.findall(spec_text)), spec_path, None
 
 
 def _ownership_and_computability(

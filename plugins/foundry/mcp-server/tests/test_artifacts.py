@@ -58,6 +58,7 @@ from foundry_mcp.tools.artifacts import (
     _resolve_spec_path,
     _run_artifact_problems,
     _save_json,
+    _spec_requirement_ids,
     _stream_marker,
     _TX_LOCK_SUFFIX,
 )
@@ -582,6 +583,132 @@ def test_the_spec_path_is_none_with_no_active_run(tmp_path):
     """
     foundry_state.clear_active_run()
     assert _resolve_spec_path(str(tmp_path)) is None
+
+
+# --------------------------------------------------------------------------- #
+# The requirement ids the run's spec declares — fallout GI-033, concern C-018
+#
+# THREE surfaces need this climb: F0.9's ownership dimensions, the F6 span
+# section, and the DONE gate's requirement count and P3 verdict synthesis. They
+# sit in layers with no legal edge between them — a verifier module may not
+# import a lifecycle module and the reverse is worse — so the ladder cannot live
+# in any one of them without a second copy appearing in another. It lives here,
+# below all three, which is what a leaf is for.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_ids_are_read_from_the_run_dir_copy_first(run_env):
+    """The first rung, and the ids it yields."""
+    project_root, fdir = run_env
+    (fdir / "spec.md").write_text(
+        "- **FR-001** a thing\n- **AC-002** another\n", encoding="utf-8"
+    )
+
+    text, ids, path, problem = _spec_requirement_ids(project_root)
+
+    assert problem is None
+    assert path == fdir / "spec.md"
+    assert ids == {"FR-001", "AC-002"}
+    assert "FR-001" in text
+
+
+def test_the_ids_follow_the_declaration_out_of_the_run_directory(run_env):
+    """The second rung — the live file, outside the run dir, which is the shape
+    a real run has and the one D-145 was filed on.
+    """
+    project_root, fdir = run_env
+    external = Path(project_root) / "forge-specs" / "probe" / "spec.md"
+    external.parent.mkdir(parents=True)
+    external.write_text("- **OT-003** observable\n", encoding="utf-8")
+    (fdir / "state.json").write_text(
+        json.dumps({"spec_path": "forge-specs/probe/spec.md"}), encoding="utf-8"
+    )
+
+    _text, ids, path, problem = _spec_requirement_ids(project_root)
+
+    assert problem is None
+    assert path == external
+    assert ids == {"OT-003"}
+
+
+def test_the_climb_and_the_resolver_never_pick_different_files(run_env):
+    """The anti-fork property, asserted on both rungs.
+
+    Two surfaces answering "which file is this run's spec" differently is the
+    whole defect this move closes: one could count requirements the other never
+    saw. `_resolve_spec_path` and `_spec_requirement_ids` share `_spec_path_from`
+    rather than each climbing, and this is what says so.
+    """
+    project_root, fdir = run_env
+    (fdir / "spec.md").write_text("- **FR-001** a thing\n", encoding="utf-8")
+    assert _spec_requirement_ids(project_root)[2] == _resolve_spec_path(project_root)
+
+    (fdir / "spec.md").unlink()
+    external = Path(project_root) / "forge-specs" / "probe" / "spec.md"
+    external.parent.mkdir(parents=True)
+    external.write_text("- **FR-001** a thing\n", encoding="utf-8")
+    (fdir / "state.json").write_text(
+        json.dumps({"spec_path": "forge-specs/probe/spec.md"}), encoding="utf-8"
+    )
+    assert _spec_requirement_ids(project_root)[2] == _resolve_spec_path(project_root)
+
+
+def test_an_absent_spec_declares_no_requirements_rather_than_raising(run_env):
+    """A run legitimately has no spec before F0, and "nothing declared" is what
+    is true of it. The PATH TRIED comes back rather than None, so a caller
+    shaping a refusal has a file to name — which is where this differs from
+    `_resolve_spec_path`, whose narrower question keeps its None.
+    """
+    project_root, fdir = run_env
+
+    text, ids, path, problem = _spec_requirement_ids(project_root)
+
+    assert (text, ids, problem) == ("", set(), None)
+    assert path == fdir / "spec.md"
+    assert _resolve_spec_path(project_root) is None
+
+
+def test_a_spec_that_cannot_be_decoded_is_named_rather_than_raised(run_env):
+    """D-145 exactly: one non-UTF-8 byte in the spec used to raise
+    UnicodeDecodeError out of the DONE gate's requirement count.
+    """
+    project_root, fdir = run_env
+    (fdir / "spec.md").write_bytes(b"\xff\xfe- **FR-001**")
+
+    text, ids, path, problem = _spec_requirement_ids(project_root)
+
+    assert problem is not None
+    assert "spec.md" in problem
+    assert (text, ids) == ("", set())
+    assert path == fdir / "spec.md"
+
+
+def test_documents_already_read_are_used_rather_than_read_again(run_env):
+    """`fdir` and `state` are passed by a caller that has already opened them —
+    the F0.9 gate reads state.json in its prelude — and the ladder must honour
+    what it is handed rather than going back to disk for a second answer.
+    """
+    project_root, fdir = run_env
+    external = Path(project_root) / "forge-specs" / "handed" / "spec.md"
+    external.parent.mkdir(parents=True)
+    external.write_text("- **CT-004** handed in\n", encoding="utf-8")
+    # Nothing on disk says this; only the state the caller hands over does.
+    assert not (fdir / "state.json").exists()
+
+    _text, ids, path, problem = _spec_requirement_ids(
+        project_root, fdir, {"spec_path": "forge-specs/handed/spec.md"}
+    )
+
+    assert problem is None
+    assert path == external
+    assert ids == {"CT-004"}
+
+
+def test_no_active_run_declares_no_requirements(tmp_path):
+    """No run, no spec, no ids — and no path to name either."""
+    foundry_state.clear_active_run()
+
+    assert _spec_requirement_ids(str(tmp_path)) == ("", set(), None, None)
 
 
 # --------------------------------------------------------------------------- #
