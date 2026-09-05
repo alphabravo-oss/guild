@@ -312,3 +312,110 @@ def test_asking_for_the_alignment_block_records_no_dispatch(run_env):
     assert not (fdir / "handoffs.jsonl").exists(), (
         "annotating a task appended a dispatch handoff record"
     )
+
+
+
+
+def test_a_concern_naming_a_casting_no_requirement_reaches_joins_the_set(run_env):
+    """fallout FR-012 / GI-023 / ST-003 / AC-004 (D-054) — the OTHER half.
+
+    FR-012 is two clauses and only the refusal one shipped: "Foundry-Tasks
+    includes the named casting" was implemented as "Foundry-Tasks NOTICES a
+    concern whose target the requirement-ownership join already reached". The
+    difference is invisible whenever the concern happens to name a casting that
+    owns one of the defect's requirement ids, and total whenever it does not —
+    which is the case ST-003 exists for, a sibling surface no requirement id
+    connects.
+
+    DRIVEN AS THE PAIR. Casting 3 owns FR-008 and the only open defect cites
+    FR-007, so the ownership join reaches castings 1 and 2 and never 3. The
+    concern names casting 3's file. Before this fix the set was `[2]`,
+    `concerns_dispatched` was empty and the concern stayed open, so
+    `inspect_start` kept refusing with the Tasks-driven exit unreachable and
+    only the lead's hand close left — AC-004's OTHER exit standing in for both.
+    """
+    from foundry_mcp.tools.concerns import foundry_concern
+
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        2: (["FR-007"], ["src/two.py"]),
+        3: (["FR-008"], ["src/three.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+    ])
+    opened = foundry_concern(
+        casting_id=1, cycle=1, target="src/three.py",
+        text="the ruling I applied is also stated in casting 3's own prose",
+        project_root=project_root,
+    )
+    assert opened.get("error") is None, opened
+    concern_id = opened["concern"]["id"]
+
+    result = foundry_defects_to_tasks(project_root)
+    assert result["ok"] is True, result
+    task = next(t for t in result["tasks"] if "D-900" in t["defect_ids"])
+
+    # Casting 2 is here because it OWNS FR-007; casting 3 is here because the
+    # concern NAMES it. Both are dispatched; only one of them was before.
+    assert task["co_dispatch"] == [2, 3], task
+    assert task["concerns_co_dispatched"] == [concern_id], task
+    assert result["concerns_dispatched"] == [concern_id], result
+
+    # The block the lead pastes says WHICH reason each casting is here for. A
+    # concern-driven member listed under "the SAME requirement is owned by"
+    # would be telling the lead something untrue about why it was dispatched.
+    block = task["alignment_block"]
+    assert "- casting 2: src/two.py" in block, block
+    assert "Cross-casting concern(s) carried by this dispatch" in block, block
+    assert concern_id in block, block
+    assert "src/three.py" in block, block
+    assert "casting 3's own prose" in block, block
+    assert block.index("- casting 2:") < block.index(concern_id), block
+
+    # ...and the door the concern was holding shut now opens.
+    from foundry_mcp.tools.concerns import open_cross_casting_concerns
+
+    assert open_cross_casting_concerns(fdir) == [], "the concern is still open"
+
+
+
+
+def test_a_concern_targeting_the_casting_that_owns_the_fix_is_already_dispatched(run_env):
+    """fallout FR-012 / ST-003 (D-054) — the owner counts as reached.
+
+    `co_dispatch` excludes the owning casting by construction, so a join that
+    read only `co_dispatch` would leave a concern targeting the very file the
+    fix lands in open forever, with nothing left to dispatch that could close
+    it. The task IS the dispatch of that casting.
+    """
+    from foundry_mcp.tools.concerns import foundry_concern
+
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        2: (["FR-007"], ["src/two.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+    ])
+    # Named BY CASTING ID, not by file: a file target already matched the
+    # task's own `files`, so only an id target drives the reached-set arm this
+    # test is for.
+    opened = foundry_concern(
+        casting_id=2, cycle=1, target="1",
+        text="casting 1's file states the same rule",
+        project_root=project_root,
+    )
+    concern_id = opened["concern"]["id"]
+
+    result = foundry_defects_to_tasks(project_root)
+    task = next(t for t in result["tasks"] if "D-900" in t["defect_ids"])
+    assert task["owning_casting"] == 1, task
+    # NOT added to co_dispatch — it is the owner, and a set that named its own
+    # owner would have the lead dispatch one casting twice.
+    assert 1 not in task["co_dispatch"], task
+    assert result["concerns_dispatched"] == [concern_id], result

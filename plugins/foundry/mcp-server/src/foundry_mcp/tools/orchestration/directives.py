@@ -164,6 +164,7 @@ def _alignment_block(
     owning_casting: int | None,
     owning_files: list[str],
     co_dispatch: list[int],
+    carried_concerns: list[dict] | None = None,
 ) -> str:
     """The block a lead pastes VERBATIM into each co-dispatched prompt.
 
@@ -171,8 +172,21 @@ def _alignment_block(
     file of the fix, and each co-dispatched casting's sibling files that cite
     those ids. Rendered here rather than described to the lead, because a block
     the lead composes is a block that carries whatever the lead had room for.
+
+    fallout FR-012 / GI-023 / ST-003 / AC-004 — AND THE CONCERNS THAT WIDENED
+    THE SET.
+    ----------------------------------------------------------------------
+    A casting joins `co_dispatch` for one of two reasons and they are not the
+    same reason: it owns a requirement the fix cites, or an open cross-casting
+    concern NAMES it. The second is the case the requirement-ownership join
+    does not reach — a sibling surface no requirement id connects — and a block
+    that lists such a casting under "the SAME requirement is owned by" would be
+    telling the lead something untrue about why it is being dispatched. So the
+    concern-driven members get their own section, naming the concern id and its
+    text, which is the only statement of what that casting is meant to change.
     """
     files = _casting_files(fdir)
+    carried_concerns = carried_concerns or []
     lines = [
         "## Co-dispatch alignment (server-generated — paste verbatim)",
         "",
@@ -190,15 +204,84 @@ def _alignment_block(
         "casting's own idiom, in THIS cycle.",
         "",
     ]
+    concern_castings = {
+        int(c["target_casting_id"]) for c in carried_concerns
+    }
     for cid in co_dispatch:
+        if cid in concern_castings:
+            # Listed below under its own heading instead, with the concern that
+            # names it. A casting appears once, under the reason it is here.
+            continue
         siblings = files.get(cid) or []
         lines.append(f"- casting {cid}: {', '.join(siblings) if siblings else 'no key_files recorded'}")
+
+    if carried_concerns:
+        lines.extend([
+            "",
+            "## Cross-casting concern(s) carried by this dispatch "
+            "(server-generated — paste verbatim)",
+            "",
+            "Each casting below is in the co-dispatch set because an OPEN "
+            "concern NAMES it, not because it owns one of the requirement ids "
+            "above. The concern text is what it is being asked to change; the "
+            "concern closes when this dispatch reaches it.",
+            "",
+        ])
+        for concern in carried_concerns:
+            cid = int(concern["target_casting_id"])
+            siblings = files.get(cid) or []
+            lines.append(
+                f"- {concern.get('id', '?')} (raised by casting "
+                f"{concern.get('source_casting', '?')}, target "
+                f"`{concern.get('target', '')}`) -> casting {cid}: "
+                f"{', '.join(siblings) if siblings else 'no key_files recorded'}"
+            )
+            text = str(concern.get("text", "")).strip()
+            if text:
+                lines.append(f"  {text}")
     return "\n".join(lines)
 
 
 
 
-def _annotate_co_dispatch(fdir: Path, tasks: list[dict]) -> bool:
+def _concern_carriers(tasks: list[dict], concern: dict) -> list[dict]:
+    """The task(s) that carry `concern`'s target casting into the wave.
+
+    fallout FR-012 / GI-023 / ST-003 / AC-004 (D-054).
+
+    A concern is raised BY one casting ABOUT another, so the task that should
+    carry it is the one being dispatched to the casting that raised it: the fix
+    that provoked the concern and the sibling surface it lands on travel
+    together, which is the whole of "one fix reaches every surface of its rule
+    in the same GRIND".
+
+    WHEN THE RAISING CASTING HAS NO TASK, EVERY TASK CARRIES IT, and that is
+    the case the mechanism exists for rather than a fallback for tidiness. By
+    the time `inspect_start` refuses on a concern, the GRIND that raised it has
+    usually closed the defects that were dispatched to its source casting — so
+    "the tasks owned by the source casting" is routinely empty, and returning
+    nothing there would leave the Tasks-driven exit unreachable at exactly the
+    moment ST-003 names it. `co_dispatch` is a WAVE-level instruction; a
+    casting named on any task of the wave is dispatched with the wave.
+    """
+    source = concern.get("source_casting")
+    if source is not None:
+        owned_by_source = [
+            t for t in tasks
+            if t.get("co_dispatch") is not None
+            and t.get("owning_casting") is not None
+            and str(t.get("owning_casting")) == str(source)
+        ]
+        if owned_by_source:
+            return owned_by_source
+    return [t for t in tasks if t.get("co_dispatch") is not None]
+
+
+
+
+def _annotate_co_dispatch(
+    fdir: Path, tasks: list[dict], concerns: list[dict] | None = None
+) -> bool:
     """Put `co_dispatch`, `owning_casting` and `alignment_block` on each task.
 
     Returns whether the manifest declares `requirement_ids` at all.
@@ -211,6 +294,25 @@ def _annotate_co_dispatch(fdir: Path, tasks: list[dict]) -> bool:
     ask for the block — and it must not append a `grind_dispatched` handoff
     record by asking. WRITES NOTHING; the recording stays at the door that
     dispatches.
+
+    fallout FR-012 / GI-023 / ST-003 / AC-004 — THE CONCERN JOIN IS THE OTHER
+    HALF OF THE SET, AND IT IS COMPUTED HERE (D-054).
+    ---------------------------------------------------------------------
+    FR-012 is two clauses — "Foundry-Tasks includes the named casting" and
+    "inspect_start refuses while a cross-casting concern is unaddressed" — and
+    only the refusal half shipped. `_dispatch_open_concerns` NOTICED a concern
+    whose target the requirement-ownership join happened to reach and marked it;
+    it never ADDED the named casting, so a concern about a sibling surface no
+    requirement id connects stayed open however many times Foundry-Tasks ran,
+    and the lead's only remaining exit was the hand close AC-004 lists as the
+    OTHER exit. Driven on two runs identical but for the target: the one whose
+    concern named a casting the ownership join already reached passed
+    `inspect_start`; the one whose concern named a casting it did not was
+    refused with the concern still open.
+    THE JOIN RUNS HERE AND NOT IN `_dispatch_open_concerns` because the
+    alignment block is rendered in this function. A casting added to the set
+    after the block is built is a casting the block does not name, which is the
+    same half-a-contract one field along.
     """
     owned, ids_declared = _casting_requirement_ids(fdir)
     for task in tasks:
@@ -236,14 +338,43 @@ def _annotate_co_dispatch(fdir: Path, tasks: list[dict]) -> bool:
         # the owner by construction, so without this the owning casting is
         # readable only out of the rendered prose.
         task["owning_casting"] = owning
+        task["_requirement_ids"] = requirement_ids
+
+    # PASS TWO — the concern join, then the block. The two passes exist because
+    # a carrier is chosen against `owning_casting`, which pass one is what
+    # computes; rendering inside pass one would render before the set is final.
+    for concern in concerns or []:
+        try:
+            target = int(concern["target_casting_id"])
+        except (KeyError, TypeError, ValueError):
+            # An unresolvable target is refused at `Foundry-Concern`'s own door
+            # (CT-001), so reaching one here means a hand-edited ledger. Skip
+            # it: it stays open, and `inspect_start` keeps naming it, which is
+            # the honest end for a record nothing can resolve.
+            continue
+        for task in _concern_carriers(tasks, concern):
+            if target != task.get("owning_casting"):
+                task["co_dispatch"] = sorted(set(task["co_dispatch"]) | {target})
+            task.setdefault("concerns_co_dispatched", []).append(
+                str(concern.get("id", "?"))
+            )
+            task.setdefault("_carried_concerns", []).append(concern)
+
+    for task in tasks:
+        if task.get("co_dispatch") is None:
+            continue
         task["alignment_block"] = _alignment_block(
             fdir,
             defect_ids=list(task.get("defect_ids") or []),
-            requirement_ids=requirement_ids,
-            owning_casting=owning,
+            requirement_ids=task.pop("_requirement_ids", set()),
+            owning_casting=task.get("owning_casting"),
             owning_files=list(task.get("files") or []),
-            co_dispatch=co_dispatch,
+            co_dispatch=task["co_dispatch"],
+            carried_concerns=task.pop("_carried_concerns", []),
         )
+    for task in tasks:
+        task.pop("_requirement_ids", None)
+        task.pop("_carried_concerns", None)
     return ids_declared
 
 
@@ -310,7 +441,9 @@ def _grind_dispatches(fdir: Path, cycle: int) -> list[dict]:
 
 
 
-def _dispatch_open_concerns(fdir: Path, tasks: list[dict]) -> list[str]:
+def _dispatch_open_concerns(
+    fdir: Path, tasks: list[dict], concerns: list[dict] | None = None
+) -> list[str]:
     """Mark every open cross-casting concern the co-dispatch set reaches.
 
     fallout GI-023 / FR-012 / ST-003 / AC-004. A concern names a casting, a file
@@ -319,10 +452,23 @@ def _dispatch_open_concerns(fdir: Path, tasks: list[dict]) -> list[str]:
     `inspect_start` stops refusing on it. Read and written through casting 1's
     `tools/concerns.py`, which owns the ledger; this supplies the join and
     nothing else.
+
+    fallout FR-012 (D-054) — THE SET IT READS IS THE ONE THE CONCERN WIDENED.
+    `_annotate_co_dispatch` has already added each open concern's target casting
+    to the tasks that carry it, so by the time this runs every open concern with
+    a resolvable target is reached and this marks it. Before that join this
+    function noticed only the concerns whose target the requirement-ownership
+    join happened to reach anyway, which made the Tasks-driven exit unreachable
+    in exactly the case ST-003 exists for.
+
+    THE OWNING CASTING COUNTS AS REACHED. A concern targeting the casting whose
+    own file the fix is in is dispatched by dispatching that task, and
+    `co_dispatch` excludes the owner by construction — so reading only
+    `co_dispatch` would leave that concern open with nothing left to dispatch.
     """
     from foundry_mcp.tools.concerns import mark_concerns_dispatched
 
-    concerns = open_cross_casting_concerns(fdir)
+    concerns = open_cross_casting_concerns(fdir) if concerns is None else concerns
     if not concerns:
         return []
     reached_castings: set[int] = set()
@@ -330,6 +476,8 @@ def _dispatch_open_concerns(fdir: Path, tasks: list[dict]) -> list[str]:
     for task in tasks:
         for cid in task.get("co_dispatch") or []:
             reached_castings.add(int(cid))
+        if task.get("owning_casting") is not None:
+            reached_castings.add(int(task["owning_casting"]))
         for path in task.get("files") or []:
             reached_files.add(str(path))
     hit = [
@@ -479,7 +627,11 @@ def foundry_defects_to_tasks(
 
     # fallout FR-011 / FR-038 / GI-021 / CT-008 / AC-002 / AC-006 / OT-002 /
     # OT-006 — THE CO-DISPATCH SET, PER TASK, AND THE BLOCK THAT CARRIES IT.
-    ids_declared = _annotate_co_dispatch(fdir, tasks)
+    # fallout FR-012 / GI-023 / ST-003 / AC-004 — READ BEFORE THE SET IS BUILT.
+    # The concern join widens `co_dispatch` and the block that names it, so the
+    # ledger is read here and handed in rather than consulted after the fact.
+    open_concerns = open_cross_casting_concerns(fdir)
+    ids_declared = _annotate_co_dispatch(fdir, tasks, open_concerns)
     open_by_id = {d["id"]: d for d in open_defects}
     for task in tasks:
         # fallout FR-048 / GI-017 / ST-011 — the dispatch RECORD, written by the
@@ -508,7 +660,7 @@ def foundry_defects_to_tasks(
     # fallout GI-023 / FR-012 / ST-003 / AC-004 — a concern whose target is in
     # the co-dispatch set is DISPATCHED by this call, which is what lets
     # `inspect_start` stop refusing on it.
-    dispatched_concerns = _dispatch_open_concerns(fdir, tasks)
+    dispatched_concerns = _dispatch_open_concerns(fdir, tasks, open_concerns)
 
     (fdir / TASKS_GENERATED_MARKER).write_text(f"{now_iso()} count={len(tasks)}\n", encoding="utf-8")
 
