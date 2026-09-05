@@ -57,6 +57,7 @@ gets which treatment and why.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import re
@@ -69,9 +70,11 @@ import pytest
 
 from foundry_mcp.schemas import vocab
 from foundry_mcp.tools import foundry as foundry_doors
+from foundry_mcp.tools import evidence as evidence_doors
 from foundry_mcp.tools import foundry_handoff
 from foundry_mcp.tools import foundry_spawn as fs
 from foundry_mcp.tools import foundry_state
+from foundry_mcp.tools import rosters
 from foundry_mcp.tools.foundry_validate import foundry_validate_castings
 
 # fallout GI-010 — the monolith this module used to import is DELETED, and
@@ -86,7 +89,7 @@ from foundry_mcp.tools.foundry_validate import foundry_validate_castings
 # the three, or shipping a re-export shim under the monolith's old name,
 # would have kept this import green and is exactly the facade GI-010
 # refuses.
-from foundry_mcp.tools.orchestration import fix_gate, streams, width
+from foundry_mcp.tools.orchestration import directives, fix_gate, streams, width
 
 # D-048: the vocabulary assertions below READ the real enum rather than
 # re-typing it. A hard-coded tuple in a test is a seventh copy of a closed
@@ -6708,4 +6711,601 @@ def test_every_dispatch_identity_has_a_documented_filing_row(path: Path) -> None
         f"missing dispatch's row to the file (the rows differ in `source` and "
         f"nothing else); never narrow this assertion to the identity that "
         f"already has one."
+    )
+
+
+# ===========================================================================
+# fallout AC-031 / AC-033 / AC-037 / AC-040 / AC-048 / FR-010 / FR-023 /
+# FR-024 / FR-025 / FR-048 / FR-049 / FR-050 / FR-051 / GI-003 / GI-016 /
+# NFR-002 / NFR-003 / NFR-011 / OT-029 / OT-037
+#
+# THE AGENT RECORDS; THE LEAD ONLY CONFIRMS. Casting 6 writes the NON-PROVE
+# half of four rulings the run splits across two castings, and pins it here.
+# The PROVE agent and the three producing skills state the same rulings in
+# their own registers and are pinned in `tests/test_skill_prose.py`; nothing
+# in this section reaches a skill file or `agents/assayer.md`.
+# ===========================================================================
+
+SPEC_TEST_DERIVER = AGENTS / "spec-test-deriver.md"
+
+#: Every spelling of a stream id that can appear in an agent file, mapped to
+#: the WIRE id `Foundry-Stream` actually takes. Built from the two vocabulary
+#: constants in the `_PYTEST_DISCOVERY_PHRASE` shape rather than typed out, so
+#: a stream added to `vocab` cannot leave this roster behind. That is the whole
+#: difference between a pin that fails on the file someone forgot and a pin
+#: that only ever checks the files it was born knowing.
+_STREAM_SPELLING_TO_WIRE = {
+    **{wire: wire for wire in vocab.STREAM_WIRE_IDS},
+    **{canonical: wire for wire, canonical in vocab.WIRE_TO_CANONICAL.items()},
+}
+
+#: The symbol name the prose must cite for the stream vocabulary, recovered
+#: from the module rather than re-typed: rename the constant in `vocab.py` and
+#: this expected cite moves with it, so the prose that still names the old
+#: spelling fails HERE instead of rotting into a cite that resolves to nothing.
+_STREAM_VOCAB_SYMBOL = next(
+    name
+    for name, value in sorted(vars(vocab).items())
+    if value is vocab.STREAM_WIRE_IDS
+)
+
+_STREAM_VOCAB_CITE = (
+    "plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#"
+    + _STREAM_VOCAB_SYMBOL
+)
+
+
+def _declared_stream_wire_ids(path: Path) -> frozenset[str]:
+    """The stream wire id(s) an agent file declares as ITS OWN.
+
+    Two declarations count and NEITHER is the clause this section pins. A
+    roster derived from the clause would drop the file that lost it and pass --
+    a pin that cannot fail on the one regression it exists to catch, which is
+    the D-017 shape in its purest form:
+
+      * ``progress/<wire>.jsonl`` -- the liveness ledger, named for the wire id
+        by an absolute the three ledger-bearing agents already state.
+      * ``"stream": "<spelling>"`` -- the output shape's own field, which
+        `coverage-diff` and `spec-test-deriver` carry instead of a ledger, the
+        deriver under the CANONICAL spelling rather than the wire one.
+    """
+    text = _read(path)
+    return frozenset(
+        wire
+        for spelling, wire in _STREAM_SPELLING_TO_WIRE.items()
+        if f"progress/{wire}.jsonl" in text or f'"stream": "{spelling}"' in text
+    )
+
+
+#: The stream-producing AGENT files, DERIVED, minus the PROVE agent.
+#:
+#: Revision 3 splits the nine producers fallout AC-031 names across two
+#: castings: the PROVE agent and the trace, prove and sight skills state the
+#: ruling in their own registers and are pinned elsewhere. The exclusion here
+#: is by WIRE ID -- `prove` -- and never by filename, so renaming the assayer
+#: cannot quietly pull it into this roster and demand a paste that belongs to
+#: another module.
+NON_PROVE_STREAM_AGENTS = tuple(
+    sorted(
+        (
+            path
+            for path in AGENTS.glob("*.md")
+            if (_declared := _declared_stream_wire_ids(path))
+            and "prove" not in _declared
+        ),
+        key=_rel,
+    )
+)
+
+
+def test_the_non_prove_stream_agent_roster_is_derived() -> None:
+    """Floor check: every stream-recording pin below sweeps this roster.
+
+    A derived roster buys nothing if the derivation silently narrows, and the
+    narrowing is invisible at every assertion that reads it -- five green
+    parametrisations over four files look exactly like five green
+    parametrisations over five. So the five known members are asserted IN, and
+    the PROVE agent is asserted OUT under the id that excludes it.
+    """
+    expected = {TRACER, FLOW_TRACER, RESEARCH_AUDITOR, COVERAGE_DIFF, SPEC_TEST_DERIVER}
+    missing = sorted(_rel(p) for p in expected - set(NON_PROVE_STREAM_AGENTS))
+    assert not missing, (
+        f"{missing} no longer derive into NON_PROVE_STREAM_AGENTS. A file drops "
+        f"out by losing the `progress/<wire>.jsonl` ledger path AND the "
+        f"`\"stream\": \"<id>\"` field in its output shape -- either of which is "
+        f"itself the defect, because a stream that names its wire id nowhere is "
+        f"a stream `Foundry-Liveness` and the roll-up cannot find. Fix the file "
+        f"rather than hard-coding this roster."
+    )
+    assert ASSAYER not in NON_PROVE_STREAM_AGENTS, (
+        "agents/assayer.md derived into NON_PROVE_STREAM_AGENTS. It is the PROVE "
+        "agent: its stream statement is casting 11's and is pinned in "
+        "tests/test_skill_prose.py, so sweeping it here would pin one ruling in "
+        "two modules that are free to drift apart."
+    )
+    assert "prove" in _declared_stream_wire_ids(ASSAYER), (
+        "agents/assayer.md no longer declares the `prove` wire id, which is the "
+        "only thing keeping it out of the roster above. Restore it in the "
+        "assayer rather than excluding the file by name here."
+    )
+
+
+#: The clauses every non-PROVE stream agent states BYTE-IDENTICALLY. Each is
+#: the load-bearing fragment of the ruling and never a whole sentence: the body
+#: around it is each file's own voice, which is required -- pasting one
+#: paragraph into five files was explicitly rejected, and the module docstring
+#: says why. Parametrised across the roster so an edit that fixes three of the
+#: five fails naming the two it forgot.
+_STREAM_RECORDING_CLAUSES = (
+    (
+        "**You record your own stream; the lead only confirms the record exists.**",
+        "the imperative that carries fallout GI-016 / OT-029: the AGENT records, "
+        "and no lead prose records for it",
+    ),
+    (
+        "Call `Foundry-Stream` yourself with `stream`, `cycle`, `items_checked`, "
+        "`items_total` and `findings_count`",
+        "the door and its five arguments; a clause naming the tool without its "
+        "arguments leaves the agent to guess a call the boundary rejects",
+    ),
+    (
+        "Take `cycle` from `Foundry-Next`",
+        "the roll-up is keyed by the server's counter; an agent inventing a cycle "
+        "records against one nothing reads",
+    ),
+    (
+        "A second call for the same stream and cycle REPLACES the first, names in "
+        "`replaced` what it replaced, and keeps every record under `records[]`",
+        "fallout FR-023 / FR-049 replace semantics, stated on the agent side of "
+        "the door casting 2 built; without it a re-run reads as double coverage",
+    ),
+    (
+        "a stream that never records contributes nothing to the cycle's coverage "
+        "roll-up, where its absence reads as no coverage rather than as a broken "
+        "call",
+        "the closing absolute the trace register uses: what the absence COSTS, "
+        "which is what stops the clause reading as advice",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", NON_PROVE_STREAM_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("clause,why", _STREAM_RECORDING_CLAUSES, ids=lambda v: v[:44])
+def test_each_non_prove_stream_agent_records_its_own_stream(
+    path: Path, clause: str, why: str
+) -> None:
+    """fallout AC-031 / FR-023 / FR-049 / GI-016: the agent records, in its own file."""
+    assert clause in _flat(path), (
+        f"{_rel(path)} no longer states: {clause!r}. That clause is {why}. All "
+        f"{len(NON_PROVE_STREAM_AGENTS)} non-PROVE stream agents must state it, "
+        f"in their own voice around it -- an agent reading its own file and "
+        f"finding no instruction to record waits for a lead that fallout OT-029 "
+        f"forbids from recording, and the cycle's roll-up reads the silence as "
+        f"no coverage."
+    )
+
+
+@pytest.mark.parametrize("path", NON_PROVE_STREAM_AGENTS, ids=lambda p: p.name)
+def test_each_non_prove_stream_agent_cites_the_stream_vocabulary(path: Path) -> None:
+    """fallout NFR-011: the prose points at the constant instead of copying it.
+
+    The cite is BUILT from the module above, so renaming the constant fails
+    here on every file that still names the old symbol rather than leaving five
+    agent files citing a symbol that resolves to nothing.
+    """
+    assert _STREAM_VOCAB_CITE in _flat(path), (
+        f"{_rel(path)} does not cite {_STREAM_VOCAB_CITE}. The stream ids are a "
+        f"closed vocabulary with one home; an agent file that re-types the set "
+        f"is a copy free to drift, and the drift surfaces as a door refusing a "
+        f"`stream` value these instructions taught."
+    )
+
+
+#: Spellings that would put the recording duty back on the lead. Absence
+#: assertions, because a positive pin cannot see prose ADDED beside it: a file
+#: can state the imperative above and, four bullets later, tell the agent the
+#: lead marks the stream complete -- both true to a substring check, and the
+#: agent believes the second one.
+_LEAD_RECORDS_SPELLINGS = (
+    "the lead records it",
+    "the lead will record",
+    "the lead marks the stream",
+    "the lead marks this stream",
+    "the lead calls `foundry-stream`",
+    "the lead records your stream",
+)
+
+
+@pytest.mark.parametrize("path", NON_PROVE_STREAM_AGENTS, ids=lambda p: p.name)
+def test_no_stream_agent_says_the_lead_records_for_it(path: Path) -> None:
+    """fallout GI-016 / OT-029, the absence half: no file re-delegates upward."""
+    flat = _flat(path).lower()
+    found = sorted(s for s in _LEAD_RECORDS_SPELLINGS if s in flat)
+    assert not found, (
+        f"{_rel(path)} states {found}, which hands the recording duty back to "
+        f"the lead. fallout GI-016 puts it on the AGENT and the lead's own "
+        f"imperative is confirm-the-record-exists; a file saying otherwise "
+        f"produces the double-record the replace semantics were built to end."
+    )
+
+
+# ---------------------------------------------------------------------------
+# fallout AC-033 / FR-024 / FR-050 -- read the roster, derive only if absent
+# ---------------------------------------------------------------------------
+
+#: The two stream agents that DERIVE their own item list rather than reading a
+#: width or a manifest the server already recorded. Declared rather than
+#: derived, in the disposition `STREAM_AGENTS` above already uses: the property
+#: that separates them is WHERE the population comes from -- `research/` plus
+#: the spec's Informational section for one, the spec's Contracts rows for the
+#: other -- and that is a fact about the source material, not a string in the
+#: file. The floor check below holds them inside the derived roster, so a file
+#: that stops being a stream agent at all cannot sit here unnoticed.
+ROSTER_DERIVING_AGENTS = (RESEARCH_AUDITOR, SPEC_TEST_DERIVER)
+
+
+def test_the_roster_deriving_agents_are_stream_agents() -> None:
+    """Floor check: the roster ruling only binds files that record a stream."""
+    stray = sorted(
+        _rel(p) for p in set(ROSTER_DERIVING_AGENTS) - set(NON_PROVE_STREAM_AGENTS)
+    )
+    assert not stray, (
+        f"{stray} carry the roster ruling but no longer derive into "
+        f"NON_PROVE_STREAM_AGENTS. The roster exists to make `items_total` "
+        f"checkable on a stream RECORD; a file with no record has no use for one."
+    )
+
+
+_ROSTER_CLAUSES = (
+    (
+        "**Read the roster before you derive one.**",
+        "fallout AC-033's imperative: the persisted list wins over a fresh "
+        "derivation, which is what gives the numbering identity across cycles",
+    ),
+    (
+        "call `Foundry-Roster(stream, items=[...])` at that first derivation",
+        "the door and its two required arguments, named as the tool schema "
+        "declares them",
+    ),
+    (
+        f"a second write is refused `{rosters.ROSTER_EXISTS}` unless you pass "
+        f"`revise=true` with a reason",
+        "the write-once door; without it a silent rewrite drops the prior list "
+        "and fallout GI-006 forbids exactly that",
+    ),
+    (
+        f"`Foundry-Stream` refuses `{streams.ROSTER_MISMATCH}` when `items_total` "
+        f"differs from the persisted roster's length",
+        "the cross-door join: the agent must know why its own record depends on "
+        "the roster it wrote, or it reports a shrunken population as full "
+        "coverage",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", ROSTER_DERIVING_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("clause,why", _ROSTER_CLAUSES, ids=lambda v: v[:44])
+def test_each_deriving_agent_states_the_roster_rule(
+    path: Path, clause: str, why: str
+) -> None:
+    """fallout AC-033 / FR-024 / FR-050: one ruling, two voices, pinned once.
+
+    The two refusal names are INTERPOLATED from the modules that declare them,
+    so renaming either constant fails here on the prose that still spells the
+    old one -- a prose statement and the door it describes cannot drift apart
+    while this holds.
+    """
+    assert clause in _flat(path), (
+        f"{_rel(path)} no longer states: {clause!r}. That clause is {why}. Both "
+        f"deriving agents state it, each in its own voice around it; an auditor "
+        f"that re-derives a list a roster already holds renumbers it silently, "
+        f"and the regression check it owes has no stable prior state to read."
+    )
+
+
+@pytest.mark.parametrize("path", ROSTER_DERIVING_AGENTS, ids=lambda p: p.name)
+def test_each_deriving_agent_names_its_own_roster_document(path: Path) -> None:
+    """fallout NFR-011: the path is composed, not copied.
+
+    Built from the ledger directory constant and the file's OWN declared wire
+    id, so an agent naming another stream's roster -- or the directory under a
+    name casting 1 does not use -- fails here rather than at a read that
+    silently finds nothing.
+    """
+    wires = _declared_stream_wire_ids(path)
+    assert len(wires) == 1, (
+        f"{_rel(path)} declares {sorted(wires)} as its stream wire id(s). A "
+        f"roster document is per stream; a file claiming two has no single "
+        f"answer to which roster is its own."
+    )
+    expected = f"{rosters.ROSTERS_DIRNAME}/{next(iter(wires))}.json"
+    assert expected in _read(path), (
+        f"{_rel(path)} does not name `{expected}`, the document its roster "
+        f"actually lives at. An agent told to read a roster it cannot name "
+        f"re-derives every cycle, which is the state fallout FR-050 ends."
+    )
+
+
+def _forbidden_source_roots() -> frozenset[str]:
+    """`FORBIDDEN_SOURCE_ROOTS`, read out of the validator without running it.
+
+    Parsed with `ast` rather than imported: the module's filename carries a
+    hyphen, and executing a script to read one constant out of it is a side
+    effect this suite has no reason to take. Derived rather than re-typed for
+    the usual reason -- a hand-copied denylist here would pass while the
+    validator grew a root the absence assertion below never learned.
+    """
+    source = (
+        REPO_ROOT / "plugins" / "foundry" / "scripts" / "validate-test-observations.py"
+    ).read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(t, ast.Name) and t.id == "FORBIDDEN_SOURCE_ROOTS"
+            for t in node.targets
+        ):
+            continue
+        call = node.value
+        assert isinstance(call, ast.Call) and call.args, (
+            "FORBIDDEN_SOURCE_ROOTS is no longer a frozenset({...}) literal; "
+            "update this reader rather than re-typing the roots here."
+        )
+        return frozenset(ast.literal_eval(call.args[0]))
+    raise AssertionError(
+        "validate-test-observations.py declares no FORBIDDEN_SOURCE_ROOTS. The "
+        "code-blind denylist is the constant the absence assertion below is "
+        "derived from; it cannot be replaced with a typed copy."
+    )
+
+
+def _section(path: Path, heading: str) -> str:
+    """One `## Heading` section of a markdown file, flattened.
+
+    Absence assertions are scoped to the section that carries the ruling. A
+    whole-file absence check cannot work on this file: § Code-Blind Discipline
+    NAMES every forbidden root, which is the point of it.
+    """
+    text = _read(path)
+    assert text.count(heading + "\n") == 1, (
+        f"{_rel(path)} carries {text.count(heading)} `{heading}` headings; the "
+        f"section pin needs exactly one."
+    )
+    start = text.index(heading + "\n")
+    rest = text.index("\n## ", start + len(heading))
+    return " ".join(text[start:rest].split())
+
+
+def test_the_derivers_roster_clause_sanctions_no_implementation_source_read() -> None:
+    """fallout GI-003 / NFR-003: the code-blind stream stays code-blind.
+
+    The ABSENCE half, and it is the half that matters. A positive pin on "the
+    items come from the Contracts table" stays green under a rewrite that adds
+    "and read the implementing module to confirm the surface exists" beside it
+    -- the sentence the positive pin quotes is still there, and TEST-01 has
+    quietly stopped being code-blind. So the section that carries the roster
+    ruling is asserted to name NO forbidden source root at all, against the
+    denylist the validator itself enforces.
+    """
+    section = _section(SPEC_TEST_DERIVER, "## Roster")
+    named = sorted(root for root in _forbidden_source_roots() if root in section)
+    assert not named, (
+        f"agents/spec-test-deriver.md's `## Roster` section names {named}, "
+        f"root(s) on the code-blind denylist. Deriving, writing or reading a "
+        f"roster is spec work: the items come from the spec's `## Contracts` "
+        f"rows. A roster clause that reaches a source root gives TEST-01 the "
+        f"one reason it has ever needed to read implementation source, and "
+        f"fallout NFR-003 makes that a Locked constraint rather than a "
+        f"preference."
+    )
+    assert "`## Contracts`" in section, (
+        "agents/spec-test-deriver.md's `## Roster` section no longer says the "
+        "items come from the spec's `## Contracts` rows. Without the positive "
+        "half the absence above is satisfied by a section that says nothing "
+        "about where the items come from at all."
+    )
+    assert "TEST_DERIVER_READ_SOURCE" in section, (
+        "agents/spec-test-deriver.md's `## Roster` section no longer names the "
+        "halt token. The rule needs the exit it forces when a derivation seems "
+        "to want a source read, or the reader is left to decide."
+    )
+
+
+# ---------------------------------------------------------------------------
+# fallout AC-048 / FR-025 -- the tracer marks fallout of an earlier fix
+# ---------------------------------------------------------------------------
+
+_FALLOUT_CLAUSES = (
+    "**Set `fallout_of` when the finding is fallout of an earlier fix.**",
+    "sibling surface left on a contract a previous cycle's fix changed is not a "
+    "fresh defect",
+    "An id the ledger does not carry is REFUSED at the door rather than stored",
+)
+
+
+@pytest.mark.parametrize("clause", _FALLOUT_CLAUSES, ids=lambda v: v[:44])
+def test_the_tracer_states_the_fallout_marking_rule(clause: str) -> None:
+    """fallout AC-048 / FR-025, the TRACE half.
+
+    The PROVE half -- `agents/assayer.md` and the prove and trace skills -- is
+    casting 11's and is pinned in its own module. Pinned on the tracer alone
+    here, deliberately: sweeping the wider roster would demand the clause in
+    four files whose castings have not written it, turning a green module red
+    for prose nobody had a chance to add.
+    """
+    assert clause in _flat(TRACER), (
+        f"agents/tracer.md no longer states: {clause!r}. Fallout marking is one "
+        f"optional field with no default the server can supply -- `measure-run` "
+        f"counts records carrying `fallout_of` per cycle, so an unmarked cycle "
+        f"reads as a cycle that produced none, and the measurement this run "
+        f"exists to make honest goes quiet instead of going red."
+    )
+
+
+# ---------------------------------------------------------------------------
+# fallout AC-037 / AC-040 / FR-010 / FR-048 / FR-051 / OT-037 -- the builder's
+# three: the sweep shell, the cross-casting concern door, the fix ledger
+# ---------------------------------------------------------------------------
+
+#: The refusal the sweep raises on a command it cannot parse. Spelled once here
+#: because two assertions name it: the prose pin that the teammate was TOLD the
+#: token, and the cross-door join below that the token is one the vocabulary
+#: actually carries. Split across two modules they would be free to drift, and
+#: the drift is invisible -- a teammate reading a token the sweep never emits
+#: greps a refusal that cannot happen and concludes the rule is dead.
+_SWEEP_SYNTAX_TOKEN = "EVIDENCE_COMMAND_SYNTAX"
+
+_TEAMMATE_CLAUSES = (
+    (
+        "The server re-runs every `# evidence-cmd:` under `/bin/sh -c`",
+        "fallout AC-037: the sweep shell, named. `Popen(cmd, shell=True)` with "
+        "no `executable=` is `/bin/sh`, and a teammate authoring in another "
+        "shell has no way to know that from prose that never says it",
+    ),
+    (
+        "Parse it yourself with `/bin/sh -n` before you commit it.",
+        "the teammate's own half of the same rule -- the parse that turns a "
+        "sweep refusal into a local failure before the commit exists",
+    ),
+    (
+        "the pre-commit guard lints the evidence logs you STAGED",
+        "fallout FR-051's first door, scoped to STAGED logs so a peer's "
+        "unstaged work in the shared tree cannot make it fire",
+    ),
+    (
+        f"refuse the crossing with `{_SWEEP_SYNTAX_TOKEN}`",
+        "fallout FR-051's second door: one rule with two enforcement points, "
+        "stated as one rule so a teammate does not read it as two",
+    ),
+    (
+        "**A concern that lands on ANOTHER casting goes through `Foundry-Concern`, "
+        "not only into the file.**",
+        "fallout FR-010: the structured ledger is the tool; concerns.md stays "
+        "the prose rendering, which is what a teammate READS and never what the "
+        "server parses",
+    ),
+    (
+        "with `casting_id`, `cycle`, `target` (the casting id, key file or symbol "
+        "it lands on) and `text`",
+        "the four write-arm arguments, as the tool schema declares them -- a "
+        "teammate inventing an argument name is refused at the boundary",
+    ),
+    (
+        "an open cross-casting concern from the closing GRIND refuses "
+        "`Foundry-Phase('inspect_start')`",
+        "what leaving one open COSTS, which is the only thing that makes "
+        "raising one early worth doing",
+    ),
+    (
+        "**One `Foundry-Fix` acceptance line per dispatched defect id (required "
+        "in GRIND).**",
+        "fallout AC-040 / OT-037: the completion-report line, one per dispatched "
+        "id, carrying what the door answered",
+    ),
+    (
+        "it refuses `DISPATCHED_DEFECT_UNRECORDED`, naming every dispatched id "
+        "still open whose file a commit since the cycle baseline SHA touched",
+        "fallout FR-048: the door the report line keeps open, named by its "
+        "refusal so the two halves of one rule cannot drift",
+    ),
+)
+
+
+@pytest.mark.parametrize("clause,why", _TEAMMATE_CLAUSES, ids=lambda v: v[:44])
+def test_teammate_states_the_builders_three_rulings(clause: str, why: str) -> None:
+    """fallout AC-037 / AC-040 / FR-010 / FR-048 / FR-051 / OT-037.
+
+    `agents/teammate.md` is the one file every builder reads, and all three
+    rulings are things a builder learns there or does not learn at all: the
+    shell the server will re-run its evidence command under, the door a
+    cross-casting concern goes through, and the line that records a dispatched
+    fix was accepted.
+    """
+    assert clause in _flat(TEAMMATE), (
+        f"agents/teammate.md no longer states: {clause!r}. That clause is {why}."
+    )
+
+
+def test_the_teammate_fix_ledger_line_is_required_of_every_dispatched_id() -> None:
+    """fallout AC-040 / OT-037: per ID, not per report.
+
+    A report carrying one acceptance line for the cycle satisfies "the report
+    mentions Foundry-Fix" and leaves four dispatched ids unaccounted for, which
+    is the exact state `Foundry-Team-Down` then refuses on. The pin is on the
+    per-id absolute rather than on the tool name.
+    """
+    flat = _flat(TEAMMATE)
+    assert (
+        "Write the line for every dispatched id, the ones you could not fix "
+        "included, saying so." in flat
+    ), (
+        "agents/teammate.md's fix-ledger bullet lost the per-id absolute. "
+        "Without it a single summary line reads as compliance, and the ids it "
+        "omits are the ones whose ledger rows stay open while their fixes sit "
+        "on the branch."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The cross-door joins: every refusal the prose above PROMISES, driven or read
+# at the door that gives it. A prose statement and its door drift apart
+# silently -- the file still reads correctly and the refusal it describes has
+# been renamed, so the reader greps a token nothing emits and concludes the
+# rule is dead. These are the assertions that make that drift loud.
+# ---------------------------------------------------------------------------
+
+
+def test_the_sweep_syntax_refusal_the_teammate_names_is_a_real_failure_token() -> None:
+    """fallout AC-037 / FR-051: the token in the prose is the token in the vocabulary."""
+    assert _SWEEP_SYNTAX_TOKEN in evidence_doors.KNOWN_EVIDENCE_FAILURE_TOKENS, (
+        f"agents/teammate.md tells every builder the sweep refuses "
+        f"`{_SWEEP_SYNTAX_TOKEN}`, and that is not a member of "
+        f"evidence.KNOWN_EVIDENCE_FAILURE_TOKENS "
+        f"({sorted(evidence_doors.KNOWN_EVIDENCE_FAILURE_TOKENS)}). The "
+        f"allowlist is closed, so a token outside it is a refusal the sweep "
+        f"cannot raise: the prose would be teaching a name nothing ever emits."
+    )
+
+
+def test_the_team_down_refusal_the_completion_report_names_is_the_doors_own() -> None:
+    """fallout AC-040 / FR-048 / OT-037: the report line and the door that needs it."""
+    assert (
+        directives.DISPATCHED_DEFECT_UNRECORDED in _flat(TEAMMATE)
+    ), (
+        f"agents/teammate.md no longer names "
+        f"`{directives.DISPATCHED_DEFECT_UNRECORDED}`, the refusal "
+        f"`Foundry-Team-Down` gives when a dispatched id is open and a commit "
+        f"since the cycle baseline touched its file. The completion-report line "
+        f"is what keeps that door open; a teammate who cannot name the refusal "
+        f"has no reason to believe the line is load-bearing."
+    )
+
+
+def test_the_unknown_fallout_id_the_tracer_promises_is_the_refusal_the_door_gives() -> None:
+    """fallout AC-048 / FR-025 / CT-019: driven, not asserted from the prose.
+
+    The tracer clause closes on "an id the ledger does not carry is REFUSED at
+    the door rather than stored", which is a claim about the SERVER. Read off
+    the prose it is unfalsifiable; driven here it is a joined pair, and the two
+    negative cases keep the join honest -- a door that refused every value
+    would satisfy a one-sided check while making the field unusable.
+    """
+    ledger = [{"id": "D-001"}]
+    refusal = foundry_doors.fallout_parent_problem("D-999", ledger)
+    assert refusal is not None, (
+        "the filing door accepts `fallout_of: 'D-999'` against a ledger that "
+        "holds no such id, while agents/tracer.md tells the TRACE stream the "
+        "door refuses it. One of the two is wrong, and the prose is the half a "
+        "stream reads before it files."
+    )
+    assert foundry_doors.fallout_parent_problem("D-001", ledger) is None, (
+        "the door refuses a `fallout_of` naming an id the ledger DOES hold. "
+        "The tracer is told to set the field on real parents; a door refusing "
+        "those makes the rule unusable rather than strict."
+    )
+    assert foundry_doors.fallout_parent_problem("", ledger) is None, (
+        "the door refuses an UNSET `fallout_of`. The field is optional by "
+        "construction -- the tracer is told to leave it unset when a finding "
+        "stands on its own -- so refusing the empty value would make every "
+        "standalone finding unfilable."
     )
