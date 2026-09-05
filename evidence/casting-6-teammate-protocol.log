@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_protocol_prose.py -k 'builders_three or teammate_fix_ledger or sweep_syntax_refusal or team_down_refusal' 2>&1 | tail -4
+# evidence-for: fallout US-009, AC-037, AC-040, FR-010, FR-048, FR-051, OT-037
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 600
+
+............                                                             [100%]
+12 passed, 583 deselected in 0.09s

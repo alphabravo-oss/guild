@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_protocol_prose.py -k 'non_prove_stream_agent or lead_records_for_it' 2>&1 | tail -4
+# evidence-for: fallout US-007, AC-031, FR-023, FR-049, NFR-002, GI-016, OT-029
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 600
+
+....................................                                     [100%]
+36 passed, 559 deselected in 0.10s

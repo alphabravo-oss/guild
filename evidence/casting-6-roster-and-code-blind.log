@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_protocol_prose.py -k 'roster_deriving or deriving_agent or derivers_roster_clause' 2>&1 | tail -4
+# evidence-for: fallout AC-033, FR-024, FR-050, NFR-003, GI-003
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 600
+
+............                                                             [100%]
+12 passed, 583 deselected in 0.09s

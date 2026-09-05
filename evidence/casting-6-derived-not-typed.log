@@ -1,0 +1,16 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c "import sys; sys.path[:0]=['src','tests']; import test_protocol_prose as m; print('vocab symbol recovered  :', m._STREAM_VOCAB_SYMBOL); print('cite the prose must use :', m._STREAM_VOCAB_CITE); print('non-PROVE roster        :', [p.name for p in m.NON_PROVE_STREAM_AGENTS]); print('PROVE agent excluded as :', sorted(m._declared_stream_wire_ids(m.ASSAYER))); print('roster-deriving agents  :', [p.name for p in m.ROSTER_DERIVING_AGENTS]); print('code-blind denylist     :', sorted(m._forbidden_source_roots())); print('roster refusals         :', m.rosters.ROSTER_EXISTS, m.streams.ROSTER_MISMATCH); print('team-down refusal       :', m.directives.DISPATCHED_DEFECT_UNRECORDED); print('sweep token is a member :', m._SWEEP_SYNTAX_TOKEN in m.evidence_doors.KNOWN_EVIDENCE_FAILURE_TOKENS); print('streams still shipped   :', len(m.vocab.STREAM_WIRE_IDS), sorted(m.vocab.STREAM_WIRE_IDS))" 2>&1
+# evidence-for: fallout NFR-011, FR-037
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 600
+
+vocab symbol recovered  : STREAM_WIRE_IDS
+cite the prose must use : plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#STREAM_WIRE_IDS
+non-PROVE roster        : ['coverage-diff.md', 'flow-tracer.md', 'research-auditor.md', 'spec-test-deriver.md', 'tracer.md']
+PROVE agent excluded as : ['prove']
+roster-deriving agents  : ['research-auditor.md', 'spec-test-deriver.md']
+code-blind denylist     : ['app/', 'cmd/', 'internal/', 'lib/', 'pkg/', 'plugins/forge/agents/', 'plugins/forge/scripts/', 'plugins/foundry/agents/', 'plugins/foundry/mcp-server/src/', 'plugins/foundry/scripts/', 'src/']
+roster refusals         : ROSTER_EXISTS ROSTER_MISMATCH
+team-down refusal       : DISPATCHED_DEFECT_UNRECORDED
+sweep token is a member : True
+streams still shipped   : 9 ['coverage_diff', 'flow_trace', 'probe', 'prove', 'research_audit', 'sight', 'test', 'test01', 'trace']
