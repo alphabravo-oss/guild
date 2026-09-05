@@ -727,6 +727,871 @@ def unreported_dispatch_summary(
     }
 
 
+# --------------------------------------------------------------------------- #
+# GI-024 / FR-008 / OT-010 — EVERY DERIVED RUN TABLE HAS ONE IMPLEMENTATION,
+# AND IT IS HERE.
+#
+# `survey/architecture.md` §3.2 inventoried the duplication and §3.3 counted the
+# renderings: "Three renderings, two derivations." The spend bucket shape was
+# typed three times (the orchestrator's persisted seed, the report's derived
+# seed, `scripts/measure-run.py`'s third copy); the spend roll-up was aggregated
+# three times off two different ledgers; the inspect-mode census, the
+# unreported-dispatch input assembly, the escalated-class rows, the REPORT.md
+# `## ` heading rule, `_now`, `_current_cycle`, `_prove_is_clean`, the cycle
+# sort key and `_as_count` each had two. Holmes `share-2` names the pattern:
+# "byte-identical `_current_cycle` / `_server_cycle` ... each kept as a
+# 'deliberate second copy' instead of living in the leaf module built for that".
+#
+# The previous fix for the spend pair made it worse in a way worth recording:
+# `foundry_report` imported `_overlay_unreported` BACK OUT of the orchestrator
+# through a function-local import, "closing the import cycle rather than sharing
+# the rule". Both halves of that pair now live here, so the report reaches only
+# the leaf and its own module header — "`schemas.vocab` and
+# `tools.foundry_state`, and nothing else from the package" — is true rather
+# than aspirational.
+#
+# THE LEAF CONTRACT IS UNCHANGED, AND IT IS WHAT SHAPES THESE SIGNATURES.
+# ---------------------------------------------------------------------
+# The module docstring's contract — `json` and `pathlib` and nothing from the
+# package — is what lets `scripts/measure-run.py` state a stdlib-only,
+# package-free import cost (`survey/infra.md` §9) and what keeps every caller
+# free of an import cycle. So a rule that needs a name from `vocab` (the
+# INSPECT modes, the escalation statuses, the escalation-status resolver) or a
+# mapping the orchestrator owns takes it as an ARGUMENT, exactly as
+# `unreported_dispatch_pairs` above takes `phase_of_dispatch` and `agent_id_of`.
+# The rule moves here; the vocabulary stays where it is declared.
+#
+# AND THERE IS NO SPEC-PATH RESOLVER HERE. Holmes `share-7` proposes one
+# ("re-inlined in three modules"), and this run routes it into
+# `tools/artifacts.py` instead. `prove_is_clean` below therefore takes the
+# requirement COUNT rather than resolving the spec — a fourth copy of that
+# ladder is the thing the proposal exists to prevent, not a step toward it.
+#
+# EVERY READER IS TOTAL. It returns an empty derived table rather than raising,
+# exactly as `unreported_dispatch_summary` does, and documents its return shape
+# in its own docstring. A caller that must TELL the operator which file is
+# broken uses the artifact guard or the `(value, problem)` readers above; it
+# never inspects one of these return values for that, because an empty table
+# cannot distinguish "absent" from "corrupt" by design.
+# --------------------------------------------------------------------------- #
+
+#: D-048 — the dispatch VERB a teammate was handed out under, mapped to the RUN
+#: PHASE its spend is bucketed under. `spawns.log` records `cast` and `grind`
+#: while `Foundry-Spend` records `F1` and `F3`, so the exact `(agent, phase)`
+#: pair could never match a teammate dispatch until the two vocabularies were
+#: reconciled through this table.
+#:
+#: DECLARED HERE, not in the module that owns the dispatch side, because THREE
+#: surfaces read it — `Foundry-Next`, the report and (from casting 3)
+#: `scripts/measure-run.py` — and the report already reached back into the
+#: orchestrator through a function-local import plus a `getattr(..., {})`
+#: degradation to get at it. A constant behind a `getattr` default is a
+#: constant that can silently go missing; a constant in the leaf both readers
+#: already import cannot.
+DISPATCH_PHASE_TO_RUN_PHASE = {"cast": "F1", "grind": "F3"}
+
+
+def now_iso(*, timespec: str = "auto") -> str:
+    """The house UTC timestamp. ONE implementation, one documented precision knob.
+
+    THE RECONCILIATION, STATED RATHER THAN PICKED
+    ---------------------------------------------
+    The two copies this replaces did NOT agree.
+    ``foundry_orchestrator._now`` returned full precision
+    (``2026-09-05T04:11:07.482913+00:00``) and ``foundry_report._now`` returned
+    ``timespec="seconds"`` (``2026-09-05T04:11:07+00:00``). Collapsing them onto
+    one precision is what a silent pick would do, and it would be wrong in one
+    direction or the other:
+
+      * onto SECONDS — the ledger writers stamp `handoffs.jsonl`, `spawns.log`
+        and `spend.jsonl` with this, and ``handoffs_wall_clock_seconds`` above
+        measures a SPAN between two of those stamps. Two records appended
+        inside one second would then span 0.0 seconds, which is precisely the
+        fabrication that function's docstring refuses by name ("a run that took
+        no measurable time and a run nobody measured are different facts").
+      * onto MICROSECONDS — `report.json`'s ``generated_at`` and REPORT.md's
+        banner are operator-facing, and six digits of noise in a line a human
+        reads is what makes a line stop being read.
+
+    So the precision is a NAMED ARGUMENT with the reason recorded here, and the
+    two callers keep the answers they already published. What is no longer
+    duplicated is the thing that actually drifted: the timezone, the ``utc``
+    spelling, and the fact that this is ISO-8601 at all.
+
+    ``datetime`` is imported INSIDE the function for the reason
+    ``handoffs_wall_clock_seconds`` states: the leaf contract is about the
+    MODULE's import list, and a call-time import adds nothing to it.
+    """
+    from datetime import datetime, timezone
+
+    return datetime.now(tz=timezone.utc).isoformat(timespec=timespec)
+
+
+def as_count(value: object) -> int:
+    """A non-negative int, or 0. Bools are not counts (``True`` is not 1 here).
+
+    The house integer coercion, spelled once. ``bool`` is an ``int`` subclass
+    and ``True`` is not a count of anything — the same guard ``derive_cycle_count``
+    applies to a cycle and ``_read_spend`` applied to a token total, which is
+    why the two had to agree and had no shared spelling to agree through.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def cycle_sort_key(raw: object) -> tuple[int, object]:
+    """Numeric order for cycle keys, with any non-numeric key sorted after.
+
+    ``by_cycle``'s keys are ``str(cycle)`` (C-4 / FR-037), so ``sorted()`` on the
+    raw mapping orders cycle 21 before cycle 3 and cycle 10 before cycle 2.
+    D-220 filed that against the display; `foundry_report` already ordered both
+    of its cycle axes through its own copy and `scripts/measure-run.py` through
+    a third, so one document had two orderings depending on which surface
+    printed it.
+
+    ``by_phase`` is deliberately safe to pass through here too: phase tokens
+    (``"F1"``, ``"F5.5"``) map to ``(1, raw)`` — after every numeric key, and
+    among themselves in exactly the lexicographic order ``sorted()`` gives them.
+    One key function over both axes, and only the axis that was wrong moves.
+    """
+    try:
+        return (0, int(raw))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return (1, raw)
+
+
+def current_cycle(run_dir: Path) -> int:
+    """The server-owned cycle counter. Never caller-supplied. Never raises.
+
+    Returns 0 for a missing, absent, or malformed value so every reader gets a
+    usable integer rather than having to guard the state file's shape.
+
+    "Every reader" is enforced, not aspirational (D-059): a raw
+    ``state.json["cycle"]`` read hands on whatever the file holds, and a
+    str/None/list/dict raised an unhandled TypeError out of Foundry-Next — the
+    mandatory handshake before every phase transition and gate — while -3 and
+    2.5 propagated silently into responses and onto every row of a synthesized
+    verdict. ``bool`` is excluded for ``derive_cycle_count``'s reason: ``True``
+    is not cycle 1.
+    """
+    state, _ = read_document(run_dir / "state.json")
+    return as_count(state.get("cycle"))
+
+
+def spend_bucket(*, persisted: bool = False) -> dict:
+    """An empty spend bucket. ONE shape, with the two variants NAMED.
+
+    ``persisted=True`` is the bucket ``foundry_record_spend`` writes into
+    ``state.json.spend``; the default is the DERIVED bucket the report's spend
+    table is built from. They differ in exactly two fields and both differences
+    are load-bearing, which is why this is one function with an argument rather
+    than one shape forced onto two documents:
+
+      * ``records`` and ``minutes`` exist only on the derived bucket. ``records``
+        counts ledger ROWS, which is a different number from ``agents`` whenever
+        an agent reported twice (D-090); ``minutes`` is ``duration_ms`` divided
+        out so an operator is not asked to divide 34_620_000 by 60_000 in their
+        head. Neither is persisted, because both are derivable from what is.
+      * ``agents`` seeds ``None`` on the derived bucket and ``0`` on the
+        persisted one. The persisted document is written by the door that
+        counted the agents, so 0 there means "no agents"; the derived table
+        FILLS the field from the roll-up, so ``None`` there means "nobody
+        recorded how many", and the report refuses to conflate that pair by
+        name.
+
+    ``unreported`` seeds 0 in both. Unlike ``agents`` it is DERIVED on every
+    run from the dispatch record (D-163), so there is no run on which it is
+    unknown: a run with no dispatch record at all has no unreported dispatch,
+    and 0 is that fact.
+    """
+    bucket: dict = {"tokens": 0, "duration_ms": 0}
+    if not persisted:
+        bucket["minutes"] = 0.0
+        bucket["records"] = 0
+    bucket["agents"] = 0 if persisted else None
+    bucket["unreported"] = 0
+    return bucket
+
+
+def overlay_unreported(spend: dict, summary: dict) -> dict:
+    """Write the DERIVED unreported counts onto the C-4 buckets (D-031).
+
+    ``summary`` is ``unreported_dispatch_summary``'s document. This distributes
+    its counts across ``by_phase``, ``by_cycle`` and ``total``, and returns the
+    same object it was handed. It MUTATES: `_spend_summary` overlays a deep copy
+    so a display call is not a write, and `foundry_record_spend` overlays the
+    persisted document inside its transaction so `state.json` is repaired in
+    place by the next spend call rather than by hand.
+
+    D-162 — TWO DERIVATIONS OF ONE NUMBER, AND THE PAIR WAS THE RIGHT ONE.
+    ---------------------------------------------------------------------
+    This took the unreported ROW list and incremented ``by_phase`` once per row,
+    with ``total["unreported"] = len(rows)``, while the row list re-expands the
+    pair set into one row per cycle stamp for every F2 stream agent — so a
+    stream agent unreported across nine cycles was NINE rows and ONE pair.
+    Driven through the real doors: `Foundry-Next` returned
+    ``spend.unreported_count 51`` with ``by_phase {F1 8, F3 6, F2 37}`` while
+    the report returned ``count 19`` with ``by_phase {F1 8, F2 5, F3 6}`` — two
+    surfaces, one run, one question, two numbers. So the counts are READ off the
+    one deriver: ``total`` and each ``by_phase`` bucket count PAIRS, ``by_cycle``
+    counts the per-cycle appearances, and nothing here re-derives either axis.
+
+    D-031 — A FIELD INITIALISED AND NORMALISED BUT NEVER WRITTEN. The
+    ``unreported`` key existed since C-4 and nothing in the tree incremented it,
+    so a consumer read a permanent 0 that could not be distinguished from "every
+    dispatch in this phase reported" — the exact opposite of the truth on a run
+    where nobody called `Foundry-Spend`. It is DERIVED here rather than
+    accumulated at the door because an unreported dispatch is the ABSENCE of a
+    record: the number changes when an agent is DISPATCHED, which is a different
+    tool's call.
+
+    D-229 — AND AN ALL-ZERO CYCLE BUCKET IS PRUNED. The seeding cannot retract
+    what it seeds: a cycle named by the summary gets a bucket, the summary's
+    cycle axis then clears the moment the PAIR reports spend — for an F2 stream
+    agent that is every cycle stamp at once — and 0/0/0/0 is what is left. An
+    ABSENT row is honest where a zero row is a claim. Only the CYCLE axis can
+    reach all-zero: `foundry_record_spend` buckets a row under its phase AND its
+    server cycle with ``agents`` at least 1, so a phase bucket whose unreported
+    clears was written by the very call that cleared it.
+    """
+    for section in ("by_phase", "by_cycle"):
+        if not isinstance(spend.get(section), dict):
+            spend[section] = {}
+    if not isinstance(spend.get("total"), dict):
+        spend["total"] = spend_bucket(persisted=True)
+
+    for bucket in (
+        *spend["by_phase"].values(), *spend["by_cycle"].values(), spend["total"],
+    ):
+        if isinstance(bucket, dict):
+            bucket["unreported"] = 0
+
+    for phase, agents in (summary.get("by_phase") or {}).items():
+        bucket = spend["by_phase"].setdefault(str(phase), spend_bucket(persisted=True))
+        bucket["unreported"] = len(agents)
+    for cycle, agents in (summary.get("by_cycle") or {}).items():
+        bucket = spend["by_cycle"].setdefault(str(cycle), spend_bucket(persisted=True))
+        bucket["unreported"] = len(agents)
+    spend["total"]["unreported"] = as_count(summary.get("count"))
+
+    spend["by_cycle"] = {
+        key: bucket
+        for key, bucket in spend["by_cycle"].items()
+        if not (
+            isinstance(bucket, dict)
+            and all(
+                not bucket.get(field)
+                for field in ("tokens", "duration_ms", "agents", "unreported")
+            )
+        )
+    }
+    return spend
+
+
+def spend_rollup(
+    *,
+    spend_rows: list[dict],
+    state_rollup: object,
+    dispatch_summary: dict | None = None,
+) -> dict:
+    """NFR-002 — tokens and MINUTES per phase, per cycle, and the run total.
+
+    Returns, and never raises::
+
+        {"records": int,                   # ledger ROWS
+         "by_phase": {phase: bucket},
+         "by_cycle": {str(cycle): bucket},
+         "total": bucket,
+         "state_rollup": dict | None,      # state.json.spend, verbatim
+         "disagreements": [{"scope", "key", "field", "ledger", "state_rollup"}],
+         "unreported_without_cycle": int}
+
+    where a bucket is ``spend_bucket()``'s derived shape. The section PROSE is
+    the caller's: this returns the numbers, and the sentence that explains the
+    two axes is rendering.
+
+    THE RECONCILIATION OF THE TWO AGGREGATIONS, AS A DECISION AND NOT A PICK
+    -----------------------------------------------------------------------
+    There were three copies of this arithmetic and the two live ones read
+    DIFFERENT SOURCES: `foundry_orchestrator._spend_summary` read
+    ``state.json.spend`` (the roll-up the server writes as it goes) while
+    `foundry_report._read_spend` re-aggregated ``spend.jsonl`` (the append-only
+    ledger). `_read_spend`'s own docstring documents four defects caused by the
+    pair disagreeing — D-038, D-090, D-162, D-163 — so the reconciliation is
+    stated here rather than silently resolved:
+
+      * THE LEDGER IS THE AUTHORITY for tokens, milliseconds and row counts.
+        It is what was actually recorded, row by row; the roll-up is a running
+        summary that a crashed or hand-edited run can leave stale.
+      * THE ROLL-UP IS THE AUTHORITY for ``agents``, and the ONLY source for it.
+        It counts DISTINCT agent ids (D-038 made it so); this reader's row count
+        is a different number by construction whenever an agent reported twice,
+        and publishing that row count under the name ``agents`` is exactly what
+        D-090 filed. ``agents`` is None, never 0, when the roll-up carries none:
+        "nobody recorded how many agents" and "no agents ran" are different
+        facts.
+      * ``unreported`` IS DERIVED, from neither of them (D-163). The roll-up's
+        copy of that one field is structurally 0 — the only writer seeds it and
+        never increments it, and the overlay that would fill it runs on a
+        throwaway copy — so one report published ``total.unreported: 0`` beside
+        its own ``unreported_dispatches {"count": 1}``.
+      * WHERE THE TWO CAN BE COMPARED THEY ARE, and the difference is NAMED.
+        ``disagreements`` carries one entry per bucket and field where the
+        roll-up's integer differs from the ledger's, instead of one of the two
+        being printed under a single label. A drift signal is only useful while
+        it is quiet on a healthy run, which is why ``agents`` is checked against
+        the ledger's DISTINCT NAMES and never against its row count.
+
+    THE SEEDING SOURCE IS THE OVERLAY'S VIEW, NOT THE RAW PERSISTED DOCUMENT
+    (D-232 / D-235). A bucket the ledger does not know still gets a row, because
+    the run where every `Foundry-Spend` call was forgotten is the one whose gap
+    most needs a line — but the all-zero cycle buckets `overlay_unreported`
+    prunes must not be re-created here, or a report generated after the last
+    spend call publishes rows the display does not have. The predicate is not
+    restated: the overlay is handed a deep copy and the key sets it hands back
+    are what this seeds from. Seeding is ``setdefault`` over buckets the ledger
+    loop already built, so a row the LEDGER measured can never be pruned away by
+    a stale roll-up.
+    """
+    dispatch_summary = dispatch_summary or {}
+    unreported_by_phase = dispatch_summary.get("by_phase") or {}
+    unreported_by_cycle = dispatch_summary.get("by_cycle") or {}
+    rollup = state_rollup if isinstance(state_rollup, dict) else None
+
+    def _rollup_bucket(section: str | None, key: str | None) -> dict:
+        if rollup is None:
+            return {}
+        if section is None:
+            found = rollup.get("total")
+        else:
+            group = rollup.get(section)
+            found = group.get(key) if isinstance(group, dict) else None
+        return found if isinstance(found, dict) else {}
+
+    by_phase: dict[str, dict] = {}
+    by_cycle: dict[str, dict] = {}
+    total = spend_bucket()
+    records = 0
+    # Agent NAMES per bucket. NOT published — `agents` is the roll-up's number
+    # and only the roll-up's. This is the CHECK.
+    seen: dict[tuple[str, str], set[str]] = {}
+    for entry in spend_rows:
+        if not isinstance(entry, dict):
+            continue
+        records += 1
+        tokens = as_count(entry.get("tokens"))
+        duration_ms = as_count(entry.get("duration_ms"))
+        phase = entry.get("phase")
+        cycle = entry.get("cycle")
+        agent = entry.get("agent")
+
+        buckets = [(("run", "total"), total)]
+        if isinstance(phase, str) and phase:
+            buckets.append((("by_phase", phase),
+                            by_phase.setdefault(phase, spend_bucket())))
+        if isinstance(cycle, int) and not isinstance(cycle, bool) and cycle >= 0:
+            buckets.append((("by_cycle", str(cycle)),
+                            by_cycle.setdefault(str(cycle), spend_bucket())))
+        for scope, bucket in buckets:
+            bucket["tokens"] += tokens
+            bucket["duration_ms"] += duration_ms
+            bucket["records"] += 1
+            if isinstance(agent, str) and agent:
+                seen.setdefault(scope, set()).add(agent)
+
+    seed_view = overlay_unreported(
+        json.loads(json.dumps(rollup or {})), dispatch_summary
+    )
+    for section, target, unreported_keys in (
+        ("by_phase", by_phase, unreported_by_phase),
+        ("by_cycle", by_cycle, unreported_by_cycle),
+    ):
+        group = seed_view.get(section)
+        keys = list(group) if isinstance(group, dict) else []
+        keys += list(unreported_keys)
+        for key in keys:
+            if isinstance(key, str):
+                target.setdefault(key, spend_bucket())
+
+    disagreements: list[dict] = []
+    for section, key, bucket in (
+        *(("by_phase", k, v) for k, v in by_phase.items()),
+        *(("by_cycle", k, v) for k, v in by_cycle.items()),
+        (None, "total", total),
+    ):
+        bucket["minutes"] = round(bucket["duration_ms"] / 60_000.0, 2)
+        scope = "run" if section is None else section
+        recorded = _rollup_bucket(section, key)
+        agents = recorded.get("agents")
+        bucket["agents"] = (
+            agents if isinstance(agents, int) and not isinstance(agents, bool)
+            else None
+        )
+        if section is None:
+            bucket["unreported"] = as_count(dispatch_summary.get("count"))
+        else:
+            bucket["unreported"] = len(
+                (unreported_by_phase if section == "by_phase"
+                 else unreported_by_cycle).get(key, ())
+            )
+        ledger_side = {
+            "tokens": bucket["tokens"],
+            "duration_ms": bucket["duration_ms"],
+            "agents": len(seen.get((scope, key), ())),
+            "unreported": bucket["unreported"],
+        }
+        for field, ledger_value in ledger_side.items():
+            value = recorded.get(field)
+            if (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and value != ledger_value
+            ):
+                disagreements.append({
+                    "scope": scope,
+                    "key": key,
+                    "field": field,
+                    "ledger": ledger_value,
+                    "state_rollup": value,
+                })
+
+    return {
+        "records": records,
+        "by_phase": {k: by_phase[k] for k in sorted(by_phase)},
+        "by_cycle": {k: by_cycle[k] for k in sorted(by_cycle, key=cycle_sort_key)},
+        "total": total,
+        "state_rollup": rollup,
+        "disagreements": disagreements,
+        "unreported_without_cycle": len(
+            dispatch_summary.get("pairs_without_cycle") or []
+        ),
+    }
+
+
+def inspect_mode_rows(*, state: dict, derived: dict, modes) -> dict:
+    """FR-023 / AC-036 — EVERY recorded FULL/DELTA decision, per cycle and phase.
+
+    Returns, and never raises::
+
+        {"count": int,                     # DECISIONS, not cycles
+         "cycle_count": int,               # cycles THAT CARRY one
+         "cycle_axis_length": int | None,  # cycles the RUN ran
+         "cycles_without_decision": [int] | None,
+         "axis_top": int | None,
+         "axis_extended": bool,            # a decision names a cycle above the counter
+         "by_mode": {mode: int},
+         "per_cycle": {str(cycle): [decision]},
+         "entries": [raw entry]}
+
+    ``derived`` is a ``derive_cycle_count`` document and ``modes`` is the mode
+    roster — ``vocab.INSPECT_MODES``, passed in because the leaf contract at the
+    top of this file forbids importing it. The disclosure SENTENCE is the
+    caller's: this publishes the numbers the sentence is built from, including
+    ``axis_top`` and ``axis_extended``, so the report and the status display draw
+    the same table and no second walk decides what a decision is.
+
+    LAST-ENTRY-WINS FABRICATED A WIDTH FOR THE ORDINARY RUN (D-119). A census
+    that keeps one of two answers is not a census, and the collapse was the
+    F2-to-F5 path rather than a corner case: the counter does not advance
+    entering F5, so TEMPER's entry is stamped with the cycle the preceding F2
+    INSPECT already used. One row per DECISION, and neither is dropped.
+
+    THE AXIS IS THE RUN'S, NOT THE LEDGER'S (D-193). ``cycle_count`` counts the
+    cycles this ledger has a decision for, and publishing it as the width of the
+    axis put two numbers for one axis in one document. The axis comes from
+    ``derived["index"]`` — the counter's own highest value — so ``0..index`` is
+    exactly the set of counter values a decision could carry. A decision ABOVE
+    that top widens the axis (``axis_extended``), because such a decision is
+    direct evidence the cycle ran; when the counter cannot be derived at all the
+    axis is None rather than falling back on the highest cycle THIS ledger
+    names, which would be complete by construction.
+    """
+    entries = state.get("inspect_modes")
+    if not isinstance(entries, list):
+        entries = []
+    per_cycle: dict[str, list[dict]] = {}
+    by_mode = dict.fromkeys(sorted(modes), 0)
+    history: list[dict] = []
+    decisions = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        history.append(entry)
+        cycle = entry.get("cycle")
+        if isinstance(cycle, bool) or not isinstance(cycle, int):
+            continue
+        decision = {
+            "cycle": cycle,
+            "phase": entry.get("phase"),
+            "mode": entry.get("mode"),
+            "rule": entry.get("rule"),
+            "decided_by": entry.get("decided_by"),
+            "required_streams": entry.get("required_streams"),
+        }
+        per_cycle.setdefault(str(cycle), []).append(decision)
+        decisions += 1
+        if decision["mode"] in by_mode:
+            by_mode[decision["mode"]] += 1
+
+    recorded_cycles = {int(key) for key in per_cycle}
+    index = derived.get("index") if isinstance(derived, dict) else None
+    highest_recorded = max(recorded_cycles) if recorded_cycles else None
+    axis_top: int | None = None
+    axis_length: int | None = None
+    without: list[int] | None = None
+    extended = False
+    if isinstance(index, int) and not isinstance(index, bool):
+        extended = highest_recorded is not None and highest_recorded > index
+        axis_top = index if highest_recorded is None else max(index, highest_recorded)
+        axis_length = axis_top + 1
+        without = [c for c in range(axis_length) if c not in recorded_cycles]
+
+    return {
+        "count": decisions,
+        "cycle_count": len(per_cycle),
+        "cycle_axis_length": axis_length,
+        "cycles_without_decision": without,
+        "axis_top": axis_top,
+        "axis_extended": extended,
+        "by_mode": by_mode,
+        "per_cycle": {k: per_cycle[k] for k in sorted(per_cycle, key=cycle_sort_key)},
+        "entries": history,
+    }
+
+
+def inspect_decisions(inspect_modes: dict) -> list[dict]:
+    """Every decision ``inspect_mode_rows`` recorded, cycle order preserved.
+
+    The flattening lives beside the census rather than in each reader, so the
+    markdown table, the JSON section and the archive metrics walk one list built
+    one way. Two flattenings of one append-only ledger is how the collapse D-119
+    names got two different answers out of the same ``inspect_modes``.
+    """
+    if not isinstance(inspect_modes, dict):
+        return []
+    return [
+        decision
+        for group in (inspect_modes.get("per_cycle") or {}).values()
+        for decision in (group or [])
+    ]
+
+
+def stream_rollup_rows(run_dir: Path) -> dict:
+    """CT-003 / AC-030 — per (stream, cycle) coverage, with replacements named.
+
+    Returns, and never raises::
+
+        {"cycles": {str(cycle): {stream: {"items_checked", "items_total",
+                                          "findings", "record_count",
+                                          "replaced_count", "records",
+                                          "over_total"}}},
+         "cycle_count": int,
+         "stream_count": int,
+         "replaced": [{"cycle", "stream", "replaced_count"}],
+         "over_total": [{"cycle", "stream", "items_checked", "items_total"}],
+         "buckets_without_records": [{"cycle", "stream"}],
+         "problem": str | None}
+
+    ``is_stream_record`` above is the one test separating a stream tranche from
+    the cycle-level facts written beside it (D-182), and it is applied here
+    rather than re-spelled — a key whose value is not a tranche is not a stream,
+    whatever its name.
+
+    BOTH LEDGER SHAPES, BECAUSE BOTH EXIST (FR-054). The replace semantics
+    (``records[]`` keeping history, the top-level totals rewritten to the LAST
+    record) arrive with casting 2 and the migration with casting 3. A bucket
+    written by the old ADDITIVE writer carries no ``records`` list of its own
+    beyond what it accumulated, and ``daring-orca``'s buckets genuinely read
+    ABOVE 100%. That is rendered and NAMED — ``over_total`` — never silently
+    normalised: a coverage figure quietly clamped to its total is a measurement
+    replaced by an assertion, and the whole point of the replace semantics is
+    that the run can see which records were superseded.
+
+    ``replaced_count`` is ``len(records) - 1`` and never negative: the FIRST
+    record for a (stream, cycle) replaced nothing, and every later one replaced
+    exactly the record before it (ST-009). A bucket with no ``records`` key at
+    all reports ``record_count`` 0 and is listed in ``buckets_without_records``,
+    so "written by the additive writer" stays distinguishable from "recorded
+    once".
+    """
+    document, problem = read_document(run_dir / "stream-rollup.json")
+    cycles_out: dict[str, dict] = {}
+    replaced: list[dict] = []
+    over_total: list[dict] = []
+    without_records: list[dict] = []
+    streams: set[str] = set()
+
+    cycles = document.get("cycles")
+    if isinstance(cycles, dict):
+        for cycle_key in sorted(cycles, key=cycle_sort_key):
+            bucket = cycles.get(cycle_key)
+            if not isinstance(bucket, dict):
+                continue
+            per_stream: dict[str, dict] = {}
+            for stream in sorted(bucket):
+                entry = bucket.get(stream)
+                if not is_stream_record(entry):
+                    continue
+                streams.add(str(stream))
+                records = entry.get("records")
+                records = records if isinstance(records, list) else []
+                checked = as_count(entry.get("items_checked"))
+                total = as_count(entry.get("items_total"))
+                row = {
+                    "items_checked": checked,
+                    "items_total": total,
+                    "findings": entry.get("findings"),
+                    "record_count": len(records),
+                    "replaced_count": max(len(records) - 1, 0),
+                    "records": records,
+                    "over_total": bool(total) and checked > total,
+                }
+                per_stream[str(stream)] = row
+                if row["replaced_count"]:
+                    replaced.append({
+                        "cycle": str(cycle_key),
+                        "stream": str(stream),
+                        "replaced_count": row["replaced_count"],
+                    })
+                if row["over_total"]:
+                    over_total.append({
+                        "cycle": str(cycle_key),
+                        "stream": str(stream),
+                        "items_checked": checked,
+                        "items_total": total,
+                    })
+                if not records:
+                    without_records.append(
+                        {"cycle": str(cycle_key), "stream": str(stream)}
+                    )
+            if per_stream:
+                cycles_out[str(cycle_key)] = per_stream
+
+    return {
+        "cycles": cycles_out,
+        "cycle_count": len(cycles_out),
+        "stream_count": len(streams),
+        "replaced": replaced,
+        "over_total": over_total,
+        "buckets_without_records": without_records,
+        "problem": problem,
+    }
+
+
+def unreported_dispatch_inputs(run_dir: Path) -> dict:
+    """The three ledgers ``unreported_dispatch_summary`` runs over, assembled ONCE.
+
+    Returns, and never raises::
+
+        {"dispatch_rows": [row],            # spawns.log
+         "spend_rows": [row],               # spend.jsonl
+         "stream_roster": {"F2": [stream]}, # from stream-rollup.json
+         "cycles_of_agent": {stream: [str(cycle)]},
+         "problem": str | None}             # the FIRST unreadable ledger
+
+    ``unreported_dispatch_summary`` above was already the consolidated RULE; what
+    was still derived twice was this ASSEMBLY — `foundry_orchestrator` built it
+    from `_spawn_rows` / `_stream_roster` / `_stream_dispatch_cycles` /
+    `_spend_ledger_rows` and `foundry_report._read_dispatch_summary` built it
+    again from three inline walks. Hosting it beside the rule is what makes
+    "one derivation, two renderings" true of the INPUT as well as the output.
+
+    THE ROSTER AND THE CYCLE MAP COME OFF ONE WALK, because they are the same
+    fact one key up — the roll-up's cycle bucket — and walking the document
+    twice is how the two would come to disagree about which cycles a stream ran
+    in. The cycle map is also the ONLY cycle stamp the archive has (D-172):
+    `spawns.log` records a teammate dispatch as timestamp, casting_id, phase,
+    wave and prompt_hash with no cycle anywhere, so a CAST or GRIND teammate can
+    never be attributed to a cycle here. The summary returns the pairs that
+    source cannot cover as ``pairs_without_cycle`` rather than inventing a stamp
+    — correlating spawn timestamps against phase windows would be a second
+    proxy, and "the axis is derived from a proxy" is the filing.
+
+    The caller still supplies ``phase_of_dispatch`` and ``agent_id_of``: the
+    verb mapping is ``DISPATCH_PHASE_TO_RUN_PHASE`` above and the agent-id
+    spelling is `foundry_spawn`'s, which this module deliberately does not
+    import.
+    """
+    dispatch_rows, problem = read_jsonl(run_dir / "spawns.log")
+    if problem is not None:
+        return {"dispatch_rows": [], "spend_rows": [], "stream_roster": {},
+                "cycles_of_agent": {}, "problem": problem}
+    spend_rows, problem = read_jsonl(run_dir / "spend.jsonl")
+    if problem is not None:
+        return {"dispatch_rows": [], "spend_rows": [], "stream_roster": {},
+                "cycles_of_agent": {}, "problem": problem}
+    rollup, problem = read_document(run_dir / "stream-rollup.json")
+    if problem is not None:
+        return {"dispatch_rows": [], "spend_rows": [], "stream_roster": {},
+                "cycles_of_agent": {}, "problem": problem}
+
+    stream_roster: dict[str, list[str]] = {}
+    cycles_of_agent: dict[str, list[str]] = {}
+    cycles = rollup.get("cycles")
+    if isinstance(cycles, dict):
+        for cycle_key, bucket in cycles.items():
+            if not isinstance(bucket, dict):
+                continue
+            for stream in bucket:
+                if is_stream_record(bucket.get(stream)):
+                    stream_roster.setdefault("F2", []).append(str(stream))
+                    cycles_of_agent.setdefault(str(stream), []).append(str(cycle_key))
+
+    return {
+        "dispatch_rows": dispatch_rows,
+        "spend_rows": spend_rows,
+        "stream_roster": stream_roster,
+        "cycles_of_agent": cycles_of_agent,
+        "problem": None,
+    }
+
+
+def escalated_class_rows(
+    document: dict,
+    *,
+    statuses,
+    exit_reasons,
+    status_of,
+) -> dict:
+    """AC-004 — per class: status, exit reason, cleared cycle, packets used.
+
+    Returns, and never raises::
+
+        {"count": int,
+         "by_status": {status: int},        # keys are `statuses`, always all of them
+         "by_exit_reason": {reason: int},
+         "classes": [row]}
+
+    ``statuses`` and ``exit_reasons`` are the closed vocabularies and
+    ``status_of`` is ``vocab.escalation_status`` — all three passed in, because
+    the leaf contract at the top of this file forbids importing `vocab` and a
+    re-typed copy of a closed vocabulary is the hand-copied-enum drift the house
+    rule bans outright.
+
+    D-214 — THE VOCABULARY DECIDES, AND IT DECIDES ON THE RAW ENTRY. The read
+    this replaces was ``status if isinstance(status, str) else "ESCALATED"``,
+    which is a shape test wearing the vocabulary's default: ANY string passed
+    through, so a document carrying ``{"status": "BOGUS"}`` reported ``count`` 3
+    while ``by_status`` summed to 2 and the row read a status no writer emits.
+    ``status_of`` is total over ``statuses``, so the increment below needs no
+    membership guard and ``count == sum(by_status.values())`` by construction.
+
+    It is called BEFORE the mapping normalisation, so nothing pre-empts it the
+    way D-212's ``continue`` did: an entry that is not a mapping carries no
+    CLEARED and resolves to ESCALATED, and a class with no ``status`` predates
+    this release's fields and is reported in the state it was written in.
+    Defaulting either to CLEARED would silently retire a class nobody cleared.
+    """
+    classes = document.get("classes") if isinstance(document, dict) else None
+    if not isinstance(classes, dict):
+        classes = {}
+
+    rows: list[dict] = []
+    by_status = dict.fromkeys(sorted(statuses), 0)
+    by_exit_reason = dict.fromkeys(sorted(exit_reasons), 0)
+    for name, entry in sorted(classes.items()):
+        status = status_of(entry)
+        fields = entry if isinstance(entry, dict) else {}
+        reason = fields.get("exit_reason")
+        rows.append(
+            {
+                "class": name,
+                "status": status,
+                "exit_reason": reason if isinstance(reason, str) else None,
+                "escalated_at_cycle": fields.get("escalated_at_cycle"),
+                "cleared_at_cycle": fields.get("cleared_at_cycle"),
+                "structural_packets_dispatched": fields.get(
+                    "structural_packets_dispatched"
+                ),
+                "structural_packet_cycles": fields.get("structural_packet_cycles"),
+                "live_clean_cycles": fields.get("live_clean_cycles"),
+                "open_latent_defect_ids": fields.get("open_latent_defect_ids"),
+                "defect_ids": fields.get("defect_ids"),
+                "proposal": fields.get("proposal"),
+            }
+        )
+        if status in by_status:
+            by_status[status] += 1
+        if isinstance(reason, str) and reason in by_exit_reason:
+            by_exit_reason[reason] += 1
+    return {
+        "count": len(rows),
+        "by_status": by_status,
+        "by_exit_reason": by_exit_reason,
+        "classes": rows,
+    }
+
+
+def markdown_sections(text: str) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    """Split a REPORT.md into ``(header_lines, [(heading, body_lines), ...])``.
+
+    A heading is a whole trimmed line beginning ``"## "``. Holmes `share-10`:
+    the seal's splitter and the DONE gate's presence check "agree by convention"
+    — one built blocks by this rule and the other built
+    ``{line.strip() for line in text.splitlines()}``, "same effective rule,
+    coded independently". Both halves of GI-006 now read the document by ONE
+    rule, so the seal can never preserve something the gate would call missing,
+    or drop something it would call present.
+
+    ``markdown_headings`` below is the same walk asked the other question, and
+    it is derived from this function rather than spelled beside it.
+    """
+    header: list[str] = []
+    blocks: list[tuple[str, list[str]]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            blocks.append((stripped, []))
+        elif blocks:
+            blocks[-1][1].append(line)
+        else:
+            header.append(line)
+    return header, blocks
+
+
+def markdown_headings(text: str) -> set[str]:
+    """Every ``## `` heading line a REPORT.md carries, trimmed.
+
+    DERIVED from ``markdown_sections`` rather than spelled beside it, which is
+    the whole of Holmes `share-10`: the presence check matched a whole trimmed
+    line anywhere in the document while the seal matched a line that STARTS a
+    block, and the two agreed only by convention. The match stays on the WHOLE
+    trimmed line rather than a prefix, so a lead's own ``## Appendix`` never
+    counts as a generated section and a generated heading with a suffix bolted
+    on reads as the edit it is.
+    """
+    return {heading for heading, _ in markdown_sections(text)[1]}
+
+
+def prove_is_clean(*, totals: dict | None, spec_requirement_count: int) -> bool:
+    """True when a recorded PROVE tranche set is clean: 0 findings AND >=95% cover.
+
+    ``totals`` is the cycle's roll-up totals (``{"items_checked", "items_total",
+    "findings"}``) or the marker's aggregate for an archive predating the
+    roll-up; ``spec_requirement_count`` is the number of requirement ids the
+    run's spec declares. BOTH are passed in, because resolving the spec needs
+    the path ladder Holmes `share-7` is moving into `tools/artifacts.py` and a
+    fourth copy of it here is the thing that proposal exists to prevent.
+
+    A spec that parses to ZERO requirements is never clean (FR-020 / AC-025).
+    The >=95% check used to be SKIPPED when the count was 0, so any
+    ``.prove-complete`` with ``findings=0`` on an unresolvable or unparseable
+    spec drove the F4 auto-VERIFY path — manufacturing a passing run out of a
+    spec nothing had actually been proved against.
+
+    ``findings`` absent is not ``findings`` zero: a tranche that recorded no
+    finding count has not been shown to be clean, so it is not.
+    """
+    if not isinstance(totals, dict):
+        return False
+    if totals.get("findings") is None or totals.get("findings") != 0:
+        return False
+    if spec_requirement_count <= 0:
+        return False
+    return as_count(totals.get("items_checked")) >= spec_requirement_count * 0.95
+
+
 def document_refusal(path: Path, problem: str) -> dict:
     """The house named refusal for an unreadable document, shaped ONCE.
 
