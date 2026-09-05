@@ -31,10 +31,13 @@ from foundry_mcp.schemas.vocab import (
     DEFECT_TIERS,
     DEFECT_TYPES,
     FIX_AUTHORS,
+    HALT_REASONS,
     OBSERVATION_CLASSES,
     STREAM_WIRE_IDS,
 )
 from foundry_mcp.tools.citation import verify_citations
+from foundry_mcp.tools.concerns import foundry_concern
+from foundry_mcp.tools.rosters import foundry_roster
 from foundry_mcp.tools.foundry import (
     foundry_add_defect,
     foundry_add_observation,
@@ -45,6 +48,7 @@ from foundry_mcp.tools.foundry import (
     foundry_verify_coverage,
 )
 from foundry_mcp.tools.foundry_orchestrator import (
+    GATE_TO_TRANSITION,
     VERDICT_VALUES,
     foundry_clear_directives,
     foundry_defects_to_tasks,
@@ -174,9 +178,33 @@ async def list_tools() -> list[Tool]:
             name="Foundry-Next",
             description=(
                 "Guidance engine — returns exactly what to do next with rich status display. "
-                "Call this instead of reading SKILL.md. Authoritative."
+                "Call this instead of reading SKILL.md. Authoritative. "
+                "Every response carries `heading_for` (DONE or HALTED), the open "
+                "defect counts per tier that would form the backlog, and "
+                "`cycles_to_cap` (null on an unbounded run) — a named backlog is "
+                "a successful end, not a failure to reach DONE."
             ),
-            inputSchema={"type": "object", "properties": {}},
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    # fallout FR-034 / FR-055 / AC-053 — a SUB-AGENT read arms
+                    # neither the lead's ordering token nor the stall clock.
+                    # Published on the surface rather than inferred, because the
+                    # server cannot tell who called it and a guess in either
+                    # direction is worse than an argument: guess "lead" and a
+                    # tracer satisfies the handshake the lead owes, guess
+                    # "subagent" and the lead's own call arms nothing.
+                    "caller": {
+                        "type": "string",
+                        "enum": ["lead", "subagent"],
+                        "description": (
+                            "Who is calling. Defaults to lead. A sub-agent MUST "
+                            "pass 'subagent': its read then arms neither the "
+                            "ordering token nor the stall clock."
+                        ),
+                    },
+                },
+            },
         ),
         Tool(
             name="Foundry-Context",
@@ -198,7 +226,29 @@ async def list_tools() -> list[Tool]:
                     # about to call, and no server-side gate existed for the one
                     # it did call. Both terminal tokens resolve to the same
                     # _done_preconditions evaluation.
-                    "phase": {"type": "string", "enum": ["validate", "cast", "inspect", "grind", "assay", "temper", "nyquist", "nyquist_done", "done"]},
+                    #
+                    # fallout AC-059 / AC-062 / CT-020 — the set is DERIVED from
+                    # `GATE_TO_TRANSITION`, which is the only mapping from a gate
+                    # token to the transition it guards. `inspect_start` and
+                    # `halt` join it here because those two transitions had no
+                    # gate at all, and "every transition has a gate" is what the
+                    # invariant test asserts. Derived rather than re-typed: a
+                    # hand copy of the table beside the table is the drift this
+                    # release exists to end.
+                    "phase": {"type": "string", "enum": sorted(GATE_TO_TRANSITION)},
+                    # CT-021: `Foundry-Gate('halt', reason, text)` reports the
+                    # three checks the halt transition refuses on, as data.
+                    "reason": {
+                        "type": "string",
+                        "description": (
+                            "phase='halt' only: the reason the halt door would "
+                            "be given. Reported, never acted on."
+                        ),
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "phase='halt' only: the lead's own words.",
+                    },
                 },
             },
         ),
@@ -225,11 +275,37 @@ async def list_tools() -> list[Tool]:
                     # drift guard is what keeps the two copies honest. See the
                     # concerns entry recommending both be collapsed once that
                     # source-grep assertion is replaced.
+                    #
+                    # fallout FR-064 / GI-034 / AC-062 — `halt` joins the set.
+                    # It is a full PHASE_TOKENS member with its own preconditions
+                    # routine and its own branch, and the SDK validates against
+                    # this enum BEFORE dispatch, so the token, the branch and
+                    # this entry land in one commit or the token is unreachable
+                    # over MCP however the handler behaves.
                     "phase": {"type": "string", "enum": [
                         "start_cast", "cast", "inspect_start", "inspect_clean",
                         "grind_start", "assay_fail", "temper", "nyquist",
-                        "nyquist_done", "done",
+                        "nyquist_done", "done", "halt",
                     ]},
+                    # fallout CT-004 / CT-005 / FR-018 — the halt token's two
+                    # arguments. Not defaulted here: the transport layer never
+                    # defaults an argument, and `_halt_preconditions` refuses an
+                    # absent reason by name rather than picking one.
+                    "reason": {
+                        "type": "string",
+                        "enum": sorted(HALT_REASONS),
+                        "description": (
+                            "phase='halt' only: why the run ended. Required for "
+                            "halt, ignored by every other token."
+                        ),
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": (
+                            "phase='halt' only: the lead's own words for why "
+                            "THIS run ended, carried beside the reason member."
+                        ),
+                    },
                 },
             },
         ),
@@ -346,6 +422,71 @@ async def list_tools() -> list[Tool]:
                             "packet, and clears mechanically after two clean "
                             "cycles or two structural passes."
                         ),
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="Foundry-Concern",
+            description=(
+                "Record a cross-casting concern, or close one. A teammate who "
+                "finds that its fix reaches another casting's files files it "
+                "here; `concerns.md` keeps the prose and this keeps the ledger "
+                "the server can act on. An OPEN concern from the closing GRIND "
+                "refuses Foundry-Phase(phase='inspect_start') by id, and "
+                "Foundry-Tasks marks it dispatched when it emits the "
+                "co-dispatch set that reaches its target. Closing takes a "
+                "reason, and appends a handoff record."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "casting_id": {
+                        "type": ["string", "integer"],
+                        "description": "The casting raising the concern.",
+                    },
+                    "cycle": {"type": "integer"},
+                    "target": {
+                        "type": "string",
+                        "description": (
+                            "The casting id, file or symbol the concern reaches "
+                            "— resolvable in castings/manifest.json, or refused."
+                        ),
+                    },
+                    "text": {"type": "string", "description": "What was found."},
+                    "close": {
+                        "type": "string",
+                        "description": "A concern id to close instead of opening one.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Required with `close`: why it is closed.",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="Foundry-Roster",
+            description=(
+                "Persist a verifying stream's item roster at its FIRST "
+                "derivation, so later cycles read it instead of re-deriving a "
+                "different one. `Foundry-Stream` refuses an items_total that "
+                "differs from the persisted length. A second write is refused "
+                "unless revise=true carries a reason, which is recorded."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["stream", "items"],
+                "properties": {
+                    "stream": {"type": "string", "enum": sorted(STREAM_WIRE_IDS)},
+                    "items": {
+                        "type": "array",
+                        "description": "The items this stream will check, in order.",
+                    },
+                    "revise": {"type": "boolean"},
+                    "reason": {
+                        "type": "string",
+                        "description": "Required with revise: why the roster changed.",
                     },
                 },
             },
@@ -1247,10 +1388,15 @@ _DISPATCH = {
         resume=args.get("resume"), ticket=args.get("ticket", ""), description=args.get("description", ""),
         url=args.get("url", ""), max_cycles=args.get("max_cycles", 0),
         project_root=_project_root),
-    "Foundry-Next": lambda args: foundry_next_action(project_root=_project_root),
+    "Foundry-Next": lambda args: foundry_next_action(
+        project_root=_project_root, caller=args.get("caller", "lead")),
     "Foundry-Context": lambda args: foundry_get_context(project_root=_project_root),
-    "Foundry-Gate": lambda args: foundry_gate(phase=args["phase"], project_root=_project_root),
-    "Foundry-Phase": lambda args: foundry_mark_phase_complete(phase=args["phase"], project_root=_project_root),
+    "Foundry-Gate": lambda args: foundry_gate(
+        phase=args["phase"], reason=args.get("reason", ""),
+        text=args.get("text", ""), project_root=_project_root),
+    "Foundry-Phase": lambda args: foundry_mark_phase_complete(
+        phase=args["phase"], reason=args.get("reason", ""),
+        text=args.get("text", ""), project_root=_project_root),
     "Foundry-Defect": lambda args: foundry_add_defect(
         cycle=args["cycle"], source=args["source"], defect_type=args["defect_type"],
         description=args["description"], spec_ref=args.get("spec_ref", ""),
@@ -1277,6 +1423,19 @@ _DISPATCH = {
     # real one, and the tripwire stayed silent on the bypass. Defaulting here
     # in EITHER direction re-decides, in transport, a question the writer owns:
     # pass absence through as absence.
+    # Plain lambdas naming the handler GLOBAL, which is the spelling
+    # `_registry_tool_modules` can read: a wrapped handler, a functools.partial
+    # or a table lookup makes the tool vanish from the registry (Holmes
+    # introspect-1). Casting 1 owns both handlers; this is their registration.
+    "Foundry-Concern": lambda args: foundry_concern(
+        casting_id=args.get("casting_id", ""), cycle=args.get("cycle", 0),
+        target=args.get("target", ""), text=args.get("text", ""),
+        close=args.get("close", ""), reason=args.get("reason", ""),
+        project_root=_project_root),
+    "Foundry-Roster": lambda args: foundry_roster(
+        stream=args["stream"], items=args["items"],
+        revise=args.get("revise", False), reason=args.get("reason", ""),
+        project_root=_project_root),
     "Foundry-Observation": lambda args: foundry_add_observation(
         cycle=args["cycle"], source=args["source"], description=args["description"],
         classification=args.get("classification", ""),

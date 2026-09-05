@@ -19,6 +19,7 @@ from pathlib import Path
 from foundry_mcp.schemas.vocab import (
     DEFECT_SOURCE_IDS,
     DEFECT_TYPES,
+    DEFECT_TIERS,
     DELTA_CONDITIONAL_STREAMS,
     ESCALATION_STATUS_CLEARED,
     ESCALATION_STATUS_ESCALATED,
@@ -43,7 +44,11 @@ from foundry_mcp.schemas.vocab import (
     TIER_UNKNOWN,
     canonical_defect_type,
     defect_tier,
+    HALT_REASONS,
+    HALT_REASON_CAP_REACHED,
     escalation_status as _escalation_status,
+    halt_reason,
+    halt_reason_phrase,
     is_test_file,
     is_verifier_path,
 )
@@ -464,7 +469,14 @@ _ACTION_TO_GATE = {
 
 
 def _expected_gate_for_action(action: str) -> str | None:
-    """Return the gate phase a given transition action asks the lead to run."""
+    """Return the gate phase a given transition action asks the lead to run.
+
+    fallout AC-059: every value `_ACTION_TO_GATE` names must be a key of
+    `GATE_TO_TRANSITION`, or the guidance sends a lead to a door that does not
+    exist. Asserted by the invariant test rather than here — this stays a total
+    lookup, because a guidance surface that raised would take Foundry-Next down
+    with it.
+    """
     return _ACTION_TO_GATE.get(action)
 
 
@@ -530,15 +542,26 @@ BLOCKING_TIERS = ("LIVE", TIER_UNKNOWN)
 def _open_defects_by_tier(fdir: Path) -> dict[str, list[dict]]:
     """Every OPEN defect in the ledger, bucketed by the tier it READS as.
 
-    Keys are exactly LIVE, LATENT and TIER_UNKNOWN, always present and possibly
-    empty — a caller that has to check whether a bucket exists before counting
-    it will eventually forget to, and an absent bucket reads as zero blocking
-    defects, which is the direction that fails open.
+    Keys are every member of `DEFECT_TIERS` plus TIER_UNKNOWN, always present
+    and possibly empty — a caller that has to check whether a bucket exists
+    before counting it will eventually forget to, and an absent bucket reads as
+    zero blocking defects, which is the direction that fails open.
+
+    fallout GI-014 / AC-011 — THE BUCKETS ARE DERIVED FROM THE VOCABULARY.
+    ---------------------------------------------------------------------
+    They were three hand-typed keys, and `defect_tier` is total over
+    `DEFECT_TIERS` — so the moment `HARDENING` joined that frozenset this
+    function raised `KeyError: 'HARDENING'` on any ledger carrying one. Not a
+    theoretical reach: `_blocking_defects` calls this, every gate and every
+    transition calls that, and the tier exists precisely so streams will file
+    into it. A hand-typed copy of a closed vocabulary is the drift `vocab.py`
+    was built to end, and this was the copy that had not been repointed.
 
     Non-dict historical records are skipped, not guessed at: the same tolerance
     `_dict_records` holds for the ledger's writers (D-128).
     """
-    buckets: dict[str, list[dict]] = {"LIVE": [], "LATENT": [], TIER_UNKNOWN: []}
+    buckets: dict[str, list[dict]] = {t: [] for t in sorted(DEFECT_TIERS)}
+    buckets[TIER_UNKNOWN] = []
     for d in _load_json(fdir / "defects.json").get("defects", []):
         if not isinstance(d, dict) or d.get("status") != "open":
             continue
@@ -745,52 +768,6 @@ def _blocking_defects(fdir: Path) -> dict:
     }
 
 
-def _blocking_defects_refusal(fdir: Path, destination: str) -> dict | None:
-    """The refusal a TRANSITION owes CT-008, or None. Same predicate as the gate.
-
-    ``destination`` names where the caller was going ("F5 TEMPER"), so the
-    refusal reads as a refusal of that crossing rather than as a gate verdict
-    the lead did not ask for.
-
-    D-236 — A TRANSITION MAY NEVER BE MORE PERMISSIVE THAN ITS OWN GATE.
-    -------------------------------------------------------------------
-    FR-006 is Locked and verbatim: "INSPECT-clean, ASSAY, TEMPER, NYQUIST and
-    DONE all pass when the only open defects are LATENT. NYQUIST gains the
-    missing defect read so one open LIVE now blocks it." `foundry_gate`
-    implements it for `temper` and `nyquist`; the matching
-    `foundry_mark_phase_complete` branches read verdicts, stream markers and the
-    evidence corpus, and read NO defects at all. Driven at HEAD: a run at F5
-    with nyquist enabled, one open LIVE D-002 and the ordering token armed —
-    `Foundry-Gate('nyquist')` returned passed False naming D-002, and
-    `Foundry-Phase('nyquist')` called immediately after returned ok True and
-    moved F5 -> F5.5. Identical on `temper` (F4 -> F5), and identical with an
-    open UNKNOWN-tier defect, which FR-051 says blocks like LIVE. Gate-before-
-    phase is enforced nowhere — `_expected_gate_for_action` is display guidance
-    — so the gate was advice and the transition was the decision.
-
-    THIS IS `_done_preconditions`' SHAPE, ONE PHASE EARLIER. D-037 / D-043 /
-    D-044 bound both F6 doors and both F6 gates to ONE evaluation so they cannot
-    disagree about what "done" means; `done` and `nyquist_done` have been safe
-    ever since for exactly that reason, while `temper` and `nyquist` — the two
-    other gated tokens — were left unbound. The predicate is `_blocking_defects`
-    itself, called here and by the gate, so the transition's refusal set is a
-    superset of the gate's by construction rather than by two authors agreeing.
-    """
-    blocking = _blocking_defects(fdir)
-    if blocking["blocking"] <= 0:
-        return None
-    return {
-        "error": (
-            f"Cannot enter {destination} — {blocking['reason']}. A LATENT-only "
-            "backlog does not block this crossing; these do (CT-008 / FR-006)."
-        ),
-        "hint": blocking["hint"],
-        "open_live_defects": blocking["live"],
-        "open_unknown_tier_defects": blocking["unknown"],
-        "open_latent_defects": blocking["latent"],
-    }
-
-
 # --------------------------------------------------------------------------- #
 # Cross-casting seam: tools/foundry_report.py (C-10) and tools/evidence.py (C-7).
 #
@@ -823,7 +800,9 @@ def _generate_report(project_root: str, fdir: Path) -> dict:
 # --- Phase gate ---
 
 
-def _done_preconditions(fdir: Path, project_root: str) -> dict:
+def _done_preconditions(
+    fdir: Path, project_root: str, *, token: str = "done"
+) -> dict:
     """Evaluate the substantive preconditions for entering F6 DONE.
 
     Returns ``{"passed": bool, "reason": str, "hint": str, "checklist": [...],
@@ -909,6 +888,19 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
     # the ladder with its own rank and its own remedy; see `_GateLadder` and
     # the `_GATE_RANK_*` block below.
     ladder = _GateLadder()
+
+    # fallout AC-056 / GI-029 — D-164's SOURCE CHECK IS A RUNG NOW, SO BOTH
+    # DOORS MAKE IT.
+    #
+    # It lived in the two F6 transition branches and in NEITHER gate, so
+    # `Foundry-Gate('done')` reported the run ready to finish from F2 while
+    # `Foundry-Phase('done')` refused it from there — the same shape as the four
+    # LIVE defects this release closes, on the one door where the run ends.
+    # `token` is what tells the two F6 doors apart: `done` leaves the terminal
+    # phase the run's own flags decide, `nyquist_done` leaves F5.5 and nowhere
+    # else. Everything BELOW this rung is what "the run may finish" means, and
+    # that is one definition for both.
+    source = _source_phase_rung(ladder, checklist, fdir, token)
 
     verdicts = _load_json(fdir / "verdicts.json")
     verdict_list = verdicts.get("requirements", [])
@@ -1447,6 +1439,12 @@ def _done_preconditions(fdir: Path, project_root: str) -> dict:
 #: `_GATE_RANK_DELEGATED` (0, "a verdict another evaluation already ordered"):
 #: that rank existed because the delegated evaluation had no ranks of its own to
 #: offer, and it now offers one per CHECK. `_GateLadder.absorb` re-enters those.
+#: fallout GI-031 / AC-056 — the key_files ceiling, named once. The gate's
+#: refusal quotes it and the decompose plan is written against it; a literal 8
+#: in a sentence beside a literal 8 in a comparison is the drift this module
+#: declares constants to end.
+CASTING_KEY_FILE_CAP = 8
+
 _GATE_RANK_HALTED = 0      # the run has already stopped: no other remedy can be
                            # gated at all, so this defeats every check and is
                            # defeated by none
@@ -1472,6 +1470,20 @@ _GATE_RANK_EVIDENCE = 55   # a committed evidence log that no longer reproduces:
 _GATE_RANK_STREAMS = 60    # a required stream has not reported
 _GATE_RANK_MARKER = 70     # a phase marker the previous transition writes
 _GATE_RANK_CONFIG = 80     # how the run was configured or sized
+_GATE_RANK_SOURCE = 85     # fallout GI-029 — the run is in a phase this token is
+                           # not accepted from. Ranked HERE, second-to-last, by
+                           # the same rule as everything else and NOT by how
+                           # fundamental it feels: the remedy is "reach the
+                           # phase this transition is accepted from", and
+                           # reaching it means executing every intervening
+                           # transition, each of which is gated by the open
+                           # defects, the missing verdicts, the registered team
+                           # and the narrow width above. So this remedy is
+                           # defeated by all of them and defeats none — except
+                           # the report, which a phase advance invalidates. A
+                           # lead refused at the wrong phase and told to advance
+                           # would be refused AGAIN at the transition that
+                           # advances, by the very check this rank yields to.
 _GATE_RANK_REPORT = 90     # the generated report: DERIVED from every ledger
                            # above it, so `Foundry-Report` succeeds whatever
                            # else is failing and produces a document the next
@@ -1555,15 +1567,878 @@ class _GateLadder:
         ]
 
 
+# --------------------------------------------------------------------------- #
+# fallout FR-007 / FR-061 / GI-011 / GI-031 / AC-007 / AC-056 / AC-059 —
+# ONE PRECONDITIONS ROUTINE PER TRANSITION TOKEN, AND ONE TABLE FROM GATE TO
+# TRANSITION.
+#
+# `_done_preconditions` above was the ONE phase whose composition was shared.
+# Every other phase had its checks composed independently in `foundry_gate` and
+# again in `_phase_transition`, by two different mechanisms — a ranked ladder on
+# one side, an ordered chain of early returns on the other — and the four open
+# LIVE defects this run inherited are all one instance of that: a check the gate
+# made with no twin at the transition it advertises.
+#
+#   D-240  the verdict read at `temper`. Gate refused on a non-VERIFIED
+#          requirement; the transition entered F5 without looking.
+#   D-241  the same read at `nyquist`, a second inline copy on the gate side and
+#          again no twin.
+#   D-242  `state.nyquist`. The gate refused a run that never asked for F5.5;
+#          the transition wrote F5.5 anyway.
+#   D-243  the SIGHT url at `cast`. `_check_sight_required` was consulted by the
+#          gate alone, so a run with frontend files in scope and no URL crossed
+#          into INSPECT with the stream it owes unrunnable.
+#
+# Patching four rungs would have closed four defects and left the generator
+# running. What closes the CLASS is that there is now exactly one function per
+# TRANSITION token which builds the ladder, and both doors read it and nothing
+# else. A check added to a token is a check both doors make on the day it is
+# written, and the invariant test in tests/test_orchestrator_gates.py walks
+# every token against every rung to say so.
+#
+# WHAT LIVES IN A ROUTINE, AND WHAT DOES NOT. The routine owns the pure,
+# read-only checks: teams, streams, blocking defects, verdict coverage,
+# `state.nyquist`, the sight url, the recorded width, `fixes_after_decision`,
+# the manifest's shape and size, and the SOURCE PHASE. Left outside, in the
+# callers, is the call-ordering protocol that is not a precondition of the
+# transition at all: `.next-action-called`, `.gate-passed`, and the HALTED guard
+# stated once above the branch chain.
+#
+# THE SOURCE PHASE IS INSIDE, and that is a deliberate departure from Holmes
+# `flow-1`, which proposed leaving `_phase_entry_source_problem` in the callers
+# as protocol. AC-056 is the tie-break and it is unambiguous: "anything a
+# transition must check lives in the shared function". A source check made by
+# the transition and not by the gate is the D-240 shape exactly — one door
+# refusing what the other admits — and this is the run that exists to end it.
+# Putting it in the routine gives every gate a source check it never had, and it
+# makes AC-009's AST pin trivially satisfiable: a transition branch reads its
+# routine and nothing else.
+# --------------------------------------------------------------------------- #
+
+#: fallout AC-059 / ST-014 / CT-020 — the ONLY mapping from a gate token to the
+#: transition token(s) it guards. Read by `foundry_gate` and by the invariant
+#: test, which asserts every gate token appears here and that every member of
+#: `PHASE_TOKENS` is some gate's target, so a token added on either side without
+#: its counterpart fails CI rather than shipping ungated.
+#:
+#: `validate` and `cast` BOTH guard `start_cast`, and that is the one row the
+#: spec's "others same-name" clause does not reach. `_ACTION_TO_GATE` maps
+#: `transition_to_cast` to the `cast` gate and that action's own instruction
+#: reads "Call Foundry-Gate(phase='cast') to validate, then
+#: Foundry-Phase(phase='start_cast')" — so the `cast` gate provably guards
+#: `start_cast`, and mapping it same-name would make it a byte-identical clone
+#: of the `inspect` gate while deleting the manifest / oversize / file-overlap
+#: gate the CAST wave depends on. The `validate` gate asks the same question one
+#: rung earlier and asking it gains it the two rungs it did not have.
+GATE_TO_TRANSITION: dict[str, tuple[str, ...]] = {
+    "validate": ("start_cast",),
+    "cast": ("start_cast",),
+    "inspect": ("cast",),
+    "inspect_start": ("inspect_start",),
+    "grind": ("grind_start", "assay_fail"),
+    "assay": ("inspect_clean",),
+    "temper": ("temper",),
+    "nyquist": ("nyquist",),
+    "nyquist_done": ("nyquist_done",),
+    "done": ("done",),
+    "halt": ("halt",),
+}
+
+
+def _preconditions_outcome(
+    ladder: "_GateLadder", checklist: list[dict], **facts: object
+) -> dict:
+    """The shape every `_<token>_preconditions` returns, built in one place.
+
+    ``{"passed", "reason", "hint", "checklist", "refusals"}`` plus any
+    NON-REFUSING facts the token computed — `would_halt` is the one this run
+    adds. Exactly what `_done_preconditions` already returned, which is why
+    `_GateLadder.absorb` consumes any of them unchanged.
+
+    `reason` and `hint` are written through the RESULT rather than through two
+    locals, for the reason `_done_preconditions` gives: a function that never
+    names them as locals has nothing a later arm can overwrite.
+    """
+    outcome: dict = {
+        "passed": ladder.passed,
+        "checklist": checklist,
+        "refusals": ladder.refusals(),
+        **facts,
+    }
+    outcome["reason"], outcome["hint"] = ladder.outcome()
+    return outcome
+
+
+def _source_phase_rung(
+    ladder: "_GateLadder", checklist: list[dict], fdir: Path, token: str
+) -> None:
+    """The `_PHASE_ENTRY_SOURCES` check, as a rung both doors make.
+
+    A no-op for a token the table does not guard, so every routine may call it
+    unconditionally and a row added to the table is enforced at both doors the
+    day it is written. Returns the refusal's own two fields (`accepted_from`,
+    `phase`) so the caller can publish them, which is what every branch that
+    returned `_phase_entry_source_problem`'s dict verbatim used to carry.
+    """
+    wrong = _phase_entry_source_problem(fdir, token)
+    if wrong is not None:
+        ladder.fail(_GATE_RANK_SOURCE, wrong["error"], wrong["hint"])
+    checklist.append({
+        "check": f"entered_from_accepted_phase (token={token})",
+        "ok": wrong is None,
+        **({"accepted_from": wrong["accepted_from"], "phase": wrong["phase"]}
+           if wrong is not None else {}),
+    })
+    return {} if wrong is None else {
+        "accepted_from": wrong["accepted_from"], "phase": wrong["phase"]
+    }
+
+
+def _teams_rung(
+    ladder: "_GateLadder", checklist: list[dict], project_root: str
+) -> None:
+    """The registered-team check, in ONE spelling for every token that makes it.
+
+    Three gate branches and one transition branch each carried their own, and
+    D-186 is what that cost: one of the three fell back to no hint at all. The
+    sentence is the gate's richer form — it names live panes as well as team
+    directories — and the transition wraps it in its own "Cannot <do X> — "
+    clause, exactly as the `inspect_clean` branch already wraps
+    `_blocking_defects`' reason.
+    """
+    teams_result = _check_active_teams(project_root)
+    if teams_result["active"]:
+        parts = []
+        if teams_result["teams"]:
+            parts.append(f"Team dirs: {', '.join(teams_result['teams'])}")
+        if teams_result.get("live_panes"):
+            parts.append(f"Live panes: {', '.join(teams_result['live_panes'])}")
+        ladder.fail(
+            _GATE_RANK_TEAMS,
+            f"Active teammates: {'; '.join(parts)}",
+            teams_result.get("hint") or _TEAMS_DOWN_HINT,
+        )
+    checklist.append({
+        "check": "no_active_teams",
+        "ok": not teams_result["active"],
+        "teams": teams_result["teams"],
+        "live_panes": teams_result.get("live_panes", []),
+    })
+
+
+def _blocking_defects_rung(
+    ladder: "_GateLadder", checklist: list[dict], fdir: Path
+) -> dict:
+    """The tier-aware open-defect check. Returns the read, for callers that
+    report its parts."""
+    blocking = _blocking_defects(fdir)
+    if blocking["blocking"] > 0:
+        ladder.fail(_GATE_RANK_DEFECTS, blocking["reason"], blocking["hint"])
+    checklist.append({
+        "check": (
+            f"zero_blocking_defects (live={len(blocking['live'])} "
+            f"unknown_tier={len(blocking['unknown'])} "
+            f"latent_backlog={len(blocking['latent'])})"
+        ),
+        "ok": blocking["blocking"] == 0,
+        "live": blocking["live"],
+        "unknown_tier": blocking["unknown"],
+        "latent_backlog": blocking["latent"],
+    })
+    return blocking
+
+
+def _all_verified_rung(
+    ladder: "_GateLadder", checklist: list[dict], fdir: Path, destination: str
+) -> None:
+    """fallout AC-010 — `verdict != "VERIFIED"` as ONE named predicate.
+
+    It was hand-written at three sites (the temper gate, the nyquist gate and
+    `_done_preconditions`) and present at NO transition, which is D-240 and
+    D-241 in one sentence. One predicate, one caller shape, both doors.
+    """
+    verdicts = _load_json(fdir / "verdicts.json")
+    non_verified = sum(
+        1 for r in verdicts.get("requirements", []) if r.get("verdict") != "VERIFIED"
+    )
+    if non_verified > 0:
+        ladder.fail(
+            _GATE_RANK_VERDICTS,
+            f"{non_verified} requirement(s) not verified",
+            "Every THIN / PARTIAL requirement is a defect, not a follow-up. "
+            f"Fix them and re-run ASSAY before entering {destination}.",
+        )
+    checklist.append({
+        "check": f"all_verified (non_verified={non_verified})",
+        "ok": non_verified == 0,
+    })
+
+
+def _start_cast_preconditions(fdir: Path, project_root: str) -> dict:
+    """Preconditions for `start_cast` — gates `validate` and `cast`.
+
+    The manifest has to exist, parse, carry at least one casting, hold every
+    casting to the eight-key_file cap and give no two castings the same file.
+    Every one of those was a gate-only check and `start_cast` was
+    `_update_phase(fdir, "F1")` under the halted guard alone, so a CAST wave
+    could be opened over a manifest the gate would have refused.
+
+    The first three used to be EARLY RETURNS carrying no checklist. They are
+    rungs now, so a run with no manifest still reports what the other checks
+    would have said — which is the property `_GateLadder` exists for.
+    """
+    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+
+    checklist: list[dict] = []
+    ladder = _GateLadder()
+
+    manifest = fdir / "castings" / "manifest.json"
+    data = _load_json(manifest) if manifest.exists() else {}
+    if not manifest.exists():
+        ladder.fail(
+            _GATE_RANK_CONFIG,
+            "No manifest.json",
+            "Run F0.5 DECOMPOSE first to create castings",
+        )
+    elif (records := _manifest_shape_problem(data)) is not None:
+        ladder.fail(
+            _GATE_RANK_CONFIG,
+            records,
+            "Re-run F0.5 DECOMPOSE — the manifest's records are unusable",
+        )
+    checklist.append({"check": "manifest_exists", "ok": manifest.exists()})
+
+    castings = data.get("castings", []) if isinstance(data.get("castings"), list) else []
+    count = len(castings)
+    if manifest.exists() and count < 1:
+        ladder.fail(
+            _GATE_RANK_CONFIG,
+            "No castings in manifest",
+            "Add castings before CAST",
+        )
+    checklist.append({"check": f"castings_count={count}", "ok": count >= 1})
+
+    oversized = []
+    for c in castings:
+        if not isinstance(c, dict):
+            continue
+        kf = len(c.get("key_files", []) or [])
+        if kf > CASTING_KEY_FILE_CAP:
+            oversized.append({"id": c.get("id"), "title": c.get("title", ""), "key_files": kf})
+    if oversized:
+        names = ", ".join(f"#{c['id']} ({c['key_files']} files)" for c in oversized)
+        ladder.fail(
+            _GATE_RANK_CONFIG,
+            f"Oversized castings: {names}. Max {CASTING_KEY_FILE_CAP} key_files per casting.",
+            "Split large castings into smaller ones (2-5 tasks, 2-8 files "
+            "each). No teammate should get 1000 lines of work.",
+        )
+        checklist.append({"check": "casting_size", "ok": False, "oversized": oversized})
+    else:
+        checklist.append({"check": "casting_size", "ok": True})
+
+    file_to_casting: dict[str, list[int]] = {}
+    for c in castings:
+        if not isinstance(c, dict):
+            continue
+        cid = c.get("id", 0)
+        for f in c.get("key_files", []) or []:
+            file_to_casting.setdefault(f, []).append(cid)
+    overlaps = {f: cids for f, cids in file_to_casting.items() if len(cids) > 1}
+    if overlaps:
+        overlap_details = [f"{f}: castings {cids}" for f, cids in overlaps.items()]
+        # Ranked ABOVE the size check: an oversized casting is a slow wave,
+        # a shared file is two teammates overwriting each other, and the
+        # second has to be resolved before the first is worth resizing.
+        ladder.fail(
+            _GATE_RANK_CONFLICT,
+            f"File overlap between castings: {'; '.join(overlap_details)}",
+            "Two castings editing the same file will cause conflicts. Move "
+            "shared files to an earlier casting or merge the overlapping "
+            "castings.",
+        )
+        checklist.append({"check": "no_file_overlap", "ok": False, "overlaps": overlaps})
+    else:
+        checklist.append({"check": "no_file_overlap", "ok": True})
+
+    return _preconditions_outcome(ladder, checklist, castings_count=count)
+
+
+def _cast_preconditions(fdir: Path, project_root: str) -> dict:
+    """Preconditions for `cast`, the F1 -> F2 crossing — gate `inspect`.
+
+    fallout AC-010 — D-243 CLOSES HERE. `_check_sight_required` was read by the
+    `inspect` gate and by NO transition, so a run with frontend files in scope
+    and no `--url` crossed into INSPECT owing a SIGHT stream it could not run.
+
+    `.cast-complete` IS NOT A RUNG, and cannot be. This transition is the only
+    writer of that marker, so requiring it would make the transition refuse
+    itself and make the F1 guidance ("Foundry-Gate(phase='inspect') ... then
+    Foundry-Phase(phase='cast')") name a gate that cannot pass until after the
+    call it precedes. It is reported as the FACT it is: the checklist still
+    carries `cast_complete`, and nothing refuses on a post-condition of itself.
+    """
+    checklist: list[dict] = []
+    ladder = _GateLadder()
+
+    source = _source_phase_rung(ladder, checklist, fdir, "cast")
+    _teams_rung(ladder, checklist, project_root)
+
+    sight = _check_sight_required(project_root)
+    if sight.get("required") and sight.get("blocked"):
+        ladder.fail(
+            _GATE_RANK_CONFIG,
+            sight["reason"],
+            "Provide --url for SIGHT audit or update manifest.json target_url",
+        )
+        checklist.append({"check": "sight_url", "ok": False, "reason": sight["reason"]})
+    else:
+        checklist.append({"check": "sight_url", "ok": True})
+
+    checklist.append({
+        "check": "cast_complete",
+        "ok": (fdir / CAST_COMPLETE_MARKER).exists(),
+        "refuses": False,
+    })
+    return _preconditions_outcome(ladder, checklist, **source)
+
+
+def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
+    """Preconditions for `inspect_start`, the GRIND -> INSPECT crossing.
+
+    Accepted from EXACTLY TWO source phases — F3, the crossing ST-005 names, and
+    F2, the widening re-open of a DELTA cycle — and both advance the counter.
+    The two widening arms (nothing to widen; blocking defects) apply only to the
+    F2 arm and are stated here rather than inside the transition, so
+    `Foundry-Gate('inspect_start')` answers the same question.
+
+    D-113 / D-114 / D-116 are why the source check exists at all; see
+    `_PHASE_ENTRY_SOURCES` for the drives. It is written here as its own rung
+    rather than through `_source_phase_rung` because `inspect_start` accepts two
+    phases for two different reasons and its refusal names both.
+    """
+    checklist: list[dict] = []
+    ladder = _GateLadder()
+
+    phase = _load_json(fdir / "state.json").get("phase", "")
+    accepted = phase in ("F3", "F2")
+    if not accepted:
+        ladder.fail(
+            _GATE_RANK_SOURCE,
+            (
+                f"Cannot start an INSPECT from phase {phase or 'F0'} — "
+                "Foundry-Phase(phase='inspect_start') is the GRIND->INSPECT "
+                "crossing (ST-005), accepted from F3, and from F2 as the "
+                "widening re-open of a DELTA cycle. It is the call that "
+                "ADVANCES the cycle counter, so from any other phase it "
+                "would record a second INSPECT decision against a cycle that "
+                "has not ended and evaluate the escalation exit arms on a "
+                "cycle still in flight."
+            ),
+            _INSPECT_START_SOURCE_HINTS.get(
+                phase,
+                "Reach F3 first: Foundry-Phase(phase='grind_start') opens a "
+                "GRIND, and its completion is what this transition closes.",
+            ),
+        )
+    checklist.append({
+        "check": f"entered_from_accepted_phase (token=inspect_start, phase={phase or 'F0'})",
+        "ok": accepted,
+        "accepted_from": ["F3", "F2"],
+    })
+
+    widening = phase == "F2"
+    if widening:
+        recorded_now = _current_inspect_mode(fdir) or {}
+        if recorded_now.get("mode") != "DELTA":
+            ladder.fail(
+                _GATE_RANK_WIDTH,
+                (
+                    "Cannot re-open INSPECT — this cycle's recorded width is "
+                    f"{recorded_now.get('mode') or 'unrecorded'}"
+                    + (f" (rule {recorded_now['rule']})"
+                       if recorded_now.get("rule") else "")
+                    + ", so there is nothing to widen."
+                ),
+                (
+                    "The F2->F2 re-open exists to widen a DELTA INSPECT to "
+                    "FULL before ASSAY. From a FULL cycle, call "
+                    "Foundry-Phase(phase='inspect_clean') to open ASSAY, or "
+                    "Foundry-Phase(phase='grind_start') to open a GRIND. The "
+                    "cycle counter has NOT moved."
+                ),
+            )
+        checklist.append({
+            "check": f"widening_a_delta_cycle (mode={recorded_now.get('mode') or 'unrecorded'})",
+            "ok": recorded_now.get("mode") == "DELTA",
+        })
+        widen_blocking = _blocking_defects(fdir)
+        if widen_blocking["blocking"] > 0:
+            ladder.fail(
+                _GATE_RANK_DEFECTS,
+                (
+                    "Cannot re-open INSPECT at full width — "
+                    f"{widen_blocking['reason']}"
+                ),
+                (
+                    "Fix them in GRIND first: Foundry-Tasks, then "
+                    "Foundry-Gate(phase='grind'), then "
+                    "Foundry-Phase(phase='grind_start'). Widening an INSPECT "
+                    "over code the run is about to change re-verifies a tree "
+                    "that will not exist. The cycle counter has NOT moved."
+                ),
+            )
+        checklist.append({
+            "check": (
+                f"zero_blocking_defects (live={len(widen_blocking['live'])} "
+                f"unknown_tier={len(widen_blocking['unknown'])} "
+                f"latent_backlog={len(widen_blocking['latent'])})"
+            ),
+            "ok": widen_blocking["blocking"] == 0,
+            "live": widen_blocking["live"],
+            "unknown_tier": widen_blocking["unknown"],
+        })
+
+    return _preconditions_outcome(ladder, checklist, widening=widening)
+
+
+def _inspect_clean_preconditions(fdir: Path, project_root: str) -> dict:
+    """Preconditions for `inspect_clean`, the F2 -> F4 crossing — gate `assay`.
+
+    `.inspect-clean` IS NOT A RUNG, for the reason `.cast-complete` is not one
+    at the `cast` token: this transition is that marker's only writer. The
+    substance the gate's `.inspect-clean` arm was reaching for -- "GRIND fixed
+    defects and INSPECT has not re-verified" -- is carried as a REFUSAL by the
+    `fixes_after_decision` rung below, which measures the same thing against the
+    recorded width decision instead of against a marker.
+    """
+    checklist: list[dict] = []
+    ladder = _GateLadder()
+
+    unrecorded = _unrecorded_width_problem(fdir)
+    if unrecorded is not None:
+        ladder.fail(_GATE_RANK_WIDTH, unrecorded["reason"], unrecorded["hint"])
+    checklist.append({
+        "check": "inspect_width_recorded",
+        "ok": unrecorded is None,
+    })
+    width_facts = {} if unrecorded is None else {"unrecorded_width": True}
+
+    streams = _check_streams_complete(project_root)
+    if not streams["complete"]:
+        required_now = streams.get("required") or []
+        ladder.fail(
+            _GATE_RANK_STREAMS,
+            f"Verification streams incomplete: {streams.get('missing', '')}",
+            "This INSPECT's recorded roster is "
+            + (", ".join(required_now) if required_now else "not recorded")
+            + f" — every one of them must complete before ASSAY. Missing: "
+            f"{streams.get('missing', '') or 'none'}. Re-dispatch each missing "
+            "stream; the AGENT records its own run with Foundry-Stream "
+            "(fallout GI-016), so a missing record is a stream to re-run and "
+            "never a number for you to supply.",
+        )
+    checklist.append({
+        "check": "all_streams_complete",
+        "ok": streams["complete"],
+        "missing": streams.get("missing", ""),
+    })
+
+    _blocking_defects_rung(ladder, checklist, fdir)
+
+    recorded_mode = _current_inspect_mode(fdir) or {}
+    superseded = recorded_mode.get("fixes_after_decision") or []
+    if superseded:
+        # RANKED AT WIDTH, and DECLARED BEFORE the DELTA arm below — which is
+        # how the ordering this branch has always documented survives the move
+        # onto ranks. "Open defects and fixes-landed-mid-INSPECT are both more
+        # specific than 'this cycle was narrow', and a lead told about the width
+        # when a defect is open would widen an INSPECT it is about to
+        # invalidate." Both remedies are a boundary crossing and neither is
+        # defeated by the other, so the tie breaks on declaration order and the
+        # more specific sentence speaks.
+        ladder.fail(
+            _GATE_RANK_WIDTH,
+            (
+                f"{len(superseded)} defect(s) were fixed after this INSPECT's "
+                f"width was decided: {', '.join(superseded)}"
+            ),
+            (
+                f"This cycle was swept at {recorded_mode.get('mode', '?')} "
+                "width before those fixes landed, so its evidence does not "
+                "cover the surface they changed. Cross the boundary again — "
+                "Foundry-Phase(phase='grind_start') then "
+                "Foundry-Phase(phase='inspect_start') — which re-decides the "
+                "width and re-sweeps at the new HEAD, and re-run the streams."
+            ),
+        )
+    checklist.append({
+        "check": f"no_fixes_after_width_decision ({len(superseded)})",
+        "ok": not superseded,
+        "fixes_after_decision": list(superseded),
+    })
+
+    # AC-016 / D-068 / D-169 — THE WIDTH IS ASSERTED POSITIVELY: FULL, or refuse.
+    # Ranked at WIDTH beside the unrecorded arm above, never below the marker
+    # rungs: D-183 and D-186 are both this refusal being displaced by a check a
+    # lead cannot act on until the width is fixed.
+    width_ok = recorded_mode.get("mode") == "FULL"
+    if unrecorded is None and not width_ok:
+        ladder.fail(
+            _GATE_RANK_WIDTH,
+            f"cycle {recorded_mode.get('cycle', '?')} ran at "
+            f"{recorded_mode.get('mode') or 'unrecorded'} width (rule "
+            f"{recorded_mode.get('rule') or 'unrecorded'}) — ASSAY is only "
+            "opened by an INSPECT whose recorded mode is FULL",
+            "Call Foundry-Phase(phase='inspect_start') again from F2: the "
+            "widening re-open advances the cycle, sweeps the whole evidence "
+            "corpus and records FULL. Which rule it records — final_gate "
+            "from the widening re-open, verifier_touched when the diff "
+            "cannot be measured — does not enter this check; the width "
+            "does.",
+        )
+    checklist.append({
+        "check": (
+            f"inspect_ran_at_full_width (mode={recorded_mode.get('mode') or 'unrecorded'} "
+            f"rule={recorded_mode.get('rule') or 'unrecorded'})"
+        ),
+        "ok": width_ok,
+    })
+
+    _teams_rung(ladder, checklist, project_root)
+    checklist.append({
+        "check": "inspect_clean",
+        "ok": (fdir / INSPECT_CLEAN_MARKER).exists(),
+        "refuses": False,
+    })
+    return _preconditions_outcome(
+        ladder,
+        checklist,
+        fixes_after_decision=list(superseded),
+        inspect_mode=recorded_mode.get("mode", ""),
+        inspect_rule=recorded_mode.get("rule", ""),
+        **width_facts,
+    )
+
+
+def _grind_start_preconditions(fdir: Path, project_root: str) -> dict:
+    """Preconditions for `grind_start` — gate `grind`.
+
+    fallout FR-062 / GI-032 / ST-015 / AC-060 / OT-044 — THE CAP IS A FACT HERE,
+    NOT A REFUSAL. `would_halt` is computed from the SINGLE
+    `_persisted_max_cycles` read this run has, published on the outcome, and
+    acted on by the two transitions that open a GRIND. `Foundry-Gate('grind')`
+    PASSES at the cap and shows `would_halt: true`, because reaching the cap is
+    not something a lead can fix at the door: the run stops, with its open work
+    written down, and that is a successful transition (FR-045).
+    """
+    checklist: list[dict] = []
+    ladder = _GateLadder()
+
+    defects = _load_json(fdir / "defects.json")
+    open_count = sum(1 for d in defects.get("defects", []) if d.get("status") == "open")
+    if open_count < 1:
+        # Ranked ABOVE the tasks marker: on a ledger with nothing open,
+        # `Foundry-Tasks` has nothing to packet, so telling the lead to call
+        # it — which is what the last-writer-wins ladder did — sends them to
+        # do work that cannot change this gate's answer.
+        ladder.fail(
+            _GATE_RANK_DEFECTS,
+            "No open defects to grind",
+            "Nothing to fix — skip to ASSAY",
+        )
+    checklist.append({"check": f"open_defects={open_count}", "ok": open_count >= 1})
+
+    _teams_rung(ladder, checklist, project_root)
+
+    tasks_generated = (fdir / TASKS_GENERATED_MARKER).exists()
+    if not tasks_generated:
+        ladder.fail(
+            _GATE_RANK_MARKER,
+            "defects-to-tasks has not been run",
+            "Call Foundry-Tasks before entering GRIND",
+        )
+    checklist.append({"check": "tasks_generated", "ok": tasks_generated})
+
+    state = _load_json(fdir / "state.json")
+    max_cycles = _persisted_max_cycles(state)
+    cycle = current_cycle(fdir)
+    opening = cycle + 1
+    would_halt = max_cycles > 0 and opening > max_cycles
+    checklist.append({
+        "check": (
+            f"within_cycle_cap (max_cycles={max_cycles or 'unbounded'} "
+            f"opening={opening})"
+        ),
+        "ok": True,
+        "would_halt": would_halt,
+        "refuses": False,
+    })
+    return _preconditions_outcome(
+        ladder,
+        checklist,
+        would_halt=would_halt,
+        max_cycles=max_cycles,
+        cycle=cycle,
+        opening=opening,
+    )
+
+
+def _assay_fail_preconditions(fdir: Path, project_root: str) -> dict:
+    """Preconditions for `assay_fail` — the OTHER door into F3, gate `grind`.
+
+    `assay_fail` clears the same markers and calls the same
+    `_update_phase(fdir, "F3")` as `grind_start`; it is a second door into the
+    same phase, not a different kind of transition, and a precondition wired to
+    one of them would let a run looping back through ASSAY failure walk past
+    what a run looping through GRIND is held to. So it IS `grind_start`'s
+    evaluation — called, not copied.
+    """
+    return _grind_start_preconditions(fdir, project_root)
+
+
+def _temper_preconditions(fdir: Path, project_root: str) -> dict:
+    """Preconditions for `temper`, the F4 -> F5 crossing.
+
+    fallout AC-010 — D-240 CLOSES HERE. The verdict read was the `temper`
+    gate's alone; this transition entered F5 on a ledger full of THIN rows.
+    """
+    checklist: list[dict] = []
+    ladder = _GateLadder()
+    source = _source_phase_rung(ladder, checklist, fdir, "temper")
+    _all_verified_rung(ladder, checklist, fdir, "TEMPER")
+    _blocking_defects_rung(ladder, checklist, fdir)
+    return _preconditions_outcome(ladder, checklist, **source)
+
+
+def _nyquist_preconditions(fdir: Path, project_root: str) -> dict:
+    """Preconditions for `nyquist`, the entry to F5.5.
+
+    fallout AC-010 — D-241 AND D-242 CLOSE HERE, and the source phase with
+    them. The gate read the verdicts and `state.nyquist`; the transition read
+    neither, so a run that never asked for F5.5 could enter it and generate
+    regression tests locking in behaviour a stream had already ruled wrong.
+    """
+    checklist: list[dict] = []
+    ladder = _GateLadder()
+    source = _source_phase_rung(ladder, checklist, fdir, "nyquist")
+    _all_verified_rung(ladder, checklist, fdir, "NYQUIST")
+    _blocking_defects_rung(ladder, checklist, fdir)
+
+    # fallout AC-056 / GI-002 / D-133 / D-159 — THE TERMINAL SWEEP IS A RUNG
+    # HERE, NOT AN ARM IN THE TRANSITION.
+    #
+    # GI-002 names three terminal boundaries — "before ASSAY/NYQUIST/DONE" — and
+    # `_done_preconditions` already takes this rung for the other two, so
+    # `Foundry-Gate('done')` has always swept. Leaving NYQUIST's copy inside the
+    # transition would leave one crossing of the three whose gate answers a
+    # different question than its transition, which is the shape this release
+    # exists to end. It costs the same at both doors because it is the same
+    # call: `_terminal_evidence_state` caches its pass, and the transition below
+    # consumes the record this rung produced rather than sweeping twice.
+    evidence_state = _terminal_evidence_state(fdir, project_root)
+    if (refusal := _terminal_evidence_refusal(evidence_state, "enter NYQUIST")) is not None:
+        ladder.fail(
+            _GATE_RANK_EVIDENCE,
+            refusal["error"].replace("Cannot enter NYQUIST — ", ""),
+            refusal["hint"],
+        )
+    checklist.append({
+        "check": (
+            f"evidence_reproduces_at_head (logs={evidence_state['logs_reexecuted']}, "
+            f"mismatches={len(evidence_state['evidence'].get('mismatches') or [])})"
+        ),
+        "ok": bool(evidence_state["evidence"]["ok"]) and not evidence_state["stripped"],
+        "corpus_size": evidence_state["corpus_size"],
+    })
+
+    nyquist_on = bool(_load_json(fdir / "state.json").get("nyquist", False))
+    if not nyquist_on:
+        # Ranked BELOW the defect read, and that is a change from the
+        # source-order ladder this replaced. The remedy here offers
+        # "call Foundry-Gate(phase='done')" as the way past F5.5, and that
+        # call is refused while a LIVE or unknown-tier defect is open
+        # (CT-008) — so on a run failing both checks the old last-writer
+        # rendered the remedy the other failing check would reject.
+        ladder.fail(
+            _GATE_RANK_CONFIG,
+            "F5.5 NYQUIST is opt-in and this run was not started with --nyquist",
+            "Re-run with --nyquist, or skip F5.5: call Foundry-Gate(phase='done').",
+        )
+    checklist.append({"check": "nyquist_enabled", "ok": nyquist_on})
+    return _preconditions_outcome(
+        ladder, checklist, evidence_record=evidence_state["record"], **source
+    )
+
+
+def _nyquist_done_preconditions(fdir: Path, project_root: str) -> dict:
+    """Preconditions for `nyquist_done` — F6's second door.
+
+    There is ONE definition of "the run may finish" and both doors ask it; a
+    second implementation is the drift that produced D-043 and D-044, not a fix
+    for it. What differs between the two doors is the phase each is reached
+    from, and `_done_preconditions` takes that as its `token`.
+    """
+    return _done_preconditions(fdir, project_root, token="nyquist_done")
+
+
+def _halt_preconditions(
+    fdir: Path, project_root: str, *, reason: str = "", text: str = ""
+) -> dict:
+    """fallout FR-064 / GI-034 / CT-004 / CT-021 / AC-062 — three checks, as rungs.
+
+    `halt` is a FULL member of `PHASE_TOKENS`: it has a preconditions routine
+    like every other token and a gate token that reports it as data.
+    `Foundry-Gate('halt', reason, text)` and `Foundry-Phase('halt', ...)` refuse
+    the identical set, which is the whole point of the token existing rather
+    than the halt being a special case with inline refusals.
+
+    ``text`` is accepted and not checked: CT-004 makes the member the thing a
+    grouper reads and the text the thing a human reads, and a run may end for a
+    reason no closed set carries. An EMPTY text is not refused either — the
+    member alone is a complete answer.
+    """
+    checklist: list[dict] = []
+    ladder = _GateLadder()
+
+    member = halt_reason(reason)
+    if member is None:
+        ladder.fail(
+            _GATE_RANK_CONFIG,
+            (
+                f"halt reason {reason!r} is not a member of the halt vocabulary"
+                if reason
+                else "Foundry-Phase(phase='halt') requires a reason"
+            ),
+            # Derived from the constant, never re-typed: the `_PYTEST_DISCOVERY_
+            # PHRASE` shape, so the door that refuses an unknown reason cannot
+            # advertise a set the vocabulary no longer holds.
+            f"Pass one of: {halt_reason_phrase()} — plus `text` saying why THIS "
+            "run ended, which no closed set can carry.",
+        )
+    checklist.append({
+        "check": f"halt_reason_is_a_member (reason={reason or 'absent'})",
+        "ok": member is not None,
+        "accepted": sorted(HALT_REASONS),
+    })
+
+    _teams_rung(ladder, checklist, project_root)
+
+    already = _halted_state(fdir)
+    if already is not None:
+        ladder.fail(
+            _GATE_RANK_HALTED,
+            f"the run is already HALTED ({already['halted_reason']})",
+            "HALTED is terminal and there is no second halt. Read REPORT.md; "
+            "start a NEW run if the work continues.",
+        )
+    checklist.append({"check": "not_already_halted", "ok": already is None})
+    return _preconditions_outcome(ladder, checklist, halt_reason=member, halt_text=text)
+
+
+def _token_preconditions(
+    token: str, fdir: Path, project_root: str, *, reason: str = "", text: str = ""
+) -> dict | None:
+    """The ONE mapping from a `PHASE_TOKENS` member to its routine.
+
+    An explicit chain rather than a dict of callables: a `GATE_CHECKS[token]`
+    predicate registry is the natural end state once the split has made the
+    checks uniform, and it is explicitly OUT OF SCOPE for this effort. What is
+    in scope is that there is exactly one routine per token and exactly one
+    place that says which.
+
+    Returns None for a token this function does not know, which is what lets
+    both doors keep their own unknown-token refusals in their own words.
+    """
+    if token == "start_cast":
+        return _start_cast_preconditions(fdir, project_root)
+    if token == "cast":
+        return _cast_preconditions(fdir, project_root)
+    if token == "inspect_start":
+        return _inspect_start_preconditions(fdir, project_root)
+    if token == "inspect_clean":
+        return _inspect_clean_preconditions(fdir, project_root)
+    if token == "grind_start":
+        return _grind_start_preconditions(fdir, project_root)
+    if token == "assay_fail":
+        return _assay_fail_preconditions(fdir, project_root)
+    if token == "temper":
+        return _temper_preconditions(fdir, project_root)
+    if token == "nyquist":
+        return _nyquist_preconditions(fdir, project_root)
+    if token == "nyquist_done":
+        return _nyquist_done_preconditions(fdir, project_root)
+    if token == "done":
+        return _done_preconditions(fdir, project_root)
+    if token == "halt":
+        return _halt_preconditions(fdir, project_root, reason=reason, text=text)
+    return None
+
+
+def _transition_refusal(outcome: dict, clause: str) -> dict:
+    """The refusal a transition returns when its shared routine refuses.
+
+    ONE shape, so the two doors say the same thing about the same check and
+    differ only in the leading clause a lead reads. The gate answers "may I?"
+    and renders `reason` / `hint` bare; the transition answers "do it" and
+    prefixes what it could not do — which is the shape the `inspect_clean`
+    branch already held against `_blocking_defects`' reason, generalised.
+
+    `checklist` and `refusals` are passed through unaltered. D-191's harm was a
+    door that computed four refusals and published one; both doors publish all
+    of them now, because they are the same list.
+    """
+    facts = {
+        key: value for key, value in outcome.items()
+        if key not in ("passed", "reason", "hint", "checklist", "refusals")
+    }
+    return {
+        "error": f"{clause} — {outcome['reason']}",
+        "hint": outcome["hint"],
+        "checklist": outcome["checklist"],
+        "refusals": outcome["refusals"],
+        # The routine's NON-REFUSING facts travel with the refusal, exactly as
+        # they do at the gate. Each branch used to return the offending
+        # predicate's own dict verbatim — `accepted_from` and `phase` from the
+        # source check, `unrecorded_width` from the width check — and a caller
+        # that read one of those keys would otherwise have lost it to the
+        # reshaping rather than to any decision.
+        **facts,
+    }
+
+
+
 def foundry_gate(
     phase: str,
     project_root: str = ".",
+    *,
+    reason: str = "",
+    text: str = "",
 ) -> dict:
-    """Check if preconditions are met to enter a phase."""
-    # D-134: the shared nested-shape validator, lazily imported because
-    # foundry_spawn imports this module at module top.
-    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+    """Check if preconditions are met to enter a phase.
 
+    fallout FR-007 / FR-061 / AC-056 / AC-059 / CT-013 / CT-020 — THE GATE
+    COMPOSES NOTHING.
+    ---------------------------------------------------------------------
+    Five hundred lines of per-phase branches lived here, each one a ladder of
+    reads that `_phase_transition` then made again, differently. This function
+    is now: look the gate token up in `GATE_TO_TRANSITION`, call the routine(s)
+    the mapped transition token(s) name, absorb their ranked refusals into this
+    door's ladder, and extend this door's checklist. It reads no ledger and no
+    marker of its own.
+
+    What is left outside is this door's PROTOCOL and nothing else — the
+    `.next-action-called` handshake it requires and the `.gate-passed` marker it
+    writes on the way out. Neither is a precondition of the transition: the
+    first is about the order the lead called things in, and the second is a
+    guidance effect. The HALTED guard above them is stated once for the same
+    reason `_phase_transition` states it once.
+
+    `reason` and `text` are the halt token's arguments and are passed through to
+    `_halt_preconditions`; every other token ignores them. CT-021 is what they
+    are for: `Foundry-Gate('halt', reason, text)` reports the three checks the
+    halt transition refuses on, as data, without acting on any of them.
+    """
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"phase": phase, "passed": False, "reason": "No active foundry run", "hint": "Call Foundry-Init first"}
@@ -1611,11 +2486,9 @@ def foundry_gate(
             "halted_reason": halted["halted_reason"],
         }
 
-    checklist: list[dict] = []
-    # D-186: the three locals this used to carry (`passed`, `reason`, `hint`)
-    # were a last-writer-wins ladder. Every failing check now enters the ladder
-    # with its own rank and its own remedy; see `_GateLadder` above.
-    ladder = _GateLadder()
+    if phase not in GATE_TO_TRANSITION:
+        return {"phase": phase, "passed": False, "reason": f"Unknown phase: {phase}",
+                "hint": ("Valid phases: " + ", ".join(GATE_TO_TRANSITION))}
 
     nac = fdir / NEXT_ACTION_CALLED_MARKER
     if not nac.exists():
@@ -1641,476 +2514,43 @@ def foundry_gate(
     # transition: it writes no phase, advances no counter and, on the passing
     # path, only stamps `.gate-passed`. Reading a marker it does not act on and
     # then deleting it was never the handshake, it was a side effect of one.
-    if phase == "validate":
-        # Gate for F0.9 VALIDATE — castings must exist
-        manifest = fdir / "castings" / "manifest.json"
-        if not manifest.exists():
-            return {"phase": phase, "passed": False, "reason": "No manifest.json", "hint": "Run DECOMPOSE first to create castings"}
-        data = _load_json(manifest)
-        if (records := _manifest_shape_problem(data)) is not None:
-            return {"phase": phase, "passed": False, "reason": records,
-                    "hint": "Re-run F0.5 DECOMPOSE — the manifest's records are unusable"}
-        count = len(data.get("castings", []))
-        checklist.append({"check": "manifest_exists", "ok": True})
-        if count < 1:
-            return {"phase": phase, "passed": False, "reason": "No castings in manifest", "hint": "Add castings before validating"}
-        checklist.append({"check": f"castings_count={count}", "ok": True})
+    checklist: list[dict] = []
+    # D-186: the three locals this used to carry (`passed`, `reason`, `hint`)
+    # were a last-writer-wins ladder. Every failing check now enters the ladder
+    # with its own rank and its own remedy; see `_GateLadder` above.
+    ladder = _GateLadder()
+    facts: dict = {}
 
-    elif phase == "cast":
-        manifest = fdir / "castings" / "manifest.json"
-        if not manifest.exists():
-            return {"phase": phase, "passed": False, "reason": "No manifest.json", "hint": "Run foundry_init and add castings"}
-        data = _load_json(manifest)
-        if (records := _manifest_shape_problem(data)) is not None:
-            return {"phase": phase, "passed": False, "reason": records,
-                    "hint": "Re-run F0.5 DECOMPOSE — the manifest's records are unusable"}
-        count = len(data.get("castings", []))
-        checklist.append({"check": "manifest_exists", "ok": True})
-        if count < 1:
-            return {"phase": phase, "passed": False, "reason": "No castings in manifest", "hint": "Add castings before CAST"}
-        checklist.append({"check": f"castings_count={count}", "ok": True})
-
-        oversized = []
-        for c in data.get("castings", []):
-            kf = len(c.get("key_files", []))
-            if kf > 8:
-                oversized.append({"id": c.get("id"), "title": c.get("title", ""), "key_files": kf})
-        if oversized:
-            names = ", ".join(f"#{c['id']} ({c['key_files']} files)" for c in oversized)
-            ladder.fail(
-                _GATE_RANK_CONFIG,
-                f"Oversized castings: {names}. Max 8 key_files per casting.",
-                "Split large castings into smaller ones (2-5 tasks, 2-8 files "
-                "each). No teammate should get 1000 lines of work.",
-            )
-            checklist.append({"check": "casting_size", "ok": False, "oversized": oversized})
-
-        file_to_casting: dict[str, list[int]] = {}
-        for c in data.get("castings", []):
-            cid = c.get("id", 0)
-            for f in c.get("key_files", []):
-                file_to_casting.setdefault(f, []).append(cid)
-        overlaps = {f: cids for f, cids in file_to_casting.items() if len(cids) > 1}
-        if overlaps:
-            overlap_details = [f"{f}: castings {cids}" for f, cids in overlaps.items()]
-            # Ranked ABOVE the size check: an oversized casting is a slow wave,
-            # a shared file is two teammates overwriting each other, and the
-            # second has to be resolved before the first is worth resizing.
-            ladder.fail(
-                _GATE_RANK_CONFLICT,
-                f"File overlap between castings: {'; '.join(overlap_details)}",
-                "Two castings editing the same file will cause conflicts. Move "
-                "shared files to an earlier casting or merge the overlapping "
-                "castings.",
-            )
-            checklist.append({"check": "no_file_overlap", "ok": False, "overlaps": overlaps})
-        else:
-            checklist.append({"check": "no_file_overlap", "ok": True})
-
-    elif phase == "inspect":
-        if not (fdir / CAST_COMPLETE_MARKER).exists():
-            ladder.fail(
-                _GATE_RANK_MARKER,
-                "CAST not complete",
-                "Complete all CAST tasks and call Foundry-Phase(phase='cast')",
-            )
-            checklist.append({"check": "cast_complete", "ok": False})
-        else:
-            checklist.append({"check": "cast_complete", "ok": True})
-
-        teams_result = _check_active_teams(project_root)
-        if teams_result["active"]:
-            parts = []
-            if teams_result["teams"]:
-                parts.append(f"Team dirs: {', '.join(teams_result['teams'])}")
-            if teams_result.get("live_panes"):
-                parts.append(f"Live panes: {', '.join(teams_result['live_panes'])}")
-            ladder.fail(
-                _GATE_RANK_TEAMS,
-                f"Active teammates: {'; '.join(parts)}",
-                teams_result.get("hint", _TEAMS_DOWN_HINT),
-            )
-            checklist.append({"check": "no_active_teams", "ok": False,
-                            "teams": teams_result["teams"],
-                            "live_panes": teams_result.get("live_panes", [])})
-        else:
-            checklist.append({"check": "no_active_teams", "ok": True})
-
-        sight = _check_sight_required(project_root)
-        if sight.get("required") and sight.get("blocked"):
-            ladder.fail(
-                _GATE_RANK_CONFIG,
-                sight["reason"],
-                "Provide --url for SIGHT audit or update manifest.json target_url",
-            )
-            checklist.append({"check": "sight_url", "ok": False, "reason": sight["reason"]})
-        else:
-            checklist.append({"check": "sight_url", "ok": True})
-
-    elif phase == "grind":
-        defects = _load_json(fdir / "defects.json")
-        open_count = sum(1 for d in defects.get("defects", []) if d.get("status") == "open")
-        if open_count < 1:
-            # Ranked ABOVE the tasks marker: on a ledger with nothing open,
-            # `Foundry-Tasks` has nothing to packet, so telling the lead to call
-            # it — which is what the last-writer-wins ladder did — sends them to
-            # do work that cannot change this gate's answer.
-            ladder.fail(
-                _GATE_RANK_DEFECTS,
-                "No open defects to grind",
-                "Nothing to fix — skip to ASSAY",
-            )
-        checklist.append({"check": f"open_defects={open_count}", "ok": open_count >= 1})
-
-        teams_result = _check_active_teams(project_root)
-        if teams_result["active"]:
-            parts = []
-            if teams_result["teams"]:
-                parts.append(f"Team dirs: {', '.join(teams_result['teams'])}")
-            if teams_result.get("live_panes"):
-                parts.append(f"Live panes: {', '.join(teams_result['live_panes'])}")
-            ladder.fail(
-                _GATE_RANK_TEAMS,
-                f"Active teammates: {'; '.join(parts)}",
-                teams_result.get("hint", _TEAMS_DOWN_HINT),
-            )
-        checklist.append({"check": "no_active_teams", "ok": not teams_result["active"],
-                         "live_panes": teams_result.get("live_panes", [])})
-
-        if not (fdir / TASKS_GENERATED_MARKER).exists():
-            ladder.fail(
-                _GATE_RANK_MARKER,
-                "defects-to-tasks has not been run",
-                "Call Foundry-Tasks before entering GRIND",
-            )
-        checklist.append({"check": "tasks_generated", "ok": (fdir / TASKS_GENERATED_MARKER).exists()})
-
-    elif phase == "assay":
-        # CT-008 / FR-006: LIVE and unknown-tier defects block ASSAY exactly as
-        # every open defect used to; a LATENT-only backlog does not. The tier is
-        # an evidence grade, never a severity — both tiers are defects and both
-        # get fixed — but a scan-derivation gap with no reachable instance no
-        # longer holds the whole run at the gate a forged evidence log holds it.
-        blocking = _blocking_defects(fdir)
-        defects = _load_json(fdir / "defects.json")
-        open_count = blocking["blocking"]
-        if open_count > 0:
-            ladder.fail(_GATE_RANK_DEFECTS, blocking["reason"], blocking["hint"])
-        checklist.append({
-            "check": (
-                f"zero_blocking_defects (live={len(blocking['live'])} "
-                f"unknown_tier={len(blocking['unknown'])} "
-                f"latent_backlog={len(blocking['latent'])})"
-            ),
-            "ok": open_count == 0,
-            "live": blocking["live"],
-            "unknown_tier": blocking["unknown"],
-            "latent_backlog": blocking["latent"],
-        })
-
-        streams = _check_streams_complete(project_root)
-        if not streams["complete"]:
-            # D-122 / FR-012 / AC-017 — THE HINT NAMES THE ROSTER THE
-            # TRANSITION RECORDED, NOT THE ONE THAT PRE-DATES THE WIDTH.
-            #
-            # This read "All streams (trace, prove, sight, test) must complete
-            # before ASSAY" — the roster this gate required before FR-012 made
-            # research_audit and test01 required in FULL mode. Driven on a FULL
-            # cycle whose recorded `required_streams` are trace, prove, test,
-            # research_audit, test01 with only the last two unmarked: the
-            # refusal said "incomplete: research_audit test01" and the hint
-            # beside it named NEITHER of them and named `sight`, which this
-            # run's recorded roster does not require. AC-017's clause is that
-            # the required set is named EXACTLY, and a hint listing a different
-            # set than the reason it sits under sends the lead to run streams
-            # the cycle does not owe while the two it does owe go unmentioned.
-            #
-            # Read from `streams["required"]`, which `_check_streams_complete`
-            # takes off the recorded decision (GI-008) — the same list the
-            # reason's `missing` is computed from, so the two halves of one
-            # refusal cannot disagree again.
-            required_now = streams.get("required") or []
-            ladder.fail(
-                _GATE_RANK_STREAMS,
-                f"Verification streams incomplete: {streams.get('missing', '')}",
-                "This INSPECT's recorded roster is "
-                + (", ".join(required_now) if required_now else "not recorded")
-                + f" — every one of them must complete before ASSAY. Missing: "
-                f"{streams.get('missing', '') or 'none'}. Run each missing "
-                "stream, then Foundry-Stream(stream, cycle, items_checked).",
-            )
-        checklist.append({"check": "all_streams_complete", "ok": streams["complete"],
-                         "missing": streams.get("missing", "")})
-
-        # AC-016 / D-068 — THE WIDTH THIS GATE WAS HANDED, CHECKED BY NAME.
-        #
-        # US-004's premise is "every final gate still runs everything at full
-        # width", and this gate read the ROSTER's completeness without ever
-        # asking how wide that roster was. Stated as its own named check beside
-        # the transition's identical refusal, so the two doors into ASSAY agree
-        # — the drift shape this module has paid for twice already.
-        #
-        # D-117 — AND "unrecorded" IS NOT full width EITHER.
-        #
-        # The test was `mode != "DELTA"`, which "unrecorded" passes, so this
-        # gate PASSED carrying its own checklist line
-        # `inspect_ran_at_full_width (mode=unrecorded rule=unrecorded) ok=True`
-        # — the check naming, in the same string, the fact that made its verdict
-        # false. The width is now asserted POSITIVELY: FULL, or refuse.
-        assay_mode = _current_inspect_mode(fdir) or {}
-        assay_unrecorded = _unrecorded_width_problem(fdir)
-        assay_width_ok = assay_mode.get("mode") == "FULL"
-        if assay_unrecorded is not None:
-            ladder.fail(
-                _GATE_RANK_WIDTH,
-                f"Cannot open ASSAY — {assay_unrecorded['reason']}",
-                assay_unrecorded["hint"],
-            )
-        # D-169 — AND THE SENTENCE STATES THE PREDICATE THIS CODE EVALUATES.
-        #
-        # The check is `assay_width_ok = mode == "FULL"`, and its checklist
-        # entry is literally named `inspect_ran_at_full_width` — WIDTH. The
-        # refusal beside it said "ASSAY is only opened by an INSPECT whose
-        # recorded rule is final_gate", which is a condition on the RULE and is
-        # false: driven at this door on synthetic runs recorded FULL/final_gate,
-        # FULL/first_of_phase and FULL/verifier_touched, all three returned
-        # ok True. A verifier-touching GRIND is the ordinary case for a run that
-        # builds this plugin, so a lead reading the old sentence believed a
-        # clean FULL/verifier_touched INSPECT still owed a widening cycle — one
-        # more cycle of ceremony, which is the cost US-004 exists to remove.
-        #
-        # D-152 fixed the rule PRECEDENCE so the recorded rule names the arm
-        # that fired, and left every stated condition naming a rule no code
-        # reads. So the mode and the rule are now reported as the FACTS they
-        # are, and the condition quoted is the one evaluated one line above.
-        elif not assay_width_ok:
-            ladder.fail(
-                _GATE_RANK_WIDTH,
-                f"cycle {assay_mode.get('cycle', '?')} ran at "
-                f"{assay_mode.get('mode') or 'unrecorded'} width (rule "
-                f"{assay_mode.get('rule') or 'unrecorded'}) — ASSAY is only "
-                "opened by an INSPECT whose recorded mode is FULL",
-                "Call Foundry-Phase(phase='inspect_start') again from F2: the "
-                "widening re-open advances the cycle, sweeps the whole evidence "
-                "corpus and records FULL. Which rule it records — final_gate "
-                "from the widening re-open, verifier_touched when the diff "
-                "cannot be measured — does not enter this check; the width "
-                "does.",
-            )
-        checklist.append({
-            "check": (
-                f"inspect_ran_at_full_width (mode={assay_mode.get('mode') or 'unrecorded'} "
-                f"rule={assay_mode.get('rule') or 'unrecorded'})"
-            ),
-            "ok": assay_width_ok,
-        })
-
-        if not (fdir / INSPECT_CLEAN_MARKER).exists():
-            has_fixed = sum(1 for d in defects.get("defects", []) if d.get("status") == "fixed")
-            if has_fixed > 0:
-                # D-183 — AND IT DOES NOT DISPLACE THE WIDTH REFUSAL ABOVE IT.
-                #
-                # `has_fixed > 0` is true of every ordinary GRIND cycle — a
-                # GRIND that fixed nothing is not a GRIND — so under the
-                # last-writer-wins ladder this arm overwrote the width refusal
-                # on the normal path.
-                #
-                # Driven through server.call_tool on a DELTA cycle carrying one
-                # fixed defect: the gate answered "GRIND fixed defects but
-                # INSPECT has not re-verified" with the hint below, and
-                # following that hint Foundry-Phase(phase='inspect_clean') was
-                # REFUSED — "ran at DELTA width (rule delta), and ASSAY is only
-                # opened by an INSPECT whose recorded mode is FULL". The gate
-                # had computed that very sentence one check earlier, in the
-                # `elif not assay_width_ok` arm above, and thrown it away. The
-                # control drive on the identical run with zero fixed defects
-                # surfaced the width refusal correctly, which is what proved the
-                # arm right and merely shadowed. This is D-123's own class —
-                # a remedy naming a call the server rejects — reopened on
-                # D-123's own symbol by a later check.
-                #
-                # Ruling 4 in the run's spec_ambiguities and start.md's
-                # ASSAY-door paragraph both make the recorded WIDTH the whole
-                # condition: "From a cycle recorded `DELTA`: call
-                # `Foundry-Phase(phase='inspect_start')` AGAIN, from F2."
-                #
-                # D-186 — AND THE GUARD THAT SAID SO IS NOW THE RANK.
-                #
-                # D-183 expressed that ruling as an `if assay_unrecorded is None
-                # and assay_width_ok:` wrapper around these two strings, which
-                # fixed this rung and left the rung below it — `no_active_teams`
-                # — displacing the width refusal in exactly the same way. The
-                # ordering is declared once, in `_GATE_RANK_WIDTH` versus
-                # `_GATE_RANK_MARKER`, so this arm states its own refusal
-                # unconditionally and the ladder decides which one speaks. The
-                # check is not weakened: it still fails, and its checklist entry
-                # below is still `ok: False`.
-                ladder.fail(
-                    _GATE_RANK_MARKER,
-                    "GRIND fixed defects but INSPECT has not re-verified",
-                    # D-123 / FR-044 / AC-035 — THE REMEDY NAMES A CALL THAT
-                    # EXISTS.
-                    #
-                    # This hint read "Call foundry_mark_inspect_clean when
-                    # clean." `grep -rn foundry_mark_inspect_clean
-                    # plugins/foundry` found the name in this string and NOWHERE
-                    # else: no MCP tool, no Python function, no prose surface
-                    # carries it. The door that closes an INSPECT is
-                    # Foundry-Phase(phase='inspect_clean'), which FR-006 and
-                    # AC-008 name and which FR-044's Gate-then-Phase sequence
-                    # relies on. A refusal whose only stated next move is a call
-                    # the server would reject is a refusal with no remedy — the
-                    # D-011 shape, on this door. It is a truthful remedy only at
-                    # a FULL width and with the teammates down, which is what
-                    # ranks WIDTH and TEAMS above this arm expresses.
-                    "Re-run the INSPECT this GRIND owes, then close it with "
-                    "Foundry-Phase(phase='inspect_clean') — that transition "
-                    "writes the .inspect-clean marker this check reads, and it "
-                    "is the only call that does.",
-                )
-            checklist.append({"check": "inspect_clean", "ok": False})
-        else:
-            checklist.append({"check": "inspect_clean", "ok": True})
-
-        teams_result = _check_active_teams(project_root)
-        if teams_result["active"]:
-            # D-186 — THIS ARM SET `reason` AND NO HINT AT ALL.
-            #
-            # Its two siblings in the `inspect` and `grind` branches both read
-            # their remedy off `teams_result`; this copy read neither, so a run
-            # whose ONLY failure was a registered team was refused with an empty
-            # `hint` — a refusal with no stated next move — and a run with a
-            # second failure inherited whatever string the arm above happened to
-            # leave behind. Both halves are closed by the same line: the remedy
-            # comes from the scan, with the ONE shared fallback the other two
-            # arms now also use.
-            ladder.fail(
-                _GATE_RANK_TEAMS,
-                f"Active teams: {', '.join(teams_result['teams'])}",
-                teams_result.get("hint", _TEAMS_DOWN_HINT),
-            )
-        checklist.append({"check": "no_active_teams", "ok": not teams_result["active"]})
-
-    elif phase == "temper":
-        verdicts = _load_json(fdir / "verdicts.json")
-        non_verified = sum(1 for r in verdicts.get("requirements", []) if r.get("verdict") != "VERIFIED")
-        if non_verified > 0:
-            ladder.fail(
-                _GATE_RANK_VERDICTS,
-                f"{non_verified} requirement(s) not verified",
-                "Every THIN / PARTIAL requirement is a defect, not a follow-up. "
-                "Fix them and re-run ASSAY before entering TEMPER.",
-            )
-        checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
-
-        # CT-008 / FR-006 — TEMPER gains the defect read it never had.
-        # AC-008 names temper alongside assay, nyquist and done: all four pass
-        # on a LATENT-only backlog, and all four refuse on a LIVE or
-        # unknown-tier defect. A gate that reads no defects at all cannot honour
-        # either half of that.
-        blocking = _blocking_defects(fdir)
-        if blocking["blocking"] > 0:
-            ladder.fail(_GATE_RANK_DEFECTS, blocking["reason"], blocking["hint"])
-        checklist.append({
-            "check": (
-                f"zero_blocking_defects (live={len(blocking['live'])} "
-                f"unknown_tier={len(blocking['unknown'])} "
-                f"latent_backlog={len(blocking['latent'])})"
-            ),
-            "ok": blocking["blocking"] == 0,
-            "live": blocking["live"],
-            "unknown_tier": blocking["unknown"],
-            "latent_backlog": blocking["latent"],
-        })
-
-    elif phase == "nyquist":
-        # F5.5 generates regression tests for VERIFIED requirements, so the
-        # same precondition as TEMPER applies: there is nothing to lock in
-        # until every requirement has passed ASSAY. Additionally the flag must
-        # actually be set — entering F5.5 on a run that never asked for it
-        # would spawn auditors the invocation did not request.
-        verdicts = _load_json(fdir / "verdicts.json")
-        non_verified = sum(1 for r in verdicts.get("requirements", []) if r.get("verdict") != "VERIFIED")
-        if non_verified > 0:
-            ladder.fail(
-                _GATE_RANK_VERDICTS,
-                f"{non_verified} requirement(s) not verified",
-                "Every THIN / PARTIAL requirement is a defect, not a follow-up. "
-                "Fix them and re-run ASSAY before entering NYQUIST.",
-            )
-        checklist.append({"check": f"all_verified (non_verified={non_verified})", "ok": non_verified == 0})
-
-        # FR-006 / CT-008 / OT-006 — NYQUIST GAINS THE MISSING DEFECT READ.
-        #
-        # This branch read verdicts and the --nyquist flag and NOTHING ELSE, so
-        # a run could enter F5.5 and generate regression tests with open defects
-        # in the ledger — locking in behaviour a stream had already ruled wrong.
-        # FR-006 names it outright: "NYQUIST gains the missing defect read so
-        # one open LIVE now blocks it." A LATENT-only backlog still passes,
-        # which is the whole point of grading the evidence.
-        blocking = _blocking_defects(fdir)
-        if blocking["blocking"] > 0:
-            ladder.fail(_GATE_RANK_DEFECTS, blocking["reason"], blocking["hint"])
-        checklist.append({
-            "check": (
-                f"zero_blocking_defects (live={len(blocking['live'])} "
-                f"unknown_tier={len(blocking['unknown'])} "
-                f"latent_backlog={len(blocking['latent'])})"
-            ),
-            "ok": blocking["blocking"] == 0,
-            "live": blocking["live"],
-            "unknown_tier": blocking["unknown"],
-            "latent_backlog": blocking["latent"],
-        })
-
-        state = _load_json(fdir / "state.json")
-        nyquist_on = state.get("nyquist", False)
-        if not nyquist_on:
-            # Ranked BELOW the defect read, and that is a change from the
-            # source-order ladder this replaced. The remedy here offers
-            # "call Foundry-Gate(phase='done')" as the way past F5.5, and that
-            # call is refused while a LIVE or unknown-tier defect is open
-            # (CT-008) — so on a run failing both checks the old last-writer
-            # rendered the remedy the other failing check would reject. Same
-            # shape as D-183 and D-186, one branch over.
-            ladder.fail(
-                _GATE_RANK_CONFIG,
-                "F5.5 NYQUIST is opt-in and this run was not started with --nyquist",
-                "Re-run with --nyquist, or skip F5.5: call Foundry-Gate(phase='done').",
-            )
-        checklist.append({"check": "nyquist_enabled", "ok": nyquist_on})
-
-    elif phase in ("done", "nyquist_done"):
-        # Every check lives in _done_preconditions, which the transitions that
-        # actually enter F6 call too (AC-011 / D-037 / D-043 / D-044). This
-        # branch is the advisory half of one shared evaluation, not a second
-        # opinion.
-        #
-        # BOTH terminal tokens land here. F6 has two doors — Foundry-Phase
-        # "done" and, on a --nyquist run, "nyquist_done" — and only the first
-        # had a gate case at all, so a lead following start.md:578
-        # (Foundry-Gate("done") -> Foundry-Phase("nyquist_done")) was gating a
-        # token other than the one it was about to call. There is one
-        # definition of "the run may finish"; asking about either door asks it.
-        outcome = _done_preconditions(fdir, project_root)
-        # D-186 / D-190 / D-191: `_done_preconditions` applies the SAME ladder
-        # to its own arms, so what arrives here is already ranked per check —
-        # not one opaque verdict. `absorb` re-enters every one of them at the
-        # rank that evaluation declared, so the ordering is still owned by the
-        # evaluation that owns the checks AND this door publishes all of them
-        # under `refusals`. It used to publish exactly one entry for a call that
-        # had computed four, which is how "Call Foundry-Report" — the only
-        # remedy on D-191's drive that no other failing check defeats — was
-        # stated nowhere a lead could read it.
+    # `grind` is the one gate token that maps to TWO transitions — `grind_start`
+    # and `assay_fail`, two doors into F3 — and it reports both. They share one
+    # evaluation, so the second call adds nothing the first did not; absorbing
+    # both is what makes the table the whole mapping rather than the table plus
+    # a rule about which of the pair a gate really means.
+    for token in GATE_TO_TRANSITION[phase]:
+        outcome = _token_preconditions(
+            token, fdir, project_root, reason=reason, text=text
+        )
+        if outcome is None:  # pragma: no cover — the table's own invariant test
+            continue          # asserts every mapped token has a routine
+        # D-186 / D-190 / D-191: `absorb` re-enters every failing check at the
+        # rank the evaluation that owns the checks declared, so the ordering is
+        # still that evaluation's AND this door publishes all of them under
+        # `refusals`. It used to publish one entry for a call that had computed
+        # four.
         ladder.absorb(outcome["refusals"])
-        checklist.extend(outcome["checklist"])
+        for entry in outcome["checklist"]:
+            if entry not in checklist:
+                checklist.append(entry)
+        # fallout GI-032 / AC-060 — NON-REFUSING FACTS ARE REPORTED, NOT ACTED
+        # ON. `would_halt` is the one this run adds: the gate PASSES at the
+        # cycle cap and says so, because reaching the cap is not something a
+        # lead clears at the door — the run stops, with its open work written
+        # down, and that is a successful transition.
+        for key, value in outcome.items():
+            if key not in ("passed", "reason", "hint", "checklist", "refusals"):
+                facts.setdefault(key, value)
 
-    else:
-        return {"phase": phase, "passed": False, "reason": f"Unknown phase: {phase}",
-                "hint": ("Valid phases: validate, cast, inspect, grind, assay, "
-                         "temper, nyquist, nyquist_done, done")}
-
-    result = {"phase": phase, "passed": ladder.passed, "checklist": checklist}
+    result = {"phase": phase, "passed": ladder.passed, "checklist": checklist, **facts}
     if not ladder.passed:
         result["reason"], result["hint"] = ladder.outcome()
         # D-186: every failing check's own sentence, in the same order, so a
@@ -4536,12 +4976,27 @@ def _halted_state(fdir: Path) -> dict | None:
     state = _load_json(fdir / "state.json")
     if state.get("phase") != RUN_PHASE_HALTED:
         return None
+    # fallout CT-004 / FR-054 — TWO SHAPES, ONE READ.
+    #
+    # `halted_reason` is `{"reason": <member>, "text": <the lead's words>}` from
+    # this release on, and a bare f-string on every archive written before it.
+    # Both are read here so no caller has to know which it got: `halted_reason`
+    # is always the SENTENCE an operator reads, and `halted_reason_member` is
+    # the HALT_REASONS member a grouper keys on, or "" when the record carries
+    # only text. Guessing which member a pre-release sentence meant is how a
+    # run's ending gets reclassified by a reader, so it is never guessed.
+    raw = state.get("halted_reason")
+    if isinstance(raw, dict):
+        member = halt_reason(raw.get("reason")) or ""
+        detail = str(raw.get("text") or "").strip()
+        sentence = f"{member}: {detail}" if member and detail else (member or detail)
+    else:
+        member = ""
+        sentence = str(raw or "").strip()
     return {
         "halted_at_cycle": state.get("halted_at_cycle"),
-        "halted_reason": (
-            str(state.get("halted_reason") or "").strip()
-            or "the configured cycle cap was reached"
-        ),
+        "halted_reason": sentence or "the configured cycle cap was reached",
+        "halted_reason_member": member,
         # D-225: the cap this run was HELD to, read the way the halt read it.
         # Displaying the raw field beside a decision made on a normalised one
         # is how a refusal comes to name a number no code acted on.
@@ -4667,55 +5122,60 @@ def _halted_refusal(fdir: Path, surface: str) -> dict | None:
     }
 
 
-def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
-    """ST-008 / CT-016 — halt the run instead of opening GRIND number N+1.
+def _seal_halted(
+    fdir: Path,
+    project_root: str,
+    *,
+    reason: str,
+    text: str = "",
+    token: str,
+    detail: str = "",
+) -> dict:
+    """fallout FR-046 / CT-004 / ST-001 / AC-025 / AC-029 — THE ONE HALTED WRITER.
 
-    Returns None when the run may proceed, otherwise the SUCCESS result of the
-    HALTED transition. Called from both transitions that open a GRIND.
+    Both endings a run can have that are not DONE come through here: the cycle
+    cap (`_halt_if_capped`, reason `cap_reached`) and the lead's own ruling
+    (`Foundry-Phase('halt', reason, text)`). One writer, so the two produce the
+    same document, the same regenerated report and the same history row; a
+    second writer is how two endings come to disagree about what HALTED means.
 
     THIS IS A TRANSITION, NOT A REFUSAL, and the distinction is the whole
-    requirement (FR-045 / A-048). A refusal would leave the run sitting in F2
-    with the lead free to call the same token again, having produced nothing —
-    a cap that only annoys. Instead `state.json` becomes HALTED, the report is
+    requirement (FR-045 / A-048). A refusal would leave the run sitting where it
+    was with the lead free to call the same token again, having produced nothing
+    — a cap that only annoys. Instead `state.json` becomes HALTED, the report is
     generated naming every open LIVE and LATENT defect, and the call returns
     ``ok: True``. HALTED is a named terminal state and is emphatically NOT DONE:
-    it is where a run that ran out of cycles stops, with its open work written
-    down.
+    it is where a run that ran out of cycles, or that the lead stopped, stops —
+    with its open work written down.
 
-    THE ARITHMETIC. The server counter advances only at `inspect_start`, so the
-    GRIND a call is about to open is always `cycle + 1`. With `max_cycles` 2:
-    GRIND 1 opens at counter 0, GRIND 2 at counter 1, and the call at counter 2
-    would open GRIND 3 — which is the one that halts (AC-037 / OT-026).
-    ``max_cycles`` 0 is unbounded and is the default, so a run that never passed
-    the flag is unaffected.
+    WRITTEN THROUGH `_update_phase` (AC-029). The cap path used to write
+    `state["phase"]` inside a bare transaction, so a halted run's `phase_times`
+    kept the phase it stopped in OPEN with no `ended_at` and `phase_history`
+    never recorded HALTED at all: the one row that says how a run ended was the
+    one row the history did not carry. `_update_phase` closes every open timing
+    entry and appends the row, which is what every other transition in this
+    module has always done.
+
+    `halted_reason` is stored as ``{"reason": <HALT_REASONS member>, "text":
+    <the lead's own words>}``. Neither substitutes for the other (CT-004): the
+    member is what `measure-run.py` and the report group on, and the text is why
+    THIS run ended, which no closed set can carry. Every reader still accepts the
+    bare f-string archives written before this release carry (FR-054); see
+    `_halted_state`.
     """
-    state = _load_json(fdir / "state.json")
-    # D-225: through `_persisted_max_cycles`, so the set of values this read
-    # HONOURS is exactly the set the MCP door ACCEPTS. The inline
-    # `isinstance(max_cycles, int)` this replaces rejected the zero-fraction
-    # float the door's own validator calls an integer.
-    max_cycles = _persisted_max_cycles(state)
-    if max_cycles <= 0:
-        return None
     cycle = current_cycle(fdir)
-    opening = cycle + 1
-    if opening <= max_cycles:
-        return None
+    sentence = f"{reason}: {text}" if text else (detail or reason)
 
-    reason = (
-        f"--max-cycles {max_cycles} reached: opening GRIND cycle {opening} would "
-        f"exceed it"
-    )
+    _update_phase(fdir, RUN_PHASE_HALTED)
     with _document_transaction(fdir / "state.json") as doc:
-        doc["phase"] = RUN_PHASE_HALTED
         doc["halted_at_cycle"] = cycle
-        doc["halted_reason"] = reason
+        doc["halted_reason"] = {"reason": reason, "text": text or detail}
         doc["updated_at"] = now_iso()
 
     # FR-045: "the report is written naming every open LIVE and LATENT defect".
     # Generated as PART of this transition rather than left to the lead, because
-    # a halted run whose open work was never written down is the outcome the cap
-    # is supposed to prevent, not a variant of it.
+    # a halted run whose open work was never written down is the outcome the
+    # halt is supposed to prevent, not a variant of it.
     #
     # D-165 — AND ITS VERDICT IS READ, BECAUSE THE MESSAGE ASSERTS IT.
     # ---------------------------------------------------------------
@@ -4730,16 +5190,16 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
     # regenerate it. CT-014 SPECIFIES that failure branch (the unreadable-ledger
     # refusal), so it is designed and reachable, not a theoretical one.
     #
-    # The transition still HAPPENS — FR-045 is explicit that the cap is "not a
-    # refusal", and a run that ran out of cycles has run out of cycles whether
-    # or not its ledgers can be rendered. What changes is that the outcome is
-    # RECORDED and SAID: the halt names the failure, and every later refusal
-    # names the one call that can still write the report.
-    # D-224: through the SAME preserving regeneration both F6 doors run. This
-    # branch carried its own copy of the overwrite, so a run that ended at the
-    # cap lost the lead's appended prose exactly as a run that ended at DONE
-    # did — a rule enforced at one terminal transition and not the other is one
-    # the run walks around by ending the other way.
+    # The transition still HAPPENS — a run that ran out of cycles has run out of
+    # cycles whether or not its ledgers can be rendered. What changes is that
+    # the outcome is RECORDED and SAID: the halt names the failure, and every
+    # later refusal names the one call that can still write the report.
+    #
+    # D-224: through the SAME preserving regeneration both F6 doors run. The cap
+    # path carried its own copy of the overwrite, so a run that ended at the cap
+    # lost the lead's appended prose exactly as a run that ended at DONE did — a
+    # rule enforced at one terminal transition and not the other is one the run
+    # walks around by ending the other way.
     sealed = _regenerate_report_preserving_lead_prose(project_root, fdir)
     report = sealed["report"]
     report_ok = sealed["report_generated"]
@@ -4764,8 +5224,9 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
         "halted": True,
         "phase": RUN_PHASE_HALTED,
         "cycle": cycle,
-        "max_cycles": max_cycles,
+        "halted_at_cycle": cycle,
         "halted_reason": reason,
+        "halted_text": text or detail,
         "requested_token": token,
         "report": report,
         "report_generated": report_ok,
@@ -4777,22 +5238,22 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
         "open_unknown_tier_defects": blocking["unknown"],
         "open_latent_defects": blocking["latent"],
         # D-233: the prose clauses come from `_lead_prose_clause`, the ONE
-        # spelling the two F6 doors say through `_sealed_report_sentence`. This
-        # branch regenerates the report exactly as they do and said nothing
+        # spelling the two F6 doors say through `_sealed_report_sentence`. The
+        # cap path regenerates the report exactly as they do and said nothing
         # about what the regeneration did to the lead's own additions — neither
         # that they were carried, nor, when the write-back failed, that they
         # were LOST. `display.py` renders this `message` and no other field, so
         # a fact absent from it is a fact the operator never sees.
         "message": (
             (
-                f"Run HALTED — {reason}. The report has been generated naming "
+                f"Run HALTED — {sentence}. The report has been generated naming "
                 f"{counts}. HALTED is not DONE: this run stopped with open "
                 "work, and the report says what."
                 + _lead_prose_clause(sealed)
             )
             if report_ok
             else (
-                f"Run HALTED — {reason}. The report could NOT be generated: "
+                f"Run HALTED — {sentence}. The report could NOT be generated: "
                 f"{report_error}. The {counts} named above are read from "
                 "defects.json, which is intact; it is the report that is "
                 "missing. Repair what the error names, then call Foundry-Report "
@@ -4802,6 +5263,55 @@ def _halt_if_capped(fdir: Path, project_root: str, token: str) -> dict | None:
             )
         ),
     }
+
+
+def _halt_if_capped(
+    fdir: Path, project_root: str, token: str, outcome: dict
+) -> dict | None:
+    """ST-008 / CT-016 — halt the run instead of opening GRIND number N+1.
+
+    Returns None when the run may proceed, otherwise the SUCCESS result of the
+    HALTED transition. Called from both transitions that open a GRIND.
+
+    fallout FR-062 / GI-032 / ST-015 / AC-060 — THE CAP IS NOT READ HERE ANY
+    MORE. `would_halt` arrives on ``outcome``, computed by
+    `_grind_start_preconditions` from the single `_persisted_max_cycles` read
+    this run has, so `Foundry-Gate('grind')` can REPORT the fact without acting
+    on it and no transition branch reads the cap itself. This function is now
+    the ACTION the fact licenses, and nothing else.
+
+    THE ARITHMETIC, which lives with the fact rather than here. The server
+    counter advances only at `inspect_start`, so the GRIND a call is about to
+    open is always `cycle + 1`. With `max_cycles` 2: GRIND 1 opens at counter 0,
+    GRIND 2 at counter 1, and the call at counter 2 would open GRIND 3 — which
+    is the one that halts (AC-037 / OT-026). ``max_cycles`` 0 is unbounded and
+    is the default, so a run that never passed the flag is unaffected.
+    """
+    if not outcome.get("would_halt"):
+        return None
+    max_cycles = outcome["max_cycles"]
+    opening = outcome["opening"]
+    sealed = _seal_halted(
+        fdir,
+        project_root,
+        # CT-005: the cap path writes the MEMBER, named in the vocabulary rather
+        # than spelled at the door, so the transition that halts on the cap and
+        # the report section that groups by reason cannot come to disagree about
+        # which member that is.
+        reason=HALT_REASON_CAP_REACHED,
+        text=(
+            f"--max-cycles {max_cycles} reached: opening GRIND cycle {opening} "
+            f"would exceed it"
+        ),
+        token=token,
+    )
+    # The cap this run was HELD to, on the result the operator reads, beside the
+    # cycle the seal recorded. `_seal_halted` cannot name it: a lead's ruling has
+    # no cap, and a field that means something on one path and nothing on the
+    # other is worse than a field only the path that has it carries.
+    sealed["max_cycles"] = max_cycles
+    sealed["opening_cycle"] = opening
+    return sealed
 
 
 
@@ -6816,12 +7326,22 @@ PHASE_TOKENS = (
     "nyquist",
     "nyquist_done",
     "done",
+    # fallout FR-064 / GI-034 / AC-062 — `halt` is a FULL member, not a special
+    # case. It has `_halt_preconditions`, a `halt` gate token, a row in
+    # `GATE_TO_TRANSITION` and a branch below, and the invariant test walks it
+    # with every other member. server.py's enum carries it too — the three
+    # copies are pinned equal by the AST drift guard, and the token, the branch
+    # and the enum entry landed in one commit for exactly that reason.
+    "halt",
 )
 
 
 def foundry_mark_phase_complete(
     phase: str,
     project_root: str = ".",
+    *,
+    reason: str = "",
+    text: str = "",
 ) -> dict:
     """Mark a phase transition. Validates preconditions AND updates state.json.phase.
 
@@ -6871,7 +7391,7 @@ def foundry_mark_phase_complete(
             "hint": "Call Foundry-Next first \u2014 it shows status and guides you.",
         }
 
-    result = _phase_transition(phase, project_root, fdir)
+    result = _phase_transition(phase, project_root, fdir, reason=reason, text=text)
     if result.get("ok"):
         nac.unlink(missing_ok=True)
     return result
@@ -7084,6 +7604,66 @@ _PHASE_ENTRY_SOURCES: dict[str, dict] = {
             ),
         },
     },
+    # fallout AC-010 / OT-008 — THE NYQUIST TRANSITION GAINS A SOURCE CHECK.
+    #
+    # It had none, and its own guidance says F5.5 is reached from two places and
+    # only two: "a --nyquist run without --temper arrives from F4 (ASSAY
+    # passed), and one with both arrives from F5 (TEMPER clean)"
+    # (`_nyquist_transition`). Without the check, `nyquist` from F2 wrote F5.5
+    # over a live INSPECT and made the auditors reachable on a tree no ASSAY had
+    # judged. `accepted_from` is a CALLABLE for the reason `done`'s is: which
+    # phase precedes F5.5 is a fact about the run's own flags, and a static
+    # tuple would either refuse every plain --nyquist run at F4 or admit the F2
+    # crossing this closes.
+    "nyquist": {
+        "accepted_from": lambda state: ("F5",) if state.get("temper") else ("F4",),
+        "opens": "F5.5",
+        "what": (
+            "the entry to NYQUIST: it closes the phase ASSAY (or TEMPER) left "
+            "the run in, sweeps the whole evidence corpus and opens F5.5, where "
+            "regression tests are generated for VERIFIED requirements"
+        ),
+        "why": (
+            "From any other phase it would lock in behaviour no ASSAY has "
+            "judged, which is the one thing F5.5 must never do."
+        ),
+        "hints": {
+            "F0": (
+                "The run has not been built. Foundry-Next names the transition "
+                "that applies; NYQUIST is the last phase, not the first."
+            ),
+            "F1": (
+                "The run is in CAST. Close it with Foundry-Phase(phase='cast')."
+            ),
+            "F2": (
+                "The run is in INSPECT. Close it with "
+                "Foundry-Phase(phase='inspect_clean') to open ASSAY — NYQUIST "
+                "is reached THROUGH ASSAY, and entering it from here would "
+                "generate regression tests for verdicts nothing has written."
+            ),
+            "F3": (
+                "The run is in GRIND. Close it with "
+                "Foundry-Phase(phase='inspect_start')."
+            ),
+            "F4": (
+                "This run was started with --temper, so F5 comes first: call "
+                "Foundry-Phase(phase='temper'), and reach NYQUIST from there."
+            ),
+            "F5": (
+                "This run was not started with --temper, so NYQUIST is entered "
+                "from F4. A run already in F5 reached it some other way; "
+                "Foundry-Next names the transition that applies."
+            ),
+            "F5.5": (
+                "The run is already in NYQUIST. Call "
+                "Foundry-Phase(phase='nyquist_done') to finish it."
+            ),
+            "F6": (
+                "The run is DONE. Start a new run rather than re-opening this "
+                "one."
+            ),
+        },
+    },
     "nyquist_done": {
         "accepted_from": ("F5.5",),
         "opens": "F6",
@@ -7243,7 +7823,14 @@ def _phase_entry_source_problem(fdir: Path, token: str) -> dict | None:
     }
 
 
-def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
+def _phase_transition(
+    phase: str,
+    project_root: str,
+    fdir: Path,
+    *,
+    reason: str = "",
+    text: str = "",
+) -> dict:
     """The branch chain behind `foundry_mark_phase_complete`.
 
     Split out for D-067 alone: the caller owns the ordering-token handshake and
@@ -7254,35 +7841,47 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
 
     D-082 — NO TRANSITION LEAVES HALTED, AND THE GUARD IS STATED ONCE.
     -----------------------------------------------------------------
-    Stated here, above the chain, rather than as an arm inside each of the ten
-    branches. Ten copies of one precondition is exactly the shape that produced
-    the defect: `_halt_if_capped` was wired into `grind_start` and `assay_fail`
-    and every other branch silently resumed the run. The next branch added to
-    this chain inherits the guard by standing below it.
+    Stated here, above the chain, rather than as an arm inside each of the
+    branches. One copy per branch of one precondition is exactly the shape that
+    produced the defect: `_halt_if_capped` was wired into `grind_start` and
+    `assay_fail` and every other branch silently resumed the run. The next
+    branch added to this chain inherits the guard by standing below it.
 
     It compares no phase literal, so the AST drift guard that derives the
     accepted token set from this function's own `phase == "<literal>"`
-    comparisons still reads exactly the ten branches and no eleventh.
+    comparisons still reads exactly the branches and no phantom one.
+
+    fallout FR-007 / GI-029 / ST-012 / AC-009 / AC-056 — EVERY BRANCH IS ONE
+    CALL, ONE REFUSAL, THEN THE MUTATION.
+    ------------------------------------------------------------------------
+    A branch consults `_<token>_preconditions` and NOTHING ELSE for its
+    refusals: no ledger read of its own, no marker read of its own, no check the
+    gate for the same token does not also make. Everything below the refusal is
+    effect — decide, sweep, clear, transact, record — and every one of those
+    runs only after the shared routine passed, so a refused crossing leaves no
+    trace it was attempted.
+
+    That is the whole of what closed D-240..D-243. Four checks the gate made and
+    this function did not is not four defects, it is one generator, and it stops
+    generating when there is exactly one place a check can be written.
+
+    `reason` and `text` belong to the `halt` token alone and are passed through
+    untouched; every other branch ignores them.
     """
     if (halted := _halted_refusal(fdir, f"Foundry-Phase(phase='{phase}')")) is not None:
         return halted
 
     if phase == "start_cast":
+        outcome = _start_cast_preconditions(fdir, project_root)
+        if not outcome["passed"]:
+            return _transition_refusal(outcome, "Cannot enter CAST")
         _update_phase(fdir, "F1")
         return {"ok": True, "phase": "F1", "message": "Phase is now F1 (CAST). Create team and build."}
 
     elif phase == "cast":
-        # D-124 — THE SOURCE PHASE IS A PRECONDITION HERE TOO.
-        # Stated FIRST, before the team scan: a run in ASSAY is not a run whose
-        # CAST wave might still be up, and the honest answer to
-        # `cast` from F4 is "this is not the transition that applies", not
-        # "shut down your teammates". See `_PHASE_ENTRY_SOURCES`.
-        if (wrong := _phase_entry_source_problem(fdir, "cast")) is not None:
-            return wrong
-        teams = _check_active_teams(project_root)
-        if teams["active"]:
-            return {"error": f"Cannot mark CAST complete \u2014 active teams: {', '.join(teams['teams'])}",
-                    "hint": "Shut down all teammates and TeamDelete before marking CAST complete"}
+        outcome = _cast_preconditions(fdir, project_root)
+        if not outcome["passed"]:
+            return _transition_refusal(outcome, "Cannot mark CAST complete")
         # GI-009 / ST-006 / AC-016 / OT-012 \u2014 THE F2 ENTRY RECORDS FULL.
         #
         # This branch, not `start_cast`: `start_cast` calls
@@ -7359,100 +7958,9 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         }
 
     elif phase == "inspect_clean":
-        # D-117 \u2014 THE WIDTH RECORD IS A PRECONDITION OF CLOSING AN INSPECT.
-        #
-        # Stated FIRST, before the roster is even consulted: "which streams did
-        # this INSPECT require" has no answer without it, so a roster read here
-        # would be the roster nothing recorded that GI-008 names. The refusal
-        # below tested `== "DELTA"` and let "unrecorded" through, which is how a
-        # resumed legacy archive closed its INSPECT and moved the run to F4
-        # having run three streams.
-        if (unrecorded := _unrecorded_width_problem(fdir)) is not None:
-            return {
-                "error": f"Cannot mark INSPECT clean \u2014 {unrecorded['reason']}",
-                "hint": unrecorded["hint"],
-                "unrecorded_width": True,
-            }
-        streams = _check_streams_complete(project_root)
-        if not streams["complete"]:
-            return {"error": f"Cannot mark INSPECT clean \u2014 streams incomplete: {streams['missing']}",
-                    "hint": streams.get("hint")
-                            or "Run all required verification streams first"}
-        # CT-008 / AC-008: "clean" is the tier-aware question. A LATENT-only
-        # backlog passes here for the same reason it passes ASSAY \u2014 nobody drove
-        # a failing instance \u2014 and it is carried, named, to the F6 backlog
-        # rather than silently closed. LIVE and unknown-tier still refuse.
-        blocking = _blocking_defects(fdir)
-        if blocking["blocking"] > 0:
-            return {"error": f"Cannot mark INSPECT clean \u2014 {blocking['reason']}",
-                    "hint": blocking["hint"]}
-        # D-035 / GI-002: a fix that landed DURING this INSPECT changed the tree
-        # after the width was decided and the sweep taken, so this cycle's
-        # evidence no longer covers what ASSAY is about to be opened on. The
-        # remedy is a boundary crossing, which re-decides and re-sweeps.
-        recorded_mode = _current_inspect_mode(fdir) or {}
-        superseded = recorded_mode.get("fixes_after_decision") or []
-        if superseded:
-            return {
-                "error": (
-                    f"Cannot mark INSPECT clean \u2014 {len(superseded)} defect(s) "
-                    f"were fixed after this INSPECT's width was decided: "
-                    f"{', '.join(superseded)}"
-                ),
-                "hint": (
-                    f"This cycle was swept at {recorded_mode.get('mode', '?')} "
-                    "width before those fixes landed, so its evidence does not "
-                    "cover the surface they changed. Cross the boundary again \u2014 "
-                    "Foundry-Phase(phase='grind_start') then "
-                    "Foundry-Phase(phase='inspect_start') \u2014 which re-decides the "
-                    "width and re-sweeps at the new HEAD, and re-run the streams."
-                ),
-                "fixes_after_decision": list(superseded),
-            }
-        # AC-016 / D-068 — A DELTA CYCLE DOES NOT OPEN ASSAY.
-        #
-        # LEAD RULING, GRIND cycle 4: "every final gate still runs everything at
-        # full width" (US-004) is a property of the INSPECT that PRECEDES the
-        # gate, so a DELTA cycle coming back clean earns the widening re-open,
-        # not the gate.
-        #
-        # D-169 — AND THE CONDITION NAMED IS THE ONE TESTED ONE LINE ABOVE.
-        #
-        # This said "ASSAY is only opened by an INSPECT whose recorded rule is
-        # final_gate", which named the RULE while the `if` beside it reads the
-        # MODE — and the sibling gate's checklist entry that decides the same
-        # question is named `inspect_ran_at_full_width`. Driven at the ASSAY
-        # door, a FULL INSPECT recorded with rule verifier_touched opens ASSAY,
-        # so the sentence was false about the very run this plugin builds, where
-        # a GRIND touching the verifier is the ordinary cycle. The width is
-        # reported as the fact it is, and the rule beside it as provenance.
-        #
-        # LAST of the three refusals, deliberately. Open defects and
-        # fixes-landed-mid-INSPECT are both more specific than "this cycle was
-        # narrow", and a lead told about the width when a defect is open would
-        # widen an INSPECT it is about to invalidate.
-        if recorded_mode.get("mode") == "DELTA":
-            return {
-                "error": (
-                    f"Cannot mark INSPECT clean — cycle {recorded_mode.get('cycle', '?')} "
-                    f"ran at DELTA width (rule {recorded_mode.get('rule', '?')}), and "
-                    "ASSAY is only opened by an INSPECT whose recorded mode is "
-                    "FULL."
-                ),
-                "hint": (
-                    "The DELTA cycle came back clean, which earns the widening "
-                    "re-open rather than the gate: call "
-                    "Foundry-Phase(phase='inspect_start') again from F2. That "
-                    "crossing advances the cycle counter, sweeps the whole "
-                    "evidence corpus, records FULL and requires the full roster "
-                    "— then inspect_clean opens ASSAY. The rule that re-open "
-                    "records is final_gate, or verifier_touched when the diff "
-                    "cannot be measured; either satisfies this door, which "
-                    "reads the width."
-                ),
-                "inspect_mode": "DELTA",
-                "inspect_rule": recorded_mode.get("rule", ""),
-            }
+        outcome = _inspect_clean_preconditions(fdir, project_root)
+        if not outcome["passed"]:
+            return _transition_refusal(outcome, "Cannot mark INSPECT clean")
         (fdir / INSPECT_CLEAN_MARKER).write_text(f"{now_iso()}\n", encoding="utf-8")
         _update_phase(fdir, "F4")
         return {"ok": True, "phase": "F4", "message": "INSPECT clean \u2192 phase is now F4 (ASSAY)"}
@@ -7470,135 +7978,19 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # value any caller supplies: this handler takes no cycle argument and
         # consults none. Only F3 -> F2 advances it — the F1 -> F2 entry from
         # CAST is the run's first INSPECT, not a new cycle.
+        #
+        # D-113 / D-114 / D-116 — THE SOURCE PHASE IS A PRECONDITION, and the
+        # two widening arms with it. All three used to be stated here and
+        # nowhere else, so `Foundry-Gate` answered a question about a crossing
+        # it could not refuse. They are `_inspect_start_preconditions` now, and
+        # `widening` is read off the outcome rather than re-derived: one read of
+        # `state.phase`, one answer, two doors.
+        outcome = _inspect_start_preconditions(fdir, project_root)
+        if not outcome["passed"]:
+            return _transition_refusal(outcome, "Cannot start an INSPECT")
         state_path = fdir / "state.json"
         completed_cycle = current_cycle(fdir)
-
-        # D-113 / D-114 / D-116 — THE SOURCE PHASE IS A PRECONDITION.
-        # ----------------------------------------------------------
-        # LEAD RULING, GRIND cycle 6: `inspect_start` is accepted from EXACTLY
-        # TWO source phases — F3, the GRIND->INSPECT crossing ST-005 names, and
-        # F2, the widening re-open the cycle-4 ruling added — and BOTH advance
-        # the counter. From every other phase it is refused, naming the phase
-        # the run is actually in and the transition that applies there.
-        #
-        # It had no such precondition, and the counter-advance arm below
-        # (`prev_phase == "F3" or (prev_phase == "F2" and widening)`) silently
-        # absorbed the difference: entered from F1, F4, F5, F5.5 or F6 the call
-        # ran the whole decision, sweep and record, returned ok, and moved NO
-        # counter. Three defects came out of that one hole, all driven through
-        # the real doors:
-        #
-        #   D-113  `_advance_escalation_exits` was then called with
-        #          `completed_cycle` equal to the cycle STILL IN FLIGHT. From
-        #          F5.5 with cycle 6 open the clean arm evaluated cycle 6,
-        #          latched it into `live_clean_cycles_counted` and stamped the
-        #          class CLEARED / clean_cycles / cleared_at 6, counted
-        #          [4, 5, 6]. TEMPER then filed a LIVE instance of that class
-        #          INSIDE cycle 6, and CLEARED is terminal, so the boundary that
-        #          really closed cycle 6 could not undo it. This is precisely
-        #          the call the DONE and nyquist_done refusal hints instruct the
-        #          lead to make.
-        #   D-114  the budget arm's guard is `completed_cycle >=
-        #          packet_cycles[BUDGET - 1]`, satisfied by EQUALITY — which is
-        #          what every non-advancing `inspect_start` produces. Packet 2
-        #          emitted in cycle 4 at F5.5, `inspect_start` from F5.5, and
-        #          the class was stamped CLEARED / budget / cleared_at 4: the
-        #          packet retracted inside the cycle that emitted it, D-058's
-        #          exact symptom one door over.
-        #   D-116  a second INSPECT decision stamped onto a cycle that already
-        #          had one — `_record_cycle_rollup`'s flat write replaced
-        #          cycle 2's row, so `state.inspect_modes` held two decisions for
-        #          one cycle and the rollup held the later — while the run was
-        #          also pulled out of F4/F5/F5.5/F6 back into F2. From F1 it
-        #          returned ok at cycle 0 with `.cast-complete` absent, skipping
-        #          CAST entirely. And `_decide_inspect_mode` was called with
-        #          `cycle = completed_cycle + 1` while the entry landed on the
-        #          unadvanced counter, so the roster recorded for cycle N was the
-        #          sample drawn with seed N+1 (AC-018 / FR-033).
-        #
-        # ONE precondition closes all three, and it is stated here rather than
-        # as three separate guards inside the arms, because the arms are correct
-        # given a real boundary crossing: what was wrong is that this branch
-        # called them when no cycle had ended.
-        prev_phase_now = _load_json(state_path).get("phase", "")
-        if prev_phase_now not in ("F3", "F2"):
-            return {
-                "error": (
-                    f"Cannot start an INSPECT from phase {prev_phase_now or 'F0'} — "
-                    "Foundry-Phase(phase='inspect_start') is the GRIND->INSPECT "
-                    "crossing (ST-005), accepted from F3, and from F2 as the "
-                    "widening re-open of a DELTA cycle. It is the call that "
-                    "ADVANCES the cycle counter, so from any other phase it "
-                    "would record a second INSPECT decision against a cycle that "
-                    "has not ended and evaluate the escalation exit arms on a "
-                    "cycle still in flight."
-                ),
-                "hint": _INSPECT_START_SOURCE_HINTS.get(
-                    prev_phase_now,
-                    "Reach F3 first: Foundry-Phase(phase='grind_start') opens a "
-                    "GRIND, and its completion is what this transition closes.",
-                ),
-                "phase": prev_phase_now,
-                "cycle": completed_cycle,
-                "accepted_from": ["F3", "F2"],
-            }
-
-        # AC-016 / D-068 — THE F2->F2 WIDENING RE-OPEN.
-        #
-        # LEAD RULING, GRIND cycle 4: a DELTA INSPECT that completes with zero
-        # new defects has not earned ASSAY — it has earned the right to re-open
-        # INSPECT at FULL width, and THAT crossing is the final gate. So an
-        # `inspect_start` called while the run is already at F2 is that
-        # widening: it advances the counter, records FULL / final_gate, sweeps
-        # the whole corpus and requires the full roster.
-        #
-        # It is refused on two conditions, and both matter. Open LIVE or
-        # unknown-tier defects go to GRIND first — widening an INSPECT over
-        # known-broken code re-verifies a tree the lead is about to change. And
-        # a cycle whose recorded mode is NOT DELTA has nothing to widen: that
-        # branch is a stray second `inspect_start`, which is exactly the call
-        # D-057 used to double-count a clean cycle with, so it is named as the
-        # mistake it is rather than silently advancing the run a cycle.
-        widening = prev_phase_now == "F2"
-        if widening:
-            recorded_now = _current_inspect_mode(fdir) or {}
-            if recorded_now.get("mode") != "DELTA":
-                return {
-                    "error": (
-                        "Cannot re-open INSPECT — this cycle's recorded width is "
-                        f"{recorded_now.get('mode') or 'unrecorded'}"
-                        + (f" (rule {recorded_now['rule']})"
-                           if recorded_now.get("rule") else "")
-                        + ", so there is nothing to widen."
-                    ),
-                    "hint": (
-                        "The F2->F2 re-open exists to widen a DELTA INSPECT to "
-                        "FULL before ASSAY. From a FULL cycle, call "
-                        "Foundry-Phase(phase='inspect_clean') to open ASSAY, or "
-                        "Foundry-Phase(phase='grind_start') to open a GRIND. The "
-                        "cycle counter has NOT moved."
-                    ),
-                    "cycle": completed_cycle,
-                    "inspect_mode": recorded_now.get("mode", ""),
-                }
-            widen_blocking = _blocking_defects(fdir)
-            if widen_blocking["blocking"] > 0:
-                return {
-                    "error": (
-                        "Cannot re-open INSPECT at full width — "
-                        f"{widen_blocking['reason']}"
-                    ),
-                    "hint": (
-                        "Fix them in GRIND first: Foundry-Tasks, then "
-                        "Foundry-Gate(phase='grind'), then "
-                        "Foundry-Phase(phase='grind_start'). Widening an INSPECT "
-                        "over code the run is about to change re-verifies a tree "
-                        "that will not exist. The cycle counter has NOT moved."
-                    ),
-                    "cycle": completed_cycle,
-                    "live": widen_blocking["live"],
-                    "unknown_tier": widen_blocking["unknown"],
-                }
+        widening = outcome["widening"]
 
         # ST-006 / GI-002 / ST-005 / CT-007 — DECIDE, THEN SWEEP, THEN
         # TRANSACT. IN THAT ORDER, AND OUTSIDE THE LOCK.
@@ -7795,8 +8187,15 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         return result
 
     elif phase == "grind_start":
-        # ST-008 / CT-016 - THE CYCLE CAP, ON EVERY DOOR THAT OPENS A GRIND.
-        if (halt := _halt_if_capped(fdir, project_root, "grind_start")) is not None:
+        # fallout GI-032 / ST-015 / AC-060 — THE CAP IS ACTED ON, NEVER READ
+        # HERE. `would_halt` is computed by the shared routine from the one
+        # `_persisted_max_cycles` read this run has; this branch does what the
+        # fact says. A cap read inside a transition branch is the second
+        # derivation GI-032 exists to forbid.
+        outcome = _grind_start_preconditions(fdir, project_root)
+        if not outcome["passed"]:
+            return _transition_refusal(outcome, "Cannot open a GRIND")
+        if (halt := _halt_if_capped(fdir, project_root, "grind_start", outcome)) is not None:
             return halt
         # Every recordable stream marker is cleared (derived from the canonical
         # stream vocabulary so new streams cannot go stale across GRIND cycles),
@@ -7817,7 +8216,10 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # of them would let a run looping back through ASSAY failure run forever
         # while a run looping through GRIND halts - and the ASSAY loop is
         # exactly the one --max-cycles exists to bound.
-        if (halt := _halt_if_capped(fdir, project_root, "assay_fail")) is not None:
+        outcome = _assay_fail_preconditions(fdir, project_root)
+        if not outcome["passed"]:
+            return _transition_refusal(outcome, "Cannot open a GRIND from an ASSAY rejection")
+        if (halt := _halt_if_capped(fdir, project_root, "assay_fail", outcome)) is not None:
             return halt
         _clear_stream_completion_markers(fdir)
         _update_phase(fdir, "F3")
@@ -7825,20 +8227,14 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
                 "message": "ASSAY failed \u2192 phase is now F3 (GRIND). Fix defects, then full INSPECT, then ASSAY again."}
 
     elif phase == "temper":
-        # D-125 — AND HERE, ON THE SAME TERMS.
-        # F5 is reached THROUGH ASSAY. Without this, a DELTA INSPECT reached
-        # NYQUIST with ASSAY never opened and no verdict written — the drive is
-        # recorded on `_PHASE_ENTRY_SOURCES`.
-        if (wrong := _phase_entry_source_problem(fdir, "temper")) is not None:
-            return wrong
-        # D-236 / CT-008 / FR-006: the SAME defect read `foundry_gate('temper')`
-        # makes. Placed here — before the mode is decided, before the corpus is
-        # swept into a detached worktree, and before any marker is cleared — so
-        # a refused crossing costs nothing and leaves the run exactly as it
-        # found it, which is the ordering this branch already holds for its
-        # other refusal.
-        if (blocked := _blocking_defects_refusal(fdir, "F5 TEMPER")) is not None:
-            return blocked
+        # fallout AC-010 — D-240 CLOSES HERE. The verdict read was the temper
+        # GATE's alone; this branch entered F5 without it. Refused before the
+        # mode is decided, before the corpus is swept into a detached worktree,
+        # and before any marker is cleared — so a refused crossing costs nothing
+        # and leaves the run exactly as it found it.
+        outcome = _temper_preconditions(fdir, project_root)
+        if not outcome["passed"]:
+            return _transition_refusal(outcome, "Cannot enter F5 TEMPER")
         # GI-009 / AC-016: the F5 entry opens TEMPER's first INSPECT, so it
         # records FULL / first_of_phase on exactly the same terms as the F2
         # entry above. One rule, two doors — which is what GI-009 means by
@@ -7919,56 +8315,43 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # _compute_next_action's F5.5 branch reachable at all, since it
         # dispatches on state["phase"].
         #
-        # D-133 / GI-002 — AND THE CORPUS IS SWEPT BEFORE NYQUIST, BY NAME.
-        #
-        # GI-002 names three terminal boundaries — "before ASSAY/NYQUIST/DONE"
-        # — and this was the one crossing between them that re-executed
-        # nothing. TEMPER lands lead-lane fixes throughout F5 (that is what
-        # US-005 exists to enable), and each one changes the tree the committed
-        # evidence was captured against. Refused BEFORE `_update_phase`, so a
-        # refused crossing leaves the run in F5 with no trace it was attempted
-        # — the same ordering the INSPECT boundaries hold.
-        #
-        # D-159 — AND IT TAKES THE SAME THREE-STATE RUNG THE OTHER TWO DO.
-        #
-        # This read `_terminal_evidence_sweep(...)["ok"]` alone, which is the
-        # pre-D-149 rule: a whole-corpus sweep over a corpus that is no longer
-        # in the tree yields zero logs, zero mismatches and ok True. Driven at
-        # cycle 9 through the real door — a run at F5 with one non-reproducing
-        # committed log was REFUSED before the F6 strip and ADMITTED after the
-        # identical strip, phase F5.5, `corpus_size 0`, while `nyquist_done` and
-        # `done` on the same tree both refused naming
-        # EVIDENCE_CORPUS_STRIPPED_BEFORE_SWEEP. GI-002 names three boundaries
-        # and this is the one it names by the word NYQUIST; a --nyquist run
-        # entered F5.5 through the door that did not apply the rule.
-        # D-236 / CT-008 / FR-006 — AND THE DEFECT READ FR-006 NAMES BY NAME.
-        # "NYQUIST gains the missing defect read so one open LIVE now blocks
-        # it." `foundry_gate('nyquist')` gained it; this transition, which is
-        # what actually writes F5.5 and makes the auditors reachable, did not —
-        # so a run could generate regression tests locking in behaviour a stream
-        # had already ruled wrong, by calling Phase without Gate or straight
-        # past a Gate that refused. Before the sweep, for the reason the temper
-        # branch states.
-        if (blocked := _blocking_defects_refusal(fdir, "F5.5 NYQUIST")) is not None:
-            return blocked
-        nyq_state = _terminal_evidence_state(fdir, project_root)
-        if (refusal := _terminal_evidence_refusal(nyq_state, "enter NYQUIST")):
-            return refusal
-        nyq_sweep = nyq_state["evidence"]
+        # fallout AC-010 — D-241 AND D-242 CLOSE HERE. The verdict read and the
+        # `state.nyquist` read were the nyquist GATE's alone, so a run that
+        # never asked for F5.5 entered it and generated regression tests locking
+        # in behaviour a stream had already ruled wrong, by calling Phase
+        # without Gate or straight past a Gate that refused. The source phase
+        # joins them: F5.5 is reached from F4 (or F5 on a --temper run) and from
+        # nowhere else.
+        outcome = _nyquist_preconditions(fdir, project_root)
+        if not outcome["passed"]:
+            return _transition_refusal(outcome, "Cannot enter F5.5 NYQUIST")
+        # D-133 / D-159 / GI-002 — AND THE CORPUS IS SWEPT BEFORE NYQUIST, BY
+        # NAME. GI-002 names three terminal boundaries — "before
+        # ASSAY/NYQUIST/DONE" — and this was the one crossing between them that
+        # re-executed nothing. TEMPER lands lead-lane fixes throughout F5 (that
+        # is what US-005 exists to enable), and each one changes the tree the
+        # committed evidence was captured against. It takes the same three-state
+        # rung the other two do: a whole-corpus sweep over a corpus no longer in
+        # the tree yields zero logs, zero mismatches and ok True, which is how a
+        # --nyquist run entered F5.5 through the door that did not apply the
+        # rule. Kept OUT of the shared routine deliberately: the sweep spawns a
+        # detached worktree and a bounded pool of subprocesses, and a gate is a
+        # query a lead runs freely.
+        nyq_record = outcome["evidence_record"]
         _update_phase(fdir, "F5.5")
         _record_cycle_rollup(
             fdir,
             current_cycle(fdir),
             sub=NYQUIST_ENTRY_ROLLUP_KEY,
-            evidence_sweep=nyq_sweep["record"],
+            evidence_sweep=nyq_record,
         )
         return {
             "ok": True,
             "phase": "F5.5",
-            "evidence_sweep": nyq_sweep["record"],
+            "evidence_sweep": nyq_record,
             "message": (
                 "Phase is now F5.5 (NYQUIST). Evidence sweep re-executed "
-                f"{len(nyq_sweep['record'].get('logs_reexecuted', []))} log(s) "
+                f"{len(nyq_record.get('logs_reexecuted', []))} log(s) "
                 "at full scope."
             ),
         }
@@ -8006,22 +8389,9 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # asserted from inside an INSPECT, on a run where NYQUIST had never
         # opened. Guarded through the SAME table the three INSPECT-opening
         # tokens use; see `_PHASE_ENTRY_SOURCES`.
-        if (wrong := _phase_entry_source_problem(fdir, "nyquist_done")) is not None:
-            return wrong
-        outcome = _done_preconditions(fdir, project_root)
+        outcome = _nyquist_done_preconditions(fdir, project_root)
         if not outcome["passed"]:
-            return {
-                "error": f"Cannot leave NYQUIST for DONE — {outcome['reason']}",
-                "hint": (
-                    outcome["hint"]
-                    or "Call Foundry-Gate(phase='nyquist_done') for the full checklist."
-                ),
-                "checklist": outcome["checklist"],
-                # D-191: every failing check, ranked, not only the one that
-                # speaks. The transition publishes exactly what the gate does,
-                # because it is exactly the same evaluation (D-037).
-                "refusals": outcome["refusals"],
-            }
+            return _transition_refusal(outcome, "Cannot leave NYQUIST for DONE")
         _update_phase(fdir, "F6")
         # D-218 / FR-001 / GI-006: the artifact is written by the transition
         # that closes the run, on the same terms `_halt_if_capped` writes it at
@@ -8059,22 +8429,9 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # started with. The guard is the same table the INSPECT-opening tokens
         # use, and it is a SOURCE-PHASE check, not a second closure check: what
         # "done" means is still `_done_preconditions` and only that.
-        if (wrong := _phase_entry_source_problem(fdir, "done")) is not None:
-            return wrong
         outcome = _done_preconditions(fdir, project_root)
         if not outcome["passed"]:
-            return {
-                "error": f"Cannot mark the run DONE — {outcome['reason']}",
-                "hint": (
-                    outcome["hint"]
-                    or "Call Foundry-Gate(phase='done') for the full checklist."
-                ),
-                "checklist": outcome["checklist"],
-                # D-191: every failing check, ranked, not only the one that
-                # speaks. The transition publishes exactly what the gate does,
-                # because it is exactly the same evaluation (D-037).
-                "refusals": outcome["refusals"],
-            }
+            return _transition_refusal(outcome, "Cannot mark the run DONE")
         _update_phase(fdir, "F6")
         # D-218 / FR-001 / GI-006: same helper, same terms, the other door.
         sealed = _seal_run_report(project_root, fdir)
@@ -8086,6 +8443,35 @@ def _phase_transition(phase: str, project_root: str, fdir: Path) -> dict:
         # Clear the active run — session is done with this run
         clear_active_run()
         return {"ok": True, "phase": "F6", **sealed, "message": message}
+
+    elif phase == "halt":
+        # fallout FR-018 / FR-046 / FR-064 / GI-034 / CT-004 / ST-001 / AC-025 —
+        # THE RUN ENDS ON A RULING, THROUGH THE SEAL THE CAP ALREADY USES.
+        #
+        # `halt` is a FULL member of PHASE_TOKENS, not a special case with
+        # inline refusals: it has a preconditions routine like every other
+        # token, a gate token that reports that routine as data (CT-021), and a
+        # row in `GATE_TO_TRANSITION`. The invariant test walks it beside every
+        # other member, which is what "full member" has to mean to be worth
+        # anything.
+        #
+        # HALTED is written by ONE function. `_seal_halted` below is that
+        # function, and the cap path reaches it through `_halt_if_capped` — so
+        # a run that ends at its cycle cap and a run the lead stops deliberately
+        # produce the same state document, the same regenerated report with the
+        # lead's own prose carried, and the same HALTED row in `phase_history`.
+        # A second writer is how the two endings come to disagree about what
+        # HALTED means.
+        outcome = _halt_preconditions(fdir, project_root, reason=reason, text=text)
+        if not outcome["passed"]:
+            return _transition_refusal(outcome, "Cannot halt the run")
+        return _seal_halted(
+            fdir,
+            project_root,
+            reason=outcome["halt_reason"],
+            text=outcome["halt_text"],
+            token="halt",
+        )
 
     else:
         return {"error": f"Invalid phase: {phase}. Valid: {', '.join(PHASE_TOKENS)}"}
@@ -12720,19 +13106,83 @@ def _stamp_subphases_in(state: dict, fdir: Path) -> None:
         state["phase_times"] = phase_times
 
 
+#: fallout FR-034 / FR-055 / AC-053 — the caller argument that tells a lead's
+#: Foundry-Next from a sub-agent's read. Only the LEAD's call arms the ordering
+#: token and resets the stall clock; a sub-agent orienting itself does neither.
+LEAD_CALLER = "lead"
+
+
+def _terminal_outlook(fdir: Path) -> dict:
+    """fallout FR-021 / FR-047 / CT-007 / AC-028 / OT-026 — where this run ENDS.
+
+    Returns ``{"heading_for", "open_by_tier", "cycles_to_cap"}`` for every
+    `Foundry-Next` response, whatever the phase and whatever the action.
+
+    WHY EVERY RESPONSE, AND NOT A SECTION SOMEWHERE. A named backlog is a
+    SUCCESSFUL end (FR-047): a run that halts with three LATENT and one
+    HARDENING defect written down has done its job, and a lead that believes
+    DONE is the only acceptable ending will grind cycles against a target it
+    has already met. The three facts that decide which ending is coming — the
+    backlog by tier, the cycles left, and which terminal state they add up to —
+    are therefore on the same surface the lead reads before every single call,
+    rather than in a report it reads once at the end.
+
+    `cycles_to_cap` is None on an unbounded run, which is the default and is a
+    REAL answer: "no cap" and "zero cycles left" are opposite facts and a
+    reader that conflates them halts a run that had no cap at all.
+    """
+    state = _load_json(fdir / "state.json")
+    buckets = _open_defects_by_tier(fdir)
+    open_by_tier = {tier: len(rows) for tier, rows in sorted(buckets.items())}
+
+    max_cycles = _persisted_max_cycles(state)
+    cycles_to_cap = None if max_cycles <= 0 else max(0, max_cycles - current_cycle(fdir))
+
+    if state.get("phase") == RUN_PHASE_HALTED:
+        heading_for = RUN_PHASE_HALTED
+    elif cycles_to_cap == 0:
+        # The next GRIND door would seal HALTED, and that is what the run is
+        # heading for even though nothing has stopped yet. Saying so BEFORE the
+        # door is the whole point of the field.
+        heading_for = RUN_PHASE_HALTED
+    else:
+        heading_for = "DONE"
+    return {
+        "heading_for": heading_for,
+        "open_by_tier": open_by_tier,
+        "cycles_to_cap": cycles_to_cap,
+    }
+
+
 def foundry_next_action(
     project_root: str = ".",
     *,
+    caller: str = LEAD_CALLER,
     _arm_stall_clock: bool = True,
 ) -> dict:
     """Determine what the lead should do next based on current foundry state.
 
+    ``caller`` is the MCP surface's own distinction (FR-034 / FR-055 / AC-053).
+    Anything other than ``"lead"`` is a SUB-AGENT read: it returns the same
+    guidance and arms NEITHER the `.next-action-called` ordering token NOR the
+    `.last-next-at` stall clock.
+
+    Both halves matter and they fail in opposite directions. A sub-agent that
+    armed the ordering token would satisfy, on the lead's behalf, the handshake
+    that proves the LEAD consulted guidance before a transition — so a lead
+    could gate and transition having never called Foundry-Next, because a
+    tracer did it. A sub-agent that reset the stall clock would restart the
+    watchdog's measurement every time any agent oriented itself, which is the
+    D-023 shape one surface over: the clock must measure the LEAD's silence,
+    and a stream reading guidance is not the lead speaking.
+
     ``_arm_stall_clock`` is FALSE for exactly one caller, ``foundry_get_context``
     (AC-035 / OT-028). Underscore-prefixed and keyword-only because it is not
-    part of the MCP surface: ``Foundry-Next`` has no such argument and never
-    will. See the marker block at the end of this function for why the
-    distinction exists at all.
+    part of the MCP surface, where the distinction that IS published is
+    ``caller``. See the marker block at the end of this function for why the
+    ordering distinction exists at all.
     """
+    is_lead = caller == LEAD_CALLER
     fdir_stamp = get_run_dir(project_root)
     if fdir_stamp and (corrupt := _artifact_guard(fdir_stamp)):
         return corrupt
@@ -13023,11 +13473,22 @@ def foundry_next_action(
 
     fdir = get_run_dir(project_root)
     if fdir and fdir.exists():
+        # fallout FR-021 / CT-007 / AC-028 / OT-026 — on EVERY response, whatever
+        # the phase and whatever the action, including this one's early returns.
+        # Placed here rather than in `_compute_next_action` for exactly that
+        # reason: that function returns from a dozen branches and a field added
+        # to one of them is a field absent from eleven.
+        result.update(_terminal_outlook(fdir))
+
         now_stamp = f"{now_iso()}\n"
         # Ordering token: armed here, consumed (unlinked) by foundry_gate /
         # foundry_mark_phase_complete to prove Foundry-Next preceded a gate
         # or phase transition.
-        (fdir / NEXT_ACTION_CALLED_MARKER).write_text(now_stamp, encoding="utf-8")
+        #
+        # AC-053: the LEAD's call arms it. A sub-agent read arms nothing, so it
+        # cannot satisfy the lead's handshake on the lead's behalf.
+        if is_lead:
+            (fdir / NEXT_ACTION_CALLED_MARKER).write_text(now_stamp, encoding="utf-8")
         # Stall timestamp: written on every REAL Foundry-Next, read on the next
         # one to measure the gap. Never unlinked by gate/phase, so the watchdog
         # is decoupled from ordering-token consumption (FR-005 / FR-008).
@@ -13047,7 +13508,11 @@ def foundry_next_action(
         # it answers "did the lead consult guidance before transitioning", and
         # Foundry-Context does return the full guidance payload. Only the
         # STALL measurement is Foundry-Next's alone.
-        if _arm_stall_clock:
+        #
+        # AC-053: and a sub-agent read does not reset it either. The clock
+        # measures the LEAD's silence; a stream orienting itself is not the lead
+        # speaking, and a watchdog any agent can silence is not a watchdog.
+        if _arm_stall_clock and is_lead:
             (fdir / LAST_NEXT_AT_MARKER).write_text(now_stamp, encoding="utf-8")
 
     return result
@@ -13236,8 +13701,18 @@ _ACTION_IMPERATIVES = {
         "  - SIGHT: runs in MAIN THREAD via Playwright \u2014 execute while the four background streams run\n"
         "  - TEST / PROBE: may also run as background Agents\n"
         "When each background stream's completion notification fires: call TaskOutput(task_id) "
-        "to retrieve its findings, then call Foundry-Stream(stream, cycle, items_checked, "
-        "items_total, findings_count) with the parsed counts. Do NOT poll \u2014 the harness notifies you."
+        "to retrieve its findings, then CONFIRM THE STREAM'S OWN RECORD EXISTS \u2014 "
+        "Foundry-Context shows the cycle's roll-up. Do NOT poll \u2014 the harness notifies you.\n"
+        "\n"
+        "fallout FR-023 / FR-049 / GI-016 \u2014 YOU DO NOT RECORD A STREAM. THE AGENT "
+        "DOES.\n"
+        "Every verifying stream calls Foundry-Stream itself, with the counts it "
+        "actually measured, and a second record for the same (stream, cycle) "
+        "REPLACES the first rather than summing with it. A lead that records on "
+        "an agent's behalf is asserting numbers it did not measure, and when the "
+        "agent then records its own the cycle carries two accounts of one run. "
+        "If a stream finished and no record exists, that is a finding about the "
+        "stream \u2014 re-dispatch it, or file it \u2014 not a gap for you to fill in."
     ),
     "transition_to_grind": (
         "YOUR NEXT CALLS (in order):\n"
@@ -13282,7 +13757,108 @@ _ACTION_IMPERATIVES = {
         "Each reads the spec FIRST, forms expectations, then reads code. "
         "(The assayer's frontmatter carries model=opus and effort=max.)"
     ),
-    "transition_to_done": "YOUR NEXT CALL: Foundry-Phase(phase='done')",
+    # fallout FR-035 / AC-054 — THE F6 ORDER, STATED EXACTLY.
+    #
+    # This read "YOUR NEXT CALL: Foundry-Phase(phase='done')", which contradicts
+    # the sequence the doors actually enforce: the DONE evaluation REQUIRES the
+    # generated report, and it sweeps the committed evidence corpus — so a lead
+    # that stripped `evidence/` before generating the report is refused for a
+    # missing document, and one that strips AFTER the gate passes has changed
+    # the tree the gate judged. Report, Gate, strip, Phase, in that order, is
+    # the only sequence in which each step's precondition is still true when the
+    # next one runs.
+    "transition_to_done": (
+        "YOUR NEXT CALLS (in order, and the order is the whole of it):\n"
+        "  (1) Foundry-Report — DONE is refused without the generated report, "
+        "and it is generated, never hand-written.\n"
+        "  (2) Foundry-Gate(phase='done') — this is where the evidence corpus is "
+        "re-executed at HEAD. It must pass BEFORE the strip, on the tree the "
+        "corpus was captured against.\n"
+        "  (3) `git rm -r --cached evidence/ && rm -rf evidence/` then commit — "
+        "the strip, AFTER the gate has judged the corpus and not before.\n"
+        "  (4) Foundry-Phase(phase='done') — seals F6, carries your appended "
+        "prose into the report and archives the run.\n"
+        "Stripping before (2) refuses the gate for a corpus that is no longer "
+        "there; stripping after (4) leaves the run sealed against a tree that "
+        "no longer exists." + _GATE_THEN_PHASE_NOTE
+    ),
+    # fallout FR-035 / AC-054 — THE NINE THE SURVEY COUNTED.
+    #
+    # `_compute_next_action` emitted these and `_ACTION_IMPERATIVES` had no
+    # entry for any of them, so each fell through to the generic header —
+    # "Execute the first tool call mentioned. Do not deliberate." — over an
+    # instructions body that, for several of them, mentions no tool call at all.
+    # An imperative table with holes is worse than none: the holes are invisible
+    # and they are exactly where the lead improvises. The invariant test derives
+    # the emitted set from this function's own AST, so the tenth is caught the
+    # day it is written.
+    "transition_to_temper": (
+        "YOUR NEXT CALLS (in order):\n"
+        "  (1) Foundry-Gate(phase='temper')\n"
+        "  (2) Foundry-Phase(phase='temper') — that call enters F5, records "
+        "TEMPER's own INSPECT at FULL width and sweeps the whole evidence "
+        "corpus. Editing state.json by hand leaves the phase's first INSPECT "
+        "with no recorded mode." + _GATE_THEN_PHASE_NOTE
+    ),
+    "run_temper": (
+        "YOUR NEXT CALL: spawn the TEMPER micro-domain agents. TEMPER zooms into "
+        "individual functions, single pages and specific flows and asks whether "
+        "they actually work — its roster is the open TEMPER_CANDIDATE "
+        "observations plus its own micro-domains. Each agent records its OWN "
+        "run with Foundry-Stream and files what it finds; a probe driven and "
+        "found clean is a result, not a blank."
+    ),
+    "transition_to_nyquist": (
+        "YOUR NEXT CALLS (in order):\n"
+        "  (1) Foundry-Gate(phase='nyquist')\n"
+        "  (2) Foundry-Phase(phase='nyquist') — that call enters F5.5 and sweeps "
+        "the whole evidence corpus first. It is refused unless this run was "
+        "started with --nyquist and every requirement is VERIFIED."
+        + _GATE_THEN_PHASE_NOTE
+    ),
+    "run_nyquist": (
+        "YOUR NEXT CALL: batch the VERIFIED requirements by 5 and spawn one "
+        "Agent(subagent_type='foundry:nyquist-auditor') per batch in a SINGLE "
+        "parallel message. Each classifies COVERED / UNTESTED / UNDERTESTED, "
+        "generates minimal behavioural tests, runs them and commits the passing "
+        "ones. Any ESCALATE_IMPL_BUG result starts a new GRIND cycle. Never mark "
+        "an untested requirement as passing."
+    ),
+    "assay_failed_loop_back": (
+        "YOUR NEXT CALLS (in order):\n"
+        "  (1) Foundry-Tasks\n"
+        "  (2) Foundry-Gate(phase='grind')\n"
+        "  (3) Foundry-Phase(phase='assay_fail') — the ASSAY-rejection door into "
+        "F3. It is the same transition `grind_start` is, through the other door, "
+        "and it is bounded by the same --max-cycles cap." + _GATE_THEN_PHASE_NOTE
+    ),
+    "widen_inspect": (
+        "YOUR NEXT CALL: Foundry-Phase(phase='inspect_start') AGAIN, from F2. "
+        "The DELTA cycle came back clean, which earns the widening re-open "
+        "rather than the gate: that crossing advances the cycle counter, sweeps "
+        "the whole evidence corpus, records FULL and requires the full roster. "
+        "Then run every stream it names — a spot check is not a FULL INSPECT."
+    ),
+    "record_inspect_width": (
+        "YOUR NEXT CALL: Foundry-Phase(phase='inspect_start') from F2. This "
+        "INSPECT has no recorded width, so the roster, the rule and the evidence "
+        "sweep it was opened with are all unknown, and every door that reads the "
+        "width refuses. Do NOT edit state.json by hand — the transition is what "
+        "records the decision."
+    ),
+    "done": (
+        "YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.md and tell the "
+        "user what shipped. Do NOT dispatch a wave, do NOT call Foundry-Phase, "
+        "do NOT call Foundry-Next in a loop. Start a NEW run with Foundry-Init "
+        "if there is more work."
+    ),
+    "unknown": (
+        "YOUR NEXT CALL: Foundry-Context. The guidance engine does not recognise "
+        "this run's phase, which means `state.json` carries a value no "
+        "transition writes. Read the run's state, then Foundry-Next again. Do "
+        "NOT guess a transition token — an unrecognised phase is a state to "
+        "diagnose, not one to advance out of."
+    ),
 }
 
 
@@ -13899,7 +14475,9 @@ def _compute_next_action(project_root: str) -> dict:
                     "Spawn agents using the agent_configs below (model and type are ENFORCED). "
                     "SIGHT runs in MAIN THREAD (Playwright MCP only works here) \u2014 "
                     "navigate to URL, snapshot every page, exercise all elements, check console. "
-                    "After each stream, call Foundry-Stream(stream, cycle, items_checked)."
+                    "Each stream records its OWN run with Foundry-Stream (fallout "
+                    "GI-016) — confirm the record exists when the stream reports; "
+                    "do not record on its behalf."
                 ),
                 "details": {
                     "missing_streams": streams["missing"].split(),
@@ -14135,8 +14713,11 @@ def _compute_next_action(project_root: str) -> dict:
                 "instructions": (
                     f"ASSAY found {non_verified}/{total} non-verified requirements. "
                     "Sync findings as defects (Foundry-Sync), "
-                    "call Foundry-Phase(phase='grind_start') to clear ALL markers, "
-                    "update state to F3 (GRIND). Fix defects, then FULL INSPECT, then ASSAY again. "
+                    "call Foundry-Gate(phase='grind') then "
+                    "Foundry-Phase(phase='assay_fail') — the ASSAY-rejection door "
+                    "into F3, which clears every stream marker and is bounded by "
+                    "the same --max-cycles cap `grind_start` is. "
+                    "Fix defects, then FULL INSPECT, then ASSAY again. "
                     "NO SPOT CORRECTIONS \u2014 the entire verification stack re-runs."
                 ),
                 "details": {
@@ -14162,9 +14743,13 @@ def _compute_next_action(project_root: str) -> dict:
                 "phase": "F4",
                 "action": "transition_to_temper",
                 "instructions": (
-                    "ASSAY passed: all requirements verified. --temper is set. "
-                    "Call Foundry-Gate(phase='temper'), update state to F5. "
-                    "Run TEMPER micro-domain stress testing."
+                    "ASSAY passed: all requirements verified. --temper is set, "
+                    "so F4 routes to F5. Call Foundry-Gate(phase='temper'), then "
+                    "Foundry-Phase(phase='temper') — that call is what enters "
+                    "F5, records TEMPER's own INSPECT at FULL width and sweeps "
+                    "the evidence corpus. Editing state.json to F5 by hand "
+                    "leaves the phase's first INSPECT with no recorded mode. "
+                    "Then run TEMPER micro-domain stress testing."
                 ),
                 "details": {
                     "agent_config": {

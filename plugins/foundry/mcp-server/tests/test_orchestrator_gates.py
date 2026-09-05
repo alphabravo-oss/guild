@@ -64,12 +64,14 @@ import ast
 import asyncio
 import builtins
 import importlib
+import inspect
 import io
 import json
 import os
 import re
 import sys
 import tempfile
+import textwrap
 import tokenize
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -806,6 +808,12 @@ def test_grind_start_clears_every_stream_marker(run_env):
         (fdir / f".{stream}-complete").write_text(
             _old_marker_body(), encoding="utf-8"
         )
+    # fallout AC-056: `grind_start` shares the `grind` GATE's evaluation now, so
+    # the fixture owes what that gate has always required — something to grind
+    # and a Foundry-Tasks that packeted it. The token used to have no
+    # preconditions at all, which is the divergence this release closes.
+    _defect_ledger(fdir, [_tiered("D-500", "LIVE")])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
 
     _arm_ordering_token(fdir)
     result = fo.foundry_mark_phase_complete("grind_start", project_root)
@@ -9632,6 +9640,38 @@ def test_the_spec_parser_keeps_its_own_anchoring(tmp_path):
 _GATE_PHASES_THAT_READ_DEFECTS = ("assay", "temper", "nyquist", "done")
 
 
+def _phase_accepting(fdir: Path, gate: str) -> str:
+    """The phase `gate`'s mapped transition is accepted from. DERIVED.
+
+    fallout AC-056 / AC-059 — the source-phase check moved INSIDE the shared
+    preconditions routine, so a gate now refuses from a phase its transition
+    does not accept exactly as the transition always did. The four end gates can
+    therefore no longer all be asked from one phase: on a --nyquist run `temper`
+    and `nyquist` are asked from F4 and `done` from F5.5, which is the sequence
+    a real run walks anyway.
+
+    Read off `GATE_TO_TRANSITION` and `_PHASE_ENTRY_SOURCES` rather than typed
+    beside them, so a row added to either table moves these fixtures with it.
+    """
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    for token in fo.GATE_TO_TRANSITION[gate]:
+        spec = fo._PHASE_ENTRY_SOURCES.get(token)
+        if spec is None:
+            continue
+        accepted = spec["accepted_from"]
+        if callable(accepted):
+            accepted = accepted(state)
+        return accepted[0]
+    return state.get("phase", "F4")
+
+
+def _at_the_phase_for(fdir: Path, gate: str) -> None:
+    """Put the fixture in the phase `gate`'s transition is accepted from."""
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    state["phase"] = _phase_accepting(fdir, gate)
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
 def _tiered(did: str, tier: str | None, status: str = "open", **extra) -> dict:
     record = {
         "id": did, "cycle": 1, "source": "trace", "type": "UNWIRED",
@@ -9742,6 +9782,7 @@ def test_a_latent_only_backlog_passes_every_end_gate(run_env):
     _generate_report(project_root, fdir)
 
     for phase in _GATE_PHASES_THAT_READ_DEFECTS:
+        _at_the_phase_for(fdir, phase)
         _arm_ordering_token(fdir)
         gate = foundry_gate(phase, project_root)
         assert gate["passed"] is True, (phase, gate)
@@ -9781,6 +9822,7 @@ def test_one_open_live_defect_refuses_every_end_gate_by_name(run_env, phase):
     ])
     _generate_report(project_root, fdir)
 
+    _at_the_phase_for(fdir, phase)
     _arm_ordering_token(fdir)
     gate = foundry_gate(phase, project_root)
 
@@ -9810,6 +9852,7 @@ def test_an_untiered_defect_blocks_like_live_and_is_named_separately(run_env, ph
     _defect_ledger(fdir, [_tiered("D-007", None)])
     _generate_report(project_root, fdir)
 
+    _at_the_phase_for(fdir, phase)
     _arm_ordering_token(fdir)
     gate = foundry_gate(phase, project_root)
 
@@ -9887,6 +9930,7 @@ def test_a_temper_cycle_filing_only_latent_leaves_temper_and_nyquist_passing(run
     _generate_report(project_root, fdir)
 
     for phase in ("temper", "nyquist"):
+        _at_the_phase_for(fdir, phase)
         _arm_ordering_token(fdir)
         gate = foundry_gate(phase, project_root)
         assert gate["passed"] is True, (phase, gate)
@@ -10455,7 +10499,10 @@ def test_halted_is_a_named_state_and_not_done(run_env):
     state = json.loads((fdir / "state.json").read_text())
     assert state["phase"] == RUN_PHASE_HALTED
     assert state["halted_at_cycle"] == 2
-    assert "max-cycles" in state["halted_reason"]
+    # fallout CT-004: the member is what a grouper keys on and the text is why
+    # THIS run ended. Neither substitutes for the other, so both are asserted.
+    assert state["halted_reason"]["reason"] == fo.HALT_REASON_CAP_REACHED
+    assert "max-cycles" in state["halted_reason"]["text"]
 
 
 def test_the_init_schema_advertises_max_cycles(run_env):
@@ -11205,6 +11252,11 @@ def test_a_successful_transition_still_consumes_the_token(run_env):
     Foundry-Next."""
     project_root, fdir = run_env
     _write_state(fdir, phase="F0", cycle=0)
+    # fallout AC-056: `start_cast` shares the `cast` GATE's evaluation now — the
+    # manifest has to exist, parse and carry a casting. It used to be
+    # `_update_phase(fdir, "F1")` under the halted guard alone, so a CAST wave
+    # could be opened over a manifest the gate would have refused.
+    _write_manifest_with_castings(fdir, ["src/handler.py"], no_ui=True)
     _arm_ordering_token(fdir)
 
     assert fo.foundry_mark_phase_complete("start_cast", project_root)["ok"] is True
@@ -11508,32 +11560,19 @@ def test_a_tiered_open_record_is_not_re_tiered(run_env):
 
 
 def _gate_phase_tokens() -> set[str]:
-    """Every literal ``foundry_gate`` branches on, from its own AST.
+    """Every gate token the server accepts, from the table that decides it.
 
-    Derived rather than listed, for the reason `_handler_phase_tokens` is: a
-    guard satisfied by updating a copy beside the function is a guard that stops
-    covering the branch someone adds next. ``done`` and ``nyquist_done`` arrive
-    as an ``in`` tuple rather than an ``==``, so both comparison shapes are read.
+    fallout AC-059 — `foundry_gate` HAS NO PER-PHASE BRANCHES ANY MORE, so
+    reading its AST for `phase == "<literal>"` comparisons now finds none and
+    this derivation returned the empty set — which pytest reports as "got empty
+    parameter set" and every parametrized guard below silently stops covering
+    anything. That is the failure mode a derived pin is most exposed to, and the
+    fix is to derive from what actually decides the answer: `GATE_TO_TRANSITION`
+    is the one mapping, `foundry_gate` refuses anything absent from it by name,
+    and a token added there is walked by every guard below on the day it lands.
     """
-    import ast
-    import inspect
-    import textwrap
-
-    tree = ast.parse(textwrap.dedent(inspect.getsource(fo.foundry_gate)))
-    tokens: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Compare):
-            continue
-        if not (isinstance(node.left, ast.Name) and node.left.id == "phase"):
-            continue
-        for op, comparator in zip(node.ops, node.comparators):
-            if isinstance(op, ast.Eq) and isinstance(comparator, ast.Constant):
-                if isinstance(comparator.value, str):
-                    tokens.add(comparator.value)
-            elif isinstance(op, ast.In) and isinstance(comparator, ast.Tuple):
-                for element in comparator.elts:
-                    if isinstance(element, ast.Constant) and isinstance(element.value, str):
-                        tokens.add(element.value)
+    tokens = set(fo.GATE_TO_TRANSITION)
+    assert tokens, "the gate token roster is empty; every guard below is vacuous"
     return tokens
 
 
@@ -11633,6 +11672,7 @@ def test_an_otherwise_perfect_run_still_cannot_reach_done_from_halted(run_env):
     _generate_report(project_root, fdir)
 
     # Prove the fixture is otherwise clean BEFORE the halt is written.
+    _at_the_phase_for(fdir, "done")
     _arm_ordering_token(fdir)
     assert foundry_gate("done", project_root)["passed"] is True
 
@@ -11670,6 +11710,7 @@ def test_done_preconditions_names_the_halt_and_lets_it_claim_the_reason(run_env)
     _generate_report(project_root, fdir)
     _halted_run(fdir)
 
+
     outcome = fo._done_preconditions(fdir, project_root)
 
     assert outcome["passed"] is False
@@ -11694,6 +11735,7 @@ def test_a_running_run_carries_the_passing_halt_row(run_env):
     _defect_ledger(fdir, [])
     _generate_report(project_root, fdir)
 
+    _at_the_phase_for(fdir, "done")
     outcome = fo._done_preconditions(fdir, project_root)
 
     assert outcome["passed"] is True, outcome
@@ -11720,9 +11762,16 @@ def test_the_halt_is_read_through_one_reader(run_env):
 def test_the_phase_token_guard_did_not_change_the_derived_branch_set(run_env):
     """The HALTED guard compares no phase literal, so the drift guard that
     derives the accepted token set from `_phase_transition`'s own
-    `phase == "<literal>"` comparisons still reads exactly the ten branches."""
+    `phase == "<literal>"` comparisons still reads exactly the branches.
+
+    fallout FR-064 / GI-034: the count is the ROSTER's length, not a number
+    typed here. `halt` joined `PHASE_TOKENS` this release and a hand-typed 10
+    would have had to be edited beside it — which is the second copy this pin
+    exists to catch, in the pin itself.
+    """
     assert _handler_phase_tokens() == set(fo.PHASE_TOKENS)
-    assert len(_handler_phase_tokens()) == 10
+    assert len(_handler_phase_tokens()) == len(fo.PHASE_TOKENS)
+    assert "halt" in _handler_phase_tokens()
 
 
 # --------------------------------------------------------------------------- #
@@ -12595,16 +12644,39 @@ def test_the_inspect_clean_hint_names_a_call_the_server_accepts(run_env):
             encoding="utf-8",
         )
 
+    # fallout AC-056 — THE ARM THIS PIN WAS WRITTEN AGAINST CANNOT BE A REFUSAL.
+    #
+    # `.inspect-clean` is written by ONE call: `Foundry-Phase('inspect_clean')`,
+    # the transition the `assay` gate guards. Under one shared routine per
+    # transition token, a rung on that marker would make the transition refuse
+    # itself, and it already made the documented sequence impossible — the gate
+    # demanded a marker only the call it precedes writes. It is a NON-REFUSING
+    # checklist fact now, and the substance the arm was reaching for — "GRIND
+    # fixed defects and this INSPECT has not re-verified" — is carried as a real
+    # refusal by `fixes_after_decision`, which measures it against the recorded
+    # width decision instead of against a marker.
+    #
+    # D-123's guarantee is unchanged and is what this still pins: whatever the
+    # door says, the call it names is one the server accepts.
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    state["inspect_modes"][-1]["fixes_after_decision"] = ["D-001"]
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
     _arm_ordering_token(fdir)
     gate = foundry_gate("assay", project_root)
 
     assert gate["passed"] is False
-    assert "has not re-verified" in gate["reason"], gate
+    assert "fixed after this INSPECT's width was decided" in gate["reason"], gate
     assert "foundry_mark_inspect_clean" not in gate["hint"]
-    assert "Foundry-Phase(phase='inspect_clean')" in gate["hint"], gate["hint"]
+    assert "Foundry-Phase(phase='inspect_start')" in gate["hint"], gate["hint"]
 
-    # And the named call is one the server actually accepts.
+    # And the named calls are ones the server actually accepts.
     assert "inspect_clean" in fo.PHASE_TOKENS
+    assert "inspect_start" in fo.PHASE_TOKENS
+
+    # The marker itself is still REPORTED, so nothing a lead could read is lost.
+    fact = next(c for c in gate["checklist"] if c["check"] == "inspect_clean")
+    assert fact["ok"] is False and fact["refuses"] is False, fact
 
 
 # --------------------------------------------------------------------------- #
@@ -12634,6 +12706,8 @@ def test_the_done_checklist_carries_an_evidence_rung(run_env):
     _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
     _defect_ledger(fdir, [])
     _generate_report(project_root, fdir)
+
+    _at_the_phase_for(fdir, "done")
 
     outcome = fo._done_preconditions(fdir, project_root)
 
@@ -12899,6 +12973,7 @@ def test_the_clean_f2_arms_name_a_persisted_escalated_class(run_env):
 
     # And the set it names is the SAME set the F6 door refuses on — one union,
     # read through one function, so the notice and the refusal cannot drift.
+    _at_the_phase_for(fdir, "done")
     outcome = fo._done_preconditions(fdir, project_root)
     assert outcome["passed"] is False
     assert "FDC" in outcome["reason"]
@@ -13021,11 +13096,15 @@ def test_a_stripped_corpus_with_no_recorded_pass_refuses_done_by_name(run_env):
     )
     _done_ready(project_root, fdir)
 
+    _at_the_phase_for(fdir, "done")
+
     before = fo._done_preconditions(fdir, project_root)
     assert before["passed"] is False, before
     assert "casting-1-handler.log" in json.dumps(before), before
 
     _strip_evidence(project_root)
+
+    _at_the_phase_for(fdir, "done")
 
     after = fo._done_preconditions(fdir, project_root)
     assert after["passed"] is False, after
@@ -13060,6 +13139,7 @@ def test_the_mandated_f6_order_earns_the_pass_the_strip_then_spends(run_env):
     _done_ready(project_root, fdir)
 
     swept_at = _head(project_root)
+    _at_the_phase_for(fdir, "done")
     gate = fo._done_preconditions(fdir, project_root)
     assert gate["passed"] is True, gate
     gate_rung = next(
@@ -13076,6 +13156,8 @@ def test_the_mandated_f6_order_earns_the_pass_the_strip_then_spends(run_env):
     assert marker["last_full_pass"]["corpus_size"] == 1, marker
 
     _strip_evidence(project_root)
+
+    _at_the_phase_for(fdir, "done")
 
     after = fo._done_preconditions(fdir, project_root)
     assert after["passed"] is True, after
@@ -13107,6 +13189,8 @@ def test_a_run_that_committed_no_evidence_at_all_still_passes(run_env):
     project_root, fdir = run_env
     _evidence_repo(project_root)
     _done_ready(project_root, fdir)
+
+    _at_the_phase_for(fdir, "done")
 
     outcome = fo._done_preconditions(fdir, project_root)
 
@@ -13211,6 +13295,24 @@ def test_the_terminal_crossing_table_names_every_branch_that_sweeps(run_env):
             for node in ast.walk(ast.Module(body=branch.body, type_ignores=[]))
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         }
+        # fallout AC-056 — THE RUNG MOVED INTO THE SHARED ROUTINES, SO THE SCAN
+        # FOLLOWS THE CALL ONE HOP.
+        #
+        # A branch no longer sweeps inline: it calls its
+        # `_<token>_preconditions`, and the rung lives there — which is what
+        # gives `Foundry-Gate('nyquist')` the sweep it never had. Reading only
+        # the branch's own body would report one crossing of three and call the
+        # roster wrong, when what actually happened is that all three now take
+        # the rung through one function each.
+        for callee in sorted(calls):
+            if callee.endswith("_preconditions") and hasattr(fo, callee):
+                calls |= {
+                    node.func.id
+                    for node in ast.walk(
+                        ast.parse(textwrap.dedent(inspect.getsource(getattr(fo, callee))))
+                    )
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                }
         if {"_terminal_evidence_state", "_done_preconditions"} & calls:
             sweeping |= tokens
 
@@ -14020,18 +14122,32 @@ def test_every_gate_refusal_states_a_remedy():
     that no call site evades it with an empty literal.
     """
     source = Path(fo.__file__).read_text(encoding="utf-8")
-    gate = next(
+    # fallout FR-007 / AC-009 — THE ARMS MOVED, SO THE SCAN FOLLOWS THEM.
+    #
+    # `foundry_gate` composes nothing now: every `ladder.fail` in this package
+    # lives in a `_<token>_preconditions` routine or in one of the rung helpers
+    # they share. Scanning the gate alone would find zero arms and pass
+    # vacuously — the exact failure the emptiness guard below refuses — so the
+    # subject is every function that records a failing check, wherever it sits.
+    bodies = [
         node for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.FunctionDef) and node.name == "foundry_gate"
-    )
-
+        if isinstance(node, ast.FunctionDef)
+    ]
     calls = [
-        node for node in ast.walk(gate)
+        node for body in bodies for node in ast.walk(body)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "fail"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "ladder"
     ]
-    assert calls, "foundry_gate records no failing check through the ladder"
+    assert len(calls) >= 12, (
+        "the package records fewer failing checks through the ladder than there "
+        "are rungs; the scan has gone blind and every assertion below is vacuous"
+    )
+    gate = next(
+        node for node in bodies if node.name == "foundry_gate"
+    )
     for call in calls:
         assert len(call.args) == 3 and not call.keywords, ast.dump(call)
         rank, reason, hint = call.args
@@ -14082,10 +14198,16 @@ def test_the_refusal_that_speaks_is_the_highest_ranked_one(run_env):
 
     # The width is the top rank at this door: `Foundry-Phase(inspect_start)` is
     # the one remedy here that no other failing check refuses.
-    assert "Cannot open ASSAY" in gate["reason"], gate["reason"]
+    #
+    # fallout AC-056: the rung states the CHECK, and the door that refused
+    # states what it could not do. `Foundry-Phase('inspect_clean')` prefixes
+    # "Cannot mark INSPECT clean — "; the gate answers "may I?" and renders the
+    # check bare. One evaluation, one sentence, and the prefix is the whole of
+    # the difference — so the substance is what this pin reads.
+    assert "no recorded width" in gate["reason"], gate["reason"]
     # ...and every check that failed is still named, in rank order.
     published = " ".join(r["reason"] for r in gate["refusals"])
-    for fragment in ("Active teams", "D-001", "streams incomplete"):
+    for fragment in ("Active teammates", "D-001", "streams incomplete"):
         assert fragment in published, (fragment, gate["refusals"])
 
 
@@ -14195,7 +14317,12 @@ def _d190_state(project_root: str, fdir: Path) -> None:
     )
     ids = ["FR-1", "FR-2", "FR-3"]
     _write_spec(fdir, ids)
-    _write_state(fdir, phase="F5", cycle=2, nyquist=True, temper=True)
+    # fallout AC-056 — F5.5, not F5. The source-phase check is a rung of the
+    # shared routine now, so a `done` door asked from F5 on a --nyquist run
+    # refuses on THAT and the two checks this fixture exists to contrast are
+    # both outranked. "Two checks fail on this state and only two" is the whole
+    # property, so the fixture stands where the run really would.
+    _write_state(fdir, phase="F5.5", cycle=2, nyquist=True, temper=True)
     _write_verdicts(
         fdir, [{"requirement_id": r, "verdict": "VERIFIED"} for r in ids]
     )
@@ -14400,6 +14527,7 @@ def test_the_halt_outranks_the_evidence_rung_it_used_to_follow(run_env):
     _d190_state(project_root, fdir)
     _halted_run(fdir)
 
+
     outcome = fo._done_preconditions(fdir, project_root)
 
     assert outcome["passed"] is False
@@ -14430,7 +14558,7 @@ def test_both_f6_transitions_publish_the_ranked_refusals(run_env):
     # Both tokens are made from F5.5 on a --nyquist run: `done`'s accepted
     # source is the LAST phase the run's own flags make terminal (D-164).
     for token in ("done", "nyquist_done"):
-        _write_state(fdir, phase="F5.5", cycle=2, nyquist=True, temper=True)
+        _at_the_phase_for(fdir, token)
         _arm_ordering_token(fdir)
         result = foundry_mark_phase_complete(token, project_root)
         assert result.get("ok") is not True, (token, result)
@@ -15486,10 +15614,15 @@ def test_the_three_terminal_doors_share_one_spelling_of_the_prose_clauses(run_en
     """
     import inspect
 
-    halt_src = inspect.getsource(fo._halt_if_capped)
+    # fallout FR-046: the cap and the lead's ruling both seal through
+    # `_seal_halted`, which is where the clause now lives — one writer, so the
+    # two endings cannot come apart on what they say about the lead's prose
+    # either. `_halt_if_capped` is the ACTION the cap fact licenses and states
+    # no sentence of its own.
+    halt_src = inspect.getsource(fo._seal_halted)
     sentence_src = inspect.getsource(fo._sealed_report_sentence)
 
-    for name, src in (("_halt_if_capped", halt_src),
+    for name, src in (("_seal_halted", halt_src),
                       ("_sealed_report_sentence", sentence_src)):
         assert "_lead_prose_clause(" in src, name
         # Neither door re-spells the clauses it delegates.
@@ -15510,236 +15643,903 @@ def test_the_three_terminal_doors_share_one_spelling_of_the_prose_clauses(run_en
 
 
 # --------------------------------------------------------------------------- #
-# D-236 — a transition is never more permissive than its own gate
+# fallout FR-041 / AC-008 / AC-009 / OT-007 / OT-009 / CT-013 — THE INVARIANT.
+#
+# A transition is never more permissive than its own gate, for EVERY token and
+# EVERY rung, and the token set and the rung set are both DERIVED from the
+# module's own declarations rather than typed here.
+#
+# What this replaces was a four-token, one-rung parity pin: `temper`, `nyquist`,
+# `done` and `nyquist_done` against the blocking-defect rung alone. It closed
+# D-236 and left the generator running, and D-240..D-243 are what came out of
+# it — four more checks the gate made with no transition twin, on tokens and
+# rungs the old pin did not walk. A pin that walks four of eleven tokens and one
+# of thirteen rungs cannot see the class it is a member of.
+#
+# THE DERIVATION, in three parts, each with its own emptiness guard:
+#   * TOKENS come from `fo.PHASE_TOKENS`. Every member must have exactly one
+#     `_<token>_preconditions` and a row in `GATE_TO_TRANSITION`'s value set.
+#   * RUNGS come from the `_GATE_RANK_*` constants read off the module's
+#     namespace. Every one must have an arranger below, so a rank added without
+#     a way to provoke it fails here rather than going unwalked.
+#   * WHICH RUNGS APPLY TO WHICH TOKEN comes from each routine's own AST: the
+#     `_GATE_RANK_*` names its body mentions. A rung moved into a routine is
+#     walked for that token the day it is written.
 # --------------------------------------------------------------------------- #
 
 
-#: The names through which the blocking-defect read reaches a Foundry-Gate
-#: branch. `_blocking_defects` is the predicate itself; `_done_preconditions` is
-#: the shared F6 evaluation that calls it, which is how both terminal gates read
-#: defects (D-037 / D-043 / D-044). A gate branch mentioning neither reads no
-#: defects, and the invariant below therefore asks nothing of its transition.
-_DEFECT_READING_GATE_CALLS = ("_blocking_defects", "_done_preconditions")
-
-
-def _phase_literals(test: ast.AST) -> set[str]:
-    """The `phase == "x"` / `phase in ("x", "y")` literals in one branch test."""
-    found: set[str] = set()
-    for node in ast.walk(test):
-        if not isinstance(node, ast.Compare):
-            continue
-        if not (isinstance(node.left, ast.Name) and node.left.id == "phase"):
-            continue
-        for op, comparator in zip(node.ops, node.comparators):
-            if isinstance(op, ast.Eq) and isinstance(comparator, ast.Constant):
-                if isinstance(comparator.value, str):
-                    found.add(comparator.value)
-            elif isinstance(op, ast.In) and isinstance(
-                comparator, (ast.Tuple, ast.List, ast.Set)
-            ):
-                for element in comparator.elts:
-                    if isinstance(element, ast.Constant) and isinstance(
-                        element.value, str
-                    ):
-                        found.add(element.value)
-    return found
-
-
-def _gate_phases_reading_defects() -> set[str]:
-    """Gate phases whose OWN branch reaches the blocking-defect predicate.
-
-    Read out of `foundry_gate`'s AST, branch by branch, rather than from a list
-    maintained beside it — the same discipline `_handler_phase_tokens` applies
-    one function over, and for the same reason. A gate that GAINS the defect
-    read later joins this set the day it gains it, and the invariant below then
-    demands the matching transition on the same day.
-
-    Deliberately NOT "every gate phase": `Foundry-Gate('cast')` reads the
-    castings manifest and no defects, and the `cast` transition opens the FIRST
-    INSPECT of F2 — before any stream has filed anything. Demanding a
-    defect refusal there would deadlock a resumed run on the defects it was
-    resumed to fix.
-    """
-    import inspect
-    import textwrap
-
-    tree = ast.parse(textwrap.dedent(inspect.getsource(fo.foundry_gate)))
-    reading: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
-            continue
-        phases = _phase_literals(node.test)
-        if not phases:
-            continue
-        body = "\n".join(ast.dump(stmt) for stmt in node.body)
-        if any(name in body for name in _DEFECT_READING_GATE_CALLS):
-            reading |= phases
-    return reading
-
-
-#: The phase each gated token is called FROM, and the run flags that make that
-#: entry legal. Declared, because an arrangement cannot be derived; the SET it
-#: must cover IS derived, so a gated token added later fails the map rather than
-#: silently skipping the invariant.
-_GATED_TOKEN_ARRANGEMENT = {
-    "temper": ("F4", {"temper": True}),
-    "nyquist": ("F5", {"temper": True, "nyquist": True}),
-    # No --nyquist: with the flag set, `done` is refused from F4 and the run
-    # must leave through `nyquist_done` instead.
-    "done": ("F4", {}),
-    "nyquist_done": ("F5.5", {"temper": True, "nyquist": True}),
-}
-
-
-def _gated_tokens() -> set[str]:
-    """Tokens that are BOTH a defect-reading gate phase and a Phase branch."""
-    return _gate_phases_reading_defects() & _handler_phase_tokens()
-
-
-def test_every_defect_reading_gate_names_a_real_predicate():
-    """The derivation's own inputs exist, so the set cannot quietly go empty.
-
-    `_DEFECT_READING_GATE_CALLS` is matched against AST dumps by NAME. If one of
-    those names were renamed in the module and not here, every branch would stop
-    matching, the derived set would empty, the parametrization below would
-    vanish, and a suite full of nothing would report green — the worst failure a
-    derived pin can have.
-    """
-    for name in _DEFECT_READING_GATE_CALLS:
-        assert callable(getattr(fo, name)), name
-    assert _gate_phases_reading_defects(), "no gate branch reads defects at all"
-
-
-def test_every_gated_token_has_an_arrangement_declared():
-    """The map above covers the derived set, in both directions.
-
-    Without this, a token added to both surfaces later would not appear in the
-    parametrization and the invariant would silently stop covering it — which is
-    how a partial coverage gap becomes a defect nobody sees. The reverse
-    direction catches a stale entry for a token that stopped being gated.
-    """
-    assert _gated_tokens() == set(_GATED_TOKEN_ARRANGEMENT), {
-        "gated_but_unarranged": sorted(
-            _gated_tokens() - set(_GATED_TOKEN_ARRANGEMENT)
-        ),
-        "arranged_but_ungated": sorted(
-            set(_GATED_TOKEN_ARRANGEMENT) - _gated_tokens()
-        ),
+def _gate_rank_names() -> dict[str, int]:
+    """Every `_GATE_RANK_*` constant the module declares, by name."""
+    return {
+        name: value
+        for name, value in vars(fo).items()
+        if name.startswith("_GATE_RANK_") and isinstance(value, int)
     }
 
 
-def _arrange_gated_token(project_root: str, fdir: Path, token: str) -> str:
-    """Put the run where `token` is legal, and return the phase it starts in."""
-    phase, flags = _GATED_TOKEN_ARRANGEMENT[token]
+def _preconditions_name(token: str) -> str:
+    return f"_{token}_preconditions"
+
+
+def _ranks_a_routine_can_emit(token: str, _seen: frozenset[str] = frozenset()) -> set[str]:
+    """The `_GATE_RANK_*` names reachable from `token`'s routine, via its own AST.
+
+    Follows calls into this module's other private helpers one level at a time —
+    `_teams_rung`, `_blocking_defects_rung`, `_all_verified_rung`,
+    `_source_phase_rung`, and the delegations `_assay_fail_preconditions` and
+    `_nyquist_done_preconditions` make — because a rung factored into a shared
+    helper is still that token's rung. Reading only the routine's own body would
+    make the derivation report FEWER rungs the more the code is deduplicated,
+    which is the wrong direction for a pin to move.
+    """
+    name = _preconditions_name(token) if token in fo.PHASE_TOKENS else token
+    fn = getattr(fo, name, None)
+    if fn is None or name in _seen:
+        return set()
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    ranks: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id.startswith("_GATE_RANK_"):
+            ranks.add(node.id)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            callee = node.func.id
+            if callee.startswith("_") and callee != name and hasattr(fo, callee):
+                ranks |= _ranks_a_routine_can_emit(callee, _seen | {name})
+    return ranks
+
+
+def test_every_transition_token_has_exactly_one_preconditions_routine():
+    """fallout AC-007 / GI-011 / GI-031 — one routine per TRANSITION token.
+
+    Derived from `PHASE_TOKENS`, so a token added without a routine fails here
+    rather than reaching a door that composes its checks inline again.
+    """
+    assert fo.PHASE_TOKENS, "the token roster is empty; the derivation is blind"
+    missing = [t for t in fo.PHASE_TOKENS if not callable(getattr(fo, _preconditions_name(t), None))]
+    assert missing == [], missing
+    # ...and the one place that says which routine belongs to which token knows
+    # every one of them. Read off the chain's own source rather than driven,
+    # because driving it would run eleven real evaluations against the
+    # filesystem to learn something the source states outright.
+    chain = inspect.getsource(fo._token_preconditions)
+    for token in fo.PHASE_TOKENS:
+        assert f'token == "{token}"' in chain, token
+        assert f"{_preconditions_name(token)}(" in chain, token
+
+
+def test_every_gate_token_maps_to_a_transition_and_every_transition_has_a_gate():
+    """fallout AC-059 / ST-014 / CT-020 — `GATE_TO_TRANSITION` is the whole map.
+
+    Both directions. A gate token missing from the table is a door with no
+    evaluation; a `PHASE_TOKENS` member that is no gate's target is a transition
+    a lead cannot ask about before calling it, which is the state `inspect_start`
+    and `halt` were in before this release.
+    """
+    assert fo.GATE_TO_TRANSITION, "the mapping is empty; every assertion below is vacuous"
+    targets = {t for tokens in fo.GATE_TO_TRANSITION.values() for t in tokens}
+    assert targets == set(fo.PHASE_TOKENS), {
+        "mapped_but_not_a_token": sorted(targets - set(fo.PHASE_TOKENS)),
+        "token_with_no_gate": sorted(set(fo.PHASE_TOKENS) - targets),
+    }
+    # The transport advertises exactly this set, DERIVED from it in server.py
+    # rather than re-typed beside it. Asserted on the source, because the enum
+    # is what the SDK validates against BEFORE dispatch: a token missing there
+    # is unreachable over MCP however the handler behaves, which is what made
+    # `inspect_start` uncallable for an entire release.
+    server_src = Path(
+        foundry_mcp.__file__
+    ).resolve().parent.joinpath("server.py").read_text(encoding="utf-8")
+    assert "sorted(GATE_TO_TRANSITION)" in server_src, (
+        "server.py's Foundry-Gate enum no longer derives from the table"
+    )
+
+    # ...and the guidance engine's own action->gate map names only doors that
+    # exist. `_ACTION_TO_GATE` is what `.gate-passed` is compared against, so a
+    # value missing from the table is a lead sent to a call the server refuses.
+    unknown = sorted(set(fo._ACTION_TO_GATE.values()) - set(fo.GATE_TO_TRANSITION))
+    assert unknown == [], unknown
+
+
+def test_every_gate_rank_constant_has_a_way_to_provoke_it():
+    """The emptiness guard on the RUNG axis.
+
+    `_RUNG_ARRANGEMENTS` is matched to the module's `_GATE_RANK_*` constants by
+    NAME. A rank added without an arranger would simply never be walked, and the
+    parametrization below would shrink silently — the worst failure a derived pin
+    can have, and the one `test_every_defect_reading_gate_names_a_real_predicate`
+    was written to prevent one axis over.
+    """
+    declared = set(_gate_rank_names())
+    assert declared, "no _GATE_RANK_* constants found; the derivation is blind"
+    assert declared == set(_RUNG_ARRANGEMENTS), {
+        "declared_but_unarrangeable": sorted(declared - set(_RUNG_ARRANGEMENTS)),
+        "arranged_but_undeclared": sorted(set(_RUNG_ARRANGEMENTS) - declared),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# The arrangements: one happy path per token, one breakage per rung.
+# --------------------------------------------------------------------------- #
+
+
+def _arrange_passing(project_root: str, fdir: Path, token: str) -> None:
+    """Put the run in the state where `token`'s routine PASSES.
+
+    The baseline every rung arranger then breaks in exactly one place, so a
+    refusal the pin observes is attributable to the rung it provoked.
+    """
     _write_spec(fdir, ["FR-1"])
     _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
-    _write_manifest_with_castings(fdir, ["src/handler.py"])
-    _write_state(fdir, phase=phase, cycle=2, **flags)
-    return phase
-
-
-@pytest.mark.parametrize("tier", ["LIVE", None])
-@pytest.mark.parametrize("token", sorted(_GATED_TOKEN_ARRANGEMENT))
-def test_a_gated_transition_refuses_whatever_its_gate_refuses(run_env, token, tier):
-    """FR-006 verbatim: 'INSPECT-clean, ASSAY, TEMPER, NYQUIST and DONE all pass
-    when the only open defects are LATENT. NYQUIST GAINS THE MISSING DEFECT READ
-    SO ONE OPEN LIVE NOW BLOCKS IT.' FR-051 / CT-008.
-
-    D-236 — THE DESIGN INVARIANT: for every phase token whose gate reads
-    defects, the TRANSITION's refusal set is a superset of the GATE's.
-    `foundry_gate` implemented FR-006 for `temper` and `nyquist`; the matching
-    `foundry_mark_phase_complete` branches read verdicts, stream markers and the
-    evidence corpus, and read NO defects at all. Driven at HEAD: a run at F5
-    with nyquist enabled, one open LIVE D-002 and the ordering token armed —
-    `Foundry-Gate('nyquist')` returned passed False naming D-002, and
-    `Foundry-Phase('nyquist')` called immediately after returned ok True and
-    moved F5 -> F5.5, generating regression tests that lock in behaviour a
-    stream had already ruled wrong. Identical on `temper` (F4 -> F5). Nothing
-    enforces gate-before-phase — `_expected_gate_for_action` is display guidance
-    — so the gate was advice and the transition was the decision.
-
-    PARAMETRIZED OVER THE DERIVED TOKEN SET, and over BOTH blocking tiers: an
-    untiered record blocks like LIVE (FR-051), and a pair that agreed on LIVE
-    and disagreed on unknown would be this defect one field over. `done` and
-    `nyquist_done` are in the set because the invariant is about every
-    defect-reading gate — they have held since D-037 bound them to
-    `_done_preconditions`, and this is what keeps them bound.
-    """
-    project_root, fdir = run_env
-    phase = _arrange_gated_token(project_root, fdir, token)
-    _defect_ledger(fdir, [_tiered("D-002", tier)])
+    _write_manifest_with_castings(fdir, ["src/handler.py"], no_ui=True)
+    _defect_ledger(fdir, [_tiered("D-500", "LIVE")] if token in ("grind_start", "assay_fail") else [])
+    (fdir / ".tasks-generated").write_text("x\n", encoding="utf-8")
+    for stream in ("trace", "prove", "test"):
+        (fdir / f".{stream}-complete").write_text(
+            "2020-01-01T00:00:00+00:00 cycle=1\nitems_checked=1\nitems_total=1\n"
+            "coverage=100%\nfindings=0\n",
+            encoding="utf-8",
+        )
+    phase = {
+        "start_cast": "F0", "cast": "F1", "inspect_start": "F3",
+        "inspect_clean": "F2", "grind_start": "F2", "assay_fail": "F4",
+        "temper": "F4", "nyquist": "F4", "nyquist_done": "F5.5",
+        "done": "F4", "halt": "F3",
+    }[token]
+    _write_state(fdir, phase=phase, cycle=1, **({"nyquist": True} if token in ("nyquist", "nyquist_done") else {}))
+    if token == "nyquist_done":
+        # The only token whose accepted source phase is decided by the run's own
+        # flags AND that is asked from F5.5; `done` is asked from the phase the
+        # flags make terminal, which with no flags is F4.
+        _write_state(fdir, phase="F5.5", cycle=1, nyquist=True, temper=True)
+    _record_full_inspect_mode(fdir, cycle=1)
     _generate_report(project_root, fdir)
 
-    _arm_ordering_token(fdir)
-    gate = foundry_gate(token, project_root)
-    assert gate["passed"] is False, (token, tier, gate)
-    assert "D-002" in gate["reason"], (token, tier, gate)
+
+def _break_halted(project_root, fdir, token, monkeypatch) -> bool:
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    state["phase"] = fo.RUN_PHASE_HALTED
+    state["halted_at_cycle"] = 1
+    state["halted_reason"] = {"reason": "lead_ruling", "text": "stopped by hand"}
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    return True
+
+
+def _break_escalation(project_root, fdir, token, monkeypatch) -> bool:
+    monkeypatch.setattr(fo, "_escalated_classes", lambda *_a, **_k: {"FDC": {}})
+    return True
+
+
+def _break_width(project_root, fdir, token, monkeypatch) -> bool:
+    if token == "inspect_start":
+        # This token's width rung is the F2->F2 WIDENING arm: "this cycle's
+        # recorded width is FULL, so there is nothing to widen". It fires only
+        # from F2, which is the arm's whole subject.
+        state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+        state["phase"] = "F2"
+        (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        return True
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    state["inspect_modes"] = []
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    return True
+
+
+def _break_teams(project_root, fdir, token, monkeypatch) -> bool:
+    _teams_active(True)
+    return True
+
+
+def _break_conflict(project_root, fdir, token, monkeypatch) -> bool:
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({"castings": [
+            {"id": 1, "title": "a", "key_files": ["src/shared.py"]},
+            {"id": 2, "title": "b", "key_files": ["src/shared.py"]},
+        ], "no_ui": True}),
+        encoding="utf-8",
+    )
+    return True
+
+
+def _break_defects(project_root, fdir, token, monkeypatch) -> bool:
+    if token == "inspect_start":
+        # Same arm as the width rung: a widening re-open over known-broken code
+        # re-verifies a tree the lead is about to change, and it is the F2 arm
+        # that says so. The recorded width has to be DELTA or the width rung
+        # above it speaks instead.
+        state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+        state["phase"] = "F2"
+        for entry in state.get("inspect_modes") or []:
+            entry["mode"] = "DELTA"
+        (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        _defect_ledger(fdir, [_tiered("D-900", "LIVE")])
+        return True
+    if token in ("grind_start", "assay_fail"):
+        # This rung fires here on an EMPTY ledger — "no open defects to grind" —
+        # which is the opposite arrangement from every other token's.
+        _defect_ledger(fdir, [])
+    else:
+        _defect_ledger(fdir, [_tiered("D-900", "LIVE")])
+    return True
+
+
+def _break_verdicts(project_root, fdir, token, monkeypatch) -> bool:
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "THIN"}])
+    return True
+
+
+def _break_evidence(project_root, fdir, token, monkeypatch) -> bool:
+    # Driven through the predicate rather than through a real non-reproducing
+    # corpus: the SUBJECT here is whether both doors consult the shared routine,
+    # and a door that does not consult it does not see this patch either.
+    monkeypatch.setattr(
+        fo,
+        "_terminal_evidence_sweep",
+        lambda _fdir, _pr: {
+            "ok": False,
+            "error": "",
+            "mismatches": [{"log": "evidence/a.log", "reason": "output differs"}],
+            "record": {"scope": "full", "corpus_size": 1,
+                       "logs_reexecuted": ["evidence/a.log"]},
+            "head": "deadbeef",
+            "cached": False,
+        },
+    )
+    return True
+
+
+def _break_streams(project_root, fdir, token, monkeypatch) -> bool:
+    (fdir / ".trace-complete").unlink(missing_ok=True)
+    return True
+
+
+def _break_marker(project_root, fdir, token, monkeypatch) -> bool:
+    if token in ("grind_start", "assay_fail"):
+        (fdir / ".tasks-generated").unlink(missing_ok=True)
+        return True
+    if token == "inspect_clean":
+        state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+        state["inspect_modes"][-1]["fixes_after_decision"] = ["D-777"]
+        (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        return True
+    return False
+
+
+def _break_config(project_root, fdir, token, monkeypatch) -> bool:
+    if token == "start_cast":
+        (fdir / "castings" / "manifest.json").unlink(missing_ok=True)
+        return True
+    if token == "cast":
+        _write_manifest_with_castings(fdir, ["src/App.tsx"], no_ui=False)
+        return True
+    if token == "nyquist":
+        state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+        state["nyquist"] = False
+        (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        return True
+    if token == "halt":
+        return True  # the reason argument is what this rung reads; see below
+    if token in ("done", "nyquist_done"):
+        (fdir / "spec.md").write_text("# Spec\nno ids here\n", encoding="utf-8")
+        return True
+    return False
+
+
+def _break_source(project_root, fdir, token, monkeypatch) -> bool:
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    state["phase"] = "F0" if state.get("phase") != "F0" else "F6"
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    return True
+
+
+def _break_report(project_root, fdir, token, monkeypatch) -> bool:
+    (fdir / "REPORT.md").unlink(missing_ok=True)
+    (fdir / "report.json").unlink(missing_ok=True)
+    return True
+
+
+#: One arranger per `_GATE_RANK_*` constant, keyed by the constant's NAME.
+#: Each returns True when it could provoke that rung for that token, and False
+#: when the rung is not reachable there — a `False` SKIPS the case rather than
+#: passing it, and the emptiness guard above is what stops the whole set going
+#: quietly empty.
+_RUNG_ARRANGEMENTS = {
+    "_GATE_RANK_HALTED": _break_halted,
+    "_GATE_RANK_ESCALATION": _break_escalation,
+    "_GATE_RANK_WIDTH": _break_width,
+    "_GATE_RANK_TEAMS": _break_teams,
+    "_GATE_RANK_CONFLICT": _break_conflict,
+    "_GATE_RANK_DEFECTS": _break_defects,
+    "_GATE_RANK_VERDICTS": _break_verdicts,
+    "_GATE_RANK_EVIDENCE": _break_evidence,
+    "_GATE_RANK_STREAMS": _break_streams,
+    "_GATE_RANK_MARKER": _break_marker,
+    "_GATE_RANK_CONFIG": _break_config,
+    "_GATE_RANK_SOURCE": _break_source,
+    "_GATE_RANK_REPORT": _break_report,
+}
+
+
+def _gate_for(token: str) -> str:
+    """A gate token whose mapping reaches `token`."""
+    return next(g for g, tokens in fo.GATE_TO_TRANSITION.items() if token in tokens)
+
+
+_TOKEN_RUNGS = sorted(
+    (token, rank)
+    for token in fo.PHASE_TOKENS
+    for rank in sorted(_ranks_a_routine_can_emit(token))
+)
+
+
+@pytest.mark.parametrize("token,rank", _TOKEN_RUNGS)
+def test_a_gate_and_its_transition_refuse_the_same_check(run_env, monkeypatch, token, rank):
+    """fallout AC-008 / OT-007 / CT-013 — the whole invariant, every token, every rung.
+
+    For each `PHASE_TOKENS` member and each `_GATE_RANK_*` rung its routine can
+    emit: arrange the run so that rung fires, then drive BOTH doors and assert
+    they refuse naming the same check, with `state.json.phase` unchanged by the
+    refused transition.
+
+    This is the pin D-240..D-243 would have failed. Each of those four was a
+    check `foundry_gate` made and `_phase_transition` did not: the verdict read
+    at temper, the second copy at nyquist, `state.nyquist`, and the sight url at
+    cast. Under one routine per token they cannot recur, and this walks every
+    token and rung to say so rather than the four the previous pin arranged.
+    """
+    project_root, fdir = run_env
+    reason_kw = {"reason": "lead_ruling", "text": "stopped by hand"} if token == "halt" else {}
+    _arrange_passing(project_root, fdir, token)
+    if not _RUNG_ARRANGEMENTS[rank](project_root, fdir, token, monkeypatch):
+        pytest.skip(f"{rank} is not reachable for {token} on a real arrangement")
+    if token == "halt" and rank == "_GATE_RANK_CONFIG":
+        reason_kw = {"reason": "not-a-member", "text": ""}
+
+    before = json.loads((fdir / "state.json").read_text(encoding="utf-8")).get("phase")
 
     _arm_ordering_token(fdir)
-    transition = foundry_mark_phase_complete(token, project_root)
+    gate = foundry_gate(_gate_for(token), project_root, **reason_kw)
+    _arm_ordering_token(fdir)
+    transition = foundry_mark_phase_complete(token, project_root, **reason_kw)
 
-    assert transition.get("ok") is not True, (token, tier, transition)
-    assert "D-002" in (
-        str(transition.get("error", "")) + str(transition.get("hint", ""))
-    ), (token, tier, transition)
-    # A refused crossing leaves the run exactly where it was.
-    assert json.loads((fdir / "state.json").read_text())["phase"] == phase, (
-        token, tier,
+    assert gate["passed"] is False, (token, rank, gate)
+    assert transition.get("ok") is not True, (token, rank, transition)
+
+    after = json.loads((fdir / "state.json").read_text(encoding="utf-8")).get("phase")
+    assert after == before, (token, rank, before, after)
+
+    # The SAME named check. `refusals` is the machine-readable list both doors
+    # publish; comparing it rather than the one rendered sentence is what makes
+    # this an assertion about the evaluation instead of about a prefix.
+    gate_reasons = {r["reason"] for r in gate.get("refusals", [])}
+    trans_reasons = {r["reason"] for r in transition.get("refusals", [])}
+    if trans_reasons or gate_reasons:
+        assert gate_reasons == trans_reasons, (token, rank, gate, transition)
+    else:
+        # The HALTED guard short-circuits above the branch chain at both doors,
+        # so neither publishes a ladder — but both say the same sentence, with
+        # each naming ITS OWN surface, which is the whole of the difference.
+        # `_halted_refusal` takes that surface as an argument for exactly this
+        # reason: one judgement, two callers, and the caller's name in the
+        # sentence so the operator knows which call was refused.
+        strip = lambda text: re.sub(r"Foundry-(Gate|Phase)\(phase='[^']+'\)", "<door>", text)
+        assert strip(gate["reason"]) == strip(transition["error"]), (token, rank, gate, transition)
+
+
+@pytest.mark.parametrize("token", sorted(fo.PHASE_TOKENS))
+def test_a_gate_and_its_transition_agree_on_the_passing_case(run_env, token):
+    """The other half: what one door admits, the other admits.
+
+    A pin that only walks refusals is satisfied by a gate that refuses
+    everything. Both doors are driven on the arrangement `_arrange_passing`
+    builds, and the gate must PASS — the transition is not driven to success
+    here because several tokens have irreversible effects (a detached worktree,
+    an archived run); `test_a_gated_transition_still_crosses_on_a_clean_ledger`
+    below drives the ones that are cheap to complete.
+    """
+    project_root, fdir = run_env
+    reason_kw = {"reason": "lead_ruling", "text": "stopped by hand"} if token == "halt" else {}
+    _arrange_passing(project_root, fdir, token)
+    _arm_ordering_token(fdir)
+    gate = foundry_gate(_gate_for(token), project_root, **reason_kw)
+    assert gate["passed"] is True, (token, gate)
+
+
+def test_neither_door_reads_a_ledger_outside_its_preconditions_routine():
+    """fallout AC-009 — the AST pin.
+
+    `foundry_gate` composes nothing: it looks the token up, calls the routine
+    and absorbs what comes back. `_phase_transition`'s branches call their own
+    routine and no OTHER refusal-producing reader. Both are asserted on the
+    SOURCE, because a check re-inlined at either door is exactly how the
+    disagreement returns — and it returns silently, which is why this is a
+    structural assertion and not a behavioural one.
+
+    The named set is the refusal-producing readers, not every function: the
+    branches still decide widths, sweep corpora, clear markers and transact,
+    and all of that is EFFECT, which runs only after the shared routine passed.
+    """
+    refusal_readers = {
+        "_blocking_defects", "_blocking_defects_refusal", "_check_streams_complete",
+        "_check_active_teams", "_unrecorded_width_problem", "_check_sight_required",
+        "_persisted_max_cycles", "_terminal_evidence_refusal",
+        "_terminal_evidence_state", "_done_preconditions",
+        "_phase_entry_source_problem", "_report_status",
+    }
+    # `_escalated_classes` is deliberately NOT in that set. The `inspect_start`
+    # branch calls it to RECORD escalation proposals at the boundary that closed
+    # a cycle — an effect, taken after the routine passed — and nothing refuses
+    # on its answer there. A reader-set that judged by name rather than by role
+    # would push a recording call into a preconditions routine to satisfy a pin,
+    # which is how a gate acquires a side effect.
+    allowed = {f"_{t}_preconditions" for t in fo.PHASE_TOKENS} | {"_token_preconditions"}
+
+    for fn in (fo.foundry_gate, fo._phase_transition):
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        called = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        leaked = sorted((called & refusal_readers) - allowed)
+        assert leaked == [], (fn.__name__, leaked)
+
+    # ...and the transition's own branches each name their token's routine.
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fo._phase_transition)))
+    source = inspect.getsource(fo._phase_transition)
+    for token in fo.PHASE_TOKENS:
+        assert f"_{token}_preconditions(" in source, token
+
+
+def test_the_four_open_live_defects_are_closed_as_one_class(run_env):
+    """fallout AC-010 / OT-008 — D-240, D-241, D-242 and D-243.
+
+    Driven at the TRANSITION, which is the door each of the four was open on.
+    Not four separate arrangements of four separate rungs: one run, four
+    crossings, each refused by the check its gate had always made and its
+    transition never had.
+    """
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "temper")
+
+    # D-240 — the verdict read at temper.
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "THIN"}])
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("temper", project_root)
+    assert result.get("ok") is not True, result
+    assert "not verified" in result["error"], result
+
+    # D-241 — the same read at nyquist.
+    _write_state(fdir, phase="F4", cycle=1, nyquist=True)
+    _record_full_inspect_mode(fdir, cycle=1)
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("nyquist", project_root)
+    assert result.get("ok") is not True, result
+    assert "not verified" in result["error"], result
+
+    # D-242 — `state.nyquist` false.
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _write_state(fdir, phase="F4", cycle=1, nyquist=False)
+    _record_full_inspect_mode(fdir, cycle=1)
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("nyquist", project_root)
+    assert result.get("ok") is not True, result
+    assert "opt-in" in result["error"], result
+
+    # ...and from the wrong source phase, which it also never checked.
+    _write_state(fdir, phase="F2", cycle=1, nyquist=True)
+    _record_full_inspect_mode(fdir, cycle=1)
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("nyquist", project_root)
+    assert result.get("ok") is not True, result
+    assert "F5.5" in result["error"], result
+
+    # D-243 — the sight url at cast.
+    _write_state(fdir, phase="F1", cycle=1)
+    _write_manifest_with_castings(fdir, ["src/App.tsx"], no_ui=False)
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("cast", project_root)
+    assert result.get("ok") is not True, result
+    assert "frontend files in scope" in result["error"], result
+
+
+def test_a_gated_transition_still_crosses_on_a_clean_ledger(run_env):
+    """The passing half, driven all the way through the two cheapest doors.
+
+    A parity pin that only ever observes refusals would be satisfied by a
+    transition that refuses everything, which is the opposite failure and just
+    as bad for a run.
+    """
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "grind_start")
+    _arm_ordering_token(fdir)
+    assert foundry_gate("grind", project_root)["passed"] is True
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("grind_start", project_root)
+    assert result.get("ok") is True, result
+    assert result["phase"] == "F3", result
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-062 / GI-032 / ST-015 / AC-060 / OT-044 — the cap is a FACT.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_grind_gate_passes_at_the_cap_and_shows_would_halt(run_env):
+    """`Foundry-Gate('grind')` PASSES at the cap and reports `would_halt: true`.
+
+    A gate that REFUSED here would be a gate with no remedy: reaching the cap is
+    not something a lead clears at the door. The run stops — successfully, with
+    its open work written down — and the gate's job is to say so before the
+    lead spends a wave finding out.
+    """
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "grind_start")
+    _write_state(fdir, phase="F2", cycle=2, max_cycles=2)
+    _record_full_inspect_mode(fdir, cycle=2)
+    _arm_ordering_token(fdir)
+
+    gate = foundry_gate("grind", project_root)
+    assert gate["passed"] is True, gate
+    assert gate["would_halt"] is True, gate
+    cap = next(c for c in gate["checklist"] if c["check"].startswith("within_cycle_cap"))
+    assert cap["would_halt"] is True and cap["ok"] is True, cap
+
+
+@pytest.mark.parametrize("token", ["grind_start", "assay_fail"])
+def test_both_grind_doors_seal_halted_at_the_cap(run_env, token):
+    """fallout ST-015 / AC-060 — and the seal writes the vocabulary MEMBER."""
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, token)
+    _write_state(fdir, phase="F2" if token == "grind_start" else "F4",
+                 cycle=2, max_cycles=2)
+    _record_full_inspect_mode(fdir, cycle=2)
+    _arm_ordering_token(fdir)
+
+    result = foundry_mark_phase_complete(token, project_root)
+    assert result.get("ok") is True, result
+    assert result["halted"] is True, result
+    assert result["halted_reason"] == fo.HALT_REASON_CAP_REACHED, result
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == fo.RUN_PHASE_HALTED, state
+    assert state["halted_reason"]["reason"] == "cap_reached", state
+    assert "--max-cycles 2" in state["halted_reason"]["text"], state
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-018 / FR-064 / GI-034 / CT-004 / CT-005 / CT-021 / ST-001 /
+# AC-025 / AC-026 / AC-029 / AC-062 / OT-023 / OT-024 / OT-045 — the halt door.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_halt_gate_reports_the_three_checks_as_data(run_env):
+    """fallout CT-021 / AC-062 / OT-045 — reported, not acted on."""
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("halt", project_root, reason="lead_ruling", text="enough")
+    assert gate["passed"] is True, gate
+    names = [c["check"] for c in gate["checklist"]]
+    assert any(n.startswith("halt_reason_is_a_member") for n in names), names
+    assert "no_active_teams" in names, names
+    assert "not_already_halted" in names, names
+    # Reported, not acted on: the run is exactly where it was.
+    assert json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"] == "F3"
+
+
+def test_a_reason_outside_the_vocabulary_is_refused_naming_the_set(run_env):
+    """fallout AC-026 / CT-005 / OT-024 — and the sentence is DERIVED."""
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("halt", project_root, reason="because", text="x")
+    assert result.get("ok") is not True, result
+    for member in fo.HALT_REASONS:
+        assert member in result["hint"], (member, result)
+    assert json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"] == "F3"
+
+
+def test_the_halt_door_refuses_while_a_team_is_registered(run_env):
+    """fallout AC-025 / OT-023 — a halt with the teammates still up is a halt
+    that leaves agents writing into a run nothing will read again."""
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+    _teams_active(True)
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("halt", project_root, reason="lead_ruling", text="x")
+    assert result.get("ok") is not True, result
+    assert "Active teammates" in result["error"], result
+
+
+def test_a_lead_ruling_seals_halted_with_the_member_the_text_and_the_history_row(run_env):
+    """fallout FR-018 / FR-046 / CT-004 / ST-001 / AC-025 / AC-029 / OT-023.
+
+    The whole contract in one drive: HALTED written through `_update_phase` so
+    `phase_history` gains the row and `phase_times` closes the phase that was
+    open, the reason stored as `{member, text}`, and the report regenerated with
+    the lead's own prose carried.
+    """
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+    # A real run reaches this door through transitions, so `phase_times` carries
+    # an OPEN entry for the phase it is in. AC-029's second half is that the
+    # halt closes it, which a fixture that wrote state.json by hand cannot show.
+    fo._update_phase(fdir, "F3")
+    report = fdir / "REPORT.md"
+    report.write_text(
+        report.read_text(encoding="utf-8") + "\n## My own notes\n\nkeep this line\n",
+        encoding="utf-8",
+    )
+    _arm_ordering_token(fdir)
+
+    result = foundry_mark_phase_complete(
+        "halt", project_root, reason="lead_ruling", text="the spec is wrong"
+    )
+    assert result.get("ok") is True, result
+    assert result["halted"] is True and result["phase"] == fo.RUN_PHASE_HALTED, result
+
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == fo.RUN_PHASE_HALTED, state
+    assert state["halted_reason"] == {"reason": "lead_ruling", "text": "the spec is wrong"}
+    assert state["halted_at_cycle"] == 1, state
+    # AC-029: the history ends on HALTED and the phase that was open is closed.
+    assert state["phase_history"][-1]["phase"] == fo.RUN_PHASE_HALTED, state
+    assert "ended_at" in state["phase_times"]["F3"], state["phase_times"]
+    # FR-046: the same regeneration the cap uses, so the lead's prose survives.
+    assert "keep this line" in report.read_text(encoding="utf-8")
+
+
+def test_a_halted_run_refuses_every_door_including_a_second_halt(run_env):
+    """fallout ST-001 — HALTED is terminal, and `halt` is not its own exit."""
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+    _arm_ordering_token(fdir)
+    assert foundry_mark_phase_complete(
+        "halt", project_root, reason="user_stop", text="stop"
+    )["ok"] is True
+
+    for token in fo.PHASE_TOKENS:
+        _arm_ordering_token(fdir)
+        result = foundry_mark_phase_complete(
+            token, project_root, reason="user_stop", text="again"
+        )
+        assert result.get("ok") is not True, (token, result)
+        assert "HALTED" in str(result.get("error", "")), (token, result)
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-021 / FR-034 / FR-035 / FR-047 / FR-049 / FR-055 / GI-014 /
+# GI-016 / CT-007 / AC-021 / AC-028 / AC-053 / AC-054 / OT-026 — the lead-facing
+# surface.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_tier_buckets_are_derived_from_the_vocabulary(run_env):
+    """fallout GI-014 / AC-011 — a HARDENING record does not take the ledger down.
+
+    `_open_defects_by_tier` seeded three hand-typed keys and `defect_tier` is
+    TOTAL over `DEFECT_TIERS`, so the moment `HARDENING` joined that frozenset
+    this raised `KeyError: 'HARDENING'` on any ledger carrying one — and
+    `_blocking_defects` calls it, and every gate and every transition calls
+    that. Driven here on a ledger with one record of every tier, because the
+    tier exists precisely so a stream will file into it.
+    """
+    project_root, fdir = run_env
+    _defect_ledger(fdir, [
+        _tiered("D-1", "LIVE"),
+        _tiered("D-2", "LATENT", reproduction_attempted="drove every caller; none reach it"),
+        _tiered("D-3", "HARDENING", reproduction_attempted="drove the probe; it failed"),
+        _tiered("D-4", None),
+    ])
+
+    buckets = fo._open_defects_by_tier(fdir)
+    assert set(buckets) == set(vocab.DEFECT_TIERS) | {vocab.TIER_UNKNOWN}, buckets
+    assert [d["id"] for d in buckets["HARDENING"]] == ["D-3"], buckets
+
+    # ...and HARDENING does not block, which is the whole reason it is a tier
+    # rather than a flag on LIVE.
+    blocking = fo._blocking_defects(fdir)
+    assert blocking["blocking"] == 2, blocking
+    assert sorted(blocking["live"]) == ["D-1"], blocking
+    assert sorted(blocking["unknown"]) == ["D-4"], blocking
+
+
+def test_every_next_response_names_the_terminal_state_it_is_heading_for(run_env):
+    """fallout FR-021 / CT-007 / AC-028 / OT-026 — three fields, every response.
+
+    A named backlog is a SUCCESSFUL end. A lead that believes DONE is the only
+    acceptable ending grinds cycles against a target it has already met, so the
+    three facts that decide which ending is coming sit on the surface it reads
+    before every call rather than in a report it reads once.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1, max_cycles=3)
+    _defect_ledger(fdir, [
+        _tiered("D-1", "LIVE"),
+        _tiered("D-2", "HARDENING", reproduction_attempted="drove the probe; it failed"),
+    ])
+
+    result = fo.foundry_next_action(project_root)
+    assert result["heading_for"] == "DONE", result
+    assert result["open_by_tier"]["LIVE"] == 1, result
+    assert result["open_by_tier"]["HARDENING"] == 1, result
+    assert result["cycles_to_cap"] == 2, result
+
+    # At the cap, the run is heading for HALTED BEFORE anything has stopped —
+    # which is the whole point of saying it at the door rather than after it.
+    _write_state(fdir, phase="F2", cycle=3, max_cycles=3)
+    at_cap = fo.foundry_next_action(project_root)
+    assert at_cap["heading_for"] == fo.RUN_PHASE_HALTED, at_cap
+    assert at_cap["cycles_to_cap"] == 0, at_cap
+
+    # An unbounded run reports None, not 0: "no cap" and "no cycles left" are
+    # opposite facts and a reader that conflates them halts a run that had no
+    # cap at all.
+    _write_state(fdir, phase="F2", cycle=3)
+    assert fo.foundry_next_action(project_root)["cycles_to_cap"] is None
+
+    # And a halted run says so whatever the arithmetic.
+    _halted_run(fdir)
+    assert fo.foundry_next_action(project_root)["heading_for"] == fo.RUN_PHASE_HALTED
+
+
+def test_a_sub_agent_read_arms_neither_the_token_nor_the_stall_clock(run_env):
+    """fallout FR-034 / FR-055 / AC-053.
+
+    Both halves fail in opposite directions. A sub-agent that armed the ordering
+    token would satisfy, on the lead's behalf, the handshake that proves the
+    LEAD consulted guidance before a transition. One that reset the stall clock
+    would restart the watchdog every time any agent oriented itself — a
+    watchdog any agent can silence is not a watchdog.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+
+    fo.foundry_next_action(project_root)
+    assert (fdir / fo.NEXT_ACTION_CALLED_MARKER).exists()
+    assert (fdir / fo.LAST_NEXT_AT_MARKER).exists()
+
+    (fdir / fo.NEXT_ACTION_CALLED_MARKER).unlink()
+    (fdir / fo.LAST_NEXT_AT_MARKER).unlink()
+
+    subagent = fo.foundry_next_action(project_root, caller="subagent")
+    assert not (fdir / fo.NEXT_ACTION_CALLED_MARKER).exists()
+    assert not (fdir / fo.LAST_NEXT_AT_MARKER).exists()
+    # It still ANSWERS — the read is not refused, it is just not the lead's.
+    assert subagent["action"], subagent
+    assert subagent["heading_for"] in ("DONE", fo.RUN_PHASE_HALTED), subagent
+
+    # ...and the transition still owes the lead's own handshake.
+    refused = fo.foundry_mark_phase_complete("grind_start", project_root)
+    assert refused.get("ok") is not True
+    assert "Foundry-Next" in refused["error"], refused
+
+
+def test_every_action_the_router_emits_has_an_imperative():
+    """fallout FR-035 / AC-054 — the survey counted nine holes; there are none.
+
+    An imperative table with holes is worse than none: the holes are invisible
+    and they are exactly where the lead improvises, because the generic fallback
+    header says "Execute the first tool call mentioned. Do not deliberate." over
+    a body that for several of them mentions no tool call at all.
+
+    Derived from `_compute_next_action`'s own AST, so the tenth is caught the
+    day it is written.
+    """
+    emitted: set[str] = set()
+    for name in ("_compute_next_action", "_nyquist_transition"):
+        tree = ast.parse(textwrap.dedent(inspect.getsource(getattr(fo, name))))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if (
+                    isinstance(key, ast.Constant) and key.value == "action"
+                    and isinstance(value, ast.Constant)
+                ):
+                    emitted.add(value.value)
+    assert len(emitted) >= 20, emitted
+    assert emitted <= set(fo._ACTION_IMPERATIVES), sorted(emitted - set(fo._ACTION_IMPERATIVES))
+
+
+def test_the_done_imperative_states_the_f6_order_exactly():
+    """fallout FR-035 / AC-054 — Report, Gate, strip, Phase.
+
+    It read "YOUR NEXT CALL: Foundry-Phase(phase='done')", which contradicts the
+    sequence the doors enforce: the DONE evaluation requires the generated
+    report AND re-executes the committed evidence corpus, so stripping
+    `evidence/` before the gate refuses it for a corpus that is not there, and
+    stripping after the gate passes changes the tree the gate judged.
+    """
+    imperative = fo._ACTION_IMPERATIVES["transition_to_done"]
+    order = [
+        imperative.index("Foundry-Report"),
+        imperative.index("Foundry-Gate(phase='done')"),
+        imperative.index("git rm"),
+        imperative.index("Foundry-Phase(phase='done')"),
+    ]
+    assert order == sorted(order), (order, imperative)
+
+
+def test_no_lead_imperative_tells_the_lead_to_record_a_stream():
+    """fallout FR-023 / FR-049 / GI-016 / AC-030 — the AGENT records.
+
+    A lead that records on an agent's behalf asserts numbers it did not measure,
+    and when the agent then records its own the cycle carries two accounts of
+    one run. Swept over every imperative rather than checked on `run_streams`
+    alone, because the instruction it was removed from is the one a lead reads
+    most and the next copy would land in a sibling.
+    """
+    # The distinguishing form is the IMPERATIVE one — a sentence telling the
+    # lead to make the call. A sentence stating that the agent records is the
+    # opposite claim and is what these now carry.
+    lead_is_told_to_record = (
+        "call foundry-stream",
+        "then foundry-stream",
+        "then call foundry-stream",
+    )
+    seen = 0
+    for action, imperative in fo._ACTION_IMPERATIVES.items():
+        if "Foundry-Stream" not in imperative:
+            continue
+        seen += 1
+        lowered = " ".join(imperative.lower().split())
+        for form in lead_is_told_to_record:
+            assert form not in lowered, (action, form, imperative)
+        assert "records its own" in lowered or "confirm" in lowered, (action, imperative)
+    assert seen >= 2, (
+        "no imperative mentions Foundry-Stream at all, so this sweep asserts "
+        "nothing — the scan has gone blind"
     )
 
 
-@pytest.mark.parametrize("token", sorted(_GATED_TOKEN_ARRANGEMENT))
-def test_a_latent_only_backlog_blocks_no_gated_transition(run_env, token):
-    """FR-006's OTHER half, and the one an over-broad fix would break: 'all pass
-    WHEN THE ONLY OPEN DEFECTS ARE LATENT'. AC-008 / OT-011 / CT-008.
+def test_the_two_new_tools_are_registered_the_way_the_registry_reads_them(run_env):
+    """fallout GI-023 / FR-012 / FR-050 — Foundry-Concern and Foundry-Roster, on the wire.
 
-    The tier is an evidence grade, never a severity — both tiers are defects and
-    both get fixed — but a scan-derivation gap with no reachable instance must
-    not hold a run at the gate a forged evidence log holds it. A transition that
-    refused on ANY open defect would close D-236 by re-creating the cost the
-    whole tier distinction exists to remove, so the permissive direction is
-    pinned beside the refusing one.
+    Casting 1 owns both handlers and tests them by direct call; what is asserted
+    here is the REGISTRATION — that they are advertised, that the dispatch names
+    the handler global (Holmes introspect-1: a wrapped handler, a
+    functools.partial or a table lookup makes a tool vanish from the registry),
+    and that a call through the transport reaches the handler.
     """
+    from foundry_mcp import server as foundry_server
+
+    names = {t.name for t in asyncio.run(foundry_server.list_tools())}
+    assert {"Foundry-Concern", "Foundry-Roster"} <= names, sorted(names)
+    assert {"Foundry-Concern", "Foundry-Roster"} <= set(foundry_server._DISPATCH)
+
     project_root, fdir = run_env
-    _arrange_gated_token(project_root, fdir, token)
-    _defect_ledger(fdir, [_tiered("D-003", "LATENT")])
-    _generate_report(project_root, fdir)
-
-    _arm_ordering_token(fdir)
-    result = foundry_mark_phase_complete(token, project_root)
-
-    assert result.get("ok") is True, (token, result)
-    assert "D-003" not in str(result.get("error", "")), (token, result)
-
-
-def test_the_temper_and_nyquist_transitions_read_the_gates_own_predicate(run_env):
-    """D-236, asserted on the code so the two cannot drift apart again.
-
-    `_blocking_defects_refusal` wraps `_blocking_defects` — the SAME function
-    `foundry_gate` calls — so the transition's answer is the gate's answer by
-    construction rather than by two authors agreeing. This is
-    `_done_preconditions`' shape one phase earlier (D-037 / D-043 / D-044), and
-    the check is on the shared name because a re-inlined copy at either branch
-    is exactly how the disagreement returned.
-    """
-    import inspect
-
-    source = inspect.getsource(fo._phase_transition)
-    assert source.count("_blocking_defects_refusal(") >= 2, source
-    for destination in ("F5 TEMPER", "F5.5 NYQUIST"):
-        assert destination in source, destination
-    # The refusal is raised BEFORE the crossing does any work: no detached
-    # worktree is created and no completion marker is cleared for a crossing
-    # that will not happen. Asserted by POSITION within each branch's source.
-    temper_at = source.index('elif phase == "temper"')
-    nyquist_at = source.index('elif phase == "nyquist"')
-    done_at = source.index('elif phase == "nyquist_done"')
-    for name, branch in (
-        ("temper", source[temper_at:nyquist_at]),
-        ("nyquist", source[nyquist_at:done_at]),
-    ):
-        refusal_at = branch.index("_blocking_defects_refusal(")
-        for later in ("_sweep_evidence_at_boundary(", "_terminal_evidence_state(",
-                      "_update_phase(", "_clear_stream_completion_markers("):
-            if later in branch:
-                assert refusal_at < branch.index(later), (name, later)
+    _write_manifest_with_castings(fdir, ["src/handler.py"], no_ui=True)
+    _write_state(fdir, phase="F1", cycle=1)
+    foundry_server._project_root = str(project_root)
+    try:
+        opened = foundry_server._DISPATCH["Foundry-Concern"]({
+            "casting_id": 1, "cycle": 1, "target": "src/handler.py",
+            "text": "this fix reaches a sibling casting's file",
+        })
+        assert opened.get("error") is None, opened
+        roster = foundry_server._DISPATCH["Foundry-Roster"]({
+            "stream": "prove", "items": ["FR-1", "FR-2"],
+        })
+        assert roster.get("error") is None, roster
+    finally:
+        foundry_server._project_root = "."
