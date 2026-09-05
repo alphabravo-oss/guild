@@ -188,3 +188,126 @@ def test_validate_module_importable():
     """Sanity guard so the regression suite fails loudly if the target symbol
     is renamed or the module stops importing."""
     assert callable(foundry_validate_castings)
+
+
+# ── The same regressions, against the widened dimension set ───────────────
+#
+# The report grew two dimensions after these tests were written: one checking a
+# casting's persisted ownership list against its own spec excerpt, one
+# computing how many castings own each requirement. Neither existed when the
+# string type-guard was filed, and the manifests these tests write carry no
+# ownership list at all — which is exactly the archive shape those dimensions
+# have to tolerate. So the guard's own regressions are the natural place to
+# hold the line: a manifest with no ownership list must still render the WHOLE
+# report, every dimension present, with the string entry still a non-blocking
+# warning and nothing else changed.
+
+
+def test_the_whole_report_renders_for_a_manifest_with_no_ownership_list(
+    tmp_path: Path,
+):
+    """Every dimension answers, including the two that read a field this
+    manifest does not have.
+
+    A dimension that raised, or that quietly went missing from the payload on
+    an archive predating its field, would take the whole F0.9 report down with
+    it — which is the same failure mode the string type-guard was filed
+    against, one dimension over.
+    """
+    castings = [_casting("C1", key_links=["LoginForm -> /api/login"])]
+
+    result = _run_validate(tmp_path, castings)
+
+    # This harness writes no prompt files and an empty spec, so dimensions 7
+    # and 9 report on that and `passed` is False for reasons that predate this
+    # module. What must hold is that EVERY dimension answered.
+    for name in (
+        "requirement_coverage",
+        "casting_completeness",
+        "dependency_correctness",
+        "key_links_planned",
+        "scope_sanity",
+        "research_integration",
+        "prompt_fidelity",
+        "migration_coverage",
+        "spec_structure",
+        "file_change_map_coverage",
+        "requirement_ownership",
+        "requirement_span",
+    ):
+        assert name in result["dimensions"], sorted(result["dimensions"])
+        assert "ok" in result["dimensions"][name]
+        assert "issues" in result["dimensions"][name]
+
+
+def test_a_manifest_with_no_ownership_list_reports_not_computable_not_failure(
+    tmp_path: Path,
+):
+    """The two new dimensions must not block an archive written before their
+    field existed, and must say why rather than passing in silence.
+
+    Silence would be indistinguishable from "checked and clean", which is the
+    reading that lets an un-migrated manifest look verified.
+    """
+    castings = [_casting("C1", key_links=[{"from": "src/a.ts", "to": "src/b.ts"}])]
+
+    result = _run_validate(tmp_path, castings)
+
+    for name in ("requirement_ownership", "requirement_span"):
+        dimension = result["dimensions"][name]
+        assert dimension["not_computable"] is True
+        assert dimension["ok"] is True
+        assert dimension["issues"], f"{name} passed with no explanation"
+        assert all(i.get("severity") == "info" for i in dimension["issues"])
+    # And neither adds a counted entry to the top-level list, so the string
+    # entry's warning is still the only thing this manifest is told about.
+    assert not any(
+        i.get("dimension") in ("requirement_ownership", "requirement_span")
+        for i in result["issues"]
+    )
+
+
+def test_the_string_entry_warning_is_unchanged_by_the_widened_report(
+    tmp_path: Path,
+):
+    """The original regression, re-run whole: a string entry is still a
+    non-blocking warning that names the casting and the entry, and the report
+    still renders.
+
+    Two dimensions were added to this payload since; a dimension that appended
+    an error for an archive it cannot judge would flip `passed` and silently
+    change what this guard proves.
+    """
+    entry = "LoginForm -> /api/login"
+    string_result = _run_validate(tmp_path, [_casting("C1", key_links=[entry])])
+    dim4 = _dim4(string_result)
+
+    warnings = [i for i in dim4["issues"] if i.get("severity") == "warning"]
+    assert len(warnings) == 1
+    assert warnings[0]["casting"] == "C1"
+    assert entry in warnings[0]["issue"]
+    assert dim4["ok"] is True
+
+    # Non-blocking, measured the way the original guard measures it: against
+    # the same manifest with a dict entry. A new dimension that appended an
+    # error for an archive it cannot judge would move this number for both runs
+    # and the comparison would still hold — so the absolute count is checked
+    # too, against the dimensions that were reporting before.
+    dict_result = _run_validate(
+        tmp_path, [_casting("C1", key_links=[{"from": "src/a.ts", "to": "src/b.ts"}])]
+    )
+    assert string_result["summary"]["error_count"] == dict_result["summary"]["error_count"]
+    assert sorted(
+        i["dimension"] for i in string_result["issues"] if i.get("severity") == "error"
+    ) == ["prompt_fidelity", "spec_structure"]
+
+
+def test_the_span_table_is_present_and_says_it_cannot_be_computed(tmp_path: Path):
+    """The table ships on every call, so a reader can always ask for it without
+    first checking whether this run is one that has one.
+    """
+    result = _run_validate(tmp_path, [_casting("C1", key_links=["a -> b"])])
+
+    assert result["requirement_span"]["not_computable"] is True
+    assert result["requirement_span"]["rows"] == []
+    assert "not computable" in result["requirement_span"]["text"]

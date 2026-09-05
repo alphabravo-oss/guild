@@ -1,7 +1,12 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_validate_ownership.py
-# evidence-for: FR-009, FR-040, AC-001, OT-001, GI-012, CT-011, US-001, US-010, FR-054, FR-037
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_validate_ownership.py -k "not (span or reason or the_table or exempt or one_owner or exits)"
+# evidence-for: FR-009, FR-040, FR-054, AC-001, OT-001, GI-012, CT-011, US-001, US-010, FR-037
 # evidence-volatile: \d+\.\d+s
-# evidence-timeout: 300
+# evidence-volatile: test_validate_ownership\.py:\d+
+# evidence-timeout: 600
 
-................                                                         [100%]
-16 passed in 2.04s
+..................sss                                                    [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_validate_ownership.py:1137: daring-orca is not present in this checkout (untracked)
+SKIPPED [1] tests/test_validate_ownership.py:1137: thunder-viper is not present in this checkout (untracked)
+SKIPPED [1] tests/test_validate_ownership.py:1137: grand-vulture is not present in this checkout (untracked)
+18 passed, 3 skipped, 18 deselected in 0.14s

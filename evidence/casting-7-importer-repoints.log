@@ -1,11 +1,11 @@
 # evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_intent_coverage.py tests/test_handoff_records.py tests/test_spawn_progress.py tests/test_foundry_validate_key_links.py
 # evidence-for: US-003, GI-033, FR-037
 # evidence-volatile: \d+\.\d+s
-# evidence-volatile: \(\d+:\d\d:\d\d\)
+# evidence-volatile: test_validate_ownership\.py:\d+
 # evidence-timeout: 600
 
-........................................................................ [ 26%]
-........................................................................ [ 52%]
-........................................................................ [ 79%]
-.........................................................                [100%]
-273 passed in 15.32s
+........................................................................ [ 25%]
+........................................................................ [ 51%]
+........................................................................ [ 77%]
+.............................................................            [100%]
+277 passed in 14.63s

@@ -54,6 +54,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from foundry_mcp.tools.foundry_state import (
     ARCHIVE_DIR,
     clear_active_run,
@@ -61,6 +63,8 @@ from foundry_mcp.tools.foundry_state import (
 )
 from foundry_mcp.tools.foundry_validate import (
     REQUIREMENT_IDS_SCHEMA_FLOOR,
+    REQUIREMENT_SPAN_EXCEEDED,
+    REQUIREMENT_SPAN_MAX,
     foundry_validate_castings,
 )
 
@@ -161,6 +165,34 @@ def _ownership(result: dict) -> dict:
 
 def _issue_kinds(dimension: dict) -> list[str]:
     return sorted(i.get("issue", "") for i in dimension["issues"])
+
+
+def _span(result: dict) -> dict:
+    return result["dimensions"]["requirement_span"]
+
+
+def _row(result: dict, requirement_id: str) -> dict:
+    """The span row for one requirement, or a failure that names what is there."""
+    rows = {r["id"]: r for r in _span(result)["rows"]}
+    assert requirement_id in rows, sorted(rows)
+    return rows[requirement_id]
+
+
+def _sharers(count: int, *, reason_on=None, reason: str = "") -> list[dict]:
+    """``count`` castings that all declare and own the same one requirement.
+
+    ``reason_on`` is the casting id that records a ``split_reason``, which is
+    the shape decompose emits: the reason sits beside the ownership it
+    explains. ``reason_on=0`` writes it at the manifest's top level instead,
+    the other position the manifest may record one in.
+    """
+    out = []
+    for cid in range(1, count + 1):
+        entry = _casting(cid, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])
+        if reason_on == cid:
+            entry["split_reason"] = {"FR-009": reason}
+        out.append(entry)
+    return out
 
 
 #: A run created under the current release: the schema marker at the floor.
@@ -527,3 +559,602 @@ def test_a_schema_bump_alone_invalidates_a_cached_pass(tmp_path: Path):
     assert second["cache"]["hit"] is False
     assert second["passed"] is False
     assert _issue_kinds(_ownership(second)) == ["missing_requirement_ids"]
+
+
+# ── The span, and the token that fires above the threshold ────────────────
+
+
+def test_the_span_table_names_every_requirement_the_spec_declares(tmp_path: Path):
+    """"A lead running F0.9 VALIDATE sees a span table listing every
+    requirement id the spec declares, the castings that own it, and the number
+    of owners."
+
+    Every id, not only the ones with a problem: the ones with a single owner
+    are the ownership picture too, and a table that showed only failures would
+    tell a lead nothing about the slice they are about to build.
+    """
+    castings = [
+        _casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+        _casting(2, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+    ]
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert sorted(r["id"] for r in _span(result)["rows"]) == ["FR-009", "US-001"]
+    assert _row(result, "US-001")["owners"] == [1, 2]
+    assert _row(result, "US-001")["span"] == 2
+    assert _span(result)["threshold"] == REQUIREMENT_SPAN_MAX
+
+
+def test_a_requirement_with_one_owner_is_a_row_like_any_other(tmp_path: Path):
+    """A single owner is the common case and the table's most useful row: it is
+    how a lead confirms who to dispatch a fix to.
+    """
+    castings = [
+        _casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+    ]
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert _row(result, "FR-009") == {
+        "id": "FR-009",
+        "owners": [1],
+        "span": 1,
+        "split_reason": None,
+    }
+    assert _span(result)["ok"] is True
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_span_at_the_threshold_passes(tmp_path: Path):
+    """The boundary itself is accepted: "more than two" is the refusal, so two
+    is the largest span that needs no reason. An off-by-one here would demand a
+    recorded reason for every ordinary two-surface requirement in the spec.
+    """
+    result = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+
+    assert _row(result, "FR-009")["span"] == REQUIREMENT_SPAN_MAX
+    assert _span(result)["ok"] is True
+    assert _span(result)["issues"] == []
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_span_above_the_threshold_with_no_reason_refuses_with_the_token(
+    tmp_path: Path,
+):
+    """"F0.9 refuses a requirement spanning three castings without
+    `split_reason`" — the token, the id and all three owners, named.
+
+    A refusal that named only the id would leave the lead grepping the manifest
+    for who has it; the owners are the actionable half.
+    """
+    result = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+    dim = _span(result)
+
+    assert dim["ok"] is False
+    errors = [i for i in dim["issues"] if i.get("severity") == "error"]
+    assert len(errors) == 2, dim["issues"]  # both shared ids are over
+    offender = next(i for i in errors if i["id"] == "FR-009")
+    assert offender["issue"] == REQUIREMENT_SPAN_EXCEEDED
+    assert offender["castings"] == [1, 2, 3]
+    assert offender["span"] == 3
+    assert REQUIREMENT_SPAN_EXCEEDED in offender["detail"]
+    assert "FR-009" in offender["detail"]
+    for owner in ("#1", "#2", "#3"):
+        assert owner in offender["detail"]
+    assert result["passed"] is False
+
+
+def test_the_refusal_hint_names_the_two_exits_a_lead_can_take(tmp_path: Path):
+    """A refusal with no way out teaches the reader to reach for --no-verify.
+
+    Both exits are real: regroup the requirement onto at most the threshold, or
+    record a reason. The second is driven by the very next test, which takes it
+    and passes.
+    """
+    result = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+    offender = next(
+        i for i in _span(result)["issues"] if i.get("id") == "FR-009"
+    )
+
+    assert "split_reason" in offender["hint"]
+    assert str(REQUIREMENT_SPAN_MAX) in offender["hint"]
+    assert any(
+        REQUIREMENT_SPAN_EXCEEDED in h and "FR-009" in h
+        for h in result["revision_hints"]
+    )
+    top = [i for i in result["issues"] if i.get("dimension") == "requirement_span"]
+    assert len(top) == 1
+    assert REQUIREMENT_SPAN_EXCEEDED in top[0]["message"]
+    assert "FR-009" in top[0]["message"]
+
+
+def test_the_same_manifest_passes_once_a_reason_names_the_id(tmp_path: Path):
+    """"adding a recorded reason for that id makes the same manifest pass, and
+    the reason is printed."
+
+    The SAME manifest — same castings, same ownership, same span — with one
+    `split_reason` entry added. Anything else changing between the two would
+    make this prove nothing.
+    """
+    reason = "the door, its report row and its command prose cannot share an owner"
+    before = _sharers(REQUIREMENT_SPAN_MAX + 1)
+    after = _sharers(REQUIREMENT_SPAN_MAX + 1, reason_on=1, reason=reason)
+    assert [c["requirement_ids"] for c in before] == [
+        c["requirement_ids"] for c in after
+    ]
+
+    refused = _run_validate(
+        tmp_path, before, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+    assert refused["passed"] is False
+
+    allowed = _run_validate(
+        tmp_path, after, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    row = _row(allowed, "FR-009")
+    assert row["span"] == 3
+    assert row["split_reason"] == reason
+    # The recorded reason is PRINTED, not merely honoured.
+    recorded = [
+        i for i in _span(allowed)["issues"] if i.get("issue") == "requirement_span_recorded"
+    ]
+    assert len(recorded) == 1
+    assert recorded[0]["id"] == "FR-009"
+    assert reason in recorded[0]["detail"]
+    assert recorded[0]["severity"] == "info"
+    # The OTHER shared requirement is still over the threshold with no reason,
+    # so the run is still refused — the exemption is for the requirement the
+    # reason names and for nothing else.
+    assert any(
+        i.get("id") == "US-001" and i.get("issue") == REQUIREMENT_SPAN_EXCEEDED
+        for i in _span(allowed)["issues"]
+    )
+
+
+def test_a_reason_recorded_at_the_manifest_top_level_exempts_too(tmp_path: Path):
+    """The other position a reason may be recorded in.
+
+    Both are authoritative and one derivation reads both, so a lead who records
+    the reason where it belongs — beside the casting, or at the top for a
+    reason that belongs to no single casting — is not refused for choosing the
+    other one.
+    """
+    reason = "one requirement, three surfaces, no shared owner"
+    castings = _sharers(REQUIREMENT_SPAN_MAX + 1)
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"split_reason": {"FR-009": reason, "US-001": reason}},
+    )
+
+    assert _row(result, "FR-009")["split_reason"] == reason
+    assert _span(result)["ok"] is True
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_reason_for_a_different_id_does_not_exempt(tmp_path: Path):
+    """The negative control that separates a recorded reason from a blanket
+    waiver: a reason names an id, and exempts THAT id.
+
+    Without this the cheapest way past the gate would be to record any reason
+    at all, which is a waiver dressed as a decision.
+    """
+    castings = _sharers(
+        REQUIREMENT_SPAN_MAX + 1, reason_on=1, reason="about something else"
+    )
+    castings[0]["split_reason"] = {"OT-038": "a requirement no casting here owns"}
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert _row(result, "FR-009")["split_reason"] is None
+    assert any(
+        i.get("id") == "FR-009" and i.get("issue") == REQUIREMENT_SPAN_EXCEEDED
+        for i in _span(result)["issues"]
+    )
+    assert result["passed"] is False
+
+
+def test_the_span_is_computed_from_the_persisted_field_and_not_the_prose(
+    tmp_path: Path,
+):
+    """"computes each requirement id's span from `requirement_ids`" — the
+    persisted claim, never the excerpt.
+
+    Driven where the two answers differ: three castings all DECLARE the same
+    requirement in their excerpts, and only one owns it. The span is one. A
+    prose-derived span would read three and refuse a manifest whose ownership
+    is unambiguous — and the ownership dimension is what reports the excerpts
+    that disagree, which is a different finding with a different fix.
+    """
+    castings = [
+        _casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+        _casting(2, excerpt=CLEAN_EXCERPT, owns=[]),
+        _casting(3, excerpt=CLEAN_EXCERPT, owns=[]),
+    ]
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert _row(result, "FR-009")["span"] == 1
+    assert _span(result)["ok"] is True
+    # ...and the disagreement IS reported, by the dimension whose question it is.
+    assert _issue_kinds(_ownership(result)) == [
+        "declared_but_not_owned",
+        "declared_but_not_owned",
+    ]
+
+
+def test_an_id_a_casting_owns_that_the_spec_never_declares_is_still_spanned(
+    tmp_path: Path,
+):
+    """Membership is the union of what the spec declares and what castings own.
+
+    An id could otherwise carry three owners and no row at all, and the span
+    rule — which is about ownership — would have nothing to act on.
+    """
+    castings = _sharers(REQUIREMENT_SPAN_MAX + 1)
+    for c in castings:
+        c["requirement_ids"] = ["US-001", "FR-009", "AC-042"]
+        c["spec_text"] = CLEAN_EXCERPT + "\n- **AC-042** [from A-017]: the span rule\n"
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert "AC-042" not in set(CLEAN_EXCERPT.split())
+    assert _row(result, "AC-042")["span"] == 3
+    assert any(
+        i.get("id") == "AC-042" and i.get("issue") == REQUIREMENT_SPAN_EXCEEDED
+        for i in _span(result)["issues"]
+    )
+
+
+def test_the_span_reports_not_computable_on_an_archive_predating_the_field(
+    tmp_path: Path,
+):
+    """The span is computed from the persisted field, so an archive that has no
+    such field has no span to report — and must not be blocked by one.
+    """
+    castings = [
+        _casting(1, excerpt=CLEAN_EXCERPT, include_owns=False),
+        _casting(2, excerpt=CLEAN_EXCERPT, include_owns=False),
+    ]
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state={"cycle": 0}, complete=True
+    )
+    dim = _span(result)
+
+    assert dim["not_computable"] is True
+    assert dim["ok"] is True
+    assert dim["rows"] == []
+    assert _issue_kinds(dim) == ["requirement_span_not_computable"]
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_split_reason_of_the_wrong_type_is_ignored_not_raised(tmp_path: Path):
+    """`split_reason` is not a shape the manifest's nested-shape guard judges.
+
+    A string where a map belongs must leave the id unexempted and the report
+    rendered — a tool never raises across the MCP boundary, and failing OPEN
+    here would be worse than failing closed: it would waive the rule.
+    """
+    castings = _sharers(REQUIREMENT_SPAN_MAX + 1)
+    castings[0]["split_reason"] = "because I said so"
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"split_reason": ["not", "a", "map"]},
+    )
+
+    assert isinstance(result, dict)
+    assert _row(result, "FR-009")["split_reason"] is None
+    assert result["passed"] is False
+
+
+# ── The table in the F0.9 payload ─────────────────────────────────────────
+
+
+def test_the_span_table_ships_as_records_and_as_a_rendered_block(tmp_path: Path):
+    """"The span table appears in the F0.9 output."
+
+    Both ways, because the tool has no display module of its own: `rows` for a
+    reader that will render them — the F6 report draws the same table — and
+    `text` for the lead reading F0.9's output directly.
+    """
+    castings = [
+        _casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+        _casting(2, excerpt=CLEAN_EXCERPT, owns=["FR-009"]),
+    ]
+    castings[1]["spec_text"] = (
+        "- **FR-009** [from A-009]: persist the ownership list at decompose time\n"
+    )
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+    table = result["requirement_span"]
+
+    assert table["threshold"] == REQUIREMENT_SPAN_MAX
+    assert table["not_computable"] is False
+    assert [r["id"] for r in table["rows"]] == ["FR-009", "US-001"]
+    assert "| requirement | owners | span | recorded reason |" in table["text"]
+    assert "| FR-009 | #1, #2 | 2 |" in table["text"]
+    assert "| US-001 | #1 | 1 |" in table["text"]
+
+
+def test_one_computation_feeds_the_table_and_the_refusal(tmp_path: Path):
+    """"Compute it ONCE and let both the refusal and the table read that one
+    computation, so the printed table and the refusal can never disagree about
+    who owns what."
+
+    Asserted as identity, not as equality: two lists that happen to match today
+    are two computations that can drift tomorrow, which is the whole shape this
+    rule exists to prevent.
+    """
+    result = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+
+    assert result["requirement_span"]["rows"] is _span(result)["rows"]
+    offender = next(
+        i for i in _span(result)["issues"] if i.get("id") == "FR-009"
+    )
+    assert offender["castings"] == _row(result, "FR-009")["owners"]
+
+
+def test_the_table_is_present_on_a_passing_manifest_as_well_as_a_failing_one(
+    tmp_path: Path,
+):
+    """The table is a REPORT, not a failure artefact. A lead reading a green
+    F0.9 should still see who owns what before dispatching the wave.
+    """
+    passing = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+    assert passing["passed"] is True, passing["issues"]
+    assert len(passing["requirement_span"]["rows"]) == 2
+    assert "| FR-009 | #1, #2 | 2 |" in passing["requirement_span"]["text"]
+
+    failing = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+    assert failing["passed"] is False
+    assert len(failing["requirement_span"]["rows"]) == 2
+    assert "| FR-009 | #1, #2, #3 | 3 |" in failing["requirement_span"]["text"]
+
+
+def test_an_exempted_row_carries_its_recorded_reason_into_the_table(tmp_path: Path):
+    """"with the recorded reason on any exempted row."
+
+    A waiver nobody can see is a waiver nobody reviews, so the reason travels
+    with the row rather than living only in the manifest a reader would have to
+    go open.
+    """
+    reason = "the door and its report row cannot share an owner"
+    result = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1, reason_on=2, reason=reason),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+
+    assert _row(result, "FR-009")["split_reason"] == reason
+    assert f"| FR-009 | #1, #2, #3 | 3 | {reason} |" in result["requirement_span"]["text"]
+    # A row with no reason prints one spelling of "nothing", not an empty cell.
+    assert "| US-001 | #1, #2, #3 | 3 | — |" in result["requirement_span"]["text"]
+
+
+def test_the_table_says_so_rather_than_rendering_empty_when_not_computable(
+    tmp_path: Path,
+):
+    """An empty table reads as "this spec has no requirements", which is a
+    different and alarming claim from "this archive predates the field".
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, include_owns=False)]
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state={"cycle": 0}, complete=True
+    )
+    table = result["requirement_span"]
+
+    assert table["not_computable"] is True
+    assert table["rows"] == []
+    assert "not computable" in table["text"]
+    assert str(REQUIREMENT_IDS_SCHEMA_FLOOR) in table["text"]
+    assert "|---|" not in table["text"]
+
+
+def test_the_table_orders_its_rows_deterministically(tmp_path: Path):
+    """A table whose row order depends on dict iteration is a table two runs
+    disagree about, and the F6 report renders these same records.
+    """
+    excerpt = (
+        "- **US-001** [from A-009]: a fix reaches every surface\n"
+        "- **FR-009** [from A-009]: persist the ownership list\n"
+        "- **AC-042** [from A-017]: refuse above the threshold\n"
+        "- **OT-038** [from A-017]: three castings without a reason\n"
+    )
+    castings = [_casting(1, excerpt=excerpt, owns=["OT-038", "AC-042", "FR-009", "US-001"])]
+
+    first = _run_validate(
+        tmp_path, castings, spec_text=excerpt, state=CURRENT_RUN, complete=True
+    )
+    second = _run_validate(
+        tmp_path, list(reversed(castings)), spec_text=excerpt, state=CURRENT_RUN,
+        complete=True,
+    )
+
+    assert [r["id"] for r in first["requirement_span"]["rows"]] == [
+        "AC-042", "FR-009", "OT-038", "US-001",
+    ]
+    assert first["requirement_span"]["text"] == second["requirement_span"]["text"]
+
+
+# ── The archives this release has to keep validating ──────────────────────
+#
+# THE SHAPES BELOW WERE MEASURED, NOT ASSUMED. Read off the three real archives
+# in this repository at the time this was written:
+#
+#   foundry-archive/daring-orca      archive_schema_version 3, 8 castings,
+#                                    none carrying `requirement_ids`
+#   foundry-archive/thunder-viper    no schema marker at all, 6 castings, none
+#                                    carrying `requirement_ids`
+#   foundry-archive/grand-vulture    no schema marker at all, 6 castings, none
+#                                    carrying `requirement_ids`
+#
+# Every one of them has requirement ids inside each casting's `spec_text` blob
+# and nowhere else, which is the state this field was added to replace — so all
+# three are exactly the archive a naive check would refuse, and all three must
+# validate. The shapes are rebuilt here against `tmp_path` rather than read out
+# of `foundry-archive/`, for two reasons: the validator WRITES to the run it
+# judges (a pass marker and a cache), which has no business touching a sealed
+# archive, and those directories are untracked, so a test that read them would
+# pass or skip depending on who ran it. The live check against the real
+# directories is the test after these; it skips where they are absent.
+
+
+def test_the_shape_of_a_schema_three_archive_still_validates(tmp_path: Path):
+    """`daring-orca`'s shape: a schema marker below the floor, eight castings,
+    no ownership list on any of them, requirement ids only in the prose.
+
+    The marker is 3 rather than absent, which is the case a floor comparison
+    has to get right and a truthiness test would not: `3` is present, non-zero
+    and still below the floor.
+    """
+    castings = [
+        _casting(cid, excerpt=CLEAN_EXCERPT, include_owns=False) for cid in range(1, 9)
+    ]
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state={"archive_schema_version": 3, "cycle": 29, "phase": "HALTED"},
+        complete=True,
+    )
+
+    assert _ownership(result)["archive_schema_version"] == 3
+    assert _ownership(result)["not_computable"] is True
+    assert _span(result)["not_computable"] is True
+    assert result["passed"] is True, result["issues"]
+
+
+def test_the_shape_of_an_archive_with_no_marker_at_all_still_validates(
+    tmp_path: Path,
+):
+    """`thunder-viper`'s and `grand-vulture`'s shape: no marker, six castings,
+    no ownership list.
+
+    Written before the marker existed, so absence is the only signal there is,
+    and it must read as "predates the field" rather than as "unknown, refuse".
+    """
+    castings = [
+        _casting(cid, excerpt=CLEAN_EXCERPT, include_owns=False) for cid in range(1, 7)
+    ]
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state={"cycle": 0, "phase": "F6"},
+        complete=True,
+    )
+
+    assert _ownership(result)["archive_schema_version"] == 0
+    assert _ownership(result)["not_computable"] is True
+    assert _span(result)["not_computable"] is True
+    assert result["passed"] is True, result["issues"]
+
+
+@pytest.mark.parametrize("run_name", ["daring-orca", "thunder-viper", "grand-vulture"])
+def test_the_real_archives_in_this_repository_report_not_computable(
+    tmp_path: Path, run_name: str
+):
+    """The same answer, driven against the ACTUAL manifest and state document.
+
+    The two tests above rebuild the shape; this one takes the bytes. The
+    documents are COPIED into a tmp_path run rather than judged in place,
+    because `foundry_validate_castings` writes a pass marker and a cache into
+    the run it judges and a sealed archive is not a place to write.
+
+    Skipped where the archives are absent — they are untracked, so a fresh
+    checkout has none, and a test that silently changed its verdict with the
+    contents of an ignored directory would be worse than one that says it did
+    not run.
+    """
+    source = Path(__file__).resolve().parents[4] / "foundry-archive" / run_name
+    manifest_path = source / "castings" / "manifest.json"
+    if not manifest_path.exists():
+        pytest.skip(f"{run_name} is not present in this checkout (untracked)")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    state_path = source / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+
+    result = _run_validate(
+        tmp_path,
+        manifest.get("castings", []),
+        manifest_extra={
+            k: v for k, v in manifest.items() if k not in ("castings",)
+        },
+        state=state,
+    )
+
+    assert _ownership(result)["not_computable"] is True, _ownership(result)["issues"]
+    assert _span(result)["not_computable"] is True
+    assert result["requirement_span"]["rows"] == []
+    # Whatever else this archive is told about, it is told nothing about a
+    # field that did not exist when it was written.
+    assert not any(
+        i.get("dimension") in ("requirement_ownership", "requirement_span")
+        for i in result["issues"]
+    )

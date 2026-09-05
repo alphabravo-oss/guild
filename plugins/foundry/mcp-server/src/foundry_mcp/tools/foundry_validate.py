@@ -79,6 +79,149 @@ REQUIREMENT_SPAN_MAX = 2
 REQUIREMENT_SPAN_EXCEEDED = "REQUIREMENT_SPAN_EXCEEDED"
 
 
+#: The two exits a lead can actually take when the span token fires. One
+#: sentence, derived from the threshold above, because more than one arm emits
+#: it and a second spelling of it is a second rule.
+_SPAN_EXITS_HINT = (
+    f"Regroup the requirement onto at most {REQUIREMENT_SPAN_MAX} castings, or "
+    f"record a `split_reason` entry naming the id and why the surfaces cannot "
+    f"share an owner."
+)
+
+
+def _recorded_split_reasons(manifest: dict, castings: list) -> dict[str, str]:
+    """``{requirement id: the reason recorded for it}`` across the manifest.
+
+    TWO POSITIONS, ONE DERIVATION. The manifest records a reason in either of
+    two places and both are authoritative, so this is the single answer to
+    "is there a recorded reason for this id" rather than two scans that could
+    disagree:
+
+      * per casting — ``castings[*].split_reason``, a ``{id: text}`` map. This
+        is the shape F0.5 DECOMPOSE emits: the casting that had to be given a
+        share of the requirement records why, next to its own ownership list.
+      * top level — ``manifest["split_reason"]``, the same map for a reason
+        that belongs to no single casting.
+
+    A reason recorded ANYWHERE in the manifest exempts the id it names, and
+    only the id it names: a reason for a different requirement is not a waiver
+    for this one, which is the whole difference between a recorded reason and a
+    blanket one. Where two positions record a reason for the same id, the
+    per-casting one is kept, because it is the one written beside the ownership
+    it explains.
+
+    Total: a `split_reason` of the wrong type, or one whose values are not
+    strings, contributes nothing rather than raising.
+    """
+    reasons: dict[str, str] = {}
+    top = manifest.get("split_reason")
+    if isinstance(top, dict):
+        reasons.update(
+            {k: v for k, v in top.items() if isinstance(k, str) and isinstance(v, str) and v}
+        )
+    for casting in castings:
+        per = casting.get("split_reason")
+        if not isinstance(per, dict):
+            continue
+        reasons.update(
+            {k: v for k, v in per.items() if isinstance(k, str) and isinstance(v, str) and v}
+        )
+    return reasons
+
+
+def _requirement_span_rows(
+    spec_req_ids: set,
+    castings: list,
+    ownership: dict,
+    reasons: dict,
+) -> list[dict]:
+    """One record per requirement id: the id, its owning castings, its span.
+
+    THE ONE COMPUTATION. The refusal and the printed table both read this list,
+    so what a lead is shown and what the gate acts on cannot disagree about who
+    owns what.
+
+    Computed from the PERSISTED ``requirement_ids``, never from the prose. That
+    is the same rule the ownership dimension enforces read from the other end:
+    ownership is a claim the manifest makes, and deriving it from `spec_text`
+    at the moment a consumer asks is what having a persisted field replaces.
+
+    MEMBERSHIP IS THE UNION, and each half is here for its own reason. Every id
+    THE SPEC DECLARES is a row, including the ones with a single owner and the
+    ones with none, because the table's job is to show a lead the whole
+    ownership picture rather than only its problems. Every id A CASTING OWNS is
+    also a row, even one the spec does not declare, because the span rule is
+    about ownership: an id could otherwise carry three owners and no row.
+
+    Owners are ordered by their printed form, so the table and the refusal are
+    byte-stable across runs whether casting ids are integers or strings.
+    """
+    owners: dict[str, list] = {}
+    for casting in castings:
+        # The casting's id AS THE MANIFEST SPELLS IT, so the table a lead reads
+        # names what they would search the manifest for. `ownership` is keyed by
+        # the printed form because that is what makes the lookup total; the
+        # display value comes from the record.
+        cid = casting.get("id", "?")
+        _present, owned = ownership.get(str(cid), (False, set()))
+        for rid in owned:
+            held = owners.setdefault(rid, [])
+            # Two castings sharing an id would otherwise be counted twice and
+            # inflate the span past a threshold nothing really crossed.
+            if cid not in held:
+                held.append(cid)
+    rows = []
+    for rid in sorted(set(spec_req_ids) | set(owners)):
+        held = sorted(owners.get(rid, []), key=str)
+        rows.append({
+            "id": rid,
+            "owners": held,
+            "span": len(held),
+            "split_reason": reasons.get(rid),
+        })
+    return rows
+
+
+#: What the table prints where a row has no recorded reason. One spelling, so a
+#: reader scanning the column sees one shape rather than two ways of saying
+#: nothing.
+_SPAN_NO_REASON = "—"
+
+
+def _render_span_table(rows: list[dict], not_computable: bool) -> str:
+    """The span table as a markdown block, for a surface with no formatter.
+
+    `Foundry-Validate-Castings` returns a payload and has no display module of
+    its own, so the table ships BOTH ways: `rows` for a reader that will render
+    it (the F6 report draws the same table from the same records) and this
+    block for the lead reading F0.9's output directly. Both come from the one
+    computation, so they cannot disagree about who owns what.
+
+    An archive that predates the persisted ownership field gets a sentence
+    saying so rather than an empty table, because an empty table reads as "no
+    requirements" and that is a different and alarming claim.
+    """
+    if not_computable:
+        return (
+            "Requirement span: not computable — no casting in this manifest "
+            "carries `requirement_ids`, and the archive predates schema "
+            f"{REQUIREMENT_IDS_SCHEMA_FLOOR}."
+        )
+    if not rows:
+        return "Requirement span: no requirement ids declared or owned."
+    lines = [
+        "| requirement | owners | span | recorded reason |",
+        "|---|---|---|---|",
+    ]
+    for row in rows:
+        owners = ", ".join(f"#{owner}" for owner in row["owners"]) or _SPAN_NO_REASON
+        reason = row["split_reason"] or _SPAN_NO_REASON
+        lines.append(
+            f"| {row['id']} | {owners} | {row['span']} | {reason} |"
+        )
+    return "\n".join(lines)
+
+
 def _archive_schema_version(state: dict) -> int:
     """The run's archive schema marker, or 0 when it is absent or unusable.
 
@@ -206,11 +349,19 @@ def foundry_validate_castings(
                 "requirement_ownership": {"ok", "issues", "not_computable",
                                           "archive_schema_version",
                                           "schema_floor"},
+                "requirement_span": {"ok", "issues", "not_computable",
+                                     "threshold", "rows"},
             },
             "issues": [...],
             "revision_hints": [...],
+            "requirement_span": {"threshold", "not_computable", "rows", "text"},
             "summary": {...},
         }
+
+    ``requirement_span.rows`` is one record per requirement id —
+    ``{"id", "owners", "span", "split_reason"}`` — ordered by id, and
+    ``requirement_span.text`` is the same records as a markdown block for a
+    surface with no formatter of its own.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -1313,6 +1464,106 @@ def foundry_validate_castings(
         "schema_floor": REQUIREMENT_IDS_SCHEMA_FLOOR,
     }
 
+    # ── Dimension 12: Requirement Span ──
+    #
+    # `forge-specs/foundry-run-fallout/spec.md` FR-013, FR-052, AC-042, AC-044,
+    # OT-038, GI-018, CT-011. "Report the span; refuse at F0.9 when any
+    # requirement spans more than two castings without a recorded reason."
+    #
+    # THE SPAN IS THE COST OF A SLICE, MADE VISIBLE. A requirement split across
+    # many castings is a requirement no single teammate can see whole: each one
+    # builds its share against a partial reading, the GRIND fix for it reaches
+    # one surface, and the ones nobody dispatched keep the old behaviour. Two
+    # owners is a boundary a lead can hold in their head. Above that the
+    # manifest must say WHY the surfaces cannot share an owner — not to make
+    # the split legal, but to make it a decision somebody took rather than one
+    # decompose fell into.
+    #
+    # REPORTED FIRST, REFUSED SECOND. The table is emitted whether or not
+    # anything is over the threshold, because a lead reading F0.9 should see the
+    # whole ownership picture and not only its failures. Both the table and the
+    # refusal read `span_rows` — ONE computation — so the printed owners and
+    # the refused owners can never disagree.
+    dim12_issues: list[dict] = []
+    span_rows: list[dict] = []
+    split_reasons = _recorded_split_reasons(manifest, castings)
+    if not ownership_not_computable:
+        span_rows = _requirement_span_rows(
+            spec_req_ids, castings, ownership, split_reasons
+        )
+        for row in span_rows:
+            if row["span"] <= REQUIREMENT_SPAN_MAX:
+                continue
+            owners = ", ".join(f"#{owner}" for owner in row["owners"])
+            if row["split_reason"]:
+                # Exempt, and the recorded reason is printed rather than merely
+                # honoured: a waiver nobody reads is a waiver nobody reviews.
+                dim12_issues.append({
+                    "severity": "info",
+                    "issue": "requirement_span_recorded",
+                    "id": row["id"],
+                    "castings": row["owners"],
+                    "span": row["span"],
+                    "split_reason": row["split_reason"],
+                    "detail": (
+                        f"{row['id']} is owned by {row['span']} castings "
+                        f"({owners}); recorded reason: {row['split_reason']}"
+                    ),
+                })
+                continue
+            dim12_issues.append({
+                "severity": "error",
+                "issue": REQUIREMENT_SPAN_EXCEEDED,
+                "id": row["id"],
+                "castings": row["owners"],
+                "span": row["span"],
+                "detail": (
+                    f"{REQUIREMENT_SPAN_EXCEEDED}: {row['id']} is owned by "
+                    f"{row['span']} castings ({owners}), above the "
+                    f"{REQUIREMENT_SPAN_MAX} F0.9 accepts without a recorded "
+                    f"reason, and no `split_reason` entry in the manifest names "
+                    f"it."
+                ),
+                "hint": _SPAN_EXITS_HINT,
+            })
+            revision_hints.append(
+                f"{REQUIREMENT_SPAN_EXCEEDED} {row['id']} (owned by {owners}): "
+                f"{_SPAN_EXITS_HINT}"
+            )
+    else:
+        dim12_issues.append({
+            "severity": "info",
+            "issue": "requirement_span_not_computable",
+            "detail": (
+                f"Requirement span is computed from the persisted "
+                f"`requirement_ids`, which no casting in this manifest carries, "
+                f"on an archive below schema "
+                f"{REQUIREMENT_IDS_SCHEMA_FLOOR}. Not computable for this "
+                f"archive and not checked."
+            ),
+        })
+
+    dim12_errors = [i for i in dim12_issues if i.get("severity") == "error"]
+    dim12_ok = len(dim12_errors) == 0
+    if dim12_errors:
+        issues.append({
+            "dimension": "requirement_span",
+            "severity": "error",
+            "message": (
+                f"{REQUIREMENT_SPAN_EXCEEDED}: {len(dim12_errors)} requirement(s) "
+                f"owned by more than {REQUIREMENT_SPAN_MAX} castings with no "
+                f"recorded reason: "
+                + ", ".join(i["id"] for i in dim12_errors)
+            ),
+        })
+    dimensions["requirement_span"] = {
+        "ok": dim12_ok,
+        "issues": dim12_issues,
+        "not_computable": ownership_not_computable,
+        "threshold": REQUIREMENT_SPAN_MAX,
+        "rows": span_rows,
+    }
+
     # ── Overall result ──
     # Fail on errors, warn on warnings
     error_count = sum(1 for i in issues if i.get("severity") == "error")
@@ -1324,6 +1575,18 @@ def foundry_validate_castings(
         "dimensions": dimensions,
         "issues": issues,
         "revision_hints": revision_hints,
+        # The span table at the top level, beside the dimension that computed
+        # it: every requirement id the spec declares or a casting owns, its
+        # owners, its span and any recorded reason. `rows` is the SAME list the
+        # `requirement_span` dimension holds — one computation, so a reader
+        # that renders the records and a reader that reads the block below can
+        # never disagree with the refusal about who owns what.
+        "requirement_span": {
+            "threshold": REQUIREMENT_SPAN_MAX,
+            "not_computable": ownership_not_computable,
+            "rows": span_rows,
+            "text": _render_span_table(span_rows, ownership_not_computable),
+        },
         "summary": {
             "castings": len(castings),
             "spec_requirements": len(spec_req_ids),
