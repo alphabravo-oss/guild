@@ -22,17 +22,23 @@ from pathlib import Path
 from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
 # D-180: the ONE derivation of "which requirement IDs does this casting own",
 # shared with the acceptance gate that demands evidence for each of them. See
-# `declared_requirement_ids`' docstring for the driven case. The edge is
-# acyclic — foundry_handoff imports foundry_orchestrator, which this module
-# already imports, and nothing in that chain imports foundry_validate (only
-# server.py does).
+# `declared_requirement_ids`' docstring for the driven case, and the ownership
+# dimension below, which is its third caller. The edge is acyclic: foundry_handoff
+# imports the artifact leaf and foundry_state, and nothing in that chain imports
+# foundry_validate (only server.py does).
 from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
-from foundry_mcp.tools.foundry_orchestrator import _artifact_guard, _load_json
+# The artifact leaf, `tools/artifacts.py`: the house door guard and the total,
+# tolerant document read. Both were reached at the top of the stack until the
+# leaf existed — this module wanted two document utilities and imported a
+# 15,000-line state machine to get them, which is what made the orchestrator
+# the package's de-facto persistence layer. The bodies are the same bodies;
+# only the module that defines them changed.
+from foundry_mcp.tools.artifacts import _artifact_guard, _load_json
 # D-134: the SHARED nested-shape validator, so "unusable manifest" means one
 # thing in every module that reads castings/manifest.json. A module-top import
-# is safe here — validate -> spawn -> orchestrator has no cycle — unlike in
-# foundry_orchestrator, which foundry_spawn imports and which therefore reaches
-# the same validator through a lazy in-function import.
+# is safe here — nothing in the chain below this module imports it back —
+# unlike in the artifact leaf, which foundry_spawn reaches transitively and
+# which therefore takes the same validator through a lazy in-function import.
 from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
 from foundry_mcp.tools.foundry_state import (
     document_refusal,
