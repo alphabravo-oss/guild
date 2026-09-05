@@ -18,14 +18,13 @@ from foundry_mcp.tools.foundry_state import (
     DISPATCH_PHASE_TO_RUN_PHASE,
     current_cycle,
     get_run_dir,
-    is_stream_record,
     now_iso,
     overlay_unreported,
-    read_text_file,
+    read_jsonl,
     spend_bucket,
+    unreported_dispatch_inputs,
 )
 from pathlib import Path
-from foundry_mcp.tools.orchestration.streams import ROLLUP_FILENAME
 
 
 
@@ -58,22 +57,18 @@ def _spend_ledger_rows(fdir: Path) -> list[dict]:
     reader in this package skips a malformed record: this is advisory data, and
     losing a cost report to one bad line would be a strictly worse outcome than
     a cost report missing one row.
+
+    fallout GI-024 / D-013 (concern C-009) — THE LINE LOOP IS `read_jsonl`'S.
+    This spelled its own splitlines / json.loads / isinstance walk, which is the
+    third of the three that reader exists to replace, and it had already made
+    the asymmetry that reader documents by hand: undecodable BYTES are a
+    problem, a torn LINE is skipped. Calling the reader keeps the two rules one
+    rule; the `problem`-to-empty degradation is this caller's, because a cost
+    report is advisory and refusing one over a corrupt ledger is worse than
+    reporting none of it.
     """
-    text, problem = read_text_file(fdir / SPEND_LEDGER_FILENAME)
-    if problem is not None:
-        return []
-    rows: list[dict] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(row, dict):
-            rows.append(row)
-    return rows
+    rows, problem = read_jsonl(fdir / SPEND_LEDGER_FILENAME)
+    return [] if problem is not None else rows
 
 
 
@@ -96,72 +91,32 @@ def _spend_ledger_rows(fdir: Path) -> list[dict]:
 # surfaces bucket identically or neither does.
 
 
-def _spawn_rows(fdir: Path) -> list[dict]:
-    """The `spawns.log` rows, exactly as casting 4's `foundry_spawn.py` wrote them.
+def _dispatch_inputs(fdir: Path) -> dict:
+    """The three dispatch ledgers, assembled ONCE by the leaf that owns them.
 
-    Handed to `unreported_dispatch_pairs` unchanged — the verb-to-phase mapping
-    and the agent-id spelling are both applied inside it, from the constant and
-    the minting function passed in, so nothing is normalised twice or normalised
-    differently by the two surfaces that read this log.
+    fallout GI-024 / D-013 (casting 10's concern C-009) — ONE ASSEMBLY, TWO
+    RENDERINGS.
+    ---------------------------------------------------------------------
+    `foundry_state.unreported_dispatch_pairs` was already the one RULE, and
+    what stayed derived twice was the ASSEMBLY of its inputs: this module
+    walked `spawns.log`, `spend.jsonl` and the roll-up through `_spawn_rows`,
+    `_spend_ledger_rows`, `_stream_roster` and `_stream_dispatch_cycles`, while
+    `foundry_report._read_dispatch_summary` walked the same three files again.
+    Casting 10 made `foundry_state.unreported_dispatch_inputs` the single
+    assembler and repointed the report at it; this is the other caller.
+
+    Returns the reader's own shape —
+    ``{dispatch_rows, spend_rows, stream_roster, cycles_of_agent, problem}``.
+    ``problem`` names the FIRST unreadable ledger and is the reader's contract,
+    not this module's: a caller that degrades reads the empty lists beside it,
+    which is what every consumer below does, because a cost report is advisory
+    and never refuses.
+
+    THE ROSTER AND THE CYCLE MAP COME OFF ONE WALK of the roll-up, which is
+    what keeps them from disagreeing about which cycles a stream ran in — the
+    two used to be two walks of one document here.
     """
-    rows: list[dict] = []
-    text, problem = read_text_file(fdir / "spawns.log")
-    if problem is not None:
-        return rows
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(row, dict):
-            rows.append(row)
-    return rows
-
-
-
-
-def _stream_dispatch_cycles(fdir: Path) -> dict[str, list[str]]:
-    """`{stream wire id: [server cycles it ran in]}` from `stream-rollup.json`.
-
-    The F2 stream agents appear in no `spawns.log` row at all, so this is the
-    only record that they were dispatched. A stream is a bucket key whose VALUE
-    is a record carrying `records` — testing the value rather than keeping a
-    denylist of non-stream keys is what keeps the C-6 additions
-    (`inspect_mode`, `stream_scope`, `evidence_sweep`) out of the roster without
-    an edit every time the roll-up gains a field.
-
-    D-182 — AND THAT TEST IS READ, NOT RE-TYPED. The same predicate was spelled
-    out inline here and in `measure-run.py` and `foundry_report.py`, three
-    derivations of one rule over one document, and D-182 was the third of them
-    disagreeing. `foundry_state.is_stream_record` is now the single definition
-    and every reader calls it, so a C-6 addition that has to be excluded is
-    excluded everywhere by one edit rather than by three that must agree.
-
-    The cycle is kept as its own axis and never folded into the phase: every
-    INSPECT stream shares the phase `F2`, and `cycle-1` is a cycle, not a phase
-    a lead could ever type into `Foundry-Spend`.
-    """
-    cycles: dict[str, list[str]] = {}
-    rollup = _load_json(fdir / ROLLUP_FILENAME).get("cycles", {})
-    if isinstance(rollup, dict):
-        for cycle_key, bucket in rollup.items():
-            if not isinstance(bucket, dict):
-                continue
-            for stream, entry in bucket.items():
-                if is_stream_record(entry):
-                    cycles.setdefault(str(stream), []).append(str(cycle_key))
-    return {stream: sorted(seen) for stream, seen in cycles.items()}
-
-
-
-
-def _stream_roster(fdir: Path) -> dict[str, list[str]]:
-    """C-5's `{run phase id: [F2 stream agent ids]}`, as the helper wants it."""
-    streams = sorted(_stream_dispatch_cycles(fdir))
-    return {"F2": streams} if streams else {}
+    return unreported_dispatch_inputs(fdir)
 
 
 
@@ -187,9 +142,10 @@ def _dispatch_pairs(fdir: Path, spend_rows: list[dict]) -> list[dict]:
     from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting
     from foundry_mcp.tools.foundry_state import unreported_dispatch_pairs
 
+    inputs = _dispatch_inputs(fdir)
     return unreported_dispatch_pairs(
-        dispatch_rows=_spawn_rows(fdir),
-        stream_roster=_stream_roster(fdir),
+        dispatch_rows=inputs["dispatch_rows"],
+        stream_roster=inputs["stream_roster"],
         spend_rows=spend_rows,
         phase_of_dispatch=DISPATCH_PHASE_TO_RUN_PHASE,
         agent_id_of=_agent_id_for_casting,
@@ -212,7 +168,7 @@ def _dispatched_agents(fdir: Path) -> list[dict]:
     is what lets `by_cycle` carry a per-cycle count while `by_phase` and the F6
     report read the pair.
     """
-    cycles = _stream_dispatch_cycles(fdir)
+    cycles = _dispatch_inputs(fdir)["cycles_of_agent"]
     rows: list[dict] = []
     for pair in _dispatch_pairs(fdir, []):
         stamps = cycles.get(pair["agent"], []) if pair["phase"] == "F2" else []
@@ -298,13 +254,14 @@ def _dispatch_summary(fdir: Path) -> dict:
     from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting
     from foundry_mcp.tools.foundry_state import unreported_dispatch_summary
 
+    inputs = _dispatch_inputs(fdir)
     return unreported_dispatch_summary(
-        dispatch_rows=_spawn_rows(fdir),
-        stream_roster=_stream_roster(fdir),
-        spend_rows=_spend_ledger_rows(fdir),
+        dispatch_rows=inputs["dispatch_rows"],
+        stream_roster=inputs["stream_roster"],
+        spend_rows=inputs["spend_rows"],
         phase_of_dispatch=DISPATCH_PHASE_TO_RUN_PHASE,
         agent_id_of=_agent_id_for_casting,
-        cycles_of_agent=_stream_dispatch_cycles(fdir),
+        cycles_of_agent=inputs["cycles_of_agent"],
     )
 
 

@@ -463,9 +463,10 @@ def _seed_fixed(fdir: Path, *records: dict) -> None:
 # now; see ``_package_modules``.
 # --------------------------------------------------------------------------- #
 
-# The only sanctioned readers of ``state.json["cycle"]``:
-#   plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py#_server_cycle
-#   plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_current_cycle
+# The only sanctioned readers of ``state.json["cycle"]``, and after GI-024 they
+# are BOTH in the leaf:
+#   plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py#current_cycle
+#   plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py#derive_cycle_count
 # Both are TOTAL, and they agree on the degraded case: a missing, absent, or
 # malformed counter resolves to 0 in BOTH, never to the caller's asserted value
 # — trusting the caller there is precisely what ST-001 exists to remove. The
@@ -473,20 +474,22 @@ def _seed_fixed(fdir: Path, *records: dict) -> None:
 # caller asserted beside the server's stamp as ``declared_cycle``, so a
 # divergence is auditable rather than silent.
 #
-# D-119 (6453159) is what made them agree. Before it ``_server_cycle`` returned
-# None on a malformed counter and a caller-side wrapper — ``_stamp_cycle``,
-# deleted in that commit and folded back into ``_server_cycle`` — read the None
-# as licence to stamp the number it had been handed, while ``_current_cycle``
-# resolved the identical input to 0. The same finding filed through the two
-# doors therefore landed in different cycles, and a class that recurred three
-# straight cycles evaded ST-002 escalation because mixed-door filing broke the
-# consecutive run. Do not restore a partial reader here: the allow-list is for
-# TOTAL readers only, and ``test_escalation``'s cross-door parity pins hold
-# both copies to this one contract.
+# D-119 (6453159) is what made the two copies agree while there WERE two. The
+# partial reader that lived in ``tools/foundry.py`` returned None on a malformed
+# counter and its caller-side wrapper — ``_stamp_cycle``, deleted in that commit
+# and folded back into the reader it wrapped — read the None as licence to stamp the
+# number it had been handed, while the orchestrator's copy resolved the
+# identical input to 0. The same finding filed through the two doors therefore
+# landed in different cycles, and a class that recurred three straight cycles
+# evaded ST-002 escalation because mixed-door filing broke the consecutive run.
+# Do not restore a partial reader here: the allow-list is for TOTAL readers
+# only, and ``test_escalation``'s cross-door parity pins hold every caller to
+# this one contract.
 #
-# The second copy is deliberate, not drift — the orchestrator imports the
-# foundry module, so reading back the other way would close a cycle in the
-# import graph.
+# There is no second copy left to be deliberate about. The cycle that once
+# forced one — the orchestrator importing the foundry module, so reading back
+# the other way would have closed an import cycle — is gone with the monolith:
+# the reader is in a LEAF now, which every layer may import.
 #: fallout GI-024 / AC-011 — `_current_cycle` moved to
 #: `foundry_state.current_cycle` in commit group (0); the monolith binds the
 #: leaf's object under the old name for its sibling test modules, so BOTH
@@ -500,8 +503,8 @@ def _seed_fixed(fdir: Path, *records: dict) -> None:
 #: enrolled here rather than routed through `current_cycle`, which cannot
 #: express the distinction.
 GUARDED_CYCLE_READERS = frozenset(
-    {"_current_cycle", "current_cycle", "_server_cycle", "derive_cycle_count"}
-)  # 3 readers, 4 spellings
+    {"_current_cycle", "current_cycle", "derive_cycle_count"}
+)  # 2 readers, 3 spellings
 
 
 
@@ -716,6 +719,21 @@ _CASTING_KEY_FILES = tuple(
 #: pins up: these keys are string constants that ARE names, so an entry would
 #: vouch for its own name the day someone redefines it.
 _PROSE_CITES_WITH_NO_DEFINITION: dict[str, str] = {
+    "_spawn_rows": (
+        "spawns.log walker folded into `foundry_state.unreported_dispatch_"
+        "inputs`, the single assembler of the three dispatch ledgers "
+        "(GI-024 / D-013, casting 10's concern C-009); `_dispatch_inputs` is "
+        "the one call that replaced it."
+    ),
+    "_stream_roster": (
+        "the roll-up's `{F2: [stream]}` view, folded into the same assembler — "
+        "it and the cycle map were two walks of one document and now come off "
+        "one (C-009)."
+    ),
+    "_stream_dispatch_cycles": (
+        "the roll-up's `{stream: [cycle]}` view, folded into the same "
+        "assembler beside the roster it was walked with (C-009)."
+    ),
     "_GATE_RANK_DELEGATED": (
         "gate rank retired when the delegated evaluation gained one rank per "
         "CHECK (D-190/D-191)."
@@ -738,7 +756,9 @@ _PROSE_CITES_WITH_NO_DEFINITION: dict[str, str] = {
         "one-per-server rather than one-per-arm (D-208)."
     ),
     "_stamp_cycle": (
-        "caller-side wrapper folded back into `_server_cycle` (D-119)."
+        "caller-side wrapper folded back into the cycle reader it wrapped "
+        "(D-119); that reader has since moved into the leaf as "
+        "`foundry_state.current_cycle`."
     ),
     "_parse_iso8601": (
         "superseded helper deleted; named here only as a prior instance of the "

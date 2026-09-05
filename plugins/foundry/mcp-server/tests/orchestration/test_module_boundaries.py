@@ -1253,9 +1253,9 @@ def _raw_state_cycle_reads(path: Path) -> tuple[list[str], list[str]]:
     D-142: the GUARDED readers are recognised and reported in the first
     element, and skipped only when deciding who OFFENDS. The old shape
     ``continue``d past them before looking at anything, so the two functions
-    that definitionally hold this rule's shape -- ``_current_cycle`` and
-    ``_server_cycle``, where every read of the counter now lives -- were the
-    two the scan could not see, and ``assert not offenders`` stayed green when
+    that definitionally hold this rule's shape -- the leaf's ``current_cycle``
+    and ``derive_cycle_count``, where every read of the counter now lives --
+    were the two the scan could not see, and ``assert not offenders`` stayed green when
     ``_mentions_state_json`` stopped recognising the package's spelling (a
     ``"state.json"`` hoisted into a module constant empties it outright).
     """
@@ -1397,8 +1397,8 @@ def test_every_state_cycle_read_goes_through_a_guarded_reader():
     # TOTAL readers are where every read of the counter now lives, so they are
     # the sites this derivation must still see, by name.
     assert {
-        "foundry.py#_server_cycle",
         "foundry_state.py#current_cycle",
+        "foundry_state.py#derive_cycle_count",
     } <= set(seen), (
         f"the scan recognised {seen} as state-cycle readers, which does not "
         f"include the two TOTAL readers the whole package routes through. The "
@@ -4868,20 +4868,17 @@ _DELIBERATE_REDEFINITIONS: dict[str, str] = {
 #: foundry-archive/foundry-run-fallout/concerns.md.
 _KNOWN_DUPLICATION: dict[str, str] = {
     "_artifact_guard": (
-        "casting 4 — tools/foundry.py holds a second artifact-read layer "
-        "beside casting 7's tools/artifacts.py leaf. Casting 7 closed "
-        "_load_json / _read_document / _document_problem; this is the last of "
-        "that layer."
+        "casting 4 — ONE NAME, TWO FUNCTIONS, and the row survives for that "
+        "reason rather than for the usual one (concern C-007). "
+        "`artifacts._artifact_guard(fdir)` scans the whole run; "
+        "`foundry._artifact_guard(fdir, *names)` is scoped to the artifacts the "
+        "calling tool touches — a corrupt roll-up must not block a defect "
+        "filing that never opens it — and additionally runs the D-096 "
+        "ledger-container rung, which is LEDGER knowledge GI-033 keeps out of a "
+        "leaf. Deleting either would break the other's call sites on arity. "
+        "Closing this means RENAMING one of the two, not importing one from the "
+        "other; casting 4 owns that rename."
     ),
-    "_RESET": "casting 4 — tools/foundry.py's own copy of display.py's palette",
-    "_BOLD": "casting 4 — tools/foundry.py's own copy of display.py's palette",
-    "_DIM": "casting 4 — tools/foundry.py's own copy of display.py's palette",
-    "_CYAN": "casting 4 — tools/foundry.py's own copy of display.py's palette",
-    "_GREEN": "casting 4 — tools/foundry.py's own copy of display.py's palette",
-    "_WHITE": "casting 4 — tools/foundry.py's own copy of display.py's palette",
-    "_BCYAN": "casting 4 — tools/foundry.py's own copy of display.py's palette",
-    "_BGREEN": "casting 4 — tools/foundry.py's own copy of display.py's palette",
-    "_BWHITE": "casting 4 — tools/foundry.py's own copy of display.py's palette",
     "_REQUIREMENT_ID_RE": (
         "castings 5 and 6 — schemas/vocab.py declares the grammar; "
         "tools/evidence.py and tools/test_deriver.py each bind their own alias "
@@ -4890,15 +4887,19 @@ _KNOWN_DUPLICATION: dict[str, str] = {
     "_normalise_path": (
         "casting 1 — tools/concerns.py and schemas/vocab.py spell one rule twice"
     ),
-    "ESCALATION_FILENAME": (
-        "casting 10 — tools/orchestration/escalation.py WRITES the file and "
-        "declares the name; tools/foundry_report.py re-declares the literal "
-        "instead of importing it"
-    ),
-    "ROLLUP_FILENAME": (
-        "casting 10 — tools/orchestration/streams.py WRITES the file and "
-        "declares the name; tools/foundry_report.py re-declares the literal "
-        "instead of importing it"
+    "_spec_requirement_ids": (
+        "casting 7 — ONE NAME, TWO ANSWERS TO ONE QUESTION, and this one is a "
+        "real fork rather than a name-alike. `foundry_validate`'s returns "
+        "(text, ids, path, problem) and says in its own docstring that a second "
+        "climb of the spec ladder elsewhere is 'a second answer to which spec "
+        "is this run's'; `gates`' returns the sorted ids off "
+        "`_resolve_spec_path`. Both feed a refusal — F0.9's dimensions and the "
+        "DONE gate's requirement count — so the two may not disagree about "
+        "which file the run's spec IS. It cannot be closed by an import: "
+        "gates.py is a VERIFIER and foundry_validate.py is lifecycle, so "
+        "GI-033 forbids the edge in that direction. The ladder belongs in a "
+        "LEAF, which is casting 7's artifacts.py or casting 10's "
+        "foundry_state.py; see concerns.md."
     ),
 }
 
