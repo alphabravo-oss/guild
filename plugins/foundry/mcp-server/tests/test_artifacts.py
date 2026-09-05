@@ -656,11 +656,13 @@ def test_the_only_edge_above_the_leaf_is_the_declared_lazy_one():
 # fallout GI-033 — THE LEAF IS THE ONE HOME, AND THE INVENTORY IS HOW THAT GETS
 # TRUE RATHER THAN MERELY ASSERTED.
 #
-# Two second copies of this module's rules are still standing in
-# ``tools/foundry.py``: a byte-identical tolerant read (fallout D-011) and a
-# lock domain of its own (fallout D-010). Neither is this casting's to delete —
-# that file belongs to another casting — so the guards below take the shape this
-# package already uses for exactly this situation
+# Both second copies this inventory was written for are GONE, closed by the
+# casting that owns ``tools/foundry.py`` under concern C-003: the tolerant read
+# is imported from here (fallout D-011) and the lock domain is bound from here
+# (fallout D-010), so ``_SECOND_LOCK_DOMAINS`` is empty and
+# ``_SECOND_READ_LAYER``'s one row has shrunk to what it still accounts for.
+# The guards stay, in the shape this package already uses for exactly this
+# situation
 # (``tests/orchestration/test_module_boundaries.py#_KNOWN_DUPLICATION``): an
 # INVENTORY, not an exemption list. It behaves one way in each direction, and
 # the two directions are the whole point:
@@ -672,11 +674,25 @@ def test_the_only_edge_above_the_leaf_is_the_declared_lazy_one():
 #     outlives the thing it excuses is how an exception becomes the rule.
 #
 # The name-collision sweep in ``test_module_boundaries`` already covers the READ
-# layer, because those four names collide. It is BLIND to the lock domain: one
-# module spells it ``_ARTIFACT_LOCK`` and the other ``_LEDGER_LOCK``, so a sweep
-# keyed on names sees two different symbols where there is one rule. That blind
-# spot is why the second guard below is keyed on the SHAPE — a module-top
-# ``threading.RLock()`` / ``threading.local()`` pair — rather than on a name.
+# layer, because those four names collide. It was BLIND to the lock domain: one
+# module spelled it ``_ARTIFACT_LOCK`` and the other ``_LEDGER_LOCK``, so a
+# sweep keyed on names saw two different symbols where there is one rule. That
+# blind spot is why the second guard below is keyed on the SHAPE — a module-top
+# ``threading.RLock()`` / ``threading.local()`` pair — rather than on a name,
+# and it is why the guard outlives the row it was written to hold: the next
+# module to declare a domain of its own will not be named after this one
+# either.
+#
+# AND THE COLLISION SWEEP CANNOT TELL TWO CONTRACTS APART, which is the other
+# half of what the rows below now record. ``_artifact_guard`` is defined here
+# and in ``tools/foundry.py`` and the two are DIFFERENT FUNCTIONS: this one
+# takes a run dir and scans the whole run; that one takes ``*names``, is scoped
+# to the artifacts the calling tool touches, and runs a ledger-container rung
+# that may not move into a leaf (fallout GI-033 — a leaf that knows what a
+# ledger is has stopped being one). A sweep keyed on names reports that as one
+# rule duplicated. It is one NAME shared by two, which is a different finding
+# and is recorded as one rather than closed by deleting a guard the package
+# needs.
 # --------------------------------------------------------------------------- #
 
 
@@ -684,12 +700,16 @@ def test_the_only_edge_above_the_leaf_is_the_declared_lazy_one():
 #: one, with the reason it is still there. fallout D-011.
 _SECOND_READ_LAYER: dict[str, str] = {
     "foundry.py": (
-        "a byte-identical `_read_document` / `_document_problem` / `_load_json` "
-        "and its own `_artifact_guard`. The comment that used to excuse it said "
-        "the leaf imports foundry.py and reading back would close a cycle; the "
-        "leaf imports foundry.py nowhere, so the deletion is a delete-and-import "
-        "with nothing standing in its way. Owned by the casting that owns "
-        "tools/foundry.py."
+        "`_artifact_guard` ONLY, and it is not a second copy of this module's — "
+        "it takes `*names`, is scoped to the artifacts the calling tool touches "
+        "so a corrupt roll-up cannot block a filing that never opens it, and it "
+        "runs the ledger-container rung (`_LEDGER_KEYS` / `ledger_shape_problem`, "
+        "D-096) that GI-033 keeps out of a leaf. The three that WERE byte-"
+        "identical — `_read_document`, `_document_problem`, `_load_json` — are "
+        "imported from here as of concern C-003; this row is the shared NAME, "
+        "which the sweep cannot distinguish from a shared rule. Closing it means "
+        "renaming one of the two, which is a decision for the castings that own "
+        "both files rather than for either alone."
     ),
 }
 
@@ -702,18 +722,16 @@ _READ_LAYER_SYMBOLS = ("_read_document", "_document_problem", "_load_json",
 
 #: A shipped module declaring its own run-artifact lock domain beside this
 #: module's, with the reason it is still there. fallout D-010.
-_SECOND_LOCK_DOMAINS: dict[str, str] = {
-    "foundry.py": (
-        "`_LEDGER_LOCK` / `_LEDGER_TX`, guarding the same documents this "
-        "module's domain guards — verdicts.json has one writer in each. They "
-        "exclude on disk today only because two independent spellings of the "
-        "lock filename agree, one of them a bare \".lock\" literal at "
-        "`_locked_document` and `write_document`; and the two in-flight maps "
-        "are different objects, so a cross-domain nesting on one document on "
-        "one thread would block on a lock that thread already holds. Owned by "
-        "the casting that owns tools/foundry.py."
-    ),
-}
+#: EMPTY, and that is the state this table was written to reach. `foundry.py`
+#: declared `_LEDGER_LOCK` / `_LEDGER_TX` over the same documents — verdicts.json
+#: has one writer in each — and the two excluded on disk only because two
+#: independently typed spellings of the lock filename agreed, one of them a bare
+#: ".lock" literal at `_locked_document` and `write_document`. It now binds this
+#: module's `_ARTIFACT_LOCK` / `_ARTIFACT_TX` and derives the sidecar name from
+#: `_TX_LOCK_SUFFIX` (concern C-003), so there is one domain, one in-flight map
+#: keyed on `str(path)`, and a cross-domain nesting composes into one write
+#: instead of blocking on a flock the thread already holds.
+_SECOND_LOCK_DOMAINS: dict[str, str] = {}
 
 
 def _shipped_modules() -> list[Path]:

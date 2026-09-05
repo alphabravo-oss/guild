@@ -89,7 +89,6 @@ import fcntl
 import json
 import re
 import subprocess
-import threading
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -123,6 +122,14 @@ from foundry_mcp.tools.foundry_state import (
     read_document,
     read_text_file,
     set_active_run,
+)
+from foundry_mcp.tools.artifacts import (
+    _ARTIFACT_LOCK,
+    _ARTIFACT_TX,
+    _TX_LOCK_SUFFIX,
+    _document_problem,
+    _load_json,
+    _read_document,
 )
 from foundry_mcp.tools.display import foundry_hammer, FOUNDRY_SEP
 
@@ -188,71 +195,43 @@ def _format_init_display(run_name: str, temper: bool = False, nyquist: bool = Fa
 # import — same four names, same refusal shape — and the two copies STAY two.
 # Holmes `helper-1` records the policy difference as deliberate: THIS module
 # fails CLOSED on a corrupt document (``LedgerShapeError``; D-096 / D-127)
-# while the leaf fails OPEN with ``{}``, so folding them would have to pick one
-# failure direction for callers that need both. The leaf is where Block B was
-# copied verbatim; nothing here is migrated onto it, for the same reason
-# ``_server_cycle`` is a deliberate second copy of
-# ``foundry_state.py#current_cycle``.
+# while the leaf fails OPEN with ``{}``.
 #
-#   ``_read_document``   — the tolerant core: (data, named problem).
-#   ``_document_problem``— the problem alone.
+# fallout D-011 — THE TOLERANT READ IS IMPORTED, NOT RE-DEFINED. This block
+# used to carry a second body of ``_read_document`` / ``_document_problem`` /
+# ``_load_json``, excused by "folding them would have to pick one failure
+# direction". That reason does not survive reading: the failure direction lives
+# in ``_locked_document`` and ``ledger_transaction``, which RAISE
+# ``LedgerShapeError`` on a problem the tolerant read merely NAMES — so the
+# read layer was never what differed, and two byte-identical bodies were being
+# kept apart by a sentence about the layer above them. ``tools/artifacts.py``
+# is the one home (GI-033) and this module imports from it; the leaf imports
+# nothing here, so the import closes no cycle.
+#
+# WHAT STAYS, AND WHY IT IS NOT THE SAME FUNCTION AS THE LEAF'S. The four names
+# collide, but only three of them are one rule:
+#
+#   ``_read_document``   — the tolerant core: (data, named problem). IMPORTED.
+#   ``_document_problem``— the problem alone. IMPORTED.
 #   ``_load_json``       — total. {} for missing / unreadable / malformed.
-#                          NEVER raises, so every reader in this module is safe
-#                          by construction rather than by remembered
-#                          try/excepts at 13 call sites.
-#   ``_artifact_guard``  — the named refusal, at the MCP entry points, which is
-#                          where a human is listening.
+#                          NEVER raises. IMPORTED.
+#   ``_artifact_guard``  — DEFINED HERE, and a different function from the
+#                          leaf's name-alike. The leaf's takes a run dir alone
+#                          and scans the WHOLE run; this one takes ``*names``
+#                          and is scoped to the artifacts the calling tool
+#                          actually touches, because a corrupt roll-up must not
+#                          block a defect filing that never opens it. It also
+#                          runs the ledger-container rung (``_LEDGER_KEYS`` /
+#                          ``ledger_shape_problem``, D-096), which is LEDGER
+#                          knowledge and so may not move into a leaf — the leaf
+#                          says as much itself: a leaf that knows what a ledger
+#                          is has stopped being one.
 #
 # Tolerance ALONE would have turned D-095 into D-096: a corrupt defects.json
 # reads as an empty one, and the next write then replaces the file and reports
 # success. The guard is the half that stops the write and names the file, and
 # neither half is sufficient without the other.
 # ---------------------------------------------------------------------------
-
-
-def _read_document(path: Path) -> tuple[dict, str | None]:
-    """Read a JSON object. Returns ``(data, problem)``; never raises.
-
-    ``problem`` is a human-readable string NAMING THE FILE when the artifact
-    exists but is not a readable JSON object, else None. An ABSENT file is not
-    a problem — a run legitimately has artifacts it has not written yet, and
-    conflating "absent" with "corrupt" is what would make a fresh run refuse to
-    start.
-    """
-    if not path.exists():
-        return {}, None
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        return {}, f"{path.name} could not be read ({type(exc).__name__}: {exc})"
-    try:
-        data = json.loads(raw)
-    except ValueError as exc:
-        return {}, f"{path.name} is not valid JSON ({exc})"
-    if not isinstance(data, dict):
-        return {}, (
-            f"{path.name} is not a JSON object (found "
-            f"{type(data).__name__}) — every run artifact is a mapping"
-        )
-    return data, None
-
-
-def _document_problem(path: Path) -> str | None:
-    """The named reason ``path`` is not a readable JSON object, or None."""
-    return _read_document(path)[1]
-
-
-def _load_json(path: Path) -> dict:
-    """Total, tolerant read of a run artifact. Returns {} rather than raising.
-
-    Every malformed-container shape — truncated, ``[]``, ``null``, ``42``,
-    ``"a string"``, non-UTF-8 — reads as an empty document, so no reader in
-    this module can raise across the MCP boundary. A caller that must TELL the
-    operator which file is broken uses ``_artifact_guard`` /
-    ``_document_problem`` rather than inspecting this return value, which
-    cannot distinguish "absent" from "corrupt" by design.
-    """
-    return _read_document(path)[0]
 
 
 def _container_shape_problem(
@@ -417,20 +396,32 @@ def _atomic_rename_write(path: Path, data: dict) -> None:
 # derives that set from the AST rather than trusting this comment.
 # ---------------------------------------------------------------------------
 
-# INSPECT's parallel streams are concurrent tool calls inside ONE MCP server
-# process (plugin.json launches one server per project), so an flock alone
-# would not serialize them — flock is advisory PER PROCESS and a second
-# acquisition from the same process succeeds immediately. The RLock covers
-# threads; the flock covers a second server process on the same repo.
-_LEDGER_LOCK = threading.RLock()
-
-# path -> in-flight document, per thread (D-099). A nested transaction on a
-# path this thread already holds yields the SAME document and defers the write
-# to the outermost exit. Without it, nesting deadlocked against our OWN flock:
-# an flock is held per open file description, and the transaction opens a fresh
-# fd on every entry, so a second acquire from the same thread blocks forever
-# rather than succeeding the way the RLock does.
-_LEDGER_TX = threading.local()
+# fallout D-010 — ONE LOCK DOMAIN FOR THE PACKAGE, IMPORTED FROM THE LEAF.
+#
+# This module used to declare ``_ARTIFACT_LOCK`` / ``_ARTIFACT_TX`` of its own and
+# spell the sidecar name as a bare ``".lock"`` literal. A second domain over
+# the same documents is not a second implementation of a convenience; it is a
+# second answer to "who may write this file now", and verdicts.json has one
+# writer in each. The two excluded each other on disk only because two
+# independently typed spellings of one filename happened to agree, and the two
+# in-flight maps were different objects, so a cross-domain nesting on one
+# document on one thread blocked on a flock that thread already held.
+#
+# Binding the leaf's ``_ARTIFACT_LOCK`` / ``_ARTIFACT_TX`` / ``_TX_LOCK_SUFFIX``
+# makes the agreement structural: one RLock orders the threads, one in-flight
+# map keyed on ``str(path)`` — the same key both primitives already used — lets
+# a nested pair compose into a single write, and the sidecar name is derived
+# rather than retyped.
+#
+# What the RLock and the flock each cover is unchanged: INSPECT's parallel
+# streams are concurrent tool calls inside ONE MCP server process, so an flock
+# alone would not serialize them (it is advisory PER PROCESS and a second
+# acquisition from the same process succeeds immediately); the RLock covers
+# threads, the flock covers a second server process on the same repo. And the
+# re-entrancy is still D-099's: a nested entry on a path this thread already
+# holds yields the SAME document and defers the write to the outermost exit,
+# because an flock belongs to the open file description and this module opens a
+# fresh fd on every entry.
 
 _RECORD_ID_RE = re.compile(r"\A([A-Za-z]+)-(\d+)\Z")
 
@@ -546,17 +537,17 @@ def _locked_document(path: Path) -> Iterator[dict]:
     named refusal, and writes NOTHING: reading it as ``{}`` and writing over it
     is the data loss the guard exists to prevent.
     """
-    held = getattr(_LEDGER_TX, "docs", None)
+    held = getattr(_ARTIFACT_TX, "docs", None)
     if held is None:
-        held = _LEDGER_TX.docs = {}
+        held = _ARTIFACT_TX.docs = {}
     tx_key = str(path)
     if tx_key in held:
         # Already open on this thread — same document, one write at the end.
         yield held[tx_key]
         return
 
-    lock_path = path.with_name(path.name + ".lock")
-    with _LEDGER_LOCK:
+    lock_path = path.with_name(path.name + _TX_LOCK_SUFFIX)
+    with _ARTIFACT_LOCK:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_path, "a+", encoding="utf-8") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
@@ -596,14 +587,14 @@ def write_document(path: Path, data: dict) -> None:
     still happens at the outermost exit, rather than a second write racing the
     transaction that is about to overwrite it.
     """
-    held = getattr(_LEDGER_TX, "docs", None) or {}
+    held = getattr(_ARTIFACT_TX, "docs", None) or {}
     tx_key = str(path)
     if tx_key in held:
         held[tx_key].clear()
         held[tx_key].update(data)
         return
-    lock_path = path.with_name(path.name + ".lock")
-    with _LEDGER_LOCK:
+    lock_path = path.with_name(path.name + _TX_LOCK_SUFFIX)
+    with _ARTIFACT_LOCK:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_path, "a+", encoding="utf-8") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
