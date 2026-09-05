@@ -1354,3 +1354,486 @@ def test_the_report_assembles_no_dispatch_inputs_of_its_own() -> None:
             f"{walked!r} in `_read_dispatch_summary`: the ledger walk is "
             f"`foundry_state.unreported_dispatch_inputs`', not this module's."
         )
+
+
+# ---------------------------------------------------------------------------
+# fallout GI-033 / D-021 / D-035 — the reads the layering moved into the leaf.
+#
+# Each is driven three ways, like every other reader here: the derived answer
+# over a synthetic run dir, the empty-ledger answer, and the malformed-document
+# answer. The fourth clause for this family is the VOCABULARY one — every
+# closed-set value these take is PASSED IN, because the leaf contract keeps
+# this module free of package imports, so a literal spelled here would be the
+# second opinion of a field that D-210 and D-212 were each filed over.
+# ---------------------------------------------------------------------------
+
+_TIERS = frozenset({"LIVE", "LATENT", "HARDENING"})
+_UNKNOWN = "unknown"
+
+
+def _tier_of(record: dict) -> str:
+    """A stand-in for `vocab.defect_tier`: total, unknown for anything else."""
+    raw = record.get("tier")
+    return raw if isinstance(raw, str) and raw in _TIERS else _UNKNOWN
+
+
+def test_current_inspect_mode_returns_the_last_entry_stamped_for_the_cycle(
+    run_env,
+) -> None:
+    """fallout GI-008 / GI-009 — the width is READ, never re-derived."""
+    _write_json(run_env, "state.json", {"cycle": 2, "inspect_modes": [
+        {"cycle": 1, "mode": "DELTA", "rule": "no_verifier_touched"},
+        {"cycle": 2, "mode": "FULL", "rule": "verifier_touched"},
+    ]})
+    entry = fs.current_inspect_mode(run_env, modes=frozenset({"FULL", "DELTA"}))
+
+    assert entry["mode"] == "FULL"
+    assert entry["rule"] == "verifier_touched"
+    # The narrow readers ask about a NAMED cycle instead, and get that cycle's
+    # answer only when the LAST entry is the one stamped for it.
+    assert fs.current_inspect_mode(
+        run_env, 1, modes=frozenset({"FULL", "DELTA"})
+    ) is None
+
+
+def test_current_inspect_mode_reads_an_unusable_record_as_no_record(
+    run_env,
+) -> None:
+    """fallout D-212 / D-216 — three axes, each of which was a defect first.
+
+    A mode outside the vocabulary, an entry that is not a mapping, and an entry
+    stamped for another cycle each read as NO record — D-117's ruling ("an
+    unrecorded width is not full width") applied to a value that is present and
+    wrong rather than to one that is absent. Walking BACK to an older valid
+    entry is the alternative, and it would report cycle N-1's FULL as cycle N's
+    width and pass the ASSAY gate that refuses today.
+    """
+    modes = frozenset({"FULL", "DELTA"})
+    for entries in (
+        [{"cycle": 0, "mode": "delta"}],          # lowercase: not a member
+        [{"cycle": 0, "mode": "BOGUS"}],
+        ["not a mapping"],
+        [{"cycle": 0, "mode": "FULL"}, {"cycle": 0, "mode": True}],
+        [{"cycle": True, "mode": "FULL"}],        # bool is not a cycle
+        [{"mode": "FULL"}],                       # no stamp at all
+        [{"cycle": 9, "mode": "FULL"}],           # another cycle's decision
+        [{"cycle": 0, "mode": "FULL"}, {"cycle": 1, "mode": "DELTA"}],
+    ):
+        _write_json(run_env, "state.json", {"cycle": 0, "inspect_modes": entries})
+        assert fs.current_inspect_mode(run_env, modes=modes) is None, entries
+
+
+def test_current_inspect_mode_is_none_on_an_empty_or_malformed_document(
+    run_env,
+) -> None:
+    """Absent, empty and unreadable all read as "no width recorded"."""
+    modes = frozenset({"FULL", "DELTA"})
+    assert fs.current_inspect_mode(run_env, modes=modes) is None
+    _write_json(run_env, "state.json", {"cycle": 0, "inspect_modes": []})
+    assert fs.current_inspect_mode(run_env, modes=modes) is None
+    _write_json(run_env, "state.json", {"cycle": 0, "inspect_modes": "nope"})
+    assert fs.current_inspect_mode(run_env, modes=modes) is None
+    (run_env / "state.json").write_text("{ not json", encoding="utf-8")
+    assert fs.current_inspect_mode(run_env, modes=modes) is None
+
+
+def test_open_defects_by_tier_derives_its_buckets_from_the_vocabulary(
+    run_env,
+) -> None:
+    """fallout GI-014 / AC-011 — every member is a key, always, even empty.
+
+    The buckets were three hand-typed keys while the resolver was total over
+    the whole tier set, so the moment HARDENING joined that frozenset this
+    raised `KeyError: 'HARDENING'` on any ledger carrying one — and the tier
+    exists precisely so streams will file into it. An absent bucket also reads
+    as zero blocking defects, which is the direction that fails open.
+    """
+    _write_json(run_env, "defects.json", {"defects": [
+        {"id": "D-1", "status": "open", "tier": "LIVE"},
+        {"id": "D-2", "status": "open", "tier": "LATENT"},
+        {"id": "D-3", "status": "open", "tier": "HARDENING"},
+        {"id": "D-4", "status": "open"},               # untiered: unknown
+        {"id": "D-5", "status": "open", "tier": "BOGUS"},
+        {"id": "D-6", "status": "fixed", "tier": "LIVE"},
+        "not a mapping",
+    ]})
+    buckets = fs.open_defects_by_tier(
+        run_env, tiers=_TIERS, unknown_tier=_UNKNOWN, tier_of=_tier_of
+    )
+
+    assert set(buckets) == set(_TIERS) | {_UNKNOWN}
+    assert [d["id"] for d in buckets["LIVE"]] == ["D-1"]
+    assert [d["id"] for d in buckets["HARDENING"]] == ["D-3"]
+    # An untiered record and one carrying a string no vocabulary knows land on
+    # the SAME sentinel, and it is not LATENT: reading them as LATENT would
+    # silently clear every gate on records nobody ever classified
+    # (convergence FR-051).
+    assert [d["id"] for d in buckets[_UNKNOWN]] == ["D-4", "D-5"]
+    assert buckets["LATENT"] and "D-6" not in {d["id"] for d in buckets["LATENT"]}
+
+
+def test_open_defects_by_tier_answers_an_empty_or_malformed_ledger(
+    run_env,
+) -> None:
+    """Every bucket present and empty — never a missing key."""
+    for document in ({}, {"defects": []}, {"defects": "nope"}, {"defects": None}):
+        _write_json(run_env, "defects.json", document)
+        buckets = fs.open_defects_by_tier(
+            run_env, tiers=_TIERS, unknown_tier=_UNKNOWN, tier_of=_tier_of
+        )
+        assert set(buckets) == set(_TIERS) | {_UNKNOWN}
+        assert all(bucket == [] for bucket in buckets.values()), document
+    (run_env / "defects.json").write_text("{ not json", encoding="utf-8")
+    assert all(
+        bucket == []
+        for bucket in fs.open_defects_by_tier(
+            run_env, tiers=_TIERS, unknown_tier=_UNKNOWN, tier_of=_tier_of
+        ).values()
+    )
+
+
+def test_open_defect_ids_by_tier_is_the_same_buckets_reduced_to_ids(
+    run_env,
+) -> None:
+    """convergence CT-008's refusal names the ids; the SENTENCE is not here.
+
+    A LIVE defect needs fixing and an unknown-tier one needs a stream to
+    re-file it with a tier, so the gate's prose must tell them apart — and that
+    prose names both filing doors and the GRIND phase, which is protocol
+    knowledge. The ids come from the leaf; the sentence stays with the gate.
+    """
+    _write_json(run_env, "defects.json", {"defects": [
+        {"id": "D-1", "status": "open", "tier": "LIVE"},
+        {"status": "open", "tier": "LIVE"},            # no id at all
+        {"id": "D-9", "status": "open"},
+    ]})
+    ids = fs.open_defect_ids_by_tier(
+        run_env, tiers=_TIERS, unknown_tier=_UNKNOWN, tier_of=_tier_of
+    )
+    assert ids["LIVE"] == ["D-1", "?"]
+    assert ids[_UNKNOWN] == ["D-9"]
+    assert ids["LATENT"] == []
+
+
+def test_halted_state_reads_both_spellings_of_the_reason(run_env) -> None:
+    """fallout CT-004 / FR-054 — the structured record and the legacy string.
+
+    The member is never GUESSED out of a pre-release sentence: that is how a
+    run's ending gets reclassified by a reader. "" means "this record carries
+    text and no member", which is what every archive written before
+    fallout FR-019 carries.
+    """
+    reason_of = lambda v: v if v in {"cap_reached", "lead_ruling"} else None
+    max_cycles_of = lambda state: state.get("max_cycles") or 0
+
+    _write_json(run_env, "state.json", {
+        "phase": "HALTED", "halted_at_cycle": 4, "max_cycles": 4,
+        "halted_reason": {"reason": "cap_reached", "text": "cycle 5 would exceed it"},
+    })
+    record = fs.halted_state(
+        run_env, halted_phase="HALTED", reason_of=reason_of,
+        max_cycles_of=max_cycles_of,
+    )
+    assert record["halted_reason_member"] == "cap_reached"
+    assert record["halted_reason"] == "cap_reached: cycle 5 would exceed it"
+    assert record["max_cycles"] == 4
+    assert record["halted_report_error"] == ""
+
+    _write_json(run_env, "state.json", {
+        "phase": "HALTED", "halted_at_cycle": 2,
+        "halted_reason": "--max-cycles 2 reached: opening GRIND cycle 3 would exceed it",
+    })
+    legacy = fs.halted_state(
+        run_env, halted_phase="HALTED", reason_of=reason_of,
+        max_cycles_of=max_cycles_of,
+    )
+    assert legacy["halted_reason_member"] == ""
+    assert legacy["halted_reason"].startswith("--max-cycles 2 reached")
+
+
+def test_halted_state_is_none_when_the_run_is_not_halted(run_env) -> None:
+    """The terminal state is decided ONCE, so no door can decide it twice."""
+    reason_of = lambda v: None
+    max_cycles_of = lambda state: 0
+    for state in ({}, {"phase": "F3"}, {"phase": "DONE"}, {"phase": None}):
+        _write_json(run_env, "state.json", state)
+        assert fs.halted_state(
+            run_env, halted_phase="HALTED", reason_of=reason_of,
+            max_cycles_of=max_cycles_of,
+        ) is None, state
+    (run_env / "state.json").write_text("{ not json", encoding="utf-8")
+    assert fs.halted_state(
+        run_env, halted_phase="HALTED", reason_of=reason_of,
+        max_cycles_of=max_cycles_of,
+    ) is None
+
+
+def test_registered_team_dirs_is_the_roster_intersected_with_the_disk(
+    run_env, tmp_path,
+) -> None:
+    """A team is active while the roster names it AND its directory is there.
+
+    The directory going away is what `TeamDelete` does, so a name with no
+    directory is a roster entry nobody cleaned up — not a team holding the
+    tree. The OTHER half, a scan for live teammate panes, reads no run artifact
+    and stays with the module that knows how to look.
+    """
+    teams_dir = tmp_path / "teams"
+    (teams_dir / "cast-run-wave-1").mkdir(parents=True)
+    _write_json(run_env, "state.json", {"active_teams": [
+        "cast-run-wave-1", "grind-run-cycle-1", 7, "",
+    ]})
+    assert fs.registered_team_dirs(run_env, teams_dir=teams_dir) == [
+        "cast-run-wave-1"
+    ]
+
+
+def test_registered_team_dirs_answers_an_empty_or_malformed_roster(
+    run_env, tmp_path,
+) -> None:
+    teams_dir = tmp_path / "teams"
+    teams_dir.mkdir()
+    for state in ({}, {"active_teams": []}, {"active_teams": "nope"},
+                  {"active_teams": None}):
+        _write_json(run_env, "state.json", state)
+        assert fs.registered_team_dirs(run_env, teams_dir=teams_dir) == [], state
+    (run_env / "state.json").write_text("{ not json", encoding="utf-8")
+    assert fs.registered_team_dirs(run_env, teams_dir=teams_dir) == []
+
+
+def test_sight_required_honours_the_no_ui_declaration(run_env) -> None:
+    """fallout AC-052 / FR-055 — the flag is read BEFORE the extension scan.
+
+    The previous shape implemented the opposite: with the flag set and any UI
+    extension in scope it answered required True / blocked True, so declaring a
+    run had no browsable UI was the one way to make the browser audit mandatory
+    AND unsatisfiable. Driven here with a `.tsx` key file, which is the shape
+    every earlier `no_ui` fixture was missing.
+    """
+    (run_env / "castings").mkdir()
+    _write_json(run_env, "castings/manifest.json", {
+        "no_ui": True,
+        "castings": [{"id": 1, "key_files": ["src/App.tsx"]}],
+    })
+    answer = fs.sight_required(
+        run_env, shape_problem=lambda _d: None, no_ui_meaning="no browsable UI",
+    )
+    assert answer == {
+        "required": False, "blocked": False, "no_ui": True,
+        "ui_files": 1, "reason": "no browsable UI",
+    }
+
+
+def test_sight_required_reads_the_extensions_when_nothing_was_declared(
+    run_env,
+) -> None:
+    """Absence of the flag is not a claim either way, so the files decide."""
+    (run_env / "castings").mkdir()
+    _write_json(run_env, "castings/manifest.json", {
+        "castings": [{"id": 1, "key_files": ["src/App.tsx", "src/api.py"]}],
+    })
+    blocked = fs.sight_required(
+        run_env, shape_problem=lambda _d: None, no_ui_meaning="unused"
+    )
+    assert blocked["required"] is True and blocked["blocked"] is True
+    assert blocked["ui_files"] == 1
+
+    _write_json(run_env, "castings/manifest.json", {
+        "target_url": "http://localhost:3000",
+        "castings": [{"id": 1, "key_files": ["src/App.tsx"]}],
+    })
+    ready = fs.sight_required(
+        run_env, shape_problem=lambda _d: None, no_ui_meaning="unused"
+    )
+    assert ready == {
+        "required": True, "blocked": False,
+        "url": "http://localhost:3000", "ui_files": 1,
+    }
+
+    _write_json(run_env, "castings/manifest.json", {
+        "castings": [{"id": 1, "key_files": ["src/api.py"]}],
+    })
+    assert fs.sight_required(
+        run_env, shape_problem=lambda _d: None, no_ui_meaning="unused"
+    ) == {"required": False, "reason": "No frontend files in castings"}
+
+
+def test_sight_required_requires_nothing_of_an_absent_or_unusable_manifest(
+    run_env,
+) -> None:
+    """fallout D-134 — the RECORDS, not just the container.
+
+    `castings: "nope"` used to meet `.get()` and raise AttributeError out of
+    Foundry-Next. A run with no manifest yet requires nothing, which is what is
+    true of it, and one whose records are unusable says so.
+    """
+    assert fs.sight_required(
+        run_env, shape_problem=lambda _d: None, no_ui_meaning="unused"
+    ) == {"required": False}
+
+    (run_env / "castings").mkdir()
+    _write_json(run_env, "castings/manifest.json", {"castings": "nope"})
+    assert fs.sight_required(
+        run_env, shape_problem=lambda _d: "records are not a list",
+        no_ui_meaning="unused",
+    ) == {
+        "required": False,
+        "reason": "castings/manifest.json records are unreadable",
+    }
+
+    (run_env / "castings" / "manifest.json").write_text("{ not json",
+                                                        encoding="utf-8")
+    assert fs.sight_required(
+        run_env, shape_problem=lambda _d: None, no_ui_meaning="unused"
+    )["required"] is False
+
+
+def test_persisted_escalated_classes_resolves_every_shape_through_the_resolver(
+    run_env,
+) -> None:
+    """fallout D-210 / D-212 — nothing pre-filters the shape ahead of it.
+
+    The comprehension tested `isinstance(entry, dict)` BEFORE the resolver, so
+    its third rung — an entry that is not a mapping reads as ESCALATED — was
+    unreachable through this door, and a non-mapping entry was DROPPED from a
+    list the DONE gate refuses on. Driven at cdb9322: `{"status": "BOGUS"}`
+    blocked correctly while `"just a string"`, `["ESCALATED"]` and `null` each
+    let the run reach DONE. convergence ST-010 is "every escalated class
+    CLEARED", and an entry that is not a mapping carries no CLEARED.
+    """
+    def status_of(entry):
+        if isinstance(entry, dict) and entry.get("status") == "CLEARED":
+            return "CLEARED"
+        return "ESCALATED"
+
+    classes = {
+        "cleared-class": {"status": "CLEARED"},
+        "live-class": {"status": "ESCALATED"},
+        "bogus-class": {"status": "BOGUS"},
+        "shapeless-class": "just a string",
+        "listy-class": ["ESCALATED"],
+        "null-class": None,
+    }
+    assert fs.persisted_escalated_classes(
+        classes, overrides=set(), status_of=status_of, escalated="ESCALATED"
+    ) == ["bogus-class", "listy-class", "live-class", "null-class",
+          "shapeless-class"]
+
+
+def test_persisted_escalated_classes_honours_the_operators_overrides() -> None:
+    """An arm reading the document directly would bypass the filter.
+
+    It would eventually stamp a class CLEARED with an exit reason no rule
+    earned — recording the operator's decision as the machine's, irreversibly,
+    since CLEARED is terminal and a withdrawn directive could never bring the
+    class back. `"*"` clears every class.
+    """
+    status_of = lambda _entry: "ESCALATED"
+    classes = {"a": {}, "b": {}}
+    assert fs.persisted_escalated_classes(
+        classes, overrides={"a"}, status_of=status_of, escalated="ESCALATED"
+    ) == ["b"]
+    assert fs.persisted_escalated_classes(
+        classes, overrides={"*"}, status_of=status_of, escalated="ESCALATED"
+    ) == []
+    for malformed in ({}, None, "nope", []):
+        assert fs.persisted_escalated_classes(
+            malformed, overrides=set(), status_of=status_of,
+            escalated="ESCALATED",
+        ) == [], malformed
+
+
+# ---------------------------------------------------------------------------
+# THE MOVE IS FAITHFUL, ASSERTED AS AN EQUALITY RATHER THAN CLAIMED.
+#
+# The point of moving a read down is that the surfaces which used to answer a
+# question through a cross-layer import now answer it from one place. That is
+# only true if the leaf's answer IS the answer the orchestration reader gave,
+# so each register below drives BOTH over the same synthetic run directory and
+# asserts they agree — not "a number that matches", but the same document
+# resolved the same way, so a future edit to either cannot make them agree by
+# coincidence.
+#
+# Scoped to the three that take a run directory. `_check_active_teams` and
+# `_check_sight_required` take a project root and resolve it through the
+# active-run lookup, which is machine state rather than a run artifact; their
+# leaf halves are driven directly above.
+# ---------------------------------------------------------------------------
+
+
+def test_the_leafs_width_read_is_the_width_readers_answer(run_env) -> None:
+    """fallout GI-033 — `width._current_inspect_mode`'s answer, from the leaf."""
+    from foundry_mcp.schemas.vocab import INSPECT_MODES
+    from foundry_mcp.tools.orchestration.width import _current_inspect_mode
+
+    for entries in (
+        [{"cycle": 0, "mode": "FULL", "rule": "first_of_phase"}],
+        [{"cycle": 0, "mode": "DELTA", "rule": "no_verifier_touched"}],
+        [{"cycle": 1, "mode": "FULL"}],          # another cycle's decision
+        [{"cycle": 0, "mode": "BOGUS"}],
+        ["not a mapping"],
+        [],
+    ):
+        _write_json(run_env, "state.json", {"cycle": 0, "inspect_modes": entries})
+        assert fs.current_inspect_mode(
+            run_env, modes=INSPECT_MODES
+        ) == _current_inspect_mode(run_env), entries
+
+
+def test_the_leafs_tier_buckets_are_the_gates_buckets(run_env) -> None:
+    """fallout GI-033 — `gates._open_defects_by_tier`'s answer, from the leaf.
+
+    This is the edge fallout GI-033 forbids with no exception at all: the guidance
+    module is lifecycle and the gate module is a verifier, so a lifecycle
+    module importing the gate to read the defect ledger is a
+    LIFECYCLE-TO-VERIFIER import. Reading it from the leaf removes the edge
+    without moving the judgement anywhere.
+    """
+    from foundry_mcp.schemas.vocab import DEFECT_TIERS, TIER_UNKNOWN, defect_tier
+    from foundry_mcp.tools.orchestration.gates import _open_defects_by_tier
+
+    _write_json(run_env, "defects.json", {"defects": [
+        {"id": "D-1", "status": "open", "tier": "LIVE"},
+        {"id": "D-2", "status": "open", "tier": "LATENT"},
+        {"id": "D-3", "status": "open", "tier": "HARDENING"},
+        {"id": "D-4", "status": "open"},
+        {"id": "D-5", "status": "open", "tier": "BOGUS"},
+        {"id": "D-6", "status": "fixed", "tier": "LIVE"},
+        "not a mapping",
+    ]})
+    assert fs.open_defects_by_tier(
+        run_env, tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN,
+        tier_of=defect_tier,
+    ) == _open_defects_by_tier(run_env)
+
+
+def test_the_leafs_halt_record_is_the_halt_modules_record(run_env) -> None:
+    """fallout GI-033 — `halt._halted_state`'s answer, from the leaf.
+
+    `_VERIFIER_TO_LIFECYCLE_SEAM` names only ('transitions', 'halt') as the one
+    permitted one-way crossing, so a GATE reaching halt.py is a second crossing
+    the exception does not cover. The refusal SHAPER stays in halt.py — it
+    names the tokens that do not leave HALTED, the report file and the remedy,
+    which is protocol knowledge — and only the read comes down.
+    """
+    from foundry_mcp.schemas.vocab import RUN_PHASE_HALTED, halt_reason
+    from foundry_mcp.tools.orchestration.halt import (
+        _halted_state,
+        _persisted_max_cycles,
+    )
+
+    for state in (
+        {"phase": "HALTED", "halted_at_cycle": 4, "max_cycles": 4,
+         "halted_reason": {"reason": "cap_reached", "text": "cycle 5 exceeds it"}},
+        {"phase": "HALTED", "halted_at_cycle": 2,
+         "halted_reason": "--max-cycles 2 reached"},
+        {"phase": "HALTED", "halted_reason": {"reason": "BOGUS", "text": "x"}},
+        {"phase": "HALTED"},
+        {"phase": "F3"},
+        {},
+    ):
+        _write_json(run_env, "state.json", state)
+        assert fs.halted_state(
+            run_env, halted_phase=RUN_PHASE_HALTED, reason_of=halt_reason,
+            max_cycles_of=_persisted_max_cycles,
+        ) == _halted_state(run_env), state

@@ -1886,3 +1886,336 @@ def get_run_dir(project_root: str, name: str | None = None) -> Path | None:
     if not n:
         return None
     return Path(project_root) / ARCHIVE_DIR / n
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-033 / D-021 / D-035 (concern C-017) — THE READS THE LAYERING PUTS
+# HERE.
+#
+# `_LAYERING_DEBT` records edges where a verifier module (gates, transitions,
+# width) reaches into the lifecycle layer, or a lifecycle module reaches into a
+# verifier. GI-033 permits exactly one exception and none of these is it. Every
+# row below was the same shape: a PURE READ of a run artifact that happened to
+# be defined in the module whose feature it serves, so the module that needed
+# the fact had to import the module that owned the feature.
+#
+# The reads live here now. This is the leaf GI-033 enumerates and GI-024
+# already designates for consolidated readers, so a verifier reaching one of
+# these crosses no layer at all.
+#
+# WHAT DOES NOT COME HERE, AND WHY IT IS NOT AN OMISSION.
+# -------------------------------------------------------
+#   * WRITERS AND EFFECTS. `_synthesize_clean_prove_verdicts` opens a
+#     `_document_transaction` on verdicts.json; it is a writer, and the locked
+#     read-modify-write primitive lives in `artifacts.py`, which this module
+#     may not import. It belongs with the four writer/effect rows already ruled
+#     a structural packet, not with these reads.
+#   * REFUSAL SHAPERS THAT HOLD PROTOCOL KNOWLEDGE. `_halted_refusal` names the
+#     tokens that do not leave HALTED, the report file and the remedy;
+#     `_blocking_defects`' hint names both filing doors and the GRIND phase.
+#     Those sentences are lifecycle knowledge and stay in the lifecycle layer.
+#     The READ each of them is built on comes here, which is the whole of the
+#     edge: the shaper then needs no cross-layer import to get its facts.
+#   * RULE ENGINES. `_escalated_classes` walks the consecutive-cycle rule
+#     through `_class_buckets` / `_class_info` / `_consecutive_run`, and
+#     `_escalation_exit_distances` walks the clean arm and prints how far each
+#     arm has left. Neither is a read of a document; both are ST-002's rule,
+#     and dragging them here would move the rule to keep an import tidy.
+#
+# THE VOCABULARY IS PASSED IN, every time, in the shape
+# `unreported_dispatch_summary` established and the leaf contract's own pin
+# spells out: "a name from `vocab` or a `tools/` module is passed IN". That is
+# what lets these be reads in a module that imports `json` and `pathlib` and
+# nothing else.
+# --------------------------------------------------------------------------- #
+
+
+def current_inspect_mode(
+    run_dir: Path, cycle: int | None = None, *, modes
+) -> dict | None:
+    """The decision the last INSPECT-opening transition recorded, or None.
+
+    THE ONLY READ of the recorded width. A lazily-computed mode is GI-008's and
+    GI-009's named violation, so every consumer — the streams-complete check,
+    the guidance engine, the status display, the report — comes through here
+    and none of them re-derives anything. None means a run whose INSPECT has
+    not been opened since the record landed, and each caller degrades to its
+    pre-change behaviour rather than guessing a width.
+
+    Three axes decide, and each was a defect before it was a rule:
+
+      * WHICH ENTRY (D-212). The LAST one. `inspect_modes` is append-only and
+        the last entry IS the current decision, so a malformed current decision
+        can never be answered with an older cycle's valid one — walking back
+        would report cycle N-1's FULL as cycle N's width and pass the ASSAY
+        gate that refuses today.
+      * WHAT ITS MODE IS (D-212). Membership of ``modes``, never truthiness, so
+        a hand-edited `"delta"` or `"BOGUS"` is not a recorded width.
+      * WHICH CYCLE IT BELONGS TO (D-216). The entry must be stamped for the
+        cycle being asked about. Driven at F2 cycle 2 with a single cycle-1
+        entry, `Foundry-Gate('assay')` PASSED carrying an assertion about cycle
+        2 answered by cycle 1's record.
+
+    An unusable record reads as NO record — D-117's ruling ("an unrecorded
+    width is not full width") applied to a value that is present and wrong
+    rather than to one that is absent. ``cycle`` is WHICH crossing is being
+    asked about and defaults to the server counter; the narrow readers that
+    measure one named cycle's coverage pass it. Total; never raises.
+    """
+    state, _ = read_document(run_dir / "state.json")
+    entries = state.get("inspect_modes")
+    if not isinstance(entries, list) or not entries:
+        return None
+    entry = entries[-1]
+    if not isinstance(entry, dict):
+        return None
+    if entry.get("mode") not in modes:
+        return None
+    stamped = entry.get("cycle")
+    if isinstance(stamped, bool) or not isinstance(stamped, int):
+        return None
+    if stamped != (current_cycle(run_dir) if cycle is None else cycle):
+        return None
+    return entry
+
+
+def open_defects_by_tier(
+    run_dir: Path, *, tiers, unknown_tier: str, tier_of
+) -> dict[str, list[dict]]:
+    """Every OPEN defect in the ledger, bucketed by the tier it READS as.
+
+    Keys are every member of ``tiers`` plus ``unknown_tier``, always present
+    and possibly empty — a caller that has to check whether a bucket exists
+    before counting it will eventually forget to, and an absent bucket reads as
+    zero blocking defects, which is the direction that fails open.
+
+    THE BUCKETS ARE DERIVED FROM THE VOCABULARY PASSED IN. They were three
+    hand-typed keys while ``tier_of`` was total over the whole tier set, so the
+    moment `HARDENING` joined that frozenset this raised `KeyError:
+    'HARDENING'` on any ledger carrying one — and the tier exists precisely so
+    streams will file into it. A hand-typed copy of a closed vocabulary is the
+    drift `vocab.py` was built to end.
+
+    ``tier_of`` resolves a record to a tier and is the one place a missing key,
+    a null, a non-string and an unknown string all land on ``unknown_tier``:
+    an untiered pre-change record blocks exactly like LIVE, and reading it as
+    LATENT would silently clear every gate on records nobody classified.
+
+    Non-dict historical records are skipped, not guessed at (D-128). Total.
+    """
+    buckets: dict[str, list[dict]] = {t: [] for t in sorted(tiers)}
+    buckets.setdefault(unknown_tier, [])
+    document, _ = read_document(run_dir / "defects.json")
+    records = document.get("defects")
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict) or record.get("status") != "open":
+            continue
+        buckets.setdefault(tier_of(record), []).append(record)
+    return buckets
+
+
+def open_defect_ids_by_tier(
+    run_dir: Path, *, tiers, unknown_tier: str, tier_of
+) -> dict[str, list[str]]:
+    """`open_defects_by_tier` reduced to the ids, which is what a refusal names.
+
+    Same buckets, same keys, `"?"` for a record carrying no id. The refusal
+    PROSE is not built here: CT-008 requires a gate to name the open LIVE and
+    the open unknown-tier defects and to tell them apart, because they block
+    for different reasons and the operator's next move differs — a LIVE defect
+    needs fixing, an unknown-tier one needs a stream to re-file it with a tier.
+    That sentence names the filing doors and the GRIND phase, which is protocol
+    knowledge, so it stays with the gate and only the ids come from here.
+    """
+    return {
+        tier: [str(record.get("id", "?")) for record in bucket]
+        for tier, bucket in open_defects_by_tier(
+            run_dir, tiers=tiers, unknown_tier=unknown_tier, tier_of=tier_of
+        ).items()
+    }
+
+
+def halted_state(
+    run_dir: Path, *, halted_phase: str, reason_of, max_cycles_of
+) -> dict | None:
+    """The run's HALTED record, or None when the run is not halted.
+
+    THE ONLY READ of `state.json.phase == HALTED`, for the reason
+    `current_inspect_mode` is the only read of the recorded width: a terminal
+    state each door decides for itself is a terminal state each door can decide
+    differently.
+
+    Returns, and never raises::
+
+        {"halted_at_cycle": object,        # as recorded; may be absent/None
+         "halted_reason": str,             # the SENTENCE an operator reads
+         "halted_reason_member": str,      # the vocabulary member, or ""
+         "max_cycles": int,                # the cap, read as the halt read it
+         "halted_report_error": str}       # "" when the report was written
+
+    TWO SHAPES, ONE READ (CT-004 / FR-054). `halted_reason` is
+    ``{"reason": <member>, "text": <the lead's words>}`` from this release on
+    and a bare f-string on every archive written before it. Both are read here
+    so no caller has to know which it got, and the member is never GUESSED out
+    of a pre-release sentence — that is how a run's ending gets reclassified by
+    a reader. ``reason_of`` returns the member for a recognised value and None
+    otherwise, so "" here means "this record carries text and no member".
+
+    ``max_cycles_of`` reads the cap off the same document the halt read it
+    from (D-225): displaying a raw field beside a decision made on a normalised
+    one is how a refusal comes to name a number no code acted on.
+    """
+    state, _ = read_document(run_dir / "state.json")
+    if state.get("phase") != halted_phase:
+        return None
+    raw = state.get("halted_reason")
+    if isinstance(raw, dict):
+        member = reason_of(raw.get("reason")) or ""
+        detail = str(raw.get("text") or "").strip()
+        sentence = f"{member}: {detail}" if member and detail else (member or detail)
+    else:
+        member = ""
+        sentence = str(raw or "").strip()
+    return {
+        "halted_at_cycle": state.get("halted_at_cycle"),
+        "halted_reason": sentence or "the configured cycle cap was reached",
+        "halted_reason_member": member,
+        "max_cycles": max_cycles_of(state),
+        "halted_report_error": str(state.get("halted_report_error") or "").strip(),
+    }
+
+
+def registered_team_dirs(run_dir: Path, *, teams_dir: Path) -> list[str]:
+    """The registered teams whose directory still exists, in recorded order.
+
+    THE ARTIFACT HALF of "is a team still holding the tree". A team is active
+    while `state.json.active_teams` names it AND its directory is still there —
+    the directory going away is what `TeamDelete` does, and a name with no
+    directory is a roster entry nobody cleaned up.
+
+    The OTHER half is a scan of the machine for live teammate panes, which
+    reads no run artifact and belongs with the module that knows how to look;
+    so does the hint naming SendMessage, TeamDelete and `tmux kill-pane`. Both
+    halves must be clear for a gate to pass, and this is the half a run
+    artifact can answer. Total: a non-list roster and a non-string member each
+    contribute nothing rather than raising.
+    """
+    state, _ = read_document(run_dir / "state.json")
+    teams = state.get("active_teams")
+    return [
+        name for name in (teams if isinstance(teams, list) else [])
+        if isinstance(name, str) and name and (Path(teams_dir) / name).is_dir()
+    ]
+
+
+def sight_required(
+    run_dir: Path, *, shape_problem, no_ui_meaning: str
+) -> dict:
+    """Whether the SIGHT browser audit is part of this run, from the manifest.
+
+    Returns ``{"required": bool}`` plus, as they apply, ``blocked``, ``no_ui``,
+    ``ui_files``, ``url`` and ``reason``. A run with no manifest yet requires
+    nothing, which is what is true of it.
+
+    `--no-ui` IS A DECLARATION AND THIS HONOURS IT (AC-052 / FR-055). The flag
+    is read BEFORE the extension scan's own answer, because the flag is the
+    operator's statement about the run and the extensions are an inference
+    about it. The previous shape implemented the opposite: with the flag set
+    and any UI extension in scope it answered `required: True, blocked: True`,
+    the streams roster then demanded `sight`, and the CAST precondition failed
+    — so declaring a run had no browsable UI was the one way to make the
+    browser audit mandatory AND unsatisfiable. ``ui_files`` is still reported
+    so the operator can see the tension between what they declared and what is
+    in scope; it is a fact on the answer, never a reason to overrule the
+    declaration. The extension scan stays for runs that did NOT declare the
+    flag: absence of the flag is not a claim either way.
+
+    ``shape_problem`` is the shared manifest-shape validator and ``no_ui_meaning``
+    the one sentence that spells what the flag means; both are passed in
+    because the leaf contract keeps this module free of package imports, and
+    both live where AC-052's "one documented meaning" puts them. A manifest
+    whose records are unusable requires nothing and says so (D-134): the
+    records, not just the container, because `castings: "nope"` used to meet
+    `.get()` and raise AttributeError out of Foundry-Next.
+    """
+    manifest_path = Path(run_dir) / "castings" / "manifest.json"
+    if not manifest_path.exists():
+        return {"required": False}
+    data, _ = read_document(manifest_path)
+    if shape_problem(data) is not None:
+        return {
+            "required": False,
+            "reason": "castings/manifest.json records are unreadable",
+        }
+
+    ui_exts = (".tsx", ".jsx", ".vue", ".svelte", ".css", ".scss", ".html", ".astro")
+    ui_files = [
+        f
+        for casting in data.get("castings", [])
+        if isinstance(casting, dict)
+        for f in (casting.get("key_files") or [])
+        if isinstance(f, str) and f.endswith(ui_exts)
+    ]
+
+    if data.get("no_ui", False):
+        return {
+            "required": False,
+            "blocked": False,
+            "no_ui": True,
+            "ui_files": len(ui_files),
+            "reason": no_ui_meaning,
+        }
+    if not ui_files:
+        return {"required": False, "reason": "No frontend files in castings"}
+
+    url = data.get("target_url", "")
+    if not url:
+        return {
+            "required": True,
+            "blocked": True,
+            "ui_files": len(ui_files),
+            "reason": (
+                f"No --url provided but {len(ui_files)} frontend files in scope"
+            ),
+        }
+    return {"required": True, "blocked": False, "url": url, "ui_files": len(ui_files)}
+
+
+def persisted_escalated_classes(
+    classes, *, overrides, status_of, escalated: str
+) -> list[str]:
+    """The class keys a persisted escalation document records as ESCALATED.
+
+    Sorted, so both escalation arms walk in one order and the document they
+    write is stable across runs. ``overrides`` is the set of classes the
+    operator de-escalated by directive; ``"*"`` in it clears every class.
+
+    OVERRIDES ARE HONOURED HERE TOO. An arm reading the document directly would
+    bypass the filter and eventually stamp a class CLEARED with an exit reason
+    no rule earned — recording the operator's decision as the machine's,
+    irreversibly, since CLEARED is terminal and a withdrawn directive could
+    never bring the class back.
+
+    ``status_of`` decides, and NOTHING PRE-FILTERS THE SHAPE AHEAD OF IT
+    (D-210 / D-212). This tested `isinstance(entry, dict)` before the resolver,
+    so its third rung — "present and NOT a member, or an entry that is not a
+    mapping at all, reads as ESCALATED" — was unreachable through this door,
+    and a non-mapping entry was DROPPED from a list the DONE gate refuses on.
+    Driven at cdb9322 through `Foundry-Gate('done')`: `{"status": "BOGUS"}`
+    blocked correctly, while `"just a string"`, `["ESCALATED"]` and `null` each
+    let the run reach DONE. ST-010 is "every escalated class CLEARED", and an
+    entry that is not a mapping carries no CLEARED.
+
+    ``escalated`` is the vocabulary's own spelling of the member, passed in
+    rather than typed here: a literal in this module would be exactly the
+    second opinion of the field D-210 closed one caller over.
+    """
+    if "*" in overrides:
+        return []
+    if not isinstance(classes, dict):
+        return []
+    return sorted(
+        key
+        for key, entry in classes.items()
+        if key not in overrides and status_of(entry) == escalated
+    )
