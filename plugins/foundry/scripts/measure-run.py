@@ -25,7 +25,19 @@ Every read of a run artifact goes through foundry_mcp.tools.foundry_state
 (D-141), for the same reason and on the same terms: that module imports json
 and pathlib and nothing else -- not even from its own package -- so it costs
 this script's stdlib-only contract nothing, and it is where the raise set of a
-document read is decided ONCE. This script's own `_load_json` used to name
+document read is decided ONCE.
+
+GI-024 EXTENDS THAT FROM THE READS TO THE DERIVATIONS. It was not only the raise
+set this file had its own copy of: the spend roll-up, the inspect-mode census,
+the escalated-class census, the cycle ordering and the count coercion were all
+second (in the spend case, THIRD) implementations of questions answered elsewhere
+in the tree, and `survey/architecture.md` §3.2 inventories them by line.
+"Three implementations, one question" is the survey's phrase for the spend
+aggregation alone. Each is now READ from `foundry_state`, which is why that
+module's leaf contract is load-bearing rather than decorative -- a derivation
+hosted in a module this script cannot import is a derivation this script has to
+re-type. Where a reader this file needs is absent from the leaf, that is a
+cross-casting concern naming its owner, never a fifth copy written here. This script's own `_load_json` used to name
 `(json.JSONDecodeError, OSError, FileNotFoundError)`, which is the majority
 spelling of the fourteen sites D-137 closed inside the package and leaks
 UnicodeDecodeError exactly as they did -- driven live, one non-UTF-8 byte in a
@@ -38,11 +50,33 @@ by the server cycle counter), state.json (the recorded cycle), handoffs.jsonl
 (wall clock). cohort.json and context-at-f2.txt are cohort-study inputs no run
 writes; their absence is strict-gated, never a schema violation.
 
+THE TWO ACCEPTANCE FIGURES (FR-025 / FR-026 / NFR-006 / NFR-008)
+----------------------------------------------------------------
+Two columns say whether the run met the figures this release makes measurable,
+and NEITHER arithmetic is this file's. ``full_cycle_ratio`` is FULL-width INSPECT
+cycles divided by total INSPECT cycles, with a pass below 50%; ``fallout_per_cycle``
+counts, per cycle, the defect records naming an earlier defect they are fallout
+of, with a pass only when the last two INSPECT cycles both recorded zero. Both
+are read from ``foundry_state`` (``full_cycle_ratio`` and ``fallout_rows``),
+because the F6 report publishes the same two numbers and an acceptance criterion
+computed twice is the one place a disagreement cannot be argued away (D-036's
+shape, applied to the figures that decide whether the effort worked).
+
+Both keep this file's None-not-zero discipline, and it bites harder here than
+anywhere else in the payload: a fabricated 0.0 ratio and a fabricated zero
+fallout count are both PASSING figures, so an archive that never measured them
+would certify the release on evidence it does not hold. An archive with no
+recorded widths has no ratio; a run with fewer than two INSPECT cycles has no
+fallout verdict; a closing pair holding records written before ``fallout_of``
+existed has none either, and says which cycles and why.
+
 THE CONVERGENCE COLUMNS (NFR-001 / AC-039 / OT-030 / FR-051)
 ------------------------------------------------------------
 Five more columns say whether a run converged and at what cost:
-``defects_by_tier`` (LIVE / LATENT / unknown — an untiered pre-change record
-reads as unknown and never as LATENT), ``spend`` (tokens and minutes per phase
+``defects_by_tier`` (every member of ``vocab.DEFECT_TIER_OR_UNKNOWN``, so
+HARDENING is a column here because it is a member there and not because this
+file lists it — AC-024 / GI-014; an untiered pre-change record still reads as
+unknown and never as LATENT), ``spend`` (tokens and minutes per phase
 and per cycle, from spend.jsonl), ``inspect_modes`` (FULL or DELTA per cycle,
 from state.json), ``escalation`` (the class census and its machine-readable
 exit reasons), and ``baseline_comparison`` (this run's numbers beside
@@ -91,13 +125,29 @@ try:  # Installed (uvx/pip) case — package is already importable.
         escalation_status,
         escalation_status_is_unknown,
     )
-    from foundry_mcp.tools.foundry_report import _baseline_comparison_section
+    from foundry_mcp.tools.foundry_report import (
+        _agent_id_for_casting,
+        _baseline_comparison_section,
+    )
     from foundry_mcp.tools.foundry_state import (
+        DISPATCH_PHASE_TO_RUN_PHASE,
+        as_count,
+        cycle_sort_key,
         derive_cycle_count,
+        escalated_class_rows,
+        fallout_rows,
+        full_cycle_ratio,
         handoffs_wall_clock_seconds,
+        inspect_decisions,
+        inspect_mode_rows,
         is_stream_record,
+        read_document,
         read_json,
+        read_jsonl,
         read_text_file,
+        spend_rollup,
+        unreported_dispatch_inputs,
+        unreported_dispatch_summary,
     )
 except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path.
     _SRC = Path(__file__).resolve().parents[1] / "mcp-server" / "src"
@@ -118,13 +168,29 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
         escalation_status,
         escalation_status_is_unknown,
     )
-    from foundry_mcp.tools.foundry_report import _baseline_comparison_section
+    from foundry_mcp.tools.foundry_report import (
+        _agent_id_for_casting,
+        _baseline_comparison_section,
+    )
     from foundry_mcp.tools.foundry_state import (
+        DISPATCH_PHASE_TO_RUN_PHASE,
+        as_count,
+        cycle_sort_key,
         derive_cycle_count,
+        escalated_class_rows,
+        fallout_rows,
+        full_cycle_ratio,
         handoffs_wall_clock_seconds,
+        inspect_decisions,
+        inspect_mode_rows,
         is_stream_record,
+        read_document,
         read_json,
+        read_jsonl,
         read_text_file,
+        spend_rollup,
+        unreported_dispatch_inputs,
+        unreported_dispatch_summary,
     )
 
 
@@ -186,8 +252,20 @@ SATURATION_THRESHOLD_DEFECT_COUNT_FLOOR = 1
 CSV_COLUMNS = (
     "cohort_id", "disable_lever", "cycles", "per_stream_defects_json",
     "f2_context_pct", "wall_clock_seconds", "wall_clock_regression_pct",
+    # FR-026 / AC-046 and FR-025 / AC-045 — the two acceptance figures this
+    # release makes measurable, on the axis a cohort matrix is read from.
+    #
+    # `full_cycle_ratio` is the NUMBER and `fallout_per_cycle_json` is the
+    # per-cycle census; the pass/fail on each is carried in
+    # `gate_verdict_overall` with the four verdicts that were already there.
+    # Both are EMPTY, never "0.00" and never "{}", when the archive cannot
+    # supply them — the same D-087 distinction `wall_clock_seconds` makes one
+    # column to the left, because a run that recorded no INSPECT width and a
+    # run whose INSPECTs were all DELTA are different facts and a matrix that
+    # prints them the same cannot be read.
+    "full_cycle_ratio", "fallout_per_cycle_json",
     "gate_verdict_overall", "failure_tokens_csv",
-)
+)  # 11 columns
 
 
 @dataclass
@@ -221,6 +299,13 @@ class MeasureResult:
     inspect_modes: dict[str, Any] | None = None
     escalation: dict[str, Any] | None = None
     baseline_comparison: dict[str, Any] = field(default_factory=dict)
+    # FR-025 / FR-026 — the two acceptance figures, each None when the archive
+    # cannot supply it. `fallout_per_cycle` is `foundry_state.fallout_rows`'
+    # document (per-cycle counts, the closing pair, and the verdict over it);
+    # `full_cycle_ratio` is `foundry_state.full_cycle_ratio`'s. Neither is
+    # re-derived here — see `_read_fallout` and `_read_inspect_modes`.
+    fallout_per_cycle: dict[str, Any] | None = None
+    full_cycle_ratio: dict[str, Any] | None = None
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -230,6 +315,8 @@ class MeasureResult:
             "per_cycle_coverage": self.per_cycle_coverage,
             "inspect_modes": self.inspect_modes,
             "escalation": self.escalation,
+            "fallout_per_cycle": self.fallout_per_cycle,
+            "full_cycle_ratio": self.full_cycle_ratio,
             "spend": self.spend,
             "f2_context_pct": self.f2_context_pct,
             "wall_clock_seconds": self.wall_clock_seconds,
@@ -554,214 +641,255 @@ def _read_defects_by_tier(run_dir: Path) -> dict[str, int] | None:
     return counts
 
 
+def _read_dispatch_summary(run_dir: Path) -> dict[str, Any]:
+    """The unreported-dispatch census (D-163), read and never re-derived.
+
+    GI-024 — THE ASSEMBLY AND THE RULE ARE BOTH `foundry_state`'s. This command
+    needs the census for one reason only: ``spend_rollup`` fills each bucket's
+    ``unreported`` field from it, and handing that reader nothing would publish
+    ``unreported: 0`` on every bucket of every run. Zero there is a CLAIM — "every
+    dispatch in this phase reported its spend" — and D-031 is what it costs to
+    print that claim for a run where nobody called `Foundry-Spend` at all. The
+    None-not-zero rule this file states for the wall clock and the two cohort
+    inputs is the same rule; ``unreported`` simply happens to be derivable on
+    every archive, so the honest answer is the derived number rather than a null.
+
+    Both halves come from the leaf: ``unreported_dispatch_inputs`` assembles the
+    three ledgers off ONE walk of the roll-up, and ``unreported_dispatch_summary``
+    applies the rule. `foundry_report._read_dispatch_summary` calls exactly this
+    pair with exactly these arguments, so the F6 report and this command cannot
+    publish two different counts of one absence — which is the shipped defect
+    (D-162) that pairing closed on the two surfaces that already existed.
+
+    Returns ``{}`` when any of the three ledgers will not read. The spend column
+    is then built without an unreported axis rather than with a fabricated one.
+    """
+    inputs = unreported_dispatch_inputs(run_dir)
+    if inputs["problem"] is not None:
+        return {}
+    return unreported_dispatch_summary(
+        dispatch_rows=inputs["dispatch_rows"],
+        stream_roster=inputs["stream_roster"],
+        spend_rows=inputs["spend_rows"],
+        phase_of_dispatch=DISPATCH_PHASE_TO_RUN_PHASE,
+        agent_id_of=_agent_id_for_casting,
+        cycles_of_agent=inputs["cycles_of_agent"],
+    )
+
+
 def _read_spend(run_dir: Path) -> dict[str, Any] | None:
     """Roll spend.jsonl up per phase and per cycle (CT-013), or None.
 
-    One JSON object per line: agent, phase, cycle, tokens, duration_ms,
-    recorded_at. Minutes are reported beside milliseconds because the question
-    an operator actually asks is "how long did F3 take", and asking them to
-    divide 34_620_000 by 60_000 in their head is how a column stops being read.
+    GI-024 — THE ARITHMETIC IS `foundry_state.spend_rollup`, AND THIS WAS THE
+    THIRD COPY OF IT.
+    ----------------------------------------------------------------------
+    `survey/architecture.md` §3.2 inventories the pair: the orchestrator's
+    `_spend_summary` read ``state.json.spend`` while `foundry_report._read_spend`
+    re-aggregated ``spend.jsonl``, and their disagreement is recorded in four
+    shipped defects (D-038, D-090, D-162, D-163). This function was the third
+    implementation of the same question, with its own `_new_spend_bucket`,
+    `_as_count` and `_cycle_sort_key` beside it — "three implementations, one
+    question", in the survey's own words. Two of the three now call one reader
+    and so does this one.
 
-    A malformed LINE is skipped rather than failing the read: the ledger is
-    append-only from many concurrent agents, so a torn final line is an
-    ordinary crash artifact and must not cost the other 84 records.
+    WHAT THE SHARED READER ADDS THAT THIS COPY COULD NOT. The reconciliation is
+    stated at `spend_rollup` and is not restated here, but the shape of it
+    matters to what this column now says: the LEDGER is the authority for tokens,
+    milliseconds and rows; the ROLL-UP is the authority for ``agents`` and the
+    only source of it, so ``agents`` reads None rather than 0 where nobody
+    recorded a count; ``unreported`` is derived from the dispatch record; and
+    where the ledger and the roll-up can both answer, the difference is NAMED in
+    ``disagreements`` instead of one of them being published under a single
+    label. This copy published its own row count under the name ``agents`` — the
+    D-090 conflation — and had no ``disagreements`` axis at all, so a run whose
+    roll-up had gone stale printed the drift as a fact.
+
+    A malformed LINE is still skipped rather than failing the read, because
+    ``read_jsonl`` skips it: the ledger is append-only from many concurrent
+    agents, so a torn final line is an ordinary crash artifact and must not cost
+    the other 84 records. Absence is still None, never an empty roll-up.
     """
     path = run_dir / SPEND_LEDGER_FILENAME
     if not path.exists():
         return None
-    text, problem = read_text_file(path)
+    rows, problem = read_jsonl(path)
     if problem is not None:
         return None
-
-    by_phase: dict[str, dict[str, Any]] = {}
-    by_cycle: dict[str, dict[str, Any]] = {}
-    total = _new_spend_bucket()
-    # Agent NAMES per bucket, so `agents` can be a count of the SET rather than
-    # of the rows (D-090). Keyed by the same ("scope", key) pair the buckets
-    # are, so the two maps cannot fall out of step.
-    seen: dict[tuple[str, str], set[str]] = {}
-    for line in text.splitlines():
-        if not line.strip():
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(entry, dict):
-            continue
-        tokens = _as_count(entry.get("tokens"))
-        duration_ms = _as_count(entry.get("duration_ms"))
-        phase = entry.get("phase")
-        cycle = entry.get("cycle")
-        agent = entry.get("agent")
-
-        buckets = [(("run", "total"), total)]
-        if isinstance(phase, str) and phase:
-            buckets.append((("by_phase", phase),
-                            by_phase.setdefault(phase, _new_spend_bucket())))
-        if isinstance(cycle, int) and not isinstance(cycle, bool) and cycle >= 0:
-            buckets.append((("by_cycle", str(cycle)),
-                            by_cycle.setdefault(str(cycle), _new_spend_bucket())))
-        for scope, bucket in buckets:
-            bucket["tokens"] += tokens
-            bucket["duration_ms"] += duration_ms
-            bucket["records"] += 1
-            if isinstance(agent, str) and agent:
-                seen.setdefault(scope, set()).add(agent)
-
-    for scope, bucket in (
-        *((("by_phase", k), v) for k, v in by_phase.items()),
-        *((("by_cycle", k), v) for k, v in by_cycle.items()),
-        (("run", "total"), total),
-    ):
-        bucket["minutes"] = round(bucket["duration_ms"] / 60_000.0, 2)
-        bucket["agents"] = len(seen.get(scope, ()))
-    return {
-        "by_phase": {k: by_phase[k] for k in sorted(by_phase)},
-        "by_cycle": {k: by_cycle[k] for k in sorted(by_cycle, key=_cycle_sort_key)},
-        "total": total,
-    }
+    state, _state_problem = read_document(run_dir / "state.json")
+    return spend_rollup(
+        spend_rows=rows,
+        state_rollup=state.get("spend"),
+        dispatch_summary=_read_dispatch_summary(run_dir),
+    )
 
 
-def _new_spend_bucket() -> dict[str, Any]:
-    """A spend bucket. ``records`` counts ROWS; ``agents`` counts AGENTS.
-
-    D-090: these were one key, and it meant ROWS here and in
-    `foundry_report._read_spend` while `orchestration.spend._spend_summary`
-    published the same key as a count of DISTINCT agents (D-038 made it so,
-    over a set, from this same ledger). One field name, two meanings, across
-    three surfaces of one run — and they parted the moment any agent reported
-    twice, which a re-dispatched GRIND teammate does every cycle.
-
-    So ``agents`` means DISTINCT agents everywhere now, and the row count keeps
-    its own honest name. ``distinct_agents`` is gone from ``total`` with it: it
-    existed only because ``agents`` had been taken, and two spellings of one
-    number in one bucket is the same defect one shape smaller.
-    """
-    return {"tokens": 0, "duration_ms": 0, "minutes": 0.0, "records": 0,
-            "agents": 0}
-
-
-def _as_count(value: Any) -> int:
-    """A non-negative int, or 0. Bools are not counts (``True`` is not 1 here)."""
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return 0
-    return value
-
-
-def _cycle_sort_key(raw: str) -> tuple[int, int | str]:
-    """Numeric order for cycle keys, with any non-numeric key sorted after."""
-    try:
-        return (0, int(raw))
-    except (TypeError, ValueError):
-        return (1, raw)
+#: GI-024 — the count coercion and the cycle ordering are `foundry_state`'s
+#: single implementations, BOUND to this module's names rather than re-typed.
+#: `foundry_report` binds the same two objects under the same two names, so the
+#: three surfaces that print a cycle axis reach one ordering and cannot order it
+#: three ways again (D-220). They are bindings, not wrappers: a wrapper is a
+#: fourth definition with an extra frame, which is the shape the survey's
+#: duplication inventory is a list of.
+_as_count = as_count
+_cycle_sort_key = cycle_sort_key
 
 
 def _read_inspect_modes(run_dir: Path) -> dict[str, Any] | None:
     """Per-cycle INSPECT width from state.json's `inspect_modes` (GI-009).
 
-    The list is APPEND-ONLY and one cycle can appear twice — an F2 INSPECT and
-    a later F5 one both carry their own entry — so the map is keyed by cycle
-    with the LAST entry winning, which is the same "current decision is the
-    last entry" rule C-4 states. `post_verification_cycles` counts the distinct
-    cycles whose INSPECT was opened in F5: thunder-viper's REPORT.md records
-    that its build was verified at cycle 14 and cycles 15-22 were TEMPER
-    hardening, which is where the baseline's 8 comes from.
-    """
-    data = _load_json(run_dir / "state.json")
-    entries = data.get("inspect_modes") if isinstance(data, dict) else None
-    if not isinstance(entries, list):
-        return None
+    GI-024 — THE CENSUS IS `foundry_state.inspect_mode_rows`, AND THE COLLAPSE
+    THIS FUNCTION USED TO DO WAS ALREADY FILED AGAINST.
+    ---------------------------------------------------------------------------
+    The list is APPEND-ONLY and one cycle can carry two decisions — an F2 INSPECT
+    and the F5 one TEMPER opens without advancing the counter — and this walked
+    it keeping only the LAST entry per cycle. `foundry_report._archive_metrics`
+    names that in as many words: "D-088 unified this number with
+    `measure-run.py::_read_inspect_modes`, which still counts off ITS collapsed
+    map ... Where they could part — a cycle whose F5 entry is followed by an F2
+    one — this now counts the cycle and that surface does not, which is the
+    direction that is right." So the report knew this reader was the wrong one
+    of the pair and could only say so. Both read the census now, so neither has
+    a collapse to differ over. ``per_cycle`` therefore carries a LIST of
+    decisions per cycle rather than one survivor.
 
-    per_cycle: dict[str, dict[str, Any]] = {}
-    by_mode: dict[str, int] = dict.fromkeys(sorted(INSPECT_MODES), 0)
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        cycle = entry.get("cycle")
-        if isinstance(cycle, bool) or not isinstance(cycle, int):
-            continue
-        mode = entry.get("mode")
-        phase = entry.get("phase")
-        per_cycle[str(cycle)] = {
-            "phase": phase if isinstance(phase, str) else None,
-            "mode": mode if isinstance(mode, str) else None,
-            "rule": entry.get("rule") if isinstance(entry.get("rule"), str) else None,
-        }
-    for decision in per_cycle.values():
-        if decision["mode"] in by_mode:
-            by_mode[decision["mode"]] += 1
-    # COUNTED OFF `per_cycle`, so the last-entry-wins rule applies to this
-    # number too. It used to be accumulated in the loop above, over EVERY entry
-    # rather than the surviving one, which is a second rule for one fact:
-    # a cycle whose F5 INSPECT was followed by an F2 one counted here and not
-    # in `foundry_report._archive_metrics`, and the two publish this number
-    # into the same NFR-001 comparison (D-088).
-    return {
-        "per_cycle": {k: per_cycle[k] for k in sorted(per_cycle, key=_cycle_sort_key)},
-        "by_mode": by_mode,
-        "post_verification_cycles": sum(
-            1 for d in per_cycle.values() if d["phase"] == "F5"
-        ),
-    }
+    ``post_verification_cycles`` IS GONE FROM THIS COLUMN, AND IS NOT LOST. It
+    was this file's own third derivation of a number `_archive_metrics` already
+    derives, and it is published in ``baseline_comparison.current`` of this very
+    payload — beside the thunder-viper baseline's 8, which is the only place the
+    number means anything. Deriving it again here to print it a second time is
+    exactly what GI-024 is a list of; removing the copy is the fix, not moving
+    it.
+
+    AC-046 / FR-026 — the acceptance ratio rides along, from
+    ``foundry_state.full_cycle_ratio`` over the widths the census already holds.
+    The F6 report builds its pass/fail sentence from the same document (casting
+    10), so the two surfaces publish ONE ratio. A ratio computed here and a ratio
+    computed there is D-036's shape applied to an acceptance criterion, which is
+    the one place a disagreement is unarguable.
+
+    ``entries`` — the census's raw history — is dropped before publication. It is
+    an input to the census, not a measurement, and a payload that repeats its own
+    source is a payload where an operator has to decide which copy to believe.
+    """
+    state, problem = read_document(run_dir / "state.json")
+    if problem is not None or not isinstance(state.get("inspect_modes"), list):
+        return None
+    table = inspect_mode_rows(
+        state=state, derived=derive_cycle_count(run_dir), modes=INSPECT_MODES
+    )
+    table.pop("entries", None)
+    table["full_cycle_ratio"] = full_cycle_ratio(table)
+    return table
+
+
+def _read_fallout(run_dir: Path) -> dict[str, Any] | None:
+    """FR-025 / AC-045 / OT-039 — filings that are fallout of an earlier defect.
+
+    A-020: "Optional `fallout_of: D-NNN` on the defect record, set by the filing
+    stream; measure-run counts it per cycle." THE COUNTING HALF IS THIS FILE'S
+    AND THE VALIDATING HALF IS NOT: the filing doors accept the field and refuse
+    an unknown id (casting 4); this command reports what the ledger holds and
+    judges no filing.
+
+    The rule itself is `foundry_state.fallout_rows`, for the reason AC-046's
+    ratio is: the F6 report publishes the same two numbers, and two derivations
+    of one acceptance figure is the duplication `survey/architecture.md` §3.2
+    inventories. What that reader decides, and this one therefore inherits:
+
+      * AN ABSENT FIELD IS NOT A MEASURED ZERO. Every record written before
+        `fallout_of` existed carries no such key, and counting those cycles as
+        "zero fallout" would certify NFR-006 on an archive that never measured
+        it — the same fabrication `_read_handoffs_wall_clock` refuses for the
+        wall clock. The KEY's presence is what makes a record measured, which is
+        why `migrate-archive.py` fills the default deliberately (step 8) rather
+        than leaving the field off.
+      * A RUN WITH FEWER THAN TWO INSPECT CYCLES CANNOT PASS, AND SAYS SO. The
+        criterion is defined over a PAIR of cycles; reporting a pass because
+        nothing contradicted it would make the acceptance figure easiest to earn
+        on the runs that did the least work.
+
+    ``axis_top`` is `derive_cycle_count`'s index — the same reading
+    ``_read_cycle_count`` and ``baseline_comparison`` sit on — so the three
+    columns of this payload cannot publish three different ideas of which cycles
+    the run ran.
+
+    None, never a census of zeros, when there is no ledger to read. That is the
+    rule ``_read_defects_by_tier`` states one reader over for the same file —
+    "no ledger is not an empty ledger" — and it matters more here, because the
+    reader's own document for an ABSENT file is a well-formed census reading 0
+    everywhere. Zero fallout is the passing side of NFR-006, so publishing that
+    census for a directory holding no defects.json at all would put the
+    strongest acceptance result against the weakest possible evidence. The
+    reader is right to answer for the document it was handed; deciding that
+    there IS no document is this command's job, and it is the same
+    ``path.exists()`` decision every other column in this section makes.
+
+    The ``PHASE9_DEFECTS_FILE_MALFORMED`` token for a file that exists and will
+    not parse stays ``_read_defects_per_stream``'s to emit — this reader is
+    silent on it rather than double-reporting one broken file.
+    """
+    if not (run_dir / "defects.json").exists():
+        return None
+    rows = fallout_rows(run_dir, axis_top=derive_cycle_count(run_dir)["index"])
+    return None if rows.get("problem") is not None else rows
 
 
 def _read_escalation(run_dir: Path) -> dict[str, Any] | None:
     """Escalated-class census from escalation.json (FR-028), or None.
 
-    Reads the machine-readable exit reason FR-028 requires: a class that left
-    ESCALATED did so either because it drew clean cycles or because its
-    structural-pass budget ran out, and "which" is the whole point of recording
-    it. A class with no `status` predates this release's fields and is counted
-    as ESCALATED — the state it was in when it was written.
+    GI-024 — THE CENSUS IS `foundry_state.escalated_class_rows`. This walked the
+    classes itself, and the orchestrator's escalation surface and the F6 report
+    walked them twice more; the rule's applies-to column names an "escalated-class
+    derivation outside `foundry_state`" as the violation, and this was one. The
+    closed vocabularies and the resolver are handed IN because the leaf module
+    imports nothing from its own package — that leaf contract is the whole reason
+    this stdlib-only script can read from it at all.
 
-    EVERY CLASS IS COUNTED, IN EXACTLY ONE BUCKET (D-215)
-    -----------------------------------------------------
-    This loop opened `if not isinstance(entry, dict): continue`, ONE LINE above
-    its own `unknown_status` counter — so the entries that counter exists for
-    were the entries that never reached it. Driven on classes {"K1":
-    {"status": "ESCALATED"}, "K2": "just a string", "K3": ["ESCALATED"],
-    "K4": null} the CLI printed `{"classes": 4, "by_status": {"CLEARED": 0,
-    "ESCALATED": 1}, "unknown_status": 0}`: three of four classes vanished off
-    the census while `Foundry-Gate('done')` was blocking on all four, so the
-    metric an operator reads and the gate that stops the run disagreed about
-    how many classes the run even had.
+    WHAT THE SHARED CENSUS KEEPS, WHICH THIS COPY HAD TO LEARN TWICE (D-214 /
+    D-215). ``vocab.escalation_status`` is total over ``ESCALATION_STATUSES`` and
+    it decides on the RAW entry, so there is no ``continue``, no shape test ahead
+    of the resolver and no membership guard on the increment:
+    ``classes == sum(by_status.values())`` holds for every document that parses.
+    This file's copy had already been repaired to that shape once; keeping the
+    repair and the original in two places is how the pair came to differ in the
+    first place.
 
-    `vocab.escalation_status` is the ONE resolver in the tree now (the
-    structural fix for D-214/D-215 moved it out of the orchestrator,
-    which was the only one of `escalation.json`'s three readers that had it),
-    and it is total over `ESCALATION_STATUSES`. So there is no `continue`, no
-    shape test ahead of the resolver and no membership guard on the increment:
-    `classes == sum(by_status.values())` holds for every document that parses.
-    `unknown_status` is `vocab.escalation_status_is_unknown` — the entries the
-    resolver had to DEFAULT (not a mapping, absent, null, empty, or a string
-    outside the vocabulary) — counted beside the buckets rather than instead of
-    them, so it says how many classes never declared a status without hiding
-    any of them from the census.
+    ``unknown_status`` is NOT part of the shared census and is derived here,
+    because it is not the census: it counts the entries the resolver had to
+    DEFAULT — not a mapping, absent, null, empty, or a string outside the
+    vocabulary — through ``vocab.escalation_status_is_unknown``, which is a
+    predicate over one entry rather than a second walk deciding what a class is.
+    It is reported BESIDE the buckets rather than instead of them, so it says how
+    many classes never declared a status without hiding any of them from the
+    census.
+
+    ``classes`` stays an INT in this payload. The shared reader returns the row
+    list under that name and the count under ``count``; this command has
+    published the count under ``classes`` since it had the column, and a payload
+    key that silently changes from a number to a list is a break for every reader
+    of the cohort matrix. The rows themselves are the F6 report's surface, not
+    this one's — a per-class table is a thing to read, and this payload is a thing
+    to aggregate.
     """
-    data = _load_json(run_dir / "escalation.json")
-    classes = data.get("classes") if isinstance(data, dict) else None
-    if not isinstance(classes, dict):
+    data, problem = read_document(run_dir / "escalation.json")
+    if problem is not None or not isinstance(data.get("classes"), dict):
         return None
 
-    by_status = dict.fromkeys(sorted(ESCALATION_STATUSES), 0)
-    by_exit_reason = dict.fromkeys(sorted(ESCALATION_EXIT_REASONS), 0)
-    unknown_status = 0
-    for entry in classes.values():
-        by_status[escalation_status(entry)] += 1
-        if escalation_status_is_unknown(entry):
-            unknown_status += 1
-        # Every OTHER field, read off the mapping or off nothing. The status is
-        # decided above, on the RAW entry, so this cannot drop a class.
-        fields = entry if isinstance(entry, dict) else {}
-        reason = fields.get("exit_reason")
-        if isinstance(reason, str) and reason in by_exit_reason:
-            by_exit_reason[reason] += 1
+    rows = escalated_class_rows(
+        data,
+        statuses=ESCALATION_STATUSES,
+        exit_reasons=ESCALATION_EXIT_REASONS,
+        status_of=escalation_status,
+    )
     return {
-        "classes": len(classes),
-        "by_status": by_status,
-        "by_exit_reason": by_exit_reason,
-        "unknown_status": unknown_status,
+        "classes": rows["count"],
+        "by_status": rows["by_status"],
+        "by_exit_reason": rows["by_exit_reason"],
+        "unknown_status": sum(
+            1
+            for entry in data["classes"].values()
+            if escalation_status_is_unknown(entry)
+        ),
     }
 
 
@@ -847,9 +975,41 @@ def _verdict_of(met: bool | None) -> str:
     return "MISSING" if met is None else "PASS" if met else "FAIL"
 
 
+#: FR-025 / NFR-006 — the fallout reader's closed verdict vocabulary, mapped
+#: into this payload's. Its three answers are exactly this table's three, which
+#: is why the mapping is a dict and not a chain of ifs: `not_measurable` is the
+#: reader's spelling of the same fact `_verdict_of(None)` publishes as MISSING,
+#: and a fourth answer appearing there must fail loudly here rather than fall
+#: through to a default that would read as a measurement.
+#: Extend only when `foundry_state.fallout_rows` extends.
+_FALLOUT_VERDICTS = {
+    "pass": "PASS", "fail": "FAIL", "not_measurable": "MISSING",
+}  # 3 answers
+
+
+def _fallout_verdict(fallout: dict[str, Any] | None) -> str:
+    """The fallout acceptance verdict (NFR-006 / NFR-007), in this vocabulary.
+
+    MISSING for an archive whose defect ledger will not read at all, and MISSING
+    for the reader's own `not_measurable` — a run with fewer than two INSPECT
+    cycles, or one whose closing pair holds records that predate the field. Both
+    are "nobody can say", and this file has one word for that.
+
+    An answer the reader gives that this table does not know is MISSING too,
+    never PASS: a verdict vocabulary that grows a member is a reason to look, and
+    defaulting an unrecognised answer to a pass is the one way to turn that into
+    silence.
+    """
+    if not isinstance(fallout, dict):
+        return "MISSING"
+    return _FALLOUT_VERDICTS.get(fallout.get("verdict"), "MISSING")
+
+
 def _compute_gate_verdicts(
     cycles: int | None, per_stream_defects: dict[str, int],
     f2_context_pct: float | None, wall_clock_regression_pct: float | None,
+    full_cycle: dict[str, Any] | None = None,
+    fallout: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """The ADVISORY verdict table. Nothing here reaches the process status.
 
@@ -877,6 +1037,17 @@ def _compute_gate_verdicts(
             else "PASS" if wall_clock_regression_pct < MAX_WALL_CLOCK_REGRESSION_PCT
             else "FAIL"
         ),
+        # AC-046 / NFR-008 — the ratio's own pass/fail, taken from the reader
+        # rather than re-compared here. `passes` is None when no INSPECT
+        # recorded a width, and `_verdict_of` already spells that MISSING: the
+        # threshold lives at the derivation with the number it judges, so this
+        # command and the F6 report cannot compare one ratio to two thresholds.
+        "full_cycle_ratio": _verdict_of(
+            (full_cycle or {}).get("passes") if isinstance(full_cycle, dict) else None
+        ),
+        # AC-045 / NFR-006 — zero fallout filings across the last two INSPECT
+        # cycles. Also the reader's, for the same reason.
+        "fallout": _fallout_verdict(fallout),
     }
 
 
@@ -996,6 +1167,14 @@ def _extract_per_run(
     r.spend = _read_spend(run_dir)
     r.inspect_modes = _read_inspect_modes(run_dir)
     r.escalation = _read_escalation(run_dir)
+    # FR-025 / FR-026 — the two acceptance figures. `full_cycle_ratio` rides in
+    # on the inspect-mode census that already holds the widths, so it is lifted
+    # out rather than derived a second time from the same table.
+    r.fallout_per_cycle = _read_fallout(run_dir)
+    r.full_cycle_ratio = (
+        r.inspect_modes.get("full_cycle_ratio")
+        if isinstance(r.inspect_modes, dict) else None
+    )
     r.baseline_comparison = _baseline_comparison(run_dir)
     context_pct, ctxf = _read_context_pct(run_dir, strict, context_pct_override)
     r.f2_context_pct = context_pct; failure_tokens.extend(ctxf)
@@ -1012,6 +1191,8 @@ def _extract_per_run(
         cycles=r.cycles, per_stream_defects=per_stream,
         f2_context_pct=context_pct,
         wall_clock_regression_pct=r.wall_clock_regression_pct,
+        full_cycle=r.full_cycle_ratio,
+        fallout=r.fallout_per_cycle,
     )
     r.failure_tokens = failure_tokens
     return r
@@ -1033,6 +1214,48 @@ def _emit_per_run(
     return _exit_status(result.gate_verdicts, result.failure_tokens)
 
 
+def _ratio_cell(full_cycle: dict[str, Any] | None) -> str:
+    """The FULL-cycle ratio as a matrix cell, or empty when it was not derived.
+
+    Two ways to have no ratio and both print empty: no `inspect_modes` list in
+    the archive at all (the reader returns None), and a list carrying no
+    decision for any cycle (the reader returns a document whose `ratio` is
+    None). The first is a pre-release archive, the second is a run that recorded
+    the field and never wrote a width; neither measured a ratio, and a cohort
+    matrix that printed 0.00 for either would show the strongest possible
+    acceptance figure for the least evidence.
+    """
+    ratio = full_cycle.get("ratio") if isinstance(full_cycle, dict) else None
+    return "" if ratio is None else f"{ratio:.4f}"
+
+
+def _fallout_cell(fallout: dict[str, Any] | None) -> str:
+    """The per-cycle fallout counts as a matrix cell, over MEASURED cycles only.
+
+    The payload distinguishes a cycle that recorded zero fallout filings from
+    one whose records predate the field — ``measured``, ``unmeasured`` and the
+    verdict's own reason all say which — and a flat CSV cell has room for none
+    of that. So the distinction is made by INCLUSION rather than by a value: a
+    cycle appears here when at least one of its records carries the
+    ``fallout_of`` key, and a cycle nobody measured is simply not a column
+    entry. An empty cell is a ledger where no record carries the field at all.
+
+    Printing ``0`` for an unmeasured cycle is the one formatting choice that
+    could not be undone by a reader: zero is the PASSING side of NFR-006, so a
+    cohort matrix would show the acceptance criterion met on arms that never
+    measured it — which is exactly the fabrication ``_ratio_cell`` refuses one
+    column to the left, arriving through a different door.
+    """
+    if not isinstance(fallout, dict):
+        return ""
+    measured = {
+        cycle: bucket["fallout"]
+        for cycle, bucket in fallout["per_cycle"].items()
+        if bucket["measured"]
+    }
+    return json.dumps(measured, sort_keys=True) if measured else ""
+
+
 def _matrix_row(result: MeasureResult) -> list[str]:
     overall = _overall_verdict(result.gate_verdicts)
     return [
@@ -1044,6 +1267,13 @@ def _matrix_row(result: MeasureResult) -> list[str]:
         "" if result.wall_clock_seconds is None
         else f"{result.wall_clock_seconds:.2f}",
         "" if result.wall_clock_regression_pct is None else f"{result.wall_clock_regression_pct:.2f}",
+        # Empty, not "0.00" and not "{}", on an archive that recorded no width
+        # and on one whose defect ledger will not read. Same D-087 rule as the
+        # two columns above it, applied to the two figures NFR-006 and NFR-008
+        # name — and the rule matters more here, because a fabricated 0.00 ratio
+        # is a PASSING acceptance figure.
+        _ratio_cell(result.full_cycle_ratio),
+        _fallout_cell(result.fallout_per_cycle),
         overall, ";".join(result.failure_tokens),
     ]
 
@@ -1099,7 +1329,8 @@ def _emit_matrix(runs_dir: Path, strict: bool, fmt: str) -> int:
     if fmt == "both":
         out.write("\n")
     if fmt in ("markdown", "both"):
-        numeric = {"cycles", "f2_context_pct", "wall_clock_seconds", "wall_clock_regression_pct"}
+        numeric = {"cycles", "f2_context_pct", "wall_clock_seconds",
+                   "wall_clock_regression_pct", "full_cycle_ratio"}
         out.write("| " + " | ".join(CSV_COLUMNS) + " |\n")
         out.write("| " + " | ".join("---:" if c in numeric else "---" for c in CSV_COLUMNS) + " |\n")
         for row in rendered:

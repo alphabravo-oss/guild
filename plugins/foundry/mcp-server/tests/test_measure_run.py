@@ -66,6 +66,13 @@ from typing import Any, Callable
 
 import pytest
 
+# AC-024 / GI-014 — the tier ROSTER, never a hand-typed list. `_tiers` below
+# builds every expected `defects_by_tier` shape from it, for the same reason
+# `measure-run.py` seeds its counts from it: the day HARDENING joined the
+# vocabulary, a test carrying its own three names would have gone red without
+# telling anyone WHICH list was wrong.
+from foundry_mcp.schemas.vocab import DEFECT_TIER_OR_UNKNOWN
+
 # tests/test_measure_run.py -> parents:
 #   [0]=tests, [1]=mcp-server, [2]=foundry, [3]=plugins, [4]=repo-root.
 # Mirrors test_intent_coverage.py / test_spec_test_deriver.py precedent.
@@ -1379,8 +1386,20 @@ def test_operator_inputs_turn_the_two_missing_gates_real(
     assert exit_code == 0, (stdout, stderr)
     payload = json.loads(stdout)
     assert payload["f2_context_pct"] == 41.5
-    assert "MISSING" not in payload["gate_verdicts"].values(), payload["gate_verdicts"]
     assert payload["gate_verdicts"]["f2_context_pct"] == "PASS"
+    assert payload["gate_verdicts"]["wall_clock_regression_pct"] == "PASS"
+    # THE CLAIM IS ABOUT THE TWO GATES THE OPERATOR CAN SUPPLY, and it was
+    # written as "no MISSING anywhere" because at the time those were the only
+    # two that could be. FR-025 and FR-026 added two more acceptance figures,
+    # and this fixture's archive records neither an `inspect_modes` list nor a
+    # `fallout_of` field — so both are honestly MISSING here, and a blanket
+    # sweep would read that honesty as the regression it is the opposite of.
+    # The four gates a measurement exists for are named.
+    for gate in ("cycles", "defect_yield_per_stream", "f2_context_pct",
+                 "wall_clock_regression_pct"):
+        assert payload["gate_verdicts"][gate] != "MISSING", (
+            gate, payload["gate_verdicts"]
+        )
 
 
 def test_context_pct_override_wins_over_the_file(
@@ -1781,6 +1800,34 @@ def _defect(did: str, source: str = "prove", **extra: Any) -> dict[str, Any]:
     return {"id": did, "cycle": 0, "source": source, "type": "THIN", **extra}
 
 
+def _tiers(**counts: int) -> dict[str, int]:
+    """The expected ``defects_by_tier`` shape, DERIVED from the vocabulary.
+
+    AC-024 / GI-014 — HARDENING joined ``vocab.DEFECT_TIERS`` and every
+    assertion in this module that hand-listed three tier names went red at once.
+    That is the right failure and the wrong place for it: the reader seeds its
+    counts from ``DEFECT_TIER_OR_UNKNOWN``, so a test that re-types the roster is
+    asserting against a second hand list — the exact drift the vocabulary module
+    exists to prevent, on the surface that is supposed to be checking for it.
+
+    So the SHAPE comes from the roster and only the NUMBERS come from the test.
+    The day a fifth tier is added, every assertion below still describes what it
+    means to describe, and the one that genuinely cares — the positive HARDENING
+    count immediately after this — is the one that has to be looked at.
+
+    A named tier that is not a roster member is a typo in the test, and it
+    raises here rather than passing an assertion that compares two wrong dicts.
+    """
+    expected = dict.fromkeys(sorted(DEFECT_TIER_OR_UNKNOWN), 0)
+    unknown_names = set(counts) - set(expected)
+    assert not unknown_names, (
+        f"{sorted(unknown_names)} is not in vocab.DEFECT_TIER_OR_UNKNOWN "
+        f"({sorted(DEFECT_TIER_OR_UNKNOWN)})"
+    )
+    expected.update(counts)
+    return expected
+
+
 def test_defects_by_tier_counts_live_latent_and_unknown(
     make_run_dir: Callable[..., Path],
 ) -> None:
@@ -1805,7 +1852,7 @@ def test_defects_by_tier_counts_live_latent_and_unknown(
         encoding="utf-8",
     )
     payload = json.loads(_invoke_measure_run(str(run_dir))[1])
-    assert payload["defects_by_tier"] == {"LIVE": 2, "LATENT": 1, "unknown": 3}
+    assert payload["defects_by_tier"] == _tiers(LIVE=2, LATENT=1, unknown=3)
     # The two ledger columns read the same file and must agree on the total.
     assert sum(payload["defects_by_tier"].values()) == sum(
         payload["per_stream_defects"].values()
@@ -1880,23 +1927,40 @@ def test_spend_is_rolled_up_per_phase_per_cycle_and_in_total(
 
     assert spend["by_phase"]["F1"] == {
         "tokens": 1500, "duration_ms": 90_000, "minutes": 1.5,
-        "records": 2, "agents": 2,
+        "records": 2, "agents": None, "unreported": 0,
     }
     assert spend["by_phase"]["F2"]["tokens"] == 2000
     assert spend["by_cycle"]["1"] == {
         "tokens": 2250, "duration_ms": 135_000, "minutes": 2.25,
-        "records": 2, "agents": 2,
+        "records": 2, "agents": None, "unreported": 0,
     }
     assert spend["total"]["tokens"] == 3750
     assert spend["total"]["minutes"] == 3.75
     # Two records from teammate-1 are two dispatches but one agent.
     assert spend["total"]["records"] == 4
-    assert spend["total"]["agents"] == 3
     assert "distinct_agents" not in spend["total"], (
         "`distinct_agents` existed only because `agents` had been taken by the "
         "row count; two spellings of one number in one bucket is the same "
         "defect one shape smaller (D-090)"
     )
+
+    # GI-024 — `agents` IS THE ROLL-UP'S NUMBER AND ONLY THE ROLL-UP'S, so it
+    # is None on a fixture whose state.json carries no `spend` roll-up. This
+    # assertion used to read 3, counted off the ledger's own distinct names —
+    # which is a DIFFERENT derivation of the same field name, and the pair
+    # parting is D-090 one layer up. `foundry_state.spend_rollup` keeps the
+    # ledger's count as a CHECK (it appears in `disagreements` when the two
+    # differ) and publishes the roll-up's, or None when there is none: "nobody
+    # recorded how many agents ran" is not "no agents ran".
+    assert spend["total"]["agents"] is None, (
+        "this fixture writes no state.json spend roll-up, and the roll-up is "
+        "the only source of `agents`"
+    )
+    assert spend["disagreements"] == [], "nothing to disagree with"
+    # `unreported` is DERIVED from the dispatch record on every run (D-163),
+    # so 0 here is a measurement and not a seed: this fixture has no spawns.log
+    # and therefore no dispatch that could have gone unreported.
+    assert spend["total"]["unreported"] == 0
 
 
 def test_a_torn_spend_line_costs_only_that_line(
@@ -1945,15 +2009,37 @@ def test_inspect_modes_are_reported_per_cycle_with_the_f5_count(
 
     payload = json.loads(_invoke_measure_run(str(run_dir))[1])
     modes = payload["inspect_modes"]
-    assert modes["per_cycle"]["3"] == {
-        "phase": "F2", "mode": "FULL", "rule": "verifier_touched",
-    }
+    # GI-024 / D-119 — ONE ROW PER DECISION, not one per cycle. This asserted a
+    # single collapsed mapping because this file used to build one, keeping the
+    # LAST entry per cycle; `foundry_report._archive_metrics` names that copy by
+    # name as the surface that could differ from the census and says which
+    # direction is right. The census is `foundry_state.inspect_mode_rows` now,
+    # and its `per_cycle` is a LIST — so a cycle whose F5 INSPECT is followed by
+    # an F2 one keeps both, which is what a census means.
+    assert modes["per_cycle"]["3"] == [
+        {"cycle": 3, "phase": "F2", "mode": "FULL", "rule": "verifier_touched",
+         "decided_by": None, "required_streams": None},
+    ]
     assert modes["by_mode"] == {"DELTA": 2, "FULL": 3}
-    assert modes["post_verification_cycles"] == 2
+    assert modes["count"] == 5, "five decisions"
+    assert modes["cycle_count"] == 5, "across five cycles"
     assert list(modes["per_cycle"]) == ["1", "2", "3", "4", "5"], "numeric order"
+    # `post_verification_cycles` IS NOT A COLUMN OF THIS TABLE ANY MORE, and it
+    # is not lost: it was this file's own third derivation of a number
+    # `_archive_metrics` already derives, and it is published one key over in
+    # the comparison where the thunder-viper baseline's 8 sits beside it. That
+    # is the only place the number means anything, and it is where it is read.
+    assert "post_verification_cycles" not in modes, (
+        "removing the second derivation is the GI-024 fix; moving it would be "
+        "the same defect in a new column"
+    )
     assert payload["baseline_comparison"]["current"][
         "post_verification_cycles"
     ] == 2
+    assert "entries" not in modes, (
+        "the census's raw input is not a measurement; a payload that repeats "
+        "its own source makes an operator choose which copy to believe"
+    )
 
 
 def test_escalation_exit_reasons_are_counted(
@@ -2171,7 +2257,7 @@ def test_thunder_viper_prints_the_baseline_beside_the_current_run() -> None:
     assert comparison["current"]["post_verification_cycles"] is None
 
     # FR-051 on 162 real unclassified records.
-    assert payload["defects_by_tier"] == {"LIVE": 0, "LATENT": 0, "unknown": 162}
+    assert payload["defects_by_tier"] == _tiers(unknown=162)
     assert sum(payload["per_stream_defects"].values()) == 162
 
     # The three artifacts 4.7.3 never wrote: null, not zero, not a token.
@@ -2385,9 +2471,7 @@ def test_all_four_nfr_001_columns_are_beside_the_baseline_not_only_cycles(
         THUNDER_VIPER_BASELINE["grind_cycles"]
     )
     # The three with no recorded constant come off the archive itself.
-    assert comparison["baseline_metrics"]["defects_by_tier"] == {
-        "LATENT": 0, "LIVE": 1, "unknown": 0,
-    }
+    assert comparison["baseline_metrics"]["defects_by_tier"] == _tiers(LIVE=1)
     assert comparison["baseline_metrics"]["wall_clock_minutes"] == 1470.0
     assert comparison["baseline_metrics"]["tokens"] is None, "no spend ledger"
 
@@ -2487,7 +2571,7 @@ def test_a_thunder_viper_shaped_archive_prints_the_baseline_and_the_target() -> 
     assert comparison["current"]["grind_cycles"] == payload["cycles"]
     assert comparison["current"]["post_verification_cycles"] is None
 
-    assert payload["defects_by_tier"] == {"LIVE": 0, "LATENT": 0, "unknown": 6}
+    assert payload["defects_by_tier"] == _tiers(unknown=6)
     for column in ("spend", "inspect_modes", "escalation"):
         assert payload[column] is None, column
     assert payload["failure_tokens"] == []
@@ -2603,3 +2687,537 @@ def test_demo_grind_cycle_12_the_widened_rollup_at_the_real_door(
         print("  the same three keys, from the rule stated once rather than")
         print("  hand-typed a third time — which is how the third walker of")
         print("  this bucket came to be missing it.")
+
+
+# ---------------------------------------------------------------------------
+# FR-025 / FR-026 / AC-024 / AC-045 / AC-046 — THE TWO ACCEPTANCE FIGURES.
+#
+# NFR-006 ("zero filings across its last two INSPECT cycles") and NFR-008
+# ("FULL cycles / total INSPECT cycles below 50%") are the numbers this release
+# is measured by, and before this casting neither existed anywhere in the tree —
+# `survey/infra.md` §9 records it flatly: "There is no 'fallout' column, metric,
+# or concept anywhere in the codebase."
+#
+# Every test below drives the REAL CLI over a fixture archive and reads the
+# emitted payload, because that is the surface an operator has. The arithmetic
+# itself is `foundry_state`'s (casting 10) and is tested there; what is tested
+# here is that this command publishes THAT number — the whole point of hosting
+# the derivation in the leaf is that the F6 report and this CLI cannot print two
+# different answers to one acceptance question.
+#
+# THE FAILURE MODE THESE GUARD IS A FALSE PASS. Both figures pass at LOW values,
+# so an archive that never measured them and reported 0 would show the strongest
+# possible result on no evidence. Every "no data" case below therefore asserts
+# the MISSING verdict explicitly, and never merely that the number is absent.
+# ---------------------------------------------------------------------------
+
+
+def _with_inspect_modes(run_dir: Path, *decisions: dict[str, Any]) -> None:
+    """Plant an `inspect_modes` list on the fixture's state.json."""
+    state = json.loads((run_dir / "state.json").read_text())
+    state["inspect_modes"] = list(decisions)
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
+def _decision(cycle: int, mode: str, phase: str = "F2") -> dict[str, Any]:
+    return {"cycle": cycle, "phase": phase, "mode": mode, "rule": "first_of_phase"}
+
+
+def test_hardening_is_counted_beside_live_latent_and_unknown(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """AC-024 / GI-014 — the non-blocking backlog is visible without the ledger.
+
+    HARDENING is a probe that was DRIVEN and failed. It blocks no gate, which is
+    exactly why it needs a column: a tier nothing refuses on is a tier nobody
+    would otherwise count, and "how much hardening work is outstanding" then
+    becomes a question only a hand-read of defects.json can answer.
+
+    The column exists here because HARDENING is a member of
+    `vocab.DEFECT_TIERS`, not because this file or the script names it — that is
+    the key link, and `_tiers` above asserts the shape from the same roster the
+    reader seeds from.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text(
+        _defects(
+            _defect("D-001", tier="LIVE"),
+            _defect("D-002", tier="HARDENING",
+                    reproduction_attempted="drove the probe; the raise is reachable"),
+            _defect("D-003", tier="HARDENING",
+                    reproduction_attempted="drove the second probe"),
+            _defect("D-004", tier="LATENT",
+                    reproduction_attempted="AST sweep finds 0 sites"),
+            _defect("D-005"),
+        ),
+        encoding="utf-8",
+    )
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    assert payload["defects_by_tier"] == _tiers(
+        LIVE=1, HARDENING=2, LATENT=1, unknown=1
+    )
+    assert "HARDENING" in DEFECT_TIER_OR_UNKNOWN, (
+        "the column is derived from the roster; if HARDENING ever leaves it, "
+        "this test should fail here and not on the count above"
+    )
+
+
+def test_the_tier_roster_is_never_hand_listed_in_the_script() -> None:
+    """AC-024's structural half — the column comes from the vocabulary.
+
+    Behaviour alone would stay green on a script that hand-listed four tier
+    names, and would then go silently wrong the day a fifth was added: an
+    archive full of the new tier would report it nowhere and the totals would
+    simply not add up. The reader must SEED from the roster.
+    """
+    import inspect as _inspect
+
+    source = _inspect.getsource(_load_measure_run_module()._read_defects_by_tier)
+    assert "DEFECT_TIER_OR_UNKNOWN" in source, (
+        "the tier column re-typed the roster instead of deriving it (GI-014)"
+    )
+    for tier in sorted(DEFECT_TIER_OR_UNKNOWN):
+        assert f'"{tier}"' not in source, (
+            f"{tier} is spelled literally in the reader; the roster is the "
+            f"one source of the tier names"
+        )
+
+
+def test_full_cycle_ratio_is_published_with_its_verdict_below_the_threshold(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """AC-046 / NFR-008 — below 50% is the acceptance figure, and it passes.
+
+    Two of five INSPECT cycles ran FULL: 0.4, under the 50% NFR-008 names. The
+    threshold travels WITH the number, from `foundry_state.full_cycle_ratio`, so
+    this command cannot compare one ratio against a second constant.
+    """
+    run_dir = make_run_dir()
+    _with_inspect_modes(
+        run_dir,
+        _decision(1, "FULL"), _decision(2, "DELTA"), _decision(3, "DELTA"),
+        _decision(4, "FULL"), _decision(5, "DELTA"),
+    )
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    assert payload["full_cycle_ratio"] == {
+        "full_cycles": 2, "total_cycles": 5, "ratio": 0.4,
+        "threshold": 0.5, "passes": True,
+    }
+    assert payload["gate_verdicts"]["full_cycle_ratio"] == "PASS"
+
+
+def test_full_cycle_ratio_fails_at_the_threshold_and_above_it(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """AC-046 — "below 50%" excludes 50% itself, and the boundary is asserted.
+
+    A-037's figure is *below* half, so a run that ran exactly half its INSPECTs
+    at FULL width has not met it. Half of a boundary condition is the half that
+    gets written as `<=` by accident, so both sides of it are driven: 2/4 fails
+    and 3/4 fails.
+    """
+    run_dir = make_run_dir()
+    _with_inspect_modes(
+        run_dir,
+        _decision(1, "FULL"), _decision(2, "FULL"),
+        _decision(3, "DELTA"), _decision(4, "DELTA"),
+    )
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    assert payload["full_cycle_ratio"]["ratio"] == 0.5
+    assert payload["full_cycle_ratio"]["passes"] is False, "50% is not below 50%"
+    assert payload["gate_verdicts"]["full_cycle_ratio"] == "FAIL"
+
+    _with_inspect_modes(
+        run_dir,
+        _decision(1, "FULL"), _decision(2, "FULL"), _decision(3, "FULL"),
+        _decision(4, "DELTA"),
+    )
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    assert payload["full_cycle_ratio"]["ratio"] == 0.75
+    assert payload["gate_verdicts"]["full_cycle_ratio"] == "FAIL"
+
+
+def test_a_cycle_reopened_at_full_counts_once_on_the_ratio_axis(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """AC-046 — the axis is CYCLES, not decisions (D-119's shape).
+
+    One cycle can carry two decisions: the F2 INSPECT and the F5 one TEMPER
+    opens without advancing the counter. Counting decisions would make a run
+    that reopened ONE cycle at FULL look wider than a run that ran TWO cycles at
+    FULL, so a run could fail this acceptance figure by doing less work.
+    """
+    run_dir = make_run_dir()
+    _with_inspect_modes(
+        run_dir,
+        _decision(1, "FULL"), _decision(1, "FULL", phase="F5"),
+        _decision(2, "DELTA"), _decision(3, "DELTA"), _decision(4, "DELTA"),
+    )
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    assert payload["inspect_modes"]["count"] == 5, "five decisions"
+    assert payload["full_cycle_ratio"]["total_cycles"] == 4, "four cycles"
+    assert payload["full_cycle_ratio"]["full_cycles"] == 1
+    assert payload["full_cycle_ratio"]["ratio"] == 0.25
+
+
+def test_an_archive_with_no_recorded_widths_has_no_ratio_and_does_not_pass(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """AC-046's negative — a missing measurement is not a passing one.
+
+    Two ways to have no ratio, and both must read MISSING rather than 0.0:
+    an archive that never wrote an `inspect_modes` list (every pre-release one,
+    thunder-viper included), and one that wrote the list empty. 0.0 is *below*
+    50%, so a fabricated zero here is a PASS on the acceptance figure — the one
+    direction in which the None-not-zero rule is not merely tidy.
+    """
+    run_dir = make_run_dir()                    # fixture state.json has no list
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    assert payload["inspect_modes"] is None
+    assert payload["full_cycle_ratio"] is None
+    assert payload["gate_verdicts"]["full_cycle_ratio"] == "MISSING"
+
+    _with_inspect_modes(run_dir)                # the list, written empty
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    assert payload["full_cycle_ratio"]["ratio"] is None
+    assert payload["full_cycle_ratio"]["passes"] is None, (
+        "'no INSPECT recorded a width' and 'more than half were FULL' are "
+        "different answers and must not print the same"
+    )
+    assert payload["gate_verdicts"]["full_cycle_ratio"] == "MISSING"
+
+
+def test_fallout_is_counted_per_cycle_from_the_defect_ledger(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """FR-025 / AC-045 / OT-039 — "measure-run counts it per cycle".
+
+    THE COUNTING HALF IS THIS COMMAND'S AND THE VALIDATING HALF IS NOT. The
+    filing doors accept `fallout_of` and refuse an unknown id (casting 4); this
+    command reports what the ledger holds and judges no filing — which is why
+    the fixture below is built by hand rather than through a door, and why a
+    record naming a parent that is not in this ledger is still counted here.
+
+    A cycle with records but no fallout reads 0, because the records CARRY the
+    key: that is a measurement. A cycle whose records have no key at all is a
+    different fact and is asserted in the test below this one.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text(
+        _defects(
+            _defect("D-001", cycle=1, fallout_of=None),
+            _defect("D-002", cycle=1, fallout_of="D-001"),
+            _defect("D-003", cycle=2, fallout_of="D-001"),
+            _defect("D-004", cycle=2, fallout_of="D-002"),
+            _defect("D-005", cycle=3, fallout_of=None),
+        ),
+        encoding="utf-8",
+    )
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    fallout = payload["fallout_per_cycle"]
+
+    assert fallout["total"] == 3
+    assert {c: b["fallout"] for c, b in fallout["per_cycle"].items()} == {
+        "1": 1, "2": 2, "3": 0,
+    }
+    assert fallout["per_cycle"]["2"]["ids"] == ["D-003", "D-004"]
+    assert fallout["measured_records"] == 5
+    assert fallout["unmeasured_records"] == 0
+    assert list(fallout["per_cycle"]) == ["1", "2", "3"], "numeric cycle order"
+
+
+def test_a_ledger_that_predates_the_field_is_unmeasured_not_zero(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """FR-054 / AC-045 — an absent key is not a measured zero.
+
+    Every record written before `fallout_of` existed carries no such key, and
+    counting those cycles as "zero fallout" would certify NFR-006 on an archive
+    that never measured it — the strongest possible acceptance result from the
+    least possible evidence. The verdict names the cycles and says what to run.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").write_text(
+        _defects(
+            _defect("D-001", cycle=1),
+            _defect("D-002", cycle=2),
+            _defect("D-003", cycle=3),
+        ),
+        encoding="utf-8",
+    )
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    fallout = payload["fallout_per_cycle"]
+
+    assert fallout["total"] == 0, "no record names a parent"
+    assert fallout["measured_records"] == 0, "and none carries the key either"
+    assert fallout["unmeasured_records"] == 3
+    assert fallout["verdict"] == "not_measurable"
+    assert "migrate-archive.py" in fallout["verdict_reason"], (
+        "the operator is told how to make the pair measurable"
+    )
+    assert payload["gate_verdicts"]["fallout"] == "MISSING", (
+        "a total of 0 over an unmeasured ledger must not read as a pass"
+    )
+
+
+def test_the_fallout_verdict_passes_only_on_a_clean_closing_pair(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """NFR-006 / NFR-007 — zero across the LAST TWO INSPECT cycles.
+
+    Three drives against one axis: a clean pair passes, a single filing in
+    either cycle of the pair fails, and an earlier cycle's filing does not —
+    the criterion is about where the run FINISHED, which is the whole point of
+    a convergence figure.
+    """
+    run_dir = make_run_dir()
+
+    def _drive(*records: dict[str, Any]) -> dict[str, Any]:
+        (run_dir / "defects.json").write_text(_defects(*records), encoding="utf-8")
+        return json.loads(_invoke_measure_run(str(run_dir))[1])
+
+    # Fallout early, none in the closing pair (cycles 2 and 3) — a converging run.
+    payload = _drive(
+        _defect("D-001", cycle=1, fallout_of="D-000"),
+        _defect("D-002", cycle=2, fallout_of=None),
+        _defect("D-003", cycle=3, fallout_of=None),
+    )
+    assert payload["fallout_per_cycle"]["last_two_cycles"] == [2, 3]
+    assert payload["fallout_per_cycle"]["verdict"] == "pass"
+    assert payload["gate_verdicts"]["fallout"] == "PASS"
+
+    # One filing in the closing pair is enough to fail it.
+    payload = _drive(
+        _defect("D-001", cycle=1, fallout_of=None),
+        _defect("D-002", cycle=2, fallout_of="D-001"),
+        _defect("D-003", cycle=3, fallout_of=None),
+    )
+    assert payload["fallout_per_cycle"]["verdict"] == "fail"
+    assert "[2]" in payload["fallout_per_cycle"]["verdict_reason"]
+    assert payload["gate_verdicts"]["fallout"] == "FAIL"
+
+    # And so is one in the last cycle alone.
+    payload = _drive(
+        _defect("D-001", cycle=2, fallout_of=None),
+        _defect("D-002", cycle=3, fallout_of="D-001"),
+    )
+    assert payload["fallout_per_cycle"]["verdict"] == "fail"
+    assert payload["gate_verdicts"]["fallout"] == "FAIL"
+
+
+def test_a_run_with_fewer_than_two_inspect_cycles_cannot_pass_the_figure(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """NFR-006's negative — the criterion is defined over a PAIR.
+
+    A one-cycle run has no pair. Reporting `pass` because nothing contradicted
+    the criterion would make the acceptance figure easiest to satisfy on the
+    runs that did the least work, which is the opposite of what a convergence
+    figure is for.
+    """
+    run_dir = make_run_dir()
+    (run_dir / "state.json").write_text(
+        json.dumps({"phase": "F2", "cycle": 0}), encoding="utf-8"
+    )
+    (run_dir / "defects.json").write_text(
+        _defects(_defect("D-001", cycle=0, fallout_of=None)), encoding="utf-8"
+    )
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    fallout = payload["fallout_per_cycle"]
+
+    assert fallout["total"] == 0
+    assert fallout["last_two_cycles"] == []
+    assert fallout["verdict"] == "not_measurable"
+    assert "fewer than two" in fallout["verdict_reason"]
+    assert payload["gate_verdicts"]["fallout"] == "MISSING"
+
+
+def test_a_missing_defect_ledger_has_no_fallout_census_at_all(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """The structurally-missing spelling, on the fallout column too."""
+    run_dir = make_run_dir()
+    (run_dir / "defects.json").unlink()
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    assert payload["fallout_per_cycle"] is None
+    assert payload["gate_verdicts"]["fallout"] == "MISSING"
+
+
+def test_neither_acceptance_figure_reaches_the_process_status(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """CT-016 / NFR-001 — "the numbers are the target, not a gate".
+
+    Both new verdicts FAIL here and the command still exits 0, because
+    `_exit_status` answers one question — could this command READ what it was
+    pointed at — and neither figure is an answer to it. `survey/infra.md` §9
+    records the exit contract (0 OK, 1 unreadable artefact, 2 usage) and
+    CT-016's error column says it does not change; D-086 is what it cost the
+    last time a published number reached the status.
+    """
+    run_dir = make_run_dir()
+    _with_inspect_modes(run_dir, _decision(1, "FULL"), _decision(2, "FULL"))
+    (run_dir / "defects.json").write_text(
+        _defects(
+            _defect("D-001", cycle=1, fallout_of=None),
+            _defect("D-002", cycle=2, fallout_of="D-001"),
+        ),
+        encoding="utf-8",
+    )
+    exit_code, stdout, stderr = _invoke_measure_run(str(run_dir))
+    payload = json.loads(stdout)
+
+    assert payload["gate_verdicts"]["full_cycle_ratio"] == "FAIL"
+    assert payload["gate_verdicts"]["fallout"] == "FAIL"
+    assert payload["failure_tokens"] == [], (stdout, stderr)
+    assert exit_code == 0, "a failing acceptance figure is reported, never gated"
+
+
+def test_the_matrix_carries_both_acceptance_figures_and_leaves_them_empty(
+    tmp_path: Path,
+) -> None:
+    """CT-016 — the two figures are readable off the cohort matrix too.
+
+    A cohort study compares arms on the numbers this release is measured by, so
+    a figure that exists only in the per-run JSON is a figure the comparison
+    cannot see. Both are EMPTY here rather than 0 — the synthesized cohort arms
+    record no `inspect_modes` and no `fallout_of` — which is the same D-087
+    spelling `wall_clock_seconds` uses two columns to the left, and matters more
+    for these two because 0 is their PASSING value.
+    """
+    runs = _populate_runs_dir(tmp_path)
+    exit_code, stdout, stderr = _invoke_measure_run(
+        "--matrix", str(runs), "--format", "csv"
+    )
+    assert exit_code == 0, (stdout, stderr)
+    rows = list(csv.reader(io.StringIO(stdout)))
+    header, data = rows[0], rows[1:]
+
+    for col in ("full_cycle_ratio", "fallout_per_cycle_json"):
+        assert col in header, header
+    ratio_col = header.index("full_cycle_ratio")
+    fallout_col = header.index("fallout_per_cycle_json")
+    for row in data:
+        assert row[ratio_col] == "", (
+            "an arm that recorded no INSPECT width has no ratio, and 0.0000 "
+            "would be a PASS on the acceptance figure"
+        )
+        assert row[fallout_col] == "", "and no fallout census either"
+
+
+def test_the_script_reads_the_consolidated_derivations_and_defines_none(
+) -> None:
+    """GI-024 — the anti-drift check: one derivation, read not re-typed.
+
+    `survey/architecture.md` §3.2 inventories what this file used to carry its
+    own copy of, by line: the spend bucket shape (`:626`), the spend roll-up
+    (`_read_spend:557`), `_cycle_sort_key:652` and `_as_count:645`. Its verdict
+    on the spend aggregation alone is "three implementations, one question", and
+    the four defects that pair cost are recorded in `foundry_report._read_spend`'s
+    own docstring (D-038, D-090, D-162, D-163).
+
+    BEHAVIOUR ALONE CANNOT HOLD THIS DOWN. Two implementations of one rule agree
+    on the day they are written and part on the first input neither test covers
+    — which is exactly how the three spend readers came to publish `agents`
+    meaning two different things. So the check is structural: the consolidated
+    objects must be the SAME objects, by identity, and each reader must call the
+    leaf rather than re-implement it.
+
+    A NEW derivation added here in future fails this test at the `is` assertion
+    or the `getsource` one, whichever it takes — and the correct response is a
+    `Foundry-Concern` naming casting 10, which owns `foundry_state.py`, never a
+    fifth copy written here.
+    """
+    import inspect as _inspect
+
+    from foundry_mcp.tools import foundry_state
+
+    module = _load_measure_run_module()
+
+    # The two shared primitives are BOUND, not wrapped: a wrapper is a fourth
+    # definition with an extra frame, which is the shape the inventory lists.
+    assert module._as_count is foundry_state.as_count
+    assert module._cycle_sort_key is foundry_state.cycle_sort_key
+
+    # And the four consolidated tables are CALLED.
+    for reader, leaf in (
+        (module._read_spend, "spend_rollup("),
+        (module._read_inspect_modes, "inspect_mode_rows("),
+        (module._read_inspect_modes, "full_cycle_ratio("),
+        (module._read_escalation, "escalated_class_rows("),
+        (module._read_fallout, "fallout_rows("),
+        (module._read_dispatch_summary, "unreported_dispatch_summary("),
+    ):
+        source = _inspect.getsource(reader)
+        assert leaf in source, (
+            f"{reader.__name__} does not call {leaf} — a table this script is "
+            f"supposed to READ has been derived here a second time (GI-024)"
+        )
+
+    # The four copies the survey names by line are gone from the whole module.
+    whole = Path(SCRIPT).read_text(encoding="utf-8")
+    for gone in (
+        "def _new_spend_bucket", "def _as_count(", "def _cycle_sort_key(",
+    ):
+        assert gone not in whole, f"{gone} is the copy §3.2 inventories"
+
+
+def test_the_rollup_reader_takes_the_last_record_as_the_total_on_schema_4(
+    make_run_dir: Callable[..., Path],
+) -> None:
+    """FR-054 / AC-034 — both ledger shapes read, and schema 4 reads the LAST.
+
+    THE TWO SHAPES DIFFER IN THE TOTALS AND NOWHERE ELSE. Both carry `records`;
+    what changed is what the top-level `items_checked` / `items_total` mean. The
+    old additive writer ACCUMULATED them across every record, so a stream that
+    recorded twice reads above 100% — nine daring-orca rows do, cycle 29's trace
+    at 1084/542 over two records of 542/542 being the row AC-034 and OT-032
+    name. Under schema 4 those same top-level keys are the LAST record's values,
+    rewritten there by `migrate-archive.py` step 8 and written there from the
+    start by `Foundry-Stream`'s replace semantics, with every earlier record
+    retained under `records[]`.
+
+    THE READER NEEDS NO SCHEMA TEST FOR THIS, and that is the assertion. It has
+    always taken the top-level totals, so the migration moves the NUMBER and
+    this reader keeps its one rule; the same fixture read before and after gives
+    1084/542 and then 542/542 with nothing here branching on a version. A
+    version branch would be a second place for the two shapes to be told apart,
+    and they do not need telling apart — which is why AC-034 is a migration
+    assertion and not a reader one.
+
+    The over-100% row is NOT normalised on the way through either. A coverage
+    figure quietly clamped to its total is a measurement replaced by an
+    assertion, and an operator measuring an un-migrated archive needs to see
+    that the run recorded 1084 checks against 542 items.
+    """
+    records = [
+        {"items_checked": 542, "items_total": 542, "findings": 4,
+         "recorded_at": "2026-09-05T01:03:47.428012+00:00"},
+        {"items_checked": 542, "items_total": 542, "findings": 4,
+         "recorded_at": "2026-09-05T01:04:52.960145+00:00"},
+    ]
+
+    # Schema 3 — the additive writer's totals, above 100%.
+    run_dir = make_run_dir(rollup=_rollup_doc({
+        "3": {"trace": {"items_checked": 1084, "items_total": 542,
+                        "findings": 8, "records": records}},
+    }))
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    assert payload["per_cycle_coverage"]["3"]["TRACE"] == {
+        "items_checked": 1084, "items_total": 542, "findings": 8,
+    }
+    assert payload["failure_tokens"] == [], (
+        "an over-100% row is the shape the additive writer left, not a "
+        "malformed document"
+    )
+
+    # Schema 4 — the same records, totals rewritten to the LAST of them.
+    run_dir = make_run_dir(cohort_id="no_TEST_01", rollup=_rollup_doc({
+        "3": {"trace": {"items_checked": 542, "items_total": 542,
+                        "findings": 4, "records": records}},
+    }))
+    payload = json.loads(_invoke_measure_run(str(run_dir))[1])
+    assert payload["per_cycle_coverage"]["3"]["TRACE"] == {
+        "items_checked": 542, "items_total": 542, "findings": 4,
+    }
+    assert payload["failure_tokens"] == []

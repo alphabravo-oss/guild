@@ -35,6 +35,11 @@ from pathlib import Path
 
 import pytest
 
+# AC-024 / GI-014 — the tier roster this module asserts migrated shapes against.
+# Imported rather than re-typed for the reason the migration itself imports
+# `TIER_UNKNOWN`: a sentinel or a roster with two spellings has two answers.
+from foundry_mcp.schemas.vocab import DEFECT_TIER_OR_UNKNOWN
+
 # tests/test_migrate_archive.py -> [0]=tests, [1]=mcp-server, [2]=foundry,
 # [3]=plugins, [4]=repo-root. Mirrors test_measure_run.py's precedent.
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -976,9 +981,14 @@ def test_grand_vulture_migration(tmp_path: Path) -> None:
         # none of them (FR-006).
         assert after["tier"] == "unknown"
     assert summary["steps"]["defect_tier"]["tier_unknown"] == 168
-    assert _measure(dest)["defects_by_tier"] == {
-        "LATENT": 0, "LIVE": 0, "unknown": 168,
-    }
+    # AC-024 / GI-014 — the tier ROSTER, never a hand-typed list. HARDENING
+    # joined `vocab.DEFECT_TIERS` this release and `measure-run.py` seeds its
+    # counts from `DEFECT_TIER_OR_UNKNOWN`, so an expected shape re-typed here
+    # would be a second list drifting against the first — on the surface whose
+    # whole job is to notice drift.
+    expected = dict.fromkeys(sorted(DEFECT_TIER_OR_UNKNOWN), 0)
+    expected["unknown"] = 168
+    assert _measure(dest)["defects_by_tier"] == expected
 
     # The 43 records whose types are outside the reconciled vocabulary — they
     # entered through the unvalidated sync path and survive verbatim.
