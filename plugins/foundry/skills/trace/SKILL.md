@@ -378,6 +378,18 @@ This JSON format can be passed directly to the foundry defect sync tools.
   refuses the filing. A security-property claim can never be `LATENT`. Both tiers are
   defects and both get fixed — `tier` records evidence, never how much work a fix is
   worth. No exceptions, no deferrals, no "this one is only cosmetic."
+- **Set `fallout_of` when the finding is fallout of an earlier fix.** A sibling surface
+  left on a contract a previous cycle's fix changed is not a fresh defect — it is the
+  half of that fix that did not reach, and on this stream it is the commonest shape
+  there is: a fix rewires one caller and leaves the other three on the old signature, so
+  the UNWIRED symbols you are about to number are one incomplete repair. Carry
+  `fallout_of` naming the `D-NNN` whose fix moved the contract, in the same call as
+  `class` and `tier`. An id the ledger does not carry is REFUSED at the door rather than
+  stored, so read the parent id from `defects.json` rather than from the commit that
+  claims to have fixed it. Leave it unset when the finding stands on its own —
+  `scripts/measure-run.py` counts fallout per cycle, and both an unmarked real one and a
+  decorative fake one corrupt the same number. No exceptions, no deferrals, no "the
+  earlier fix was probably unrelated."
 - **Spec-anchored** — every finding references a spec requirement
 - **The symbol is authoritative** — cite `path#Symbol`, never `path:line`. A cite whose
   symbol resolves is valid however stale any line hint beside it has become. No finding

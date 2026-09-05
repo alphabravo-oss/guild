@@ -421,6 +421,17 @@ guarantee valid pointers into the provided document.
   refuses the filing. A security-property claim can never be `LATENT`. Both tiers are
   defects and both get fixed — `tier` records evidence, never how much work a fix is
   worth. No exceptions, no deferrals, no "this one is only cosmetic."
+- **Set `fallout_of` when the finding is fallout of an earlier fix.** A sibling surface
+  left on a contract a previous cycle's fix changed is not a fresh defect — it is the
+  half of that fix that did not reach, and the CR-N you are about to write is a second
+  description of one incomplete repair rather than a new one. Carry `fallout_of` naming
+  the `D-NNN` whose fix moved the contract, in the same call as `spec_ref`, `class` and
+  `tier`. An id the ledger does not carry is REFUSED at the door rather than stored, so
+  take the parent from `defects.json` and never from a fix's own account of itself.
+  Unset is correct when the finding stands alone: `scripts/measure-run.py` counts
+  fallout per cycle against a target of zero across the last two, so an unmarked cycle
+  reads as a clean one and a decorative `fallout_of` reads as a dirty one. No
+  exceptions, no deferrals, no "the earlier fix was probably unrelated."
 - **Spec-anchored** — every finding references exact spec text with `[SPEC:...]` citations
 - **Fresh eyes** — read spec and code BEFORE any audit reports
 - **Exhaustive** — verify every item, no batching or skipping
