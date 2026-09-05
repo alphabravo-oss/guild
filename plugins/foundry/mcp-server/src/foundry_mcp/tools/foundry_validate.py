@@ -66,25 +66,25 @@ from foundry_mcp.tools.foundry_state import (
 #: under a release that writes it and a casting is missing it" — the first is
 #: reported NOT COMPUTABLE and passes, the second is refused.
 #:
-#: DECLARED HERE, DELIBERATELY, rather than derived from a module this casting
-#: may not edit. `schemas/vocab.py`, `tools/foundry.py#ARCHIVE_SCHEMA_VERSION`
-#: (the marker a new run is born with) and
-#: `scripts/migrate-archive.py#ARCHIVE_SCHEMA_VERSION` (which does the bump)
-#: all belong to other castings, and consolidating the spellings is tracked as
-#: an open concern in `foundry-archive/foundry-run-fallout/concerns.json`: the
-#: proposal is that the generation be declared in the `foundry_state` leaf this
-#: module already imports, so the floor can be defined against it.
+#: NOT DERIVED FROM THE GENERATION, AND THAT IS THE WHOLE POINT OF DECLARING IT
+#: SEPARATELY. `foundry_state.py#ARCHIVE_SCHEMA_VERSION` is now the leaf home of
+#: "which generation is current", and its own comment names this module among
+#: the consumers that should reach it. This constant deliberately does not:
+#: they read 4 apiece today only because `requirement_ids` became mandatory in
+#: the generation that happens to be current, and that coincidence is the trap.
 #:
-#: AND IT IS A FLOOR, NOT A COPY OF THE GENERATION, WHICH IS WHY THE TWO ARE
-#: STILL TWO. They read 4 apiece today only because the field became mandatory
-#: in the generation that is current. The generation says what a run's
-#: artifacts ARE and moves at every bump; this says where `requirement_ids`
-#: started being mandatory and is a historical fact that must NOT move with it,
-#: or the next bump silently re-reads every schema-4 archive as predating a
-#: field it carries. So the relation to pin between them is
-#: `ARCHIVE_SCHEMA_VERSION >= REQUIREMENT_IDS_SCHEMA_FLOOR`, never equality —
-#: `tests/test_migrate_archive.py` holds it for the migration's spelling and
-#: `tests/test_validate_ownership.py` for the value a created run carries.
+#: The generation says what a run's artefacts ARE and MOVES at every bump. This
+#: says where `requirement_ids` STARTED being mandatory, which is a historical
+#: fact that must stay put — define it as the generation and the next bump
+#: silently re-reads every schema-4 archive as predating a field it carries,
+#: turning a whole shelf of valid archives into refusals nobody asked for.
+#:
+#: So what binds them is a RELATION, never an assignment:
+#: `ARCHIVE_SCHEMA_VERSION >= REQUIREMENT_IDS_SCHEMA_FLOOR`. It is held where
+#: each writer of the marker can break it — `tests/test_migrate_archive.py` for
+#: the value the migration stamps, and `tests/test_validate_ownership.py` for
+#: the value a run this server just created carries, read back off its own
+#: state.json rather than out of a fixture.
 REQUIREMENT_IDS_SCHEMA_FLOOR = 4
 
 #: How many castings may own one requirement id before F0.9 wants a reason.
