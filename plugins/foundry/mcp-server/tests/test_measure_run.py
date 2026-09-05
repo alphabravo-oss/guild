@@ -834,7 +834,7 @@ def test_lowercase_source_counted_under_canonical_stream_id(
     """Test 16 — FR-018 / AC-024 regression.
 
     Every writer of defects.json persists the filing stream as ``source``,
-    lowercase (tools/foundry.py, tools/foundry_orchestrator.py). measure-run
+    lowercase (tools/foundry.py, orchestration/fix_gate.py). measure-run
     read ``d.get("stream")`` against an UPPERCASE roster, so per_stream_defects
     was ALWAYS empty and every record emitted PHASE9_DEFECTS_FILE_MALFORMED.
     This pins both halves of that repair: the key and the case.
@@ -1271,7 +1271,7 @@ def test_both_rollup_readers_classify_one_bucket_identically(
 ) -> None:
     """D-182 — the two walkers of one bucket, fed the same bucket.
 
-    `foundry_orchestrator._stream_dispatch_cycles` and `measure-run.py`
+    `orchestration.spend._stream_dispatch_cycles` and `measure-run.py`
     `_read_stream_rollup` both answer "which keys here are streams", and the
     whole filing is that they answered differently. The rule now has ONE
     definition in `foundry_state.is_stream_record`; this drives BOTH readers
@@ -1279,7 +1279,7 @@ def test_both_rollup_readers_classify_one_bucket_identically(
     keys, so the day a third C-6 field is added, whichever reader is not
     taught it fails here rather than in a live run.
     """
-    from foundry_mcp.tools import foundry_orchestrator as fo
+    from foundry_mcp.tools.orchestration import spend
 
     bucket = {
         "prove": _entry(80, 80, 1),
@@ -1290,7 +1290,7 @@ def test_both_rollup_readers_classify_one_bucket_identically(
         json.dumps(_rollup_doc({"3": bucket})), encoding="utf-8"
     )
 
-    orchestrator_streams = set(fo._stream_dispatch_cycles(tmp_path))
+    orchestrator_streams = set(spend._stream_dispatch_cycles(tmp_path))
 
     module = _load_measure_run_module()
     coverage, _highest, tokens = module._read_stream_rollup(tmp_path)
@@ -1321,10 +1321,20 @@ def test_the_stream_record_rule_has_one_definition() -> None:
     this got here: two modules spelled `"records" in entry` inline and a third
     never learned it. Both readers in this package's own tree must CALL the
     shared predicate.
+
+    THE SECOND OWNER MOVED, AND THE PIN FOLLOWED THE SYMBOL (GI-026). The
+    dispatch-summary walk of the cycle bucket used to sit inside
+    `foundry_report._read_dispatch_summary`; the GI-024 consolidation moved it
+    into `foundry_state.unreported_dispatch_inputs`, which assembles the roster
+    and the cycle map off ONE walk for both surfaces. A pin left on the old
+    host reads as "the rule was re-typed" when what actually happened is that
+    the rule was consolidated further — the exact false alarm a pin aimed at a
+    module rather than at the symbol produces. It is aimed at the walker now,
+    wherever the walker lives.
     """
     import inspect
 
-    from foundry_mcp.tools import foundry_report, foundry_state
+    from foundry_mcp.tools import foundry_state
 
     assert callable(foundry_state.is_stream_record)
     assert foundry_state.is_stream_record({"records": []}) is True
@@ -1334,7 +1344,8 @@ def test_the_stream_record_rule_has_one_definition() -> None:
 
     for owner in (
         inspect.getsource(_load_measure_run_module()._read_stream_rollup),
-        inspect.getsource(foundry_report._read_dispatch_summary),
+        inspect.getsource(foundry_state.unreported_dispatch_inputs),
+        inspect.getsource(foundry_state.stream_rollup_rows),
     ):
         assert "is_stream_record(" in owner, (
             "a walker of the cycle bucket re-typed the stream-record rule "
@@ -1840,7 +1851,7 @@ def test_spend_is_rolled_up_per_phase_per_cycle_and_in_total(
     60_000 in your head stops being read.
 
     D-090 — `agents` COUNTS AGENTS AND `records` COUNTS ROWS. They were one
-    key here, meaning ROWS, while `foundry_orchestrator._spend_summary`
+    key here, meaning ROWS, while `orchestration.spend._spend_summary`
     published the same key over the same ledger meaning DISTINCT agents — one
     field name, two meanings, across three surfaces of one run, parting the
     moment any agent reported twice. The comment below this assertion already
@@ -2574,19 +2585,19 @@ def test_demo_grind_cycle_12_the_widened_rollup_at_the_real_door(
         print("  'Numbers are the target, not a gate'.")
 
         print("\n=== one definition, both readers ===")
-        from foundry_mcp.tools import foundry_orchestrator as fo
+        from foundry_mcp.tools.orchestration import spend
         from foundry_mcp.tools.foundry_state import is_stream_record
 
         (control_dir / "stream-rollup.json").write_text(
             json.dumps(widened), encoding="utf-8"
         )
-        orchestrator_view = sorted(fo._stream_dispatch_cycles(control_dir))
+        orchestrator_view = sorted(spend._stream_dispatch_cycles(control_dir))
         predicate_view = sorted(
             key
             for key, value in {**cycle_bucket, **_CYCLE_LEVEL_FACTS}.items()
             if is_stream_record(value)
         )
-        print(f"  foundry_orchestrator._stream_dispatch_cycles: {orchestrator_view}")
+        print(f"  orchestration.spend._stream_dispatch_cycles: {orchestrator_view}")
         print(f"  foundry_state.is_stream_record:               {predicate_view}")
         assert orchestrator_view == predicate_view
         print("  the same three keys, from the rule stated once rather than")

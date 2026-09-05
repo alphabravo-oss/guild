@@ -318,7 +318,7 @@ def _migrate_observations(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, 
 # ---------------------------------------------------------------------------
 
 
-# The roll-up is READ BACK by foundry_orchestrator._rollup_totals, which looks
+# The roll-up is READ BACK by orchestration.streams._rollup_totals, which looks
 # an entry up as ``cycles[str(cycle)][<wire stream id>]`` and requires a dict
 # carrying these four keys. A migrated archive must therefore speak the
 # server's own document shape rather than a derived summary of it: v1 wrote
@@ -371,7 +371,7 @@ def _read_stream_marker(run_dir: Path, wire_stream: str) -> dict[str, int] | Non
     The marker is the ONLY place a pre-roll-up archive records coverage, and it
     holds one cycle's terminal totals. ``cycle=`` sits on the timestamp line
     rather than at the start of its own line, so tokens are scanned
-    whitespace-separated — foundry_orchestrator._marker_counts reads only
+    whitespace-separated — orchestration.streams._marker_counts reads only
     line-leading keys and therefore never sees ``cycle`` at all.
 
     Returns None when the marker is absent, unreadable, or carries no usable

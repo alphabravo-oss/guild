@@ -469,7 +469,7 @@ def _read_defects_per_stream(run_dir: Path) -> tuple[dict[str, int], list[str]]:
             fts.append("PHASE9_DEFECTS_FILE_MALFORMED"); continue
         # Every writer of defects.json persists the filing stream as
         # `source`, lowercase (tools/foundry.py foundry_add_defect,
-        # tools/foundry_orchestrator.py foundry_sync_defects). Reading
+        # orchestration/fix_gate.py foundry_sync_defects). Reading
         # `stream` matched nothing on a real archive — that was FR-018's
         # key half. `stream` is kept as a legacy fallback so an archive
         # written under either shape still counts and nothing is lost.
@@ -627,7 +627,7 @@ def _new_spend_bucket() -> dict[str, Any]:
     """A spend bucket. ``records`` counts ROWS; ``agents`` counts AGENTS.
 
     D-090: these were one key, and it meant ROWS here and in
-    `foundry_report._read_spend` while `foundry_orchestrator._spend_summary`
+    `foundry_report._read_spend` while `orchestration.spend._spend_summary`
     published the same key as a count of DISTINCT agents (D-038 made it so,
     over a set, from this same ledger). One field name, two meanings, across
     three surfaces of one run — and they parted the moment any agent reported
@@ -728,7 +728,7 @@ def _read_escalation(run_dir: Path) -> dict[str, Any] | None:
     how many classes the run even had.
 
     `vocab.escalation_status` is the ONE resolver in the tree now (the
-    structural fix for D-214/D-215 moved it out of `foundry_orchestrator`,
+    structural fix for D-214/D-215 moved it out of the orchestrator,
     which was the only one of `escalation.json`'s three readers that had it),
     and it is total over `ESCALATION_STATUSES`. So there is no `continue`, no
     shape test ahead of the resolver and no membership guard on the increment:

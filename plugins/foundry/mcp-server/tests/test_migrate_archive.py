@@ -54,7 +54,7 @@ C6_ROLLUP = FIXTURES / "c6_rollup"
 GRAND_VULTURE = REPO_ROOT / "foundry-archive" / "grand-vulture"
 
 # v2: step 4's output shape changed — v1 wrote a stream-rollup.json that its
-# own consumer (foundry_orchestrator._rollup_totals) could not read (D-029).
+# own consumer (orchestration.streams._rollup_totals) could not read (D-029).
 # v3: the evidence-tier step joined the list (GI-001 / FR-051).
 ARCHIVE_SCHEMA_VERSION = 3
 
@@ -355,7 +355,7 @@ def test_step_3_observations_ledger_created_empty(archive: Path) -> None:
 def test_step_4_stream_rollup_is_derived_per_cycle(archive: Path) -> None:
     """D-029 — the migrated document must be the shape its CONSUMER reads.
 
-    foundry_orchestrator._rollup_totals looks an entry up as
+    orchestration.streams._rollup_totals looks an entry up as
     ``cycles[str(cycle)][<lowercase wire id>]`` and requires a dict carrying
     items_checked / items_total / findings / records. v1 wrote
     ``cycles[c][<CANONICAL>] = <int>``, which reads back as "no record for this
@@ -404,7 +404,7 @@ def test_step_4_rollup_is_readable_by_its_consumer(archive: Path) -> None:
     Imports the real ``_rollup_totals`` rather than re-implementing its lookup,
     so the assertion tracks the consumer instead of a copy of it.
     """
-    from foundry_mcp.tools.foundry_orchestrator import _rollup_totals
+    from foundry_mcp.tools.orchestration.streams import _rollup_totals
 
     _migrate(archive)
     assert _rollup_totals(archive, 0, "trace") == {
@@ -999,7 +999,7 @@ def test_grand_vulture_migration(tmp_path: Path) -> None:
 
     # --- roll-up carries the real per-stream counts, and its consumer can
     #     actually read them (D-029) ---
-    from foundry_mcp.tools.foundry_orchestrator import _rollup_totals
+    from foundry_mcp.tools.orchestration.streams import _rollup_totals
 
     findings_per_stream = summary["steps"]["stream_rollup"]["findings_per_stream"]
     assert findings_per_stream == {"prove": 165, "test": 2, "trace": 1}
