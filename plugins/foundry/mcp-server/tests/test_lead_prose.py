@@ -1,4 +1,4 @@
-"""Pins the LEAD-facing half of the protocol: the two command files, the
+"""Pins the LEAD-facing half of the protocol: the three command files, the
 rationale reference, the temper skill, the setup script and both READMEs.
 
 Why a second prose module rather than more assertions in
@@ -2267,19 +2267,32 @@ def test_no_owned_prose_promises_the_pre_ruling_seal() -> None:
 # The deliverable is a DELETION, and a deletion is invisible to every positive
 # test -- nothing else in this module would notice the flag coming back.
 #
-# SCOPED TO THE TWO FILES THIS CASTING OWNS, ON PURPOSE. Both READMEs carry the
-# flag too (`plugins/foundry/README.md`'s options table and the repo-root
-# `README.md`), and their rows are CASTING 9's to remove -- it owns both README
-# paths because `test_readme_badges_agree_with_the_shipped_versions` and
+# EVERY SURFACE THAT EVER NAMED THE FLAG, not the two whose owner deleted it.
+# This roster was narrow for one wave and one reason: both READMEs can only
+# move in the same commit as `plugin.json` / `pyproject.toml`, because
+# `test_readme_badges_agree_with_the_shipped_versions` and
 # `test_readme_describes_the_release_it_badges` pin their badges and release
-# headings against `plugin.json` / `pyproject.toml`, so a README can only move
-# in the same commit as those manifests. A sweep that also covered the READMEs
-# would be RED for the whole of wave 4 for a reason nobody in wave 4 could fix.
+# headings against those manifests -- so while that commit was outstanding a
+# sweep covering the READMEs would have been RED for a reason nobody could
+# then fix. That commit has landed, and the narrow roster is what let the flag
+# survive in `commands/help.md`: help.md names no casting owner, so a sweep
+# scoped to owned surfaces was the one place the deletion could hide
+# (D-030 / D-038). A roster scoped to who-owns-what sweeps the files that were
+# already fixed and misses the file nobody was watching.
 #
-# WHEN CASTING 9 LANDS, WIDEN `_OUTPUT_DIR_FREE` TO THE TWO README PATHS. Do
-# not delete this test to make room for a broader one; the two files below are
-# the ones that would silently regain the flag on a future edit.
-_OUTPUT_DIR_FREE: tuple[Path, ...] = (START_MD, SETUP_SH)
+# `plugins/forge` has an `--output-dir` of its own, which is a DIFFERENT flag on
+# a different plugin and is correctly untouched. If the repo-root `README.md`
+# ever documents forge's flag surface, SCOPE this sweep to the foundry section
+# rather than dropping the path -- the root README is where a reader learns
+# what `/foundry:start` accepts.
+_OUTPUT_DIR_FREE: tuple[Path, ...] = (
+    START_MD,
+    RESUME_MD,
+    HELP_MD,
+    SETUP_SH,
+    PLUGIN_README,
+    ROOT_README,
+)
 
 #: Every spelling the flag reached a surface under. Three, because deleting the
 #: user-facing `--output-dir` while leaving `OUTPUT_DIR="$2"` in the argument
@@ -2288,8 +2301,8 @@ _OUTPUT_DIR_FREE: tuple[Path, ...] = (START_MD, SETUP_SH)
 _OUTPUT_DIR_SPELLINGS = ("--output-dir", "OUTPUT_DIR", "FOUNDRY_OUTPUT")
 
 
-@pytest.mark.parametrize("path", _OUTPUT_DIR_FREE, ids=lambda p: p.name)
-def test_the_output_dir_flag_is_gone_from_the_surfaces_this_casting_owns(
+@pytest.mark.parametrize("path", _OUTPUT_DIR_FREE, ids=_rel)
+def test_the_output_dir_flag_is_gone_from_every_lead_facing_surface(
     path: Path,
 ) -> None:
     """fallout AC-057 / FR-059: deleted from every surface, not just documented away."""
@@ -2311,14 +2324,26 @@ def test_the_output_dir_flag_is_gone_from_the_surfaces_this_casting_owns(
 
 
 def test_the_output_dir_sweep_still_has_something_to_sweep() -> None:
-    """Floor: the two paths exist and are the two this casting owns.
+    """Floor: all six paths exist and the roster did not silently narrow.
 
     A tuple that silently emptied -- a renamed constant, a moved file -- would
-    parametrize zero cases and report success while forbidding nothing.
+    parametrize zero cases and report success while forbidding nothing. The
+    count is pinned rather than merely non-zero because the failure this sweep
+    was filed against (D-030) was a roster that covered five of the six
+    surfaces and reported success on the sixth by never looking at it.
     """
-    assert len(_OUTPUT_DIR_FREE) == 2, _OUTPUT_DIR_FREE
+    assert len(_OUTPUT_DIR_FREE) == 6, _OUTPUT_DIR_FREE
+    assert len(set(_OUTPUT_DIR_FREE)) == 6, _OUTPUT_DIR_FREE
     for path in _OUTPUT_DIR_FREE:
         assert path.is_file(), f"{_rel(path)} does not exist"
+    # help.md names no casting owner in `castings/manifest.json`, which is why
+    # it kept the flag through the deletion. If it ever leaves this roster, the
+    # same blind spot reopens.
+    assert HELP_MD in _OUTPUT_DIR_FREE, (
+        f"{_rel(HELP_MD)} left the `--output-dir` sweep. It has no casting "
+        f"owner, so no owner-scoped sweep covers it -- this roster is the only "
+        f"thing that does (D-030 / D-038)."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2464,16 +2489,25 @@ def test_the_no_ui_meaning_is_the_servers_sentence_on_both_owned_surfaces() -> N
 # measured. GI-016 settles it: the AGENT records, per (stream, cycle), and a
 # later record REPLACES the earlier one rather than summing with it.
 #
-# SCOPED TO THE FOUR SURFACES THIS CASTING OWNS. `plugins/foundry/README.md`
-# still carries the old `Foundry-Stream` row ("Mark verification stream
-# complete"), and that file is CASTING 9's -- see the `_OUTPUT_DIR_FREE`
-# comment above for why a README cannot move in this casting's commit. Widen
-# `_OWNED_LEAD_SURFACES` to it in casting 9's commit rather than deleting this.
+# EVERY LEAD-FACING SURFACE, not the four whose owner rewrote them. This
+# roster was narrow for the same wave and the same reason as `_OUTPUT_DIR_FREE`
+# above -- `plugins/foundry/README.md` carried the old `Foundry-Stream` row
+# ("Mark verification stream complete") and a README can only move in the same
+# commit as the manifests its badges are pinned against. That commit has
+# landed, so the roster is now every surface a LEAD reads: the three command
+# files, the rationale reference, the setup script and both READMEs.
+#
+# `TEMPER_SKILL` is deliberately absent. A skill file is what the AGENT is
+# told, and the agent is exactly who SHOULD be instructed to record -- sweeping
+# it here would forbid the correct half of GI-016.
 _OWNED_LEAD_SURFACES: tuple[Path, ...] = (
     START_MD,
     RESUME_MD,
+    HELP_MD,
     LEAD_DISCIPLINE,
     SETUP_SH,
+    PLUGIN_README,
+    ROOT_README,
 )
 
 #: Spellings that tell the LEAD to record a stream. The first is the exact row
@@ -2487,7 +2521,7 @@ _LEAD_RECORDS_A_STREAM = (
 )
 
 
-@pytest.mark.parametrize("path", _OWNED_LEAD_SURFACES, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", _OWNED_LEAD_SURFACES, ids=_rel)
 def test_no_owned_lead_prose_tells_the_lead_to_record_a_stream(path: Path) -> None:
     """fallout OT-029 / FR-049 / GI-016: the agent records; the lead confirms."""
     flat = _flat(path)
@@ -2501,14 +2535,15 @@ def test_no_owned_lead_prose_tells_the_lead_to_record_a_stream(path: Path) -> No
         )
 
 
-def test_the_owned_lead_surface_roster_is_the_four_files_this_casting_owns() -> None:
+def test_the_owned_lead_surface_roster_is_every_lead_facing_surface() -> None:
     """Floor: a roster that silently emptied sweeps nothing.
 
     Named apart from the sweep above because a parametrize over an empty tuple
     collects zero cases and reports success -- the failure mode this module's
     tool-name derivation carries the same guard against.
     """
-    assert len(_OWNED_LEAD_SURFACES) == 4, _OWNED_LEAD_SURFACES
+    assert len(_OWNED_LEAD_SURFACES) == 7, _OWNED_LEAD_SURFACES
+    assert len(set(_OWNED_LEAD_SURFACES)) == 7, _OWNED_LEAD_SURFACES
     for path in _OWNED_LEAD_SURFACES:
         assert path.is_file(), f"{_rel(path)} does not exist"
     # start.md must still NAME the tool, or the sweep above is passing because

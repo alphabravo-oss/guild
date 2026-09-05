@@ -86,7 +86,6 @@ Start a new build run.
 - `--nyquist` — enable F5.5 regression test generation
 - `--max-cycles <n>` — cap on F2/F3 verify-fix loops (default `0`, unbounded)
 - `--no-ui` — skip SIGHT
-- `--output-dir <dir>` — custom run directory (default: `foundry-archive/{run}/`)
 
 **`--max-cycles N` and the HALTED state.** `N` caps the verify-fix cycles; the default `0` is
 unbounded. The phase transition that would open a GRIND cycle beyond the cap **succeeds** — it
