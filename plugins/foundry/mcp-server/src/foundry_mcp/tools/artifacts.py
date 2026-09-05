@@ -801,6 +801,27 @@ _RUN_DOCUMENT_SUFFIXES = frozenset(_STRICT_ARTIFACT_DECODERS) | {
 # axis, so the version-number scratch directory stays silent exactly as it does
 # today.
 
+#: The per-cycle stream roll-up document (fallout GI-033, concern C-018).
+#:
+#: A RUN-ARTIFACT FILENAME, WHICH IS WHAT THIS LAYER IS FOR. It was declared in
+#: ``tools/orchestration/streams.py`` — a lifecycle module — and read by two
+#: VERIFIER modules, ``evidence_boundary`` (which walks the roll-up to decide
+#: whether a boundary sweep is owed) and ``width`` (which writes the cycle
+#: roll-up the width decision produces). A verifier reaching into the lifecycle
+#: layer for a filename is two rows of GI-033's layering debt, and both are one
+#: constant: the NAME of a document is not lifecycle knowledge, it is the same
+#: kind of fact as the marker names below it.
+#:
+#: A SECOND DECLARATION STANDS WHILE THIS IS BEING REPOINTED, and it is bounded
+#: and deliberate. ``streams.py`` still declares the same value until the
+#: casting that owns ``tools/orchestration/`` deletes it and points its readers
+#: here; until then the package-wide single-definition guard reports the pair,
+#: which is the transient window a lead ruling accepted rather than a state
+#: anyone should preserve. The value is byte-identical to the one it will
+#: replace, so nothing can read a different document through either name.
+ROLLUP_FILENAME = "stream-rollup.json"
+
+
 #: The HEAD recorded at each INSPECT boundary, so the next crossing knows what
 #: "since the last boundary" means. A marker rather than a state key because
 #: ``_trace_skip_check``'s ``.trace-clean-at`` is the established shape for
