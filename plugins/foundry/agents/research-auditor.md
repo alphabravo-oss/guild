@@ -165,8 +165,37 @@ Every item in `defects` flows through `Foundry-Sync` and becomes grist for F3 GR
 - **If there's no research (no files in `research/` and no Informational items in spec), return immediately with empty findings and a note**: "No research recommendations to audit." Don't make up checks.
 - **Run in parallel with other INSPECT streams.** Don't wait for TRACE/PROVE/SIGHT/TEST. Return your findings independently.
 - **Regression check.** If a previous cycle's research audit had HONORED items that are now IGNORED, flag as regression.
-- **You record your own stream; the lead only confirms the record exists.** Call `Foundry-Stream` yourself with `stream`, `cycle`, `items_checked`, `items_total` and `findings_count` once every RA-N item carries a verdict — the `stream` value is your wire id, a member of the closed vocabulary at `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#STREAM_WIRE_IDS`; read it there and never re-type the set here. Take `cycle` from `Foundry-Next`; `items_checked` is the recommendations you verified and `items_total` the persisted roster's length rather than a number you re-counted, which is why the roster rule below is the other half of this one. The early return is the single case with nothing to record: with no files under `research/` and no Informational items there is no roster and no item, and `Foundry-Stream` refuses `items_checked` of zero rather than accepting an empty audit as coverage — say so in the returned note instead of manufacturing a count to satisfy the door. A second call for the same stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every record under `records[]`, so re-auditing a recommendation corrects the cycle rather than doubling it. No exceptions, no deferrals, no waiting for the lead to record on your behalf: a stream that never records contributes nothing to the cycle's coverage roll-up, where its absence reads as no coverage rather than as a broken call.
-- **Read the roster before you derive one.** Your item list is persisted at `rosters/research_audit.json` under the run directory, named for the wire id exactly as your stream record is. Read it first; derive `RA-1..RA-n` from `research/` and the spec's `## Informational` section ONLY when no roster is there, and call `Foundry-Roster(stream, items=[...])` at that first derivation so the numbering has an identity a later cycle can hold you to. A later cycle READS the persisted roster and does not re-derive: a list re-derived every cycle renumbers silently, and the `HONORED → IGNORED` regression check you owe has no stable prior state to compare against. Then a second write is refused `ROSTER_EXISTS` unless you pass `revise=true` with a reason naming what changed in the source material, and the prior items are kept under `revisions[]` rather than replaced. This rule and the stream record above are one rule: `Foundry-Stream` refuses `ROSTER_MISMATCH` when `items_total` differs from the persisted roster's length, so a shorter list you re-derived cannot be reported as full coverage of a population it quietly shrank. No exceptions, no deferrals, no "the research had obviously not changed."
+- **You record your own stream; the lead only confirms the record exists.** Call
+  `Foundry-Stream` yourself with `stream`, `cycle`, `items_checked`, `items_total` and
+  `findings_count` once every RA-N item carries a verdict — the `stream` value is your wire id,
+  a member of the closed vocabulary at
+  `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#STREAM_WIRE_IDS`; read it there
+  and never re-type the set here. Take `cycle` from `Foundry-Next`; `items_checked` is the
+  recommendations you verified and `items_total` the persisted roster's length rather than a
+  number you re-counted, which is why the roster rule below is the other half of this one. The
+  early return is the single case with nothing to record: with no files under `research/` and no
+  Informational items there is no roster and no item, and `Foundry-Stream` refuses
+  `items_checked` of zero rather than accepting an empty audit as coverage — say so in the
+  returned note instead of manufacturing a count to satisfy the door. A second call for the same
+  stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every
+  record under `records[]`, so re-auditing a recommendation corrects the cycle rather than
+  doubling it. No exceptions, no deferrals, no waiting for the lead to record on your behalf: a
+  stream that never records contributes nothing to the cycle's coverage roll-up, where its
+  absence reads as no coverage rather than as a broken call.
+- **Read the roster before you derive one.** Your item list is persisted at
+  `rosters/research_audit.json` under the run directory, named for the wire id exactly as your
+  stream record is. Read it first; derive `RA-1..RA-n` from `research/` and the spec's `##
+  Informational` section ONLY when no roster is there, and call `Foundry-Roster(stream,
+  items=[...])` at that first derivation so the numbering has an identity a later cycle can hold
+  you to. A later cycle READS the persisted roster and does not re-derive: a list re-derived
+  every cycle renumbers silently, and the `HONORED → IGNORED` regression check you owe has no
+  stable prior state to compare against. Then a second write is refused `ROSTER_EXISTS` unless
+  you pass `revise=true` with a reason naming what changed in the source material, and the prior
+  items are kept under `revisions[]` rather than replaced. This rule and the stream record above
+  are one rule: `Foundry-Stream` refuses `ROSTER_MISMATCH` when `items_total` differs from the
+  persisted roster's length, so a shorter list you re-derived cannot be reported as full
+  coverage of a population it quietly shrank. No exceptions, no deferrals, no "the research had
+  obviously not changed."
 - **Log your own progress, don't just verify everyone else's.** Append a ledger line at every new step, per the `## Progress ledger` section. You demand a grep behind every claim; the lead is owed the same evidence that you are still running.
 
 ## Progress ledger
