@@ -105,6 +105,7 @@ from foundry_mcp.tools.foundry import (
     foundry_add_defect,
     foundry_add_observation,
     foundry_add_verdict,
+    foundry_drive_temper_candidate,
     foundry_init,
     foundry_query_defects,
     foundry_query_observations,
@@ -2456,3 +2457,288 @@ def test_a_classification_outside_the_vocabulary_is_refused_naming_the_set(
     for member in OBSERVATION_CLASSES:
         assert member in refusal["error"], (member, refusal["error"])
     assert _observations(run)["observations"] == []
+# --------------------------------------------------------------------------- #
+# fallout ST-007 / fallout AC-019 / fallout AC-020 — DRIVING a candidate, the
+# write half of the transition. Nothing in the package could reach the terminal
+# state before this door: the create door above OPENS a candidate and the F6
+# report reader splits open from driven, and between the two there was no
+# writer at all — so the driven side of that split was unreachable and every
+# candidate was undriven by construction.
+# --------------------------------------------------------------------------- #
+
+#: One probe idea, shared by the tests below so the SUBJECT never varies while
+#: the closure does. Code, not comment prose: a candidate is the one class
+#: whose subject is the implementation.
+CANDIDATE_PROBE = (
+    "nobody has driven what the reaper does to a session the purge cascade is "
+    "halfway through"
+)
+
+
+def _open_candidate(tmp_path: Path, description: str = CANDIDATE_PROBE) -> str:
+    """Record one TEMPER_CANDIDATE through the real door; return its id."""
+    result = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=description,
+        classification="TEMPER_CANDIDATE",
+        target_kind="code",
+        symbol="reap_expired",
+        file_path="src/session/reaper.py",
+        project_root=str(tmp_path),
+    )
+    assert result.get("observation_id"), result
+    return result["observation_id"]
+
+
+def _report_reader(fdir: Path) -> dict:
+    """The F6 section reader, driven over the ledger these doors wrote.
+
+    Imported at call time rather than at module top because it is the OTHER
+    side of the boundary this section is about: the assertion is that two
+    modules agree about one record, and reaching for it here rather than in the
+    import block says so.
+    """
+    from foundry_mcp.tools.foundry_report import _read_undriven_temper_candidates
+
+    payload, problem = _read_undriven_temper_candidates(fdir)
+    assert problem is None, problem
+    return payload
+
+
+def test_a_driven_candidate_leaves_the_report_readers_undriven_list(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout ST-007 verbatim: 'TEMPER_CANDIDATE observation open' ->
+    'DRIVEN (filed or clean)'; and fallout AC-020, 'the F6 report lists every
+    TEMPER candidate that was not driven'.
+
+    Driven ACROSS THE MODULE BOUNDARY rather than against this door's own
+    return value, because the two halves of fallout ST-007 live in two files:
+    the writer here and the reader at
+    ``foundry_mcp/tools/foundry_report.py#_read_undriven_temper_candidates``,
+    which counts a record driven when it carries ``driven`` truthy OR
+    ``status`` "DRIVEN". A door that wrote a THIRD spelling would return a
+    perfectly good result and move nothing in the report — which is the exact
+    shape of what this closes: a state machine whose terminal state no writer
+    could reach, so the undriven section listed every candidate on every run
+    and the count could never fall.
+
+    The undriven assertion comes FIRST because it is the state every run was in
+    before this door existed, and a closure test that never saw the open state
+    proves the transition rather than assuming it.
+    """
+    candidate = _open_candidate(tmp_path)
+
+    before = _report_reader(run)
+    assert [c["id"] for c in before["candidates"]] == [candidate], before
+    assert before["count"] == 1, before
+    assert before["driven_count"] == 0, before
+
+    closed = foundry_drive_temper_candidate(
+        observation_id=candidate, project_root=str(tmp_path)
+    )
+    assert "error" not in closed, closed
+    assert closed["already_driven"] is False, closed
+    # The clean closure: driven, and no defect came of it.
+    assert closed["driven_finding"] == "", closed
+
+    after = _report_reader(run)
+    assert after["candidates"] == [], after
+    assert after["count"] == 0, after
+    assert after["driven_count"] == 1, after
+
+
+def test_a_candidate_driven_and_filed_records_the_defect_it_produced(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout ST-007's parenthetical, the other closure: 'DRIVEN (filed or
+    clean)' — both are closures and neither is the blank.
+
+    ``filed`` is recorded VERBATIM and is never ranked against the defect
+    ledger. fallout ST-007 admits no error on the field, and D-101 is this
+    package's record of what inventing a rung a contract does not admit costs:
+    the door refuses its own documented example and the stream's next move is
+    to fabricate the field. So what is asserted is that the id reads back
+    exactly as the stream wrote it, and that the record reaches DRIVEN by the
+    same route the clean closure takes — the closure kind is a FACT on the
+    record, not a second code path.
+    """
+    candidate = _open_candidate(tmp_path)
+
+    closed = foundry_drive_temper_candidate(
+        observation_id=candidate, filed="D-404", project_root=str(tmp_path)
+    )
+
+    assert "error" not in closed, closed
+    assert closed["driven_finding"] == "D-404", closed
+    assert closed["status"] == "DRIVEN", closed
+
+    stored = _observations(run)["observations"]
+    assert [o["id"] for o in stored] == [candidate], stored
+    assert stored[0]["driven_finding"] == "D-404", stored
+    assert stored[0]["status"] == "DRIVEN", stored
+    # The record keeps everything it was FILED with: driving a candidate
+    # records a result about it and rewrites nothing it said.
+    assert stored[0]["classification"] == "TEMPER_CANDIDATE", stored
+    assert stored[0]["description"] == CANDIDATE_PROBE, stored
+    assert stored[0]["symbol"] == "reap_expired", stored
+    # And it is driven as far as the report reader is concerned, exactly as the
+    # clean closure is: the reader splits on driven-ness, not on outcome.
+    assert _report_reader(run)["driven_count"] == 1
+
+
+def test_the_query_door_reads_a_driven_candidate_back_with_its_closure(
+    run: Path, tmp_path: Path
+) -> None:
+    """The OTHER door onto the same ledger, which the closure travels through
+    untouched (fallout CT-017: 'TEMPER reads it via
+    Foundry-Observations(classification=TEMPER_CANDIDATE)').
+
+    TEMPER's roster read is the adjacent path this write has to leave working:
+    a query that dropped the new keys, or a census that stopped counting a
+    record once it carried a status, would leave the roster unreadable in a
+    different way than the one just repaired. The summary is asserted as well
+    as the records, because ``by_classification`` counts EVERY observation
+    regardless of status and a driven candidate is still a candidate.
+    """
+    candidate = _open_candidate(tmp_path)
+    foundry_drive_temper_candidate(
+        observation_id=candidate, filed="D-404", project_root=str(tmp_path)
+    )
+
+    read_back = foundry_query_observations(
+        classification="TEMPER_CANDIDATE", project_root=str(tmp_path)
+    )
+
+    assert [o["id"] for o in read_back["observations"]] == [candidate]
+    record = read_back["observations"][0]
+    assert record["status"] == "DRIVEN", record
+    assert record["driven_finding"] == "D-404", record
+    assert record["driven_in_cycle"] == 0, record
+    assert read_back["summary"]["by_classification"] == {"TEMPER_CANDIDATE": 1}
+    assert read_back["tripwire"] == [], read_back
+
+
+def test_driving_an_unknown_observation_is_refused_naming_the_id(
+    run: Path, tmp_path: Path
+) -> None:
+    """A call that closed nothing is a caller error, and it says so.
+
+    Unlike ``supersedes`` — which rides along a filing that succeeded whatever
+    it cited, so reporting the id it actually closed is the honest answer —
+    the whole of this call is the closure. A success result over a record that
+    does not exist would be a door reporting a transition it did not make,
+    which is the class of defect the whole section exists to close.
+    """
+    refusal = foundry_drive_temper_candidate(
+        observation_id="O-404", project_root=str(tmp_path)
+    )
+
+    assert refusal.get("field") == "observation_id", refusal
+    assert "O-404" in refusal["error"], refusal
+    assert "TEMPER_CANDIDATE" in refusal["hint"], refusal
+    assert _observations(run)["observations"] == []
+
+
+def test_driving_an_observation_that_is_not_a_candidate_is_refused(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout ST-007's from-state is TEMPER_CANDIDATE and nothing else.
+
+    The four comment-prose classes record a finding ABOUT prose — a statement,
+    not a question — so there is nothing to drive and no closure to record. The
+    refusal names the class the record actually carries, because the caller
+    that reached here has an id it believed was a candidate and the useful
+    thing to tell it is what that id really is.
+    """
+    filed = foundry_add_observation(
+        cycle=1,
+        source="trace",
+        description=DRIFT,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+    observation_id = filed["observation_id"]
+    assert filed["classification"] != "TEMPER_CANDIDATE", filed
+
+    refusal = foundry_drive_temper_candidate(
+        observation_id=observation_id, project_root=str(tmp_path)
+    )
+
+    assert refusal.get("field") == "classification", refusal
+    assert filed["classification"] in refusal["error"], refusal
+    assert "TEMPER_CANDIDATE" in refusal["error"], refusal
+    # Refused, and the record is untouched -- no status, no closure.
+    stored = _observations(run)["observations"][0]
+    assert "status" not in stored, stored
+    assert "driven_finding" not in stored, stored
+
+
+def test_re_driving_a_closed_candidate_keeps_the_first_closure(
+    run: Path, tmp_path: Path
+) -> None:
+    """Idempotent, not a refusal, and the FIRST closure is the one that stands.
+
+    A retry after a dropped answer must not report failure over work that
+    landed, so the second call succeeds and says ``already_driven``. What it
+    must not do is overwrite: the stream that drove the probe first is the one
+    that drove it, and a later call that rewrote the finding and the cycle
+    would let a second reader silently replace the first reader's result.
+    """
+    candidate = _open_candidate(tmp_path)
+    first = foundry_drive_temper_candidate(
+        observation_id=candidate, filed="D-404", project_root=str(tmp_path)
+    )
+    assert first["already_driven"] is False, first
+
+    _set_server_cycle(run, 7)
+    second = foundry_drive_temper_candidate(
+        observation_id=candidate, filed="D-999", project_root=str(tmp_path)
+    )
+
+    assert second["already_driven"] is True, second
+    assert second["driven_finding"] == "D-404", second
+    assert second["driven_in_cycle"] == 0, second
+
+    stored = _observations(run)["observations"][0]
+    assert stored["driven_finding"] == "D-404", stored
+    assert stored["driven_in_cycle"] == 0, stored
+    # Still exactly one driven record, not two closures on one candidate.
+    assert _report_reader(run)["driven_count"] == 1
+def test_a_malformed_historical_record_does_not_derail_the_closure(
+    run: Path, tmp_path: Path
+) -> None:
+    """D-097 / D-128 at this door, driven rather than left to the AST pin.
+
+    The transaction yields the ledger and a run carrying one junk record from
+    an older writer is a run this door still has to close a candidate in. An
+    element scan that assumed dicts raised MID-TRANSACTION on exactly this
+    input once, and it raised after the mutation, so nothing was written and
+    the caller got a traceback instead of an answer.
+
+    NOTHING IS LOST TO THE FILTER either: the junk is set aside by index and
+    re-inserted, so the ledger comes back off the lock with the closure written
+    and the record it could not read still in place. Refusing to lose records
+    to a bad container while losing them to a bad record is the quieter half of
+    the same defect.
+    """
+    candidate = _open_candidate(tmp_path)
+
+    path = run / "observations.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["observations"].insert(0, "a string where a record should be")
+    path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+
+    closed = foundry_drive_temper_candidate(
+        observation_id=candidate, filed="D-404", project_root=str(tmp_path)
+    )
+
+    assert "error" not in closed, closed
+    assert closed["already_driven"] is False, closed
+
+    stored = _observations(run)["observations"]
+    assert "a string where a record should be" in stored, stored
+    record = next(o for o in stored if isinstance(o, dict))
+    assert record["status"] == "DRIVEN", record
+    assert record["driven_finding"] == "D-404", record

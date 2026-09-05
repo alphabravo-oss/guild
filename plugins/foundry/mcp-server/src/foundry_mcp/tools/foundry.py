@@ -3575,6 +3575,177 @@ def foundry_add_observation(
     }
 
 
+#: The one spelling of "go and read the candidate roster", so the three arms of
+#: `foundry_drive_temper_candidate` that fall back to it cannot drift apart the
+#: way D-186's three gate arms did.
+_CANDIDATE_ROSTER_HINT = (
+    "Read the open candidates with "
+    "Foundry-Observations(classification=TEMPER_CANDIDATE) and pass the O-NNN "
+    "of the one you drove."
+)
+
+
+@ledger_refusals
+def foundry_drive_temper_candidate(
+    observation_id: str,
+    filed: str = "",
+    project_root: str = ".",
+) -> dict:
+    """ST-007 — close an open TEMPER_CANDIDATE observation as DRIVEN.
+
+    The WRITE half of the transition ``foundry_add_observation`` above opens
+    and ``foundry_query_observations`` below reads back. Until this door
+    existed the terminal state had no writer anywhere in the package: the
+    record literal carried neither marker and no parameter could set one, so
+    every candidate was undriven BY CONSTRUCTION, TEMPER had no call to make,
+    and ``foundry_mcp/tools/foundry_report.py#_read_undriven_temper_candidates``
+    listed every recorded candidate on every run — a partition one side of
+    which nothing could ever reach.
+
+    FILED AND CLEAN ARE BOTH CLOSURES. A probe driven and filed against names
+    the defect it produced in ``filed``; a probe driven and found sound omits
+    it. A candidate found sound is a RESULT, and the only result that ever
+    retires a question, so the record is DRIVEN either way and
+    ``driven_finding`` carries the id or the empty string that says there was
+    none.
+
+    ``filed`` IS STATED EVIDENCE, NOT A RANKED CITE. It is recorded verbatim
+    and never checked against the defect ledger. ST-007 admits no error on this
+    field, and D-101 is this package's record of what inventing a rung a
+    contract does not admit costs: the door refuses its own documented example
+    and the stream's next move is to fabricate the field. It reads back exactly
+    as the stream wrote it, the way ``reproduction_attempted`` does. Ranking it
+    would also mean reading a SECOND ledger's file while holding this one's
+    flock, which is a lock ordering this module does not have and a race it
+    could not close: ``fallout_parent_problem`` can rank ``fallout_of`` only
+    because the parent lives in the records its caller is already holding.
+
+    RE-DRIVING IS IDEMPOTENT, NOT A REFUSAL. The first closure stands and the
+    result says ``already_driven``, because a retry after a dropped answer must
+    not report failure over work that landed, and the stream that drove the
+    probe first is the one that drove it.
+
+    ONE OF THE TWO SPELLINGS, PINNED BY THE READER RATHER THAN BY A SHARED
+    CONSTANT. The report reader accepts ``driven`` truthy OR ``status``
+    "DRIVEN" — it was written to tolerate whichever of the two castings
+    landed first — so this door writes ``status`` alone, and
+    ``tests/test_observations.py`` drives that reader over a record this door
+    wrote. Two spellings agreed by inspection is what the tolerance was for;
+    agreement driven end to end is what replaces it.
+
+    Args:
+        observation_id: the ``O-NNN`` of the candidate that was driven.
+        filed: optional; the ``D-NNN`` this drive produced. Omitted means the
+            probe was driven and found clean, which is a closure and not a
+            blank.
+
+    Returns:
+        ``{observation_id, status, driven_in_cycle, driven_finding,
+        already_driven}``, or a named refusal ``{error, hint, field}``.
+    """
+    fdir = get_run_dir(project_root)
+    if not fdir:
+        return {"error": "No active foundry run. Call Foundry-Init."}
+
+    # Both containers, for the reason `foundry_add_observation` guards both:
+    # the cycle this closure is stamped with comes out of state.json, and a
+    # closure stamped from a corrupt counter is a record that cannot be joined
+    # against the defects filed beside it.
+    if (corrupt := _artifact_guard(fdir, "observations.json", "state.json")):
+        return corrupt
+
+    candidate_id = observation_id.strip()
+    if not candidate_id:
+        return {
+            "error": "observation_id is required: name the candidate to close.",
+            "hint": _CANDIDATE_ROSTER_HINT,
+            "field": "observation_id",
+        }
+
+    cycle = _server_cycle(fdir)
+    finding = filed.strip()
+    result: dict = {}
+    closed = False
+    closed_description = ""
+
+    with ledger_transaction(fdir / "observations.json", "observations") as records:
+        # `_dict_records`, never a bare scan over the binding: D-128's package
+        # property. The elements are the SAME objects, so the mutation below
+        # still reaches the ledger, and the filter is the ONE spelling every
+        # scan in this module shares rather than an inline `isinstance` --
+        # which is another copy of the same filter, which is the defect class.
+        record = next(
+            (o for o in _dict_records(records) if o.get("id") == candidate_id),
+            None,
+        )
+        if record is None:
+            # A call that closed nothing is a caller error worth naming, and
+            # unlike `supersedes` -- which rides along a filing that succeeded
+            # regardless -- there is no other answer this door could give.
+            result = {
+                "error": (
+                    f"Unknown observation: {candidate_id!r} names no record in "
+                    f"this run's observations ledger."
+                ),
+                "hint": _CANDIDATE_ROSTER_HINT,
+                "field": "observation_id",
+            }
+        elif record.get("classification") != TEMPER_CANDIDATE:
+            result = {
+                "error": (
+                    f"{candidate_id} is classified "
+                    f"{record.get('classification')!r}, not {TEMPER_CANDIDATE}. "
+                    f"Only a candidate is driven."
+                ),
+                "hint": (
+                    "The driven transition is defined on the one observation "
+                    "class whose subject is CODE. Every other class records a "
+                    "finding about comment prose — a statement, not a "
+                    "question — and there is nothing to drive. "
+                    + _CANDIDATE_ROSTER_HINT
+                ),
+                "field": "classification",
+            }
+        elif record.get("driven") or str(record.get("status", "")).upper() == "DRIVEN":
+            # BOTH spellings read here, not just the one this door writes: a
+            # record closed by a later tool, or read out of an archive that
+            # spelled it the other way, is already driven and must not be
+            # re-closed under a second cycle. The reader tolerates two
+            # spellings, so the idempotence rung has to see the same two.
+            result = {
+                "observation_id": candidate_id,
+                "status": record.get("status"),
+                "driven_in_cycle": record.get("driven_in_cycle"),
+                "driven_finding": record.get("driven_finding", ""),
+                "already_driven": True,
+            }
+        else:
+            record["status"] = "DRIVEN"
+            record["driven_in_cycle"] = cycle
+            record["driven_finding"] = finding
+            closed = True
+            closed_description = str(record.get("description", ""))
+            result = {
+                "observation_id": candidate_id,
+                "status": record["status"],
+                "driven_in_cycle": cycle,
+                "driven_finding": finding,
+                "already_driven": False,
+            }
+
+    if closed:
+        _ledger_mirror(
+            fdir,
+            f"Cycle {cycle} — temper: {candidate_id} driven (candidate)",
+            [
+                ("Closure", f"filed {finding}" if finding else "clean"),
+                ("Description", closed_description),
+            ],
+        )
+
+    return result
+
+
 def foundry_query_observations(
     cycle: int | None = None,
     source: str | None = None,
