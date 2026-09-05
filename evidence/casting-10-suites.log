@@ -4,18 +4,19 @@
 # evidence-volatile: \d+\.\d+ seconds
 # evidence-timeout: 900
 
-........................................................................ [ 13%]
-........................................................................ [ 26%]
-........................................................................ [ 39%]
-........................................................................ [ 52%]
-........................................................................ [ 65%]
-........................................................................ [ 78%]
-........................................................................ [ 92%]
-...
+........................................................................ [ 12%]
+........................................................................ [ 25%]
+........................................................................ [ 38%]
+........................................................................ [ 51%]
+........................................................................ [ 63%]
+........................................................................ [ 76%]
+........................................................................ [ 89%]
+.............
 === report.json top-level keys ===
   generated_at
   run
   verdict_matrix
+  requirement_span
   defects_by_tier_and_status
   latent_backlog
   hardening_backlog
@@ -32,6 +33,7 @@
   baseline_comparison
 === REPORT.md headings, in REPORT_REQUIRED_SECTIONS order ===
   ## Verdict matrix
+  ## Requirement span
   ## Defects by tier and status
   ## LATENT backlog
   ## HARDENING backlog
@@ -203,5 +205,5 @@
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-.....................................                              [100%]
-547 passed in 2.97s
+...........................................              [100%]
+563 passed in 4.89s
