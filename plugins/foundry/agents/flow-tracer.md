@@ -231,7 +231,14 @@ Every non-SOURCED verdict is a defect. `UNBUILT`, `DISCONNECTED`, `STUB`, and `C
   the closed vocabulary at
   `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#STREAM_WIRE_IDS`; read it there
   and never re-type the set here. Take `cycle` from `Foundry-Next`; `items_checked` is the
-  flow-delta packets you walked and `items_total` the packets the delta declares. **It holds
+  flow-delta packets you walked and `items_total` the packets the delta declares.
+  **That read carries the caller argument, and so does every other one.** If you are a SUB-AGENT
+  rather than the lead, pass caller='subagent' on every Foundry-Next call. The lead's call is a
+  protocol step — it arms the ordering token the next Foundry-Gate requires and resets the stall
+  clock; yours is a read, and passing the argument keeps it one. That sentence is
+  `plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+  quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+  **It holds
   with the daemon dead.** A packet you could only reach by labelled grep is `NOT_VERIFIED`
   rather than `SOURCED`, and `NOT_VERIFIED` is a defect you count in `findings_count` — a
   degraded run reports a smaller VERIFIED set, never a smaller stream, and a stream that records

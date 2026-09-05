@@ -290,6 +290,14 @@ nothing else, so a record spelled the canonical way never lands and the
 stream reads as uncovered for the cycle. Take `cycle` from
 `Foundry-Next`; `items_checked` is the derived hypotheses you actually
 executed and `items_total` the persisted roster's length (see § Roster).
+**That read carries the caller argument, and so does every other
+one.** If you are a SUB-AGENT rather than the lead, pass
+caller='subagent' on every Foundry-Next call. The lead's call is a
+protocol step — it arms the ordering token the next Foundry-Gate
+requires and resets the stall clock; yours is a read, and passing
+the argument keeps it one. That sentence is
+`plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
 A `SKIP` observation counts in `items_checked` and not in
 `findings_count` — the roster item was reached and the surface was not
 there to drive, which is coverage of a truthful kind and no finding at

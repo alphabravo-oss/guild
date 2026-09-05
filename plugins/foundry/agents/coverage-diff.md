@@ -160,7 +160,14 @@ Every row above carries `description`, `source`, `tier` and `class`, because tho
   and never re-type the set here. Take `cycle` from `Foundry-Next`; `items_checked` is the
   `coverage_list` source entries you diffed and `items_total` the entries the castings declare,
   both counted against the lists themselves and never against the destinations you happened to
-  find. The not-a-MIGRATION skip above is the single case with nothing to record, because no
+  find.
+  **That read carries the caller argument, and so does every other one.** If you are a SUB-AGENT
+  rather than the lead, pass caller='subagent' on every Foundry-Next call. The lead's call is a
+  protocol step — it arms the ordering token the next Foundry-Gate requires and resets the stall
+  clock; yours is a read, and passing the argument keeps it one. That sentence is
+  `plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+  quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+  The not-a-MIGRATION skip above is the single case with nothing to record, because no
   diff ran; every cycle you actually run, you record, orphans and thin ports included in
   `findings_count`. A second call for the same stream and cycle REPLACES the first, names in
   `replaced` what it replaced, and keeps every record under `records[]`. No exceptions, no

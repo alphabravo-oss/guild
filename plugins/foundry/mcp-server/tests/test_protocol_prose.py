@@ -90,7 +90,7 @@ from foundry_mcp.tools.foundry_validate import foundry_validate_castings
 # the three, or shipping a re-export shim under the monolith's old name,
 # would have kept this import green and is exactly the facade GI-010
 # refuses.
-from foundry_mcp.tools.orchestration import directives, fix_gate, streams, width
+from foundry_mcp.tools.orchestration import directives, fix_gate, guidance, streams, width
 
 # D-048: the vocabulary assertions below READ the real enum rather than
 # re-typing it. A hard-coded tuple in a test is a seventh copy of a closed
@@ -6973,6 +6973,64 @@ def test_a_stream_agent_can_call_the_door_its_prose_requires(path: Path) -> None
         f"does not degrade the stream -- it deletes it, and the agent finds out "
         f"only after doing the whole audit. Name the doors (either prefix, or "
         f"a `mcp__..foundry..__*` wildcard) or drop the line."
+    )
+
+
+#: fallout FR-034 / FR-055 / AC-053 -- the sentence a SUB-AGENT has to read,
+#: taken from the constant and whitespace-flattened to match `_flat`. Casting
+#: 2's tests/orchestration/test_guidance.py pins the two SERVER surfaces that
+#: carry it (the Foundry-Next tool description and the spawn-time protocol
+#: block); this is the third, and it is the one that makes the argument a rule
+#: the agent states rather than a default it never learns about. C-016 drove
+#: it: a grep across agents/, skills/ and commands/ found ZERO files naming
+#: `caller` while nine stream surfaces were pinned to take the cycle from
+#: `Foundry-Next` with nothing beside it, so every one of them took the lead
+#: default and armed the lead's ordering token and stall clock on an
+#: orienting read.
+_SUBAGENT_CALLER_SENTENCE = " ".join(guidance.SUBAGENT_CALLER_INSTRUCTION.split())
+
+#: The files the rule binds, DERIVED from whose prose actually prescribes the
+#: read. agents/teammate.md names `Foundry-Next` nowhere, so a typed roster
+#: would demand a rule about a call that file never makes; the assayer and the
+#: skills are casting 11's and are pinned in their own module.
+FOUNDRY_NEXT_READING_AGENTS = tuple(
+    path for path in NON_PROVE_STREAM_AGENTS if "Foundry-Next" in _read(path)
+)
+
+
+def test_the_foundry_next_reading_roster_is_derived() -> None:
+    """Floor check: the caller-rule pin is vacuous on an empty sweep."""
+    missing = sorted(
+        _rel(p)
+        for p in {TRACER, FLOW_TRACER, RESEARCH_AUDITOR, COVERAGE_DIFF, SPEC_TEST_DERIVER}
+        - set(FOUNDRY_NEXT_READING_AGENTS)
+    )
+    assert not missing, (
+        f"{missing} no longer name `Foundry-Next`, which is how they learn the "
+        f"cycle the roll-up is keyed by. Fix the file rather than hard-coding "
+        f"this roster."
+    )
+    assert TEAMMATE not in FOUNDRY_NEXT_READING_AGENTS, (
+        "agents/teammate.md derived in by naming `Foundry-Next`. If a builder "
+        "is now told to read it, the caller rule binds that file too -- add the "
+        "sentence there rather than excluding the file here."
+    )
+
+
+@pytest.mark.parametrize("path", FOUNDRY_NEXT_READING_AGENTS, ids=lambda p: p.name)
+def test_a_stream_agent_states_the_subagent_caller_rule(path: Path) -> None:
+    """fallout FR-034 / FR-055 / AC-053: the argument stated, not defaulted.
+
+    Quoted from `guidance.SUBAGENT_CALLER_INSTRUCTION` rather than re-typed, so
+    the server's two surfaces and the agent's own file cannot drift into three
+    spellings of one rule -- the reason `_TEAMS_DOWN_HINT` is a constant.
+    """
+    assert _SUBAGENT_CALLER_SENTENCE in _flat(path), (
+        f"{_rel(path)} tells a sub-agent to read `Foundry-Next` without stating "
+        f"the caller argument. The wire default is the LEAD value, so the read "
+        f"arms the ordering token the next `Foundry-Gate` requires and resets "
+        f"the stall clock -- a stream orienting itself moves the lead's "
+        f"protocol on. Quote the constant: {_SUBAGENT_CALLER_SENTENCE!r}"
     )
 
 

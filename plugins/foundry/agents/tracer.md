@@ -284,7 +284,14 @@ If previous trace results are provided, compare:
   `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#STREAM_WIRE_IDS`; read it there
   and never re-type the set here. Take `cycle` from `Foundry-Next` and the two counts from the
   Step 1.5 width read: `items_checked` is the symbols you actually verified, `items_total` the
-  declared symbols in the width the server drew. **It holds on both paths.** A walk that fell
+  declared symbols in the width the server drew.
+  **That read carries the caller argument, and so does every other one.** If you are a SUB-AGENT
+  rather than the lead, pass caller='subagent' on every Foundry-Next call. The lead's call is a
+  protocol step — it arms the ordering token the next Foundry-Gate requires and resets the stall
+  clock; yours is a read, and passing the argument keeps it one. That sentence is
+  `plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+  quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+  **It holds on both paths.** A walk that fell
   back to labelled grep because Serena never answered still has a width and still has findings,
   so it still records — the `"method": "grep-fallback"` marker and the `degraded` labels ride on
   the report BESIDE the record, never instead of it, and every `NOT_VERIFIED` defect is a

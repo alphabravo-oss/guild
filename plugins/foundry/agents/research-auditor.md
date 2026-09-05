@@ -172,7 +172,14 @@ Every item in `defects` flows through `Foundry-Sync` and becomes grist for F3 GR
   `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#STREAM_WIRE_IDS`; read it there
   and never re-type the set here. Take `cycle` from `Foundry-Next`; `items_checked` is the
   recommendations you verified and `items_total` the persisted roster's length rather than a
-  number you re-counted, which is why the roster rule below is the other half of this one. The
+  number you re-counted, which is why the roster rule below is the other half of this one.
+  **That read carries the caller argument, and so does every other one.** If you are a SUB-AGENT
+  rather than the lead, pass caller='subagent' on every Foundry-Next call. The lead's call is a
+  protocol step — it arms the ordering token the next Foundry-Gate requires and resets the stall
+  clock; yours is a read, and passing the argument keeps it one. That sentence is
+  `plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+  quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+  The
   early return is the single case with nothing to record: with no files under `research/` and no
   Informational items there is no roster and no item, and `Foundry-Stream` refuses
   `items_checked` of zero rather than accepting an empty audit as coverage — say so in the
