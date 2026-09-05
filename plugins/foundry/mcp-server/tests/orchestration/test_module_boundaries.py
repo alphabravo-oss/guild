@@ -5134,13 +5134,21 @@ _LAYERING_DEBT: dict[tuple[str, str], str] = {
         "which is what both escalation exit arms are stated in terms of."
     ),
     ("transitions", "streams"): (
-        "_check_streams_complete, _clear_stream_completion_markers — opening an "
-        "INSPECT clears the previous one's completion state (D-221), and "
-        "closing one reads the roster it recorded."
+        "_check_streams_complete — ALL THAT IS LEFT OF THIS ROW. "
+        "`_clear_stream_completion_markers` has moved into `transitions.py`, "
+        "whose four INSPECT-opening branches were its only callers, and it "
+        "walks `vocab.STREAM_WIRE_IDS` directly. The streams-complete READ "
+        "cannot follow it: `guidance.py` reads it too, so it is shared between "
+        "the layers and closes only in a leaf."
     ),
     ("transitions", "teams"): (
-        "_check_active_teams, _check_sight_required — the cast transition's own "
-        "two preconditions, one of which is D-243."
+        "_check_active_teams — ALL THAT IS LEFT OF THIS ROW. The SIGHT "
+        "precondition (D-243) now answers from `foundry_state.sight_required` "
+        "through `width._sight_required`, which is verifier-to-verifier. The "
+        "team check cannot follow it: it is `registered_team_dirs` (leaf) AND a "
+        "tmux pane scan, and the scan reads no run artifact, so the leaf holds "
+        "half the answer and a gate that took only that half would pass while "
+        "teammates were still running."
     ),
     ("guidance", "gates"): (
         "_blocking_defects, _open_defects_by_tier, "

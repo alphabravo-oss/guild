@@ -9,9 +9,7 @@ from pathlib import Path
 
 from foundry_mcp.schemas.vocab import STREAM_WIRE_IDS
 from foundry_mcp.tools.artifacts import (
-    INSPECT_CLEAN_MARKER,
     ROLLUP_FILENAME,
-    TASKS_GENERATED_MARKER,
     TRACE_CLEAN_AT_MARKER,
     _artifact_guard,
     _document_transaction,
@@ -134,83 +132,6 @@ VALID_STREAMS = STREAM_WIRE_IDS
 
 
 
-def _clear_stream_completion_markers(fdir: Path) -> list[str]:
-    """Unlink every completion marker the INSPECT that is ending left behind.
-
-    Returns the markers that actually existed, so a caller can say what it
-    cleared. Derived from the canonical stream vocabulary rather than listed,
-    for the reason stated above this function: the marker-clear lists were two
-    of the six hand-typed copies of that vocabulary, and a stream added to
-    `vocab.py` has to be cleared the day it is added or its marker goes stale
-    across a boundary.
-
-    D-219 — ONE SPELLING, BECAUSE THE THIRD DOOR NEEDED IT AND DID NOT HAVE IT.
-    -------------------------------------------------------------------------
-    This was two byte-identical loops inside `foundry_mark_phase_complete`, in
-    `grind_start` and `assay_fail`, each carrying the comment "completion state
-    must stay honest". The `temper` branch — which opens TEMPER's INSPECT, and
-    records the five-stream FULL roster to prove it (GI-009: "One rule, two
-    doors") — carried only the width half of that rule. Driven through the real
-    handlers: a run at F4 with `.trace-complete`, `.prove-complete`,
-    `.test-complete`, `.research_audit-complete` and `.test01-complete` all
-    present from the F2 INSPECT, `foundry_mark_phase_complete('temper')`
-    returned ok with mode FULL, rule first_of_phase and the five-stream roster;
-    all five markers were still on disk afterwards; `_check_streams_complete`
-    answered `complete True, missing ''` for F5 and `_format_status_display`
-    drew `[✓]prove [✓]research_audit [✓]test [✓]test01 [✓]trace` — five streams
-    reported complete for a TEMPER INSPECT in which none of them ran. It
-    compounded through `_coverage_shortfall`, which is consulted only for a
-    stream that is NOT missing and reads the current cycle's roll-up: in F5
-    that is still the F2 cycle's numbers, so the earlier INSPECT's coverage met
-    the thresholds too. Clearing the markers closes both halves — a missing
-    stream is never coverage-checked.
-
-    D-221 — EVERY DOOR THAT OPENS AN INSPECT CALLS THIS, UNCONDITIONALLY.
-    ---------------------------------------------------------------------
-    This paragraph used to argue the opposite for two of the four doors, and
-    the argument is what the next defect was made of. It read: "`cast` enters
-    F2 from F1, which is entered by `start_cast` before any stream can have
-    reported; `inspect_start` enters F2 from F3, and F3 is entered ONLY by the
-    two doors below, both of which clear on the way in ... a call here would
-    have no reachable state behind it." Both halves are false at the doors
-    themselves. `inspect_start` admits **F2** as a source — the F2->F2 widening
-    re-open, which advances the counter, records FULL / final_gate with the
-    five-stream roster and sweeps the whole corpus. `start_cast` carries no
-    entry-source precondition at all (it is `_update_phase(fdir, "F1")` under
-    the halted guard alone), so F1 is reachable from a phase that has markers.
-
-    Driven at the widening door: a DELTA cycle 2 with `.trace-complete`,
-    `.prove-complete` and `.test-complete` recorded at 40/40, then a second
-    `inspect_start` returning ok at cycle 3 with mode FULL, rule final_gate and
-    the five-stream roster — with all three markers still on disk.
-    `_check_streams_complete` answered missing "research_audit test01" only, so
-    trace, prove and test were COMPLETE for a FULL INSPECT in which none of
-    them ran; `_rollup_totals` had nothing for cycle 3, so `_coverage_shortfall`
-    fell back to `_marker_counts` on the stale cycle-2 marker and cleared the
-    0.95 threshold too. Driven at the `cast` door on the same terms: F2 with
-    five markers -> `start_cast` -> `cast` -> ok, FULL, five-stream roster,
-    markers untouched, four of five reported complete.
-
-    So the call is the guarantee and the reachability argument is retired. A
-    door standing on genuinely cleared state gets an empty return, and that
-    empty return is the PROOF there was nothing stale — not a reason to omit
-    the call and re-derive the proof in prose. `test_inspect_mode.py`'s
-    `test_every_inspect_opening_door_clears_the_previous_inspects_completion_state`
-    derives the obligation from this module's own AST: any branch of
-    `_phase_transition` that calls `_decide_inspect_mode` must call this too,
-    so a fifth door inherits the rule the day it is written.
-    """
-    markers = [_stream_marker(stream) for stream in sorted(VALID_STREAMS)] + [
-        INSPECT_CLEAN_MARKER,
-        TASKS_GENERATED_MARKER,
-    ]
-    cleared: list[str] = []
-    for marker in markers:
-        path = fdir / marker
-        if path.exists():
-            cleared.append(marker)
-        path.unlink(missing_ok=True)
-    return cleared
 
 
 
