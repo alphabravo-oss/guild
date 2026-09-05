@@ -5165,10 +5165,6 @@ _LAYERING_DEBT: dict[tuple[str, str], str] = {
         "_check_active_teams, _check_sight_required — the cast transition's own "
         "two preconditions, one of which is D-243."
     ),
-    ("transitions", "report_seal"): (
-        "_seal_run_report, _sealed_report_sentence — the transition that closes "
-        "the run writes the artifact (D-218)."
-    ),
     ("width", "teams"): (
         "_check_active_teams, _check_sight_required — the required-stream "
         "roster depends on whether SIGHT is earnable."

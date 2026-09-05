@@ -35,10 +35,6 @@ from foundry_mcp.tools.foundry_state import (
     now_iso,
 )
 from pathlib import Path
-from foundry_mcp.tools.orchestration.report_seal import (
-    _seal_run_report,
-    _sealed_report_sentence,
-)
 from foundry_mcp.tools.orchestration.escalation import (
     _advance_escalation_exits,
     _escalated_classes,
@@ -68,12 +64,22 @@ from foundry_mcp.tools.orchestration.evidence_boundary import (
     _terminal_evidence_refusal,
     _terminal_evidence_state,
 )
+# fallout GI-033 / FR-063 / AC-061 — THE ONE-WAY SEAM, AND BOTH HALVES OF IT.
+#
+# GI-033's exception is "transitions dispatch the `halt` token AND THE
+# TERMINAL SEAL through a one-way seam into halt.py". The seal half used to
+# go straight to `report_seal.py`, which made it a SECOND verifier-to-
+# lifecycle crossing where the rule permits exactly one. `seal_run_report`
+# and `sealed_report_sentence` are that half, reached here through the same
+# module the halt token already goes through. Nothing flows back.
 from foundry_mcp.tools.orchestration.halt import (
     _halt_if_capped,
     _halted_refusal,
     _halted_state,
     _persisted_max_cycles,
     _seal_halted,
+    seal_run_report,
+    sealed_report_sentence,
 )
 from foundry_mcp.tools.orchestration.gates import (
     CASTING_KEY_FILE_CAP,
@@ -2205,10 +2211,10 @@ def _phase_transition(
         # D-218 / FR-001 / GI-006: the artifact is written by the transition
         # that closes the run, on the same terms `_halt_if_capped` writes it at
         # the other terminal transition. Both F6 doors, one helper.
-        sealed = _seal_run_report(project_root, fdir)
+        sealed = seal_run_report(project_root, fdir)
         message = (
             "NYQUIST complete → phase is now F6 (DONE). "
-            + _sealed_report_sentence(sealed, fdir)
+            + sealed_report_sentence(sealed, fdir)
             + " Run archived."
         )
         clear_active_run()
@@ -2243,10 +2249,10 @@ def _phase_transition(
             return _transition_refusal(outcome, "Cannot mark the run DONE")
         _update_phase(fdir, "F6")
         # D-218 / FR-001 / GI-006: same helper, same terms, the other door.
-        sealed = _seal_run_report(project_root, fdir)
+        sealed = seal_run_report(project_root, fdir)
         message = (
             "Phase is now F6 (DONE). "
-            + _sealed_report_sentence(sealed, fdir)
+            + sealed_report_sentence(sealed, fdir)
             + " Run archived. Start a new run with foundry_init."
         )
         # Clear the active run — session is done with this run

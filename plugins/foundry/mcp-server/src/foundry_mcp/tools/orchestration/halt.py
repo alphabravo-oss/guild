@@ -26,6 +26,8 @@ from pathlib import Path
 from foundry_mcp.tools.orchestration.report_seal import (
     _lead_prose_clause,
     _regenerate_report_preserving_lead_prose,
+    _seal_run_report,
+    _sealed_report_sentence,
 )
 
 
@@ -436,3 +438,29 @@ def _halt_if_capped(
     sealed["max_cycles"] = max_cycles
     sealed["opening_cycle"] = opening
     return sealed
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-033 / FR-063 / AC-061 — THE TERMINAL SEAL, THROUGH THE ONE SEAM.
+#
+# GI-033 names the exception in full: "transitions dispatch the `halt` token AND
+# THE TERMINAL SEAL through a one-way seam into halt.py". `transitions.py` was
+# doing the first half and reaching `report_seal.py` directly for the second,
+# which is a SECOND verifier-to-lifecycle crossing where the rule permits one.
+#
+# These are the seal half of that seam. Thin by design: they exist so the
+# crossing is written in one place and nothing is re-decided here — the two F6
+# doors and the halt path all reach the same `report_seal` implementation, and
+# `halt.py` already reaches it for the HALTED regeneration, so no new coupling
+# is created by routing the F6 seal alongside it. Nothing flows back.
+# --------------------------------------------------------------------------- #
+
+
+def seal_run_report(project_root: str, fdir) -> dict:
+    """`report_seal._seal_run_report`, through the transitions-to-halt seam."""
+    return _seal_run_report(project_root, fdir)
+
+
+def sealed_report_sentence(sealed: dict, fdir) -> str:
+    """`report_seal._sealed_report_sentence`, through the same seam."""
+    return _sealed_report_sentence(sealed, fdir)
