@@ -383,7 +383,11 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
     # Unguarded, so a wiring break fails loudly at the one call site that
     # needs the symbol rather than hiding behind a silent fallback.
     from foundry_mcp.tools.orchestration.directives import DISPATCHED_DEFECT_UNRECORDED, _grind_dispatches
-    from foundry_mcp.tools.orchestration.width import _boundary_base_sha, git_changed_paths
+    from foundry_mcp.tools.orchestration.width import (
+        _boundary_base_sha,
+        git_changed_paths,
+        git_touching_commit,
+    )
     dispatched = _grind_dispatches(fdir, current_cycle(fdir))
     if not dispatched:
         return None
@@ -408,7 +412,26 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
     unrecorded = [r for r in still_open if str(r["file"]) in touched]
     if not unrecorded:
         return None
-    named = ", ".join(f"{r['defect_id']} ({r['file']})" for r in unrecorded)
+
+    # fallout AC-039 — THE COMMIT THAT MADE THE CHANGE, RESOLVED PER FILE.
+    #
+    # "refuses naming the id AND the commit", and this named the BASELINE: the
+    # revision the diff is measured FROM, which is the one commit that provably
+    # did not make the change. `git_changed_paths` prints paths and no
+    # revisions, so the touching commit was never resolved at all — the
+    # operator got a SHA that could not be the answer and had to run the log
+    # themselves. `git_touching_commit` answers it per file, and answers "" for
+    # every way it cannot; an unresolved commit is an absent field here, never a
+    # refusal withheld, because the id and the file are still the finding.
+    for row in unrecorded:
+        row["_commit"] = git_touching_commit(project_root, base, str(row["file"]))
+    named = ", ".join(
+        f"{r['defect_id']} ({r['file']}"
+        + (f" @ {r['_commit']}" if r.get("_commit") else "")
+        + ")"
+        for r in unrecorded
+    )
+    commits = sorted({r["_commit"] for r in unrecorded if r.get("_commit")})
     return {
         "error": DISPATCHED_DEFECT_UNRECORDED,
         "reason": (
@@ -427,9 +450,15 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
         ),
         "phase": "dispatched_defect_unrecorded",
         "defects": [
-            {"id": r["defect_id"], "file": r["file"], "casting": r.get("casting")}
+            {
+                "id": r["defect_id"],
+                "file": r["file"],
+                "casting": r.get("casting"),
+                "commit": r.get("_commit", ""),
+            }
             for r in unrecorded
         ],
+        "commits": commits,
         "baseline_sha": base,
         "baseline_source": base_source,
     }
@@ -566,7 +595,31 @@ def foundry_unregister_team(
 
 
 def _check_sight_required(project_root: str) -> dict:
-    """Check if SIGHT audit is required based on frontend files in castings."""
+    """Check if SIGHT audit is required based on frontend files in castings.
+
+    fallout AC-052 / FR-055 — `--no-ui` IS A DECLARATION AND THIS GATE HONOURS
+    IT.
+    -----------------------------------------------------------------------
+    AC-052 requires one documented meaning across README, setup script and
+    gate, and `NO_UI_MEANING` is that sentence: "`--no-ui` declares that this
+    run has no browsable UI, so the SIGHT browser audit is not part of it."
+    Two of the three surfaces said exactly that; this one implemented its
+    opposite. With the flag set and any UI extension in scope it answered
+    `required: True, blocked: True` with a reason reading "--no-ui set but N
+    frontend files in scope", `_check_streams_complete` then appended `sight`
+    to the required roster, and `_cast_preconditions` failed at the config
+    rung — so declaring a run had no browsable UI was the one way to make the
+    browser audit mandatory AND unsatisfiable.
+
+    It survived because no fixture reached the arm: every `no_ui` arrangement
+    under `tests/orchestration/` used `.py` key files, where the extension scan
+    returns first. `test_sight_is_not_required_when_the_run_declares_no_ui`
+    drives it with a `.tsx` key file, which is the shape that was missing.
+
+    The extension scan stays for runs that did NOT declare the flag: absence of
+    `--no-ui` is not a claim either way, so the file extensions are the only
+    evidence there is.
+    """
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"required": False}
@@ -592,15 +645,32 @@ def _check_sight_required(project_root: str) -> dict:
             if any(f.endswith(ext) for ext in ui_exts):
                 ui_files.append(f)
 
+    # Read BEFORE the extension scan's own answer, because the flag is the
+    # operator's statement about the run and the extensions are an inference
+    # about it. `ui_files` is still reported so the operator can see the
+    # tension between what they declared and what is in scope; it is a fact on
+    # the answer, never a reason to overrule the declaration.
+    #
+    # LAZY, in the shape the cross-module seam pattern shows: `tools/foundry.py`
+    # reaches into this package, so a module-top import here would close a cycle
+    # the boundary guard refuses. Unguarded, so a wiring break fails loudly at
+    # the one call site that needs the sentence.
+    if data.get("no_ui", False):
+        from foundry_mcp.tools.foundry import NO_UI_MEANING
+
+        return {
+            "required": False,
+            "blocked": False,
+            "no_ui": True,
+            "ui_files": len(ui_files),
+            "reason": NO_UI_MEANING,
+        }
+
     if not ui_files:
         return {"required": False, "reason": "No frontend files in castings"}
 
     url = data.get("target_url", "")
-    no_ui = data.get("no_ui", False)
 
-    if no_ui:
-        return {"required": True, "blocked": True, "ui_files": len(ui_files),
-                "reason": f"--no-ui set but {len(ui_files)} frontend files in scope"}
     if not url:
         return {"required": True, "blocked": True, "ui_files": len(ui_files),
                 "reason": f"No --url provided but {len(ui_files)} frontend files in scope"}

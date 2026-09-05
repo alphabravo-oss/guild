@@ -2649,6 +2649,81 @@ def _ranks_a_routine_can_emit(token: str, _seen: frozenset[str] = frozenset()) -
 
 
 
+#: fallout AC-009 / FR-041 — the primitives a preconditions routine and a
+#: transition branch BOTH legitimately use, so their presence at a door says
+#: nothing about where a refusal was composed.
+#:
+#: Typed, and deliberately short. Everything else a routine reaches is a
+#: refusal-producing read by construction — the routines exist to build ladders
+#: — so subtracting exactly these leaves the set the doors must not touch. A
+#: name added here is a claim that a door may make that read outside its
+#: routine, which is the claim AC-009 exists to make expensive.
+_SHARED_PRIMITIVES = frozenset({
+    "_load_json",
+    "_save_json",
+    "current_cycle",
+    "now_iso",
+    "_GateLadder",
+    "_preconditions_outcome",
+    "_document_transaction",
+})
+
+
+def _readers_a_routine_can_reach(token: str, _seen: frozenset[str] = frozenset()) -> set[str]:
+    """Every helper `token`'s preconditions routine reaches, transitively.
+
+    fallout AC-009 / FR-041 — DERIVED, NOT TYPED. The pin this feeds used to
+    compare each door's calls against a hand-written set of twelve reader names,
+    and a reader outside that list was invisible to it: `_sweep_evidence_at_
+    boundary` and `_sweep_refusal` sat inside three transition branches while
+    the pin reported green. A set derived from the routines themselves grows the
+    day a rung does, which is the only way a structural pin stays true.
+
+    Follows calls into this package's own private helpers, the same one-level-at
+    -a-time walk `_ranks_a_routine_can_emit` makes, and for the same reason: a
+    read factored into a shared rung helper is still that routine's read.
+
+    BOTH CALL SHAPES ARE WALKED. `ast.Name` alone misses `module.fn()`, which is
+    how a door could reach a reader through its module object and satisfy a pin
+    that only looks for bare names.
+    """
+    name = _preconditions_name(token) if token in PHASE_TOKENS else token
+    fn = getattr(owning_module(name), name, None)
+    if fn is None or name in _seen:
+        return set()
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    reached: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            callee = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            callee = node.func.attr
+        else:
+            continue
+        if not callee.startswith("_") or callee == name:
+            continue
+        if not orchestration_has(callee):
+            continue
+        reached.add(callee)
+        reached |= _readers_a_routine_can_reach(callee, _seen | {name})
+    return reached
+
+
+def _refusal_readers() -> set[str]:
+    """The union over every token, minus the shared primitives."""
+    reached: set[str] = set()
+    for token in PHASE_TOKENS:
+        reached |= _readers_a_routine_can_reach(token)
+    return {
+        name for name in reached
+        if name not in _SHARED_PRIMITIVES
+        and not name.endswith("_preconditions")
+        and not name.endswith("_rung")
+    }
+
+
 # --------------------------------------------------------------------------- #
 # The arrangements: one happy path per token, one breakage per rung.
 # --------------------------------------------------------------------------- #
@@ -2788,6 +2863,33 @@ def _break_evidence(project_root, fdir, token, monkeypatch) -> bool:
                        "logs_reexecuted": ["evidence/a.log"]},
             "head": "deadbeef",
             "cached": False,
+        },
+    )
+    # fallout FR-058 / GI-029 — THE OTHER EVIDENCE RUNG, AT THE OTHER THREE
+    # BOUNDARIES.
+    #
+    # GI-002 names two kinds of evidence boundary and this rank covers both: the
+    # TERMINAL sweep above (nyquist, done, nyquist_done) and the INSPECT-opening
+    # sweep at `cast`, `inspect_start` and `temper`. The second used to be an
+    # arm inside `_phase_transition`, so those three tokens emitted no
+    # `_GATE_RANK_EVIDENCE` rung at all and this arranger was never asked for
+    # them. It is a rung of their routines now, so a mismatch has to be
+    # arrangeable at both kinds of boundary or half the tokens would walk this
+    # rank against a corpus that reproduces and assert nothing.
+    patch_everywhere(monkeypatch, "_sweep_evidence_at_boundary",
+        lambda _fdir, _pr, _entry, *, full: {
+            "ok": False,
+            "error": "",
+            "mismatches": [{"log": "evidence/a.log", "reason": "output differs"}],
+            "record": {
+                "scope": "full" if full else "delta",
+                "corpus_size": 1,
+                "logs_reexecuted": ["evidence/a.log"],
+                "mismatches": [{"log": "evidence/a.log", "reason": "output differs"}],
+                "per_log": [],
+                "elapsed_seconds": 0.0,
+                "pool_size": 0,
+            },
         },
     )
     return True

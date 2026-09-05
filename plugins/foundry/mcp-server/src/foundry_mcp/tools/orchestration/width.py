@@ -192,6 +192,56 @@ def git_changed_paths(
 
 
 
+def git_touching_commit(
+    project_root: str, base: str, path: str, head: str = "HEAD",
+    *, timeout: float = 30.0,
+) -> str:
+    """The most recent commit in `base..head` that touched `path`, or "".
+
+    fallout AC-039 — THE COMMIT, NOT THE BASELINE.
+    ---------------------------------------------
+    "Team-Down refuses naming the id AND the commit" and the refusal named the
+    BASELINE — the revision the diff is measured FROM, which is by construction
+    the one commit that did NOT make the change. The operator was handed a SHA
+    and told a commit since it touched their file, leaving them to run the log
+    themselves to find out which. `git_changed_paths` cannot answer it: the
+    diff it runs prints paths and no revisions at all, which is why the commit
+    was never resolved rather than resolved wrongly.
+
+    Written here beside `git_changed_paths` for the reason that helper's own
+    docstring gives — one place for one git invocation — and public for the
+    same reason: a lifecycle module reaches it through a lazy seam.
+
+    Returns "" for every way the question has no answer (no git, a bad
+    revision, a path with no commit in the range). The caller's refusal is
+    advisory and reports what it could resolve; a commit it could not name is
+    an absent field, never a raise and never a wrong SHA.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            [
+                "git", "-C", project_root,
+                "-c", "core.quotepath=false",
+                "log", "-1", "--format=%h",
+                "--end-of-options", f"{base}..{head}", "--", path,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+
+
 def _trace_skip_check(fdir: Path, project_root: str) -> dict:
     """Decide whether the current F2 INSPECT can skip the TRACE stream.
 

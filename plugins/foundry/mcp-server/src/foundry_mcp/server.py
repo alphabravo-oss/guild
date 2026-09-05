@@ -42,6 +42,7 @@ from foundry_mcp.tools.foundry import (
     foundry_add_defect,
     foundry_add_observation,
     foundry_add_verdict,
+    foundry_drive_temper_candidate,
     foundry_init,
     foundry_query_defects,
     foundry_query_observations,
@@ -599,6 +600,42 @@ async def list_tools() -> list[Tool]:
                     "cycle": {"type": "integer"},
                     "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
                     "classification": {"type": "string", "enum": sorted(OBSERVATION_CLASSES)},
+                },
+            },
+        ),
+        Tool(
+            name="Foundry-Drive-Candidate",
+            description=(
+                "Close an open TEMPER_CANDIDATE observation as DRIVEN. The "
+                "write half of ST-007: TEMPER reads its roster with "
+                "Foundry-Observations(classification=TEMPER_CANDIDATE) and "
+                "closes each candidate here. A probe driven and filed against "
+                "names the defect in `filed`; a probe driven and found sound "
+                "omits it, and clean is a closure, not a blank. Re-driving a "
+                "closed candidate is idempotent and the first closure stands."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["observation_id"],
+                "properties": {
+                    "observation_id": {
+                        "type": "string",
+                        "description": "The O-NNN of the candidate that was driven.",
+                    },
+                    # D-074 — NO `default` KEY HERE, DELIBERATELY. An omitted
+                    # `filed` IS the clean closure, and a schema default would
+                    # manufacture a value the caller never sent; absence has to
+                    # travel as absence all the way to the writer, which is why
+                    # the dispatch below spells `args.get("filed", "")`.
+                    "filed": {
+                        "type": "string",
+                        "description": (
+                            "Optional \u2014 the D-NNN this drive produced. Omitted "
+                            "means the probe was driven and found clean. "
+                            "Recorded verbatim and not ranked against the "
+                            "defect ledger (ST-007 admits no error on it)."
+                        ),
+                    },
                 },
             },
         ),
@@ -1515,6 +1552,9 @@ _DISPATCH = {
     "Foundry-Observations": lambda args: foundry_query_observations(
         cycle=args.get("cycle"), source=args.get("source"),
         classification=args.get("classification"), project_root=_project_root),
+    "Foundry-Drive-Candidate": lambda args: foundry_drive_temper_candidate(
+        observation_id=args["observation_id"], filed=args.get("filed", ""),
+        project_root=_project_root),
     "Foundry-Fix": lambda args: foundry_mark_defect_fixed(
         defect_id=args["defect_id"], cycle=args["cycle"],
         adjacent_path_statement=args.get("adjacent_path_statement", ""),

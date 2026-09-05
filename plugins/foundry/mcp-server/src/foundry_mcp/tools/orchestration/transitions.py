@@ -236,6 +236,72 @@ def _all_verified_rung(
 
 
 
+def _boundary_evidence_rung(
+    ladder: "_GateLadder",
+    checklist: list[dict],
+    fdir: Path,
+    project_root: str,
+    *,
+    entry: dict,
+    full: bool,
+    token: str,
+) -> dict:
+    """The INSPECT-boundary evidence sweep, as a rung BOTH doors make.
+
+    fallout FR-058 / GI-029 / ST-012 / AC-056 / CT-013 — THE SWEEP IS A
+    PRECONDITION, NOT AN ARM IN THE TRANSITION.
+    -----------------------------------------------------------------------
+    "Exactly the preconditions function; no extra reads or refusals" (FR-058).
+    Three branches — `cast`, `inspect_start` and `temper` — each swept the
+    corpus themselves and each returned `_sweep_refusal(...)` on a mismatch,
+    while none of the three routines read the corpus at all. Driven with one
+    non-reproducing log: `Foundry-Gate('inspect')`, `('inspect_start')` and
+    `('temper')` all answered `passed: True` while the matching
+    `Foundry-Phase` calls refused, and because the refusal was built outside
+    the ladder it carried `refusals: None` — so the one thing both doors
+    publish did not contain the check that actually stopped the crossing.
+    That is D-240's shape restored at a fourth site, which is exactly what the
+    per-token routines exist to make impossible.
+
+    `_nyquist_preconditions` is the shape copied here: take the sweep as a
+    rung, hand the record back as a NON-REFUSING fact, and let the branch
+    consume the record the rung produced rather than sweeping again.
+
+    THE WIDTH DECISION COMES WITH IT, because the scope of the sweep IS the
+    width decision (`_decide_inspect_mode` writes nothing, so computing it here
+    costs a read and decides nothing twice). The branch reads `inspect_entry`
+    off the outcome and records it after the crossing is allowed.
+
+    The refusal strings stay `_sweep_refusal`'s, minus the clause
+    `_transition_refusal` now supplies, so a lead reads the same sentence it
+    read before — including the named logs and the retry naming this token.
+    """
+    sweep = _sweep_evidence_at_boundary(fdir, project_root, entry, full=full)
+    if not sweep["ok"]:
+        refusal = _sweep_refusal(sweep, current_cycle(fdir), token=token)
+        ladder.fail(
+            _GATE_RANK_EVIDENCE,
+            refusal["error"].replace("Cannot cross into INSPECT — ", ""),
+            refusal["hint"],
+        )
+    checklist.append({
+        "check": (
+            "evidence_reproduces_at_head "
+            f"(scope={sweep['record'].get('scope', '?')}, "
+            f"corpus={sweep['record'].get('corpus_size', 0)}, "
+            f"mismatches={len(sweep['mismatches'])})"
+        ),
+        "ok": bool(sweep["ok"]),
+    })
+    return {
+        "inspect_entry": entry,
+        "evidence_sweep": sweep["record"],
+        "mismatches": sweep["mismatches"],
+    }
+
+
+
+
 def _start_cast_preconditions(fdir: Path, project_root: str) -> dict:
     """Preconditions for `start_cast` — gates `validate` and `cast`.
 
@@ -364,7 +430,20 @@ def _cast_preconditions(fdir: Path, project_root: str) -> dict:
         "ok": (fdir / CAST_COMPLETE_MARKER).exists(),
         "refuses": False,
     })
-    return _preconditions_outcome(ladder, checklist, **source)
+
+    # fallout FR-058 / AC-056 — the F2 entry's own width decision and sweep.
+    # This branch, not `start_cast`: `cast` is the token that enters F2, so it
+    # opens the run's first INSPECT and therefore decides its width.
+    evidence = _boundary_evidence_rung(
+        ladder, checklist, fdir, project_root,
+        entry=_decide_inspect_mode(
+            fdir, project_root, decided_by="cast", phase="F2",
+            cycle=current_cycle(fdir),
+        ),
+        full=True,
+        token="cast",
+    )
+    return _preconditions_outcome(ladder, checklist, **source, **evidence)
 
 
 
@@ -502,7 +581,22 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
         "concerns": [str(c.get("id")) for c in open_concerns],
     })
 
-    return _preconditions_outcome(ladder, checklist, widening=widening)
+    # fallout FR-058 / AC-056 — the crossing's width decision and its sweep,
+    # in the routine both doors call. The cycle is `completed + 1` because this
+    # is the call that advances the counter, and `widening` is the answer the
+    # source rung above already computed rather than a second read of
+    # `state.phase`.
+    entry = _decide_inspect_mode(
+        fdir, project_root, decided_by="inspect_start", phase="F2",
+        cycle=current_cycle(fdir) + 1, widening=widening,
+    )
+    evidence = _boundary_evidence_rung(
+        ladder, checklist, fdir, project_root,
+        entry=entry, full=entry["mode"] == "FULL", token="inspect_start",
+    )
+    return _preconditions_outcome(
+        ladder, checklist, widening=widening, **evidence
+    )
 
 
 
@@ -719,7 +813,19 @@ def _temper_preconditions(fdir: Path, project_root: str) -> dict:
     source = _source_phase_rung(ladder, checklist, fdir, "temper")
     _all_verified_rung(ladder, checklist, fdir, "TEMPER")
     _blocking_defects_rung(ladder, checklist, fdir)
-    return _preconditions_outcome(ladder, checklist, **source)
+    # fallout FR-058 / AC-056 — the F5 entry opens TEMPER's first INSPECT and
+    # records FULL / first_of_phase on the same terms as the F2 entry, so it
+    # sweeps on the same terms too — in the routine, where the gate sees it.
+    evidence = _boundary_evidence_rung(
+        ladder, checklist, fdir, project_root,
+        entry=_decide_inspect_mode(
+            fdir, project_root, decided_by="temper", phase="F5",
+            cycle=current_cycle(fdir),
+        ),
+        full=True,
+        token="temper",
+    )
+    return _preconditions_outcome(ladder, checklist, **source, **evidence)
 
 
 
@@ -1604,17 +1710,15 @@ def _phase_transition(
         # all. `cast` is the token that enters F2, so it is the transition that
         # opens the run's first INSPECT and therefore the one that decides its
         # width \u2014 recorded here, before any Foundry-Next is called (OT-012).
-        entry = _decide_inspect_mode(
-            fdir, project_root, decided_by="cast", phase="F2",
-            cycle=current_cycle(fdir),
-        )
-        # D-014 / FR-009 / GI-002 \u2014 THE FULL RULE FIRES HERE, SO THE SWEEP RUNS
-        # HERE. Decided and swept BEFORE the first marker is written, so a
-        # refused transition leaves no trace it was attempted \u2014 the same
-        # ordering `inspect_start` holds against its state transaction.
-        sweep = _sweep_evidence_at_boundary(fdir, project_root, entry, full=True)
-        if not sweep["ok"]:
-            return _sweep_refusal(sweep, current_cycle(fdir), token="cast")
+        #
+        # fallout FR-058 / GI-029 \u2014 DECIDED AND SWEPT BY THE ROUTINE, READ HERE.
+        # D-014's sweep and its `_sweep_refusal` stood in this branch, which made
+        # them a refusal the gate for this token could not make.
+        # `_boundary_evidence_rung` owns both now and what is left here is the
+        # effect. The ordering the old arm defended survives by construction:
+        # the routine refuses before this line is reached, so a refused
+        # transition still leaves no trace it was attempted.
+        entry = outcome["inspect_entry"]
 
         # D-221 / GI-009 / AC-016 — AND THE COMPLETION HALF HERE TOO.
         #
@@ -1653,7 +1757,7 @@ def _phase_transition(
         _update_phase(fdir, "F2")
         _record_inspect_mode(fdir, entry)
         _record_cycle_rollup(
-            fdir, current_cycle(fdir), evidence_sweep=sweep["record"]
+            fdir, current_cycle(fdir), evidence_sweep=outcome["evidence_sweep"]
         )
         return {
             "ok": True,
@@ -1661,14 +1765,14 @@ def _phase_transition(
             "inspect_mode": entry["mode"],
             "inspect_rule": entry["rule"],
             "required_streams": entry["required_streams"],
-            "evidence_sweep": sweep["record"],
+            "evidence_sweep": outcome["evidence_sweep"],
             "cleared_markers": cleared,
             "message": (
                 f"CAST complete \u2192 phase is now F2 (INSPECT), mode {entry['mode']} "
                 f"(rule {entry['rule']}). Required streams: "
                 f"{', '.join(entry['required_streams'])}. Evidence sweep "
-                f"re-executed {len(sweep['record']['logs_reexecuted'])} log(s) "
-                f"at {sweep['record']['scope']} scope."
+                f"re-executed {len(outcome['evidence_sweep']['logs_reexecuted'])} log(s) "
+                f"at {outcome['evidence_sweep']['scope']} scope."
             ),
         }
 
@@ -1723,15 +1827,11 @@ def _phase_transition(
         # untouched (AC-013 / OT-008) and no mode is recorded for a transition
         # that did not happen. A transition the server refused must leave no
         # trace that it was attempted.
-        entry = _decide_inspect_mode(
-            fdir, project_root, decided_by="inspect_start", phase="F2",
-            cycle=completed_cycle + 1, widening=widening,
-        )
-        sweep = _sweep_evidence_at_boundary(
-            fdir, project_root, entry, full=entry["mode"] == "FULL"
-        )
-        if not sweep["ok"]:
-            return _sweep_refusal(sweep, completed_cycle)
+        # fallout FR-058 / GI-029: the decision and the sweep are rungs of
+        # `_inspect_start_preconditions` now, so `Foundry-Gate('inspect_start')`
+        # refuses the mismatch this branch used to refuse alone. Read off the
+        # outcome rather than re-taken: one decision, one sweep, two doors.
+        entry = outcome["inspect_entry"]
 
         # D-221 / GI-009 / AC-016 / AC-017 — THIS DOOR OPENS AN INSPECT, SO IT
         # CLEARS THE PREVIOUS ONE'S COMPLETION STATE. BOTH ARMS.
@@ -1812,7 +1912,7 @@ def _phase_transition(
             inspect_mode=entry["mode"],
             inspect_rule=entry["rule"],
             stream_scope=entry["stream_scope"],
-            evidence_sweep=sweep["record"],
+            evidence_sweep=outcome["evidence_sweep"],
         )
         # The commit this boundary crossed at, so the NEXT crossing's diff is
         # measured from here rather than from whatever older marker happened to
@@ -1881,7 +1981,7 @@ def _phase_transition(
             "inspect_mode": entry["mode"],
             "inspect_rule": entry["rule"],
             "required_streams": entry["required_streams"],
-            "evidence_sweep": sweep["record"],
+            "evidence_sweep": outcome["evidence_sweep"],
             "widened": widening,
             "cleared_markers": cleared_markers,
             "message": (
@@ -1893,8 +1993,8 @@ def _phase_transition(
                 + f"phase is now F2 (INSPECT), cycle {cycle}, "
                 f"mode {entry['mode']} (rule {entry['rule']}). Required "
                 f"streams: {', '.join(entry['required_streams'])}. Evidence "
-                f"sweep re-executed {len(sweep['record']['logs_reexecuted'])} "
-                f"log(s) at {sweep['record']['scope']} scope."
+                f"sweep re-executed {len(outcome['evidence_sweep']['logs_reexecuted'])} "
+                f"log(s) at {outcome['evidence_sweep']['scope']} scope."
             ),
         }
         if cleared:
@@ -1955,10 +2055,7 @@ def _phase_transition(
         # entry above. One rule, two doors — which is what GI-009 means by
         # "whichever Foundry-Phase transition opens an INSPECT records the
         # mode".
-        entry = _decide_inspect_mode(
-            fdir, project_root, decided_by="temper", phase="F5",
-            cycle=current_cycle(fdir),
-        )
+        entry = outcome["inspect_entry"]
         # D-014 — AND HERE, ON THE SAME TERMS.
         #
         # FR-009: the whole corpus is swept "whenever the FULL rule fires", and
@@ -1969,9 +2066,6 @@ def _phase_transition(
         # US-005 exists to enable were landing commits throughout F5. The
         # boundary that opens the LAST inspection of a run was the one boundary
         # not checking that the run's committed evidence still reproduces.
-        sweep = _sweep_evidence_at_boundary(fdir, project_root, entry, full=True)
-        if not sweep["ok"]:
-            return _sweep_refusal(sweep, current_cycle(fdir), token="temper")
 
         # D-219 / GI-009 / AC-016 — AND THE OTHER HALF OF "ONE RULE, TWO DOORS".
         #
@@ -2004,7 +2098,7 @@ def _phase_transition(
             fdir,
             current_cycle(fdir),
             sub=TEMPER_ENTRY_ROLLUP_KEY,
-            evidence_sweep=sweep["record"],
+            evidence_sweep=outcome["evidence_sweep"],
         )
         return {
             "ok": True,
@@ -2012,7 +2106,7 @@ def _phase_transition(
             "inspect_mode": entry["mode"],
             "inspect_rule": entry["rule"],
             "required_streams": entry["required_streams"],
-            "evidence_sweep": sweep["record"],
+            "evidence_sweep": outcome["evidence_sweep"],
             "cleared_markers": cleared,
             "message": (
                 f"Phase is now F5 (TEMPER), mode {entry['mode']} "
@@ -2020,8 +2114,8 @@ def _phase_transition(
                 f"{', '.join(entry['required_streams'])} — TEMPER's INSPECT "
                 f"runs them itself; {len(cleared)} stale completion marker(s) "
                 "from the previous INSPECT were cleared. Evidence sweep "
-                f"re-executed {len(sweep['record']['logs_reexecuted'])} log(s) "
-                f"at {sweep['record']['scope']} scope."
+                f"re-executed {len(outcome['evidence_sweep']['logs_reexecuted'])} log(s) "
+                f"at {outcome['evidence_sweep']['scope']} scope."
             ),
         }
 

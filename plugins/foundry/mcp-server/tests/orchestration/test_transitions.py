@@ -138,6 +138,7 @@ from tests.orchestration._env import (  # noqa: F401
     _preconditions_name,
     _ranks_a_routine_can_emit,
     _ready_for_the_end_gates,
+    _refusal_readers,
     _record_full_inspect_mode,
     _teams_active,
     _tiered,
@@ -3403,39 +3404,163 @@ def test_neither_door_reads_a_ledger_outside_its_preconditions_routine():
     structural assertion and not a behavioural one.
 
     The named set is the refusal-producing readers, not every function: the
-    branches still decide widths, sweep corpora, clear markers and transact,
-    and all of that is EFFECT, which runs only after the shared routine passed.
+    branches still clear markers, record widths and transact, and all of that
+    is EFFECT, which runs only after the shared routine passed.
+
+    THE READER SET IS DERIVED, AND BOTH CALL SHAPES ARE WALKED (fallout AC-009
+    / FR-041). This pin was twelve hand-typed names matched against `ast.Name`
+    calls only, and it reported green over three transition branches that swept
+    the evidence corpus themselves and returned `_sweep_refusal(...)`:
+    `_sweep_evidence_at_boundary`, `_sweep_refusal`, `_escalated_classes`,
+    `_load_json` and `current_cycle` were all outside the twelve, and any
+    `module.fn()` spelling was outside the walk. The set now comes from the
+    routines' own ASTs — every helper any `_<token>_preconditions` reaches,
+    transitively, minus the primitives a branch may also use — so a rung added
+    tomorrow is a reader this pin knows about tomorrow.
     """
-    refusal_readers = {
-        "_blocking_defects", "_blocking_defects_refusal", "_check_streams_complete",
-        "_check_active_teams", "_unrecorded_width_problem", "_check_sight_required",
-        "_persisted_max_cycles", "_terminal_evidence_refusal",
-        "_terminal_evidence_state", "_done_preconditions",
-        "_phase_entry_source_problem", "_report_status",
+    refusal_readers = _refusal_readers()
+    # The emptiness guard the derivation needs: a walk that silently returned
+    # nothing would make every assertion below vacuous, which is the worst
+    # failure a derived pin can have.
+    assert len(refusal_readers) > 20, sorted(refusal_readers)
+    for expected in (
+        "_blocking_defects", "_check_active_teams", "_check_sight_required",
+        "_terminal_evidence_state", "_sweep_evidence_at_boundary",
+        "_unrecorded_width_problem",
+    ):
+        assert expected in refusal_readers, (expected, sorted(refusal_readers))
+
+    #: The TWO reads a door may make outside its routine, each with its reason.
+    #: Both are protocol rather than precondition — Holmes `flow-1` names the
+    #: first explicitly — and naming them here, with the reason, is what makes
+    #: adding a third an argument someone has to write down.
+    DOOR_PROTOCOL_READS = {
+        # D-082: the HALTED guard, stated ONCE above each door's branch chain
+        # rather than as an arm inside every branch. It is not a precondition of
+        # any token; it is the statement that a stopped run has no next door.
+        "_halted_refusal",
+        # `inspect_start` calls this to RECORD escalation proposals at the
+        # boundary that closed a cycle — an effect, taken after the routine
+        # passed, and nothing refuses on its answer. A reader set that judged by
+        # name rather than by role would push a recording call into a
+        # preconditions routine to satisfy a pin, which is how a gate acquires a
+        # side effect.
+        "_escalated_classes",
     }
-    # `_escalated_classes` is deliberately NOT in that set. The `inspect_start`
-    # branch calls it to RECORD escalation proposals at the boundary that closed
-    # a cycle — an effect, taken after the routine passed — and nothing refuses
-    # on its answer there. A reader-set that judged by name rather than by role
-    # would push a recording call into a preconditions routine to satisfy a pin,
-    # which is how a gate acquires a side effect.
-    allowed = {f"_{t}_preconditions" for t in PHASE_TOKENS} | {"_token_preconditions"}
+    allowed = (
+        {f"_{t}_preconditions" for t in PHASE_TOKENS}
+        | {"_token_preconditions"}
+        | DOOR_PROTOCOL_READS
+    )
+
+    def _called(fn) -> set[str]:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Name):
+                names.add(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                names.add(node.func.attr)
+        return names
 
     for fn in (foundry_gate, _phase_transition):
-        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
-        called = {
-            node.func.id
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-        }
-        leaked = sorted((called & refusal_readers) - allowed)
+        leaked = sorted((_called(fn) & refusal_readers) - allowed)
         assert leaked == [], (fn.__name__, leaked)
 
     # ...and the transition's own branches each name their token's routine.
-    tree = ast.parse(textwrap.dedent(inspect.getsource(_phase_transition)))
     source = inspect.getsource(_phase_transition)
     for token in PHASE_TOKENS:
         assert f"_{token}_preconditions(" in source, token
+
+
+
+
+def test_the_transition_adds_no_refusal_of_its_own():
+    """fallout FR-041 / FR-058 / GI-029 / ST-012 / AC-009 — the OTHER half.
+
+    "The transition adds no refusal of its own" was in FR-041 and asserted
+    nowhere. Three branches returned `_sweep_refusal(...)` directly, which is a
+    refusal the mapped gate could not make and — because it was built outside
+    `_GateLadder` — one that reached the caller with `refusals` absent, so the
+    ranked list both doors publish did not contain the check that stopped the
+    crossing.
+
+    Structural, because the harm is structural: the check is that every refusal
+    leaving this function was composed by the shared shape. Two composers are
+    legal — `_transition_refusal`, which renders the routine's outcome, and the
+    `_halted_refusal` guard stated once above the chain — and a third is the
+    defect returning.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_phase_transition)))
+
+    composed = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and (node.func.id.endswith("_refusal") or node.func.id.endswith("_problem"))
+    }
+    assert composed == {"_transition_refusal", "_halted_refusal"}, sorted(composed)
+
+    # ...and no branch hand-builds one either. A returned dict literal carrying
+    # an `error` key IS a refusal, whatever composed it.
+    #
+    # ONE is legal and it is not a refusal of a crossing: the else-branch answer
+    # to a token that is not a token at all, which names `PHASE_TOKENS` as the
+    # legal set exactly as `foundry_gate`'s unknown-phase answer names
+    # `GATE_TO_TRANSITION`. It is identified by that derivation rather than by
+    # position, so a second inline refusal cannot hide behind "there was already
+    # one".
+    inline = [
+        ast.unparse(node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)
+        and any(
+            isinstance(key, ast.Constant) and key.value == "error"
+            for key in node.value.keys
+        )
+    ]
+    unaccounted = [text for text in inline if "PHASE_TOKENS" not in text]
+    assert unaccounted == [], unaccounted
+    assert len(inline) == 1, inline
+
+
+
+
+def test_the_boundary_sweep_is_a_rung_of_the_routine_not_an_arm_in_the_branch():
+    """fallout FR-058 / GI-029 / AC-056 — D-032, structurally.
+
+    GI-002 puts an evidence sweep at every boundary that opens an INSPECT, and
+    `cast`, `inspect_start` and `temper` are those three doors. The sweep and
+    the width decision that scopes it stood inside `_phase_transition`'s
+    branches, so `Foundry-Gate('inspect')`, `('inspect_start')` and
+    `('temper')` answered `passed: True` over a corpus that no longer
+    reproduced while the matching `Foundry-Phase` calls refused. Same shape as
+    D-240..D-243, one boundary over.
+
+    Asserted on the routines rather than driven, because "which door owns the
+    read" is a structural fact and driving it proves only that today's
+    arrangement happens to agree.
+    """
+    for token in ("cast", "inspect_start", "temper"):
+        routine = getattr(_transitions, f"_{token}_preconditions")
+        tree = ast.parse(textwrap.dedent(inspect.getsource(routine)))
+        calls = {
+            node.func.id for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "_decide_inspect_mode" in calls, (token, sorted(calls))
+        assert "_boundary_evidence_rung" in calls, (token, sorted(calls))
+
+    # ...and the branches take neither read back. They consume what the routine
+    # produced — `inspect_entry` and `evidence_sweep` are non-refusing facts on
+    # the outcome, exactly as `_nyquist_preconditions` hands its record forward.
+    branch_source = inspect.getsource(_phase_transition)
+    assert "_decide_inspect_mode(" not in branch_source, branch_source
+    assert "_sweep_evidence_at_boundary(" not in branch_source, branch_source
+    assert branch_source.count('outcome["inspect_entry"]') == 3, branch_source
 
 
 

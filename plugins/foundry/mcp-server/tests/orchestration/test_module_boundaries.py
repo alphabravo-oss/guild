@@ -647,6 +647,74 @@ def test_observation_tools_are_registered_and_reach_their_handlers(run_env):
 
 
 
+def test_the_candidate_drive_door_is_registered_and_reaches_its_handler(run_env):
+    """fallout ST-007 / GI-027 — the WRITE half, reachable over MCP.
+
+    Concern C-004 from casting 4: `foundry_drive_temper_candidate` shipped in
+    `tools/foundry.py` with its own regression tests, and the registration
+    lands in `server.py`, which is this casting's file. A Python function with
+    no `Tool()` declaration and no `_DISPATCH` entry is a channel a real run
+    cannot reach, which is D-008/D-009 one layer up — and until it lands TEMPER
+    has a roster it can read and no call that closes anything on it.
+
+    The sibling pin above names its two tools explicitly, so it cannot see a
+    third. This drives the round trip the concern asks for: open a candidate
+    through the wire, close it through the wire, and read it back DRIVEN.
+
+    ABSENCE TRAVELS AS ABSENCE (D-074). `filed` carries no schema `default`
+    and the dispatch spells `args.get("filed", "")`, so an omitted field
+    reaches the writer as the empty string it was given rather than as a
+    manufactured id. Driven here by omitting it: clean is a closure.
+    """
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F5", cycle=1)
+
+    tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
+    assert "Foundry-Drive-Candidate" in tools, sorted(tools)
+    schema = tools["Foundry-Drive-Candidate"].inputSchema
+    assert set(schema["required"]) == {"observation_id"}, schema
+    assert "default" not in schema["properties"]["filed"], schema["properties"]["filed"]
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        opened = foundry_server._DISPATCH["Foundry-Observation"]({
+            "cycle": 1,
+            "source": "prove",
+            "description": (
+                "probe idea: drive the halt door from a phase that has no "
+                "entry-source row and see whether the seal still writes"
+            ),
+            "classification": "TEMPER_CANDIDATE",
+            "target_kind": "comment",
+        })
+        assert "error" not in opened, opened
+
+        # `filed` omitted entirely — the clean closure.
+        driven = foundry_server._DISPATCH["Foundry-Drive-Candidate"]({
+            "observation_id": opened["observation_id"],
+        })
+        assert "error" not in driven, driven
+        assert driven["driven_finding"] == "", driven
+
+        read_back = foundry_server._DISPATCH["Foundry-Observations"](
+            {"classification": "TEMPER_CANDIDATE"}
+        )
+    finally:
+        foundry_server._project_root = previous_root
+
+    closed = [
+        o for o in read_back["observations"]
+        if o["id"] == opened["observation_id"]
+    ]
+    assert len(closed) == 1, read_back
+    assert closed[0].get("status") == "DRIVEN", closed[0]
+
+
+
+
 def test_an_absent_target_kind_is_refused_at_the_mcp_boundary_too(run_env):
     """D-074 / AC-002 / FR-002 — D-069's fail-closed writer, defeated one frame
     up by the dispatch lambda.
@@ -4759,7 +4827,19 @@ _DELIBERATE_REDEFINITIONS: dict[str, str] = {
     "_named_refusal": (
         "tools/concerns.py and tools/rosters.py each shape their own four-token "
         "refusal set; the SHAPE is the house one and the token vocabularies are "
-        "disjoint, so there is nothing for one definition to say for both."
+        "disjoint, so there is nothing for one definition to say for both. "
+        "tools/display.py's is a third thing again and not a refusal SHAPER at "
+        "all — it READS the refusal text a handler already named, so it shares "
+        "the noun and nothing else."
+    ),
+    "_agent_id_for_casting": (
+        "tools/foundry_spawn.py holds the ONE implementation, because it is the "
+        "door that seeds the progress ledger with the id. "
+        "tools/foundry_report.py's is a lazy CALL-THROUGH — a function-local "
+        "import that runs at call time, so it neither forks the derivation nor "
+        "closes the cycle a module-top import would (D-013). "
+        "`test_the_agent_id_has_one_implementation_however_it_is_spelled` pins "
+        "that it still resolves to the one implementation."
     ),
     "main": (
         "server.py's stdio entry point and scripts/validate_intent_coverage.py's "
@@ -4779,32 +4859,47 @@ _DELIBERATE_REDEFINITIONS: dict[str, str] = {
 #: entry whose duplication has been removed ALSO fails, so this shrinks and
 #: never grows quietly.
 #:
-#: Casting 2 closed the two it owned — the thirteen ANSI codes (now imported
-#: from display.py, which already owned the palette) and Block B's primitives
-#: (now imported from artifacts.py). What is left is in files this casting may
-#: not edit; see foundry-archive/foundry-run-fallout/concerns.md.
+#: EVERY ROW NAMES THE CASTING THAT MUST CLOSE IT, and every one of them is a
+#: file this casting may not edit. Casting 2's own share is closed: the ANSI
+#: palette (imported from display.py), Block B's primitives (imported from
+#: artifacts.py), and `_agent_id_for_casting`, which was never a fork at all
+#: and has moved to `_DELIBERATE_REDEFINITIONS` with the pin that says so.
+#: The open rows carry a `Foundry-Concern` naming their owner; see
+#: foundry-archive/foundry-run-fallout/concerns.md.
 _KNOWN_DUPLICATION: dict[str, str] = {
-    "_load_json": "tools/foundry.py holds a second artifact-read layer beside tools/artifacts.py",
-    "_read_document": "same layer, same module",
-    "_document_problem": "same layer, same module",
-    "_artifact_guard": "same layer, same module",
-    "_RESET": "tools/foundry.py's own third copy of the palette",
-    "_BOLD": "tools/foundry.py's own third copy of the palette",
-    "_DIM": "tools/foundry.py's own third copy of the palette",
-    "_CYAN": "tools/foundry.py's own third copy of the palette",
-    "_GREEN": "tools/foundry.py's own third copy of the palette",
-    "_WHITE": "tools/foundry.py's own third copy of the palette",
-    "_BCYAN": "tools/foundry.py's own third copy of the palette",
-    "_BGREEN": "tools/foundry.py's own third copy of the palette",
-    "_BWHITE": "tools/foundry.py's own third copy of the palette",
-    "_REQUIREMENT_ID_RE": (
-        "schemas/vocab.py declares the grammar; tools/evidence.py and "
-        "tools/test_deriver.py each bind their own alias to it"
+    "_artifact_guard": (
+        "casting 4 — tools/foundry.py holds a second artifact-read layer "
+        "beside casting 7's tools/artifacts.py leaf. Casting 7 closed "
+        "_load_json / _read_document / _document_problem; this is the last of "
+        "that layer."
     ),
-    "_normalise_path": "tools/concerns.py and schemas/vocab.py spell one rule twice",
-    "ESCALATION_FILENAME": "tools/foundry_orchestrator.py writes it, tools/foundry_report.py re-declares it",
-    "ROLLUP_FILENAME": "tools/foundry_orchestrator.py writes it, tools/foundry_report.py re-declares it",
-    "_agent_id_for_casting": "tools/foundry_spawn.py owns it, tools/foundry_report.py re-derives it",
+    "_RESET": "casting 4 — tools/foundry.py's own copy of display.py's palette",
+    "_BOLD": "casting 4 — tools/foundry.py's own copy of display.py's palette",
+    "_DIM": "casting 4 — tools/foundry.py's own copy of display.py's palette",
+    "_CYAN": "casting 4 — tools/foundry.py's own copy of display.py's palette",
+    "_GREEN": "casting 4 — tools/foundry.py's own copy of display.py's palette",
+    "_WHITE": "casting 4 — tools/foundry.py's own copy of display.py's palette",
+    "_BCYAN": "casting 4 — tools/foundry.py's own copy of display.py's palette",
+    "_BGREEN": "casting 4 — tools/foundry.py's own copy of display.py's palette",
+    "_BWHITE": "casting 4 — tools/foundry.py's own copy of display.py's palette",
+    "_REQUIREMENT_ID_RE": (
+        "castings 5 and 6 — schemas/vocab.py declares the grammar; "
+        "tools/evidence.py and tools/test_deriver.py each bind their own alias "
+        "to it rather than importing the declaration"
+    ),
+    "_normalise_path": (
+        "casting 1 — tools/concerns.py and schemas/vocab.py spell one rule twice"
+    ),
+    "ESCALATION_FILENAME": (
+        "casting 10 — tools/orchestration/escalation.py WRITES the file and "
+        "declares the name; tools/foundry_report.py re-declares the literal "
+        "instead of importing it"
+    ),
+    "ROLLUP_FILENAME": (
+        "casting 10 — tools/orchestration/streams.py WRITES the file and "
+        "declares the name; tools/foundry_report.py re-declares the literal "
+        "instead of importing it"
+    ),
 }
 
 
@@ -4923,6 +5018,40 @@ def test_the_timestamp_has_one_implementation_however_it_is_spelled():
         # thing that actually drifted when there were two.
         assert own().endswith("+00:00"), (module_name, own())
         assert len(own()) == len(foundry_state.now_iso()), module_name
+
+
+
+
+def test_the_agent_id_has_one_implementation_however_it_is_spelled():
+    """fallout FR-008 / GI-024 / AC-011 — the `_agent_id_for_casting` entry,
+    held to what it claims.
+
+    It sat in `_KNOWN_DUPLICATION` as "foundry_spawn.py owns it,
+    foundry_report.py re-derives it", which is a description of the state D-013
+    fixed rather than of the state that shipped: the second spelling is a
+    function-local import that runs at call time and returns the first one's
+    answer. Recording a delegation as a fork makes the inventory a list of
+    things that are not wrong, which is how an inventory stops being read.
+
+    What has to stay true is that it IS a delegation, and that is what this
+    drives: the two names must agree on the id for every shape of casting id
+    the spawn door mints one from — and the ids are what `Foundry-Spend` and
+    `Foundry-Liveness` join a run's rows on, so the two disagreeing is the
+    D-013 harm rather than an untidiness.
+    """
+    from foundry_mcp.tools import foundry_report, foundry_spawn
+
+    for casting_id in (1, 12, "3", "casting-with-a-name"):
+        assert (
+            foundry_report._agent_id_for_casting(casting_id)
+            == foundry_spawn._agent_id_for_casting(casting_id)
+        ), casting_id
+    # ...and the delegation is a call-through, not a re-typed f-string: the
+    # report's source names the spawn door rather than the format.
+    assert (
+        "from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting"
+        in inspect.getsource(foundry_report._agent_id_for_casting)
+    ), inspect.getsource(foundry_report._agent_id_for_casting)
 
 
 # --------------------------------------------------------------------------- #

@@ -18,6 +18,51 @@ from foundry_mcp.tools.orchestration.streams import ROLLUP_FILENAME
 
 
 
+#: fallout FR-058 / GI-029 / AC-056 — PASSES ONLY, KEYED ON HEAD AND SCOPE.
+#:
+#: The boundary sweep became a RUNG of `_cast_preconditions`,
+#: `_inspect_start_preconditions` and `_temper_preconditions`, which is what
+#: makes `Foundry-Gate` refuse whatever `Foundry-Phase` refuses. It also means
+#: the gate and the transition each ask for it, and a whole-corpus re-execution
+#: is minutes. This is `_terminal_evidence_sweep`'s memo argument at the other
+#: three boundaries, made once here for all three of these: the pass really was
+#: taken at exactly this tree over exactly this scope, so re-taking it answers
+#: the same question at the same HEAD.
+#:
+#: PASSES ONLY. A mismatch is not cached, for the reason the terminal memo does
+#: not cache one either: an evidence command may be nondeterministic in a way
+#: its `# evidence-volatile:` lines do not yet declare, and remembering a
+#: failure would make a corpus that started reproducing look broken until the
+#: next commit. Remembering a success has no such asymmetry.
+#:
+#: Process-local rather than persisted: the pair this exists to collapse is one
+#: lead's Gate then Phase inside one server process, and a file would outlive
+#: that for no gain the persisted terminal memo does not already give.
+_BOUNDARY_SWEEP_PASSES: dict[tuple, dict] = {}
+
+#: Bounded so a long-lived server cannot accumulate one entry per HEAD forever.
+#: Oldest-first eviction; insertion order is the dict's own.
+_BOUNDARY_SWEEP_MEMO_LIMIT = 16
+
+
+def _boundary_sweep_head(project_root: str) -> str:
+    """HEAD as the sweep's cache key, or "" when it cannot be read.
+
+    A HEAD that cannot be read is not a cache key, so nothing is remembered and
+    nothing is served — the same ruling `_terminal_evidence_sweep` makes.
+    """
+    import subprocess
+
+    try:
+        rev = subprocess.run(
+            ["git", "-C", project_root, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return rev.stdout.strip() if rev.returncode == 0 else ""
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return ""
+
+
 def _sweep_evidence_at_boundary(
     fdir: Path, project_root: str, entry: dict, *, full: bool
 ) -> dict:
@@ -62,6 +107,17 @@ def _sweep_evidence_at_boundary(
         touched_files=list(entry.get("touched_files") or []),
         full=full,
     )
+    # The scope is part of the key, not just HEAD: a DELTA boundary and a FULL
+    # one at the same commit ask about different corpora, and answering the
+    # second from the first would be the D-117 fail-open by another route.
+    head = _boundary_sweep_head(project_root)
+    memo_key = (
+        str(project_root), head, bool(full),
+        tuple(sorted(str(p) for p in logs)),
+    )
+    if head and (cached := _BOUNDARY_SWEEP_PASSES.get(memo_key)) is not None:
+        return {**cached, "cached": True}
+
     outcome = sweep_evidence_at_head(
         project_root=Path(project_root), run_dir=fdir, logs=logs
     )
@@ -112,12 +168,17 @@ def _sweep_evidence_at_boundary(
         "pool_size": outcome.get("pool_size", 0),
         "swept_at": now_iso(),
     }
-    return {
+    result = {
         "ok": bool(outcome.get("ok")),
         "record": record,
         "mismatches": outcome.get("mismatches", []),
         "error": outcome.get("error") or "",
     }
+    if head and result["ok"]:
+        while len(_BOUNDARY_SWEEP_PASSES) >= _BOUNDARY_SWEEP_MEMO_LIMIT:
+            _BOUNDARY_SWEEP_PASSES.pop(next(iter(_BOUNDARY_SWEEP_PASSES)))
+        _BOUNDARY_SWEEP_PASSES[memo_key] = result
+    return result
 
 
 
