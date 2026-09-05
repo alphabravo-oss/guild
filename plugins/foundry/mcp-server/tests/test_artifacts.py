@@ -1,0 +1,594 @@
+"""The run-artifact leaf, driven directly.
+
+Requirements: ``forge-specs/foundry-run-fallout/spec.md``. The rows this module
+proves are named, with the symbol each lands on, in casting 7's completion
+report and in the ``# evidence-for:`` header of
+``evidence/casting-7-artifact-leaf.log``. They are deliberately absent from the
+prose here: ``tests/test_spec_id_convention.py`` demands that every three-digit
+requirement id in a docstring or comment in this directory carry one of two
+qualifications, ``process-fixes`` or ``convergence``, and a third spec is
+installed now with no legal qualification of its own — so the only spellings
+that would pass this directory's pin name a DIFFERENT spec's requirement.
+Recorded in ``foundry-archive/foundry-run-fallout/concerns.md``.
+
+The answer this module is built from, verbatim:
+
+    "Layered: verifier modules may import shared leaf modules (artifacts,
+    foundry_state, vocab, schemas) and nothing in the presentation/lifecycle
+    layer, EXCEPT that transitions dispatch the `halt` token and the terminal
+    seal through a one-way seam into halt.py"
+
+``foundry_mcp/tools/artifacts.py`` is the "artifacts" of that sentence: the
+document primitives, standing beside ``foundry_state`` and ``vocab`` with
+nothing above them in scope. Every test below drives the leaf DIRECTLY against
+a ``tmp_path`` run directory and reads the persisted document — and the lock
+sidecar — back off disk. The module carries its own ``run_env`` fixture rather
+than sharing one through ``conftest.py``, which is this suite's per-concern
+convention.
+
+WHAT IS ACTUALLY AT RISK HERE, and it is not the logic. These bodies are the
+monolith's bodies, moved unchanged; what a move can break is the SEAM — a name
+that resolved through the old module's globals and now does not, an import the
+new home lacks, a lock filename that drifted and stopped excluding the copy
+still standing in the monolith. So the tests below are anchored on the seam:
+what each primitive does with a malformed document, what it writes, what it
+names its lock, and what the module reaches for at import time.
+"""
+
+from __future__ import annotations
+
+import ast
+import json
+import threading
+from pathlib import Path
+
+import pytest
+
+from foundry_mcp.tools import artifacts
+from foundry_mcp.tools import foundry_state
+from foundry_mcp.tools.artifacts import (
+    _artifact_guard,
+    _document_problem,
+    _document_transaction,
+    _load_json,
+    _resolve_spec_path,
+    _run_artifact_problems,
+    _save_json,
+    _stream_marker,
+    _TX_LOCK_SUFFIX,
+)
+
+
+# --------------------------------------------------------------------------- #
+# Fixtures
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def run_env(tmp_path):
+    """Activate a foundry run under tmp_path; yield (project_root, fdir)."""
+    project_root = tmp_path
+    run_name = "artifact-leaf-run"
+    fdir = project_root / "foundry-archive" / run_name
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+
+    foundry_state.set_active_run(run_name)
+    try:
+        yield str(project_root), fdir
+    finally:
+        foundry_state.clear_active_run()
+
+
+#: Every malformed container shape ``_load_json``'s own docstring names, plus
+#: the absent file. Written as BYTES so the non-UTF-8 case is expressible at
+#: all: a str fixture cannot carry the one shape that raises before json is
+#: ever reached, which is the shape the tolerant read was written for.
+MALFORMED_DOCUMENTS = {
+    "truncated": b'{"cycle": 3,',
+    "list": b"[]",
+    "null": b"null",
+    "number": b"42",
+    "string": b'"a string"',
+    "not-utf8": b"\xff\xfe\x00garbage",
+    "empty": b"",
+}
+
+
+# --------------------------------------------------------------------------- #
+# The total, tolerant read
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("shape", sorted(MALFORMED_DOCUMENTS))
+def test_the_tolerant_read_answers_every_malformed_container_with_an_empty_document(
+    run_env, shape
+):
+    """"Every malformed-container shape — truncated, ``[]``, ``null``, ``42``,
+    ``"a string"``, non-UTF-8 — reads as an empty document, so no reader in
+    this module can raise across the MCP boundary."
+
+    The primitive's own docstring, and the whole reason a reader in the leaf is
+    safe by construction rather than by a remembered try/except at each site.
+    """
+    _, fdir = run_env
+    path = fdir / "state.json"
+    path.write_bytes(MALFORMED_DOCUMENTS[shape])
+
+    assert _load_json(path) == {}
+
+
+def test_the_tolerant_read_answers_an_absent_document_with_an_empty_document(run_env):
+    """A run legitimately has artifacts it has not written yet, so ABSENT and
+    CORRUPT read alike here — the return value cannot distinguish them by
+    design, which is why a caller that must tell the operator uses the guard.
+    """
+    _, fdir = run_env
+    assert _load_json(fdir / "never-written.json") == {}
+
+
+def test_a_readable_document_reads_back_as_itself(run_env):
+    """The tolerance is a floor, not a filter: a well-formed object is returned
+    unchanged. A read that answered {} for everything would pass every test
+    above and be useless.
+    """
+    _, fdir = run_env
+    path = fdir / "state.json"
+    path.write_text(json.dumps({"cycle": 3, "phase": "F2"}), encoding="utf-8")
+
+    assert _load_json(path) == {"cycle": 3, "phase": "F2"}
+
+
+@pytest.mark.parametrize("shape", sorted(set(MALFORMED_DOCUMENTS) - {"empty"}))
+def test_the_named_problem_names_the_file_that_cannot_be_read(run_env, shape):
+    """"The named reason ``path`` is not a readable JSON object, or None."
+
+    Tolerance alone would read a corrupt state.json as cycle 0 in silence; this
+    is the rung that makes the file's NAME reachable by a caller that refuses.
+    """
+    _, fdir = run_env
+    path = fdir / "state.json"
+    path.write_bytes(MALFORMED_DOCUMENTS[shape])
+
+    problem = _document_problem(path)
+    assert problem is not None
+    assert "state.json" in problem
+
+
+def test_an_absent_document_is_not_a_named_problem(run_env):
+    """An ABSENT file is not a problem. Conflating absent with corrupt is what
+    would make a fresh run refuse to start.
+    """
+    _, fdir = run_env
+    assert _document_problem(fdir / "never-written.json") is None
+
+
+# --------------------------------------------------------------------------- #
+# The atomic write
+# --------------------------------------------------------------------------- #
+
+
+def test_the_atomic_write_leaves_the_document_and_no_sidecar(run_env):
+    """"Atomic JSON write — write to a UNIQUE .tmp, then rename."
+
+    The rename is the commit. What must be true after it is that the document
+    is readable and NOTHING else is left in the directory: a stray sidecar is a
+    file the guard would then have to have an opinion about.
+    """
+    _, fdir = run_env
+    path = fdir / "verdicts.json"
+
+    _save_json(path, {"US-1": "VERIFIED"})
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"US-1": "VERIFIED"}
+    assert sorted(p.name for p in fdir.iterdir() if p.is_file()) == ["verdicts.json"]
+
+
+def test_the_write_sidecar_carries_the_writers_own_pid_and_thread(run_env):
+    """The tmp name carries pid and thread id, because the old shared
+    ``path.with_suffix(".tmp")`` let a peer's rename move THIS call's
+    half-written payload into place or delete it mid-write.
+
+    Driven by holding the write open: the sidecar's name is read while it
+    exists rather than inferred from the source.
+    """
+    _, fdir = run_env
+    path = fdir / "stream-rollup.json"
+    seen: list[str] = []
+
+    real_rename = Path.rename
+
+    def _watch(self, target):
+        seen.append(self.name)
+        return real_rename(self, target)
+
+    original = Path.rename
+    Path.rename = _watch
+    try:
+        _save_json(path, {"cycles": {}})
+    finally:
+        Path.rename = original
+
+    assert len(seen) == 1, seen
+    assert seen[0].startswith("stream-rollup.json.")
+    assert seen[0].endswith(".tmp")
+    assert str(threading.get_ident()) in seen[0]
+
+
+# --------------------------------------------------------------------------- #
+# The locked read-modify-write
+# --------------------------------------------------------------------------- #
+
+
+def test_a_transaction_that_mutates_writes_on_clean_exit(run_env):
+    """"Mutate it in place; it is written back through ``_save_json`` on clean
+    exit."
+    """
+    _, fdir = run_env
+    path = fdir / "state.json"
+    path.write_text(json.dumps({"cycle": 0}), encoding="utf-8")
+
+    with _document_transaction(path) as doc:
+        doc["cycle"] = 1
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"cycle": 1}
+
+
+def test_an_exception_inside_a_transaction_writes_nothing(run_env):
+    """"An exception inside the block propagates and NOTHING is written, so a
+    failed mutation cannot leave a half-updated artifact."
+    """
+    _, fdir = run_env
+    path = fdir / "state.json"
+    path.write_text(json.dumps({"cycle": 0}), encoding="utf-8")
+
+    with pytest.raises(RuntimeError):
+        with _document_transaction(path) as doc:
+            doc["cycle"] = 99
+            raise RuntimeError("mid-transaction")
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"cycle": 0}
+
+
+def test_a_transaction_that_mutates_nothing_leaves_the_file_untouched(run_env):
+    """"A block that mutates NOTHING writes nothing: the document is
+    snapshotted on entry and compared on exit."
+
+    Driven on the case the docstring names as the reason: a CORRUPT artifact a
+    caller only read is left intact rather than silently replaced by ``{}``.
+    """
+    _, fdir = run_env
+    path = fdir / "state.json"
+    path.write_bytes(b'{"cycle": 3,')
+
+    with _document_transaction(path) as doc:
+        assert doc == {}
+
+    assert path.read_bytes() == b'{"cycle": 3,'
+
+
+def test_a_nested_transaction_on_one_path_yields_the_same_document(run_env):
+    """"Re-entrant per path: a nested transaction on a path this thread already
+    holds yields the same in-flight dict and defers the write to the outermost
+    exit."
+
+    Without it the package's own nested state.json write blocks forever on its
+    own flock. Both halves are asserted: the SAME object inside, and one
+    document carrying both mutations after the outermost exit.
+    """
+    _, fdir = run_env
+    path = fdir / "state.json"
+
+    with _document_transaction(path) as outer:
+        outer["outer"] = True
+        with _document_transaction(path) as inner:
+            assert inner is outer
+            inner["inner"] = True
+        # The inner exit deferred: nothing on disk yet.
+        assert not path.exists()
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"outer": True, "inner": True}
+
+
+def test_the_lock_sidecar_is_the_document_name_plus_the_declared_suffix(run_env):
+    """The lock FILENAME is load-bearing across module boundaries, not an
+    implementation detail.
+
+    While the monolith still carries its own copy of this primitive, the two
+    copies exclude each other only because both open the SAME on-disk lock:
+    ``path.with_name(path.name + _TX_LOCK_SUFFIX)``. A renamed or "improved"
+    sidecar would leave two writers believing they were serialized when they
+    were not. Read off disk while the transaction is open, and the suffix is
+    read from the declaration rather than typed here.
+    """
+    _, fdir = run_env
+    path = fdir / "state.json"
+
+    with _document_transaction(path):
+        present = sorted(p.name for p in fdir.iterdir() if p.is_file())
+
+    assert f"state.json{_TX_LOCK_SUFFIX}" in present
+    assert _TX_LOCK_SUFFIX == ".lock"
+
+
+def test_the_lock_name_the_leaf_opens_is_the_one_the_monolith_opens():
+    """The transient-duplicate window's whole safety property, pinned.
+
+    Two definitions of this primitive are live in one process until the carve
+    lands. They exclude each other through ``flock`` on a sidecar whose name
+    each computes independently, so the two spellings are compared here as
+    OBJECTS rather than trusted to be the same by inspection.
+    """
+    from foundry_mcp.tools import foundry_orchestrator as fo
+
+    assert artifacts._TX_LOCK_SUFFIX == fo._TX_LOCK_SUFFIX
+    assert artifacts._TX_TMP_SUFFIX == fo._TX_TMP_SUFFIX
+
+
+# --------------------------------------------------------------------------- #
+# Corruption classification and the house guard
+# --------------------------------------------------------------------------- #
+
+
+def test_the_guard_is_silent_on_a_healthy_run(run_env):
+    """A guard that refuses a healthy run locks every door at once, so the
+    negative case is the one that has to hold first.
+    """
+    _, fdir = run_env
+    (fdir / "state.json").write_text(json.dumps({"cycle": 0}), encoding="utf-8")
+    (fdir / "directives.md").write_text("nothing urgent\n", encoding="utf-8")
+
+    assert _artifact_guard(fdir) is None
+
+
+def test_the_guard_refuses_in_the_house_shape_and_names_the_file(run_env):
+    """"``error`` names the offending FILES and what is wrong with each,
+    ``hint`` names the action."
+
+    The refusal shape is the contract: a tool never raises across the MCP
+    boundary, it returns a dict the operator can act on.
+    """
+    _, fdir = run_env
+    (fdir / "state.json").write_bytes(b'{"cycle": 3,')
+
+    refusal = _artifact_guard(fdir)
+
+    assert refusal is not None
+    assert set(refusal) == {"error", "hint", "corrupt_artifacts"}
+    assert "state.json" in refusal["error"]
+    assert refusal["corrupt_artifacts"] and all(
+        isinstance(p, str) for p in refusal["corrupt_artifacts"]
+    )
+    assert "repair" in refusal["hint"].lower()
+
+
+def test_a_non_json_artifact_is_classified_on_the_text_floor(run_env):
+    """A suffix outside the strict table falls THROUGH to the text floor rather
+    than out of the scan: directives.md is not JSON and still must decode.
+    """
+    _, fdir = run_env
+    (fdir / "directives.md").write_bytes(b"\xff\xfe URGENT: stop the cast wave")
+
+    problems = _run_artifact_problems(fdir)
+
+    assert any("directives.md" in p for p in problems), problems
+
+
+def test_a_write_primitive_s_own_scaffolding_is_not_a_run_artifact(run_env):
+    """The scaffolding a write puts BESIDE an artifact is not an artifact.
+
+    Nothing reads a ``.tmp`` sidecar or a ``.lock`` file back, both are
+    mid-flight by construction while a peer writes, and the guard's hint —
+    "repair or delete the named file" — is advice that races the writer.
+    """
+    _, fdir = run_env
+    (fdir / f"state.json{_TX_LOCK_SUFFIX}").write_bytes(b"\xff\xfe")
+    (fdir / "state.json.9999.1234.tmp").write_bytes(b'{"half":')
+
+    assert _run_artifact_problems(fdir) == []
+
+
+def test_a_binary_artifact_a_run_legitimately_holds_is_not_reported(run_env):
+    """A screenshot is a run artifact and does not decode as text. Reporting it
+    would refuse every door on a healthy run.
+    """
+    _, fdir = run_env
+    (fdir / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+
+    assert _run_artifact_problems(fdir) == []
+
+
+def test_a_directory_occupying_a_document_position_is_named(run_env):
+    """A DIRECTORY is a container and is walked past — except one occupying a
+    path a reader OPENS as a document, where the read raises instead of
+    refusing by name.
+
+    Both axes of the position question are driven: a suffixed document name and
+    a suffix-less sentinel.
+    """
+    _, fdir = run_env
+    (fdir / "state.json").mkdir()
+    (fdir / ".last-next-at").mkdir()
+
+    problems = _run_artifact_problems(fdir)
+
+    assert any("state.json" in p for p in problems), problems
+    assert any(".last-next-at" in p for p in problems), problems
+
+
+def test_a_scratch_directory_whose_name_holds_a_dot_stays_silent(run_env):
+    """A DOT IS NOT A DOCUMENT TYPE. ``Path("14.0.0").suffix`` is ``".0"``, and
+    classifying a directory by its punctuation named a healthy run corrupt and
+    refused every door at once.
+    """
+    _, fdir = run_env
+    (fdir / "test_observations" / "generated" / ".hypothesis" / "unicode_data" / "14.0.0").mkdir(
+        parents=True
+    )
+
+    assert _run_artifact_problems(fdir) == []
+
+
+def test_the_guard_walks_past_the_runs_own_worktrees_checkout(run_env):
+    """A checkout this package nests UNDER the run dir is not one of the run's
+    artifacts. Every worktree it creates is rooted at ``<run>/worktrees``, and
+    walking into one made the boundary sweep's own virtualenv refuse every
+    door for the duration of the sweep.
+
+    The control matters as much as the case: a directory spelled the same way
+    somewhere DEEPER is not a position the writer roots at and stays in scope.
+    """
+    _, fdir = run_env
+    nested = fdir / "worktrees" / "sweep-evidence" / "plugins"
+    nested.mkdir(parents=True)
+    (nested / "fixture.md").write_bytes(b"\xff\xfe not utf-8")
+
+    assert _run_artifact_problems(fdir) == []
+
+    deeper = fdir / "traces" / "worktrees"
+    deeper.mkdir(parents=True)
+    (deeper / "notes.md").write_bytes(b"\xff\xfe not utf-8")
+
+    assert any("notes.md" in p for p in _run_artifact_problems(fdir))
+
+
+# --------------------------------------------------------------------------- #
+# The one spelling of a stream's completion sentinel
+# --------------------------------------------------------------------------- #
+
+
+def test_the_stream_marker_has_one_spelling_and_the_guard_knows_the_family():
+    """"Five call sites spelled ``f".{stream}-complete"`` and four more spelled
+    two of its members as bare literals, so the guard's derived family and the
+    readers agreed only by inspection."
+
+    Driven over the whole vocabulary rather than over two members, because
+    listing members is the hand-kept-list defect the derivation replaced.
+    """
+    from foundry_mcp.schemas.vocab import STREAM_WIRE_IDS
+
+    assert STREAM_WIRE_IDS, "an empty vocabulary would make this pass vacuously"
+    for wire_id in STREAM_WIRE_IDS:
+        assert _stream_marker(wire_id) == f".{wire_id}-complete"
+        assert artifacts._is_document_position(Path("run") / _stream_marker(wire_id))
+
+
+# --------------------------------------------------------------------------- #
+# Spec-path resolution
+# --------------------------------------------------------------------------- #
+
+
+def test_the_spec_path_prefers_the_run_dir_copy(run_env):
+    """"Prefers ``<run_dir>/spec.md``." The first rung, and the one that holds
+    on a run whose spec was copied in.
+    """
+    project_root, fdir = run_env
+    (fdir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+    assert _resolve_spec_path(project_root) == fdir / "spec.md"
+
+
+def test_the_spec_path_falls_back_to_the_declared_external_path(run_env):
+    """"falls back to ``state.json['spec_path']`` resolved against
+    ``project_root``."
+
+    This is the live shape of a real run: the spec sits outside the run
+    directory and is reachable only through the declaration.
+    """
+    project_root, fdir = run_env
+    external = Path(project_root) / "forge-specs" / "probe" / "spec.md"
+    external.parent.mkdir(parents=True)
+    external.write_text("# Spec\n", encoding="utf-8")
+    (fdir / "state.json").write_text(
+        json.dumps({"spec_path": "forge-specs/probe/spec.md"}), encoding="utf-8"
+    )
+
+    assert _resolve_spec_path(project_root) == external
+
+
+def test_the_spec_path_is_none_when_neither_rung_resolves(run_env):
+    """A declaration pointing at a file that is not there resolves to nothing,
+    and the caller decides what that means. Silently returning the run-dir path
+    would hand every caller a path that does not exist.
+    """
+    project_root, fdir = run_env
+    (fdir / "state.json").write_text(
+        json.dumps({"spec_path": "forge-specs/gone/spec.md"}), encoding="utf-8"
+    )
+
+    assert _resolve_spec_path(project_root) is None
+
+
+def test_the_spec_path_is_none_with_no_active_run(tmp_path):
+    """No run, no spec. The resolver asks ``get_run_dir`` first, which is the
+    only package edge this module is allowed and the one this rung needs.
+    """
+    foundry_state.clear_active_run()
+    assert _resolve_spec_path(str(tmp_path)) is None
+
+
+# --------------------------------------------------------------------------- #
+# The layering assertion — what makes this module a leaf
+# --------------------------------------------------------------------------- #
+
+#: What a leaf may reach for at LOAD time. ``schemas.vocab`` and
+#: ``tools.foundry_state`` are the two shared leaves named by the layering
+#: answer this module is built from; everything else is the standard library.
+LEAF_PACKAGE_IMPORTS = frozenset(
+    {"foundry_mcp.schemas.vocab", "foundry_mcp.tools.foundry_state"}
+)
+
+
+def test_the_leaf_reaches_for_nothing_above_it_at_module_top():
+    """The property that makes this module the leaf, asserted rather than
+    described.
+
+    Read off the SOURCE with ``ast`` rather than off the imported module,
+    because a module object cannot tell a load-time edge from a call-time one —
+    and the difference is the entire point. A module-top import of anything in
+    the presentation or lifecycle layer would put the state machine back
+    underneath the persistence layer, which is the shape this split exists to
+    end.
+    """
+    tree = ast.parse(Path(artifacts.__file__).read_text(encoding="utf-8"))
+
+    reached: set[str] = set()
+    for node in tree.body:  # module TOP only — a nested import is call-time
+        if isinstance(node, ast.Import):
+            reached.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            reached.add(node.module)
+
+    package = sorted(name for name in reached if name.startswith("foundry_mcp"))
+    assert package, "an empty result would make this pass vacuously"
+    assert set(package) <= LEAF_PACKAGE_IMPORTS, package
+
+
+def test_the_only_edge_above_the_leaf_is_the_declared_lazy_one():
+    """The one call-time import, and it is named rather than merely tolerated.
+
+    ``_manifest_shape_problem_lazy`` reaches ``foundry_spawn`` INSIDE the
+    function because ``foundry_spawn`` imports the orchestrator at module top,
+    and a load-time edge here would close the graph. This asserts there is
+    exactly one such edge and that it sits where it is claimed to sit — a
+    second lazy import added later is a layering decision, not a detail.
+    """
+    tree = ast.parse(Path(artifacts.__file__).read_text(encoding="utf-8"))
+
+    lazy: list[str] = []
+    for parent in ast.walk(tree):
+        if not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(parent):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if node.module.startswith("foundry_mcp"):
+                    lazy.append(f"{parent.name} -> {node.module}")
+            elif isinstance(node, ast.Import):
+                lazy.extend(
+                    f"{parent.name} -> {a.name}"
+                    for a in node.names
+                    if a.name.startswith("foundry_mcp")
+                )
+
+    assert lazy == [
+        "_manifest_shape_problem_lazy -> foundry_mcp.tools.foundry_spawn"
+    ], lazy
