@@ -1,8 +1,10 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_protocol_prose.py -k 'fallout_marking or unknown_fallout' 2>&1 | tail -4
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header -rs tests/test_protocol_prose.py -k 'fallout_marking or unknown_fallout' 2>&1 | tail -7
 # evidence-for: fallout AC-048, FR-025
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: \b\d+ms\b
 # evidence-timeout: 600
 
-....                                                                     [100%]
-4 passed, 591 deselected in 0.08s
+...s                                                                     [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_protocol_prose.py:7306: foundry.fallout_parent_problem is not committed on this branch yet -- casting 4 owns the `fallout_of` filing door and commits it in this wave. agents/tracer.md's rule is asserted unconditionally by test_the_tracer_states_the_fallout_marking_rule; this join arms itself the moment the symbol lands.
+3 passed, 1 skipped, 591 deselected in 0.08s
