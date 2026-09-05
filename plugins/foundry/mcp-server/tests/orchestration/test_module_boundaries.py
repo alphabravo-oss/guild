@@ -4828,6 +4828,19 @@ def test_the_two_new_tools_are_registered_the_way_the_registry_reads_them(run_en
 #: entry whose duplication has since been removed FAILS — an allowlist that
 #: outlives the thing it excuses is how the exception becomes the rule.
 _DELIBERATE_REDEFINITIONS: dict[str, str] = {
+    "_INSPECT_PHASES": (
+        "fallout GI-033 / AC-061 (D-021 / D-035) — ONE VALUE, TWO LAYERS, AND "
+        "NO LEAF THAT MAY HOLD IT. The phases that ARE an INSPECT are needed by "
+        "`gates._streams_complete` (verifier) and `streams._check_streams_complete` "
+        "(lifecycle), which compose the same `foundry_state.check_streams_complete` "
+        "call for their own layer; neither may import the other, and a run "
+        "phase is not a concern `schemas/vocab.py` currently carries. So the "
+        "two are pinned by BEHAVIOUR instead of by import: "
+        "`test_both_streams_complete_compositions_answer_the_same_thing` drives "
+        "both compositions over one run directory and asserts they agree, which "
+        "is what a drift would actually break. If a phase vocabulary lands in "
+        "vocab.py, both read it and this row goes."
+    ),
     "_now": (
         "a per-module private timestamp helper in the leaf modules that may not "
         "import each other. `foundry_state.now_iso` is the ONE implementation; "
@@ -4967,6 +4980,52 @@ def test_no_top_level_symbol_is_defined_in_two_shipped_modules():
         f"entr(y/ies) accounting for nothing: {stale}. The duplication is gone; "
         "take the row with it."
     )
+
+
+
+
+def test_both_streams_complete_compositions_answer_the_same_thing(run_env):
+    """fallout GI-033 / AC-061 (D-021 / D-035) — the pin `_DELIBERATE_REDEFINITIONS`
+    promises for `_INSPECT_PHASES`.
+
+    `foundry_state.check_streams_complete` is the one implementation, and each
+    layer composes it for itself because neither may import the other:
+    `gates._streams_complete` for the verifier, `streams._check_streams_complete`
+    for lifecycle. Two compositions is the cost of the layering, and the risk it
+    buys is that they drift — a different INSPECT-phase tuple, a different
+    fallback roster, a different marker function — and answer differently about
+    the same run.
+
+    SO THE PIN IS ON THE ANSWER, NOT ON THE LITERALS. Both are driven over ONE
+    run directory in the two shapes that exercise the two constants: a run
+    inside an INSPECT with a recorded roster, and a run outside one with no
+    recorded width at all, which is where the fallback roster is built. A
+    comparison of the two tuples would pass while the compositions passed them
+    to different arguments; this fails on what a reader would actually see.
+
+    It is NOT tautological: the two functions are separate bodies with separate
+    literals, so nothing here compares an expression to itself.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/a.py"], no_ui=True)
+
+    # (1) Outside an INSPECT, with no recorded width: the fallback roster arm.
+    _write_state(fdir, phase="F1")
+    assert _gates._streams_complete(project_root) == _streams._check_streams_complete(
+        project_root
+    )
+
+    # (2) Inside an INSPECT with a recorded roster: the recorded-roster arm.
+    _write_state(fdir, phase="F2", inspect_modes=[{
+        "cycle": 0, "mode": "DELTA", "rule": "", "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"], "stream_scope": {},
+    }])
+    verifier = _gates._streams_complete(project_root)
+    lifecycle = _streams._check_streams_complete(project_root)
+    assert verifier == lifecycle, (verifier, lifecycle)
+    # ...and the drive reached the arm it was aimed at, rather than agreeing
+    # because both returned the same empty answer.
+    assert verifier["required"] == ["trace", "prove", "test"], verifier
 
 
 
@@ -5137,40 +5196,23 @@ _LAYERING_DEBT: dict[tuple[str, str], str] = {
         "— AC-011: the run cannot reach DONE while an escalated class is open, "
         "so the closure evaluation reads the escalation ledger."
     ),
-    ("gates", "teams"): (
-        "_check_active_teams — AC-011 again: DONE is refused while a team holds "
-        "the tree, and that is a scan of the machine, not of a run artifact."
-    ),
     ("transitions", "escalation"): (
         "_record_escalation_proposals, _advance_escalation_exits — the "
         "GRIND->INSPECT crossing is the one event that knows a cycle ENDED, "
         "which is what both escalation exit arms are stated in terms of."
     ),
-    ("transitions", "streams"): (
-        "_check_streams_complete — ALL THAT IS LEFT OF THIS ROW. "
-        "`_clear_stream_completion_markers` has moved into `transitions.py`, "
-        "whose four INSPECT-opening branches were its only callers, and it "
-        "walks `vocab.STREAM_WIRE_IDS` directly. The streams-complete READ "
-        "cannot follow it: `guidance.py` reads it too, so it is shared between "
-        "the layers and closes only in a leaf."
-    ),
-    ("transitions", "teams"): (
-        "_check_active_teams — ALL THAT IS LEFT OF THIS ROW. The SIGHT "
-        "precondition (D-243) now answers from `foundry_state.sight_required` "
-        "through `width._sight_required`, which is verifier-to-verifier. The "
-        "team check cannot follow it: it is `registered_team_dirs` (leaf) AND a "
-        "tmux pane scan, and the scan reads no run artifact, so the leaf holds "
-        "half the answer and a gate that took only that half would pass while "
-        "teammates were still running."
-    ),
     ("transitions", "concerns"): (
-        "open_cross_casting_concerns — GI-023's CONCERN_OPEN rung, which "
-        "`inspect_start` refuses on. `tools/concerns.py` is NOT a leaf: it "
-        "imports `tools/foundry.py` at module top, so this edge pulls the "
-        "largest lifecycle module into the verifier layer transitively. "
-        "Invisible until the scan below stopped stopping at the orchestration "
-        "package (D-036). Closing it means the concern READER in a leaf, which "
-        "is casting 1's and casting 10's ground."
+        "open_concerns_for_other_castings — GI-023's CONCERN_OPEN rung, which "
+        "`inspect_start` refuses on. THE READ IS ALREADY IN THE LEAF: casting 1 "
+        "landed the delegation, so `foundry_state.open_cross_casting_concerns` "
+        "holds the body. What is left is the WORD: the leaf takes its status "
+        "member as a required argument, `CONCERN_STATUSES` is declared in "
+        "`tools/concerns.py`, and that module imports `tools/foundry.py` at "
+        "module top so it is not a leaf. A verifier can reach the read and not "
+        "the member, and the three ways round it — respelling \"open\", "
+        "importing the member here, importing it lazily — are each worse than "
+        "waiting. Concern C-032 moves `CONCERN_STATUSES` to `vocab.py`; this "
+        "row closes on one import line the day it lands."
     ),
     ("guidance", "width"): (
         "_maybe_skip_trace — ALL THAT IS LEFT OF THIS ROW. The recorded width "

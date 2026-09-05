@@ -17,7 +17,7 @@ from foundry_mcp.tools.artifacts import (
     _load_json,
     _read_text,
 )
-from foundry_mcp.tools.concerns import open_cross_casting_concerns
+from foundry_mcp.tools.concerns import open_concerns_for_other_castings
 from foundry_mcp.tools.foundry import ledger_refusals
 from foundry_mcp.tools.foundry_state import (
     current_cycle,
@@ -468,7 +468,7 @@ def _dispatch_open_concerns(
     """
     from foundry_mcp.tools.concerns import mark_concerns_dispatched
 
-    concerns = open_cross_casting_concerns(fdir) if concerns is None else concerns
+    concerns = open_concerns_for_other_castings(fdir) if concerns is None else concerns
     if not concerns:
         return []
     reached_castings: set[int] = set()
@@ -630,7 +630,7 @@ def foundry_defects_to_tasks(
     # fallout FR-012 / GI-023 / ST-003 / AC-004 — READ BEFORE THE SET IS BUILT.
     # The concern join widens `co_dispatch` and the block that names it, so the
     # ledger is read here and handed in rather than consulted after the fact.
-    open_concerns = open_cross_casting_concerns(fdir)
+    open_concerns = open_concerns_for_other_castings(fdir)
     ids_declared = _annotate_co_dispatch(fdir, tasks, open_concerns)
     open_by_id = {d["id"]: d for d in open_defects}
     for task in tasks:

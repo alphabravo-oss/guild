@@ -29,7 +29,7 @@ from foundry_mcp.tools.artifacts import (
     _load_json,
     _stream_marker,
 )
-from foundry_mcp.tools.concerns import open_cross_casting_concerns
+from foundry_mcp.tools.concerns import open_concerns_for_other_castings
 from foundry_mcp.tools.foundry_state import (
     clear_active_run,
     current_cycle,
@@ -43,12 +43,6 @@ from foundry_mcp.tools.orchestration.escalation import (
     _advance_escalation_exits,
     _escalated_classes,
     _record_escalation_proposals,
-)
-from foundry_mcp.tools.orchestration.streams import (
-    _check_streams_complete,
-)
-from foundry_mcp.tools.orchestration.teams import (
-    _check_active_teams,
 )
 from foundry_mcp.tools.orchestration.width import (
     NYQUIST_ENTRY_ROLLUP_KEY,
@@ -83,6 +77,8 @@ from foundry_mcp.tools.orchestration.halt import (
 )
 from foundry_mcp.tools.orchestration.gates import (
     CASTING_KEY_FILE_CAP,
+    _active_teams,
+    _streams_complete,
     _halted_refusal,
     _halted_state,
     _GATE_RANK_CONFIG,
@@ -170,7 +166,7 @@ def _teams_rung(
     clause, exactly as the `inspect_clean` branch already wraps
     `_blocking_defects`' reason.
     """
-    teams_result = _check_active_teams(project_root)
+    teams_result = _active_teams(project_root)
     if teams_result["active"]:
         parts = []
         if teams_result["teams"]:
@@ -589,7 +585,7 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
     # or close it with a reason. Neither is "fix everything"; both are decisions
     # that leave a record.
     open_concerns = [
-        c for c in open_cross_casting_concerns(fdir, cycle=current_cycle(fdir))
+        c for c in open_concerns_for_other_castings(fdir, cycle=current_cycle(fdir))
     ]
     if open_concerns:
         named = ", ".join(str(c.get("id")) for c in open_concerns)
@@ -656,7 +652,7 @@ def _inspect_clean_preconditions(fdir: Path, project_root: str) -> dict:
     })
     width_facts = {} if unrecorded is None else {"unrecorded_width": True}
 
-    streams = _check_streams_complete(project_root)
+    streams = _streams_complete(project_root)
     if not streams["complete"]:
         required_now = streams.get("required") or []
         ladder.fail(

@@ -7,9 +7,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from foundry_mcp.schemas.vocab import STREAM_WIRE_IDS
+from foundry_mcp.schemas.vocab import (
+    DELTA_CONDITIONAL_STREAMS,
+    FULL_ROSTER_STREAMS,
+    INSPECT_MODES,
+    STREAM_WIRE_IDS,
+)
 from foundry_mcp.tools.artifacts import (
     ROLLUP_FILENAME,
+    _spec_requirement_ids,
     TRACE_CLEAN_AT_MARKER,
     _artifact_guard,
     _document_transaction,
@@ -18,6 +24,7 @@ from foundry_mcp.tools.artifacts import (
     _stream_marker,
 )
 from foundry_mcp.tools.foundry_state import (
+    check_streams_complete,
     current_cycle,
     get_run_dir,
     now_iso,
@@ -128,6 +135,14 @@ ROSTER_MISMATCH = "ROSTER_MISMATCH"
 
 
 VALID_STREAMS = STREAM_WIRE_IDS
+
+
+#: The run phases that ARE an INSPECT, so a run in neither has no INSPECT whose
+#: width could be missing. `gates.py` spells the verifier side's copy of this
+#: (it may not import this lifecycle module), and
+#: `test_both_streams_complete_compositions_answer_the_same_thing` drives both
+#: over one run directory so the two cannot drift apart.
+_INSPECT_PHASES = ("F2", "F5")
 
 
 
@@ -734,137 +749,51 @@ def foundry_mark_stream(
 
 
 def _check_streams_complete(project_root: str) -> dict:
-    """Check if all required verification streams have completed for this cycle.
+    """Have this cycle's required verification streams completed?
 
-    Two behaviours land here.
+    fallout GI-033 / AC-061 / FR-063 (D-021 / D-035, concern C-027) — THE
+    CHECK IS THE LEAF'S; THIS IS THE LIFECYCLE LAYER'S COMPOSITION.
+    ------------------------------------------------------------------
+    The whole of it — the recorded roster read (AC-017 / ST-006 / ST-007 /
+    GI-008), D-117's "a run with no recorded decision is INCOMPLETE, not
+    pre-change", the manifest fallback and the per-cycle coverage thresholds
+    (FR-014 / CT-003 / AC-020) — is `foundry_state.check_streams_complete`. It
+    went to the leaf because `transitions.py` is a VERIFIER module that opens
+    and closes the INSPECT this reports on, and GI-033 forbids it importing
+    this lifecycle one; two implementations of "are the streams done" is how a
+    cycle comes to disagree with itself about what it required.
 
-    SIGHT (FR-020 / AC-025). ``sight`` used to be appended UNCONDITIONALLY
-    whenever ``manifest.no_ui`` was false — which is the default — so a run with
-    zero frontend files in scope still had to produce a sight marker it had no
-    way to earn. That is the grand-vulture deadlock: a fully clean cycle-17
-    INSPECT blocked on ``sight``. The requirement is now driven by the same
-    ``_check_sight_required`` evidence the inspect gate already uses (do any
-    casting key_files actually carry a UI extension?), which also collapses the
-    ``no_ui`` divergence between state.json and castings/manifest.json — the
-    flag is read from the manifest here and from state.json elsewhere, and
-    foundry_init writes both. A UI run is unaffected: frontend files in scope
-    still make sight required, and still make it BLOCKED when no url is set.
+    THE UNRECORDED-WIDTH ARM IS DEliberately NOT ASKED FOR HERE. Its refusal
+    names the transitions that record a width and the remedy, which is door
+    protocol, so the leaf takes it as an injection and the DOORS pass it. This
+    caller only REPORTS, so it passes nothing and the arm is skipped — which is
+    what the original said in its own scoping note: "the two doors that matter
+    ask `_unrecorded_width_problem` themselves rather than inferring it from
+    this result".
 
-    COVERAGE (FR-014 / CT-003 / AC-020). The >=95% PROVE and TRACE thresholds
-    are evaluated HERE, once per cycle, against the cycle's roll-up total —
-    the one point where every tranche of a partially-delivered stream is in
-    hand. A stream that recorded but fell short is reported in ``missing`` (so
-    every existing caller keeps blocking on it) and detailed in ``shortfalls``.
+    LAZY SEAM, written once per symbol: `teams` imports this module, so a
+    module-top import here closes a cycle that takes every tool in the server
+    down at load.
     """
-    # fallout FR-004 / GI-033 -- LAZY SEAM, written once per symbol.
-    # `teams, width` import(s) this module, so a module-top import here would
-    # close a cycle that takes every tool in this server down at once.
-    # Unguarded, so a wiring break fails loudly at the one call site that
-    # needs the symbol rather than hiding behind a silent fallback.
     from foundry_mcp.tools.orchestration.teams import _check_sight_required
-    from foundry_mcp.tools.orchestration.width import _current_inspect_mode, _unrecorded_width_problem
+
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"complete": False, "missing": "all", "required": [], "shortfalls": []}
-    manifest = fdir / "castings" / "manifest.json"
-
-    # AC-017 / ST-006 / ST-007 / GI-008 — THE ROSTER IS READ, NOT RECOMPUTED.
-    #
-    # The transition that opened this INSPECT already decided which streams it
-    # requires and at what scope, and recorded both. Re-deriving them here would
-    # let the check disagree with the cycle that actually ran: the mode is a
-    # function of a GRIND diff measured at the boundary, and by the time this is
-    # called the tree has moved on. GI-008 names the shape outright — "a
-    # streams-complete check that reads a roster nothing recorded".
-    #
-    # D-117 — A RUN WITH NO RECORDED DECISION IS INCOMPLETE, NOT PRE-CHANGE.
-    #
-    # This fell back to the roster the function required before the width
-    # existed — trace/prove/test — and called that "the pre-change behaviour,
-    # which is what a resumed archive should get". It is also, exactly,
-    # GI-008's named violation: "a streams-complete check that reads a roster
-    # nothing recorded". The fallback silently dropped `research_audit` and
-    # `test01` from every mode-less INSPECT and reported `complete: True`, which
-    # is how ASSAY came to open on a three-stream roster. See
-    # `_unrecorded_width_problem` for the end-to-end drive.
-    #
-    # `missing` carries the sentinel `inspect_mode` so every existing caller —
-    # each of which blocks on a non-empty `missing` — blocks here too without
-    # being taught a new key, and `unrecorded_width` plus `hint` are there for
-    # the callers that name the remedy.
-    # SCOPED TO A RUN THAT IS ACTUALLY IN AN INSPECT. The width belongs to an
-    # INSPECT, so a run that is in none has no INSPECT whose width could be
-    # missing — and this function is also the plain "did these markers record
-    # and clear the coverage threshold" query, which `tests/test_stream_rollup.py`
-    # asks of a run that never entered F2. The two doors that matter, `Foundry-
-    # Gate('assay')` and `inspect_clean`, ask `_unrecorded_width_problem`
-    # themselves rather than inferring it from this result, so nothing rests on
-    # the scope being wider than the phase.
-    recorded = _current_inspect_mode(fdir)
-    inspect_mode = ""
-    inspect_rule = ""
-    stream_scope: dict = {}
-    in_inspect = _load_json(fdir / "state.json").get("phase") in ("F2", "F5")
-    unrecorded = _unrecorded_width_problem(fdir) if in_inspect else None
-    if unrecorded is not None:
-        return {
-            "complete": False,
-            "missing": "inspect_mode",
-            "required": [],
-            "shortfalls": [],
-            "inspect_mode": "",
-            "inspect_rule": "",
-            "stream_scope": {},
-            "unrecorded_width": True,
-            "reason": unrecorded["reason"],
-            "hint": unrecorded["hint"],
-        }
-    if isinstance(recorded, dict) and isinstance(recorded.get("required_streams"), list):
-        required = [s for s in recorded["required_streams"] if isinstance(s, str)]
-        inspect_mode = recorded.get("mode", "")
-        inspect_rule = recorded.get("rule", "")
-        raw_scope = recorded.get("stream_scope")
-        stream_scope = raw_scope if isinstance(raw_scope, dict) else {}
-    else:
-        # A recorded entry that carries a mode but no usable roster. The width
-        # IS recorded, so this is not the D-117 hole; the roster is rebuilt from
-        # the run's own manifest exactly as it was before the width existed.
-        required = ["trace", "prove", "test"]
-
-        url = ""
-        if manifest.exists():
-            url = _load_json(manifest).get("target_url", "")
-
-        if _check_sight_required(project_root).get("required"):
-            required.append("sight")
-
-        if url:
-            required.append("probe")
-
-        inspect_mode = (recorded or {}).get("mode", "")
-        inspect_rule = (recorded or {}).get("rule", "")
-
-    missing = [s for s in required if not (fdir / _stream_marker(s)).exists()]
-
-    cycle = current_cycle(fdir)
-    shortfalls = []
-    for s in required:
-        if s in missing:
-            continue
-        shortfall = _coverage_shortfall(fdir, project_root, s, cycle)
-        if shortfall:
-            shortfalls.append(shortfall)
-            missing.append(s)
-
-    return {
-        "complete": len(missing) == 0,
-        "missing": " ".join(missing),
-        "required": required,
-        "shortfalls": shortfalls,
-        # Reported, never decided here (GI-008). Empty strings on a run with no
-        # recorded decision, which is how a caller tells "this run predates the
-        # width" from "this run is at FULL".
-        "inspect_mode": inspect_mode,
-        "inspect_rule": inspect_rule,
-        "stream_scope": stream_scope,
-    }
+    return check_streams_complete(
+        fdir,
+        modes=INSPECT_MODES,
+        marker_of=_stream_marker,
+        sight=_check_sight_required(project_root),
+        spec_requirement_count=len(_spec_requirement_ids(project_root)[1]),
+        # DERIVED, never a second hand list: the pre-width roster is exactly the
+        # FULL roster minus the two streams DELTA makes conditional, and both
+        # sets are `vocab.py`'s. `gates.py` composes the verifier side's call
+        # from the same two vocabulary members, and
+        # `test_both_streams_complete_compositions_answer_the_same_thing`
+        # drives the two over one run directory so they cannot drift.
+        inspect_phases=_INSPECT_PHASES,
+        fallback_streams=[
+            s for s in FULL_ROSTER_STREAMS if s not in DELTA_CONDITIONAL_STREAMS
+        ],
+    )

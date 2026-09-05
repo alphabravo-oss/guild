@@ -12,6 +12,9 @@ from pathlib import Path
 from foundry_mcp.schemas.vocab import (
     BLOCKING_TIERS,
     DEFECT_TIERS,
+    DELTA_CONDITIONAL_STREAMS,
+    FULL_ROSTER_STREAMS,
+    INSPECT_MODES,
     DEFECT_TYPES,
     REPORT_JSON_FILENAME,
     REPORT_MD_FILENAME,
@@ -28,8 +31,11 @@ from foundry_mcp.tools.artifacts import (
     _artifact_guard,
     _load_json,
     _spec_requirement_ids,
+    _stream_marker,
 )
 from foundry_mcp.tools.foundry_state import (
+    active_teams,
+    check_streams_complete,
     get_run_dir,
     halted_state,
     now_iso,
@@ -42,7 +48,9 @@ from foundry_mcp.tools.orchestration.escalation import (
     _escalation_exit_distances,
     _persisted_escalations,
 )
-from foundry_mcp.tools.orchestration.teams import _check_active_teams
+from foundry_mcp.tools.orchestration.width import (
+    _sight_required,
+)
 from foundry_mcp.tools.orchestration.evidence_boundary import (
     EVIDENCE_STRIPPED_TOKEN,
     _terminal_evidence_refusal,
@@ -198,6 +206,76 @@ def _open_defects_by_tier(fdir: Path) -> dict[str, list[dict]]:
             continue
         buckets[defect_tier(d)].append(d)
     return buckets
+
+
+
+
+def _active_teams(project_root: str) -> dict:
+    """Is any team still holding the tree? The VERIFIER layer's composition.
+
+    fallout GI-033 / AC-061 / FR-063 (D-021 / D-035, concern C-027). Both
+    halves of the answer — the registered directories and the live tmux panes —
+    are `foundry_state.active_teams`, because `orchestration/teams.py` is
+    LIFECYCLE by GI-033's own violation column and this module is a verifier.
+    What is composed here is the two things a leaf may not know: where this
+    machine keeps its team directories, and the sentence to print.
+
+    NO SENTENCE IS PASSED, DELIBERATELY. `hint_for` is omitted, so the leaf
+    reports the two lists and no prose, and every arm below falls back to
+    `_TEAMS_DOWN_HINT` — the one spelling of "shut the teammates down" that
+    already exists here precisely so the gate arms cannot drift apart. The
+    lifecycle side passes `teams._teammate_shutdown_hint`, which is the shape
+    the ruling describes: the read is shared, the prose belongs to the doors
+    that own it.
+    """
+    fdir = get_run_dir(project_root)
+    if not fdir:
+        return {"active": False, "teams": [], "live_panes": []}
+    return active_teams(fdir, teams_dir=Path.home() / ".claude" / "teams")
+
+
+
+
+#: The run phases that ARE an INSPECT. `streams.py` spells the lifecycle side's
+#: copy (this module is a verifier and may not import it), and
+#: `test_both_streams_complete_compositions_answer_the_same_thing` drives both
+#: over one run directory so the two cannot drift apart.
+_INSPECT_PHASES = ("F2", "F5")
+
+
+def _streams_complete(project_root: str) -> dict:
+    """Have this cycle's required verification streams completed? Verifier side.
+
+    fallout GI-033 / AC-061 / FR-063 (D-021 / D-035, concern C-027). The check
+    itself is `foundry_state.check_streams_complete`; `orchestration/streams.py`
+    is LIFECYCLE and `transitions.py`, which opens and closes the INSPECT this
+    reports on, is a VERIFIER, so the answer had to move to a leaf both could
+    reach. What is composed here is the closed-set values and leaf helpers a
+    leaf may not import.
+
+    THE UNRECORDED-WIDTH ARM IS NOT ASKED FOR, and that is the pre-existing
+    contract rather than a narrowing. `_inspect_start_preconditions` and
+    `_inspect_clean_preconditions` ask `_unrecorded_width_problem` themselves
+    and rank the refusal on their own ladder — the original said so in its own
+    scoping note — so injecting the shaper here would give them the same
+    refusal twice, once ranked and once as a missing stream.
+    """
+    fdir = get_run_dir(project_root)
+    if not fdir:
+        return {"complete": False, "missing": "all", "required": [], "shortfalls": []}
+    return check_streams_complete(
+        fdir,
+        modes=INSPECT_MODES,
+        marker_of=_stream_marker,
+        sight=_sight_required(fdir),
+        spec_requirement_count=_count_spec_requirements(project_root),
+        inspect_phases=_INSPECT_PHASES,
+        # DERIVED, never a second hand list: the pre-width roster is exactly the
+        # FULL roster minus the two streams DELTA makes conditional.
+        fallback_streams=[
+            s for s in FULL_ROSTER_STREAMS if s not in DELTA_CONDITIONAL_STREAMS
+        ],
+    )
 
 
 
@@ -426,7 +504,7 @@ def _done_preconditions(
     non_verified = sum(1 for r in verdict_list if r.get("verdict") != "VERIFIED")
     blocking = _blocking_defects(fdir)
     open_count = blocking["blocking"]
-    teams_result = _check_active_teams(project_root)
+    teams_result = _active_teams(project_root)
     spec_count = _count_spec_requirements(project_root)
 
     # GI-006 / CT-014 / AC-036 / ST-010 — DONE REQUIRES THE GENERATED REPORT.

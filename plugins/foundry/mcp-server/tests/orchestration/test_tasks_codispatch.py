@@ -378,9 +378,9 @@ def test_a_concern_naming_a_casting_no_requirement_reaches_joins_the_set(run_env
     assert block.index("- casting 2:") < block.index(concern_id), block
 
     # ...and the door the concern was holding shut now opens.
-    from foundry_mcp.tools.concerns import open_cross_casting_concerns
+    from foundry_mcp.tools.concerns import open_concerns_for_other_castings
 
-    assert open_cross_casting_concerns(fdir) == [], "the concern is still open"
+    assert open_concerns_for_other_castings(fdir) == [], "the concern is still open"
 
 
 

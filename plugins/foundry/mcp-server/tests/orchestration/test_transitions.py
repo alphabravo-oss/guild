@@ -3424,7 +3424,12 @@ def test_neither_door_reads_a_ledger_outside_its_preconditions_routine():
     # failure a derived pin can have.
     assert len(refusal_readers) > 20, sorted(refusal_readers)
     for expected in (
-        "_blocking_defects", "_check_active_teams", "_check_sight_required",
+        # fallout GI-033 / AC-061 (D-021 / D-035): the team and SIGHT reads now
+        # answer from the leaf, so the verifier layer's own compositions are
+        # what a routine reaches — `gates._active_teams` and
+        # `width._sight_required`. Same two questions, same two rungs, named by
+        # the module that may ask them.
+        "_blocking_defects", "_active_teams", "_sight_required",
         "_terminal_evidence_state", "_sweep_evidence_at_boundary",
         "_unrecorded_width_problem",
     ):

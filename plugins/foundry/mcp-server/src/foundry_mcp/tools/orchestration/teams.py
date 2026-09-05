@@ -15,9 +15,11 @@ from foundry_mcp.tools.artifacts import (
     _load_json,
 )
 from foundry_mcp.tools.foundry_state import (
+    active_teams,
     current_cycle,
     get_run_dir,
-    registered_team_dirs,
+    live_teammate_panes,
+    sight_required,
 )
 from pathlib import Path
 
@@ -123,125 +125,10 @@ def agent_model(subagent_type: str, baseline: str = "") -> dict:
 # --- Team lifecycle ---
 
 
-def _scan_tmux_panes() -> dict:
-    """Scan all tmux panes and classify them.
-
-    Claude Code spawns teammates as PANES within the lead's tmux session
-    (via split-window). Pane titles are set to the agent name (e.g., "@cast-c1").
-
-    IMPORTANT: pane_current_command for a live teammate is the Claude Code
-    VERSION NUMBER (e.g., "2.1.80"), NOT "claude" or "node" or "bash".
-    A zombie pane shows "bash"/"zsh" because the agent exited and the shell
-    is all that's left. But a live teammate's bash shell has the agent as a
-    child process, so pane_current_command reflects the agent binary.
-
-    We use pane title + child process check for definitive classification:
-    - LEAD: the active pane
-    - LIVE: teammate pane whose bash PID has child processes (agent running)
-    - ZOMBIE: teammate pane that is dead OR whose bash PID has NO children
-    - USER: non-lead pane that doesn't look like a teammate (left alone)
-
-    Teammate detection: Claude Code sets pane titles via `select-pane -T`.
-    Teammate panes have titles starting with "@" or matching agent naming
-    patterns (cast-, grind-, etc.). User's personal panes are never touched.
-
-    Returns {
-        "available": bool,
-        "live": [(id, title, cmd)],
-        "zombie": [(id, title, cmd)],
-        "user": [(id, title, cmd)],   # user's panes — never touched
-        "lead": (id, title) | None,
-    }
-    """
-    import subprocess
-    import re
-
-    empty: dict = {"available": False, "live": [], "zombie": [], "user": [], "lead": None}
-    try:
-        check = subprocess.run(["tmux", "list-sessions"], capture_output=True, timeout=5)
-        if check.returncode != 0:
-            return empty
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return empty
-
-    # Patterns that identify a pane as a Claude Code teammate
-    _TEAMMATE_RE = re.compile(
-        r"^@|"                                 # Claude Code prefixes teammate titles with @
-        r"cast[-_]|grind[-_]|inspect[-_]|"     # foundry phase agents
-        r"assay[-_]|temper[-_]|decompose[-_]|" # foundry phase agents
-        r"trace[-_]|prove[-_]|sight[-_]|"      # verification stream agents
-        r"test[-_]|probe[-_]|"                 # verification stream agents
-        r"^teammate-|^agent-",                 # generic teammate patterns
-        re.IGNORECASE,
-    )
-
-    try:
-        result = subprocess.run(
-            ["tmux", "list-panes", "-a", "-F",
-             "#{session_name}:#{window_index}.#{pane_index}\t"
-             "#{pane_title}\t#{pane_dead}\t#{pane_current_command}\t"
-             "#{pane_active}\t#{pane_pid}"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode != 0:
-            return empty
-    except (subprocess.TimeoutExpired, OSError):
-        return empty
-
-    live = []
-    zombie = []
-    user = []
-    lead = None
-
-    for line in result.stdout.strip().split("\n"):
-        if not line.strip():
-            continue
-        parts = line.split("\t", 5)
-        if len(parts) < 6:
-            continue
-        pane_id, title, dead, cmd, active, pid = parts
-
-        if active == "1":
-            lead = (pane_id, title)
-            continue
-
-        # Only touch panes that look like teammates
-        if not _TEAMMATE_RE.search(title):
-            user.append((pane_id, title, cmd))
-            continue
-
-        # Dead panes are always zombies
-        if dead == "1":
-            zombie.append((pane_id, title, cmd))
-            continue
-
-        # Check if the pane's process has children (= agent still running)
-        has_children = _pid_has_children(pid)
-        if has_children:
-            live.append((pane_id, title, cmd))
-        else:
-            zombie.append((pane_id, title, cmd))
-
-    return {"available": True, "live": live, "zombie": zombie, "user": user, "lead": lead}
 
 
 
 
-def _pid_has_children(pid: str) -> bool:
-    """Check if a PID has child processes (i.e., agent is still running)."""
-    import subprocess
-
-    if not pid or not pid.strip().isdigit():
-        return False
-    try:
-        # pgrep -P returns 0 if children exist, 1 if none
-        result = subprocess.run(
-            ["pgrep", "-P", pid],
-            capture_output=True, timeout=3,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return False
 
 
 
@@ -272,53 +159,62 @@ def _kill_panes(panes: list[tuple[str, str, str]]) -> int:
 
 
 
+def _teammate_shutdown_hint(live_panes: list[str]) -> str:
+    """The shutdown sentence, for live panes with no registered team left.
+
+    fallout GI-033 / AC-061 (D-021 / D-035, concern C-027) — PROTOCOL PROSE
+    STAYS WITH THE DOORS IT NAMES. `foundry_state.active_teams` composes the
+    two halves of "is a team still holding the tree" and takes this shaper as
+    `hint_for`, on the same rule every other injected sentence in the leaf
+    follows: the leaf may hold the READ and may not hold a sentence naming
+    SendMessage, TeamDelete and `tmux kill-pane`, because those are this
+    module's doors.
+    """
+    return (
+        f"{len(live_panes)} teammate pane(s) still running: {', '.join(live_panes)}. "
+        "Send 'All work complete, stop working.' to each teammate in a parallel SendMessage batch, "
+        "then TeamDelete immediately — do NOT wait for acks. "
+        "If panes won't terminate, run: tmux kill-pane -t <pane_id>"
+    )
+
+
+
+
 def _check_active_teams(project_root: str) -> dict:
-    """Check if any registered teams still have directories OR live tmux panes.
+    """Is any team still holding the tree? The LIFECYCLE layer's composition.
 
-    Two-layer check:
-    1. Team directory exists in ~/.claude/teams/ (TeamDelete wasn't called)
-    2. Live teammate tmux panes exist (teammates haven't exited yet)
+    fallout GI-033 / AC-061 / FR-063 (D-021 / D-035, concern C-027) — THE
+    ANSWER IS THE LEAF'S; THIS IS THE COMPOSITION.
+    ----------------------------------------------------------------------
+    Both halves — `state.json.active_teams` crossed against the directories
+    still on disk, and the tmux pane scan — now live in
+    `foundry_state.active_teams`, because the gates and transitions that ask
+    the question are VERIFIER modules and this one is lifecycle, so wherever
+    the answer sat inside `orchestration/` exactly one of the two layers could
+    reach it. The pane scan went with it: it is a READ that lists panes and
+    kills nothing, and a readers-only leaf that reads the machine rather than
+    the run directory is still a leaf (lead ruling
+    `lead_ruling_gi_033_leaf_moves`). `_kill_panes` stayed here with the doors
+    that kill.
 
-    BOTH must be clear for the gate to pass. This prevents the lead from
-    progressing to the next phase while teammates are still running.
+    WHAT THIS ADDS is the two things the leaf may not know: where this machine
+    keeps its team directories, and the shutdown sentence. `gates.py` composes
+    the same leaf call for the verifier side and passes no sentence, falling
+    back to its own `_TEAMS_DOWN_HINT` — one answer, two callers, and neither
+    of them a second judgement about what "active" means.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"active": False, "teams": [], "live_panes": []}
-    # fallout GI-033 / AC-061 (concern C-017) — THE ARTIFACT HALF IS THE LEAF'S.
-    #
-    # This check has two halves and only one of them reads a run artifact:
-    # `state.json.active_teams` crossed against the team directories on disk.
-    # That half is `foundry_state.registered_team_dirs` now, which is what lets
-    # `gates.py`, `transitions.py` and `width.py` — all three VERIFIER modules —
-    # ask the question without importing this lifecycle module. The tmux pane
-    # scan and the shutdown hint below stay here: they read no artifact, and a
-    # leaf that shelled out to tmux would have stopped being one.
-    #
-    # `Path.home()` is supplied rather than known there for the same reason
-    # every other closed-set value is: the leaf's contract is json and pathlib
-    # over the run directory, and where a machine keeps its team dirs is not a
-    # fact about the run.
-    active = registered_team_dirs(fdir, teams_dir=Path.home() / ".claude" / "teams")
+    return active_teams(
+        fdir,
+        teams_dir=Path.home() / ".claude" / "teams",
+        hint_for=_teammate_shutdown_hint,
+    )
 
-    # Also check for live teammate tmux panes — even if TeamDelete was called,
-    # the claude processes might still be running
-    live_panes = []
-    scan = _scan_tmux_panes()
-    if scan["available"] and scan["live"]:
-        live_panes = [title for _, title, _ in scan["live"]]
 
-    is_active = len(active) > 0 or len(live_panes) > 0
 
-    result: dict = {"active": is_active, "teams": active, "live_panes": live_panes}
-    if live_panes and not active:
-        result["hint"] = (
-            f"{len(live_panes)} teammate pane(s) still running: {', '.join(live_panes)}. "
-            "Send 'All work complete, stop working.' to each teammate in a parallel SendMessage batch, "
-            "then TeamDelete immediately \u2014 do NOT wait for acks. "
-            "If panes won't terminate, run: tmux kill-pane -t <pane_id>"
-        )
-    return result
+
 
 
 
@@ -378,7 +274,7 @@ def _concerns_excusing(
     second walk is the shape this run has already paid for twice. LAZY, in the
     seam style this module's other cross-module reaches use.
 
-    NOT `open_cross_casting_concerns`, deliberately. That reader drops a concern
+    NOT `open_concerns_for_other_castings`, deliberately. That reader drops a concern
     whose target casting IS its source, which is right for the INSPECT rung it
     serves (GI-023 is about a fix reaching a SIBLING) and wrong here: a casting
     saying "my own fix is deliberately partial" is self-targeting by nature, and
@@ -632,7 +528,7 @@ def foundry_unregister_team(
         }
 
     # ── Phase 2: Verify no live teammate processes ───────────────────
-    scan = _scan_tmux_panes()
+    scan = live_teammate_panes()
     if scan["available"] and scan["live"]:
         live_titles = [title for _, title, _cmd in scan["live"]]
         return {
@@ -652,7 +548,7 @@ def foundry_unregister_team(
         killed = _kill_panes(scan["zombie"])
         # Brief wait + re-scan to verify
         time.sleep(1)
-        rescan = _scan_tmux_panes()
+        rescan = live_teammate_panes()
         remaining_zombie = len(rescan.get("zombie", []))
         remaining_live = len(rescan.get("live", []))
         if remaining_zombie > 0 or remaining_live > 0:
@@ -660,7 +556,7 @@ def foundry_unregister_team(
             if rescan.get("zombie"):
                 killed += _kill_panes(rescan["zombie"])
             time.sleep(1)
-            rescan = _scan_tmux_panes()
+            rescan = live_teammate_panes()
             remaining_zombie = len(rescan.get("zombie", []))
             remaining_live = len(rescan.get("live", []))
             if remaining_zombie > 0 or remaining_live > 0:
@@ -698,84 +594,32 @@ def foundry_unregister_team(
 
 
 def _check_sight_required(project_root: str) -> dict:
-    """Check if SIGHT audit is required based on frontend files in castings.
+    """Whether the SIGHT browser audit is part of this run.
 
-    fallout AC-052 / FR-055 — `--no-ui` IS A DECLARATION AND THIS GATE HONOURS
-    IT.
-    -----------------------------------------------------------------------
-    AC-052 requires one documented meaning across README, setup script and
-    gate, and `NO_UI_MEANING` is that sentence: "`--no-ui` declares that this
-    run has no browsable UI, so the SIGHT browser audit is not part of it."
-    Two of the three surfaces said exactly that; this one implemented its
-    opposite. With the flag set and any UI extension in scope it answered
-    `required: True, blocked: True` with a reason reading "--no-ui set but N
-    frontend files in scope", `_check_streams_complete` then appended `sight`
-    to the required roster, and `_cast_preconditions` failed at the config
-    rung — so declaring a run had no browsable UI was the one way to make the
-    browser audit mandatory AND unsatisfiable.
+    fallout AC-052 / FR-055, and GI-033 / AC-061 (D-021 / D-035) — ONE RULE,
+    READ FROM THE LEAF.
+    -------------------------------------------------------------------
+    The whole decision — the `--no-ui` declaration read BEFORE the extension
+    scan's own answer, the manifest shape guard, the blocked-without-a-url arm —
+    is `foundry_state.sight_required`. It went to the leaf because
+    `orchestration/width.py` and `orchestration/transitions.py` are VERIFIER
+    modules that ask the same question and may not import this lifecycle one;
+    keeping a second implementation here would have left the run with two
+    answers about whether it has a browsable UI, which is the divergence
+    AC-052 exists to end.
 
-    It survived because no fixture reached the arm: every `no_ui` arrangement
-    under `tests/orchestration/` used `.py` key files, where the extension scan
-    returns first. `test_sight_is_not_required_when_the_run_declares_no_ui`
-    drives it with a `.tsx` key file, which is the shape that was missing.
-
-    The extension scan stays for runs that did NOT declare the flag: absence of
-    `--no-ui` is not a claim either way, so the file extensions are the only
-    evidence there is.
+    The two closed-set values are supplied because a leaf may not know them,
+    and both are LAZY for the reason the seam pattern gives: `foundry_spawn`
+    and `tools/foundry.py` both import this package, so a module-top import
+    closes an import cycle that takes every tool in the server down at load.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"required": False}
-    manifest = fdir / "castings" / "manifest.json"
 
-    if not manifest.exists():
-        return {"required": False}
-
+    from foundry_mcp.tools.foundry import NO_UI_MEANING
     from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
 
-    data = _load_json(manifest)
-    # D-134: the records, not just the container. `castings: "nope"` used to
-    # meet `.get()` two lines down and raise AttributeError out of Foundry-Next.
-    # The guard at every MCP door names the file; this keeps the reader itself
-    # total for the paths that reach it without one.
-    if _manifest_shape_problem(data) is not None:
-        return {"required": False, "reason": "castings/manifest.json records are unreadable"}
-    ui_exts = {".tsx", ".jsx", ".vue", ".svelte", ".css", ".scss", ".html", ".astro"}
-
-    ui_files = []
-    for casting in data.get("castings", []):
-        for f in casting.get("key_files", []):
-            if any(f.endswith(ext) for ext in ui_exts):
-                ui_files.append(f)
-
-    # Read BEFORE the extension scan's own answer, because the flag is the
-    # operator's statement about the run and the extensions are an inference
-    # about it. `ui_files` is still reported so the operator can see the
-    # tension between what they declared and what is in scope; it is a fact on
-    # the answer, never a reason to overrule the declaration.
-    #
-    # LAZY, in the shape the cross-module seam pattern shows: `tools/foundry.py`
-    # reaches into this package, so a module-top import here would close a cycle
-    # the boundary guard refuses. Unguarded, so a wiring break fails loudly at
-    # the one call site that needs the sentence.
-    if data.get("no_ui", False):
-        from foundry_mcp.tools.foundry import NO_UI_MEANING
-
-        return {
-            "required": False,
-            "blocked": False,
-            "no_ui": True,
-            "ui_files": len(ui_files),
-            "reason": NO_UI_MEANING,
-        }
-
-    if not ui_files:
-        return {"required": False, "reason": "No frontend files in castings"}
-
-    url = data.get("target_url", "")
-
-    if not url:
-        return {"required": True, "blocked": True, "ui_files": len(ui_files),
-                "reason": f"No --url provided but {len(ui_files)} frontend files in scope"}
-
-    return {"required": True, "blocked": False, "url": url, "ui_files": len(ui_files)}
+    return sight_required(
+        fdir, shape_problem=_manifest_shape_problem, no_ui_meaning=NO_UI_MEANING
+    )

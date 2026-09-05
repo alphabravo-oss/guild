@@ -171,12 +171,22 @@ def run_env(tmp_path, monkeypatch):
     (fdir / "castings").mkdir(parents=True, exist_ok=True)
 
     _TEAM_SCAN["active"] = False
-    patch_everywhere(monkeypatch, "_check_active_teams",
-        lambda _pr: {
-            "active": _TEAM_SCAN["active"],
-            "teams": ["c3-team"] if _TEAM_SCAN["active"] else [],
-            "live_panes": [],
-        },
+    # fallout GI-033 / AC-061 (D-021 / D-035, concern C-027) — TWO NAMES, ONE
+    # FAKE. The two-layer team check is `foundry_state.active_teams` now, and
+    # each layer composes it under its own name because neither may import the
+    # other: `teams._check_active_teams` for lifecycle, `gates._active_teams`
+    # for the verifier. Patching one and not the other would leave every gate
+    # and transition shelling out to a real tmux.
+    _fake_teams = lambda _pr: {
+        "active": _TEAM_SCAN["active"],
+        "teams": ["c3-team"] if _TEAM_SCAN["active"] else [],
+        "live_panes": [],
+    }
+    patch_everywhere(monkeypatch, "_check_active_teams", _fake_teams)
+    patch_everywhere(monkeypatch, "_active_teams", _fake_teams)
+    patch_everywhere(
+        monkeypatch, "live_teammate_panes",
+        lambda: {"available": False, "live": [], "zombie": [], "user": [], "lead": None},
     )
 
     foundry_state.set_active_run(run_name)
