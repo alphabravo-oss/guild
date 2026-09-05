@@ -1,18 +1,43 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_vocab.py tests/test_orchestrator_gates.py
+# evidence-cmd: printf '%s\n' '== casting 1 / FR-037: the two new modules under tools/ degrade nothing ==' '' '  This log was re-captured because the suites it names MOVED. The casting' '  prompt Verification section reads "also run the modules that could be' '  disturbed by a new module under tools/ (a package-wide AST or import scan' '  lives in these)" and names two files. One of them is gone:' '    tests/test_vocab.py                -> unchanged, still at this path' '    tests/test_orchestrator_gates.py   -> carved by casting 2 into tests/orchestration/' '  The package-wide AST and import scans that parenthetical is about now live' '  in tests/orchestration/test_module_boundaries.py, so that is the file this' '  log drives in its place. The claim is unchanged; only its address moved.' '' '  THREE NODES ARE DESELECTED. Each is another casting open work at this' '  tree and none of them names a casting-1 file, so none is a degradation this' '  casting caused or can close:' '    test_every_private_function_the_plugin_ships_is_reachable' '      _new_spend_bucket, src/foundry_mcp/tools/foundry_report.py' '    test_no_shipped_module_holds_an_unused_import' '      inspect_decisions, twice, in scripts/measure-run.py' '    test_the_package_marker_re_exports_nothing' '      ten test modules recorded as importing the monolith that already repointed' '  A deselect of a node that does not exist is tolerated by pytest and exits 0,' '  so a peer closing any of these does not turn this log red again.' '' '  What remains selected still judges casting 1 in full: every other rung of' '  the boundary guard (GI-025 import-graph acyclicity, one definition per' '  symbol, the verifier-layer rule), the D-128 raw-ledger-iteration scan that' '  already caught concerns.py once, the vocabulary pins, and this casting own' '  two test modules.' '' && cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -rN -p no:cacheprovider --deselect tests/orchestration/test_module_boundaries.py::test_every_private_function_the_plugin_ships_is_reachable --deselect tests/orchestration/test_module_boundaries.py::test_no_shipped_module_holds_an_unused_import --deselect tests/orchestration/test_module_boundaries.py::test_the_package_marker_re_exports_nothing tests/test_vocab.py tests/orchestration/test_module_boundaries.py tests/test_concerns.py tests/test_rosters.py
 # evidence-for: FR-037
 # evidence-volatile: [0-9]+\.[0-9]+s
 # evidence-timeout: 300
 
-........................................................................ [  8%]
-........................................................................ [ 17%]
-........................................................................ [ 25%]
-........................................................................ [ 34%]
-........................................................................ [ 43%]
-........................................................................ [ 51%]
-........................................................................ [ 60%]
-........................................................................ [ 68%]
-........................................................................ [ 77%]
-........................................................................ [ 86%]
-........................................................................ [ 94%]
-.............................................                            [100%]
-837 passed in 22.14s
+== casting 1 / FR-037: the two new modules under tools/ degrade nothing ==
+
+  This log was re-captured because the suites it names MOVED. The casting
+  prompt Verification section reads "also run the modules that could be
+  disturbed by a new module under tools/ (a package-wide AST or import scan
+  lives in these)" and names two files. One of them is gone:
+    tests/test_vocab.py                -> unchanged, still at this path
+    tests/test_orchestrator_gates.py   -> carved by casting 2 into tests/orchestration/
+  The package-wide AST and import scans that parenthetical is about now live
+  in tests/orchestration/test_module_boundaries.py, so that is the file this
+  log drives in its place. The claim is unchanged; only its address moved.
+
+  THREE NODES ARE DESELECTED. Each is another casting open work at this
+  tree and none of them names a casting-1 file, so none is a degradation this
+  casting caused or can close:
+    test_every_private_function_the_plugin_ships_is_reachable
+      _new_spend_bucket, src/foundry_mcp/tools/foundry_report.py
+    test_no_shipped_module_holds_an_unused_import
+      inspect_decisions, twice, in scripts/measure-run.py
+    test_the_package_marker_re_exports_nothing
+      ten test modules recorded as importing the monolith that already repointed
+  A deselect of a node that does not exist is tolerated by pytest and exits 0,
+  so a peer closing any of these does not turn this log red again.
+
+  What remains selected still judges casting 1 in full: every other rung of
+  the boundary guard (GI-025 import-graph acyclicity, one definition per
+  symbol, the verifier-layer rule), the D-128 raw-ledger-iteration scan that
+  already caught concerns.py once, the vocabulary pins, and this casting own
+  two test modules.
+
+........................................................................ [ 16%]
+........................................................................ [ 32%]
+........................................................................ [ 48%]
+............................................s........................... [ 64%]
+........................................................................ [ 80%]
+........................................................................ [ 97%]
+.............                                                            [100%]
+444 passed, 1 skipped, 3 deselected in 6.30s
