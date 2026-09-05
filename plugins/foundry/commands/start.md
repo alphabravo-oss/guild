@@ -1,6 +1,6 @@
 ---
 description: "Start a foundry build-verify-fix loop"
-argument-hint: "<SCOPE> [--spec PATH] [--url URL] [--temper] [--nyquist] [--max-cycles N] [--no-ui] [--output-dir DIR]"
+argument-hint: "<SCOPE> [--spec PATH] [--url URL] [--temper] [--nyquist] [--max-cycles N] [--no-ui]"
 allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/setup-foundry.sh:*)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/install-commit-guard.sh:*)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/migrate-archive.py:*)", "Bash(git:*)", "Bash(go:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(yarn:*)", "Bash(cargo:*)", "Bash(python:*)", "Bash(pip:*)", "Bash(make:*)", "Bash(docker:*)", "Bash(curl:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(mkdir:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(rm:*)", "Bash(chmod:*)", "Bash(echo:*)", "Bash(grep:*)", "Bash(find:*)", "Bash(sed:*)", "Bash(awk:*)", "Bash(jq:*)", "Bash(wc:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(sort:*)", "Bash(diff:*)", "Bash(test:*)", "Bash(sleep:*)", "Bash(tmux:*)", "Bash(kill:*)", "AskUserQuestion", "Read", "Write", "Edit", "Glob", "Grep", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TeamCreate", "TeamDelete", "SendMessage"]
 disable-model-invocation: "true"
 ---
@@ -64,6 +64,14 @@ Call `Foundry-Next` after every step. It returns a `YOUR NEXT CALL:` imperative 
 **Creating the run (F0), continued:** in the same call, thread the `--nyquist` invocation flag through by passing `nyquist=<FOUNDRY_NYQUIST>` (the value `setup-foundry.sh` echoed as `FOUNDRY_NYQUIST=...`, `true` or `false`). `Foundry-Init` persists it to both `state.json` and `castings/manifest.json` as `nyquist`, which is what `Foundry-Next` reads to route F4/F5 into F5.5 NYQUIST. Omit it (or pass `false`) when no `--nyquist` was given — F5.5 is then skipped and the run goes straight to F6 DONE. **Not passing it on a `--nyquist` run silently drops the flag:** the phase becomes unreachable and no regression tests are generated.
 
 **Creating the run (F0), continued:** in the same call, thread the `--max-cycles` invocation flag through by passing `max_cycles=<FOUNDRY_MAX_CYCLES>` (the value `setup-foundry.sh` echoed as `FOUNDRY_MAX_CYCLES=...`, an integer, `0` when the flag was absent). `--max-cycles N` caps the verify-fix cycles; the default `0` is unbounded. `Foundry-Init` persists it to `state.json`. **The `Foundry-Phase` call that would open a GRIND cycle beyond the cap SUCCEEDS.** It is a successful transition and never a refusal: the run's phase becomes `HALTED`, `halted_at_cycle` and `halted_reason` are written beside it, and the report is generated as part of that same transition, naming every open `LIVE` and every open `LATENT` defect. The next `Foundry-Next` then reports the run halted and issues no dispatch. **`HALTED` is a named terminal state distinct from `DONE`** — a halted run stopped with open work. Never describe it as a refusal and never describe it as a finished run.
+
+**Creating the run (F0), continued:** in the same call, thread the `--temper` invocation flag through by passing `temper=<FOUNDRY_TEMPER>` (the value `setup-foundry.sh` echoed as `FOUNDRY_TEMPER=...`, `true` or `false`). **`--temper` DEFAULTS OFF.** `Foundry-Init` persists it to both `state.json` and `castings/manifest.json` as `temper`, and `state.json` is the store of record: a TEMPER-on run routes F4 into F5 TEMPER, and a TEMPER-off run leaves F4 for F5.5 NYQUIST or F6 DONE without entering F5 at all. **Opt-in does NOT mean a TEMPER-off run gets less adversarial verification.** On a TEMPER-off run PROVE keeps its adversarial half AT INSPECT — it drives its own probes there and files what fails off the matrix as `HARDENING`. On a TEMPER-on run PROVE records those same off-row probe ideas as `TEMPER_CANDIDATE` observations instead, and F5 drives them. The adversarial work happens on every run; the flag decides WHICH PHASE does it, and a run on which no stream drives a novel probe is a run that lost a capability rather than an option. **Not passing it on a `--temper` run silently drops the flag:** F5 becomes unreachable and the probes PROVE deferred to it are never driven by anything.
+
+**Creating the run (F0), continued:** in the same call, thread the `--no-ui` invocation flag through by passing `no_ui=<FOUNDRY_NO_UI>` (the value `setup-foundry.sh` echoed as `FOUNDRY_NO_UI=...`, `true` or `false`). The flag has exactly ONE meaning, spelled once in the server's own `NO_UI_MEANING` constant, and this is the sentence every other surface quotes rather than re-words: **`--no-ui` declares that this run has no browsable UI, so the SIGHT browser audit is not part of it.** It does NOT suppress banners — the display is not a UI the run audits — and it is not a refusal. `Foundry-Init` persists it to both `state.json` and `castings/manifest.json`, exactly as `temper` and `nyquist` are. It meant all three of those things at once until this release, one meaning per document, which is three answers to a question an operator had to pick between without being told there was a choice.
+
+**Ending the run on a ruling, from any live phase (F1..F5.5):** `Foundry-Phase(phase='halt', reason=…, text=…)` is the door, and it is the SAME door the cap reaches — the cap path simply supplies the reason for you. `reason` is a member of the halt vocabulary `schemas/vocab.py` holds in `HALT_REASONS`: `cap_reached`, `lead_ruling`, `spec_change_required`, `user_stop`. `text` says why THIS run ended, which no closed set can carry — an empty `text` is accepted, because the member alone is already a complete answer, and the member is what a report groups on while the text is what a human reads. `_halt_preconditions` refuses exactly three things, and `Foundry-Gate(phase='halt', reason=…, text=…)` reports those same three as data without acting on them: a reason that is not a member, a team still registered, and a run that is already `HALTED`. On success the phase becomes `HALTED`, `halted_at_cycle` and `halted_reason` are written beside it, `phase_history` gains a `HALTED` row, and `REPORT.md` is regenerated and SEALED — your appended prose carried onto it — inside that same transition. **`HALTED` is terminal and there is no second halt:** read `REPORT.md` and start a NEW run if the work continues.
+
+**Every `Foundry-Next` response names where the run is heading**, whatever the phase and whatever the action it returns. It carries `heading_for` — `DONE` or `HALTED` — beside `open_by_tier`, the per-tier open counts that would form the backlog if the run ended now, and `cycles_to_cap`. **`cycles_to_cap` is `null` on an unbounded run, and `null` and `0` are opposite facts:** `null` says there is no cap at all, `0` says the next GRIND door seals `HALTED`, and a reader that conflates them stops a run that was never capped. Read the three together as the answer to "what ending is this run coming to", and read `references/lead-discipline.md` for why an ending with a named backlog is a successful one.
 
 **Starting a run whose target is foundry itself (F0):** a run that BUILDS the foundry plugin must be started with
 
@@ -457,9 +465,15 @@ no-op; orchestrator transitions directly to F0.9 VALIDATE.
    missing A-NNN list as re-decompose guidance. NEVER amends casting prompts in
    place. Loop until intent-coverage clears.
 
-Call `Foundry-Gate(phase='intent_coverage')` to enter F0.7. Call
-`Foundry-Intent-Coverage` to run the gate. Call `Foundry-Gate(phase='validate')`
-on intent-coverage pass to transition to F0.9.
+**F0.7 is not a gated phase transition, and `intent_coverage` is not a gate
+token.** `Foundry-Gate`'s schema takes its enum from `GATE_TO_TRANSITION` — the
+table mapping each gate token to the transition it guards — and F0.7 guards no
+transition, so it has no row there and no token of its own. A call naming
+`intent_coverage` is rejected by the SCHEMA, before any handler sees it, which
+is a rejection at the transport rather than a refusal a checklist explains: the
+step it was supposed to open never opens and nothing says why. Call
+`Foundry-Intent-Coverage` to run the F0.7 check. On intent-coverage pass, call
+`Foundry-Gate(phase='validate')` to transition to F0.9.
 
 ### F0.9: VALIDATE
 
@@ -591,6 +605,8 @@ The token is diagnostic, never a gate. It lets a `NOT_VERIFIED` record name *whi
 
 *Streams whose agent declares `min_spec_format_version` exceeding `manifest.spec_format_version_tuple` are predictively skipped at F0.5 (see F0.5 V2 step 2b) and recorded in `manifest.stream_skips`. F2 invokes only the streams not in the skip list; F0.9 sub-check 7k re-derives the expected skip set and compares to the recorded array. Phase 3 / TYPE-02.*
 
+**YOU DO NOT RECORD A STREAM. THE AGENT DOES.** Every verifying stream calls `Foundry-Stream` itself, with the counts it actually measured, and a second record for the same `(stream, cycle)` REPLACES the first rather than summing with it — the earlier one is kept under `records[]`, so the history survives and the cycle's total is the last account rather than an accumulating one. When a stream finishes, CONFIRM ITS RECORD EXISTS: `Foundry-Context` shows the cycle's roll-up. A lead that records on an agent's behalf is asserting numbers it did not measure, and when the agent then records its own the cycle carries two accounts of one run. **If a stream finished and no record exists, that is a finding about the stream** — re-dispatch it, or file it — not a gap for you to fill in.
+
 Sync all findings: `Foundry-Sync`. Don't trust build-green alone — stubs compile.
 
 Defects → `Foundry-Phase("grind_start")` → F3.
@@ -639,19 +655,23 @@ Exit with `Foundry-Gate(phase="done")` → `Foundry-Phase(phase="nyquist_done")`
 
 Shut down all teammates → `Foundry-Report` → `Foundry-Gate(phase="done")` → strip consumed evidence → `Foundry-Phase("done")`. That sequence is exact, not indicative: the report is generated FIRST, the gate is what re-executes the committed evidence corpus and RECORDS that pass against the commit it swept, the evidence strip is the commit that follows the recorded pass, and `Foundry-Phase("done")` is last.
 
-**`Foundry-Report` generates the run's report from the run's own ledgers.** You do not write it. It emits `REPORT.md` and `report.json` carrying eleven sections, in this order — these are the names the done gate refuses by, so they are the names to look for when it does:
+**`Foundry-Report` generates the run's report from the run's own ledgers.** You do not write it. It emits `REPORT.md` and `report.json` carrying every member of `REPORT_REQUIRED_SECTIONS`, in this order — these are the names the done gate refuses by, so they are the names to look for when it does:
 
 | Section | What it carries |
 |---|---|
 | `verdict_matrix` | Every requirement's ASSAY verdict with its evidence |
-| `defects_by_tier_and_status` | The whole ledger, split `LIVE` / `LATENT` / unknown against open / fixed |
+| `defects_by_tier_and_status` | The whole ledger, split `LIVE` / `LATENT` / `HARDENING` / unknown against open / fixed |
 | `latent_backlog` | Every open `LATENT` defect, named — the run's deliberate carry-forward |
+| `hardening_backlog` | Every open `HARDENING` defect, named — the off-spec findings the run carried rather than blocked on |
 | `unknown_tier_defects` | Records with no tier, listed apart so they can be re-tiered rather than guessed at |
+| `fallout_per_cycle` | Each cycle's filings that are fallout of an earlier defect, with the verdict stated beside the counts |
 | `escalated_classes` | Each class with its `exit_reason` (`clean_cycles` or `budget`) and the cycle it cleared |
 | `lead_fix_records` | Every `lead_fix` handoff the server wrote — defect id, tier, file, line count, test |
 | `inspect_modes_per_cycle` | The `FULL`-or-`DELTA` decision per cycle and the rule that fired |
+| `stream_coverage_per_cycle` | Each `(stream, cycle)` pair's checked / total / findings, and how many records a later recording replaced |
 | `spend_per_phase_and_cycle` | Tokens and minutes per phase and per cycle |
 | `unreported_dispatches` | Every agent that completed without a `Foundry-Spend` record |
+| `halt_and_co_dispatch` | How the run ended — the `halted_reason` member and your own text — beside the co-dispatch sets `Foundry-Tasks` recorded |
 | `executing_versions` | The executing server and plugin version, `server_root` and commit |
 | `baseline_comparison` | This run's cycle counts beside the recorded baseline and the convergence target |
 
@@ -750,11 +770,13 @@ When either says stop — a cycle's measured spend climbing with cycles still to
 |------|------|
 | `Validate-Report` | Validate a report's JSON block against a built-in schema (trace, prove, temper) |
 | `Verify-Citations` | Cross-reference spec requirements with PROVE verdicts for traceability |
-| `Foundry-Init` | F0: create run — pass `url=<FOUNDRY_URL from setup-foundry.sh>` so the `--url URL` invocation flag is persisted to `castings/manifest.json` `target_url` for the SIGHT/inspect gate, `nyquist=<FOUNDRY_NYQUIST from setup-foundry.sh>` so the `--nyquist` flag is persisted to `state.json` and reaches the F5.5 routing, and `max_cycles=<FOUNDRY_MAX_CYCLES from setup-foundry.sh>` so the `--max-cycles` cap is persisted and the HALTED transition can read it |
-| `Foundry-Next` | Every step: what to do next (returns `YOUR NEXT CALL:` imperative). Reports the INSPECT mode and roster; never decides them |
-| `Foundry-Context` | Reload state after compaction |
-| `Foundry-Gate` | Before phase transitions — then `Foundry-Phase`, with `Foundry-Next` between them optional |
-| `Foundry-Phase` | Mark phase transitions. The transition that opens an INSPECT decides its mode; the one that would exceed `max_cycles` halts the run |
+| `Foundry-Init` | F0: create run — thread EVERY invocation flag `setup-foundry.sh` echoed: `url=<FOUNDRY_URL>` persisted to `castings/manifest.json` `target_url` for the SIGHT/inspect gate, `nyquist=<FOUNDRY_NYQUIST>` persisted to `state.json` for the F5.5 routing, `max_cycles=<FOUNDRY_MAX_CYCLES>` persisted so the HALTED transition can read the cap, `temper=<FOUNDRY_TEMPER>` persisted so F4 can route into F5, and `no_ui=<FOUNDRY_NO_UI>` persisted so the SIGHT gate knows this run has no browsable UI. Also `Foundry-Init(resume=…, max_cycles=N)` to REWRITE the cap on a running run |
+| `Foundry-Next` | Every step: what to do next (returns `YOUR NEXT CALL:` imperative). Every response also carries `heading_for`, `open_by_tier` and `cycles_to_cap`. Reports the INSPECT mode and roster; never decides them |
+| `Foundry-Context` | Reload state after compaction; also where you confirm a cycle's stream roll-up exists |
+| `Foundry-Gate` | Before phase transitions — then `Foundry-Phase`, with `Foundry-Next` between them optional. Its token set is `GATE_TO_TRANSITION`, and each token reports the preconditions of the transition it maps to, `halt` included |
+| `Foundry-Phase` | Mark phase transitions. The transition that opens an INSPECT decides its mode; the one that would exceed `max_cycles` halts the run; `phase='halt'` with a `reason` and `text` ends it on a ruling |
+| `Foundry-Concern` | Record a cross-casting concern, or close one with a reason. An open concern from the closing GRIND refuses `Foundry-Phase(phase='inspect_start')` by id |
+| `Foundry-Roster` | Persist a verifying stream's item roster at its FIRST derivation, so later cycles read it instead of re-deriving a different one |
 | `Foundry-Defect` | Log findings — every filing carries `tier`, `class` and `target_kind` |
 | `Foundry-Observation` | Record a comment-prose finding in the observations ledger (the non-blocking half of the split) |
 | `Foundry-Observations` | Query the observations ledger, with the denylist tripwire log returned alongside |
@@ -764,7 +786,7 @@ When either says stop — a cycle's measured spend climbing with cycles still to
 | `Foundry-Tasks` | Convert defects to tasks — one structural packet per escalated class, none for a `CLEARED` one |
 | `Foundry-Verdict` | Record assay verdicts |
 | `Foundry-Coverage` | Traceability matrix |
-| `Foundry-Stream` | Mark verification stream complete |
+| `Foundry-Stream` | The verifying AGENT calls this to record its own `(stream, cycle)` coverage, and a second record REPLACES the first. You CONFIRM the record exists — you never record one on an agent's behalf |
 | `Foundry-Validate-Castings` | F0.9: multi-dimension validate |
 | `Foundry-Intent-Coverage` | F0.7: A-NNN intent coverage check |
 | `Foundry-Spawn-Teammate` | F1/F3: dispatch block + progress protocol for one casting's pre-authored prompt |
