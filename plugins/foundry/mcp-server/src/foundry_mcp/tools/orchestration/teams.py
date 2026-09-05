@@ -365,6 +365,69 @@ def foundry_register_team(
 
 
 
+def _concerns_excusing(
+    fdir: Path, cycle: int, defect_ids: list[str]
+) -> dict[str, str]:
+    """`{defect id: concern id}` for ids an OPEN concern of this cycle names.
+
+    fallout AC-041 (D-050) — the read that makes `_unrecorded_fix_problem`'s
+    third exit exist.
+
+    READ THROUGH THE CONCERN MODULE'S OWN READER, never a walk of the document
+    here: `read_concerns` is where "what is a concern record" is decided, and a
+    second walk is the shape this run has already paid for twice. LAZY, in the
+    seam style this module's other cross-module reaches use.
+
+    NOT `open_cross_casting_concerns`, deliberately. That reader drops a concern
+    whose target casting IS its source, which is right for the INSPECT rung it
+    serves (GI-023 is about a fix reaching a SIBLING) and wrong here: a casting
+    saying "my own fix is deliberately partial" is self-targeting by nature, and
+    C-022 — the concern this defect was driven on — is exactly that shape.
+
+    THE CYCLE COMPARISON IS `>=`, AND THAT IS THE ARITHMETIC, NOT LOOSENESS.
+    A `grind_dispatched` record carries the SERVER counter; `Foundry-Concern`
+    stores the cycle its CALLER declared. The counter advances at
+    `inspect_start`, so during GRIND N the counter reads N-1 and the lead
+    declares N — C-022 carries cycle 1 while this run's counter reads 0. An
+    equality test would therefore exclude every concern a lead ever files about
+    the GRIND it is standing in, which is this defect one layer over: a check
+    that silently never fires. Anything from an EARLIER cycle is still excluded,
+    which is what the scoping is for.
+
+    THE MATCH IS BOUNDED. `D-021` must not be found inside `D-0210`, and
+    `CD-021` is not a mention of `D-021`, so the id is matched with neither an
+    identifier character before it nor after it.
+    """
+    import re
+
+    from foundry_mcp.tools.concerns import CONCERN_STATUS_OPEN, read_concerns
+
+    records, problem = read_concerns(fdir)
+    if problem is not None:
+        # A ledger that will not read excuses nothing, which is the direction
+        # every advisory reader in this package takes: the door still refuses,
+        # and the operator is not told an id passed on evidence nobody has.
+        return {}
+    out: dict[str, str] = {}
+    for record in records:
+        if record.get("status") != CONCERN_STATUS_OPEN:
+            continue
+        record_cycle = record.get("cycle")
+        if not isinstance(record_cycle, int) or record_cycle < cycle:
+            continue
+        text = str(record.get("text") or "")
+        concern_id = str(record.get("id") or "")
+        if not concern_id:
+            continue
+        for defect_id in defect_ids:
+            if defect_id in out:
+                continue
+            pattern = rf"(?<![A-Za-z0-9_]){re.escape(defect_id)}(?![A-Za-z0-9_])"
+            if re.search(pattern, text):
+                out[defect_id] = concern_id
+    return out
+
+
 def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
     """The Team-Down refusal a stale fix ledger owes, or None.
 
@@ -399,7 +462,8 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
         git_changed_paths,
         git_touching_commit,
     )
-    dispatched = _grind_dispatches(fdir, current_cycle(fdir))
+    cycle = current_cycle(fdir)
+    dispatched = _grind_dispatches(fdir, cycle)
     if not dispatched:
         return None
     open_ids = {
@@ -421,6 +485,25 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
     touched = set(diff["files"])
 
     unrecorded = [r for r in still_open if str(r["file"]) in touched]
+
+    # fallout AC-041 (D-050) — THE THIRD EXIT THE HINT NAMES, MADE REAL.
+    #
+    # The hint below offers three ways past this refusal and the third is "or
+    # leave it open and say so in the cycle's concerns". This function read the
+    # dispatch rows, the defect ledger, the baseline SHA and the diff, and never
+    # read `concerns.json` — so the exit did not exist. Driven at this run's own
+    # cycle-1 door: D-021 and D-035 were deliberately left open as a partial fix
+    # of a ruled structural packet, C-022 was filed naming both ids and the
+    # reason, and Foundry-Team-Down returned the identical refusal with the
+    # identical two ids. A run with an honestly partial fix could only get its
+    # team down by falsifying a `Foundry-Fix` record or by deleting a sentence
+    # from the hint, which are the two things this door exists to prevent.
+    #
+    # An OPEN concern from this cycle that NAMES the id is now what the hint
+    # says it is, and the reason names the concern so the operator can see why
+    # an id passed rather than wondering whether the check ran.
+    excused = _concerns_excusing(fdir, cycle, [str(r["defect_id"]) for r in unrecorded])
+    unrecorded = [r for r in unrecorded if str(r["defect_id"]) not in excused]
     if not unrecorded:
         return None
 
@@ -449,6 +532,14 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
             f"{len(unrecorded)} defect(s) dispatched this cycle are still OPEN "
             f"while a commit since {base} ({base_source}) touched the file each "
             f"names: {named}"
+            + (
+                # AC-041 / D-050: an id that PASSED is named beside the concern
+                # that excused it, so the operator reads why the count is what
+                # it is rather than inferring that the check did not run.
+                "; excused by an open concern of this cycle: "
+                + ", ".join(f"{d} ({c})" for d, c in sorted(excused.items()))
+                if excused else ""
+            )
         ),
         "hint": (
             "The fix is on the branch and the ledger row is not. Close each id "
@@ -472,6 +563,7 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
         "commits": commits,
         "baseline_sha": base,
         "baseline_source": base_source,
+        "excused": excused,
     }
 
 

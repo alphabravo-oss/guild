@@ -201,6 +201,124 @@ def test_the_teardown_refusal_names_the_commit_that_made_the_change(run_env):
     assert named != base, (named, base)
 
 
+def test_an_open_concern_naming_the_id_is_the_exit_the_hint_promises(run_env):
+    """fallout AC-041 (D-050) — the third exit, driven both ways.
+
+    The refusal's hint offers three ways past it and the third is "or leave it
+    open and say so in the cycle's concerns". This function read the dispatch
+    rows, the defect ledger, the baseline SHA and the diff, and read
+    `concerns.json` never — so filing the concern the hint asks for changed
+    nothing and the door refused identically. It was driven at this run's own
+    cycle-1 door: two ids deliberately open as a partial fix of a ruled
+    structural packet, a concern filed naming both, the same refusal returned.
+
+    ONE ARRANGEMENT, TWO DRIVES. The same open defect, the same touching
+    commit, the same baseline — the ONLY thing that differs between the two
+    halves is whether an open concern of this cycle names the id, which is what
+    makes this a test of the exit rather than of the arrangement.
+    """
+    from foundry_mcp.tools.concerns import foundry_concern
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=0)
+
+    base = _repo_with_commit(project_root, "src/one.py", "print('before')\n")
+    (fdir / artifacts.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+        base + "\n", encoding="utf-8"
+    )
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        2: (["FR-008"], ["src/two.py"]),
+    })
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+    ])
+    assert foundry_defects_to_tasks(project_root)["ok"] is True
+    _repo_with_commit(project_root, "src/one.py", "print('after')\n")
+
+    # WITHOUT the concern: the door refuses, naming the id.
+    before = _unrecorded_fix_problem(fdir, project_root)
+    assert before is not None, "the arrangement does not reach the refusal"
+    assert "D-900" in before["reason"], before
+    assert before.get("excused") == {}, before
+
+    # The hint the operator is following says to do exactly this.
+    assert "leave it open and say so in the cycle's concerns" in before["hint"]
+
+    # WITH it: the same door, the same commit, one open concern naming the id.
+    #
+    # Filed at cycle 1 while the server counter reads 0 — which is the ordinary
+    # case, not a quirk: the counter advances at `inspect_start`, so during
+    # GRIND N it reads N-1 and a lead declares N. An equality test on the cycle
+    # would exclude every concern anyone ever files about the GRIND they are
+    # standing in.
+    opened = foundry_concern(
+        casting_id=1,
+        cycle=1,
+        target="2",
+        text=(
+            "D-900 is deliberately left open: the fix is partial by ruling and "
+            "the remainder is a structural packet for the next cycle."
+        ),
+        project_root=project_root,
+    )
+    assert opened.get("ok") is True, opened
+
+    after = _unrecorded_fix_problem(fdir, project_root)
+    assert after is None, after
+
+
+def test_a_concern_excuses_only_the_id_it_actually_names(run_env):
+    """fallout AC-041 (D-050) — the exit is per ID, and the match is bounded.
+
+    An excuse that leaked across ids would be worse than no exit at all: one
+    concern about one deliberately-partial fix would silently clear every other
+    dispatched id whose fix nobody recorded, which is the exact state
+    `DISPATCHED_DEFECT_UNRECORDED` exists to make visible.
+
+    Two ids are dispatched and touched; the concern names ONE. The other must
+    still refuse, and the refusal must say which id was excused and by which
+    concern — an operator reading a shrunken count needs to see why, not infer
+    that the check stopped running.
+    """
+    from foundry_mcp.tools.concerns import foundry_concern
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=0)
+
+    base = _repo_with_commit(project_root, "src/one.py", "print('a')\n")
+    (fdir / artifacts.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+        base + "\n", encoding="utf-8"
+    )
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        2: (["FR-008"], ["src/two.py"]),
+    })
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+        dict(_tiered("D-901", "LIVE"), file="src/two.py", spec_ref="FR-008"),
+    ])
+    assert foundry_defects_to_tasks(project_root)["ok"] is True
+    _repo_with_commit(project_root, "src/one.py", "print('b')\n")
+    _repo_with_commit(project_root, "src/two.py", "print('c')\n")
+
+    assert foundry_concern(
+        casting_id=1, cycle=1, target="2",
+        text="D-900 stays open by ruling; D-9010 is a different id entirely.",
+        project_root=project_root,
+    ).get("ok") is True
+
+    problem = _unrecorded_fix_problem(fdir, project_root)
+    assert problem is not None, "the unnamed id must still refuse"
+    ids = {d["id"] for d in problem["defects"]}
+    assert ids == {"D-901"}, problem["defects"]
+    # ...and the excused one is REPORTED beside the concern that excused it.
+    assert problem["excused"] == {"D-900": "C-001"}, problem["excused"]
+    assert "D-900 (C-001)" in problem["reason"], problem["reason"]
+    # The bounded match: `D-9010` in the text is not a mention of `D-901`.
+    assert "D-901" not in problem["excused"], problem["excused"]
+
+
 def test_the_teardown_door_states_the_call_order_it_enforces(run_env):
     """The hint names the exact sequence, because the door refuses on ordering.
 
