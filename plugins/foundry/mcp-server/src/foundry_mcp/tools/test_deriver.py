@@ -50,6 +50,15 @@ _REQUIREMENT_ID_RE = re.compile(r"\b(?:US|FR)-\d+\b")
 # Bash invocation stays in lock-step with the wrapper here.
 _UVX_BASE_CMD: tuple[str, ...] = (
     "uvx",
+    # D-009: uvx with no interpreter request resolves whatever `python3` the
+    # host offers -- 3.11.14 on the run that drove this, below the
+    # `requires-python = ">=3.12"` floor pyproject declares for PEP 701
+    # f-strings, so every generated test that imported a plugin script died at
+    # a SyntaxError the code does not have. The floor is requested exactly
+    # rather than as `>=3.12`: this tuple is joined on spaces and handed to a
+    # shell (`_run_command_with_timeout` runs `shell=True`), where `>=3.12`
+    # parses as a redirection and the argument disappears.
+    "--python", "3.12",
     "--from", "hypothesis-jsonschema==0.23.1",
     "--with", "hypothesis>=6.125,<7",
     "--with", "pytest>=7.4,<9",

@@ -75,6 +75,7 @@ from foundry_mcp.tools import foundry_handoff
 from foundry_mcp.tools import foundry_spawn as fs
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools import rosters
+from foundry_mcp.tools import test_deriver
 from foundry_mcp.tools.foundry_validate import foundry_validate_castings
 
 # fallout GI-010 — the monolith this module used to import is DELETED, and
@@ -109,6 +110,7 @@ from foundry_mcp.tools.orchestration import directives, fix_gate, streams, width
 # path, so the suite runs from any checkout.
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FOUNDRY_ROOT = REPO_ROOT / "plugins" / "foundry"
+MCP_SERVER = FOUNDRY_ROOT / "mcp-server"
 
 AGENTS = FOUNDRY_ROOT / "agents"
 COMMANDS = FOUNDRY_ROOT / "commands"
@@ -7085,6 +7087,74 @@ def test_no_stream_agent_says_the_lead_records_for_it(path: Path) -> None:
 #: other -- and that is a fact about the source material, not a string in the
 #: file. The floor check below holds them inside the derived roster, so a file
 #: that stops being a stream agent at all cannot sit here unnoticed.
+#: The TEST-01 harness pin, held in two places on purpose: the wrapper module
+#: runs it and `agents/spec-test-deriver.md` tells the AGENT to run it by hand,
+#: and the agent file says the two are verbatim-identical. D-016 / D-009 is
+#: what that claim is worth unchecked -- neither copy requested an interpreter,
+#: uvx resolved 3.11.14, and the generated tests died at a PEP 701 SyntaxError
+#: in code that has none.
+_UVX_PIN = test_deriver._UVX_BASE_CMD
+
+
+def _uvx_prose_block() -> str:
+    """The `## uvx Invocation Pattern` bash block, backslash-joins undone."""
+    text = _read(SPEC_TEST_DERIVER)
+    start = text.index("## uvx Invocation Pattern")
+    body = text[start : text.index("\n## ", start + 1)]
+    return " ".join(body.replace("\\\n", " ").split())
+
+
+@pytest.mark.parametrize("token", _UVX_PIN, ids=lambda s: s)
+def test_the_agent_uvx_block_names_every_pinned_token(token: str) -> None:
+    """fallout A-AUTO-003: the prose and the constant the prose cites."""
+    assert token in _uvx_prose_block(), (
+        f"agents/spec-test-deriver.md's uvx block omits {token!r}, which "
+        f"`test_deriver._UVX_BASE_CMD` pins. The file states the two are named "
+        f"verbatim in each other; a token in one and not the other means the "
+        f"agent's hand-run invocation and the wrapper's resolve differently, "
+        f"which is the whole failure D-016 drove."
+    )
+
+
+def test_the_uvx_pin_requests_the_declared_interpreter_floor() -> None:
+    """fallout A-AUTO-003 / NFR-011: the floor is READ, never re-typed.
+
+    `requires-python` is the server's own declaration of the floor PEP 701
+    needs; raising it there and leaving `--python` behind would put the harness
+    back under an interpreter the code cannot parse, which is exactly how
+    D-009 arrived. So the floor is derived from pyproject.toml and the pin is
+    checked against it rather than against a literal repeated here.
+    """
+    declared = re.search(
+        r'^requires-python\s*=\s*">=\s*(\d+)\.(\d+)"',
+        (MCP_SERVER / "pyproject.toml").read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert declared, "mcp-server/pyproject.toml declares no `requires-python` floor."
+    floor = (int(declared.group(1)), int(declared.group(2)))
+
+    assert "--python" in _UVX_PIN, (
+        f"`test_deriver._UVX_BASE_CMD` requests no interpreter, so uvx resolves "
+        f"whatever `python3` the host offers -- 3.11.14 on the host that drove "
+        f"D-009, under the {floor[0]}.{floor[1]} floor pyproject declares."
+    )
+    requested = _UVX_PIN[_UVX_PIN.index("--python") + 1]
+    parts = tuple(int(n) for n in requested.split(".")[:2])
+    assert parts >= floor, (
+        f"`_UVX_BASE_CMD` requests Python {requested}, below the "
+        f"{floor[0]}.{floor[1]} floor `requires-python` declares. The generated "
+        f"tests import plugin scripts, so an interpreter under the floor fails "
+        f"them at a SyntaxError the code does not have."
+    )
+    assert not any(c in requested for c in "<>=!*"), (
+        f"`_UVX_BASE_CMD` requests {requested!r}, a specifier rather than a "
+        f"version. This tuple is space-joined into a shell command "
+        f"(`_run_command_with_timeout` runs `shell=True`), where `>` and `<` "
+        f"are redirections: the request would be eaten and the floor lost "
+        f"silently, which is D-009 again with an extra step."
+    )
+
+
 ROSTER_DERIVING_AGENTS = (RESEARCH_AUDITOR, SPEC_TEST_DERIVER)
 
 

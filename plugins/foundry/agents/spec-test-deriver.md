@@ -199,7 +199,8 @@ co-firing — both surfaces of the discipline at one observation.
 After writing all test files, run:
 
 ```bash
-uvx --from hypothesis-jsonschema==0.23.1 \
+uvx --python 3.12 \
+    --from hypothesis-jsonschema==0.23.1 \
     --with hypothesis>=6.125,<7 \
     --with pytest>=7.4,<9 \
     --with pytest-reportlog==1.0.0 \
@@ -208,9 +209,14 @@ uvx --from hypothesis-jsonschema==0.23.1 \
     --report-log foundry-archive/{run}/test_observations/test-deriver-cycle-{N}-report.jsonl
 ```
 
-Pin trio is locked. Do NOT add MCP server runtime deps. The pin trio is
-also named verbatim in `foundry_mcp.tools.test_deriver._UVX_BASE_CMD` so
-the wrapper module and your Bash invocation stay in lock-step.
+Pin trio is locked. Do NOT add MCP server runtime deps. The pin trio and
+the `--python` floor are named verbatim in
+`foundry_mcp.tools.test_deriver._UVX_BASE_CMD` so the wrapper module and
+your Bash invocation stay in lock-step. The floor is not optional: uvx with
+no interpreter request resolves whatever `python3` the host offers, and
+below the `requires-python` floor the server declares, every generated test
+that imports a plugin script dies at a SyntaxError the code does not have
+(D-016).
 
 ## Output Format
 
