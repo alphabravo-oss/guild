@@ -83,6 +83,7 @@ from foundry_mcp.schemas.vocab import (
     RUN_PHASE_HALTED,
 )
 from foundry_mcp.tools import foundry_orchestrator as fo
+from foundry_mcp.tools import artifacts
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools.foundry import foundry_add_defect
 from foundry_mcp.tools.foundry_orchestrator import (
@@ -3501,7 +3502,7 @@ def test_an_absent_artifact_is_not_a_problem(run_env):
     EXISTS and cannot be read is a refusal."""
     project_root, fdir = run_env
 
-    assert fo._run_artifact_problems(fdir) == []
+    assert artifacts._run_artifact_problems(fdir) == []
     assert fo._artifact_guard(fdir) is None
     assert "corrupt_artifacts" not in fo.foundry_next_action(project_root=project_root)
 
@@ -3595,12 +3596,21 @@ def test_every_orchestrator_entry_point_runs_the_artifact_guard():
     entry_points = _dispatched_orchestrator_handlers()
     assert len(entry_points) >= 12, entry_points
 
-    tree = ast.parse(Path(fo.__file__).read_text(encoding="utf-8"))
-    bodies = {
-        node.name: node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+    # fallout FR-004 / AC-014 — THE PIN FOLLOWS THE DEFINITION, NOT THE FILE.
+    #
+    # Commit group (0) moved `_artifact_guard`, `_run_artifact_problems` and
+    # `_declared_external_inputs` into `tools/artifacts.py` and left the DOORS
+    # here. Both modules are parsed and their bodies merged, so the entry-point
+    # half is still read off the doors' own source while the guard chain is read
+    # off the leaf that now holds it. Merging rather than switching is what
+    # keeps this test honest through the carve: it names symbols, and a symbol
+    # is found wherever the package defines it.
+    bodies = {}
+    for module in (fo, artifacts):
+        tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                bodies.setdefault(node.name, node)
 
     def calls(name: str, callee: str) -> bool:
         return any(
@@ -3987,6 +3997,18 @@ def test_every_private_function_the_plugin_ships_is_reachable():
 #: module would vouch for it and the allowlist would grant itself the exception
 #: it is supposed to record.
 _ATTRIBUTE_READ_REEXPORTS: dict[tuple[str, str], str] = {
+    ("tools/foundry_orchestrator.py", "_TX_LOCK_SUFFIX"): (
+        "tests/test_artifacts.py::"
+        "test_the_lock_name_the_leaf_opens_is_the_one_the_monolith_opens reads "
+        "it as `fo._TX_LOCK_SUFFIX` and compares it to `artifacts._TX_LOCK_"
+        "SUFFIX`. Commit group (0) deleted the monolith's own copy, so holding "
+        "the import is what keeps that assertion resolving -- and makes what it "
+        "asserts true by construction: after the dedup the two sides are the "
+        "same object. The entry goes when the monolith does."
+    ),
+    ("tools/foundry_orchestrator.py", "_TX_TMP_SUFFIX"): (
+        "the other half of the same assertion; see the entry above."
+    ),
     ("scripts/measure-run.py", "THUNDER_VIPER_BASELINE"): (
         "tests/test_measure_run.py::"
         "test_the_baseline_and_target_are_read_from_vocab_not_re_typed asserts "
@@ -6186,9 +6208,13 @@ def test_no_module_renames_onto_a_run_artifact_without_a_lock():
     # D-142's anchor: the two modules that OWN the write primitive must be
     # recognised as renaming, or the rename idiom has moved behind a spelling
     # this scan no longer tracks and `assert not offenders` means nothing.
+    # fallout FR-004: `_save_json` moved to `tools/artifacts.py` when commit
+    # group (0) deleted the monolith's copy of Block B. The anchor follows the
+    # DEFINITION, because what it pins is that the scan still recognises the
+    # idiom -- not which file happens to hold it.
     assert {
         "foundry.py#_atomic_rename_write",
-        "foundry_orchestrator.py#_save_json",
+        "artifacts.py#_save_json",
     } <= set(seen), (
         f"the scan recognised {seen} as tmp+rename sites, which does not "
         f"include the package's own two write primitives. The rename "
@@ -6606,7 +6632,7 @@ def test_every_artifact_the_run_dir_holds_is_guarded_at_any_depth(run_env):
         original = member.read_bytes()
         try:
             member.write_bytes(b"\xe9\x00 not a readable artifact\n")
-            problems = fo._run_artifact_problems(fdir)
+            problems = artifacts._run_artifact_problems(fdir)
             assert any(member.name in p for p in problems), (
                 f"{member.name} was corrupted and the guard reported {problems}. "
                 f"Membership must be DERIVED on every axis -- which files, which "
@@ -6636,7 +6662,7 @@ def test_a_binary_artifact_is_not_reported_as_corrupt(run_env):
     (fdir / "sight").mkdir(exist_ok=True)
     (fdir / "sight" / "screenshot.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xe9")
 
-    assert fo._run_artifact_problems(fdir) == []
+    assert artifacts._run_artifact_problems(fdir) == []
     assert fo._artifact_guard(fdir) is None
 
 
@@ -6731,7 +6757,7 @@ def test_a_pycache_entry_does_not_brick_the_handshake(run_env):
     (cache / "h.cpython-current.pyc").write_bytes(live + b"\x00\x00\x00\x00\xa7\xe9")
     (cache / "h.cpython-311.pyc").write_bytes(b"\xa7\r\r\n\x00\x00\x00\x00\xe9")
 
-    assert fo._run_artifact_problems(fdir) == []
+    assert artifacts._run_artifact_problems(fdir) == []
     assert fo._artifact_guard(fdir) is None
 
 
@@ -6747,7 +6773,7 @@ def test_an_unrecognised_binary_type_is_reported_rather_than_skipped(run_env):
     _seed_run_artifacts(project_root, fdir)
     (fdir / "mystery.dat").write_bytes(b"\x00\x01\x02\xe9 not a type anyone enrolled")
 
-    problems = fo._run_artifact_problems(fdir)
+    problems = artifacts._run_artifact_problems(fdir)
     assert any("mystery.dat" in p for p in problems), problems
 
 
@@ -6764,7 +6790,7 @@ def test_a_directory_occupying_an_artifact_name_is_refused_not_skipped(run_env):
     (fdir / "state.json").unlink()
     (fdir / "state.json").mkdir()
 
-    problems = fo._run_artifact_problems(fdir)
+    problems = artifacts._run_artifact_problems(fdir)
     assert any("state.json" in p for p in problems), problems
     guard = fo._artifact_guard(fdir)
     assert guard is not None and "state.json" in guard["error"]
@@ -6824,7 +6850,7 @@ def test_a_scratch_directory_does_not_make_the_run_unreadable(run_env, scratch):
     _seed_run_artifacts(project_root, fdir)
     (fdir / scratch).mkdir(parents=True)
 
-    assert fo._run_artifact_problems(fdir) == [], (
+    assert artifacts._run_artifact_problems(fdir) == [], (
         f"{scratch} is a directory; nothing opens it as a document"
     )
     assert fo._artifact_guard(fdir) is None
@@ -6871,7 +6897,7 @@ def test_a_directory_at_a_document_position_is_still_named(run_env):
     # ...with a scratch directory of the D-195 shape sitting beside it.
     (fdir / "traces" / "scratch" / "v1.2").mkdir(parents=True)
 
-    problems = fo._run_artifact_problems(fdir)
+    problems = artifacts._run_artifact_problems(fdir)
     assert any("manifest.json" in p for p in problems), problems
     assert not any("v1.2" in p for p in problems), problems
 
@@ -6889,7 +6915,7 @@ def test_a_scratch_directory_does_not_silence_a_genuinely_corrupt_document(run_e
     # ...and an in-flight write sidecar, which is still not an artifact.
     (fdir / "state.json.9.9.tmp").write_bytes(b"\xe9 half a document")
 
-    problems = fo._run_artifact_problems(fdir)
+    problems = artifacts._run_artifact_problems(fdir)
 
     assert [p.split(" could")[0] for p in problems] == ["defects.json"], problems
 
@@ -6952,7 +6978,7 @@ def test_a_directory_at_every_run_document_position_is_named(run_env):
     (fdir / "test_observations" / "generated" / ".hypothesis"
      / "unicode_data" / "14.0.0").mkdir(parents=True)
 
-    problems = fo._run_artifact_problems(fdir)
+    problems = artifacts._run_artifact_problems(fdir)
     named = {p.split(" could")[0] for p in problems}
 
     unguarded = sorted(
@@ -7024,7 +7050,7 @@ def test_a_directory_at_every_run_marker_position_is_named(run_env):
     (fdir / "test_observations" / "generated" / ".hypothesis"
      / "unicode_data" / "14.0.0").mkdir(parents=True)
 
-    problems = fo._run_artifact_problems(fdir)
+    problems = artifacts._run_artifact_problems(fdir)
     named = {p.split(" could")[0] for p in problems}
 
     unguarded = sorted(p for p in _RUN_MARKER_POSITIONS if p not in named)
@@ -7057,7 +7083,7 @@ def test_every_stream_completion_marker_is_a_document_position():
     assert STREAM_WIRE_IDS, "empty vocabulary would make this pass vacuously"
     unguarded = sorted(
         marker for wire_id in STREAM_WIRE_IDS
-        if not fo._is_document_position(Path("run") / (marker := f".{wire_id}-complete"))
+        if not artifacts._is_document_position(Path("run") / (marker := f".{wire_id}-complete"))
     )
     assert unguarded == [], (
         f"stream completion marker(s) the guard walks past: {unguarded}. "
@@ -7143,7 +7169,7 @@ def test_the_document_suffix_table_covers_every_declared_run_artifact():
     unenrolled = sorted(
         f"{name} = {value!r}"
         for name, value in declared.items()
-        if not fo._is_document_position(Path("run") / value)
+        if not artifacts._is_document_position(Path("run") / value)
     )
     assert unenrolled == [], (
         f"run artifact(s) neither _RUN_DOCUMENT_SUFFIXES nor _RUN_MARKER_NAMES "
@@ -7342,7 +7368,7 @@ def _drive_the_guard_against_a_writer(fdir: Path, seconds: float) -> list[list[s
     try:
         deadline = time.time() + seconds
         while time.time() < deadline:
-            if (problems := fo._run_artifact_problems(fdir)):
+            if (problems := artifacts._run_artifact_problems(fdir)):
                 hits.append(problems)
     finally:
         stop.set()
@@ -7422,13 +7448,13 @@ def test_the_sidecars_the_writers_create_are_the_ones_the_scan_excludes(run_env)
     tmp_sidecars = [p for p in seen if p.name.endswith(fo._TX_TMP_SUFFIX)]
     assert tmp_sidecars, "no _save_json sidecar observed — the spy missed the write"
     for sidecar in tmp_sidecars:
-        assert fo._is_write_sidecar(sidecar), sidecar
+        assert artifacts._is_write_sidecar(sidecar), sidecar
 
     lock = fdir / ("defects.json" + fo._TX_LOCK_SUFFIX)
     assert lock.exists(), "the transaction's lock sidecar was not created"
-    assert fo._is_write_sidecar(lock)
+    assert artifacts._is_write_sidecar(lock)
     # And the lock sitting in the run dir is not reported as an artifact.
-    assert not any(lock.name in p for p in fo._run_artifact_problems(fdir))
+    assert not any(lock.name in p for p in artifacts._run_artifact_problems(fdir))
 
 
 def test_a_real_artifact_that_vanishes_mid_scan_is_absent_not_corrupt(run_env):
@@ -7441,10 +7467,10 @@ def test_a_real_artifact_that_vanishes_mid_scan_is_absent_not_corrupt(run_env):
     _project_root, fdir = run_env
     ghost = fdir / "vanished.json"
 
-    assert fo._unless_it_vanished(ghost, "vanished.json could not be read (x)") is None
+    assert artifacts._unless_it_vanished(ghost, "vanished.json could not be read (x)") is None
     # A file that IS there keeps its named problem, so the guard has not gone soft.
     ghost.write_bytes(b"\xff\xfe not utf-8")
-    assert fo._unless_it_vanished(ghost, "vanished.json could not be read (x)") == (
+    assert artifacts._unless_it_vanished(ghost, "vanished.json could not be read (x)") == (
         "vanished.json could not be read (x)"
     )
 
@@ -7479,7 +7505,7 @@ def _d129_run_artifact_problems(fdir: Path) -> list[str]:
     """
     if not fdir or not fdir.exists():
         return []
-    decoders = {".json": fo._document_problem, ".md": fo._text_problem}
+    decoders = {".json": fo._document_problem, ".md": artifacts._text_problem}
     candidates = sorted(p for p in fdir.glob("*") if p.is_file())
     manifest = fdir / "castings" / "manifest.json"
     if manifest.is_file():
@@ -7513,7 +7539,7 @@ def render_artifact_guard_table(fdir: Path) -> str:
             member.write_bytes(b"\xe9\x00 not a readable artifact\n")
             oldest = any(member.name in p for p in _prefix_run_artifact_problems(fdir))
             d129 = any(member.name in p for p in _d129_run_artifact_problems(fdir))
-            post = any(member.name in p for p in fo._run_artifact_problems(fdir))
+            post = any(member.name in p for p in artifacts._run_artifact_problems(fdir))
             out.append("   %-34s %-11s %-11s %s" % (
                 str(member.relative_to(fdir)),
                 "NAMED" if oldest else "invisible",
@@ -7763,19 +7789,19 @@ def render_artifact_exemption_table(tmp_path: Path) -> str:
     out = ["== the exemption table fails toward REPORTING, without false alarms =="]
     out.append(
         "   healthy run dir + png + two pyc versions -> problems=%d"
-        % len(fo._run_artifact_problems(fdir))
+        % len(artifacts._run_artifact_problems(fdir))
     )
     (fdir / "mystery.dat").write_bytes(b"\x00\x01\xe9 a type nobody enrolled")
     out.append(
         "   ...plus one unrecognised binary type      -> %s"
-        % [p.split(" could")[0] for p in fo._run_artifact_problems(fdir)]
+        % [p.split(" could")[0] for p in artifacts._run_artifact_problems(fdir)]
     )
     (fdir / "mystery.dat").unlink()
     (fdir / "state.json").unlink()
     (fdir / "state.json").mkdir()
     out.append(
         "   ...state.json replaced by a DIRECTORY     -> %s"
-        % [p.split(" (")[0] for p in fo._run_artifact_problems(fdir)]
+        % [p.split(" (")[0] for p in artifacts._run_artifact_problems(fdir)]
     )
     return "\n".join(out)
 
@@ -8160,7 +8186,7 @@ def test_a_corrupt_spec_outside_the_run_dir_is_refused_not_raised(tmp_path, monk
     try:
         monkeypatch.setattr(srv, "_project_root", root)
         # The guard SEES it now — the assertion the driving evidence inverted.
-        problems = fo._run_artifact_problems(fdir)
+        problems = artifacts._run_artifact_problems(fdir)
         assert any("spec.md" in p for p in problems), problems
 
         result = srv._DISPATCH["Foundry-Validate-Castings"]({})
@@ -8185,7 +8211,7 @@ def test_the_same_spec_read_healthy_still_passes_the_door(tmp_path, monkeypatch)
     )
     try:
         monkeypatch.setattr(srv, "_project_root", root)
-        assert fo._run_artifact_problems(fdir) == []
+        assert artifacts._run_artifact_problems(fdir) == []
         result = srv._DISPATCH["Foundry-Validate-Castings"]({})
         assert "could not be read" not in str(result.get("error", "")), result
     finally:
@@ -8206,9 +8232,9 @@ def test_the_external_input_membership_is_derived_over_the_state_document(tmp_pa
         tmp_path, "inputs/context.txt", _BAD_UTF8_SPEC, state_key="operator_context_path"
     )
     try:
-        declared = fo._declared_external_inputs(fdir)
+        declared = artifacts._declared_external_inputs(fdir)
         assert [p.name for p in declared] == ["context.txt"], declared
-        problems = fo._run_artifact_problems(fdir)
+        problems = artifacts._run_artifact_problems(fdir)
         assert any("context.txt" in p for p in problems), problems
     finally:
         foundry_state.clear_active_run()
@@ -8240,8 +8266,8 @@ def test_declared_leaves_that_name_no_file_are_not_members(tmp_path):
     )
     foundry_state.set_active_run("d145b")
     try:
-        assert fo._declared_external_inputs(fdir) == []
-        assert fo._run_artifact_problems(fdir) == []
+        assert artifacts._declared_external_inputs(fdir) == []
+        assert artifacts._run_artifact_problems(fdir) == []
     finally:
         foundry_state.clear_active_run()
 
@@ -8315,7 +8341,7 @@ def _plant_corrupt_shapes(under: Path) -> None:
 def _populate_sweep_worktree(fdir: Path) -> Path:
     """A checkout exactly where `_setup_worktree` roots the boundary sweep's."""
     tree = (
-        fdir / fo.RUN_WORKTREES_DIRNAME / "sweep-evidence"
+        fdir / artifacts.RUN_WORKTREES_DIRNAME / "sweep-evidence"
         / "plugins" / "foundry" / "mcp-server" / ".venv" / "lib"
     )
     _plant_corrupt_shapes(tree)
@@ -8341,12 +8367,12 @@ def test_the_guard_walks_past_the_run_s_own_worktrees_subtree(run_env):
     # — `_setup_worktree`'s `dir_prefix` is a parameter, so the exclusion is the
     # directory, never one spelling of what is nested in it.
     _populate_sweep_worktree(fdir)
-    _plant_corrupt_shapes(fdir / fo.RUN_WORKTREES_DIRNAME / "casting-9" / "src")
+    _plant_corrupt_shapes(fdir / artifacts.RUN_WORKTREES_DIRNAME / "casting-9" / "src")
     _plant_corrupt_shapes(
-        fdir / fo.RUN_WORKTREES_DIRNAME / "test-deriver-cycle-3" / "deep" / "nest"
+        fdir / artifacts.RUN_WORKTREES_DIRNAME / "test-deriver-cycle-3" / "deep" / "nest"
     )
 
-    assert fo._run_artifact_problems(fdir) == [], (
+    assert artifacts._run_artifact_problems(fdir) == [], (
         "a checkout this package nests under the run dir is not one of the "
         "run's artifacts"
     )
@@ -8356,7 +8382,7 @@ def test_the_guard_walks_past_the_run_s_own_worktrees_subtree(run_env):
     # true positives, and they are the reason the exclusion is a POSITION rather
     # than a relaxation of what counts as broken.
     _plant_corrupt_shapes(fdir / "traces")
-    problems = fo._run_artifact_problems(fdir)
+    problems = artifacts._run_artifact_problems(fdir)
     for named in ("payload.log", "state.json", "spawns.log", ".last-next-at"):
         assert any(named in p for p in problems), (named, problems)
     # D-195's control is still silent, on both sides of the exclusion.
@@ -8414,9 +8440,9 @@ def test_the_worktrees_exclusion_names_what_setup_worktree_roots_under():
     """
     roots = _setup_worktree_root_dirnames()
 
-    assert roots == [fo.RUN_WORKTREES_DIRNAME], (
+    assert roots == [artifacts.RUN_WORKTREES_DIRNAME], (
         f"_setup_worktree nests worktrees under {roots}, the guard walks past "
-        f"{fo.RUN_WORKTREES_DIRNAME!r}; one of the two has moved"
+        f"{artifacts.RUN_WORKTREES_DIRNAME!r}; one of the two has moved"
     )
 
 
@@ -8448,7 +8474,7 @@ def test_a_declared_external_input_is_still_named_beside_a_live_sweep_worktree(
         _populate_sweep_worktree(fdir)
         monkeypatch.setattr(srv, "_project_root", root)
 
-        problems = fo._run_artifact_problems(fdir)
+        problems = artifacts._run_artifact_problems(fdir)
         assert any("spec.md" in p for p in problems), problems
         # ...and NOTHING from inside the worktree rode along with it.
         assert not any("payload.log" in p for p in problems), problems
@@ -9094,7 +9120,7 @@ def render_external_input_guard_table(tmp_path: Path) -> str:
     out.append(f"   rglob over the run dir alone  : {[]}")
     out.append(
         f"   ...plus the run's declared inputs: "
-        f"{[p.split(' could')[0] for p in fo._run_artifact_problems(fdir)]}"
+        f"{[p.split(' could')[0] for p in artifacts._run_artifact_problems(fdir)]}"
     )
 
     out += ["", "-- and the door itself, through the real _DISPATCH --"]
@@ -9122,7 +9148,7 @@ def render_external_input_guard_table(tmp_path: Path) -> str:
     try:
         srv._project_root = good_root
         result = srv._DISPATCH["Foundry-Validate-Castings"]({})
-        out.append(f"   guard problems = {fo._run_artifact_problems(good_fdir)}")
+        out.append(f"   guard problems = {artifacts._run_artifact_problems(good_fdir)}")
         out.append(
             f"   Foundry-Validate-Castings  read-fault reported="
             f"{'could not be read' in str(result.get('error', ''))}"
@@ -9139,8 +9165,8 @@ def render_external_input_guard_table(tmp_path: Path) -> str:
     try:
         out.append(
             f"   a key nobody has heard of -> "
-            f"{[p.name for p in fo._declared_external_inputs(new_fdir)]} reported="
-            f"{[p.split(' could')[0] for p in fo._run_artifact_problems(new_fdir)]}"
+            f"{[p.name for p in artifacts._declared_external_inputs(new_fdir)]} reported="
+            f"{[p.split(' could')[0] for p in artifacts._run_artifact_problems(new_fdir)]}"
         )
     finally:
         foundry_state.clear_active_run()
