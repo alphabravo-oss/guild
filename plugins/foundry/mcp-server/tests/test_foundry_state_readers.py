@@ -1929,3 +1929,642 @@ def test_halted_state_answers_a_hand_built_expected_record(run_env) -> None:
 
     assert read({"phase": "F3"}) is None
     assert read({}) is None
+
+
+# ---------------------------------------------------------------------------
+# fallout GI-033 / FR-063 / AC-061 / D-021 / D-035 (concerns C-027, C-030) —
+# the leaf moves.
+#
+# Each reader below was declared in an `orchestration/` module and read from
+# BOTH layers the boundary guard keeps apart, so it could live in neither. The
+# expected values here are HAND-BUILT and never compared against the copy each
+# one came from: castings 2 and 1 delete those copies and repoint in the same
+# wave, so a parity assertion would be comparing an expression to itself and
+# then, days later, to nothing at all.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "persisted,expected",
+    [
+        ({"max_cycles": 3}, 3),
+        ({"max_cycles": 0}, 0),
+        ({}, 0),
+        # D-225: the door validates with a JSON-Schema `integer`, in which a
+        # zero-fraction float IS one. `2.0` was ACCEPTED there and read as
+        # absent here, so a run capped at 2 opened GRIND cycle 100.
+        ({"max_cycles": 2.0}, 2),
+        ({"max_cycles": 2.5}, 0),
+        # `bool` is an `int` subclass and `True` is not a cap of one.
+        ({"max_cycles": True}, 0),
+        ({"max_cycles": False}, 0),
+        ({"max_cycles": -1}, 0),
+        ({"max_cycles": "2"}, 0),
+        ({"max_cycles": None}, 0),
+    ],
+)
+def test_persisted_max_cycles_reads_a_cap_or_says_there_is_none(
+    persisted, expected
+) -> None:
+    """CT-016 / D-225 — one read of the cap, in the door's terms.
+
+    Zero means unbounded, and anything that is not a usable cap reads as zero
+    because this is consulted inside a transition whose only other answer is
+    "proceed". The float row is the defect: it was ACCEPTED at the door and
+    discarded here, which is the one combination that loses a cap silently.
+    """
+    assert fs.persisted_max_cycles(persisted) == expected
+
+
+def test_finalize_open_phase_entry_closes_an_open_entry_with_its_duration() -> None:
+    """The open entry gets `ended_at` and a rendered `duration`, in place."""
+    entry = {"started_at": "2026-09-05T10:00:00+00:00"}
+    assert fs.finalize_open_phase_entry(entry, "2026-09-05T10:03:07+00:00") is None
+    assert entry == {
+        "started_at": "2026-09-05T10:00:00+00:00",
+        "ended_at": "2026-09-05T10:03:07+00:00",
+        "duration": "3m 7s",
+    }
+
+
+def test_finalize_open_phase_entry_leaves_a_closed_or_unstarted_entry_alone() -> None:
+    """Closing twice would overwrite when a phase ENDED with when someone looked.
+
+    And an entry with no `started_at` was never open, so there is nothing to
+    close — a phase this run has not entered must not acquire an end time.
+    """
+    closed = {"started_at": "2026-09-05T10:00:00+00:00", "ended_at": "ALREADY"}
+    fs.finalize_open_phase_entry(closed, "2026-09-05T11:00:00+00:00")
+    assert closed == {"started_at": "2026-09-05T10:00:00+00:00", "ended_at": "ALREADY"}
+
+    unstarted: dict = {}
+    fs.finalize_open_phase_entry(unstarted, "2026-09-05T11:00:00+00:00")
+    assert unstarted == {}
+
+
+def test_an_unparseable_start_still_closes_the_entry_without_a_duration() -> None:
+    """The stamp comes before the arithmetic, and that ordering is the point.
+
+    A hand-edited archive whose `started_at` is not ISO-8601 would otherwise
+    leave an entry that stays open forever and is re-closed at every later
+    transition.
+    """
+    entry = {"started_at": "not-a-timestamp"}
+    fs.finalize_open_phase_entry(entry, "2026-09-05T10:03:07+00:00")
+    assert entry == {
+        "started_at": "not-a-timestamp",
+        "ended_at": "2026-09-05T10:03:07+00:00",
+    }
+    assert "duration" not in entry
+
+
+# --- the concern-ledger read (C-030's mechanical half) ---------------------
+
+OPEN = "open"
+
+
+def _concern(**fields) -> dict:
+    record = {
+        "id": "C-1", "cycle": 2, "source_casting": 10,
+        "target_casting_id": 4, "status": OPEN, "text": "t",
+    }
+    record.update(fields)
+    return record
+
+
+def test_open_cross_casting_concerns_names_only_the_ones_landing_elsewhere(
+    run_env,
+) -> None:
+    """GI-023 / ST-005 — the list the INSPECT door refuses on.
+
+    Four records, one qualifying: a concern a casting filed against ITSELF
+    lands on nobody else, and one whose target resolved to no casting lands on
+    nobody at all. Refusing INSPECT for either would block the run over work
+    that has no other owner.
+    """
+    _write_json(run_env, "concerns.json", {"concerns": [
+        _concern(id="C-1", source_casting=10, target_casting_id=4),
+        _concern(id="C-2", source_casting=10, target_casting_id=10),
+        _concern(id="C-3", source_casting=10, target_casting_id=None),
+        _concern(id="C-4", source_casting=10, target_casting_id=2, status="closed"),
+    ]})
+    got = fs.open_cross_casting_concerns(run_env, status_open=OPEN)
+    assert [c["id"] for c in got] == ["C-1"]
+
+
+def test_a_dispatched_concern_is_addressed_and_leaves_the_list(run_env) -> None:
+    """FR-039 — `dispatched` is the mark Foundry-Tasks leaves when the concern
+    reached the casting that owns it, so it is addressed by definition. Only
+    `open` qualifies; nothing else is treated as open by omission.
+    """
+    _write_json(run_env, "concerns.json", {"concerns": [
+        _concern(id="C-1", status="dispatched"),
+        _concern(id="C-2", status="closed"),
+        _concern(id="C-3", status=OPEN),
+    ]})
+    assert [c["id"] for c in fs.open_cross_casting_concerns(run_env, status_open=OPEN)] == ["C-3"]
+
+
+def test_the_concern_read_scopes_to_one_cycle_when_asked(run_env) -> None:
+    """The door refuses on the CLOSING GRIND's concerns, not the run's history."""
+    _write_json(run_env, "concerns.json", {"concerns": [
+        _concern(id="C-1", cycle=1), _concern(id="C-2", cycle=2),
+    ]})
+    assert [c["id"] for c in fs.open_cross_casting_concerns(
+        run_env, status_open=OPEN, cycle=2)] == ["C-2"]
+    assert [c["id"] for c in fs.open_cross_casting_concerns(
+        run_env, status_open=OPEN)] == ["C-1", "C-2"]
+
+
+def test_a_casting_id_typed_as_an_int_and_as_a_string_are_the_same_casting(
+    run_env,
+) -> None:
+    """A manifest may carry ids as integers and a filing the same id as a string.
+
+    Comparing them raw would make a self-targeting concern look cross-casting
+    and refuse INSPECT over a concern that lands on its own filer.
+    """
+    _write_json(run_env, "concerns.json", {"concerns": [
+        _concern(id="C-1", source_casting=10, target_casting_id="10"),
+    ]})
+    assert fs.open_cross_casting_concerns(run_env, status_open=OPEN) == []
+
+
+@pytest.mark.parametrize("document", [
+    {}, {"concerns": "nope"}, {"concerns": ["a string", 7, None]},
+], ids=["no-collection", "not-a-list", "non-dict-members"])
+def test_the_concern_read_is_total_over_a_malformed_ledger(run_env, document) -> None:
+    """No reader here may raise across the MCP boundary, and this one is
+    consulted from inside a transition — a raise takes the door down."""
+    _write_json(run_env, "concerns.json", document)
+    assert fs.open_cross_casting_concerns(run_env, status_open=OPEN) == []
+
+
+def test_an_absent_and_a_torn_concern_ledger_both_read_as_nothing_open(
+    run_env,
+) -> None:
+    """A run that filed no concern has no concerns.json, and the door must open."""
+    assert fs.open_cross_casting_concerns(run_env, status_open=OPEN) == []
+    (run_env / "concerns.json").write_text('{"concerns": [', encoding="utf-8")
+    assert fs.open_cross_casting_concerns(run_env, status_open=OPEN) == []
+
+
+# --- the two halves of "is a team still holding the tree" -------------------
+
+
+def _scan(*, available=True, live=()) -> object:
+    return lambda: {
+        "available": available, "live": list(live),
+        "zombie": [], "user": [], "lead": None,
+    }
+
+
+def test_active_teams_is_active_when_either_half_says_so(run_env, tmp_path) -> None:
+    """BOTH halves must be clear for a gate to pass (C-020's drive).
+
+    The artifact half alone passes while teammates are still running; the pane
+    half alone passes while a roster entry nobody cleaned up still names a team.
+    """
+    teams_dir = tmp_path / "teams"
+    (teams_dir / "cast-team").mkdir(parents=True)
+    _write_json(run_env, "state.json", {"active_teams": ["cast-team"]})
+
+    only_dirs = fs.active_teams(run_env, teams_dir=teams_dir, scan=_scan())
+    assert only_dirs == {
+        "active": True, "teams": ["cast-team"], "live_panes": [],
+    }
+
+    _write_json(run_env, "state.json", {"active_teams": []})
+    only_panes = fs.active_teams(
+        run_env, teams_dir=teams_dir,
+        scan=_scan(live=[("%1", "@grind-c10", "2.1.80")]),
+    )
+    assert only_panes == {
+        "active": True, "teams": [], "live_panes": ["@grind-c10"],
+    }
+
+
+def test_active_teams_is_clear_only_when_both_halves_are(run_env, tmp_path) -> None:
+    """A roster naming a team whose directory TeamDelete removed is an entry
+    nobody cleaned up, not a live team — so with no panes the gate may pass."""
+    teams_dir = tmp_path / "teams"
+    teams_dir.mkdir()
+    _write_json(run_env, "state.json", {"active_teams": ["deleted-team"]})
+    assert fs.active_teams(run_env, teams_dir=teams_dir, scan=_scan()) == {
+        "active": False, "teams": [], "live_panes": [],
+    }
+
+
+def test_the_shutdown_hint_is_offered_only_for_the_case_it_explains(
+    run_env, tmp_path
+) -> None:
+    """Panes running with no team registered is the state an operator cannot
+    work out from the two lists — the roster says gone, the machine says not.
+
+    The sentence itself is passed in: it names SendMessage, TeamDelete and
+    `tmux kill-pane`, which is the lifecycle layer's protocol and not this
+    module's to spell.
+    """
+    teams_dir = tmp_path / "teams"
+    (teams_dir / "cast-team").mkdir(parents=True)
+    _write_json(run_env, "state.json", {"active_teams": ["cast-team"]})
+    hint_for = lambda panes: f"shut down {len(panes)}"
+
+    with_team = fs.active_teams(
+        run_env, teams_dir=teams_dir, hint_for=hint_for,
+        scan=_scan(live=[("%1", "@grind-c10", "2.1.80")]),
+    )
+    assert "hint" not in with_team
+
+    _write_json(run_env, "state.json", {"active_teams": []})
+    without_team = fs.active_teams(
+        run_env, teams_dir=teams_dir, hint_for=hint_for,
+        scan=_scan(live=[("%1", "@grind-c10", "2.1.80"), ("%2", "@grind-c4", "2.1.80")]),
+    )
+    assert without_team["hint"] == "shut down 2"
+
+    # No hint asked for, no hint invented.
+    assert "hint" not in fs.active_teams(
+        run_env, teams_dir=teams_dir,
+        scan=_scan(live=[("%1", "@grind-c10", "2.1.80")]),
+    )
+
+
+def test_a_scan_that_could_not_look_contributes_no_live_panes(
+    run_env, tmp_path
+) -> None:
+    """`available: False` is "this half could not be checked", and it must not
+    be read as "this half is clear" — nor may it invent panes from a listing
+    the scan could not make. A machine with no tmux is the common case."""
+    teams_dir = tmp_path / "teams"
+    teams_dir.mkdir()
+    _write_json(run_env, "state.json", {"active_teams": []})
+    unavailable = _scan(available=False, live=[("%1", "@grind-c10", "2.1.80")])
+    assert fs.active_teams(run_env, teams_dir=teams_dir, scan=unavailable) == {
+        "active": False, "teams": [], "live_panes": [],
+    }
+
+
+def test_the_pane_scan_is_the_default_and_never_raises_on_this_machine() -> None:
+    """The real reader, driven. It shells out, so the only assertion that holds
+    on every machine is the SHAPE — a host with no tmux answers
+    `available: False` and a host with one answers with four lists."""
+    panes = fs.live_teammate_panes()
+    assert set(panes) == {"available", "live", "zombie", "user", "lead"}
+    assert isinstance(panes["available"], bool)
+    for key in ("live", "zombie", "user"):
+        assert isinstance(panes[key], list)
+
+
+def test_a_pane_pid_that_is_not_a_pid_is_never_handed_to_pgrep() -> None:
+    """The PID comes off a tmux format string, so it is text until checked."""
+    for value in ("", "   ", "not-a-pid", "12x", "-1"):
+        assert fs._pane_pid_has_children(value) is False
+
+
+# --- the streams-complete read chain ---------------------------------------
+
+MARKER_OF = lambda stream: f".{stream}-complete"
+FALLBACK_STREAMS = ("trace", "prove", "test")
+INSPECT_PHASES = ("F2", "F5")
+
+
+def _decision(**fields) -> dict:
+    entry = {
+        "cycle": 1, "mode": "FULL", "rule": "first_of_phase",
+        "required_streams": ["trace", "prove"], "stream_scope": {"prove": "all"},
+    }
+    entry.update(fields)
+    return entry
+
+
+def _marker(run_dir: Path, stream: str, **counts) -> None:
+    body = "".join(f"{k}={v}\n" for k, v in counts.items())
+    (run_dir / MARKER_OF(stream)).write_text(body, encoding="utf-8")
+
+
+def test_marker_counts_reads_the_key_value_body(run_env) -> None:
+    """The load path for archives written before the per-cycle roll-up existed."""
+    _marker(run_env, "trace", items_checked=40, items_total=42, findings=3)
+    assert fs.marker_counts(run_env / MARKER_OF("trace")) == {
+        "items_checked": 40, "items_total": 42, "findings": 3,
+    }
+
+
+def test_an_absent_marker_and_an_unreadable_one_are_different_answers(
+    run_env,
+) -> None:
+    """D-098 — None means "no marker"; a PRESENT marker whose numbers cannot be
+    read must FAIL the coverage threshold rather than skip it, so it yields the
+    zero-counts record. UnicodeDecodeError is a ValueError and an `except
+    OSError` around this raised straight through.
+    """
+    assert fs.marker_counts(run_env / MARKER_OF("trace")) is None
+
+    (run_env / MARKER_OF("trace")).write_bytes(b"items_checked=\xff\xfe4\n")
+    assert fs.marker_counts(run_env / MARKER_OF("trace")) == {
+        "items_checked": 0, "items_total": 0, "findings": None,
+    }
+
+    _marker(run_env, "prove", items_checked="not-a-number")
+    assert fs.marker_counts(run_env / MARKER_OF("prove")) == {
+        "items_checked": 0, "items_total": 0, "findings": None,
+    }
+
+
+def test_rollup_totals_reads_one_streams_bucket_and_counts_its_tranches(
+    run_env,
+) -> None:
+    """`records` is how many tranches the bucket kept, which is what makes a
+    replaced record visible to a reader that only has the totals."""
+    _write_json(run_env, "stream-rollup.json", {"cycles": {"2": {"prove": {
+        "items_checked": 38, "items_total": 40, "findings": 2,
+        "records": [{"items_checked": 20}, {"items_checked": 38}],
+    }}}})
+    assert fs.rollup_totals(run_env, 2, "prove") == {
+        "items_checked": 38, "items_total": 40, "findings": 2, "records": 2,
+    }
+
+
+def test_no_record_for_a_stream_is_none_and_a_recorded_zero_is_not(
+    run_env,
+) -> None:
+    """"Nobody ran it" and "it ran and found nothing" are different answers, and
+    only the first may fall back to the marker."""
+    _write_json(run_env, "stream-rollup.json", {"cycles": {"2": {"prove": {
+        "items_checked": 0, "items_total": 0, "findings": 0,
+    }}}})
+    assert fs.rollup_totals(run_env, 2, "prove") == {
+        "items_checked": 0, "items_total": 0, "findings": 0, "records": 0,
+    }
+    assert fs.rollup_totals(run_env, 2, "trace") is None
+    assert fs.rollup_totals(run_env, 9, "prove") is None
+
+
+@pytest.mark.parametrize("document", [
+    {}, {"cycles": "nope"}, {"cycles": {"2": "nope"}}, {"cycles": {"2": {"prove": 7}}},
+], ids=["empty", "cycles-not-a-map", "bucket-not-a-map", "entry-not-a-map"])
+def test_rollup_totals_is_total_over_a_malformed_document(run_env, document) -> None:
+    _write_json(run_env, "stream-rollup.json", document)
+    assert fs.rollup_totals(run_env, 2, "prove") is None
+
+
+def test_the_prove_roster_is_read_only_from_this_cycles_delta_decision(
+    run_env,
+) -> None:
+    """D-216 — a width is a fact about ONE crossing.
+
+    A roster decided for cycle 2 says nothing about what cycle 1's PROVE owed,
+    and a FULL cycle has no roster at all. None means "measure against the
+    spec"; an empty LIST means "the recorded roster is empty", which is a
+    different instruction.
+    """
+    _write_json(run_env, "state.json", {"cycle": 2, "inspect_modes": [
+        _decision(cycle=2, mode="DELTA", prove_sample=["FR-1", "AC-2", 7]),
+    ]})
+    assert fs.recorded_prove_roster(run_env, 2, modes=INSPECT_MODES) == ["FR-1", "AC-2"]
+    assert fs.recorded_prove_roster(run_env, 1, modes=INSPECT_MODES) is None
+
+    _write_json(run_env, "state.json", {"cycle": 2, "inspect_modes": [
+        _decision(cycle=2, mode="FULL", prove_sample=["FR-1"]),
+    ]})
+    assert fs.recorded_prove_roster(run_env, 2, modes=INSPECT_MODES) is None
+
+    _write_json(run_env, "state.json", {"cycle": 2, "inspect_modes": [
+        _decision(cycle=2, mode="DELTA", prove_sample=[]),
+    ]})
+    assert fs.recorded_prove_roster(run_env, 2, modes=INSPECT_MODES) == []
+
+    _write_json(run_env, "state.json", {"cycle": 2, "inspect_modes": [
+        _decision(cycle=2, mode="DELTA"),
+    ]})
+    assert fs.recorded_prove_roster(run_env, 2, modes=INSPECT_MODES) is None
+
+
+def _shortfall(run_env, stream, cycle, spec_count=40):
+    return fs.coverage_shortfall(
+        run_env, stream, cycle, marker_of=MARKER_OF,
+        modes=INSPECT_MODES, spec_requirement_count=spec_count,
+    )
+
+
+def test_a_delta_cycle_owes_its_recorded_roster_and_nothing_else(run_env) -> None:
+    """D-080 — the DELTA arm, and the reason DELTA was unreachable without it.
+
+    Measuring a DELTA cycle against the whole spec meant a PROVE that checked
+    exactly the roster the server itself recorded was reported incomplete
+    forever. No 0.95 slack here: the roster is a NAMED, FINITE list the server
+    drew, so "which of these did you not check" has an answer.
+    """
+    _write_json(run_env, "state.json", {"cycle": 5, "inspect_modes": [
+        _decision(cycle=5, mode="DELTA", prove_sample=["FR-1", "AC-2", "AC-3"]),
+    ]})
+    _write_json(run_env, "stream-rollup.json", {"cycles": {"5": {"prove": {
+        "items_checked": 3, "items_total": 3,
+    }}}})
+    assert _shortfall(run_env, "prove", 5) is None
+
+    _write_json(run_env, "stream-rollup.json", {"cycles": {"5": {"prove": {
+        "items_checked": 2, "items_total": 3,
+    }}}})
+    short = _shortfall(run_env, "prove", 5)
+    assert short["stream"] == "prove"
+    assert short["mode"] == "DELTA"
+    assert short["checked"] == 2
+    assert short["required"] == 3
+    assert short["coverage"] == "67%"
+    assert short["roster"] == ["FR-1", "AC-2", "AC-3"]
+    assert "recorded DELTA roster names" in short["reason"]
+
+
+def test_a_full_cycle_measures_prove_against_the_spec_with_five_percent_slack(
+    run_env,
+) -> None:
+    """At FULL the denominator is the whole spec and the 5% is tolerance for a
+    matrix that moved under a long stream. The count is PASSED IN: which spec
+    is this run's belongs to the module that climbs to it."""
+    _write_json(run_env, "state.json", {"cycle": 1})
+    _write_json(run_env, "stream-rollup.json", {"cycles": {"1": {"prove": {
+        "items_checked": 38, "items_total": 40,
+    }}}})
+    assert _shortfall(run_env, "prove", 1, spec_count=40) is None
+
+    _write_json(run_env, "stream-rollup.json", {"cycles": {"1": {"prove": {
+        "items_checked": 12, "items_total": 40,
+    }}}})
+    short = _shortfall(run_env, "prove", 1, spec_count=40)
+    assert short["checked"] == 12 and short["required"] == 40
+    assert short["coverage"] == "30%"
+    assert "must be ≥95%" in short["reason"]
+
+    # A spec that parses to nothing has no threshold to fall short of.
+    assert _shortfall(run_env, "prove", 1, spec_count=0) is None
+
+
+def test_trace_measures_against_the_symbols_it_declared(run_env) -> None:
+    """TRACE's denominator is its own `items_total`, not the spec's."""
+    _write_json(run_env, "state.json", {"cycle": 1})
+    _write_json(run_env, "stream-rollup.json", {"cycles": {"1": {"trace": {
+        "items_checked": 96, "items_total": 100,
+    }}}})
+    assert _shortfall(run_env, "trace", 1) is None
+
+    _write_json(run_env, "stream-rollup.json", {"cycles": {"1": {"trace": {
+        "items_checked": 50, "items_total": 100,
+    }}}})
+    short = _shortfall(run_env, "trace", 1)
+    assert short["coverage"] == "50%"
+    assert "Must check ≥95% of declared symbols" in short["reason"]
+
+
+def test_a_cycle_with_no_rollup_entry_falls_back_to_the_marker(run_env) -> None:
+    """Without the fallback an archive written before the roll-up existed had a
+    marker the check counted as PRESENT while the threshold evaluated nothing,
+    so 40% coverage passed. "No numbers" means "read them from the marker"."""
+    _write_json(run_env, "state.json", {"cycle": 1})
+    _marker(run_env, "trace", items_checked=40, items_total=100)
+    short = _shortfall(run_env, "trace", 1)
+    assert short["checked"] == 40 and short["required"] == 100
+
+    # And a stream with neither has no numbers at all, which is not a shortfall.
+    assert _shortfall(run_env, "prove", 1) is None
+
+
+def _complete(run_env, **overrides):
+    kwargs = dict(
+        modes=INSPECT_MODES, marker_of=MARKER_OF, sight={"required": False},
+        spec_requirement_count=40, inspect_phases=INSPECT_PHASES,
+        fallback_streams=FALLBACK_STREAMS,
+    )
+    kwargs.update(overrides)
+    return fs.check_streams_complete(run_env, **kwargs)
+
+
+def test_the_streams_check_reads_the_recorded_roster_and_reports_the_width(
+    run_env,
+) -> None:
+    """GI-008 / AC-017 — the roster is READ, never recomputed.
+
+    The transition that opened this INSPECT decided which streams it requires
+    and recorded them; re-deriving here would let the check disagree with the
+    cycle that actually ran. `missing` is a SPACE-JOINED STRING because every
+    caller blocks on it being non-empty.
+    """
+    _write_json(run_env, "state.json", {"phase": "F2", "cycle": 1, "inspect_modes": [
+        _decision(cycle=1, mode="DELTA", rule="delta",
+                  required_streams=["trace", "prove"],
+                  stream_scope={"prove": "sampled"}),
+    ]})
+    _marker(run_env, "trace", items_checked=100, items_total=100)
+
+    result = _complete(run_env)
+    assert result["required"] == ["trace", "prove"]
+    assert result["missing"] == "prove"
+    assert result["complete"] is False
+    assert result["inspect_mode"] == "DELTA"
+    assert result["inspect_rule"] == "delta"
+    assert result["stream_scope"] == {"prove": "sampled"}
+
+    _marker(run_env, "prove", items_checked=40, items_total=40)
+    assert _complete(run_env)["complete"] is True
+    assert _complete(run_env)["missing"] == ""
+
+
+def test_a_stream_that_recorded_but_fell_short_is_missing_and_detailed(
+    run_env,
+) -> None:
+    """CT-003 — the thresholds are evaluated HERE, once per cycle, at the one
+    point where every tranche of a partially-delivered stream is in hand. The
+    stream is reported in `missing` so existing callers keep blocking on it,
+    and detailed in `shortfalls` so the lead learns which number was short."""
+    _write_json(run_env, "state.json", {"phase": "F2", "cycle": 1, "inspect_modes": [
+        _decision(cycle=1, required_streams=["trace"]),
+    ]})
+    _marker(run_env, "trace", items_checked=50, items_total=100)
+    _write_json(run_env, "stream-rollup.json", {"cycles": {"1": {"trace": {
+        "items_checked": 50, "items_total": 100,
+    }}}})
+
+    result = _complete(run_env)
+    assert result["complete"] is False
+    assert result["missing"] == "trace"
+    assert [s["stream"] for s in result["shortfalls"]] == ["trace"]
+    assert result["shortfalls"][0]["coverage"] == "50%"
+
+
+def test_an_unrecorded_width_inside_an_inspect_blocks_with_the_shapers_words(
+    run_env,
+) -> None:
+    """D-117 — an unrecorded width is not FULL width.
+
+    `missing` carries the sentinel `inspect_mode` so every existing caller
+    blocks without being taught a new key. The refusal's own sentences are the
+    SHAPER's — it names the transitions that record a width and the remedy,
+    which is door protocol — so it is passed in rather than spelled here.
+    """
+    _write_json(run_env, "state.json", {"phase": "F2", "cycle": 3})
+    shaper = lambda _run_dir: {"reason": "no width for cycle 3", "hint": "cross a boundary"}
+
+    result = _complete(run_env, unrecorded_width_problem=shaper)
+    assert result["complete"] is False
+    assert result["missing"] == "inspect_mode"
+    assert result["required"] == []
+    assert result["unrecorded_width"] is True
+    assert result["reason"] == "no width for cycle 3"
+    assert result["hint"] == "cross a boundary"
+
+
+def test_the_width_arm_is_scoped_to_a_run_that_is_in_an_inspect(run_env) -> None:
+    """A run in no INSPECT has no INSPECT whose width could be missing — and
+    this is also the plain "did these markers record" query, which a run that
+    never entered F2 may ask."""
+    _write_json(run_env, "state.json", {"phase": "F3", "cycle": 3})
+    shaper = lambda _run_dir: {"reason": "r", "hint": "h"}
+    assert "unrecorded_width" not in _complete(run_env, unrecorded_width_problem=shaper)
+
+
+def test_a_reporting_caller_omits_the_shaper_and_the_arm_is_skipped(
+    run_env,
+) -> None:
+    """The two doors that REFUSE ask the shaper themselves; a caller that only
+    reports passes none, and then gets the roster answer rather than a refusal
+    it has no business making."""
+    _write_json(run_env, "state.json", {"phase": "F2", "cycle": 3})
+    result = _complete(run_env)
+    assert "unrecorded_width" not in result
+    assert result["required"] == list(FALLBACK_STREAMS)
+
+
+def test_a_recorded_mode_with_no_usable_roster_rebuilds_the_manifest_answer(
+    run_env,
+) -> None:
+    """The width IS recorded, so this is not the D-117 hole: the roster is
+    rebuilt from the run's own manifest exactly as it was before the width
+    existed. `sight` is the already-computed answer, so this makes no second
+    decision about whether the run has a browsable UI."""
+    _write_json(run_env, "state.json", {"phase": "F2", "cycle": 1, "inspect_modes": [
+        _decision(cycle=1, mode="FULL", rule="first_of_phase", required_streams="nope"),
+    ]})
+    (run_env / "castings").mkdir(exist_ok=True)
+    _write_json(run_env, "castings/manifest.json", {"target_url": ""})
+
+    assert _complete(run_env)["required"] == ["trace", "prove", "test"]
+    assert _complete(run_env, sight={"required": True})["required"] == [
+        "trace", "prove", "test", "sight",
+    ]
+
+    _write_json(run_env, "castings/manifest.json", {"target_url": "http://localhost:3000"})
+    assert _complete(run_env, sight={"required": True})["required"] == [
+        "trace", "prove", "test", "sight", "probe",
+    ]
+    assert _complete(run_env)["inspect_mode"] == "FULL"
+
+
+def test_the_streams_check_is_total_over_an_empty_run(run_env) -> None:
+    """No state, no manifest, no markers. Nothing may raise: this is consulted
+    from inside a transition whose failure takes the door down."""
+    result = _complete(run_env)
+    assert result["complete"] is False
+    assert result["required"] == list(FALLBACK_STREAMS)
+    assert result["missing"] == "trace prove test"
+    assert result["inspect_mode"] == "" and result["stream_scope"] == {}

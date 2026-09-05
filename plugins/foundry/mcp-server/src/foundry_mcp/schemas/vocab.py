@@ -336,6 +336,34 @@ TIER_UNKNOWN = "unknown"
 # without a second edit.
 DEFECT_TIER_OR_UNKNOWN = frozenset(DEFECT_TIERS | {TIER_UNKNOWN})  # 4 items
 
+#: CT-008 / AC-022 — the tiers that BLOCK a gate. LIVE is a reachable failure
+#: and blocks as it always did; `unknown` is a record no stream has classified
+#: and blocks identically until one re-files it with a tier (FR-051). LATENT
+#: and HARDENING block nothing: both stay open, tracked, and named in their own
+#: F6 backlog section (FR-006 / GI-014).
+#:
+#: fallout GI-033 / D-021 / D-035 (concern C-027) — WHY IT IS HERE AND NOT AT
+#: THE GATE. GI-014's own applies-to column has always named this tuple beside
+#: DEFECT_TIERS in this module, and the layering guard is what forced the move
+#: to actually happen: it was declared in `orchestration/gates.py`, a VERIFIER
+#: module, while `orchestration/guidance.py` — LIFECYCLE — needed the same
+#: membership to count blocking defects for the status display. A symbol both
+#: layers read can live in neither, so it lives in the leaf that declares the
+#: vocabulary it is derived from.
+#:
+#: A TUPLE, NOT A FROZENSET, and deliberately so: it is an ORDERED pair that a
+#: refusal reads out in this order ("LIVE, then unknown"), and the order is the
+#: one a reader of that sentence expects. Membership is the only test any
+#: consumer applies, so nothing rests on the container beyond that.
+#:
+#: Derived from `TIER_UNKNOWN` rather than spelling "unknown" a second time —
+#: the sentinel has exactly one spelling and this is a reader of it.
+#:
+#: Extend only via phase-level RFC. In particular a new tier is NOT a member
+#: by default: DEFECT_TIERS grew by HARDENING and this tuple deliberately did
+#: not, which is the whole of AC-022's second clause.
+BLOCKING_TIERS = ("LIVE", TIER_UNKNOWN)  # 2 members
+
 
 def defect_tier(record: Mapping[str, object]) -> str:
     """The tier a defect record READS as — never raises, never guesses.

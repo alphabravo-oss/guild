@@ -2247,3 +2247,668 @@ def persisted_escalated_classes(
         for key, entry in classes.items()
         if key not in overrides and status_of(entry) == escalated
     )
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-033 / FR-063 / AC-061 / D-021 / D-035 (concerns C-027, C-030) —
+# THE LEAF MOVES, and the arithmetic that makes them the only available home.
+#
+# The boundary guard forbids verifier -> lifecycle AND lifecycle -> verifier at
+# module top, with one enumerated seam (transitions -> halt). That makes the
+# two layers mutually unreachable, so a symbol read by BOTH — say
+# `orchestration/transitions.py` (verifier) and `orchestration/guidance.py`
+# (lifecycle) — can live in neither. It must live in a leaf, and orchestration
+# modules cannot be leaves under the guard. Every reader below is one such
+# symbol, moved here from the layer that happened to declare it first.
+#
+# EVERY ONE IS A READ. Nothing here writes a run artifact: the writers and the
+# rule engines stayed where they were, for the reasons the section above this
+# one already gives. A pane scan is a read of the MACHINE rather than of the
+# run directory, which is the one line the ruling drew differently from this
+# module's older `json and pathlib` phrasing — a readers-only leaf that lists
+# panes read-only is still a leaf, and the alternative was a gate that passed
+# while teammates were still holding the tree.
+#
+# NO PARITY PINS. Casting 2 and casting 1 delete their copies and repoint in
+# the same wave, so a test asserting "this equals the copy it came from" would
+# be comparing an expression to itself and then to nothing. Every test for
+# these is built on hand-written expected values.
+# --------------------------------------------------------------------------- #
+
+
+def persisted_max_cycles(state: dict) -> int:
+    """CT-016 — THE ONE READ of `state.json.max_cycles`, in the door's terms.
+
+    Returns the cap in force: a positive int, or 0 for "no cap", which is the
+    default and means unbounded.
+
+    D-225 — THE DOOR ACCEPTED A CAP THIS READ SILENTLY DISCARDED.
+    ------------------------------------------------------------
+    `Foundry-Init` advertises `max_cycles` as `{"type": "integer"}` and
+    `server.py` validates it with Draft202012Validator, in which a zero-fraction
+    float IS an integer — so `2.0` is ACCEPTED at the door and persisted as
+    `2.0`. The guard below read `isinstance(max_cycles, int)`, and
+    `isinstance(2.0, int)` is False, so the cap read as absent. Driven: cap 2.0
+    persisted, counter at 99, `Foundry-Phase('grind_start')` returned ok True
+    and phase F3 — an operator who asked for a cap of 2 opened GRIND cycle 100
+    with no notice. The schema had no `minimum` either, so `-1` was accepted at
+    the same door and read here as unbounded.
+
+    The fix is on BOTH sides and they meet exactly: the door advertises
+    `minimum: 0`, so a negative cap is refused where the operator can see it
+    rather than discarded here; and this read accepts the zero-fraction float
+    the schema calls an integer, because JSON has no integer type and `2.0` is
+    the integer 2 by the rule the door validated against.
+
+    WHY NORMALISE HERE RATHER THAN ONLY AT THE DISPATCH. `state.json` is not
+    always written by this server's current door — a resumed archive, a
+    hand-edited file, a fixture — and the deciding read is the one place that
+    must never mistake a cap for its absence. Anything that is not a usable cap
+    (a string, a fractional float, a bool, a negative) reads as 0/no cap,
+    because this function cannot refuse: it is consulted from inside a
+    transition whose only other answer is "proceed".
+
+    `bool` is tested FIRST because it is an `int` subclass and `True` is not a
+    cap of 1.
+    """
+    raw = state.get("max_cycles", 0)
+    if isinstance(raw, bool):
+        return 0
+    if isinstance(raw, int):
+        return raw if raw > 0 else 0
+    if isinstance(raw, float) and raw.is_integer():
+        return int(raw) if raw > 0 else 0
+    return 0
+
+
+def finalize_open_phase_entry(entry: dict, now: str) -> None:
+    """Stamp `ended_at` and `duration` on an OPEN `phase_times` entry.
+
+    Mutates in place and returns None. An entry with no `started_at`, or one
+    that already carries `ended_at`, is left exactly as it is — closing a phase
+    twice would overwrite the moment it really ended with the moment somebody
+    looked.
+
+    TWO CALLERS IN TWO LAYERS, which is why it is here: the phase transition
+    closes every still-open entry before opening the new one, and the passive
+    sub-phase stamping closes F0 / F0.5 / F0.9 from file-state signals. One
+    implementation or the two eventually disagree about what a closed phase
+    looks like, and the pair sits across the layer boundary.
+
+    UNPARSEABLE TIMESTAMPS STILL CLOSE THE ENTRY. `ended_at` is written before
+    the arithmetic, so a `started_at` that is not ISO-8601 — a hand-edited
+    archive, a fixture — leaves a closed entry with no `duration` rather than
+    an entry that stays open forever and is re-closed at every later
+    transition.
+
+    ``datetime`` is imported INSIDE the function, the convention this module's
+    other time readers already follow for the leaf-contract reason stated at
+    ``handoffs_wall_clock_seconds``.
+    """
+    from datetime import datetime
+
+    if "started_at" not in entry or "ended_at" in entry:
+        return
+    entry["ended_at"] = now
+    try:
+        start = datetime.fromisoformat(entry["started_at"])
+        end = datetime.fromisoformat(now)
+        delta = end - start
+        mins = int(delta.total_seconds() // 60)
+        secs = int(delta.total_seconds() % 60)
+        entry["duration"] = f"{mins}m {secs}s"
+    except (ValueError, KeyError, TypeError):
+        pass
+
+
+def open_cross_casting_concerns(
+    run_dir: Path, *, status_open: str, cycle: int | None = None
+) -> list[dict]:
+    """Open concerns whose target casting is NOT the casting that filed them.
+
+    Returns the records themselves, in ledger order. Pass `cycle` to scope the
+    answer to one GRIND; omit it for every open cross-casting concern.
+
+    "Unaddressed" is `status == status_open` and nothing else (GI-023 / ST-005
+    / FR-039): `dispatched` is the mark Foundry-Tasks leaves when the concern
+    reaches the casting that owns it, and a dispatched concern has been
+    addressed by definition. The status member is PASSED IN rather than typed
+    here, on the same rule every other closed-set value in this module follows.
+
+    fallout GI-033 (concern C-030) — WHY THE READ IS THE LEAF'S. The INSPECT
+    door refuses on this list, and `orchestration/transitions.py` is a VERIFIER
+    module while `tools/concerns.py` reaches `tools/foundry.py` at module top
+    for its ledger apparatus — so the edge did not merely cross into the
+    lifecycle layer, it pulled the largest lifecycle module in the tree across
+    with it. The ledger's WRITERS stay in `tools/concerns.py` with the
+    transaction and the markdown render; this is the read, and casting 1's own
+    reader delegates here so there is one implementation (GI-024).
+
+    A record with no `target_casting_id` is not a cross-casting concern: it
+    named a target nothing resolved to a casting, and the door may not refuse
+    on a concern that lands on nobody. The comparison is on `str()` of both
+    sides because a manifest may carry casting ids as integers and a filing may
+    carry the same id as a string.
+    """
+    document, _problem = read_document(Path(run_dir) / "concerns.json")
+    records = document.get("concerns")
+    out: list[dict] = []
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict):
+            continue
+        if record.get("status") != status_open:
+            continue
+        if cycle is not None and record.get("cycle") != cycle:
+            continue
+        target_casting = record.get("target_casting_id")
+        if target_casting is None:
+            continue
+        if str(target_casting) == str(record.get("source_casting")):
+            continue
+        out.append(record)
+    return out
+
+
+#: The pane titles that mark a tmux pane as a Claude Code teammate rather than
+#: one of the operator's own. Claude Code prefixes teammate titles with "@";
+#: the phase and stream names are foundry's own agent naming. A pane matching
+#: none of these is the USER's and is never counted, never listed and never
+#: killed.
+TEAMMATE_PANE_TITLE_PATTERN = (
+    r"^@|"
+    r"cast[-_]|grind[-_]|inspect[-_]|"
+    r"assay[-_]|temper[-_]|decompose[-_]|"
+    r"trace[-_]|prove[-_]|sight[-_]|"
+    r"test[-_]|probe[-_]|"
+    r"^teammate-|^agent-"
+)
+
+
+def _pane_pid_has_children(pid: str) -> bool:
+    """True when a pane's process has children — i.e. an agent is still running.
+
+    A live teammate's shell has the agent as a child; a zombie pane is the
+    shell alone. Anything that is not a plain decimal PID is False rather than
+    an argument handed to `pgrep`.
+    """
+    import subprocess
+
+    if not pid or not pid.strip().isdigit():
+        return False
+    try:
+        result = subprocess.run(
+            ["pgrep", "-P", pid.strip()], capture_output=True, timeout=3
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def live_teammate_panes() -> dict:
+    """Scan tmux and classify every pane. Returns, and never raises::
+
+        {"available": bool,               # tmux answered at all
+         "live":   [(pane_id, title, cmd)],   # teammate, agent still running
+         "zombie": [(pane_id, title, cmd)],   # teammate, dead or childless
+         "user":   [(pane_id, title, cmd)],   # not a teammate — never touched
+         "lead":   (pane_id, title) | None}   # the active pane
+
+    THE OTHER HALF of "is a team still holding the tree", beside
+    `registered_team_dirs`. Both must be clear for a gate to pass: a check that
+    took only the artifact half passes while teammates are still running, which
+    is the drive this exists for.
+
+    fallout GI-033 / D-021 / D-035 (concern C-027) — WHY AN ENVIRONMENT READ IS
+    LEAF MATERIAL. `orchestration/teams.py` is LIFECYCLE and the gates and
+    transitions that ask the question are VERIFIER, so the scan could be
+    reached from only one of the two layers wherever it sat inside
+    orchestration. It is a READ with no writer — it lists panes and kills
+    nothing; `_kill_panes` stays in the lifecycle module with `register` and
+    `unregister` — and a readers-only leaf that reads the machine instead of
+    the run directory is still a leaf. That is the one line this module's older
+    "json and pathlib" phrasing drew differently, and it was a casting
+    convention rather than the spec.
+
+    CLASSIFICATION, and why it is not just `pane_current_command`. For a live
+    teammate that command is the Claude Code VERSION NUMBER (e.g. "2.1.80"),
+    not "claude" or "node"; a zombie shows "bash"/"zsh" because the agent
+    exited and the shell is what is left. So the title says WHETHER a pane is a
+    teammate and the child-process check says whether it is still working, and
+    neither alone is enough.
+
+    Every failure mode — no tmux binary, tmux not answering, a timeout, a
+    malformed row — degrades to `available: False` or to skipping the row. A
+    gate that cannot see the machine must not therefore believe it is empty:
+    `available` is what tells a caller "this half could not be checked" apart
+    from "this half is clear".
+    """
+    import re
+    import subprocess
+
+    empty: dict = {
+        "available": False, "live": [], "zombie": [], "user": [], "lead": None,
+    }
+    try:
+        check = subprocess.run(["tmux", "list-sessions"], capture_output=True, timeout=5)
+        if check.returncode != 0:
+            return empty
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return empty
+
+    teammate_re = re.compile(TEAMMATE_PANE_TITLE_PATTERN, re.IGNORECASE)
+
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-a", "-F",
+             "#{session_name}:#{window_index}.#{pane_index}\t"
+             "#{pane_title}\t#{pane_dead}\t#{pane_current_command}\t"
+             "#{pane_active}\t#{pane_pid}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return empty
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return empty
+
+    live: list = []
+    zombie: list = []
+    user: list = []
+    lead = None
+
+    for line in result.stdout.strip().split("\n"):
+        if not line.strip():
+            continue
+        parts = line.split("\t", 5)
+        if len(parts) < 6:
+            continue
+        pane_id, title, dead, cmd, active, pid = parts
+
+        if active == "1":
+            lead = (pane_id, title)
+            continue
+        if not teammate_re.search(title):
+            user.append((pane_id, title, cmd))
+            continue
+        if dead == "1":
+            zombie.append((pane_id, title, cmd))
+            continue
+        if _pane_pid_has_children(pid):
+            live.append((pane_id, title, cmd))
+        else:
+            zombie.append((pane_id, title, cmd))
+
+    return {"available": True, "live": live, "zombie": zombie, "user": user, "lead": lead}
+
+
+def active_teams(
+    run_dir: Path, *, teams_dir: Path, hint_for=None, scan=None
+) -> dict:
+    """Is any team still holding the tree? Both halves, composed. Never raises.
+
+    Returns ``{"active": bool, "teams": [names], "live_panes": [titles]}``,
+    plus ``hint`` when ``hint_for`` is given and there are live panes but no
+    registered team left — the case where the roster says the team is gone and
+    the machine says it is not, which is the one an operator cannot work out
+    from the two lists alone.
+
+    TWO LAYERS, BOTH REQUIRED. `registered_team_dirs` answers the artifact
+    half: `state.json.active_teams` crossed against the directories still on
+    disk, so a name whose directory `TeamDelete` removed is a roster entry
+    nobody cleaned up rather than a live team. `live_teammate_panes` answers
+    the machine half. Either one alone lets a gate pass while teammates are
+    still running, which is why the composition is here and not at each caller.
+
+    ``teams_dir`` is supplied rather than known: where a machine keeps its team
+    directories is not a fact about the run. ``hint_for`` takes the live pane
+    titles and returns the shutdown sentence — protocol prose naming
+    SendMessage, TeamDelete and `tmux kill-pane`, which belongs to the
+    lifecycle module that owns those doors, so it is passed in on the same rule
+    every other sentence in this module follows. ``scan`` is the pane reader,
+    defaulting to `live_teammate_panes`; a test passes its own rather than
+    shelling out to a tmux the machine may not have.
+    """
+    teams = registered_team_dirs(run_dir, teams_dir=teams_dir)
+
+    panes = (scan or live_teammate_panes)()
+    live_panes: list[str] = []
+    if isinstance(panes, dict) and panes.get("available") and panes.get("live"):
+        live_panes = [
+            row[1] for row in panes["live"]
+            if isinstance(row, (list, tuple)) and len(row) > 1 and isinstance(row[1], str)
+        ]
+
+    result: dict = {
+        "active": bool(teams) or bool(live_panes),
+        "teams": teams,
+        "live_panes": live_panes,
+    }
+    if live_panes and not teams and hint_for is not None:
+        result["hint"] = hint_for(live_panes)
+    return result
+
+
+def marker_counts(marker: Path) -> dict | None:
+    """Parse a ``.{stream}-complete`` marker's ``key=value`` body. Never raises.
+
+    Returns ``{"items_checked", "items_total", "findings"}`` with ``findings``
+    possibly None (the key absent), or None when the marker is not there.
+
+    THE LOAD PATH FOR ARCHIVES WRITTEN BEFORE THE PER-CYCLE ROLL-UP EXISTED —
+    those runs have markers and no `stream-rollup.json`, and the coverage
+    threshold has to be measurable on them.
+
+    AN UNREADABLE MARKER IS NOT AN ABSENT ONE (D-098). A marker with one
+    non-UTF-8 byte still yields the zero-counts record, because None means "no
+    marker" and a PRESENT marker whose numbers cannot be read must FAIL the
+    coverage threshold rather than skip it. `read_text_file` is the total read
+    that makes the distinction reachable: UnicodeDecodeError is a ValueError,
+    not an OSError, and an `except OSError` around this raised straight
+    through.
+    """
+    marker = Path(marker)
+    if not marker.exists():
+        return None
+    text, _problem = read_text_file(marker)
+    counts: dict = {"items_checked": 0, "items_total": 0, "findings": None}
+    for line in text.splitlines():
+        for key in ("items_checked", "items_total", "findings"):
+            if line.startswith(f"{key}="):
+                try:
+                    counts[key] = int(line.split("=", 1)[1].strip())
+                except (ValueError, IndexError):
+                    pass
+    return counts
+
+
+def rollup_totals(run_dir: Path, cycle: int, stream: str) -> dict | None:
+    """This cycle's accumulated totals for one stream, or None. Never raises.
+
+    Returns ``{"items_checked", "items_total", "findings", "records"}``, where
+    ``records`` is how many tranches the bucket kept.
+
+    None means the cycle has no record for that stream AT ALL, which callers
+    must be able to tell from a recorded zero: "nobody ran it" and "it ran and
+    found nothing" are different answers, and only the first may fall back to
+    the marker.
+    """
+    document, _problem = read_document(Path(run_dir) / "stream-rollup.json")
+    cycles = document.get("cycles")
+    bucket = cycles.get(str(cycle)) if isinstance(cycles, dict) else None
+    entry = bucket.get(stream) if isinstance(bucket, dict) else None
+    if not isinstance(entry, dict):
+        return None
+    records = entry.get("records")
+    return {
+        "items_checked": as_count(entry.get("items_checked")),
+        "items_total": as_count(entry.get("items_total")),
+        "findings": as_count(entry.get("findings")),
+        "records": len(records) if isinstance(records, list) else 0,
+    }
+
+
+def recorded_prove_roster(
+    run_dir: Path, cycle: int, *, modes
+) -> list[str] | None:
+    """The PROVE rows THIS cycle's recorded DELTA decision named, or None.
+
+    None means "no DELTA roster applies to this cycle" — the run is at FULL,
+    the run predates the width, or the newest recorded decision belongs to
+    another cycle — and the caller then measures against the spec exactly as it
+    did before the width existed. An empty LIST is a DIFFERENT answer: the
+    decision recorded a roster and the roster is empty, which happens only when
+    the spec parses to zero rows.
+
+    THE CYCLE MUST MATCH, and that is not defensive padding (D-216). A width is
+    a fact about one crossing: a roster decided for cycle 5 says nothing about
+    what cycle 4's PROVE owed. On the live path the two are equal by
+    construction, so the check costs nothing there, and a resumed archive whose
+    counter and ledger disagree falls back rather than measuring one cycle's
+    work against another cycle's roster. The match is made by
+    `current_inspect_mode`, which takes the cycle as its subject.
+    """
+    recorded = current_inspect_mode(run_dir, cycle, modes=modes)
+    if not recorded or recorded.get("mode") != "DELTA":
+        return None
+    sample = recorded.get("prove_sample")
+    if not isinstance(sample, list):
+        return None
+    return [row for row in sample if isinstance(row, str)]
+
+
+def coverage_shortfall(
+    run_dir: Path,
+    stream: str,
+    cycle: int,
+    *,
+    marker_of,
+    modes,
+    spec_requirement_count: int,
+) -> dict | None:
+    """This stream's per-cycle coverage threshold, evaluated once on the total.
+
+    Returns a named shortfall dict, or None when the stream has no threshold or
+    clears it. Called from `check_streams_complete` — the streams-complete
+    check is the single point where the whole cycle's records are in hand
+    (CT-003). The mark-stream door deliberately does NOT evaluate it: a partial
+    tranche must be stored, not refused.
+
+    Falls back to the marker's aggregate counts when this cycle has no roll-up
+    entry. Without the fallback, an archive written before the roll-up existed
+    had a marker the streams-complete check counted as PRESENT while the
+    threshold silently evaluated nothing, so 40% coverage passed. "No numbers"
+    must mean "read them from the marker", never "assume the threshold is met".
+
+    D-080 — THE PROVE THRESHOLD IS MEASURED AGAINST THE WIDTH THE SERVER
+    RECORDED. The streams-complete check reads the recorded roster — GI-008
+    names "a streams-complete check that reads a roster nothing recorded" as
+    the violation — and then hands each member of it here, so this must consult
+    the same recorded decision. Measuring a DELTA cycle against the whole spec
+    made DELTA unreachable on the guided path: a PROVE that checked exactly the
+    roster the server itself recorded was reported incomplete forever.
+
+    NO 0.95 SLACK ON THE DELTA ARM. At FULL the denominator is the whole spec
+    and the 5% is tolerance for a matrix that moved under a long stream. A
+    DELTA roster is a NAMED, FINITE list of rows the server itself drew, so
+    "which of these did you not check" has an answer and there is nothing to be
+    tolerant of. `checked >= len(roster)` is the whole test.
+
+    ``spec_requirement_count`` is PASSED IN — the spec-path climb and the
+    requirement-ID grammar both live in leaf modules this one may not import,
+    and which spec is this run's is their question, not this one's.
+    """
+    totals = rollup_totals(run_dir, cycle, stream) or marker_counts(
+        Path(run_dir) / marker_of(stream)
+    )
+    if totals is None:
+        return None
+    checked = totals["items_checked"]
+
+    if stream == "prove":
+        roster = recorded_prove_roster(run_dir, cycle, modes=modes)
+        if roster is not None:
+            required = len(roster)
+            if required > 0 and checked < required:
+                return {
+                    "stream": "prove",
+                    "checked": checked,
+                    "required": required,
+                    "coverage": f"{checked / required * 100:.0f}%",
+                    "mode": "DELTA",
+                    "roster": roster,
+                    "reason": (
+                        f"PROVE checked {checked} of the {required} requirement "
+                        f"row(s) cycle {cycle}'s recorded DELTA roster names "
+                        f"({', '.join(roster[:12])}"
+                        + (", ..." if len(roster) > 12 else "")
+                        + "). That roster IS this INSPECT's width — the rows "
+                        "tied to the defects the preceding GRIND fixed plus the "
+                        "sampled remainder — so every row in it is owed, and no "
+                        "row outside it is."
+                    ),
+                }
+            return None
+
+        if spec_requirement_count > 0 and checked < spec_requirement_count * 0.95:
+            pct = checked / spec_requirement_count * 100
+            return {
+                "stream": "prove",
+                "checked": checked,
+                "required": spec_requirement_count,
+                "coverage": f"{pct:.0f}%",
+                "reason": (
+                    f"PROVE checked {checked} requirements across cycle {cycle} but the "
+                    f"spec has {spec_requirement_count}. Coverage is {pct:.0f}% "
+                    "— must be ≥95%."
+                ),
+            }
+        return None
+
+    if stream == "trace":
+        declared = totals["items_total"]
+        if declared > 0 and checked < declared * 0.95:
+            pct = checked / declared * 100
+            return {
+                "stream": "trace",
+                "checked": checked,
+                "required": declared,
+                "coverage": f"{pct:.0f}%",
+                "reason": (
+                    f"TRACE checked {checked}/{declared} symbols across cycle {cycle} "
+                    f"({pct:.0f}%). Must check ≥95% of declared symbols."
+                ),
+            }
+    return None
+
+
+def check_streams_complete(
+    run_dir: Path,
+    *,
+    modes,
+    marker_of,
+    sight: dict,
+    spec_requirement_count: int,
+    inspect_phases,
+    fallback_streams,
+    unrecorded_width_problem=None,
+) -> dict:
+    """Have this cycle's required verification streams completed? Never raises.
+
+    Returns ``{"complete", "missing", "required", "shortfalls",
+    "inspect_mode", "inspect_rule", "stream_scope"}``; the unrecorded-width arm
+    additionally carries ``unrecorded_width``, ``reason`` and ``hint``.
+    ``missing`` is a SPACE-JOINED STRING, not a list, because every existing
+    caller blocks on it being non-empty.
+
+    THE ROSTER IS READ, NOT RECOMPUTED (AC-017 / ST-006 / ST-007 / GI-008).
+    The transition that opened this INSPECT already decided which streams it
+    requires and at what scope, and recorded both. Re-deriving them here would
+    let the check disagree with the cycle that actually ran: the mode is a
+    function of a GRIND diff measured at the boundary, and by the time this is
+    called the tree has moved on.
+
+    D-117 — A RUN WITH NO RECORDED DECISION IS INCOMPLETE, NOT PRE-CHANGE. This
+    used to fall back to the roster the function required before the width
+    existed and call that "what a resumed archive should get". That is exactly
+    GI-008's named violation, and the fallback silently dropped two streams from
+    every mode-less INSPECT while reporting `complete: True` — which is how
+    ASSAY came to open on a three-stream roster. `missing` carries the sentinel
+    `inspect_mode` so every existing caller blocks here too without being taught
+    a new key.
+
+    SCOPED TO A RUN THAT IS ACTUALLY IN AN INSPECT. The width belongs to an
+    INSPECT, so a run in none has no INSPECT whose width could be missing — and
+    this is also the plain "did these markers record and clear the threshold"
+    query, which a run that never entered F2 may ask.
+
+    WHAT IS INJECTED, AND WHY EACH ONE (fallout GI-033, concern C-027). This is
+    the composition; the pieces that hold DOOR PROTOCOL stay with their doors,
+    on the rule stated at the top of the reader section:
+
+      * ``unrecorded_width_problem`` — the refusal that names the transitions
+        which record a width and the remedy. That is door protocol, so it stays
+        in the module that owns those transitions and is passed in by the
+        callers that refuse on it. Omit it and the arm is skipped, which is
+        correct for a caller that only REPORTS: the two doors that refuse ask
+        the shaper themselves rather than inferring it from this result.
+      * ``sight`` — the already-computed `sight_required` answer, so this makes
+        no second decision about whether a run has a browsable UI.
+      * ``modes``, ``inspect_phases``, ``fallback_streams``, ``marker_of`` and
+        ``spec_requirement_count`` — closed-set values and leaf helpers this
+        module may not import, passed in exactly as `sight_required`'s
+        ``shape_problem`` and ``no_ui_meaning`` are.
+    """
+    run_dir = Path(run_dir)
+    state, _problem = read_document(run_dir / "state.json")
+
+    recorded = current_inspect_mode(run_dir, modes=modes)
+    inspect_mode = ""
+    inspect_rule = ""
+    stream_scope: dict = {}
+
+    in_inspect = state.get("phase") in tuple(inspect_phases)
+    unrecorded = (
+        unrecorded_width_problem(run_dir)
+        if in_inspect and unrecorded_width_problem is not None
+        else None
+    )
+    if unrecorded is not None:
+        return {
+            "complete": False,
+            "missing": "inspect_mode",
+            "required": [],
+            "shortfalls": [],
+            "inspect_mode": "",
+            "inspect_rule": "",
+            "stream_scope": {},
+            "unrecorded_width": True,
+            "reason": unrecorded["reason"],
+            "hint": unrecorded["hint"],
+        }
+
+    if isinstance(recorded, dict) and isinstance(recorded.get("required_streams"), list):
+        required = [s for s in recorded["required_streams"] if isinstance(s, str)]
+        inspect_mode = recorded.get("mode", "")
+        inspect_rule = recorded.get("rule", "")
+        raw_scope = recorded.get("stream_scope")
+        stream_scope = raw_scope if isinstance(raw_scope, dict) else {}
+    else:
+        # A recorded entry carrying a mode but no usable roster. The width IS
+        # recorded, so this is not the D-117 hole; the roster is rebuilt from
+        # the run's own manifest exactly as it was before the width existed.
+        required = list(fallback_streams)
+        manifest, _mproblem = read_document(run_dir / "castings" / "manifest.json")
+        if sight.get("required"):
+            required.append("sight")
+        if manifest.get("target_url", ""):
+            required.append("probe")
+        inspect_mode = (recorded or {}).get("mode", "")
+        inspect_rule = (recorded or {}).get("rule", "")
+
+    missing = [s for s in required if not (run_dir / marker_of(s)).exists()]
+
+    cycle = current_cycle(run_dir)
+    shortfalls = []
+    for s in required:
+        if s in missing:
+            continue
+        shortfall = coverage_shortfall(
+            run_dir, s, cycle,
+            marker_of=marker_of, modes=modes,
+            spec_requirement_count=spec_requirement_count,
+        )
+        if shortfall:
+            shortfalls.append(shortfall)
+            missing.append(s)
+
+    return {
+        "complete": len(missing) == 0,
+        "missing": " ".join(missing),
+        "required": required,
+        "shortfalls": shortfalls,
+        # Reported, never decided here (GI-008). Empty strings on a run with no
+        # recorded decision, which is how a caller tells "this run predates the
+        # width" from "this run is at FULL".
+        "inspect_mode": inspect_mode,
+        "inspect_rule": inspect_rule,
+        "stream_scope": stream_scope,
+    }

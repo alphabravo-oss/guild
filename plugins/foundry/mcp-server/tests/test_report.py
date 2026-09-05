@@ -58,6 +58,7 @@ import hashlib
 import json
 import re
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -3683,7 +3684,24 @@ def test_foundry_state_still_imports_nothing_from_its_own_package():
     while the alternative — a hand-rolled timestamp parser to avoid the import
     — would be a third parser of one format in the module written to end
     second derivations. What is forbidden at EVERY depth is `foundry_mcp`,
-    because that is the import the cycle is actually made of."""
+    because that is the import the cycle is actually made of.
+
+    fallout GI-033 / D-021 / D-035 (concern C-027) — `subprocess` AND `re` JOIN
+    THE CALL-DEPTH LIST, BY RULING. The layering guard made the tmux pane scan
+    leaf material: it is the second half of "is a team still holding the tree",
+    the gates and transitions that ask are VERIFIER and the module that owned
+    the scan is LIFECYCLE, so it could be reached from only one of the two
+    layers wherever it sat inside `orchestration/`. The lead's ruling on C-027
+    is explicit that "a readers-only leaf that lists panes read-only is still a
+    reader" and that the json-and-pathlib phrasing was a CASTING CONVENTION
+    rather than the spec — GI-033 names the leaf SET, never a leaf's import
+    list. So the contract narrows to what it was always protecting: the
+    module-level list stays exactly json + pathlib, because that is what
+    `foundry.py` pays on import and what `measure-run.py`'s stdlib-only
+    contract quotes; the call-depth list stays STDLIB-ONLY; and `foundry_mcp`
+    stays forbidden at every depth. A `subprocess` here reads the machine and
+    writes nothing — `_kill_panes` stayed in the lifecycle module — which is
+    the line that keeps this a reader."""
     import ast
 
     from foundry_mcp.tools import foundry_state
@@ -3706,12 +3724,19 @@ def test_foundry_state_still_imports_nothing_from_its_own_package():
     everywhere: set[str] = set()
     for node in ast.walk(tree):
         everywhere |= _imported(node)
-    assert everywhere == {"__future__", "json", "pathlib", "datetime"}, sorted(
-        everywhere
-    )
+    assert everywhere == {
+        "__future__", "json", "pathlib", "datetime", "re", "subprocess",
+    }, sorted(everywhere)
+
+    # The clause the whole pin is for, and the one no ruling relaxes.
     assert not {m for m in everywhere if m.startswith("foundry_mcp")}, (
         "the leaf module reached back into its own package"
     )
+    # STDLIB ONLY, at every depth. NFR-009 forbids a new dependency and this
+    # module is the one `measure-run.py` reads with no package installed at
+    # all, so a third-party import here breaks the census as well as the leaf.
+    assert not {m for m in everywhere if m.split(".")[0] not in sys.stdlib_module_names
+                and m != "__future__"}, sorted(everywhere)
 
 
 def test_read_jsonl_reports_undecodable_bytes_and_skips_torn_lines(tmp_path):

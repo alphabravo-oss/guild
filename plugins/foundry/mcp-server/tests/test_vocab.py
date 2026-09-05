@@ -1255,12 +1255,15 @@ def test_hardening_is_a_defect_tier_and_is_not_in_the_blocking_set() -> None:
     AC-022 also names the four doors that must pass with open HARDENING
     defects; those are driven at the doors themselves (casting 4's file). What
     is asserted here is the vocabulary fact the doors read.
+
+    fallout GI-033 / D-021 / D-035 (concern C-027) — READ FROM `vocab` NOW.
+    This used to import the tuple from `orchestration/gates.py`, which is where
+    it happened to be declared. GI-014's applies-to column had always named it
+    beside DEFECT_TIERS here, and the layering guard forced the move: gates is
+    a VERIFIER module and the status display needed the same membership from
+    the LIFECYCLE layer, so a symbol both layers read could live in neither.
     """
-    # GI-010 / GI-026 — the wave-2 destination. Casting 2's split defines
-    # this symbol in the module named below and its completion report's
-    # `## Symbol map` is the authority; where the map and this differ, the
-    # map wins and this is the edit.
-    from foundry_mcp.tools.orchestration.gates import BLOCKING_TIERS
+    BLOCKING_TIERS = vocab.BLOCKING_TIERS
 
     assert vocab.TIER_HARDENING not in BLOCKING_TIERS, (
         "HARDENING is a driven failure that no requirement asks about "
@@ -1272,6 +1275,37 @@ def test_hardening_is_a_defect_tier_and_is_not_in_the_blocking_set() -> None:
         f"{BLOCKING_TIERS} — LIVE is a reachable failure and unknown is a "
         f"record nobody classified. Neither LATENT nor HARDENING joins them."
     )
+
+
+def test_blocking_tiers_is_an_ordered_pair_derived_from_the_sentinel() -> None:
+    """fallout GI-033 / CT-008 (concern C-027) — the tuple's own shape.
+
+    Hand-built, and deliberately NOT compared against the copy in
+    `orchestration/gates.py`: casting 2 deletes that copy and repoints in this
+    same wave, so a parity assertion would be comparing an expression to itself
+    and then, a commit later, to nothing.
+
+    A TUPLE, and ordered. A refusal reads the members out in this order ("LIVE,
+    then unknown"), so the container is not incidental. Membership is the only
+    test any consumer applies, which is why nothing else rests on it.
+
+    `TIER_UNKNOWN` is the second member BY DERIVATION, not by a second spelling
+    of "unknown" — the sentinel has exactly one spelling and this is a reader
+    of it, so renaming the sentinel cannot leave this tuple pointing at a value
+    no reader resolves to.
+    """
+    assert vocab.BLOCKING_TIERS == ("LIVE", "unknown")
+    assert isinstance(vocab.BLOCKING_TIERS, tuple)
+    assert vocab.BLOCKING_TIERS[1] is vocab.TIER_UNKNOWN
+    assert len(vocab.BLOCKING_TIERS) == 2
+
+    # The two members that are DEFECT_TIERS members, and the two that are not.
+    assert set(vocab.BLOCKING_TIERS) & vocab.DEFECT_TIERS == {"LIVE"}
+    assert set(vocab.DEFECT_TIERS) - set(vocab.BLOCKING_TIERS) == {
+        "LATENT", "HARDENING",
+    }
+    # Every member is something a reader can actually see (FR-051).
+    assert set(vocab.BLOCKING_TIERS) <= vocab.DEFECT_TIER_OR_UNKNOWN
 
 
 def test_defect_tier_reads_a_hardening_record_as_hardening() -> None:
