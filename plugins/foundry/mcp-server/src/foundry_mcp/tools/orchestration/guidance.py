@@ -94,7 +94,12 @@ from foundry_mcp.tools.orchestration.directives import _read_directives
 # tells the lead the gate is satisfied and to proceed to the transition step
 # instead of re-running the now-satisfied gate.
 _ACTION_TO_GATE = {
-    "transition_to_cast": "cast",
+    # fallout AC-059 — `validate`, not `cast`. The gate this action asks for is
+    # the one guarding the `start_cast` transition it then tells the lead to
+    # call, and `GATE_TO_TRANSITION` assigns `start_cast` to the `validate`
+    # token. `cast` maps same-name to the `cast` transition (F1 complete), which
+    # is a different question asked one phase later.
+    "transition_to_cast": "validate",
     "transition_to_inspect": "inspect",
     "transition_to_grind": "grind",
     "transition_to_assay": "assay",
@@ -796,7 +801,7 @@ _ACTION_IMPERATIVES = {
     ),
     "transition_to_cast": (
         "YOUR NEXT CALLS (in order — bulk flow saves N-1 roundtrips):\n"
-        "  (1) Foundry-Gate(phase='cast')\n"
+        "  (1) Foundry-Gate(phase='validate')\n"
         "  (2) Foundry-Phase(phase='start_cast')\n"
         "  (3) TeamCreate('cast-{run}-wave-1')\n"
         "  (4) Foundry-Team-Up(team_name='cast-{run}-wave-1')\n"
@@ -1544,7 +1549,7 @@ def _compute_next_action(project_root: str) -> dict:
             "action": "transition_to_cast",
             "instructions": (
                 f"Decomposition complete ({casting_count} castings). "
-                "Call Foundry-Gate(phase='cast') to validate, then Foundry-Phase(phase='start_cast'). "
+                "Call Foundry-Gate(phase='validate'), then Foundry-Phase(phase='start_cast'). "
                 "Create a CAST team (TeamCreate), register it (Foundry-Team-Up). "
                 "Spawn ONE teammate per casting (or per wave of independent castings). "
                 "Do NOT overload one teammate with many castings \u2014 distribute evenly."

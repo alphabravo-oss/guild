@@ -1185,18 +1185,25 @@ class _GateLadder:
 #: `PHASE_TOKENS` is some gate's target, so a token added on either side without
 #: its counterpart fails CI rather than shipping ungated.
 #:
-#: `validate` and `cast` BOTH guard `start_cast`, and that is the one row the
-#: spec's "others same-name" clause does not reach. `_ACTION_TO_GATE` maps
-#: `transition_to_cast` to the `cast` gate and that action's own instruction
-#: reads "Call Foundry-Gate(phase='cast') to validate, then
-#: Foundry-Phase(phase='start_cast')" — so the `cast` gate provably guards
-#: `start_cast`, and mapping it same-name would make it a byte-identical clone
-#: of the `inspect` gate while deleting the manifest / oversize / file-overlap
-#: gate the CAST wave depends on. The `validate` gate asks the same question one
-#: rung earlier and asking it gains it the two rungs it did not have.
+#: THE ENUMERATION IS THE SPEC'S AND IT IS EXHAUSTIVE. AC-059 names four
+#: exceptions — `inspect` to `cast`, `grind` to `grind_start` and `assay_fail`,
+#: `assay` to `inspect_clean`, `validate` to `start_cast` — and says every other
+#: token maps same-name, halt included. `cast` is not among the four, so it maps
+#: to the transition `cast`.
+#:
+#: This row shipped as `cast` to `start_cast`, on the reasoning that the lead's
+#: own guidance said "Foundry-Gate(phase='cast') to validate, then
+#: Foundry-Phase(phase='start_cast')". That reasoning inverted the direction of
+#: authority: the guidance string is a consumer of this table, not evidence
+#: about it, so the fix is to repoint `_ACTION_TO_GATE` at the `validate` gate —
+#: which the spec's own row already assigns to `start_cast` — rather than to
+#: bend the table to the string. Nothing is lost by it: `validate` evaluates the
+#: identical `_start_cast_preconditions`, so the manifest / oversize /
+#: file-overlap rungs the CAST wave depends on are still asked, at the one token
+#: the spec assigns them to.
 GATE_TO_TRANSITION: dict[str, tuple[str, ...]] = {
     "validate": ("start_cast",),
-    "cast": ("start_cast",),
+    "cast": ("cast",),
     "inspect": ("cast",),
     "inspect_start": ("inspect_start",),
     "grind": ("grind_start", "assay_fail"),

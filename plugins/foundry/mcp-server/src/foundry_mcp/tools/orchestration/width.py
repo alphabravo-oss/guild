@@ -813,11 +813,28 @@ def _registry_tool_modules() -> dict[str, list[str]]:
     from types import FunctionType
 
     try:
+        import foundry_mcp
         from foundry_mcp import server as _server
     except Exception:  # pragma: no cover - registry unavailable
         return {}
 
-    package_root = Path(__file__).resolve().parent.parent  # .../foundry_mcp
+    # fallout FR-030 / FR-047 / GI-026 — THE ANCHOR IS THE PACKAGE, NOT THIS
+    # MODULE'S DEPTH.
+    #
+    # `Path(__file__).parent.parent` was right while this code sat at
+    # `foundry_mcp/tools/width.py` and became `.../foundry_mcp/tools` the moment
+    # the split moved it into `tools/orchestration/`: `module_file` then looked
+    # for `tools/tools/foundry_report.py`, found nothing for any dotted name,
+    # and the registry returned `{}` — which fails `_test01_scope_touched` OPEN
+    # and forces `test01` into every DELTA roster, the exact D-204/D-207
+    # asymmetry this module exists to have fixed.
+    #
+    # `foundry_mcp/__init__.py` IS the package root by definition, so deriving
+    # the anchor from it cannot drift with a later move of this file. This is
+    # the shape `tools/foundry.py#_executing_server_root` already uses, and it
+    # makes the anchor and `module_file`'s own meaning of "package root" the
+    # same fact rather than two that have to be kept in step.
+    package_root = Path(foundry_mcp.__file__).resolve().parent  # .../foundry_mcp
 
     def module_file(dotted: str) -> str | None:
         if dotted == "foundry_mcp":

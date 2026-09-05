@@ -169,6 +169,7 @@ from foundry_mcp.tools.orchestration.gates import (  # noqa: F401
 )
 
 from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
+    _ACTION_IMPERATIVES,
     _ACTION_TO_GATE,
     _compute_next_action,
     foundry_next_action,
@@ -2318,6 +2319,81 @@ def test_a_purely_generated_report_is_left_exactly_as_generated(run_env):
     assert len(headings) == len(vocab.REPORT_REQUIRED_SECTIONS), headings
 
 
+
+
+#: fallout AC-059 — the FOUR rows the spec enumerates as exceptions, quoted:
+#: "inspect→cast, grind→grind_start and assay_fail, assay→inspect_clean,
+#: validate→start_cast, others same-name including halt". Typed here because
+#: the spec sentence is the authority and there is nothing in the package to
+#: derive it from; the "others" clause below is walked over the shipped table,
+#: so a row added later is judged without anyone editing this tuple.
+_AC059_NAMED_EXCEPTIONS = {
+    "inspect": ("cast",),
+    "grind": ("grind_start", "assay_fail"),
+    "assay": ("inspect_clean",),
+    "validate": ("start_cast",),
+}
+
+
+def test_the_table_is_the_specs_enumeration_with_no_fifth_exception():
+    """fallout AC-059 — every row outside the spec's four maps SAME-NAME.
+
+    `cast` shipped mapping to `start_cast`, a fifth exception the enumeration
+    does not name. It read as harmless — `validate` guards `start_cast` too, so
+    the rung set was reachable — but it left the `cast` gate answering the
+    question one phase early, and the transition `cast` gated by a single token
+    while `start_cast` had two. The clause the table has to satisfy is
+    positional, not incidental: four named rows, and same-name for the rest.
+    """
+    for gate, expected in _AC059_NAMED_EXCEPTIONS.items():
+        assert GATE_TO_TRANSITION[gate] == expected, (gate, GATE_TO_TRANSITION[gate])
+    off_enumeration = {
+        gate: targets
+        for gate, targets in GATE_TO_TRANSITION.items()
+        if gate not in _AC059_NAMED_EXCEPTIONS and targets != (gate,)
+    }
+    assert off_enumeration == {}, off_enumeration
+
+
+def test_the_cast_action_names_the_gate_that_guards_the_transition_it_calls():
+    """fallout AC-059 — the guidance chain the table's fifth exception hid.
+
+    `_ACTION_TO_GATE` is what `.gate-passed` is compared against, so the gate
+    `transition_to_cast` names has to be the one evaluating `start_cast`, the
+    transition the same action's imperative then tells the lead to call. While
+    `cast` mapped to `start_cast` the chain closed by accident and the table's
+    deviation was invisible from here; with the table corrected it closes only
+    through `validate`, which is the row the spec assigns `start_cast` to.
+
+    Driven off the shipped imperative rather than a second hand-typed table:
+    the `Foundry-Phase(phase='<token>')` the lead is told to call is read out of
+    the string, so rewording the step without moving the gate fails here.
+
+    Scoped to this one action deliberately. The other six actions each name a
+    gate and a phase call too, but several of them span more than one crossing
+    in one step — `transition_to_inspect` gates `inspect` and then calls
+    `inspect_start` — and asserting a one-to-one chain over all of them would
+    be a claim about the guidance sequence, which is not what this defect is.
+    """
+    gate = _ACTION_TO_GATE["transition_to_cast"]
+    assert gate in GATE_TO_TRANSITION, gate
+    called = set(
+        re.findall(
+            r"Foundry-Phase\(phase='([a-z_]+)'\)",
+            _ACTION_IMPERATIVES["transition_to_cast"],
+        )
+    )
+    assert called == {"start_cast"}, called
+    assert called <= set(GATE_TO_TRANSITION[gate]), {
+        "gate": gate,
+        "gate_guards": GATE_TO_TRANSITION[gate],
+        "imperative_calls": sorted(called),
+    }
+    # ...and the step itself names that gate, so a lead following the text and a
+    # lead following `_ACTION_TO_GATE` make the same call.
+    assert (
+        f"Foundry-Gate(phase='{gate}')" in _ACTION_IMPERATIVES["transition_to_cast"]
+    ), _ACTION_IMPERATIVES["transition_to_cast"]
 
 
 def test_every_gate_token_maps_to_a_transition_and_every_transition_has_a_gate():
