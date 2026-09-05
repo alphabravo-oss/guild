@@ -753,13 +753,25 @@ class _EnvironmentalGrammar:
 #: notably a byte-size and a content hash, which the lead's brief anticipated
 #: but which no committed log varies and no teammate.md example declares.
 #: Adding one means adding its witness, which is the point.
+#:
+#: D-051: ``witness`` is checked BY NAME. The corpus rung used to ask only
+#: whether SOME committed log erased a token of the shape, so it never read
+#: the name beside it, and four entries went on citing `casting-1-pytest.log`,
+#: `casting-3-observations.log` and `casting-8-suite.log` for cycles after the
+#: tree stopped holding them — the human-readable pointer outliving the corpus
+#: while the mechanical rung stayed green. ``_grammar_witness_sweep`` now
+#: RESOLVES the named log and re-derives the shape from THAT log's own
+#: declarations, so a repointed or retired witness turns the sweep red rather
+#: than passing on a sibling's evidence. Repointing an entry means naming a
+#: log the tree holds today which declares this shape today; the trailing
+#: comments below record where each pointer moved from.
 _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
     "duration_seconds": _EnvironmentalGrammar(
         token=re.compile(r"\d+\.\d+s"),
         varies_in="digits",
         key=None,  # the `s` unit is in the token
         witness_kind="corpus",
-        witness="casting-1-pytest.log",
+        witness="casting-5-both-doors.log",  # D-051: was casting-1-pytest.log
         witness_pair=("", "0.47s", "0.76s"),
         falsifier=("", "0.47", "0.76"),  # strip the unit: a bare ratio-less number
         note=(
@@ -795,7 +807,8 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         varies_in="text",
         key=re.compile(r"(?:^|\s)rootdir:$"),
         witness_kind="corpus",
-        witness="casting-3-observations.log",
+        # D-051: was casting-3-observations.log
+        witness="casting-5-platform-witness.log",
         witness_pair=(
             "rootdir:",
             "/Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server",
@@ -860,7 +873,7 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         varies_in="text",
         key=None,  # the `/.planning/` anchor is in the token
         witness_kind="corpus",
-        witness="casting-1-pytest.log",
+        witness="casting-10-blast-radius.log",  # D-051: was casting-1-pytest.log
         witness_pair=(
             "",
             "/private/var/folders/kq/T/tmp.X6ktF5/wt/.planning/phases/09",
@@ -884,7 +897,7 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         varies_in="text",
         key=None,  # the `/foundry-archive/` anchor is in the token
         witness_kind="corpus",
-        witness="casting-8-suite.log",
+        witness="casting-10-blast-radius.log",  # D-051: was casting-8-suite.log
         witness_pair=(
             "",
             "/private/tmp/c3wt/foundry-archive/thunder-viper",

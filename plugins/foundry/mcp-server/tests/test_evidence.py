@@ -53,6 +53,7 @@ RED-or-SKIP discipline:
 from __future__ import annotations
 
 import ast
+import dataclasses
 import inspect
 import json
 import os
@@ -3855,8 +3856,8 @@ def test_each_d143_shape_really_did_buy_a_byte_match(
 _TEAMMATE_PROTOCOL = REPO_ROOT / "plugins/foundry/agents/teammate.md"
 
 
-def _corpus_witness_fields() -> set:
-    """Every ``(key_context, token)`` the shipped corpus's declarations erase.
+def _corpus_witness_fields_by_log() -> dict:
+    """Every ``(key_context, token)`` the corpus erases, BY the log that erases it.
 
     Derived: each committed log's declared patterns applied to that log's own
     body, matches tokenized the way the guard tokenizes them, and each token
@@ -3870,14 +3871,22 @@ def _corpus_witness_fields() -> set:
     token; the sweep confirmed a witness EXISTS without confirming the grammar
     was no WIDER than it. A `rootdir:` path and an interpreter path are the
     same token and different fields, and only the context tells them apart.
+
+    D-051: the ATTRIBUTION is the other half, and it is why this returns a
+    mapping rather than one flat set. A flat set answers "does the corpus
+    witness this shape somewhere", which is not the question ``witness`` asks —
+    ``witness`` names ONE log, and a name nothing resolves is a name that can
+    rot in silence. Keyed by log name, the sweep can hold each entry to the
+    log it actually cites.
     """
     import re as _re
 
-    fields = set()
+    by_log: dict = {}
     evidence_dir = REPO_ROOT / "evidence"
     for log in sorted(evidence_dir.glob("*.log")):
         text = log.read_text(encoding="utf-8")
         body = evidence._strip_leading_header_block(text)
+        fields = set()
         for pattern in evidence._parse_evidence_header(text).get("volatile", []):
             try:
                 matches = list(_re.finditer(pattern, body))
@@ -3887,7 +3896,8 @@ def _corpus_witness_fields() -> set:
                 tokens = match.group(0).split()
                 for index, token in enumerate(tokens):
                     fields.add((" ".join(tokens[:index]), token))
-    return fields
+        by_log[log.name] = fields
+    return by_log
 
 
 def _grammar_witness_sweep() -> tuple:
@@ -3905,8 +3915,20 @@ def _grammar_witness_sweep() -> tuple:
     fullmatch `/x/y`; without the key half, one rootdir line would witness them
     all and a grammar could be arbitrarily wider than the thing keeping it
     alive.
+
+    D-051 added the NAME. Until it, the corpus branch never read ``witness`` at
+    all — it asked whether SOME committed log erased the shape, so the name
+    beside the shape was prose, and four entries went on citing
+    `casting-1-pytest.log`, `casting-3-observations.log` and
+    `casting-8-suite.log` for cycles after the tree stopped holding them. The
+    protocol branch had always resolved its witness; the corpus branch now does
+    the same, in the two directions a pointer can rot: the named log is gone,
+    or the named log is committed but its own declarations no longer erase this
+    shape. Sharing one log between entries stays legal — the key half already
+    tells the fields apart — but citing a log that does not witness you does
+    not.
     """
-    corpus_fields = _corpus_witness_fields()
+    corpus_by_log = _corpus_witness_fields_by_log()
     protocol_text = (
         _TEAMMATE_PROTOCOL.read_text(encoding="utf-8")
         if _TEAMMATE_PROTOCOL.exists()
@@ -3921,19 +3943,28 @@ def _grammar_witness_sweep() -> tuple:
             )
             continue
         if grammar.witness_kind == "corpus":
-            if not any(
+            under_key = (
+                f" under the key {grammar.key.pattern!r}"
+                if grammar.key is not None
+                else ""
+            )
+            witness_fields = corpus_by_log.get(grammar.witness)
+            if witness_fields is None:
+                offenders.append(
+                    f"{name}: declares the corpus witness {grammar.witness!r}, "
+                    f"which evidence/ no longer holds — repoint it at a log the "
+                    f"tree carries today whose own patterns erase a token of "
+                    f"this shape{under_key}"
+                )
+            elif not any(
                 grammar.token.fullmatch(tok)
                 and (grammar.key is None or grammar.key.search(context))
-                for context, tok in corpus_fields
+                for context, tok in witness_fields
             ):
                 offenders.append(
-                    f"{name}: declares a corpus witness, but no committed "
-                    f"evidence log's own patterns erase a token of this shape"
-                    + (
-                        f" under the key {grammar.key.pattern!r}"
-                        if grammar.key is not None
-                        else ""
-                    )
+                    f"{name}: declares the corpus witness {grammar.witness!r}, "
+                    f"which is committed but whose own patterns no longer erase "
+                    f"a token of this shape{under_key}"
                 )
         elif grammar.witness_kind == "protocol":
             if grammar.witness not in protocol_text:
@@ -4068,6 +4099,89 @@ def test_a_grammar_with_no_live_witness_is_reported_by_name(monkeypatch):
     )
 
 
+def test_a_corpus_witness_pointer_must_name_a_log_that_still_witnesses_it(
+    monkeypatch,
+):
+    """D-051: the NAMED witness, not merely SOME witness.
+
+    The plant that would have caught the defect. Before this rung the corpus
+    branch never read ``witness``: it asked whether SOME committed log erased a
+    token of the shape, and 40-odd logs erase a duration, so `duration_seconds`
+    could go on citing `casting-1-pytest.log` — a log the tree had not held for
+    cycles — and the sweep stayed green. `pytest_rootdir`, `planning_root` and
+    `archive_root` rotted the same way behind the same green. That is the
+    registry-coherence half of GI-006: the corpus stays re-executable, and the
+    pointers INTO it stay resolvable, or the provenance the block comment calls
+    "checked, not asserted" is asserted after all.
+
+    Two plants, because a pointer rots in two directions, and BOTH were green
+    under the old rung:
+
+      1. it names a log the corpus no longer holds, while the shape it claims
+         is witnessed by plenty of siblings — exactly D-051's shape;
+      2. it names a log the corpus DOES hold, which does not declare this shape
+         — a live pointer aimed at the wrong log, which reads as provenance and
+         proves nothing.
+
+    Everything but the pointer is the real entry (``dataclasses.replace`` over
+    a registry member), so a green here cannot come from a plant that was
+    unwitnessable for some other reason. The anchor grammar and the
+    non-witnessing log are both DERIVED from what ships — hardcoding either
+    would plant, in the regression test for stale pointers, a stale pointer.
+    """
+    if not (REPO_ROOT / "evidence").exists():
+        pytest.skip("no committed evidence corpus")
+
+    anchor = next(
+        (
+            name
+            for name, g in evidence._ENVIRONMENTAL_GRAMMARS.items()
+            if g.witness_kind == "corpus"
+        ),
+        None,
+    )
+    assert anchor is not None, "the registry declares no corpus witness at all"
+    real = evidence._ENVIRONMENTAL_GRAMMARS[anchor]
+
+    # Direction 1 — a name evidence/ does not hold.
+    dead = "casting-0-this-log-was-never-committed.log"
+    assert not (REPO_ROOT / "evidence" / dead).exists(), (
+        f"{dead} exists, so it cannot stand in for a retired log"
+    )
+    planted = dict(evidence._ENVIRONMENTAL_GRAMMARS)
+    planted[anchor] = dataclasses.replace(real, witness=dead)
+    monkeypatch.setattr(evidence, "_ENVIRONMENTAL_GRAMMARS", planted)
+    _, offenders = _grammar_witness_sweep()
+    assert any(anchor in o and dead in o for o in offenders), (
+        f"a witness naming a log the corpus no longer holds went unreported "
+        f"— this is D-051 exactly: {offenders}"
+    )
+
+    # Direction 2 — a name evidence/ DOES hold, which does not witness it.
+    by_log = _corpus_witness_fields_by_log()
+    wrong = next(
+        (
+            log_name
+            for log_name in sorted(by_log)
+            if not any(real.token.fullmatch(tok) for _, tok in by_log[log_name])
+        ),
+        None,
+    )
+    if wrong is None:
+        pytest.skip(
+            f"every committed log erases a {anchor!r}-shaped token, so the "
+            f"corpus offers no live-but-wrong pointer to plant"
+        )
+    planted = dict(evidence._ENVIRONMENTAL_GRAMMARS)
+    planted[anchor] = dataclasses.replace(real, witness=wrong)
+    monkeypatch.setattr(evidence, "_ENVIRONMENTAL_GRAMMARS", planted)
+    _, offenders = _grammar_witness_sweep()
+    assert any(anchor in o and wrong in o for o in offenders), (
+        f"a witness naming a committed log that does not declare this shape "
+        f"went unreported: {offenders}"
+    )
+
+
 def test_every_grammar_declares_a_known_variation_site():
     """The `varies_in` axis is closed and total over the registry."""
     unknown = {
@@ -4091,7 +4205,7 @@ def test_an_unreadable_variation_site_is_reported_not_admitted(monkeypatch):
         varies_in="whenever",
         key=None,
         witness_kind="corpus",
-        witness="casting-1-pytest.log",
+        witness="casting-5-both-doors.log",  # D-051: was casting-1-pytest.log
         witness_pair=("", "4.86s", "4.91s"),
         falsifier=("", "4.86", "4.91"),
         note="planted",
