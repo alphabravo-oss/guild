@@ -384,3 +384,262 @@ def test_the_version_fields_do_not_disturb_the_existing_state_keys(tmp_path):
     # AC5's Locked constraint, re-checked against the widened literal.
     assert "target_url" not in state
     assert "url" not in state
+
+
+# ---------------------------------------------------------------------------
+# fallout casting 4 — the resume cap, the two seeded artefacts, and the one
+# meaning of --no-ui.
+#
+#   AC9   test_resume_rewrites_the_persisted_cap
+#           fallout CT-006 / ST-002 / FR-020 / AC-027 / OT-025 — the resume
+#           branch honours max_cycles instead of dropping it.
+#   AC10  test_a_resume_carrying_no_cap_leaves_the_persisted_one_alone
+#           the 0-means-absent reading, which is what keeps a bare resume from
+#           lifting a ceiling nobody asked it to lift.
+#   AC11  test_a_cap_this_door_will_not_honour_is_refused
+#           fallout CT-006 — 'N not an integer'; and a negative value, which
+#           the persisted-cap reader would silently treat as no cap.
+#   AC12  test_a_cap_below_the_current_cycle_halts_at_the_next_grind_door
+#           fallout ST-002 / OT-025 — the downstream fact, driven at the real
+#           GRIND door rather than re-read off the state file.
+#   AC13  test_init_creates_the_rosters_directory_and_the_concerns_ledger
+#           fallout CT-001 / CT-002 — both waiting on disk before any stream
+#           or teammate reports for the first time.
+#   AC14  test_the_no_ui_definition_is_stated_once_where_the_flag_arrives
+#           fallout FR-055 / AC-052 — one meaning, at the parameter that
+#           receives it, pinned by exact substring.
+# ---------------------------------------------------------------------------
+
+
+def _state(result: dict) -> dict:
+    return json.loads(
+        (Path(result["foundry_dir"]) / "state.json").read_text(encoding="utf-8")
+    )
+
+
+def test_resume_rewrites_the_persisted_cap(tmp_path):
+    """fallout CT-006 verbatim: 'state.json.max_cycles rewritten to N'.
+
+    fallout survey/data.md:336 is the gap: the resume branch did
+    ``document.update(version_fields)`` and nothing else, so ``max_cycles`` — a
+    parameter of the same function, advertised on the schema and forwarded by
+    the dispatch lambda — was accepted and dropped on the floor. An operator
+    lowering a ceiling onto a running run was told the resume succeeded while
+    the ceiling stayed where it was.
+    """
+    created = foundry_init(project_root=str(tmp_path), max_cycles=12)
+    assert _state(created)["max_cycles"] == 12
+
+    resumed = foundry_init(
+        project_root=str(tmp_path), resume=created["run_name"], max_cycles=3
+    )
+
+    assert resumed.get("resumed") is True, resumed
+    assert _state(resumed)["max_cycles"] == 3
+    # Echoed beside the refreshed state, so a caller reads what was persisted
+    # rather than what it asked for.
+    assert resumed["max_cycles"] == 3
+    # The provenance refresh still happened in the same transaction.
+    assert "server_version" in _state(resumed)
+
+
+def test_a_resume_carrying_no_cap_leaves_the_persisted_one_alone(tmp_path):
+    """The 0-means-absent reading, and why it is forced rather than chosen.
+
+    ``setup-foundry.sh`` echoes ``FOUNDRY_MAX_CYCLES=0`` when the flag was
+    ABSENT and ``server.py``'s dispatch sends ``args.get("max_cycles", 0)``, so
+    over the wire 'no cap requested' and 'a cap of 0' arrive as one value. Of
+    the two readings only this one keeps a bare ``/foundry:resume`` from
+    silently clearing the ceiling the run was launched with — the cost, stated
+    at the parameter, is that a cap cannot be lifted back to unbounded through
+    this door.
+    """
+    created = foundry_init(project_root=str(tmp_path), max_cycles=7)
+
+    resumed = foundry_init(project_root=str(tmp_path), resume=created["run_name"])
+
+    assert _state(resumed)["max_cycles"] == 7
+    assert resumed["max_cycles"] == 7
+
+
+@pytest.mark.parametrize(
+    "bad", ["3", 2.5, True, None, -1], ids=["string", "float", "bool", "none", "negative"]
+)
+def test_a_cap_this_door_will_not_honour_is_refused(tmp_path, bad):
+    """fallout CT-006's errors column: 'N not an integer'.
+
+    Plus the negative case, which is the same rule one direction along and is
+    on record: a negative cap passed the wire schema, was persisted, and was
+    then read as 'no cap' by the persisted-cap reader — so an operator who
+    typed -1 ran unbounded and was told nothing. The accepted set has to equal
+    the HONOURED set.
+
+    ``True`` is refused as a non-integer on purpose: it IS an ``int`` in
+    Python, and accepting it would persist a cap of 1 and halt the run at its
+    first GRIND door for a caller who passed a flag where a ceiling was asked
+    for.
+    """
+    created = foundry_init(project_root=str(tmp_path), max_cycles=9)
+
+    refusal = foundry_init(
+        project_root=str(tmp_path), resume=created["run_name"], max_cycles=bad
+    )
+
+    assert "max_cycles" in refusal.get("error", ""), refusal
+    assert refusal.get("hint"), refusal
+    assert _state(created)["max_cycles"] == 9, "a refused cap may not be written"
+
+
+def test_an_unknown_run_is_still_refused_on_resume(tmp_path):
+    """fallout CT-006's other error: 'unknown run'. No-regression — the cap
+    rung runs BEFORE the branch and must not have displaced it."""
+    refusal = foundry_init(
+        project_root=str(tmp_path), resume="no-such-run", max_cycles=3
+    )
+    assert "not found" in refusal.get("error", ""), refusal
+
+
+def test_a_cap_below_the_current_cycle_halts_at_the_next_grind_door(tmp_path):
+    """fallout ST-002 / OT-025 verbatim: 'a value below the current cycle halts
+    at the next GRIND door'.
+
+    Driven at the REAL door rather than re-read off state.json. The cap this
+    function writes is only worth writing if something acts on it, and the
+    thing that acts on it is two modules away: ``orchestration/halt.py``'s
+    ``_persisted_max_cycles`` is the one read, the grind preconditions function
+    in ``orchestration/transitions.py`` turns it into ``would_halt``, and the
+    transition writes the halt with reason ``cap_reached``. None of that is
+    this casting's code, which is exactly why the contract is asserted by
+    driving it instead of by reading the cap a second time here.
+    """
+    from foundry_mcp.tools.foundry import foundry_add_defect
+    from foundry_mcp.tools.orchestration.directives import foundry_defects_to_tasks
+    from foundry_mcp.tools.orchestration.gates import (
+        NEXT_ACTION_CALLED_MARKER,
+        foundry_gate,
+    )
+    from foundry_mcp.tools.orchestration.transitions import (
+        foundry_mark_phase_complete,
+    )
+
+    created = foundry_init(project_root=str(tmp_path))
+    fdir = Path(created["foundry_dir"])
+    set_active_run(created["run_name"])
+
+    state_path = fdir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update({"phase": "F2", "cycle": 4})
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    # The GRIND door has rungs of its own ahead of the cap, and a run with no
+    # work to do never reaches it. So the run is given the shape a real cycle
+    # closes in: an open defect, and the tasks call the door demands.
+    foundry_add_defect(
+        cycle=4, source="prove", defect_type="MISSING",
+        description="drove GET /jobs with a drained queue and got 500",
+        defect_class="UNHANDLED_500", tier="LIVE", project_root=str(tmp_path),
+    )
+    foundry_defects_to_tasks(project_root=str(tmp_path))
+
+    resumed = foundry_init(
+        project_root=str(tmp_path), resume=created["run_name"], max_cycles=2
+    )
+    assert resumed["max_cycles"] == 2, resumed
+    (fdir / NEXT_ACTION_CALLED_MARKER).touch()
+
+    # fallout GI-032 — the gate REPORTS the cap as a non-refusing fact and does
+    # not act on it. The cap this door wrote is the only input to it.
+    gate = foundry_gate("grind", str(tmp_path))
+    cap_row = [c for c in gate["checklist"] if c["check"].startswith("within_cycle_cap")]
+    assert cap_row and cap_row[0]["would_halt"] is True, gate
+    assert cap_row[0]["ok"] is True and cap_row[0]["refuses"] is False, gate
+
+    # ...and the TRANSITION acts on it: a successful crossing into HALTED, not
+    # a refusal.
+    result = foundry_mark_phase_complete("grind_start", project_root=str(tmp_path))
+    assert result.get("phase") == "HALTED", result
+
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    assert after["phase"] == "HALTED", (result, after)
+    # The STRUCTURED reason casting 10's HALT_REASONS vocabulary spells, with
+    # the free text beside it rather than instead of it.
+    assert after["halted_reason"]["reason"] == "cap_reached", after
+    assert "2" in after["halted_reason"]["text"], after
+    assert after["halted_at_cycle"] == 4, after
+
+
+def test_init_creates_the_rosters_directory_and_the_concerns_ledger(tmp_path):
+    """fallout CT-001 / CT-002 — both artefacts on disk before anything reports.
+
+    The run directory is created imperatively here, and these two join that
+    list for the same reason ``observations.json`` did: the first stream to
+    derive a roster, and the first teammate to raise a cross-casting concern,
+    must never be the caller that discovers the artefact does not exist.
+
+    The names come from casting 1's own modules rather than being re-typed —
+    ``rosters.ROSTERS_DIRNAME`` and ``concerns.CONCERNS_FILENAME`` /
+    ``CONCERNS_COLLECTION_KEY`` — so a rename there cannot leave this creating
+    a directory nothing reads.
+    """
+    from foundry_mcp.tools.concerns import (
+        CONCERNS_COLLECTION_KEY,
+        CONCERNS_FILENAME,
+        read_concerns,
+    )
+    from foundry_mcp.tools.rosters import ROSTERS_DIRNAME
+
+    result = foundry_init(project_root=str(tmp_path))
+    fdir = Path(result["foundry_dir"])
+
+    assert (fdir / ROSTERS_DIRNAME).is_dir(), sorted(p.name for p in fdir.iterdir())
+
+    concerns_path = fdir / CONCERNS_FILENAME
+    assert concerns_path.is_file(), sorted(p.name for p in fdir.iterdir())
+    assert json.loads(concerns_path.read_text(encoding="utf-8")) == {
+        CONCERNS_COLLECTION_KEY: []
+    }
+    assert CONCERNS_FILENAME in result["files_created"], result["files_created"]
+
+    # Well-formed to the module that owns every later write, not merely present.
+    records, problem = read_concerns(fdir)
+    assert (records, problem) == ([], None)
+
+
+def test_the_no_ui_definition_is_stated_once_where_the_flag_arrives(tmp_path):
+    """fallout FR-055 / AC-052 verbatim: '--no-ui and --output-dir are parsed
+    and echoed but read by nothing' — '--no-ui is threaded into Foundry-Init
+    with one documented meaning across README, setup script and gate'.
+
+    fallout survey/surface.md FI-2 found the flag meaning three different
+    things at once — setup-foundry.sh's 'Skip browser audit (SIGHT)',
+    README.md's 'Suppress orchestrator banners', and a SIGHT check treating
+    ``manifest.no_ui`` as a hard block — which is three answers to one question
+    an operator has to choose between without being told there is a choice.
+
+    This casting's deliverable is the DEFINITION and the threading; the README
+    row and the setup-script line are casting 8's and the gate's behaviour is
+    casting 2's, and all three quote this sentence. So it is pinned by exact
+    substring against the constant, never against a re-typed copy — the
+    ``_PYTEST_DISCOVERY_PHRASE`` shape, where the prose a reader meets is
+    derived from the code a test can hold.
+    """
+    import inspect
+
+    from foundry_mcp.tools.foundry import NO_UI_MEANING
+
+    # Compared with whitespace normalised on BOTH sides: the constant is one
+    # line and the docstring wraps, so an exact-substring match would be
+    # pinning the wrap column rather than the sentence.
+    def _flat(text: str) -> str:
+        return " ".join(text.split())
+
+    assert _flat(NO_UI_MEANING) in _flat(inspect.getdoc(foundry_init) or ""), (
+        NO_UI_MEANING
+    )
+    assert "SIGHT" in NO_UI_MEANING and "browsable UI" in NO_UI_MEANING
+
+    # Threaded, and persisted to BOTH stores exactly as temper and nyquist are:
+    # the gate that acts on it reads the manifest, the display reads state.
+    result = foundry_init(project_root=str(tmp_path), no_ui=True)
+    assert _state(result)["no_ui"] is True
+    assert _read_manifest(result)["no_ui"] is True

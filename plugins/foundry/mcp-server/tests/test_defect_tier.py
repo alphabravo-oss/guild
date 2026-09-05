@@ -30,6 +30,30 @@ either direction.
   C-2
       the persisted record's shape.
 
+Casting 4 of ``forge-specs/foundry-run-fallout`` added the HARDENING rows
+below. They sit in this module rather than a new one because the rungs they
+prove are rungs of ``validate_defect_filing`` — the same shared validator the
+rows above prove — and a second module would have to re-establish the same
+synthetic run and then drift from it.
+
+  fallout AC-023 / CT-012 / FR-045 / OT-018
+      a HARDENING filing carrying a reproduction is accepted at both doors,
+      and the four terminal gates do not refuse on it.
+  fallout AC-055 / FR-057 / GI-028 / OT-019
+      a HARDENING filing carrying ANY spec_ref is refused naming
+      TIER_NOT_ALLOWED, at both doors, on the same field.
+  fallout GI-004 / NFR-004
+      a HARDENING filing matching the never-demote denylist is refused and the
+      tripwire records it, exactly as the LATENT one is.
+  fallout FR-025 / CT-019 / AC-045 / OT-039
+      fallout_of naming a known id is accepted and persisted; an unknown id is
+      refused naming it; and the key is on every record whether it was set or
+      not, because an absent key is what the measurement reads as never
+      measured.
+  fallout ST-006 / GI-022 / OT-020
+      a filing citing an open HARDENING id under supersedes closes that record
+      as superseded and leaves its tier exactly where the stream put it.
+
 ``validate_defect_filing`` is tested DIRECTLY as well as through
 ``foundry_add_defect``, because the batch door ``foundry_sync_defects`` is
 casting 3's file and lands in wave 3: the helper is the contract those two
@@ -1887,6 +1911,13 @@ def test_the_pre_dispatch_rung_and_the_handler_build_one_mapping():
         "source",  # a closed vocabulary, and passed separately by the rung
         "defect_type",  # a closed vocabulary
         "project_root",  # not part of the filing
+        # fallout CT-019 — LOCATORS, not claim prose: each names another record
+        # by id and asserts nothing about the code, so a rung blind to them is
+        # blind to nothing a security predicate could ever match. They are in
+        # `_FILING_LOCATOR_KEYS` for the same reason, which is what keeps the
+        # LIVE prose floor from reading a bare `D-NNN` as a statement.
+        "fallout_of",
+        "supersedes",
     }
     assert unread == set(), (
         f"{sorted(unread)} reached the filing door without reaching "
@@ -1987,3 +2018,461 @@ def test_every_documented_latent_example_is_accepted_by_both_real_doors(run_env)
         "filing was accepted, so the record names an attempt nobody made and "
         "an auditor reading the ledger by class finds a false positive."
     )
+
+
+# ---------------------------------------------------------------------------
+# fallout US-005 — the HARDENING tier, at the one shared validator.
+# ---------------------------------------------------------------------------
+
+
+def _hardening_finding(**overrides) -> dict:
+    """The batch door's finding shape for a well-formed HARDENING filing."""
+    finding = {
+        "source": "prove",
+        "type": "PARTIAL",
+        "description": "drove the retry arm twice and the counter reported 3 for 2 jobs",
+        "spec_ref": "",
+        "symbol": "",
+        "file": "src/queue/retry.py",
+        "class": "OFF_SPEC_RETRY_DOUBLE_COUNT",
+        "tier": "HARDENING",
+        "reproduction_attempted": (
+            "drove POST /jobs/retry twice against one queued job; the counter "
+            "reported 3"
+        ),
+    }
+    finding.update(overrides)
+    return finding
+
+
+def _hardening_arguments(project_root: str, **overrides) -> dict:
+    """The single door's argument set for the same filing."""
+    args = {
+        "cycle": 1,
+        "source": "prove",
+        "defect_type": "PARTIAL",
+        "description": "drove the retry arm twice and the counter reported 3 for 2 jobs",
+        "file_path": "src/queue/retry.py",
+        "defect_class": "OFF_SPEC_RETRY_DOUBLE_COUNT",
+        "tier": "HARDENING",
+        "reproduction_attempted": (
+            "drove POST /jobs/retry twice against one queued job; the counter "
+            "reported 3"
+        ),
+        "project_root": project_root,
+    }
+    args.update(overrides)
+    return args
+
+
+def test_a_hardening_filing_with_a_reproduction_is_accepted_at_both_doors(run_env):
+    """fallout AC-023 / CT-012 / OT-018: 'A HARDENING defect is accepted with a
+    reproduction and does not block assay, temper, nyquist or done.'
+
+    The acceptance half, at BOTH doors, because CT-012's surface column names
+    'Foundry-Defect / Foundry-Sync' and a tier one door takes and the other
+    refuses is the D-119 class with a third field. The gate half is the test
+    below.
+    """
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
+
+    project_root, fdir = run_env
+
+    single = foundry_add_defect(**_hardening_arguments(project_root))
+    assert single.get("defect_id"), single
+
+    batch = foundry_sync_defects(
+        cycle=1, findings=[_hardening_finding()], project_root=project_root
+    )
+    assert batch.get("added") == 1, batch
+
+    stored = _defects(fdir)
+    assert [d["tier"] for d in stored] == ["HARDENING", "HARDENING"], stored
+    assert all(d["status"] == "open" for d in stored), stored
+
+    # The evidence the record RESTS on, persisted rather than dropped. Both this
+    # door's literal and the batch door's `new_defect_record` wrote
+    # `reproduction_attempted if tier == "LATENT" else None`, which refuses a
+    # HARDENING filing for omitting the field and then throws away the field it
+    # supplied. Fixed here; the batch door's copy of the expression lives in
+    # `orchestration/fix_gate.py#new_defect_record`, which is casting 2's file
+    # and is named in this run's concerns.md — so this asserts the door it can
+    # reach and does NOT pin the other door's current answer as correct.
+    single_record = next(d for d in stored if d["id"] == single["defect_id"])
+    assert single_record["reproduction_attempted"], single_record
+
+
+def test_a_hardening_filing_without_a_reproduction_is_refused_naming_the_field(run_env):
+    """fallout FR-045: HARDENING carries 'a reproduction, not a worry' — the
+    same evidence standard as LIVE, stated in the field LATENT states its
+    negative result in.
+
+    A worry nobody drove is a TEMPER_CANDIDATE observation, and the hint says
+    so, because the wrong repair here is to invent a reproduction.
+    """
+    project_root, _ = run_env
+
+    refusal = foundry_add_defect(
+        **_hardening_arguments(project_root, reproduction_attempted="")
+    )
+
+    assert refusal.get("field") == "reproduction_attempted", refusal
+    assert "TEMPER_CANDIDATE" in refusal["hint"], refusal["hint"]
+
+
+@pytest.mark.parametrize(
+    "spec_ref",
+    ["FR-025", "the retry section", "0", " NFR-002 "],
+    ids=["well-formed-id", "prose", "zero-string", "padded"],
+)
+def test_a_hardening_filing_carrying_any_spec_ref_is_refused_at_both_doors(
+    run_env, spec_ref
+):
+    """fallout AC-055 / FR-057 / GI-028 / OT-019 verbatim: 'Refuse HARDENING
+    whenever spec_ref is set' — 'both filing doors refuse a HARDENING record
+    that carries any spec_ref, naming the tier rule'.
+
+    ANY value, not merely a well-formed requirement id: GI-028's violation
+    column is 'a HARDENING record carrying a spec_ref for context', and a
+    reference offered as context is exactly the one a well-formedness check
+    would wave through.
+
+    Driven at both doors and asserted to name the SAME field, which is the
+    property the locked check order exists for — a filing refused on `spec_ref`
+    at one door and on something else at the other sends two streams to repair
+    two different things about one filing.
+    """
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
+    from foundry_mcp.tools.foundry import TIER_NOT_ALLOWED
+
+    project_root, fdir = run_env
+
+    single = foundry_add_defect(**_hardening_arguments(project_root, spec_ref=spec_ref))
+    assert single.get("field") == "spec_ref", single
+    assert TIER_NOT_ALLOWED in single["error"], single["error"]
+
+    batch = foundry_sync_defects(
+        cycle=1,
+        findings=[_hardening_finding(spec_ref=spec_ref)],
+        project_root=project_root,
+    )
+    refused = batch.get("refusals") or []
+    assert refused and batch.get("error"), batch
+    assert [r["field"] for r in refused] == ["spec_ref"], batch
+    assert TIER_NOT_ALLOWED in refused[0]["reason"], batch
+
+    assert _defects(fdir) == [], "a refused filing may not reach the ledger"
+
+
+def test_a_blank_spec_ref_is_not_a_spec_ref(run_env):
+    """The other side of the rung, and the one an over-eager reading breaks.
+
+    `_finding_mapping` writes `spec_ref: ""` for every filing that did not give
+    one, and `filing_finding_mapping` coerces an absent argument to `""` off
+    the wire — so a rung that treated "the key is present" as "a reference was
+    made" would refuse EVERY HARDENING filing, which is the tier being
+    unreachable rather than guarded.
+    """
+    project_root, fdir = run_env
+
+    assert foundry_add_defect(
+        **_hardening_arguments(project_root, spec_ref="")
+    ).get("defect_id"), "a blank spec_ref is the absence of one"
+    assert validate_defect_filing(
+        _finding(
+            tier="HARDENING",
+            spec_ref="   ",
+            reproduction_attempted="drove the arm; saw 3 for 2",
+        )
+    ) is None
+    assert len(_defects(fdir)) == 1
+
+
+def test_a_hardening_security_claim_is_refused_and_the_tripwire_records_it(run_env):
+    """fallout GI-004 / AC-023 / NFR-004: 'a never-demote class match is refused
+    and the tripwire recorded'.
+
+    vocab's DEFECT_TIERS block states the rule this drives: 'a security-property
+    claim filed as HARDENING is refused and the audit tripwire fires, exactly as
+    it is when filed as LATENT. A tier is never a route around the never-weaken
+    guarantee.' The rung is the FIRST one, so the audit record is written for a
+    filing that is also wrong in some other way — which is the shape a stream
+    actually files, and D-061 is the record of what a rung-dependent audit
+    control costs.
+    """
+    project_root, fdir = run_env
+
+    refusal = foundry_add_defect(
+        **_hardening_arguments(
+            project_root,
+            description=(
+                "the login endpoint does not verify the authentication token "
+                "signature"
+            ),
+            # Also wrong on a later rung, so this proves the ordering and not
+            # merely the predicate.
+            reproduction_attempted="",
+        )
+    )
+
+    assert refusal.get("denylist_class") == SECURITY_PROPERTY_CLAIM, refusal
+    fired = _tripwire(fdir)
+    assert len(fired) == 1, fired
+    assert fired[0]["denylist_class"] == SECURITY_PROPERTY_CLAIM, fired
+    assert _defects(fdir) == [], "the claim may not land in the backlog tier"
+
+
+@pytest.mark.parametrize("gate_token", ["assay", "temper", "nyquist", "done"])
+def test_the_terminal_gates_do_not_refuse_on_an_open_hardening_defect(
+    run_env, gate_token
+):
+    """fallout OT-018 / AC-022: '... does not block assay, temper, nyquist or
+    done.'
+
+    THE REAL GATE IS DRIVEN, not `BLOCKING_TIERS` membership. The constant lives
+    in `orchestration/gates.py` and this casting does not touch it — the whole
+    of the tier's gate semantics is that it is ABSENT from it, and the thing
+    worth pinning is that the ladder every door actually walks agrees.
+
+    Asserted as the absence of the DEFECT rung from the failing checks rather
+    than as `passed is True`: a synthetic run is not gate-ready for other
+    reasons (no recorded INSPECT width, no generated report), and a test
+    demanding a green gate would be pinning those instead. The control below
+    shows the rung is reachable and does fire.
+    """
+    from foundry_mcp.tools.orchestration.gates import (
+        NEXT_ACTION_CALLED_MARKER,
+        foundry_gate,
+    )
+
+    project_root, fdir = run_env
+    filed = foundry_add_defect(**_hardening_arguments(project_root))
+    (fdir / NEXT_ACTION_CALLED_MARKER).touch()
+
+    gate = foundry_gate(gate_token, project_root)
+    failing = [c["check"] for c in gate.get("checklist", []) if not c.get("ok")]
+
+    assert not any(c.startswith("zero_blocking_defects") for c in failing), gate
+    assert filed["defect_id"] not in str(gate.get("reason", "")), gate
+
+
+def test_the_blocking_rung_the_gates_walk_does_fire_on_a_live_defect(run_env):
+    """The control for the four above: the rung they are asserted not to trip
+    is reachable, and an open LIVE defect trips it by name.
+
+    Without this, the four tests above pass just as well against a gate that
+    stopped reading the ledger at all — which is the failure mode a
+    non-blocking tier makes easiest to ship.
+    """
+    from foundry_mcp.tools.orchestration.gates import (
+        NEXT_ACTION_CALLED_MARKER,
+        foundry_gate,
+    )
+
+    project_root, fdir = run_env
+    foundry_add_defect(
+        **_hardening_arguments(
+            project_root, tier="LIVE", reproduction_attempted=""
+        )
+    )
+    (fdir / NEXT_ACTION_CALLED_MARKER).touch()
+
+    gate = foundry_gate("done", project_root)
+    failing = [c["check"] for c in gate.get("checklist", []) if not c.get("ok")]
+
+    assert any(c.startswith("zero_blocking_defects") for c in failing), gate
+    assert "D-001" in str(gate.get("reason", "")), gate
+
+
+# ---------------------------------------------------------------------------
+# fallout FR-025 / CT-019 / ST-006 — the two provenance fields.
+# ---------------------------------------------------------------------------
+
+
+def _live_arguments(project_root: str, **overrides) -> dict:
+    args = {
+        "cycle": 1,
+        "source": "prove",
+        "defect_type": "MISSING",
+        "description": "drove POST /login with a valid body and got 500",
+        "file_path": "src/api/login.py",
+        "defect_class": "UNHANDLED_500",
+        "tier": "LIVE",
+        "project_root": project_root,
+    }
+    args.update(overrides)
+    return args
+
+
+def test_fallout_of_naming_a_known_defect_is_accepted_and_persisted(run_env):
+    """fallout AC-045 / CT-019 / OT-039 verbatim: 'Optional fallout_of: D-NNN on
+    the defect record, set by the filing stream; measure-run counts it per
+    cycle.'
+
+    The field is persisted under exactly this name because casting 3's
+    `measure-run.py` and casting 10's `foundry_state.fallout_rows` read it by
+    name — the shape is a cross-module contract, not this door's private
+    spelling.
+    """
+    project_root, fdir = run_env
+
+    parent = foundry_add_defect(**_live_arguments(project_root))
+    child = foundry_add_defect(
+        **_live_arguments(
+            project_root,
+            description="the retry after that 500 double-books the session",
+            defect_class="RETRY_DOUBLE_BOOK",
+            symbol="retry_login",
+            fallout_of=parent["defect_id"],
+        )
+    )
+
+    assert child.get("defect_id"), child
+    stored = {d["id"]: d for d in _defects(fdir)}
+    assert stored[child["defect_id"]]["fallout_of"] == parent["defect_id"], stored
+    assert stored[parent["defect_id"]]["fallout_of"] is None, stored
+
+
+def test_fallout_of_naming_an_unknown_id_is_refused_naming_the_id(run_env):
+    """fallout CT-019 / OT-039: 'fallout_of naming an unknown id' is the ONE
+    error this contract admits, and the refusal names the id so the filer can
+    see which citation is wrong rather than which field.
+
+    Refused with NOTHING written: the check runs inside the ledger transaction
+    ahead of every mutation, so a bad citation costs the run no record and no
+    id.
+    """
+    project_root, fdir = run_env
+
+    refusal = foundry_add_defect(
+        **_live_arguments(project_root, fallout_of="D-404")
+    )
+
+    assert refusal.get("field") == "fallout_of", refusal
+    assert "D-404" in refusal["error"], refusal
+    assert _defects(fdir) == [], "a refused filing may not reach the ledger"
+
+
+def test_every_record_carries_the_provenance_keys_even_when_nothing_set_them(run_env):
+    """fallout FR-025 — an ABSENT key is not a measured zero, so the door writes
+    both keys on every record.
+
+    `foundry_state.fallout_rows` (casting 10) reads the KEY's presence as 'this
+    record was measured' and its absence as 'this record predates the field',
+    and a cycle holding one unmeasured record cannot contribute to FR-025's
+    acceptance figure. A door that wrote `fallout_of` only when a filer set it
+    would make every cycle of every post-change run read as not_measurable
+    forever — the reader certifying nothing while looking like it certified
+    something. Driven through the reader itself, not asserted on the literal.
+    """
+    from foundry_mcp.tools.foundry_state import fallout_rows
+
+    project_root, fdir = run_env
+    foundry_add_defect(**_live_arguments(project_root))
+
+    record = _defects(fdir)[0]
+    assert record["fallout_of"] is None and record["supersedes"] is None, record
+
+    rows = fallout_rows(fdir)
+    assert rows["measured_records"] == 1, rows
+    assert rows["unmeasured_records"] == 0, rows
+
+
+def test_supersedes_closes_the_cited_hardening_record(run_env):
+    """fallout ST-006 / AC-023 / OT-020 verbatim: 'a later filing carrying
+    supersedes closes the HARDENING record as superseded and no door re-tiers a
+    record in place'.
+
+    The tier, the description and the reproduction of the earlier record are
+    asserted UNCHANGED, because that is the whole of GI-022: promotion is a new
+    filing that cites the old one, and re-tiering in place would rewrite what a
+    stream said it saw. `status` moves to a third value beside open and fixed —
+    the closure stops it blocking without claiming anybody repaired it.
+    """
+    project_root, fdir = run_env
+
+    hardening = foundry_add_defect(**_hardening_arguments(project_root))
+    before = next(d for d in _defects(fdir) if d["id"] == hardening["defect_id"])
+
+    promotion = foundry_add_defect(
+        **_live_arguments(
+            project_root,
+            description=(
+                "the same retry arm loses a job when the queue is drained "
+                "concurrently, which FR-025 requires it not to"
+            ),
+            spec_ref="FR-025",
+            symbol="retry_arm",
+            supersedes=hardening["defect_id"],
+        )
+    )
+
+    assert promotion["superseded"] == hardening["defect_id"], promotion
+
+    stored = {d["id"]: d for d in _defects(fdir)}
+    closed = stored[hardening["defect_id"]]
+    assert closed["status"] == "superseded", closed
+    assert closed["superseded_by"] == promotion["defect_id"], closed
+    # NOT RE-TIERED. Every field the stream filed is exactly where it left it.
+    assert closed["tier"] == before["tier"] == "HARDENING", closed
+    assert closed["description"] == before["description"], closed
+    assert closed["reproduction_attempted"] == before["reproduction_attempted"], closed
+    # The promotion carries its OWN tier and its own evidence.
+    assert stored[promotion["defect_id"]]["tier"] == "LIVE", stored
+
+
+def test_supersedes_citing_something_that_is_not_an_open_hardening_record(run_env):
+    """The other half of ST-006, and the reason it is not a refusal.
+
+    CT-019's errors column admits exactly one error — an unknown `fallout_of` —
+    and D-101 is this package's record of what inventing a rung a contract does
+    not admit costs: the door refuses its own documented example and the stream's
+    next move is to fabricate the field. So a `supersedes` naming an unknown id,
+    or naming a record that is not an open HARDENING one, closes NOTHING and
+    refuses nothing; the result's `superseded` key is null and that is how the
+    filer learns the promotion did not land.
+    """
+    project_root, fdir = run_env
+
+    live = foundry_add_defect(**_live_arguments(project_root))
+
+    unknown = foundry_add_defect(
+        **_live_arguments(
+            project_root, symbol="a", defect_class="B", supersedes="D-404"
+        )
+    )
+    assert unknown.get("defect_id"), unknown
+    assert unknown["superseded"] is None, unknown
+
+    not_hardening = foundry_add_defect(
+        **_live_arguments(
+            project_root, symbol="c", defect_class="D", supersedes=live["defect_id"]
+        )
+    )
+    assert not_hardening["superseded"] is None, not_hardening
+    stored = {d["id"]: d for d in _defects(fdir)}
+    assert stored[live["defect_id"]]["status"] == "open", stored
+
+
+def test_no_door_offers_a_tier_rewrite_of_a_record_already_on_disk(run_env):
+    """fallout GI-022 / OT-020: 'no door re-tiers a record in place'.
+
+    The structural half. Two functions in this module mutate a record that is
+    already on disk, and neither can move a tier a stream declared:
+    `retier_matching_untiered` writes one only into a record that has NONE
+    (`defect_tier` reads TIER_UNKNOWN), and `close_superseded_record` writes
+    `status` and nothing else. Driven rather than read: an identical re-filing
+    of a HARDENING record appends a second record beside it and leaves the
+    first one's tier alone.
+    """
+    project_root, fdir = run_env
+
+    first = foundry_add_defect(**_hardening_arguments(project_root))
+    again = foundry_add_defect(
+        **_hardening_arguments(project_root, tier="LIVE", reproduction_attempted="")
+    )
+
+    assert again["defect_id"] != first["defect_id"], (first, again)
+    assert again["retiered"] == 0, again
+    stored = {d["id"]: d for d in _defects(fdir)}
+    assert stored[first["defect_id"]]["tier"] == "HARDENING", stored

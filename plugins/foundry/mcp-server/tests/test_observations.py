@@ -2313,3 +2313,146 @@ def test_the_shim_reads_this_modules_own_data(monkeypatch) -> None:
     # ``GI`` citations are outside LEGACY_ID_FAMILIES and stay unreported here.
     assert not _unqualified_ids("GI-006 requires the generated report")
     assert unqualified_ids("GI-006 requires the generated report")
+
+
+# ---------------------------------------------------------------------------
+# fallout CT-017 / FR-017 / GI-027 — TEMPER_CANDIDATE, the fifth observation
+# class and the one that is not about comment prose at all.
+# ---------------------------------------------------------------------------
+
+
+def test_a_temper_candidate_is_accepted_and_read_back(run: Path, tmp_path: Path) -> None:
+    """fallout CT-017 / OT-022 verbatim: 'A TEMPER_CANDIDATE observation is
+    accepted, TEMPER reads it first, and an undriven candidate is listed in the
+    F6 report.'
+
+    The first two clauses, driven end to end: recorded at the door, then read
+    back through the query TEMPER uses,
+    ``Foundry-Observations(classification=TEMPER_CANDIDATE)``.
+
+    ``target_kind="code"`` IS THE POINT. A candidate is a probe idea about the
+    implementation — vocab's own block calls it 'the one that is not about
+    comment prose at all', and casting 10's report fixture seeds one with
+    exactly this subject. Every other class in this ledger requires
+    ``target_kind="comment"`` because recording one IS a demotion of a
+    comment-prose finding; nothing has been shown to be wrong here, so there is
+    no defect for the ledger to hide and the subject rung does not apply.
+    """
+    result = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=(
+            "nobody has driven what the reaper does to a session the purge "
+            "cascade is halfway through"
+        ),
+        classification="TEMPER_CANDIDATE",
+        target_kind="code",
+        symbol="reap_expired",
+        file_path="src/session/reaper.py",
+        project_root=str(tmp_path),
+    )
+
+    assert result.get("observation_id"), result
+    assert result["classification"] == "TEMPER_CANDIDATE", result
+
+    read_back = foundry_query_observations(
+        classification="TEMPER_CANDIDATE", project_root=str(tmp_path)
+    )
+    assert [o["id"] for o in read_back["observations"]] == [result["observation_id"]]
+    assert read_back["observations"][0]["target_kind"] == "code"
+    # No demotion was attempted, so no audit signal fired.
+    assert read_back["tripwire"] == [], read_back
+    assert _defects(run) == [], "a candidate is not a defect"
+
+
+def test_an_undeclared_candidate_still_meets_the_comment_subject_rung(
+    run: Path, tmp_path: Path
+) -> None:
+    """The narrowing, asserted from the side that must NOT move.
+
+    The exemption is keyed on the classification the caller DECLARED. An
+    omitted ``classification`` reaches the comment-subject rung exactly as it
+    did before this casting — which is process-fixes D-069's ruling applied
+    rather than re-argued: a default that decides this question for a caller
+    who said nothing is how a fabricated ``target_kind="comment"`` got into the
+    ledger in the first place. ``observation_class`` walks four comment-prose
+    predicates and can never answer TEMPER_CANDIDATE, so there is no path by
+    which the exemption is reached without somebody asking for it.
+    """
+    refusal = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=(
+            "nobody has driven what the reaper does to a session the purge "
+            "cascade is halfway through"
+        ),
+        target_kind="code",
+        project_root=str(tmp_path),
+    )
+
+    assert refusal.get("denylist_class") == "NON_COMMENT", refusal
+    assert len(_observations(run)["tripwire"]) == 1, _observations(run)
+    assert _observations(run)["observations"] == []
+
+
+def test_a_candidate_that_claims_a_security_property_is_still_refused(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout GI-004: 'The never-demote denylist ... is UNCHANGED by the fifth
+    member and still outranks every one of them ... a probe idea whose
+    description makes a security-property claim is a DEFECT, and the tripwire
+    fires naming the entry that matched.'
+
+    The exemption lifts ONE denylist entry — NON_COMMENT, which reads the
+    finding's subject — and leaves the three that read what the finding CLAIMS
+    exactly where they were. A tier or a class is never a route around the
+    never-weaken guarantee, and this is the test that fails if the exemption is
+    ever widened from 'the subject rung' to 'the denylist'.
+    """
+    from foundry_mcp.schemas.vocab import SECURITY_PROPERTY_CLAIM
+
+    refusal = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=(
+            "the login endpoint does not verify the authentication token "
+            "signature"
+        ),
+        classification="TEMPER_CANDIDATE",
+        target_kind="code",
+        project_root=str(tmp_path),
+    )
+
+    assert refusal.get("denylist_class") == SECURITY_PROPERTY_CLAIM, refusal
+    fired = _observations(run)["tripwire"]
+    assert len(fired) == 1 and fired[0]["denylist_class"] == SECURITY_PROPERTY_CLAIM
+    assert _observations(run)["observations"] == []
+
+
+def test_a_classification_outside_the_vocabulary_is_refused_naming_the_set(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout CT-017's one error: 'classification not in OBSERVATION_CLASSES'.
+
+    The refusal names the set by DERIVING it from the constant rather than by
+    listing it, which is this package's third convention — so the sentence an
+    operator reads gained TEMPER_CANDIDATE the moment casting 10 added the
+    member, with no edit here. Asserted against the live frozenset, not against
+    a copy of its members typed into this file, since a hand-typed expectation
+    would agree with a hand-typed hint and prove nothing.
+    """
+    from foundry_mcp.schemas.vocab import OBSERVATION_CLASSES
+
+    refusal = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description="the comment above the guard still says line 244",
+        classification="TEMPER_CANDIDATES",  # one letter off a real member
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+
+    assert "Invalid classification" in refusal["error"], refusal
+    for member in OBSERVATION_CLASSES:
+        assert member in refusal["error"], (member, refusal["error"])
+    assert _observations(run)["observations"] == []

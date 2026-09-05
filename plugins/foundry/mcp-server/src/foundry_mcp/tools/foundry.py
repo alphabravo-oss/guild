@@ -102,8 +102,11 @@ from foundry_mcp.schemas.vocab import (
     DEFECT_TIERS,
     DEFECT_TYPES,
     NEVER_DEMOTE_CLASSES,
+    NON_COMMENT,
     OBSERVATION_CLASSES,
     SECURITY_PROPERTY_CLAIM,
+    TEMPER_CANDIDATE,
+    TIER_HARDENING,
     TIER_UNKNOWN,
     canonical_defect_type,
     defect_tier,
@@ -960,6 +963,7 @@ def record_denylist_tripwire(
     *,
     cycle: int,
     source: str,
+    comment_subject_required: bool = True,
 ) -> dict | None:
     """Fire and persist the never-demote audit tripwire, iff it applies.
 
@@ -1027,16 +1031,52 @@ def record_denylist_tripwire(
     derivation of a path the caller has.
     """
     denied = never_demote_class(finding)
-    if denied is None and not _subject_is_declared_comment(finding):
+
+    # CT-017 / GI-027 / FR-017 — `comment_subject_required=False` IS THE
+    # TEMPER_CANDIDATE DOOR, AND IT LIFTS EXACTLY ONE ENTRY.
+    #
+    # The four never-demote entries are not one rule. Three of them read what
+    # the finding CLAIMS — a security property, a spec-required behaviour, an
+    # unresolvable cite — and they are absolute here as everywhere: vocab's
+    # OBSERVATION_CLASSES block is explicit that the denylist "is UNCHANGED by
+    # the fifth member and still outranks every one of them", and a probe idea
+    # whose description makes a security-property claim is a DEFECT.
+    #
+    # NON_COMMENT reads the finding's SUBJECT, and it is the one entry that
+    # exists because recording an observation used to BE a demotion: the four
+    # original classes are all "this comment no longer agrees with the code", so
+    # a finding about code arriving in that ledger was a defect in hiding, and
+    # the door had to fail closed on an undeclared subject.
+    #
+    # A TEMPER_CANDIDATE is not a demotion of anything. It is "here is a
+    # question nobody has asked yet" — nothing has been shown to be wrong, so
+    # there is no defect for it to hide. Its subject is CODE by definition, and
+    # casting 10's own report fixture seeds one with `target_kind: "code"`. Held
+    # to the comment-subject rung the member would be unrecordable at the only
+    # door that writes it, which would make OT-022 ("a TEMPER_CANDIDATE
+    # observation is accepted") unsatisfiable and TEMPER's roster permanently
+    # empty.
+    #
+    # LIFTED ONLY ON AN EXPLICIT DECLARATION, never on an inferred one — see the
+    # caller. Absence keeps today's behaviour to the byte, which is D-069's
+    # ruling applied rather than re-argued: a default that decides this question
+    # for a caller who said nothing is how the fabricated declaration got in.
+    if denied == NON_COMMENT and not comment_subject_required:
+        denied = None
+    if (
+        denied is None
+        and comment_subject_required
+        and not _subject_is_declared_comment(finding)
+    ):
         # An undeclared subject cannot be SHOWN to be a comment, and "anything
         # non-comment" can never be an observation. Reported under the existing
         # NON_COMMENT entry rather than inventing a class name.
-        denied = "NON_COMMENT"
+        denied = NON_COMMENT
     if denied is None:
         return None
 
     target_kind = finding.get("target_kind")
-    if denied != "NON_COMMENT":
+    if denied != NON_COMMENT:
         detail = f"the finding matches the {denied} denylist entry"
     elif not (isinstance(target_kind, str) and target_kind.strip()):
         # Absence is the common case and its own diagnosis: `target_kind` is
@@ -1191,7 +1231,19 @@ _FILING_LOCATOR_KEYS = frozenset({
     "file",
     "symbol",
     "spec_ref",
-})  # 3 items
+    # CT-019 / FR-025 — the two provenance fields are LOCATORS: each names
+    # another record by id and asserts nothing whatever about the code. Out of
+    # the claim partition for the same driven reason `spec_ref` is out of it,
+    # and the omission would bite in BOTH directions at the batch door, which
+    # hands its caller's whole finding dict to `security_scan_text`: a `D-NNN`
+    # can never match the security predicate, so nothing would be refused that
+    # should not be — but the LIVE prose floor asks whether the filing carries
+    # ANY prose at all, and a LIVE filing whose only text was `fallout_of:
+    # "D-012"` would pass a floor whose whole subject is that the record states
+    # something about what is wrong.
+    "fallout_of",
+    "supersedes",
+})  # 5 items
 
 _FILING_ESCALATION_KEYS = frozenset({
     "class",
@@ -1211,7 +1263,7 @@ NON_CLAIM_FILING_KEYS = frozenset(
     | _FILING_LOCATOR_KEYS
     | _FILING_ESCALATION_KEYS
     | _FILING_NEGATIVE_SPACE_KEYS
-)  # 10 items
+)  # 12 items
 
 
 def _collect_prose(value: object, into: list[str], depth: int = 0) -> None:
@@ -1327,13 +1379,164 @@ def tripwire_finding(finding: Mapping[str, object]) -> dict:
     return {**finding, "description": scanned}
 
 
+#: AC-055 / GI-028 / CT-012 — the named refusal a HARDENING filing carrying any
+#: `spec_ref` gets. Spelled ONCE, and carried in the `error` STRING rather than
+#: in a key of its own, because `_merged_door_refusal` hoists three named keys
+#: and no more: a token in a fourth key would be the one thing a filing that
+#: failed two rungs loses on its way back to the caller.
+TIER_NOT_ALLOWED = "TIER_NOT_ALLOWED"
+
+#: GI-004 / GI-014 — the tiers a security-property claim may never be PARKED in.
+#: DERIVED from the vocabulary rather than listed, so a fourth member joins this
+#: rung by construction instead of by somebody remembering it: what the denylist
+#: exists to stop is a claim filed where it holds no gate shut, and LIVE — the
+#: one tier that does hold one shut — is therefore the exclusion. `BLOCKING_TIERS`
+#: says the same thing one module over (`orchestration/gates.py`, LIVE plus the
+#: unknown sentinel) and is NOT imported here: this module is the layer that one
+#: imports from, and reading it back would close a cycle in the import graph.
+NON_BLOCKING_TIERS = frozenset(DEFECT_TIERS - {"LIVE"})
+
+#: The two reproduction hints, one per tier that demands the field. Same rung,
+#: same refusal, different EVIDENCE: a LATENT filing owes a negative result, a
+#: HARDENING filing owes the probe it drove and the wrong result it saw. One
+#: hint serving both would tell half its readers to describe the wrong thing.
+_LATENT_REPRODUCTION_HINT = (
+    "A LATENT filing is a gap you REASONED about rather than "
+    "reproduced, so the negative result is the whole evidence: "
+    "say what you drove and what it found (e.g. 'AST sweep of "
+    "both roots finds 0 sites'). If you did drive the failure, "
+    "file it as LIVE with its reproduction instead."
+)
+_HARDENING_REPRODUCTION_HINT = (
+    "A HARDENING filing is a probe you DROVE that failed on a path no "
+    "requirement states, so it carries the same evidence a LIVE filing does: "
+    "name the probe you ran and the wrong result you observed. A worry you did "
+    "not drive is not a HARDENING record — record it as a TEMPER_CANDIDATE "
+    "observation through Foundry-Observation instead."
+)
+
+#: FR-025 / CT-019 / ST-006 — the two OPTIONAL provenance fields a filing may
+#: carry onto its record, named once so the doors, the record shape and casting
+#: 3's `fallout_per_cycle` measurement read ONE spelling.
+DEFECT_PROVENANCE_KEYS = ("fallout_of", "supersedes")
+
+
+def _provenance_value(value: object) -> str | None:
+    """One provenance field, normalised to a non-blank str or to None."""
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def defect_provenance(finding: Mapping[str, object]) -> dict:
+    """The two provenance keys, ALWAYS BOTH, for a new defect record.
+
+    FR-025 / CT-019 — `fallout_of` names the D-NNN this finding is fallout of;
+    `supersedes` names the open HARDENING record this filing promotes.
+
+    BOTH KEYS ARE ALWAYS WRITTEN, `None` when the filing carried neither, and
+    that is the whole contract rather than tidiness. `foundry_state.fallout_rows`
+    reads the KEY's presence as "this record was measured" and its absence as
+    "this record predates the field" — structurally unmeasured, never a measured
+    zero — and a cycle holding one unmeasured record cannot contribute to
+    FR-025's acceptance figure. A door that wrote the key only when the filer set
+    it would make every post-change cycle read as unmeasured forever, which is
+    the reader certifying nothing while looking like it certified something.
+
+    Reads the mapping and nothing else, like `validate_defect_filing` beside it,
+    so the batch door can build the same two keys from its caller's finding dict
+    without a second spelling of what they are called or how they normalise.
+    """
+    return {key: _provenance_value(finding.get(key)) for key in DEFECT_PROVENANCE_KEYS}
+
+
+def fallout_parent_problem(fallout_of: str | None, records: list) -> dict | None:
+    """CT-019's one error: `fallout_of` naming an id the ledger does not hold.
+
+    Returns the house refusal dict, or None when the field is absent or names a
+    record that exists. Takes the RECORDS rather than a run dir because the
+    decision belongs inside the caller's open transaction: deciding outside it
+    would re-open the read-then-write window the ledger lock exists to close,
+    and a parent filed by a concurrent door would read as unknown.
+
+    CT-019 admits exactly ONE error on this contract, so there is no rung here
+    for a `supersedes` naming an unknown or non-HARDENING id — see
+    `close_superseded_record` for what happens instead and why. D-101 is the
+    record of what inventing a rung a contract's errors column does not admit
+    costs: the door refuses its own documented example and the stream's next
+    move is to fabricate the field.
+    """
+    if not fallout_of:
+        return None
+    if any(d.get("id") == fallout_of for d in _dict_records(records)):
+        return None
+    return {
+        "ok": False,
+        "error": (
+            f"Unknown fallout_of: {fallout_of!r} names no record in this run's "
+            f"defect ledger."
+        ),
+        "hint": (
+            "`fallout_of` cites the defect this finding is fallout OF — a "
+            "D-NNN this run has already filed — so that measure-run can count "
+            "fallout per cycle. Check the id against Foundry-Defects, or drop "
+            "the field: a finding that is nobody's fallout carries it as null."
+        ),
+        "field": "fallout_of",
+    }
+
+
+def close_superseded_record(
+    records: list,
+    superseded_id: str | None,
+    *,
+    by_id: str,
+    cycle: int,
+) -> str | None:
+    """ST-006 — close the cited open HARDENING record as SUPERSEDED, in place.
+
+    Returns the id actually closed, or None when the field was absent or the
+    cited record is not an open HARDENING one. Mutates ``records`` (the list a
+    ``ledger_transaction`` is yielding) exactly as ``retier_matching_untiered``
+    does, and for the same reason: the read and the write are one event.
+
+    THE TIER IS NOT TOUCHED (OT-020 / GI-022). Promotion is a NEW filing that
+    CITES the earlier record, never a rewrite of what a stream said it saw. So
+    this sets `status`, and the record keeps the tier, the description and the
+    reproduction it was filed with; the new record carries its own. There is no
+    door in this package that re-tiers a record in place, and this is the
+    function a reader looking for one arrives at.
+
+    `"superseded"` is a THIRD status beside `"open"` and `"fixed"`, not either of
+    them: every gate and census in the package counts `status == "open"`, so the
+    closure stops it blocking; and `status == "fixed"` is what Foundry-Fix
+    writes when a defect was repaired, which this was not.
+
+    A cited id that is unknown, already closed, or not HARDENING closes NOTHING
+    and refuses nothing — CT-019's errors column admits one refusal and this is
+    not it. The caller reports the id it actually closed (`superseded` in the
+    door's result, `None` here), so a filer who cited the wrong record sees that
+    in the answer rather than being told the filing failed.
+    """
+    if not superseded_id:
+        return None
+    for d in _dict_records(records):
+        if d.get("id") != superseded_id:
+            continue
+        if d.get("status") != "open" or defect_tier(d) != TIER_HARDENING:
+            return None
+        d["status"] = "superseded"
+        d["superseded_by"] = by_id
+        d["superseded_in_cycle"] = cycle
+        return superseded_id
+    return None
+
+
 def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
     """The tier/class/LATENT checks both filing doors apply, decided in ONE place.
 
     Returns None when the filing may be persisted, otherwise the house refusal
     dict: ``{"ok": False, "error": ..., "hint": ..., "field": <"tier" | "class"
-    | "reproduction_attempted" | "description">}`` plus, for the security
-    refusal only, ``"denylist_class": SECURITY_PROPERTY_CLAIM``.
+    | "reproduction_attempted" | "description" | "spec_ref">}`` plus, for the
+    security refusal only, ``"denylist_class": SECURITY_PROPERTY_CLAIM``.
 
     Reads the mapping and nothing else — no ledger read, no run-dir resolution,
     no write — so the batch door can call it once per finding BEFORE it opens
@@ -1354,13 +1557,38 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
     rare one.
 
     THE CHECK ORDER IS LOCKED, so that the two doors name the same field first
-    for the same bad filing: the security denylist, then tier, then class,
-    then — for LIVE only — the prose floor (D-147), then — for LATENT only —
-    reproduction_attempted. There is no rung after those; see the D-101 block
-    at the tail of this function for why a `file_path` rung was added in GRIND
-    cycle 5 and reversed in cycle 6, and the D-147 block at the LIVE rung for
-    why that one is scoped and shaped the way it is rather than as a
-    `description`-key check.
+    for the same bad filing: the security denylist (over every NON-BLOCKING
+    tier), then tier, then class, then — for LIVE only — the prose floor
+    (D-147), then — for HARDENING only — the `spec_ref` refusal, then — for
+    LATENT and HARDENING — reproduction_attempted. There is no rung after
+    those; see the D-101 block at the tail of this function for why a
+    `file_path` rung was added in GRIND cycle 5 and reversed in cycle 6, and
+    the D-147 block at the LIVE rung for why that one is scoped and shaped the
+    way it is rather than as a `description`-key check.
+
+    WHAT THE HARDENING TIER ADDED, AND WHERE (FR-015 / FR-057 / FR-045 /
+    GI-004 / GI-014 / GI-022 / GI-028 / CT-012 / AC-023 / AC-055)
+    --------------------------------------------------------------------
+    Three rungs, all of them placed INSIDE the locked order rather than beside
+    it, because the order is the only reason the two doors name the same field
+    first for the same bad filing:
+
+      * the denylist rung widened from LATENT to `NON_BLOCKING_TIERS`. A
+        security-property claim parked in a tier that holds no gate shut is the
+        demotion the denylist exists to refuse, and which non-blocking tier it
+        was parked in does not change that.
+      * a `spec_ref` refusal reachable only from HARDENING, naming
+        `TIER_NOT_ALLOWED`.
+      * the reproduction rung widened to both tiers that owe evidence in that
+        field.
+
+    Nothing here decides whether HARDENING blocks a gate. `BLOCKING_TIERS` is
+    LIVE plus the unknown sentinel, it lives in `orchestration/gates.py`, and it
+    was not touched: the tier's gate semantics are entirely that it is absent
+    from that tuple. And nothing here re-tiers a record — promotion is a NEW
+    filing citing the earlier one through `supersedes` (see
+    `close_superseded_record`), because a re-tier would rewrite what a stream
+    said it saw.
 
     D-147 / D-158 — WHAT THE DENYLIST RUNG READS
     --------------------------------------------
@@ -1443,17 +1671,35 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
     # put the claim in `failure`), and not `reproduction_attempted` either
     # (D-158: that field reports what a search did NOT find, so scanning it
     # refused the protocol's own LATENT shapes). See `NON_CLAIM_FILING_KEYS`.
-    if tier == "LATENT" and is_security_property_text(security_scan_text(finding)):
+    # GI-004 / GI-014: HARDENING joined LATENT on this rung the moment it became
+    # a tier. `NON_BLOCKING_TIERS` is the derivation, not a second list — vocab's
+    # own DEFECT_TIERS block is explicit that "a security-property claim filed as
+    # HARDENING is refused and the audit tripwire fires, exactly as it is when
+    # filed as LATENT", and a tier is never a route around the never-weaken
+    # guarantee. The rung reads the DECLARED tier, before the tier rung has
+    # judged it, for the reason the docstring gives: the rung that would validate
+    # it is the very rung this must outrank.
+    # `isinstance` first: this rung reads the tier the caller DECLARED, which is
+    # any value the wire can carry — and an unhashable one (a list) makes a bare
+    # `in` against a frozenset RAISE, which is the one thing a validator whose
+    # whole contract is "returns the house refusal, never raises" may not do.
+    # The equality this widened from could not be reached that way.
+    if (
+        isinstance(tier, str)
+        and tier in NON_BLOCKING_TIERS
+        and is_security_property_text(security_scan_text(finding))
+    ):
         return {
             "ok": False,
             "error": (
                 f"Refused: {SECURITY_PROPERTY_CLAIM} — a security-property "
-                f"claim may never be filed as LATENT."
+                f"claim may never be filed as {tier}."
             ),
             "hint": (
                 "A claim that a security property is broken is never a gap "
-                "reasoned about: drive it, and file what you observed as "
-                "LIVE. Do NOT re-word the claim to get past this refusal — "
+                "reasoned about, and it is never off-spec: drive it, and file "
+                "what you observed as LIVE. Do NOT re-word the claim to get "
+                "past this refusal — "
                 "every field that CARRIES a claim is read, not just the "
                 "description (D-147); the same predicate guards the "
                 "never-demote denylist, and an audit tripwire has already "
@@ -1479,8 +1725,11 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
                 "answerable for. LIVE means you drove the door and observed "
                 "the wrong result — put the reproduction in the description. "
                 "LATENT means you looked for the failure and did not find one "
-                "— name what you drove in reproduction_attempted. The tier is "
-                "not a severity: both are defects and both get fixed."
+                "— name what you drove in reproduction_attempted. HARDENING "
+                "means you drove a probe of your own devising and it failed on "
+                "a path NO requirement states — same reproduction standard as "
+                "LIVE, and it carries no spec_ref. The tier is not a severity: "
+                "all three are defects and all three get fixed."
             ),
             "field": "tier",
         }
@@ -1556,20 +1805,71 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
             "field": "description",
         }
 
-    if tier != "LATENT":
+    if tier == "LIVE":
         return None
 
+    # AC-055 / GI-028 / CT-012 — HARDENING CARRYING ANY `spec_ref` IS REFUSED.
+    #
+    # Not down-ranked, refused, and refused here rather than at the vocabulary:
+    # vocab's DEFECT_TIERS block says "that is a door rule and lives at the
+    # doors; what lives here is the member". The discriminator is mechanical
+    # because the claim is: a spec reference IS the statement that a requirement
+    # is at stake, and a record making that statement from inside the
+    # non-blocking tier is precisely the downgrade this axis exists to prevent.
+    #
+    # ANY VALUE AT ALL, not merely a well-formed requirement id. GI-028's
+    # violation column is "a HARDENING record carrying a `spec_ref` for
+    # context", and a reference offered as context is exactly the one that would
+    # survive a well-formedness check. A blank string and an absent key are the
+    # same thing — no reference was made — and every other value, of every type
+    # the batch door's caller dict can hold, is one.
+    #
+    # AHEAD OF THE REPRODUCTION RUNG deliberately. A HARDENING filing carrying a
+    # spec_ref does not belong in this tier at all, so naming the missing
+    # reproduction first would send the filer to complete evidence for a record
+    # that must be re-filed as LIVE either way.
+    if tier == TIER_HARDENING:
+        spec_ref = finding.get("spec_ref")
+        carries_spec_ref = (
+            bool(spec_ref.strip()) if isinstance(spec_ref, str) else spec_ref is not None
+        )
+        if carries_spec_ref:
+            return {
+                "ok": False,
+                "error": (
+                    f"Refused: {TIER_NOT_ALLOWED} — a {TIER_HARDENING} filing "
+                    f"may carry no spec_ref, and this one carries "
+                    f"{spec_ref!r}."
+                ),
+                "hint": (
+                    "HARDENING is the tier for a driven failure on a path NO "
+                    "requirement states, and a spec_ref is the statement that "
+                    "a requirement IS at stake — the two cannot both be true "
+                    "of one filing. If the requirement really is unmet, this "
+                    "is a LIVE defect: re-file it with tier=LIVE, keeping the "
+                    "spec_ref and putting the reproduction in the description. "
+                    "If it is not, drop the spec_ref; a HARDENING record cites "
+                    "no requirement, not even for context."
+                ),
+                "field": "spec_ref",
+            }
+
+    # FR-004 / FR-029 / GI-014 — the negative-result rung, now reached by the
+    # two tiers that owe evidence in this field. LATENT owes what it DROVE and
+    # did not find; HARDENING owes the probe it drove and the wrong result it
+    # saw ("Same evidence standard as LIVE — a reproduction, not a worry", per
+    # vocab's DEFECT_TIERS block). One rung, one refusal, two hints — because
+    # the two tiers owe different evidence and a single hint would tell half
+    # its readers to write the wrong thing.
     problem = reproduction_attempted_problem(finding.get("reproduction_attempted"))
     if problem is not None:
         return {
             "ok": False,
             "error": f"Invalid reproduction_attempted: {problem}",
             "hint": (
-                "A LATENT filing is a gap you REASONED about rather than "
-                "reproduced, so the negative result is the whole evidence: "
-                "say what you drove and what it found (e.g. 'AST sweep of "
-                "both roots finds 0 sites'). If you did drive the failure, "
-                "file it as LIVE with its reproduction instead."
+                _HARDENING_REPRODUCTION_HINT
+                if tier == TIER_HARDENING
+                else _LATENT_REPRODUCTION_HINT
             ),
             "field": "reproduction_attempted",
         }
@@ -1707,8 +2007,14 @@ def retier_matching_untiered(
             # path rather than half-handled here.
             continue
         d["tier"] = tier
+        # GI-014: `!= "LIVE"`, not `== "LATENT"`. HARDENING owes the same
+        # reproduction LATENT does — vocab's DEFECT_TIERS block calls it "the
+        # whole reason the record is trusted" and the report's HARDENING backlog
+        # renders the column — so keying on LATENT alone would classify a record
+        # into the new tier and throw away the evidence that classified it. LIVE
+        # is the one tier whose reproduction lives in the description.
         d["reproduction_attempted"] = (
-            reproduction_attempted if tier == "LATENT" else None
+            reproduction_attempted if tier != "LIVE" else None
         )
         if not str(d.get("class") or "").strip():
             d["class"] = defect_class
@@ -2033,6 +2339,67 @@ def _generate_run_name(ticket: str = "", description: str = "") -> str:
     return f"{adj}-{noun}"
 
 
+#: FR-055 / AC-052 — THE ONE MEANING OF `--no-ui`, and the sentence every other
+#: surface quotes rather than re-words.
+#:
+#: `survey/surface.md` FI-2 found the flag meaning THREE different things at
+#: once: setup-foundry.sh's help said "Skip browser audit (SIGHT)", README.md's
+#: table said "Suppress orchestrator banners", and the SIGHT check treated
+#: `manifest.no_ui` as a HARD BLOCK — a refusal, which is neither of the other
+#: two. A flag whose meaning depends on which document the operator read is a
+#: flag nobody can use correctly, and the three readings disagree about the
+#: direction of the effect, not merely its wording.
+#:
+#: The chosen meaning is the one the flag's own NAME carries and that two of the
+#: three surfaces were already reaching for. It says nothing about banners: the
+#: display is not a UI the run audits, and a flag that suppressed output would
+#: need its own name.
+NO_UI_MEANING = (
+    "`--no-ui` declares that this run has no browsable UI, so the SIGHT "
+    "browser audit is not part of it."
+)
+
+
+def _max_cycles_problem(value: object) -> dict | None:
+    """The cap rung: a value this door will not honour is refused, not stored.
+
+    CT-006 / D-225 — the accepted set must EQUAL the honoured set. `Foundry-Init`
+    is reachable in-process as well as over the advertised schema, and D-225 is
+    the record of what the gap costs on this exact parameter: a NEGATIVE cap
+    passed the wire schema, was persisted, and then read as "no cap" by
+    `_persisted_max_cycles`, so an operator who typed -1 ran unbounded and was
+    told nothing. The schema gained a `minimum`; this is the same rung at the
+    handler, which is the door the resume path reaches through.
+
+    `bool` is refused as a non-integer on purpose: `True` IS an `int` in Python
+    and would persist a cap of 1, halting the run at the first GRIND door for a
+    caller who passed a flag where a ceiling was asked for.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return {
+            "error": (
+                f"Invalid max_cycles: {value!r} is not an integer. The GRIND "
+                f"cycle ceiling is a whole number of cycles."
+            ),
+            "hint": (
+                "Pass an integer at least 0 — 0 is unbounded, which is the "
+                "default and what an omitted --max-cycles flag sends."
+            ),
+        }
+    if value < 0:
+        return {
+            "error": (
+                f"Invalid max_cycles: {value} is below zero. A negative "
+                f"ceiling is not a smaller cap, it is no cap at all."
+            ),
+            "hint": (
+                "Pass 0 for unbounded, or the number of GRIND cycles this run "
+                "may open before it halts."
+            ),
+        }
+    return None
+
+
 @ledger_refusals
 def foundry_init(
     spec_path: str | None = None,
@@ -2061,6 +2428,41 @@ def foundry_init(
             castings/manifest.json. Default 0 means unbounded. The Foundry-Phase
             call that would exceed it SUCCEEDS, sets phase HALTED and generates
             the report; HALTED is a named terminal state and is not DONE.
+
+            CT-006 / ST-002 / FR-020 / AC-027 — ON A RESUME IT REWRITES THE CAP.
+            ``Foundry-Init(resume=…, max_cycles=N)`` writes N to
+            ``state.json.max_cycles`` inside the same locked document as the
+            refreshed provenance, so an operator can lower a ceiling onto a
+            running run and the next GRIND door halts it with reason
+            ``cap_reached`` when N is below the cycle it is opening. This branch
+            used to do ``document.update(version_fields)`` and nothing else,
+            dropping a parameter of its own signature on the floor.
+
+            A RESUME CARRYING 0 CHANGES NOTHING, and that is forced rather than
+            chosen. ``setup-foundry.sh`` echoes ``FOUNDRY_MAX_CYCLES=0`` when the
+            flag was ABSENT and ``server.py``'s dispatch sends
+            ``args.get("max_cycles", 0)``, so over the wire "no cap requested"
+            and "cap of 0" arrive as the same value — and of the two readings,
+            only this one keeps a bare ``/foundry:resume`` from silently lifting
+            the ceiling the run was launched with. The cost is that a cap cannot
+            be lifted back to unbounded through this door; resume with the
+            ceiling you want instead. A non-integer, or a value below 0, is
+            refused at the door on BOTH branches (``_max_cycles_problem``).
+        no_ui: FR-055 / AC-052 — and THIS is the definition every other surface
+            quotes, spelled once in ``NO_UI_MEANING``:
+
+            `--no-ui` declares that this run has no browsable UI, so the SIGHT
+            browser audit is not part of it.
+
+            It does NOT suppress banners, and it is not a refusal. The flag meant
+            all three at once (survey/surface.md FI-2) — setup-foundry.sh's
+            "Skip browser audit (SIGHT)", README.md's "Suppress orchestrator
+            banners", and a SIGHT check treating it as a hard block — which is
+            three answers to one question an operator has to pick between
+            without being told there is a choice. Persisted to BOTH state.json
+            and castings/manifest.json, exactly as ``temper`` and ``nyquist``
+            are; the surfaces that quote the sentence and the gate that acts on
+            it are other castings' files, and they quote this one.
         ticket: Ticket ID (e.g., "AQUA-123") for name generation.
         description: Short description for name generation.
         url: Target URL for the SIGHT audit. Persisted to
@@ -2084,6 +2486,13 @@ def foundry_init(
     """
     root = Path(project_root)
     archive = root / ARCHIVE_DIR
+
+    # CT-006 / D-225 — the cap rung, ahead of BOTH branches. One parameter, one
+    # check: a value this door will not honour is refused rather than written,
+    # and there is no reading under which a new run may store a cap the resume
+    # door would refuse.
+    if (cap_problem := _max_cycles_problem(max_cycles)) is not None:
+        return cap_problem
 
     # --- Resume mode ---
     if resume:
@@ -2137,12 +2546,37 @@ def foundry_init(
         set_active_run(resume)
         with _locked_document(state_path) as document:
             document.update(version_fields)
+            # CT-006 / ST-002 / FR-020 — THE CAP THIS CALL CARRIES, WRITTEN.
+            #
+            # `survey/data.md:336`: this branch did `document.update(...)` and
+            # nothing else, so `max_cycles` — a parameter of this very function,
+            # advertised on the schema and forwarded by the dispatch lambda —
+            # was accepted and dropped, and an operator lowering a ceiling onto
+            # a running run was told the resume succeeded while the ceiling
+            # stayed where it was.
+            #
+            # In THIS transaction rather than a second one: the provenance
+            # refresh and the cap are one operator action, and a cap written
+            # under its own lock could interleave with a concurrent phase
+            # transition reading the old value.
+            #
+            # `if max_cycles:` is the 0-means-absent reading the Args block
+            # argues for — the wire cannot distinguish an omitted flag from an
+            # explicit 0, and only this direction keeps a bare resume from
+            # lifting a ceiling nobody asked it to lift.
+            if max_cycles:
+                document["max_cycles"] = max_cycles
             state = dict(document)
         return {
             "foundry_dir": str(run_dir),
             "run_name": resume,
             "resumed": True,
             "state": state,
+            # AC-027 — the cap this run is NOW running under, echoed beside the
+            # refreshed state exactly as the new-run result echoes its own, so a
+            # caller reads what was persisted rather than what it asked for. A
+            # resume that carried no cap reports the one the run already had.
+            "max_cycles": state.get("max_cycles", 0),
             # D-109 — echoed beside the refreshed copy, exactly as the new-run
             # result echoes it, so a caller rendering either result reads what
             # the run is EXECUTING on rather than what it was born on.
@@ -2192,12 +2626,34 @@ def foundry_init(
     if legacy_pointer.exists():
         legacy_pointer.unlink(missing_ok=True)
 
+    # A FUNCTION-LOCAL IMPORT, and the cycle it avoids is named. Both
+    # `tools/rosters.py` and `tools/concerns.py` import THIS module at their
+    # module top — `_locked_document`, `ledger_transaction`, `allocate_record_id`
+    # and `ledger_refusals` are all defined here — so importing them back at the
+    # top of this file is an ImportError raised at server startup, behind which
+    # every tool in the package lives. The names taken are the two artifacts'
+    # own spellings of where they live and what their record container is
+    # called: this function CREATES them empty and well-formed, casting 1's
+    # writers own every subsequent write, and neither end re-types the other's
+    # path (`rosters.roster_path`'s docstring names this caller).
+    from foundry_mcp.tools.concerns import (
+        CONCERNS_COLLECTION_KEY,
+        CONCERNS_FILENAME,
+    )
+    from foundry_mcp.tools.rosters import ROSTERS_DIRNAME
+
     dirs = [
         fdir,
         fdir / "castings",
         fdir / "traces",
         fdir / "proofs",
         fdir / "proofs" / "screenshots",
+        # CT-002 / FR-024 / ST-010 — one document per stream lands in here at
+        # first derivation. Created at init, empty, so `Foundry-Roster` never has
+        # to decide whether the directory exists and a lead listing the run
+        # directory can see that rosters are a thing this run keeps before any
+        # stream has reported.
+        fdir / ROSTERS_DIRNAME,
     ]
     if temper:
         dirs.extend([fdir / "temper", fdir / "temper" / "probe-results"])
@@ -2220,6 +2676,18 @@ def foundry_init(
     observations_path = fdir / "observations.json"
     write_document(observations_path, {"observations": [], "tripwire": []})
     files_created.append("observations.json")
+
+    # concerns.json — always fresh. CT-001 / GI-013: the STRUCTURED half of the
+    # concern channel, seeded beside the other ledgers for the same reason
+    # observations.json is — a teammate filing the first concern of a run must
+    # never be the caller that discovers the ledger does not exist. Written
+    # through `write_document`, which takes the ledger lock and therefore leaves
+    # the `.lock` sidecar every casting-1 writer flocks already on disk.
+    # concerns.md stays prose and is rendered from this by the writers; nothing
+    # here parses it.
+    concerns_path = fdir / CONCERNS_FILENAME
+    write_document(concerns_path, {CONCERNS_COLLECTION_KEY: []})
+    files_created.append(CONCERNS_FILENAME)
 
     # verdicts.json — always fresh
     verdicts_path = fdir / "verdicts.json"
@@ -2421,6 +2889,8 @@ def foundry_add_defect(
     project_root: str = ".",
     tier: str = "",
     reproduction_attempted: str = "",
+    fallout_of: str = "",
+    supersedes: str = "",
 ) -> dict:
     """Add a defect to the foundry ledger.
 
@@ -2460,6 +2930,21 @@ def foundry_add_defect(
             ``None`` on a LIVE record, whose reproduction lives in the
             description.
 
+        fallout_of: optional (CT-019 / FR-025) — the ``D-NNN`` this finding is
+            fallout OF: a defect this run already filed whose fix, or whose
+            absence, produced this one. Refused when it names an id the ledger
+            does not hold. Persisted on every record, ``None`` when unset,
+            because casting 3's ``measure-run.py`` counts fallout per cycle and
+            an ABSENT key reads as "never measured" rather than as a zero.
+        supersedes: optional (CT-019 / ST-006 / GI-022) — the id of an open
+            HARDENING record this filing PROMOTES. The cited record is closed
+            with status ``superseded``; its tier, description and reproduction
+            are left exactly as the stream filed them, because promotion is a
+            new filing that cites the old one and never a re-tier in place.
+            Citing an id that is unknown, already closed, or not HARDENING
+            closes nothing and refuses nothing — the ``superseded`` key of the
+            result names what was actually closed.
+
         file_path: the file the finding is in, bare and repo-relative, never
             carrying a line number. Optional on EVERY tier (D-101): FR-005
             refuses a LATENT filing "only when the description matches the
@@ -2471,7 +2956,8 @@ def foundry_add_defect(
 
     Returns:
         ``{defect_id, cycle, declared_cycle, type, total_defects, open_defects,
-        retiered, retiered_ids}``, or a named refusal ``{error, hint, ...}``
+        retiered, retiered_ids, superseded}``, or a named refusal
+        ``{error, hint, ...}``
         when the vocabulary check, the comment-prose check, or
         ``validate_defect_filing`` rejects the filing.
 
@@ -2710,11 +3196,16 @@ def foundry_add_defect(
         # leaving the conditional would have meant escalation still had to
         # handle a keyless record it can never again be handed.
         "class": defect_class,
-        # FR-004 / FR-029: the negative result a LATENT filing is answerable
-        # for, and explicitly `None` on a LIVE record rather than "" — absent
-        # evidence and empty evidence are different claims, and a LIVE record's
-        # reproduction lives in the description where the stream put it.
-        "reproduction_attempted": reproduction_attempted if tier == "LATENT" else None,
+        # FR-004 / FR-029 / GI-014: the negative result a LATENT filing is
+        # answerable for AND the probe a HARDENING filing drove, and explicitly
+        # `None` on a LIVE record rather than "" — absent evidence and empty
+        # evidence are different claims, and a LIVE record's reproduction lives
+        # in the description where the stream put it. Keyed on `!= "LIVE"`
+        # rather than on `== "LATENT"`: the validator now demands the field of
+        # both non-blocking tiers, so keying on one of them would refuse a
+        # HARDENING filing for omitting evidence and then drop the evidence it
+        # supplied.
+        "reproduction_attempted": reproduction_attempted if tier != "LIVE" else None,
         "description": description,
         "spec_ref": spec_ref,
         "symbol": symbol,
@@ -2730,6 +3221,14 @@ def foundry_add_defect(
         "regression_test": None,
         "authored_by": None,
         "fix_commit": None,
+        # FR-025 / CT-019 / ST-006 — the two provenance fields, ALWAYS both,
+        # seeded null exactly as the three fix fields above are and for a
+        # sharper reason than symmetry: `foundry_state.fallout_rows` reads an
+        # absent `fallout_of` key as STRUCTURALLY UNMEASURED, so a door that
+        # wrote the key only when a filer set it would make every cycle of every
+        # post-change run read as "never measured" and FR-025's acceptance
+        # figure permanently not_measurable.
+        **defect_provenance({"fallout_of": fallout_of, "supersedes": supersedes}),
         "created_at": now,
     }
     if target_kind:
@@ -2737,6 +3236,20 @@ def foundry_add_defect(
 
     defects_path = fdir / "defects.json"
     with ledger_transaction(defects_path, "defects") as defects:
+        # CT-019 — the `fallout_of` rung, INSIDE the lock and ahead of every
+        # mutation. It is the one rung `validate_defect_filing` cannot own: that
+        # function reads the mapping and nothing else, by contract, so that the
+        # batch door can call it once per finding before opening its
+        # transaction. "Does the ledger hold this id" is a LEDGER question, and
+        # asking it outside the lock would re-open the read-then-write window
+        # the lock exists to close — a parent filed by a concurrent door would
+        # read as unknown. Returning from inside the transaction is safe and
+        # deliberate: nothing has been mutated yet, so the primitive's exit
+        # compares an unchanged document and writes nothing.
+        unknown_parent = fallout_parent_problem(defect["fallout_of"], defects)
+        if unknown_parent is not None:
+            return unknown_parent
+
         # FR-051 / AC-008 / D-077 — THE UNTIERED EXIT, AT THIS DOOR TOO.
         #
         # D-062 gave the batch door this branch and left this one appending a
@@ -2772,6 +3285,20 @@ def foundry_add_defect(
             defect_id = allocate_record_id(defects, "D")
             defect["id"] = defect_id
             defects.append(defect)
+
+        # ST-006 / GI-022 — the promotion, in the SAME transaction that
+        # persisted the record making it. A closure written in a second
+        # transaction would leave a window in which the citing record exists and
+        # the record it supersedes is still open, and every gate and census that
+        # counts `status == "open"` reads that window as one more open defect
+        # than the run has. After the append, because the closure records the id
+        # of the record that superseded it and that id is minted above.
+        superseded_id = close_superseded_record(
+            defects,
+            defect["supersedes"],
+            by_id=defect_id,
+            cycle=defect["cycle"],
+        )
         total = len(defects)
         # D-097: skip a non-dict historical record here exactly as
         # `allocate_record_id` does four lines above. The raw `d.get(...)` used
@@ -2832,6 +3359,12 @@ def foundry_add_defect(
         # per-door divergence that keeps costing this package defects.
         "retiered": 1 if retiered_id is not None else 0,
         "retiered_ids": [retiered_id] if retiered_id is not None else [],
+        # ST-006 — the id this filing actually CLOSED, or None. Reported rather
+        # than assumed, because `supersedes` naming an unknown, already-closed
+        # or non-HARDENING record is not a refusal (CT-019's errors column
+        # admits one error and this is not it): the filer learns here that the
+        # promotion did not land, instead of learning nothing.
+        "superseded": superseded_id,
     }
 
 
@@ -2877,11 +3410,19 @@ def foundry_add_observation(
 
     Args:
         classification: optional; a member of ``vocab.OBSERVATION_CLASSES``.
-            Derived from the description when omitted.
+            Derived from the description when omitted — and only the four
+            COMMENT-PROSE classes are derivable, so ``TEMPER_CANDIDATE``
+            (CT-017: a PROVE probe idea nobody has driven) is reachable only by
+            declaring it. Declaring it also lifts the ``target_kind="comment"``
+            requirement below, because a candidate's subject is code and nothing
+            has been shown to be wrong about it; the three CLAIM entries of the
+            never-demote denylist still apply unchanged.
         target_kind: REQUIRED in effect \u2014 must be the explicit string
             "comment". Omitting it is refused under the NON_COMMENT denylist
             entry and fires the tripwire, exactly as a present non-comment
-            value does.
+            value does. The ONE exception is a declared
+            ``classification="TEMPER_CANDIDATE"``: that class is not about
+            comment prose at all, so the subject rung does not apply to it.
 
     Returns:
         ``{observation_id, classification, total_observations}``, or a named
@@ -2920,7 +3461,18 @@ def foundry_add_observation(
     # one exported call so that every path into this ledger is audited by the
     # same code \u2014 see `record_denylist_tripwire`.
     tripwire = record_denylist_tripwire(
-        fdir, finding, cycle=_server_cycle(fdir), source=source
+        fdir,
+        finding,
+        cycle=_server_cycle(fdir),
+        source=source,
+        # CT-017 / GI-027 — the one class whose subject is CODE. Keyed on the
+        # classification the caller DECLARED, before `observation_class` has
+        # inferred anything, and that is the whole of the narrowing: the four
+        # inferable classes are comment-prose predicates and none of them can
+        # ever return TEMPER_CANDIDATE, so an omitted `classification` reaches
+        # the comment-subject rung exactly as it does today. Fail-closed in
+        # D-069's direction — absence licenses nothing.
+        comment_subject_required=classification != TEMPER_CANDIDATE,
     )
     if tripwire is not None:
         denied = tripwire["denylist_class"]
@@ -2952,6 +3504,11 @@ def foundry_add_observation(
             "tripwire": tripwire,
         }
 
+    # `observation_class` walks the four COMMENT-PROSE predicates and can never
+    # return TEMPER_CANDIDATE (CT-017): a probe idea is a question somebody
+    # thought of, not a pattern a regex finds, so the fifth class arrives only
+    # when a caller declares it. That is also why the denylist call above can
+    # key on the declared value alone.
     resolved = classification or observation_class(finding)
     if resolved is None:
         return {
