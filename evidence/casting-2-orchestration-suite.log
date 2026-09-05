@@ -1,0 +1,9 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/orchestration/ 2>&1 | tail -3
+# evidence-for: fallout GI-007, GI-008, FR-037, NFR-001, NFR-007
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 300
+
+........................................................................ [ 90%]
+..........................................................               [100%]
+634 passed in 22.99s

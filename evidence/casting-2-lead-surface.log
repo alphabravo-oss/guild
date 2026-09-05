@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/orchestration/test_guidance.py -k 'heading_for or terminal_state or sub_agent or imperative or f6_order or record_a_stream' 2>&1 | tail -3
+# evidence-for: fallout US-012, FR-021, FR-034, FR-035, FR-047, FR-055, CT-007, AC-021, AC-028, AC-053, AC-054, OT-026
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 300
+
+.........                                                                [100%]
+9 passed, 62 deselected in 0.25s

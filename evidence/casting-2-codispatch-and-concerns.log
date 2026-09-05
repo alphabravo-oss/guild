@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/orchestration/test_tasks_codispatch.py 2>&1 | tail -3
+# evidence-for: fallout US-001, FR-011, FR-012, FR-038, GI-021, GI-023, CT-008, CT-009, ST-003, ST-005, AC-002, AC-003, AC-004, AC-006, OT-002, OT-003, OT-004, OT-006
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 300
+
+...                                                                      [100%]
+3 passed in 0.06s

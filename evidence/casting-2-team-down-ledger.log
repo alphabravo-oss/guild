@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/orchestration/test_teams.py tests/orchestration/test_transitions.py -k 'team_down or dispatched_defect or teams' 2>&1 | tail -3
+# evidence-for: fallout US-009, FR-022, FR-048, GI-017, CT-010, ST-011, AC-039, AC-041, OT-036
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 300
+
+...........                                                              [100%]
+11 passed, 190 deselected in 0.38s

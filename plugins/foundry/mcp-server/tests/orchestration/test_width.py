@@ -315,3 +315,81 @@ def test_the_trace_skip_does_not_fire_on_a_delta_cycle_with_a_diff(run_env):
 
     assert decision["skip"] is False, decision
     assert not (fdir / ".trace-complete").exists()
+
+
+# --------------------------------------------------------------------------- #
+# fallout OT-013 / OT-014 / FR-043 — ONLY THE VERIFIER FORCES FULL WIDTH.
+# --------------------------------------------------------------------------- #
+
+#: The surfaces a GRIND may touch and still earn a DELTA INSPECT. Every one of
+#: them is a module this casting created, and the point of creating them was
+#: that the monolith made this list impossible: one file held the gate ladder
+#: AND the report seal AND the spend ledger, so a diff touching the spend door
+#: forced a FULL cycle over everything.
+_DELTA_SURFACES = (
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/report_seal.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/spend.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/halt.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/directives.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/teams.py",
+    "plugins/foundry/commands/start.md",
+    "plugins/foundry/agents/teammate.md",
+    "plugins/foundry/references/lead-discipline.md",
+)
+
+#: The surfaces whose diff makes a verdict already reached UNTRUSTWORTHY, which
+#: is the only thing `verifier_touched` is for.
+_VERIFIER_SURFACES = (
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/gates.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/transitions.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/width.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/evidence_boundary.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/schemas/findings.py",
+)
+
+
+def test_the_split_surfaces_that_may_earn_a_delta_inspect():
+    """fallout OT-013 — a diff touching only these records rule `delta`.
+
+    This is what the whole carve BUYS. Before it, one file held the gate ladder,
+    the report seal, the spend ledger, the halt door, the directives and the team
+    lifecycle, so a diff touching any of them matched the verifier pattern and
+    every GRIND ran at FULL width. Casting 10 narrowed `VERIFIER_PATH_PATTERNS`
+    to four module paths; this asserts the paths it names are the ones that now
+    exist, which is the half a narrowing cannot check for itself.
+    """
+    from foundry_mcp.schemas.vocab import is_verifier_path
+
+    forced = [p for p in _DELTA_SURFACES if is_verifier_path(p, None)]
+    assert forced == [], (
+        f"{forced} still match the verifier pattern, so a GRIND touching only "
+        "the presentation and lifecycle surfaces would run at FULL width — the "
+        "cost the split exists to remove."
+    )
+
+
+def test_every_verifier_surface_still_forces_full_after_the_split():
+    """fallout OT-014 / FR-043 — and the narrowing did not narrow too far.
+
+    A pattern set that matched NOTHING would satisfy the test above and be
+    catastrophic: `verifier_touched` would never fire and a run that rewrote its
+    own gate would re-use verdicts the rewrite invalidated. Both halves, on the
+    same list, in the same commit.
+    """
+    from foundry_mcp.schemas.vocab import is_verifier_path
+
+    missed = [p for p in _VERIFIER_SURFACES if not is_verifier_path(p, None)]
+    assert missed == [], (
+        f"{missed} no longer match the verifier pattern. A diff moving any of "
+        "them can make a verdict already reached wrong, which is the whole of "
+        "what `verifier_touched` is for."
+    )
+
+
+def test_the_two_sets_are_disjoint_and_neither_is_empty():
+    """The emptiness guard on both axes at once."""
+    assert set(_DELTA_SURFACES).isdisjoint(_VERIFIER_SURFACES)
+    assert len(_DELTA_SURFACES) >= 6 and len(_VERIFIER_SURFACES) >= 6

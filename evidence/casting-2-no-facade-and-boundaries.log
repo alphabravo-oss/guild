@@ -1,0 +1,9 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/orchestration/test_module_boundaries.py -k 'acyclic or planted_cycle or three_layers or seam_table or lazily_either or test_module or package_marker or defined_in_two or consolidated or timestamp_has_one' 2>&1 | tail -3
+# evidence-for: fallout US-003, FR-004, FR-005, FR-006, FR-043, FR-063, GI-010, GI-025, GI-026, GI-033, AC-011, AC-013, AC-014, AC-015, AC-061, OT-011, OT-012, OT-015, OT-016, NFR-009
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 300
+
+........................................................................ [ 80%]
+.................                                                        [100%]
+89 passed in 8.12s
