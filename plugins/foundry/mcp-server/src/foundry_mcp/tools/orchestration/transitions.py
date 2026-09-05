@@ -282,6 +282,31 @@ def _boundary_evidence_rung(
     `_transition_refusal` now supplies, so a lead reads the same sentence it
     read before — including the named logs and the retry naming this token.
     """
+    # NOT TAKEN WHEN THE CROSSING IS ALREADY REFUSED, and that is a statement
+    # about what a measurement MEANS, not only about what it costs. A
+    # whole-corpus re-execution is minutes, and this rung is the last one every
+    # routine adds — so a token whose SOURCE PHASE rung has already failed would
+    # otherwise sweep the corpus for a crossing that cannot happen from where
+    # the run is. `Foundry-Gate('inspect')` from F3 is exactly that call: it
+    # guards the `cast` transition, which is refused from F3 on its first rung,
+    # and the evidence verdict could not change the answer.
+    #
+    # Both doors take the same branch, because both reach it through this one
+    # function — so gate and transition still refuse the identical set, which is
+    # the whole of AC-056. What differs is only whether an already-decided
+    # checklist row was measured, and the row says which.
+    if not ladder.passed:
+        checklist.append({
+            "check": "evidence_reproduces_at_head (not taken)",
+            "ok": True,
+            "refuses": False,
+            "detail": (
+                "an earlier rung already refuses this crossing, so the corpus "
+                "was not re-executed for a transition that cannot happen"
+            ),
+        })
+        return {"inspect_entry": entry, "evidence_sweep": {}, "mismatches": []}
+
     sweep = _sweep_evidence_at_boundary(fdir, project_root, entry, full=full)
     if not sweep["ok"]:
         refusal = _sweep_refusal(sweep, current_cycle(fdir), token=token)

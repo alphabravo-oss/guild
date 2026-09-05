@@ -3851,3 +3851,56 @@ def test_a_concern_closed_with_a_reason_also_clears_the_door(run_env):
     _arm_ordering_token(fdir)
     result = foundry_mark_phase_complete("inspect_start", project_root)
     assert "cross-casting concern" not in str(result.get("error", "")), result
+
+
+
+
+def test_a_crossing_already_refused_does_not_re_execute_the_corpus(run_env, monkeypatch):
+    """fallout FR-058 / AC-056 — the rung is last, so it must not be blind.
+
+    `_boundary_evidence_rung` is the final rung of the three INSPECT-opening
+    routines, and a whole-corpus re-execution is minutes. `Foundry-Gate('inspect')`
+    called from F3 is the case that makes this matter: it guards the `cast`
+    transition, whose FIRST rung refuses from F3 — so sweeping there measures a
+    corpus for a crossing that cannot happen, and the verdict could not change
+    the answer either way.
+
+    BOTH DOORS TAKE THE SAME BRANCH, which is what keeps this an optimisation
+    and not a divergence: the skip lives inside the one routine both doors call,
+    so the refusal set is still identical and only an already-decided checklist
+    row goes unmeasured. The row says so rather than going missing.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+
+    swept = {"n": 0}
+
+    def _counting(_fdir, _pr, _entry, *, full):
+        swept["n"] += 1
+        return {"ok": True, "record": {"scope": "full", "corpus_size": 0,
+                                       "logs_reexecuted": [], "mismatches": [],
+                                       "per_log": [], "elapsed_seconds": 0.0,
+                                       "pool_size": 0},
+                "mismatches": [], "error": ""}
+
+    patch_everywhere(monkeypatch, "_sweep_evidence_at_boundary", _counting)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("inspect", project_root)
+    assert gate["passed"] is False, gate
+    assert swept["n"] == 0, "the corpus was re-executed for a refused crossing"
+
+    # The row is REPORTED, not dropped: a checklist that silently loses a rung
+    # is how a lead stops being able to tell "passed" from "not asked".
+    rows = [c for c in gate["checklist"] if "evidence_reproduces_at_head" in c["check"]]
+    assert len(rows) == 1, gate["checklist"]
+    assert "not taken" in rows[0]["check"], rows[0]
+    assert rows[0]["refuses"] is False, rows[0]
+
+    # ...and from the phase the crossing IS legal from, it sweeps.
+    _write_state(fdir, phase="F1", cycle=1)
+    (fdir / artifacts.CAST_COMPLETE_MARKER).write_text("x\n", encoding="utf-8")
+    _arm_ordering_token(fdir)
+    foundry_gate("inspect", project_root)
+    assert swept["n"] == 1, "the corpus was not re-executed on a reachable crossing"
