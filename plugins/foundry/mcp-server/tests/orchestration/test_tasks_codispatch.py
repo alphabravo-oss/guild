@@ -229,7 +229,8 @@ def test_the_alignment_block_is_named_by_a_surface_that_reaches_the_prompt(run_e
     """fallout FR-038 / GI-021 / CT-008 / AC-002 — D-040: computed, published,
     consumed by nothing.
 
-    FR-038 ends "the lead pastes it verbatim into the dispatch prompt", and a
+    fallout FR-038 ends "the lead pastes it verbatim into the dispatch
+    prompt", and a
     grep over src/, tests/, commands/ and agents/ found exactly three
     references to the block: its definition, the one assignment inside
     `foundry_defects_to_tasks`, and one test assertion. No consumer, and no
