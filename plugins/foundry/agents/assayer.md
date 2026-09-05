@@ -66,6 +66,8 @@ Your checklist is what the spec says. **What you must CHECK this cycle is what t
 - `inspect_mode.prove_sample` — the PROVE roster: the requirement rows tied to the defects the preceding GRIND fixed, plus a deterministic sample of the remainder. Populated on a `DELTA` cycle, empty otherwise.
 - `inspect_mode.cycle` — the cycle the roster belongs to. A roster stamped with a different cycle is not yours; fall back to the whole matrix.
 
+**That read carries the caller argument, and so does every other one.** If you are a SUB-AGENT rather than the lead, pass caller='subagent' on every Foundry-Next call. The lead's call is a protocol step — it arms the ordering token the next Foundry-Gate requires and resets the stall clock; yours is a read, and passing the argument keeps it one. That sentence is `plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION` quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+
 **On `DELTA`, verify exactly the rows in `inspect_mode.prove_sample`.** Every one of them and no fewer — that named list is the whole test the streams-complete check applies to this stream, and a roster row you skipped is a row nothing else reaches this cycle. Report `items_checked` as the number of ROSTER rows you verified and `items_total` as the roster's length, so both numbers are measured against the width the server drew rather than against the matrix. Checking the whole matrix instead is not a safe over-delivery: it spends the cycle the `DELTA` width exists to save, and it reports a coverage pair that describes a different denominator than the one the gate reads.
 
 **On `FULL`, verify the whole matrix exactly as Step 0 built it** — `items_total` is every requirement in the spec.

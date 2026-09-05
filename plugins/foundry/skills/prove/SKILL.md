@@ -72,6 +72,14 @@ The checklist is what the spec says. What you must CHECK this cycle is what the 
 - `inspect_mode.prove_sample` — the PROVE roster on a `DELTA` cycle: the rows tied to the defects the preceding GRIND fixed, plus a deterministic sample of the remainder.
 - `inspect_mode.cycle` — the cycle that roster belongs to. A roster stamped with a different cycle is not yours.
 
+**That read carries the caller argument, and so does every other one.** If you are a
+SUB-AGENT rather than the lead, pass caller='subagent' on every Foundry-Next call. The
+lead's call is a protocol step — it arms the ordering token the next Foundry-Gate requires
+and resets the stall clock; yours is a read, and passing the argument keeps it one. That
+sentence is
+`plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+
 **On `DELTA`, verify exactly the rows in `inspect_mode.prove_sample`** — every one of them and no fewer — and report `items_checked` and `items_total` against that roster's length rather than against the spec. **On `FULL`, verify the whole matrix** and report `items_total` as every requirement in the spec. **With no recorded `inspect_mode` at all, verify the whole matrix**: a missing width means no narrowing was decided, never that you may narrow it yourself.
 
 **Read the array, never the terminal line.** The `Foundry-Next` display truncates the roster at eight rows; the roster itself is `inspect_mode.prove_sample`, below that display and after the marker line. Copying the eight visible rows checks eight rows and reports a width that was never run.

@@ -59,7 +59,7 @@ import pytest
 
 from foundry_mcp.schemas import vocab
 from foundry_mcp.tools import foundry_report
-from foundry_mcp.tools.orchestration import gates, streams
+from foundry_mcp.tools.orchestration import gates, guidance, streams
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FOUNDRY_ROOT = REPO_ROOT / "plugins" / "foundry"
@@ -699,4 +699,63 @@ def test_no_prove_side_surface_says_the_lead_records_for_it(path: Path) -> None:
         f"the lead. fallout GI-016 puts it on the AGENT and the lead's own "
         f"imperative is confirm-the-record-exists; a file saying otherwise "
         f"produces the double-record the replace semantics were built to end."
+    )
+
+
+# ---------------------------------------------------------------------------
+# fallout FR-034 / FR-055 / AC-053 -- the caller a sub-agent's read declares
+# ---------------------------------------------------------------------------
+
+#: The sentence itself, taken from the constant and whitespace-flattened to
+#: match `_flat`. Casting 2 pins the two SERVER surfaces that carry it (the
+#: `Foundry-Next` tool description and the spawn-time protocol block) in
+#: tests/orchestration/test_guidance.py; casting 6 pins the five non-PROVE
+#: stream agents in test_protocol_prose.py. This is the PROVE-side third,
+#: covering the assayer and the verification skills, and it reads the same
+#: constant rather than re-typing the sentence -- the `_TEAMS_DOWN_HINT`
+#: reason: four spellings of one rule is four chances to drift, and the
+#: refusal a stream would eventually read is the server's, not its own file's.
+_SUBAGENT_CALLER_SENTENCE = " ".join(guidance.SUBAGENT_CALLER_INSTRUCTION.split())
+
+#: DERIVED from whose prose actually prescribes the read, not typed. C-016
+#: settled that the rule binds a file only where the file tells someone to
+#: call the door: agents/teammate.md names `Foundry-Next` nowhere and was
+#: correctly left alone, so the same key is applied here rather than a roster
+#: that would demand a rule about a call a file never makes.
+FOUNDRY_NEXT_READING_SURFACES = tuple(
+    p for p in (ASSAYER, *VERIFICATION_SKILLS) if "Foundry-Next" in _read(p)
+)
+
+
+def test_the_foundry_next_reading_roster_is_derived() -> None:
+    """Floor check: the caller-rule pin below is vacuous on an empty sweep."""
+    missing = sorted(
+        _rel(p)
+        for p in {ASSAYER, PROVE_SKILL, TRACE_SKILL, SIGHT_SKILL, TEMPER_SKILL}
+        - set(FOUNDRY_NEXT_READING_SURFACES)
+    )
+    assert not missing, (
+        f"{missing} no longer name `Foundry-Next`, which is how each learns "
+        f"the cycle its `Foundry-Stream` record is keyed by. A surface leaves "
+        f"this roster by losing that read -- fix the file rather than "
+        f"hard-coding the roster here."
+    )
+
+
+@pytest.mark.parametrize("path", FOUNDRY_NEXT_READING_SURFACES, ids=_rel)
+def test_a_prove_side_surface_states_the_subagent_caller_rule(path: Path) -> None:
+    """fallout FR-034 / FR-055 / AC-053: the argument stated, never defaulted.
+
+    `caller` defaults to the LEAD value at the wire, so a stream that never
+    learns the argument exists arms the ordering token the next `Foundry-Gate`
+    requires and resets the stall clock every time it orients itself. D-047
+    drove it: a grep across `agents/`, `skills/` and `commands/` found ZERO
+    files naming `caller` while nine stream surfaces were pinned to take the
+    cycle from `Foundry-Next` with nothing beside it.
+    """
+    assert _SUBAGENT_CALLER_SENTENCE in _flat(path), (
+        f"{_rel(path)} tells a sub-agent to read `Foundry-Next` without "
+        f"stating the caller argument, so the read takes the lead default and "
+        f"moves the lead's protocol on. Quote the constant rather than "
+        f"paraphrasing it: {_SUBAGENT_CALLER_SENTENCE!r}"
     )

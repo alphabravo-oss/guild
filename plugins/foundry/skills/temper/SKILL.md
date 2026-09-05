@@ -72,6 +72,14 @@ record under `records[]`, so a re-run is a correction rather than a doubling; a 
 never records contributes nothing to the cycle's coverage roll-up, where its absence reads as
 no coverage rather than as a broken call.
 
+**That read carries the caller argument, and so does every other one.** If you are a
+SUB-AGENT rather than the lead, pass caller='subagent' on every Foundry-Next call. The
+lead's call is a protocol step — it arms the ordering token the next Foundry-Gate requires
+and resets the stall clock; yours is a read, and passing the argument keeps it one. That
+sentence is
+`plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+
 ---
 
 ## Phase C1: DECOMPOSE — Map the Codebase into Micro-Domains

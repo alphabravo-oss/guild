@@ -609,6 +609,14 @@ foundry report (F6: DONE).
 - Convert findings into defect entries via the foundry MCP `Foundry-Defect` tool (one call per finding), each carrying `tier`, `defect_class`, `target_kind` and — on a `LATENT` filing — `reproduction_attempted`, per the filing rules below.
 - **Never write `foundry-archive/{run}/defects.json` yourself.** That file is the server's. A hand-written entry reaches the ledger without passing the tier check, the class check or the `SECURITY_PROPERTY_CLAIM` denylist, so a finding no door ever saw is indistinguishable there from one that was refused nothing — which is the whole guarantee those doors exist to give. Outside an MCP session you have no filing door at all: write the audit report and stop, and never hand-edit the ledger to stand in for one.
 - Mark the stream complete via the foundry MCP `Foundry-Stream` tool with `stream='sight'`, `cycle=<the run's current cycle, from Foundry-Next>` and `items_checked=<count>`. All three are REQUIRED — a call omitting any one is rejected at the MCP boundary and this stream records no coverage for the cycle at all. The roll-up is keyed by the server's own cycle counter; the value you pass is retained on the record for audit only.
+- **That read carries the caller argument, and so does every other one.** If you are a
+  SUB-AGENT rather than the lead, pass caller='subagent' on every Foundry-Next call. The
+  lead's call is a protocol step — it arms the ordering token the next Foundry-Gate requires
+  and resets the stall clock; yours is a read, and passing the argument keeps it one. That
+  sentence is
+  `plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+  quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+
 - **You record your own stream; the lead only confirms the record exists.** Pass
   `items_total` and `findings_count` beside the three required arguments — the pair is
   what turns "this stream ran" into "this stream covered N of M routes", and a record

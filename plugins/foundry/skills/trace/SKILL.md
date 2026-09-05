@@ -48,6 +48,14 @@ The checklist is what the spec says. What you must WALK this cycle is what the r
 - `inspect_mode.touched_files` — the repo-relative files the GRIND commits touched, measured at the boundary from `inspect_mode.diff_base`. This is the TRACE roster on a `DELTA` cycle.
 - `inspect_mode.cycle` — the cycle that scope belongs to. A scope stamped with a different cycle is not yours; walk everything.
 
+**That read carries the caller argument, and so does every other one.** If you are a
+SUB-AGENT rather than the lead, pass caller='subagent' on every Foundry-Next call. The
+lead's call is a protocol step — it arms the ordering token the next Foundry-Gate requires
+and resets the stall clock; yours is a read, and passing the argument keeps it one. That
+sentence is
+`plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+
 **On `DELTA` with `stream_scope.trace.scope == "delta"`, walk exactly the symbols declared in `inspect_mode.touched_files`** — every declared symbol whose file appears in that list and no fewer — and report `items_checked` and `items_total` against those files rather than against the spec. **On `FULL`, walk every declared symbol** and report `items_total` as every symbol in scope. **With no recorded `inspect_mode` at all, walk everything**: a missing width means no narrowing was decided, never that you may narrow it yourself.
 
 **Read the array, never the terminal line.** The `Foundry-Next` display prints `TRACE:    N file(s) — ...` and TRUNCATES that list at five files; the roster itself is `inspect_mode.touched_files`, below that display and after the marker line. Copying the five visible files walks five files and reports a width that was never run.
