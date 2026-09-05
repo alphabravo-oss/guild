@@ -609,6 +609,15 @@ foundry report (F6: DONE).
 - Convert findings into defect entries via the foundry MCP `Foundry-Defect` tool (one call per finding), each carrying `tier`, `defect_class`, `target_kind` and — on a `LATENT` filing — `reproduction_attempted`, per the filing rules below.
 - **Never write `foundry-archive/{run}/defects.json` yourself.** That file is the server's. A hand-written entry reaches the ledger without passing the tier check, the class check or the `SECURITY_PROPERTY_CLAIM` denylist, so a finding no door ever saw is indistinguishable there from one that was refused nothing — which is the whole guarantee those doors exist to give. Outside an MCP session you have no filing door at all: write the audit report and stop, and never hand-edit the ledger to stand in for one.
 - Mark the stream complete via the foundry MCP `Foundry-Stream` tool with `stream='sight'`, `cycle=<the run's current cycle, from Foundry-Next>` and `items_checked=<count>`. All three are REQUIRED — a call omitting any one is rejected at the MCP boundary and this stream records no coverage for the cycle at all. The roll-up is keyed by the server's own cycle counter; the value you pass is retained on the record for audit only.
+- **You record your own stream; the lead only confirms the record exists.** Pass
+  `items_total` and `findings_count` beside the three required arguments — the pair is
+  what turns "this stream ran" into "this stream covered N of M routes", and a record
+  carrying only `items_checked` reports a numerator with no denominator. A second call
+  for the same stream and cycle REPLACES the first, names in `replaced` what it
+  replaced, and keeps every record under `records[]`, so a second crawl after a login
+  fix corrects the cycle's coverage rather than doubling it. Nobody records on your
+  behalf: a crawl that ends without the call leaves the cycle reading as no UI coverage
+  at all.
 - File every UX FINDING as a defect for GRIND, with a `tier`, exactly as you file anything else this stream reports. Proposals stay in the backlog file and never enter the defect ledger. Nothing here routes on how large a fix looks.
 - Flow: SIGHT audit (you are here) → INSPECT aggregation → GRIND fixes → next cycle.
 

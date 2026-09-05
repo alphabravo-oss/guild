@@ -224,6 +224,14 @@ coverage for the cycle at all. Take `cycle` from `Foundry-Next`, and take `items
 and `items_total` from the width Step 0.5 read — on a `DELTA` cycle they are counted
 against `inspect_mode.prove_sample`, not against the spec.
 
+**You record your own stream; the lead only confirms the record exists.** A second call
+for the same stream and cycle REPLACES the first, names in `replaced` what it replaced,
+and keeps every record under `records[]` — so widening the sweep and recording again is
+a correction, not a second stream, and the cycle's totals can never exceed 100%. Nobody
+records on your behalf: a pass that ends without the call leaves the cycle showing no
+PROVE coverage at all, which reads as a stream that did nothing rather than as one that
+finished and forgot.
+
 **Which INSPECT filing arm is live is a READ, not a call you make.** `Foundry-Context`
 returns `state.temper` — the run's persisted `--temper` setting, written once at
 `Foundry-Init` and false unless the lead passed the flag. Take it in the same breath as

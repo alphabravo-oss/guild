@@ -277,6 +277,14 @@ counter, and the value you pass is retained on the record for audit only. Take
 cycle they are counted against `inspect_mode.touched_files`, not against the
 spec. F3 GRIND converts findings into fix items.
 
+**You record your own stream; the lead only confirms the record exists.** A second call
+for the same stream and cycle REPLACES the first, names in `replaced` what it replaced,
+and keeps every record under `records[]`. That is what makes a re-walk safe: widen the
+scope, walk again, record again, and the roll-up holds the wider number instead of
+summing two passes over the same wiring into a coverage figure no walk ever achieved.
+The lead confirms the record is there and does not write it, so a walk that ends without
+the call is a walk the cycle cannot see.
+
 ## MCP Validation (optional)
 
 After generating the report, if the `foundry` MCP server is available, run
