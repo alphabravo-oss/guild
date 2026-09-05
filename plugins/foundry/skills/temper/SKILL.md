@@ -25,6 +25,55 @@ failed — re-read the 5 most complex functions and run the checklist again.
 
 ---
 
+## Phase C0: ROSTER — read the recorded candidates BEFORE anything else
+
+**Your first tool call is `Foundry-Observations(classification="TEMPER_CANDIDATE")`.** Those
+records are the probe ideas the PROVE stream had at INSPECT and was forbidden to file: on a
+run with `--temper` set, an INSPECT defect must cite the matrix row whose stated behaviour
+failed, and every off-row hunch is recorded as a candidate instead of spent as a GRIND cycle.
+TEMPER is the phase those hunches were being saved FOR. Read them before you build anything,
+because a candidate you never read is a probe the run paid to think of and then threw away.
+
+**Your roster is the open candidates UNIONED with your own micro-domains, never one or the
+other.** Phase C1 below discovers domains from the filesystem and stays spec-blind; this read
+does not break that, and the reason is mechanical rather than a promise: a `TEMPER_CANDIDATE`
+observation carries no `spec_ref` and no requirement id at all — `Foundry-Observation` refuses
+one that does, reading any `spec_ref` as a spec-required-behaviour claim by construction — so
+a candidate tells you a place to look and nothing about what the spec says should be there.
+Walk the filesystem in C1 without narrowing it to the candidate list, then add every open
+candidate to the domains that walk produced.
+
+**Every candidate is closed as DRIVEN — filed or clean, both are closures.** A candidate you
+probed and filed a finding against is driven. A candidate you probed and found sound is ALSO
+driven: a probe driven and found clean is a result, not a blank, and it is the only result
+that ever retires a question. Closure is recorded on the candidate's own observation record,
+which the F6 report reads at
+`plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_report.py#_read_undriven_temper_candidates`
+— a record carrying `driven` or `status: "DRIVEN"` counts as driven, and a record carrying
+neither is UNDRIVEN and is listed by id, cycle and description in the report's non-blocking
+backlog beside the `HARDENING` rows. That listing is the whole cost of skipping one, and it
+is visible to everyone who reads the run: leaving a candidate alone is a decision the report
+prints, not a decision that disappears. No exceptions, no deferrals, no "the domain looked
+fine from outside."
+
+**You record your own stream; the lead only confirms the record exists.** Call
+`Foundry-Stream` yourself once a pass is done, with `stream`, `cycle`, `items_checked`,
+`items_total` and `findings_count` — and `stream` is the WIRE ID OF THE STREAM YOU RAN AS,
+a member of the closed vocabulary at
+`plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#STREAM_WIRE_IDS`; read the
+members there and never re-type the set here. **`temper` is not one of them, and that is
+deliberate rather than an omission.** `temper` is a member of
+`plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_SOURCE_IDS` — it is the
+identity you FILE under, which is a different axis from the stream you record coverage for —
+so a `Foundry-Stream` call passing `stream: "temper"` is rejected at the MCP boundary and the
+pass records no coverage at all. Take `cycle` from `Foundry-Next`. A second call for the same
+stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every
+record under `records[]`, so a re-run is a correction rather than a doubling; a stream that
+never records contributes nothing to the cycle's coverage roll-up, where its absence reads as
+no coverage rather than as a broken call.
+
+---
+
 ## Phase C1: DECOMPOSE — Map the Codebase into Micro-Domains
 
 **THIS PHASE IS SPEC-BLIND.** Do NOT read the spec or prior phase findings yet.
