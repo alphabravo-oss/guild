@@ -319,20 +319,21 @@ def test_asking_for_the_alignment_block_records_no_dispatch(run_env):
 def test_a_concern_naming_a_casting_no_requirement_reaches_joins_the_set(run_env):
     """fallout FR-012 / GI-023 / ST-003 / AC-004 (D-054) — the OTHER half.
 
-    FR-012 is two clauses and only the refusal one shipped: "Foundry-Tasks
-    includes the named casting" was implemented as "Foundry-Tasks NOTICES a
-    concern whose target the requirement-ownership join already reached". The
-    difference is invisible whenever the concern happens to name a casting that
-    owns one of the defect's requirement ids, and total whenever it does not —
-    which is the case ST-003 exists for, a sibling surface no requirement id
-    connects.
+    fallout FR-012 is two clauses and only the refusal one shipped:
+    "Foundry-Tasks includes the named casting" was implemented as "Foundry-Tasks
+    NOTICES a concern whose target the requirement-ownership join already
+    reached". The difference is invisible whenever the concern happens to name a
+    casting that owns one of the defect's requirement ids, and total whenever it
+    does not — which is the case fallout ST-003 exists for, a sibling surface no
+    requirement id connects.
 
-    DRIVEN AS THE PAIR. Casting 3 owns FR-008 and the only open defect cites
-    FR-007, so the ownership join reaches castings 1 and 2 and never 3. The
-    concern names casting 3's file. Before this fix the set was `[2]`,
-    `concerns_dispatched` was empty and the concern stayed open, so
-    `inspect_start` kept refusing with the Tasks-driven exit unreachable and
-    only the lead's hand close left — AC-004's OTHER exit standing in for both.
+    DRIVEN AS THE PAIR. The synthetic manifest below gives casting 3 a
+    DIFFERENT requirement id from the one the only open defect cites, so the
+    ownership join reaches castings 1 and 2 and never 3. The concern names
+    casting 3's file. Before this fix the set was `[2]`, `concerns_dispatched`
+    was empty and the concern stayed open, so `inspect_start` kept refusing with
+    the Tasks-driven exit unreachable and only the lead's hand close left —
+    fallout AC-004's OTHER exit standing in for both.
     """
     from foundry_mcp.tools.concerns import foundry_concern
 
@@ -358,8 +359,9 @@ def test_a_concern_naming_a_casting_no_requirement_reaches_joins_the_set(run_env
     assert result["ok"] is True, result
     task = next(t for t in result["tasks"] if "D-900" in t["defect_ids"])
 
-    # Casting 2 is here because it OWNS FR-007; casting 3 is here because the
-    # concern NAMES it. Both are dispatched; only one of them was before.
+    # Casting 2 is here because it OWNS the requirement the defect cites;
+    # casting 3 is here because the concern NAMES it. Both are dispatched; only
+    # one of them was before.
     assert task["co_dispatch"] == [2, 3], task
     assert task["concerns_co_dispatched"] == [concern_id], task
     assert result["concerns_dispatched"] == [concern_id], result

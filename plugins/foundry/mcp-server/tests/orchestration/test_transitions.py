@@ -164,7 +164,7 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     foundry_next_action,
 )
 
-from foundry_mcp.tools.orchestration.halt import (  # noqa: F401
+from foundry_mcp.tools.orchestration.gates import (  # noqa: F401
     _halted_refusal,
 )
 

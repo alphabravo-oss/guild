@@ -164,12 +164,12 @@ from foundry_mcp.tools.orchestration.gates import (  # noqa: F401
     _generate_report,
     _open_defects_by_tier,
     _sorted_spec_requirement_ids,
-    _synthesize_clean_prove_verdicts,
     foundry_gate,
 )
 
 from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _ACTION_IMPERATIVES,
+    _synthesize_clean_prove_verdicts,
     _ACTION_TO_GATE,
     _compute_next_action,
     foundry_next_action,

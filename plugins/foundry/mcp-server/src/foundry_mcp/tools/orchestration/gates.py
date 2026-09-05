@@ -10,26 +10,30 @@ import json
 from pathlib import Path
 
 from foundry_mcp.schemas.vocab import (
+    BLOCKING_TIERS,
     DEFECT_TIERS,
     DEFECT_TYPES,
     REPORT_JSON_FILENAME,
     REPORT_MD_FILENAME,
     REQUIREMENT_ID_RE,
+    RUN_PHASE_HALTED,
     STRUCTURAL_PASS_BUDGET,
     TIER_UNKNOWN,
     defect_tier,
+    halt_reason,
 )
 from foundry_mcp.tools.artifacts import (
     GATE_PASSED_MARKER,
     NEXT_ACTION_CALLED_MARKER,
     _artifact_guard,
-    _document_transaction,
     _load_json,
     _spec_requirement_ids,
 )
 from foundry_mcp.tools.foundry_state import (
     get_run_dir,
+    halted_state,
     now_iso,
+    persisted_max_cycles,
 )
 from pathlib import Path
 from foundry_mcp.tools.orchestration.escalation import (
@@ -43,10 +47,6 @@ from foundry_mcp.tools.orchestration.evidence_boundary import (
     EVIDENCE_STRIPPED_TOKEN,
     _terminal_evidence_refusal,
     _terminal_evidence_state,
-)
-from foundry_mcp.tools.orchestration.halt import (
-    _halted_refusal,
-    _halted_state,
 )
 
 
@@ -140,53 +140,6 @@ VERDICT_VALUES = frozenset({"VERIFIED"}) | DEFECT_TYPES
 
 
 
-def _synthesize_clean_prove_verdicts(
-    fdir: Path, project_root: str, cycle: int = 0
-) -> int:
-    """On a clean PROVE, write a VERIFIED verdict row for every spec
-    requirement ID that lacks one. Returns the count synthesized.
-
-    Rows match the Foundry-Verdict schema (foundry.py record shape):
-    id / verdict / evidence / spec_text_cited / code_location / cycle /
-    recorded_at. Existing rows are left untouched — never downgraded, never
-    duplicated — so a real ASSAY verdict is preserved and ``verdict_coverage``
-    never double-counts (analog note 7: preserve id-dedup).
-    """
-    ids = _sorted_spec_requirement_ids(project_root)
-    if not ids:
-        return 0
-    verdicts_path = fdir / "verdicts.json"
-    now = now_iso()
-    synthesized = 0
-    # D-103: verdicts.json is read-modify-written here AND by
-    # foundry.py#foundry_add_verdict. Serializing this side removes the
-    # orchestrator's contribution to the race; the flock is what would bind the
-    # other side too, once that writer takes it (logged as a concern).
-    with _document_transaction(verdicts_path) as verdicts:
-        requirements = verdicts.get("requirements")
-        if not isinstance(requirements, list):
-            requirements = []
-        existing_ids = {r.get("id") for r in requirements if isinstance(r, dict)}
-        for rid in ids:
-            if rid in existing_ids:
-                continue
-            requirements.append(
-                {
-                    "id": rid,
-                    "verdict": "VERIFIED",
-                    "evidence": (
-                        "Auto-verified on clean PROVE "
-                        "(≥95% coverage, 0 findings)."
-                    ),
-                    "spec_text_cited": "",
-                    "code_location": "",
-                    "cycle": cycle,
-                    "recorded_at": now,
-                }
-            )
-            synthesized += 1
-        verdicts["requirements"] = requirements
-    return synthesized
 
 
 
@@ -212,7 +165,7 @@ def _synthesize_clean_prove_verdicts(
 #: always did; unknown is a record no stream has classified and is treated
 #: identically until one re-files it with a tier (FR-051). LATENT blocks nothing:
 #: it stays open, tracked, and named in the F6 backlog (FR-006).
-BLOCKING_TIERS = ("LIVE", TIER_UNKNOWN)
+
 
 
 
@@ -308,7 +261,12 @@ def _blocking_defects(fdir: Path) -> dict:
             )
 
     return {
-        "blocking": len(live) + len(unknown),
+        # fallout GI-014 / GI-033 (C-027) — DERIVED FROM THE VOCABULARY, so
+        # this count and `guidance._open_by_blocking_tier`'s cannot disagree
+        # about which tiers block. `len(live) + len(unknown)` was the same
+        # answer spelled by hand, and a hand-spelled copy of a closed
+        # vocabulary is the drift `vocab.py` exists to end.
+        "blocking": sum(len(buckets[tier]) for tier in BLOCKING_TIERS),
         "live": live,
         "unknown": unknown,
         "latent": latent,
@@ -1388,3 +1346,163 @@ def foundry_gate(
         except OSError:
             pass
     return result
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-033 / AC-061 / FR-063 (D-021 / D-035, concern C-027) — THE HALTED
+# READ AND ITS REFUSAL, MOVED HERE FROM `orchestration/halt.py`.
+#
+# GI-033 names ONE seam, `transitions.py` -> `halt.py`, one-way. A gate reaching
+# into halt.py for the halt record was a SECOND crossing that the seam table
+# never covered and `_LAYERING_DEBT` excused. Neither symbol had a halt.py
+# caller: `_halted_state`'s only one was `_halted_refusal`, and `_halted_refusal`
+# had none at all. Their real callers are `foundry_gate` in this module and the
+# three transition doors — every one of them a VERIFIER — so the pair moves to
+# the layer that reads it and the row is deleted rather than narrowed. halt.py
+# keeps what the seam is FOR: `_halt_if_capped` and the terminal seal.
+# --------------------------------------------------------------------------- #
+
+def _halted_state(fdir: Path) -> dict | None:
+    """The run's HALTED record, or None when the run is not halted.
+
+    fallout GI-033 / FR-063 / AC-061 (C-017, then C-027) — THE READ IS THE
+    LEAF'S AND THIS DELEGATION LIVES WITH ITS TWO CALLERS.
+
+    THE ONLY READ of `state.json.phase == RUN_PHASE_HALTED`, for the reason
+    `_current_inspect_mode` is the only read of the recorded width: a terminal
+    state that each door decides for itself is a terminal state each door can
+    decide differently. What changed is WHERE the only read lives.
+    `gates.py` is a VERIFIER and `halt.py` is lifecycle, so a gate reaching
+    into halt.py for the halt record was a second verifier-to-lifecycle
+    crossing on top of the one seam GI-033 names. The record itself is a
+    document read and was already leaf material; what was left in halt.py was
+    this DELEGATION, and its only two callers are `foundry_gate` below and
+    `transitions.py` — both verifier. So the delegation moved to them, and
+    halt.py, which never called it, lost the coupling with it.
+
+    The three closed-set values are supplied here rather than known there
+    because a leaf may not know a vocabulary: the HALTED phase token, the
+    reason vocabulary, and the cap normaliser — which is
+    `foundry_state.persisted_max_cycles` since C-027 landed it, so nothing in
+    this call reaches outside the leaf and the vocabulary any more.
+    """
+    return halted_state(
+        fdir,
+        halted_phase=RUN_PHASE_HALTED,
+        reason_of=halt_reason,
+        max_cycles_of=persisted_max_cycles,
+    )
+
+
+def _halted_refusal(fdir: Path, surface: str) -> dict | None:
+    """ST-008 / CT-016 / FR-024 / FR-045 / FR-052 — HALTED is terminal, and
+    every door that could leave it reads THIS.
+
+    Returns None when the run may proceed, otherwise the refusal `surface`
+    should return, carrying `error` / `hint` in the house shape plus the halt
+    record. `foundry_gate` reshapes the same two strings into its
+    `reason` / `hint` pair; nothing recomputes the judgement.
+
+    D-081 / D-082 — HALTED WAS WRITTEN AND READ BY NOTHING.
+    ------------------------------------------------------
+    ST-008 says "HALTED is not DONE", CT-016 calls it "a named terminal state
+    distinct from DONE", FR-024 says "the run ends in a named HALTED state
+    rather than DONE" — and `_halt_if_capped` was the only code in the server
+    that mentioned the state at all. It wrote `phase = HALTED` from the two
+    doors that open a GRIND and then nothing, anywhere, asked.
+
+    Driven, both halves. (1) max_cycles 2 at cycle 2 with one open LATENT
+    defect: `Foundry-Phase('grind_start')` returned ok / halted True and
+    state.phase HALTED; two calls later `Foundry-Gate('done')` returned passed
+    True with reason None and `Foundry-Phase('done')` returned ok, phase F6,
+    "Run archived." The cap exists precisely so the run does not end as DONE,
+    and the F6 state recorded nothing about it having fired. (2) From
+    state.phase HALTED: `Foundry-Phase('inspect_start')` returned ok, set F2
+    and ADVANCED the cycle counter; `cast` returned ok and set F2; `temper`
+    returned ok and set F5; `nyquist` returned ok and set F5.5. Only
+    `grind_start` and `assay_fail` re-halted, because only they call
+    `_halt_if_capped`; every other branch had no HALTED precondition at all. So
+    a halted run resumed and kept dispatching with no refusal and no record
+    that the cap had been overridden — and FR-052's "Foundry-Next reports
+    halted and stops dispatching" rested on lead discipline, which is the thing
+    the cap exists to replace.
+
+    NOT A WAIVER AND NOT A RESUME PATH. There is deliberately no token, flag or
+    argument that leaves HALTED, because "the operator may override the cap
+    in-place" is how a bounded run becomes an unbounded one. The remedy the
+    hint names is a NEW run with a higher `--max-cycles`, which starts a fresh
+    counter and a fresh state file, so the override is a decision someone makes
+    on the record rather than one more call in the loop.
+    """
+    halted = _halted_state(fdir)
+    if halted is None:
+        return None
+    cycle_text = (
+        f"cycle {halted['halted_at_cycle']}"
+        if isinstance(halted["halted_at_cycle"], int)
+        else "its cycle cap"
+    )
+    # D-165 — THE REPORT IS ASSERTED ONLY WHERE IT WAS WRITTEN.
+    #
+    # This said "the report says what" and pointed at REPORT.md unconditionally,
+    # because `_halt_if_capped` asserted the same thing unconditionally. On a
+    # halt whose report generation failed (CT-014's designed unreadable-ledger
+    # branch) the operator was sent to read a file that does not exist, from a
+    # state with no exit, with no reason given to regenerate it. Both halves are
+    # read from the record the transition now leaves: the presence of the file,
+    # and the error the generator returned.
+    #
+    # THE FILE'S PRESENCE IS THE GROUND TRUTH, and the recorded error only
+    # supplies the REASON when it is absent. Reading the recorded error as
+    # authoritative would go stale the moment the operator follows this hint and
+    # calls Foundry-Report — a refusal that then still said "NOT written" about
+    # a file sitting on disk would be this same defect with the sign flipped.
+    report_path = fdir / REPORT_MD_FILENAME
+    report_error = halted["halted_report_error"]
+    report_present = report_path.exists()
+    return {
+        "error": (
+            f"Cannot call {surface} — this run is HALTED. It stopped at "
+            f"{cycle_text} because {halted['halted_reason']}. HALTED is a "
+            "terminal state and it is NOT DONE: the run ended with open work"
+            + (
+                " and the report says what."
+                if report_present
+                else (
+                    f", and the report was NOT written — {report_error or 'it is not present at ' + str(report_path)}."
+                )
+            )
+        ),
+        "hint": (
+            (
+                f"Nothing leaves HALTED — no phase token, no gate. Read "
+                f"{REPORT_MD_FILENAME}, tell the user what remains open by "
+                "tier, and stop. To carry the remaining work forward, start a "
+                "NEW run (Foundry-Init) with a higher --max-cycles; the cap is "
+                "not overridden in place."
+            )
+            if report_present
+            else (
+                "Nothing leaves HALTED — no phase token, no gate — but the "
+                "report is not a phase transition and Foundry-Report still "
+                "runs on a halted run. Repair what the error above names, call "
+                f"Foundry-Report to write {REPORT_MD_FILENAME}, then read it, "
+                "tell the user what remains open by tier, and stop. Until it "
+                "is written, read defects.json directly: the open work is "
+                "recorded there whatever the report generator could not "
+                "render. To carry the remaining work forward, start a NEW run "
+                "(Foundry-Init) with a higher --max-cycles; the cap is not "
+                "overridden in place."
+            )
+        ),
+        "halted": True,
+        "phase": RUN_PHASE_HALTED,
+        "halted_at_cycle": halted["halted_at_cycle"],
+        "halted_reason": halted["halted_reason"],
+        "max_cycles": halted["max_cycles"],
+        # Named as what it IS rather than always as a path, so a caller cannot
+        # read a promise out of the field's presence.
+        "report": str(report_path) if report_present else None,
+        "report_generated": report_present,
+        "report_error": report_error,
+    }

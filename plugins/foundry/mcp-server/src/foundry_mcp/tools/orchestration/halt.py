@@ -10,16 +10,13 @@ from pathlib import Path
 
 from foundry_mcp.schemas.vocab import (
     HALT_REASON_CAP_REACHED,
-    REPORT_MD_FILENAME,
     RUN_PHASE_HALTED,
-    halt_reason,
 )
 from foundry_mcp.tools.artifacts import (
     _document_transaction,
 )
 from foundry_mcp.tools.foundry_state import (
     current_cycle,
-    halted_state,
     now_iso,
 )
 from pathlib import Path
@@ -33,192 +30,12 @@ from foundry_mcp.tools.orchestration.report_seal import (
 
 
 
-def _persisted_max_cycles(state: dict) -> int:
-    """CT-016 — THE ONE READ of `state.json.max_cycles`, in the door's terms.
-
-    Returns the cap in force: a positive int, or 0 for "no cap", which is the
-    default and means unbounded.
-
-    D-225 — THE DOOR ACCEPTED A CAP THIS READ SILENTLY DISCARDED.
-    ------------------------------------------------------------
-    `Foundry-Init` advertises `max_cycles` as `{"type": "integer"}` and
-    `server.py`'s `_argument_refusal` validates it with Draft202012Validator,
-    in which a zero-fraction float IS an integer — so `2.0` is ACCEPTED at the
-    door and `foundry_init` persists `2.0`. The guard below then read
-    `isinstance(max_cycles, int)`, and `isinstance(2.0, int)` is False, so the
-    cap read as absent. Driven: cap 2.0 persisted, counter at 99,
-    `Foundry-Phase('grind_start')` returned ok True and phase F3 — an operator
-    who asked for a cap of 2 opened GRIND cycle 100 with no notice. The schema
-    had no `minimum` either, so `-1` was accepted at the same door and read
-    here as unbounded by the `<= 0` arm.
-
-    The fix is on BOTH sides and they meet exactly: `server.py` now advertises
-    `minimum: 0`, so a negative cap is refused where the operator can see it
-    rather than discarded here; and this read accepts the zero-fraction float
-    the schema calls an integer, because JSON has no integer type and `2.0` is
-    the integer 2 by the rule the door validated against.
-
-    WHY NORMALISE HERE RATHER THAN ONLY AT THE DISPATCH. `state.json` is not
-    always written by this server's current door — a resumed archive, a
-    hand-edited file, a fixture — and the deciding read is the one place that
-    must never mistake a cap for its absence. Anything that is not a usable cap
-    (a string, a fractional float, a bool, a negative) still reads as 0/no cap,
-    because this function cannot refuse: it is consulted from inside a
-    transition whose only other answer is "proceed".
-    """
-    raw = state.get("max_cycles", 0)
-    if isinstance(raw, bool):
-        return 0
-    if isinstance(raw, int):
-        return raw if raw > 0 else 0
-    if isinstance(raw, float) and raw.is_integer():
-        return int(raw) if raw > 0 else 0
-    return 0
 
 
 
 
-def _halted_state(fdir: Path) -> dict | None:
-    """The run's HALTED record, or None when the run is not halted.
-
-    fallout GI-033 / FR-063 / AC-061 (concern C-017) — THE READ IS THE LEAF'S.
-
-    THE ONLY READ of `state.json.phase == RUN_PHASE_HALTED`, for the reason
-    `_current_inspect_mode` is the only read of the recorded width: a terminal
-    state that each door decides for itself is a terminal state each door can
-    decide differently. What changed is WHERE the only read lives.
-    `gates.py` is a VERIFIER and this module is lifecycle, so a gate reaching
-    here for the halt record was a second verifier-to-lifecycle crossing on top
-    of the one seam GI-033 names — and the record is a document read, which is
-    leaf material. `foundry_state.halted_state` holds it now.
-
-    The three closed-set values it needs are supplied here rather than known
-    there, because the leaf's own contract is json and pathlib: the HALTED
-    phase token, the reason vocabulary, and this module's cap normaliser. That
-    last one is why the delegation stays a function rather than becoming an
-    import at each caller — `_persisted_max_cycles` is halt.py's, and passing
-    it in is what lets the leaf answer without knowing what a cap is.
-    """
-    return halted_state(
-        fdir,
-        halted_phase=RUN_PHASE_HALTED,
-        reason_of=halt_reason,
-        max_cycles_of=_persisted_max_cycles,
-    )
 
 
-def _halted_refusal(fdir: Path, surface: str) -> dict | None:
-    """ST-008 / CT-016 / FR-024 / FR-045 / FR-052 — HALTED is terminal, and
-    every door that could leave it reads THIS.
-
-    Returns None when the run may proceed, otherwise the refusal `surface`
-    should return, carrying `error` / `hint` in the house shape plus the halt
-    record. `foundry_gate` reshapes the same two strings into its
-    `reason` / `hint` pair; nothing recomputes the judgement.
-
-    D-081 / D-082 — HALTED WAS WRITTEN AND READ BY NOTHING.
-    ------------------------------------------------------
-    ST-008 says "HALTED is not DONE", CT-016 calls it "a named terminal state
-    distinct from DONE", FR-024 says "the run ends in a named HALTED state
-    rather than DONE" — and `_halt_if_capped` was the only code in the server
-    that mentioned the state at all. It wrote `phase = HALTED` from the two
-    doors that open a GRIND and then nothing, anywhere, asked.
-
-    Driven, both halves. (1) max_cycles 2 at cycle 2 with one open LATENT
-    defect: `Foundry-Phase('grind_start')` returned ok / halted True and
-    state.phase HALTED; two calls later `Foundry-Gate('done')` returned passed
-    True with reason None and `Foundry-Phase('done')` returned ok, phase F6,
-    "Run archived." The cap exists precisely so the run does not end as DONE,
-    and the F6 state recorded nothing about it having fired. (2) From
-    state.phase HALTED: `Foundry-Phase('inspect_start')` returned ok, set F2
-    and ADVANCED the cycle counter; `cast` returned ok and set F2; `temper`
-    returned ok and set F5; `nyquist` returned ok and set F5.5. Only
-    `grind_start` and `assay_fail` re-halted, because only they call
-    `_halt_if_capped`; every other branch had no HALTED precondition at all. So
-    a halted run resumed and kept dispatching with no refusal and no record
-    that the cap had been overridden — and FR-052's "Foundry-Next reports
-    halted and stops dispatching" rested on lead discipline, which is the thing
-    the cap exists to replace.
-
-    NOT A WAIVER AND NOT A RESUME PATH. There is deliberately no token, flag or
-    argument that leaves HALTED, because "the operator may override the cap
-    in-place" is how a bounded run becomes an unbounded one. The remedy the
-    hint names is a NEW run with a higher `--max-cycles`, which starts a fresh
-    counter and a fresh state file, so the override is a decision someone makes
-    on the record rather than one more call in the loop.
-    """
-    halted = _halted_state(fdir)
-    if halted is None:
-        return None
-    cycle_text = (
-        f"cycle {halted['halted_at_cycle']}"
-        if isinstance(halted["halted_at_cycle"], int)
-        else "its cycle cap"
-    )
-    # D-165 — THE REPORT IS ASSERTED ONLY WHERE IT WAS WRITTEN.
-    #
-    # This said "the report says what" and pointed at REPORT.md unconditionally,
-    # because `_halt_if_capped` asserted the same thing unconditionally. On a
-    # halt whose report generation failed (CT-014's designed unreadable-ledger
-    # branch) the operator was sent to read a file that does not exist, from a
-    # state with no exit, with no reason given to regenerate it. Both halves are
-    # read from the record the transition now leaves: the presence of the file,
-    # and the error the generator returned.
-    #
-    # THE FILE'S PRESENCE IS THE GROUND TRUTH, and the recorded error only
-    # supplies the REASON when it is absent. Reading the recorded error as
-    # authoritative would go stale the moment the operator follows this hint and
-    # calls Foundry-Report — a refusal that then still said "NOT written" about
-    # a file sitting on disk would be this same defect with the sign flipped.
-    report_path = fdir / REPORT_MD_FILENAME
-    report_error = halted["halted_report_error"]
-    report_present = report_path.exists()
-    return {
-        "error": (
-            f"Cannot call {surface} — this run is HALTED. It stopped at "
-            f"{cycle_text} because {halted['halted_reason']}. HALTED is a "
-            "terminal state and it is NOT DONE: the run ended with open work"
-            + (
-                " and the report says what."
-                if report_present
-                else (
-                    f", and the report was NOT written — {report_error or 'it is not present at ' + str(report_path)}."
-                )
-            )
-        ),
-        "hint": (
-            (
-                f"Nothing leaves HALTED — no phase token, no gate. Read "
-                f"{REPORT_MD_FILENAME}, tell the user what remains open by "
-                "tier, and stop. To carry the remaining work forward, start a "
-                "NEW run (Foundry-Init) with a higher --max-cycles; the cap is "
-                "not overridden in place."
-            )
-            if report_present
-            else (
-                "Nothing leaves HALTED — no phase token, no gate — but the "
-                "report is not a phase transition and Foundry-Report still "
-                "runs on a halted run. Repair what the error above names, call "
-                f"Foundry-Report to write {REPORT_MD_FILENAME}, then read it, "
-                "tell the user what remains open by tier, and stop. Until it "
-                "is written, read defects.json directly: the open work is "
-                "recorded there whatever the report generator could not "
-                "render. To carry the remaining work forward, start a NEW run "
-                "(Foundry-Init) with a higher --max-cycles; the cap is not "
-                "overridden in place."
-            )
-        ),
-        "halted": True,
-        "phase": RUN_PHASE_HALTED,
-        "halted_at_cycle": halted["halted_at_cycle"],
-        "halted_reason": halted["halted_reason"],
-        "max_cycles": halted["max_cycles"],
-        # Named as what it IS rather than always as a path, so a caller cannot
-        # read a promise out of the field's presence.
-        "report": str(report_path) if report_present else None,
-        "report_generated": report_present,
-        "report_error": report_error,
-    }
 
 
 
@@ -262,7 +79,7 @@ def _seal_halted(
     member is what `measure-run.py` and the report group on, and the text is why
     THIS run ended, which no closed set can carry. Every reader still accepts the
     bare f-string archives written before this release carry (FR-054); see
-    `_halted_state`.
+    `gates.py#_halted_state`.
     """
     # fallout FR-004 / GI-033 -- LAZY SEAM, written once per symbol.
     # `gates, transitions` import(s) this module, so a module-top import here would
@@ -385,7 +202,7 @@ def _halt_if_capped(
 
     fallout FR-062 / GI-032 / ST-015 / AC-060 — THE CAP IS NOT READ HERE ANY
     MORE. `would_halt` arrives on ``outcome``, computed by
-    `_grind_start_preconditions` from the single `_persisted_max_cycles` read
+    `_grind_start_preconditions` from the single `persisted_max_cycles` read
     this run has, so `Foundry-Gate('grind')` can REPORT the fact without acting
     on it and no transition branch reads the cap itself. This function is now
     the ACTION the fact licenses, and nothing else.

@@ -13,6 +13,7 @@ from datetime import (
     timezone,
 )
 from foundry_mcp.schemas.vocab import (
+    BLOCKING_TIERS,
     DEFECT_TIERS,
     INSPECT_MODES,
     PHASE_LADDER,
@@ -22,6 +23,7 @@ from foundry_mcp.schemas.vocab import (
     STREAM_WIRE_IDS,
     TIER_UNKNOWN,
     defect_tier,
+    halt_reason,
 )
 from foundry_mcp.tools.artifacts import (
     CAST_COMPLETE_MARKER,
@@ -33,6 +35,7 @@ from foundry_mcp.tools.artifacts import (
     _document_transaction,
     _load_json,
     _read_text,
+    _spec_requirement_ids,
 )
 # fallout research/holmes-orchestrator.md#coh-8 (D-014) / GI-024 — THE PALETTE
 # AND THE PHASE VOCABULARY ARE READ, NOT DECLARED.
@@ -59,7 +62,11 @@ from foundry_mcp.tools.display import (
 from foundry_mcp.tools.foundry_state import (
     current_cycle,
     current_inspect_mode,
+    finalize_open_phase_entry,
+    halted_state,
+    open_defect_ids_by_tier,
     open_defects_by_tier,
+    persisted_max_cycles,
     get_run_dir,
     now_iso,
     read_document,
@@ -86,15 +93,7 @@ from foundry_mcp.tools.orchestration.width import (
     _maybe_skip_trace,
 )
 from foundry_mcp.tools.orchestration.spend import _spend_summary
-from foundry_mcp.tools.orchestration.halt import (
-    _halted_state,
-    _persisted_max_cycles,
-)
-from foundry_mcp.tools.orchestration.gates import (
-    _blocking_defects,
-    _synthesize_clean_prove_verdicts,
-)
-from foundry_mcp.tools.orchestration.transitions import _finalize_open_phase_entry
+
 from foundry_mcp.tools.orchestration.directives import _read_directives
 
 
@@ -227,7 +226,7 @@ def _stamp_subphases_in(state: dict, fdir: Path) -> None:
     def _close(pid: str) -> bool:
         entry = phase_times.get(pid)
         if entry and "started_at" in entry and "ended_at" not in entry:
-            _finalize_open_phase_entry(entry, now)
+            finalize_open_phase_entry(entry, now)
             return True
         return False
 
@@ -320,7 +319,7 @@ def _terminal_outlook(fdir: Path) -> dict:
     )
     open_by_tier = {tier: len(rows) for tier, rows in sorted(buckets.items())}
 
-    max_cycles = _persisted_max_cycles(state)
+    max_cycles = persisted_max_cycles(state)
     cycles_to_cap = None if max_cycles <= 0 else max(0, max_cycles - current_cycle(fdir))
 
     if state.get("phase") == RUN_PHASE_HALTED:
@@ -1296,6 +1295,60 @@ def _escalation_notice(fdir: Path, project_root: str) -> str:
 
 
 
+def _leaf_halted_state(fdir: Path) -> dict | None:
+    """The run's HALTED record, read from the leaf.
+
+    fallout GI-033 / AC-061 (D-021 / D-035, concern C-027) — `halt.py`'s own
+    delegation moved to `gates.py`, where its two verifier callers are, and
+    this module may not import a verifier. It reads the same leaf reader
+    directly, supplying the same three closed-set values: the HALTED phase
+    token, the reason vocabulary and `foundry_state.persisted_max_cycles`. One
+    reader, two callers, no second judgement about what HALTED means.
+    """
+    return halted_state(
+        fdir,
+        halted_phase=RUN_PHASE_HALTED,
+        reason_of=halt_reason,
+        max_cycles_of=persisted_max_cycles,
+    )
+
+
+
+
+def _open_by_blocking_tier(fdir: Path) -> dict:
+    """`{"blocking": int, "live": [ids], "unknown": [ids], "latent": [ids]}`.
+
+    fallout GI-033 / AC-061 / GI-014 (D-021 / D-035, concern C-027) — THE
+    COUNT, WITHOUT THE DOOR'S PROSE.
+    -------------------------------------------------------------------
+    `gates._blocking_defects` answers the same question AND builds the refusal
+    the gate returns, and that prose is protocol: it names both filing doors and
+    the GRIND phase. Foundry-Next needs none of it — it reads the ids and the
+    count and writes its own guidance — so importing the gate for it made this
+    lifecycle module reach the verifier set to obtain the two-thirds it throws
+    away.
+
+    THIS IS NOT A SECOND COPY OF THE BLOCKING RULE. The rule is
+    `vocab.BLOCKING_TIERS`, which is where GI-014's applies-to column always
+    said it lives and where C-027 landed it; the ids come from
+    `foundry_state.open_defect_ids_by_tier`, the one ledger read. Both halves
+    are shared with the gate by construction, so the two answers cannot drift —
+    only the sentence differs, and only the gate has one.
+    """
+    buckets = open_defect_ids_by_tier(
+        fdir, tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN, tier_of=defect_tier
+    )
+    blocking = sum(len(buckets[tier]) for tier in BLOCKING_TIERS)
+    return {
+        "blocking": blocking,
+        "live": buckets["LIVE"],
+        "unknown": buckets[TIER_UNKNOWN],
+        "latent": buckets["LATENT"],
+    }
+
+
+
+
 def _recorded_inspect_mode(fdir: Path) -> dict | None:
     """The width the last INSPECT-opening transition RECORDED, from the leaf.
 
@@ -1452,7 +1505,7 @@ def _compute_next_action(project_root: str) -> dict:
     # report, not start another wave. Emitting the ordinary phase guidance here
     # would send the lead round the loop the cap just stopped.
     if phase == RUN_PHASE_HALTED:
-        blocking = _blocking_defects(fdir)
+        blocking = _open_by_blocking_tier(fdir)
         # D-171 — AND IT DOES NOT ASSERT A REPORT THE HALT MAY NEVER HAVE
         # WRITTEN. D-165, one surface along.
         # ------------------------------------------------------------------
@@ -1480,7 +1533,7 @@ def _compute_next_action(project_root: str) -> dict:
         # supplies the REASON when it is absent — read the other way, this
         # would still say "not written" about a report the lead had just
         # regenerated with Foundry-Report.
-        halted = _halted_state(fdir) or {}
+        halted = _leaf_halted_state(fdir) or {}
         report_path = fdir / REPORT_MD_FILENAME
         report_present = report_path.exists()
         report_error = halted.get("halted_report_error", "")
@@ -1517,9 +1570,9 @@ def _compute_next_action(project_root: str) -> dict:
             "details": {
                 "halted_at_cycle": state.get("halted_at_cycle"),
                 "halted_reason": state.get("halted_reason", ""),
-                # D-225: `_persisted_max_cycles`, the one read, so this display
+                # D-225: `persisted_max_cycles`, the one read, so this display
                 # cannot state a cap the halt did not act on.
-                "max_cycles": _persisted_max_cycles(state),
+                "max_cycles": persisted_max_cycles(state),
                 "open_live_defects": blocking["live"],
                 "open_unknown_tier_defects": blocking["unknown"],
                 "open_latent_defects": blocking["latent"],
@@ -1565,7 +1618,7 @@ def _compute_next_action(project_root: str) -> dict:
     # ONE read, shared by every branch below, so the router and the gate cannot
     # answer differently about the same ledger. The raw count is kept beside it
     # for display only — a lead still wants to know the backlog exists.
-    blocking = _blocking_defects(fdir)
+    blocking = _open_by_blocking_tier(fdir)
     open_count = blocking["blocking"]
     latent_backlog = blocking["latent"]
 
@@ -2325,3 +2378,70 @@ def _waiting_on_agents(project_root: str) -> dict:
     })
     return result
 
+
+# --------------------------------------------------------------------------- #
+# fallout FR-003 / FR-004 / ST-001, and GI-033 / AC-061 (D-021 / D-035) —
+# CLEAN-PROVE VERDICT SYNTHESIS, MOVED HERE FROM `orchestration/gates.py`.
+#
+# `gates.py` declared it and never called it; `_compute_next_action` below is
+# its only caller in the tree, so every reach for it was a lifecycle module
+# importing a verifier module — the direction GI-033 refuses with no exception.
+# It is also a WRITER, which is the other reason it could not go to a leaf
+# instead: it opens a `_document_transaction` on verdicts.json. Its one caller
+# is here, so it is here.
+# --------------------------------------------------------------------------- #
+
+def _synthesize_clean_prove_verdicts(
+    fdir: Path, project_root: str, cycle: int = 0
+) -> int:
+    """On a clean PROVE, write a VERIFIED verdict row for every spec
+    requirement ID that lacks one. Returns the count synthesized.
+
+    Rows match the Foundry-Verdict schema (foundry.py record shape):
+    id / verdict / evidence / spec_text_cited / code_location / cycle /
+    recorded_at. Existing rows are left untouched — never downgraded, never
+    duplicated — so a real ASSAY verdict is preserved and ``verdict_coverage``
+    never double-counts (analog note 7: preserve id-dedup).
+
+    fallout GI-033 / AC-061 (D-021 / D-035, concern C-027) — IT LIVES WITH ITS
+    ONE CALLER. It was declared in `gates.py`, which never called it, and
+    imported from here — a lifecycle module reaching the verifier set, which
+    GI-033 refuses outright. The ids come from `artifacts._spec_requirement_ids`,
+    the leaf ladder casting 7 owns: `sorted(...)` is not a rule, so reading the
+    leaf directly is one spelling of the ladder rather than a second copy of it.
+    """
+    ids = sorted(_spec_requirement_ids(project_root)[1])
+    if not ids:
+        return 0
+    verdicts_path = fdir / "verdicts.json"
+    now = now_iso()
+    synthesized = 0
+    # D-103: verdicts.json is read-modify-written here AND by
+    # foundry.py#foundry_add_verdict. Serializing this side removes the
+    # orchestrator's contribution to the race; the flock is what would bind the
+    # other side too, once that writer takes it (logged as a concern).
+    with _document_transaction(verdicts_path) as verdicts:
+        requirements = verdicts.get("requirements")
+        if not isinstance(requirements, list):
+            requirements = []
+        existing_ids = {r.get("id") for r in requirements if isinstance(r, dict)}
+        for rid in ids:
+            if rid in existing_ids:
+                continue
+            requirements.append(
+                {
+                    "id": rid,
+                    "verdict": "VERIFIED",
+                    "evidence": (
+                        "Auto-verified on clean PROVE "
+                        "(≥95% coverage, 0 findings)."
+                    ),
+                    "spec_text_cited": "",
+                    "code_location": "",
+                    "cycle": cycle,
+                    "recorded_at": now,
+                }
+            )
+            synthesized += 1
+        verdicts["requirements"] = requirements
+    return synthesized

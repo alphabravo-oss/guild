@@ -116,10 +116,17 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     foundry_next_action,
 )
 
-from foundry_mcp.tools.orchestration.halt import (  # noqa: F401
+# fallout GI-033 / AC-061 (D-021 / D-035) — the halted READ and its refusal
+# moved into `gates.py`, where their only two callers are, and the cap
+# normaliser into the leaf. The pin below still drives all three together,
+# because "one read" is a claim about the answer, not about the file.
+from foundry_mcp.tools.foundry_state import (  # noqa: F401
+    persisted_max_cycles as _persisted_max_cycles,
+)
+
+from foundry_mcp.tools.orchestration.gates import (  # noqa: F401
     _halted_refusal,
     _halted_state,
-    _persisted_max_cycles,
 )
 
 from tests.orchestration._env import (  # noqa: F401

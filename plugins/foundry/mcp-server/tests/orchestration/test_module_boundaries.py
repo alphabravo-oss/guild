@@ -5141,10 +5141,6 @@ _LAYERING_DEBT: dict[tuple[str, str], str] = {
         "_check_active_teams — AC-011 again: DONE is refused while a team holds "
         "the tree, and that is a scan of the machine, not of a run artifact."
     ),
-    ("gates", "halt"): (
-        "_halted_state, _halted_refusal — every gate refuses from HALTED "
-        "(D-081), and the halt record is halt.py's by GI-033."
-    ),
     ("transitions", "escalation"): (
         "_record_escalation_proposals, _advance_escalation_exits — the "
         "GRIND->INSPECT crossing is the one event that knows a cycle ENDED, "
@@ -5166,20 +5162,6 @@ _LAYERING_DEBT: dict[tuple[str, str], str] = {
         "tmux pane scan, and the scan reads no run artifact, so the leaf holds "
         "half the answer and a gate that took only that half would pass while "
         "teammates were still running."
-    ),
-    ("guidance", "gates"): (
-        "_blocking_defects, _synthesize_clean_prove_verdicts — NARROWED. The "
-        "tier buckets now come from `foundry_state.open_defects_by_tier`, the "
-        "leaf. `_blocking_defects` cannot follow them while `BLOCKING_TIERS` — "
-        "the rule saying WHICH tiers block — is declared in `gates.py`: this "
-        "module needs the count, and building one from a second copy of that "
-        "tuple would fork the blocking rule rather than move it. It closes "
-        "when `BLOCKING_TIERS` sits in `vocab.py`, which is where GI-014's own "
-        "applies-to column already puts it."
-    ),
-    ("guidance", "transitions"): (
-        "_finalize_open_phase_entry — the sub-phase stamper closes the same "
-        "phase_times entries `_update_phase` does, through one implementation."
     ),
     ("transitions", "concerns"): (
         "open_cross_casting_concerns — GI-023's CONCERN_OPEN rung, which "

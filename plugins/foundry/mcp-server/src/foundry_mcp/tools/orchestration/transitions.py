@@ -33,8 +33,10 @@ from foundry_mcp.tools.concerns import open_cross_casting_concerns
 from foundry_mcp.tools.foundry_state import (
     clear_active_run,
     current_cycle,
+    finalize_open_phase_entry,
     get_run_dir,
     now_iso,
+    persisted_max_cycles,
 )
 from pathlib import Path
 from foundry_mcp.tools.orchestration.escalation import (
@@ -75,15 +77,14 @@ from foundry_mcp.tools.orchestration.evidence_boundary import (
 # module the halt token already goes through. Nothing flows back.
 from foundry_mcp.tools.orchestration.halt import (
     _halt_if_capped,
-    _halted_refusal,
-    _halted_state,
-    _persisted_max_cycles,
     _seal_halted,
     seal_run_report,
     sealed_report_sentence,
 )
 from foundry_mcp.tools.orchestration.gates import (
     CASTING_KEY_FILE_CAP,
+    _halted_refusal,
+    _halted_state,
     _GATE_RANK_CONFIG,
     _GATE_RANK_CONFLICT,
     _GATE_RANK_DEFECTS,
@@ -759,7 +760,7 @@ def _grind_start_preconditions(fdir: Path, project_root: str) -> dict:
 
     fallout FR-062 / GI-032 / ST-015 / AC-060 / OT-044 — THE CAP IS A FACT HERE,
     NOT A REFUSAL. `would_halt` is computed from the SINGLE
-    `_persisted_max_cycles` read this run has, published on the outcome, and
+    `persisted_max_cycles` read this run has, published on the outcome, and
     acted on by the two transitions that open a GRIND. `Foundry-Gate('grind')`
     PASSES at the cap and shows `would_halt: true`, because reaching the cap is
     not something a lead can fix at the door: the run stops, with its open work
@@ -794,7 +795,7 @@ def _grind_start_preconditions(fdir: Path, project_root: str) -> dict:
     checklist.append({"check": "tasks_generated", "ok": tasks_generated})
 
     state = _load_json(fdir / "state.json")
-    max_cycles = _persisted_max_cycles(state)
+    max_cycles = persisted_max_cycles(state)
     cycle = current_cycle(fdir)
     opening = cycle + 1
     would_halt = max_cycles > 0 and opening > max_cycles
@@ -1069,23 +1070,12 @@ def _transition_refusal(outcome: dict, clause: str) -> dict:
 
 
 # --- Phase lifecycle markers ---
-
-
-def _finalize_open_phase_entry(entry: dict, now: str) -> None:
-    """If `entry` has started_at but no ended_at, stamp ended_at + duration."""
-    if "started_at" in entry and "ended_at" not in entry:
-        entry["ended_at"] = now
-        try:
-            start = datetime.fromisoformat(entry["started_at"])
-            end = datetime.fromisoformat(now)
-            delta = end - start
-            mins = int(delta.total_seconds() // 60)
-            secs = int(delta.total_seconds() % 60)
-            entry["duration"] = f"{mins}m {secs}s"
-        except (ValueError, KeyError):
-            pass
-
-
+#
+# fallout GI-033 / AC-061 (D-021 / D-035, concern C-027) — the phase-entry
+# stamper used to be declared here and `guidance.py` read it, which made a
+# lifecycle module import this verifier one. It is twelve pure lines over a
+# `phase_times` entry and belongs to neither layer, so it is
+# `foundry_state.finalize_open_phase_entry` now and both callers read the leaf.
 
 
 def _update_phase(fdir: Path, new_phase: str) -> None:
@@ -1105,7 +1095,7 @@ def _update_phase(fdir: Path, new_phase: str) -> None:
         if not isinstance(phase_times, dict):
             phase_times = {}
         for entry in phase_times.values():
-            _finalize_open_phase_entry(entry, now)
+            finalize_open_phase_entry(entry, now)
 
         phase_times[new_phase] = {"started_at": now}
 
@@ -2036,7 +2026,7 @@ def _phase_transition(
     elif phase == "grind_start":
         # fallout GI-032 / ST-015 / AC-060 — THE CAP IS ACTED ON, NEVER READ
         # HERE. `would_halt` is computed by the shared routine from the one
-        # `_persisted_max_cycles` read this run has; this branch does what the
+        # `persisted_max_cycles` read this run has; this branch does what the
         # fact says. A cap read inside a transition branch is the second
         # derivation GI-032 exists to forbid.
         outcome = _grind_start_preconditions(fdir, project_root)
