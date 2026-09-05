@@ -52,6 +52,34 @@ from pathlib import Path
 _active_run_name: str | None = None
 ARCHIVE_DIR = "foundry-archive"
 
+#: The archive-schema GENERATION every artefact under ``ARCHIVE_DIR`` is
+#: written at, and the marker ``scripts/migrate-archive.py`` writes when it
+#: finishes bumping an older one (CT-018).
+#:
+#: fallout C-023 — THE LEAF IS THE HOME BECAUSE THE INTEGER HAD FOUR. It was
+#: spelled independently in ``foundry.py#ARCHIVE_SCHEMA_VERSION`` (the value
+#: ``foundry_init`` writes into state.json),
+#: ``scripts/migrate-archive.py#ARCHIVE_SCHEMA_VERSION`` (the module that does
+#: the bump), ``foundry_validate.py#REQUIREMENT_IDS_SCHEMA_FLOOR`` (the floor
+#: at which a manifest is required to carry ``requirement_ids``) and a literal
+#: in ``tests/test_migrate_archive.py``. Four copies of one generation number
+#: is the shape where a writer bumps and a reader does not, so the archive a
+#: run just wrote reads as one generation to the tool that made it and another
+#: to the tool that migrates it.
+#:
+#: It lives HERE and not in ``schemas/vocab.py`` for the same reason
+#: ``ARCHIVE_DIR`` does: this is a run-artefact LAYOUT fact, not a closed
+#: vocabulary of values a door may accept. And it lives in the leaf because
+#: the leaf is the one module every consumer already imports — ``foundry.py``,
+#: ``foundry_validate.py`` and ``migrate-archive.py`` on both its installed
+#: and its source-tree branch — with no layering rule in the way, and because
+#: this module imports nothing from the package itself, so reaching it can
+#: never close a cycle in the import graph.
+#:
+#: Bumping it is a MIGRATION, never an edit: raise it here and give
+#: ``migrate-archive.py`` the step that carries a schema-N archive to N+1.
+ARCHIVE_SCHEMA_VERSION = 4
+
 
 def read_text_file(path: Path) -> tuple[str, str | None]:
     """Read UTF-8 text. Returns ``(text, problem)``; never raises.
