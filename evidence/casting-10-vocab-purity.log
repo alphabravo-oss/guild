@@ -16,4 +16,4 @@
 ............                                                             [100%]
 =========================== short test summary info ============================
 SKIPPED [4] tests/test_vocab.py:1890: plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration does not exist yet — casting 2 creates it in wave 2. The RULE is asserted above; the existence assertion arms itself the moment the package appears.
-80 passed, 4 skipped, 235 deselected in 0.07s
+80 passed, 4 skipped, 236 deselected in 0.07s

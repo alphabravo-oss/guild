@@ -9,9 +9,9 @@
 .....................EEEEEEEE....................................F...... [ 39%]
 ....................................................................FF.. [ 52%]
 ................ssss.................................................... [ 65%]
-................................................FFF..................... [ 78%]
-......F.........................F...................................F... [ 92%]
-...
+.................................................FFF.................... [ 78%]
+.......F.........................F...................................F.. [ 91%]
+....
 === report.json top-level keys ===
   generated_at
   run
@@ -137,7 +137,7 @@ F
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-...F..F..............................                              [100%]
+...F..F..............................                             [100%]
 =========================== short test summary info ============================
 SKIPPED [4] tests/test_vocab.py:1890: plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration does not exist yet — casting 2 creates it in wave 2. The RULE is asserted above; the existence assertion arms itself the moment the package appears.
 ERROR tests/test_vocab.py::test_the_defect_door_audits_under_the_class_it_refuses[code]
@@ -162,4 +162,4 @@ FAILED tests/test_report.py::test_demo_grind_cycle_9_filings_at_the_real_door
 FAILED tests/test_report.py::test_demo_grind_cycle_10_filings_at_the_real_door
 FAILED tests/test_report.py::test_the_report_and_foundry_next_publish_the_same_cycle_axis
 FAILED tests/test_report.py::test_the_generated_banner_is_absorbed_by_the_seal_never_carried_as_prose
-14 failed, 521 passed, 4 skipped, 8 errors in 1.35s
+14 failed, 522 passed, 4 skipped, 8 errors in 1.91s

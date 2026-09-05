@@ -10,7 +10,7 @@
 ........................................................................ [ 54%]
 ....ssss................................................................ [ 68%]
 ........................................................................ [ 82%]
-.........................................................
+..........................................................
 === report.json top-level keys ===
   generated_at
   run
@@ -134,8 +134,8 @@
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-.............. [ 96%]
-.....................                                                    [100%]
+............. [ 95%]
+......................                                                   [100%]
 =========================== short test summary info ============================
 SKIPPED [4] tests/test_vocab.py:1890: plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration does not exist yet — casting 2 creates it in wave 2. The RULE is asserted above; the existence assertion arms itself the moment the package appears.
-521 passed, 4 skipped, 22 deselected in 1.26s
+522 passed, 4 skipped, 22 deselected in 1.15s
