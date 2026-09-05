@@ -2069,10 +2069,10 @@ def test_a_hardening_filing_with_a_reproduction_is_accepted_at_both_doors(run_en
     """fallout AC-023 / CT-012 / OT-018: 'A HARDENING defect is accepted with a
     reproduction and does not block assay, temper, nyquist or done.'
 
-    The acceptance half, at BOTH doors, because CT-012's surface column names
-    'Foundry-Defect / Foundry-Sync' and a tier one door takes and the other
-    refuses is the D-119 class with a third field. The gate half is the test
-    below.
+    The acceptance half, at BOTH doors, because fallout CT-012's surface
+    column names 'Foundry-Defect / Foundry-Sync' and a tier one door takes and
+    the other refuses is the D-119 class with a third field. The gate half is
+    the test below.
     """
     from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
 
@@ -2132,10 +2132,10 @@ def test_a_hardening_filing_carrying_any_spec_ref_is_refused_at_both_doors(
     whenever spec_ref is set' — 'both filing doors refuse a HARDENING record
     that carries any spec_ref, naming the tier rule'.
 
-    ANY value, not merely a well-formed requirement id: GI-028's violation
-    column is 'a HARDENING record carrying a spec_ref for context', and a
-    reference offered as context is exactly the one a well-formedness check
-    would wave through.
+    ANY value, not merely a well-formed requirement id: fallout GI-028's
+    violation column is 'a HARDENING record carrying a spec_ref for context',
+    and a reference offered as context is exactly the one a well-formedness
+    check would wave through.
 
     Driven at both doors and asserted to name the SAME field, which is the
     property the locked check order exists for — a filing refused on `spec_ref`
@@ -2359,11 +2359,12 @@ def test_every_record_carries_the_provenance_keys_even_when_nothing_set_them(run
 
     `foundry_state.fallout_rows` (casting 10) reads the KEY's presence as 'this
     record was measured' and its absence as 'this record predates the field',
-    and a cycle holding one unmeasured record cannot contribute to FR-025's
-    acceptance figure. A door that wrote `fallout_of` only when a filer set it
-    would make every cycle of every post-change run read as not_measurable
-    forever — the reader certifying nothing while looking like it certified
-    something. Driven through the reader itself, not asserted on the literal.
+    and a cycle holding one unmeasured record cannot contribute to fallout
+    FR-025's acceptance figure. A door that wrote `fallout_of` only when a
+    filer set it would make every cycle of every post-change run read as
+    not_measurable forever — the reader certifying nothing while looking like
+    it certified something. Driven through the reader itself, not asserted on
+    the literal.
     """
     from foundry_mcp.tools.foundry_state import fallout_rows
 
@@ -2384,9 +2385,10 @@ def test_supersedes_closes_the_cited_hardening_record(run_env):
     record in place'.
 
     The tier, the description and the reproduction of the earlier record are
-    asserted UNCHANGED, because that is the whole of GI-022: promotion is a new
-    filing that cites the old one, and re-tiering in place would rewrite what a
-    stream said it saw. `status` moves to a third value beside open and fixed —
+    asserted UNCHANGED, because that is the whole of fallout GI-022:
+    promotion is a new filing that cites the old one, and re-tiering in place
+    would rewrite what a stream said it saw. `status` moves to a third value
+    beside open and fixed —
     the closure stops it blocking without claiming anybody repaired it.
     """
     project_root, fdir = run_env
@@ -2422,12 +2424,13 @@ def test_supersedes_closes_the_cited_hardening_record(run_env):
 
 
 def test_supersedes_citing_something_that_is_not_an_open_hardening_record(run_env):
-    """The other half of ST-006, and the reason it is not a refusal.
+    """The other half of fallout ST-006, and the reason it is not a refusal.
 
-    CT-019's errors column admits exactly one error — an unknown `fallout_of` —
-    and D-101 is this package's record of what inventing a rung a contract does
-    not admit costs: the door refuses its own documented example and the stream's
-    next move is to fabricate the field. So a `supersedes` naming an unknown id,
+    fallout CT-019's errors column admits exactly one error — an unknown
+    `fallout_of` — and D-101 is this package's record of what inventing a rung
+    a contract does not admit costs: the door refuses its own documented
+    example and the stream's next move is to fabricate the field. So a
+    `supersedes` naming an unknown id,
     or naming a record that is not an open HARDENING one, closes NOTHING and
     refuses nothing; the result's `superseded` key is null and that is how the
     filer learns the promotion did not land.
