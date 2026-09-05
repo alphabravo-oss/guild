@@ -139,6 +139,64 @@ def test_failure_tokens_includes_unbound_and_malformed():
     )
 
 
+def test_a_declared_volatile_admits_a_keyed_interpreter_path_and_refuses_a_bare_one():
+    """The HEADER-side door onto the environmental-field allowlist.
+
+    ``tests/test_evidence.py`` walks the REGISTRY: which grammars are declared,
+    which the corpus witnesses, which admit their own witness pair. This drives
+    the other direction, the one an evidence author actually takes — a
+    ``# evidence-volatile:`` line parsed out of a real header, handed to
+    ``_compare_byte_match``, deciding whether the byte-match that redaction
+    bought erased a FIELD or a CLAIM. Same registry, a different caller: the
+    parse-then-compare path rather than the registry sweep.
+
+    D-003/D-019: the shape pinned here is the one ``pytest_platform_interpreter``
+    exists for and the one ``evidence/casting-5-platform-witness.log`` carries.
+    A sweep re-executes in a detached worktree with no project ``.venv``, where
+    uv builds a fresh ``builds-v0/.tmpXXXXXX`` env every run, so a ``pytest -v``
+    log's interpreter disagrees on every honest verification.
+
+    The KEY is what makes that admissible, and the second half is why the entry
+    is not simply "paths are volatile": the same two paths with the
+    ``platform … --`` text no longer beside them are a bare relocation, which
+    says nothing about whether it is where the run happened or what the run
+    reported, and the guard refuses it.
+    """
+    interpreter = "/Users/x/.cache/uv/builds-v0/{build}/bin/python"
+    keyed = (
+        "============================= test session starts ==============\n"
+        "platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- "
+        + interpreter
+        + "\nconfigfile: pyproject.toml\n"
+        "tests/test_x.py::test_y PASSED\n"
+        "============================== 1 passed =======================\n"
+    )
+    matched, _, _, _ = evidence._compare_byte_match(
+        keyed.format(build=".tmphgnUSu"),
+        keyed.format(build=".tmpvRAwWQ"),
+        [r"(?:^|\s)platform \S+ -- Python \S+.*"],
+    )
+    assert matched, (
+        "the interpreter pytest -v reports, under the platform key that "
+        "identifies it, is the field pytest_platform_interpreter admits — a "
+        "log that declares the whole `platform … --` line must survive its "
+        "own re-execution in a worktree"
+    )
+
+    unkeyed = (
+        "the suite ran and reported this build directory as its result: "
+        + interpreter
+        + "\nconfigfile: pyproject.toml\n"
+        "tests/test_x.py::test_y PASSED\n"
+    )
+    with pytest.raises(ValueError, match="EVIDENCE_VOLATILE_MALFORMED"):
+        evidence._compare_byte_match(
+            unkeyed.format(build=".tmphgnUSu"),
+            unkeyed.format(build=".tmpvRAwWQ"),
+            [r"/\S*"],
+        )
+
+
 # ---------------------------------------------------------------------------
 # Plan 05-03 territory — verify_evidence + foundry_accept_casting integration
 # (5 stubs, pytest.skip until Plan 05-03 wires the gate)
