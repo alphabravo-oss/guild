@@ -1511,13 +1511,51 @@ def close_superseded_record(
     closure stops it blocking; and `status == "fixed"` is what Foundry-Fix
     writes when a defect was repaired, which this was not.
 
-    A cited id that is unknown, already closed, or not HARDENING closes NOTHING
-    and refuses nothing — CT-019's errors column admits one refusal and this is
-    not it. The caller reports the id it actually closed (`superseded` in the
-    door's result, `None` here), so a filer who cited the wrong record sees that
-    in the answer rather than being told the filing failed.
+    A cited id that is unknown, already closed, not HARDENING, or the id of the
+    record this very filing is creating closes NOTHING and refuses nothing —
+    CT-019's errors column admits one refusal and none of these is it. The
+    caller reports the id it actually closed (`superseded` in the door's result,
+    `None` here), so a filer who cited the wrong record sees that in the answer
+    rather than being told the filing failed.
     """
     if not superseded_id:
+        return None
+
+    # fallout D-053 / ST-006 / GI-022 — THE RECORD THIS CALL IS CREATING IS NOT
+    # A CANDIDATE FOR ITS OWN SUPERSESSION.
+    #
+    # Both doors call this AFTER the append, so `records` already holds the new
+    # record and the scan below matched it whenever the filer cited the id the
+    # call was about to mint. That is not an exotic input: on an EMPTY ledger
+    # the mint is deterministic, so `supersedes="D-001"` on a run's first filing
+    # names the record being filed. Driven at BOTH doors on an empty ledger —
+    # `foundry_add_defect(tier="HARDENING", supersedes="D-001")` returned
+    # `{defect_id: "D-001", superseded: "D-001", open_defects: 0}`, and
+    # `foundry_sync_defects` with the same finding returned `{added: 1,
+    # superseded_ids: ["D-001"], total_open: 0}`. Each persisted ONE record,
+    # born `status: "superseded"` with `superseded_by` naming itself. It never
+    # counted as open, never reached the F6 HARDENING backlog CT-012 promises
+    # it, and the door reported the self-promotion as a success.
+    #
+    # ST-006 and GI-022 are both stated over TWO records — "a new filing on the
+    # same path that CITES the HARDENING id", "promotion only by a NEW filing
+    # that cites it" — so a record citing itself is not a transition this
+    # function has a shape for, and the closure it produced was a record born
+    # closed against the very filing that created it.
+    #
+    # BY ID, NOT BY OBJECT IDENTITY. The re-tier branch of the single door
+    # reuses an EXISTING record object and passes that record's id as `by_id`,
+    # so `d is <the appended dict>` would be False there while the self-closure
+    # is exactly the same one. The id is what both branches share.
+    #
+    # A no-op rather than a refusal, exactly like the three abstentions below.
+    # No refusal rung is being asked for here: CT-019's errors column admits one
+    # error and this is not it, and D-101 is this package's record of what
+    # inventing a rung a contract does not admit costs. The filer reads
+    # `superseded: None` and learns the promotion did not land; the record it
+    # filed stays OPEN, which is where a HARDENING finding with nothing behind
+    # it belongs.
+    if superseded_id == by_id:
         return None
     for d in _dict_records(records):
         if d.get("id") != superseded_id:
@@ -2324,6 +2362,37 @@ NO_UI_MEANING = (
     "browser audit is not part of it."
 )
 
+#: fallout FR-054 / D-052 — the archive schema generation a run CREATED BY THIS
+#: SERVER conforms to, stamped into `state.json` by `foundry_init`.
+#:
+#: FR-054 ends "F0.9 fails closed on missing `requirement_ids` only for new
+#: runs", and the discriminator between a new run and a legacy archive is
+#: `state.json.archive_schema_version` against
+#: `foundry_validate.REQUIREMENT_IDS_SCHEMA_FLOOR`. Until D-052 the ONLY writer
+#: of that key was `scripts/migrate-archive.py`, so a run this server had
+#: created minutes earlier read as version 0 — indistinguishable from
+#: `daring-orca` — and the fail-closed half of the contract could never fire on
+#: the runs it was written for. The reader half shipped correct; the producer
+#: that makes it reachable is this constant and the state key below.
+#:
+#: A NEW RUN IS BORN AT THE CURRENT GENERATION, not at the floor. The floor is
+#: where `requirement_ids` became mandatory; this is what the run's artifacts
+#: ARE, and writing the floor here would make a later floor bump silently
+#: restate what every already-created run claimed about itself.
+#:
+#: THE FOURTH SPELLING OF THIS INTEGER, AND DELIBERATELY SO FOR NOW. It is also
+#: `scripts/migrate-archive.py#ARCHIVE_SCHEMA_VERSION` (casting 3, which does
+#: the bump), `foundry_validate.py#REQUIREMENT_IDS_SCHEMA_FLOOR` (casting 7,
+#: whose own comment already calls the consolidation the follow-up) and
+#: `tests/test_migrate_archive.py`. None of those three files is this casting's
+#: to edit, and the one home all three of them plus this module can already
+#: reach is the leaf `tools/foundry_state.py`, where `ARCHIVE_DIR` — the other
+#: run-directory layout fact — already lives. That move is filed as concern
+#: C-023 against casting 10 (with C-024 to casting 7 and C-025 to casting 3 for
+#: the halves they own); when the leaf declares it, this block becomes an import
+#: and nothing else here changes.
+ARCHIVE_SCHEMA_VERSION = 4
+
 
 def _max_cycles_problem(value: object) -> dict | None:
     """The cap rung: a value this door will not honour is refused, not stored.
@@ -2531,6 +2600,14 @@ def foundry_init(
             # lifting a ceiling nobody asked it to lift.
             if max_cycles:
                 document["max_cycles"] = max_cycles
+            # fallout FR-054 / D-052 — AND NOTHING STAMPS
+            # `archive_schema_version` HERE, deliberately. The marker records
+            # the generation a run was CREATED under, and a legacy archive
+            # stamped on resume would stop being distinguishable from a new run
+            # — which is the whole discrimination FR-054 rests on, destroyed by
+            # the door an operator reaches for to recover a legacy run.
+            # `scripts/migrate-archive.py` is what raises an old archive's
+            # marker, on purpose and with a migration behind it.
             state = dict(document)
         return {
             "foundry_dir": str(run_dir),
@@ -2673,6 +2750,22 @@ def foundry_init(
         # phase handler and Foundry-Next read it; the manifest carries it too,
         # mirroring how temper/nyquist are written to both.
         "max_cycles": max_cycles,
+        # fallout FR-054 / D-052 — THE MARKER THAT SAYS THIS IS A NEW RUN.
+        #
+        # `foundry_validate._archive_schema_version` reads THIS key and nothing
+        # else to decide whether a manifest's missing `requirement_ids` is an
+        # archive that predates the field (reported not computable, passes) or a
+        # run created under the schema that mandates it (refused). Nothing wrote
+        # it at init, so every run this server created answered 0 and F0.9's
+        # fail-closed half was unreachable on exactly the runs FR-054 names.
+        #
+        # state.json ONLY, matching the single reader and matching
+        # `scripts/migrate-archive.py`, which writes the same key to the same
+        # document. The manifest carries `temper` / `nyquist` / `no_ui` /
+        # `max_cycles` because a second reader loads them from there; no reader
+        # loads the schema marker from the manifest, and a second copy of a
+        # generation number is a second thing to bump.
+        "archive_schema_version": ARCHIVE_SCHEMA_VERSION,
         # FR-017 / FR-050 / AC-027 — what this run actually EXECUTED on:
         # server_version, plugin_version, server_root, server_commit and
         # self_target. Recorded on EVERY run, compared only on a self-targeting

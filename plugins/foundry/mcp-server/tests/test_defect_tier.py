@@ -53,6 +53,11 @@ synthetic run and then drift from it.
   fallout ST-006 / GI-022 / OT-020
       a filing citing an open HARDENING id under supersedes closes that record
       as superseded and leaves its tier exactly where the stream put it.
+  fallout ST-006 / GI-022 (defect D-053)
+      a filing citing the id it is itself about to be given promotes NOTHING,
+      at both doors — the transition is stated over two records, and on an
+      empty ledger the mint is deterministic enough that the one-record case
+      is reachable by a filer who simply guessed the next id.
 
 ``validate_defect_filing`` is tested DIRECTLY as well as through
 ``foundry_add_defect``, because the batch door ``foundry_sync_defects`` is
@@ -2479,3 +2484,109 @@ def test_no_door_offers_a_tier_rewrite_of_a_record_already_on_disk(run_env):
     assert again["retiered"] == 0, again
     stored = {d["id"]: d for d in _defects(fdir)}
     assert stored[first["defect_id"]]["tier"] == "HARDENING", stored
+
+
+def test_a_filing_cannot_supersede_the_record_it_is_itself_creating(run_env):
+    """fallout ST-006 / GI-022, the D-053 half: the promotion is stated over
+    TWO records — 'a new filing on the same path that CITES the HARDENING id',
+    'promotion only by a NEW filing that cites it' — so a filing citing the id
+    it is about to be GIVEN promotes nothing.
+
+    NOT AN EXOTIC INPUT. Both doors close the supersession AFTER the append, so
+    the scan sees the record being filed; and on an EMPTY ledger the mint is
+    deterministic, so ``supersedes="D-001"`` on a run's first filing names that
+    filing. Driven at exactly that point before the fix, the record was BORN
+    ``status: "superseded"`` with ``superseded_by`` naming itself — it never
+    counted as open, never reached the F6 HARDENING backlog fallout CT-012
+    promises it, and the door reported the self-promotion as a success.
+
+    A NO-OP, NOT A REFUSAL, exactly like the unknown / already-closed /
+    non-HARDENING citations the test above covers. fallout CT-019's errors
+    column admits one error and this is not it (D-101), so the record lands
+    OPEN and ``superseded`` is null, which is how the filer learns the
+    promotion did not land.
+    """
+    project_root, fdir = run_env
+
+    assert _defects(fdir) == [], "an empty ledger is what makes the mint known"
+
+    filed = foundry_add_defect(**_hardening_arguments(project_root, supersedes="D-001"))
+
+    assert filed["defect_id"] == "D-001", filed
+    assert filed["superseded"] is None, filed
+    assert filed["open_defects"] == 1, filed
+
+    stored = _defects(fdir)
+    assert len(stored) == 1, stored
+    record = stored[0]
+    assert record["status"] == "open", record
+    assert "superseded_by" not in record, record
+    # The CITATION is kept exactly as the filer made it. The record is not
+    # rewritten to hide a promotion that did not happen; `superseded` in the
+    # result is the only place the outcome is reported.
+    assert record["supersedes"] == "D-001", record
+
+
+def test_the_batch_door_cannot_supersede_the_record_it_is_itself_creating(run_env):
+    """THE ADJACENT PATH: ``foundry_sync_defects`` is the OTHER caller of
+    ``close_superseded_record``, and it reaches the same shared function from
+    ``orchestration/fix_gate.py`` with its OWN mint (``_mint_defect_id``) and
+    its own transaction.
+
+    Driven separately rather than assumed from the single door, because that is
+    the whole reason the rung lives in the shared function: a door the fix
+    reached and a door it did not is the D-119 class, and the batch door is the
+    one a whole INSPECT stream files through, so a gap there is the common path
+    rather than the rare one. Before the fix this door returned
+    ``{added: 1, superseded_ids: ["D-001"], total_open: 0}`` over an empty
+    ledger holding one self-superseded record.
+    """
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
+
+    project_root, fdir = run_env
+
+    assert _defects(fdir) == [], "an empty ledger is what makes the mint known"
+
+    result = foundry_sync_defects(
+        cycle=1,
+        findings=[_hardening_finding(supersedes="D-001")],
+        project_root=project_root,
+    )
+
+    assert result.get("added") == 1, result
+    assert result.get("superseded_ids") == [], result
+    assert result.get("total_open") == 1, result
+
+    stored = _defects(fdir)
+    assert len(stored) == 1 and stored[0]["id"] == "D-001", stored
+    assert stored[0]["status"] == "open", stored[0]
+    assert "superseded_by" not in stored[0], stored[0]
+
+
+def test_a_real_two_record_promotion_still_closes_after_the_self_citation_rung(run_env):
+    """The positive control for the rung above, and it is not optional: a guard
+    that refused every citation would pass both tests above and silently delete
+    fallout ST-006.
+
+    Two DISTINCT records, which is the shape that transition is stated over — so the
+    earlier one closes, the later one stays open, and the tier of neither moves.
+    """
+    project_root, fdir = run_env
+
+    hardening = foundry_add_defect(**_hardening_arguments(project_root))
+    promotion = foundry_add_defect(
+        **_hardening_arguments(
+            project_root,
+            symbol="retry_arm",
+            defect_class="OFF_SPEC_RETRY_TRIPLE_COUNT",
+            supersedes=hardening["defect_id"],
+        )
+    )
+
+    assert promotion["defect_id"] != hardening["defect_id"], (hardening, promotion)
+    assert promotion["superseded"] == hardening["defect_id"], promotion
+
+    stored = {d["id"]: d for d in _defects(fdir)}
+    assert stored[hardening["defect_id"]]["status"] == "superseded", stored
+    assert stored[hardening["defect_id"]]["tier"] == "HARDENING", stored
+    assert stored[promotion["defect_id"]]["status"] == "open", stored

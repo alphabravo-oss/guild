@@ -408,6 +408,13 @@ def test_the_version_fields_do_not_disturb_the_existing_state_keys(tmp_path):
 #   AC14  test_the_no_ui_definition_is_stated_once_where_the_flag_arrives
 #           fallout FR-055 / AC-052 — one meaning, at the parameter that
 #           receives it, pinned by exact substring.
+#   AC15  test_init_stamps_the_schema_generation_that_makes_f0_9_fail_closed
+#           fallout FR-054 / D-052 — the marker that tells a new run from a
+#           legacy archive, driven at the real F0.9 door rather than read back
+#           off the state file.
+#   AC16  test_a_resume_does_not_stamp_the_marker_onto_a_legacy_archive
+#           the other half of the same clause: the recovery door must not
+#           raise a legacy archive's generation out from under the reader.
 # ---------------------------------------------------------------------------
 
 
@@ -643,3 +650,92 @@ def test_the_no_ui_definition_is_stated_once_where_the_flag_arrives(tmp_path):
     result = foundry_init(project_root=str(tmp_path), no_ui=True)
     assert _state(result)["no_ui"] is True
     assert _read_manifest(result)["no_ui"] is True
+
+
+def test_init_stamps_the_schema_generation_that_makes_f0_9_fail_closed(tmp_path):
+    """fallout FR-054 / D-052, the clause that had no producer: 'F0.9 fails
+    closed on missing requirement_ids only for NEW runs'.
+
+    The discriminator between a new run and a legacy archive is
+    ``state.json.archive_schema_version`` against
+    ``foundry_validate.REQUIREMENT_IDS_SCHEMA_FLOOR``, and until this stamp the
+    ONLY writer of that key was ``scripts/migrate-archive.py``. So a run this
+    server had created minutes earlier read as version 0 — indistinguishable
+    from ``daring-orca`` — and the fail-closed half of the contract could never
+    fire on the runs it was written for. The reader half shipped correct; this
+    is the producer that makes it reachable.
+
+    DRIVEN AT THE REAL F0.9 DOOR rather than asserted on the state literal.
+    ``foundry_validate_castings`` is casting 7's file and the marker is only
+    worth writing if that door changes its answer because of it, so the run
+    this function created is handed a manifest of exactly the shape that used
+    to be reported not computable — one casting citing a requirement id in its
+    ``spec_text`` and carrying no ``requirement_ids`` — and the door now
+    refuses it.
+    """
+    from foundry_mcp.tools.foundry import ARCHIVE_SCHEMA_VERSION
+    from foundry_mcp.tools.foundry_validate import (
+        REQUIREMENT_IDS_SCHEMA_FLOOR,
+        foundry_validate_castings,
+    )
+
+    result = foundry_init(project_root=str(tmp_path))
+    state = _state(result)
+
+    marker = state.get("archive_schema_version")
+    # `bool` excluded on the same grounds `_archive_schema_version` excludes it:
+    # it is a subclass of `int` and would compare as 0 or 1.
+    assert isinstance(marker, int) and not isinstance(marker, bool), state
+    assert marker == ARCHIVE_SCHEMA_VERSION, state
+    assert marker >= REQUIREMENT_IDS_SCHEMA_FLOOR, (marker, REQUIREMENT_IDS_SCHEMA_FLOOR)
+
+    manifest_path = Path(result["foundry_dir"]) / "castings" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["castings"] = [{
+        "id": 1,
+        "title": "The door under test",
+        "spec_text": (
+            "- **FR-007** [from A-007]: the door refuses a filing that carries "
+            "no reproduction\n"
+        ),
+    }]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    dim = foundry_validate_castings(str(tmp_path))["dimensions"][
+        "requirement_ownership"
+    ]
+
+    assert dim["archive_schema_version"] == ARCHIVE_SCHEMA_VERSION, dim
+    assert dim["not_computable"] is False, dim
+    assert dim["ok"] is False, dim
+    assert [i["issue"] for i in dim["issues"]] == ["missing_requirement_ids"], dim
+
+
+def test_a_resume_does_not_stamp_the_marker_onto_a_legacy_archive(tmp_path):
+    """The other half of fallout FR-054: the marker records the generation a run
+    was CREATED under, so the RECOVERY door must not raise it.
+
+    A legacy archive stamped on resume stops being distinguishable from a new
+    run, which is the discrimination the clause above rests on — destroyed by
+    the one door an operator reaches for when recovering a legacy run.
+    ``scripts/migrate-archive.py`` is what raises an old archive's marker, on
+    purpose and with a migration behind it.
+
+    The legacy archive is made the only way it can be made here: the marker
+    removed, which is exactly what ``daring-orca`` looks like on disk. Driven
+    with a cap alongside, so the resume genuinely writes to the document rather
+    than passing through a branch that touched nothing.
+    """
+    created = foundry_init(project_root=str(tmp_path))
+    state_path = Path(created["foundry_dir"]) / "state.json"
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    del state["archive_schema_version"]
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    resumed = foundry_init(
+        project_root=str(tmp_path), resume=created["run_name"], max_cycles=3
+    )
+
+    assert _state(resumed)["max_cycles"] == 3, resumed
+    assert "archive_schema_version" not in _state(resumed), _state(resumed)
