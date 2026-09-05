@@ -5104,16 +5104,33 @@ _VERIFIER_TO_LIFECYCLE_SEAM = frozenset({("transitions", "halt")})
 #: `_KNOWN_DUPLICATION` above: a NEW edge fails immediately, and an entry whose
 #: edge is gone ALSO fails, so this shrinks and never grows quietly.
 #:
-#: WHY IT IS AN INVENTORY AND NOT A CLEAN SWEEP. The rule and the module
-#: contract this run mandates cannot both be satisfied as written, and the
-#: clearest instance is `_done_preconditions`: AC-011 requires ONE evaluation of
-#: "the run may finish" shared by both F6 doors and both F6 gates, and that
-#: evaluation reads the team scan, the stream roster, the escalation ledger and
-#: the report status — four facts the layering calls lifecycle. Either the
-#: closure evaluation is duplicated (which is the defect AC-011 exists to close)
-#: or `gates.py` reaches the lifecycle layer. The same argument holds for
-#: `Foundry-Next`, whose whole job is to render what the gates and the width
-#: decision concluded. Recorded in concerns.md as approach-altering.
+#: WHY IT IS AN INVENTORY AND NOT A CLEAN SWEEP, AND WHAT EACH ROW IS WAITING
+#: ON. It is still an allowlist and it is still the defect (D-021 / D-035); what
+#: changed is that no row is a shrug any more. Every one names the ONE symbol
+#: left crossing and the ONE move that closes it, and each move is filed as a
+#: cross-casting concern against the casting that owns the file it lands in:
+#:
+#:   C-027 -> casting 10 (`foundry_state.py` / `vocab.py`): `persisted_max_cycles`
+#:            closes ('gates','halt'); `BLOCKING_TIERS` into vocab closes
+#:            `_blocking_defects` out of ('guidance','gates');
+#:            `finalize_open_phase_entry` closes ('guidance','transitions');
+#:            the whole `active_teams` and `check_streams_complete` are the
+#:            expensive pair behind ('gates','teams'), ('transitions','teams')
+#:            and ('transitions','streams'), and are for the lead to rule on.
+#:   C-030 -> casting 1 (`concerns.py`): ('transitions','concerns') — and that
+#:            row is a genuine SPEC tension, because this casting's own
+#:            key_links table mandates the very import GI-033 forbids.
+#:   The escalation rows are the writer/effect packet the lead already ruled
+#:   structural: `_record_escalation_proposals` and `_advance_escalation_exits`
+#:   are writers, so no leaf can hold them.
+#:
+#: THE ARITHMETIC THAT MAKES THE RESIDUE A LEAF PROBLEM RATHER THAN A LAZY ONE.
+#: The rule forbids verifier->lifecycle AND lifecycle->verifier at module top,
+#: so the two layers are mutually unreachable and a symbol read from BOTH can
+#: live in neither. It must live in a leaf, and no orchestration module can be
+#: one without widening the leaf set — which is this rule's own named failure
+#: mode. So every remaining row is exactly one shared symbol, and the fix for
+#: each is one leaf move by the casting that owns the leaf.
 _LAYERING_DEBT: dict[tuple[str, str], str] = {
     ("gates", "escalation"): (
         "_escalated_classes, _persisted_escalations, _escalation_exit_distances "
