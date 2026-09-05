@@ -270,6 +270,69 @@ adjudicator-appended `assay_verdict`. ONLY these 11 keys —
 it at ASSAY, and the validator accepts the channel file both before
 and after that append.
 
+## Stream Recording
+
+**You record your own stream; the lead only confirms the record
+exists.** Call `Foundry-Stream` yourself with `stream`, `cycle`,
+`items_checked`, `items_total` and `findings_count` once the observation
+file is emitted. The `stream` value is your **wire id**, a member of the
+closed vocabulary at
+`plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#STREAM_WIRE_IDS`;
+read it there and never re-type the set here. It is NOT the canonical
+`TEST-01` your output shape carries: the door admits that vocabulary and
+nothing else, so a record spelled the canonical way never lands and the
+stream reads as uncovered for the cycle. Take `cycle` from
+`Foundry-Next`; `items_checked` is the derived hypotheses you actually
+executed and `items_total` the persisted roster's length (see § Roster).
+A `SKIP` observation counts in `items_checked` and not in
+`findings_count` — the roster item was reached and the surface was not
+there to drive, which is coverage of a truthful kind and no finding at
+all. A second call for the same stream and cycle REPLACES the first,
+names in `replaced` what it replaced, and keeps every record under
+`records[]`, so a re-run corrects the cycle rather than doubling it.
+
+**Calling a protocol door is not a source read.** `Foundry-Stream`,
+`Foundry-Next` and `Foundry-Roster` are MCP tools, not implementation
+files. Reaching one widens no entry in § Code-Blind Discipline's allowed
+read prefixes and trips no forbidden root, because the Layer 2 audit
+judges the targets of your Read, Grep and Glob calls and a tool call has
+none. Source stays forbidden and `TEST_DERIVER_READ_SOURCE` still fires
+on the first `src/` path you open.
+
+No exceptions, no deferrals, no waiting for the lead to record on your
+behalf: a stream that never records contributes nothing to the cycle's
+coverage roll-up, where its absence reads as no coverage rather than as
+a broken call.
+
+## Roster
+
+**Read the roster before you derive one.** Your item list is persisted
+at `rosters/test01.json` under the run directory, named for the wire id
+exactly as your stream record is. Read it first; derive the item list
+from the spec's `## Contracts` rows and the surfaces they name ONLY when
+no roster is there, and call `Foundry-Roster(stream, items=[...])` at
+that first derivation. A later cycle READS the persisted roster and does
+not re-derive, which is what makes `items_total` checkable rather than
+asserted. Then a second write is refused `ROSTER_EXISTS` unless you pass
+`revise=true` with a reason naming what changed in the spec, and the
+prior items are kept under `revisions[]` rather than replaced. This rule
+and § Stream Recording are one rule: `Foundry-Stream` refuses
+`ROSTER_MISMATCH` when `items_total` differs from the persisted roster's
+length, so a re-derived shorter list cannot be reported as full coverage
+of a population it quietly shrank.
+
+**The roster is spec-derived, and reading it opens no source.** Every
+item comes from `## Contracts` — the row, its surface cell, its citation
+cell — which is material you already read and the only material a
+falsifiable derivation needs. `foundry-archive/{run}/rosters/` sits
+inside § Code-Blind Discipline's allowed read prefixes, exactly as
+`test_observations/` does, and nothing in this rule widens that list by
+a single entry. A roster item may NAME a path a contracts row declares
+and you still never open it; if deriving or checking one ever seems to
+need a read outside those prefixes, that is `TEST_DERIVER_READ_SOURCE`
+and you halt rather than widen the rule. No exceptions, no deferrals, no
+"just to confirm the roster is right."
+
 ## Closed-Vocabulary Status
 
 `observation.status` MUST be one of: `FAIL`, `ERROR`, `SKIP`, `PASS`.

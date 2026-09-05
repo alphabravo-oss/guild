@@ -218,6 +218,8 @@ The fix or implementation you need requires a structural change that goes beyond
 
 Then continue with the best available approach. The Lead reviews concerns after the CAST phase completes.
 
+**A concern that lands on ANOTHER casting goes through `Foundry-Concern`, not only into the file.** When the rule your fix changes is one a sibling casting's file also states — the same ruling in another agent's voice, the same constant re-typed in another module, a refusal another casting's prose describes — that is a CROSS-CASTING concern and the ledger has to carry it. Call `Foundry-Concern` with `casting_id`, `cycle`, `target` (the casting id, key file or symbol it lands on) and `text`; the structured ledger is `concerns.json` and `concerns.md` stays the prose rendering of it, so the format above is how you READ a concern and the tool is how you FILE one. A target nothing resolves, or empty text, is refused at the door. Raise it early, because an open cross-casting concern from the closing GRIND refuses `Foundry-Phase('inspect_start')` and names the id: INSPECT does not open over a tree one casting has updated and its sibling has not. Two exits, both leaving a record — `Foundry-Tasks`, whose co-dispatch set carries the concern to the casting it names and marks it dispatched, or `Foundry-Concern(close=<id>, reason=...)`, which is refused without a reason. A concern left open is not a concern deferred; it is a phase the lead cannot open. (fallout FR-010)
+
 **Examples:**
 - Your task needs a `notifications` table but the spec only mentions notifications in the UI. Log the concern, use an in-memory or file-based approach for now, and move on.
 - The current auth library does not support the OAuth flow your task requires. Log the concern, implement with the available library's closest approximation, and move on.
@@ -379,6 +381,7 @@ Update the task status via TaskUpdate:
   - Build/test status (pass/fail with details if fail)
   - **The prompt hash you read (required).** State the `sha256:`-prefixed value your Step 0 check produced for your own prompt file, character for character. The lead passes it to `Foundry-Accept-Casting` and to `Foundry-Fix`; a value that differs from the file's own hash is refused at both doors, and a report that omits it leaves the lead nothing to pass. Never copy the hash out of the dispatch message without reading the file — the check exists precisely to tell those two cases apart.
   - **The failing-then-passing account, for every fix (required in GRIND).** For each defect you closed, state in prose that the test was RED before your change and GREEN after it: "the test failed at `<commit before the fix>` and passes at `<fix commit>`". One line per defect, naming the defect id and both commits. FR-041 puts that account in this report and nowhere else: `Foundry-Fix` declares no field for it, and an undeclared argument there is silently DROPPED rather than refused — see `### Step 7, second lane: DECLARE — the regression test that closes a LATENT defect` for why. The `regression_test` locator proves a test EXISTS; only this account proves it was ever red, which is the whole difference between a fix and a test written to pass what the code already does. No exceptions, no deferrals, no "the suite is green now."
+  - **One `Foundry-Fix` acceptance line per dispatched defect id (required in GRIND).** For every defect id the lead dispatched to you this cycle, name the id and state what `Foundry-Fix` ANSWERED — accepted, carrying the `fixed_in_cycle` and `remaining_open` it returned, or refused, naming the check it refused on. A fix you committed and never recorded leaves the ledger saying open while the tree says fixed, and the next INSPECT re-verifies work already done and files it again; that state is invisible at every door that reads the ledger, because the ledger is the thing that is wrong. `Foundry-Team-Down` is the one door that catches it — it refuses `DISPATCHED_DEFECT_UNRECORDED`, naming every dispatched id still open whose file a commit since the cycle baseline SHA touched, and the team cannot come down until each is recorded. Write the line for every dispatched id, the ones you could not fix included, saying so. No exceptions, no deferrals, no "the lead can read the commits." (fallout AC-040 / FR-048)
   - **Requirement citations (required).** For every requirement ID in your `<spec_requirements>` block (US-N, FR-N, NFR-N, AC-N, etc.), cite the exact `path#Symbol` where you implemented it — the symbol, not a line range. The lead runs `Foundry-Accept-Casting` which mechanically verifies each requirement ID has a citation within 300 characters of the ID mention and resolves every symbol you name — **missing or unresolvable citations = casting rejected, you will be re-dispatched.** Use this format:
 
     ```
@@ -435,6 +438,22 @@ Update the task status via TaskUpdate:
     ≥1 ID, you MUST commit ≥1 evidence file with a `# evidence-for:`
     header that, combined across all evidence files, covers every cited
     ID.
+
+    **The sweep shell, and the parse you owe before committing.** The
+    server re-runs every `# evidence-cmd:` under `/bin/sh -c` — that one
+    shell, never the interactive shell you authored the command in — so
+    a command leaning on your own shell's syntax runs clean for you and
+    is a syntax error for the sweep. Parse it yourself with `/bin/sh -n`
+    before you commit it. One rule with two enforcement points: the
+    pre-commit guard lints the evidence logs you STAGED and blocks the
+    commit naming the log whose command fails the parse, and the
+    boundary and terminal evidence sweeps parse before executing and
+    refuse the crossing with `EVIDENCE_COMMAND_SYNTAX`, a member of the
+    closed token vocabulary at
+    `plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py#KNOWN_EVIDENCE_FAILURE_TOKENS`.
+    Failing the guard costs a commit and failing the sweep costs a phase
+    transition, and both are the same unparsed command. No exceptions,
+    no deferrals, no "it ran in my shell." (fallout AC-037 / FR-051)
 
     **Volatile field redaction:** if your command's output contains
     timestamps, durations, ports, PIDs, or other non-deterministic
