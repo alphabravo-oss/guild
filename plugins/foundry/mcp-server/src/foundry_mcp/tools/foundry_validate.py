@@ -48,7 +48,78 @@ from foundry_mcp.tools.foundry_state import (
 )
 
 
-def _fingerprint_inputs(fdir: Path, manifest: dict) -> dict:
+#: The archive schema at which a casting's `requirement_ids` becomes MANDATORY.
+#:
+#: `forge-specs/foundry-run-fallout/spec.md` FR-054: the field is additive, so
+#: every archive written before it existed must keep validating. The floor is
+#: what separates "this run predates the field" from "this run was created
+#: under a release that writes it and a casting is missing it" — the first is
+#: reported NOT COMPUTABLE and passes, the second is refused.
+#:
+#: DECLARED HERE, DELIBERATELY, rather than derived from the two places that
+#: would be better homes for it. `schemas/vocab.py` and
+#: `scripts/migrate-archive.py` (which owns `ARCHIVE_SCHEMA_VERSION` and does
+#: the bump) both belong to other castings in this wave and may not be edited
+#: from here. Consolidating the two spellings into one is the follow-up, and
+#: it is recorded in `foundry-archive/foundry-run-fallout/concerns.md`.
+REQUIREMENT_IDS_SCHEMA_FLOOR = 4
+
+#: How many castings may own one requirement id before F0.9 wants a reason.
+#:
+#: `forge-specs/foundry-run-fallout/spec.md` FR-013 / AC-042: "refuse at F0.9
+#: when any requirement spans more than two castings without a recorded
+#: reason". The number appears ONCE in this file and both the refusal message
+#: and the printed table derive from it, so the prose a lead reads and the
+#: threshold the gate applies cannot drift apart.
+REQUIREMENT_SPAN_MAX = 2
+
+#: The refusal token for a span above `REQUIREMENT_SPAN_MAX` with no recorded
+#: reason. Spelled once; the issue, the top-level message and the hint all
+#: derive from this name, and the lead protocol quotes it.
+REQUIREMENT_SPAN_EXCEEDED = "REQUIREMENT_SPAN_EXCEEDED"
+
+
+def _archive_schema_version(state: dict) -> int:
+    """The run's archive schema marker, or 0 when it is absent or unusable.
+
+    0 rather than None so every comparison against
+    ``REQUIREMENT_IDS_SCHEMA_FLOOR`` is an int comparison with no second shape
+    to remember. An archive written before the marker existed and one whose
+    marker is a string both read as "below the floor", which is the same
+    answer: this run predates the field.
+
+    ``bool`` is excluded explicitly because it is a subclass of ``int`` and
+    ``True < 4`` would otherwise answer a question nobody asked.
+    """
+    raw = state.get("archive_schema_version")
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return 0
+    return raw
+
+
+def _owned_requirement_ids(casting: dict) -> tuple[bool, set[str]]:
+    """``(the field is present, the ids it names)`` for one casting.
+
+    PRESENCE AND EMPTINESS ARE DIFFERENT CLAIMS, and the F0.9 rule turns on the
+    difference. An ABSENT list is an un-migrated record, which an archive
+    written before the field existed is allowed to be and a run created under
+    the current schema is not. An EMPTY list is a casting stating that it owns
+    nothing, which is a claim this gate can check.
+
+    Total, like every other read on this surface: a `requirement_ids` that is
+    not a list at all is not a shape `_manifest_shape_problem` judges, so it
+    reads as present-and-empty and every id the casting's own excerpt declares
+    is then reported unowned BY NAME, rather than raising here.
+    """
+    raw = casting.get("requirement_ids")
+    if raw is None:
+        return False, set()
+    if not isinstance(raw, list):
+        return True, set()
+    return True, {v for v in raw if isinstance(v, str) and v}
+
+
+def _fingerprint_inputs(fdir: Path, manifest: dict, schema_version: int = 0) -> dict:
     """Hash the inputs that validator dimensions depend on.
 
     Returns {spec_hash, manifest_hash, castings: {id: {prompt_hash, manifest_entry_hash}}}.
@@ -61,6 +132,11 @@ def _fingerprint_inputs(fdir: Path, manifest: dict) -> dict:
     spec_hash = hashlib.sha256(spec_bytes).hexdigest()[:16]
 
     shared_fields = {
+        # The ownership and span dimensions read the archive schema marker, so
+        # a migration that bumps it can turn a passing manifest into a refused
+        # one with no byte of the manifest or the spec changed. Absent from the
+        # fingerprint, that bump would be served a cached pass forever.
+        "archive_schema_version": schema_version,
         "spec_type": manifest.get("spec_type"),
         "migration_source_root": manifest.get("migration_source_root"),
         "migration_destination_root": manifest.get("migration_destination_root"),
@@ -105,24 +181,35 @@ def _save_validate_cache(fdir: Path, cache: dict) -> None:
 def foundry_validate_castings(
     project_root: str = ".",
 ) -> dict:
-    """Validate castings against the spec across 9 dimensions.
+    """Validate castings against the spec, one dimension per question asked.
+
+    Every dimension answers in the same shape — ``{"ok": bool, "issues": [...]}``
+    plus whatever facts that dimension measured — and adds an entry to the
+    top-level ``issues`` list at ``error`` or ``warning`` severity. ``passed``
+    fails on errors alone; warnings and informational entries are reported and
+    do not block.
 
     Returns:
         {
             "passed": bool,
             "dimensions": {
-                "requirement_coverage": {"ok": bool, "issues": [...]},
-                "casting_completeness": {"ok": bool, "issues": [...]},
-                "dependency_correctness": {"ok": bool, "issues": [...]},
-                "key_links_planned": {"ok": bool, "issues": [...]},
-                "scope_sanity": {"ok": bool, "issues": [...]},
-                "research_integration": {"ok": bool, "issues": [...]},
-                "prompt_fidelity": {"ok": bool, "issues": [...]},
-                "migration_coverage": {"ok": bool, "issues": [...]},
-                "spec_structure": {"ok": bool, "issues": [...]},
+                "requirement_coverage": {"ok", "issues", "covered", "total"},
+                "casting_completeness": {"ok", "issues"},
+                "dependency_correctness": {"ok", "issues"},
+                "key_links_planned": {"ok", "issues", "warnings"},
+                "scope_sanity": {"ok", "issues"},
+                "research_integration": {"ok", "issues"},
+                "prompt_fidelity": {"ok", "issues"},
+                "migration_coverage": {"ok", "issues", "spec_type", "active"},
+                "spec_structure": {"ok", "issues", "errors", "warnings"},
+                "file_change_map_coverage": {"ok", "issues", "active", ...},
+                "requirement_ownership": {"ok", "issues", "not_computable",
+                                          "archive_schema_version",
+                                          "schema_floor"},
             },
             "issues": [...],
             "revision_hints": [...],
+            "summary": {...},
         }
     """
     fdir = get_run_dir(project_root)
@@ -175,7 +262,12 @@ def foundry_validate_castings(
     # re-calls Foundry-Validate-Castings without any code change (happens
     # on retry paths), the cache short-circuits to near-zero cost.
     _started_wall = datetime.now(timezone.utc)
-    fingerprints = _fingerprint_inputs(fdir, manifest)
+    # Read ABOVE the fingerprint, not beside the spec fallback below, because
+    # the fingerprint now carries the archive schema marker this document
+    # holds. One read, two readers — the spec fallback still uses this `state`.
+    state = _load_json(fdir / "state.json")
+    schema_version = _archive_schema_version(state)
+    fingerprints = _fingerprint_inputs(fdir, manifest, schema_version)
     cache = _load_validate_cache(fdir)
     cached_result = cache.get("last_pass")
     if cached_result and cached_result.get("fingerprints") == fingerprints:
@@ -186,7 +278,6 @@ def foundry_validate_castings(
 
     # Load spec to extract requirements
     spec_path = fdir / "spec.md"
-    state = _load_json(fdir / "state.json")
     if not spec_path.exists():
         sp = state.get("spec_path", "")
         if sp:
@@ -216,6 +307,9 @@ def foundry_validate_castings(
 
     # ── Dimension 1: Requirement Coverage ──
     covered_reqs: set[str] = set()
+    #: casting id -> the ids that casting's own excerpt DECLARES. Filled by the
+    #: loop below and read by the ownership and span dimensions.
+    declared_by_casting: dict[str, set[str]] = {}
     for c in castings:
         # D-180: a casting's `spec_text` IS the verbatim `<spec_requirements>`
         # block its prompt carries, so "which requirements does this casting
@@ -226,8 +320,20 @@ def foundry_validate_castings(
         # requirement COVERED while `foundry_accept_casting` demanded evidence
         # for it from nobody. Two readers of one question, disagreeing with no
         # surface that compares them, is the shape D-180 was filed against.
+        #
+        # A `spec_text` that is not a string is not a shape
+        # `_manifest_shape_problem` judges, and `declared_requirement_ids`
+        # splits it into lines — so reading it totally here is what keeps a
+        # malformed excerpt a REPORTED gap rather than a traceback across the
+        # MCP boundary. The ownership and span dimensions below read
+        # `declared_by_casting` rather than scanning the same blob again: one
+        # question, one derivation, no surface where two readers of it can
+        # disagree with nothing comparing them.
         spec_text_field = c.get("spec_text", "")
+        if not isinstance(spec_text_field, str):
+            spec_text_field = ""
         casting_reqs = set(declared_requirement_ids(spec_text_field))
+        declared_by_casting[str(c.get("id", "?"))] = casting_reqs
         covered_reqs.update(casting_reqs)
         # Also check observable truths text.
         #
@@ -1060,6 +1166,152 @@ def foundry_validate_castings(
             "covered": len(map_files - set(casting_files.keys())),
             "scope_creep": len(scope_creep),
         }
+
+    # ── Dimension 11: Requirement Ownership ──
+    #
+    # `forge-specs/foundry-run-fallout/spec.md` FR-009, FR-040, AC-001, OT-001,
+    # GI-012, CT-011. "Persist `requirement_ids` per casting at F0.5, validated
+    # at F0.9."
+    #
+    # WHY A PERSISTED FIELD AND NOT THE PROSE. Ownership used to live only
+    # inside each casting's `spec_text` blob, so every consumer that needed to
+    # know which casting answers for an id re-derived it from prose at the
+    # moment it asked — the acceptance gate at one time, the co-dispatch set at
+    # another, this validator at a third. A persisted list is a claim the
+    # manifest makes once, and this dimension is what makes the claim
+    # answerable: it must agree, in BOTH directions, with what the casting's
+    # own excerpt declares.
+    #
+    #   declared but not owned — the excerpt assigns the casting a requirement
+    #       its ownership list omits. Nobody is answerable for it: the
+    #       acceptance gate will not demand evidence for it and the
+    #       co-dispatch set will not route a fix to this casting.
+    #   owned but not declared — the ownership list claims a requirement the
+    #       excerpt never assigns. The teammate is handed no text for it and
+    #       cannot build it, while the manifest reports it covered.
+    #
+    # THROUGH THE ONE DERIVATION, NOT A SECOND SCAN. `declared_by_casting` is
+    # filled by dimension 1 from `declared_requirement_ids` — the same answer
+    # the acceptance gate uses, reading ids in SUBJECT POSITION on their own
+    # line, so `  - Maps to: US-003` and an id quoted mid-prose are correctly
+    # NOT declarations. A bare `REQUIREMENT_ID_RE.findall` over the block would
+    # credit a casting with ids another casting owns; that is D-180 exactly,
+    # and re-introducing it here would be the same defect twice.
+    dim11_issues: list[dict] = []
+    ownership: dict[str, tuple[bool, set[str]]] = {
+        str(c.get("id", "?")): _owned_requirement_ids(c) for c in castings
+    }
+    # NOT COMPUTABLE, AND ONLY FOR AN ARCHIVE THAT PREDATES THE FIELD. Both
+    # halves are required: a manifest where NO casting carries the list at all,
+    # AND a run below the schema floor. A run created under the current release
+    # is refused for the same manifest, which is what "fail closed only for new
+    # runs" means. A partially-filled manifest is evaluated whatever the
+    # schema: somebody has started populating it, and the gaps are real.
+    ownership_not_computable = (
+        not any(present for present, _ in ownership.values())
+        and schema_version < REQUIREMENT_IDS_SCHEMA_FLOOR
+    )
+    if ownership_not_computable:
+        dim11_issues.append({
+            "severity": "info",
+            "issue": "requirement_ids_not_computable",
+            "detail": (
+                f"No casting in this manifest carries `requirement_ids`, and "
+                f"the run's archive_schema_version is {schema_version}, below "
+                f"the {REQUIREMENT_IDS_SCHEMA_FLOOR} at which the field became "
+                f"mandatory. Ownership consistency and requirement span are "
+                f"not computable for this archive and are not checked. Run "
+                f"scripts/migrate-archive.py to fill the field."
+            ),
+        })
+    else:
+        for c in castings:
+            cid = c.get("id", "?")
+            title = c.get("title", "Untitled")
+            present, owned = ownership[str(cid)]
+            declared = declared_by_casting.get(str(cid), set())
+            if not present:
+                dim11_issues.append({
+                    "severity": "error",
+                    "casting": cid,
+                    "title": title,
+                    "issue": "missing_requirement_ids",
+                    "detail": (
+                        f"Casting #{cid} '{title}' has no `requirement_ids`. "
+                        f"This run is on archive schema {schema_version}, at or "
+                        f"above the {REQUIREMENT_IDS_SCHEMA_FLOOR} that makes "
+                        f"the field mandatory, so ownership cannot be left to "
+                        f"the prose."
+                    ),
+                })
+                revision_hints.append(
+                    f"Casting #{cid} '{title}': add a `requirement_ids` list to the "
+                    f"manifest entry naming every requirement id the casting's "
+                    f"<spec_requirements> block declares."
+                )
+                continue
+            unowned = sorted(declared - owned)
+            if unowned:
+                dim11_issues.append({
+                    "severity": "error",
+                    "casting": cid,
+                    "title": title,
+                    "issue": "declared_but_not_owned",
+                    "ids": unowned,
+                    "detail": (
+                        f"Casting #{cid} '{title}' declares {', '.join(unowned)} in "
+                        f"its <spec_requirements> block but does not name "
+                        f"{'them' if len(unowned) > 1 else 'it'} in "
+                        f"`requirement_ids`. Nobody is answerable for "
+                        f"{'those requirements' if len(unowned) > 1 else 'that requirement'}."
+                    ),
+                })
+                revision_hints.append(
+                    f"Casting #{cid} '{title}': add {', '.join(unowned)} to "
+                    f"`requirement_ids`, or remove the declaration(s) from its "
+                    f"<spec_requirements> block."
+                )
+            undeclared = sorted(owned - declared)
+            if undeclared:
+                dim11_issues.append({
+                    "severity": "error",
+                    "casting": cid,
+                    "title": title,
+                    "issue": "owned_but_not_declared",
+                    "ids": undeclared,
+                    "detail": (
+                        f"Casting #{cid} '{title}' names {', '.join(undeclared)} in "
+                        f"`requirement_ids` but its <spec_requirements> block never "
+                        f"declares "
+                        f"{'them' if len(undeclared) > 1 else 'it'}. The teammate is "
+                        f"handed no text to build from while the manifest reports "
+                        f"the requirement covered."
+                    ),
+                })
+                revision_hints.append(
+                    f"Casting #{cid} '{title}': declare {', '.join(undeclared)} in its "
+                    f"<spec_requirements> block, or remove "
+                    f"{'them' if len(undeclared) > 1 else 'it'} from `requirement_ids`."
+                )
+
+    dim11_errors = [i for i in dim11_issues if i.get("severity") == "error"]
+    dim11_ok = len(dim11_errors) == 0
+    if dim11_errors:
+        issues.append({
+            "dimension": "requirement_ownership",
+            "severity": "error",
+            "message": (
+                f"{len(dim11_errors)} casting(s) whose `requirement_ids` and "
+                f"<spec_requirements> block disagree about what they own"
+            ),
+        })
+    dimensions["requirement_ownership"] = {
+        "ok": dim11_ok,
+        "issues": dim11_issues,
+        "not_computable": ownership_not_computable,
+        "archive_schema_version": schema_version,
+        "schema_floor": REQUIREMENT_IDS_SCHEMA_FLOOR,
+    }
 
     # ── Overall result ──
     # Fail on errors, warn on warnings

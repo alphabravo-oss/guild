@@ -1,0 +1,7 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_validate_ownership.py
+# evidence-for: FR-009, FR-040, AC-001, OT-001, GI-012, CT-011, US-001, US-010, FR-054, FR-037
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+................                                                         [100%]
+16 passed in 2.04s
