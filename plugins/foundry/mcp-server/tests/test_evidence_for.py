@@ -99,10 +99,10 @@ def test_evidence_for_malformed_raises_token(load_fixture):
 
 def test_failure_tokens_includes_unbound_and_malformed():
     """``KNOWN_EVIDENCE_FAILURE_TOKENS`` extends from 8 tokens (Phase 4) to
-    10 (Phase 5) to 11 (fallout / US-008). The Phase 5 pair is
+    10 (Phase 5) to 11 (fallout US-008). The Phase 5 pair is
     EVIDENCE_REQUIREMENT_UNBOUND + EVIDENCE_FOR_MALFORMED; the eleventh is
-    EVIDENCE_COMMAND_SYNTAX, the parse-before-execute refusal CT-015 / FR-051
-    add to the sweep.
+    EVIDENCE_COMMAND_SYNTAX, the parse-before-execute refusal that
+    fallout CT-015 / FR-051 add to the sweep.
 
     Closed-vocabulary discipline mirrors Phase 4's
     ``test_failure_tokens_are_in_allowlist``: any TWELFTH token = code-edit
