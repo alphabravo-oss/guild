@@ -70,10 +70,23 @@ import pytest
 from foundry_mcp.schemas import vocab
 from foundry_mcp.tools import foundry as foundry_doors
 from foundry_mcp.tools import foundry_handoff
-from foundry_mcp.tools import foundry_orchestrator as orch
 from foundry_mcp.tools import foundry_spawn as fs
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools.foundry_validate import foundry_validate_castings
+
+# fallout GI-010 — the monolith this module used to import is DELETED, and
+# the three private symbols pinned below are reached at the module-contract
+# homes casting 2's symbol map records: `_statement_problem` with the
+# fix-gate block, `_recorded_prove_roster` with the streams block,
+# `_maybe_skip_trace` with the width blocks. The call sites stay QUALIFIED
+# by module rather than importing the three names bare, because a bare
+# `_statement_problem(...)` no longer says which of the thirteen
+# orchestration modules owns it, and this module reaches private symbols
+# across module boundaries on purpose. Re-binding one short alias to one of
+# the three, or shipping a re-export shim under the monolith's old name,
+# would have kept this import green and is exactly the facade GI-010
+# refuses.
+from foundry_mcp.tools.orchestration import fix_gate, streams, width
 
 # D-048: the vocabulary assertions below READ the real enum rather than
 # re-typing it. A hard-coded tuple in a test is a seventh copy of a closed
@@ -2889,7 +2902,7 @@ def test_teammate_statement_examples_survive_the_shipped_gate() -> None:
     against an accepted one.
     """
     for label, statement in _statement_examples():
-        problem = orch._statement_problem(statement, "", "")
+        problem = fix_gate._statement_problem(statement, "", "")
         if label == "REFUSED":
             assert problem is not None, (
                 f"teammate.md labels this statement REFUSED, but the shipped "
@@ -5612,7 +5625,7 @@ def test_the_prove_roster_key_the_prose_names_is_the_one_the_gate_reads(
         ),
         encoding="utf-8",
     )
-    assert orch._recorded_prove_roster(fdir, 6) == roster, (
+    assert streams._recorded_prove_roster(fdir, 6) == roster, (
         f"the recorded decision's {key!r} list is not what the streams-complete "
         f"check reads back. Both PROVE surfaces tell the stream to check "
         f"exactly that list, so a rename here makes the instruction point at "
@@ -5821,7 +5834,7 @@ def test_the_trace_roster_key_the_prose_names_is_the_one_the_server_reads(
         encoding="utf-8",
     )
 
-    decision = orch._maybe_skip_trace(fdir, str(tmp_path))
+    decision = width._maybe_skip_trace(fdir, str(tmp_path))
 
     assert decision is not None and decision["skip"] is False, (
         f"the recorded decision's {key!r} list is not what the server reads "
