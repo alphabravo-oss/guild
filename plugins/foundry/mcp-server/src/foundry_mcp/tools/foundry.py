@@ -119,6 +119,7 @@ from foundry_mcp.schemas.vocab import (
 from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
 from foundry_mcp.tools.foundry_state import (
     ARCHIVE_DIR,
+    ARCHIVE_SCHEMA_VERSION,
     current_cycle,
     document_refusal,
     get_run_dir,
@@ -2362,37 +2363,6 @@ NO_UI_MEANING = (
     "browser audit is not part of it."
 )
 
-#: fallout FR-054 / D-052 — the archive schema generation a run CREATED BY THIS
-#: SERVER conforms to, stamped into `state.json` by `foundry_init`.
-#:
-#: FR-054 ends "F0.9 fails closed on missing `requirement_ids` only for new
-#: runs", and the discriminator between a new run and a legacy archive is
-#: `state.json.archive_schema_version` against
-#: `foundry_validate.REQUIREMENT_IDS_SCHEMA_FLOOR`. Until D-052 the ONLY writer
-#: of that key was `scripts/migrate-archive.py`, so a run this server had
-#: created minutes earlier read as version 0 — indistinguishable from
-#: `daring-orca` — and the fail-closed half of the contract could never fire on
-#: the runs it was written for. The reader half shipped correct; the producer
-#: that makes it reachable is this constant and the state key below.
-#:
-#: A NEW RUN IS BORN AT THE CURRENT GENERATION, not at the floor. The floor is
-#: where `requirement_ids` became mandatory; this is what the run's artifacts
-#: ARE, and writing the floor here would make a later floor bump silently
-#: restate what every already-created run claimed about itself.
-#:
-#: THE FOURTH SPELLING OF THIS INTEGER, AND DELIBERATELY SO FOR NOW. It is also
-#: `scripts/migrate-archive.py#ARCHIVE_SCHEMA_VERSION` (casting 3, which does
-#: the bump), `foundry_validate.py#REQUIREMENT_IDS_SCHEMA_FLOOR` (casting 7,
-#: whose own comment already calls the consolidation the follow-up) and
-#: `tests/test_migrate_archive.py`. None of those three files is this casting's
-#: to edit, and the one home all three of them plus this module can already
-#: reach is the leaf `tools/foundry_state.py`, where `ARCHIVE_DIR` — the other
-#: run-directory layout fact — already lives. That move is filed as concern
-#: C-023 against casting 10 (with C-024 to casting 7 and C-025 to casting 3 for
-#: the halves they own); when the leaf declares it, this block becomes an import
-#: and nothing else here changes.
-ARCHIVE_SCHEMA_VERSION = 4
-
 
 def _max_cycles_problem(value: object) -> dict | None:
     """The cap rung: a value this door will not honour is refused, not stored.
@@ -2758,6 +2728,14 @@ def foundry_init(
         # run created under the schema that mandates it (refused). Nothing wrote
         # it at init, so every run this server created answered 0 and F0.9's
         # fail-closed half was unreachable on exactly the runs FR-054 names.
+        #
+        # THE GENERATION, NOT THE FLOOR (fallout C-023). The value is
+        # `foundry_state.ARCHIVE_SCHEMA_VERSION` — what this run's artefacts
+        # ARE — and deliberately not `foundry_validate.REQUIREMENT_IDS_SCHEMA_FLOOR`,
+        # which is merely where `requirement_ids` became mandatory. The two
+        # integers are equal today and answer different questions, so writing
+        # the floor here would make a later floor bump silently restate what
+        # every already-created run had claimed about itself.
         #
         # state.json ONLY, matching the single reader and matching
         # `scripts/migrate-archive.py`, which writes the same key to the same

@@ -673,7 +673,11 @@ def test_init_stamps_the_schema_generation_that_makes_f0_9_fail_closed(tmp_path)
     ``spec_text`` and carrying no ``requirement_ids`` — and the door now
     refuses it.
     """
-    from foundry_mcp.tools.foundry import ARCHIVE_SCHEMA_VERSION
+    # fallout C-023 — from the LEAF that declares it, not from `foundry.py`,
+    # which now imports the same name. A test that reached for the re-export
+    # would still pass while asserting nothing about where the value lives, and
+    # the whole point of the concern was that the integer had four homes.
+    from foundry_mcp.tools.foundry_state import ARCHIVE_SCHEMA_VERSION
     from foundry_mcp.tools.foundry_validate import (
         REQUIREMENT_IDS_SCHEMA_FLOOR,
         foundry_validate_castings,
