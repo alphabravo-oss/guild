@@ -13,8 +13,8 @@
 ........................................................................ [ 11%]
 ........................................................................ [ 13%]
 ........................................................................ [ 15%]
-........................................................................ [ 17%]
-...........................................
+........................................................................ [ 16%]
+....................................................
 === select_sweep_scope: which logs the boundary re-executes ===
   FULL rule fired / before ASSAY, NYQUIST or DONE
     touched=['src/alpha.py']
@@ -220,19 +220,20 @@
     total needing recapture      18 of 76
     the other 58 reproduce unchanged: their whole leading run
     is directives and one separator, which is the grammar.
-.......................... [ 19%]
+................. [ 18%]
 ........................................................................ [ 20%]
 ........................................................................ [ 22%]
 ........................................................................ [ 24%]
 ........................................................................ [ 26%]
 ........................................................................ [ 28%]
 ........................................................................ [ 30%]
-........................................................................ [ 32%]
-........................................................................ [ 34%]
-........................................................................ [ 36%]
-........................................................................ [ 38%]
-.......................................................................s [ 40%]
-.............................................s.s.....
+........................................................................ [ 31%]
+........................................................................ [ 33%]
+........................................................................ [ 35%]
+........................................................................ [ 37%]
+........................................................................ [ 39%]
+........................s.............................................s. [ 41%]
+s.....
 === D-182 — a cycle bucket carrying its own C-6 facts ===
   the five keys `_record_cycle_facts` writes beside the stream
   tranches, in the shape the live archive holds them:
@@ -270,28 +271,27 @@
   the same three keys, from the rule stated once rather than
   hand-typed a third time — which is how the third walker of
   this bucket came to be missing it.
-................... [ 41%]
-........................................................................ [ 43%]
+.................................................................. [ 43%]
 ........................................................................ [ 45%]
-........................................................................ [ 47%]
-........................................................................ [ 49%]
-........................................................................ [ 51%]
-........................................................................ [ 53%]
-........................................................................ [ 55%]
-........................................................................ [ 57%]
-........................................................................ [ 59%]
+........................................................................ [ 46%]
+........................................................................ [ 48%]
+........................................................................ [ 50%]
+........................................................................ [ 52%]
+........................................................................ [ 54%]
+........................................................................ [ 56%]
+........................................................................ [ 58%]
 ........................................................................ [ 60%]
-........................................................................ [ 62%]
-........................................................................ [ 64%]
-........................................................................ [ 66%]
-........................................................................ [ 68%]
-........................................................................ [ 70%]
-........................................................................ [ 72%]
-..................................................................s..s.s [ 74%]
-..s..................................................................... [ 76%]
+........................................................................ [ 61%]
+........................................................................ [ 63%]
+........................................................................ [ 65%]
+........................................................................ [ 67%]
+........................................................................ [ 69%]
+........................................................................ [ 71%]
+........................................................................ [ 73%]
+......................................s..s.s..s......................... [ 75%]
+........................................................................ [ 77%]
 ........................................................................ [ 78%]
-........................................................................ [ 80%]
-...
+...............................................
 === report.json top-level keys ===
   generated_at
   run
@@ -475,23 +475,24 @@
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-.................................................................. [ 81%]
-........................................................................ [ 83%]
-......................................ss.ss.ssss.ssssssss.ssss.s..ss.sss [ 85%]
-........................................................................ [ 87%]
-........................................................................ [ 89%]
-........................................................................ [ 91%]
+...................... [ 80%]
+........................................................................ [ 82%]
+........................................................................ [ 84%]
+...................ss.ss.ssss.ssssssss.ssss.s..ss.sss................... [ 86%]
+........................................................................ [ 88%]
+........................................................................ [ 90%]
+........................................................................ [ 92%]
 ........................................................................ [ 93%]
 ........................................................................ [ 95%]
 ........................................................................ [ 97%]
 ........................................................................ [ 99%]
-....................................                                     [100%]
+.................                                                        [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_agent_frontmatter_parse.py:342: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
 SKIPPED [2] tests/test_agent_frontmatter_parse.py:384: pyyaml is not a dependency of this suite; run `uv run --with pytest --with pyyaml pytest` to exercise this cross-check
-SKIPPED [1] tests/test_measure_run.py:625: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/6b8e5e17-8196-488b-b81f-e8fcd26a1a86/scratchpad/wt-c7-cycle28/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:2178: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/6b8e5e17-8196-488b-b81f-e8fcd26a1a86/scratchpad/wt-c7-cycle28/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2247: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/6b8e5e17-8196-488b-b81f-e8fcd26a1a86/scratchpad/wt-c7-cycle28/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:625: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/6b8e5e17-8196-488b-b81f-e8fcd26a1a86/scratchpad/suite-head/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:2178: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/6b8e5e17-8196-488b-b81f-e8fcd26a1a86/scratchpad/suite-head/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2247: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/6b8e5e17-8196-488b-b81f-e8fcd26a1a86/scratchpad/suite-head/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
 SKIPPED [1] tests/test_protocol_prose.py:5309: plugins/foundry/agents/coverage-diff.md's `target_kind` rule refers to nothing above it
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/agents/teammate.md states no `target_kind` bullet
 SKIPPED [1] tests/test_protocol_prose.py:5306: plugins/foundry/skills/prove/SKILL.md states no `target_kind` bullet
@@ -522,4 +523,4 @@ SKIPPED [1] tests/test_spec_id_convention.py:345: test_stream_rollup.py is decla
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_test_observations_validator.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_validate_report.py is declared unqualified; see UNQUALIFIED_MODULES
 SKIPPED [1] tests/test_spec_id_convention.py:345: test_vocab.py is declared unqualified; see UNQUALIFIED_MODULES
-3744 passed, 36 skipped, 3 deselected in 156.52s
+3797 passed, 36 skipped, 3 deselected in 179.81s
