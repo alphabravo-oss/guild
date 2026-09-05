@@ -15913,6 +15913,30 @@ def _break_streams(project_root, fdir, token, monkeypatch) -> bool:
 
 
 def _break_marker(project_root, fdir, token, monkeypatch) -> bool:
+    if token == "inspect_start":
+        # This token's MARKER rung is the CONCERN_OPEN one: a cross-casting
+        # concern from the closing GRIND, still open. Arranged through casting
+        # 1's own writer rather than by writing `concerns.json` by hand, so the
+        # record this drives on is the record the ledger really produces.
+        from foundry_mcp.tools.concerns import foundry_concern
+
+        (fdir / "castings" / "manifest.json").write_text(
+            json.dumps({"castings": [
+                {"id": 1, "title": "a", "key_files": ["src/a.py"]},
+                {"id": 2, "title": "b", "key_files": ["src/b.py"]},
+            ], "no_ui": True}),
+            encoding="utf-8",
+        )
+        opened = foundry_concern(
+            casting_id=1, cycle=json.loads(
+                (fdir / "state.json").read_text(encoding="utf-8")
+            ).get("cycle", 0),
+            target="src/b.py",
+            text="this fix reaches casting 2's own spelling of the same rule",
+            project_root=str(project_root),
+        )
+        assert opened.get("error") is None, opened
+        return True
     if token in ("grind_start", "assay_fail"):
         (fdir / ".tasks-generated").unlink(missing_ok=True)
         return True
@@ -16543,3 +16567,496 @@ def test_the_two_new_tools_are_registered_the_way_the_registry_reads_them(run_en
         assert roster.get("error") is None, roster
     finally:
         foundry_server._project_root = "."
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-011 / FR-012 / FR-022 / FR-023 / FR-038 / FR-048 / FR-049 /
+# FR-050 / GI-016 / GI-017 / GI-021 / GI-023 / CT-003 / CT-008 / CT-009 /
+# CT-010 / ST-003 / ST-005 / ST-008 / ST-009 / ST-011 / AC-002 / AC-003 /
+# AC-004 / AC-006 / AC-030 / AC-039 / AC-041 / OT-002 / OT-003 / OT-004 /
+# OT-006 / OT-028 / OT-031 / OT-036 — commit group (3).
+# --------------------------------------------------------------------------- #
+
+
+def _manifest_with_requirement_ids(fdir: Path, spec: dict[int, tuple[list[str], list[str]]]) -> None:
+    """`{casting id: (requirement_ids, key_files)}` as the F0.5 manifest."""
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({
+            "no_ui": True,
+            "castings": [
+                {"id": cid, "title": f"casting {cid}",
+                 "requirement_ids": ids, "key_files": files}
+                for cid, (ids, files) in sorted(spec.items())
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+
+def test_a_second_stream_record_replaces_the_cycles_totals_and_names_what_it_replaced(run_env):
+    """fallout FR-023 / CT-003 / ST-008 / ST-009 / AC-030 / OT-028.
+
+    The three totals were `+=`, `max` and `+=` — the arithmetic for TRANCHES of
+    one run. It is the wrong arithmetic for what actually happens, which is a
+    stream RE-RUNNING inside one cycle: 40 of 40 recorded twice reads as 80 of
+    40 and coverage passes 100% on the same work counted twice, which is the one
+    direction a coverage check must never fail.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+
+    first = fo.foundry_mark_stream("prove", 1, 20, 40, 3, project_root)
+    assert first["ok"] is True, first
+    assert first["items_checked"] == 20 and first["items_total"] == 40, first
+    assert first["findings"] == 3, first
+    assert first["replaced"] is None, first
+
+    second = fo.foundry_mark_stream("prove", 1, 40, 40, 0, project_root)
+    assert second["ok"] is True, second
+    # REPLACED, not summed: 40 of 40, not 60 of 40.
+    assert second["items_checked"] == 40 and second["items_total"] == 40, second
+    assert second["findings"] == 0, second
+    assert second["replaced"]["items_checked"] == 20, second
+    assert second["replaced"]["findings"] == 3, second
+    # ...and the history is kept, which is what makes the replacement safe.
+    assert second["records_this_cycle"] == 2, second
+    rollup = json.loads((fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8"))
+    entry = rollup["cycles"]["1"]["prove"]
+    assert [r["items_checked"] for r in entry["records"]] == [20, 40], entry
+    assert entry["items_checked"] == 40, entry
+
+
+def test_a_stream_total_that_disagrees_with_its_roster_is_refused(run_env):
+    """fallout FR-050 / CT-003 / ST-008 / OT-031.
+
+    `items_total` is the size of the population, and when a roster exists that
+    size is not the agent's to assert: a stream that re-derives a SHORTER list
+    and reports 12 of 12 clears the >=95% threshold on two thirds of the set the
+    run agreed to check, with nothing on the record saying so.
+    """
+    from foundry_mcp.tools.rosters import foundry_roster
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    written = foundry_roster(
+        stream="prove", items=[f"FR-{n}" for n in range(1, 19)],
+        project_root=project_root,
+    )
+    assert written.get("error") is None, written
+
+    refused = fo.foundry_mark_stream("prove", 1, 12, 12, 0, project_root)
+    assert refused.get("ok") is not True, refused
+    assert refused["error"] == fo.ROSTER_MISMATCH, refused
+    assert refused["roster_length"] == 18, refused
+    assert "18" in refused["reason"], refused
+
+    accepted = fo.foundry_mark_stream("prove", 1, 18, 18, 0, project_root)
+    assert accepted["ok"] is True, accepted
+
+    # No roster for a stream means no refusal — "no roster" and "a roster of
+    # zero items" are different answers and only the second could refuse.
+    assert fo.foundry_mark_stream("trace", 1, 3, 3, 0, project_root)["ok"] is True
+
+
+def test_foundry_tasks_names_every_casting_that_owns_the_defects_requirement(run_env):
+    """fallout FR-011 / FR-038 / GI-021 / CT-008 / AC-002 / OT-002.
+
+    A defect cites a requirement, the requirement is owned by more than one
+    casting, and the fix lands in one of them. The others carry the same rule
+    spelled the old way until a later cycle files the same finding against them
+    — a cycle spent re-discovering something the run already knew.
+    """
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        3: (["FR-007", "FR-009"], ["src/three.py"]),
+        5: (["FR-007"], ["src/five.py"]),
+        7: (["FR-009"], ["src/seven.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/three.py",
+             spec_ref="FR-007"),
+    ])
+
+    result = fo.foundry_defects_to_tasks(project_root)
+    assert result["ok"] is True, result
+    assert result["co_dispatch_computable"] is True, result
+    task = next(t for t in result["tasks"] if "D-900" in t["defect_ids"])
+    assert task["co_dispatch"] == [5], task
+    block = task["alignment_block"]
+    for fragment in ("D-900", "FR-007", "casting 3", "src/three.py",
+                     "casting 5", "src/five.py"):
+        assert fragment in block, (fragment, block)
+    # Casting 7 owns a DIFFERENT requirement and is not dragged in.
+    assert "src/seven.py" not in block, block
+
+
+def test_a_manifest_without_requirement_ids_reports_not_computable(run_env):
+    """fallout AC-006 / OT-006 — never an empty set.
+
+    "No casting owns this requirement" and "nobody recorded who owns anything"
+    are opposite facts, and a lead reading the first when the second is true
+    dispatches one casting for a rule that lives in four.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/three.py"], no_ui=True)
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [dict(_tiered("D-900", "LIVE"), file="src/three.py")])
+
+    result = fo.foundry_defects_to_tasks(project_root)
+    assert result["co_dispatch_computable"] is False, result
+    task = next(t for t in result["tasks"] if "D-900" in t["defect_ids"])
+    assert task["co_dispatch"] is None, task
+    assert "not computable" in task["co_dispatch_problem"], task
+
+
+def test_a_directive_naming_a_requirement_prints_the_castings_that_own_it(run_env):
+    """fallout FR-011 / GI-021 / CT-009 / AC-003 / OT-003.
+
+    The union of the owners of every id in the text, found with the ONE
+    requirement-id grammar and never a second regex here. A directive naming no
+    id prints an empty set and is otherwise unchanged — most directives are
+    instructions, not citations, and that case must stay free.
+    """
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        3: (["FR-007"], ["src/three.py"]),
+        5: (["FR-007", "CT-004"], ["src/five.py"]),
+        7: (["CT-004"], ["src/seven.py"]),
+    })
+
+    both = fo.foundry_inject_directive(
+        "Re-read FR-007 and CT-004 before the next wave.",
+        project_root=project_root,
+    )
+    assert both["ok"] is True, both
+    assert both["co_dispatch"] == [3, 5, 7], both
+    assert both["requirement_ids"] == ["CT-004", "FR-007"] or set(
+        both["requirement_ids"]
+    ) == {"CT-004", "FR-007"}, both
+
+    plain = fo.foundry_inject_directive("Slow down and read the diff.",
+                                        project_root=project_root)
+    assert plain["ok"] is True, plain
+    assert plain["co_dispatch"] == [], plain
+    assert plain["requirement_ids"] == [], plain
+
+
+def test_inspect_start_is_refused_while_a_cross_casting_concern_is_open(run_env):
+    """fallout FR-012 / GI-023 / ST-005 / AC-004 / OT-004.
+
+    Both exits, driven: the concern is dispatched by Foundry-Tasks, or closed
+    with a reason. Neither is "fix everything"; both leave a record.
+    """
+    from foundry_mcp.tools.concerns import foundry_concern
+
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        2: (["FR-007"], ["src/two.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+    opened = foundry_concern(
+        casting_id=1, cycle=1, target="src/two.py",
+        text="the fix reaches casting 2's own spelling of this rule",
+        project_root=project_root,
+    )
+    assert opened.get("error") is None, opened
+    concern_id = opened["concern"]["id"]
+
+    _arm_ordering_token(fdir)
+    refused = fo.foundry_mark_phase_complete("inspect_start", project_root)
+    assert refused.get("ok") is not True, refused
+    assert concern_id in refused["error"], refused
+    assert "Foundry-Tasks" in refused["hint"], refused
+    assert "Foundry-Concern(close=" in refused["hint"], refused
+
+    # EXIT ONE: the co-dispatch set carries it, and Foundry-Tasks says so.
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+    ])
+    tasks = fo.foundry_defects_to_tasks(project_root)
+    assert concern_id in tasks["concerns_dispatched"], tasks
+
+    _arm_ordering_token(fdir)
+    passed = fo.foundry_mark_phase_complete("inspect_start", project_root)
+    assert "cross-casting concern" not in str(passed.get("error", "")), passed
+
+
+def test_a_concern_closed_with_a_reason_also_clears_the_door(run_env):
+    """fallout ST-004 / AC-004 — the OTHER exit, which costs a decision."""
+    from foundry_mcp.tools.concerns import foundry_concern
+
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        2: (["FR-007"], ["src/two.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+    opened = foundry_concern(
+        casting_id=1, cycle=1, target="src/two.py",
+        text="the fix reaches casting 2's own spelling of this rule",
+        project_root=project_root,
+    )
+    concern_id = opened["concern"]["id"]
+
+    closed = foundry_concern(
+        close=concern_id, reason="casting 2 already carries the new spelling",
+        project_root=project_root,
+    )
+    assert closed.get("error") is None, closed
+
+    _arm_ordering_token(fdir)
+    result = fo.foundry_mark_phase_complete("inspect_start", project_root)
+    assert "cross-casting concern" not in str(result.get("error", "")), result
+
+
+def _repo_with_commit(project_root: str, path: str, body: str) -> str:
+    """Commit `path` in a throwaway repo at `project_root`; return the SHA."""
+    import subprocess
+
+    root = Path(project_root)
+    if not (root / ".git").exists():
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True)
+        (root / ".gitignore").write_text("foundry-archive/\n", encoding="utf-8")
+        subprocess.run(["git", "add", ".gitignore"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "base"], cwd=root, check=True)
+    target = root / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body, encoding="utf-8")
+    subprocess.run(["git", "add", path], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", f"touch {path}"], cwd=root, check=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def test_team_down_refuses_a_dispatched_defect_whose_fix_is_on_the_branch(run_env):
+    """fallout FR-022 / FR-048 / GI-017 / CT-010 / ST-011 / AC-039 / OT-036.
+
+    A teammate made the fix, committed it, and did not close the defect — so the
+    ledger says open, the tree says fixed, and the next INSPECT re-verifies work
+    that is already done and files it again. Invisible at every other door,
+    because every other door reads the ledger and the ledger is wrong.
+    """
+    project_root, fdir = run_env
+    base = _repo_with_commit(project_root, "src/one.py", "before\n")
+    (fdir / fo.INSPECT_BOUNDARY_SHA_MARKER).write_text(f"{base}\n", encoding="utf-8")
+
+    _manifest_with_requirement_ids(fdir, {1: (["FR-007"], ["src/one.py"])})
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+    ])
+    assert fo.foundry_defects_to_tasks(project_root)["ok"] is True
+
+    # AC-041: dispatched and open, and NOTHING committed since the baseline.
+    # The fix was not made, which is a GRIND that ran out of time and not a
+    # ledger that went stale. Team-Down passes.
+    assert fo._unrecorded_fix_problem(fdir, project_root) is None
+
+    # Now the fix lands and the ledger row stays open.
+    _repo_with_commit(project_root, "src/one.py", "after\n")
+    refusal = fo._unrecorded_fix_problem(fdir, project_root)
+    assert refusal is not None, "the stale ledger row was not caught"
+    assert refusal["error"] == fo.DISPATCHED_DEFECT_UNRECORDED, refusal
+    assert "D-900" in refusal["reason"], refusal
+    assert "src/one.py" in refusal["reason"], refusal
+    assert refusal["baseline_sha"] == base, refusal
+
+    # ...and it is the DOOR that refuses, before the tmux scan.
+    down = fo.foundry_unregister_team("grind-team", project_root)
+    assert down["error"] == fo.DISPATCHED_DEFECT_UNRECORDED, down
+
+    # Closing the row clears it.
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE", status="fixed"), file="src/one.py"),
+    ])
+    assert fo._unrecorded_fix_problem(fdir, project_root) is None
+
+
+# --------------------------------------------------------------------------- #
+# fallout AC-011 / OT-011 / GI-024 — commit group (4): ONE DEFINITION, PACKAGE-WIDE.
+#
+# Commit group (0) removed the last known duplicates — the transient second copy
+# of Block B that `tools/artifacts.py` created, and the reader copies casting 10
+# consolidated into `tools/foundry_state.py`. This passes the moment it is
+# written and fails the moment anyone forks a helper again, which is the only
+# kind of guard worth having against a class this package has paid for five
+# times: `_load_json`, `_now`, `_current_cycle`, the spend bucket and the
+# unreported-dispatch rule were each defined twice, and every pair drifted.
+#
+# It moves into `tests/orchestration/test_module_boundaries.py` at the carve,
+# where it becomes one of that guard's four assertions.
+# --------------------------------------------------------------------------- #
+
+
+#: A name defined in two modules ON PURPOSE, with the reason. Not "we are fine
+#: with this": every entry names why the two definitions cannot be one, and an
+#: entry whose duplication has since been removed FAILS — an allowlist that
+#: outlives the thing it excuses is how the exception becomes the rule.
+_DELIBERATE_REDEFINITIONS: dict[str, str] = {
+    "_now": (
+        "a per-module private timestamp helper in the leaf modules that may not "
+        "import each other. `foundry_state.now_iso` is the ONE implementation; "
+        "these are call-through bindings and `test_the_timestamp_has_one_"
+        "implementation_however_it_is_spelled` pins that they resolve to it."
+    ),
+    "_named_refusal": (
+        "tools/concerns.py and tools/rosters.py each shape their own four-token "
+        "refusal set; the SHAPE is the house one and the token vocabularies are "
+        "disjoint, so there is nothing for one definition to say for both."
+    ),
+    "main": (
+        "server.py's stdio entry point and scripts/validate_intent_coverage.py's "
+        "CLI. Two programs, two entry points, one conventional name."
+    ),
+}
+
+#: fallout AC-011 / OT-011 — DUPLICATION THIS GUARD FOUND AND HAS NOT CLOSED.
+#:
+#: NOT an exemption list. Every entry is a real second definition of one rule,
+#: named here with the casting that owns the file it would take to close, so the
+#: guard can start being useful on the day it is written rather than on the day
+#: the whole package is clean. It behaves like the allowlist above in one
+#: direction and the opposite in the other: a NEW fork fails immediately, and an
+#: entry whose duplication has been removed ALSO fails, so this shrinks and
+#: never grows quietly.
+#:
+#: Casting 2 closed the two it owned — the thirteen ANSI codes (now imported
+#: from display.py, which already owned the palette) and Block B's primitives
+#: (now imported from artifacts.py). What is left is in files this casting may
+#: not edit; see foundry-archive/foundry-run-fallout/concerns.md.
+_KNOWN_DUPLICATION: dict[str, str] = {
+    "_load_json": "tools/foundry.py holds a second artifact-read layer beside tools/artifacts.py",
+    "_read_document": "same layer, same module",
+    "_document_problem": "same layer, same module",
+    "_artifact_guard": "same layer, same module",
+    "_RESET": "tools/foundry.py's own third copy of the palette",
+    "_BOLD": "tools/foundry.py's own third copy of the palette",
+    "_DIM": "tools/foundry.py's own third copy of the palette",
+    "_CYAN": "tools/foundry.py's own third copy of the palette",
+    "_GREEN": "tools/foundry.py's own third copy of the palette",
+    "_WHITE": "tools/foundry.py's own third copy of the palette",
+    "_BCYAN": "tools/foundry.py's own third copy of the palette",
+    "_BGREEN": "tools/foundry.py's own third copy of the palette",
+    "_BWHITE": "tools/foundry.py's own third copy of the palette",
+    "_REQUIREMENT_ID_RE": (
+        "schemas/vocab.py declares the grammar; tools/evidence.py and "
+        "tools/test_deriver.py each bind their own alias to it"
+    ),
+    "_normalise_path": "tools/concerns.py and schemas/vocab.py spell one rule twice",
+    "ESCALATION_FILENAME": "tools/foundry_orchestrator.py writes it, tools/foundry_report.py re-declares it",
+    "ROLLUP_FILENAME": "tools/foundry_orchestrator.py writes it, tools/foundry_report.py re-declares it",
+    "_agent_id_for_casting": "tools/foundry_spawn.py owns it, tools/foundry_report.py re-derives it",
+}
+
+
+def _package_source_modules() -> list[Path]:
+    """Every shipped `.py` under the installed package, tests excluded."""
+    pkg = Path(foundry_mcp.__file__).resolve().parent
+    return sorted(p for p in pkg.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+def _top_level_definitions(path: Path) -> set[str]:
+    """Names this module DEFINES at top level — `def`, `class`, assignment.
+
+    An IMPORT is not a definition: a module that imports a name is reaching the
+    one definition, which is the outcome this guard exists to produce rather
+    than to forbid.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+
+def test_no_top_level_symbol_is_defined_in_two_shipped_modules():
+    """fallout AC-011 / OT-011 — the package-wide single-definition guard.
+
+    Two definitions of one rule is not a style question: `_load_json` had two
+    and they were byte-identical until they were not, `_now` had two at
+    different precisions, the spend bucket had three and two of them read
+    different documents. Every one of those drifted, and every one was found by
+    a defect rather than by a guard.
+    """
+    modules = _package_source_modules()
+    assert len(modules) >= 15, [str(m) for m in modules]
+
+    defined: dict[str, list[str]] = {}
+    for module in modules:
+        for name in _top_level_definitions(module):
+            defined.setdefault(name, []).append(module.name)
+
+    accounted = set(_DELIBERATE_REDEFINITIONS) | set(_KNOWN_DUPLICATION)
+    duplicated = {
+        name: sorted(where) for name, where in defined.items()
+        if len(where) > 1 and name not in accounted
+    }
+    assert duplicated == {}, (
+        "top-level name(s) defined in more than one shipped module. Two "
+        "definitions of one rule drift; delete one and import the other, or — "
+        "if the two genuinely cannot be one — record the reason in "
+        f"_DELIBERATE_REDEFINITIONS: {duplicated}"
+    )
+
+    # ...and neither table outlives what it accounts for. This is what makes the
+    # inventory shrink: closing a duplication and leaving its row here fails.
+    stale = sorted(name for name in accounted if len(defined.get(name, [])) < 2)
+    assert stale == [], (
+        f"entr(y/ies) accounting for nothing: {stale}. The duplication is gone; "
+        "take the row with it."
+    )
+
+
+def test_the_helpers_group_zero_consolidated_have_exactly_one_definition():
+    """The named half of the sweep above, so a REGRESSION names the helper.
+
+    GI-024's inventory, one name at a time: a future author who re-inlines
+    `_now` in a module that used to have its own copy fails here with the
+    helper's name in the message, rather than in a dict of forty entries.
+    """
+    modules = _package_source_modules()
+    for helper in (
+        "now_iso", "current_cycle", "prove_is_clean", "overlay_unreported",
+        "spend_bucket", "markdown_sections", "unreported_dispatch_pairs",
+        "unreported_dispatch_summary", "escalated_class_rows", "spend_rollup",
+        "_save_json", "_document_transaction", "_resolve_spec_path",
+        "_declared_external_inputs", "_run_artifact_problems",
+    ):
+        where = [m.name for m in modules if helper in _top_level_definitions(m)]
+        assert len(where) == 1, (helper, where)
+
+
+def test_the_timestamp_has_one_implementation_however_it_is_spelled():
+    """The `_now` allowlist entry, held to what it claims.
+
+    Every module that binds the name resolves to `foundry_state.now_iso` — the
+    entry says "call-through bindings", and a binding that stopped being one
+    would be a second implementation wearing an exemption.
+    """
+    import importlib
+
+    from foundry_mcp.tools import foundry_state
+
+    for module_name in ("foundry_mcp.tools.foundry_orchestrator",
+                        "foundry_mcp.tools.concerns",
+                        "foundry_mcp.tools.rosters"):
+        module = importlib.import_module(module_name)
+        own = getattr(module, "_now", None)
+        if own is None:
+            continue
+        assert own() [:4].isdigit(), (module_name, own())
+        # Same instant, same precision, same timezone spelling — which is the
+        # thing that actually drifted when there were two.
+        assert own().endswith("+00:00"), (module_name, own())
+        assert len(own()) == len(foundry_state.now_iso()), module_name

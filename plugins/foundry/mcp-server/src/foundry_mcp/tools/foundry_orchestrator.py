@@ -49,16 +49,20 @@ from foundry_mcp.schemas.vocab import (
     escalation_status as _escalation_status,
     halt_reason,
     halt_reason_phrase,
+    is_requirement_id,
     is_test_file,
     is_verifier_path,
 )
 from foundry_mcp.tools.citation import iter_symbol_cites
+from foundry_mcp.tools.concerns import open_cross_casting_concerns
+from foundry_mcp.tools.rosters import roster_length
 from foundry_mcp.tools.foundry_state import (
     DISPATCH_PHASE_TO_RUN_PHASE,
     clear_active_run,
     current_cycle,
     get_run_dir,
     is_stream_record,
+    read_jsonl,
     markdown_sections,
     now_iso,
     overlay_unreported,
@@ -151,24 +155,26 @@ from foundry_mcp.tools.artifacts import (  # noqa: F401  (see the two suffixes)
 # A module-top import, not the lazy one used for foundry_spawn: THIS module
 # imports foundry.py (never the reverse), so there is no cycle to open.
 from foundry_mcp.tools.foundry import ledger_refusals
-from foundry_mcp.tools.display import foundry_hammer, FOUNDRY_SEP
+# fallout AC-011 / OT-011 — THE ANSI CODES ARE DISPLAY'S, NOT A SECOND COPY.
+#
+# Thirteen escape sequences were declared here and again in `display.py`, which
+# this module already imports from. Two copies of a colour code is a small
+# drift and a real one — D-202 is `_BLUE` surviving in one copy because the
+# other vouched for it — and the group (4) guard names any symbol two shipped
+# modules define. The renderer owns the palette; this module uses it.
+from foundry_mcp.tools.display import (
+    FOUNDRY_SEP,
+    _BCYAN,
+    _BGREEN,
+    _BRED,
+    _BWHITE,
+    _BYELLOW,
+    _DIM,
+    _GREEN,
+    _RESET,
+    foundry_hammer,
+)
 
-# ANSI colors — shared with display.py. D-202: `_BLUE` had no reader in either
-# copy, and a name-keyed reachability pin means one dead copy vouches for the
-# other, so both went. Add a code back when a renderer needs it.
-_RESET = "\033[0m"
-_BOLD = "\033[1m"
-_DIM = "\033[2m"
-_RED = "\033[31m"
-_GREEN = "\033[32m"
-_YELLOW = "\033[33m"
-_CYAN = "\033[36m"
-_WHITE = "\033[37m"
-_BCYAN = f"{_BOLD}{_CYAN}"
-_BGREEN = f"{_BOLD}{_GREEN}"
-_BYELLOW = f"{_BOLD}{_YELLOW}"
-_BRED = f"{_BOLD}{_RED}"
-_BWHITE = f"{_BOLD}{_WHITE}"
 
 
 # --------------------------------------------------------------------------- #
@@ -1999,6 +2005,43 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
             "unknown_tier": widen_blocking["unknown"],
         })
 
+    # fallout FR-012 / GI-023 / ST-005 / AC-004 / OT-004 — A CROSS-CASTING
+    # CONCERN FROM THE CLOSING GRIND HOLDS THE INSPECT DOOR.
+    #
+    # A teammate that found its fix reaches another casting's files filed a
+    # concern saying so. Opening the next INSPECT over a tree where one casting
+    # carries the new rule and its sibling carries the old one verifies a state
+    # the run already knows is half-done — and the finding it produces is the
+    # one the concern already made, a cycle later. Two exits, both cheap: let
+    # `Foundry-Tasks` dispatch it (the co-dispatch set carries it to its target),
+    # or close it with a reason. Neither is "fix everything"; both are decisions
+    # that leave a record.
+    open_concerns = [
+        c for c in open_cross_casting_concerns(fdir, cycle=current_cycle(fdir))
+    ]
+    if open_concerns:
+        named = ", ".join(str(c.get("id")) for c in open_concerns)
+        ladder.fail(
+            _GATE_RANK_MARKER,
+            (
+                f"{len(open_concerns)} cross-casting concern(s) from this GRIND "
+                f"are still open: {named}"
+            ),
+            (
+                "Two exits, and both leave a record: call Foundry-Tasks, whose "
+                "co-dispatch set carries the concern to the casting it names and "
+                "marks it dispatched — or close it deliberately with "
+                "Foundry-Concern(close=<id>, reason=...). An INSPECT opened over "
+                "a tree one casting has updated and its sibling has not "
+                "re-discovers the concern as a defect a cycle later."
+            ),
+        )
+    checklist.append({
+        "check": f"no_open_cross_casting_concerns ({len(open_concerns)})",
+        "ok": not open_concerns,
+        "concerns": [str(c.get("id")) for c in open_concerns],
+    })
+
     return _preconditions_outcome(ladder, checklist, widening=widening)
 
 
@@ -2590,6 +2633,13 @@ def foundry_gate(
 # The name is retained as an alias because it is part of this module's public
 # surface. Recordable is NOT required: the required-stream computation in
 # _check_streams_complete is intentionally independent.
+#: fallout FR-050 / CT-003 / OT-031 — the named refusal `Foundry-Stream` gives
+#: an `items_total` that disagrees with the stream's persisted roster. Declared
+#: HERE, at the door that raises it: `tools/rosters.py` owns the roster and its
+#: own four refusal tokens, and this is a condition of RECORDING a stream rather
+#: than of writing a roster. The reader it consults is casting 1's.
+ROSTER_MISMATCH = "ROSTER_MISMATCH"
+
 VALID_STREAMS = STREAM_WIRE_IDS
 
 
@@ -2754,11 +2804,36 @@ def _record_stream_rollup(
     findings_count: int,
     declared_cycle: int,
 ) -> dict:
-    """Append one (possibly partial) stream record to the cycle's roll-up.
+    """Record one stream run against the cycle's roll-up, REPLACING the last.
 
     ``declared_cycle`` is what the caller asserted; it is retained per record
-    for audit but is NEVER the key \u2014 the key is the server counter (FR-005).
-    Returns the cycle's totals AFTER this record.
+    for audit but is NEVER the key -- the key is the server counter (FR-005).
+    Returns the cycle's totals AFTER this record, plus ``replaced``: the record
+    this one supersedes, or None on the first write.
+
+    fallout FR-023 / FR-049 / GI-016 / CT-003 / ST-008 / ST-009 / AC-030 /
+    OT-028 -- REPLACE PER (STREAM, CYCLE), NOT ACCUMULATE.
+    -------------------------------------------------------------------------
+    The three totals were `+= items_checked`, `max(items_total)` and
+    `+= findings`, which is the arithmetic for TRANCHES of one run: a PROVE
+    delivered in two halves summed to the whole. It is the wrong arithmetic for
+    what actually happens, which is a stream RE-RUNNING inside one cycle -- a
+    re-dispatched TRACE, a PROVE the lead asked for again after a fix. Then 40
+    of 40 recorded twice reads as 80 of 40, and coverage passes 100%: the
+    threshold `_coverage_shortfall` evaluates is satisfied by the same work
+    counted twice, which is the one direction a coverage check must never fail.
+
+    So the top-level totals are the LAST record's values, `records[]` keeps
+    every one of them in order, and the result names what was replaced. A run
+    genuinely delivered in tranches is recorded as the agent's own running
+    total, which is what the agent has and the server does not -- and GI-016
+    puts the recording in the agent's hands for exactly that reason.
+
+    THE HISTORY IS NOT LOST, which is what makes this safe (GI-006). Every
+    record ever written stays under `records[]`; what changes is which of them
+    the top-level fields report. A reader wanting the tranche history reads the
+    list, and `Foundry-Stream` hands the caller the record it displaced so the
+    replacement is visible at the door rather than only in the artifact.
     """
     path = fdir / ROLLUP_FILENAME
     # D-103: THE concurrency site. F2 runs 4-8 parallel streams and each calls
@@ -2775,7 +2850,18 @@ def _record_stream_rollup(
             stream, {"items_checked": 0, "items_total": 0, "findings": 0, "records": []}
         )
 
-        entry["records"].append(
+        history = entry.get("records")
+        if not isinstance(history, list):
+            history = entry["records"] = []
+        # The record this one supersedes, captured BEFORE the append so the door
+        # can name it. None on the first write, which is what "replaced" meaning
+        # "nothing" has to look like.
+        replaced = (
+            dict(history[-1])
+            if history and isinstance(history[-1], dict)
+            else None
+        )
+        history.append(
             {
                 "recorded_at": now_iso(),
                 "items_checked": items_checked,
@@ -2784,9 +2870,9 @@ def _record_stream_rollup(
                 "declared_cycle": declared_cycle,
             }
         )
-        entry["items_checked"] = entry.get("items_checked", 0) + items_checked
-        entry["items_total"] = max(entry.get("items_total", 0), items_total)
-        entry["findings"] = entry.get("findings", 0) + findings_count
+        entry["items_checked"] = items_checked
+        entry["items_total"] = items_total
+        entry["findings"] = findings_count
 
         data["updated_at"] = now_iso()
     return {
@@ -2794,6 +2880,7 @@ def _record_stream_rollup(
         "items_total": entry["items_total"],
         "findings": entry["findings"],
         "records": len(entry["records"]),
+        "replaced": replaced,
     }
 
 
@@ -3030,6 +3117,35 @@ def foundry_mark_stream(
     # The roll-up is keyed by the SERVER counter, never by the caller's `cycle`
     # (FR-005). The caller's value is kept on the record for audit only.
     server_cycle = current_cycle(fdir)
+    # fallout FR-050 / CT-003 / ST-008 / OT-031 — THE ROSTER IS THE POPULATION.
+    #
+    # `items_total` is the size of the set this stream is checking, and when a
+    # roster has been persisted for the stream that size is not the agent's to
+    # assert: it is `rosters/<stream>.json`'s length. A stream that re-derives a
+    # SHORTER list and reports 12 of 12 clears the >=95% threshold on a
+    # population two thirds the size of the one the run agreed to check, and
+    # nothing on the record says so. The roster is read through casting 1's
+    # `tools/rosters.py` reader and never re-derived here — a second derivation
+    # of the population is the very drift the roster exists to end.
+    roster_len, roster_problem = roster_length(fdir, stream)
+    if roster_problem is None and roster_len is not None and items_total != roster_len:
+        return {
+            "error": ROSTER_MISMATCH,
+            "reason": (
+                f"Cannot record {stream} with items_total={items_total}: the "
+                f"persisted roster for this stream names {roster_len} item(s)."
+            ),
+            "hint": (
+                f"Report items_total={roster_len} — the roster is the population "
+                "this stream agreed to check, and a smaller total clears the "
+                "coverage threshold on a smaller set. If the roster itself is "
+                "wrong, revise it: Foundry-Roster(stream, items, revise=true, "
+                "reason=...)."
+            ),
+            "roster_length": roster_len,
+            "items_total": items_total,
+        }
+
     prev_totals = _rollup_totals(fdir, server_cycle - 1, stream) if server_cycle > 0 else None
     totals = _record_stream_rollup(
         fdir, server_cycle, stream, items_checked, items_total, findings_count, cycle
@@ -3134,6 +3250,11 @@ def foundry_mark_stream(
         "coverage": coverage_pct,
         "findings": totals["findings"],
         "records_this_cycle": totals["records"],
+        # fallout CT-003 / ST-009 / AC-030 / OT-028 — WHAT THIS RECORD REPLACED.
+        # The prior record for this (stream, cycle), or None on the first write.
+        # Named at the door rather than left in the artifact, because a
+        # replacement a caller cannot see is a replacement it will make twice.
+        "replaced": totals["replaced"],
         "recorded": {
             "items_checked": items_checked,
             "items_total": items_total,
@@ -8702,6 +8823,80 @@ def foundry_register_team(
     return {"ok": True, "registered": team_name, "total_teams": total_teams}
 
 
+def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
+    """The Team-Down refusal a stale fix ledger owes, or None.
+
+    fallout FR-022 / FR-048 / GI-017 / CT-010 / ST-011 / AC-039 / AC-041.
+
+    For every defect `Foundry-Tasks` dispatched into THIS cycle that is still
+    open, ask whether a commit since the cycle's baseline touched its file. If
+    one did, the fix is on the branch and the ledger row is not -- which is the
+    one state where tearing the team down loses the only person who could close
+    it.
+
+    THREE WAYS THIS ANSWERS NOTHING, and all three PASS rather than refuse,
+    because an advisory join that blocks on its own blindness is worse than one
+    that does not fire:
+
+      * no dispatch records -- a CAST team, or a GRIND that never ran
+        Foundry-Tasks. There is nothing dispatched to be stale about.
+      * no baseline SHA -- a run whose first INSPECT has not happened. "Since
+        when" has no answer, and a diff measured from nothing is not a diff.
+      * the diff cannot be computed -- no git, a detached tree, a timeout.
+        `git_changed_paths` reports that distinctly from an empty diff, and this
+        keeps the two apart for the reason every caller of it must.
+    """
+    dispatched = _grind_dispatches(fdir, current_cycle(fdir))
+    if not dispatched:
+        return None
+    open_ids = {
+        d["id"] for d in _load_json(fdir / "defects.json").get("defects", [])
+        if isinstance(d, dict) and d.get("status") == "open" and d.get("id")
+    }
+    still_open = [
+        r for r in dispatched if r.get("defect_id") in open_ids and r.get("file")
+    ]
+    if not still_open:
+        return None
+
+    base, base_source = _boundary_base_sha(fdir)
+    if not base:
+        return None
+    diff = git_changed_paths(project_root, base)
+    if not diff["ok"]:
+        return None
+    touched = set(diff["files"])
+
+    unrecorded = [r for r in still_open if str(r["file"]) in touched]
+    if not unrecorded:
+        return None
+    named = ", ".join(f"{r['defect_id']} ({r['file']})" for r in unrecorded)
+    return {
+        "error": DISPATCHED_DEFECT_UNRECORDED,
+        "reason": (
+            f"{len(unrecorded)} defect(s) dispatched this cycle are still OPEN "
+            f"while a commit since {base} ({base_source}) touched the file each "
+            f"names: {named}"
+        ),
+        "hint": (
+            "The fix is on the branch and the ledger row is not. Close each id "
+            "with Foundry-Fix before the team goes down -- after teardown the "
+            "teammate who made the change cannot be asked, and the next INSPECT "
+            "re-verifies work that is already done and files it again. If the "
+            "commit is unrelated to the defect, close the id against the fix "
+            "commit it really belongs to, or leave it open and say so in the "
+            "cycle's concerns."
+        ),
+        "phase": "dispatched_defect_unrecorded",
+        "defects": [
+            {"id": r["defect_id"], "file": r["file"], "casting": r.get("casting")}
+            for r in unrecorded
+        ],
+        "baseline_sha": base,
+        "baseline_source": base_source,
+    }
+
+
 def foundry_unregister_team(
     team_name: str,
     project_root: str = ".",
@@ -8723,6 +8918,32 @@ def foundry_unregister_team(
         return {"error": "No active foundry run."}
     if (corrupt := _artifact_guard(fdir)):
         return corrupt
+
+    # -- Phase 0: the FIX LEDGER, before the tmux scan ------------------------
+    #
+    # fallout FR-022 / FR-048 / GI-017 / CT-010 / ST-011 / AC-039 / AC-041 /
+    # OT-036 -- A DISPATCHED DEFECT WHOSE FIX IS ON THE BRANCH AND WHOSE LEDGER
+    # ROW IS STILL OPEN.
+    #
+    # The shape this refuses is the one that costs a whole cycle: a teammate
+    # made the fix, committed it, and did not close the defect -- so the ledger
+    # says open, the tree says fixed, and the next INSPECT re-verifies work that
+    # is already done and files it again. It is invisible at every other door,
+    # because every other door reads the LEDGER and the ledger is wrong.
+    #
+    # The two facts are joined HERE because this is the last door before the
+    # team is gone: after teardown the teammate who knows cannot be asked.
+    # AC-041 is the boundary, and it is the whole reason the commit half exists:
+    # a dispatched id that is open with NO commit touching its file did not get
+    # fixed, which is a GRIND that ran out of time and not a ledger that went
+    # stale. That case passes.
+    #
+    # Stated FIRST, before the tmux scan, for the ordering reason every door in
+    # this module holds: a refusal that costs nothing to compute goes above one
+    # that shells out.
+    if (unrecorded := _unrecorded_fix_problem(fdir, project_root)) is not None:
+        return unrecorded
+
 
     # ── Phase 1: Verify TeamDelete was called ────────────────────────
     teams_dir = Path.home() / ".claude" / "teams"
@@ -12888,6 +13109,244 @@ def foundry_sync_defects(
     return result
 
 
+# --------------------------------------------------------------------------- #
+# fallout FR-011 / FR-012 / FR-038 / GI-021 / GI-023 / CT-008 / CT-009 /
+# ST-003 / AC-002 / AC-003 / AC-004 / AC-006 / OT-002 / OT-003 / OT-004 /
+# OT-006 — A FIX REACHES EVERY SURFACE OF ITS RULE, IN THE SAME GRIND.
+#
+# A defect cites a requirement, the requirement is owned by more than one
+# casting, and the fix lands in one of them. The other owners then carry the
+# same rule spelled the old way until some later cycle files the same finding
+# against them — which is a cycle spent re-discovering something the run already
+# knew. The join is mechanical and the manifest already carries what it needs:
+# `requirement_ids` per casting, persisted at F0.5 and validated at F0.9.
+#
+# SERVER-GENERATED, never lead-authored (GI-021). The alignment block is what a
+# lead pastes VERBATIM into a dispatch prompt, so a lead composing it by hand is
+# a lead deciding, per wave, how much of the join to carry across.
+# --------------------------------------------------------------------------- #
+
+#: fallout FR-048 / GI-017 / CT-010 / ST-011 — the handoff event `Foundry-Tasks`
+#: writes per dispatched defect and `Foundry-Team-Down` reads. One event name,
+#: declared where both ends can see it.
+HANDOFF_EVENT_GRIND_DISPATCHED = "grind_dispatched"
+
+#: The named refusal `Foundry-Team-Down` gives while a defect dispatched this
+#: cycle is still open and a commit since the cycle baseline touched its file.
+DISPATCHED_DEFECT_UNRECORDED = "DISPATCHED_DEFECT_UNRECORDED"
+
+
+def _casting_requirement_ids(fdir: Path) -> tuple[dict[int, set[str]], bool]:
+    """`{casting id: {requirement ids}}` from the manifest, and whether it CAN.
+
+    The second element is False on a manifest whose castings carry no
+    `requirement_ids` at all — a pre-FR-009 archive. That is reported as NOT
+    COMPUTABLE and never as an empty set (AC-006 / OT-006): "no casting owns
+    this requirement" and "nobody recorded who owns anything" are opposite
+    facts, and a lead reading the first when the second is true dispatches one
+    casting for a rule that lives in four.
+    """
+    manifest = _load_json(fdir / "castings" / "manifest.json")
+    castings = manifest.get("castings")
+    if not isinstance(castings, list):
+        return {}, False
+    owned: dict[int, set[str]] = {}
+    any_declared = False
+    for casting in castings:
+        if not isinstance(casting, dict):
+            continue
+        raw = casting.get("requirement_ids")
+        ids = {str(r) for r in raw if isinstance(r, str)} if isinstance(raw, list) else set()
+        if raw is not None:
+            any_declared = True
+        try:
+            cid = int(casting.get("id"))
+        except (TypeError, ValueError):
+            continue
+        owned[cid] = ids
+    return owned, any_declared
+
+
+def _casting_files(fdir: Path) -> dict[int, list[str]]:
+    """`{casting id: key_files}` — the sibling files an alignment block names."""
+    manifest = _load_json(fdir / "castings" / "manifest.json")
+    castings = manifest.get("castings")
+    out: dict[int, list[str]] = {}
+    if not isinstance(castings, list):
+        return out
+    for casting in castings:
+        if not isinstance(casting, dict):
+            continue
+        try:
+            cid = int(casting.get("id"))
+        except (TypeError, ValueError):
+            continue
+        files = casting.get("key_files")
+        out[cid] = [f for f in files if isinstance(f, str)] if isinstance(files, list) else []
+    return out
+
+
+def _owning_casting(fdir: Path, files: list[str]) -> int | None:
+    """The casting whose key_files contain one of `files`, or None."""
+    for cid, key_files in _casting_files(fdir).items():
+        if any(f in key_files for f in files):
+            return cid
+    return None
+
+
+def _co_dispatch_for(
+    owned: dict[int, set[str]], requirement_ids: set[str], *, exclude: int | None = None
+) -> list[int]:
+    """Every casting whose `requirement_ids` intersect `requirement_ids`."""
+    return sorted(
+        cid for cid, ids in owned.items()
+        if cid != exclude and ids & requirement_ids
+    )
+
+
+def _alignment_block(
+    fdir: Path,
+    *,
+    defect_ids: list[str],
+    requirement_ids: set[str],
+    owning_casting: int | None,
+    owning_files: list[str],
+    co_dispatch: list[int],
+) -> str:
+    """The block a lead pastes VERBATIM into each co-dispatched prompt.
+
+    Names the originating defects, the requirement ids, the owning casting and
+    file of the fix, and each co-dispatched casting's sibling files that cite
+    those ids. Rendered here rather than described to the lead, because a block
+    the lead composes is a block that carries whatever the lead had room for.
+    """
+    files = _casting_files(fdir)
+    lines = [
+        "## Co-dispatch alignment (server-generated — paste verbatim)",
+        "",
+        f"Originating defect(s): {', '.join(defect_ids) or 'none'}",
+        f"Requirement id(s): {', '.join(sorted(requirement_ids)) or 'none'}",
+        (
+            f"Fixed in casting {owning_casting}"
+            + (f", file(s) {', '.join(owning_files)}" if owning_files else "")
+            if owning_casting is not None
+            else "Owning casting: not resolvable from the manifest"
+        ),
+        "",
+        "The SAME requirement is owned by the castings below. Each one carries "
+        "the rule on its own files; make the same change there, in that "
+        "casting's own idiom, in THIS cycle.",
+        "",
+    ]
+    for cid in co_dispatch:
+        siblings = files.get(cid) or []
+        lines.append(f"- casting {cid}: {', '.join(siblings) if siblings else 'no key_files recorded'}")
+    return "\n".join(lines)
+
+
+def _append_grind_dispatch(
+    fdir: Path, *, defect_id: str, file_path: str, cycle: int, casting: int | None
+) -> None:
+    """Record that `defect_id` was dispatched into THIS GRIND cycle.
+
+    fallout FR-022 / FR-048 / GI-017 / CT-010 / ST-011 / AC-039 / AC-041.
+
+    Written by `Foundry-Tasks`, because that is the call that dispatches: it is
+    what turns an open defect into a packet a teammate is handed. Read by
+    `Foundry-Team-Down`, which refuses while one of these is still open and a
+    commit since the cycle baseline touched its file — the shape of "the fix was
+    made and nobody closed the ledger".
+
+    Appended to `handoffs.jsonl` through casting 5's writer, so the dispatch
+    record lives in the same file, the same format and the same order as every
+    other handoff this run makes. Total: a run whose ledger cannot be written is
+    a run with an unrecorded dispatch, which the door then cannot refuse on —
+    the honest failure direction for an advisory record, and the same one every
+    other ledger reader in this package takes.
+    """
+    from foundry_mcp.tools.foundry_handoff import _append_handoff_record
+
+    entry = {
+        "handoff_id": "",
+        "timestamp": now_iso(),
+        "event": HANDOFF_EVENT_GRIND_DISPATCHED,
+        "defect_id": defect_id,
+        "file": file_path,
+        "cycle": cycle,
+        "casting": casting,
+    }
+    try:
+        _append_handoff_record(
+            fdir,
+            entry,
+            [
+                ("defect", f"`{defect_id}`"),
+                ("file", f"`{file_path}`" if file_path else ""),
+                ("cycle", f"`{cycle}`"),
+                ("casting", f"`{casting}`" if casting is not None else ""),
+            ],
+        )
+    except OSError:
+        pass
+
+
+def _grind_dispatches(fdir: Path, cycle: int) -> list[dict]:
+    """Every `grind_dispatched` record this cycle wrote, oldest first."""
+    records, problem = read_jsonl(fdir / "handoffs.jsonl")
+    if problem is not None:
+        return []
+    return [
+        r for r in records
+        if isinstance(r, dict)
+        and r.get("event") == HANDOFF_EVENT_GRIND_DISPATCHED
+        and r.get("cycle") == cycle
+    ]
+
+
+def _dispatch_open_concerns(fdir: Path, tasks: list[dict]) -> list[str]:
+    """Mark every open cross-casting concern the co-dispatch set reaches.
+
+    fallout GI-023 / FR-012 / ST-003 / AC-004. A concern names a casting, a file
+    or a symbol; when the set this call emits contains that casting — or the
+    task's own files contain that file — the concern HAS been dispatched, and
+    `inspect_start` stops refusing on it. Read and written through casting 1's
+    `tools/concerns.py`, which owns the ledger; this supplies the join and
+    nothing else.
+    """
+    from foundry_mcp.tools.concerns import mark_concerns_dispatched
+
+    concerns = open_cross_casting_concerns(fdir)
+    if not concerns:
+        return []
+    reached_castings: set[int] = set()
+    reached_files: set[str] = set()
+    for task in tasks:
+        for cid in task.get("co_dispatch") or []:
+            reached_castings.add(int(cid))
+        for path in task.get("files") or []:
+            reached_files.add(str(path))
+    hit = [
+        c["id"] for c in concerns
+        if str(c.get("target", "")) in reached_files
+        or str(c.get("target_casting_id", "")) in {str(cid) for cid in reached_castings}
+    ]
+    if not hit:
+        return []
+    mark_concerns_dispatched(fdir, hit)
+    return sorted(hit)
+
+
+# fallout GI-023 / D-127 — DECORATED, because this door now reaches a ledger.
+#
+# `Foundry-Tasks` marks the concerns its co-dispatch set carried, and that write
+# goes through casting 1's `ledger_transaction`. A `LedgerShapeError` raised
+# inside the locked primitive escapes across the MCP boundary as call_tool's
+# unhandled-error banner rather than the house `{error, hint}` refusal — which
+# is D-127 exactly, on a door that did not reach a ledger until this release.
+# The pin that found it derives the reachable set from the source rather than
+# from a list, which is why adding the reach and forgetting the decorator was a
+# test failure and not a shipped defect.
+@ledger_refusals
 def foundry_defects_to_tasks(
     project_root: str = ".",
 ) -> dict:
@@ -13009,6 +13468,55 @@ def foundry_defects_to_tasks(
             }
             tasks.append(task)
 
+    # fallout FR-011 / FR-038 / GI-021 / CT-008 / AC-002 / AC-006 / OT-002 /
+    # OT-006 — THE CO-DISPATCH SET, PER TASK, AND THE BLOCK THAT CARRIES IT.
+    owned, ids_declared = _casting_requirement_ids(fdir)
+    open_by_id = {d["id"]: d for d in open_defects}
+    for task in tasks:
+        requirement_ids = {r for r in task.get("spec_refs", []) if r}
+        if not ids_declared:
+            # AC-006 / OT-006: NOT COMPUTABLE, never an empty set. A lead
+            # reading "no other casting owns this" when the truth is "nobody
+            # recorded who owns anything" dispatches one casting for a rule that
+            # lives in four.
+            task["co_dispatch"] = None
+            task["co_dispatch_problem"] = (
+                "castings/manifest.json declares no requirement_ids, so which "
+                "castings own this defect's requirements is not computable. "
+                "Re-run F0.5 DECOMPOSE, or accept that the fix reaches one "
+                "casting only."
+            )
+            continue
+        owning = _owning_casting(fdir, task.get("files") or [])
+        co_dispatch = _co_dispatch_for(owned, requirement_ids, exclude=owning)
+        task["co_dispatch"] = co_dispatch
+        task["alignment_block"] = _alignment_block(
+            fdir,
+            defect_ids=list(task.get("defect_ids") or []),
+            requirement_ids=requirement_ids,
+            owning_casting=owning,
+            owning_files=list(task.get("files") or []),
+            co_dispatch=co_dispatch,
+        )
+        # fallout FR-048 / GI-017 / ST-011 — the dispatch RECORD, written by the
+        # call that dispatches. `Foundry-Team-Down` reads these back and refuses
+        # to tear a GRIND team down with one of them still open and a commit
+        # since the cycle baseline touching its file.
+        for did in task.get("defect_ids") or []:
+            defect = open_by_id.get(did) or {}
+            _append_grind_dispatch(
+                fdir,
+                defect_id=did,
+                file_path=str(defect.get("file") or ""),
+                cycle=packet_cycle,
+                casting=owning,
+            )
+
+    # fallout GI-023 / FR-012 / ST-003 / AC-004 — a concern whose target is in
+    # the co-dispatch set is DISPATCHED by this call, which is what lets
+    # `inspect_start` stop refusing on it.
+    dispatched_concerns = _dispatch_open_concerns(fdir, tasks)
+
     (fdir / TASKS_GENERATED_MARKER).write_text(f"{now_iso()} count={len(tasks)}\n", encoding="utf-8")
 
     result = {
@@ -13017,6 +13525,8 @@ def foundry_defects_to_tasks(
         "count": len(tasks),
         "escalated_classes": sorted(escalated),
         "structural_tasks": sum(1 for t in tasks if t["structural"]),
+        "co_dispatch_computable": ids_declared,
+        "concerns_dispatched": dispatched_concerns,
     }
     if packets_counted:
         # AC-004: what this call SPENT, reported where it happened. A lead that
@@ -15016,6 +15526,30 @@ def foundry_inject_directive(
         "priority": priority,
         "message": "Directive injected \u2014 lead will read it at next phase transition",
     }
+
+    # fallout FR-011 / GI-021 / CT-009 / AC-003 / OT-003 — THE SAME JOIN THE
+    # TASKS DOOR MAKES, ON THE SAME TABLE.
+    #
+    # A human directive that names a requirement id names a rule, and a rule is
+    # owned by however many castings the manifest says it is. The ids are found
+    # with `vocab.is_requirement_id` — the ONE grammar, never a second regex
+    # here — and the union of their owners is printed. A directive naming NO id
+    # prints an empty set and is otherwise unchanged, which is the ordinary case
+    # and must stay free: most directives are instructions, not citations.
+    owned, ids_declared = _casting_requirement_ids(fdir)
+    directive_ids = {
+        token for token in REQUIREMENT_ID_RE.findall(directive)
+        if is_requirement_id(token)
+    }
+    result["requirement_ids"] = sorted(directive_ids)
+    if not ids_declared:
+        result["co_dispatch"] = None
+        result["co_dispatch_problem"] = (
+            "castings/manifest.json declares no requirement_ids, so which "
+            "castings own the ids in this directive is not computable."
+        )
+    else:
+        result["co_dispatch"] = _co_dispatch_for(owned, directive_ids)
 
     # D-133: report the override decision HERE, at the call that made it. The
     # operator learns immediately whether the marker they just sent was read,
