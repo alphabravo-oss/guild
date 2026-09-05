@@ -4,8 +4,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/foundry-4.10.0-F57C00?style=flat-square" alt="foundry 4.10.0"/>
-  <img src="https://img.shields.io/badge/foundry--mcp-1.9.0-F57C00?style=flat-square" alt="foundry-mcp 1.9.0"/>
+  <img src="https://img.shields.io/badge/foundry-4.11.0-F57C00?style=flat-square" alt="foundry 4.11.0"/>
+  <img src="https://img.shields.io/badge/foundry--mcp-1.10.0-F57C00?style=flat-square" alt="foundry-mcp 1.10.0"/>
   <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
   <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
@@ -114,7 +114,7 @@ In V3 packet mode, `<spec_requirements>` is replaced by structural blocks: `<ups
 | `/foundry:setup` | Install MCP server + verify Python prerequisites |
 | `/foundry:start "<scope>" --spec PATH` | Start a build-verify-fix loop |
 | `/foundry:status` | Show current foundry run status |
-| `/foundry:resume` | Resume an interrupted run |
+| `/foundry:resume [--max-cycles N]` | Resume an interrupted run. `--max-cycles N` **rewrites** the persisted cap in the same locked write as the refreshed provenance, lowering a ceiling onto a run that is already moving; the next GRIND door halts when `N` is below the cycle it would open. Same semantics as the `/foundry:start` row below |
 | `/foundry:stop` | Gracefully stop the current run |
 | `/foundry:help` | Show plugin help |
 
@@ -127,8 +127,7 @@ In V3 packet mode, `<spec_requirements>` is replaced by structural blocks: `<ups
 | `--temper` | Enable F5 TEMPER stress testing |
 | `--nyquist` | Enable F5.5 NYQUIST regression test generation |
 | `--max-cycles N` | Cap the verify-fix cycles. Default `0` = unbounded. The phase transition that would open a GRIND cycle past the cap **succeeds** — it is not a refusal: the run's phase becomes `HALTED`, the report is generated as part of that transition naming every open `LIVE` and `LATENT` defect, and the next guidance call reports the halt and dispatches nothing. **`HALTED` is a named terminal state distinct from `DONE`** — a halted run stopped with open work |
-| `--no-ui` | Suppress orchestrator banners |
-| `--output-dir DIR` | Override `foundry-archive/` location |
+| `--no-ui` | `--no-ui` declares that this run has no browsable UI, so the SIGHT browser audit is not part of it. It says nothing about banners — the display is not a UI the run audits |
 
 ### Building foundry itself — launch with `--plugin-dir`
 
@@ -198,7 +197,7 @@ The server stores all run state under `foundry-archive/{run}/` in your project �
 | `Foundry-Init` | F0: create the run |
 | `Foundry-Next` | Every step: returns `YOUR NEXT CALL:` imperative |
 | `Foundry-Gate` | Before phase transitions |
-| `Foundry-Phase` | Mark phase transitions |
+| `Foundry-Phase` | Mark phase transitions — including `phase='halt'`, the lead's deliberate end (see below) |
 | `Foundry-Spawn-Teammate` | F0.5 / F1 / F3: dispatch block (path + sha256) for one casting's pre-authored prompt |
 | `Foundry-Cast-Wave` | F1: one bulk call returning the dispatch block for every casting in a wave |
 | `Foundry-Validate-Castings` | F0.9: 11-dimension validate |
@@ -207,11 +206,28 @@ The server stores all run state under `foundry-archive/{run}/` in your project �
 | `Foundry-Accept-Casting` | F1: re-run cited evidence + bind to requirement IDs |
 | `Foundry-Handoff` | Record every phase / artifact transition |
 | `Foundry-Defect` / `Foundry-Sync` / `Foundry-Tasks` / `Foundry-Fix` | F2 / F3 defect lifecycle |
+| `Foundry-Concern` | F1 / F3: a teammate whose fix reaches ANOTHER casting's files records it here, and the lead closes it with a reason. `concerns.md` keeps the prose; this is the ledger the server acts on — an open concern from the closing GRIND refuses `Foundry-Phase(phase='inspect_start')` by id, and `Foundry-Tasks` marks it dispatched when the co-dispatch set reaches its target |
 | `Foundry-Verdict` | F4 ASSAY verdicts |
 | `Foundry-Coverage` | Traceability matrix |
-| `Foundry-Stream` | Mark verification stream complete |
+| `Foundry-Roster` | F2, first derivation: persists a stream's item list to `rosters/<stream>.json` so later cycles read it instead of re-deriving a different one. A second write is refused unless `revise=true` carries a reason |
+| `Foundry-Stream` | F2: the verifying **agent** records its own `(stream, cycle)` counts — never the lead, which would assert numbers it did not measure. A later record for the same pair REPLACES the earlier one and names what it replaced, with the history kept, so a cycle carries one account of one run and a total can never exceed 100% |
 | `Foundry-Context` | Reload state after compaction |
-| `Foundry-Team-Up` / `Foundry-Team-Down` | Teammate lifecycle around CAST + GRIND waves |
+| `Foundry-Team-Up` / `Foundry-Team-Down` | Teammate lifecycle around CAST + GRIND waves. Team-Down is **refused** while a defect dispatched this cycle is still open and its file appears in the commits since the cycle baseline, named by id |
+
+### Ending a run on purpose — `Foundry-Phase(phase='halt')`
+
+A run does not only end by finishing. `Foundry-Phase` takes a `halt` token that ends it deliberately, and the reason is a closed vocabulary — `schemas/vocab.py`'s `HALT_REASONS`, four members:
+
+| Reason | When |
+|---|---|
+| `cap_reached` | the GRIND door found the persisted `max_cycles` below the cycle it was about to open. The only member a transition writes on its own |
+| `lead_ruling` | the lead stopped the run deliberately |
+| `spec_change_required` | the run cannot converge without a spec change, so continuing would grind against a target that is itself wrong |
+| `user_stop` | the user asked for it |
+
+The member is what the report and `measure-run.py` group on; the lead's own free text rides alongside it and says why *this* run ended, which no closed set can carry. Neither substitutes for the other.
+
+**`HALTED` with a named backlog is a successful end, not a failure.** The halt is a transition that succeeds: the phase becomes `HALTED`, the report regenerates with every open `LIVE`, `LATENT` and `HARDENING` defect named in it, and `phase_history` gains a `HALTED` row. It is refused only on the three things `Foundry-Gate(phase='halt')` will report first — a reason outside the four, a team still registered, or a run already halted. **`HALTED` is a named terminal state distinct from `DONE`**: a halted run stopped with open work, and the report says what.
 
 ---
 
@@ -284,6 +300,27 @@ A blocked model does not fail the spawn. Claude Code checks the value against yo
 ---
 
 ## What's new
+
+### foundry 4.11.0 — the loop stops making work for itself
+
+4.10.0 taught a run when to stop. Building it showed what a run does *until* it stops: `daring-orca` shipped it in 29 GRIND cycles and sealed `HALTED` with four defects still open, and a large share of what those cycles found was the loop's own fallout — a fix in one casting breaking a sibling nobody had dispatched, one finding re-filed as three because no channel existed for a probe that was never a spec requirement, and a 15,000-line orchestrator shaped cycle by cycle by the defect loop rather than by a design. This release is about that: work the machine manufactures for itself. Concerns become a ledger the server can act on instead of prose nobody joins; a fix dispatches to every casting it reaches rather than to the one it was filed against; each transition token gets exactly one routine that decides it; and the monolith is split, with a guard that keeps it split. The sections above document each mechanism in place; the table below maps what shipped to where it lives.
+
+| Adds | Where |
+|---|---|
+| **`Foundry-Concern` — the cross-casting concern ledger** — a teammate whose fix reaches another casting's files records it against a target the manifest can resolve, and the lead closes it with a reason. `concerns.md` stays prose; the ledger is what the server reads. An open concern from the closing GRIND refuses the next INSPECT by id | `Foundry-Concern` · `concerns.json` · `_inspect_start_preconditions` |
+| **Co-dispatch instead of a lone fix** — `Foundry-Tasks` emits, per task, the set of castings whose `requirement_ids` intersect the fix, under a **server-generated** alignment block naming the originating defects and each sibling's files. `Foundry-Directive` gets the same set from the ids the requirement-ID regex finds in its text | `Foundry-Tasks` · `Foundry-Directive` · `castings/manifest.json` |
+| **One preconditions routine per transition token** — every `PHASE_TOKENS` member has exactly one `_<token>_preconditions`, and the transition makes no other read and adds no refusal of its own. `Foundry-Gate` reports that same checklist through `GATE_TO_TRANSITION`, so a gate and the transition it guards can no longer disagree. The cap arrives as a non-refusing `would_halt` fact the transition acts on | `transitions.py` · `gates.py` |
+| **The orchestrator split — no facade** — the 1.9.0 monolith is deleted rather than shimmed, and every importer rewritten: `tools/orchestration/` is fourteen modules with their own test package, and the verifier set narrows to the gates, transitions, width and sweep modules. A stdlib-only pytest guard holds the import graph acyclic, keeps each symbol defined once, and keeps verifier modules out of the presentation layer | `tools/orchestration/` · `tests/orchestration/test_module_boundaries.py` |
+| **`HARDENING` tier** — a third channel for a probe the stream drove *itself* and saw fail, with no spec row behind it. It does not block a gate, it gets its own report backlog, and it is never re-tiered in place: a promotion is a new filing that cites it through `supersedes`. A `HARDENING` filing carrying any `spec_ref` is refused at both doors | `vocab.DEFECT_TIERS` · both filing doors · `Foundry-Report` |
+| **The lead halt door** — `Foundry-Phase(phase='halt')` ends a run deliberately on one of four reasons (`cap_reached`, `lead_ruling`, `spec_change_required`, `user_stop`) plus the lead's own text. `halt` is a full token with its own preconditions function and its own gate | `Foundry-Phase` · `Foundry-Gate` · `vocab.HALT_REASONS` |
+| **Stream records replace; rosters persist** — a second `Foundry-Stream` for one `(stream, cycle)` REPLACES the first and names what it replaced, history kept, so totals can never exceed 100%. The verifying **agent** records; the lead confirms the record exists. `Foundry-Roster` fixes a stream's item list at first derivation and later cycles read it | `Foundry-Stream` · `Foundry-Roster` · `rosters/` |
+| **Evidence commands linted at both doors** — an `# evidence-cmd:` that will not parse under `/bin/sh -n` is `BLOCKED` at the commit guard naming the log and the shell's own message, and refused *before execution* at every sweep crossing with `EVIDENCE_COMMAND_SYNTAX`. Linting at one door only is what let a broken command reach the corpus | `hooks/pre-commit-guard.sh` · `evidence.py` |
+| **The run measures its own fallout** — `measure-run.py` reports `fallout_per_cycle` (findings that are fallout of an earlier fix) and `full_cycle_ratio` (FULL over total INSPECT cycles), each with a pass/fail verdict; defect records gained `fallout_of` and `supersedes` to feed it | `scripts/measure-run.py` · `Foundry-Report` |
+| **Ownership is declared, not inferred** — each casting persists its `requirement_ids` at F0.5 instead of having ownership re-read out of prose at dispatch time, and F0.9 refuses a requirement spanning more than two castings without a recorded `split_reason` | `castings/manifest.json` · `Foundry-Validate-Castings` |
+| **`Foundry-Team-Down` refuses a live hand-off** — tearing a GRIND team down while a defect dispatched this cycle is still open, with its file among the commits since the cycle baseline, is refused by id | `Foundry-Team-Down` · `handoffs.jsonl` |
+| **`TEMPER_CANDIDATE` observations** — PROVE records a probe idea instead of filing it as a defect; TEMPER's roster is the open candidates plus its own micro-domains, and each is closed as driven — filed or clean | `Foundry-Observation` · `skills/prove` · `skills/temper` |
+| **`/foundry:resume --max-cycles N`** — the resume path rewrites the persisted cap in the same locked write as the refreshed provenance, lowering a ceiling onto a run already moving. A negative cap is refused at the door rather than silently read as unbounded | `Foundry-Init` · `commands/resume.md` |
+| **Archives keep reading** — `migrate-archive.py` takes a schema-3 archive to schema 4 idempotently: rollup totals rewritten to the LAST record with history kept, and defaults filled for `requirement_ids`, `split_reason`, `fallout_of`, `supersedes`, `concerns.json` and `rosters/` | `scripts/migrate-archive.py` |
 
 ### foundry 4.10.0 — the run knows when to stop
 

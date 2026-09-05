@@ -2,11 +2,11 @@
 
 The release number is written down in FIVE places and DERIVED in none:
 
-  server number (1.9.0)
+  server number (1.10.0)
     * ``src/foundry_mcp/__init__.py``               ``__version__``
     * ``pyproject.toml``                            ``[project] version``
     * ``uv.lock``                                   the ``foundry-mcp`` entry
-  plugin number (4.10.0)
+  plugin number (4.11.0)
     * ``plugins/foundry/.claude-plugin/plugin.json``  ``version``
     * ``.claude-plugin/marketplace.json``             the ``foundry`` entry
 
@@ -21,7 +21,7 @@ AFTER editing ``pyproject.toml``; and the two plugin manifests are read only
 by the plugin loader and the marketplace installer, neither of which runs in
 CI. So a partial bump is silent at every stage a release passes through: the
 suite is green, the server starts, the plugin loads, and the disagreement
-surfaces as an operator installing "4.10.0" and being served a manifest that
+surfaces as an operator installing "4.11.0" and being served a manifest that
 says something else.
 
 This module is the join. It reads all five sites off disk (the sixth,
@@ -71,8 +71,8 @@ MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 
 # The release declaration. These two literals ARE the release; every site is
 # judged against them, and against each other.
-SERVER_VERSION = "1.9.0"
-PLUGIN_VERSION = "4.10.0"
+SERVER_VERSION = "1.10.0"
+PLUGIN_VERSION = "4.11.0"
 
 # The dependency ceiling that keeps the bundled server on the 1.x protocol
 # library. server.py uses mcp's 1.x low-level decorator API, which 2.0.0
