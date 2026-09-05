@@ -1,4 +1,4 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest --tb=no -p no:cacheprovider tests/test_inspect_mode.py tests/test_orchestrator_gates.py tests/test_measure_run.py tests/test_lead_prose.py --deselect 'tests/test_inspect_mode.py::test_every_verifier_surface_forces_full[foundry_mcp/tools/foundry_orchestrator.py]' --deselect 'tests/test_inspect_mode.py::test_every_verifier_surface_forces_full[foundry_mcp/server.py]' --deselect 'tests/test_inspect_mode.py::test_every_verifier_surface_forces_full[commands/start.md]' --deselect tests/test_measure_run.py::test_the_stream_record_rule_has_one_definition --deselect tests/test_measure_run.py::test_defects_by_tier_counts_live_latent_and_unknown --deselect tests/test_measure_run.py::test_all_four_nfr_001_columns_are_beside_the_baseline_not_only_cycles --deselect tests/test_measure_run.py::test_a_thunder_viper_shaped_archive_prints_the_baseline_and_the_target --deselect tests/test_lead_prose.py::test_the_report_step_names_every_required_section
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest --tb=no -p no:cacheprovider tests/test_inspect_mode.py tests/orchestration/ tests/test_measure_run.py tests/test_lead_prose.py --deselect tests/test_inspect_mode.py::test_delta_mode_requires_neither_conditional_stream_on_an_untouched_scope --deselect tests/test_inspect_mode.py::test_test01_scope_is_the_registry_binding_not_a_stem_in_the_contracts_prose --deselect tests/test_inspect_mode.py::test_every_contracts_surface_resolves_to_a_module_through_the_registry --deselect tests/test_inspect_mode.py::test_a_stem_colliding_grind_diff_leaves_test01_unrequired_over_mcp --deselect tests/test_inspect_mode.py::test_next_reports_the_recorded_decision_whenever_it_is_called
 # evidence-for: FR-003, FR-014, FR-027, AC-012, AC-024, AC-047
 # evidence-volatile: (?:^|\s)platform \S+ -- Python \S+.*
 # evidence-volatile: (?:^|\s)rootdir:.*
@@ -7,28 +7,43 @@
 # evidence-volatile: /\S*/foundry-archive/\S*
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: \d+\.\d+ seconds
-# evidence-timeout: 600
+# evidence-timeout: 900
 
 ============================= test session starts ==============================
 platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
 rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/925305b8-e685-489b-8b2a-86c7dc74623f/scratchpad/cap/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
-collected 911 items / 8 deselected / 903 selected
+collected 1085 items / 5 deselected / 1080 selected
 
 tests/test_inspect_mode.py ............................................. [  4%]
-........................................................................ [ 12%]
-......................................                                   [ 17%]
-tests/test_orchestrator_gates.py ....................................... [ 21%]
-........................................................................ [ 29%]
-........................................................................ [ 37%]
-........................................................................ [ 45%]
-........................................................................ [ 53%]
-........................................................................ [ 61%]
-........................................................................ [ 69%]
-..................................................................       [ 76%]
-tests/test_measure_run.py .........s.........................s.......... [ 81%]
-........ss.s...
+........................................................................ [ 10%]
+..............................................                           [ 15%]
+tests/orchestration/test_directives.py ................................. [ 18%]
+............................                                             [ 20%]
+tests/orchestration/test_escalation.py ............                      [ 21%]
+tests/orchestration/test_evidence_boundary.py ..                         [ 22%]
+tests/orchestration/test_fix_gate.py ................................... [ 25%]
+............................                                             [ 27%]
+tests/orchestration/test_gates.py ...................................... [ 31%]
+................................................                         [ 35%]
+tests/orchestration/test_guidance.py ................................... [ 39%]
+....................................                                     [ 42%]
+tests/orchestration/test_halt.py ..                                      [ 42%]
+tests/orchestration/test_module_boundaries.py .......................... [ 45%]
+...............................................................          [ 50%]
+tests/orchestration/test_report_seal.py ..........                       [ 51%]
+tests/orchestration/test_spend.py ....                                   [ 52%]
+tests/orchestration/test_streams.py .....................                [ 54%]
+tests/orchestration/test_tasks_codispatch.py ...                         [ 54%]
+tests/orchestration/test_teams.py ....                                   [ 54%]
+tests/orchestration/test_transitions.py ................................ [ 57%]
+........................................................................ [ 64%]
+........................................................................ [ 71%]
+.....................                                                    [ 72%]
+tests/orchestration/test_width.py .........                              [ 73%]
+tests/test_measure_run.py .........s..........................s......... [ 78%]
+..........ss.s.....
 === D-182 — a cycle bucket carrying its own C-6 facts ===
   the five keys `_record_cycle_facts` writes beside the stream
   tranches, in the shape the live archive holds them:
@@ -61,20 +76,21 @@ tests/test_measure_run.py .........s.........................s.......... [ 81%]
   'Numbers are the target, not a gate'.
 
 === one definition, both readers ===
-  foundry_orchestrator._stream_dispatch_cycles: ['prove', 'research_audit', 'trace']
+  orchestration.spend._stream_dispatch_cycles: ['prove', 'research_audit', 'trace']
   foundry_state.is_stream_record:               ['prove', 'research_audit', 'trace']
   the same three keys, from the rule stated once rather than
   hand-typed a third time — which is how the third walker of
   this bucket came to be missing it.
-.                                                         [ 83%]
-tests/test_lead_prose.py ............................................... [ 88%]
-........................................................................ [ 96%]
-..............................                                           [100%]
+.................                                     [ 81%]
+tests/test_lead_prose.py ............................................... [ 85%]
+........................................................................ [ 92%]
+........................................................................ [ 99%]
+..........                                                               [100%]
 
 =========================== short test summary info ============================
-SKIPPED [1] tests/test_measure_run.py:625: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/925305b8-e685-489b-8b2a-86c7dc74623f/scratchpad/cap/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:1457: grand-vulture archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/925305b8-e685-489b-8b2a-86c7dc74623f/scratchpad/cap/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2119: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/925305b8-e685-489b-8b2a-86c7dc74623f/scratchpad/cap/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2178: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/925305b8-e685-489b-8b2a-86c7dc74623f/scratchpad/cap/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2247: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/925305b8-e685-489b-8b2a-86c7dc74623f/scratchpad/cap/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-================ 898 passed, 5 skipped, 8 deselected in 41.96s =================
+SKIPPED [1] tests/test_measure_run.py:632: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/925305b8-e685-489b-8b2a-86c7dc74623f/scratchpad/cap/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:1487: grand-vulture archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/925305b8-e685-489b-8b2a-86c7dc74623f/scratchpad/cap/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2216: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/925305b8-e685-489b-8b2a-86c7dc74623f/scratchpad/cap/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2275: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/925305b8-e685-489b-8b2a-86c7dc74623f/scratchpad/cap/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2344: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/925305b8-e685-489b-8b2a-86c7dc74623f/scratchpad/cap/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+================ 1075 passed, 5 skipped, 5 deselected in 49.67s ================

@@ -1,16 +1,17 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q --tb=no -p no:cacheprovider tests/test_foundry_state_readers.py tests/test_vocab.py tests/test_report.py --deselect tests/test_report.py::test_a_closed_untiered_record_is_not_listed_under_the_blocking_note --deselect tests/test_report.py::test_a_halted_runs_report_states_the_grind_cycles_its_halt_reason_states --deselect tests/test_report.py::test_demo_grind_cycle_10_filings_at_the_real_door --deselect tests/test_report.py::test_demo_grind_cycle_9_filings_at_the_real_door --deselect tests/test_report.py::test_the_agents_field_means_distinct_agents_exactly_as_the_rollup_does --deselect tests/test_report.py::test_the_driven_fixture_leaves_the_pre_change_record_alone --deselect tests/test_report.py::test_the_fixture_escalation_record_is_what_production_writes --deselect tests/test_report.py::test_the_fixture_state_is_what_production_writes --deselect tests/test_report.py::test_the_generated_banner_is_absorbed_by_the_seal_never_carried_as_prose --deselect tests/test_report.py::test_the_report_and_foundry_next_publish_the_same_cycle_axis --deselect tests/test_vocab.py::test_all_three_readers_account_for_every_class_on_one_document --deselect tests/test_vocab.py::test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab --deselect tests/test_vocab.py::test_hardening_is_a_defect_tier_and_is_not_in_the_blocking_set --deselect tests/test_vocab.py::test_stream_wire_ids_never_narrows_valid_streams --deselect 'tests/test_vocab.py::test_the_defect_door_audits_under_the_class_it_refuses[absent]' --deselect 'tests/test_vocab.py::test_the_defect_door_audits_under_the_class_it_refuses[code]' --deselect 'tests/test_vocab.py::test_the_defect_door_audits_under_the_class_it_refuses[comment]' --deselect 'tests/test_vocab.py::test_the_defect_door_audits_under_the_class_it_refuses[test]' --deselect 'tests/test_vocab.py::test_the_sync_door_audits_under_the_class_it_refuses[absent]' --deselect 'tests/test_vocab.py::test_the_sync_door_audits_under_the_class_it_refuses[code]' --deselect 'tests/test_vocab.py::test_the_sync_door_audits_under_the_class_it_refuses[comment]' --deselect 'tests/test_vocab.py::test_the_sync_door_audits_under_the_class_it_refuses[test]'
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q --tb=no -p no:cacheprovider tests/test_foundry_state_readers.py tests/test_vocab.py tests/test_report.py
 # evidence-for: US-002, US-003, US-004, US-005, US-006, US-011, FR-003, FR-008, FR-014, FR-017, FR-019, FR-027, FR-037, FR-053, AC-012, AC-017, AC-020, AC-022, AC-024, AC-046, AC-047, GI-004, GI-009, GI-014, GI-024, GI-027, OT-010, OT-022, OT-041
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: \d+\.\d+ seconds
-# evidence-timeout: 600
+# evidence-timeout: 900
 
 ........................................................................ [ 13%]
-........................................................................ [ 27%]
-........................................................................ [ 41%]
-........................................................................ [ 54%]
-....ssss................................................................ [ 68%]
-........................................................................ [ 82%]
-..........................................................
+........................................................................ [ 26%]
+........................................................................ [ 39%]
+........................................................................ [ 52%]
+........................................................................ [ 65%]
+........................................................................ [ 78%]
+........................................................................ [ 92%]
+...
 === report.json top-level keys ===
   generated_at
   run
@@ -103,6 +104,74 @@
 === report_status, the DONE gate's read (GI-006 / OT-025) ===
   present=True  missing_sections=[]
 .
+=== D-163 — two dispatches, ONE spend record, one report.json ===
+  unreported_dispatches:           count=1 by_phase={'F1': ['casting-2']}
+  spend.total:                     unreported=1
+  spend.by_phase[F1]:                unreported=1
+  the filing observed 0 here beside 1 there; one derivation now: True
+  | phase | F1 | 1000 | 1.0 | 1 |  | 1 |
+
+  a stale state.json.spend claim is NAMED, never published:
+  published=1  state.json.spend claimed=99
+  disagreement: by_phase F1 unreported derived=1 state_rollup=99
+  disagreement: run total unreported derived=1 state_rollup=99
+
+=== D-166 — the unknown-tier section lists OPEN records only ===
+  open (listed, blocking): ['D-003']   closed (counted, not listed): 2 ['D-001', 'D-002']
+  the gate agrees about what blocks: ['D-003']
+  the cross-tab is a census and still counts all three:
+    fixed   2 ['D-001', 'D-002']
+    open    1 ['D-003']
+  no closed id appears under the blocking note: True
+  ...2 untiered record(s) in this run are already closed; they are counted in `closed_count` and not listed, because a fixed record blocks no gate and has no re-filing to do (D-166).
+
+=== D-167 — a verdicts.json with no cycle key ===
+  0 requirements, verdicts at a cycle verdicts.json does not record: {}
+  report.json stays honest — cycle is null, never fabricated: None
+  and cycle 0 is a RECORDED cycle (the server counter is 0-based):
+  0 requirements, verdicts at cycle 0: {}
+
+=== D-168 — the executing-versions section states what it has ===
+  recorded=False  missing=['server_version', 'plugin_version', 'server_root', 'server_commit', 'self_target']
+  state.json carries no server_version, plugin_version, server_root, server_commit, self_target for this run, so the cell(s) below are blank because the run recorded nothing there — not because this report dropped a value. Foundry-Init writes these fields when it runs its self-target preflight (CT-010), so their absence is the finding: nothing compared the executing server against the working tree.
+  
+  | Field | Value |
+  |---|---|
+  | server_version | (none recorded) |
+  | plugin_version | (none recorded) |
+  | server_root | (none recorded) |
+  | server_commit | (none recorded) |
+  | self_target | (none recorded) |
+  a PARTIAL record names the one field it lacks, and self_target False is an answer:
+  recorded=False  missing=['server_commit']  self_target=False
+.
+=== D-175 — the halt reason and the report it generated, one call, one number ===
+  Foundry-Phase('grind_start') -> ok=True halted=True  state.phase=HALTED
+  state.halted_reason:  {'reason': 'cap_reached', 'text': '--max-cycles 2 reached: opening GRIND cycle 3 would exceed it'}
+  the server counter it was computed from: cycle=2  halted_at_cycle=2
+  report.json run.max_cycles:                2
+  report.json baseline_comparison.current.grind_cycles:  2
+  REPORT.md: | GRIND cycles | 22 |  | 12 | 2 |
+  the filing read 3 in both of those, beside a cap of 2 and a reason naming GRIND 3 as the one that did NOT open.
+  under the cap now: True
+
+  the counter is untouched; only the GRIND it would have opened is subtracted:
+  index=2  halted=True  count=2
+  and a run at the same counter with no halt record still publishes index + 1, which is what keeps the two published baselines reproducing from their own archives:
+  index=2  halted=False  count=3
+
+=== D-172 — the cycle axis covers what the archive stamps, and the prose says which ===
+  three teammates dispatched at cycle 1, one reported spend:
+  unreported_dispatches: count=2  by_phase={'F1': ['casting-2', 'casting-3']}
+  spend by_phase[F1].unreported = 2   spend by_cycle['1'].unreported = 0
+  the filing observed exactly that 2-beside-0 with prose claiming the cycle row 'names the cycles those agents were dispatched in'.
+  the gap is now a derived number: unreported_without_cycle=2
+  ...an agent reaches them only if its dispatch record stamps a cycle, and the only record that does is stream-rollup.json's own cycle bucket, so those rows cover the F2 stream agents and nothing else. spawns.log stamps a teammate dispatch with a timestamp and no cycle, so a CAST or GRIND teammate is counted per phase and appears in NO cycle row, however many cycles it ran in — of the 2 unreported pairs here, 2 are in that position and are absent from every cycle row below (D-172).
+
+  the axis is narrowed, not emptied — a stream agent IS stamped, by the roll-up's own cycle bucket:
+  one stream pair over two cycles + one teammate pair: total=2  cycle rows={'1': 1, '2': 1}  without a cycle=1
+  the cycle column still does not add up to the total, and now the note says why rather than only that it does not.
+.
 === D-193 — the filing run's own shape: a counter that reached 14, an inspect_modes ledger that starts at 10 ===
   report.json inspect_modes_per_cycle.count       5
   report.json inspect_modes_per_cycle.cycle_count 5   <- cycles that CARRY a decision
@@ -134,8 +203,5 @@
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-............. [ 95%]
-......................                                                   [100%]
-=========================== short test summary info ============================
-SKIPPED [4] tests/test_vocab.py:1890: plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration does not exist yet — casting 2 creates it in wave 2. The RULE is asserted above; the existence assertion arms itself the moment the package appears.
-522 passed, 4 skipped, 22 deselected in 1.37s
+.....................................                              [100%]
+547 passed in 2.97s
