@@ -16,10 +16,10 @@ from foundry_mcp.schemas.vocab import (
 )
 from foundry_mcp.tools.artifacts import (
     _document_transaction,
-    _load_json,
 )
 from foundry_mcp.tools.foundry_state import (
     current_cycle,
+    halted_state,
     now_iso,
 )
 from pathlib import Path
@@ -81,46 +81,30 @@ def _persisted_max_cycles(state: dict) -> int:
 def _halted_state(fdir: Path) -> dict | None:
     """The run's HALTED record, or None when the run is not halted.
 
+    fallout GI-033 / FR-063 / AC-061 (concern C-017) — THE READ IS THE LEAF'S.
+
     THE ONLY READ of `state.json.phase == RUN_PHASE_HALTED`, for the reason
     `_current_inspect_mode` is the only read of the recorded width: a terminal
     state that each door decides for itself is a terminal state each door can
-    decide differently.
+    decide differently. What changed is WHERE the only read lives.
+    `gates.py` is a VERIFIER and this module is lifecycle, so a gate reaching
+    here for the halt record was a second verifier-to-lifecycle crossing on top
+    of the one seam GI-033 names — and the record is a document read, which is
+    leaf material. `foundry_state.halted_state` holds it now.
+
+    The three closed-set values it needs are supplied here rather than known
+    there, because the leaf's own contract is json and pathlib: the HALTED
+    phase token, the reason vocabulary, and this module's cap normaliser. That
+    last one is why the delegation stays a function rather than becoming an
+    import at each caller — `_persisted_max_cycles` is halt.py's, and passing
+    it in is what lets the leaf answer without knowing what a cap is.
     """
-    state = _load_json(fdir / "state.json")
-    if state.get("phase") != RUN_PHASE_HALTED:
-        return None
-    # fallout CT-004 / FR-054 — TWO SHAPES, ONE READ.
-    #
-    # `halted_reason` is `{"reason": <member>, "text": <the lead's words>}` from
-    # this release on, and a bare f-string on every archive written before it.
-    # Both are read here so no caller has to know which it got: `halted_reason`
-    # is always the SENTENCE an operator reads, and `halted_reason_member` is
-    # the HALT_REASONS member a grouper keys on, or "" when the record carries
-    # only text. Guessing which member a pre-release sentence meant is how a
-    # run's ending gets reclassified by a reader, so it is never guessed.
-    raw = state.get("halted_reason")
-    if isinstance(raw, dict):
-        member = halt_reason(raw.get("reason")) or ""
-        detail = str(raw.get("text") or "").strip()
-        sentence = f"{member}: {detail}" if member and detail else (member or detail)
-    else:
-        member = ""
-        sentence = str(raw or "").strip()
-    return {
-        "halted_at_cycle": state.get("halted_at_cycle"),
-        "halted_reason": sentence or "the configured cycle cap was reached",
-        "halted_reason_member": member,
-        # D-225: the cap this run was HELD to, read the way the halt read it.
-        # Displaying the raw field beside a decision made on a normalised one
-        # is how a refusal comes to name a number no code acted on.
-        "max_cycles": _persisted_max_cycles(state),
-        # D-165: what the halt transition's own report generation did. Recorded
-        # by `_halt_if_capped` and read here so the refusal cannot promise a
-        # document the transition failed to write.
-        "halted_report_error": str(state.get("halted_report_error") or "").strip(),
-    }
-
-
+    return halted_state(
+        fdir,
+        halted_phase=RUN_PHASE_HALTED,
+        reason_of=halt_reason,
+        max_cycles_of=_persisted_max_cycles,
+    )
 
 
 def _halted_refusal(fdir: Path, surface: str) -> dict | None:

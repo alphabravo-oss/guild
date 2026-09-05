@@ -17,6 +17,7 @@ from foundry_mcp.tools.artifacts import (
 from foundry_mcp.tools.foundry_state import (
     current_cycle,
     get_run_dir,
+    registered_team_dirs,
 )
 from pathlib import Path
 
@@ -284,11 +285,21 @@ def _check_active_teams(project_root: str) -> dict:
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"active": False, "teams": [], "live_panes": []}
-    state = _load_json(fdir / "state.json")
-    teams = state.get("active_teams", [])
-
-    teams_dir = Path.home() / ".claude" / "teams"
-    active = [t for t in teams if (teams_dir / t).is_dir()]
+    # fallout GI-033 / AC-061 (concern C-017) — THE ARTIFACT HALF IS THE LEAF'S.
+    #
+    # This check has two halves and only one of them reads a run artifact:
+    # `state.json.active_teams` crossed against the team directories on disk.
+    # That half is `foundry_state.registered_team_dirs` now, which is what lets
+    # `gates.py`, `transitions.py` and `width.py` — all three VERIFIER modules —
+    # ask the question without importing this lifecycle module. The tmux pane
+    # scan and the shutdown hint below stay here: they read no artifact, and a
+    # leaf that shelled out to tmux would have stopped being one.
+    #
+    # `Path.home()` is supplied rather than known there for the same reason
+    # every other closed-set value is: the leaf's contract is json and pathlib
+    # over the run directory, and where a machine keeps its team dirs is not a
+    # fact about the run.
+    active = registered_team_dirs(fdir, teams_dir=Path.home() / ".claude" / "teams")
 
     # Also check for live teammate tmux panes — even if TeamDelete was called,
     # the claude processes might still be running
