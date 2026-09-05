@@ -1,7 +1,7 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_migrate_archive.py -k 'step_8 or step_9 or step_10 or steps_11_and_12 or dry_run_writes_none or migrated_ledger_is_measurable or migrated_manifest_does_not_trip or c6_archive_migrates' 2>&1 | tail -2
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_migrate_archive.py -k 'step_8 or step_9 or step_10 or steps_11_and_12 or dry_run_writes_none or migrated_ledger_is_measurable or migrated_manifest_does_not_trip or c6_archive_migrates or two_writers_of_the_schema_marker' 2>&1 | tail -2
 # evidence-for: CT-018, FR-028, FR-054, AC-034, AC-049, GI-006, NFR-010, OT-032, US-012
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
-............                                                             [100%]
-12 passed, 44 deselected in 1.10s
+.............                                                            [100%]
+13 passed, 44 deselected in 1.34s
