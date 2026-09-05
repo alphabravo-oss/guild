@@ -1,0 +1,70 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -q --tb=no -p no:cacheprovider tests/test_inspect_mode.py tests/test_orchestrator_gates.py tests/test_measure_run.py tests/test_lead_prose.py
+# evidence-for: FR-003, FR-014, FR-027, AC-012, AC-024, AC-047
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \d+\.\d+ seconds
+# evidence-timeout: 600
+
+.......FF..F............................................................ [  7%]
+........................................................................ [ 15%]
+........................................................................ [ 23%]
+........................................................................ [ 31%]
+.........................................................F.............. [ 39%]
+........................................................................ [ 47%]
+........................................................................ [ 55%]
+........................................................................ [ 63%]
+........................................................................ [ 71%]
+........................................................s............... [ 79%]
+.......F............F..........F....F..F
+=== D-182 — a cycle bucket carrying its own C-6 facts ===
+  the five keys `_record_cycle_facts` writes beside the stream
+  tranches, in the shape the live archive holds them:
+    inspect_mode    (str)
+    inspect_rule    (str)
+    stream_scope    (dict)
+    evidence_sweep  (dict)
+    temper_entry    (dict)
+
+  measure-run.py over that archive, as a real process:
+    exit code:      0
+    failure_tokens: []
+    cycles:         4
+    coverage read:  ['PROVE', 'RESEARCH_AUDIT', 'TRACE']
+  before this fix the same document produced PHASE9_SCHEMA_INVALID
+  for the two string keys, PHASE9_UNKNOWN_STREAM for the three
+  mapping keys, and exit 1 — a schema fault asserted about the
+  shape the spec's own Data Model widened the document to.
+
+=== the filing's own control — the same archive with only
+=== those keys stripped, and nothing else changed ===
+    exit code:      0
+    failure_tokens: []
+    cycles:         4
+
+  keys differing between the two payloads: []
+  every published value identical — the five keys carry no
+  measurement this command publishes. The numbers were never the
+  defect; the VERDICT on a well-formed artifact was. NFR-001:
+  'Numbers are the target, not a gate'.
+
+=== one definition, both readers ===
+  foundry_orchestrator._stream_dispatch_cycles: ['prove', 'research_audit', 'trace']
+  foundry_state.is_stream_record:               ['prove', 'research_audit', 'trace']
+  the same three keys, from the rule stated once rather than
+  hand-typed a third time — which is how the third walker of
+  this bucket came to be missing it.
+................................ [ 86%]
+........................................................................ [ 94%]
+.................................F.............                          [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_measure_run.py:625: planning cohort stubs not present in this checkout: /Users/rayjanoka/ab/code/guild/.planning/phases/09-milestone-real-run-consolidation/runs
+FAILED tests/test_inspect_mode.py::test_every_verifier_surface_forces_full[foundry_mcp/tools/foundry_orchestrator.py]
+FAILED tests/test_inspect_mode.py::test_every_verifier_surface_forces_full[foundry_mcp/server.py]
+FAILED tests/test_inspect_mode.py::test_every_verifier_surface_forces_full[commands/start.md]
+FAILED tests/test_orchestrator_gates.py::test_every_private_function_the_plugin_ships_is_reachable
+FAILED tests/test_measure_run.py::test_the_stream_record_rule_has_one_definition
+FAILED tests/test_measure_run.py::test_defects_by_tier_counts_live_latent_and_unknown
+FAILED tests/test_measure_run.py::test_thunder_viper_prints_the_baseline_beside_the_current_run
+FAILED tests/test_measure_run.py::test_all_four_nfr_001_columns_are_beside_the_baseline_not_only_cycles
+FAILED tests/test_measure_run.py::test_a_thunder_viper_shaped_archive_prints_the_baseline_and_the_target
+FAILED tests/test_lead_prose.py::test_the_report_step_names_every_required_section
+10 failed, 900 passed, 1 skipped in 42.29s
