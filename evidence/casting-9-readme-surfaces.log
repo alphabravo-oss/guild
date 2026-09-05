@@ -1,0 +1,12 @@
+# evidence-cmd: git grep -c -e '--output-dir' -e 'OUTPUT_DIR' -e 'FOUNDRY_OUTPUT' -- README.md plugins/foundry/README.md; echo "output-dir-spellings-exit=$?"; git grep -c 'Mark verification stream complete' -- plugins/foundry/README.md; echo "lead-records-a-stream-exit=$?"; git grep -o -e 'badge/foundry-4\.11\.0-' -e 'badge/foundry--mcp-1\.10\.0-' -- README.md plugins/foundry/README.md | sort; git grep -c '^### foundry 4\.11\.0' -- README.md plugins/foundry/README.md
+# evidence-for: AC-057, US-012
+# evidence-timeout: 120
+
+output-dir-spellings-exit=1
+lead-records-a-stream-exit=1
+plugins/foundry/README.md:badge/foundry--mcp-1.10.0-
+plugins/foundry/README.md:badge/foundry-4.11.0-
+README.md:badge/foundry--mcp-1.10.0-
+README.md:badge/foundry-4.11.0-
+README.md:1
+plugins/foundry/README.md:1

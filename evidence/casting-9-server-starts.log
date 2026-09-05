@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet foundry-mcp --version
+# evidence-for: AC-050, FR-029, US-012
+# evidence-timeout: 300
+
+foundry-mcp 1.10.0

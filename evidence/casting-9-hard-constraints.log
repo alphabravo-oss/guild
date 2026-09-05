@@ -1,0 +1,14 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet python -c 'import json,tomllib,pathlib; r=pathlib.Path("../../..").resolve(); pp=tomllib.loads(pathlib.Path("pyproject.toml").read_text()); lock=tomllib.loads(pathlib.Path("uv.lock").read_text()); fm=[p for p in lock["package"] if p["name"]=="foundry-mcp"][0]; pj=json.loads((r/"plugins/foundry/.claude-plugin/plugin.json").read_text()); print("requires-python    ", pp["project"]["requires-python"]); print("dependencies       ", pp["project"]["dependencies"]); print("build-backend      ", pp["build-system"]["build-backend"]); print("script entry       ", pp["project"]["scripts"]["foundry-mcp"]); print("lock requires-dist ", sorted((e["name"], e.get("specifier")) for e in fm["metadata"]["requires-dist"])); print("locked mcp         ", [p["version"] for p in lock["package"] if p["name"]=="mcp"][0]); print("locked packages    ", len(lock["package"])); print("mcpServers command ", pj["mcpServers"]["foundry"]["command"], pj["mcpServers"]["foundry"]["args"]); print("FOUNDRY_MODEL env  ", pj["mcpServers"]["foundry"]["env"]["FOUNDRY_MODEL"]); print("userConfig model   ", pj["userConfig"]["model"]["type"])'
+# evidence-for: FR-037
+# evidence-timeout: 300
+
+requires-python     >=3.12
+dependencies        ['mcp>=1.0.0,<2.0.0', 'jsonschema>=4.20.0']
+build-backend       hatchling.build
+script entry        foundry_mcp.server:main
+lock requires-dist  [('jsonschema', '>=4.20.0'), ('mcp', '>=1.0.0,<2.0.0')]
+locked mcp          1.29.0
+locked packages     32
+mcpServers command  uv ['run', '--project', '${CLAUDE_PLUGIN_ROOT}/mcp-server', 'foundry-mcp', '--project-root', '${CLAUDE_PROJECT_DIR}']
+FOUNDRY_MODEL env   ${user_config.model}
+userConfig model    string

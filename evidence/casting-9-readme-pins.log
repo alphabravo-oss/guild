@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_lead_prose.py -k readme 2>&1 | tail -1 | sed 's/ in [0-9.]*s$//'
+# evidence-for: AC-050, AC-057, OT-042, US-012
+# evidence-timeout: 300
+
+12 passed, 189 deselected

@@ -1,0 +1,9 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet python -c 'import json,tomllib,pathlib; r=pathlib.Path("../../..").resolve(); import foundry_mcp; print("plugin.json        ", json.loads((r/"plugins/foundry/.claude-plugin/plugin.json").read_text())["version"]); print("marketplace.json   ", [e for e in json.loads((r/".claude-plugin/marketplace.json").read_text())["plugins"] if e["name"]=="foundry"][0]["version"]); print("pyproject.toml     ", tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]); print("uv.lock            ", [p for p in tomllib.loads(pathlib.Path("uv.lock").read_text())["package"] if p["name"]=="foundry-mcp"][0]["version"]); print("__init__.py        ", foundry_mcp.__version__)'
+# evidence-for: AC-050, FR-029, OT-042, US-012
+# evidence-timeout: 300
+
+plugin.json         4.11.0
+marketplace.json    4.11.0
+pyproject.toml      1.10.0
+uv.lock             1.10.0
+__init__.py         1.10.0
