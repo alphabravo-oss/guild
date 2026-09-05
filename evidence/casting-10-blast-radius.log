@@ -3,6 +3,8 @@
 # evidence-volatile: (?:^|\s)platform \S+ -- Python \S+.*
 # evidence-volatile: (?:^|\s)rootdir:.*
 # evidence-volatile: (?:^|\s)plugins:.*
+# evidence-volatile: /\S*/\.planning/\S*
+# evidence-volatile: /\S*/foundry-archive/\S*
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: \d+\.\d+ seconds
 # evidence-timeout: 600
