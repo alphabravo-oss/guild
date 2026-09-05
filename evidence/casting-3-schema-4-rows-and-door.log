@@ -1,0 +1,45 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header -s tests/test_migrate_archive.py -k 'demo_ot_032 or demo_the_f0_9' 2>&1 | tail -55
+# evidence-for: AC-034, AC-049, OT-032, GI-006, FR-054
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+
+=== daring-orca cycle 29, stream trace (AC-034 / OT-032) ===
+  before: items_checked=1084 items_total=542 findings=8 records=2
+  the additive writer added each record's numbers INTO the totals,
+  so a stream that recorded twice reads as checking twice the items
+  that exist: 1084/542 is 200%.
+
+  step 8 outcome: upgraded
+  after:  items_checked=542 items_total=542 findings=4 records=2
+  the totals are the LAST record's values and every earlier record
+  is still under records[] — GI-006 names dropping history as the
+  violation, and the superseded record is the evidence that
+  explains the number that was wrong.
+    records[0]: 542/542 findings=4
+    records[1]: 542/542 findings=4
+
+  second run: migrated=False step 8 outcome=no-op
+  idempotent (CT-018 'none new; idempotent', NFR-010).
+.
+=== F0.9 ownership + span, before migration (AC-049) ===
+  archive_schema_version=0 (floor is 4)
+  castings reported missing requirement_ids: 0
+  requirement spans refused for want of a reason: 0
+  below the floor the door reports `not computable` and checks
+  neither dimension — which is what 'fail closed only for new runs'
+  means, and what the schema bump would otherwise take away.
+
+=== after migration ===
+  archive_schema_version=4
+  casting 1: requirement_ids=['AC-001', 'FR-001'] split_reason keys=['FR-001']
+  casting 2: requirement_ids=['FR-001'] split_reason keys=['FR-001']
+  casting 3: requirement_ids=['AC-002', 'FR-001'] split_reason keys=['FR-001']
+  castings reported missing requirement_ids: 0
+  requirement spans refused for want of a reason: 0
+  step 10 transcribed ownership from each casting's own
+  <spec_requirements> block through the SAME derivation the door
+  uses, and recorded a reason on every shared id — so the marker
+  moved and the door still passes.
+.
+2 passed, 54 deselected in 0.26s
