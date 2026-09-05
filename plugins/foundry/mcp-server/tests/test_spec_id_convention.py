@@ -231,12 +231,29 @@ def prose_blocks(source: str, *, require_sentinel: bool = False) -> list[tuple[i
 
 
 def module_roster() -> list[Path]:
-    """Every Python module in this directory, test or not.
+    """Every Python module in this directory TREE, test or not.
 
     ``conftest.py`` and ``__init__.py`` are in scope and are clean today; a
     citation written into a fixture helper is a citation like any other.
+
+    fallout FR-005: `rglob`, not `glob`. The carve put fifteen modules under
+    `tests/orchestration/`, and a roster derived one directory deep would have
+    stopped judging every one of them on the day they were written — the silent
+    half of a derived pin, which this file exists to prevent one axis over.
     """
-    return sorted(TESTS_DIR.glob("*.py"))
+    return sorted(
+        p for p in TESTS_DIR.rglob("*.py") if "__pycache__" not in p.parts
+    )
+
+
+def module_key(path: Path) -> str:
+    """A module's name in this roster: its path RELATIVE to `tests/`.
+
+    fallout FR-005: `tests/test_spend.py` and `tests/orchestration/test_spend.py`
+    are two modules with one basename, and a roster keyed on the basename would
+    let one module's waiver silently cover the other module's prose.
+    """
+    return path.relative_to(TESTS_DIR).as_posix()
 
 
 # --------------------------------------------------------------------------- #
@@ -314,7 +331,38 @@ def module_roster() -> list[Path]:
 #: not listed here for the same reason: naming them in prose would demand a
 #: qualification of THIS file that no true one exists for.) Every other entry
 #: is another casting's module and is ordinary unconverted debt.
-UNQUALIFIED_MODULES = frozenset(
+#:
+#: fallout FR-005: three of the carved modules came out CLEAN and are not
+#: waived — `orchestration/test_evidence_boundary.py`, `orchestration/test_halt.py`
+#: and `orchestration/test_tasks_codispatch.py` carry only prose this casting
+#: wrote, qualified `fallout <ID>`, and the pin holds them directly. The other
+#: thirteen carry inherited prose and inherit the waiver with it.
+#: fallout FR-005 — THE CARVE'S FIFTEEN, INHERITED FROM ONE WAIVER.
+#:
+#: `test_orchestrator_gates.py` carried this waiver and was carved into
+#: `tests/orchestration/`. Its prose travelled VERBATIM, so the debt travelled
+#: with it: fifteen modules now hold what one module held, and requalifying it
+#: is a pass over 17,000 lines of inherited comment that no casting of this run
+#: was scoped to make. The waiver is inherited rather than granted — every
+#: citation THIS casting writes into those modules is qualified `fallout <ID>`,
+#: and the entry above says the same thing the deleted one did.
+_CARVED_FROM_THE_ORCHESTRATOR_TEST = frozenset({
+    "orchestration/_env.py",
+    "orchestration/test_directives.py",
+    "orchestration/test_escalation.py",
+    "orchestration/test_fix_gate.py",
+    "orchestration/test_gates.py",
+    "orchestration/test_guidance.py",
+    "orchestration/test_module_boundaries.py",
+    "orchestration/test_report_seal.py",
+    "orchestration/test_spend.py",
+    "orchestration/test_streams.py",
+    "orchestration/test_teams.py",
+    "orchestration/test_transitions.py",
+    "orchestration/test_width.py",
+})
+
+UNQUALIFIED_MODULES = _CARVED_FROM_THE_ORCHESTRATOR_TEST | frozenset(
     {
         "test_agent_frontmatter_parse.py",
         "test_foundry_init.py",
@@ -332,7 +380,6 @@ UNQUALIFIED_MODULES = frozenset(
         "test_migrate_archive.py",
         "test_model_config.py",
         "test_nyquist_flag.py",
-        "test_orchestrator_gates.py",
         "test_protocol_prose.py",
         "test_release_version.py",
         "test_report.py",
@@ -356,7 +403,7 @@ def _offences(path: Path) -> list[str]:
     ]
 
 
-@pytest.mark.parametrize("module", [p.name for p in module_roster()])
+@pytest.mark.parametrize("module", [module_key(p) for p in module_roster()])
 def test_every_requirement_id_in_this_module_names_its_spec(module: str) -> None:
     """The convention, applied to the whole directory rather than one file.
 
@@ -392,7 +439,7 @@ def test_no_allow_list_entry_outlives_the_debt_it_records() -> None:
     -- fails here and must be deleted. That is also the handshake by which a
     module leaves the list: qualify it, and this test tells you to remove it.
     """
-    present = {p.name for p in module_roster()}
+    present = {module_key(p) for p in module_roster()}
 
     missing = sorted(UNQUALIFIED_MODULES - present)
     assert not missing, (
@@ -425,7 +472,7 @@ def test_the_roster_is_derived_from_the_directory_not_typed() -> None:
     roster is read off the directory so that nobody has to remember to add the
     next one, and so a module cannot leave the check by being forgotten.
     """
-    roster = {p.name for p in module_roster()}
+    roster = {module_key(p) for p in module_roster()}
 
     # This module, the three the defect chain ran through, and the two
     # non-test modules that are in scope and clean.
@@ -439,7 +486,15 @@ def test_the_roster_is_derived_from_the_directory_not_typed() -> None:
     ):
         assert expected in roster, expected
 
-    assert roster == {p.name for p in TESTS_DIR.glob("*.py")}
+    # fallout FR-005: the WHOLE TREE, so the carved `tests/orchestration/`
+    # modules are in scope the moment they exist. A roster one directory deep
+    # would have stopped judging fifteen modules on the day they were written,
+    # which is the silent failure this file exists to prevent one axis over.
+    assert roster == {
+        module_key(p) for p in TESTS_DIR.rglob("*.py")
+        if "__pycache__" not in p.parts
+    }
+    assert "orchestration/test_module_boundaries.py" in roster, sorted(roster)
 
 
 def test_the_pin_reports_the_three_tags_it_was_written_for() -> None:

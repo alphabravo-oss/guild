@@ -181,7 +181,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from foundry_mcp.schemas import vocab
-from foundry_mcp.tools.foundry_orchestrator import agent_model, git_changed_paths
+# fallout FR-004 / GI-010: each symbol from the module that defines it.
+from foundry_mcp.tools.orchestration.teams import agent_model
+from foundry_mcp.tools.orchestration.width import git_changed_paths
 from foundry_mcp.tools.foundry_state import (
     document_refusal,
     get_run_dir,
@@ -255,7 +257,7 @@ LEDGER_SEED_AUTHOR = "server"
 # (56 min), so a dead agent is caught roughly four times over within a normal
 # batch instead of at the end of one.
 #
-# NOT copied: the lead stall watchdog's 180s (`foundry_orchestrator.py`
+# NOT copied: the lead stall watchdog's 180s (`orchestration/guidance.py`
 # `.last-next-at`). That number is tuned to a LEAD's tool-call cadence, where
 # three quiet minutes is genuinely anomalous. A teammate that reads ten files
 # before writing a line would trip it constantly. The marker-plus-threshold
@@ -1218,7 +1220,7 @@ def _unreadable_artifacts_refusal(problems: list[str]) -> dict:
     spawn doors return; this is the same sentence for the many-file case, which
     liveness needs because it reads a whole directory of ledgers and a lead told
     about only the first corrupt one goes round the loop once per bad file.
-    ``foundry_orchestrator._artifact_guard`` is the same shape one module over
+    ``artifacts._artifact_guard`` is the same shape one module over
     and is deliberately mirrored down to ``corrupt_artifacts``; it omits ``ok``
     because its callers return bare dicts, and this module's contract is the
     ``ok: False`` variant (house rule 1), which is the only difference.

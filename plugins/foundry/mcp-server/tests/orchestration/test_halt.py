@@ -1,0 +1,186 @@
+"""HALTED: the token, the reason vocabulary and the cap that reaches it.
+
+Carved from `tests/test_orchestrator_gates.py` (fallout FR-005 / GI-026 /
+AC-014 / OT-016): one test module per shipped orchestration module, landed in
+the same casting as the source move so no pin is ever left pointing at a module
+that no longer exists.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+
+from foundry_mcp.schemas.vocab import RUN_PHASE_HALTED
+from foundry_mcp.tools import artifacts, foundry_state
+
+# fallout FR-004 / AC-013 — THE MODULE OBJECTS, UNDER UNDERSCORE ALIASES.
+#
+# `streams`, `spend`, `width`, `gates`, `directives` and `teams` are all LOCAL
+# variable names somewhere in this suite, and a local rebinding shadows a
+# module for the rest of its function. The aliases are what `ORCHESTRATION`,
+# `owning_module` and every `monkeypatch.setattr` resolve through; individual
+# SYMBOLS are imported by name below, which is how the carved modules read.
+from foundry_mcp.tools.orchestration import directives as _directives
+from foundry_mcp.tools.orchestration import escalation as _escalation
+from foundry_mcp.tools.orchestration import evidence_boundary as _evidence_boundary
+from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
+from foundry_mcp.tools.orchestration import gates as _gates
+from foundry_mcp.tools.orchestration import guidance as _guidance
+from foundry_mcp.tools.orchestration import halt as _halt
+from foundry_mcp.tools.orchestration import report_seal as _report_seal
+from foundry_mcp.tools.orchestration import spend as _spend
+from foundry_mcp.tools.orchestration import streams as _streams
+from foundry_mcp.tools.orchestration import teams as _teams
+from foundry_mcp.tools.orchestration import transitions as _transitions
+from foundry_mcp.tools.orchestration import width as _width
+
+# fallout AC-014 — THE TWO SIBLING SUITES THE CARVE MUST KEEP REACHING.
+#
+# `test_observations` owns the never-demote corpus and `test_spawn_progress`
+# owns the shipped-source-tree derivation. Both are imported rather than copied,
+# for the reason the monolith imported them: a parity test that owned its own
+# copy of the corpus would keep passing while the two corpora drifted, and two
+# scans over "the shipped source" must not be able to disagree about what that
+# is. If either renames a symbol the ImportError says so by name, which is the
+# loud failure rather than the silent one.
+
+#: fallout FR-004 / AC-014 — WHAT `fo` USED TO MEAN, NOW THAT IT MEANS THIRTEEN
+#: THINGS.
+#:
+#: Every pin that read `Path(fo.__file__).read_text()` was asking about THE
+#: ORCHESTRATOR. That is thirteen files now, so the honest translation of the
+#: question is all thirteen — and it stays the honest translation when a
+#: fourteenth is added, which a hand-listed pair of modules would not.
+ORCHESTRATION = (
+    _report_seal, _escalation, _streams, _teams, _width, _evidence_boundary,
+    _spend, _halt, _gates, _transitions, _fix_gate, _directives, _guidance,
+)
+
+
+def orchestration_source() -> str:
+    """The concatenated source of every shipped orchestration module."""
+    return chr(10).join(
+        Path(m.__file__).read_text(encoding="utf-8") for m in ORCHESTRATION
+    )
+
+
+def owning_module(symbol: str):
+    """The orchestration module that DEFINES `symbol`.
+
+    A patch has to reach the module each CALLER resolves the name through, and
+    after the carve that is a binding per importer rather than one module
+    attribute. Patching only the module that defines a symbol leaves every
+    importer on the real one, which is the silent half of a broken pin.
+    """
+    for module in ORCHESTRATION:
+        value = vars(module).get(symbol)
+        if value is None:
+            continue
+        if getattr(value, "__module__", module.__name__) == module.__name__:
+            return module
+    for module in ORCHESTRATION:
+        if symbol in vars(module):
+            return module
+    raise AssertionError(f"no orchestration module defines {symbol!r}")
+
+
+def patch_everywhere(monkeypatch, name: str, value) -> None:
+    """Patch `name` in EVERY module that carries it.
+
+    fallout FR-004 / AC-014 — WHAT A MODULE-ATTRIBUTE PATCH USED TO MEAN.
+
+    There was one module, so patching it patched the only binding. After the
+    carve a symbol is imported BY NAME into each caller's namespace, so patching
+    the module that DEFINES it leaves every importer resolving the real one —
+    and a patch that reaches some callers and not others is worse than no patch,
+    because the drive then exercises a state no run can be in. This patches
+    every binding, which is the same fact the single module used to make true by
+    construction.
+    """
+    for module in (*ORCHESTRATION, artifacts, foundry_state):
+        if name in vars(module):
+            monkeypatch.setattr(module, name, value)
+
+
+def orchestration_has(symbol: str) -> bool:
+    """True when any orchestration module carries `symbol`."""
+    return any(symbol in vars(m) for m in ORCHESTRATION)
+
+from tests.orchestration._env import (  # noqa: F401
+    _defect_ledger,
+    _write_state,
+    run_env,
+)
+
+from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
+    foundry_next_action,
+)
+
+from foundry_mcp.tools.orchestration.halt import (  # noqa: F401
+    _halted_refusal,
+    _halted_state,
+    _persisted_max_cycles,
+)
+
+from tests.orchestration._env import (  # noqa: F401
+    _init_schema,
+)
+
+
+
+
+def test_every_reader_of_the_cap_reports_the_number_the_halt_acted_on(run_env):
+    """THE ADJACENT PATH: the DISPLAY readers of the same field.
+
+    `_persisted_max_cycles` is the one read, for `_current_inspect_mode`'s
+    reason — a value each door normalises for itself is a value each door can
+    normalise differently. `_halted_state` feeds every HALTED refusal and
+    `foundry_next_action`'s halt block feeds the operator's screen; both used to
+    print the raw field. A refusal naming `max_cycles 2.0` beside a decision
+    made on `2` is a message about a number no code acted on.
+    """
+    project_root, fdir = run_env
+    _write_state(
+        fdir, phase=RUN_PHASE_HALTED, cycle=2, max_cycles=2.0,
+        halted_at_cycle=2, halted_reason="--max-cycles 2 reached",
+    )
+    _defect_ledger(fdir, [])
+
+    # `2.0 == 2` is True in Python, so equality alone cannot tell the raw field
+    # from the normalised one. The TYPE is what a reader sees: an operator
+    # reading "max_cycles 2.0" is reading a value no code acted on.
+    for surface, value in (
+        ("_halted_state", _halted_state(fdir)["max_cycles"]),
+        ("_halted_refusal", _halted_refusal(
+            fdir, "Foundry-Phase('grind_start')")["max_cycles"]),
+        ("Foundry-Next", foundry_next_action(project_root)["details"]["max_cycles"]),
+    ):
+        assert value == 2, (surface, value)
+        assert isinstance(value, int), (surface, repr(value))
+
+
+
+
+def test_a_cap_that_is_not_a_whole_number_is_no_cap_and_says_so_at_the_door(run_env):
+    """The set the door ACCEPTS and the set the read HONOURS are now the same set.
+
+    `2.5`, `'2'` and `True` are refused at the door — Draft 2020-12 rejects a
+    fractional float, a string and a bool for `type: integer` — and each reads
+    as no cap here, which is the only answer a function consulted from inside a
+    transition can give. What matters is that no value is accepted by one and
+    discarded by the other, which is the whole of D-225's class.
+    """
+    from foundry_mcp import server as srv
+
+    schema = _init_schema()
+    for rejected in (2.5, "2", True, -1):
+        assert srv._argument_refusal(
+            "Foundry-Init", schema, {"max_cycles": rejected}
+        ) is not None, rejected
+        assert _persisted_max_cycles({"max_cycles": rejected}) == 0, rejected
+    for accepted in (0, 2, 2.0, 99):
+        assert srv._argument_refusal(
+            "Foundry-Init", schema, {"max_cycles": accepted}
+        ) is None, accepted
+    assert _persisted_max_cycles({"max_cycles": 2.0}) == 2
+    assert _persisted_max_cycles({}) == 0

@@ -17,7 +17,7 @@ from foundry_mcp import __version__
 # emit. Where each one comes from:
 #
 #   stream / source / defect_type   schemas/vocab.py — the wire vocabulary
-#   verdict                         foundry_orchestrator.VERDICT_VALUES, which
+#   verdict                         orchestration.gates.VERDICT_VALUES, which
 #                                   derives from vocab's DEFECT_TYPES
 #   phase                           the ONE remaining literal, spelled out
 #                                   below with its own note on why, and pinned
@@ -47,23 +47,36 @@ from foundry_mcp.tools.foundry import (
     foundry_query_observations,
     foundry_verify_coverage,
 )
-from foundry_mcp.tools.foundry_orchestrator import (
-    GATE_TO_TRANSITION,
-    VERDICT_VALUES,
+# fallout FR-004 / GI-010 / AC-013 — EVERY IMPORT NAMES THE MODULE THAT
+# DEFINES THE SYMBOL. There is no `foundry_orchestrator` any more and no
+# re-export shim standing where it was: a facade would leave this file
+# spelling its imports exactly as it did, which is the coupling the split
+# exists to move rather than to rename.
+from foundry_mcp.tools.orchestration.directives import (
     foundry_clear_directives,
     foundry_defects_to_tasks,
-    foundry_gate,
-    foundry_get_context,
     foundry_inject_directive,
+)
+from foundry_mcp.tools.orchestration.fix_gate import (
     foundry_mark_defect_fixed,
-    foundry_mark_phase_complete,
-    foundry_mark_stream,
-    foundry_next_action,
-    foundry_record_spend,
-    foundry_register_team,
     foundry_sync_defects,
+)
+from foundry_mcp.tools.orchestration.gates import (
+    GATE_TO_TRANSITION,
+    VERDICT_VALUES,
+    foundry_gate,
+)
+from foundry_mcp.tools.orchestration.guidance import (
+    foundry_get_context,
+    foundry_next_action,
+)
+from foundry_mcp.tools.orchestration.spend import foundry_record_spend
+from foundry_mcp.tools.orchestration.streams import foundry_mark_stream
+from foundry_mcp.tools.orchestration.teams import (
+    foundry_register_team,
     foundry_unregister_team,
 )
+from foundry_mcp.tools.orchestration.transitions import foundry_mark_phase_complete
 from foundry_mcp.tools.display import format_result_blocks
 from foundry_mcp.tools.forge_spec import (
     forge_spec_check,
@@ -270,7 +283,7 @@ async def list_tools() -> list[Tool]:
                     # enum before dispatch, so that omission made the counter
                     # unable to leave 0 over MCP however the handler behaved.
                     # Spelled out rather than imported from
-                    # foundry_orchestrator.PHASE_TOKENS because tests assert
+                    # orchestration.transitions.PHASE_TOKENS because tests assert
                     # these tokens are READABLE in this file's own source; the
                     # drift guard is what keeps the two copies honest. See the
                     # concerns entry recommending both be collapsed once that
@@ -1789,7 +1802,7 @@ def _audit_security_claim_on_refusal(name: str, arguments: dict) -> None:
             tripwire_finding,
             validate_defect_filing,
         )
-        from foundry_mcp.tools.foundry_orchestrator import _current_cycle
+        from foundry_mcp.tools.foundry_state import current_cycle as _current_cycle
         from foundry_mcp.tools.foundry_state import get_run_dir
 
         fdir = get_run_dir(_project_root)
@@ -1835,7 +1848,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     # to have no try/except at all — so one unguarded read of a corrupt
     # state.json raised out of Foundry-Next, the mandatory pre-transition
     # handshake, and the operator could not even read state to diagnose it. The
-    # tolerant loader in foundry_orchestrator means no KNOWN input reaches this
+    # tolerant loader in tools/artifacts.py means no KNOWN input reaches this
     # branch; it exists for the unknown one, so a bug degrades to an error
     # message naming the tool instead of bricking the run.
     try:
