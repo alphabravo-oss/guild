@@ -1807,33 +1807,125 @@ def test_the_leafs_tier_buckets_are_the_gates_buckets(run_env) -> None:
     ) == _open_defects_by_tier(run_env)
 
 
-def test_the_leafs_halt_record_is_the_halt_modules_record(run_env) -> None:
-    """fallout GI-033 — `halt._halted_state`'s answer, from the leaf.
+def test_the_halt_modules_read_is_the_leafs_and_supplies_the_vocabulary(
+    run_env,
+) -> None:
+    """fallout GI-033 — the DELEGATION is the subject now, not an equality.
 
-    `_VERIFIER_TO_LIFECYCLE_SEAM` names only ('transitions', 'halt') as the one
-    permitted one-way crossing, so a GATE reaching halt.py is a second crossing
-    the exception does not cover. The refusal SHAPER stays in halt.py — it
-    names the tokens that do not leave HALTED, the report file and the remedy,
-    which is protocol knowledge — and only the read comes down.
+    THIS PIN WENT TAUTOLOGICAL AND IS REBUILT RATHER THAN DELETED (concern
+    C-021). It asserted `fs.halted_state(...) == halt._halted_state(run_env)`,
+    which held two real implementations against each other until casting 2's
+    da97739 made `_halted_state` precisely that call with those three
+    arguments. Both sides then evaluated the same expression, so the assertion
+    was true for every state in the loop whatever either implementation did —
+    including the malformed and wrong-cycle shapes the loop existed to cover.
+    Green, and pinning nothing.
+
+    What is still worth protecting is one level out. The leaf cannot know what
+    a HALTED phase, a reason vocabulary or a cap is — its contract is `json`
+    and `pathlib` — so the DELEGATION supplies all three, and a delegation that
+    passed a different reason vocabulary would answer differently with nothing
+    to say so. So the subject is the call itself: it reaches `halted_state`,
+    and it binds the three closed-set values by the names that mean them.
+
+    Structural rather than a substring match on the source, because a comment
+    naming `halt_reason` would satisfy a grep and prove nothing.
+    """
+    import ast
+    import inspect
+
+    from foundry_mcp.tools.orchestration import halt
+
+    tree = ast.parse(inspect.getsource(halt._halted_state).strip())
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "halted_state"
+    ]
+    assert len(calls) == 1, (
+        "halt._halted_state no longer delegates to `foundry_state.halted_state`. "
+        "If it grew its own implementation back, that is a SECOND read of the "
+        "terminal state and the thing GI-033 moved down; if it delegates by "
+        "another spelling, point this pin at that spelling."
+    )
+    bound = {kw.arg: kw.value for kw in calls[0].keywords}
+    assert set(bound) == {"halted_phase", "reason_of", "max_cycles_of"}, sorted(bound)
+    assert isinstance(bound["halted_phase"], ast.Name)
+    assert bound["halted_phase"].id == "RUN_PHASE_HALTED"
+    assert bound["reason_of"].id == "halt_reason"
+    assert bound["max_cycles_of"].id == "_persisted_max_cycles"
+
+
+def test_halted_state_answers_a_hand_built_expected_record(run_env) -> None:
+    """The value half, against an expectation this file OWNS.
+
+    The retired equality could never assert a VALUE: both of its sides came
+    from the same code, so it could only ever say "these two agree", which
+    became "this agrees with itself". Six states, each with the record spelled
+    out here, is what an independent expectation looks like — a change in the
+    leaf's coercion now fails against a number written down rather than
+    against a second copy of itself.
+
+    The vocabulary is the delegation's own, imported here so the drive is the
+    live one: fallout FR-019's four members and the cap normaliser.
     """
     from foundry_mcp.schemas.vocab import RUN_PHASE_HALTED, halt_reason
-    from foundry_mcp.tools.orchestration.halt import (
-        _halted_state,
-        _persisted_max_cycles,
-    )
+    from foundry_mcp.tools.orchestration.halt import _persisted_max_cycles
 
-    for state in (
-        {"phase": "HALTED", "halted_at_cycle": 4, "max_cycles": 4,
-         "halted_reason": {"reason": "cap_reached", "text": "cycle 5 exceeds it"}},
-        {"phase": "HALTED", "halted_at_cycle": 2,
-         "halted_reason": "--max-cycles 2 reached"},
-        {"phase": "HALTED", "halted_reason": {"reason": "BOGUS", "text": "x"}},
-        {"phase": "HALTED"},
-        {"phase": "F3"},
-        {},
-    ):
+    def read(state: dict):
         _write_json(run_env, "state.json", state)
-        assert fs.halted_state(
+        return fs.halted_state(
             run_env, halted_phase=RUN_PHASE_HALTED, reason_of=halt_reason,
             max_cycles_of=_persisted_max_cycles,
-        ) == _halted_state(run_env), state
+        )
+
+    assert read({
+        "phase": "HALTED", "halted_at_cycle": 4, "max_cycles": 4,
+        "halted_reason": {"reason": "cap_reached", "text": "cycle 5 exceeds it"},
+    }) == {
+        "halted_at_cycle": 4,
+        "halted_reason": "cap_reached: cycle 5 exceeds it",
+        "halted_reason_member": "cap_reached",
+        "max_cycles": 4,
+        "halted_report_error": "",
+    }
+
+    # The spelling that predates fallout FR-019: a bare sentence, and NO
+    # member guessed out of it. "" is the real answer: text, no member.
+    assert read({
+        "phase": "HALTED", "halted_at_cycle": 2,
+        "halted_reason": "--max-cycles 2 reached",
+    }) == {
+        "halted_at_cycle": 2,
+        "halted_reason": "--max-cycles 2 reached",
+        "halted_reason_member": "",
+        "max_cycles": 0,
+        "halted_report_error": "",
+    }
+
+    # A structured record whose member is outside the vocabulary keeps its
+    # TEXT and loses the member, for the same reason: the sentence is what an
+    # operator reads, and no grouper should key on a value nothing declared.
+    assert read({
+        "phase": "HALTED", "halted_reason": {"reason": "BOGUS", "text": "x"},
+    }) == {
+        "halted_at_cycle": None,
+        "halted_reason": "x",
+        "halted_reason_member": "",
+        "max_cycles": 0,
+        "halted_report_error": "",
+    }
+
+    # HALTED with nothing recorded still reads as halted, with the default
+    # sentence — never as "not halted", which is the direction that fails open.
+    assert read({"phase": "HALTED"}) == {
+        "halted_at_cycle": None,
+        "halted_reason": "the configured cycle cap was reached",
+        "halted_reason_member": "",
+        "max_cycles": 0,
+        "halted_report_error": "",
+    }
+
+    assert read({"phase": "F3"}) is None
+    assert read({}) is None
