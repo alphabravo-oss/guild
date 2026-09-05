@@ -38,14 +38,30 @@ from pathlib import Path
 
 import pytest
 
-from foundry_mcp.tools import foundry_orchestrator as fo
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools.foundry import foundry_init
-from foundry_mcp.tools.foundry_orchestrator import (
-    _compute_next_action,
-    foundry_gate,
-    foundry_mark_phase_complete,
-)
+
+# fallout FR-005 / GI-010 / GI-026 / AC-014 — THE ORCHESTRATOR IS THIRTEEN
+# MODULES, AND THIS MODULE NAMES THE THREE IT REACHES.
+#
+# The single orchestrator module reached every concern through one `fo` alias.
+# There is no such module now and there is no re-export shim standing in for it
+# — GI-010 forbids the facade outright — so
+# each reach below names the module that DEFINES the symbol, and a failure here
+# points at the module a fix belongs in. Aliased under a leading underscore for
+# the reason `tests/orchestration/_env.py` gives: `gates`, `guidance` and
+# `transitions` are all plausible local names, and a local rebinding would
+# shadow the module for the rest of its function.
+from foundry_mcp.tools.orchestration import guidance as _guidance
+from foundry_mcp.tools.orchestration.guidance import _compute_next_action
+from foundry_mcp.tools.orchestration.gates import foundry_gate
+from foundry_mcp.tools.orchestration.transitions import foundry_mark_phase_complete
+
+# The team scan is bound by name in five orchestration modules, so patching the
+# one that DEFINES it leaves the other four resolving the real one — a patch
+# that reaches some callers and not others drives a state no run can be in.
+# `patch_everywhere` is the harness casting 2 landed for exactly that.
+from tests.orchestration._env import patch_everywhere
 
 
 # tests/test_nyquist_flag.py -> parents: [0]=tests, [1]=mcp-server, [2]=foundry.
@@ -72,8 +88,8 @@ def run_env(tmp_path, monkeypatch):
     fdir = project_root / "foundry-archive" / run_name
     (fdir / "castings").mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr(
-        fo,
+    patch_everywhere(
+        monkeypatch,
         "_check_active_teams",
         lambda _pr: {"active": False, "teams": [], "live_panes": []},
     )
@@ -126,7 +142,7 @@ def _generate_report(project_root: str, fdir: Path) -> dict:
 
 def _arm_ordering_token(fdir: Path) -> None:
     """Simulate a preceding Foundry-Next so a gate's ordering check passes."""
-    (fdir / ".next-action-called").write_text(f"{fo._now()}\n", encoding="utf-8")
+    (fdir / ".next-action-called").write_text(f"{foundry_state.now_iso()}\n", encoding="utf-8")
 
 
 def _read_state(fdir: Path) -> dict:
@@ -441,7 +457,7 @@ def test_f5_5_agent_config_carries_no_model_key(run_env) -> None:
 def test_nyquist_transition_maps_to_its_gate() -> None:
     """P4 guidance advance: a passing nyquist gate must advance past the
     transition step rather than asking for the same gate again."""
-    assert fo._expected_gate_for_action("transition_to_nyquist") == "nyquist"
+    assert _guidance._expected_gate_for_action("transition_to_nyquist") == "nyquist"
 
 
 # --------------------------------------------------------------------------- #
@@ -455,8 +471,8 @@ def test_init_to_f5_5_end_to_end(tmp_path, monkeypatch) -> None:
     Each link was individually broken before the fix; this drives them in the
     order a real run does, so a regression in any one of them fails here too.
     """
-    monkeypatch.setattr(
-        fo,
+    patch_everywhere(
+        monkeypatch,
         "_check_active_teams",
         lambda _pr: {"active": False, "teams": [], "live_panes": []},
     )

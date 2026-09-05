@@ -46,17 +46,48 @@ from foundry_mcp.schemas.vocab import (
     INSPECT_MODES,
     PROVE_DELTA_SAMPLE_SIZE,
 )
-from foundry_mcp.tools import foundry_orchestrator as fo
 from foundry_mcp.tools import foundry_state
-from foundry_mcp.tools.foundry_orchestrator import (
+
+# fallout FR-005 / AC-014 / GI-010 / GI-026 — THE WIDTH DECISION HAS A MODULE,
+# AND THE SIX CONCERNS THIS FILE DRIVES HAVE SIX.
+#
+# The `fo` alias reached all of them through one name. The single orchestrator
+# module it named is gone and GI-010 forbids a re-export shim standing in for
+# it, so each reach names the module that DEFINES the symbol:
+# the width decision and its scope predicates are `orchestration/width.py`; the
+# roll-up and the streams-complete check are `orchestration/streams.py`; the
+# transitions are `orchestration/transitions.py`; the gate ladder is
+# `orchestration/gates.py`; the guidance engine is `orchestration/guidance.py`;
+# the evidence sweep is `orchestration/evidence_boundary.py`; and the marker
+# names and the document transaction are the leaf `tools/artifacts.py`.
+#
+# `_current_cycle` is none of them. Casting 10 consolidated the two
+# byte-identical copies into `foundry_state.current_cycle` (GI-024, Holmes
+# `share-2`), so reaching a split module for that leaf fact would recreate the
+# second copy this run just removed.
+from foundry_mcp.tools import artifacts as _artifacts
+from foundry_mcp.tools.foundry_state import current_cycle as _current_cycle
+from foundry_mcp.tools.orchestration import evidence_boundary as _evidence_boundary
+from foundry_mcp.tools.orchestration import gates as _gates
+from foundry_mcp.tools.orchestration import guidance as _guidance
+from foundry_mcp.tools.orchestration import streams as _streams
+from foundry_mcp.tools.orchestration import transitions as _transitions
+from foundry_mcp.tools.orchestration import width as _width
+from foundry_mcp.tools.orchestration.guidance import foundry_next_action
+from foundry_mcp.tools.orchestration.streams import (
     _check_streams_complete,
-    _current_cycle,
+    foundry_mark_stream,
+)
+from foundry_mcp.tools.orchestration.transitions import foundry_mark_phase_complete
+from foundry_mcp.tools.orchestration.width import (
     _current_inspect_mode,
     _decide_inspect_mode,
-    foundry_mark_phase_complete,
-    foundry_mark_stream,
-    foundry_next_action,
 )
+
+# `_check_active_teams` is bound by name in five orchestration modules, so
+# patching the one that DEFINES it leaves the other four on the real one.
+# `ORCHESTRATION` is what `fo.__file__` used to mean: thirteen files, not one.
+from tests.orchestration._env import ORCHESTRATION, patch_everywhere
 
 
 def _plugin_root() -> Path:
@@ -117,8 +148,8 @@ def run_env(tmp_path, monkeypatch):
     # `test_orchestrator_gates.py`'s `_TEAM_SCAN` shape exactly, including the
     # reset on every entry so no test leaks its team state into the next.
     _TEAM_SCAN["active"] = False
-    monkeypatch.setattr(
-        fo,
+    patch_everywhere(
+        monkeypatch,
         "_check_active_teams",
         lambda _pr: {
             "active": _TEAM_SCAN["active"],
@@ -230,9 +261,40 @@ def _write_spec(fdir: Path, ids: list[str]) -> None:
     )
 
 
+def _entry_rung(result: dict, token: str) -> dict:
+    """The `entered_from_accepted_phase` rung for `token`, off a result.
+
+    Matched by PREFIX, not by equality: five tokens go through
+    `_source_phase_rung` and label the row `... (token=<token>)`, while
+    `inspect_start` writes its own and labels it `... (token=inspect_start,
+    phase=<phase>)` because it accepts two phases for two different reasons.
+    Both are the same rung and this reads either.
+    """
+    rows = [
+        row for row in result["checklist"]
+        if row["check"].startswith(f"entered_from_accepted_phase (token={token}")
+    ]
+    assert len(rows) == 1, (token, result["checklist"])
+    return rows[0]
+
+
+def _accepted_from(result: dict, token: str) -> list[str]:
+    """The `accepted_from` list off a refusal's entry rung.
+
+    fallout ST-012 / GI-011 / GI-029 — WHERE THIS FACT LIVES NOW.
+    `accepted_from` was a top-level key of the refusal payload. Casting 4 gave
+    every transition token one preconditions function answering as a checklist,
+    and the transition adds no refusal of its own, so the fact is published on
+    the rung that computed it: `entered_from_accepted_phase (token=<token>)`.
+    Read by NAME rather than by index, because the ladder's order is the gate's
+    business and no test here is about it.
+    """
+    return _entry_rung(result, token)["accepted_from"]
+
+
 def _arm(fdir: Path) -> None:
     """Foundry-Next's ordering token, which gate/phase calls consume."""
-    (fdir / ".next-action-called").write_text(f"{fo._now()}\n", encoding="utf-8")
+    (fdir / ".next-action-called").write_text(f"{foundry_state.now_iso()}\n", encoding="utf-8")
 
 
 def _grind_touching(project_root: str, fdir: Path, *paths: str) -> None:
@@ -249,7 +311,7 @@ def _grind_touching(project_root: str, fdir: Path, *paths: str) -> None:
     # in the diff as if the GRIND had produced it.
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "--allow-empty", "-m", "pre-boundary")
-    (fdir / fo.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+    (fdir / _artifacts.INSPECT_BOUNDARY_SHA_MARKER).write_text(
         _git(root, "rev-parse", "HEAD") + "\n", encoding="utf-8"
     )
     for rel in paths:
@@ -337,10 +399,18 @@ def test_start_cast_opens_no_inspect_and_records_nothing(run_env):
     """
     project_root, fdir = run_env
     _write_state(fdir, phase="F0", cycle=0)
+    # fallout GI-011 / CT-013 — `start_cast` HAS PRECONDITIONS OF ITS OWN NOW.
+    # One preconditions function per token: `_start_cast_preconditions` refuses
+    # without a manifest ("Run F0.5 DECOMPOSE first"), so a fixture that enters
+    # CAST from an empty run dir is driving a state no run reaches. The subject
+    # here is what `start_cast` RECORDS, and it has to get past the door to
+    # record anything.
+    _write_manifest(fdir)
     _arm(fdir)
 
     result = foundry_mark_phase_complete("start_cast", project_root)
 
+    assert result.get("ok") is True, result
     assert result["phase"] == "F1"
     assert "inspect_modes" not in _read_state(fdir)
     assert _current_inspect_mode(fdir) is None
@@ -399,18 +469,51 @@ def test_a_grind_touching_vocab_records_full_with_rule_verifier_touched(run_env)
     assert "vocab.py" in recorded["rule_detail"]
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        "schemas/vocab.py",
-        "foundry_mcp/schemas/findings.py",
-        "foundry_mcp/tools/foundry_orchestrator.py",
-        "foundry_mcp/server.py",
-        "agents/assayer.md",
-        "skills/prove/SKILL.md",
-        "commands/start.md",
-    ],
-)
+#: fallout AC-012 / AC-017 / FR-005 / OT-016 — THE NARROWED VERIFIER SET.
+#:
+#: This roster used to name the single orchestrator module,
+#: `foundry_mcp/server.py` and `commands/start.md`. Casting 10 narrowed
+#: `VERIFIER_PATH_PATTERNS` in wave 1 (A-005: "Gates/transitions + schemas +
+#: vocab + stream contracts"), and GI-009's violation column names the surfaces
+#: that must NOT match after the split — "a display, report-seal, spend, halt,
+#: directives or teams module (or `commands/*.md`, `teammate.md`,
+#: `references/`) still matching a verifier pattern". So the three are gone from
+#: here BY DESIGN, and `_NO_LONGER_VERIFIER_SURFACES` below asserts the same
+#: narrowing from the other side: a roster that only shrinks is a roster that
+#: cannot tell a deliberate removal from an accidental one.
+_VERIFIER_SURFACES = [
+    "schemas/vocab.py",
+    "foundry_mcp/schemas/findings.py",
+    # THE FOUR MODULES THAT DECIDE, which is what the monolith row became: the
+    # gate ladder, the phase transitions, the INSPECT width decision and the
+    # evidence-sweep boundary. The other nine orchestration modules are on the
+    # delta side and are named below.
+    "foundry_mcp/tools/orchestration/gates.py",
+    "foundry_mcp/tools/orchestration/transitions.py",
+    "foundry_mcp/tools/orchestration/width.py",
+    "foundry_mcp/tools/orchestration/evidence_boundary.py",
+    "foundry_mcp/tools/evidence.py",
+    "agents/assayer.md",
+    "skills/prove/SKILL.md",
+]
+
+#: The surfaces that used to force FULL and deliberately no longer do. Driven as
+#: the negative case, so the narrowing is asserted in BOTH directions here as
+#: well as in `vocab.py`'s own tests: a row silently dropped from the roster
+#: above would otherwise be indistinguishable from one the run meant to drop.
+_NO_LONGER_VERIFIER_SURFACES = [
+    "foundry_mcp/server.py",
+    "commands/start.md",
+    "agents/teammate.md",
+    "foundry_mcp/tools/orchestration/spend.py",
+    "foundry_mcp/tools/orchestration/teams.py",
+    "foundry_mcp/tools/orchestration/halt.py",
+    "foundry_mcp/tools/orchestration/report_seal.py",
+    "foundry_mcp/tools/orchestration/directives.py",
+]
+
+
+@pytest.mark.parametrize("path", _VERIFIER_SURFACES)
 def test_every_verifier_surface_forces_full(run_env, path):
     """FR-011's list, driven one member at a time.
 
@@ -430,6 +533,36 @@ def test_every_verifier_surface_forces_full(run_env, path):
 
     assert result["inspect_mode"] == "FULL", (path, result)
     assert result["inspect_rule"] == "verifier_touched", (path, result)
+
+
+@pytest.mark.parametrize("path", _NO_LONGER_VERIFIER_SURFACES)
+def test_a_narrowed_surface_no_longer_forces_full(run_env, path):
+    """fallout AC-012 / AC-017 / GI-009 — the narrowing, driven the other way.
+
+    `verifier_touched` is the widest rule there is: it says a verdict already
+    reached may now be wrong. A-005 narrowed its subject to the machinery that
+    JUDGES — gates, transitions, width, the evidence boundary, the schemas, the
+    vocabulary and the verifying streams' own contracts — because a run that
+    forced FULL on every edit to the server was forcing FULL on every cycle,
+    which is the same as having no width rule at all.
+
+    Driven rather than asserted against `VERIFIER_PATH_PATTERNS`, for the same
+    reason the positive case is: a pattern that stopped being consulted would
+    satisfy a set comparison and neither of these. The assertion is on the RULE
+    and not on the mode, because a DELTA cycle can still be widened to FULL for
+    an unrelated reason — what must not happen is this diff claiming to be the
+    reason.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _write_defects(fdir, [_open_live()])
+    _write_manifest(fdir)
+    _grind_touching(project_root, fdir, path)
+    _arm(fdir)
+
+    result = foundry_mark_phase_complete("inspect_start", project_root)
+
+    assert result["inspect_rule"] != "verifier_touched", (path, result)
 
 
 def test_the_runs_own_spec_forces_full_though_it_is_no_static_pattern(run_env):
@@ -844,7 +977,7 @@ def test_delta_mode_requires_test01_when_a_schema_file_is_touched(run_env):
     _write_defects(fdir, [_open_live()])
     _write_manifest(fdir)
     _write_spec(fdir, ["FR-001"])
-    schema_hit = fo._test01_scope_touched(
+    schema_hit = _width._test01_scope_touched(
         fdir, project_root, ["src/foundry_mcp/schemas/x.py"]
     )
     assert schema_hit["touched"] is True, schema_hit
@@ -855,7 +988,7 @@ def test_delta_mode_requires_test01_when_a_schema_file_is_touched(run_env):
     # The spec here was READ and names no Contracts surfaces, which is a
     # genuinely empty covered set rather than an unknown one — the one case the
     # D-207 fail-closed rule does not reach.
-    miss = fo._test01_scope_touched(fdir, project_root, ["src/handler.py"])
+    miss = _width._test01_scope_touched(fdir, project_root, ["src/handler.py"])
     assert miss["touched"] is False, miss
     assert miss["computable"] is True, miss
 
@@ -953,14 +1086,14 @@ def test_test01_scope_is_the_registry_binding_not_a_stem_in_the_contracts_prose(
     _write_spec_with_contracts(fdir, ["FR-001"])
 
     for path in _STEM_COLLIDING_PATHS:
-        decision = fo._test01_scope_touched(fdir, project_root, [path])
+        decision = _width._test01_scope_touched(fdir, project_root, [path])
         assert decision["touched"] is False, (path, decision)
         # D-207: a COMPUTED miss, from the registry, on a run that records
         # self_target — not the asserted negative an unknown set used to give.
         assert decision["computable"] is True, (path, decision)
         assert decision["source"] == "registry", (path, decision)
 
-    hit = fo._test01_scope_touched(
+    hit = _width._test01_scope_touched(
         fdir, project_root, ["src/foundry_mcp/tools/foundry_report.py"]
     )
     assert hit["touched"] is True, hit
@@ -986,7 +1119,7 @@ def test_the_contracts_surface_column_is_read_as_cells_by_its_header(run_env):
     project_root, fdir = run_env
     _write_spec_with_contracts(fdir, ["FR-001"])
 
-    rows, problem = fo._contracts_surface_cells(project_root)
+    rows, problem = _width._contracts_surface_cells(project_root)
 
     # D-207: the spec was READ, so there is no problem to report — that channel
     # exists so an unreadable spec stops arriving as an empty table.
@@ -1010,7 +1143,7 @@ def test_every_contracts_surface_resolves_to_a_module_through_the_registry():
     map CT-014 to `server.py` and leave `tools/foundry_report.py` uncovered,
     which is the second half of what D-204 reported.
     """
-    registry = fo._registry_tool_modules()
+    registry = _width._registry_tool_modules()
 
     assert registry, "the registry is what the mapping IS; an empty one is the bug"
     assert len(registry) >= 20, len(registry)
@@ -1018,8 +1151,15 @@ def test_every_contracts_surface_resolves_to_a_module_through_the_registry():
     assert any(m.endswith("tools/foundry_report.py") for m in report_modules), (
         report_modules
     )
+    # fallout FR-005 / AC-014 / OT-016 — Foundry-Phase RESOLVES ONE DIRECTORY
+    # DEEPER NOW. The token handler was the single orchestrator module; the
+    # transitions are `tools/orchestration/transitions.py`, and the module is
+    # named from the imported module object rather than typed, so the pin
+    # follows a future move instead of asserting a path that stopped existing.
+    phase_module = Path(_transitions.__file__).name
+    assert phase_module == "transitions.py", phase_module
     assert any(
-        m.endswith("tools/foundry_orchestrator.py")
+        m.endswith(f"tools/orchestration/{phase_module}")
         for m in registry["Foundry-Phase"]
     ), registry["Foundry-Phase"]
     # No surface resolves to a file outside the plugin's own package.
@@ -1150,12 +1290,12 @@ def test_a_declared_test01_scope_answers_for_a_run_the_registry_cannot_describe(
     project_root, fdir = run_env
     _product_run(project_root, fdir, test01_scope=["src/api/users.py"])
 
-    hit = fo._test01_scope_touched(fdir, project_root, ["src/api/users.py"])
+    hit = _width._test01_scope_touched(fdir, project_root, ["src/api/users.py"])
     assert hit["touched"] is True, hit
     assert hit["source"] == "declared", hit
     assert "test01_scope" in hit["detail"] and "src/api/users.py" in hit["detail"]
 
-    miss = fo._test01_scope_touched(fdir, project_root, ["src/zzz.py"])
+    miss = _width._test01_scope_touched(fdir, project_root, ["src/zzz.py"])
     assert miss["touched"] is False, miss
     assert miss["computable"] is True, miss
     assert miss["source"] == "declared", miss
@@ -1180,9 +1320,9 @@ def test_a_declared_scope_on_a_casting_row_is_the_same_declaration(run_env):
     )
     (fdir / "spec.md").write_text(_PRODUCT_CONTRACTS_TABLE, encoding="utf-8")
 
-    hit = fo._test01_scope_touched(fdir, project_root, ["src/api/users.py"])
+    hit = _width._test01_scope_touched(fdir, project_root, ["src/api/users.py"])
     assert hit["touched"] is True and hit["source"] == "declared", hit
-    assert fo._test01_scope_touched(fdir, project_root, ["src/zzz.py"])["touched"] is False
+    assert _width._test01_scope_touched(fdir, project_root, ["src/zzz.py"])["touched"] is False
 
 
 def test_an_unreadable_tool_registry_fails_closed(run_env, monkeypatch):
@@ -1198,9 +1338,9 @@ def test_an_unreadable_tool_registry_fails_closed(run_env, monkeypatch):
     _write_state(fdir, phase="F3", cycle=1)   # self_target, so arm (2) is live
     _write_manifest(fdir)
     _write_spec_with_contracts(fdir, ["FR-001"])
-    monkeypatch.setattr(fo, "_registry_tool_modules", lambda: {})
+    patch_everywhere(monkeypatch, "_registry_tool_modules", lambda: {})
 
-    decision = fo._test01_scope_touched(
+    decision = _width._test01_scope_touched(
         fdir, project_root, ["src/foundry_mcp/tools/foundry_report.py"]
     )
     assert decision["touched"] is True, decision
@@ -1225,16 +1365,16 @@ def test_an_unreadable_contracts_table_fails_closed_but_an_absent_one_does_not(
 
     # Read, no table: a computed empty covered set.
     _write_spec(fdir, ["FR-001"])
-    rows, problem = fo._contracts_surface_cells(project_root)
+    rows, problem = _width._contracts_surface_cells(project_root)
     assert (rows, problem) == ([], None)
-    absent = fo._test01_scope_touched(fdir, project_root, ["src/handler.py"])
+    absent = _width._test01_scope_touched(fdir, project_root, ["src/handler.py"])
     assert absent["touched"] is False and absent["computable"] is True, absent
 
     # Unreadable: an unknown one.
     (fdir / "spec.md").write_bytes(b"## Contracts\n\n| ID | surface |\ncaf\xe9\n")
-    rows, problem = fo._contracts_surface_cells(project_root)
+    rows, problem = _width._contracts_surface_cells(project_root)
     assert rows == [] and problem is not None, (rows, problem)
-    unknown = fo._test01_scope_touched(fdir, project_root, ["src/handler.py"])
+    unknown = _width._test01_scope_touched(fdir, project_root, ["src/handler.py"])
     assert unknown["touched"] is True and unknown["computable"] is False, unknown
     assert "Contracts table could not be read" in unknown["detail"], unknown
 
@@ -1277,11 +1417,11 @@ def test_the_research_audit_arm_is_unmoved_by_the_test01_source_ladder(run_env):
     }])
     (fdir / "spec.md").write_text(_PRODUCT_CONTRACTS_TABLE, encoding="utf-8")
 
-    touched = fo._research_scope_touched(fdir, project_root, ["src/api/users.py"])
+    touched = _width._research_scope_touched(fdir, project_root, ["src/api/users.py"])
     assert touched["touched"] is True, touched
     assert touched["computable"] is True, touched
     assert "research_context" in touched["detail"], touched
-    untouched = fo._research_scope_touched(fdir, project_root, ["src/zzz.py"])
+    untouched = _width._research_scope_touched(fdir, project_root, ["src/zzz.py"])
     assert untouched["touched"] is False, untouched
     # D-208: a COMPUTED miss — the manifest was read and declares no covered
     # file the diff touched. `computable` is what says so, and it is the whole
@@ -1423,14 +1563,14 @@ def test_a_read_manifest_declaring_no_research_context_is_a_computed_miss(run_en
     project_root, fdir = run_env
     _product_run(project_root, fdir)          # manifest present, no research_context
 
-    miss = fo._research_scope_touched(fdir, project_root, ["src/api/users.py"])
+    miss = _width._research_scope_touched(fdir, project_root, ["src/api/users.py"])
     assert miss["touched"] is False, miss
     assert miss["computable"] is True, miss
     assert miss["source"] == "manifest", miss
     assert miss["detail"] == "", miss
 
     (fdir / "castings" / "manifest.json").unlink()
-    unknown = fo._research_scope_touched(fdir, project_root, ["src/api/users.py"])
+    unknown = _width._research_scope_touched(fdir, project_root, ["src/api/users.py"])
     assert unknown["touched"] is True, unknown
     assert unknown["computable"] is False, unknown
     assert unknown["source"] == "unknown", unknown
@@ -1464,15 +1604,15 @@ def test_every_delta_conditional_arm_answers_the_shared_three_valued_shape(
     )
 
     for wire in sorted(DELTA_CONDITIONAL_STREAMS):
-        hit = fo._delta_conditional_scope(
+        hit = _width._delta_conditional_scope(
             fdir, project_root, wire, ["src/api/users.py"]
         )
-        assert set(fo._CONDITIONAL_ANSWER_KEYS) <= set(hit), (wire, hit)
+        assert set(_width._CONDITIONAL_ANSWER_KEYS) <= set(hit), (wire, hit)
         assert hit["touched"] is True and hit["computable"] is True, (wire, hit)
         assert hit["detail"], (wire, hit)
 
-        miss = fo._delta_conditional_scope(fdir, project_root, wire, ["src/zzz.py"])
-        assert set(fo._CONDITIONAL_ANSWER_KEYS) <= set(miss), (wire, miss)
+        miss = _width._delta_conditional_scope(fdir, project_root, wire, ["src/zzz.py"])
+        assert set(_width._CONDITIONAL_ANSWER_KEYS) <= set(miss), (wire, miss)
         assert miss["touched"] is False and miss["computable"] is True, (wire, miss)
         assert miss["detail"] == "", (wire, miss)
 
@@ -1480,10 +1620,10 @@ def test_every_delta_conditional_arm_answers_the_shared_three_valued_shape(
     # covered set can be computed and neither may answer a negative.
     (fdir / "castings" / "manifest.json").unlink()
     for wire in sorted(DELTA_CONDITIONAL_STREAMS):
-        unknown = fo._delta_conditional_scope(
+        unknown = _width._delta_conditional_scope(
             fdir, project_root, wire, ["src/api/users.py"]
         )
-        assert set(fo._CONDITIONAL_ANSWER_KEYS) <= set(unknown), (wire, unknown)
+        assert set(_width._CONDITIONAL_ANSWER_KEYS) <= set(unknown), (wire, unknown)
         assert unknown["touched"] is True, (wire, unknown)
         assert unknown["computable"] is False, (wire, unknown)
         assert unknown["source"] == "unknown", (wire, unknown)
@@ -1494,7 +1634,7 @@ def test_every_delta_conditional_arm_answers_the_shared_three_valued_shape(
     # And every member of the vocabulary is answerable at all — a conditional
     # stream with no registered predicate is the next instance of this class
     # waiting to happen, so the registry is asserted to cover the set.
-    assert DELTA_CONDITIONAL_STREAMS <= set(fo._DELTA_CONDITIONAL_PREDICATES)
+    assert DELTA_CONDITIONAL_STREAMS <= set(_width._DELTA_CONDITIONAL_PREDICATES)
 
 
 def test_a_conditional_stream_with_no_predicate_is_required_not_skipped(
@@ -1511,7 +1651,7 @@ def test_a_conditional_stream_with_no_predicate_is_required_not_skipped(
     project_root, fdir = run_env
     _product_run(project_root, fdir)
 
-    answer = fo._delta_conditional_scope(
+    answer = _width._delta_conditional_scope(
         fdir, project_root, "a_stream_added_later", ["src/api/users.py"]
     )
     assert answer["touched"] is True, answer
@@ -1534,12 +1674,12 @@ def test_a_two_valued_arm_reads_as_unknown_rather_than_as_a_negative(
     project_root, fdir = run_env
     _product_run(project_root, fdir)
     monkeypatch.setitem(
-        fo._DELTA_CONDITIONAL_PREDICATES,
+        _width._DELTA_CONDITIONAL_PREDICATES,
         "research_audit",
         lambda fdir, project_root, touched: {"touched": False, "detail": ""},
     )
 
-    answer = fo._delta_conditional_scope(
+    answer = _width._delta_conditional_scope(
         fdir, project_root, "research_audit", ["src/api/users.py"]
     )
     assert answer["touched"] is True, answer
@@ -1780,7 +1920,7 @@ def test_an_unrecorded_inspect_width_is_refused_at_every_door(run_env):
 
     # 3. Foundry-Gate('assay')
     _arm(fdir)
-    gate = fo.foundry_gate("assay", project_root)
+    gate = _gates.foundry_gate("assay", project_root)
     assert gate["passed"] is False, gate
     width = next(
         c for c in gate["checklist"]
@@ -1794,7 +1934,7 @@ def test_an_unrecorded_inspect_width_is_refused_at_every_door(run_env):
     (fdir / ".trace-clean-at").write_text(
         _git(Path(project_root), "rev-parse", "HEAD") + "\n", encoding="utf-8"
     )
-    decision = fo._maybe_skip_trace(fdir, project_root)
+    decision = _width._maybe_skip_trace(fdir, project_root)
     assert decision is not None and decision["skip"] is False, decision
     assert "no recorded width" in decision["reason"], decision
     assert not (fdir / ".trace-complete").exists(), (
@@ -1803,7 +1943,7 @@ def test_an_unrecorded_inspect_width_is_refused_at_every_door(run_env):
 
     # 5. Foundry-Next names the transition that records one, and dispatches no
     #    stream roster it cannot know.
-    action = fo._compute_next_action(project_root)
+    action = _guidance._compute_next_action(project_root)
     assert action["action"] == "record_inspect_width", action
     assert "inspect_start" in action["instructions"], action
     assert action["details"]["unrecorded_width"] is True
@@ -1830,7 +1970,7 @@ def test_an_unrecorded_width_sweeps_the_whole_corpus_not_a_delta_slice(run_env):
     original = evidence_mod.select_sweep_scope
     evidence_mod.select_sweep_scope = _fake_select
     try:
-        fo._sweep_evidence_at_boundary(
+        _evidence_boundary._sweep_evidence_at_boundary(
             fdir, project_root, {"touched_files": ["src/handler.py"]}, full=False
         )
     finally:
@@ -1904,7 +2044,7 @@ def test_the_archived_spec_spelling_answers_the_predicate_too(run_env):
 
     from foundry_mcp.schemas.vocab import is_verifier_path
 
-    spellings = fo._spec_relative_paths(project_root)
+    spellings = _width._spec_relative_paths(project_root)
     archived = next(s for s in spellings if s.endswith(f"{RUN_NAME}/spec.md"))
     assert any(is_verifier_path("forge-specs/subject/spec.md", s) for s in spellings)
     assert any(is_verifier_path(archived, s) for s in spellings)
@@ -1928,7 +2068,7 @@ def test_both_spec_spellings_are_offered_to_the_verifier_predicate(run_env):
     declared.write_text("# Spec\n", encoding="utf-8")
     _write_spec(fdir, ["FR-001"])
 
-    spellings = fo._spec_relative_paths(project_root)
+    spellings = _width._spec_relative_paths(project_root)
 
     assert "forge-specs/subject/spec.md" in spellings, spellings
     assert any(s.endswith(f"{RUN_NAME}/spec.md") for s in spellings), spellings
@@ -1987,13 +2127,13 @@ def test_the_same_cycle_number_yields_the_same_ten_rows(run_env):
     _write_state(fdir, phase="F3", cycle=1, spec_path="")
     _write_defects(fdir, [_open_live("D-001")])
 
-    first = fo._prove_delta_sample(fdir, project_root, 7)
+    first = _width._prove_delta_sample(fdir, project_root, 7)
 
     _write_defects(fdir, [_open_live("D-009"), _open_live("D-001")])
-    second = fo._prove_delta_sample(fdir, project_root, 7)
+    second = _width._prove_delta_sample(fdir, project_root, 7)
 
     assert first == second, (first, second)
-    assert first != fo._prove_delta_sample(fdir, project_root, 8), (
+    assert first != _width._prove_delta_sample(fdir, project_root, 8), (
         "a different cycle must draw a different sample, or the seed is not the "
         "cycle"
     )
@@ -2063,12 +2203,12 @@ def test_compute_next_action_contains_no_width_decision(run_env):
     """
     import inspect
 
-    source = inspect.getsource(fo._compute_next_action)
+    source = inspect.getsource(_guidance._compute_next_action)
     assert "_decide_inspect_mode" not in source
     assert "_record_inspect_mode" not in source
 
     # And the reporting path reads the recorded entry through the ONE reader.
-    reporter = inspect.getsource(fo.foundry_next_action)
+    reporter = inspect.getsource(_guidance.foundry_next_action)
     assert "_current_inspect_mode" in reporter
     assert "_decide_inspect_mode" not in reporter
 
@@ -2117,7 +2257,7 @@ def test_the_decision_is_mirrored_into_the_cycle_rollup(run_env):
     foundry_mark_phase_complete("inspect_start", project_root)
 
     rollup = json.loads(
-        (fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8")
+        (fdir / _streams.ROLLUP_FILENAME).read_text(encoding="utf-8")
     )["cycles"]["2"]
     assert rollup["inspect_mode"] == "DELTA"
     assert rollup["inspect_rule"] == INSPECT_DELTA_RULE
@@ -2366,7 +2506,7 @@ def test_the_sweep_result_is_recorded_in_the_cycle_rollup(run_env):
     foundry_mark_phase_complete("inspect_start", project_root)
 
     rollup = json.loads(
-        (fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8")
+        (fdir / _streams.ROLLUP_FILENAME).read_text(encoding="utf-8")
     )["cycles"]["2"]["evidence_sweep"]
     assert rollup["scope"] == "delta"
     assert [Path(p).name for p in rollup["logs_reexecuted"]] == [
@@ -2408,7 +2548,7 @@ def test_the_persisted_sweep_record_carries_the_per_log_column(run_env):
     result = foundry_mark_phase_complete("inspect_start", project_root)
 
     persisted = json.loads(
-        (fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8")
+        (fdir / _streams.ROLLUP_FILENAME).read_text(encoding="utf-8")
     )["cycles"]["2"]["evidence_sweep"]
     assert persisted["per_log"] == result["evidence_sweep"]["per_log"], (
         "the artifact and the transition result must carry the same column"
@@ -2476,7 +2616,7 @@ def test_the_sweep_runs_before_the_state_transaction_opens(run_env):
     # D-067 moved the branch chain into `_phase_transition` so the ordering
     # token is consumed only by a transition that succeeded; the branches, and
     # therefore this order, live there now.
-    source = inspect.getsource(fo._phase_transition)
+    source = inspect.getsource(_transitions._phase_transition)
     body = source[source.index('elif phase == "inspect_start"'):]
     sweep_at = body.index("_sweep_evidence_at_boundary")
     decide_at = body.index("_decide_inspect_mode")
@@ -2609,7 +2749,7 @@ def test_both_phase_entries_sweep_the_whole_corpus_and_record_it(run_env):
     assert result["evidence_sweep"]["scope"] == "full"
     assert len(result["evidence_sweep"]["logs_reexecuted"]) == 2
     assert result["evidence_sweep"]["mismatches"] == []
-    rollup = json.loads((fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8"))
+    rollup = json.loads((fdir / _streams.ROLLUP_FILENAME).read_text(encoding="utf-8"))
     assert rollup["cycles"]["0"]["evidence_sweep"]["scope"] == "full"
 
 
@@ -2623,7 +2763,7 @@ def test_every_transition_that_opens_an_inspect_sweeps(run_env):
     import textwrap
 
     tree = ast.parse(textwrap.dedent(
-        inspect.getsource(fo._phase_transition)
+        inspect.getsource(_transitions._phase_transition)
     ))
 
     def _calls(node) -> set[str]:
@@ -2696,7 +2836,7 @@ def test_a_fix_landing_during_f2_blocks_inspect_clean(run_env):
     The fix is legitimate work and is accepted; what is refused is carrying
     this cycle's decision forward as though it still described the tree.
     """
-    from foundry_mcp.tools.foundry_orchestrator import foundry_mark_defect_fixed
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_mark_defect_fixed
 
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
@@ -2731,7 +2871,7 @@ def test_a_fix_landing_during_f3_leaves_the_next_inspect_alone(run_env):
     """The normal case, which must stay free: GRIND is where fixes land, and
     the next `inspect_start` decides a width that already accounts for them.
     A guard that fired there would refuse every cycle the protocol produces."""
-    from foundry_mcp.tools.foundry_orchestrator import foundry_mark_defect_fixed
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_mark_defect_fixed
 
     project_root, fdir = run_env
     _write_state(fdir, phase="F3", cycle=2, inspect_modes=[{
@@ -2791,14 +2931,14 @@ def test_the_temper_entry_keeps_the_preceding_inspects_rollup_row(run_env):
     # ASSAY) — `_update_phase` rather than `_write_state`, because the recorded
     # DELTA decision and the cycle counter are exactly what this test reads
     # back and a fresh state document would erase both.
-    fo._update_phase(fdir, "F4")
+    _transitions._update_phase(fdir, "F4")
 
     _arm(fdir)
     temper = foundry_mark_phase_complete("temper", project_root)
     assert temper["inspect_mode"] == "FULL"
     assert temper["inspect_rule"] == "first_of_phase"
 
-    rollup = json.loads((fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8"))
+    rollup = json.loads((fdir / _streams.ROLLUP_FILENAME).read_text(encoding="utf-8"))
     bucket = rollup["cycles"][cycle]
 
     # The INSPECT's own row is intact...
@@ -2806,7 +2946,7 @@ def test_the_temper_entry_keeps_the_preceding_inspects_rollup_row(run_env):
     assert bucket["inspect_rule"] == "delta"
     assert bucket["stream_scope"], "the DELTA per-stream scope was overwritten"
     # ...and the F5 entry is recorded beside it, under its own key.
-    entry = bucket[fo.TEMPER_ENTRY_ROLLUP_KEY]
+    entry = bucket[_width.TEMPER_ENTRY_ROLLUP_KEY]
     assert entry["inspect_mode"] == "FULL"
     assert entry["inspect_rule"] == "first_of_phase"
     assert entry["evidence_sweep"]["scope"] == "full"
@@ -2831,10 +2971,10 @@ def test_the_inspect_start_row_is_written_flat_not_nested(run_env):
 
     result = foundry_mark_phase_complete("inspect_start", project_root)
 
-    rollup = json.loads((fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8"))
+    rollup = json.loads((fdir / _streams.ROLLUP_FILENAME).read_text(encoding="utf-8"))
     bucket = rollup["cycles"][str(result["cycle"])]
     assert "inspect_mode" in bucket
-    assert fo.TEMPER_ENTRY_ROLLUP_KEY not in bucket
+    assert _width.TEMPER_ENTRY_ROLLUP_KEY not in bucket
 
 
 # --------------------------------------------------------------------------- #
@@ -2877,7 +3017,7 @@ def _delta_cycle_with_a_roster(project_root, fdir, *, ids: list[str]) -> dict:
 
 
 def _mark(project_root: str, stream: str, cycle: int, checked: int, total: int) -> dict:
-    return fo.foundry_mark_stream(
+    return _streams.foundry_mark_stream(
         stream, cycle, items_checked=checked, items_total=total,
         project_root=project_root,
     )
@@ -2962,12 +3102,22 @@ def test_the_full_arm_still_measures_prove_against_the_spec(run_env):
     assert foundry_mark_phase_complete("cast", project_root)["inspect_mode"] == "FULL"
 
     cycle = _current_cycle(fdir)
-    assert fo._recorded_prove_roster(fdir, cycle) is None
+    assert _streams._recorded_prove_roster(fdir, cycle) is None
 
     shortfall = _mark(project_root, "prove", cycle, 11, 40)["coverage_shortfall"]
     assert shortfall["required"] == 40
     assert "mode" not in shortfall
-    assert _mark(project_root, "prove", cycle, 27, 40).get("coverage_shortfall") is None
+    # fallout AC-030 / OT-028 — THE SECOND RECORD STATES THE RUN'S OWN TOTAL.
+    # This recorded 27 as a second TRANCHE, summing to 38 of 40 and clearing
+    # the threshold. Records replace per (stream, cycle) now, so a second call
+    # reporting 27 IS 27 of 40 and the shortfall correctly stands. The agent
+    # states its running total — 38 — which is what an agent has and the server
+    # does not (GI-016), and that is what clears the >=95% arm.
+    assert _mark(project_root, "prove", cycle, 27, 40)["coverage_shortfall"], (
+        "27 of 40 is 68% — a replacing record must be measured on its own "
+        "numbers, not on a sum with the record it displaced"
+    )
+    assert _mark(project_root, "prove", cycle, 38, 40).get("coverage_shortfall") is None
 
 
 def test_a_delta_cycle_at_its_recorded_width_reaches_the_widening_refusal(run_env):
@@ -3012,9 +3162,9 @@ def test_the_roster_reader_refuses_a_decision_from_another_cycle(run_env):
     recorded = _delta_cycle_with_a_roster(project_root, fdir, ids=ids)
     cycle = recorded["cycle"]
 
-    assert fo._recorded_prove_roster(fdir, cycle) == recorded["prove_sample"]
-    assert fo._recorded_prove_roster(fdir, cycle + 1) is None
-    assert fo._recorded_prove_roster(fdir, cycle - 1) is None
+    assert _streams._recorded_prove_roster(fdir, cycle) == recorded["prove_sample"]
+    assert _streams._recorded_prove_roster(fdir, cycle + 1) is None
+    assert _streams._recorded_prove_roster(fdir, cycle - 1) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -3046,7 +3196,7 @@ def test_cast_is_refused_from_every_phase_but_f1(run_env):
     _write_state(fdir, phase="F4", cycle=2, inspect_modes=[{
         "cycle": 2, "phase": "F2", "mode": "FULL", "rule": "final_gate",
         "rule_detail": "fixture", "decided_by": "inspect_start",
-        "decided_at": fo._now(), "required_streams": ["trace", "prove", "test"],
+        "decided_at": foundry_state.now_iso(), "required_streams": ["trace", "prove", "test"],
         "stream_scope": {}, "touched_files": [], "prove_sample": [],
     }])
     _write_manifest(fdir)
@@ -3094,7 +3244,7 @@ def test_temper_is_refused_from_every_phase_but_f4(run_env):
     _write_state(fdir, phase="F2", cycle=2, nyquist=True, inspect_modes=[{
         "cycle": 2, "phase": "F2", "mode": "DELTA", "rule": INSPECT_DELTA_RULE,
         "rule_detail": "fixture", "decided_by": "inspect_start",
-        "decided_at": fo._now(), "required_streams": ["trace", "prove", "test"],
+        "decided_at": foundry_state.now_iso(), "required_streams": ["trace", "prove", "test"],
         "stream_scope": {}, "touched_files": [], "prove_sample": [],
     }])
     _write_manifest(fdir)
@@ -3136,9 +3286,17 @@ def test_every_source_guarded_token_guards_its_source(run_env):
     project_root, fdir = run_env
     _write_manifest(fdir)
 
-    guarded = set(fo._PHASE_ENTRY_SOURCES) | {"inspect_start"}
+    guarded = set(_transitions._PHASE_ENTRY_SOURCES) | {"inspect_start"}
+    # fallout GI-011 / GI-031 / ST-012 — `nyquist` JOINED THE TABLE.
+    # "a token added later cannot quietly join without a guard" is this test's
+    # own sentence, and one did: casting 4 gave every PHASE_TOKENS member its
+    # own preconditions function, and `nyquist` acquired a `_PHASE_ENTRY_SOURCES`
+    # row with it (F4 on a TEMPER-off run, F5 with `--temper`). The set is
+    # widened here rather than the derivation loosened, because the point of the
+    # assertion is that joining is VISIBLE — the loop below drives the new
+    # member exactly as it drives the other five.
     assert guarded == {
-        "cast", "temper", "inspect_start", "nyquist_done", "done",
+        "cast", "temper", "inspect_start", "nyquist", "nyquist_done", "done",
     }, guarded
 
     for token in sorted(guarded):
@@ -3147,7 +3305,23 @@ def test_every_source_guarded_token_guards_its_source(run_env):
         _arm(fdir)
         result = foundry_mark_phase_complete(token, project_root)
         assert result.get("ok") is not True, (token, result)
-        assert "F6" in result["error"], (token, result)
+        # fallout ST-012 / GI-011 / GI-029 — THE GUARD IS THE RUNG, NOT THE
+        # SENTENCE THAT WON. Every token's refusal used to name the phase,
+        # because the source check was the only one most of them made. One
+        # preconditions function per token now assembles a whole ladder, and a
+        # HIGHER-ranked rung legitimately speaks instead — `done` from F6 on an
+        # empty spec refuses on "ZERO requirement IDs" first, which is the more
+        # specific answer and the one a lead should read. What this test is
+        # about is that the source guard EXISTS and FIRED, so it is asserted on
+        # the rung rather than on whichever sentence outranked it.
+        rung = _entry_rung(result, token)
+        assert rung["ok"] is False, (token, rung)
+        assert "F6" not in rung["accepted_from"], (token, rung)
+        # The offending phase is NAMED on the rung — in its own `phase` field
+        # for the five that go through `_source_phase_rung`, and in the label
+        # for `inspect_start`, which writes its rung by hand because it accepts
+        # two phases for two different reasons and its refusal names both.
+        assert "F6" in f"{rung['check']} {rung.get('phase', '')}", (token, rung)
         assert _read_state(fdir)["phase"] == "F6", token
 
 
@@ -3175,13 +3349,17 @@ def test_the_terminal_doors_refuse_the_phases_the_defect_drove(run_env):
             {"requirement_id": "FR-001", "verdict": "VERIFIED"},
         ]}), encoding="utf-8"
     )
-    fo._generate_report(project_root, fdir)
+    _gates._generate_report(project_root, fdir)
 
     _write_state(fdir, phase="F4", cycle=2, temper=True, nyquist=True)
     _arm(fdir)
     early = foundry_mark_phase_complete("done", project_root)
     assert early.get("ok") is not True, early
-    assert early["accepted_from"] == ["F5.5"], early
+    # fallout ST-012 / GI-011 / GI-029 — the accepted set is a CHECKLIST ROW.
+    # It was a top-level key of the refusal; one preconditions function per
+    # token now answers as a checklist and the transition adds no refusal of its
+    # own, so the fact lives on the rung that computed it.
+    assert _accepted_from(early, "done") == ["F5.5"], early
     assert "post-verification" in early["error"], early
     assert "temper" in early["hint"], early["hint"]
     assert _read_state(fdir)["phase"] == "F4"
@@ -3190,7 +3368,7 @@ def test_the_terminal_doors_refuse_the_phases_the_defect_drove(run_env):
     _arm(fdir)
     from_inspect = foundry_mark_phase_complete("nyquist_done", project_root)
     assert from_inspect.get("ok") is not True, from_inspect
-    assert from_inspect["accepted_from"] == ["F5.5"], from_inspect
+    assert _accepted_from(from_inspect, "nyquist_done") == ["F5.5"], from_inspect
     assert _read_state(fdir)["phase"] == "F2"
 
 
@@ -3213,14 +3391,14 @@ def test_the_terminal_phase_a_run_may_finish_from_follows_its_own_flags(run_env)
         ({"nyquist": True}, "F5.5"),
     ):
         _write_state(fdir, phase=terminal, cycle=1, **flags)
-        assert fo._phase_entry_source_problem(fdir, "done") is None, (
+        assert _transitions._phase_entry_source_problem(fdir, "done") is None, (
             flags, terminal
         )
         for wrong in ("F2", "F3", "F4", "F5", "F5.5"):
             if wrong == terminal:
                 continue
             _write_state(fdir, phase=wrong, cycle=1, **flags)
-            problem = fo._phase_entry_source_problem(fdir, "done")
+            problem = _transitions._phase_entry_source_problem(fdir, "done")
             assert problem is not None, (flags, wrong)
             assert problem["accepted_from"] == [terminal], (flags, wrong)
 
@@ -3255,13 +3433,13 @@ def test_a_delta_stream_is_not_accused_of_rushing_for_running_its_roster(run_env
     _write_spec(fdir, [f"FR-{n}" for n in range(1, 41)])
 
     _write_state(fdir, phase="F2", cycle=1)
-    fo._record_stream_rollup(fdir, 1, "prove", 40, 40, 0, 1)
+    _streams._record_stream_rollup(fdir, 1, "prove", 40, 40, 0, 1)
 
     sample = ["FR-1", "FR-2", "FR-3"]
     _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
         "cycle": 2, "phase": "F2", "mode": "DELTA", "rule": INSPECT_DELTA_RULE,
         "rule_detail": "fixture", "decided_by": "inspect_start",
-        "decided_at": fo._now(),
+        "decided_at": foundry_state.now_iso(),
         "required_streams": ["trace", "prove", "test"],
         "stream_scope": {
             "prove": {"scope": "delta", "detail": "3 row(s)"},
@@ -3293,12 +3471,12 @@ def test_a_stream_the_server_left_at_full_width_still_gets_the_drop_rung(run_env
     _write_manifest(fdir)
 
     _write_state(fdir, phase="F2", cycle=1)
-    fo._record_stream_rollup(fdir, 1, "test", 500, 500, 0, 1)
+    _streams._record_stream_rollup(fdir, 1, "test", 500, 500, 0, 1)
 
     _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
         "cycle": 2, "phase": "F2", "mode": "DELTA", "rule": INSPECT_DELTA_RULE,
         "rule_detail": "fixture", "decided_by": "inspect_start",
-        "decided_at": fo._now(),
+        "decided_at": foundry_state.now_iso(),
         "required_streams": ["trace", "prove", "test"],
         "stream_scope": {
             "test": {"scope": "full", "detail": "whole suite, cold"},
@@ -3465,7 +3643,7 @@ def _uncomputable_diff(fdir: Path) -> None:
     no boundary marker, no clean-TRACE stamp and no CAST baseline.
     """
     for marker in (
-        fo.INSPECT_BOUNDARY_SHA_MARKER, ".trace-clean-at", ".cast-baseline-sha"
+        _artifacts.INSPECT_BOUNDARY_SHA_MARKER, ".trace-clean-at", ".cast-baseline-sha"
     ):
         (fdir / marker).unlink(missing_ok=True)
 
@@ -3564,7 +3742,7 @@ def test_the_recorded_rule_survives_the_transition_into_state_and_rollup(run_env
     assert recorded["rule"] == "final_gate", recorded
     assert recorded["mode"] == "FULL", recorded
 
-    rollup = json.loads((fdir / fo.ROLLUP_FILENAME).read_text(encoding="utf-8"))
+    rollup = json.loads((fdir / _streams.ROLLUP_FILENAME).read_text(encoding="utf-8"))
     cycle_row = rollup["cycles"][str(recorded["cycle"])]
     assert cycle_row["inspect_rule"] == "final_gate", cycle_row
 
@@ -3635,7 +3813,7 @@ def test_a_full_inspect_opens_assay_whichever_full_rule_recorded_it(run_env, rul
     _full_cycle_recorded_with(fdir, rule)
 
     _arm(fdir)
-    gate = fo.foundry_gate("assay", project_root)
+    gate = _gates.foundry_gate("assay", project_root)
     width = next(
         c for c in gate["checklist"]
         if c["check"].startswith("inspect_ran_at_full_width")
@@ -3671,7 +3849,7 @@ def test_the_delta_refusals_state_the_width_they_test_and_not_a_rule(run_env):
     assert "ran at DELTA width (rule delta)" in clean["error"], clean["error"]
 
     _arm(fdir)
-    gate = fo.foundry_gate("assay", project_root)
+    gate = _gates.foundry_gate("assay", project_root)
     assert gate["passed"] is False, gate
     assert "recorded mode is FULL" in gate["reason"], gate["reason"]
     assert "DELTA width (rule delta)" in gate["reason"], gate["reason"]
@@ -3693,23 +3871,41 @@ def test_no_shipped_surface_states_the_rule_as_the_assay_condition():
     author learns which invariant they are about to break. What may not survive
     is a sentence the server can EMIT, and every one of those is a string
     literal.
+
+    fallout FR-005 / AC-014 / OT-016 — THIRTEEN FILES, NOT ONE.
+    This read `Path(fo.__file__)` — the orchestrator's single module. The claim
+    it scans is about the strings the SERVER can emit, and those are spread
+    across `gates.py`, `transitions.py`, `width.py` and `guidance.py` now. So
+    the file is `ORCHESTRATION`, all thirteen, and it stays all thirteen when a
+    fourteenth is added; repointing at any single module would have left the
+    sentence legal in the other twelve while the pin went green. The failure
+    names the MODULE as well as the line, because "which file" is the first
+    thing a reader of this failure needs and a concatenated scan cannot say it.
     """
     import ast
 
-    tree = ast.parse(Path(fo.__file__).read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
-            continue
-        for claim in (
-            "recorded rule is final_gate",
-            "recorded with rule final_gate",
-        ):
-            assert claim not in node.value, (
-                f"foundry_orchestrator.py line {node.lineno} states {claim!r} in "
-                "a string the server can emit; both ASSAY doors read the "
-                "recorded MODE, and `inspect_ran_at_full_width` is the name of "
-                "the check that decides it"
-            )
+    # The scan must SEE something, or every assertion below is vacuous — the
+    # failure mode of every derived pin in this suite.
+    assert ORCHESTRATION, "the orchestration set is empty; this scan reads nothing"
+    scanned = 0
+    for module in ORCHESTRATION:
+        path = Path(module.__file__)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        scanned += 1
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            for claim in (
+                "recorded rule is final_gate",
+                "recorded with rule final_gate",
+            ):
+                assert claim not in node.value, (
+                    f"{path.name} line {node.lineno} states {claim!r} in "
+                    "a string the server can emit; both ASSAY doors read the "
+                    "recorded MODE, and `inspect_ran_at_full_width` is the name "
+                    "of the check that decides it"
+                )
+    assert scanned == len(ORCHESTRATION), scanned
 
 
 # --------------------------------------------------------------------------- #
@@ -3977,6 +4173,26 @@ def _fixed_defect(did: str = "D-001", cycle: int = 2) -> dict:
     }
 
 
+def _fix_landed_mid_inspect(fdir: Path, did: str = "D-001") -> None:
+    """Stamp `did` as a fix that landed AFTER this INSPECT's width was decided.
+
+    fallout GI-011 / CT-013 / AC-016 — WHERE THIS FACT LIVES NOW.
+    The `assay` door used to reach the "GRIND fixed defects and INSPECT has not
+    re-verified" substance through the `.inspect-clean` marker and a `status:
+    fixed` row in `defects.json`. `_inspect_clean_preconditions` says in its own
+    docstring why it no longer does: the marker is not a rung, because this
+    transition is that marker's only writer, and the substance is carried by the
+    `fixes_after_decision` rung "which measures the same thing against the
+    recorded width decision instead of against a marker".
+
+    So the fixture stamps the decision the way a real `foundry_mark_defect_fixed`
+    in F2 does — through the production writer, not by hand-editing state — for
+    the reason `_generate_report` states one helper over: an artifact a fixture
+    made up can clear a door that no real run in the same state could.
+    """
+    _width._note_fix_after_inspect_decision(fdir, did)
+
+
 def _gate_over_the_wire(project_root: str, fdir: Path, monkeypatch) -> dict:
     """`Foundry-Gate('assay')` through the MCP request handler.
 
@@ -4077,12 +4293,28 @@ def test_a_full_cycle_carrying_a_fixed_defect_still_names_the_inspect_clean_door
     project_root, fdir = run_env
     _cycle_recorded_with_mode(fdir, "FULL", rule)
     _write_defects(fdir, [_fixed_defect()])
+    _fix_landed_mid_inspect(fdir)
 
     gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
 
     assert gate["passed"] is False, gate
-    assert "has not re-verified" in gate["reason"], gate["reason"]
-    assert "Foundry-Phase(phase='inspect_clean')" in gate["hint"], gate["hint"]
+    # fallout AC-016 / CT-013 — THE SENTENCE MOVED WITH THE MECHANISM.
+    # The rung reads `fixes_after_decision` off the recorded decision now, so
+    # it names the defects by id rather than saying "has not re-verified". The
+    # claim is unchanged and is asserted on both halves: the refusal is the
+    # fixes rung (not the width rung, which passes here), and the remedy it
+    # states is the boundary crossing a FULL cycle can actually make.
+    assert "fixed after this INSPECT's width was decided" in gate["reason"], (
+        gate["reason"]
+    )
+    assert "D-001" in gate["reason"], gate["reason"]
+    assert "Foundry-Phase(phase='inspect_start')" in gate["hint"], gate["hint"]
+    fixes = next(
+        c for c in gate["checklist"]
+        if c["check"].startswith("no_fixes_after_width_decision")
+    )
+    assert fixes["ok"] is False, fixes
+    assert fixes["fixes_after_decision"] == ["D-001"], fixes
     width = next(
         c for c in gate["checklist"]
         if c["check"].startswith("inspect_ran_at_full_width")
@@ -4113,12 +4345,26 @@ def test_an_unrecorded_width_carrying_a_fixed_defect_refuses_on_the_width(
             encoding="utf-8",
         )
 
+    _fix_landed_mid_inspect(fdir, "D-001")
+
     gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
 
     assert gate["passed"] is False, gate
-    assert "Cannot open ASSAY" in gate["reason"], gate["reason"]
+    # fallout GI-011 / GI-029 / CT-013 — THE GATE REPORTS; THE TRANSITION ACTS.
+    # "Cannot open ASSAY — " is the transition's own wrapping clause, and the
+    # gate no longer writes one: one preconditions function answers both doors
+    # and the gate publishes its checklist as data. So the width sentence is
+    # asserted here and the wrap is asserted at the door that produces it,
+    # which is a stronger pair than the single string this used to read.
+    assert "no recorded width" in gate["reason"], gate["reason"]
     assert "has not re-verified" not in gate["reason"], gate["reason"]
     assert "inspect_clean" not in gate["hint"], gate["hint"]
+
+    _arm(fdir)
+    refused = foundry_mark_phase_complete("inspect_clean", project_root)
+    assert refused.get("ok") is not True, refused
+    assert "Cannot mark INSPECT clean" in refused["error"], refused
+    assert "no recorded width" in refused["error"], refused
 
 
 # --------------------------------------------------------------------------- #
@@ -4175,7 +4421,7 @@ def test_a_delta_cycle_with_an_active_team_still_refuses_on_its_width(
     assert gate["passed"] is False, gate
     assert "DELTA width (rule delta)" in gate["reason"], gate["reason"]
     assert "recorded mode is FULL" in gate["reason"], gate["reason"]
-    assert "Active teams" not in gate["reason"], gate["reason"]
+    assert "Active team" not in gate["reason"], gate["reason"]
     assert "inspect_start" in gate["hint"], gate["hint"]
 
     # The teams check has not been weakened — it still fails, its checklist
@@ -4183,8 +4429,16 @@ def test_a_delta_cycle_with_an_active_team_still_refuses_on_its_width(
     # discarded; one thing speaks.
     teams = next(c for c in gate["checklist"] if c["check"] == "no_active_teams")
     assert teams["ok"] is False, teams
+    # fallout GI-011 / FR-026 — ONE SPELLING, RICHER THAN THE THREE IT
+    # REPLACED. `_teams_rung` names live panes as well as team directories, so
+    # the sentence is "Active teammates: Team dirs: foundry-cast" rather than
+    # "Active teams: foundry-cast". Asserted as the two facts this test is
+    # about — the scan fired, and the team it found is NAMED — which is the
+    # shape `test_the_three_gate_branches_that_scan_teams_state_one_remedy`
+    # already uses, rather than a literal a later widening breaks again.
     published = " ".join(r["reason"] for r in gate["refusals"])
-    assert "Active teams: foundry-cast" in published, gate["refusals"]
+    assert "Active team" in published, gate["refusals"]
+    assert "foundry-cast" in published, gate["refusals"]
     assert gate["refusals"][0]["reason"] == gate["reason"], gate["refusals"]
     assert gate["refusals"][0]["hint"] == gate["hint"], gate["refusals"]
 
@@ -4209,17 +4463,29 @@ def test_a_full_cycle_with_an_active_team_names_the_team_and_not_the_marker(
     gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
 
     assert gate["passed"] is False, gate
-    assert "Active teams: foundry-cast" in gate["reason"], gate["reason"]
+    assert "Active team" in gate["reason"], gate["reason"]
+    assert "foundry-cast" in gate["reason"], gate["reason"]
     assert gate["hint"], "a refusal with no stated next move is no remedy"
+    assert gate["hint"] == _gates._TEAMS_DOWN_HINT, gate["hint"]
     assert "Foundry-Team-Down" in gate["hint"], gate["hint"]
     assert "inspect_clean" not in gate["hint"], gate["hint"]
 
-    # The harm, driven: the displaced hint's call SUCCEEDS here, which is why
-    # naming it while a team is registered was worse than naming nothing.
+    # The harm, driven. It used to LAND: `inspect_clean` returned ok True with
+    # the team still registered, which is why naming that call in the hint was
+    # worse than naming nothing.
+    #
+    # fallout GI-011 / GI-029 / CT-013 — AND IT CANNOT LAND ANY MORE.
+    # `_inspect_clean_preconditions` makes the same `_teams_rung` the gate
+    # makes, so the transition refuses on the check the gate refused on and the
+    # two doors agree by construction rather than by two copies of a rule. The
+    # drive is KEPT rather than deleted, because "following this hint defeats
+    # the check that refused" is the harm, and the assertion that it no longer
+    # does is the thing worth pinning — a deleted drive proves nothing.
     _arm(fdir)
     clean = foundry_mark_phase_complete("inspect_clean", project_root)
-    assert clean["ok"] is True, clean
-    assert clean["phase"] == "F4", clean
+    assert clean.get("ok") is not True, clean
+    assert "Active team" in clean["error"], clean
+    assert _read_state(fdir)["phase"] == "F2", clean
 
 
 def test_teams_active_alone_still_states_what_clears_it(run_env, monkeypatch):
@@ -4240,8 +4506,10 @@ def test_teams_active_alone_still_states_what_clears_it(run_env, monkeypatch):
     gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
 
     assert gate["passed"] is False, gate
-    assert "Active teams: foundry-cast" in gate["reason"], gate["reason"]
+    assert "Active team" in gate["reason"], gate["reason"]
+    assert "foundry-cast" in gate["reason"], gate["reason"]
     assert gate["hint"].strip(), gate
+    assert gate["hint"] == _gates._TEAMS_DOWN_HINT, gate["hint"]
     assert "Foundry-Team-Down" in gate["hint"], gate["hint"]
     assert len(gate["refusals"]) == 1, gate["refusals"]
 
@@ -4266,11 +4534,11 @@ def test_the_three_gate_branches_that_scan_teams_state_one_remedy(run_env):
 
     for phase in ("inspect", "grind", "assay"):
         _arm(fdir)
-        gate = fo.foundry_gate(phase, project_root)
+        gate = _gates.foundry_gate(phase, project_root)
         teams = next(
             r for r in gate["refusals"] if "Active team" in r["reason"]
         )
-        assert teams["hint"] == fo._TEAMS_DOWN_HINT, (phase, teams)
+        assert teams["hint"] == _gates._TEAMS_DOWN_HINT, (phase, teams)
 
 
 # --------------------------------------------------------------------------- #
@@ -4312,7 +4580,7 @@ def test_a_width_outside_the_vocabulary_is_not_a_recorded_width(run_env, mode):
     _cycle_recorded_with_mode(fdir, mode, INSPECT_DELTA_RULE)
 
     assert _current_inspect_mode(fdir) is None, mode
-    problem = fo._unrecorded_width_problem(fdir)
+    problem = _width._unrecorded_width_problem(fdir)
     assert problem is not None, mode
     assert "no recorded width" in problem["reason"], mode
     assert "inspect_start" in problem["hint"], mode
@@ -4333,7 +4601,7 @@ def test_both_vocabulary_members_still_read_as_the_recorded_width(run_env, mode)
     recorded = _current_inspect_mode(fdir)
     assert recorded is not None, mode
     assert recorded["mode"] == mode, recorded
-    assert fo._unrecorded_width_problem(fdir) is None, mode
+    assert _width._unrecorded_width_problem(fdir) is None, mode
 
 
 def test_an_out_of_vocabulary_width_is_refused_at_every_door(run_env, monkeypatch):
@@ -4401,7 +4669,7 @@ def test_a_malformed_current_width_is_not_answered_with_an_older_valid_one(
     assert _current_inspect_mode(fdir) is None, current
 
     _arm(fdir)
-    gate = fo.foundry_gate("assay", project_root)
+    gate = _gates.foundry_gate("assay", project_root)
     assert gate["passed"] is False, gate
 
 
@@ -4418,7 +4686,7 @@ def test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary(run_env):
     import inspect
     import textwrap
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(fo._current_inspect_mode)))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_width._current_inspect_mode)))
     names = {
         node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
     }
@@ -4519,7 +4787,7 @@ def test_a_width_stamped_for_an_earlier_cycle_is_not_this_cycles_width(
     _cycles_recorded_against(fdir, stamped=(1,), state_cycle=2)
 
     assert _current_inspect_mode(fdir) is None
-    problem = fo._unrecorded_width_problem(fdir)
+    problem = _width._unrecorded_width_problem(fdir)
     assert problem is not None
     assert "no recorded width" in problem["reason"], problem
     assert "cycle 2" in problem["reason"], problem
@@ -4552,7 +4820,7 @@ def test_a_width_stamped_for_a_later_cycle_is_not_this_cycles_width_either(
     _cycles_recorded_against(fdir, stamped=(1, 3), state_cycle=2)
 
     assert _current_inspect_mode(fdir) is None
-    problem = fo._unrecorded_width_problem(fdir)
+    problem = _width._unrecorded_width_problem(fdir)
     assert problem is not None
     assert "cycle 2" in problem["reason"], problem
     assert "cycle 3" in problem["reason"], problem
@@ -4609,7 +4877,7 @@ def test_the_entry_stamped_for_this_cycle_is_still_the_recorded_width(
     assert recorded is not None
     assert recorded["cycle"] == 2, recorded
     assert recorded["mode"] == "FULL", recorded
-    assert fo._unrecorded_width_problem(fdir) is None
+    assert _width._unrecorded_width_problem(fdir) is None
 
     gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
     assert gate["passed"] is True, gate
@@ -4633,15 +4901,15 @@ def test_the_trace_skip_fence_fails_closed_on_a_width_from_another_cycle(run_env
     """
     project_root, fdir = run_env
     _cycles_recorded_against(fdir, stamped=(1,), state_cycle=2)
-    (fdir / fo._stream_marker("trace")).unlink()
+    (fdir / _artifacts._stream_marker("trace")).unlink()
 
-    decision = fo._maybe_skip_trace(fdir, project_root)
+    decision = _width._maybe_skip_trace(fdir, project_root)
 
     assert decision is not None, decision
     assert decision["skip"] is False, decision
     assert "no recorded width" in decision["reason"], decision
     assert "cycle 2" in decision["reason"], decision
-    assert not (fdir / fo._stream_marker("trace")).exists(), (
+    assert not (fdir / _artifacts._stream_marker("trace")).exists(), (
         "the fence auto-stamped TRACE complete off another cycle's width"
     )
 
@@ -4684,12 +4952,22 @@ def test_the_cycle_stamp_is_checked_in_the_one_width_read(run_env):
     import inspect
     import textwrap
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(fo._current_inspect_mode)))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_width._current_inspect_mode)))
     names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-    assert "_current_cycle" in names, (
+    # fallout FR-005 / AC-014 / OT-016 — THE SPELLING MOVED WITH THE SYMBOL.
+    # This pinned the name `_current_cycle`. Casting 10 consolidated the two
+    # byte-identical readers into `foundry_state.current_cycle` (GI-024, Holmes
+    # `share-2`), so the call this rule is about is spelled `current_cycle` in
+    # the source it derives from. The name is taken from the imported FUNCTION
+    # rather than typed, so a future rename moves the pin with it instead of
+    # leaving a derived scan looking for a word nothing says any more.
+    reader = _current_cycle.__name__
+    assert reader == "current_cycle", reader
+    assert reader in names, (
         "_current_inspect_mode no longer compares the entry's cycle stamp "
-        "against the server counter, so a decision recorded for another "
-        "crossing reads as this INSPECT's width again — D-216."
+        f"against the server counter through `{reader}`, so a decision "
+        "recorded for another crossing reads as this INSPECT's width again "
+        "— D-216."
     )
 
 
@@ -4713,8 +4991,8 @@ _F2_STREAM_MARKERS = ("trace", "prove", "test", "research_audit", "test01")
 def _mark_streams_complete(fdir: Path, streams=_F2_STREAM_MARKERS) -> None:
     """Write the completion sentinel a stream writes when it reports."""
     for stream in streams:
-        (fdir / fo._stream_marker(stream)).write_text(
-            f"{fo._now()} cycle=1\n", encoding="utf-8"
+        (fdir / _artifacts._stream_marker(stream)).write_text(
+            f"{foundry_state.now_iso()} cycle=1\n", encoding="utf-8"
         )
 
 
@@ -4748,7 +5026,7 @@ def test_the_f5_entry_clears_the_previous_inspects_completion_markers(run_env):
     assert set(_F2_STREAM_MARKERS) <= set(result["required_streams"]), result
 
     for stream in _F2_STREAM_MARKERS:
-        assert not (fdir / fo._stream_marker(stream)).exists(), (
+        assert not (fdir / _artifacts._stream_marker(stream)).exists(), (
             f"{stream}'s F2 completion marker survived the F5 entry"
         )
 
@@ -4786,7 +5064,7 @@ def test_the_f5_entry_leaves_completion_state_alone_when_it_refuses(run_env):
     assert result.get("ok") is not True, result
     assert _read_state(fdir)["phase"] == "F4"
     for stream in _F2_STREAM_MARKERS:
-        assert (fdir / fo._stream_marker(stream)).exists(), (
+        assert (fdir / _artifacts._stream_marker(stream)).exists(), (
             f"{stream}'s marker was cleared by a transition that was refused"
         )
 
@@ -4805,21 +5083,30 @@ def test_the_grind_doors_clear_through_the_same_one_spelling(run_env):
     """
     project_root, fdir = run_env
 
+    # fallout GI-011 / GI-032 / ST-015 — BOTH DOORS HAVE PRECONDITIONS NOW.
+    # `_grind_start_preconditions` requires open defects and a `.tasks-generated`
+    # marker; the marker is written below and the ledger here. The subject is
+    # which markers the transition CLEARS, so it has to get through the door
+    # first — a refused transition clears nothing, which is exactly what the
+    # sibling test above asserts about `temper`.
+    _write_defects(fdir, [_open_live()])
+    _write_manifest(fdir)
+
     for token in ("grind_start", "assay_fail"):
         _write_state(fdir, phase="F2" if token == "grind_start" else "F4", cycle=2)
-        _mark_streams_complete(fdir, sorted(fo.VALID_STREAMS))
-        (fdir / fo.INSPECT_CLEAN_MARKER).write_text("x\n", encoding="utf-8")
-        (fdir / fo.TASKS_GENERATED_MARKER).write_text("x\n", encoding="utf-8")
+        _mark_streams_complete(fdir, sorted(_streams.VALID_STREAMS))
+        (fdir / _artifacts.INSPECT_CLEAN_MARKER).write_text("x\n", encoding="utf-8")
+        (fdir / _artifacts.TASKS_GENERATED_MARKER).write_text("x\n", encoding="utf-8")
         _arm(fdir)
 
         result = foundry_mark_phase_complete(token, project_root)
 
         assert result["ok"] is True, (token, result)
         assert result["phase"] == "F3", (token, result)
-        for stream in sorted(fo.VALID_STREAMS):
-            assert not (fdir / fo._stream_marker(stream)).exists(), (token, stream)
-        assert not (fdir / fo.INSPECT_CLEAN_MARKER).exists(), token
-        assert not (fdir / fo.TASKS_GENERATED_MARKER).exists(), token
+        for stream in sorted(_streams.VALID_STREAMS):
+            assert not (fdir / _artifacts._stream_marker(stream)).exists(), (token, stream)
+        assert not (fdir / _artifacts.INSPECT_CLEAN_MARKER).exists(), token
+        assert not (fdir / _artifacts.TASKS_GENERATED_MARKER).exists(), token
 
 
 def test_no_phase_branch_spells_the_marker_family_by_hand():
@@ -4843,7 +5130,7 @@ def test_no_phase_branch_spells_the_marker_family_by_hand():
     import inspect
     import textwrap
 
-    source = textwrap.dedent(inspect.getsource(fo._phase_transition))
+    source = textwrap.dedent(inspect.getsource(_transitions._phase_transition))
     # The guard is only worth what its subject is: assert the branches really
     # are in this function before asserting what they do not contain.
     assert 'phase == "temper"' in source and 'phase == "grind_start"' in source, (
@@ -4914,7 +5201,7 @@ def test_the_widening_re_open_clears_the_delta_inspects_completion_markers(run_e
     for stream in delta["required_streams"]:
         foundry_mark_stream(stream, 2, items_checked=40, items_total=40,
                             project_root=project_root)
-        assert (fdir / fo._stream_marker(stream)).exists(), stream
+        assert (fdir / _artifacts._stream_marker(stream)).exists(), stream
 
     _arm(fdir)
     widened = foundry_mark_phase_complete("inspect_start", project_root)
@@ -4927,11 +5214,11 @@ def test_the_widening_re_open_clears_the_delta_inspects_completion_markers(run_e
 
     # Every marker the DELTA cycle wrote is gone, and the transition says so.
     for stream in delta["required_streams"]:
-        assert not (fdir / fo._stream_marker(stream)).exists(), (
+        assert not (fdir / _artifacts._stream_marker(stream)).exists(), (
             f"{stream}'s DELTA marker survived the widening re-open"
         )
     assert set(widened["cleared_markers"]) >= {
-        fo._stream_marker(s) for s in delta["required_streams"]
+        _artifacts._stream_marker(s) for s in delta["required_streams"]
     }, widened
 
     # ...and the harm those markers did: the roster the final gate just
@@ -4958,12 +5245,12 @@ def test_the_f2_entry_clears_completion_markers_an_earlier_inspect_left(run_env)
     _write_state(fdir, phase="F2", cycle=4)
     _write_manifest(fdir)
     _mark_streams_complete(fdir)
-    (fdir / fo.TASKS_GENERATED_MARKER).write_text("x\n", encoding="utf-8")
+    (fdir / _artifacts.TASKS_GENERATED_MARKER).write_text("x\n", encoding="utf-8")
 
     _arm(fdir)
     assert foundry_mark_phase_complete("start_cast", project_root)["phase"] == "F1"
     for stream in _F2_STREAM_MARKERS:
-        assert (fdir / fo._stream_marker(stream)).exists(), (
+        assert (fdir / _artifacts._stream_marker(stream)).exists(), (
             f"{stream}'s marker was cleared by start_cast, which opens no INSPECT"
         )
 
@@ -4976,10 +5263,10 @@ def test_the_f2_entry_clears_completion_markers_an_earlier_inspect_left(run_env)
     assert set(_F2_STREAM_MARKERS) <= set(result["required_streams"]), result
 
     for stream in _F2_STREAM_MARKERS:
-        assert not (fdir / fo._stream_marker(stream)).exists(), (
+        assert not (fdir / _artifacts._stream_marker(stream)).exists(), (
             f"{stream}'s marker survived the F2 entry"
         )
-    assert not (fdir / fo.TASKS_GENERATED_MARKER).exists()
+    assert not (fdir / _artifacts.TASKS_GENERATED_MARKER).exists()
 
     streams = _check_streams_complete(project_root)
     assert streams["complete"] is False, streams
@@ -5007,7 +5294,7 @@ def test_the_grind_to_inspect_crossing_clears_what_the_grind_left(run_env):
     # is the window the by-construction argument did not cover.
     foundry_mark_stream("test", 1, items_checked=9, items_total=9,
                         project_root=project_root)
-    assert (fdir / fo._stream_marker("test")).exists()
+    assert (fdir / _artifacts._stream_marker("test")).exists()
     _arm(fdir)
 
     result = foundry_mark_phase_complete("inspect_start", project_root)
@@ -5015,8 +5302,8 @@ def test_the_grind_to_inspect_crossing_clears_what_the_grind_left(run_env):
     assert result["ok"] is True, result
     assert result["widened"] is False, result
     assert result["cycle"] == 2, result
-    assert fo._stream_marker("test") in result["cleared_markers"], result
-    assert not (fdir / fo._stream_marker("test")).exists()
+    assert _artifacts._stream_marker("test") in result["cleared_markers"], result
+    assert not (fdir / _artifacts._stream_marker("test")).exists()
 
     # The ordinary crossing is otherwise untouched: it still decides its own
     # width and still names its own roster as outstanding.
@@ -5054,7 +5341,7 @@ def test_a_refused_inspect_start_leaves_completion_state_alone(run_env):
     assert result.get("ok") is not True, result
     assert _current_cycle(fdir) == 1, "a refused crossing advanced the counter"
     for stream in _F2_STREAM_MARKERS:
-        assert (fdir / fo._stream_marker(stream)).exists(), (
+        assert (fdir / _artifacts._stream_marker(stream)).exists(), (
             f"{stream}'s marker was cleared by a transition that was refused"
         )
 
@@ -5082,7 +5369,7 @@ def test_every_inspect_opening_door_clears_the_previous_inspects_completion_stat
     import inspect
     import textwrap
 
-    source = textwrap.dedent(inspect.getsource(fo._phase_transition))
+    source = textwrap.dedent(inspect.getsource(_transitions._phase_transition))
     tree = ast.parse(source)
 
     def _called_names(nodes: list[ast.stmt]) -> set[str]:
@@ -5241,7 +5528,7 @@ def test_the_diff_helper_returns_the_paths_git_names(run_env):
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "non-ascii work")
 
-    diff = fo.git_changed_paths(project_root, base, "HEAD")
+    diff = _width.git_changed_paths(project_root, base, "HEAD")
 
     assert diff["ok"] is True, diff
     assert diff["files"] == sorted(
@@ -5252,7 +5539,7 @@ def test_the_diff_helper_returns_the_paths_git_names(run_env):
     # An UNKNOWN diff is not an empty one, and the two must stay
     # distinguishable — a caller that confused them would run a delta roster off
     # a diff it never obtained.
-    unknown = fo.git_changed_paths(project_root, "0" * 40, "HEAD")
+    unknown = _width.git_changed_paths(project_root, "0" * 40, "HEAD")
     assert unknown["ok"] is False, unknown
     assert unknown["files"] == [], unknown
     assert unknown["error"], unknown
@@ -5274,7 +5561,7 @@ def test_the_trace_skip_reads_the_same_spelling_the_width_does(run_env):
         fdir, castings=[{"id": 1, "key_files": [_NON_ASCII_KEY_FILE]}]
     )
     root = Path(project_root)
-    (fdir / fo.TRACE_CLEAN_AT_MARKER).write_text(
+    (fdir / _artifacts.TRACE_CLEAN_AT_MARKER).write_text(
         json.dumps({"head_sha": _git(root, "rev-parse", "HEAD")}), encoding="utf-8"
     )
     target = root / _NON_ASCII_KEY_FILE
@@ -5283,7 +5570,7 @@ def test_the_trace_skip_reads_the_same_spelling_the_width_does(run_env):
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "touch the declared file")
 
-    decision = fo._trace_skip_check(fdir, project_root)
+    decision = _width._trace_skip_check(fdir, project_root)
 
     assert decision["skip"] is False, decision
     assert _NON_ASCII_KEY_FILE in decision["details"]["changed_keyfiles"], decision

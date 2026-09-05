@@ -778,7 +778,10 @@ def test_the_fallback_block_reaches_both_spawn_doors_alike(grind_repo) -> None:
 # is handed a path no reader can resolve, under prose telling it to read the
 # path first. The lane measures a commit in the TARGET repo, which owes this
 # repo no filename charset. PROVE filed the identical unguarded invocation
-# against `foundry_orchestrator.py#_grind_diff`; this is the sibling call site.
+# against `orchestration/width.py#_grind_diff`; this is the sibling call site.
+# (PROVE filed it against the orchestrator's own `#_grind_diff` — the symbol
+# is the authoritative half of the cite and it moved to the width module with
+# the split, so the path is the half that had to be rewritten.)
 
 NON_ASCII_KEY_FILE = "src/modèle_owned_by_the_casting.py"
 
@@ -1785,7 +1788,7 @@ def test_every_manifest_key_the_module_indexes_is_declared() -> None:
     request path for no reason that survived being written down, the boundary
     here is the write surface of the packet that owns ``_MANIFEST_SHAPE``.
     Four more modules index this same document with their own top-rung-only
-    guards (``foundry_orchestrator.py``, ``foundry_validate.py``,
+    guards (``orchestration/gates.py``, ``foundry_validate.py``,
     ``intent_coverage.py``, ``scripts/validate_intent_coverage.py``); widening
     to them is a real and recommended follow-up, logged to concerns.md, and it
     is a change to files this casting is forbidden to touch while castings 2
@@ -1943,7 +1946,19 @@ _UNSCANNED_SHIPPED_DIRS = {
         "package offender, and would make each rule's membership include its "
         "own judge."
     ),
-}  # 1 declared exemption
+    # fallout FR-005 / AC-014 / OT-016 — casting 2's carve landed a NEW shipped
+    # `.py` directory, and D-159's whole point is that a new one must fail BY
+    # NAME rather than be silently absent. It did, here, which is the pin
+    # working. The reason is the parent's reason and nothing new: these are test
+    # modules, one per shipped orchestration module, and they carry the same
+    # planted violation strings the rules above judge.
+    "mcp-server/tests/orchestration": (
+        "the suite itself, one directory deeper. The per-concern test modules "
+        "carved out of the orchestrator suite are judges like their parent, not "
+        "subjects, and scanning them would report each planted violation string "
+        "as a package offender exactly as scanning `mcp-server/tests` would."
+    ),
+}  # 2 declared exemptions
 
 
 def _derived_roots(pkg: Path) -> list[Path]:
@@ -2624,7 +2639,7 @@ def test_no_read_in_this_module_can_raise_a_decode_error() -> None:
     the package. That difference is the ST-003 class living inside D-138's own
     fix: an unguarded ``read_text`` anywhere else was invisible, and D-146
     proved it by planting one in a NEW subpackage, one in foundry_validate.py
-    and one in foundry_orchestrator.py, all three GREEN against the full suite.
+    and one in the orchestrator, all three GREEN against the full suite.
 
     Membership now comes from ``_scanned_modules`` -- the same rglob over both
     shipped trees the manifest rule uses -- so there is no module the rule
@@ -3222,12 +3237,33 @@ def _plant(tmp_path: Path, name: str, source: str) -> Path:
 _D134_FILED_READERS = (
     "plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py"
     "#_append_to_manifest_evidence_provenance",
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py"
+    # fallout FR-005 / AC-014 / OT-016 — THREE OF THESE MOVED WITH THE SPLIT.
+    # All three named the retired orchestrator module and that module is
+    # gone. The SYMBOL is the authoritative half of a `path#Symbol` cite, so
+    # each keeps its symbol and gains the module that now defines it:
+    # `_check_sight_required` is the teams module, `_trace_skip_check` the width
+    # module, `foundry_gate` the gate ladder. A roster entry left pointing at a
+    # deleted path is GI-026's violation verbatim — "leaving a mechanism pin
+    # pointed at a deleted module path" — and here it would be worse than
+    # cosmetic: this tuple is the anchor that makes `assert not offenders` a
+    # claim about the package rather than about the scan's eyesight (D-142), and
+    # `test_every_manifest_record_reader_in_the_package_establishes_the_shape`
+    # fails on a named reader the scan can no longer resolve.
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/teams.py"
     "#_check_sight_required",
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py"
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/width.py"
     "#_trace_skip_check",
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py"
-    "#foundry_gate",
+    # `foundry_gate` is the one of the three whose SYMBOL moved as well as its
+    # module. The gate no longer indexes the manifest itself: casting 4 put the
+    # manifest's shape-and-size rungs in the shared preconditions routine
+    # (`gates.py`: "the routine owns ... the manifest's shape and size"), and
+    # `foundry_gate` reaches them through `GATE_TO_TRANSITION`. So the reader
+    # D-134 was filed on is `_start_cast_preconditions`, and naming the gate
+    # here would name a function the scan can no longer see reading a manifest
+    # — an anchor that fails not because the package got safer but because the
+    # rule moved, which is the exact confusion this tuple exists to prevent.
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/transitions.py"
+    "#_start_cast_preconditions",
     "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py"
     "#_fingerprint_inputs",
     "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_validate.py"
@@ -3499,9 +3535,10 @@ def test_every_manifest_record_reader_in_the_package_establishes_the_shape() -> 
     driven and every one raises ``AttributeError`` across the MCP boundary on
     ``{"castings": [1,2,3]}`` or ``{"castings": "nope"}``:
 
-      foundry_orchestrator.py#_check_sight_required   Foundry-Next  (reported)
-      foundry_orchestrator.py#foundry_gate            Foundry-Gate  (found)
-      foundry_orchestrator.py#_trace_skip_check       Foundry-Next's TRACE-skip
+      orchestration/teams.py#_check_sight_required   Foundry-Next  (reported)
+      orchestration/transitions.py#_start_cast_preconditions
+                                                     Foundry-Gate  (found)
+      orchestration/width.py#_trace_skip_check       Foundry-Next's TRACE-skip
                                                                     (found)
       foundry_validate.py#foundry_validate_castings   Foundry-Validate-Castings
                                                                     (reported)

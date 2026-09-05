@@ -48,12 +48,29 @@ from foundry_mcp.schemas.vocab import (
     PYTEST_TESTPATHS,
     is_test_file,
 )
-from foundry_mcp.tools import foundry_orchestrator as fo
 from foundry_mcp.tools import foundry_state
-from foundry_mcp.tools.foundry_orchestrator import (
+
+# fallout FR-005 / GI-010 / GI-026 / AC-014 — THE FIX GATE HAS A MODULE.
+#
+# The `fo` alias reached the whole adjacent-path ladder through one name; the
+# single orchestrator module it named is gone and GI-010 forbids a re-export
+# shim standing in for it. Everything this module drives —
+# `foundry_mark_defect_fixed`, `_PYTEST_DISCOVERY_PHRASE`,
+# `_split_pytest_node_id`, `_lead_lane_problem`, `_regression_test_problem`,
+# `_numstat_measurement` — is `orchestration/fix_gate.py`. The one exception is
+# `_decode_git_path`: `fix_gate.py` imports it, but `orchestration/width.py`
+# DEFINES it, so the unit test below names width — a failure there belongs in
+# the module that owns the decoder, not in the module that calls it.
+from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
+from foundry_mcp.tools.orchestration import width as _width
+from foundry_mcp.tools.orchestration.fix_gate import (
     _PYTEST_DISCOVERY_PHRASE,
     foundry_mark_defect_fixed as _mark_defect_fixed,
 )
+
+# `_check_active_teams` is bound by name in five orchestration modules, so
+# patching the one that DEFINES it leaves the other four on the real one.
+from tests.orchestration._env import patch_everywhere
 
 
 # --------------------------------------------------------------------------- #
@@ -118,8 +135,8 @@ def run_env(tmp_path, monkeypatch):
         FIXTURE_PROMPT_TEXT, encoding="utf-8"
     )
 
-    monkeypatch.setattr(
-        fo,
+    patch_everywhere(
+        monkeypatch,
         "_check_active_teams",
         lambda _pr: {"active": False, "teams": [], "live_panes": []},
     )
@@ -936,7 +953,7 @@ def test_the_whole_statement_patterns_really_are_all_anchored():
     NOT anchored — they are judged positionally by ``_unbounded_denial``, never
     by a bare whole-string search.
     """
-    for pattern in fo._STATEMENT_NON_ANSWERS:
+    for pattern in _fix_gate._STATEMENT_NON_ANSWERS:
         assert pattern.pattern.startswith("^"), (
             f"{pattern.pattern!r} is judged against the WHOLE statement but is "
             f"not anchored, so it fires wherever the phrase appears — "
@@ -947,10 +964,10 @@ def test_the_whole_statement_patterns_really_are_all_anchored():
 
     # ...and the denials that are deliberately unanchored are reachable only
     # through the positional judge, so the tuples cannot be quietly merged.
-    assert fo._STATEMENT_ADJACENCY_DENIALS
-    for pattern in fo._STATEMENT_ADJACENCY_DENIALS:
+    assert _fix_gate._STATEMENT_ADJACENCY_DENIALS
+    for pattern in _fix_gate._STATEMENT_ADJACENCY_DENIALS:
         assert not pattern.pattern.startswith("^"), pattern.pattern
-        assert pattern not in fo._STATEMENT_NON_ANSWERS
+        assert pattern not in _fix_gate._STATEMENT_NON_ANSWERS
 
 
 # --------------------------------------------------------------------------- #
@@ -1016,8 +1033,8 @@ def test_moving_the_resource_off_the_front_cannot_change_the_verdict():
         "index.lock, which is the concurrent interaction."
     )
 
-    assert fo._statement_problem(resource_first, "", "") is None
-    assert fo._statement_problem(paths_first, "", "") is None
+    assert _fix_gate._statement_problem(resource_first, "", "") is None
+    assert _fix_gate._statement_problem(paths_first, "", "") is None
 
 
 # What the narrowed rule still owns: the two nouns that restate the path the
@@ -1077,7 +1094,7 @@ def test_no_whole_statement_pattern_claims_a_shared_resource_statement():
     """
     for statement in _SHARED_RESOURCE_STATEMENTS:
         normalized = " ".join(statement.split())
-        for pattern in fo._STATEMENT_NON_ANSWERS:
+        for pattern in _fix_gate._STATEMENT_NON_ANSWERS:
             assert not pattern.search(normalized), (
                 f"{pattern.pattern!r} claims {normalized!r}, which names two "
                 f"distinct real paths meeting at one shared resource — that is "
@@ -1087,7 +1104,7 @@ def test_no_whole_statement_pattern_claims_a_shared_resource_statement():
 
     assert any(
         pattern.search("the same path the defect was found on, nothing further")
-        for pattern in fo._STATEMENT_NON_ANSWERS
+        for pattern in _fix_gate._STATEMENT_NON_ANSWERS
     ), (
         "nothing in the whole-statement tuple refuses a literal restatement of "
         "the defect's own path any more. The word floor does not reach it (it "
@@ -1558,7 +1575,7 @@ def test_a_symbol_reduces_to_one_name_however_it_was_spelled(spelling, expected)
     """D-088's root cause as a unit. The parse is shared with the cite grammar
     (``citation.iter_symbol_cites``) rather than re-typed, so ``path#Symbol``
     means one thing in this repo and cannot drift between the two readers."""
-    assert fo._own_symbol_name(spelling) == expected
+    assert _fix_gate._own_symbol_name(spelling) == expected
 
 
 def test_the_cite_form_of_a_symbol_does_not_disable_the_own_symbol_rule(run_env):
@@ -1731,13 +1748,13 @@ def test_the_own_path_rule_landed_as_a_path_rule_not_a_widened_phrase(run_env):
         "The write in src/auth/session.py is what the fix touches, and that "
         "is the whole radius."
     )
-    for pattern in fo._STATEMENT_NON_ANSWERS:
+    for pattern in _fix_gate._STATEMENT_NON_ANSWERS:
         assert not pattern.search(self_referential), pattern.pattern
-    assert not fo._unbounded_denial(self_referential)
+    assert not _fix_gate._unbounded_denial(self_referential)
     # ...and with no own path to compare against, the statement is fine.
-    assert fo._statement_problem(self_referential, "", "") is None
+    assert _fix_gate._statement_problem(self_referential, "", "") is None
     # It is the path rule, and only the path rule, that refuses it.
-    assert "only path it names" in fo._statement_problem(
+    assert "only path it names" in _fix_gate._statement_problem(
         self_referential, "refresh_session", "src/auth/session.py"
     )
 
@@ -1812,7 +1829,7 @@ def test_one_shared_token_is_enough_to_link_the_two_declarations(run_env):
 
     statement = "The nightly reaper thread also touches the token store."
     ref = "tests/test_reaper.py::test_reaper_ordering"
-    assert fo._content_tokens(ref) & fo._content_tokens(statement) == {"reaper"}
+    assert _fix_gate._content_tokens(ref) & _fix_gate._content_tokens(statement) == {"reaper"}
 
     result = _drive_mcp(
         project_root,
@@ -1861,8 +1878,8 @@ def test_a_reference_naming_a_test_file_is_not_judged_for_linkage(run_env):
     project_root, fdir = run_env
     _seed_defect(fdir, symbol="refresh_session", file="src/auth/session.py")
 
-    assert not fo._ref_singles_out_a_leaf("tests/test_billing.py")
-    assert fo._ref_singles_out_a_leaf(UNLINKED_TEST)
+    assert not _fix_gate._ref_singles_out_a_leaf("tests/test_billing.py")
+    assert _fix_gate._ref_singles_out_a_leaf(UNLINKED_TEST)
 
     result = _drive_mcp(
         project_root,
@@ -2164,10 +2181,10 @@ def test_a_locator_rooted_at_a_subdirectory_resolves_by_suffix(run_env):
         "def test_evicts_stale():\n    assert True\n", encoding="utf-8"
     )
 
-    assert fo._regression_test_problem(
+    assert _fix_gate._regression_test_problem(
         "tests/test_sweeper.py::test_evicts_stale", project_root
     ) is None
-    assert fo._regression_test_problem(
+    assert _fix_gate._regression_test_problem(
         "tests/test_sweeper.py::test_never_written", project_root
     ) is not None
 
@@ -2203,14 +2220,14 @@ def test_a_parametrised_node_id_is_not_refused_as_naming_no_test(run_env):
         encoding="utf-8",
     )
 
-    assert fo._regression_test_problem(
+    assert _fix_gate._regression_test_problem(
         "tests/test_repro.py::test_param_gap[1]", project_root
     ) is None, "a parametrised node id names the def it is drawn from"
-    assert fo._regression_test_problem(
+    assert _fix_gate._regression_test_problem(
         "tests/test_repro.py::test_param_gap[a-b-c]", project_root
     ) is None, "the whole bracketed param set is stripped, not one token of it"
     # And the suffix is not a way to smuggle a name the file lacks past the rung.
-    assert fo._regression_test_problem(
+    assert _fix_gate._regression_test_problem(
         "tests/test_repro.py::test_absent[1]", project_root
     ) is not None
 
@@ -3050,7 +3067,7 @@ def test_the_comparison_is_equality_not_an_upper_bound(run_env):
     so the rule survives a refactor that never runs the zero-file case."""
     import inspect
 
-    source = inspect.getsource(fo._lead_lane_problem)
+    source = inspect.getsource(_fix_gate._lead_lane_problem)
     assert "len(files) != LEAD_LANE_MAX_FILES" in source, (
         "the lane is EXACTLY one non-test file (lead ruling on FR-014 vs "
         "FR-016); an upper-bound comparison would admit a test-only fix"
@@ -3137,16 +3154,16 @@ def test_the_latent_locator_ladder_applies_the_rungs_its_sibling_has(run_env):
                  file="src/auth/session.py")
 
     # A path that is not a test file, however test-shaped the leaf is.
-    assert fo._regression_test_problem(
+    assert _fix_gate._regression_test_problem(
         "src/auth/session.py::test_refresh", project_root
     ) is not None
     # A test file whose leaf names no test.
-    assert fo._regression_test_problem(
+    assert _fix_gate._regression_test_problem(
         "tests/test_auth.py::refresh_session", project_root
     ) is not None
     # Both ladders reject prose outright.
-    assert fo._regression_test_problem("the fix::works now", project_root)
-    assert fo._test_ref_problem("the fix works now", "", "")
+    assert _fix_gate._regression_test_problem("the fix::works now", project_root)
+    assert _fix_gate._test_ref_problem("the fix works now", "", "")
     # ...and a real locator clears it. D-131: "real" now includes the file
     # being in the tree, so the fixture writes it rather than naming a path off
     # in space — which is the point of that rung.
@@ -3155,7 +3172,7 @@ def test_the_latent_locator_ladder_applies_the_rungs_its_sibling_has(run_env):
     (tests_dir / "test_auth.py").write_text(
         "def test_refresh_session_expiry():\n    assert True\n", encoding="utf-8"
     )
-    assert fo._regression_test_problem(
+    assert _fix_gate._regression_test_problem(
         "tests/test_auth.py::test_refresh_session_expiry", project_root
     ) is None
 
@@ -3180,7 +3197,7 @@ def test_a_rename_is_measured_at_its_destination_path(run_env):
     _git(root, "commit", "-qm", "rename")
     commit = _git(root, "rev-parse", "HEAD")
 
-    measured = fo._numstat_measurement(commit, project_root)
+    measured = _fix_gate._numstat_measurement(commit, project_root)
 
     assert measured["ok"] is True, measured
     assert measured["files"] == ["src/sweeper_renamed.py"]
@@ -3202,26 +3219,26 @@ def test_a_rename_into_the_tests_tree_is_still_a_source_change(run_env):
     _git(root, "commit", "-qm", "rename into tests")
     commit = _git(root, "rev-parse", "HEAD")
 
-    measured = fo._numstat_measurement(commit, project_root)
+    measured = _fix_gate._numstat_measurement(commit, project_root)
 
     assert measured["files"] == ["tests/sweeper.py"], measured
     assert measured["per_file"][0]["renamed_from"] == "src/sweeper.py"
     # ...and the lane counts it, so the one-file budget is spent on it.
-    assert fo._lead_lane_problem(commit, project_root) is None
+    assert _fix_gate._lead_lane_problem(commit, project_root) is None
 
 
 def test_the_rename_parse_handles_both_spellings_git_emits():
     """The braced form (with the common prefix and suffix factored out) and the
     bare `old => new`. Both are DISPLAY strings; the path they name is the
     destination."""
-    assert fo._numstat_rename_paths("src/{f20.py => f20_renamed.py}") == (
+    assert _fix_gate._numstat_rename_paths("src/{f20.py => f20_renamed.py}") == (
         "src/f20_renamed.py", "src/f20.py",
     )
-    assert fo._numstat_rename_paths("{src => tests}/a.py") == (
+    assert _fix_gate._numstat_rename_paths("{src => tests}/a.py") == (
         "tests/a.py", "src/a.py",
     )
-    assert fo._numstat_rename_paths("old.py => new.py") == ("new.py", "old.py")
-    assert fo._numstat_rename_paths("src/plain.py") == ("src/plain.py", "")
+    assert _fix_gate._numstat_rename_paths("old.py => new.py") == ("new.py", "old.py")
+    assert _fix_gate._numstat_rename_paths("src/plain.py") == ("src/plain.py", "")
 
 
 def test_the_lead_fix_record_never_names_one_file_beside_a_total(run_env):
@@ -3363,7 +3380,7 @@ def test_a_fix_commit_that_is_not_an_object_name_is_refused_by_name(run_env, bog
     project_root, _fdir = run_env
     _repo(project_root)
 
-    measured = fo._numstat_measurement(bogus, project_root)
+    measured = _fix_gate._numstat_measurement(bogus, project_root)
 
     assert measured["ok"] is False, (bogus, measured)
     assert measured["field"] == "fix_commit", measured
@@ -3389,7 +3406,7 @@ def test_a_dash_led_fix_commit_no_longer_measures_head(run_env):
     # HEAD is a commit that WOULD pass the lane, which is what made the
     # substitution silent: the lead saw a success and a plausible record.
     tiny = _commit_changing(project_root, {"src/tiny.py": 3})
-    assert fo._lead_lane_problem(tiny, project_root) is None
+    assert _fix_gate._lead_lane_problem(tiny, project_root) is None
 
     result = _mark_defect_fixed(
         defect_id="D-001", cycle=1, authored_by="lead", fix_commit="-1",
@@ -3420,11 +3437,11 @@ def test_a_real_object_name_still_measures_and_still_passes(run_env):
     short = _git(root, "rev-parse", "--short", commit)
 
     for spelling in (commit, short):
-        measured = fo._numstat_measurement(spelling, project_root)
+        measured = _fix_gate._numstat_measurement(spelling, project_root)
         assert measured["ok"] is True, (spelling, measured)
         assert measured["files"] == ["src/sweeper.py"], (spelling, measured)
         assert measured["lines"] == 4, (spelling, measured)
-        assert fo._lead_lane_problem(spelling, project_root) is None, spelling
+        assert _fix_gate._lead_lane_problem(spelling, project_root) is None, spelling
 
 
 def test_an_empty_commit_is_not_told_it_touched_only_test_files(run_env):
@@ -3448,11 +3465,11 @@ def test_an_empty_commit_is_not_told_it_touched_only_test_files(run_env):
     _git(root, "commit", "-q", "--allow-empty", "-m", "empty")
     commit = _git(root, "rev-parse", "HEAD")
 
-    measured = fo._numstat_measurement(commit, project_root)
+    measured = _fix_gate._numstat_measurement(commit, project_root)
     assert measured["ok"] is True and measured["files"] == [] , measured
     assert measured["test_files"] == [], measured
 
-    problem = fo._lead_lane_problem(commit, project_root)
+    problem = _fix_gate._lead_lane_problem(commit, project_root)
 
     assert problem is not None
     assert "changes no files at all" in problem, problem
@@ -3472,11 +3489,11 @@ def test_a_test_only_commit_still_gets_the_test_only_diagnosis(run_env):
     _repo(project_root)
     commit = _commit_changing(project_root, {"tests/test_sweeper.py": 5})
 
-    measured = fo._numstat_measurement(commit, project_root)
+    measured = _fix_gate._numstat_measurement(commit, project_root)
     assert measured["files"] == [], measured
     assert measured["test_files"] == ["tests/test_sweeper.py"], measured
 
-    problem = fo._lead_lane_problem(commit, project_root)
+    problem = _fix_gate._lead_lane_problem(commit, project_root)
 
     assert problem is not None
     assert "touches only test files" in problem, problem
@@ -3792,12 +3809,10 @@ def test_every_collected_pytest_node_id_is_an_acceptable_regression_locator():
     which 500 carry a separator or whitespace inside their brackets and 13
     carry a `::` there. Nobody has to remember to add the awkward ones.
     """
-    from foundry_mcp.tools import foundry_orchestrator as fo
-
     root = str(_mcp_server_root())
     refused = []
     for node_id in _collected_node_ids():
-        problem = fo._regression_test_problem(node_id, root)
+        problem = _fix_gate._regression_test_problem(node_id, root)
         if problem is not None:
             refused.append(f"{node_id}\n    -> {problem}")
 
@@ -3820,8 +3835,6 @@ def test_the_node_id_corpus_contains_the_shapes_that_broke_the_door():
     It also drives the four verbatim ids D-145 was filed on, so the specific
     refusals stay pinned independently of what collection happens to yield.
     """
-    from foundry_mcp.tools import foundry_orchestrator as fo
-
     collected = _collected_node_ids()
     payloads = [p for p in (_param_payload(n) for n in collected) if p]
     assert any("::" in p for p in payloads), "no id carries a '::' in its brackets"
@@ -3833,7 +3846,7 @@ def test_the_node_id_corpus_contains_the_shapes_that_broke_the_door():
     root = str(_mcp_server_root())
     for node_id in _D145_DRIVEN_NODE_IDS:
         assert node_id in collected, f"the driven id is no longer collected: {node_id}"
-        assert fo._regression_test_problem(node_id, root) is None, node_id
+        assert _fix_gate._regression_test_problem(node_id, root) is None, node_id
 
 
 def test_the_node_id_parser_splits_a_node_id_the_way_pytest_composes_one():
@@ -3845,7 +3858,7 @@ def test_the_node_id_parser_splits_a_node_id_the_way_pytest_composes_one():
     element of the chain between them. Every case below is a shape a previous
     string-surgery parse got wrong.
     """
-    from foundry_mcp.tools.foundry_orchestrator import _split_pytest_node_id
+    from foundry_mcp.tools.orchestration.fix_gate import _split_pytest_node_id
 
     assert _split_pytest_node_id("tests/t.py::test_a") == ("tests/t.py", ["test_a"], "")
     # A class-scoped node id: the TEST is the last element, not the class.
@@ -4115,7 +4128,7 @@ def test_rung_twos_refusal_names_the_shapes_the_rung_actually_accepts(run_env):
     """
     project_root, _fdir = run_env
 
-    refused = fo._regression_test_problem(
+    refused = _fix_gate._regression_test_problem(
         "pkg/thing_test.py::test_thing", project_root
     )
     assert refused is not None
@@ -4197,7 +4210,7 @@ def test_a_non_ascii_source_path_is_measured_as_the_path_it_names(run_env):
     _git(root, "commit", "-qm", "non-ascii paths")
     commit = _git(root, "rev-parse", "HEAD")
 
-    measured = fo._numstat_measurement(commit, project_root)
+    measured = _fix_gate._numstat_measurement(commit, project_root)
 
     assert measured["ok"] is True, measured
     # The path git NAMES, with no quotes and no octal escapes anywhere.
@@ -4210,7 +4223,7 @@ def test_a_non_ascii_source_path_is_measured_as_the_path_it_names(run_env):
     assert measured["per_file"][0]["path"] == _NON_ASCII_SOURCE, measured
 
     # ...and the lane therefore sees ONE non-test file, not three.
-    assert fo._lead_lane_problem(commit, project_root) is None
+    assert _fix_gate._lead_lane_problem(commit, project_root) is None
 
 
 def test_the_lead_fix_record_carries_a_non_ascii_path_a_reader_can_resolve(run_env):
@@ -4269,7 +4282,7 @@ def test_a_path_git_still_quotes_is_decoded_rather_than_taken_verbatim(run_env):
     _git(root, "commit", "-qm", "quoted path")
     commit = _git(root, "rev-parse", "HEAD")
 
-    measured = fo._numstat_measurement(commit, project_root)
+    measured = _fix_gate._numstat_measurement(commit, project_root)
 
     assert measured["ok"] is True, measured
     assert measured["files"] == [weird], measured
@@ -4297,7 +4310,7 @@ def test_a_non_ascii_rename_is_parsed_after_the_quoting_is_undone(run_env):
     _git(root, "commit", "-qm", "rename non-ascii")
     commit = _git(root, "rev-parse", "HEAD")
 
-    measured = fo._numstat_measurement(commit, project_root)
+    measured = _fix_gate._numstat_measurement(commit, project_root)
 
     assert measured["ok"] is True, measured
     assert measured["files"] == [renamed], measured
@@ -4331,4 +4344,4 @@ def test_the_git_path_decoder_undoes_exactly_what_git_does(printed, names):
     is not something the repo fixtures above should be creating, and it is
     precisely the form quotepath cannot switch off.
     """
-    assert fo._decode_git_path(printed) == names
+    assert _width._decode_git_path(printed) == names

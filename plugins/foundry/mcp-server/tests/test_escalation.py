@@ -87,23 +87,51 @@ from pathlib import Path
 
 import pytest
 
-from foundry_mcp.tools import foundry_orchestrator as fo
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.schemas.vocab import (
     ESCALATION_EXIT_REASONS,
     ESCALATION_STATUSES,
     STRUCTURAL_PASS_BUDGET,
 )
-from foundry_mcp.tools.foundry_orchestrator import (
+
+# fallout FR-005 / AC-014 / GI-010 / GI-026 — ESCALATION HAS A MODULE, AND
+# THE FIVE CONCERNS THIS FILE DRIVES HAVE FIVE.
+#
+# The `fo` alias reached all of them through one name. The single orchestrator
+# module it named is gone and GI-010 forbids a re-export shim standing in for
+# it, so each reach names the module that DEFINES the symbol:
+# the ledger, its readers and the exit arms are `orchestration/escalation.py`;
+# the co-dispatch and directive doors are `orchestration/directives.py`; the
+# gate ladder and `_done_preconditions` are `orchestration/gates.py`; the phase
+# tokens are `orchestration/transitions.py`; the next-action guidance is
+# `orchestration/guidance.py`.
+#
+# `_current_cycle` is NOT one of them. Casting 10 consolidated the two
+# byte-identical copies into `foundry_state.current_cycle` (GI-024, Holmes
+# `share-2`), and reaching a split module for that leaf fact would recreate the
+# second copy this run just removed.
+from foundry_mcp.tools.foundry_state import current_cycle as _current_cycle
+from foundry_mcp.tools.orchestration import directives as _directives
+from foundry_mcp.tools.orchestration import escalation as _escalation
+from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
+from foundry_mcp.tools.orchestration import gates as _gates
+from foundry_mcp.tools.orchestration import guidance as _guidance
+from foundry_mcp.tools.orchestration.directives import (
+    foundry_defects_to_tasks,
+    foundry_inject_directive,
+)
+from foundry_mcp.tools.orchestration.escalation import (
     ESCALATION_CYCLES,
-    _current_cycle,
     _defect_class,
     _escalated_classes,
-    foundry_defects_to_tasks,
-    foundry_gate,
-    foundry_inject_directive,
-    foundry_mark_phase_complete,
 )
+from foundry_mcp.tools.orchestration.gates import foundry_gate
+from foundry_mcp.tools.orchestration.transitions import foundry_mark_phase_complete
+
+# `_check_active_teams` is bound by name in five orchestration modules and
+# `STRUCTURAL_PASS_BUDGET` in two, so patching the one that DEFINES either
+# leaves every importer resolving the real one.
+from tests.orchestration._env import patch_everywhere
 
 
 # --------------------------------------------------------------------------- #
@@ -119,8 +147,8 @@ def run_env(tmp_path, monkeypatch):
     fdir = project_root / "foundry-archive" / run_name
     (fdir / "castings").mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr(
-        fo,
+    patch_everywhere(
+        monkeypatch,
         "_check_active_teams",
         lambda _pr: {"active": False, "teams": [], "live_panes": []},
     )
@@ -155,7 +183,7 @@ def _generate_report(project_root: str, fdir: Path) -> dict:
 
 def _arm(fdir: Path) -> None:
     """Foundry-Next's ordering token, which gate/phase calls consume."""
-    (fdir / ".next-action-called").write_text(f"{fo._now()}\n", encoding="utf-8")
+    (fdir / ".next-action-called").write_text(f"{foundry_state.now_iso()}\n", encoding="utf-8")
 
 
 def _record_inspect_mode(fdir: Path, *, cycle: int, mode: str = "FULL",
@@ -178,7 +206,7 @@ def _record_inspect_mode(fdir: Path, *, cycle: int, mode: str = "FULL",
         "rule": rule,
         "rule_detail": "fixture",
         "decided_by": "inspect_start",
-        "decided_at": fo._now(),
+        "decided_at": foundry_state.now_iso(),
         "required_streams": list(required),
         "stream_scope": {
             wire: {"scope": "full", "detail": "every item in scope"}
@@ -242,7 +270,7 @@ def _sync_defects(cycle: int, findings: list[dict], project_root: str) -> dict:
         f.setdefault("tier", FIXTURE_TIER)
         f.setdefault("class", FIXTURE_CLASS)
         supplied.append(f)
-    return fo.foundry_sync_defects(
+    return _fix_gate.foundry_sync_defects(
         cycle=cycle, findings=supplied, project_root=project_root
     )
 
@@ -289,11 +317,23 @@ def test_the_boundary_handler_takes_no_cycle_argument(run_env):
     """process-fixes ST-001: 'caller-supplied cycle is not trusted where the
     server knows better'. The handler's signature is the proof — there is no
     cycle argument to supply, so the increment cannot be steered from
-    outside."""
+    outside.
+
+    fallout CT-004 / ST-001 — THE CLAIM IS THE ABSENCE, NOT THE ROSTER.
+    This pinned the parameter set as exactly `{phase, project_root}`, which is
+    a stronger statement than the requirement makes and it went red the moment
+    the halt token arrived: `Foundry-Phase(phase=halt, reason, text)` carries
+    the halt reason and its free text, and neither is a cycle. So the claim is
+    asserted directly — no argument names the cycle — and the roster is pinned
+    beside it, so a THIRD member still has to be looked at rather than sliding
+    in under a set comparison nobody reads.
+    """
     import inspect
 
     params = inspect.signature(foundry_mark_phase_complete).parameters
-    assert set(params) == {"phase", "project_root"}
+    assert "cycle" not in params, sorted(params)
+    assert not [p for p in params if "cycle" in p], sorted(params)
+    assert set(params) == {"phase", "project_root", "reason", "text"}, sorted(params)
 
     project_root, fdir = run_env
     _write_state(fdir, phase="F3", cycle=7)
@@ -304,15 +344,31 @@ def test_the_boundary_handler_takes_no_cycle_argument(run_env):
 
 def test_repeated_grind_inspect_loops_advance_one_cycle_each(run_env):
     """The counter tracks GRIND cycles, one per loop — which is what makes
-    'three consecutive cycles' a real measurement."""
+    'three consecutive cycles' a real measurement.
+
+    fallout ST-015 / GI-011 / GI-032 — THE GRIND DOOR HAS PRECONDITIONS NOW.
+    This drove `grind_start` on an empty run and read the counter off the reply,
+    which the door refuses: `_grind_start_preconditions` requires open defects
+    and a `.tasks-generated` marker, and only `foundry_defects_to_tasks` writes
+    the second. So the loop runs the tool a real cycle runs, which is exactly
+    what `_grind_cycle` above documents — "a test that skips it is driving the
+    exit against a record no run produces". The measurement is unchanged: one
+    crossing, one cycle.
+    """
     project_root, fdir = run_env
     _write_state(fdir, phase="F2", cycle=0)
+    _write_defects(fdir, [_defect("D-001", 0, **{
+        "class": FIXTURE_CLASS, "tier": FIXTURE_TIER,
+    })])
 
     for expected in (1, 2, 3):
+        foundry_defects_to_tasks(project_root)
         _arm(fdir)
-        foundry_mark_phase_complete("grind_start", project_root)
+        opened = foundry_mark_phase_complete("grind_start", project_root)
+        assert opened.get("ok") is True, opened
         _arm(fdir)
         result = foundry_mark_phase_complete("inspect_start", project_root)
+        assert result.get("ok") is True, result
         assert result["cycle"] == expected, result
 
 
@@ -336,7 +392,19 @@ def test_inspect_start_from_cast_is_refused_and_names_the_transition_that_works(
     assert "F1" in result["error"], result
     assert "inspect_start" in result["error"], result
     assert "Foundry-Phase(phase='cast')" in result["hint"], result
-    assert result["accepted_from"] == ["F3", "F2"]
+    # fallout ST-012 / GI-011 / GI-029 — the accepted set is a CHECKLIST ROW.
+    # It was a top-level key of the refusal. One preconditions function per
+    # token now answers as a checklist, and the transition adds no refusal of
+    # its own, so the fact lives on the rung that computed it. Read off the row
+    # by name rather than by index, because the ladder's order is the gate's
+    # business and not this test's subject.
+    entry_rung = [
+        row for row in result["checklist"]
+        if row["check"].startswith("entered_from_accepted_phase")
+    ]
+    assert len(entry_rung) == 1, result["checklist"]
+    assert entry_rung[0]["ok"] is False, entry_rung
+    assert entry_rung[0]["accepted_from"] == ["F3", "F2"], entry_rung
     # Neither the phase nor the counter moved, and CAST was not skipped.
     state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
     assert state["phase"] == "F1"
@@ -389,7 +457,7 @@ def _guidance_phases() -> set[str]:
     import inspect
     import textwrap
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(fo._compute_next_action)))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_guidance._compute_next_action)))
     phases: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Compare):
@@ -552,7 +620,7 @@ def test_fallback_clusters_on_type_plus_file_cluster(run_env):
     the constant): the fallback is the canonical defect type joined with the
     first FALLBACK_CLUSTER_DEPTH path segments. Same type + same subsystem is
     one class; a different subsystem is a different class."""
-    assert fo.FALLBACK_CLUSTER_DEPTH == 2
+    assert _escalation.FALLBACK_CLUSTER_DEPTH == 2
 
     same_a = _defect_class({"type": "UNWIRED", "file": "src/api/login.py"})
     same_b = _defect_class({"type": "UNWIRED", "file": "src/api/session.py"})
@@ -1047,7 +1115,7 @@ def test_a_latent_only_escalated_class_still_blocks_done_until_an_arm_fires(run_
     project_root, fdir = run_env
     _ready_for_f6(fdir, _latent_recurring([0, 1, 2]))
 
-    outcome = fo._done_preconditions(fdir, project_root)
+    outcome = _gates._done_preconditions(fdir, project_root)
 
     assert outcome["passed"] is False
     assert "still ESCALATED" in outcome["reason"]
@@ -1094,7 +1162,7 @@ def test_the_cleared_class_that_carries_a_latent_backlog_passes_done(run_env):
         }
     }}), encoding="utf-8")
 
-    outcome = fo._done_preconditions(fdir, project_root)
+    outcome = _gates._done_preconditions(fdir, project_root)
 
     checks = {c["check"]: c for c in outcome["checklist"]}
     escalation_check = next(
@@ -1128,7 +1196,7 @@ def test_a_persisted_escalated_class_blocks_done_even_with_nothing_open(run_env)
         "FALSE_DOCUMENTED_CONTRACT": {"status": "ESCALATED", "exit_reason": None}
     }}), encoding="utf-8")
 
-    outcome = fo._done_preconditions(fdir, project_root)
+    outcome = _gates._done_preconditions(fdir, project_root)
 
     checks = {c["check"]: c for c in outcome["checklist"]}
     escalation_check = next(
@@ -1159,13 +1227,13 @@ def test_the_persisted_guard_terminates_through_the_clean_arm(run_env):
         d["fixed_in_cycle"] = 3
     _write_defects(fdir, defects)
 
-    assert fo._done_preconditions(fdir, project_root)["passed"] is False
+    assert _gates._done_preconditions(fdir, project_root)["passed"] is False
 
     for _ in range(3):
         _cross_boundary(fdir, project_root)
 
     assert _escalation_entry(fdir)["status"] == "CLEARED"
-    outcome = fo._done_preconditions(fdir, project_root)
+    outcome = _gates._done_preconditions(fdir, project_root)
     checks = {c["check"]: c for c in outcome["checklist"]}
     escalation_check = next(
         k for k in checks if k.startswith("escalated_classes_cleared")
@@ -1191,11 +1259,11 @@ def test_an_operator_override_still_clears_the_persisted_guard(run_env):
         "FALSE_DOCUMENTED_CONTRACT": {"status": "ESCALATED", "exit_reason": None}
     }}), encoding="utf-8")
     foundry_inject_directive(
-        fo._override_instruction("FALSE_DOCUMENTED_CONTRACT"),
+        _escalation._override_instruction("FALSE_DOCUMENTED_CONTRACT"),
         project_root=project_root,
     )
 
-    outcome = fo._done_preconditions(fdir, project_root)
+    outcome = _gates._done_preconditions(fdir, project_root)
 
     checks = {c["check"]: c for c in outcome["checklist"]}
     escalation_check = next(
@@ -1353,7 +1421,7 @@ def test_the_status_resolver_is_the_one_path_both_deciding_reads_take(run_env):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         }
 
-    for reader in (fo._persisted_escalations, fo._escalated_classes):
+    for reader in (_escalation._persisted_escalations, _escalation._escalated_classes):
         assert "_escalation_status" in _calls(reader), (
             f"{reader.__name__} no longer resolves the persisted status through "
             "the closed vocabulary, so a value outside it can read as neither "
@@ -1362,10 +1430,10 @@ def test_the_status_resolver_is_the_one_path_both_deciding_reads_take(run_env):
 
     # And the resolver answers ONLY in the vocabulary, whatever it is handed.
     for handed in ("BOGUS", "cleared", "", None, 7, ["CLEARED"]):
-        assert fo._escalation_status({"status": handed}) in ESCALATION_STATUSES
-    assert fo._escalation_status({}) in ESCALATION_STATUSES
-    assert fo._escalation_status(None) in ESCALATION_STATUSES
-    assert fo._escalation_status("not a mapping") in ESCALATION_STATUSES
+        assert _escalation._escalation_status({"status": handed}) in ESCALATION_STATUSES
+    assert _escalation._escalation_status({}) in ESCALATION_STATUSES
+    assert _escalation._escalation_status(None) in ESCALATION_STATUSES
+    assert _escalation._escalation_status("not a mapping") in ESCALATION_STATUSES
 
 
 def test_the_two_status_names_are_exactly_the_closed_vocabulary(run_env):
@@ -1378,8 +1446,8 @@ def test_the_two_status_names_are_exactly_the_closed_vocabulary(run_env):
     quietly leaving a read matching nothing.
     """
     assert {
-        fo.ESCALATION_STATUS_ESCALATED,
-        fo.ESCALATION_STATUS_CLEARED,
+        _escalation.ESCALATION_STATUS_ESCALATED,
+        _escalation.ESCALATION_STATUS_CLEARED,
     } == set(ESCALATION_STATUSES)
 
 
@@ -1535,7 +1603,7 @@ def test_the_shape_test_lives_inside_the_resolver_and_nowhere_above_it(run_env):
     import inspect
     import textwrap
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(fo._persisted_escalations)))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_escalation._persisted_escalations)))
     pre_filters = [
         node
         for node in ast.walk(tree)
@@ -1551,7 +1619,7 @@ def test_the_shape_test_lives_inside_the_resolver_and_nowhere_above_it(run_env):
 
     # And the resolver still answers in the vocabulary for every one of them.
     for handed in _NON_MAPPING_ENTRIES:
-        assert fo._escalation_status(handed) == fo.ESCALATION_STATUS_ESCALATED
+        assert _escalation._escalation_status(handed) == _escalation.ESCALATION_STATUS_ESCALATED
 
 
 @pytest.mark.parametrize("entry", _NON_MAPPING_ENTRIES)
@@ -1633,21 +1701,21 @@ def test_the_boundary_arms_normalise_a_non_mapping_entry_instead_of_raising(
     """
     project_root, fdir = run_env
     _escalate(fdir, project_root)
-    doc = json.loads((fdir / fo.ESCALATION_FILENAME).read_text(encoding="utf-8"))
+    doc = json.loads((fdir / _escalation.ESCALATION_FILENAME).read_text(encoding="utf-8"))
     doc["classes"]["FALSE_DOCUMENTED_CONTRACT"] = entry
-    (fdir / fo.ESCALATION_FILENAME).write_text(json.dumps(doc), encoding="utf-8")
+    (fdir / _escalation.ESCALATION_FILENAME).write_text(json.dumps(doc), encoding="utf-8")
 
     crossing = _cross_boundary(fdir, project_root)
 
     assert crossing.get("ok") is True, crossing
     recorded = _escalation_entry(fdir)
     assert isinstance(recorded, dict), recorded
-    assert recorded["status"] == fo.ESCALATION_STATUS_ESCALATED, recorded
+    assert recorded["status"] == _escalation.ESCALATION_STATUS_ESCALATED, recorded
     assert recorded["live_clean_cycles"] == 0, recorded
     assert recorded["structural_packets_dispatched"] == 0, recorded
     # ADJACENT PATH 2 — the guidance notice reads the same union the gate
     # refuses on, so the lead is told about the class the gate will stop on.
-    assert fo._still_escalated_classes(fdir, project_root) == [
+    assert _guidance._still_escalated_classes(fdir, project_root) == [
         "FALSE_DOCUMENTED_CONTRACT"
     ]
 
@@ -1665,9 +1733,9 @@ def test_a_normalised_entry_still_reaches_a_bounded_exit(run_env):
     """
     project_root, fdir = run_env
     _escalate(fdir, project_root)
-    doc = json.loads((fdir / fo.ESCALATION_FILENAME).read_text(encoding="utf-8"))
+    doc = json.loads((fdir / _escalation.ESCALATION_FILENAME).read_text(encoding="utf-8"))
     doc["classes"]["FALSE_DOCUMENTED_CONTRACT"] = "just a string"
-    (fdir / fo.ESCALATION_FILENAME).write_text(json.dumps(doc), encoding="utf-8")
+    (fdir / _escalation.ESCALATION_FILENAME).write_text(json.dumps(doc), encoding="utf-8")
 
     _cross_boundary(fdir, project_root)
     _fix_every_instance(fdir, _current_cycle(fdir))
@@ -1676,11 +1744,11 @@ def test_a_normalised_entry_still_reaches_a_bounded_exit(run_env):
 
     for _ in range(4):
         _cross_boundary(fdir, project_root)
-        if _escalation_entry(fdir)["status"] == fo.ESCALATION_STATUS_CLEARED:
+        if _escalation_entry(fdir)["status"] == _escalation.ESCALATION_STATUS_CLEARED:
             break
 
     entry = _escalation_entry(fdir)
-    assert entry["status"] == fo.ESCALATION_STATUS_CLEARED, entry
+    assert entry["status"] == _escalation.ESCALATION_STATUS_CLEARED, entry
     assert entry["exit_reason"] == "clean_cycles", entry
 
 
@@ -1699,7 +1767,7 @@ def test_the_recurrence_read_survives_a_non_mapping_entry(run_env, entry):
     project_root, fdir = run_env
     _write_defects(fdir, _recurring([1, 2, 3]))
     _write_state(fdir, phase="F2", cycle=3)
-    (fdir / fo.ESCALATION_FILENAME).write_text(
+    (fdir / _escalation.ESCALATION_FILENAME).write_text(
         json.dumps({"classes": {"FALSE_DOCUMENTED_CONTRACT": entry}}),
         encoding="utf-8",
     )
@@ -1725,7 +1793,7 @@ def test_the_recurrence_read_survives_a_classes_container_that_is_not_a_mapping(
     project_root, fdir = run_env
     _write_defects(fdir, _recurring([1, 2, 3]))
     _write_state(fdir, phase="F2", cycle=3)
-    (fdir / fo.ESCALATION_FILENAME).write_text(
+    (fdir / _escalation.ESCALATION_FILENAME).write_text(
         json.dumps({"classes": classes}), encoding="utf-8"
     )
 
@@ -1824,7 +1892,7 @@ def test_a_reproduced_instance_of_an_escalated_class_still_blocks_done(run_env):
     defects[1]["reproduction_attempted"] = None
     _ready_for_f6(fdir, defects)
 
-    outcome = fo._done_preconditions(fdir, project_root)
+    outcome = _gates._done_preconditions(fdir, project_root)
 
     assert outcome["passed"] is False
     assert "1 defect class(es) are still ESCALATED" in outcome["reason"]
@@ -1845,7 +1913,7 @@ def test_an_untiered_instance_of_an_escalated_class_blocks_like_a_live_one(run_e
     project_root, fdir = run_env
     _ready_for_f6(fdir, _recurring([0, 1, 2]))   # `_recurring` writes no tier
 
-    outcome = fo._done_preconditions(fdir, project_root)
+    outcome = _gates._done_preconditions(fdir, project_root)
 
     assert outcome["passed"] is False
     assert "1 defect class(es) are still ESCALATED" in outcome["reason"]
@@ -1907,7 +1975,32 @@ def test_both_doors_into_f6_enforce_the_same_preconditions(run_env):
     assert nyquist_done.get("ok") is not True
     # Same evaluation, so the same checklist and the same underlying reason —
     # only the prefix naming which door was tried differs.
-    assert nyquist_done["checklist"] == done["checklist"]
+    #
+    # fallout CT-013 / GI-011 / GI-031 — AND THE TOKEN IS NOW ON THE ROW.
+    # One preconditions function per TRANSITION token, so the entry rung labels
+    # itself `entered_from_accepted_phase (token=done)` /`(token=nyquist_done)`.
+    # That IS "the prefix naming which door was tried", moved from the message
+    # onto the rung that computed it. So the token is normalised out and the
+    # rows compared — and the difference is asserted to be EXACTLY that, rather
+    # than merely tolerated, because a comparison that ignores a field cannot
+    # tell "only the token differs" from "the token and something else do".
+    def _without_token(checklist: list[dict], token: str) -> list[dict]:
+        return [
+            {**row, "check": row["check"].replace(f"(token={token})", "(token=…)")}
+            for row in checklist
+        ]
+
+    assert _without_token(nyquist_done["checklist"], "nyquist_done") == _without_token(
+        done["checklist"], "done"
+    )
+    # The normalisation actually fired, or the comparison above proves nothing.
+    assert any("(token=…)" in row["check"] for row in
+               _without_token(done["checklist"], "done")), done["checklist"]
+    assert nyquist_done["checklist"] != done["checklist"], (
+        "the two doors' rungs are byte-identical, so nothing names which door "
+        "was tried — the normalisation above is guarding a difference that is "
+        "no longer there"
+    )
     shared_reason = (
         "1 defect class(es) are still ESCALATED: FALSE_DOCUMENTED_CONTRACT"
     )
@@ -2030,7 +2123,7 @@ def test_next_action_surfaces_the_escalation_at_f2(run_env):
     for s in ("trace", "prove", "test"):
         (fdir / f".{s}-complete").write_text("items_checked=1\nfindings=0\n", encoding="utf-8")
 
-    action = fo._compute_next_action(project_root)
+    action = _guidance._compute_next_action(project_root)
 
     assert action["action"] == "transition_to_grind"
     assert "ESCALATED" in action["instructions"]
@@ -2048,7 +2141,7 @@ def test_next_action_reads_normally_when_nothing_is_escalated(run_env):
     for s in ("trace", "prove", "test"):
         (fdir / f".{s}-complete").write_text("items_checked=1\nfindings=0\n", encoding="utf-8")
 
-    action = fo._compute_next_action(project_root)
+    action = _guidance._compute_next_action(project_root)
 
     assert "ESCALATED" not in action["instructions"]
     assert action["details"]["escalation"] == {}
@@ -2100,7 +2193,7 @@ def test_mentioning_the_override_token_in_prose_does_not_override(run_env, direc
     project_root, fdir = run_env
     foundry_inject_directive(directive, "normal", project_root)
 
-    assert fo._escalation_overrides(project_root) == set()
+    assert _escalation._escalation_overrides(project_root) == set()
 
 
 @pytest.mark.parametrize("directive", _OVERRIDE_REQUESTS_ALL)
@@ -2108,14 +2201,14 @@ def test_the_bare_marker_grammar_overrides_every_class(run_env, directive):
     project_root, fdir = run_env
     foundry_inject_directive(directive, "normal", project_root)
 
-    assert fo._escalation_overrides(project_root) == {"*"}
+    assert _escalation._escalation_overrides(project_root) == {"*"}
 
 
 def test_the_scoped_marker_grammar_overrides_exactly_that_class(run_env):
     project_root, fdir = run_env
     foundry_inject_directive("escalation-override: FALSE_DOCUMENTED_CONTRACT", "normal", project_root)
 
-    assert fo._escalation_overrides(project_root) == {"FALSE_DOCUMENTED_CONTRACT"}
+    assert _escalation._escalation_overrides(project_root) == {"FALSE_DOCUMENTED_CONTRACT"}
 
 
 def test_a_directive_forbidding_the_override_leaves_escalation_armed(run_env):
@@ -2217,7 +2310,7 @@ def test_two_declared_classes_over_one_cluster_do_not_absorb(run_env):
     ])
     _write_state(fdir, phase="F3", cycle=3)
 
-    resolved = fo._resolve_defect_classes(
+    resolved = _escalation._resolve_defect_classes(
         json.loads((fdir / "defects.json").read_text())["defects"]
     )
     assert sorted(resolved.values()) == ["ALPHA", "BETA", "MISSING@src"]
@@ -2271,8 +2364,10 @@ def test_two_cycles_of_a_mixed_cluster_still_do_not_fire(run_env):
 # returned None, and the caller-side wrapper around it — named _stamp_cycle at
 # the time, deleted in 6453159 which folded it back into _server_cycle — took
 # that as licence to fall back to the CALLER's cycle; while
-# plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_orchestrator.py#_current_cycle
-# returned 0 on the same input. That wrapper's docstring claimed "Every writer
+# plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py#current_cycle
+# returned 0 on the same input. (It was the orchestrator's `_current_cycle`
+# when D-119 was filed; casting 10 consolidated the two byte-identical copies
+# into the leaf, which is where the symbol — and any fix to it — now lives.) That wrapper's docstring claimed "Every writer
 # goes through this, so 'which cycle was this?' has one answer per run" — it
 # had two.
 #
@@ -2495,12 +2590,12 @@ def _overrides_prefix(text: str) -> set[str]:
     Kept so the evidence log can show the same phrasings judged by both rules
     side by side, rather than asserting the new behaviour against nothing.
     """
-    if fo.ESCALATION_OVERRIDE_TOKEN not in text.lower():
+    if _escalation.ESCALATION_OVERRIDE_TOKEN not in text.lower():
         return set()
     scoped = {
         m.group(1).strip(" .,;:'\"`")
         for m in re.finditer(
-            rf"{fo.ESCALATION_OVERRIDE_TOKEN}\s*[:=]\s*(\S+)", text, re.IGNORECASE
+            rf"{_escalation.ESCALATION_OVERRIDE_TOKEN}\s*[:=]\s*(\S+)", text, re.IGNORECASE
         )
     }
     return {s for s in scoped if s} or {"*"}
@@ -2520,7 +2615,7 @@ def render_override_table() -> str:
         foundry_state.set_active_run("ov")
         try:
             foundry_inject_directive(text, "normal", str(root))
-            return fo._escalation_overrides(str(root))
+            return _escalation._escalation_overrides(str(root))
         finally:
             foundry_state.clear_active_run()
 
@@ -2757,7 +2852,7 @@ def test_the_restore_instruction_the_tool_prints_actually_works(run_env, klass):
     _write_state(fdir, phase="F3", cycle=3)
 
     escalated = _escalated_classes(fdir, project_root)
-    proposal = fo._structural_proposal(escalated[klass] | {"proposal": ""})
+    proposal = _escalation._structural_proposal(escalated[klass] | {"proposal": ""})
 
     # Lift the directive text out of the printed Foundry-Directive('...') call.
     marker = re.search(r"Foundry-Directive\('(.+?)'\)\.", proposal)
@@ -2792,7 +2887,7 @@ def test_a_blockquoted_marker_is_not_honoured(run_env, directive):
 
     foundry_inject_directive(directive, "normal", project_root)
 
-    assert fo._escalation_overrides(project_root) == set()
+    assert _escalation._escalation_overrides(project_root) == set()
     assert set(_escalated_classes(fdir, project_root)) == {"FALSE_DOCUMENTED_CONTRACT"}
 
 
@@ -2862,7 +2957,7 @@ def test_foundry_next_reports_the_override_decision_too(run_env):
         "escalation-override: FALSE_DOCUMENTED_CONTRAC", "normal", project_root
     )
 
-    action = fo.foundry_next_action(project_root)
+    action = _guidance.foundry_next_action(project_root)
 
     assert action["escalation_overrides"]["unmatched"] == ["FALSE_DOCUMENTED_CONTRAC"]
     assert "ESCALATION-OVERRIDE DECISIONS" in action["instructions"]
@@ -2885,7 +2980,7 @@ def test_a_quoted_marker_beside_a_real_one_honours_only_the_real_one(run_env):
         project_root,
     )
 
-    assert fo._escalation_overrides(project_root) == {"FALSE_DOCUMENTED_CONTRACT"}
+    assert _escalation._escalation_overrides(project_root) == {"FALSE_DOCUMENTED_CONTRACT"}
     assert _escalated_classes(fdir, project_root) == {}
 
 
@@ -2899,7 +2994,7 @@ def test_widening_the_value_group_did_not_reopen_d_101(run_env, directive):
     project_root, fdir = run_env
     foundry_inject_directive(directive, "normal", project_root)
 
-    assert fo._escalation_overrides(project_root) == set()
+    assert _escalation._escalation_overrides(project_root) == set()
 
 
 @pytest.mark.parametrize("directive", _OVERRIDE_REQUESTS_ALL)
@@ -2908,7 +3003,7 @@ def test_widening_the_value_group_kept_the_bare_marker_working(run_env, directiv
     project_root, fdir = run_env
     foundry_inject_directive(directive, "normal", project_root)
 
-    assert fo._escalation_overrides(project_root) == {"*"}
+    assert _escalation._escalation_overrides(project_root) == {"*"}
 
 
 # --------------------------------------------------------------------------- #
@@ -2974,7 +3069,7 @@ def test_the_ledger_parity_table_shows_the_raise_and_the_fix():
 def _prefix_override_prefix() -> re.Pattern:
     """The PRE-fix line prefix, verbatim: `[\\s>]*` admitted the blockquote."""
     return re.compile(
-        rf"^[\s>]*(?:[-*+]\s*)?{fo.ESCALATION_OVERRIDE_TOKEN}\s*[:=]\s*(\S+)\s*$",
+        rf"^[\s>]*(?:[-*+]\s*)?{_escalation.ESCALATION_OVERRIDE_TOKEN}\s*[:=]\s*(\S+)\s*$",
         re.IGNORECASE | re.MULTILINE,
     )
 
@@ -2992,12 +3087,12 @@ def _overrides_d133_prefix(text: str) -> set[str]:
         value = m.group(1).strip(" .,;:'\"`")
         if not value:
             continue
-        if value.lower() in fo._OVERRIDE_ALL_VALUES:
+        if value.lower() in _escalation._OVERRIDE_ALL_VALUES:
             override_all = True
         else:
             scoped.add(value)
     if re.search(
-        rf"^[\s>]*(?:[-*+]\s*)?{fo.ESCALATION_OVERRIDE_TOKEN}\s*[:=]?\s*$",
+        rf"^[\s>]*(?:[-*+]\s*)?{_escalation.ESCALATION_OVERRIDE_TOKEN}\s*[:=]?\s*$",
         text, re.IGNORECASE | re.MULTILINE,
     ):
         override_all = True
@@ -3016,7 +3111,7 @@ def render_override_decision_table() -> str:
         return rendered if len(rendered) <= 24 else rendered[:21] + "..."
 
     def post(text: str) -> set[str]:
-        return fo._override_markers(text)["overrides"]
+        return _escalation._override_markers(text)["overrides"]
 
     out = [
         "== D-133 (1) THE VALUE: a class key with a space could never be named ==",
@@ -3024,7 +3119,7 @@ def render_override_decision_table() -> str:
         "   %-24s %-24s %s" % ("-" * 7, "-" * 8, "-" * 14),
     ]
     for key in _AWKWARD_CLASS_KEYS:
-        text = f"{fo.ESCALATION_OVERRIDE_TOKEN}: {key}"
+        text = f"{_escalation.ESCALATION_OVERRIDE_TOKEN}: {key}"
         out.append("   %-24s %-24s %s" % (
             fmt(_overrides_d133_prefix(text)), fmt(post(text)), text[:56]
         ))
@@ -3066,21 +3161,21 @@ def test_the_override_decision_table_shows_both_holes_and_the_fix():
     spaced = [k for k in _AWKWARD_CLASS_KEYS if " " in k]
     assert len(spaced) >= 3
     for key in spaced:
-        text = f"{fo.ESCALATION_OVERRIDE_TOKEN}: {key}"
+        text = f"{_escalation.ESCALATION_OVERRIDE_TOKEN}: {key}"
         # The pre-fix reader could only ever see the LAST whitespace-free run,
         # never the key itself -- most often nothing at all.
         assert _overrides_d133_prefix(text) != {key}, key
-        assert fo._override_markers(text)["overrides"] == {key}, key
+        assert _escalation._override_markers(text)["overrides"] == {key}, key
 
     for text in _QUOTED_MARKERS:
         assert _overrides_d133_prefix(text) != set(), f"pre-fix arm wrong for {text!r}"
-        assert fo._override_markers(text)["overrides"] == set(), text
-        assert fo._override_markers(text)["quoted"], text
+        assert _escalation._override_markers(text)["overrides"] == set(), text
+        assert _escalation._override_markers(text)["quoted"], text
 
     for text in _OVERRIDE_NON_REQUESTS:
-        assert fo._override_markers(text)["overrides"] == set(), text
+        assert _escalation._override_markers(text)["overrides"] == set(), text
     for text in _OVERRIDE_REQUESTS_ALL:
-        assert fo._override_markers(text)["overrides"] == {"*"}, text
+        assert _escalation._override_markers(text)["overrides"] == {"*"}, text
 
     table = render_override_decision_table()
     assert "D-133 (1) THE VALUE" in table
@@ -3260,7 +3355,7 @@ def _escalate(fdir: Path, project_root: str, klass: str = "FALSE_DOCUMENTED_CONT
 
 def _escalation_entry(fdir: Path, klass: str = "FALSE_DOCUMENTED_CONTRACT") -> dict:
     return json.loads(
-        (fdir / fo.ESCALATION_FILENAME).read_text(encoding="utf-8")
+        (fdir / _escalation.ESCALATION_FILENAME).read_text(encoding="utf-8")
     )["classes"][klass]
 
 
@@ -3445,7 +3540,7 @@ def test_the_exit_arms_read_the_escalation_ledger_not_the_open_work(run_env):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         }
 
-    exits = _calls(fo._advance_escalation_exits)
+    exits = _calls(_escalation._advance_escalation_exits)
     assert "_escalated_classes" not in exits, (
         "_advance_escalation_exits iterates _escalated_classes again, which "
         "omits a class with no open instances — D-043's exact blindness."
@@ -3456,7 +3551,7 @@ def test_the_exit_arms_read_the_escalation_ledger_not_the_open_work(run_env):
         "again."
     )
 
-    spend = _calls(fo._spend_structural_budget)
+    spend = _calls(_escalation._spend_structural_budget)
     assert "_escalated_classes" not in spend
     assert "_persisted_escalations" not in spend, (
         "the dispatcher must count only against the classes this call actually "
@@ -3479,7 +3574,7 @@ def test_the_dispatcher_holds_no_exit_arm(run_env):
     import textwrap
 
     exit_fields = {"status", "exit_reason", "cleared_at_cycle"}
-    for fn in (fo._spend_structural_budget, fo.foundry_defects_to_tasks):
+    for fn in (_escalation._spend_structural_budget, _directives.foundry_defects_to_tasks):
         tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
         written = {
             target.slice.value
@@ -3614,7 +3709,7 @@ def test_the_clean_arm_fires_across_real_grind_cycles_not_just_boundaries(
     pinned.
     """
     project_root, fdir = run_env
-    monkeypatch.setattr(fo, "STRUCTURAL_PASS_BUDGET", 99)
+    patch_everywhere(monkeypatch, "STRUCTURAL_PASS_BUDGET", 99)
     _escalate(fdir, project_root)
 
     _grind_cycle(fdir, project_root)          # closes cycle 3, the escalation cycle
@@ -3642,9 +3737,9 @@ def test_every_writer_of_the_escalation_date_treats_it_as_a_latch(run_env):
     import textwrap
 
     writers = (
-        fo._record_escalation_proposals,
-        fo._spend_structural_budget,
-        fo._advance_escalation_exits,
+        _escalation._record_escalation_proposals,
+        _escalation._spend_structural_budget,
+        _escalation._advance_escalation_exits,
     )
     bare: list[str] = []
     for fn in writers:
@@ -3909,12 +4004,30 @@ def test_the_finer_boundary_scenario_is_driven_and_clears_on_budget(run_env):
 
     # --- the run reaches NYQUIST: the only open instances are LATENT, and a
     #     never-reproduced backlog blocks nothing (FR-006).
+    #
+    # fallout ST-012 / GI-011 / GI-031 — AND THE DOOR NOW ASKS WHERE FROM.
+    # `nyquist` carries a `_PHASE_ENTRY_SOURCES` row: F4 on a TEMPER-off run,
+    # F5 with `--temper`. The crossings above leave the run at F2 mid-INSPECT,
+    # which is a phase no real run gates NYQUIST from, so the state is moved to
+    # the accepted one first. The subject here is the LATENT backlog and not
+    # the entry rung, and driving the gate from a phase the door refuses would
+    # have asserted `passed is True` about a refusal it never reached.
     (fdir / "verdicts.json").write_text(
         json.dumps({"requirements": []}), encoding="utf-8"
     )
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert not state.get("temper"), state
+    state["phase"] = "F4"
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
     _arm(fdir)
     gate = foundry_gate("nyquist", project_root)
     assert gate["passed"] is True, gate
+    entry_rung = next(
+        c for c in gate["checklist"]
+        if c["check"].startswith("entered_from_accepted_phase")
+    )
+    assert entry_rung["ok"] is True, entry_rung
     blocking = next(
         c for c in gate["checklist"] if c["check"].startswith("zero_blocking_defects")
     )
@@ -4032,7 +4145,7 @@ def test_a_pre_change_escalation_record_reads_as_escalated_with_nothing_counted(
     project_root, fdir = run_env
     _write_defects(fdir, _recurring([1, 2, 3]))
     _write_state(fdir, phase="F2", cycle=3)
-    (fdir / fo.ESCALATION_FILENAME).write_text(
+    (fdir / _escalation.ESCALATION_FILENAME).write_text(
         json.dumps({"classes": {"FALSE_DOCUMENTED_CONTRACT": {
             "proposal": "an older run recorded only this",
             "escalated_at_cycle": 3,
@@ -4100,7 +4213,7 @@ def test_a_latent_only_class_acquires_its_record_at_the_inspect_boundary(run_env
     _write_state(fdir, phase="F3", cycle=3)
 
     assert "FALSE_DOCUMENTED_CONTRACT" in _escalated_classes(fdir, project_root)
-    assert not (fdir / fo.ESCALATION_FILENAME).exists(), (
+    assert not (fdir / _escalation.ESCALATION_FILENAME).exists(), (
         "the fixture must start from the state D-111 reports: escalated, unrecorded"
     )
 
@@ -4142,7 +4255,7 @@ def test_a_latent_only_class_clears_on_the_clean_arm_within_the_promised_bound(r
 
     # ...and the F6 door stops naming it, which is the outcome the six wasted
     # crossings in the filing were trying and failing to reach.
-    outcome = fo._done_preconditions(fdir, project_root)
+    outcome = _gates._done_preconditions(fdir, project_root)
     assert "FALSE_DOCUMENTED_CONTRACT" not in outcome["reason"], outcome["reason"]
 
 
@@ -4161,7 +4274,7 @@ def test_the_done_refusal_names_the_arm_and_the_cycles_remaining(run_env):
     _cross_boundary(fdir, project_root)   # closes 3, records the class
     _cross_boundary(fdir, project_root)   # closes 4 — one clean cycle banked
 
-    outcome = fo._done_preconditions(fdir, project_root)
+    outcome = _gates._done_preconditions(fdir, project_root)
 
     assert outcome["passed"] is False
     hint = outcome["hint"]
@@ -4199,7 +4312,7 @@ def test_the_promised_crossings_are_the_crossings_the_arm_actually_takes(run_env
     _write_defects(fdir, _latent_recurring([3, 4, 5]))
     _write_state(fdir, phase="F3", cycle=5)
 
-    hint = fo._done_preconditions(fdir, project_root)["hint"]
+    hint = _gates._done_preconditions(fdir, project_root)["hint"]
     promised = _crossings_the_hint_promises(hint, "FALSE_DOCUMENTED_CONTRACT")
     assert promised == 3, hint
     # The sentence says WHICH crossing banks nothing, so the count and the
@@ -4284,7 +4397,7 @@ def test_cycles_skipped_under_an_override_break_the_streak_too(run_env):
     assert _escalation_entry(fdir)["live_clean_cycles"] == 1
 
     foundry_inject_directive(
-        fo._override_instruction("FALSE_DOCUMENTED_CONTRACT"),
+        _escalation._override_instruction("FALSE_DOCUMENTED_CONTRACT"),
         project_root=project_root,
     )
     defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
@@ -4298,7 +4411,7 @@ def test_cycles_skipped_under_an_override_break_the_streak_too(run_env):
         "an overridden class must not advance the count either"
     )
 
-    fo.foundry_clear_directives(project_root=project_root)
+    _directives.foundry_clear_directives(project_root=project_root)
     _cross_boundary(fdir, project_root)    # closes 8 — clean, but NOT adjacent
 
     entry = _escalation_entry(fdir)
@@ -4613,7 +4726,7 @@ def _seed_recorded_escalation(fdir: Path, entry: object, klass: str = "K") -> No
     (fdir / "defects.json").write_text(
         json.dumps({"defects": []}, indent=2), encoding="utf-8"
     )
-    (fdir / fo.ESCALATION_FILENAME).write_text(
+    (fdir / _escalation.ESCALATION_FILENAME).write_text(
         json.dumps({"classes": {klass: entry}}), encoding="utf-8"
     )
 
@@ -4781,17 +4894,17 @@ def test_only_a_real_integer_stamps_an_unstamped_entry(offered):
     reader sees "not yet known" rather than "not yet written"; every arm already
     treats `None` as unstamped.
     """
-    entry = fo._escalation_entry_defaults(
+    entry = _escalation._escalation_entry_defaults(
         {"status": "ESCALATED"}, escalated_at_cycle=offered
     )
     assert "escalated_at_cycle" in entry
     assert entry["escalated_at_cycle"] is None, entry
 
     # A real int stamps, and then a second offer never moves it.
-    stamped = fo._escalation_entry_defaults(
+    stamped = _escalation._escalation_entry_defaults(
         {"status": "ESCALATED"}, escalated_at_cycle=9
     )
     assert stamped["escalated_at_cycle"] == 9
-    assert fo._escalation_entry_defaults(
+    assert _escalation._escalation_entry_defaults(
         stamped, escalated_at_cycle=11
     )["escalated_at_cycle"] == 9

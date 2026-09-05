@@ -34,13 +34,33 @@ from pathlib import Path
 
 import pytest
 
+import foundry_mcp
 from foundry_mcp.schemas.vocab import SPEND_LEDGER_FILENAME
-from foundry_mcp.tools import foundry_orchestrator as fo
 from foundry_mcp.tools import foundry_state
-from foundry_mcp.tools.foundry_orchestrator import (
-    foundry_gate,
-    foundry_next_action,
-    foundry_record_spend,
+
+# fallout FR-005 / GI-010 / GI-026 / AC-014 — THE SPEND LEDGER HAS A MODULE.
+#
+# The `fo` alias reached three concerns through one name; the single
+# orchestrator module it named is gone and GI-010 forbids a re-export shim
+# standing in for it. The ledger, its door and its roll-up inputs are
+# `orchestration/spend.py`; the gate ladder is `orchestration/gates.py`; the
+# next-action guidance and the status renderer are `orchestration/guidance.py`.
+# The two leaf facts this module reaches — the house timestamp and the
+# unreported-dispatch overlay — are `tools/foundry_state.py` (GI-024, Holmes
+# `share-2`), not an `orchestration/` module: reaching a split module for a leaf
+# fact would recreate the second copy casting 10 just removed.
+from foundry_mcp.tools.orchestration import guidance as _guidance
+from foundry_mcp.tools.orchestration import spend as _spend
+from foundry_mcp.tools.orchestration.gates import foundry_gate
+from foundry_mcp.tools.orchestration.guidance import foundry_next_action
+from foundry_mcp.tools.orchestration.spend import foundry_record_spend
+
+# `_check_active_teams` is bound by name in five orchestration modules, so
+# patching the one that DEFINES it leaves the other four on the real one.
+from tests.orchestration._env import (
+    ORCHESTRATION,
+    orchestration_source,
+    patch_everywhere,
 )
 
 RUN_NAME = "spend-run"
@@ -57,8 +77,8 @@ def run_env(tmp_path, monkeypatch):
     fdir = project_root / "foundry-archive" / RUN_NAME
     (fdir / "castings").mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr(
-        fo,
+    patch_everywhere(
+        monkeypatch,
         "_check_active_teams",
         lambda _pr: {"active": False, "teams": [], "live_panes": []},
     )
@@ -273,7 +293,7 @@ def test_no_gate_refuses_because_a_spend_record_is_missing(run_env):
     _write_spawns(fdir, [{"agent": "casting-9", "phase": "cast"}])
 
     for phase in ("assay", "temper", "nyquist", "done"):
-        (fdir / ".next-action-called").write_text(f"{fo._now()}\n", encoding="utf-8")
+        (fdir / ".next-action-called").write_text(f"{foundry_state.now_iso()}\n", encoding="utf-8")
         result = foundry_gate(phase, project_root)
         reason = result.get("reason", "")
         assert "spend" not in reason.lower(), (phase, result)
@@ -287,11 +307,11 @@ def test_recording_the_missing_agent_removes_it_from_the_unreported_list(run_env
     _write_state(fdir)
     _write_spawns(fdir, [{"agent": "casting-7", "phase": "cast"}])
 
-    assert fo._unreported_dispatches(fdir)
+    assert _spend._unreported_dispatches(fdir)
 
     foundry_record_spend("casting-7", "cast", 1, 1, project_root=project_root)
 
-    assert fo._unreported_dispatches(fdir) == []
+    assert _spend._unreported_dispatches(fdir) == []
 
 
 def test_a_run_that_dispatched_nothing_reports_no_unreported_agents(run_env):
@@ -303,7 +323,7 @@ def test_a_run_that_dispatched_nothing_reports_no_unreported_agents(run_env):
     project_root, fdir = run_env
     _write_state(fdir)
 
-    assert fo._unreported_dispatches(fdir) == []
+    assert _spend._unreported_dispatches(fdir) == []
     assert foundry_next_action(project_root)["spend"]["unreported_count"] == 0
 
 
@@ -620,7 +640,7 @@ def test_the_next_display_does_not_pass_a_phantom_off_as_an_attributed_agent(
     assert "Unreported: 1" in rendered, rendered
 
     # No gate refuses on any of it (CT-013 / FR-022 / AC-034).
-    (fdir / ".next-action-called").write_text(f"{fo._now()}\n", encoding="utf-8")
+    (fdir / ".next-action-called").write_text(f"{foundry_state.now_iso()}\n", encoding="utf-8")
     assert "spend" not in json.dumps(foundry_gate("grind", project_root)).lower()
 
 
@@ -652,8 +672,8 @@ def _server_package_modules() -> list[Path]:
     """Every module of the server package — GI-005's actual subject.
 
     D-226. This guard's docstring said it was asserted against the source of
-    every module that touches spend, and its body read `inspect.getsource(fo)`
-    — foundry_orchestrator alone. `foundry_report.py`, `foundry_state.py` and
+    every module that touches spend, and its body read the orchestrator's
+    source alone. `foundry_report.py`, `foundry_state.py` and
     `display.py` all touch spend and none was scanned, so a transcript tail
     added to any of them would not have tripped it.
 
@@ -664,8 +684,22 @@ def _server_package_modules() -> list[Path]:
     spend-touching modules would be the same defect one step out — a parser in
     `foundry.py` or `evidence.py` is exactly as much a violation and would ship
     unchallenged.
+
+    fallout FR-005 / OT-016 — THE ROOT IS DERIVED FROM THE PACKAGE, NOT COUNTED
+    FROM A MODULE.
+
+    This was `Path(fo.__file__).resolve().parents[1]`, which named
+    `foundry_mcp` only because the single orchestrator module sat exactly two
+    directories down under `tools/`. The thirteen split modules sit one deeper,
+    so
+    the same arithmetic now names `tools/` and the scan reads a third of the
+    package — a silent shrinkage the `foundry_mcp` assertion below would not
+    have caught, because `tools` is a real directory holding real modules.
+    Derived from the PACKAGE's own `__file__` the way
+    `test_spawn_progress.py#_plugin_root` already does, so no future move of a
+    module can change what this names.
     """
-    root = Path(fo.__file__).resolve().parents[1]
+    root = Path(foundry_mcp.__file__).resolve().parent
     assert root.name == "foundry_mcp", root
     modules = sorted(root.rglob("*.py"))
     assert len(modules) > 10, modules
@@ -742,8 +776,8 @@ def test_the_server_parses_no_transcript_and_no_usage_block(run_env):
     contract, so it drifts and the server then reports a wrong number instead of
     no number.
 
-    D-226 — THE SUBJECT USED TO BE ONE MODULE. This read
-    `inspect.getsource(fo)` while claiming the scope above, so the four other
+    D-226 — THE SUBJECT USED TO BE ONE MODULE. This read the orchestrator's
+    own source while claiming the scope above, so the four other
     spend-touching modules, and every module beyond them, were unguarded. See
     `_server_package_modules` for why the fix widens past the modules that
     touch spend rather than to exactly them.
@@ -768,13 +802,24 @@ def test_the_parser_guard_covers_the_whole_server_package(run_env):
     """D-226's first half: the guard's SUBJECT is what its docstring claims.
 
     Named modules rather than a count alone, because a count passes on any
-    roster of the right size. These five are the ones the defect named as
-    touching spend and going unscanned; `server.py` and `foundry.py` are here
-    because GI-005's subject is the server and neither touches spend at all.
+    roster of the right size. These are the ones the defect named as touching
+    spend and going unscanned; `server.py` and `foundry.py` are here because
+    GI-005's subject is the server and neither touches spend at all.
+
+    fallout FR-005 / OT-016 — THE ORCHESTRATOR WAS ONE OF THESE NAMES.
+    It is thirteen modules now, and the roster names them all rather than only
+    `orchestration/spend.py`: a roster narrowed to the split module that
+    touches spend would be D-226 recommitted one directory down, which is the
+    same defect the docstring above refuses one step out. Derived from
+    `ORCHESTRATION` rather than typed, so a fourteenth module is required to be
+    scanned the day it lands and nobody has to remember a second list.
     """
     scanned = {path.name for path in _server_package_modules()}
+    orchestration = {Path(m.__file__).name for m in ORCHESTRATION}
+    assert orchestration, "the orchestration set is empty; this roster names nothing"
+    assert "spend.py" in orchestration, sorted(orchestration)
     for module in (
-        "foundry_orchestrator.py", "foundry_report.py", "foundry_state.py",
+        *sorted(orchestration), "foundry_report.py", "foundry_state.py",
         "display.py", "foundry_spawn.py", "server.py", "foundry.py",
         "evidence.py", "vocab.py",
     ):
@@ -858,12 +903,19 @@ def test_the_estimated_usage_block_is_gone(run_env):
     assert "context_budget" not in nxt
     assert "spend" in nxt
 
-    import inspect
-
     # Code only, for the same reason as the parser scan above: the comment
     # explaining why the block was removed necessarily names it.
+    #
+    # fallout FR-005 / OT-016 — READ OVER THE SET, NOT OVER ONE MODULE.
+    # This read the orchestrator's own source, and the orchestrator is thirteen
+    # modules now. `orchestration_source()` concatenates all thirteen, so a
+    # `context_budget` block reintroduced in `guidance.py` — the module that
+    # actually renders the next action — is caught where a scan repointed at
+    # any single module would have missed it.
+    source = orchestration_source()
+    assert source.strip(), "the orchestration source is empty; the scan reads nothing"
     code = "\n".join(
-        line for line in inspect.getsource(fo).splitlines()
+        line for line in source.splitlines()
         if not line.lstrip().startswith("#")
     )
     assert "estimated_usage" not in code
@@ -1162,7 +1214,7 @@ def test_exactly_one_renderer_draws_each_of_the_four_fact_groups(run_env):
     # because "which module drew it" is not observable in the joined string.
     import inspect
 
-    status_src = inspect.getsource(fo._format_status_display)
+    status_src = inspect.getsource(_guidance._format_status_display)
     code = "\n".join(
         line for line in status_src.splitlines()
         if not line.lstrip().startswith("#")
@@ -1219,7 +1271,7 @@ def test_the_unreported_bucket_count_is_written_not_left_at_zero(run_env):
     ])
     foundry_record_spend("casting-1", "cast", 10, 10, project_root=project_root)
 
-    summary = fo._spend_summary(fdir)
+    summary = _spend._spend_summary(fdir)
 
     assert summary["total"]["unreported"] == 2
     # D-048: bucketed under the RUN PHASE the verb maps to, never under the verb
@@ -1264,7 +1316,7 @@ def test_next_and_the_report_state_one_unreported_count(run_env):
         encoding="utf-8",
     )
 
-    summary = fo._spend_summary(fdir)
+    summary = _spend._spend_summary(fdir)
     report_side, problem = _read_unreported_dispatches(fdir)
     assert problem is None, problem
 
@@ -1309,7 +1361,7 @@ def test_a_phase_with_no_recorded_spend_still_gets_its_unreported_count(run_env)
     _write_state(fdir, phase="F1", cycle=0)
     _write_spawns(fdir, [{"casting_id": 7, "phase": "cast"}])
 
-    summary = fo._spend_summary(fdir)
+    summary = _spend._spend_summary(fdir)
 
     assert summary["by_phase"]["F1"]["unreported"] == 1
     assert summary["total"]["unreported"] == 1
@@ -1505,15 +1557,15 @@ def test_the_documented_phase_spelling_actually_clears_a_dispatch(run_env):
     _write_state(fdir, phase="F1", cycle=0)
     _write_spawns(fdir, [{"casting_id": 3, "phase": "cast"}])
 
-    assert fo._unreported_dispatches(fdir) == [
+    assert _spend._unreported_dispatches(fdir) == [
         {"agent": "casting-3", "phase": "F1"}
     ]
 
     foundry_record_spend("casting-3", "F1", 1_000, 1_000,
                          project_root=project_root)
 
-    assert fo._unreported_dispatches(fdir) == []
-    assert fo._spend_summary(fdir)["by_phase"]["F1"]["tokens"] == 1_000
+    assert _spend._unreported_dispatches(fdir) == []
+    assert _spend._spend_summary(fdir)["by_phase"]["F1"]["tokens"] == 1_000
 
 
 def test_the_dispatch_verb_a_lead_can_see_also_clears_the_dispatch(run_env):
@@ -1531,9 +1583,9 @@ def test_the_dispatch_verb_a_lead_can_see_also_clears_the_dispatch(run_env):
     foundry_record_spend("casting-3", "cast", 1_000, 1_000,
                          project_root=project_root)
 
-    assert fo._unreported_dispatches(fdir) == []
-    assert fo._spend_summary(fdir)["by_phase"]["F1"]["tokens"] == 1_000
-    assert "cast" not in fo._spend_summary(fdir)["by_phase"]
+    assert _spend._unreported_dispatches(fdir) == []
+    assert _spend._spend_summary(fdir)["by_phase"]["F1"]["tokens"] == 1_000
+    assert "cast" not in _spend._spend_summary(fdir)["by_phase"]
     row = json.loads(
         (fdir / "spend.jsonl").read_text(encoding="utf-8").splitlines()[0]
     )
@@ -1561,10 +1613,10 @@ def test_a_phase_gap_is_visible_when_the_same_agent_reported_elsewhere(run_env):
 
     foundry_record_spend("casting-3", "F1", 500, 500, project_root=project_root)
 
-    assert fo._unreported_dispatches(fdir) == [
+    assert _spend._unreported_dispatches(fdir) == [
         {"agent": "casting-3", "phase": "F3"}
     ]
-    summary = fo._spend_summary(fdir)
+    summary = _spend._spend_summary(fdir)
     assert summary["by_phase"]["F3"]["unreported"] == 1
     assert summary["by_phase"]["F1"]["unreported"] == 0
 
@@ -1596,7 +1648,7 @@ def test_foundry_next_and_the_report_name_the_same_unreported_pairs(run_env):
         for agent in agents
     }
     from_next = {
-        (row["agent"], row["phase"]) for row in fo._unreported_dispatches(fdir)
+        (row["agent"], row["phase"]) for row in _spend._unreported_dispatches(fdir)
     }
     assert from_next == from_report == {("casting-4", "F3")}
 
@@ -1975,18 +2027,36 @@ def test_the_renderer_consults_the_cycle_key_function_rather_than_copying_it():
     would fix the instance and widen the class, so this asserts the shape of
     the fix and not only its effect: the renderer imports the spelling, and
     defines none of its own.
+
+    fallout GI-024 / OT-016 — AND THE SPELLING MOVED TO THE LEAF.
+    This pinned the literal `from foundry_mcp.tools.foundry_report import
+    _cycle_sort_key`. Casting 10 consolidated the two copies into
+    `foundry_state.cycle_sort_key` (Holmes `share-2`), so `foundry_report` now
+    holds an alias rather than the definition and the renderer reaches the leaf
+    directly. The claim is unchanged — one definition, everyone else imports it
+    — so the assertion is written against the module that DEFINES the symbol,
+    resolved from the function object rather than from a typed path.
     """
     from pathlib import Path
 
     import foundry_mcp.tools.display as display_mod
+    from foundry_mcp.tools.foundry_state import cycle_sort_key
+
+    owner = cycle_sort_key.__module__
+    assert owner == "foundry_mcp.tools.foundry_state", owner
 
     source = Path(display_mod.__file__).read_text(encoding="utf-8")
     assert "def _cycle_sort_key" not in source, (
         "display.py defines its own cycle-ordering key — import the one "
-        "`foundry_report` already owns instead of adding a third copy"
+        "`foundry_state` already owns instead of adding a third copy"
     )
-    assert "from foundry_mcp.tools.foundry_report import _cycle_sort_key" in source, (
-        "the spend renderer must consult the existing cycle key function"
+    assert "def cycle_sort_key" not in source, (
+        "display.py defines the key under the leaf's own spelling — the "
+        "second copy the underscore spelling above was renamed away from"
+    )
+    assert f"from {owner} import cycle_sort_key" in source, (
+        "the spend renderer must consult the existing cycle key function, "
+        f"imported from {owner} — the module that defines it"
     )
 
 
@@ -2061,7 +2131,7 @@ def test_a_cycle_the_run_never_measured_gets_no_row_at_all(run_env):
     assert persisted["5"]["tokens"] == 30, persisted
 
     # The read path says the same, because it runs the same overlay.
-    summary = fo._spend_summary(fdir)
+    summary = _spend._spend_summary(fdir)
     assert set(summary["by_cycle"]) == {"5"}, summary["by_cycle"]
 
     # ...and the roll-up that survived is the one that carries a measurement.
@@ -2126,14 +2196,14 @@ def test_the_overlay_keeps_every_bucket_that_measured_something():
     measured = {"tokens": 1_430_191, "duration_ms": 8_726_752, "agents": 8,
                 "unreported": 0}
 
-    cleared = fo._overlay_unreported(
+    cleared = foundry_state.overlay_unreported(
         {"by_phase": {}, "by_cycle": {"5": dict(zero), "23": dict(measured)},
          "total": dict(zero)},
         {"by_phase": {}, "by_cycle": {}, "count": 0},
     )
     assert set(cleared["by_cycle"]) == {"23"}, cleared["by_cycle"]
 
-    still_unreported = fo._overlay_unreported(
+    still_unreported = foundry_state.overlay_unreported(
         {"by_phase": {}, "by_cycle": {"5": dict(zero), "23": dict(measured)},
          "total": dict(zero)},
         {"by_phase": {"F2": ["trace"]}, "by_cycle": {"5": ["trace"]}, "count": 1},
