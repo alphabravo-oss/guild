@@ -414,6 +414,35 @@ async def list_tools() -> list[Tool]:
                     # refusal and class tagging were dead: a line-drift finding
                     # filed over MCP was accepted as a defect because
                     # target_kind never arrived to make it demotable.
+                    # fallout FR-025 / CT-019 / ST-006 — THE TWO PROVENANCE
+                    # FIELDS, ON THE WIRE.
+                    #
+                    # Both doors persist these keys unconditionally, `None` when
+                    # the filer set neither, so `foundry_state.fallout_rows` can
+                    # tell "measured and zero" from "predates the field". The
+                    # handler has accepted them since casting 4 landed; without
+                    # a schema property and a dispatch entry the fields could
+                    # not ARRIVE, which is the shape D-006 and the target_kind
+                    # note below both record — a rule alive in the handler and
+                    # unreachable over MCP.
+                    "fallout_of": {
+                        "type": "string",
+                        "description": (
+                            "The D-NNN this finding is fallout OF — a defect a "
+                            "fix to that one created or exposed. Refused when it "
+                            "names no record in this run's ledger."
+                        ),
+                    },
+                    "supersedes": {
+                        "type": "string",
+                        "description": (
+                            "The open HARDENING D-NNN this filing PROMOTES. The "
+                            "cited record is closed as superseded in the same "
+                            "transaction; its tier is never rewritten, because "
+                            "promotion is a new filing that cites what a stream "
+                            "saw rather than an edit of it."
+                        ),
+                    },
                     "target_kind": {
                         "type": "string",
                         "description": (
@@ -821,6 +850,29 @@ async def list_tools() -> list[Tool]:
                                         "several instances. Escalation keys on it. "
                                         "A class filed in 3 consecutive cycles "
                                         "escalates to one structural-fix packet."
+                                    ),
+                                },
+                                # fallout FR-025 / CT-019 / ST-006 — the same
+                                # two provenance fields the single door takes.
+                                # Both doors persist both keys unconditionally;
+                                # a batch filing that could not carry them was
+                                # the half of "both filing doors" that no
+                                # casting's key_files reached until now.
+                                "fallout_of": {
+                                    "type": "string",
+                                    "description": (
+                                        "The D-NNN this finding is fallout OF. "
+                                        "The whole batch is refused if it names "
+                                        "no record in this run's ledger."
+                                    ),
+                                },
+                                "supersedes": {
+                                    "type": "string",
+                                    "description": (
+                                        "The open HARDENING D-NNN this finding "
+                                        "PROMOTES. Closed as superseded in the "
+                                        "same transaction; its tier is never "
+                                        "rewritten."
                                     ),
                                 },
                                 "target_kind": {
@@ -1422,6 +1474,11 @@ _DISPATCH = {
         # that is the answer it must get.
         tier=args.get("tier", ""),
         reproduction_attempted=args.get("reproduction_attempted", ""),
+        # fallout FR-025 / CT-019 / ST-006: absence travels as absence here too,
+        # for the D-074 reason above. `None` is what the writer reads as "the
+        # filer cited nothing", and it is what both doors then persist.
+        fallout_of=args.get("fallout_of"),
+        supersedes=args.get("supersedes"),
         project_root=_project_root),
     "Foundry-Defects": lambda args: foundry_query_defects(
         status=args.get("status"), cycle=args.get("cycle"), source=args.get("source"),

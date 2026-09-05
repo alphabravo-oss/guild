@@ -5054,26 +5054,23 @@ _LAYERING_DEBT: dict[tuple[str, str], str] = {
 }
 
 
-#: fallout FR-004 / AC-013 / OT-012 — TEST MODULES ANOTHER CASTING OWNS, still
-#: importing the module this casting deleted.
+#: fallout FR-004 / AC-013 / OT-012 — THE REPOINT ROSTER IS EMPTY, AND THAT IS
+#: THE HANDSHAKE BY WHICH IT ENDED.
 #:
-#: Each is repointed by its owner from casting 2's symbol map, which is the
-#: cross-casting seam the decompose plan describes. Recorded rather than
-#: tolerated: a module that stops importing the deleted name makes its entry
-#: stale and FAILS, so the list can only shrink, and a module that starts
-#: importing it fails immediately.
-_SIBLING_SUITES_AWAITING_REPOINT = (
-    "mcp-server/tests/test_defect_tier.py",        # casting 4
-    "mcp-server/tests/test_escalation.py",         # casting 12
-    "mcp-server/tests/test_evidence.py",           # casting 5
-    "mcp-server/tests/test_fix_gate.py",           # casting 12
-    "mcp-server/tests/test_foundry_init.py",       # casting 4
-    "mcp-server/tests/test_inspect_mode.py",       # casting 12
-    "mcp-server/tests/test_migrate_archive.py",    # casting 3
-    "mcp-server/tests/test_nyquist_flag.py",       # casting 12
-    "mcp-server/tests/test_spend.py",              # casting 12
-    "mcp-server/tests/test_stream_rollup.py",      # casting 12
-)
+#: It carried ten test modules another casting owned, each still importing the
+#: module casting 2 deleted, each named with its owner. The table's own rule was
+#: that it could only SHRINK: an entry whose module had repointed failed, so
+#: nobody could leave a row behind. Castings 3, 4, 5, 6 and 12 have now
+#: repointed all ten, every row went stale at once, and the tuple is gone with
+#: them — which is what the rule was for.
+#:
+#: What replaces it is the absolute assertion it was standing in for, and that
+#: assertion is now TRUE of the whole tree rather than of `src/` alone. OT-012
+#: says "no module named foundry_orchestrator exists and NOTHING imports it";
+#: an inventory was the honest way to say "not yet" while the repoints were in
+#: flight, and keeping one after they land would be an allowlist for a debt that
+#: no longer exists.
+_SIBLING_SUITES_AWAITING_REPOINT: tuple[str, ...] = ()
 
 
 def _orchestration_dir() -> Path:
@@ -5347,20 +5344,21 @@ def test_the_package_marker_re_exports_nothing():
             if isinstance(n, ast.ImportFrom)
         }
     ]
-    # THE SHIPPED SOURCE IS HELD ABSOLUTELY. A src/ module importing a module
-    # that does not exist is an ImportError at server startup, so there is no
-    # inventory here and no grace: it is zero or the server does not run.
+    # THE WHOLE TREE IS HELD ABSOLUTELY NOW, shipped source and tests alike.
+    #
+    # A src/ module importing a module that does not exist is an ImportError at
+    # server startup — zero or the server does not run — and the ten sibling
+    # test modules that were in flight behind an inventory have all repointed.
+    # The two halves are still reported separately, because they fail for
+    # different reasons and a reader wants to know which: a shipped offender
+    # breaks the server, a test offender breaks a suite.
     shipped = [o for o in offenders if "/src/" in o]
     assert shipped == [], (
         f"shipped module(s) still importing foundry_orchestrator: {shipped}. It "
         "does not exist; each needs the module that defines the symbol."
     )
-    # The sibling TEST modules are each another casting's file, and each is
-    # repointed by its owner from this casting's symbol map. Named rather than
-    # tolerated, and the list shrinks: an entry whose module no longer imports
-    # the deleted name fails, so nobody can leave a row behind.
     outstanding = sorted(o for o in offenders if "/src/" not in o)
-    assert outstanding == sorted(_SIBLING_SUITES_AWAITING_REPOINT), {
+    assert outstanding == list(_SIBLING_SUITES_AWAITING_REPOINT), {
         "still importing but not recorded": sorted(
             set(outstanding) - set(_SIBLING_SUITES_AWAITING_REPOINT)
         ),

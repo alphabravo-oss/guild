@@ -25,7 +25,19 @@ from foundry_mcp.schemas.vocab import (
 )
 from foundry_mcp.tools.artifacts import _artifact_guard
 from foundry_mcp.tools.citation import iter_symbol_cites
-from foundry_mcp.tools.foundry import ledger_refusals
+# fallout FR-025 / CT-019 / ST-006 — the three rules casting 4 exported so this
+# door could apply them without a second spelling. `defect_provenance` builds the
+# two keys, `fallout_parent_problem` is the one error CT-019 admits, and
+# `close_superseded_record` is ST-006's promotion. All three read what they are
+# handed and nothing else, which is what lets a batch door call them per finding
+# inside its own transaction. Module-top, like `ledger_refusals` beside them:
+# this module already imports `foundry.py` and `foundry.py` never imports back.
+from foundry_mcp.tools.foundry import (
+    close_superseded_record,
+    defect_provenance,
+    fallout_parent_problem,
+    ledger_refusals,
+)
 from foundry_mcp.tools.foundry_state import (
     current_cycle,
     get_run_dir,
@@ -2109,6 +2121,8 @@ def new_defect_record(
     target_kind: str = "",
     record_id: str = "",
     created_at: str | None = None,
+    fallout_of: str | None = None,
+    supersedes: str | None = None,
 ) -> dict:
     """The persisted defect record — ONE shape definition, BOTH filing doors.
 
@@ -2180,11 +2194,22 @@ def new_defect_record(
         # refused an absent or blank class. A record without the key can no
         # longer be produced, so escalation never has to handle one.
         "class": defect_class,
-        # FR-004 / FR-029: the negative result a LATENT filing is answerable
-        # for, and explicitly `None` on a LIVE record rather than "" — absent
-        # evidence and empty evidence are different claims, and a LIVE record's
-        # reproduction lives in the description where the stream put it.
-        "reproduction_attempted": reproduction_attempted if tier == "LATENT" else None,
+        # FR-004 / FR-029 / GI-014: the negative result a NON-LIVE filing is
+        # answerable for, and explicitly `None` on a LIVE record rather than ""
+        # — absent evidence and empty evidence are different claims, and a LIVE
+        # record's reproduction lives in the description where the stream put
+        # it.
+        #
+        # fallout AC-045 — `!= "LIVE"`, NOT `== "LATENT"`. HARDENING joined
+        # DEFECT_TIERS this release and it is a probe that was DRIVEN and
+        # failed, so it carries a reproduction exactly as LATENT does. The
+        # equality spelling ACCEPTED a HARDENING filing for carrying one (the
+        # shared validator demands it) and then persisted the record without it
+        # — the field the F6 backlog calls the whole reason a HARDENING record
+        # is trusted, dropped between the door that required it and the ledger.
+        # Casting 4 fixed this expression at the single door and in
+        # `retier_matching_untiered`; this is the third and last copy.
+        "reproduction_attempted": reproduction_attempted if tier != "LIVE" else None,
         "description": description,
         "spec_ref": spec_ref,
         "symbol": symbol,
@@ -2199,6 +2224,19 @@ def new_defect_record(
         "authored_by": None,
         "fix_commit": None,
         "created_at": created_at if created_at is not None else now_iso(),
+        # fallout FR-025 / CT-019 / ST-006 — THE TWO PROVENANCE KEYS, ALWAYS
+        # BOTH, ON EVERY RECORD EITHER DOOR WRITES.
+        #
+        # Through casting 4's `defect_provenance`, which is the one place that
+        # says what they are called and how they normalise. Written
+        # UNCONDITIONALLY, `None` when the filing carried neither, and that is
+        # the contract rather than tidiness: `foundry_state.fallout_rows` reads
+        # an ABSENT `fallout_of` key as STRUCTURALLY UNMEASURED — never a
+        # measured zero — so a door that wrote the key only when a filer set it
+        # would make every cycle of every post-change run report
+        # `not_measurable` forever, which is the reader certifying nothing while
+        # looking like it certified something.
+        **defect_provenance({"fallout_of": fallout_of, "supersedes": supersedes}),
     }
     if target_kind:
         record["target_kind"] = target_kind
@@ -2623,6 +2661,31 @@ def foundry_sync_defects(
         # class asks for; one guard in a file this casting may not edit is not.
         fixed = [d for d in _dict_records(records) if d.get("status") == "fixed"]
 
+        # fallout CT-019 / AC-045 — THE `fallout_of` RUNG, INSIDE THE LOCK AND
+        # AHEAD OF EVERY APPEND.
+        #
+        # It is the one rung `validate_defect_filing` cannot own: that function
+        # reads the mapping and nothing else, by contract, precisely so this
+        # door can call it once per finding BEFORE opening a transaction. "Does
+        # the ledger hold this id" is a LEDGER question, and asking it outside
+        # the lock would re-open the read-then-write window the lock exists to
+        # close — a parent filed by a concurrent door would read as unknown.
+        #
+        # SWEPT OVER EVERY FINDING FIRST, which is what makes this door's
+        # all-or-nothing refusal survive the addition. The single door returns
+        # from inside its transaction knowing nothing has been mutated yet; this
+        # one appends in a loop, so a rung that fired on the fourth finding
+        # after three appends would commit three of a batch the caller was told
+        # was refused. `test_sync_refusal_is_all_or_nothing` is the pin, and it
+        # is about exactly this.
+        superseded: list[str] = []
+        for finding in findings:
+            unknown_parent = fallout_parent_problem(
+                finding.get("fallout_of"), records
+            )
+            if unknown_parent is not None:
+                return unknown_parent
+
         for finding, norm in zip(findings, normalized):
             symbol = finding.get("symbol", "")
             desc = finding.get("description", "")
@@ -2822,9 +2885,37 @@ def foundry_sync_defects(
                 # the same finding preserves when it is filed one door over.
                 target_kind=finding.get("target_kind") or "",
                 created_at=now_iso(),
+                # fallout FR-025 / CT-019 / ST-006: the caller's two provenance
+                # fields, carried onto the record. `new_defect_record` writes
+                # both keys whatever these are, so a Sync-filed record is
+                # measurable on the same terms a Defect-filed one is.
+                fallout_of=finding.get("fallout_of"),
+                supersedes=finding.get("supersedes"),
             )
             records.append(defect)
             added += 1
+
+            # fallout ST-006 / GI-022 — THE PROMOTION, IN THE SAME TRANSACTION
+            # THAT PERSISTED THE RECORD MAKING IT.
+            #
+            # A closure written in a second transaction would leave a window in
+            # which the citing record exists and the record it supersedes is
+            # still open, and every gate and census that counts `status ==
+            # "open"` reads that window as one more open defect than the run
+            # has. After the append, because the closure records the id of the
+            # record that superseded it and that id is minted above.
+            #
+            # The TIER is not touched (OT-020 / GI-022): promotion is a NEW
+            # filing that CITES the earlier record, never a rewrite of what a
+            # stream said it saw.
+            superseded_id = close_superseded_record(
+                records,
+                defect["supersedes"],
+                by_id=defect["id"],
+                cycle=defect["cycle"],
+            )
+            if superseded_id is not None:
+                superseded.append(superseded_id)
 
         total_open = sum(1 for d in _dict_records(records) if d.get("status") == "open")
 
@@ -2855,6 +2946,10 @@ def foundry_sync_defects(
         # following `_blocking_defects`' hint can see the exit happened.
         "retiered": retiered,
         "retiered_ids": retiered_ids,
+        # fallout ST-006: the open HARDENING records this batch PROMOTED, named
+        # where the filer reads them. A closure the caller cannot see is a
+        # closure it will try to make again.
+        "superseded_ids": superseded,
         "total_open": total_open,
     }
     if tripwires:
