@@ -1,0 +1,37 @@
+# evidence-cmd: cd plugins/foundry && printf '%s\n' 'agents/assayer.md|returns `state.temper`' 'agents/assayer.md|cite the matrix row whose stated behaviour failed' 'agents/assayer.md|classification: "TEMPER_CANDIDATE"' 'agents/assayer.md|the novel probes at INSPECT' 'agents/assayer.md|as `HARDENING` — never `LIVE` unless the never-demote denylist fires' 'agents/assayer.md|**Set `fallout_of` when the finding is fallout of an earlier fix.**' 'agents/assayer.md|sibling surface left on a contract a previous cycle'"'"'s fix changed is not a fresh defect' 'agents/assayer.md|An id the ledger does not carry is REFUSED at the door rather than stored' 'agents/assayer.md|**You record your own stream; the lead only confirms the record exists.**' 'agents/assayer.md|A second call for the same stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every record under `records[]`' 'skills/prove/SKILL.md|returns `state.temper`' 'skills/prove/SKILL.md|cite the matrix row whose stated behaviour failed' 'skills/prove/SKILL.md|classification: "TEMPER_CANDIDATE"' 'skills/prove/SKILL.md|the novel probes at INSPECT' 'skills/prove/SKILL.md|as `HARDENING` — never `LIVE` unless the never-demote denylist fires' 'skills/prove/SKILL.md|**Set `fallout_of` when the finding is fallout of an earlier fix.**' 'skills/prove/SKILL.md|sibling surface left on a contract a previous cycle'"'"'s fix changed is not a fresh defect' 'skills/prove/SKILL.md|An id the ledger does not carry is REFUSED at the door rather than stored' 'skills/prove/SKILL.md|**You record your own stream; the lead only confirms the record exists.**' 'skills/prove/SKILL.md|A second call for the same stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every record under `records[]`' 'skills/trace/SKILL.md|**Set `fallout_of` when the finding is fallout of an earlier fix.**' 'skills/trace/SKILL.md|sibling surface left on a contract a previous cycle'"'"'s fix changed is not a fresh defect' 'skills/trace/SKILL.md|An id the ledger does not carry is REFUSED at the door rather than stored' 'skills/trace/SKILL.md|**You record your own stream; the lead only confirms the record exists.**' 'skills/trace/SKILL.md|A second call for the same stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every record under `records[]`' 'skills/sight/SKILL.md|**You record your own stream; the lead only confirms the record exists.**' 'skills/sight/SKILL.md|A second call for the same stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every record under `records[]`' 'skills/sight/SKILL.md|`findings_count`' 'skills/temper/SKILL.md|Foundry-Observations(classification="TEMPER_CANDIDATE")' 'skills/temper/SKILL.md|open candidates UNIONED with your own micro-domains' 'skills/temper/SKILL.md|closed as DRIVEN — filed or clean, both are closures' 'skills/temper/SKILL.md|is UNDRIVEN and is listed by id, cycle and description in the report' 'skills/temper/SKILL.md|**You record your own stream; the lead only confirms the record exists.**' 'skills/temper/SKILL.md|A second call for the same stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every record under `records[]`' | while IFS='|' read -r f c; do printf '%s | before=%s after=%s | %s\n' "$f" "$(git show f6f8965:plugins/foundry/"$f" | tr '\n' ' ' | tr -s ' ' | grep -cF -- "$c")" "$(tr '\n' ' ' < "$f" | tr -s ' ' | grep -cF -- "$c")" "$c"; done
+# evidence-for: AC-018, AC-019, AC-031, AC-048, AC-058, FR-016, FR-017, FR-023, FR-025, FR-044, FR-049, FR-060, NFR-011
+
+agents/assayer.md | before=0 after=1 | returns `state.temper`
+agents/assayer.md | before=0 after=1 | cite the matrix row whose stated behaviour failed
+agents/assayer.md | before=0 after=1 | classification: "TEMPER_CANDIDATE"
+agents/assayer.md | before=0 after=1 | the novel probes at INSPECT
+agents/assayer.md | before=0 after=1 | as `HARDENING` — never `LIVE` unless the never-demote denylist fires
+agents/assayer.md | before=0 after=1 | **Set `fallout_of` when the finding is fallout of an earlier fix.**
+agents/assayer.md | before=0 after=1 | sibling surface left on a contract a previous cycle's fix changed is not a fresh defect
+agents/assayer.md | before=0 after=1 | An id the ledger does not carry is REFUSED at the door rather than stored
+agents/assayer.md | before=0 after=1 | **You record your own stream; the lead only confirms the record exists.**
+agents/assayer.md | before=0 after=1 | A second call for the same stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every record under `records[]`
+skills/prove/SKILL.md | before=0 after=1 | returns `state.temper`
+skills/prove/SKILL.md | before=0 after=1 | cite the matrix row whose stated behaviour failed
+skills/prove/SKILL.md | before=0 after=1 | classification: "TEMPER_CANDIDATE"
+skills/prove/SKILL.md | before=0 after=1 | the novel probes at INSPECT
+skills/prove/SKILL.md | before=0 after=1 | as `HARDENING` — never `LIVE` unless the never-demote denylist fires
+skills/prove/SKILL.md | before=0 after=1 | **Set `fallout_of` when the finding is fallout of an earlier fix.**
+skills/prove/SKILL.md | before=0 after=1 | sibling surface left on a contract a previous cycle's fix changed is not a fresh defect
+skills/prove/SKILL.md | before=0 after=1 | An id the ledger does not carry is REFUSED at the door rather than stored
+skills/prove/SKILL.md | before=0 after=1 | **You record your own stream; the lead only confirms the record exists.**
+skills/prove/SKILL.md | before=0 after=1 | A second call for the same stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every record under `records[]`
+skills/trace/SKILL.md | before=0 after=1 | **Set `fallout_of` when the finding is fallout of an earlier fix.**
+skills/trace/SKILL.md | before=0 after=1 | sibling surface left on a contract a previous cycle's fix changed is not a fresh defect
+skills/trace/SKILL.md | before=0 after=1 | An id the ledger does not carry is REFUSED at the door rather than stored
+skills/trace/SKILL.md | before=0 after=1 | **You record your own stream; the lead only confirms the record exists.**
+skills/trace/SKILL.md | before=0 after=1 | A second call for the same stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every record under `records[]`
+skills/sight/SKILL.md | before=0 after=1 | **You record your own stream; the lead only confirms the record exists.**
+skills/sight/SKILL.md | before=0 after=1 | A second call for the same stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every record under `records[]`
+skills/sight/SKILL.md | before=0 after=1 | `findings_count`
+skills/temper/SKILL.md | before=0 after=1 | Foundry-Observations(classification="TEMPER_CANDIDATE")
+skills/temper/SKILL.md | before=0 after=1 | open candidates UNIONED with your own micro-domains
+skills/temper/SKILL.md | before=0 after=1 | closed as DRIVEN — filed or clean, both are closures
+skills/temper/SKILL.md | before=0 after=1 | is UNDRIVEN and is listed by id, cycle and description in the report
+skills/temper/SKILL.md | before=0 after=1 | **You record your own stream; the lead only confirms the record exists.**
+skills/temper/SKILL.md | before=0 after=1 | A second call for the same stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every record under `records[]`

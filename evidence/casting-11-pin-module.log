@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_skill_prose.py 2>&1 | tail -1
+# evidence-for: AC-018, AC-019, AC-031, AC-048, AC-058, FR-037, NFR-011
+# evidence-volatile: \d+\.\d+s
+
+65 passed in 0.05s
