@@ -1278,15 +1278,28 @@ def test_both_rollup_readers_classify_one_bucket_identically(
 ) -> None:
     """D-182 — the two walkers of one bucket, fed the same bucket.
 
-    `orchestration.spend._stream_dispatch_cycles` and `measure-run.py`
+    `foundry_state.unreported_dispatch_inputs` and `measure-run.py`
     `_read_stream_rollup` both answer "which keys here are streams", and the
     whole filing is that they answered differently. The rule now has ONE
     definition in `foundry_state.is_stream_record`; this drives BOTH readers
     over a single bucket and asserts they accept and reject exactly the same
     keys, so the day a third C-6 field is added, whichever reader is not
     taught it fails here rather than in a live run.
+
+    THE PIN FOLLOWED THE WALKER, NOT THE MODULE (GI-026 / GI-024). The
+    dispatch-side walk of this bucket has moved twice: out of the monolith
+    into `orchestration/spend.py` at the split, and then into
+    `foundry_state.unreported_dispatch_inputs` when the GI-024 consolidation
+    made that the single assembler — leaving `orchestration.spend`'s
+    `#_dispatch_inputs` a one-line delegation that walks nothing. Aiming this
+    at the delegator would report "the rule was re-typed" on every occasion
+    the rule was in fact consolidated FURTHER, which is the false alarm the
+    sibling test below names, so it is aimed at the walker wherever the
+    walker lives. `cycles_of_agent` is that walk's `{stream wire id:
+    [cycles]}` answer — the same question, and the same shape, the
+    dispatch-side reader has returned at all three addresses.
     """
-    from foundry_mcp.tools.orchestration import spend
+    from foundry_mcp.tools import foundry_state
 
     bucket = {
         "prove": _entry(80, 80, 1),
@@ -1297,7 +1310,14 @@ def test_both_rollup_readers_classify_one_bucket_identically(
         json.dumps(_rollup_doc({"3": bucket})), encoding="utf-8"
     )
 
-    orchestrator_streams = set(spend._stream_dispatch_cycles(tmp_path))
+    # No `spawns.log` and no `spend.jsonl` here, and that is not a degraded
+    # read: an ABSENT ledger is not a problem to `read_jsonl`, so the roll-up
+    # walk below runs on its own terms. A ledger that were unreadable would
+    # empty this set and fail the assertions loudly rather than pass a
+    # narrowed answer off as agreement.
+    dispatch_streams = set(
+        foundry_state.unreported_dispatch_inputs(tmp_path)["cycles_of_agent"]
+    )
 
     module = _load_measure_run_module()
     coverage, _highest, tokens = module._read_stream_rollup(tmp_path)
@@ -1309,12 +1329,12 @@ def test_both_rollup_readers_classify_one_bucket_identically(
         if module.canonical_stream_id(wire) in coverage.get("3", {})
     }
 
-    assert orchestrator_streams == {"prove", "trace"}
-    assert measure_streams == orchestrator_streams, (
+    assert dispatch_streams == {"prove", "trace"}
+    assert measure_streams == dispatch_streams, (
         "the two readers of one cycle bucket disagree about which keys are "
         "streams — D-182 is back"
     )
-    assert set(_CYCLE_LEVEL_FACTS) & orchestrator_streams == set()
+    assert set(_CYCLE_LEVEL_FACTS) & dispatch_streams == set()
     assert tokens == [], (
         "no cycle-level fact may produce a failure token in either reader"
     )
@@ -2669,21 +2689,33 @@ def test_demo_grind_cycle_12_the_widened_rollup_at_the_real_door(
         print("  'Numbers are the target, not a gate'.")
 
         print("\n=== one definition, both readers ===")
-        from foundry_mcp.tools.orchestration import spend
-        from foundry_mcp.tools.foundry_state import is_stream_record
+        from foundry_mcp.tools.foundry_state import (
+            is_stream_record,
+            unreported_dispatch_inputs,
+        )
 
         (control_dir / "stream-rollup.json").write_text(
             json.dumps(widened), encoding="utf-8"
         )
-        orchestrator_view = sorted(spend._stream_dispatch_cycles(control_dir))
+        # THE DISPATCH-SIDE WALKER, WHEREVER IT LIVES. This demo drove that
+        # walker in the monolith, then in `orchestration/spend.py` after the
+        # split; the GI-024 consolidation made
+        # `foundry_state.unreported_dispatch_inputs` the one assembler and
+        # `orchestration.spend`'s `#_dispatch_inputs` a delegation that walks
+        # nothing. `cycles_of_agent` is the same `{stream: [cycles]}` answer
+        # off the same walk, so what the demo shows is the rule and its
+        # reader rather than a module name that has moved twice.
+        walker_view = sorted(
+            unreported_dispatch_inputs(control_dir)["cycles_of_agent"]
+        )
         predicate_view = sorted(
             key
             for key, value in {**cycle_bucket, **_CYCLE_LEVEL_FACTS}.items()
             if is_stream_record(value)
         )
-        print(f"  orchestration.spend._stream_dispatch_cycles: {orchestrator_view}")
-        print(f"  foundry_state.is_stream_record:               {predicate_view}")
-        assert orchestrator_view == predicate_view
+        print(f"  foundry_state.unreported_dispatch_inputs: {walker_view}")
+        print(f"  foundry_state.is_stream_record:           {predicate_view}")
+        assert walker_view == predicate_view
         print("  the same three keys, from the rule stated once rather than")
         print("  hand-typed a third time — which is how the third walker of")
         print("  this bucket came to be missing it.")
