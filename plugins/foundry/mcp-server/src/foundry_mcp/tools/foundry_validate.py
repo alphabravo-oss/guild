@@ -66,12 +66,25 @@ from foundry_mcp.tools.foundry_state import (
 #: under a release that writes it and a casting is missing it" — the first is
 #: reported NOT COMPUTABLE and passes, the second is refused.
 #:
-#: DECLARED HERE, DELIBERATELY, rather than derived from the two places that
-#: would be better homes for it. `schemas/vocab.py` and
-#: `scripts/migrate-archive.py` (which owns `ARCHIVE_SCHEMA_VERSION` and does
-#: the bump) both belong to other castings in this wave and may not be edited
-#: from here. Consolidating the two spellings into one is the follow-up, and
-#: it is recorded in `foundry-archive/foundry-run-fallout/concerns.md`.
+#: DECLARED HERE, DELIBERATELY, rather than derived from a module this casting
+#: may not edit. `schemas/vocab.py`, `tools/foundry.py#ARCHIVE_SCHEMA_VERSION`
+#: (the marker a new run is born with) and
+#: `scripts/migrate-archive.py#ARCHIVE_SCHEMA_VERSION` (which does the bump)
+#: all belong to other castings, and consolidating the spellings is tracked as
+#: an open concern in `foundry-archive/foundry-run-fallout/concerns.json`: the
+#: proposal is that the generation be declared in the `foundry_state` leaf this
+#: module already imports, so the floor can be defined against it.
+#:
+#: AND IT IS A FLOOR, NOT A COPY OF THE GENERATION, WHICH IS WHY THE TWO ARE
+#: STILL TWO. They read 4 apiece today only because the field became mandatory
+#: in the generation that is current. The generation says what a run's
+#: artifacts ARE and moves at every bump; this says where `requirement_ids`
+#: started being mandatory and is a historical fact that must NOT move with it,
+#: or the next bump silently re-reads every schema-4 archive as predating a
+#: field it carries. So the relation to pin between them is
+#: `ARCHIVE_SCHEMA_VERSION >= REQUIREMENT_IDS_SCHEMA_FLOOR`, never equality —
+#: `tests/test_migrate_archive.py` holds it for the migration's spelling and
+#: `tests/test_validate_ownership.py` for the value a created run carries.
 REQUIREMENT_IDS_SCHEMA_FLOOR = 4
 
 #: How many castings may own one requirement id before F0.9 wants a reason.

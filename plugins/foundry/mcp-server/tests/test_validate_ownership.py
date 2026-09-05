@@ -5,13 +5,13 @@ proves are named, with the symbol each lands on, in casting 7's completion
 report and in the ``# evidence-for:`` headers of
 ``evidence/casting-7-ownership-consistency.log``,
 ``evidence/casting-7-requirement-span.log`` and
-``evidence/casting-7-span-table.log``. They are deliberately absent from the
-prose here: ``tests/test_spec_id_convention.py`` demands that every three-digit
-requirement id in a docstring or comment in this directory carry one of two
-qualifications, ``process-fixes`` or ``convergence``, and a third spec is
-installed now with no legal qualification of its own — so the only spellings
-that would pass this directory's pin name a DIFFERENT spec's requirement.
-Recorded in ``foundry-archive/foundry-run-fallout/concerns.md``.
+``evidence/casting-7-span-table.log``. They stay out of the prose below except
+where naming one is the point: ``tests/test_spec_id_convention.py`` demands that
+every three-digit requirement id in a docstring or comment in this directory
+name its spec, and this release's qualification — ``fallout`` — did not exist
+when this module was written, so the only spellings that would then have passed
+the pin named a DIFFERENT spec's requirement. It exists now, so a citation that
+earns its place carries it.
 
 The two answers this module is built from, verbatim:
 
@@ -56,6 +56,7 @@ from pathlib import Path
 
 import pytest
 
+from foundry_mcp.tools.foundry import foundry_init
 from foundry_mcp.tools.foundry_state import (
     ARCHIVE_DIR,
     clear_active_run,
@@ -65,6 +66,7 @@ from foundry_mcp.tools.foundry_validate import (
     REQUIREMENT_IDS_SCHEMA_FLOOR,
     REQUIREMENT_SPAN_EXCEEDED,
     REQUIREMENT_SPAN_MAX,
+    _archive_schema_version,
     foundry_validate_castings,
     requirement_span_table,
 )
@@ -81,6 +83,7 @@ def _run_validate(
     state: dict | None = None,
     manifest_extra: dict | None = None,
     complete: bool = False,
+    run_name: str = "ownership-test",
 ) -> dict:
     """Write a minimal run and invoke the validator against it.
 
@@ -88,7 +91,14 @@ def _run_validate(
     isolated from requirement coverage and the file-change-map cross-check.
     ``state`` writes state.json, which is where the archive schema marker lives
     — absent by default, which is what a run created before the marker existed
-    looks like.
+    looks like. ``state=None`` therefore also means "leave whatever is already
+    there", which is what the one test below that creates its run through
+    ``Foundry-Init`` relies on.
+
+    ``run_name`` exists for that same one test: it points the manifest and the
+    validator at a run directory this harness did not invent, so the state
+    document the door reads is the one the real creating call wrote. Every
+    other caller takes the default and the two are the same thing.
 
     ``complete=True`` writes the rest of what F0.5 emits — a prompt file per
     casting carrying the three blocks, a spec.md the excerpts are a verbatim
@@ -97,7 +107,6 @@ def _run_validate(
     test asserting one dimension does not, and paying for it everywhere would
     hide which dimension a failure came from.
     """
-    run_name = "ownership-test"
     fdir = project_root / ARCHIVE_DIR / run_name
     (fdir / "castings").mkdir(parents=True, exist_ok=True)
     manifest = {"castings": castings, "spec_type": "GREENFIELD"}
@@ -458,6 +467,65 @@ def test_a_run_created_under_the_current_schema_is_refused_for_a_missing_list(
     assert dim["not_computable"] is False
     assert dim["ok"] is False
     assert _issue_kinds(dim) == ["missing_requirement_ids"]
+    assert dim["issues"][0]["casting"] == 1
+    assert result["passed"] is False
+
+
+def test_a_run_this_server_created_is_refused_the_same_way_a_hand_written_one_is(
+    tmp_path: Path,
+):
+    """The door reads the marker a REAL run-creating call writes, not a literal.
+
+    Every other test in this section stands a hand-written state document in
+    for "a run created under the current release", and a stand-in nobody checks
+    is a suite that proves the door against a shape that need not exist. It did
+    not exist: for a whole cycle nothing stamped the marker at creation, so a
+    run this server had made minutes earlier read as version 0 — the same
+    answer an archive written long before the field existed gives — and the
+    fail-closed half of fallout FR-054 could not fire on one real run while
+    every test above this one passed. A fixture cannot see that, because the
+    value it asserts against is the value it just wrote.
+
+    So this is the one test in the module that takes no state document from the
+    harness. It creates a run through the real door, and ``state=None`` below
+    is the load-bearing argument: what that door wrote is left exactly where it
+    is, and F0.9 is driven against it. A marker written under another key, into
+    another document, with another value, or on no branch at all fails here and
+    passes everything above it.
+
+    The first assertion reads the marker through ``_archive_schema_version``,
+    the reader the dimension itself compares — not the raw key — because a
+    marker of the wrong TYPE under the right key coerces to 0 there and would
+    sail past an assertion on the literal, leaving the refusal below to explain
+    a failure whose cause is two frames away.
+    """
+    spec = tmp_path / "spec.md"
+    spec.write_text(DECLARES_TWO, encoding="utf-8")
+
+    created = foundry_init(spec_path=str(spec), project_root=str(tmp_path))
+    state = json.loads(
+        (Path(created["foundry_dir"]) / "state.json").read_text(encoding="utf-8")
+    )
+
+    assert _archive_schema_version(state) >= REQUIREMENT_IDS_SCHEMA_FLOOR, (
+        f"a run this server just created reads as schema "
+        f"{_archive_schema_version(state)}, below the "
+        f"{REQUIREMENT_IDS_SCHEMA_FLOOR} every CURRENT_RUN test above assumes — "
+        f"so those tests describe a run that cannot be created and the "
+        f"fail-closed half of this rule is unreachable. state.json: {state}"
+    )
+
+    castings = [_casting(1, excerpt=DECLARES_TWO, include_owns=False)]
+    result = _run_validate(
+        tmp_path, castings, run_name=created["run_name"], state=None
+    )
+    dim = _ownership(result)
+
+    assert dim["archive_schema_version"] == _archive_schema_version(state)
+    assert dim["not_computable"] is False
+    assert dim["ok"] is False
+    assert _issue_kinds(dim) == ["missing_requirement_ids"]
+    assert dim["issues"][0]["severity"] == "error"
     assert dim["issues"][0]["casting"] == 1
     assert result["passed"] is False
 
