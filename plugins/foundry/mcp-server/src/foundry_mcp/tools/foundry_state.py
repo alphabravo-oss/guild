@@ -1478,6 +1478,164 @@ def stream_rollup_rows(run_dir: Path) -> dict:
 FULL_CYCLE_RATIO_THRESHOLD = 0.5
 
 
+# --------------------------------------------------------------------------- #
+# fallout GI-033 / D-080 (concern C-059) — HOISTED FROM THE VERIFIER LAYER.
+#
+# Each function below was read by a VERIFIER module and a LIFECYCLE module at
+# once. GI-033's arithmetic is that the two layers are mutually unreachable, so
+# a symbol both read can live in neither and belongs in a leaf. They are MOVED,
+# not re-implemented — the bodies are the ones `orchestration/width.py`,
+# `orchestration/gates.py` and `tools/foundry_spawn.py` shipped, so nothing
+# about the behaviour is new and casting 2 deletes the old copies when it
+# repoints.
+#
+# THE VOCABULARY IS PASSED IN, every time. This module imports `json` and
+# `pathlib` and nothing else, because `scripts/measure-run.py` reads it with no
+# package on the path; a hoist that imported `vocab` to get a marker name or a
+# tier set would end that, so the names arrive as arguments in the shape
+# `unreported_dispatch_summary` and `current_inspect_mode` established.
+#
+# EACH HOISTED NAME DIFFERS FROM THE ONE IT LEAVES BEHIND, and that is not
+# cosmetic. `test_no_top_level_symbol_is_defined_in_two_shipped_modules` fails
+# on a name defined in two shipped modules, and the old copies stay until
+# casting 2 repoints, so a same-name hoist turns that guard red for the whole
+# window. C-059's rows 1, 2 and 8 (`git_changed_paths`, `git_touching_commit`,
+# `NO_UI_MEANING`) are held back for exactly that reason: both remedies the
+# guard names — deleting the old copy, or recording it in
+# `_DELIBERATE_REDEFINITIONS` — are casting 2's files, not this casting's.
+# --------------------------------------------------------------------------- #
+
+
+def boundary_base_sha(
+    run_dir: Path, *, boundary_marker: str, trace_marker: str, cast_marker: str
+) -> tuple[str, str]:
+    """The commit a cycle's diff is measured FROM, and which marker named it.
+
+    ``(sha, marker_name)``, or ``("", "")`` when no marker carries one. The
+    three markers are tried in the order they become true about a run — the
+    INSPECT boundary, then the TRACE-clean stamp, then the CAST baseline — so
+    the newest fact wins and an older marker left behind cannot answer for it.
+
+    The marker BASENAMES are passed in: they are declared in `artifacts.py`,
+    which this stdlib-only module may not import. Reads through this module's
+    own tolerant primitives, so a torn or non-UTF-8 marker reads as absent
+    rather than raising. Total; never raises.
+    """
+    marker = run_dir / boundary_marker
+    if marker.exists():
+        sha, _ = read_text_file(marker)
+        if sha.strip():
+            return sha.strip(), boundary_marker
+    trace = run_dir / trace_marker
+    if trace.exists():
+        data, problem = read_document(trace)
+        if problem is None and data.get("head_sha"):
+            return str(data["head_sha"]), trace_marker
+    cast = run_dir / cast_marker
+    if cast.exists():
+        sha, _ = read_text_file(cast)
+        if sha.strip():
+            return sha.strip(), cast_marker
+    return "", ""
+
+
+def blocking_defects(
+    run_dir: Path, *, tiers, unknown_tier: str, tier_of
+) -> dict:
+    """The FACTS behind "may this gate pass?" — counts and ids, no prose.
+
+    Returns, and never raises::
+
+        {"blocking": int,        # len(live) + len(unknown)
+         "live": [ids],
+         "unknown": [ids],
+         "latent": [ids]}
+
+    THE REFUSAL PROSE IS DELIBERATELY NOT HERE, and this module's own contract
+    is why: a sentence naming both filing doors and the GRIND phase is
+    lifecycle knowledge and stays in the lifecycle layer, while "the READ each
+    of them is built on comes here". `_blocking_defects`' hint is the example
+    that contract names by name. So the gate keeps its sentence and this
+    answers the numbers it is built from — which is also the shape C-059
+    offered.
+
+    LIVE and unknown are counted separately and BOTH block, because CT-008
+    requires the refusal to tell them apart: a LIVE defect needs fixing, an
+    untiered one needs a stream to re-file it with a tier, and one
+    undifferentiated count sends a lead hunting for a reproduction no stream
+    ever claimed. LATENT is returned because a caller reporting the backlog
+    wants it, and it blocks nothing.
+    """
+    buckets = open_defects_by_tier(
+        run_dir, tiers=tiers, unknown_tier=unknown_tier, tier_of=tier_of
+    )
+    live = [d.get("id", "?") for d in buckets.get("LIVE", [])]
+    unknown = [d.get("id", "?") for d in buckets.get(unknown_tier, [])]
+    latent = [d.get("id", "?") for d in buckets.get("LATENT", [])]
+    return {
+        "blocking": len(live) + len(unknown),
+        "live": live,
+        "unknown": unknown,
+        "latent": latent,
+    }
+
+
+def skipped_stream_ids(
+    run_dir: Path, *, wire_ids, wire_to_canonical, shape_problem
+) -> set[str]:
+    """The wire ids of streams this run DECLARED it would not spawn.
+
+    ``manifest.stream_skips`` is F0.5's predictive skip list. An entry is a
+    mapping carrying ``stream_id`` (canonical UPPERCASE) or a bare string, so
+    an older manifest still reads. The canonical spelling maps back through
+    ``wire_to_canonical`` rather than by lowercasing, because the two
+    spellings are not related by case alone (``TEST-01`` / ``test01``).
+
+    Degrades to "no declared skips" on any shape the readers cannot index,
+    decided by the SHARED validator passed in as ``shape_problem`` rather than
+    by a private `isinstance` — that private check is the reason
+    ``stream_skips: 42`` reached ``for entry in 42`` and raised TypeError out
+    of Foundry-Liveness, from the very reader the prose held up as the one
+    that had always guarded it (D-132).
+
+    ``wire_ids`` and ``wire_to_canonical`` are `vocab.STREAM_WIRE_IDS` and
+    `vocab.WIRE_TO_CANONICAL`, passed in for the reason at the top of this
+    section. Total; never raises.
+    """
+    document, problem = read_json(run_dir / "castings" / "manifest.json")
+    if problem is not None:
+        return set()
+    if shape_problem(document) is not None:
+        return set()
+    manifest = document if isinstance(document, dict) else {}
+    canonical_to_wire = {
+        canonical: wire for wire, canonical in wire_to_canonical.items()
+    }
+    skipped: set[str] = set()
+    # TOTAL INDEPENDENTLY OF THE VALIDATOR PASSED IN, which is this module's
+    # contract and is STRICTER than the one this body had at its old home.
+    # There, `shape_problem` was always `_manifest_shape_problem` and caught a
+    # non-indexable `stream_skips` on the way past; here it is an argument, so a
+    # caller handing in a laxer validator would reach `for entry in 42` and raise
+    # TypeError out of a leaf that promises never to. That is D-132's own defect
+    # arriving through the new seam — the shared validator still DECIDES, and
+    # this guard is what keeps the promise when it is not the one that ran.
+    entries = manifest.get("stream_skips")
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, dict):
+            raw = entry.get("stream_id") or entry.get("stream") or entry.get("id")
+        else:
+            raw = entry
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        token = raw.strip()
+        if token.lower() in wire_ids:
+            skipped.add(token.lower())
+        elif token.upper() in canonical_to_wire:
+            skipped.add(canonical_to_wire[token.upper()])
+    return skipped
+
+
 def full_cycle_ratio(inspect_modes: dict, *, full_mode: str = "FULL") -> dict:
     """AC-046 / FR-053 — FULL cycles divided by total INSPECT cycles.
 

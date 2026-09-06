@@ -45,10 +45,14 @@ from pathlib import Path
 
 import pytest
 
+from foundry_mcp.schemas import vocab
 from foundry_mcp.schemas.vocab import (
+    DEFECT_TIERS,
     ESCALATION_EXIT_REASONS,
     ESCALATION_STATUSES,
     INSPECT_MODES,
+    TIER_UNKNOWN,
+    defect_tier,
     escalation_status,
 )
 from foundry_mcp.tools import foundry_state as fs
@@ -1079,6 +1083,157 @@ def test_the_full_cycle_ratio_is_derived_once(report_run) -> None:
         {"per_cycle": section["per_cycle"]}
     )
     assert section["full_cycle_ratio"]["total_cycles"] == section["cycle_count"]
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-033 / D-080 (concern C-059) — the symbols hoisted out of the
+# verifier layer. Each was read by a verifier module and a lifecycle module at
+# once, which fallout GI-033's arithmetic makes impossible anywhere but a leaf.
+# --------------------------------------------------------------------------- #
+
+
+def _run(tmp_path):
+    """A run directory with a castings/ dir, which every reader below expects."""
+    (tmp_path / "castings").mkdir(parents=True, exist_ok=True)
+    return tmp_path
+
+
+def test_boundary_base_sha_prefers_the_newest_marker(tmp_path) -> None:
+    """fallout D-080 row 3 — which commit a cycle's diff is measured from.
+
+    The three markers are tried in the order they become true about a run, so
+    the newest fact wins and a stale marker cannot answer for it. The marker
+    BASENAMES are passed in because they are declared in `artifacts.py`, which
+    this stdlib-only module may not import.
+    """
+    fdir = _run(tmp_path)
+    markers = dict(boundary_marker=".inspect-boundary-sha",
+                   trace_marker=".trace-clean-at",
+                   cast_marker=".cast-baseline-sha")
+
+    assert fs.boundary_base_sha(fdir, **markers) == ("", ""), "no marker, no sha"
+
+    (fdir / ".cast-baseline-sha").write_text("deadbee\n")
+    assert fs.boundary_base_sha(fdir, **markers) == ("deadbee", ".cast-baseline-sha")
+
+    (fdir / ".trace-clean-at").write_text(json.dumps({"head_sha": "cafe999"}))
+    assert fs.boundary_base_sha(fdir, **markers) == ("cafe999", ".trace-clean-at")
+
+    (fdir / ".inspect-boundary-sha").write_text("abc1234\n")
+    assert fs.boundary_base_sha(fdir, **markers) == ("abc1234", ".inspect-boundary-sha"), (
+        "the INSPECT boundary is the newest fact and outranks both"
+    )
+
+    # A torn marker reads as ABSENT rather than raising, and the next one answers.
+    (fdir / ".inspect-boundary-sha").write_text("   \n")
+    assert fs.boundary_base_sha(fdir, **markers) == ("cafe999", ".trace-clean-at")
+
+
+def test_blocking_defects_counts_live_and_unknown_and_not_the_rest(tmp_path) -> None:
+    """fallout D-080 row 6 / fallout AC-022 — the gate's FACTS, without its prose.
+
+    LIVE and untiered both block and are counted SEPARATELY (fallout CT-008: the two
+    need different remedies). LATENT and HARDENING block nothing — the tier
+    added for off-spec driven failures must not hold a gate shut, which is
+    fallout AC-022's second clause read from the other end.
+
+    The refusal sentence is deliberately not here: a hint naming both filing
+    doors and the GRIND phase is lifecycle knowledge, and this module's own
+    contract keeps the READ here and the sentence there.
+    """
+    fdir = _run(tmp_path)
+    (fdir / "defects.json").write_text(json.dumps({"defects": [
+        {"id": "D-1", "status": "open", "tier": "LIVE"},
+        {"id": "D-2", "status": "open", "tier": "HARDENING"},
+        {"id": "D-3", "status": "open"},
+        {"id": "D-4", "status": "open", "tier": "LATENT"},
+        {"id": "D-5", "status": "closed", "tier": "LIVE"},
+    ]}))
+
+    out = fs.blocking_defects(
+        fdir, tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN, tier_of=defect_tier
+    )
+
+    assert out == {"blocking": 2, "live": ["D-1"], "unknown": ["D-3"],
+                   "latent": ["D-4"]}
+    assert "D-2" not in out["live"], (
+        "the HARDENING record is not a LIVE instance (fallout AC-022) and blocks nothing"
+    )
+    assert set(out) == {"blocking", "live", "unknown", "latent"}, (
+        "no reason/hint: the sentence stays in the layer that speaks it"
+    )
+
+
+def test_blocking_defects_reads_an_absent_and_a_torn_ledger_as_nothing_open(
+    tmp_path,
+) -> None:
+    """The empty and malformed drives this module owes every reader."""
+    fdir = _run(tmp_path)
+    kw = dict(tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN, tier_of=defect_tier)
+    empty = {"blocking": 0, "live": [], "unknown": [], "latent": []}
+
+    assert fs.blocking_defects(fdir, **kw) == empty, "absent ledger"
+    (fdir / "defects.json").write_text("{ truncated")
+    assert fs.blocking_defects(fdir, **kw) == empty, "torn ledger, no raise"
+
+
+def test_skipped_stream_ids_maps_both_spellings_and_degrades(tmp_path) -> None:
+    """fallout D-080 row 7 — the declared skip list, read in the leaf.
+
+    Canonical spellings map back through the vocabulary rather than by
+    lowercasing, because the two are not related by case alone (`TEST-01` /
+    `test01`). Both the mapping and the wire-id set are passed IN, for the same
+    reason every other reader here takes its vocabulary as an argument.
+    """
+    fdir = _run(tmp_path)
+    kw = dict(wire_ids=vocab.STREAM_WIRE_IDS,
+              wire_to_canonical=vocab.WIRE_TO_CANONICAL,
+              shape_problem=lambda _m: None)
+
+    assert fs.skipped_stream_ids(fdir, **kw) == set(), "no manifest, no declared skips"
+
+    (fdir / "castings" / "manifest.json").write_text(json.dumps(
+        {"castings": [], "stream_skips": [{"stream_id": "TEST-01"}, "sight"]}))
+    got = fs.skipped_stream_ids(fdir, **kw)
+    assert "sight" in got, "a wire id passes through as itself"
+    assert "test01" in got, (
+        "TEST-01 maps to test01 through WIRE_TO_CANONICAL, which lowercasing "
+        "would have spelled 'test-01'"
+    )
+
+    # D-132: a non-indexable shape is decided by the SHARED validator, and the
+    # reader degrades to "no declared skips" rather than raising out of a door.
+    (fdir / "castings" / "manifest.json").write_text(json.dumps(
+        {"castings": [], "stream_skips": 42}))
+    assert fs.skipped_stream_ids(fdir, **kw) == set()
+    (fdir / "castings" / "manifest.json").write_text("{ truncated")
+    assert fs.skipped_stream_ids(fdir, **kw) == set()
+
+
+def test_the_leaf_still_imports_nothing_from_the_package(tmp_path) -> None:
+    """fallout GI-033 / FR-008 — the hoist did not cost the leaf its contract.
+
+    `scripts/measure-run.py` reads this module with no package on the path, so
+    a hoisted symbol that imported `vocab` for a tier set or `artifacts` for a
+    marker name would end that. Every one of them takes its vocabulary as an
+    argument instead, and this is what holds the line.
+    """
+    import ast
+    from pathlib import Path as _P
+
+    tree = ast.parse(_P(fs.__file__).read_text())
+    reached = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            reached.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            reached.add(node.module or "")
+
+    assert reached, "the walk must SEE something or it proves nothing"
+    assert not [m for m in reached if "foundry_mcp" in m], (
+        f"{sorted(m for m in reached if 'foundry_mcp' in m)} — the leaf reaches "
+        f"into the package, so measure-run.py's package-free read is over"
+    )
 
 
 def test_the_full_cycle_ratio_threshold_is_spelled_once(monkeypatch) -> None:
