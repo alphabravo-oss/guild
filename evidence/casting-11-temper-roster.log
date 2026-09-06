@@ -1,4 +1,4 @@
-# evidence-cmd: cd plugins/foundry && f=skills/temper/SKILL.md; for c in 'Foundry-Observations(classification="TEMPER_CANDIDATE")' 'open candidates UNIONED with your own micro-domains' 'closed as DRIVEN — filed or clean, both are closures' 'status: "DRIVEN"' 'is UNDRIVEN and is listed by id, cycle and description in the report' 'You record your own stream; the lead only confirms the record exists.' '`temper` is not one of them'; do printf '%s | %s | %s\n' "$f" "$c" "$(tr '\n' ' ' < "$f" | tr -s ' ' | grep -cF -- "$c")"; done
+# evidence-cmd: cd plugins/foundry && f=skills/temper/SKILL.md; for c in 'Foundry-Observations(classification="TEMPER_CANDIDATE")' 'open candidates UNIONED with your own micro-domains' 'closed as DRIVEN — filed or clean, both are closures' 'status: "DRIVEN"' 'is UNDRIVEN and is listed by id, cycle and description in the report' 'The call that closes one is `Foundry-Drive-Candidate`' 'Pass `observation_id`' 'OMIT `filed`' 'the answer says `already_driven`' 'You record your own stream; the lead only confirms the record exists.' '`temper` is not one of them'; do printf '%s | %s | %s\n' "$f" "$c" "$(tr '\n' ' ' < "$f" | tr -s ' ' | grep -cF -- "$c")"; done
 # evidence-for: AC-019, FR-017, GI-027, OT-022, ST-007
 
 skills/temper/SKILL.md | Foundry-Observations(classification="TEMPER_CANDIDATE") | 1
@@ -6,5 +6,9 @@ skills/temper/SKILL.md | open candidates UNIONED with your own micro-domains | 1
 skills/temper/SKILL.md | closed as DRIVEN — filed or clean, both are closures | 1
 skills/temper/SKILL.md | status: "DRIVEN" | 1
 skills/temper/SKILL.md | is UNDRIVEN and is listed by id, cycle and description in the report | 1
+skills/temper/SKILL.md | The call that closes one is `Foundry-Drive-Candidate` | 1
+skills/temper/SKILL.md | Pass `observation_id` | 1
+skills/temper/SKILL.md | OMIT `filed` | 1
+skills/temper/SKILL.md | the answer says `already_driven` | 1
 skills/temper/SKILL.md | You record your own stream; the lead only confirms the record exists. | 1
 skills/temper/SKILL.md | `temper` is not one of them | 1
