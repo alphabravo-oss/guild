@@ -132,6 +132,13 @@ def _prove_is_clean(fdir: Path, project_root: str) -> bool:
 #: than of writing a roster. The reader it consults is casting 1's.
 ROSTER_MISMATCH = "ROSTER_MISMATCH"
 
+#: fallout FR-050 / GI-020 / CT-003 (concern C-058) — the named refusal a
+#: record gets when the roster it declares a population against cannot be read.
+#: DISTINCT from `ROSTER_MISMATCH`, which is a record disagreeing with a roster
+#: that read fine: the remedy is different (repair the artifact, not the
+#: record), so the token is different.
+ROSTER_UNREADABLE = "ROSTER_UNREADABLE"
+
 
 
 VALID_STREAMS = STREAM_WIRE_IDS
@@ -617,7 +624,54 @@ def foundry_mark_stream(
     # `tools/rosters.py` reader and never re-derived here — a second derivation
     # of the population is the very drift the roster exists to end.
     roster_len, roster_problem = roster_length(fdir, stream)
-    if roster_problem is None and roster_len is not None and items_total != roster_len:
+
+    # fallout FR-050 / GI-020 / CT-003 (concern C-058, same class as D-071) —
+    # A ROSTER THAT WILL NOT READ IS A REFUSAL, NOT AN UNCONSTRAINED RECORD.
+    # ------------------------------------------------------------------------
+    # The rung below opened `if roster_problem is None and ...`, which reads the
+    # problem channel as "no constraint" and DISCARDS the string. Casting 1's
+    # D-071 fix changed what that channel means: it used to carry only "the JSON
+    # could not be read", and it now also carries the third answer — a document
+    # exists at `rosters/<stream>.json` and no population can be read from it.
+    # The whole point of that fix is that "no roster" and "a document here I
+    # cannot read as one" are different facts; consuming both as `None` put them
+    # back together one door over, and on the side that ACCEPTS.
+    #
+    # THE DIRECTION IS GI-020's. The roster is written at first derivation and
+    # read by every later cycle, so a record whose declared population cannot be
+    # read is a record nothing can check the >=95% threshold against — and the
+    # threshold is the only thing `items_total` is for. Accepting it is the
+    # survey's "4/4 with no way to know which four", which is the shape FR-050
+    # exists to end. It is refused, naming the problem the reader gave, so the
+    # operator repairs the artifact rather than discovering at the streams-
+    # complete check that a cycle's coverage was measured against nothing.
+    #
+    # ABSENT IS STILL ABSENT: `roster_length` answers `(None, None)` for a
+    # stream with no roster and that is not a problem — a stream may run before
+    # anyone derives a roster for it, which is why the two answers had to become
+    # distinguishable in the first place.
+    if roster_problem is not None:
+        return {
+            "error": ROSTER_UNREADABLE,
+            "reason": (
+                f"Cannot record {stream} with items_total={items_total}: the "
+                f"persisted roster for this stream could not be read — "
+                f"{roster_problem}"
+            ),
+            "hint": (
+                "`items_total` is checked against the roster, so a roster "
+                "nothing can read leaves the coverage threshold measured "
+                "against a population nobody knows. Repair "
+                f"rosters/{stream}.json, or re-derive it with "
+                "Foundry-Roster(stream, items, revise=true, reason=...). A "
+                "stream with NO roster at all is not this refusal — that is "
+                "unconstrained by design."
+            ),
+            "roster_problem": roster_problem,
+            "items_total": items_total,
+        }
+
+    if roster_len is not None and items_total != roster_len:
         return {
             "error": ROSTER_MISMATCH,
             "reason": (

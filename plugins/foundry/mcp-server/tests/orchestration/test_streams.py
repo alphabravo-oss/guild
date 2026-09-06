@@ -654,3 +654,100 @@ def test_the_replace_writer_and_the_refusal_agree_about_what_a_record_does():
         assert (second["items_checked"], second["findings"]) == (7, 2), second
         assert second["replaced"]["items_checked"] == 10, second
         assert second["records"] == 2, second
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-050 / GI-020 / CT-003 (concern C-058, same class as D-071) — THE
+# ROSTER'S PROBLEM CHANNEL IS A REFUSAL, NOT AN ABSENT CONSTRAINT.
+# --------------------------------------------------------------------------- #
+
+
+def _unreadable_roster(fdir, stream: str) -> None:
+    """A roster document that PARSES and is not a roster.
+
+    Deliberately valid JSON: `_artifact_guard` already refuses the whole door on
+    a file that will not parse, so an unparseable roster never reaches the rung
+    and is not the state C-058 is about. The reachable third answer is a
+    document `read_document` accepts and `_roster_shape_problem` then NAMES —
+    which is exactly what casting 1's D-071 fix created.
+    """
+    rosters = fdir / "rosters"
+    rosters.mkdir(parents=True, exist_ok=True)
+    (rosters / f"{stream}.json").write_text(
+        json.dumps({"stream": stream, "note": "no items list here"}),
+        encoding="utf-8",
+    )
+
+
+def test_a_roster_that_cannot_be_read_refuses_the_record(run_env):
+    """fallout FR-050 / GI-020 (C-058).
+
+    The rung read `if roster_problem is None and ...`, so every answer on the
+    problem channel skipped the check, accepted the record with `items_total`
+    unchecked, and DISCARDED the string. Casting 1's D-071 fix had just made
+    that channel carry a second, different fact — "a document is here and no
+    population can be read from it" — and consuming both as "no roster" put the
+    two back together on the accepting side.
+    """
+    from foundry_mcp.tools.rosters import roster_length
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _unreadable_roster(fdir, "prove")
+    # The arrangement reaches the channel this rung branches on...
+    assert roster_length(fdir, "prove")[1] is not None, "no problem to report"
+
+    refused = foundry_mark_stream("prove", 1, 12, 12, 0, project_root)
+
+    assert refused.get("ok") is not True, refused
+    assert refused["error"] == _streams.ROSTER_UNREADABLE, refused
+    # The problem the reader gave is SURFACED, not discarded.
+    assert refused["roster_problem"], refused
+    assert refused["roster_problem"] in refused["reason"], refused
+    assert "prove.json" in refused["hint"], refused["hint"]
+    # ...and nothing was recorded against a population nobody could read.
+    assert _streams._rollup_totals(fdir, 1, "prove") is None, "the record was written"
+
+
+def test_no_roster_at_all_is_still_unconstrained(run_env):
+    """fallout FR-050 (C-058) — the fix must not turn absence into a refusal.
+
+    "No roster" and "a roster I cannot read" became different answers precisely
+    so that a stream running before anyone derives a roster keeps working. If
+    the new refusal fired on absence it would block every first-cycle record,
+    which is the opposite failure and a worse one.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    assert not (fdir / "rosters" / "prove.json").exists()
+
+    assert foundry_mark_stream("prove", 1, 12, 12, 0, project_root)["ok"] is True
+
+
+def test_the_two_roster_refusals_carry_different_tokens_and_remedies(run_env):
+    """fallout CT-003 (C-058) — a record disagreeing with a roster and a roster
+    nothing can read are different findings with different remedies.
+
+    ROSTER_MISMATCH says fix the RECORD (or revise the roster deliberately);
+    ROSTER_UNREADABLE says repair the ARTIFACT. Folding them into one token
+    would send an operator to revise a roster that cannot be parsed.
+    """
+    from foundry_mcp.tools.rosters import foundry_roster
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    assert foundry_roster(
+        stream="prove", items=[f"FR-{n}" for n in range(1, 19)],
+        project_root=project_root,
+    ).get("error") is None
+
+    mismatch = foundry_mark_stream("prove", 1, 12, 12, 0, project_root)
+    assert mismatch["error"] == ROSTER_MISMATCH, mismatch
+    assert mismatch["roster_length"] == 18, mismatch
+    assert "roster_problem" not in mismatch, mismatch
+
+    _unreadable_roster(fdir, "prove")
+    unreadable = foundry_mark_stream("prove", 1, 12, 12, 0, project_root)
+    assert unreadable["error"] == _streams.ROSTER_UNREADABLE, unreadable
+    assert "roster_length" not in unreadable, unreadable
+    assert _streams.ROSTER_UNREADABLE != ROSTER_MISMATCH
