@@ -1,4 +1,4 @@
-# evidence-cmd: printf '%s\n' '== casting 1 / FR-037: what this casting touched, and what the tree shows ==' '' '  ADDRESS NOTE. The casting prompt Verification section names' '  tests/test_orchestrator_gates.py, which casting 2 carved into' '  tests/orchestration/. The package-wide AST and import scans that' '  parenthetical is about now live in' '  tests/orchestration/test_module_boundaries.py, so that is the file this log' '  drives in its place. The claim is unchanged; only its address moved.' '' '  WHAT CHANGED THIS CYCLE. One defect, fallout D-060 / AC-004. The' '  Foundry-Concern write arm declared cycle: int = 0 and collapsed every bool,' '  non-int and negative onto 0 with no refusal, so a concern filed with the' '  cycle omitted -- or with the JSON string 4 that a transport hands through' '  unconverted -- was stamped 0 and told the caller it had succeeded. The' '  READER, foundry_state.open_cross_casting_concerns, scopes the inspect_start' '  CONCERN_OPEN rung by exact cycle equality and is right to: GI-023 and ST-005' '  ask for the concerns from the closing GRIND, and no other reading of that' '  phrase exists. So a stamp of 0 at cycle 4 was invisible to the one door that' '  exists to refuse on it, and INSPECT opened over the tree the concern was' '  filed to hold shut. The refusal is the writers now:' '  tools/concerns.py#_cycle_refusal, one token CONCERN_CYCLE_REQUIRED for all' '  four shapes, and the default is the sentinel None rather than a cycle --' '  because 0 is a real cycle a concern raised during CAST carries, and telling' '  the two apart is precisely what the old default destroyed. The dispatch half' '  is casting 2s and landed in the same cycle, filed as concern C-046: server.py' '  passes absence THROUGH as absence instead of substituting a 0 of its own.' '' '  NOTHING IS DESELECTED, AND THE SELECTION IS WHOLE. No deselects and no' '  qualifications: every rung below runs, and every rung below passes. An' '  earlier capture of this log had to say it did not vouch for two layering' '  rungs; this one vouches for all of them.' '' '  WHAT FR-037 CLAIMS HERE, precisely. This casting touched no file outside its' '  key_files -- concerns.py, rosters.py, test_concerns.py, test_rosters.py --' '  and its own two evidence logs under evidence/. Every rung of the boundary' '  guard is green at this commit: the GI-025 import-graph acyclicity, the' '  three-layer rule and its one named seam, the lazy-import rung behind it, the' '  unused-import scan, the D-128 raw-ledger-iteration scan that caught' '  concerns.py once before, the reachability scan, the vocabulary pins, the' '  spec-id qualification pin that judges test prose, and this castings own two' '  test modules.' '' && cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -rN -p no:cacheprovider tests/test_vocab.py tests/orchestration/test_module_boundaries.py tests/test_concerns.py tests/test_rosters.py
+# evidence-cmd: printf '%s\n' '== casting 1 / FR-037: what this casting touched, and what the tree shows ==' '' '  ADDRESS NOTE. The casting prompt Verification section names' '  tests/test_orchestrator_gates.py, which casting 2 carved into' '  tests/orchestration/. The package-wide AST and import scans that' '  parenthetical is about now live in' '  tests/orchestration/test_module_boundaries.py, so that is the file this log' '  drives in its place. The claim is unchanged; only its address moved.' '' '  WHAT CHANGED THIS CYCLE. Three defects, all LIVE, all inside this castings' '  own two modules.' '' '  fallout D-071 / AC-032 -- BOTH HALVES OF THE ROSTER GUARD FAILED OPEN ON A' '  DOCUMENT THIS DOOR DID NOT STAMP. read_roster tested derived_at not in data' '  and answered NO ROSTER, and foundry_roster scoped its write-once door on the' '  same field. This runs own rosters/research_audit.json is exactly that shape' '  -- items 42, stream, total, and no derived_at -- so a second Foundry-Roster' '  write replaced the 42 items with 1 and left revisions empty, which is the' '  replace-semantics write that drops history GI-006 names, and Foundry-Stream' '  accepted items_total 7 at full coverage because ROSTER_MISMATCH had no length' '  to compare with. derived_at is provenance; the items list is what makes a' '  document a roster. There are three answers now rather than two: absent, a' '  document carrying an items list, and a NAMED problem for anything else at the' '  path. The write door scopes on the document itself, and foundry_init and' '  migrate-archive.py both create rosters/ and put nothing in it, so no invented' '  stub can refuse a real first derivation.' '' '  fallout D-091 / GI-020 -- THE ROSTER_EXISTS HINT NAMED AN EXIT ON NO' '  BOUNDARY. Its first remedy read: read it with Foundry-Rosters reader.' '  read_roster is a Python function no MCP tool surfaces, so the only actionable' '  branch left was revise=True, which REPLACES the roster with the agents' '  re-derived list -- GI-020s own named violation. The refusal carries the' '  roster now: stream, items, items_total, derived_at and path beside error,' '  hint and phase. Every exit the hint names is reachable from the refused' '  state: items and path are keys of the same return value, and revise and' '  reason are declared properties of the Foundry-Roster input schema that' '  server.py passes through.' '' '  fallout D-073 / GI-013 -- THE DOCUMENT RESERVED FOR PROSE DESTROYED PROSE.' '  render_concerns_markdown emitted the carry marker only when a tail already' '  existed, so a file this module generated with no prose in it had nowhere safe' '  to put any: a lead ruling appended below the last entry carried no marker,' '  fell into the generated-by-an-earlier-render branch, and was dropped on the' '  next write -- while the preamble the same module emits promised the reader' '  the opposite, in the same file. The marker is unconditional now, because it' '  is where the generated region ENDS and a file only has somewhere safe to' '  write prose if the end is marked before there is prose to keep. The previous' '  marker spelling is still scanned, since the prose under it in an' '  already-generated archive is the only copy.' '' '  NOTHING IS DESELECTED, AND THE SELECTION IS WHOLE. No deselects and no' '  qualifications: every rung below runs, and every rung below passes.' '' '  WHAT FR-037 CLAIMS HERE, precisely. This casting touched no file outside its' '  key_files -- concerns.py, rosters.py, test_concerns.py, test_rosters.py --' '  and its own three evidence logs under evidence/. Every rung of the boundary' '  guard is green at this commit: the GI-025 import-graph acyclicity, the' '  three-layer rule and its one named seam, the lazy-import rung behind it, the' '  unused-import scan, the D-128 raw-ledger-iteration scan that caught' '  concerns.py once before, the reachability scan, the vocabulary pins, the' '  spec-id qualification pin that judges test prose, and this castings own two' '  test modules.' '' && cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -rN -p no:cacheprovider tests/test_vocab.py tests/orchestration/test_module_boundaries.py tests/test_concerns.py tests/test_rosters.py
 # evidence-for: FR-037
 # evidence-volatile: [0-9]+\.[0-9]+s
 # evidence-timeout: 300
@@ -12,32 +12,53 @@
   tests/orchestration/test_module_boundaries.py, so that is the file this log
   drives in its place. The claim is unchanged; only its address moved.
 
-  WHAT CHANGED THIS CYCLE. One defect, fallout D-060 / AC-004. The
-  Foundry-Concern write arm declared cycle: int = 0 and collapsed every bool,
-  non-int and negative onto 0 with no refusal, so a concern filed with the
-  cycle omitted -- or with the JSON string 4 that a transport hands through
-  unconverted -- was stamped 0 and told the caller it had succeeded. The
-  READER, foundry_state.open_cross_casting_concerns, scopes the inspect_start
-  CONCERN_OPEN rung by exact cycle equality and is right to: GI-023 and ST-005
-  ask for the concerns from the closing GRIND, and no other reading of that
-  phrase exists. So a stamp of 0 at cycle 4 was invisible to the one door that
-  exists to refuse on it, and INSPECT opened over the tree the concern was
-  filed to hold shut. The refusal is the writers now:
-  tools/concerns.py#_cycle_refusal, one token CONCERN_CYCLE_REQUIRED for all
-  four shapes, and the default is the sentinel None rather than a cycle --
-  because 0 is a real cycle a concern raised during CAST carries, and telling
-  the two apart is precisely what the old default destroyed. The dispatch half
-  is casting 2s and landed in the same cycle, filed as concern C-046: server.py
-  passes absence THROUGH as absence instead of substituting a 0 of its own.
+  WHAT CHANGED THIS CYCLE. Three defects, all LIVE, all inside this castings
+  own two modules.
+
+  fallout D-071 / AC-032 -- BOTH HALVES OF THE ROSTER GUARD FAILED OPEN ON A
+  DOCUMENT THIS DOOR DID NOT STAMP. read_roster tested derived_at not in data
+  and answered NO ROSTER, and foundry_roster scoped its write-once door on the
+  same field. This runs own rosters/research_audit.json is exactly that shape
+  -- items 42, stream, total, and no derived_at -- so a second Foundry-Roster
+  write replaced the 42 items with 1 and left revisions empty, which is the
+  replace-semantics write that drops history GI-006 names, and Foundry-Stream
+  accepted items_total 7 at full coverage because ROSTER_MISMATCH had no length
+  to compare with. derived_at is provenance; the items list is what makes a
+  document a roster. There are three answers now rather than two: absent, a
+  document carrying an items list, and a NAMED problem for anything else at the
+  path. The write door scopes on the document itself, and foundry_init and
+  migrate-archive.py both create rosters/ and put nothing in it, so no invented
+  stub can refuse a real first derivation.
+
+  fallout D-091 / GI-020 -- THE ROSTER_EXISTS HINT NAMED AN EXIT ON NO
+  BOUNDARY. Its first remedy read: read it with Foundry-Rosters reader.
+  read_roster is a Python function no MCP tool surfaces, so the only actionable
+  branch left was revise=True, which REPLACES the roster with the agents
+  re-derived list -- GI-020s own named violation. The refusal carries the
+  roster now: stream, items, items_total, derived_at and path beside error,
+  hint and phase. Every exit the hint names is reachable from the refused
+  state: items and path are keys of the same return value, and revise and
+  reason are declared properties of the Foundry-Roster input schema that
+  server.py passes through.
+
+  fallout D-073 / GI-013 -- THE DOCUMENT RESERVED FOR PROSE DESTROYED PROSE.
+  render_concerns_markdown emitted the carry marker only when a tail already
+  existed, so a file this module generated with no prose in it had nowhere safe
+  to put any: a lead ruling appended below the last entry carried no marker,
+  fell into the generated-by-an-earlier-render branch, and was dropped on the
+  next write -- while the preamble the same module emits promised the reader
+  the opposite, in the same file. The marker is unconditional now, because it
+  is where the generated region ENDS and a file only has somewhere safe to
+  write prose if the end is marked before there is prose to keep. The previous
+  marker spelling is still scanned, since the prose under it in an
+  already-generated archive is the only copy.
 
   NOTHING IS DESELECTED, AND THE SELECTION IS WHOLE. No deselects and no
-  qualifications: every rung below runs, and every rung below passes. An
-  earlier capture of this log had to say it did not vouch for two layering
-  rungs; this one vouches for all of them.
+  qualifications: every rung below runs, and every rung below passes.
 
   WHAT FR-037 CLAIMS HERE, precisely. This casting touched no file outside its
   key_files -- concerns.py, rosters.py, test_concerns.py, test_rosters.py --
-  and its own two evidence logs under evidence/. Every rung of the boundary
+  and its own three evidence logs under evidence/. Every rung of the boundary
   guard is green at this commit: the GI-025 import-graph acyclicity, the
   three-layer rule and its one named seam, the lazy-import rung behind it, the
   unused-import scan, the D-128 raw-ledger-iteration scan that caught
@@ -46,10 +67,10 @@
   test modules.
 
 ........................................................................ [ 14%]
-........................................................................ [ 29%]
-........................................................................ [ 44%]
-........................................................................ [ 59%]
-........................................................................ [ 73%]
-........................................................................ [ 88%]
-........................................................                 [100%]
-488 passed in 13.47s
+........................................................................ [ 28%]
+........................................................................ [ 43%]
+........................................................................ [ 57%]
+........................................................................ [ 72%]
+........................................................................ [ 86%]
+..................................................................       [100%]
+498 passed in 11.80s
