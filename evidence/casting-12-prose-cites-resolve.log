@@ -15,5 +15,5 @@
 
 defined>=500: True
 cited>=100: True
-excused=['_ref_names_a_test_function']
+excused=['_ref_names_a_test_function', '_trace_skip_check']
 unresolved=[]
