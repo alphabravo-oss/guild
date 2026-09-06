@@ -1253,7 +1253,30 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         RESUME_MD,
         "REWRITES `state.json.max_cycles`",
     ),
-    ("resume-zero-is-unbounded", "FR-020", RESUME_MD, "`0` is unbounded, and the default"),
+    # fallout FR-020 / CT-006 (D-067): this row read "`0` is unbounded, and the
+    # default", which was true of the wire and false of the door -- and the
+    # sentence beside it, "Omitting the flag changes nothing ... Only a positive
+    # N rewrites it", was the prose half of the bug. `max_cycles` now defaults to
+    # `None` at the handler, so absence, 0 and N are three answers; all three are
+    # pinned, because a pin on only one of them cannot see the other two merge.
+    (
+        "resume-omitted-flag-leaves-the-cap-alone",
+        "FR-020",
+        RESUME_MD,
+        "Omitting `--max-cycles` leaves the run's persisted cap exactly where it was",
+    ),
+    (
+        "resume-explicit-zero-lifts-the-ceiling",
+        "FR-020",
+        RESUME_MD,
+        "`--max-cycles 0` REWRITES the cap to unbounded",
+    ),
+    (
+        "resume-positive-n-rewrites-the-cap",
+        "FR-020",
+        RESUME_MD,
+        "Any positive N rewrites the cap to N.",
+    ),
     (
         "resume-below-the-cycle-halts-at-the-grind-door",
         "FR-047",
@@ -2557,6 +2580,61 @@ def test_the_f3_close_gates_the_transition_that_reopens_inspect() -> None:
         f"`Foundry-Phase(phase='inspect_start')`. **Gate then Phase** is the "
         f"protocol's own ordering, and a gate read after the transition "
         f"reports the preconditions of a crossing that already happened."
+    )
+
+
+def test_resume_md_states_the_cap_doors_three_answers() -> None:
+    """fallout FR-020 / CT-006: absence, `0` and N are three answers, not two.
+
+    ``foundry_init`` took ``max_cycles: int = 0``, so the resume branch's
+    ``if max_cycles:`` could not tell "no flag was passed" from "a cap of 0 was
+    passed" -- and 0 is the documented spelling of UNBOUNDED, so the one value
+    that means "lift the ceiling" was the one value the door declined to write.
+    An operator who typed ``--max-cycles 0`` was told, accurately and
+    uselessly, that the cap was still 5. The handler now defaults to ``None``
+    and ``server.py`` forwards ``args.get("max_cycles")`` under a schema
+    carrying no default, which is what makes the absence a value of its own.
+
+    resume.md documented the bug in as many words: "`0` is unbounded, and the
+    default. **Omitting the flag changes nothing** ... Only a positive N
+    rewrites it." Both halves are asserted -- the three arms positively in
+    ``_PINS``, the retired reading as an absence here, because a positive pin
+    cannot see a retired sentence that survives BESIDE its replacement.
+
+    The default is DERIVED from the signature rather than described here, in
+    the ``_PYTEST_DISCOVERY_PHRASE`` shape: revert the handler to ``= 0`` and
+    this fails beside the prose that documents it, rather than one release
+    later when an operator lifts a ceiling and is told it did not move.
+    """
+    import inspect as _inspect
+
+    from foundry_mcp.tools.foundry import foundry_init
+
+    default = _inspect.signature(foundry_init).parameters["max_cycles"].default
+    assert default is None, (
+        f"foundry_init's `max_cycles` default is {default!r}, not None. With a "
+        f"default of 0 the resume branch cannot distinguish an omitted flag "
+        f"from an explicit `--max-cycles 0`, and {_rel(RESUME_MD)}'s "
+        f"three-answer paragraph then documents a door that does not behave "
+        f"that way. Fix the handler, or rewrite the prose -- do not delete "
+        f"this assertion."
+    )
+
+    flat = _flat(RESUME_MD)
+    retired = [
+        spelling
+        for spelling in (
+            "`0` is unbounded, and the default",
+            "**Omitting the flag changes nothing**",
+            "Only a positive N rewrites it",
+        )
+        if spelling in flat
+    ]
+    assert not retired, (
+        f"{_rel(RESUME_MD)} still carries {retired}, which describes the door "
+        f"BEFORE the omitted flag and an explicit 0 became different answers. A "
+        f"positive N is no longer the only value that rewrites the cap, and an "
+        f"omitted flag is no longer a cap of zero."
     )
 
 
