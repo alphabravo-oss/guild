@@ -7404,8 +7404,28 @@ def test_the_derivers_roster_clause_sanctions_no_implementation_source_read() ->
 # fallout AC-048 / FR-025 -- the tracer marks fallout of an earlier fix
 # ---------------------------------------------------------------------------
 
+#: The provenance field fallout AC-048's rule is ABOUT, recovered from the
+#: filing door's own refusal rather than typed here: `fallout_parent_problem`
+#: reports the field it refused on under `field`, and `defect_provenance` writes
+#: exactly the keys `DEFECT_PROVENANCE_KEYS` declares. Rename the key in
+#: `tools/foundry.py` and this expected clause moves with it, so the prose still
+#: naming the old spelling fails HERE instead of rotting into a rule about a
+#: field no door reads. That is `_PYTEST_DISCOVERY_PHRASE`'s shape applied to a
+#: prose rule, which fallout NFR-011 asks of every rule this effort states.
+_FALLOUT_FIELD = foundry_doors.fallout_parent_problem("D-000", [])["field"]
+
+#: THE ONE SPELLING of fallout AC-048's three clauses, for the whole suite.
+#:
+#: `tests/test_skill_prose.py` pins the same three on the PROVE-side surfaces
+#: and IMPORTS this tuple rather than holding a second one. D-095 is the record
+#: of what the second copy cost: two independent tuples of this name, so
+#: rewording one surface left the other module green against a sentence no file
+#: says any more -- and fallout NFR-011 names this module and
+#: `test_lead_prose.py` as the two homes a prose rule may be pinned in, which a
+#: third module's private copy is not. The sweep below is what holds the count
+#: at one; the f-string is what holds the field name joined to the door.
 _FALLOUT_CLAUSES = (
-    "**Set `fallout_of` when the finding is fallout of an earlier fix.**",
+    f"**Set `{_FALLOUT_FIELD}` when the finding is fallout of an earlier fix.**",
     "sibling surface left on a contract a previous cycle's fix changed is not a "
     "fresh defect",
     "An id the ledger does not carry is REFUSED at the door rather than stored",
@@ -7425,9 +7445,176 @@ def test_the_tracer_states_the_fallout_marking_rule(clause: str) -> None:
     assert clause in _flat(TRACER), (
         f"agents/tracer.md no longer states: {clause!r}. Fallout marking is one "
         f"optional field with no default the server can supply -- `measure-run` "
-        f"counts records carrying `fallout_of` per cycle, so an unmarked cycle "
-        f"reads as a cycle that produced none, and the measurement this run "
-        f"exists to make honest goes quiet instead of going red."
+        f"counts records carrying `{_FALLOUT_FIELD}` per cycle, so an unmarked "
+        f"cycle reads as a cycle that produced none, and the measurement this "
+        f"run exists to make honest goes quiet instead of going red."
+    )
+
+
+def test_the_fallout_clause_names_the_field_by_derivation_not_by_literal() -> None:
+    """fallout NFR-011 / D-095 -- the MECHANISM, not today's answer.
+
+    Reads this module's own source and asserts the first clause is BUILT from
+    `_FALLOUT_FIELD` rather than carrying the field's spelling as a literal.
+    Against the pre-fix tuple -- three plain strings -- this is RED, which is
+    the whole of NFR-011's ask: not that the pin names the right field today,
+    but that it cannot go on naming the old one after `tools/foundry.py`
+    renames the key. A literal passes both before and after such a rename, and
+    a pin that survives the change it exists to catch is the one shape that
+    reads as coverage while providing none.
+
+    Pinned on the AST rather than on the rendered value because the rendered
+    value is `fallout_of` either way: the difference between a derivation and a
+    literal that happens to agree with it is invisible downstream and total
+    upstream.
+    """
+    assign = next(
+        node
+        for node in ast.parse(Path(__file__).read_text(encoding="utf-8")).body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "_FALLOUT_CLAUSES"
+            for target in node.targets
+        )
+    )
+    first = assign.value.elts[0] if isinstance(assign.value, ast.Tuple) else None
+    assert isinstance(first, ast.JoinedStr), (
+        "`_FALLOUT_CLAUSES`'s first clause is a plain string literal again. "
+        "fallout NFR-011 wants every prose rule derived from or pinned to a "
+        "code constant in the `_PYTEST_DISCOVERY_PHRASE` shape; typing "
+        "`fallout_of` here restores the state D-095 records, where the door "
+        "could rename the field and every pin on the prose would stay green."
+    )
+    interpolated = {
+        node.value.id
+        for node in ast.walk(first)
+        if isinstance(node, ast.FormattedValue) and isinstance(node.value, ast.Name)
+    }
+    assert "_FALLOUT_FIELD" in interpolated, (
+        f"`_FALLOUT_CLAUSES`'s first clause interpolates {sorted(interpolated)} "
+        f"and not `_FALLOUT_FIELD`, the name read off the filing door's own "
+        f"refusal. An f-string over some other value is a literal wearing a "
+        f"derivation's clothes."
+    )
+
+
+def test_the_pinned_fallout_field_is_the_key_the_defect_record_carries() -> None:
+    """fallout NFR-011 / CT-019 -- the derivation joined to the record shape.
+
+    `_FALLOUT_FIELD` is read off a REFUSAL, and a refusal is free to name a
+    field the record never writes. Joining it to `DEFECT_PROVENANCE_KEYS` --
+    the keys `defect_provenance` puts on every filing -- is what makes the
+    derived clause a pin on the shipped contract rather than on one door's
+    error message, and it fails the day those two source spellings part.
+    """
+    assert _FALLOUT_FIELD in foundry_doors.DEFECT_PROVENANCE_KEYS, (
+        f"the filing door refuses under {_FALLOUT_FIELD!r} while the record "
+        f"shape carries {list(foundry_doors.DEFECT_PROVENANCE_KEYS)!r}. The "
+        f"tracer is told to set a field on its filing; a refusal naming one "
+        f"key while the record writes another leaves the prose describing "
+        f"neither."
+    )
+
+
+#: This module's own directory -- the suite the sweep below reads. Derived from
+#: `__file__` rather than from `MCP_SERVER` so a test module moved with the
+#: package keeps being swept.
+_SUITE_TESTS = Path(__file__).resolve().parent
+_SKILL_PROSE = _SUITE_TESTS / "test_skill_prose.py"
+
+
+def _module_level_string_tuples(path: Path) -> list[tuple[str, tuple[str, ...]]]:
+    """Every module-level ``NAME = ("...", "...")`` in a test module.
+
+    AST rather than a substring sweep because `ast` FOLDS implicit string
+    concatenation: a clause split across source lines compares equal to the
+    flat one, and both copies of the fallout tuple were written split. A raw
+    text search for the flat clause finds neither.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):  # pragma: no cover - unreadable sibling
+        return []
+    found: list[tuple[str, tuple[str, ...]]] = []
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Tuple):
+            continue
+        values = tuple(
+            element.value
+            for element in node.value.elts
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        )
+        if not values or len(values) != len(node.value.elts):
+            continue
+        name = next(
+            (t.id for t in node.targets if isinstance(t, ast.Name)), "<unnamed>"
+        )
+        found.append((name, values))
+    return found
+
+
+def _imports_from_this_module(path: Path) -> bool:
+    """Does `path` carry a real ``from ... test_protocol_prose import ...``?
+
+    The arming condition for the sweep below, read off the IMPORT STATEMENT and
+    never off the raw text: `tests/test_skill_prose.py`'s own docstring names
+    this module in prose, so a substring check arms on a sentence and fires
+    against a duplicate its author has had no chance to remove.
+    """
+    stem = Path(__file__).stem
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):  # pragma: no cover - unreadable sibling
+        return False
+    return any(
+        isinstance(node, ast.ImportFrom)
+        and (node.module or "").split(".")[-1] == stem
+        for node in ast.walk(tree)
+    )
+
+
+def test_no_second_module_re_types_the_fallout_clauses() -> None:
+    """fallout NFR-011 / D-095 -- one spelling for N doors, held mechanically.
+
+    D-095 is the record of the second copy: `tests/test_skill_prose.py` carried
+    its own `_FALLOUT_CLAUSES` with the same three strings typed again, so
+    rewording `agents/tracer.md` and this module left the PROVE-side module
+    green against a sentence no file said any more. Convention did not hold the
+    two together and a comment would not either; this sweep does, and it sweeps
+    the whole suite so the THIRD copy fails the same way as the second.
+
+    THIS ARMS ITSELF, and the skip is not a courtesy -- it is
+    `test_the_unknown_fallout_id_the_tracer_promises_is_the_refusal_the_door_gives`'s
+    rule applied to a co-dispatch instead of a wave. `tests/test_skill_prose.py`
+    is casting 11's half of D-095, landing in the same cycle. Written
+    unconditionally this pin would be RED at every commit of mine that precedes
+    theirs -- and the acceptance gate re-executes in a detached worktree at MY
+    commit, where only what is committed exists. That is not a flaky test; it
+    is a pin reaching into work no commit contains. So it waits for the import
+    that replaces the duplicate, names what it is waiting for, and arms
+    permanently once that import lands.
+    """
+    if not _imports_from_this_module(_SKILL_PROSE):
+        pytest.skip(
+            "tests/test_skill_prose.py does not yet import from this module -- "
+            "casting 11 owns it and replaces its duplicate `_FALLOUT_CLAUSES` "
+            "with `from tests.test_protocol_prose import _FALLOUT_CLAUSES` in "
+            "this cycle. The tuple here is already the one spelling; this "
+            "sweep arms the moment that import appears."
+        )
+    duplicates = sorted(
+        f"{path.name}#{name}"
+        for path in sorted(_SUITE_TESTS.glob("test_*.py"))
+        if path.name != Path(__file__).name
+        for name, values in _module_level_string_tuples(path)
+        if values == _FALLOUT_CLAUSES
+    )
+    assert not duplicates, (
+        f"{duplicates} re-type fallout AC-048's three clauses instead of "
+        f"importing `_FALLOUT_CLAUSES` from this module. Two tuples are two "
+        f"rulings the moment one is reworded, and the one that is not reworded "
+        f"keeps passing -- which is the drift D-095 filed, not a tidiness "
+        f"preference."
     )
 
 
