@@ -24,7 +24,7 @@ has no reader either*:
      so it can never name a stale set.
   3. "Addressed" had no representation at all. A concern was open forever, or
      until someone edited the prose. The status is a closed vocabulary now
-     (``CONCERN_STATUSES``) with one writer per move: ``Foundry-Concern``
+     (``vocab.CONCERN_STATUSES``) with one writer per move: ``Foundry-Concern``
      opens, ``mark_concerns_dispatched`` dispatches (CT-008 / FR-039), and
      ``Foundry-Concern(close=id, reason)`` closes with a handoff record
      (ST-004).
@@ -65,6 +65,12 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from foundry_mcp.schemas.vocab import (
+    CONCERN_STATUS_CLOSED,
+    CONCERN_STATUS_DISPATCHED,
+    CONCERN_STATUS_OPEN,
+    CONCERN_STATUSES,
+)
 from foundry_mcp.tools.citation import iter_symbol_cites
 from foundry_mcp.tools.foundry import (
     _dict_records,
@@ -99,19 +105,26 @@ CONCERNS_COLLECTION_KEY = "concerns"
 #: max(suffix)+1 INSIDE the lock, so uniqueness comes from the transaction.
 CONCERN_ID_PREFIX = "C"
 
-#: CLOSED VOCABULARY — the three statuses a concern record may carry, in
-#: lifecycle order. A tuple rather than a frozenset because the order IS the
-#: lifecycle and the hint below reads in it.
-#:
-#: One writer per move: ``foundry_concern`` opens, ``mark_concerns_dispatched``
-#: dispatches, ``foundry_concern(close=...)`` closes.
-CONCERN_STATUSES: tuple[str, ...] = ("open", "dispatched", "closed")
+# THE CLOSED STATUS VOCABULARY IS IMPORTED, NOT DECLARED HERE — concern C-033
+# and the same GI-033 layering the reader above moved for. It was declared in
+# this module, and this module reaches ``tools/foundry.py`` at module top for
+# the ledger apparatus, so ``orchestration/transitions.py`` — a VERIFIER module
+# — could reach the leaf's READ for GI-023's CONCERN_OPEN rung and still not
+# reach the MEMBER that read takes as an argument. A closed vocabulary is
+# ``schemas/vocab.py``'s by the house convention (top convention 3), so
+# ``CONCERN_STATUSES`` and its three members are declared there and this module
+# imports them: one declaration, reachable from every layer (GI-024).
+#
+# WHAT STAYED HERE IS THE LEDGER, which is the division the whole ruling draws:
+# the transaction, the id allocation, the markdown render, and one writer per
+# status move — ``foundry_concern`` opens, ``mark_concerns_dispatched``
+# dispatches, ``foundry_concern(close=...)`` closes.
 
-CONCERN_STATUS_OPEN, CONCERN_STATUS_DISPATCHED, CONCERN_STATUS_CLOSED = CONCERN_STATUSES
-
-#: Derived from ``CONCERN_STATUSES``, never re-typed beside it — the
+#: Derived from ``vocab.CONCERN_STATUSES``, never re-typed beside it — the
 #: ``_PYTEST_DISCOVERY_PHRASE`` rule: prose that names a set is built from the
-#: constant that DEFINES the set, so the two cannot drift.
+#: constant that DEFINES the set, so the two cannot drift. The PHRASE stays in
+#: this module rather than following the set to ``vocab``: it is the sentence
+#: ``concerns.md`` opens with, so it belongs beside the renderer that writes it.
 CONCERN_STATUS_PHRASE = (
     ", ".join(CONCERN_STATUSES[:-1]) + f" or {CONCERN_STATUSES[-1]}"
 )
@@ -609,10 +622,18 @@ def open_concerns_for_other_castings(
 
     WHAT IS LEFT FOR THIS FUNCTION TO DO, which is why it is not merely the
     re-export. The leaf takes its status member as an ARGUMENT rather than
-    typing one, on the rule that a closed-set value belongs to the module that
-    declares the set — and ``CONCERN_STATUSES`` is declared here. So this is the
-    one place the leaf's read meets this module's vocabulary, and no caller
-    respells "open" to ask the question.
+    typing one, and its callers divide on whether naming the member is worth
+    it. A VERIFIER reaches ``vocab.CONCERN_STATUS_OPEN`` and the leaf directly,
+    which is what ``orchestration/transitions.py`` does for the CONCERN_OPEN
+    rung — it may not import this module at all. A lifecycle caller asking the
+    ledger a ledger question does not need to spell the member at each site,
+    and ``orchestration/directives.py``'s two co-dispatch reads take it here
+    for that reason.
+
+    It also keeps the import above HONEST. ``open_cross_casting_concerns`` is
+    named in code by this body, so no repoint of an outside caller can turn it
+    into the unused import that ``test_no_shipped_module_holds_an_unused_import``
+    fails on — a file no later casting is dispatched to edit.
 
     "Unaddressed" is ``CONCERN_STATUS_OPEN`` and nothing else: FR-039 makes
     ``dispatched`` the mark Foundry-Tasks leaves when the concern reaches the

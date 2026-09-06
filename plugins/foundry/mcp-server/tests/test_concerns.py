@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+from foundry_mcp.schemas import vocab
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools.concerns import (
     CARRIED_PROSE_MARKER,
@@ -162,9 +163,25 @@ def test_a_concern_appends_to_the_ledger_and_renders_into_the_markdown(run_env):
 
 
 def test_the_rendered_file_names_the_status_vocabulary_from_the_constant(run_env):
-    """Prose that names a set is derived from the constant that defines it."""
+    """Prose that names a set is derived from the constant that defines it.
+
+    AND THE CONSTANT IS THE LEAF ONE (concern C-033). The set was declared in
+    ``tools/concerns.py``, which reaches ``tools/foundry.py`` at module top, so
+    a VERIFIER module could reach the leaf read for GI-023's CONCERN_OPEN rung
+    and still not reach the member that read takes as an argument. It is
+    declared in ``schemas/vocab.py`` now and this module imports it, so the
+    names below are the vocabulary itself rather than a second copy agreeing
+    with it today.
+    """
     project_root, fdir = run_env
     _open_one(project_root)
+
+    assert CONCERN_STATUSES is vocab.CONCERN_STATUSES
+    assert (CONCERN_STATUS_OPEN, CONCERN_STATUS_DISPATCHED, CONCERN_STATUS_CLOSED) == (
+        vocab.CONCERN_STATUS_OPEN,
+        vocab.CONCERN_STATUS_DISPATCHED,
+        vocab.CONCERN_STATUS_CLOSED,
+    )
 
     rendered = _file(fdir, CONCERNS_MARKDOWN_FILENAME).read_text(encoding="utf-8")
     assert CONCERN_STATUS_PHRASE in rendered
@@ -359,10 +376,12 @@ def test_the_cross_casting_filter_has_one_body_and_it_is_the_leafs(run_env):
 def test_this_module_supplies_its_own_open_status_to_the_leafs_read(run_env):
     """fallout GI-023 / ST-005 / FR-039 — what is left on this side of the delegation.
 
-    The leaf takes its status member as an argument on the rule that a
-    closed-set value belongs to the module that DECLARES the set, and
-    ``CONCERN_STATUSES`` is declared here. So this is the one place the read
-    meets the vocabulary, and the door never respells "open".
+    The leaf takes its status member as an argument, and this module supplies
+    ``vocab.CONCERN_STATUS_OPEN`` for the lifecycle callers that ask the ledger
+    a ledger question — ``orchestration/directives.py``'s two co-dispatch
+    reads. A verifier does not come through here at all: it reaches the
+    vocabulary and the leaf directly, which is what concern C-033 moved the
+    declaration into ``schemas/vocab.py`` to make possible.
 
     The ledger is hand-built rather than driven through ``Foundry-Concern``:
     the expected ids below are written out, so this pins the ANSWER rather than
