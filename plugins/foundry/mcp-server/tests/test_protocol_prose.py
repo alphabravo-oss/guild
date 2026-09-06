@@ -7106,13 +7106,64 @@ def test_each_non_prove_stream_agent_records_its_own_stream(
     )
 
 
-@pytest.mark.parametrize("path", NON_PROVE_STREAM_AGENTS, ids=lambda p: p.name)
-def test_each_non_prove_stream_agent_cites_the_stream_vocabulary(path: Path) -> None:
+#: The halt token the code-blind stream raises when a Read reaches a forbidden
+#: root, and the property that identifies which agent is the code-blind one.
+_CODE_BLIND_HALT_TOKEN = "TEST_DERIVER_READ_SOURCE"
+
+#: The stream agents for which a `path#Symbol` cite INTO implementation source
+#: is a legal way to bind prose to a constant.
+#:
+#: D-141 / D-142: the shared stream-recording paragraph was pasted onto the one
+#: agent that may not obey it. TEST-01's Layer 2 audit rejects the WHOLE cycle's
+#: observations for a Read under `FORBIDDEN_SOURCE_ROOTS`, and every home of the
+#: stream vocabulary sits under one -- so a file telling THAT agent to read the
+#: constant there turns obedience into the loss of the stream it was recording.
+#: The exclusion is DERIVED from the discipline rather than by filename: the
+#: file that raises the halt token is the file the cite is forbidden in, so
+#: renaming the deriver cannot pull it back in and giving a second stream the
+#: same discipline takes that one out, which is the right answer both times.
+SOURCE_CITING_STREAM_AGENTS = tuple(
+    path
+    for path in NON_PROVE_STREAM_AGENTS
+    if _CODE_BLIND_HALT_TOKEN not in _read(path)
+)
+
+
+def test_only_the_code_blind_agent_is_excused_the_vocabulary_cite() -> None:
+    """Floor check: the narrowing above is exactly one file wide.
+
+    A relaxation is invisible at the assertion it relaxes -- four green
+    parametrisations look exactly like five. So the four files that must still
+    carry the cite are asserted IN, and the deriver is asserted OUT under the
+    property that excuses it rather than under its name.
+    """
+    expected = {TRACER, FLOW_TRACER, RESEARCH_AUDITOR, COVERAGE_DIFF}
+    missing = sorted(_rel(p) for p in expected - set(SOURCE_CITING_STREAM_AGENTS))
+    assert not missing, (
+        f"{missing} dropped out of SOURCE_CITING_STREAM_AGENTS by naming "
+        f"{_CODE_BLIND_HALT_TOKEN!r}. That token is the code-blind stream's own "
+        f"halt; a file raising it is claiming the excuse from the cite rule "
+        f"below. Drop the token or accept that the file is now code-blind."
+    )
+    assert SPEC_TEST_DERIVER not in SOURCE_CITING_STREAM_AGENTS, (
+        f"agents/spec-test-deriver.md no longer names {_CODE_BLIND_HALT_TOKEN!r}, "
+        f"the only thing excusing it from citing a path under "
+        f"`FORBIDDEN_SOURCE_ROOTS`. Restore the code-blind discipline in the "
+        f"agent rather than excusing the file by name here."
+    )
+
+
+@pytest.mark.parametrize("path", SOURCE_CITING_STREAM_AGENTS, ids=lambda p: p.name)
+def test_each_source_citing_stream_agent_cites_the_stream_vocabulary(
+    path: Path,
+) -> None:
     """fallout NFR-011: the prose points at the constant instead of copying it.
 
     The cite is BUILT from the module above, so renaming the constant fails
-    here on every file that still names the old symbol rather than leaving five
-    agent files citing a symbol that resolves to nothing.
+    here on every file that still names the old symbol rather than leaving four
+    agent files citing a symbol that resolves to nothing. The code-blind agent
+    is excused and pinned the other way round, below: it must name no source
+    root at all, and its binding to the same constant is held by this suite.
     """
     assert _STREAM_VOCAB_CITE in _flat(path), (
         f"{_rel(path)} does not cite {_STREAM_VOCAB_CITE}. The stream ids are a "
@@ -7365,28 +7416,54 @@ def _section(path: Path, heading: str) -> str:
     return " ".join(text[start:rest].split())
 
 
-def test_the_derivers_roster_clause_sanctions_no_implementation_source_read() -> None:
+#: The sections of the code-blind agent that carry a RULING, and must therefore
+#: name no forbidden source root. The sweep is per-section rather than
+#: whole-file because § Code-Blind Discipline NAMES every root -- that is the
+#: point of it -- and § Tool-Call Sequence Discipline names the auditor that
+#: reads the log.
+#:
+#: D-141 / D-142 put § Stream Recording in this tuple. The stream-recording
+#: paragraph every stream agent carries cites the stream vocabulary and the
+#: caller instruction at their `src/` homes; legitimate on the other four files
+#: and, on this one, an order whose obedience costs the cycle every observation
+#: it produced. One ruling swept over both sections, so the next paste onto the
+#: code-blind agent lands on a red test instead of on a lost stream.
+_CODE_BLIND_RULING_SECTIONS = ("## Roster", "## Stream Recording")
+
+
+@pytest.mark.parametrize("heading", _CODE_BLIND_RULING_SECTIONS, ids=lambda s: s)
+def test_a_deriver_ruling_section_sanctions_no_implementation_source_read(
+    heading: str,
+) -> None:
     """fallout GI-003 / NFR-003: the code-blind stream stays code-blind.
 
     The ABSENCE half, and it is the half that matters. A positive pin on "the
     items come from the Contracts table" stays green under a rewrite that adds
     "and read the implementing module to confirm the surface exists" beside it
     -- the sentence the positive pin quotes is still there, and TEST-01 has
-    quietly stopped being code-blind. So the section that carries the roster
-    ruling is asserted to name NO forbidden source root at all, against the
-    denylist the validator itself enforces.
+    quietly stopped being code-blind. So every section that carries a ruling is
+    asserted to name NO forbidden source root at all, against the denylist the
+    validator itself enforces.
     """
-    section = _section(SPEC_TEST_DERIVER, "## Roster")
+    section = _section(SPEC_TEST_DERIVER, heading)
     named = sorted(root for root in _forbidden_source_roots() if root in section)
     assert not named, (
-        f"agents/spec-test-deriver.md's `## Roster` section names {named}, "
-        f"root(s) on the code-blind denylist. Deriving, writing or reading a "
-        f"roster is spec work: the items come from the spec's `## Contracts` "
-        f"rows. A roster clause that reaches a source root gives TEST-01 the "
-        f"one reason it has ever needed to read implementation source, and "
-        f"fallout NFR-003 makes that a Locked constraint rather than a "
-        f"preference."
+        f"agents/spec-test-deriver.md's `{heading}` section names {named}, "
+        f"root(s) on the code-blind denylist. Every ruling this file states is "
+        f"spec work: roster items come from the spec's `## Contracts` rows, and "
+        f"the wire id it records under is held to the vocabulary by the pins in "
+        f"this module rather than by a path the agent is told to open. A ruling "
+        f"section that reaches a source root gives TEST-01 the one reason it "
+        f"has ever needed to read implementation source -- and the Layer 2 "
+        f"audit answers that read by rejecting the whole cycle's observations, "
+        f"so the agent that obeyed loses the stream. fallout NFR-003 makes it a "
+        f"Locked constraint rather than a preference."
     )
+
+
+def test_the_derivers_roster_clause_says_where_its_items_come_from() -> None:
+    """fallout AC-033 / FR-050: the positive half of the section pin above."""
+    section = _section(SPEC_TEST_DERIVER, "## Roster")
     assert "`## Contracts`" in section, (
         "agents/spec-test-deriver.md's `## Roster` section no longer says the "
         "items come from the spec's `## Contracts` rows. Without the positive "

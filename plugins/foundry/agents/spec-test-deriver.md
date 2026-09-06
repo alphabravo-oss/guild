@@ -281,13 +281,17 @@ and after that append.
 **You record your own stream; the lead only confirms the record
 exists.** Call `Foundry-Stream` yourself with `stream`, `cycle`,
 `items_checked`, `items_total` and `findings_count` once the observation
-file is emitted. The `stream` value is your **wire id**, a member of the
-closed vocabulary at
-`plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#STREAM_WIRE_IDS`;
-read it there and never re-type the set here. It is NOT the canonical
-`TEST-01` your output shape carries: the door admits that vocabulary and
-nothing else, so a record spelled the canonical way never lands and the
-stream reads as uncovered for the cycle. Take `cycle` from
+file is emitted. The `stream` value is your **wire id**, `test01` — the
+spelling `rosters/test01.json` already carries and the only one the door
+admits. It is NOT the canonical `TEST-01` your output shape carries: a
+record spelled the canonical way never lands and the stream reads as
+uncovered for the cycle. Take that pairing from this sentence and never
+from the module that declares the closed vocabulary, whose every path
+sits under a root § Code-Blind Discipline forbids you; the binding to
+that constant is held instead by an exact-substring pin derived from it,
+so a vocabulary change fails the suite rather than teaching you a read
+that costs the cycle its whole observation set (fallout GI-003 /
+NFR-003 / NFR-011). Take `cycle` from
 `Foundry-Next`; `items_checked` is the derived hypotheses you actually
 executed and `items_total` the persisted roster's length (see § Roster).
 **That read carries the caller argument, and so does every other
@@ -295,9 +299,10 @@ one.** If you are a SUB-AGENT rather than the lead, pass
 caller='subagent' on every Foundry-Next call. The lead's call is a
 protocol step — it arms the ordering token the next Foundry-Gate
 requires and resets the stall clock; yours is a read, and passing
-the argument keeps it one. That sentence is
-`plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
-quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+the argument keeps it one. That sentence is the server's own,
+quoted rather than re-typed and pinned against the constant it comes
+from by the same suite, which is why this file names no path to it
+(fallout FR-034 / FR-055 / AC-053).
 A `SKIP` observation counts in `items_checked` and not in
 `findings_count` — the roster item was reached and the surface was not
 there to drive, which is coverage of a truthful kind and no finding at
@@ -311,7 +316,7 @@ files. Reaching one widens no entry in § Code-Blind Discipline's allowed
 read prefixes and trips no forbidden root, because the Layer 2 audit
 judges the targets of your Read, Grep and Glob calls and a tool call has
 none. Source stays forbidden and `TEST_DERIVER_READ_SOURCE` still fires
-on the first `src/` path you open.
+on the first path you open under any root § Code-Blind Discipline lists.
 
 No exceptions, no deferrals, no waiting for the lead to record on your
 behalf: a stream that never records contributes nothing to the cycle's

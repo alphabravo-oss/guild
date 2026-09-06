@@ -1,0 +1,12 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_protocol_prose.py -k "deriver_ruling_section or code_blind_agent_is_excused or source_citing_stream_agent_cites" -v --no-header 2>&1 | grep -E "PASSED|FAILED|passed|failed" | sort
+# evidence-for: GI-003, NFR-003, NFR-011
+# evidence-volatile: \d+\.\d+s
+
+====================== 7 passed, 661 deselected in 0.11s =======================
+tests/test_protocol_prose.py::test_a_deriver_ruling_section_sanctions_no_implementation_source_read[## Roster] PASSED [ 85%]
+tests/test_protocol_prose.py::test_a_deriver_ruling_section_sanctions_no_implementation_source_read[## Stream Recording] PASSED [100%]
+tests/test_protocol_prose.py::test_each_source_citing_stream_agent_cites_the_stream_vocabulary[coverage-diff.md] PASSED [ 28%]
+tests/test_protocol_prose.py::test_each_source_citing_stream_agent_cites_the_stream_vocabulary[flow-tracer.md] PASSED [ 42%]
+tests/test_protocol_prose.py::test_each_source_citing_stream_agent_cites_the_stream_vocabulary[research-auditor.md] PASSED [ 57%]
+tests/test_protocol_prose.py::test_each_source_citing_stream_agent_cites_the_stream_vocabulary[tracer.md] PASSED [ 71%]
+tests/test_protocol_prose.py::test_only_the_code_blind_agent_is_excused_the_vocabulary_cite PASSED [ 14%]
