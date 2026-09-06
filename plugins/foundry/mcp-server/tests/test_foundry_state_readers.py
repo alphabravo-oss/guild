@@ -1989,9 +1989,25 @@ def test_persisted_escalated_classes_honours_the_operators_overrides() -> None:
 
 
 def test_the_leafs_width_read_is_the_width_readers_answer(run_env) -> None:
-    """fallout GI-033 — `width._current_inspect_mode`'s answer, from the leaf."""
+    """fallout GI-033 — `width._current_inspect_mode`'s answer, from the leaf.
+
+    AN AGREEMENT PIN, so it retires the day its subject does. It compares the
+    leaf against the reader it was hoisted from while BOTH exist — the only
+    thing showing the hoist preserved behaviour rather than merely compiling —
+    and casting 2 deletes the width copy as it repoints. A hard import would
+    turn this red on that commit and read as a regression in the leaf, which is
+    the opposite of what it would mean, so it skips with a reason naming why.
+    """
     from foundry_mcp.schemas.vocab import INSPECT_MODES
-    from foundry_mcp.tools.orchestration.width import _current_inspect_mode
+
+    try:
+        from foundry_mcp.tools.orchestration.width import _current_inspect_mode
+    except ImportError:
+        pytest.skip(
+            "width._current_inspect_mode is gone — casting 2 repointed to the "
+            "leaf (C-059 row 4). Nothing is left to agree with, and the leaf "
+            "reader is driven directly above."
+        )
 
     for entries in (
         [{"cycle": 0, "mode": "FULL", "rule": "first_of_phase"}],

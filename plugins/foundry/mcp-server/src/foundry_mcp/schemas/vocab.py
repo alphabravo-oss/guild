@@ -1154,8 +1154,19 @@ REPORT_REQUIRED_SECTIONS = (
 #: assertion below runs at vocabulary import, so a section added to one and not
 #: the other fails at the vocabulary rather than at whichever reader ran first.
 #:
+#: READ-ONLY BY CONSTRUCTION, in the shape `WIRE_TO_CANONICAL` already uses.
+#: Three modules in two layers now bind this ONE object — casting 7's leaf read
+#: pins `artifacts.REPORT_SECTION_TITLES is vocab.REPORT_SECTION_TITLES` rather
+#: than comparing equal, because a copy that agreed today was the defect that
+#: hoist was refused over. Identity proves the reference is shared; it does not
+#: prove nobody writes through it, and neither a grep for the name nor an AST
+#: scan for subscript assignment sees `t = REPORT_SECTION_TITLES` followed by
+#: `t[k] = ...`. A scan and a pin that miss the SAME shape is where
+#: construction beats inspection, so the proxy closes it: every writer raises
+#: TypeError at the point of the write, whatever name it reached through.
+#:
 #: Extend only via phase-level RFC, together with REPORT_REQUIRED_SECTIONS.
-REPORT_SECTION_TITLES: dict[str, str] = {
+_REPORT_SECTION_TITLES: dict[str, str] = {
     "verdict_matrix": "Verdict matrix",
     "requirement_span": "Requirement span",
     "defects_by_tier_and_status": "Defects by tier and status",
@@ -1173,6 +1184,8 @@ REPORT_SECTION_TITLES: dict[str, str] = {
     "executing_versions": "Executing server and plugin versions",
     "baseline_comparison": "Baseline comparison",
 }
+
+REPORT_SECTION_TITLES: Mapping[str, str] = MappingProxyType(_REPORT_SECTION_TITLES)
 
 assert set(REPORT_SECTION_TITLES) == set(REPORT_REQUIRED_SECTIONS), (
     "every REPORT_REQUIRED_SECTIONS member needs a markdown title: "

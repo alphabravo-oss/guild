@@ -446,6 +446,48 @@ def test_no_ui_meaning_is_the_one_sentence_the_flag_means() -> None:
     )
 
 
+def test_the_section_titles_cannot_be_written_through_any_name() -> None:
+    """fallout GI-033 — read-only by CONSTRUCTION, not by nobody having tried.
+
+    Three modules in two layers bind this one object, and casting 7's leaf read
+    pins `artifacts.REPORT_SECTION_TITLES is vocab.REPORT_SECTION_TITLES`
+    rather than comparing equal — a copy that agreed today was the defect that
+    hoist was refused over.
+
+    But identity proves the reference is SHARED, not that nobody writes through
+    it. Two independent checks agreed the tree mutates nothing here — a grep
+    over the name and an AST scan for subscript assignment, `del`, rebinding
+    and the dict mutators — and BOTH miss the same shape:
+
+        t = REPORT_SECTION_TITLES
+        t["verdict_matrix"] = "..."
+
+    an alias neither the scan nor the identity pin inspects. A scan and a pin
+    that miss the same shape is where construction beats inspection, so the
+    ALIAS case below is the one this test exists for; the direct case is the
+    easy half.
+    """
+    from types import MappingProxyType
+
+    assert isinstance(vocab.REPORT_SECTION_TITLES, MappingProxyType)
+
+    with pytest.raises(TypeError):
+        vocab.REPORT_SECTION_TITLES["verdict_matrix"] = "hijacked"
+
+    # THE CASE THE SCAN CANNOT SEE: reached through a local name.
+    alias = vocab.REPORT_SECTION_TITLES
+    with pytest.raises(TypeError):
+        alias["verdict_matrix"] = "hijacked"
+    with pytest.raises(TypeError):
+        del alias["verdict_matrix"]
+    with pytest.raises(AttributeError):
+        alias.update({"verdict_matrix": "hijacked"})
+
+    assert vocab.REPORT_SECTION_TITLES["verdict_matrix"] == "Verdict matrix", (
+        "and the value every reader sees is the one the seal writes"
+    )
+
+
 def test_every_report_section_has_a_title_and_the_two_are_paired_here() -> None:
     """fallout GI-033 (concern C-060 row 2) — the headings the gate checks.
 

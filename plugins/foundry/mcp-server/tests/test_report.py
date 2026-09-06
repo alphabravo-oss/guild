@@ -26,8 +26,7 @@ and ten registers stood RED until it landed:
     orchestration/streams.py       foundry_mark_stream
     orchestration/fix_gate.py      foundry_mark_defect_fixed
     orchestration/teams.py         _check_active_teams
-    orchestration/width.py         _current_inspect_mode,
-                                   INSPECT_BOUNDARY_SHA_MARKER
+    orchestration/width.py         INSPECT_BOUNDARY_SHA_MARKER
     orchestration/gates.py         _open_defects_by_tier
     orchestration/directives.py    foundry_defects_to_tasks
     orchestration/spend.py         _spend_summary
@@ -435,10 +434,7 @@ def drive_finer_boundary_run(tmp_path: Path) -> dict[str, object]:
     from foundry_mcp.tools.orchestration.transitions import (
         foundry_mark_phase_complete,
     )
-    from foundry_mcp.tools.orchestration.width import (
-        INSPECT_BOUNDARY_SHA_MARKER,
-        _current_inspect_mode,
-    )
+    from foundry_mcp.tools.orchestration.width import INSPECT_BOUNDARY_SHA_MARKER
     from foundry_mcp.tools import foundry_state
 
     rows = _drive_defect_ledger(tmp_path / "ledger")
@@ -525,7 +521,12 @@ def drive_finer_boundary_run(tmp_path: Path) -> dict[str, object]:
 
     def _streams_done(cycle: int) -> None:
         """Every stream the RECORDED roster requires, through the real door."""
-        recorded = _current_inspect_mode(fdir) or {}
+        # fallout GI-033: the leaf answers this now. Casting 2 is
+        # deleting the width reader this used to call, and the two
+        # resolve the same document on the same three axes.
+        recorded = foundry_state.current_inspect_mode(
+            fdir, modes=vocab.INSPECT_MODES
+        ) or {}
         for wire in recorded.get("required_streams", []):
             marked = foundry_mark_stream(
                 wire, cycle, items_checked=100, items_total=100,
