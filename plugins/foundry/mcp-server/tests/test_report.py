@@ -64,6 +64,7 @@ from pathlib import Path
 
 import pytest
 
+from foundry_mcp.schemas import vocab
 from foundry_mcp.schemas.vocab import (
     CONVERGENCE_TARGET,
     DEFECT_TIER_OR_UNKNOWN,
@@ -1086,7 +1087,7 @@ def test_report_md_carries_one_heading_per_section_in_the_same_order(report_env)
     _generate(report_env)
     headings = re.findall(r"^## (.+)$", _markdown(report_env), re.M)
     assert len(headings) == len(REPORT_REQUIRED_SECTIONS)
-    assert headings == [fr._SECTION_TITLES[k] for k in REPORT_REQUIRED_SECTIONS]
+    assert headings == [vocab.REPORT_SECTION_TITLES[k] for k in REPORT_REQUIRED_SECTIONS]
 
 
 def test_every_named_section_carries_content_from_its_own_ledger(report_env):

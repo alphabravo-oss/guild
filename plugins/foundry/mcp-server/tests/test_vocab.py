@@ -421,6 +421,34 @@ def test_a_spec_ref_alone_is_a_spec_required_behaviour_claim() -> None:
     assert not vocab.is_spec_required_behaviour_claim({"spec_ref": "  "})
 
 
+def test_every_report_section_has_a_title_and_the_two_are_paired_here() -> None:
+    """fallout GI-033 (concern C-060 row 2) — the headings the gate checks.
+
+    The report SEAL writes these headings and the DONE gate CHECKS them, and
+    those two sit in different layers, so the table cannot live in the
+    presentation module that renders it — `artifacts.py` reads it back and
+    would have had to import `foundry_report.py` to do so.
+
+    Pairing it with the tuple HERE is what makes the pairing enforceable at
+    vocabulary import: a section added to one and not the other fails at the
+    vocabulary rather than at whichever reader happened to run first. The
+    module-level assertion beside the table is that check; this pins that the
+    check has something to bite on and that no title is blank.
+    """
+    assert set(vocab.REPORT_SECTION_TITLES) == set(vocab.REPORT_REQUIRED_SECTIONS)
+    assert len(vocab.REPORT_SECTION_TITLES) == len(vocab.REPORT_REQUIRED_SECTIONS), (
+        "one title per section, and the tuple has no duplicate members"
+    )
+    assert all(
+        isinstance(t, str) and t.strip() for t in vocab.REPORT_SECTION_TITLES.values()
+    ), "a blank title renders a blank `## ` heading the DONE gate cannot match"
+
+    # A prettifier over the key names is why this is a dict: it would render
+    # `unknown_tier_defects` as "Unknown Tier Defects", which reads as a tier
+    # called "Unknown Tier".
+    assert vocab.REPORT_SECTION_TITLES["unknown_tier_defects"] == "Unknown-tier defects"
+
+
 def test_the_claim_half_of_the_denylist_is_derived_not_re_listed() -> None:
     """fallout GI-004 / AC-023 / OT-019 (D-078) — the split has one home.
 

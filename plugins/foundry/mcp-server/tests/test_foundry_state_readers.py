@@ -1378,7 +1378,7 @@ def test_the_done_gate_and_the_seal_apply_one_heading_rule(report_run) -> None:
     missing, problem = fr._markdown_missing_sections(report_run)
     assert problem is None and missing == []
     assert fs.markdown_headings(text) >= {
-        f"## {fr._SECTION_TITLES[key]}" for key in fr.REPORT_REQUIRED_SECTIONS
+        f"## {vocab.REPORT_SECTION_TITLES[key]}" for key in fr.REPORT_REQUIRED_SECTIONS
     }
     # And the two really are one walk: every heading the splitter starts a
     # block on is a heading the presence check sees, and nothing else is.

@@ -54,6 +54,7 @@ from foundry_mcp.schemas.vocab import (
     REPORT_JSON_FILENAME,
     REPORT_MD_FILENAME,
     REPORT_REQUIRED_SECTIONS,
+    REPORT_SECTION_TITLES,
     RUN_PHASE_HALTED,
     SPEND_LEDGER_FILENAME,
     TEMPER_CANDIDATE,
@@ -1899,35 +1900,6 @@ def _baseline_comparison_section(
 # `## ` headings and their ORDER are not).
 # ---------------------------------------------------------------------------
 
-#: Human titles for the eleven section keys. A dict rather than a prettifier
-#: over the key names, because `latent_backlog` prettifies to "Latent Backlog"
-#: but `unknown_tier_defects` prettifies to "Unknown Tier Defects", which reads
-#: as a tier called "Unknown Tier". Derived from REPORT_REQUIRED_SECTIONS at
-#: import time so a section added to vocab without a title here fails loudly at
-#: the assertion below instead of rendering a blank heading.
-_SECTION_TITLES: dict[str, str] = {
-    "verdict_matrix": "Verdict matrix",
-    "requirement_span": "Requirement span",
-    "defects_by_tier_and_status": "Defects by tier and status",
-    "latent_backlog": "LATENT backlog",
-    "hardening_backlog": "HARDENING backlog",
-    "unknown_tier_defects": "Unknown-tier defects",
-    "fallout_per_cycle": "Fallout per cycle",
-    "escalated_classes": "Escalated classes",
-    "lead_fix_records": "Lead fix records",
-    "inspect_modes_per_cycle": "INSPECT mode per cycle",
-    "stream_coverage_per_cycle": "Stream coverage per cycle",
-    "spend_per_phase_and_cycle": "Spend per phase and cycle",
-    "unreported_dispatches": "Unreported dispatches",
-    "halt_and_co_dispatch": "Halt and co-dispatch",
-    "executing_versions": "Executing server and plugin versions",
-    "baseline_comparison": "Baseline comparison",
-}
-
-assert set(_SECTION_TITLES) == set(REPORT_REQUIRED_SECTIONS), (
-    "every REPORT_REQUIRED_SECTIONS member needs a markdown title: "
-    f"{sorted(set(REPORT_REQUIRED_SECTIONS) ^ set(_SECTION_TITLES))}"
-)
 
 
 def _full_ratio_sentence(ratio: dict) -> str:
@@ -1988,7 +1960,7 @@ def _render_markdown(run_name: str, generated_at: str, sections: dict) -> str:
     `report_status` reads BOTH documents off disk — `report.json`'s top-level
     keys AND this file's headings (`_markdown_missing_sections`) — and the DONE
     gate refuses on the union. So a heading rendered here with different text
-    than `_SECTION_TITLES` holds is a section the gate reports missing, even
+    than `REPORT_SECTION_TITLES` holds is a section the gate reports missing, even
     though the JSON carries it.
 
     What the lead may still do is APPEND prose (GI-006), and that stays safe
@@ -2054,7 +2026,7 @@ def _render_markdown(run_name: str, generated_at: str, sections: dict) -> str:
         "",
     ]
     for key in REPORT_REQUIRED_SECTIONS:
-        lines.append(f"## {_SECTION_TITLES[key]}")
+        lines.append(f"## {REPORT_SECTION_TITLES[key]}")
         lines.append("")
         lines.extend(_render_section(key, sections.get(key) or {}))
         lines.append("")
@@ -2767,7 +2739,7 @@ def _markdown_missing_sections(run_dir: Path) -> tuple[list[str], str | None]:
     return [
         key
         for key in REPORT_REQUIRED_SECTIONS
-        if f"## {_SECTION_TITLES[key]}" not in headings
+        if f"## {REPORT_SECTION_TITLES[key]}" not in headings
     ], None
 
 

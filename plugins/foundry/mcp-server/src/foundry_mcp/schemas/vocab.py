@@ -1140,6 +1140,46 @@ REPORT_REQUIRED_SECTIONS = (
     "baseline_comparison",
 )  # 16 sections
 
+#: fallout GI-033 (concern C-060 row 2) — THE MARKDOWN HEADING PER SECTION KEY.
+#:
+#: A dict rather than a prettifier over the key names, because `latent_backlog`
+#: prettifies to "Latent Backlog" but `unknown_tier_defects` prettifies to
+#: "Unknown Tier Defects", which reads as a tier called "Unknown Tier".
+#:
+#: IT LIVES HERE, beside the tuple it is paired with, because the report SEAL
+#: writes these headings and the DONE gate CHECKS them, and those two sit in
+#: different layers. `foundry_report.py` renders them and `artifacts.py` reads
+#: them back; a table owned by the presentation module put the gate's check
+#: behind a presentation import. Pairing it with the tuple here also means the
+#: assertion below runs at vocabulary import, so a section added to one and not
+#: the other fails at the vocabulary rather than at whichever reader ran first.
+#:
+#: Extend only via phase-level RFC, together with REPORT_REQUIRED_SECTIONS.
+REPORT_SECTION_TITLES: dict[str, str] = {
+    "verdict_matrix": "Verdict matrix",
+    "requirement_span": "Requirement span",
+    "defects_by_tier_and_status": "Defects by tier and status",
+    "latent_backlog": "LATENT backlog",
+    "hardening_backlog": "HARDENING backlog",
+    "unknown_tier_defects": "Unknown-tier defects",
+    "fallout_per_cycle": "Fallout per cycle",
+    "escalated_classes": "Escalated classes",
+    "lead_fix_records": "Lead fix records",
+    "inspect_modes_per_cycle": "INSPECT mode per cycle",
+    "stream_coverage_per_cycle": "Stream coverage per cycle",
+    "spend_per_phase_and_cycle": "Spend per phase and cycle",
+    "unreported_dispatches": "Unreported dispatches",
+    "halt_and_co_dispatch": "Halt and co-dispatch",
+    "executing_versions": "Executing server and plugin versions",
+    "baseline_comparison": "Baseline comparison",
+}
+
+assert set(REPORT_SECTION_TITLES) == set(REPORT_REQUIRED_SECTIONS), (
+    "every REPORT_REQUIRED_SECTIONS member needs a markdown title: "
+    f"{sorted(set(REPORT_REQUIRED_SECTIONS) ^ set(REPORT_SECTION_TITLES))}"
+)
+
+
 # ---------------------------------------------------------------------------
 # NFR-001 / AC-039 / OT-030 — the convergence comparison.
 #
