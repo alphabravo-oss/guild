@@ -48,6 +48,11 @@ from pathlib import Path
 
 import pytest
 
+from foundry_mcp.schemas import vocab
+from foundry_mcp.schemas.vocab import (
+    REPORT_REQUIRED_SECTIONS,
+    REPORT_SECTION_TITLES,
+)
 from foundry_mcp.tools import artifacts
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools.artifacts import (
@@ -1240,3 +1245,137 @@ def _declaration_covers(path: str) -> bool:
             return False
         shape = shape[token]
     return True
+
+
+# --------------------------------------------------------------------------- #
+# C-060 row 2: the DONE gate's report read
+# --------------------------------------------------------------------------- #
+
+
+def _complete_report(run_dir: Path, *, markdown: str | None = None) -> Path:
+    """A run directory holding a report both documents call complete."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "report.json").write_text(
+        json.dumps({k: [] for k in REPORT_REQUIRED_SECTIONS} | {"generated_at": "t"}),
+        encoding="utf-8",
+    )
+    (run_dir / "REPORT.md").write_text(
+        markdown
+        if markdown is not None
+        else "\n".join(f"## {REPORT_SECTION_TITLES[k]}" for k in REPORT_REQUIRED_SECTIONS),
+        encoding="utf-8",
+    )
+    return run_dir
+
+
+def test_the_headings_this_read_looks_for_are_the_ones_the_seal_writes(tmp_path):
+    """`fallout GI-033` — the row that could only be hoisted once ONE table existed.
+
+    This read checks headings the report SEAL wrote. While the table lived in
+    the presentation module, a leaf copy of it would have given the writer one
+    table and the checker another: rename a heading and the gate reports a
+    section missing that the seal had just written — a gate refusing a run for
+    a document it produced correctly. So the assertion is identity, not
+    equality. A copy that happened to agree today would pass an equality check
+    and is exactly what must not exist.
+    """
+    assert artifacts.REPORT_SECTION_TITLES is vocab.REPORT_SECTION_TITLES
+
+
+def test_the_done_gates_read_finds_a_complete_report(tmp_path):
+    """Both documents carry every section, so nothing is missing and the read
+    carries the generation stamp a caller reports.
+    """
+    status = artifacts.report_document_status(_complete_report(tmp_path / "run"))
+
+    assert status["present"] is True
+    assert status["missing_sections"] == []
+    assert status["generated_at"] == "t"
+
+
+def test_a_report_with_no_markdown_is_not_present_however_complete_the_json(
+    tmp_path,
+):
+    """D-015 driven, and it is the reason this reads two documents.
+
+    Delete REPORT.md outright and the JSON still answers every section — the
+    read that trusted the JSON alone passed here, so a run could reach DONE
+    with no operator-readable report at all, which is the outcome GI-006 exists
+    to prevent.
+    """
+    run_dir = _complete_report(tmp_path / "run")
+    (run_dir / "REPORT.md").unlink()
+
+    status = artifacts.report_document_status(run_dir)
+
+    assert status["present"] is False
+    assert status["missing_sections"] == list(REPORT_REQUIRED_SECTIONS)
+    assert status["missing_from_json"] == []
+    assert "REPORT.md does not exist" in status["problem"]
+
+
+def test_prose_the_lead_appended_hides_no_generated_section(tmp_path):
+    """GI-006 licenses the lead to APPEND, so a document with the lead's own
+    sections above, below and between the generated ones is still complete —
+    the heading is found at any depth and in any order.
+    """
+    generated = [f"## {REPORT_SECTION_TITLES[k]}" for k in REPORT_REQUIRED_SECTIONS]
+    markdown = "\n".join(
+        ["## Lead preface", "some prose", *generated, "## Appendix", "more prose"]
+    )
+
+    status = artifacts.report_document_status(
+        _complete_report(tmp_path / "run", markdown=markdown)
+    )
+
+    assert status["present"] is True
+    assert status["missing_from_markdown"] == []
+
+
+def test_a_generated_heading_with_a_suffix_reads_as_the_edit_it_is(tmp_path):
+    """The match is the whole trimmed line, not a prefix. An edited heading is
+    an edit, and the lead's own `## Appendix` is not a generated section.
+    """
+    edited = REPORT_REQUIRED_SECTIONS[0]
+    markdown = "\n".join(
+        f"## {REPORT_SECTION_TITLES[k]}" + (" (see below)" if k == edited else "")
+        for k in REPORT_REQUIRED_SECTIONS
+    )
+
+    status = artifacts.report_document_status(
+        _complete_report(tmp_path / "run", markdown=markdown)
+    )
+
+    assert status["present"] is False
+    assert status["missing_sections"] == [edited]
+    assert status["missing_from_json"] == []
+
+
+def test_the_report_read_agrees_with_the_definition_it_was_hoisted_from(tmp_path):
+    """The window pin for row 2, retiring itself the same way rows 1 and 3 do.
+
+    Four states, through both definitions while both exist: complete, an empty
+    pair of documents, a corrupt JSON, and a directory with no report at all.
+    The payloads must be equal and not merely agree on `present` — the callers
+    read `missing_sections`, `problem` and both halves of the union.
+    """
+    report = pytest.importorskip("foundry_mcp.tools.foundry_report")
+    hoisted_from = getattr(report, "report_status", None)
+    if hoisted_from is None:
+        pytest.skip(
+            "foundry_report.report_status is gone: the hoist completed and this "
+            "agreement pin has nothing left to compare"
+        )
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    blank = tmp_path / "blank"
+    blank.mkdir()
+    (blank / "report.json").write_text("{}", encoding="utf-8")
+    (blank / "REPORT.md").write_text("# nothing", encoding="utf-8")
+    corrupt = tmp_path / "corrupt"
+    corrupt.mkdir()
+    (corrupt / "report.json").write_text("not json{", encoding="utf-8")
+
+    for run_dir in (_complete_report(tmp_path / "run"), empty, blank, corrupt):
+        assert artifacts.report_document_status(run_dir) == hoisted_from(run_dir), run_dir
