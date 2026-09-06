@@ -4174,20 +4174,46 @@ def test_the_init_schema_advertises_max_cycles(run_env):
     A `max_cycles` the handler persists but the schema never advertises is a cap
     no run can set — the shape that made `casting_commit` always-None and
     `inspect_start` unreachable.
+
+    fallout D-067 (casting 4's concern C-043) — AND THE WIRE'S DEFAULT IS THE
+    HANDLER'S DEFAULT, WHICH IS NOW ABSENCE RATHER THAN ZERO.
+
+    This asserted `default == 0` on both halves, which was the pair agreeing on
+    the wrong answer: CT-006's input domain is "integer N at least 0" and 0 is
+    the one member of it a resume did not write, because the handler could not
+    tell an omitted flag from an explicit 0 and the schema default plus the
+    dispatch `.get(..., 0)` between them guaranteed it never would. The two
+    halves still have to agree — that is what this test is for — so it now
+    asserts the shape they agree on: no schema default at all, and `None` on the
+    signature. `type` and `minimum` stay asserted because both still do work.
     """
     from foundry_mcp import server as foundry_server
 
     tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
     prop = tools["Foundry-Init"].inputSchema["properties"]["max_cycles"]
     assert prop["type"] == "integer"
-    assert prop["default"] == 0
+    assert prop["minimum"] == 0
+    assert "default" not in prop, (
+        "the Foundry-Init schema carries a `max_cycles` default again. A "
+        "default a validator or client fills in manufactures an explicit 0 out "
+        "of an absent key, and an explicit 0 REWRITES a resumed run's cap to "
+        "unbounded — so the default lifts the ceiling of every bare resume."
+    )
 
     import inspect
 
     from foundry_mcp.tools import foundry as foundry_module
 
     params = inspect.signature(foundry_module.foundry_init).parameters
-    assert params["max_cycles"].default == 0
+    assert params["max_cycles"].default is None
+
+    # ...and the dispatch entry between them substitutes nothing either, which
+    # is the third surface the same value passes through.
+    source = inspect.getsource(foundry_server)
+    assert 'max_cycles=args.get("max_cycles")' in source, (
+        "the Foundry-Init dispatch entry no longer passes an absent "
+        "`max_cycles` through as absence"
+    )
 
 
 
@@ -4807,6 +4833,73 @@ def test_the_two_new_tools_are_registered_the_way_the_registry_reads_them(run_en
 
 
 
+def test_the_concern_door_requires_a_cycle_on_the_arm_that_writes_one(run_env):
+    """fallout D-060 / AC-004 / CT-001 — the registration half of the cycle rung.
+
+    AC-004 is "with a Foundry-Concern entry from casting 2 targeting casting 5's
+    file still open after GRIND, `Foundry-Phase('inspect_start')` refuses naming
+    the concern id". `_inspect_start_preconditions` scopes that refusal to
+    `current_cycle(fdir)`, because the requirement says "from the closing
+    GRIND" — so a concern stored under a cycle nobody is in is a concern the
+    gate that exists to refuse over it walks straight past.
+
+    Three surfaces produced that stored zero and two of them are in this file:
+    an inputSchema with no `required` list at all — the only ledger-WRITING door
+    here without one — and a dispatch entry reading `args.get("cycle", 0)`,
+    which manufactures a real cycle out of an omitted key. 0 is a cycle a
+    CAST-time concern legitimately carries, so nothing downstream can tell the
+    substitute from the value.
+
+    Driven at the transport, not at the handler, because the schema is the layer
+    that answers first and a direct call walks past it.
+    """
+    from foundry_mcp import server as foundry_server
+
+    schema = next(
+        t.inputSchema for t in asyncio.run(foundry_server.list_tools())
+        if t.name == "Foundry-Concern"
+    )
+
+    # The WRITE arm without a cycle is refused, and the refusal names the field.
+    refusal = foundry_server._argument_refusal("Foundry-Concern", schema, {
+        "casting_id": 2, "target": "src/handler.py", "text": "reaches casting 5",
+    })
+    assert refusal is not None, "an omitted cycle was accepted at the door"
+    assert "cycle" in refusal["missing_fields"], refusal
+
+    # The same call carrying it passes the door...
+    assert foundry_server._argument_refusal("Foundry-Concern", schema, {
+        "casting_id": 2, "cycle": 4, "target": "src/handler.py",
+        "text": "reaches casting 5",
+    }) is None
+
+    # ...and cycle 0 is a VALUE, not the absence the substitute used to forge.
+    assert foundry_server._argument_refusal("Foundry-Concern", schema, {
+        "casting_id": 2, "cycle": 0, "target": "src/handler.py",
+        "text": "reaches casting 5",
+    }) is None
+
+    # The CLOSE arm neither takes a cycle nor is asked for one: it moves a
+    # record that already carries its stamp (ST-004). A flat `required` here
+    # would refuse this call and break the half of AC-004 that says the gate
+    # passes once the lead closes the concern with a reason.
+    assert foundry_server._argument_refusal("Foundry-Concern", schema, {
+        "close": "C-001", "reason": "dispatched to casting 5 this cycle",
+    }) is None
+
+    # And the dispatch entry between the schema and the handler substitutes
+    # nothing, so an absent key reaches the handler's own sentinel.
+    import inspect
+
+    source = inspect.getsource(foundry_server)
+    assert 'cycle=args.get("cycle")' in source, (
+        "the Foundry-Concern dispatch entry no longer passes an absent cycle "
+        "through as absence"
+    )
+
+
+
+
 # --------------------------------------------------------------------------- #
 # fallout AC-011 / OT-011 / GI-024 — commit group (4): ONE DEFINITION, PACKAGE-WIDE.
 #
@@ -4890,18 +4983,19 @@ _DELIBERATE_REDEFINITIONS: dict[str, str] = {
 #: The open rows carry a `Foundry-Concern` naming their owner; see
 #: foundry-archive/foundry-run-fallout/concerns.md.
 _KNOWN_DUPLICATION: dict[str, str] = {
-    "_artifact_guard": (
-        "casting 4 — ONE NAME, TWO FUNCTIONS, and the row survives for that "
-        "reason rather than for the usual one (concern C-007). "
-        "`artifacts._artifact_guard(fdir)` scans the whole run; "
-        "`foundry._artifact_guard(fdir, *names)` is scoped to the artifacts the "
-        "calling tool touches — a corrupt roll-up must not block a defect "
-        "filing that never opens it — and additionally runs the D-096 "
-        "ledger-container rung, which is LEDGER knowledge GI-033 keeps out of a "
-        "leaf. Deleting either would break the other's call sites on arity. "
-        "Closing this means RENAMING one of the two, not importing one from the "
-        "other; casting 4 owns that rename."
-    ),
+    # fallout D-061 (casting 4's concern C-042) — THE `_artifact_guard` ROW IS
+    # GONE BECAUSE THE DUPLICATION IS, AND IT WENT THE WAY THE ROW PRESCRIBED.
+    #
+    # The row read "Closing this means RENAMING one of the two, not importing
+    # one from the other; casting 4 owns that rename." Casting 4 took that
+    # decision at 9892cd1: `tools/foundry.py#_artifact_guard(fdir, *names)` is
+    # now `_named_artifact_guard`, and `tools/artifacts.py#_artifact_guard(fdir)`
+    # is the package's only definition of the name. Both contracts survive —
+    # whole-run scan versus named subset with the D-096 ledger-container rung —
+    # which is why the exit was a rename rather than a deletion. The guard below
+    # now asserts the single definition instead of accounting for two, and its
+    # own stale-row assertion is what forced this line to be deleted rather than
+    # left to rot: an inventory that never shrinks is a catalogue.
     "_REQUIREMENT_ID_RE": (
         "castings 5 and 6 — schemas/vocab.py declares the grammar; "
         "tools/evidence.py and tools/test_deriver.py each bind their own alias "

@@ -160,11 +160,9 @@ async def list_tools() -> list[Tool]:
                     "ticket": {"type": "string", "default": ""},
                     "description": {"type": "string", "default": ""},
                     "url": {"type": "string", "default": "", "description": "Target URL for SIGHT audit; persisted to castings/manifest.json target_url."},
-                    # CT-016 / FR-024 / ST-008 - the cycle cap. 0 is unbounded
-                    # and is the default, so a run that does not pass it behaves
-                    # exactly as every run did before. When set, the
-                    # Foundry-Phase call that would open GRIND cycle
-                    # max_cycles+1 SUCCEEDS into a named HALTED state and
+                    # CT-016 / FR-024 / ST-008 - the cycle cap. 0 is unbounded.
+                    # When set, the Foundry-Phase call that would open GRIND
+                    # cycle max_cycles+1 SUCCEEDS into a named HALTED state and
                     # generates the report; it is not a refusal.
                     # D-225 - `minimum` is the half that makes the accepted
                     # set equal the HONOURED set. Draft202012Validator applies
@@ -175,17 +173,36 @@ async def list_tools() -> list[Tool]:
                     # cap, and refusing it at the door is where the operator can
                     # still act on the refusal. 0 stays legal because 0 IS the
                     # documented spelling of unbounded.
+                    #
+                    # fallout D-067 (casting 4's concern C-043) - AND THERE IS
+                    # NO `default: 0` HERE ANY MORE, BECAUSE ABSENCE AND 0 ARE
+                    # DIFFERENT ANSWERS ON THE RESUME PATH.
+                    #
+                    # `foundry_init` now takes `max_cycles: int | None = None`:
+                    # None is "this call passed no cap" and leaves a resumed
+                    # run's persisted ceiling exactly as it is, while an
+                    # explicit 0 REWRITES it to unbounded. A schema default that
+                    # a validator or a client fills in manufactures the explicit
+                    # 0 out of an absent key and lifts the ceiling of every bare
+                    # `/foundry:resume` - which is the whole of the defect, one
+                    # layer up from the dispatch entry that also carried it.
+                    # `type` and `minimum` both still matter: the type is what
+                    # keeps a JSON null from ever reaching the handler as a
+                    # value, and D-225's minimum is unchanged.
                     "max_cycles": {
                         "type": "integer",
                         "minimum": 0,
-                        "default": 0,
                         "description": (
-                            "Halt the run after this many GRIND cycles. 0 (the "
-                            "default) is unbounded. Reaching the cap is a "
-                            "SUCCESSFUL transition into HALTED, not a refusal: "
-                            "state.json becomes HALTED and the report is "
-                            "generated naming every open LIVE and LATENT defect. "
-                            "HALTED is not DONE. Must not be negative."
+                            "Halt the run after this many GRIND cycles. 0 is "
+                            "unbounded. OMITTING the property is not the same "
+                            "answer as 0: a resume that omits it leaves the "
+                            "run's persisted cap unchanged, while a resume "
+                            "carrying 0 rewrites the cap to unbounded. "
+                            "Reaching the cap is a SUCCESSFUL transition into "
+                            "HALTED, not a refusal: state.json becomes HALTED "
+                            "and the report is generated naming every open "
+                            "LIVE and LATENT defect. HALTED is not DONE. Must "
+                            "not be negative."
                         ),
                     },
                 },
@@ -491,7 +508,14 @@ async def list_tools() -> list[Tool]:
                         "type": ["string", "integer"],
                         "description": "The casting raising the concern.",
                     },
-                    "cycle": {"type": "integer"},
+                    "cycle": {
+                        "type": "integer",
+                        "description": (
+                            "The GRIND cycle this concern was raised in. "
+                            "REQUIRED on the write arm; the close arm neither "
+                            "takes it nor asks for it."
+                        ),
+                    },
                     "target": {
                         "type": "string",
                         "description": (
@@ -509,6 +533,39 @@ async def list_tools() -> list[Tool]:
                         "description": "Required with `close`: why it is closed.",
                     },
                 },
+                # fallout D-060 / AC-004 — `cycle` IS REQUIRED ON THE ARM THAT
+                # WRITES, AND ONLY ON THAT ARM.
+                #
+                # This door was the only ledger-WRITING tool in this file with
+                # no `required` list at all, and the field it silently defaulted
+                # is the one `_inspect_start_preconditions` scopes its refusal
+                # on: a concern stored under cycle 0 is a concern no closing
+                # GRIND owns, so the gate that exists to refuse over it passed.
+                # Foundry-Defect, Foundry-Observation, Foundry-Fix, Foundry-Sync
+                # and Foundry-Stream all require `cycle`; this now does too.
+                #
+                # A FLAT `required` WOULD BE WRONG, and the two arms are why.
+                # `close=id` with a `reason` moves a record that already carries
+                # its stamp (ST-004) and takes no cycle, so an unconditional
+                # requirement would refuse every close at the transport and
+                # break the half of AC-004 that says the same call succeeds once
+                # the lead closes the concern with a reason. `if`/`then` says
+                # exactly what the door means — a call that is not a close is a
+                # write, and a write carries its cycle — and the SDK selects the
+                # draft with `validator_for`, so the applicator is evaluated by
+                # the same validator every other schema in this file is judged
+                # by.
+                #
+                # SCOPED TO `cycle` AND NOTHING ELSE. `casting_id`, `target` and
+                # `text` stay the handler's to refuse, because casting 1's door
+                # answers each with a NAMED refusal that says what to do next
+                # (CONCERN_TARGET_UNRESOLVED, an empty-text refusal), and a
+                # schema failure would replace those sentences with a generic
+                # validation message. `cycle` is here because absence is the one
+                # thing the handler cannot tell from a value once a default has
+                # been substituted for it.
+                "if": {"not": {"required": ["close"]}},
+                "then": {"required": ["cycle"]},
             },
         ),
         Tool(
@@ -1487,11 +1544,19 @@ _DISPATCH = {
     "Verify-Citations": lambda args: verify_citations(
         spec_path=args["spec_path"], report_path=args["report_path"],
         strict=args.get("strict", False), project_root=_project_root),
+    # fallout D-067 (casting 4's concern C-043) — `max_cycles` PASSES THROUGH AS
+    # ABSENCE, for the same reason Foundry-Concern's `cycle` does.
+    # `args.get("max_cycles", 0)` turned a bare `/foundry:resume` into a
+    # deliberate `--max-cycles 0` at the handler, which REWRITES the persisted
+    # ceiling to unbounded — so the one call that must leave a running cap alone
+    # was the call that lifted it. The handler's default is `None`, meaning "no
+    # cap was passed"; the schema above no longer carries a `default: 0` that
+    # would re-manufacture the value a layer earlier.
     "Foundry-Init": lambda args: foundry_init(
         spec_path=args.get("spec_path"), temper=args.get("temper", False),
         nyquist=args.get("nyquist", False), no_ui=args.get("no_ui", False),
         resume=args.get("resume"), ticket=args.get("ticket", ""), description=args.get("description", ""),
-        url=args.get("url", ""), max_cycles=args.get("max_cycles", 0),
+        url=args.get("url", ""), max_cycles=args.get("max_cycles"),
         project_root=_project_root),
     "Foundry-Next": lambda args: foundry_next_action(
         project_root=_project_root, caller=args.get("caller", LEAD_CALLER)),
@@ -1537,8 +1602,14 @@ _DISPATCH = {
     # `_registry_tool_modules` can read: a wrapped handler, a functools.partial
     # or a table lookup makes the tool vanish from the registry (Holmes
     # introspect-1). Casting 1 owns both handlers; this is their registration.
+    # fallout D-060 / AC-004 — `cycle` PASSES THROUGH AS ABSENCE.
+    # `args.get("cycle", 0)` manufactured a real cycle out of an omitted key,
+    # and 0 is a cycle a CAST-time concern legitimately carries, so nothing
+    # downstream could tell the two apart once one was written. The handler's
+    # default is the `None` sentinel it refuses on (CONCERN_CYCLE_REQUIRED);
+    # this entry's job is to hand it absence, not a substitute.
     "Foundry-Concern": lambda args: foundry_concern(
-        casting_id=args.get("casting_id", ""), cycle=args.get("cycle", 0),
+        casting_id=args.get("casting_id", ""), cycle=args.get("cycle"),
         target=args.get("target", ""), text=args.get("text", ""),
         close=args.get("close", ""), reason=args.get("reason", ""),
         project_root=_project_root),
