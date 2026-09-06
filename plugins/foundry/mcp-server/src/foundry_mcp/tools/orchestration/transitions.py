@@ -135,9 +135,29 @@ def _source_phase_rung(
 
     A no-op for a token the table does not guard, so every routine may call it
     unconditionally and a row added to the table is enforced at both doors the
-    day it is written. Returns the refusal's own two fields (`accepted_from`,
-    `phase`) so the caller can publish them, which is what every branch that
-    returned `_phase_entry_source_problem`'s dict verbatim used to carry.
+    day it is written. Returns the refusal's own two fields so the caller can
+    publish them, which is what every branch that returned
+    `_phase_entry_source_problem`'s dict verbatim used to carry.
+
+    fallout CT-020 (D-084) — THE FACT IS `source_phase`, AND THE RENAME IS THE
+    FIX.
+    -------------------------------------------------------------------------
+    It was `phase`, and a routine's non-refusing facts are SPREAD into the
+    door's result — so at `foundry_gate`, where the result opens
+    `{"phase": <the gate token>, ...}` and the spread lands after it, the run's
+    CURRENT phase overwrote the gate token in the door's own identity field.
+    `Foundry-Gate('temper')` answered `phase: "F0"`, and `display.py#_fmt_
+    foundry_gate` renders `PHASE_NAMES.get(phase.upper(), phase)`, so a lead who
+    ran the temper gate was shown "Gate RESEARCH: not ready". A regression: the
+    pre-wave-1 gate returned `{"phase", "passed", "checklist"}` and spread
+    nothing.
+
+    `source_phase` says what the value IS — the phase the transition was
+    attempted FROM — and collides with no door's identity. The `accepted_from`
+    half is unchanged, because nothing is named that.
+
+    The CHECKLIST entry keeps `phase`: it is nested inside a checklist dict,
+    spread into nothing, and `tests/test_inspect_mode.py` reads it there.
     """
     wrong = _phase_entry_source_problem(fdir, token)
     if wrong is not None:
@@ -149,7 +169,7 @@ def _source_phase_rung(
            if wrong is not None else {}),
     })
     return {} if wrong is None else {
-        "accepted_from": wrong["accepted_from"], "phase": wrong["phase"]
+        "accepted_from": wrong["accepted_from"], "source_phase": wrong["phase"]
     }
 
 

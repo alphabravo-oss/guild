@@ -960,6 +960,15 @@ def _done_preconditions(
         # F6 doors used to compute and discard are PUBLISHED. Both gates and
         # both transitions pass this through.
         "refusals": ladder.refusals(),
+        # fallout CT-020 (D-084) — THE SOURCE RUNG'S FACTS, PUBLISHED.
+        #
+        # `source` was assigned above and never read — a dead local — so the two
+        # F6 doors alone published no `accepted_from` and no `source_phase`,
+        # while every other token's routine spreads them through
+        # `_preconditions_outcome`. `transitions.py#_transition_refusal`'s
+        # docstring says a caller reading one of those keys "would otherwise
+        # have lost it to the reshaping", and at these two doors it had.
+        **source,
     }
     # Written through the RESULT rather than through two locals, exactly as
     # `foundry_gate` renders its own ladder: a function that never names
@@ -1383,6 +1392,22 @@ def foundry_gate(
     # evaluation, so the second call adds nothing the first did not; absorbing
     # both is what makes the table the whole mapping rather than the table plus
     # a rule about which of the pair a gate really means.
+    # fallout CT-020 (D-085) — ONE LADDER PER DISTINCT CHECK, NOT PER TOKEN.
+    #
+    # `grind` maps to TWO transitions and `_assay_fail_preconditions` IS
+    # `_grind_start_preconditions`, so the identical ladder was absorbed twice
+    # and the door published every refusal twice: driven with a team active,
+    # `Foundry-Gate('grind')` returned two rank-20 refusals reading "Active
+    # teammates: Team dirs: c3-team" for one registered team. The checklist was
+    # already deduped one line down; the refusals were not, and the invariant
+    # test could not see it because it compares `{r['reason'] for r in ...}` — a
+    # SET, which is exactly what a duplicate survives.
+    #
+    # Deduped HERE rather than inside `_GateLadder`: the ladder's contract is
+    # that nothing it is handed is discarded, and two callers passing one list
+    # twice is this loop's fact about the mapping table, not the ladder's about
+    # its input.
+    absorbed: list[dict] = []
     for token in GATE_TO_TRANSITION[phase]:
         outcome = _token_preconditions(
             token, fdir, project_root, reason=reason, text=text
@@ -1394,7 +1419,9 @@ def foundry_gate(
         # still that evaluation's AND this door publishes all of them under
         # `refusals`. It used to publish one entry for a call that had computed
         # four.
-        ladder.absorb(outcome["refusals"])
+        fresh = [r for r in outcome["refusals"] if r not in absorbed]
+        absorbed.extend(fresh)
+        ladder.absorb(fresh)
         for entry in outcome["checklist"]:
             if entry not in checklist:
                 checklist.append(entry)
@@ -1407,7 +1434,17 @@ def foundry_gate(
             if key not in ("passed", "reason", "hint", "checklist", "refusals"):
                 facts.setdefault(key, value)
 
-    result = {"phase": phase, "passed": ladder.passed, "checklist": checklist, **facts}
+    # fallout CT-020 (D-084) — A ROUTINE'S FACTS NEVER SHADOW THE DOOR'S OWN
+    # IDENTITY, AND THAT IS STRUCTURAL RATHER THAN A LIST OF SAFE NAMES.
+    #
+    # This read `{"phase": phase, ..., **facts}`, so any fact named `phase`,
+    # `passed` or `checklist` replaced the door's answer with a precondition's.
+    # One did: `_source_phase_rung` published the run's CURRENT phase under
+    # `phase`, and `Foundry-Gate('temper')` therefore answered `phase: "F0"`.
+    # That key is renamed at its source (`source_phase`), and the spread is
+    # moved BELOW the literals so the next fact to collide cannot do it again —
+    # the collision was the generator, the name was one instance of it.
+    result = {**facts, "phase": phase, "passed": ladder.passed, "checklist": checklist}
     if not ladder.passed:
         result["reason"], result["hint"] = ladder.outcome()
         # D-186: every failing check's own sentence, in the same order, so a

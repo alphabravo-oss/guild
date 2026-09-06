@@ -2689,3 +2689,164 @@ def test_the_tier_buckets_are_derived_from_the_vocabulary(run_env):
     assert blocking["blocking"] == 2, blocking
     assert sorted(blocking["live"]) == ["D-1"], blocking
     assert sorted(blocking["unknown"]) == ["D-4"], blocking
+
+
+# --------------------------------------------------------------------------- #
+# fallout CT-020 (D-084 / D-085) — WHAT THE DOOR PUBLISHES IS THE DOOR'S, AND
+# EACH CHECK SPEAKS ONCE.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_precondition_fact_never_shadows_the_gate_token_it_was_asked_about(run_env):
+    """fallout CT-020 (D-084) — `Foundry-Gate('temper')` answered `phase: F0`.
+
+    CT-020's output column is "the mapped transition's preconditions checklist,
+    including non-refusing facts such as would_halt", and the facts are SPREAD
+    into the result. `_source_phase_rung` published the run's CURRENT phase
+    under `phase`, the spread landed after the literal, and the door's own
+    identity field became a precondition's answer. Downstream harm is real:
+    `display.py#_fmt_foundry_gate` does `PHASE_NAMES.get(phase.upper(), phase)`,
+    so a lead who ran the temper gate from F0 was shown "Gate RESEARCH: not
+    ready". A REGRESSION — the pre-wave-1 gate spread nothing.
+    """
+    project_root, fdir = run_env
+    # F0 is a wrong source for all three of these, so the source rung fires and
+    # its facts are published — which is the only state the collision existed in.
+    _write_state(fdir, phase="F0", cycle=0)
+    (fdir / artifacts.NEXT_ACTION_CALLED_MARKER).write_text("x", encoding="utf-8")
+
+    for token in ("temper", "cast", "inspect"):
+        result = foundry_gate(token, project_root)
+        assert result["phase"] == token, (token, result["phase"])
+        # ...and the fact is not lost to the fix: it is published under a name
+        # that says what it is.
+        assert result.get("source_phase") == "F0", (token, result)
+        assert result.get("accepted_from"), (token, result)
+
+
+def test_the_two_f6_doors_publish_the_source_rung_they_compute(run_env):
+    """fallout CT-020 (D-084) — the mirror bug, on the same channel.
+
+    `_done_preconditions` assigned `source = _source_phase_rung(...)` and never
+    read it, so `done` and `nyquist_done` published no `accepted_from` and no
+    source phase at all — while every other token's routine spreads them through
+    `_preconditions_outcome`. `_transition_refusal`'s docstring promises a
+    caller reading those keys keeps them; at these two doors it did not.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    (fdir / artifacts.NEXT_ACTION_CALLED_MARKER).write_text("x", encoding="utf-8")
+
+    for token in ("done", "nyquist_done"):
+        result = foundry_gate(token, project_root)
+        assert result["phase"] == token, result
+        assert result["passed"] is False, result
+        assert result.get("source_phase") == "F2", (token, result)
+        assert result.get("accepted_from"), (token, result)
+
+
+def test_the_gate_identity_keys_are_not_spreadable_over(run_env):
+    """fallout CT-020 (D-084) — the GENERATOR, not the one colliding name.
+
+    Renaming `phase` to `source_phase` fixes the instance; a fact named `passed`
+    or `checklist` would do the same damage tomorrow. The result literal is
+    built with the spread FIRST, so the door's three answers are the door's
+    whatever a routine computes. Driven by planting each name as a fact.
+    """
+    from foundry_mcp.tools.orchestration import transitions as _transitions
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    (fdir / artifacts.NEXT_ACTION_CALLED_MARKER).write_text("x", encoding="utf-8")
+
+    real = _transitions._token_preconditions
+
+    def _poisoned(token, fdir_, project_root_, *, reason="", text=""):
+        outcome = real(token, fdir_, project_root_, reason=reason, text=text)
+        if outcome is not None:
+            outcome["phase"] = "F0"
+            outcome["passed"] = "not a bool"
+            outcome["checklist"] = "not a list"
+        return outcome
+
+    _transitions._token_preconditions = _poisoned
+    try:
+        result = foundry_gate("done", project_root)
+    finally:
+        _transitions._token_preconditions = real
+
+    assert result["phase"] == "done", result["phase"]
+    assert isinstance(result["passed"], bool), result["passed"]
+    assert isinstance(result["checklist"], list), result["checklist"]
+
+
+def test_a_two_token_gate_publishes_each_failing_check_once(run_env):
+    """fallout CT-020 (D-085) — one ladder, absorbed twice.
+
+    `grind` is the one gate token mapping to TWO transitions, and
+    `_assay_fail_preconditions` IS `_grind_start_preconditions` — the same
+    function, returning the same ladder — so `foundry_gate`'s per-token loop
+    absorbed it twice and published every refusal twice. The checklist was
+    deduped one line down; the refusals were not.
+
+    The invariant test could not see it: it compares `{r['reason'] for r in
+    ...}`, a SET, which is precisely what a duplicate survives. So this asserts
+    the LIST.
+    """
+    from foundry_mcp.tools.orchestration.gates import GATE_TO_TRANSITION
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    (fdir / artifacts.NEXT_ACTION_CALLED_MARKER).write_text("x", encoding="utf-8")
+    # The arrangement: `grind` maps to a pair, and a registered team makes one
+    # rung fire for both members of it.
+    assert len(GATE_TO_TRANSITION["grind"]) == 2, GATE_TO_TRANSITION["grind"]
+    (Path.home() / ".claude" / "teams").mkdir(parents=True, exist_ok=True)
+
+    result = foundry_gate("grind", project_root)
+    refusals = result.get("refusals") or []
+    # Every published refusal is distinct...
+    assert len(refusals) == len({
+        (r["rank"], r["reason"], r["hint"]) for r in refusals
+    }), refusals
+    # ...and the checklist, which was already deduped, still is.
+    checklist = result["checklist"]
+    assert len(checklist) == len([
+        c for i, c in enumerate(checklist) if c not in checklist[:i]
+    ]), checklist
+
+
+def test_the_dedupe_keeps_a_genuinely_second_distinct_refusal(run_env):
+    """fallout D-085 — deduping identical entries is not dropping information.
+
+    A rung that two mapped tokens fail DIFFERENTLY still publishes both, because
+    the two entries are not equal. Only the byte-identical repeat of one
+    evaluation goes.
+    """
+    from foundry_mcp.tools.orchestration import transitions as _transitions
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    (fdir / artifacts.NEXT_ACTION_CALLED_MARKER).write_text("x", encoding="utf-8")
+
+    real = _transitions._token_preconditions
+
+    def _distinct(token, fdir_, project_root_, *, reason="", text=""):
+        outcome = real(token, fdir_, project_root_, reason=reason, text=text)
+        if outcome is not None:
+            outcome["refusals"] = [
+                {"rank": 40, "reason": f"a reason only {token} gives",
+                 "hint": "a hint"}
+            ]
+            outcome["passed"] = False
+        return outcome
+
+    _transitions._token_preconditions = _distinct
+    try:
+        result = foundry_gate("grind", project_root)
+    finally:
+        _transitions._token_preconditions = real
+
+    reasons = [r["reason"] for r in result["refusals"]]
+    assert len(reasons) == 2, reasons
+    assert len(set(reasons)) == 2, reasons
