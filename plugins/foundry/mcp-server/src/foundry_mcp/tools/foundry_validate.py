@@ -478,8 +478,9 @@ def requirement_span_table(project_root=".", fdir: Path | None = None) -> dict:
 #: directory the research artifacts land in. Spelled once because two surfaces
 #: ask about it — the dimension that reports on it and the cache key that has to
 #: notice it appear — and a second spelling is a second answer waiting to drift.
-#: `foundry_spawn.py#_stream_roster` asks the same question of the same
-#: directory and asks it with `is_dir`, which is the spelling that is total: a
+#: `foundry_spawn.py#_expected_inspect_stream_agents` asks the same question of
+#: the same directory -- is there research for RESEARCH_AUDIT to audit -- and
+#: asks it with `is_dir`, which is the spelling that is total: a
 #: plain FILE at that path answers `exists` yes and then raises out of
 #: `iterdir`, and a tool never raises across the MCP boundary.
 _RESEARCH_DIRNAME = "research"
