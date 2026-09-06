@@ -1,4 +1,4 @@
-# evidence-cmd: printf '%s\n' '== casting 1 / FR-037: what this casting touched, and what the tree shows ==' '' '  ADDRESS NOTE. The casting prompt Verification section names' '  tests/test_orchestrator_gates.py, which casting 2 carved into' '  tests/orchestration/. The package-wide AST and import scans that' '  parenthetical is about now live in' '  tests/orchestration/test_module_boundaries.py, so that is the file this log' '  drives in its place. The claim is unchanged; only its address moved.' '' '  BOTH HALVES OF THE GI-033 RULING ARE IN THIS TREE, and they were two' '  different things. THE READ: lead ruling lead_ruling_gi_033_leaf_moves item' '  (3), on concern C-030, put the ONE body of the cross-casting concern filter' '  in foundry_state and told casting 1 to delete its second body and delegate;' '  concern C-033 carried the three call sites to casting 2. THE WORD: the leaf' '  read takes its status member as an argument, and that member was declared' '  in tools/concerns.py -- which reaches tools/foundry.py at module top -- so a' '  VERIFIER could reach the question and not the word. Casting 10 declared' '  CONCERN_STATUSES in schemas/vocab.py and casting 1 deleted its declaration' '  and imported the four names. The selection below runs over both halves.' '' '  NOTHING IS DESELECTED, AND THAT IS THE NEWS. Two earlier captures of this' '  log carried deselects, both times naming another casting open work:' '  first three boundary nodes, then the two layering rungs' '  (test_the_three_layers_hold_with_exactly_one_named_seam and' '  test_no_verifier_module_reaches_a_lifecycle_module_lazily_either), which' '  were red on gates -> escalation and transitions -> escalation at module' '  top. All five are closed now. So this selection is whole, the count is the' '  count, and the claim below is unqualified again -- the previous capture had' '  to say it did not vouch for the layering rungs, and this one does.' '' '  WHAT FR-037 CLAIMS HERE, precisely. This casting touched no file outside' '  its key_files -- concerns.py, rosters.py, test_concerns.py,' '  test_rosters.py -- and every rung of the boundary guard is green at this' '  commit: the GI-025 import-graph acyclicity, the three-layer rule and its' '  one named seam, the lazy-import rung behind it, the unused-import scan, the' '  D-128 raw-ledger-iteration scan that caught concerns.py once before, the' '  reachability scan, the vocabulary pins, and this casting own two test' '  modules. The one-definition-per-symbol rung' '  (test_no_top_level_symbol_is_defined_in_two_shipped_modules) was RED before' '  each of this casting two substantive commits -- on' '  open_cross_casting_concerns, then on CONCERN_STATUSES -- and is GREEN here.' '' && cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -rN -p no:cacheprovider tests/test_vocab.py tests/orchestration/test_module_boundaries.py tests/test_concerns.py tests/test_rosters.py
+# evidence-cmd: printf '%s\n' '== casting 1 / FR-037: what this casting touched, and what the tree shows ==' '' '  ADDRESS NOTE. The casting prompt Verification section names' '  tests/test_orchestrator_gates.py, which casting 2 carved into' '  tests/orchestration/. The package-wide AST and import scans that' '  parenthetical is about now live in' '  tests/orchestration/test_module_boundaries.py, so that is the file this log' '  drives in its place. The claim is unchanged; only its address moved.' '' '  WHAT CHANGED THIS CYCLE. One defect, fallout D-060 / AC-004. The' '  Foundry-Concern write arm declared cycle: int = 0 and collapsed every bool,' '  non-int and negative onto 0 with no refusal, so a concern filed with the' '  cycle omitted -- or with the JSON string 4 that a transport hands through' '  unconverted -- was stamped 0 and told the caller it had succeeded. The' '  READER, foundry_state.open_cross_casting_concerns, scopes the inspect_start' '  CONCERN_OPEN rung by exact cycle equality and is right to: GI-023 and ST-005' '  ask for the concerns from the closing GRIND, and no other reading of that' '  phrase exists. So a stamp of 0 at cycle 4 was invisible to the one door that' '  exists to refuse on it, and INSPECT opened over the tree the concern was' '  filed to hold shut. The refusal is the writers now:' '  tools/concerns.py#_cycle_refusal, one token CONCERN_CYCLE_REQUIRED for all' '  four shapes, and the default is the sentinel None rather than a cycle --' '  because 0 is a real cycle a concern raised during CAST carries, and telling' '  the two apart is precisely what the old default destroyed. The dispatch half' '  is casting 2s and landed in the same cycle, filed as concern C-046: server.py' '  passes absence THROUGH as absence instead of substituting a 0 of its own.' '' '  NOTHING IS DESELECTED, AND THE SELECTION IS WHOLE. No deselects and no' '  qualifications: every rung below runs, and every rung below passes. An' '  earlier capture of this log had to say it did not vouch for two layering' '  rungs; this one vouches for all of them.' '' '  WHAT FR-037 CLAIMS HERE, precisely. This casting touched no file outside its' '  key_files -- concerns.py, rosters.py, test_concerns.py, test_rosters.py --' '  and its own two evidence logs under evidence/. Every rung of the boundary' '  guard is green at this commit: the GI-025 import-graph acyclicity, the' '  three-layer rule and its one named seam, the lazy-import rung behind it, the' '  unused-import scan, the D-128 raw-ledger-iteration scan that caught' '  concerns.py once before, the reachability scan, the vocabulary pins, the' '  spec-id qualification pin that judges test prose, and this castings own two' '  test modules.' '' && cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -rN -p no:cacheprovider tests/test_vocab.py tests/orchestration/test_module_boundaries.py tests/test_concerns.py tests/test_rosters.py
 # evidence-for: FR-037
 # evidence-volatile: [0-9]+\.[0-9]+s
 # evidence-timeout: 300
@@ -12,44 +12,44 @@
   tests/orchestration/test_module_boundaries.py, so that is the file this log
   drives in its place. The claim is unchanged; only its address moved.
 
-  BOTH HALVES OF THE GI-033 RULING ARE IN THIS TREE, and they were two
-  different things. THE READ: lead ruling lead_ruling_gi_033_leaf_moves item
-  (3), on concern C-030, put the ONE body of the cross-casting concern filter
-  in foundry_state and told casting 1 to delete its second body and delegate;
-  concern C-033 carried the three call sites to casting 2. THE WORD: the leaf
-  read takes its status member as an argument, and that member was declared
-  in tools/concerns.py -- which reaches tools/foundry.py at module top -- so a
-  VERIFIER could reach the question and not the word. Casting 10 declared
-  CONCERN_STATUSES in schemas/vocab.py and casting 1 deleted its declaration
-  and imported the four names. The selection below runs over both halves.
+  WHAT CHANGED THIS CYCLE. One defect, fallout D-060 / AC-004. The
+  Foundry-Concern write arm declared cycle: int = 0 and collapsed every bool,
+  non-int and negative onto 0 with no refusal, so a concern filed with the
+  cycle omitted -- or with the JSON string 4 that a transport hands through
+  unconverted -- was stamped 0 and told the caller it had succeeded. The
+  READER, foundry_state.open_cross_casting_concerns, scopes the inspect_start
+  CONCERN_OPEN rung by exact cycle equality and is right to: GI-023 and ST-005
+  ask for the concerns from the closing GRIND, and no other reading of that
+  phrase exists. So a stamp of 0 at cycle 4 was invisible to the one door that
+  exists to refuse on it, and INSPECT opened over the tree the concern was
+  filed to hold shut. The refusal is the writers now:
+  tools/concerns.py#_cycle_refusal, one token CONCERN_CYCLE_REQUIRED for all
+  four shapes, and the default is the sentinel None rather than a cycle --
+  because 0 is a real cycle a concern raised during CAST carries, and telling
+  the two apart is precisely what the old default destroyed. The dispatch half
+  is casting 2s and landed in the same cycle, filed as concern C-046: server.py
+  passes absence THROUGH as absence instead of substituting a 0 of its own.
 
-  NOTHING IS DESELECTED, AND THAT IS THE NEWS. Two earlier captures of this
-  log carried deselects, both times naming another casting open work:
-  first three boundary nodes, then the two layering rungs
-  (test_the_three_layers_hold_with_exactly_one_named_seam and
-  test_no_verifier_module_reaches_a_lifecycle_module_lazily_either), which
-  were red on gates -> escalation and transitions -> escalation at module
-  top. All five are closed now. So this selection is whole, the count is the
-  count, and the claim below is unqualified again -- the previous capture had
-  to say it did not vouch for the layering rungs, and this one does.
+  NOTHING IS DESELECTED, AND THE SELECTION IS WHOLE. No deselects and no
+  qualifications: every rung below runs, and every rung below passes. An
+  earlier capture of this log had to say it did not vouch for two layering
+  rungs; this one vouches for all of them.
 
-  WHAT FR-037 CLAIMS HERE, precisely. This casting touched no file outside
-  its key_files -- concerns.py, rosters.py, test_concerns.py,
-  test_rosters.py -- and every rung of the boundary guard is green at this
-  commit: the GI-025 import-graph acyclicity, the three-layer rule and its
-  one named seam, the lazy-import rung behind it, the unused-import scan, the
-  D-128 raw-ledger-iteration scan that caught concerns.py once before, the
-  reachability scan, the vocabulary pins, and this casting own two test
-  modules. The one-definition-per-symbol rung
-  (test_no_top_level_symbol_is_defined_in_two_shipped_modules) was RED before
-  each of this casting two substantive commits -- on
-  open_cross_casting_concerns, then on CONCERN_STATUSES -- and is GREEN here.
+  WHAT FR-037 CLAIMS HERE, precisely. This casting touched no file outside its
+  key_files -- concerns.py, rosters.py, test_concerns.py, test_rosters.py --
+  and its own two evidence logs under evidence/. Every rung of the boundary
+  guard is green at this commit: the GI-025 import-graph acyclicity, the
+  three-layer rule and its one named seam, the lazy-import rung behind it, the
+  unused-import scan, the D-128 raw-ledger-iteration scan that caught
+  concerns.py once before, the reachability scan, the vocabulary pins, the
+  spec-id qualification pin that judges test prose, and this castings own two
+  test modules.
 
-........................................................................ [ 15%]
-........................................................................ [ 30%]
-........................................................................ [ 45%]
-........................................................................ [ 60%]
-........................................................................ [ 75%]
-........................................................................ [ 90%]
-...........................................                              [100%]
-475 passed in 11.03s
+........................................................................ [ 14%]
+........................................................................ [ 29%]
+........................................................................ [ 44%]
+........................................................................ [ 59%]
+........................................................................ [ 73%]
+........................................................................ [ 88%]
+........................................................                 [100%]
+488 passed in 13.47s
