@@ -36,6 +36,10 @@ from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
 from foundry_mcp.tools.artifacts import (
     _artifact_guard,
     _load_json,
+    # The rungs themselves, for the one reader that needs the PATH and not the
+    # text: the cache fingerprint, which hashes the spec's bytes before any
+    # dimension has run.
+    _spec_path_from,
     # fallout GI-033 / concern C-018 — the two-rung spec ladder is LEAF
     # material, not this module's. `orchestration/gates.py` needs the same
     # climb for the DONE gate's requirement count and P3 verdict
@@ -470,28 +474,61 @@ def requirement_span_table(project_root=".", fdir: Path | None = None) -> dict:
     return {**payload, "problem": None}
 
 
-def _fingerprint_inputs(fdir: Path, manifest: dict, schema_version: int = 0) -> dict:
+def _fingerprint_inputs(
+    fdir: Path,
+    manifest: dict,
+    schema_version: int = 0,
+    *,
+    spec_path: Path | None,
+) -> dict:
     """Hash the inputs that validator dimensions depend on.
 
     Returns {spec_hash, manifest_hash, castings: {id: {prompt_hash, manifest_entry_hash}}}.
     Any change in these hashes invalidates the cached validation result
     for the affected casting (or all castings when spec/manifest-level
     inputs change).
+
+    THE SPEC IS THE ONE THE VALIDATOR READ, which is why the path is handed in
+    rather than built here. A run that kept no copy of its spec in the run
+    directory resolves it through `state.spec_path`, the second rung of the one
+    ladder `_spec_requirement_ids` climbs for every dimension that counts
+    requirements — and the digest of a file that is not there never moves, so a
+    fingerprint that reached only for `<run>/spec.md` served that run its first
+    verdict forever. `spec_path` is keyword-only and has no default because
+    "which file is this run's spec" is not a question this hasher may answer by
+    omission: `None` is the caller SAYING the run has no resolvable spec.
     """
-    spec_path = fdir / "spec.md"
-    spec_bytes = spec_path.read_bytes() if spec_path.exists() else b""
+    spec_bytes = (
+        spec_path.read_bytes()
+        if spec_path is not None and spec_path.exists()
+        else b""
+    )
     spec_hash = hashlib.sha256(spec_bytes).hexdigest()[:16]
 
     shared_fields = {
         # The ownership and span dimensions read the archive schema marker, so
         # a migration that bumps it can turn a passing manifest into a refused
         # one with no byte of the manifest or the spec changed. Absent from the
-        # fingerprint, that bump would be served a cached pass forever.
+        # fingerprint, that bump would be served a cached pass forever. It is
+        # the one input here that is not IN the document.
         "archive_schema_version": schema_version,
-        "spec_type": manifest.get("spec_type"),
-        "migration_source_root": manifest.get("migration_source_root"),
-        "migration_destination_root": manifest.get("migration_destination_root"),
-        "file_change_map": manifest.get("file_change_map"),
+        # EVERY OTHER SHARED FIELD, DERIVED FROM THE DOCUMENT RATHER THAN
+        # LISTED. A hand-written list of the shared fields is a list that has
+        # to be remembered, and the rule above states exactly what forgetting
+        # costs: five fields were named here and `split_reason` was not, so
+        # deleting the only recorded reason for a three-way span moved no hash
+        # and F0.9 served the pass that reason had bought — the span refusal
+        # this file exists to make, cached past the removal of its own
+        # exemption. `global_invariants`, `mandatory_rules`, `stream_skips` and
+        # `source_inventory` were four more of the same, each read by a
+        # dimension below and none of them hashed.
+        #
+        # `castings` is excluded because it is fingerprinted BETTER below: per
+        # entry, beside the prompt file that entry is copied into. Everything
+        # else the manifest carries is shared, so the safe direction is to hash
+        # it all — a field this misses serves a wrong verdict, a field it need
+        # not have hashed costs one re-run.
+        "manifest": {k: v for k, v in manifest.items() if k != "castings"},
     }
     manifest_hash = hashlib.sha256(
         json.dumps(shared_fields, sort_keys=True).encode("utf-8")
@@ -626,7 +663,16 @@ def foundry_validate_castings(
     # holds. One read, two readers — the spec fallback still uses this `state`.
     state = _load_json(fdir / "state.json")
     schema_version = _archive_schema_version(state)
-    fingerprints = _fingerprint_inputs(fdir, manifest, schema_version)
+    # The one ladder, climbed here because the prelude already holds the two
+    # documents it takes — the same climb `_spec_requirement_ids` makes below,
+    # so the spec the cache is keyed on and the spec the dimensions read are
+    # the same file by construction rather than by two agreeing guesses.
+    fingerprints = _fingerprint_inputs(
+        fdir,
+        manifest,
+        schema_version,
+        spec_path=_spec_path_from(project_root, fdir, state),
+    )
     cache = _load_validate_cache(fdir)
     cached_result = cache.get("last_pass")
     if cached_result and cached_result.get("fingerprints") == fingerprints:

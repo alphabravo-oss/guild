@@ -83,6 +83,7 @@ def _run_validate(
     state: dict | None = None,
     manifest_extra: dict | None = None,
     complete: bool = False,
+    external_spec: str | None = None,
     run_name: str = "ownership-test",
 ) -> dict:
     """Write a minimal run and invoke the validator against it.
@@ -99,6 +100,13 @@ def _run_validate(
     validator at a run directory this harness did not invent, so the state
     document the door reads is the one the real creating call wrote. Every
     other caller takes the default and the two are the same thing.
+
+    ``external_spec`` is the run that kept NO copy of its spec: the text is
+    written at that path under ``project_root`` and recorded as
+    ``state.spec_path`` instead of at ``<run>/spec.md``, which is the second
+    rung of the one ladder every requirement-counting dimension climbs. Absent
+    — the default, and every other caller — the run holds its own copy and only
+    the first rung is ever reached.
 
     ``complete=True`` writes the rest of what F0.5 emits — a prompt file per
     casting carrying the three blocks, a spec.md the excerpts are a verbatim
@@ -124,7 +132,13 @@ def _run_validate(
                 f"<spec_requirements>\n{c.get('spec_text', '')}\n</spec_requirements>\n",
                 encoding="utf-8",
             )
-    (fdir / "spec.md").write_text(spec_text, encoding="utf-8")
+    if external_spec is None:
+        (fdir / "spec.md").write_text(spec_text, encoding="utf-8")
+    else:
+        live = project_root / external_spec
+        live.parent.mkdir(parents=True, exist_ok=True)
+        live.write_text(spec_text, encoding="utf-8")
+        state = {**(state or {}), "spec_path": external_spec}
     if state is not None:
         (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
@@ -207,6 +221,14 @@ def _sharers(count: int, *, reason_on=None, reason: str = "") -> list[dict]:
 
 #: A run created under the current release: the schema marker at the floor.
 CURRENT_RUN = {"archive_schema_version": REQUIREMENT_IDS_SCHEMA_FLOOR}
+
+#: Where a run's LIVE spec sits when the run kept no copy of its own: outside
+#: the run directory, reached through `state.spec_path`.
+LIVE_SPEC = "forge-specs/live-spec/spec.md"
+
+#: A row appended to that live spec: a requirement id no casting here owns, so
+#: the verdict it produces differs from the verdict before it.
+GROWN_ROW = "\n- **NFR-777** [from A-000]: a row no casting owns\n"
 
 #: The excerpt shape F0.5 emits: bold bullets, typed-table rows and story
 #: headings all declare, and the two shapes that are NOT declarations sit in it
@@ -628,6 +650,82 @@ def test_a_schema_bump_alone_invalidates_a_cached_pass(tmp_path: Path):
     assert second["cache"]["hit"] is False
     assert second["passed"] is False
     assert _issue_kinds(_ownership(second)) == ["missing_requirement_ids"]
+
+
+# ── Every other input the verdict depends on reaches it too ───────────────
+
+
+def test_removing_the_only_recorded_reason_invalidates_a_cached_pass(
+    tmp_path: Path,
+):
+    """fallout AC-042: "a span above two without a `split_reason` entry naming
+    the id refuses; with one it passes and the reason is printed."
+
+    The recorded reason is an INPUT to that verdict, so it belongs in the cache
+    key. Driven on the position the manifest carries it at the TOP LEVEL — the
+    one `commands/start.md` names beside the per-casting position, and the one
+    no casting entry holds, so a fingerprint built from the casting entries
+    plus a hand-listed handful of shared fields is exactly the shape that
+    cannot see it go. Nothing else changes between the two calls: the same
+    castings, the same ownership, the same spec. The second call must recompute
+    and refuse rather than serve the pass the reason bought.
+    """
+    reason = "one requirement, three surfaces, no shared owner"
+    recorded = {"split_reason": {"FR-009": reason, "US-001": reason}}
+    castings = _sharers(REQUIREMENT_SPAN_MAX + 1)
+    args = dict(spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True)
+
+    allowed = _run_validate(tmp_path, castings, manifest_extra=recorded, **args)
+    assert allowed["passed"] is True, allowed["issues"]
+    assert allowed["cache"]["hit"] is False
+
+    # Proof the cache is live at all, or the assertion below proves nothing.
+    again = _run_validate(tmp_path, castings, manifest_extra=recorded, **args)
+    assert again["cache"]["hit"] is True
+
+    removed = _run_validate(tmp_path, castings, **args)
+
+    assert removed["cache"]["hit"] is False
+    assert removed["passed"] is False
+    assert any(
+        i.get("id") == "FR-009" and i.get("issue") == REQUIREMENT_SPAN_EXCEEDED
+        for i in _span(removed)["issues"]
+    )
+
+
+def test_a_spec_the_run_never_copied_reaches_the_cache_fingerprint(
+    tmp_path: Path,
+):
+    """The spec the fingerprint hashes is the spec the validator READ.
+
+    A run that kept no copy in its own directory resolves its spec through
+    `state.spec_path` — the second rung of the one ladder, which
+    `_spec_requirement_ids` climbs for every dimension that counts
+    requirements. A fingerprint that reached only for `<run>/spec.md` hashed an
+    absent file on such a run, and the digest of no bytes never moves: the live
+    spec could gain a requirement nobody owns and F0.9 would keep serving the
+    pass it gave before that requirement existed.
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])]
+    args = dict(state=CURRENT_RUN, complete=True, external_spec=LIVE_SPEC)
+
+    first = _run_validate(tmp_path, castings, spec_text=CLEAN_EXCERPT, **args)
+    assert first["passed"] is True, first["issues"]
+    assert first["cache"]["hit"] is False
+
+    # Proof the cache is live at all, or the assertion below proves nothing.
+    again = _run_validate(tmp_path, castings, spec_text=CLEAN_EXCERPT, **args)
+    assert again["cache"]["hit"] is True
+
+    grown = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT + GROWN_ROW, **args
+    )
+
+    assert grown["cache"]["hit"] is False
+    assert grown["passed"] is False
+    assert grown["dimensions"]["requirement_coverage"]["issues"] == [
+        {"type": "uncovered_requirements", "ids": ["NFR-777"]}
+    ]
 
 
 # ── The span, and the token that fires above the threshold ────────────────
