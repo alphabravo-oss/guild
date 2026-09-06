@@ -899,7 +899,7 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         "context-nothing-to-save-before-handover",
         "US-007",
         START_MD,
-        "**`Foundry-Context` READS the run back on the far side of a handover; it writes nothing and saves nothing**",
+        "**`Foundry-Context` READS the run back on the far side of a handover; it saves nothing**",
     ),
     (
         "uncomputable-diff-is-full",
@@ -1340,6 +1340,68 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         SETUP_SH,
         "/foundry:resume [--max-cycles N]",
     ),
+    # --- D25: the ordering token belongs to the LEAD (fallout FR-055) ------
+    # D-089: `foundry_get_context` reached `foundry_next_action` with no
+    # caller, so it took the lead value and a SUB-AGENT's orienting
+    # Foundry-Context armed `.next-action-called` -- the sole precondition of
+    # `foundry_gate` and `foundry_mark_phase_complete`. Casting 2 carries the
+    # caller scope into that door; these pin the half the LEAD reads, on both
+    # doors into the loop, because a lead that believes a sub-agent's read
+    # satisfied the handshake gates on a consultation it never made.
+    (
+        "gate-ordering-token-is-the-leads",
+        "FR-055",
+        START_MD,
+        "**The ordering token is YOURS, and no sub-agent can arm it for you.**",
+    ),
+    (
+        "caller-argument-scopes-both-guidance-doors",
+        "FR-055",
+        START_MD,
+        "**`Foundry-Next` and `Foundry-Context` both carry a `caller` "
+        "argument, and it exists for exactly this.**",
+    ),
+    (
+        "subagent-call-never-counts-as-the-leads",
+        "FR-055",
+        START_MD,
+        "never count a sub-agent's call as having made it for you",
+    ),
+    (
+        "handover-context-is-still-caller-scoped",
+        "FR-055",
+        START_MD,
+        "What it is NOT free of is caller scope",
+    ),
+    (
+        "resume-does-not-fold-context-into-next",
+        "FR-055",
+        RESUME_MD,
+        "**Do not fold steps 2 and 3 into one.**",
+    ),
+    # --- D26: an empty verdicts ledger is ASSAY NOT RUN (fallout GI-001) ---
+    # D-070: the F4 branch of `_compute_next_action` computed `non_verified`
+    # and `total` from an EMPTY ledger and fell through to the auto-pass tail,
+    # so on entering F4 the lead was told "ASSAY passed: all requirements
+    # verified" and to transition onward -- with zero assayers spawned and
+    # `verdicts.json` never written. The lead protocol is "follow Foundry-Next
+    # literally", so guidance instructed the lead to skip the phase. Casting 2
+    # branches on the zero; this is the sentence that makes the lead's own
+    # reading of a zero count unambiguous, and it is a COUNT rather than a
+    # judgement so it costs the lead no deliberation.
+    (
+        "empty-verdict-ledger-is-not-an-assay-pass",
+        "GI-001",
+        START_MD,
+        '**Zero recorded verdicts is the state F4 OPENS in, and it is never '
+        '"ASSAY passed".**',
+    ),
+    (
+        "never-leave-f4-on-an-unwatched-count",
+        "GI-001",
+        START_MD,
+        "**Never transition out of F4 on a count you did not watch go up.**",
+    ),
 )
 
 
@@ -1454,6 +1516,20 @@ _RETIRED_START_MD_SPELLINGS: tuple[tuple[str, str, str], ...] = (
     # opened. This is the only retired spelling here whose replacement is a
     # DIFFERENT NUMBER of calls rather than different words, so a positive pin
     # on the new sentence cannot see the old one surviving beside it.
+    # fallout FR-055 (D-089): the half of that sentence the driven evidence
+    # disproved. `foundry_get_context` calls `foundry_next_action`, and that
+    # call WROTE `.next-action-called` -- this run's own artefacts carry the
+    # asymmetric signature, `.next-action-called` 19 seconds later than
+    # `.last-next-at`, written by a PROVE sub-agent's Foundry-Context. What the
+    # handover paragraph was ever claiming is that the call preserves no WORK,
+    # which is the half that survives.
+    (
+        "it writes nothing and saves nothing",
+        "FR-055",
+        "Foundry-Context saves nothing -- there is no work for it to preserve "
+        "before a handover -- and it is scoped by the same `caller` argument "
+        "Foundry-Next carries",
+    ),
     (
         "Foundry-Gate(phase='intent_coverage')",
         "AC-051",
@@ -2765,4 +2841,104 @@ def test_the_owned_lead_surface_roster_is_every_lead_facing_surface() -> None:
         f"{_rel(START_MD)} no longer names `Foundry-Stream` at all. The rule "
         f"is that the AGENT records it -- a protocol that stops mentioning the "
         f"tool satisfies the absence sweep while telling the lead nothing."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The ordering token, quoted from the doors that emit it (fallout FR-055)
+# ---------------------------------------------------------------------------
+#
+# D-089: `foundry_get_context` called `foundry_next_action` with no `caller`,
+# so it took `LEAD_CALLER`, `is_lead` was True, and the write of
+# `.next-action-called` fired on a SUB-AGENT's orienting read. That token is
+# the sole precondition of `foundry_gate` and `foundry_mark_phase_complete`,
+# so a lead could gate and transition having never called `Foundry-Next`.
+# `agents/assayer.md` and `skills/prove/SKILL.md` both INSTRUCT a sub-agent to
+# call `Foundry-Context` at F2, which is what made it routine rather than rare.
+#
+# Casting 2 carries the caller scope into that door. These two tests pin the
+# LEAD-facing half: that both command files spell the sub-agent value the
+# SERVER spells, and that the refusals they quote are the strings the doors
+# really emit rather than paraphrases that drift free of them.
+
+
+def test_the_caller_scope_prose_quotes_the_servers_own_tokens() -> None:
+    """fallout FR-055: the sub-agent value is derived, never re-typed.
+
+    Four surfaces say this word -- the wire enum, the tool description, the
+    spawn-time instruction and the guard -- which is why the server names it
+    once in ``SUBAGENT_CALLER``. A command file that spelled a fifth would tell
+    a sub-agent to pass a value the guard does not accept, and the sub-agent
+    would arm the lead's token exactly as before while looking compliant.
+    """
+    from foundry_mcp.tools.orchestration.guidance import (
+        LEAD_CALLER,
+        SUBAGENT_CALLER,
+    )
+
+    spelled = f"caller='{SUBAGENT_CALLER}'"
+    for path in (START_MD, RESUME_MD):
+        assert spelled in _flat(path), (
+            f"{_rel(path)} does not spell {spelled!r}. The lead's two doors "
+            f"into the loop both state which call arms the ordering token; a "
+            f"file that names the argument without its server-spelled value "
+            f"leaves a sub-agent guessing at the one word the guard reads."
+        )
+
+    assert f"take the `{LEAD_CALLER}` caller by default" in _flat(RESUME_MD), (
+        f"{_rel(RESUME_MD)} no longer says its two calls take the "
+        f"`{LEAD_CALLER}` caller by default. That is the half that tells a "
+        f"RESUMING lead its own reads are the armed ones -- without it the "
+        f"paragraph reads as though the lead had to pass something too."
+    )
+
+
+def test_start_md_quotes_the_refusals_the_doors_actually_emit() -> None:
+    """fallout FR-055 and fallout GI-001: quoted from source, not paraphrased.
+
+    Each literal below is asserted in the module that emits it AND in the
+    prose that quotes it, so a reworded refusal fails on both sides at once
+    rather than leaving the lead matching a sentence no door will ever print.
+    The ``done``-gate literal is the D-070 half: an empty verdicts ledger is
+    caught only at F6, by that count, after TEMPER and NYQUIST have already
+    run against a tree nothing assayed.
+    """
+    orchestration = MCP_SRC / "tools" / "orchestration"
+    gates_src = (orchestration / "gates.py").read_text(encoding="utf-8")
+    transitions_src = (orchestration / "transitions.py").read_text(
+        encoding="utf-8"
+    )
+
+    cases = (
+        ("Must call Foundry-Next before any gate check", gates_src, "gates.py"),
+        (
+            "Must call Foundry-Next before phase transitions",
+            transitions_src,
+            "transitions.py",
+        ),
+        (
+            "Only {verdict_count} verdicts but spec has {spec_count} "
+            "requirements. {skipped} skipped.",
+            gates_src,
+            "gates.py",
+        ),
+    )
+
+    flat = _flat(START_MD)
+    for literal, source, module in cases:
+        assert literal in source, (
+            f"{module} no longer emits {literal!r}. The lead protocol quotes "
+            f"it verbatim; re-word one side and the lead is watching for a "
+            f"refusal string that door will never print."
+        )
+        assert literal in flat, (
+            f"{_rel(START_MD)} no longer quotes {literal!r} from {module}. "
+            f"Restore the quotation rather than paraphrasing it -- a lead "
+            f"matches the refusal it is shown against the refusal it gets."
+        )
+
+    assert "Must call Foundry-Next before any gate check" in _flat(RESUME_MD), (
+        f"{_rel(RESUME_MD)} no longer quotes the gate's ordering refusal. A "
+        f"resuming lead is exactly the one who has not called `Foundry-Next` "
+        f"yet, so this is the door where the refusal is most likely to be met."
     )

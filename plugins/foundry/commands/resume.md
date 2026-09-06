@@ -92,6 +92,8 @@ The absence is carried at the parameter rather than guessed at from falsiness: `
 3. Call `Foundry-Next` to get the next action — its `heading_for`, `open_by_tier` and `cycles_to_cap` fields say which ending the run you just picked up is coming to
 4. Continue the foundry loop from the current phase
 
+**Do not fold steps 2 and 3 into one.** `Foundry-Context` reloads the run; `Foundry-Next` is the guidance call the loop is driven by and the one whose `heading_for`, `open_by_tier` and `cycles_to_cap` say which ending the run is coming to, and `Foundry-Gate` refuses with `Must call Foundry-Next before any gate check` until you have made it. Both are LEAD calls and take the `lead` caller by default; a sub-agent orienting itself on the same run passes `caller='subagent'` on either door, so its read never stands in for yours. `commands/start.md`'s **Gate then Phase** carries the rule.
+
 **A resume runs the SAME self-target preflight a fresh `Foundry-Init` runs.** On a run whose target is foundry itself, it compares the working tree's plugin manifest against the executing server's own and `git rev-parse HEAD` on both sides, and REFUSES the resume on either mismatch, naming the reason and the launch command. That refusal is the point: the run you are picking up shipped process fixes, and resuming it on a server built before them silently verifies the wrong thing for the rest of the run.
 
 Follow the same rules as `/foundry:start` — you are the Lead, never edit code, delegate everything.
