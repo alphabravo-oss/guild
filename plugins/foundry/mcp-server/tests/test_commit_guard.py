@@ -720,6 +720,159 @@ def test_guard_lints_only_what_declares_an_evidence_command(
     assert set(paths) <= set(_tree_paths(guarded_repo, env))
 
 
+def test_guard_lints_an_evidence_log_whose_body_carries_a_nul_byte(
+    guarded_repo: Path, env: dict[str, str]
+):
+    """D-075: the binary exemption belonged to Check 3, and Check 4 inherited it.
+
+    A NUL anywhere in a blob is git's own test for binary content, and the probe
+    that applies it used to ``continue`` the whole per-path loop — so every
+    check written after it was silently exempt too. An evidence log is text that
+    happens to contain a byte of captured output, and a NUL in that output says
+    nothing whatever about whether its command parses. The server agrees: it
+    reads the same file with ``errors='replace'`` and resolves the command
+    normally, then refuses the crossing a cycle later. That is exactly the "a
+    syntax mistake costs a cycle, not a commit" outcome US-008 exists to end.
+
+    The NUL is placed in the BODY, where captured output actually lives, and the
+    command is the same unparseable one the plain BLOCKED case above stages — so
+    the only difference between the two tests is the byte, and the only thing
+    that can make this one pass while that one fails is the exemption.
+    """
+    log = guarded_repo / "evidence" / "nul-body.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_bytes(
+        b"# evidence-cmd: if [ 1 ; then\n"
+        b"# evidence-for: FR-002\n"
+        b"\n"
+        b"captured output with a NUL: \x00 here\n"
+    )
+    _git(["add", "evidence/nul-body.log"], cwd=guarded_repo, env=env)
+
+    result = _git(
+        ["commit", "-m", "nul", "--", "evidence/nul-body.log"],
+        cwd=guarded_repo,
+        env=env,
+        check=False,
+    )
+
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, (
+        "a NUL byte in captured output bought an unparseable command a free "
+        "pass through the commit door:\n" + combined
+    )
+    assert "evidence/nul-body.log" in combined
+    assert "/bin/sh -n" in combined
+    assert "evidence/nul-body.log" not in _tree_paths(guarded_repo, env)
+
+
+# The header shapes the two doors must agree about. Each is a real evidence-log
+# text; none is contrived beyond what a teammate can type by hand. The last
+# entry is the ONE documented place the guard is deliberately stricter.
+_GRAMMAR_FIXTURES: list[tuple[str, str, bool]] = [
+    # (name, log text, guard-is-a-superset-here)
+    ("plain-good", "# evidence-cmd: echo hi\n\nbody\n", False),
+    ("plain-broken", "# evidence-cmd: if [ 1 ; then\n\nbody\n", False),
+    # D-076's drive, verbatim: an empty value, then the real directive. The
+    # server used to read the SECOND LINE ENTIRE as the first line's value
+    # (Python's `\s` matches `\n`) and the guard printed the empty value and
+    # stopped. One text, two answers, neither of them the rule.
+    (
+        "empty-value-then-broken",
+        "# evidence-cmd:\n# evidence-cmd: if [ 1 ; then\n\nbody\n",
+        False,
+    ),
+    ("empty-value-then-good", "# evidence-cmd:\n# evidence-cmd: echo hi\n\nbody\n", False),
+    (
+        "whitespace-value-then-broken",
+        "# evidence-cmd:   \n# evidence-cmd: if [ 1 ; then\n\nbody\n",
+        False,
+    ),
+    # The block ends before an INDENTED `#`, so the server never reads this as a
+    # directive at all and neither may the guard.
+    ("indented-directive", "   # evidence-cmd: if [ 1 ; then\n\nbody\n", False),
+    ("non-comment-line-first", "text\n# evidence-cmd: if [ 1 ; then\n", False),
+    ("blank-line-first", "\n# evidence-cmd: if [ 1 ; then\n\nbody\n", False),
+    ("other-directive-first", "# evidence-for: FR-1\n# evidence-cmd: if [ 1 ; then\n\nb\n", False),
+    # Quoted inside prose, below the header block — the shape every casting
+    # prompt has.
+    ("quoted-below-the-block", "# a doc\n\n```\n# evidence-cmd: if [ 1 ; then\n```\n", False),
+    ("tab-separated", "#\tevidence-cmd:\techo hi\n\nbody\n", False),
+    ("trailing-spaces", "# evidence-cmd: echo hi   \n\nbody\n", False),
+    ("crlf", "# evidence-cmd: echo hi\r\n\r\nbody\r\n", False),
+    ("pipefail", "# evidence-cmd: set -o pipefail; ls | sort\n\nbody\n", False),
+    # `_EVIDENCE_HEADER_BLOCK_RE` requires each block line to end in a newline,
+    # so the server resolves NOTHING here and refuses the crossing as
+    # EVIDENCE_COMMAND_MISSING. awk has no notion of a missing final newline and
+    # lints it anyway. Superset, never subset — the guard may be stricter than
+    # the crossing, never laxer.
+    ("no-final-newline", "# evidence-cmd: if [ 1 ; then", True),
+]
+
+
+def test_guard_and_server_resolve_the_same_evidence_command(
+    guarded_repo: Path, env: dict[str, str]
+):
+    """D-076: one rule, two doors, driven rather than asserted.
+
+    Check 4's comment used to CLAIM it read "the same grammar the server's own
+    parser reads" and did not, and nothing in the suite could tell. That is the
+    whole defect: a prose promise standing in for a check. This is the check.
+
+    Both doors are the real shipped ones — the installed guard under real git,
+    and ``evidence.py``'s real parser and real ``/bin/sh -n`` — and the
+    expectation for each fixture is COMPUTED from the server rather than typed
+    out here, so the test cannot drift into agreeing with itself. If either side
+    changes what it resolves from these bytes, the pair stops agreeing and this
+    fails, naming the shape.
+
+    It is bidirectional by construction. Revert the guard's awk and
+    ``empty-value-then-broken`` commits with an unparseable command staged;
+    revert the parser's ``[ \\t]`` narrowing and the same fixture resolves to an
+    inert shell comment that parses fine, so the guard blocks where the server
+    would not. Neither half can be undone alone.
+    """
+    evidence = pytest.importorskip("foundry_mcp.tools.evidence")
+
+    disagreements: list[str] = []
+    for index, (name, text, guard_superset) in enumerate(_GRAMMAR_FIXTURES):
+        path = f"evidence/grammar-{index}-{name}.log"
+        (guarded_repo / "evidence").mkdir(parents=True, exist_ok=True)
+        (guarded_repo / path).write_text(text, encoding="utf-8")
+        _git(["add", "--", path], cwd=guarded_repo, env=env)
+
+        result = _git(
+            ["commit", "-m", name, "--", path], cwd=guarded_repo, env=env, check=False
+        )
+        guard_blocked = result.returncode != 0
+
+        server_cmd = evidence._parse_evidence_header(text).get("cmd")
+        server_refuses = (
+            server_cmd is not None
+            and evidence._shell_parse_problem(server_cmd) is not None
+        )
+
+        if guard_superset:
+            if not guard_blocked or server_cmd is not None:
+                disagreements.append(
+                    f"{name}: the documented superset case changed shape — "
+                    f"guard_blocked={guard_blocked}, server_cmd={server_cmd!r}"
+                )
+            continue
+
+        if guard_blocked != server_refuses:
+            disagreements.append(
+                f"{name}: guard {'BLOCKED' if guard_blocked else 'passed'} but the "
+                f"server resolves {server_cmd!r}, which it "
+                f"{'REFUSES as EVIDENCE_COMMAND_SYNTAX' if server_refuses else 'accepts'}"
+            )
+
+    assert not disagreements, (
+        "the commit door and the crossing door read different commands out of "
+        "the same bytes:\n  " + "\n  ".join(disagreements)
+    )
+
+
 def test_guard_lint_reaches_for_the_host_shell_and_nothing_else():
     """AC-036 verbatim: '`/bin/sh -n` on the host' — the lint uses the host's
     `/bin/sh` and nothing else; no shellcheck, no bashism grep.

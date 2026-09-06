@@ -180,57 +180,112 @@ for path in "${STAGED[@]}"; do
 
   # ── Check 2: is this text at all? ──────────────────────────────────────────
   # A NUL byte anywhere is git's own test for binary content, so a blob whose
-  # NUL-stripped length differs from its real length is binary. Binary blobs
-  # are exempt from the text checks below — an image whose bytes happen to
-  # spell a marker at a line boundary is not a merge conflict.
+  # NUL-stripped length differs from its real length is binary.
+  #
+  # THE ANSWER IS RECORDED, NOT ACTED ON. This check used to `continue` the
+  # whole per-path loop, which made "binary" mean "exempt from every check
+  # below, including ones written later" — and D-075 is what that cost: Check 4
+  # inherited an exemption nobody had decided for it. A log with a stray NUL
+  # anywhere in its captured body committed with its command unlinted, while the
+  # server's parser (which reads the same file with errors='replace') resolved
+  # that command normally and refused the crossing a cycle later. Each check now
+  # states its own relationship to binary content, right where it is written.
   #
   # `tr | wc` is a pipeline, and it is deliberately allowed: `wc` is the reader
   # and it counts to EOF by definition, so neither command can exit early and
   # neither can raise SIGPIPE on the other.
   nul_free="$(tr -d '\0' <"$SCRATCH" | wc -c | tr -d ' ')"
   if [ "$nul_free" != "$size" ]; then
-    continue
+    is_binary=1
+  else
+    is_binary=0
   fi
 
   # ── Check 3: unresolved conflict markers in staged content ─────────────────
+  # EXEMPT ON BINARY, deliberately: an image whose bytes happen to spell a
+  # marker at a line boundary is not a merge conflict, and blocking it would
+  # teach everyone to reach for --no-verify.
+  #
   # grep reads the scratch FILE, so `-q` is free to stop at the first match:
   # there is no upstream process left to kill, the exit status is grep's own,
   # and an `if` condition exempts it from `set -e`. Match = violation, always,
   # at any blob size.
-  if LC_ALL=C grep -Eq -- "$CONFLICT_RE" "$SCRATCH"; then
+  if [ "$is_binary" -eq 0 ] && LC_ALL=C grep -Eq -- "$CONFLICT_RE" "$SCRATCH"; then
     violation "${path} — staged content contains unresolved merge-conflict markers."
   fi
 
   # ── Check 4: does a staged evidence log's command PARSE? ───────────────────
+  # NOT EXEMPT ON BINARY, deliberately, and this is the half of Check 2 that
+  # D-075 was filed on. A NUL somewhere in a log's captured output says nothing
+  # about whether its command parses, and the server does not care either — it
+  # reads the same bytes with errors='replace' and resolves the command
+  # normally. A check that skipped such a log would hand the crossing a typo the
+  # commit door had been standing right next to.
+  #
+  # The bound, stated rather than discovered later: a NUL INSIDE a header
+  # directive line is beyond this check's reach, because a POSIX shell variable
+  # cannot hold a NUL at all — no reader chosen here changes that. Nothing
+  # escapes by that route either, since a command carrying a NUL cannot be
+  # handed to the sweep's `Popen` as an argument in the first place.
+  #
   # An evidence log declares, in a `# evidence-cmd:` header, the command that
   # reproduces its body, and Foundry's server re-executes that command at every
   # crossing. Until this check a command with a syntax error was discovered only
   # by RUNNING it, a crossing later, as an opaque non-zero exit — by which time
   # the teammate who wrote it was gone and the refusal named a failure mode
   # rather than a typo. This is the commit-time half of one rule; the other half
-  # is the server's, which now parses before executing and refuses with
+  # is the server's, which parses before executing and refuses with
   # EVIDENCE_COMMAND_SYNTAX (evidence.py#_sweep_one_log).
   #
-  # WHICH text is the command is not re-decided here. The block scanned is the
-  # leading run of comment-or-blank lines, and the first `evidence-cmd`
-  # directive in it wins — the same grammar the server's own parser reads
-  # (evidence.py#_parse_evidence_header). A file whose leading block carries no
-  # such directive is not an evidence log and is not linted, so this stays the
-  # repo-agnostic template the header above promises: no corpus path is
-  # hardcoded and nothing here knows what Foundry calls its evidence directory.
+  # WHICH TEXT IS THE COMMAND — the grammar below is the server's, transcribed,
+  # and D-076 is what an approximation of it cost. Every clause here answers to
+  # a named part of evidence.py#_parse_evidence_header, and the correspondence
+  # is not asserted, it is DRIVEN: test_commit_guard.py runs the real shipped
+  # guard and the real shipped parser over one adversarial corpus and fails the
+  # moment either side resolves text the other would not.
+  #
+  #   * The block is the leading run of lines that begin with `#` in COLUMN ZERO
+  #     or contain only spaces and tabs; the first other line ends it. That is
+  #     evidence.py#_EVIDENCE_HEADER_BLOCK_RE (`#[^\n]*\n|[ \t]*\n`) —
+  #     including its refusal of an INDENTED `#`, which the server never reads
+  #     as a directive because the block ends before reaching it.
+  #     ONE STATED DIFFERENCE, in the safe direction: that pattern requires each
+  #     block line to END in a newline, so a file whose final line has none
+  #     resolves no command server-side (refused at the crossing as
+  #     EVIDENCE_COMMAND_MISSING). awk has no notion of a missing final newline
+  #     and lints it anyway. The guard therefore lints a superset: never less
+  #     than the server resolves, and never a DIFFERENT command than the server
+  #     resolves. Both halves of that are what the cross-door test drives.
+  #   * A directive line is `#`, `evidence-cmd`, `:`, then a value that BEGINS
+  #     on that same line — evidence.py#_EVIDENCE_HEADER_LINE_RE's `(\S.*?)`.
+  #     A directive with an empty or whitespace-only value is not a match, so
+  #     the scan CONTINUES past it and the first line actually carrying a value
+  #     wins. Getting that wrong is the whole of D-076: this scan used to print
+  #     the empty value and stop, linting nothing at all, while the server read
+  #     on. Never `exit` on a directive line whose value is empty.
+  #   * Whitespace is spaces and tabs, never a class that includes a newline.
+  #     A trailing carriage return is stripped with them, which is what the
+  #     server's own `.strip()` of the captured value does.
+  #
+  # A file whose leading block carries no such directive is not an evidence log
+  # and is not linted, so this stays the repo-agnostic template the header above
+  # promises: no corpus path is hardcoded and nothing here knows what Foundry
+  # calls its evidence directory.
   #
   # awk reads the scratch FILE, so its `exit` at the first match is free for
   # Check 3's reason: there is no upstream process left to take SIGPIPE, and the
   # exit status is awk's own.
   evidence_cmd="$(
     awk '
-      /^[[:space:]]*$/ { next }
-      /^[[:space:]]*#/ {
-        if (match($0, /^[[:space:]]*#[[:space:]]*evidence-cmd[[:space:]]*:[[:space:]]*/)) {
+      /^[ \t]*$/ { next }
+      /^#/ {
+        if (match($0, /^#[ \t]*evidence-cmd[ \t]*:[ \t]*/)) {
           line = substr($0, RSTART + RLENGTH)
-          sub(/[[:space:]]+$/, "", line)
-          print line
-          exit
+          sub(/[ \t\r]+$/, "", line)
+          if (line != "") {
+            print line
+            exit
+          }
         }
         next
       }

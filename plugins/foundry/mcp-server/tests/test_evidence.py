@@ -6396,6 +6396,113 @@ def test_the_lint_judges_syntax_only_so_a_pipefail_command_survives():
     assert evidence._shell_parse_problem("if [ 1 ; then") is not None
 
 
+def test_no_header_directive_match_ever_spans_a_newline():
+    """D-076: a directive is ONE LINE, and the grammar has to say so itself.
+
+    `_EVIDENCE_HEADER_LINE_RE` is applied with `re.MULTILINE` to a multi-line
+    block, and Python's `\\s` MATCHES `\\n`. Every `\\s*` in it was therefore free
+    to walk off the end of its own line, and one of them did: a directive with
+    an empty value took its value from the FOLLOWING line of the header. This
+    drives the property rather than reading the pattern, so any future spelling
+    that reintroduces a newline-crossing class fails here whatever it looks
+    like.
+
+    The probe is every known directive with an empty value, stacked, which is
+    the exact arrangement that made the old pattern reach forward.
+    """
+    probe = (
+        "# evidence-cmd:\n"
+        "# evidence-volatile:\n"
+        "# evidence-timeout:\n"
+        "# evidence-for:\n"
+        "# evidence-cmd: echo hi\n"
+    )
+    for match in evidence._EVIDENCE_HEADER_LINE_RE.finditer(probe):
+        assert "\n" not in match.group(0), (
+            f"a header directive match spans a newline, so an empty value is "
+            f"read from the next line: {match.group(0)!r}"
+        )
+
+
+def test_an_empty_directive_value_is_skipped_not_read_from_the_next_line():
+    """D-076's drive, at the parser.
+
+    `# evidence-cmd:` followed by the real directive used to resolve to the
+    WHOLE of that second line — `'# evidence-cmd: if [ 1 ; then'` — a string
+    that is an inert shell comment. The sweep then ran a no-op, compared its
+    empty output against the committed body and refused the crossing as an
+    output mismatch, naming nothing about the typo that caused it.
+
+    A value has to BEGIN on its directive's own line. A directive that carries
+    none is not a match at all, so the scan continues and the first line
+    actually carrying a value wins — which is also what the commit guard's
+    Check 4 does, driven against this parser in `test_commit_guard.py`.
+    """
+    resolved = evidence._parse_evidence_header(
+        "# evidence-cmd:\n# evidence-cmd: if [ 1 ; then\n\nbody\n"
+    )
+    assert resolved["cmd"] == "if [ 1 ; then", (
+        "the empty directive swallowed the next line instead of being skipped"
+    )
+    assert evidence._shell_parse_problem(resolved["cmd"]) is not None, (
+        "the command the parser now resolves has to be the one the sweep "
+        "refuses; if it parses, the mis-resolution is still in place"
+    )
+
+    # A whitespace-only value is the same case with the mistake harder to see.
+    assert (
+        evidence._parse_evidence_header(
+            "# evidence-cmd:   \n# evidence-cmd: echo hi\n\nbody\n"
+        )["cmd"]
+        == "echo hi"
+    )
+    # And a header carrying ONLY an empty directive resolves nothing, so the
+    # caller reaches EVIDENCE_COMMAND_MISSING rather than running a comment.
+    assert evidence._parse_evidence_header("# evidence-cmd:\n\nbody\n")["cmd"] is None
+
+
+def test_every_line_the_reader_reads_is_a_line_the_writer_accounts_for():
+    """The intra-module half of D-076's `two-grammars-one-rule`.
+
+    `evidence.py` holds two directive patterns and they had drifted apart:
+    `_EVIDENCE_DIRECTIVE_LINE_RE` (documented as "the WRITER'S grammar", used by
+    `_is_directive_line` to decide which lines are header rather than captured
+    body) is strictly line-oriented, while the reader's
+    `_EVIDENCE_HEADER_LINE_RE` was not.
+
+    They are not required to AGREE outright — the writer accounts for
+    `# evidence-cmd:` as header text while the reader resolves no value from it,
+    and that difference is deliberate. The load-bearing direction is the
+    inclusion: every line the READER takes a value from must be a line the
+    WRITER already calls header. The converse would put a line the parser read
+    into the comparator's body and produce a mismatch nobody can explain.
+    """
+    lines = [
+        "# evidence-cmd: echo hi\n",
+        "#evidence-cmd:echo hi\n",
+        "#\tevidence-cmd:\techo hi\n",
+        "  # evidence-cmd: echo hi\n",
+        "# evidence-volatile: \\d+ms\n",
+        "# evidence-timeout: 300\n",
+        "# evidence-for: FR-002\n",
+        "# evidence-cmd: echo hi\r\n",
+        "# evidence-cmd:\n",
+        "# not a directive\n",
+        "echo hi\n",
+    ]
+    for line in lines:
+        match = evidence._EVIDENCE_HEADER_LINE_RE.match(line)
+        read_by_parser = (
+            match is not None and match.group(1) in evidence._KNOWN_HEADER_DIRECTIVES
+        )
+        if read_by_parser:
+            assert evidence._is_directive_line(line), (
+                f"the parser reads a value out of {line!r} but the writer's "
+                f"grammar calls that line captured output, so the comparator "
+                f"will judge a header line as body"
+            )
+
+
 def test_the_sweeps_lint_reaches_for_the_host_shell_and_nothing_else():
     """AC-036 verbatim: '`/bin/sh -n` on the host' — the lint uses the host's
     `/bin/sh` and nothing else; no shellcheck, no bashism grep.

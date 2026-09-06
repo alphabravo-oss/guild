@@ -136,8 +136,31 @@ _KNOWN_HEADER_DIRECTIVES: frozenset[str] = frozenset(
 # ignored so Phase 5's introduction lands without parser edits — Phase 5
 # grep contract from CONTEXT.md.
 # ---------------------------------------------------------------------------
+# D-076: A DIRECTIVE IS ONE LINE. Every whitespace class here is ``[ \t]`` and
+# never ``\s``, because Python's ``\s`` MATCHES ``\n`` — and this pattern is
+# applied with ``re.MULTILINE`` to a multi-line block, so a ``\s*`` beside the
+# colon was free to walk off the end of its own line. A directive with an empty
+# value then took its value from the NEXT line of the header: ``# evidence-cmd:``
+# followed by ``# evidence-cmd: if [ 1 ; then`` resolved to the whole of that
+# second line, ``'# evidence-cmd: if [ 1 ; then'`` — a string that is an inert
+# shell comment, so the sweep ran a no-op and refused the crossing as an output
+# mismatch, naming nothing about the typo that caused it.
+#
+# The narrowing also ends a split INSIDE THIS MODULE. ``_is_directive_line``
+# reads ``_EVIDENCE_DIRECTIVE_LINE_RE``, which is already strictly line-oriented
+# (``[ \t]`` throughout), and is documented there as "the WRITER'S grammar" —
+# so the writer and the reader disagreed about what a directive line is, and
+# ``evidence.py`` held both halves of the disagreement. They now spell one rule.
+#
+# ``(\S.*?)`` requires the value to BEGIN on the directive's own line: an empty
+# or whitespace-only value is not a match at all, so the scan simply continues
+# and the first directive line that actually carries a value wins. That is what
+# the guard's Check 4 does (``plugins/foundry/hooks/pre-commit-guard.sh``), and
+# it is why the two doors of US-008 can no longer resolve different text from
+# the same bytes. Verified invariant over the committed corpus: every log and
+# every test fixture parses to the identical header under both spellings.
 _EVIDENCE_HEADER_LINE_RE = re.compile(
-    r"^\s*#\s*evidence-([a-z][a-z0-9-]*)\s*:\s*(.+?)\s*$",
+    r"^[ \t]*#[ \t]*evidence-([a-z][a-z0-9-]*)[ \t]*:[ \t]*(\S.*?)[ \t]*$",
     re.MULTILINE,
 )
 _EVIDENCE_HEADER_BLOCK_RE = re.compile(r"\A(?:#[^\n]*\n|[ \t]*\n)+")
@@ -177,8 +200,12 @@ def _parse_evidence_header(text: str) -> dict[str, Any]:
     time and raises ``EVIDENCE_VOLATILE_MALFORMED`` on ``re.error``. Plan
     04-02 SUMMARY documents this application-time-validation choice.
 
-    Multiple ``# evidence-cmd:`` lines: first wins; subsequent ignored. Plan
-    04-04 may upgrade to a hard-fail if abuse surfaces.
+    Multiple ``# evidence-cmd:`` lines: the first one CARRYING A VALUE wins;
+    subsequent ones are ignored. A directive whose value is empty or only
+    whitespace is not a directive match at all (D-076 — see the comment on
+    ``_EVIDENCE_HEADER_LINE_RE``), so the scan continues past it rather than
+    resolving it from the following line. Plan 04-04 may upgrade to a hard-fail
+    if abuse surfaces.
 
     Phase 5 grep contract: unknown ``# evidence-*:`` directives are silently
     ignored at this parser level. Phase 5 owns the parsing of its own
