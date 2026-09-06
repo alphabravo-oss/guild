@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/orchestration/test_gates.py::test_every_transition_action_names_the_gate_that_guards_the_crossing_it_calls tests/orchestration/test_guidance.py::test_the_inspect_action_names_its_own_crossing_from_f1_and_from_f3 tests/orchestration/test_guidance.py::test_the_gate_advance_signal_reads_the_gate_this_crossing_actually_needs tests/orchestration/test_guidance.py::test_every_next_response_names_the_terminal_state_it_is_heading_for tests/orchestration/test_module_boundaries.py::test_every_private_name_the_plugins_prose_cites_has_a_definition tests/orchestration/test_module_boundaries.py::test_the_concern_door_requires_a_cycle_on_the_arm_that_writes_one tests/orchestration/test_module_boundaries.py::test_the_init_schema_advertises_max_cycles tests/orchestration/test_module_boundaries.py::test_no_top_level_symbol_is_defined_in_two_shipped_modules 2>&1 | tail -3
+# evidence-for: fallout AC-059, AC-028, AC-014, AC-004, AC-011, GI-001, GI-021, GI-023, GI-024, CT-007, CT-020, OT-011, OT-026
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 300
+
+........                                                                 [100%]
+8 passed in 2.20s
