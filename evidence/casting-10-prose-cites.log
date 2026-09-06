@@ -31,4 +31,4 @@ tests/test_report.py:3806:    is `foundry_state.spend_bucket`, which seeds 0 and
 tests/test_report.py:4755:    D-229 closed the zero rows in `foundry_state.overlay_unreported`,
 tests/test_report.py:4863:    `foundry_state.overlay_unreported`, and `foundry_state.spend_rollup` seeds
 tests/test_report.py:4985:    `foundry_state.markdown_sections` matches a whole trimmed line, and this
-tests/test_foundry_state_readers.py:1165:    find and the seal's splitter -- now `foundry_state.markdown_sections` --
+tests/test_foundry_state_readers.py:1213:    find and the seal's splitter -- now `foundry_state.markdown_sections` --

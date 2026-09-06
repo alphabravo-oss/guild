@@ -11,36 +11,36 @@
 
 ===== test session starts =====
 platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
-rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/recapture-c3/wt/plugins/foundry/mcp-server
+rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
-collected 1127 items / 9 deselected / 1118 selected
+collected 1153 items / 9 deselected / 1144 selected
 
-tests/test_inspect_mode.py ............................................. [  4%]
+tests/test_inspect_mode.py ............................................. [  3%]
 ........................................................................ [ 10%]
-.........................................                                [ 14%]
-tests/orchestration/test_directives.py ................................. [ 17%]
+.........................................                                [ 13%]
+tests/orchestration/test_directives.py ................................. [ 16%]
 ............................                                             [ 19%]
-tests/orchestration/test_escalation.py ............                      [ 20%]
+tests/orchestration/test_escalation.py .................                 [ 20%]
 tests/orchestration/test_evidence_boundary.py ..                         [ 20%]
 tests/orchestration/test_fix_gate.py ................................... [ 23%]
 ............................                                             [ 26%]
 tests/orchestration/test_gates.py ...................................... [ 29%]
 ...................................................                      [ 34%]
 tests/orchestration/test_guidance.py ................................... [ 37%]
-..............................................                           [ 41%]
-tests/orchestration/test_halt.py ..                                      [ 41%]
+......................................................                   [ 41%]
+tests/orchestration/test_halt.py ..                                      [ 42%]
 tests/orchestration/test_module_boundaries.py .......................... [ 44%]
 .......................................................................  [ 50%]
 tests/orchestration/test_report_seal.py ..........                       [ 51%]
 tests/orchestration/test_spend.py ....                                   [ 51%]
-tests/orchestration/test_streams.py .....................                [ 53%]
+tests/orchestration/test_streams.py .......................              [ 53%]
 tests/orchestration/test_tasks_codispatch.py .......                     [ 54%]
-tests/orchestration/test_teams.py ........                               [ 55%]
+tests/orchestration/test_teams.py .........                              [ 55%]
 tests/orchestration/test_transitions.py ................................ [ 57%]
 ........................................................................ [ 64%]
 ........................................................................ [ 70%]
-...........................                                              [ 73%]
+...........................                                              [ 72%]
 tests/orchestration/test_width.py .....                                  [ 73%]
 tests/test_measure_run.py .........s..........................s......... [ 77%]
 ..........ss.s.....
@@ -82,15 +82,15 @@ tests/test_measure_run.py .........s..........................s......... [ 77%]
   hand-typed a third time — which is how the third walker of
   this bucket came to be missing it.
 .................                                     [ 80%]
-tests/test_lead_prose.py ............................................... [ 85%]
-........................................................................ [ 91%]
-........................................................................ [ 98%]
-......................                                                   [100%]
+tests/test_lead_prose.py ............................................... [ 84%]
+........................................................................ [ 90%]
+........................................................................ [ 97%]
+................................                                         [100%]
 
 ===== short test summary info =====
-SKIPPED [1] tests/test_measure_run.py:632: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/recapture-c3/wt/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:1507: grand-vulture archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/recapture-c3/wt/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2236: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/recapture-c3/wt/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2295: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/recapture-c3/wt/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2364: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/recapture-c3/wt/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-===== 1113 passed, 5 skipped, 9 deselected in 62.90s =====
+SKIPPED [1] tests/test_measure_run.py:632: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:1507: grand-vulture archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2236: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2295: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2364: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+===== 1139 passed, 5 skipped, 9 deselected in 58.51s =====
