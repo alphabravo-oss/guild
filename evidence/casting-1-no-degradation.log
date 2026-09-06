@@ -1,4 +1,4 @@
-# evidence-cmd: printf '%s\n' '== casting 1 / FR-037: what this casting touched, and what the tree shows ==' '' '  ADDRESS NOTE. The casting prompt Verification section names' '  tests/test_orchestrator_gates.py, which casting 2 carved into' '  tests/orchestration/. The package-wide AST and import scans that' '  parenthetical is about now live in' '  tests/orchestration/test_module_boundaries.py, so that is the file this log' '  drives in its place. The claim is unchanged; only its address moved.' '' '  BOTH HALVES OF THE GI-033 RULING ARE IN THIS TREE, and they were two' '  different things. THE READ: lead ruling lead_ruling_gi_033_leaf_moves item' '  (3), on concern C-030, put the ONE body of the cross-casting concern filter' '  in foundry_state and told casting 1 to delete its second body and delegate;' '  concern C-033 carried the three call sites to casting 2. THE WORD: the leaf' '  read takes its status member as an argument, and that member was declared' '  in tools/concerns.py -- which reaches tools/foundry.py at module top -- so a' '  VERIFIER could reach the question and not the word. Casting 10 declared' '  CONCERN_STATUSES in schemas/vocab.py and casting 1 deleted its declaration' '  and imported the four names. The selection below runs over both halves.' '' '  TWO NODES ARE DESELECTED, AND THEY ARE THE LAYERING RUNGS, so read the' '  claim below narrowly:' '    test_the_three_layers_hold_with_exactly_one_named_seam' '    test_no_verifier_module_reaches_a_lifecycle_module_lazily_either' '  Both are RED at this commit on the same two edges, neither of which names a' '  casting-1 file and neither of which casting 1 can close:' '    gates (verifier) imports escalation (lifecycle) at module top' '    transitions (verifier) imports escalation (lifecycle) at module top' '  That is casting 2 open work -- the transition-time half of the escalation' '  rule engine, ruled into transitions.py and not yet landed. Said plainly:' '  THIS LOG DOES NOT VOUCH FOR THE LAYERING RUNGS at this commit. It vouches' '  for every other rung, and it names what it is not covering rather than' '  letting a green count imply it.' '' '  A deselect of a node that does not exist is tolerated by pytest and exits' '  0, so casting 2 closing either of these does not turn this log red again.' '' '  WHAT FR-037 CLAIMS HERE, precisely. This casting touched no file outside' '  its key_files -- concerns.py, rosters.py, test_concerns.py,' '  test_rosters.py -- and every rung of the boundary guard OTHER THAN the two' '  named above is green at this commit: the GI-025 import-graph acyclicity,' '  the unused-import scan, the D-128 raw-ledger-iteration scan that caught' '  concerns.py once before, the reachability scan, the vocabulary pins, and' '  this casting own two test modules. The one-definition-per-symbol rung' '  (test_no_top_level_symbol_is_defined_in_two_shipped_modules) was RED before' '  each of this casting two commits -- on open_cross_casting_concerns, then on' '  CONCERN_STATUSES -- and is GREEN here.' '' && cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -rN -p no:cacheprovider --deselect tests/orchestration/test_module_boundaries.py::test_the_three_layers_hold_with_exactly_one_named_seam --deselect tests/orchestration/test_module_boundaries.py::test_no_verifier_module_reaches_a_lifecycle_module_lazily_either tests/test_vocab.py tests/orchestration/test_module_boundaries.py tests/test_concerns.py tests/test_rosters.py
+# evidence-cmd: printf '%s\n' '== casting 1 / FR-037: what this casting touched, and what the tree shows ==' '' '  ADDRESS NOTE. The casting prompt Verification section names' '  tests/test_orchestrator_gates.py, which casting 2 carved into' '  tests/orchestration/. The package-wide AST and import scans that' '  parenthetical is about now live in' '  tests/orchestration/test_module_boundaries.py, so that is the file this log' '  drives in its place. The claim is unchanged; only its address moved.' '' '  BOTH HALVES OF THE GI-033 RULING ARE IN THIS TREE, and they were two' '  different things. THE READ: lead ruling lead_ruling_gi_033_leaf_moves item' '  (3), on concern C-030, put the ONE body of the cross-casting concern filter' '  in foundry_state and told casting 1 to delete its second body and delegate;' '  concern C-033 carried the three call sites to casting 2. THE WORD: the leaf' '  read takes its status member as an argument, and that member was declared' '  in tools/concerns.py -- which reaches tools/foundry.py at module top -- so a' '  VERIFIER could reach the question and not the word. Casting 10 declared' '  CONCERN_STATUSES in schemas/vocab.py and casting 1 deleted its declaration' '  and imported the four names. The selection below runs over both halves.' '' '  NOTHING IS DESELECTED, AND THAT IS THE NEWS. Two earlier captures of this' '  log carried deselects, both times naming another casting open work:' '  first three boundary nodes, then the two layering rungs' '  (test_the_three_layers_hold_with_exactly_one_named_seam and' '  test_no_verifier_module_reaches_a_lifecycle_module_lazily_either), which' '  were red on gates -> escalation and transitions -> escalation at module' '  top. All five are closed now. So this selection is whole, the count is the' '  count, and the claim below is unqualified again -- the previous capture had' '  to say it did not vouch for the layering rungs, and this one does.' '' '  WHAT FR-037 CLAIMS HERE, precisely. This casting touched no file outside' '  its key_files -- concerns.py, rosters.py, test_concerns.py,' '  test_rosters.py -- and every rung of the boundary guard is green at this' '  commit: the GI-025 import-graph acyclicity, the three-layer rule and its' '  one named seam, the lazy-import rung behind it, the unused-import scan, the' '  D-128 raw-ledger-iteration scan that caught concerns.py once before, the' '  reachability scan, the vocabulary pins, and this casting own two test' '  modules. The one-definition-per-symbol rung' '  (test_no_top_level_symbol_is_defined_in_two_shipped_modules) was RED before' '  each of this casting two substantive commits -- on' '  open_cross_casting_concerns, then on CONCERN_STATUSES -- and is GREEN here.' '' && cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -rN -p no:cacheprovider tests/test_vocab.py tests/orchestration/test_module_boundaries.py tests/test_concerns.py tests/test_rosters.py
 # evidence-for: FR-037
 # evidence-volatile: [0-9]+\.[0-9]+s
 # evidence-timeout: 300
@@ -23,39 +23,33 @@
   CONCERN_STATUSES in schemas/vocab.py and casting 1 deleted its declaration
   and imported the four names. The selection below runs over both halves.
 
-  TWO NODES ARE DESELECTED, AND THEY ARE THE LAYERING RUNGS, so read the
-  claim below narrowly:
-    test_the_three_layers_hold_with_exactly_one_named_seam
-    test_no_verifier_module_reaches_a_lifecycle_module_lazily_either
-  Both are RED at this commit on the same two edges, neither of which names a
-  casting-1 file and neither of which casting 1 can close:
-    gates (verifier) imports escalation (lifecycle) at module top
-    transitions (verifier) imports escalation (lifecycle) at module top
-  That is casting 2 open work -- the transition-time half of the escalation
-  rule engine, ruled into transitions.py and not yet landed. Said plainly:
-  THIS LOG DOES NOT VOUCH FOR THE LAYERING RUNGS at this commit. It vouches
-  for every other rung, and it names what it is not covering rather than
-  letting a green count imply it.
-
-  A deselect of a node that does not exist is tolerated by pytest and exits
-  0, so casting 2 closing either of these does not turn this log red again.
+  NOTHING IS DESELECTED, AND THAT IS THE NEWS. Two earlier captures of this
+  log carried deselects, both times naming another casting open work:
+  first three boundary nodes, then the two layering rungs
+  (test_the_three_layers_hold_with_exactly_one_named_seam and
+  test_no_verifier_module_reaches_a_lifecycle_module_lazily_either), which
+  were red on gates -> escalation and transitions -> escalation at module
+  top. All five are closed now. So this selection is whole, the count is the
+  count, and the claim below is unqualified again -- the previous capture had
+  to say it did not vouch for the layering rungs, and this one does.
 
   WHAT FR-037 CLAIMS HERE, precisely. This casting touched no file outside
   its key_files -- concerns.py, rosters.py, test_concerns.py,
-  test_rosters.py -- and every rung of the boundary guard OTHER THAN the two
-  named above is green at this commit: the GI-025 import-graph acyclicity,
-  the unused-import scan, the D-128 raw-ledger-iteration scan that caught
-  concerns.py once before, the reachability scan, the vocabulary pins, and
-  this casting own two test modules. The one-definition-per-symbol rung
+  test_rosters.py -- and every rung of the boundary guard is green at this
+  commit: the GI-025 import-graph acyclicity, the three-layer rule and its
+  one named seam, the lazy-import rung behind it, the unused-import scan, the
+  D-128 raw-ledger-iteration scan that caught concerns.py once before, the
+  reachability scan, the vocabulary pins, and this casting own two test
+  modules. The one-definition-per-symbol rung
   (test_no_top_level_symbol_is_defined_in_two_shipped_modules) was RED before
-  each of this casting two commits -- on open_cross_casting_concerns, then on
-  CONCERN_STATUSES -- and is GREEN here.
+  each of this casting two substantive commits -- on
+  open_cross_casting_concerns, then on CONCERN_STATUSES -- and is GREEN here.
 
 ........................................................................ [ 15%]
 ........................................................................ [ 30%]
 ........................................................................ [ 45%]
-........................................................................ [ 61%]
-........................................................................ [ 76%]
-........................................................................ [ 91%]
-.......................................                                  [100%]
-471 passed, 2 deselected in 10.63s
+........................................................................ [ 60%]
+........................................................................ [ 75%]
+........................................................................ [ 90%]
+...........................................                              [100%]
+475 passed in 11.03s
