@@ -107,6 +107,75 @@ def roster_path(fdir: Path, stream: str) -> Path:
     return fdir / ROSTERS_DIRNAME / f"{stream}.json"
 
 
+def _roster_shape_problem(path: Path, data: dict) -> str | None:
+    """Why ``data`` at ``path`` is not a roster, or None when it is one.
+
+    A ROSTER IS AN ``items`` LIST. ``derived_at`` is provenance — the stamp
+    THIS door happens to write — and fallout D-071 is what came of scoping
+    both halves of AC-032 on it instead. This run's own
+    ``rosters/research_audit.json`` carries ``{stream, items, total}``: 42 real
+    items persisted by another hand, with no stamp. Reading the absent stamp as
+    "no roster" made that document invisible to both doors at once — a second
+    ``Foundry-Roster`` write replaced the 42 items with 1 and left
+    ``revisions`` empty (GI-006's named violation, a replace-semantics write
+    that drops history), and ``Foundry-Stream`` accepted ``items_total=7``
+    against it at 100% coverage because ``ROSTER_MISMATCH`` had no length to
+    compare with.
+
+    So the predicate is the LIST, and the absence of a list is a NAMED problem
+    rather than silence: "no roster" and "a document here I cannot read as one"
+    send the operator to look at different things, and a reader that collapses
+    them is the fail-open this function exists to close.
+    """
+    if not isinstance(data.get("items"), list):
+        return (
+            f"{path.name} exists but carries no `items` list — a roster is the "
+            f"item list a stream agreed to check, and this document does not "
+            f"hold one"
+        )
+    return None
+
+
+def _existing_roster_facts(path: Path, data: dict) -> tuple[str, dict]:
+    """NAME the document already at a roster's path, and HAND IT BACK.
+
+    Returns the sentence ``ROSTER_EXISTS`` reads and the payload keys it
+    carries beside ``{error, hint, phase}``.
+
+    THE PAYLOAD IS THE POINT (fallout D-091). The refusal used to be the three
+    named-refusal keys and nothing else, so a refused agent held neither the
+    persisted items nor a machine-readable count, and the hint's first remedy
+    sent it to "Foundry-Roster's reader" — an exit that does not exist on the
+    boundary, since ``read_roster`` below is a Python function no MCP tool
+    surfaces. The only actionable branch left was ``revise=True``, which
+    REPLACES the roster with the agent's re-derived list: GI-020's own named
+    violation, "an auditor that re-derives its item list when a roster exists".
+    A refusal that carries the roster has no such gap — the list arrives in the
+    same return value as the refusal, so the exit is reachable by construction.
+
+    The sentence degrades honestly on a document this door did not write: an
+    absent ``derived_at`` is described rather than interpolated, because
+    "derived at None" is how the old wording read over exactly the shape
+    fallout D-071 was filed on.
+    """
+    prior = data.get("items")
+    stamp = data.get("derived_at")
+    facts: dict = {
+        "items": prior if isinstance(prior, list) else None,
+        "items_total": len(prior) if isinstance(prior, list) else None,
+        "derived_at": stamp,
+        "path": str(path),
+    }
+    if not isinstance(prior, list):
+        return "a document carrying no `items` list at all", facts
+    if stamp:
+        return f"{len(prior)} item(s) derived at {stamp}", facts
+    return (
+        f"{len(prior)} item(s) with no derivation stamp — it was written by "
+        f"something other than this door"
+    ), facts
+
+
 # --------------------------------------------------------------------------- #
 # The tool (CT-002 / FR-024 / ST-010 / AC-032 / OT-030)
 # --------------------------------------------------------------------------- #
@@ -168,22 +237,45 @@ def foundry_roster(
     path = roster_path(fdir, stream)
     refusal: dict | None = None
     with _locked_document(path) as data:
-        existed = "derived_at" in data
+        # THE DOOR SCOPES ON THE DOCUMENT, NOT ON ONE OF ITS FIELDS (fallout
+        # D-071). Anything already at this path is something a write would
+        # destroy, whether or not this door is what wrote it — and
+        # `foundry_init` and `migrate-archive.py` both create `rosters/` and
+        # put NOTHING in it, precisely so an invented stub can never refuse a
+        # real first derivation. So a non-empty document IS a roster for the
+        # purposes of the write-once door, and `revise=True` with a reason
+        # stays the one way past it, which also repairs the shape.
+        existed = bool(data)
         if existed and not revise:
-            prior = data.get("items")
-            count = len(prior) if isinstance(prior, list) else 0
-            refusal = _named_refusal(
-                f"A roster for {stream!r} already exists: {count} item(s) "
-                f"derived at {data.get('derived_at')}. It is written ONCE, at "
-                f"first derivation, and later cycles read it rather than "
-                f"re-deriving one.",
-                f"Read it with Foundry-Roster's reader, or — if the item list "
-                f"genuinely changed — call Foundry-Roster(stream={stream!r}, "
-                f"items=[...], revise=True, reason='why it changed'), which "
-                f"keeps the current {count} item(s) under "
-                f"{ROSTER_REVISIONS_KEY!r}.",
-                ROSTER_EXISTS,
+            described, facts = _existing_roster_facts(path, data)
+            count = facts["items_total"]
+            keeps = (
+                f"the current {count} item(s)" if count is not None
+                else "whatever the document holds"
             )
+            refusal = {
+                **_named_refusal(
+                    f"A roster for {stream!r} already exists: {described}. It "
+                    f"is written ONCE, at first derivation, and later cycles "
+                    f"read it rather than re-deriving one.",
+                    # Every exit named here is reachable FROM THIS REFUSAL:
+                    # `items` and `path` are keys of this very return value,
+                    # and `revise`/`reason` are declared properties of the
+                    # Foundry-Roster input schema that `server.py#_DISPATCH`
+                    # passes through. The exit this hint used to name first —
+                    # "Foundry-Roster's reader" — was on no boundary at all.
+                    f"The roster is IN this refusal: `items` carries the "
+                    f"persisted list, `items_total` its length and `path` the "
+                    f"document — read either rather than deriving a second "
+                    f"list. If the item list genuinely CHANGED, call "
+                    f"Foundry-Roster(stream={stream!r}, items=[...], "
+                    f"revise=True, reason='why it changed'), which keeps "
+                    f"{keeps} under {ROSTER_REVISIONS_KEY!r}.",
+                    ROSTER_EXISTS,
+                ),
+                "stream": stream,
+                **facts,
+            }
         else:
             revisions = data.get(ROSTER_REVISIONS_KEY)
             if not isinstance(revisions, list):
@@ -235,12 +327,24 @@ def read_roster(fdir: Path, stream: str) -> tuple[dict | None, str | None]:
     one, and a reader that collapsed the two would have Foundry-Stream refuse a
     perfectly good record because a document was unreadable, or accept any
     ``items_total`` at all because it was.
+
+    THERE ARE THREE ANSWERS, NOT TWO (fallout D-071). This reader used to test
+    for ``derived_at`` and answer "no roster" when it was absent, which is that
+    same collapse spelled the other way round: a roster document written
+    without this door's stamp read as ABSENT, so ``roster_length`` handed
+    Foundry-Stream no length and every ``items_total`` cleared. The stamp is
+    provenance; ``_roster_shape_problem`` holds the predicate that decides
+    whether this is a roster, and an unreadable one is NAMED.
     """
-    data, problem = read_document(roster_path(fdir, stream))
+    path = roster_path(fdir, stream)
+    data, problem = read_document(path)
     if problem is not None:
         return None, problem
-    if "derived_at" not in data:
+    if not data:
         return None, None
+    problem = _roster_shape_problem(path, data)
+    if problem is not None:
+        return None, problem
     return data, None
 
 

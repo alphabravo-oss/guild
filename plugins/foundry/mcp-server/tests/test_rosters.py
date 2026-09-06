@@ -321,3 +321,203 @@ def test_no_active_run_is_refused_in_band(run_env):
     result = foundry_roster("research_audit", ["RA-1"])
 
     assert "error" in result
+
+
+# --------------------------------------------------------------------------- #
+# fallout AC-032 / GI-020, defect D-071 — a roster this door did not stamp is
+# still a roster, and both halves of the guard have to see it
+# --------------------------------------------------------------------------- #
+
+
+#: The EXACT shape this run's own ``rosters/research_audit.json`` carries:
+#: ``{items, stream, total}``, 42 real items, no ``derived_at`` and no
+#: ``revisions``. Seeded from the live document rather than invented, because
+#: the whole of fallout D-071 is that a shape nobody wrote a test for is the
+#: shape the guard met.
+def _seed_unstamped_roster(fdir: Path, stream: str, count: int = 42) -> list[str]:
+    items = [f"RA-{n}: recommendation {n}" for n in range(1, count + 1)]
+    path = roster_path(fdir, stream)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"items": items, "stream": stream, "total": count}),
+        encoding="utf-8",
+    )
+    return items
+
+
+def test_a_roster_written_without_this_doors_stamp_is_read_as_a_roster(run_env):
+    """fallout AC-032, defect D-071 — THE FAILING-THEN-PASSING TEST.
+
+    Both readers used to test for ``derived_at`` and answer "NO ROSTER" when it
+    was absent, so a 42-item roster persisted by another hand was invisible:
+    ``read_roster`` -> ``(None, None)`` and ``roster_length`` -> ``(None,
+    None)``. ``derived_at`` is provenance; the ``items`` list is what makes a
+    document a roster.
+    """
+    _project_root, fdir = run_env
+    items = _seed_unstamped_roster(fdir, "research_audit")
+
+    doc, problem = read_roster(fdir, "research_audit")
+    assert problem is None, problem
+    assert doc is not None and doc["items"] == items
+
+    assert roster_length(fdir, "research_audit") == (42, None)
+
+
+def test_a_second_write_over_an_unstamped_roster_is_refused_not_silently_taken(
+    run_env,
+):
+    """fallout GI-006, defect D-071 — 'a replace-semantics write that drops history'.
+
+    Driven in the ledger record: ``foundry_roster('research_audit',
+    ['ONLY-ONE-ITEM'])`` returned ``ok: True``, replaced the 42 items with 1 and
+    left ``revisions`` empty, so the prior list was GONE with no revise and no
+    reason. The write-once door scopes on the DOCUMENT now, so it refuses.
+    """
+    project_root, fdir = run_env
+    items = _seed_unstamped_roster(fdir, "research_audit")
+
+    result = foundry_roster(
+        "research_audit", ["ONLY-ONE-ITEM"], project_root=project_root
+    )
+
+    assert result["phase"] == ROSTER_EXISTS, result
+    assert "42 item" in result["error"], result["error"]
+    # The sentence degrades honestly rather than interpolating an absent stamp:
+    # "derived at None" is how the old wording read over exactly this shape.
+    assert "None" not in result["error"], result["error"]
+    assert _document(fdir, "research_audit")["items"] == items
+
+
+def test_revising_an_unstamped_roster_keeps_its_items_and_repairs_the_shape(
+    run_env,
+):
+    """The one way past the door also fixes the document it refused over.
+
+    fallout GI-006: the prior 42 items survive under ``revisions``, and the
+    document that comes out carries the stamp the next reader wants.
+    """
+    project_root, fdir = run_env
+    items = _seed_unstamped_roster(fdir, "research_audit")
+
+    result = foundry_roster(
+        "research_audit",
+        ["RA-1: the one recommendation left"],
+        revise=True,
+        reason="research/ was rewritten down to a single item",
+        project_root=project_root,
+    )
+
+    assert result.get("ok") is True, result
+    doc = _document(fdir, "research_audit")
+    assert doc["items"] == ["RA-1: the one recommendation left"]
+    assert doc["derived_at"]
+    assert [r["items"] for r in doc[ROSTER_REVISIONS_KEY]] == [items]
+
+
+def test_foundry_stream_refuses_an_items_total_against_an_unstamped_roster(
+    run_env,
+):
+    """THE ADJACENT PATH: the OTHER caller of this module's reader.
+
+    ``read_roster``'s defect was found through ``Foundry-Roster``'s own door.
+    Its other caller is ``streams.foundry_mark_stream``, which reaches
+    ``roster_length`` for its ``ROSTER_MISMATCH`` refusal (fallout CT-003 /
+    OT-031 / AC-032 second half) — a transition into this module that the
+    write door never walks. Driven in the ledger record:
+    ``Foundry-Stream(research_audit, items_checked=7, items_total=7)`` returned
+    ``ok: True`` at 100% coverage against a 42-item roster, because the reader
+    handed the arm no length to compare with.
+
+    The test lives in casting 1's module because casting 1 owns the reader; it
+    drives casting 2's door to prove the reader answers it.
+    """
+    from foundry_mcp.tools.orchestration.streams import ROSTER_MISMATCH, foundry_mark_stream
+
+    project_root, fdir = run_env
+    (fdir / "state.json").write_text(
+        json.dumps({"phase": "F2", "cycle": 1}), encoding="utf-8"
+    )
+    _seed_unstamped_roster(fdir, "research_audit")
+
+    refused = foundry_mark_stream("research_audit", 1, 7, 7, 0, project_root)
+
+    assert refused.get("ok") is not True, refused
+    assert refused["error"] == ROSTER_MISMATCH, refused
+    assert refused["roster_length"] == 42, refused
+
+    accepted = foundry_mark_stream("research_audit", 1, 42, 42, 0, project_root)
+    assert accepted["ok"] is True, accepted
+
+
+def test_a_document_at_a_rosters_path_that_holds_no_items_list_is_named(run_env):
+    """The THIRD answer: not absent, not a roster.
+
+    'No roster' and 'a document here I cannot read as one' send the operator to
+    look at different things. Answering absent for the second is the fail-open
+    fallout D-071 names; answering a length of zero would make Foundry-Stream
+    refuse every record against a population nobody derived.
+    """
+    project_root, fdir = run_env
+    path = roster_path(fdir, "research_audit")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"note": "not a roster"}), encoding="utf-8")
+
+    doc, problem = read_roster(fdir, "research_audit")
+    assert doc is None
+    assert problem is not None and "research_audit.json" in problem
+
+    length, problem = roster_length(fdir, "research_audit")
+    assert length is None and problem is not None
+
+    # And the write door still refuses to overwrite it unseen.
+    result = foundry_roster("research_audit", ["RA-1"], project_root=project_root)
+    assert result["phase"] == ROSTER_EXISTS, result
+    assert "`items` list" in result["error"], result["error"]
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-020, defect D-091 — the refusal hands back the roster it refuses over
+# --------------------------------------------------------------------------- #
+
+
+def test_the_roster_exists_refusal_carries_the_roster_and_names_reachable_exits(
+    run_env,
+):
+    """fallout GI-020, defect D-091 — THE FAILING-THEN-PASSING TEST.
+
+    The refusal used to be ``{error, hint, phase}`` and nothing else, and its
+    first remedy read "Read it with Foundry-Roster's reader" — an exit on no
+    boundary at all, since ``read_roster`` is a Python function no MCP tool
+    surfaces. That left ``revise=True`` as the only actionable branch, and
+    ``revise=True`` REPLACES the roster with the agent's re-derived list, which
+    is fallout GI-020's own named violation.
+
+    Every exit the hint now names is DRIVEN here rather than merely spelled.
+    """
+    project_root, fdir = run_env
+    foundry_roster("research_audit", ["RA-1", "RA-2"], project_root=project_root)
+
+    result = foundry_roster("research_audit", ["RA-9"], project_root=project_root)
+    assert result["phase"] == ROSTER_EXISTS, result
+
+    # Exit 1 — the roster arrives IN the refusal.
+    assert result["items"] == ["RA-1", "RA-2"], result
+    assert result["items_total"] == 2, result
+    assert result["derived_at"], result
+    assert result["stream"] == "research_audit", result
+
+    # Exit 2 — the path it names holds that same list.
+    persisted = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
+    assert persisted["items"] == result["items"]
+
+    # Exit 3 — the revise form it names is accepted by this door.
+    revised = foundry_roster(
+        "research_audit", ["RA-9"], revise=True, reason="the list changed",
+        project_root=project_root,
+    )
+    assert revised.get("ok") is True, revised
+
+    # And the exit that was on no boundary is gone from the sentence.
+    assert "Foundry-Roster's reader" not in result["hint"], result["hint"]
+    assert "`items`" in result["hint"] and "`path`" in result["hint"], result["hint"]
