@@ -91,6 +91,7 @@ from foundry_mcp.tools.orchestration.streams import (
 )
 from foundry_mcp.tools.orchestration.transitions import foundry_mark_phase_complete
 from foundry_mcp.tools.foundry_state import current_inspect_mode
+from foundry_mcp.tools.foundry_state import unrecorded_width_problem
 from foundry_mcp.tools.orchestration.width import _decide_inspect_mode
 
 
@@ -110,6 +111,29 @@ def _current_inspect_mode(fdir, cycle=None):
     every axis the read decides on is still decided in the read.
     """
     return current_inspect_mode(fdir, cycle, modes=INSPECT_MODES)
+
+
+def _unrecorded_width_problem(fdir):
+    """The width refusal, asked the way every production door asks it.
+
+    fallout D-080 / AC-061 / GI-033 / FR-005 / AC-014 / OT-016 — THE PREDICATE
+    MOVED, AND TOOK AN ARGUMENT. `width.py#_unrecorded_width_problem` is now
+    `foundry_state.py#unrecorded_width_problem`, hoisted as one unit with
+    `inspect_mode_gap` and `WIDTH_RECORDING_TRANSITIONS` for the same reason
+    that moved `current_inspect_mode` above, one edge further along: the last
+    reach was `streams.py`'s function-local import of it, a LIFECYCLE module
+    reading a VERIFIER-set module, which is the edge GI-033 refuses outright
+    and D-080 was filed on. The leaf is the one module both layers may reach.
+
+    `modes` is keyword-only and REQUIRED. The leaf is stdlib-only — it may not
+    import `schemas/vocab.py`, which is what keeps `scripts/measure-run.py`'s
+    package-free read alive — so the vocabulary is the CALLER's fact at every
+    door, and this binds `INSPECT_MODES` exactly as `gates.py`, `streams.py`
+    and `transitions.py` do. A BINDING, not a reimplementation: the predicate
+    stays SINGLE, one predicate behind six callers, and its refusal prose is
+    not split per door, because that split is what would reopen D-117.
+    """
+    return unrecorded_width_problem(fdir, modes=INSPECT_MODES)
 
 # `_check_active_teams` and `_active_teams` — the lifecycle and verifier halves
 # of one leaf check — are bound by name across the orchestration modules, so
@@ -4482,8 +4506,8 @@ def test_an_unrecorded_width_carrying_a_fixed_defect_refuses_on_the_width(
 ):
     """AC-016 / D-117: 'unrecorded' is not full width either.
 
-    The width arm has two branches — `_unrecorded_width_problem` and the
-    positive `mode == "FULL"` test — and the shadowing swallowed BOTH. A
+    The width arm has two branches — `foundry_state.py#unrecorded_width_problem`
+    and the positive `mode == "FULL"` test — and the shadowing swallowed BOTH. A
     resumed pre-change archive carries no `inspect_modes` at all, so this is
     the branch a legacy run actually lands on, and it must reach the lead
     intact for the same reason the DELTA one must.
@@ -4703,7 +4727,8 @@ def test_the_three_gate_branches_that_scan_teams_state_one_remedy(run_env):
 # comparing a persisted field against a typed literal instead of against the
 # closed vocabulary that spells it. `_current_inspect_mode` accepted any
 # TRUTHY `mode`, so a hand-edited or foreign-written `"delta"` (lowercase) or
-# `"BOGUS"` was a recorded width — `_unrecorded_width_problem` answered None
+# `"BOGUS"` was a recorded width — `foundry_state.py#unrecorded_width_problem`
+# answered None
 # and `inspect_clean`'s refusal (`recorded_mode.get("mode") == "DELTA"`) is
 # false for such a value, so a narrow INSPECT closed and the run reached F4.
 #
@@ -4729,13 +4754,14 @@ def test_a_width_outside_the_vocabulary_is_not_a_recorded_width(run_env, mode):
     PRESENT and outside the vocabulary is the same fact one layer in: nothing
     this module writes produces it, so nothing has recorded a width the run can
     act on. It now reads as no record at all, and every door refuses through
-    `_unrecorded_width_problem`, naming the transition that records one.
+    `foundry_state.py#unrecorded_width_problem`, naming the transition that
+    records one.
     """
     project_root, fdir = run_env
     _cycle_recorded_with_mode(fdir, mode, INSPECT_DELTA_RULE)
 
     assert _current_inspect_mode(fdir) is None, mode
-    problem = _width._unrecorded_width_problem(fdir)
+    problem = _unrecorded_width_problem(fdir)
     assert problem is not None, mode
     assert "no recorded width" in problem["reason"], mode
     assert "inspect_start" in problem["hint"], mode
@@ -4756,7 +4782,7 @@ def test_both_vocabulary_members_still_read_as_the_recorded_width(run_env, mode)
     recorded = _current_inspect_mode(fdir)
     assert recorded is not None, mode
     assert recorded["mode"] == mode, recorded
-    assert _width._unrecorded_width_problem(fdir) is None, mode
+    assert _unrecorded_width_problem(fdir) is None, mode
 
 
 def test_an_out_of_vocabulary_width_is_refused_at_every_door(run_env, monkeypatch):
@@ -4944,23 +4970,38 @@ def test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary(run_env):
     # green with five of the six caller-side sites invisible to the walk, which
     # is the shape of blindness that matters here: the assertion below only
     # judges what this scan managed to SEE.
+    # fallout D-080 / AC-061 / GI-033 — WHY THIS ROSTER IS THREE AND NOT FOUR.
+    # `width` consulted the recorded width from exactly ONE body, the refusal
+    # `_unrecorded_width_problem`, which hoisted to `foundry_state.py` as one
+    # unit with `inspect_mode_gap` and `WIDTH_RECORDING_TRANSITIONS` because
+    # `streams.py` — a LIFECYCLE module — was reaching into the verifier-set
+    # width module for it, the edge GI-033 refuses and D-080 was filed on. So
+    # that site did not disappear, it changed LAYER: the caller-side floor
+    # drops from six to five and the leaf-side floor rises from two to three,
+    # and the pair of them is what makes a shrunken roster here a recorded move
+    # rather than the blindness this guard exists to catch (OT-016).
     reached = {site.split(":")[0] for site in callers}
-    assert {"streams", "guidance", "width", "transitions"} <= reached, (
+    assert {"streams", "guidance", "transitions"} <= reached, (
         "the width read's caller-side sites are not all visible to this scan — "
-        f"saw {sorted(reached)}, and the four modules that consult the recorded "
-        "width are streams, guidance, width and transitions. A derivation that "
+        f"saw {sorted(reached)}, and the three modules that consult the recorded "
+        "width are streams, guidance and transitions. A derivation that "
         "cannot see a caller cannot judge what that caller hands over."
     )
-    assert len(callers) >= 6, (
-        f"only {len(callers)} caller-side site(s) found: {callers}. Six is what "
-        "the tree carries (streams x2, transitions x2, guidance, width); fewer "
+    assert len(callers) >= 5, (
+        f"only {len(callers)} caller-side site(s) found: {callers}. Five is what "
+        "the tree carries (streams x2, transitions x2, guidance); fewer "
         "means the walk went blind rather than that the package got smaller, "
         "and this assertion is the difference between the two."
     )
-    assert forwards, (
-        "the leaf's own forwarding calls vanished from the scan; they are the "
-        "half that proves an injected vocabulary stays the CALLER's fact one "
-        "frame further out rather than becoming the leaf's"
+    assert len(forwards) >= 3, (
+        f"only {len(forwards)} leaf-side forwarding call(s) found: {forwards}. "
+        "They are the half that proves an injected vocabulary stays the "
+        "CALLER's fact one frame further out rather than becoming the leaf's, "
+        "and three is what the tree carries after the D-080 hoist "
+        "(`unrecorded_width_problem`, `recorded_prove_roster`, "
+        "`check_streams_complete`). A floor here is what keeps the "
+        "caller-side floor above honest: width's site moved layer, it did "
+        "not vanish."
     )
     assert offenders == [], (
         f"width read(s) handed something other than the closed vocabulary: "
@@ -4979,8 +5020,8 @@ def test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary(run_env):
 # it was stamped for, so cycle 1's decision answered "what width is cycle 2" at
 # every door that decides on it — the ASSAY gate's positive FULL assertion, the
 # streams-complete roster, and the TRACE-skip fence — while
-# `_unrecorded_width_problem` implemented D-117 as "is there ANY entry" rather
-# than "is there an entry for THIS one".
+# `foundry_state.py#unrecorded_width_problem` implemented D-117 as "is there
+# ANY entry" rather than "is there an entry for THIS one".
 #
 # That third door has since moved, and the cite moves with it: the fence was
 # `width._maybe_skip_trace`, a display-time helper `guidance.py` imported,
@@ -5011,8 +5052,8 @@ def test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary(run_env):
 #
 # An entry for another cycle — EARLIER OR LATER — is not this cycle's width, and
 # reads as no record at all: every door refuses through
-# `_unrecorded_width_problem`, whose refusal now names the cycle it is refusing
-# FOR and what it found instead.
+# `foundry_state.py#unrecorded_width_problem`, whose refusal now names the cycle
+# it is refusing FOR and what it found instead.
 # --------------------------------------------------------------------------- #
 
 
@@ -5080,7 +5121,7 @@ def test_a_width_stamped_for_an_earlier_cycle_is_not_this_cycles_width(
     _cycles_recorded_against(fdir, stamped=(1,), state_cycle=2)
 
     assert _current_inspect_mode(fdir) is None
-    problem = _width._unrecorded_width_problem(fdir)
+    problem = _unrecorded_width_problem(fdir)
     assert problem is not None
     assert "no recorded width" in problem["reason"], problem
     assert "cycle 2" in problem["reason"], problem
@@ -5113,7 +5154,7 @@ def test_a_width_stamped_for_a_later_cycle_is_not_this_cycles_width_either(
     _cycles_recorded_against(fdir, stamped=(1, 3), state_cycle=2)
 
     assert _current_inspect_mode(fdir) is None
-    problem = _width._unrecorded_width_problem(fdir)
+    problem = _unrecorded_width_problem(fdir)
     assert problem is not None
     assert "cycle 2" in problem["reason"], problem
     assert "cycle 3" in problem["reason"], problem
@@ -5170,7 +5211,7 @@ def test_the_entry_stamped_for_this_cycle_is_still_the_recorded_width(
     assert recorded is not None
     assert recorded["cycle"] == 2, recorded
     assert recorded["mode"] == "FULL", recorded
-    assert _width._unrecorded_width_problem(fdir) is None
+    assert _unrecorded_width_problem(fdir) is None
 
     gate = _gate_over_the_wire(project_root, fdir, monkeypatch)
     assert gate["passed"] is True, gate
