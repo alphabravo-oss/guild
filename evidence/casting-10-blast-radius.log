@@ -14,7 +14,7 @@ platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
 rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev7/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
-collected 1191 items / 9 deselected / 1182 selected
+collected 1193 items / 9 deselected / 1184 selected
 
 tests/test_inspect_mode.py ............................................. [  3%]
 ........................................................................ [  9%]
@@ -26,7 +26,7 @@ tests/orchestration/test_evidence_boundary.py ..                         [ 20%]
 tests/orchestration/test_fix_gate.py ................................... [ 23%]
 ............................                                             [ 25%]
 tests/orchestration/test_gates.py ...................................... [ 28%]
-............................................................             [ 33%]
+..............................................................           [ 33%]
 tests/orchestration/test_guidance.py ................................... [ 36%]
 ......................................................                   [ 41%]
 tests/orchestration/test_halt.py ..                                      [ 41%]
@@ -36,7 +36,7 @@ tests/orchestration/test_report_seal.py ..........                       [ 50%]
 tests/orchestration/test_shipped_parsers.py .........                    [ 51%]
 tests/orchestration/test_spend.py ....                                   [ 51%]
 tests/orchestration/test_streams.py ..........................           [ 53%]
-tests/orchestration/test_tasks_codispatch.py ..............              [ 54%]
+tests/orchestration/test_tasks_codispatch.py ..............              [ 55%]
 tests/orchestration/test_teams.py .........                              [ 55%]
 tests/orchestration/test_transitions.py ................................ [ 58%]
 ........................................................................ [ 64%]
@@ -94,4 +94,4 @@ SKIPPED [1] tests/test_measure_run.py:1507: grand-vulture archive not present in
 SKIPPED [1] tests/test_measure_run.py:2236: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev7/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
 SKIPPED [1] tests/test_measure_run.py:2295: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev7/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
 SKIPPED [1] tests/test_measure_run.py:2364: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev7/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-===== 1177 passed, 5 skipped, 9 deselected in 60.80s =====
+===== 1179 passed, 5 skipped, 9 deselected in 63.04s =====
