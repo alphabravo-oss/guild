@@ -4908,7 +4908,8 @@ def test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary(run_env):
     leaf = Path(foundry_state.__file__).resolve()
     package = leaf.parent.parent
     offenders: list[str] = []
-    call_sites = 0
+    forwards: list[str] = []
+    callers: list[str] = []
     for path in sorted(package.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
@@ -4918,7 +4919,7 @@ def test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary(run_env):
             called = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
             if called != "current_inspect_mode":
                 continue
-            call_sites += 1
+            site = f"{path.stem}:{node.lineno}"
             handed = next(
                 (kw.value for kw in node.keywords if kw.arg == "modes"), None
             )
@@ -4926,16 +4927,37 @@ def test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary(run_env):
             # The leaf forwards its OWN parameter — the vocabulary is still the
             # caller's, one frame further out — and cannot name a set it may
             # not import. Everyone else names the closed set itself.
-            wanted = "modes" if path == leaf else "INSPECT_MODES"
+            is_leaf = path == leaf
+            (forwards if is_leaf else callers).append(site)
+            wanted = "modes" if is_leaf else "INSPECT_MODES"
             if spelling != wanted:
                 offenders.append(
-                    f"{path.name}:{node.lineno} passes modes={spelling!r}, "
-                    f"expected {wanted!r}"
+                    f"{site} passes modes={spelling!r}, expected {wanted!r}"
                 )
 
-    assert call_sites >= 3, (
-        f"only {call_sites} call site(s) of the one width read found; the scan "
-        "has gone blind and the assertion below proves nothing"
+    # The vacuity guard, stated as MODULES rather than as a count — this suite's
+    # own D-226 rule, "named modules rather than a count alone, because a count
+    # passes on any roster of the right size". A bare `len(...) >= 1` would go
+    # green with five of the six caller-side sites invisible to the walk, which
+    # is the shape of blindness that matters here: the assertion below only
+    # judges what this scan managed to SEE.
+    reached = {site.split(":")[0] for site in callers}
+    assert {"streams", "guidance", "width", "transitions"} <= reached, (
+        "the width read's caller-side sites are not all visible to this scan — "
+        f"saw {sorted(reached)}, and the four modules that consult the recorded "
+        "width are streams, guidance, width and transitions. A derivation that "
+        "cannot see a caller cannot judge what that caller hands over."
+    )
+    assert len(callers) >= 6, (
+        f"only {len(callers)} caller-side site(s) found: {callers}. Six is what "
+        "the tree carries (streams x2, transitions x2, guidance, width); fewer "
+        "means the walk went blind rather than that the package got smaller, "
+        "and this assertion is the difference between the two."
+    )
+    assert forwards, (
+        "the leaf's own forwarding calls vanished from the scan; they are the "
+        "half that proves an injected vocabulary stays the CALLER's fact one "
+        "frame further out rather than becoming the leaf's"
     )
     assert offenders == [], (
         f"width read(s) handed something other than the closed vocabulary: "
