@@ -742,6 +742,13 @@ def shipped_python_files() -> list[Path]:
 #: pins up: these keys are string constants that ARE names, so an entry would
 #: vouch for its own name the day someone redefines it.
 _PROSE_CITES_WITH_NO_DEFINITION: dict[str, str] = {
+    "_concerns_excusing": (
+        "the Team-Down concern EXIT, deleted with the exit itself (D-074, "
+        "superseding D-050): AC-039 admits one exit and AC-041 names it, and "
+        "no row sanctioned a concern-based one. `_concerns_naming` is the "
+        "reader that replaced it — same resolution, published as context "
+        "beside a refusal that stands rather than subtracted from it."
+    ),
     "_spawn_rows": (
         "spawns.log walker folded into `foundry_state.unreported_dispatch_"
         "inputs`, the single assembler of the three dispatch ledgers "

@@ -261,34 +261,55 @@ def foundry_register_team(
 
 
 
-def _concerns_excusing(
+def _concerns_naming(
     fdir: Path, cycle: int, defect_ids: list[str]
 ) -> dict[str, str]:
     """`{defect id: concern id}` for ids an OPEN concern of this cycle names.
 
-    fallout AC-041 (D-050) — the read that makes `_unrecorded_fix_problem`'s
-    third exit exist.
+    fallout AC-039 / AC-041 / GI-017 (D-074, supersedes D-050) — CONTEXT ON THE
+    REFUSAL, NOT AN EXIT THROUGH IT.
 
-    READ THROUGH THE CONCERN MODULE'S OWN READER, never a walk of the document
-    here: `read_concerns` is where "what is a concern record" is decided, and a
-    second walk is the shape this run has already paid for twice. LAZY, in the
-    seam style this module's other cross-module reaches use.
+    THIS FUNCTION EXCUSES NOTHING, and the rename is the fix. It was
+    `_concerns_excusing`, and `_unrecorded_fix_problem` DROPPED every id it
+    returned — so an open concern of this cycle whose free text mentioned a
+    dispatched id unregistered the team in exactly the state five rows require a
+    refusal. AC-039 states the rule ("refuses naming the id and the commit") and
+    AC-041 states the only exit the spec sanctions ("a dispatched id that is
+    open with NO commit touching its file"). No row anywhere sanctions a
+    concern-based exit; D-050's fix made the hint's third sentence true by
+    WIDENING THE DOOR instead of correcting the sentence, which is GI-008's
+    violation column — "treating a non-negotiable as a concern to trade
+    against" — executed in shipped code.
 
-    NOT `open_concerns_for_other_castings`, deliberately. That reader drops a concern
-    whose target casting IS its source, which is right for the INSPECT rung it
-    serves (GI-023 is about a fix reaching a SIBLING) and wrong here: a casting
-    saying "my own fix is deliberately partial" is self-targeting by nature, and
-    C-022 — the concern this defect was driven on — is exactly that shape.
+    THE MATCH IS UNSTRUCTURED PROSE, which is the second half of why it could
+    never have been an exit. A concern reading "D-900 is NOT fixed" excused the
+    id exactly as one claiming it was, and the concerns are authored by the same
+    teammates the door constrains.
+
+    What survives is REPORTING. An operator reading a refusal is better served
+    knowing a teammate wrote something about this id than not, so the ids are
+    still resolved and published beside the refusal under `concerns_naming` —
+    as context, in a field named for what it is. Nothing is dropped from the
+    finding.
 
     THE CYCLE COMPARISON IS `>=`, AND THAT IS THE ARITHMETIC, NOT LOOSENESS.
     A `grind_dispatched` record carries the SERVER counter; `Foundry-Concern`
     stores the cycle its CALLER declared. The counter advances at
     `inspect_start`, so during GRIND N the counter reads N-1 and the lead
-    declares N — C-022 carries cycle 1 while this run's counter reads 0. An
-    equality test would therefore exclude every concern a lead ever files about
-    the GRIND it is standing in, which is this defect one layer over: a check
-    that silently never fires. Anything from an EARLIER cycle is still excluded,
-    which is what the scoping is for.
+    declares N. An equality test would therefore exclude every concern a lead
+    ever files about the GRIND it is standing in. Anything from an EARLIER cycle
+    is still excluded, which is what the scoping is for.
+
+    NOT `open_concerns_for_other_castings`, deliberately. That reader drops a
+    concern whose target casting IS its source, which is right for the INSPECT
+    rung it serves (GI-023 is about a fix reaching a SIBLING) and wrong here: a
+    casting saying "my own fix is deliberately partial" is self-targeting by
+    nature.
+
+    READ THROUGH THE CONCERN MODULE'S OWN READER, never a walk of the document
+    here: `read_concerns` is where "what is a concern record" is decided, and a
+    second walk is the shape this run has already paid for twice. LAZY, in the
+    seam style this module's other cross-module reaches use.
 
     THE MATCH IS BOUNDED. `D-021` must not be found inside `D-0210`, and
     `CD-021` is not a mention of `D-021`, so the id is matched with neither an
@@ -300,9 +321,10 @@ def _concerns_excusing(
 
     records, problem = read_concerns(fdir)
     if problem is not None:
-        # A ledger that will not read excuses nothing, which is the direction
-        # every advisory reader in this package takes: the door still refuses,
-        # and the operator is not told an id passed on evidence nobody has.
+        # A ledger that will not read reports nothing, which is the direction
+        # every advisory reader in this package takes: the door still refuses
+        # on exactly what it refused on, and the operator is not told an id was
+        # written about on evidence nobody has.
         return {}
     out: dict[str, str] = {}
     for record in records:
@@ -382,26 +404,20 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
 
     unrecorded = [r for r in still_open if str(r["file"]) in touched]
 
-    # fallout AC-041 (D-050) — THE THIRD EXIT THE HINT NAMES, MADE REAL.
-    #
-    # The hint below offers three ways past this refusal and the third is "or
-    # leave it open and say so in the cycle's concerns". This function read the
-    # dispatch rows, the defect ledger, the baseline SHA and the diff, and never
-    # read `concerns.json` — so the exit did not exist. Driven at this run's own
-    # cycle-1 door: D-021 and D-035 were deliberately left open as a partial fix
-    # of a ruled structural packet, C-022 was filed naming both ids and the
-    # reason, and Foundry-Team-Down returned the identical refusal with the
-    # identical two ids. A run with an honestly partial fix could only get its
-    # team down by falsifying a `Foundry-Fix` record or by deleting a sentence
-    # from the hint, which are the two things this door exists to prevent.
-    #
-    # An OPEN concern from this cycle that NAMES the id is now what the hint
-    # says it is, and the reason names the concern so the operator can see why
-    # an id passed rather than wondering whether the check ran.
-    excused = _concerns_excusing(fdir, cycle, [str(r["defect_id"]) for r in unrecorded])
-    unrecorded = [r for r in unrecorded if str(r["defect_id"]) not in excused]
     if not unrecorded:
         return None
+
+    # fallout AC-039 / AC-041 / GI-017 (D-074, supersedes D-050) — READ AFTER
+    # THE FINDING IS FIXED, BECAUSE IT NO LONGER CHANGES IT.
+    #
+    # D-050 read this ABOVE the return and subtracted its keys from
+    # `unrecorded`, making an open concern of this cycle a THIRD exit past the
+    # refusal. The spec sanctions exactly one exit — AC-041's "no commit
+    # touching its file" — and the match was over a concern's free text, so
+    # "D-900 is NOT fixed" cleared the id exactly as a claim that it was. The
+    # ids are still resolved and published, as CONTEXT beside a refusal that
+    # stands, and the hint below no longer offers the exit that produced them.
+    naming = _concerns_naming(fdir, cycle, [str(r["defect_id"]) for r in unrecorded])
 
     # fallout AC-039 — THE COMMIT THAT MADE THE CHANGE, RESOLVED PER FILE.
     #
@@ -429,22 +445,36 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
             f"while a commit since {base} ({base_source}) touched the file each "
             f"names: {named}"
             + (
-                # AC-041 / D-050: an id that PASSED is named beside the concern
-                # that excused it, so the operator reads why the count is what
-                # it is rather than inferring that the check did not run.
-                "; excused by an open concern of this cycle: "
-                + ", ".join(f"{d} ({c})" for d, c in sorted(excused.items()))
-                if excused else ""
+                # fallout AC-039 / D-074: an id an open concern of this cycle
+                # WRITES ABOUT is named beside its concern — as context, and
+                # explicitly not as a pass. It is still in the count above.
+                "; written about in an open concern of this cycle (which is "
+                "context, not an exit): "
+                + ", ".join(f"{d} ({c})" for d, c in sorted(naming.items()))
+                if naming else ""
             )
         ),
+        # fallout AC-039 / AC-041 (D-074) — EVERY EXIT THIS HINT NAMES IS ONE
+        # THE CHECK ABOVE ACTUALLY READS.
+        #
+        # It used to end "or leave it open and say so in the cycle's concerns",
+        # and D-050 answered that by teaching the check to honour it — widening
+        # the door until the sentence was true. AC-039 admits no such exit and
+        # AC-041 names the only one there is, so the sentence goes and the door
+        # stays the shape five rows describe. The two remaining clauses are both
+        # reachable from exactly this state: `Foundry-Fix` closes the id, and an
+        # id whose commit belongs to a different defect is closed against that
+        # one.
         "hint": (
             "The fix is on the branch and the ledger row is not. Close each id "
             "with Foundry-Fix before the team goes down -- after teardown the "
             "teammate who made the change cannot be asked, and the next INSPECT "
             "re-verifies work that is already done and files it again. If the "
             "commit is unrelated to the defect, close the id against the fix "
-            "commit it really belongs to, or leave it open and say so in the "
-            "cycle's concerns."
+            "commit it really belongs to. A concern saying an id is "
+            "deliberately open does NOT clear this refusal: the concern is "
+            "prose the same teammates author, and AC-039 admits one exit only "
+            "-- no commit since the baseline touching the id's file."
         ),
         "phase": "dispatched_defect_unrecorded",
         "defects": [
@@ -459,7 +489,9 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
         "commits": commits,
         "baseline_sha": base,
         "baseline_source": base_source,
-        "excused": excused,
+        # fallout D-074 — RENAMED FOR WHAT IT IS. `excused` said these ids had
+        # passed the check; they are in `defects` above and in the count.
+        "concerns_naming": naming,
     }
 
 

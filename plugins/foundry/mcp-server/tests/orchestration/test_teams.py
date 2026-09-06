@@ -201,21 +201,22 @@ def test_the_teardown_refusal_names_the_commit_that_made_the_change(run_env):
     assert named != base, (named, base)
 
 
-def test_an_open_concern_naming_the_id_is_the_exit_the_hint_promises(run_env):
-    """fallout AC-041 (D-050) — the third exit, driven both ways.
+def test_an_open_concern_naming_the_id_is_not_an_exit_past_the_refusal(run_env):
+    """fallout AC-039 / AC-041 / GI-017 (D-074, supersedes D-050).
 
-    The refusal's hint offers three ways past it and the third is "or leave it
-    open and say so in the cycle's concerns". This function read the dispatch
-    rows, the defect ledger, the baseline SHA and the diff, and read
-    `concerns.json` never — so filing the concern the hint asks for changed
-    nothing and the door refused identically. It was driven at this run's own
-    cycle-1 door: two ids deliberately open as a partial fix of a ruled
-    structural packet, a concern filed naming both, the same refusal returned.
+    AC-039 is the rule — "for any dispatched id still open whose file appears in
+    commits since the cycle's baseline SHA, refuses naming the id and the
+    commit" — and AC-041 is the ONE exit: an id with no commit touching its
+    file. No row anywhere sanctions a concern-based exit, and D-050 built one by
+    teaching the check to honour a sentence in the hint rather than correcting
+    the sentence. That is GI-008's violation column ("treating a non-negotiable
+    as a concern to trade against") in shipped code, and the match was over a
+    concern's free TEXT, so "D-900 is NOT fixed" cleared the id exactly as a
+    claim that it was — authored by the same teammates the door constrains.
 
-    ONE ARRANGEMENT, TWO DRIVES. The same open defect, the same touching
-    commit, the same baseline — the ONLY thing that differs between the two
-    halves is whether an open concern of this cycle names the id, which is what
-    makes this a test of the exit rather than of the arrangement.
+    ONE ARRANGEMENT, TWO DRIVES. The same open defect, the same touching commit,
+    the same baseline — the only thing that differs is whether an open concern
+    of this cycle names the id, and the answer must not differ with it.
     """
     from foundry_mcp.tools.concerns import foundry_concern
 
@@ -236,22 +237,15 @@ def test_an_open_concern_naming_the_id_is_the_exit_the_hint_promises(run_env):
     assert foundry_defects_to_tasks(project_root)["ok"] is True
     _repo_with_commit(project_root, "src/one.py", "print('after')\n")
 
-    # WITHOUT the concern: the door refuses, naming the id.
     before = _unrecorded_fix_problem(fdir, project_root)
     assert before is not None, "the arrangement does not reach the refusal"
     assert "D-900" in before["reason"], before
-    assert before.get("excused") == {}, before
+    assert before.get("concerns_naming") == {}, before
 
-    # The hint the operator is following says to do exactly this.
-    assert "leave it open and say so in the cycle's concerns" in before["hint"]
+    # ...and the hint no longer offers the exit D-050 was filed to make real.
+    assert "leave it open and say so in the cycle's concerns" not in before["hint"]
+    assert "does NOT clear this refusal" in before["hint"], before["hint"]
 
-    # WITH it: the same door, the same commit, one open concern naming the id.
-    #
-    # Filed at cycle 1 while the server counter reads 0 — which is the ordinary
-    # case, not a quirk: the counter advances at `inspect_start`, so during
-    # GRIND N it reads N-1 and a lead declares N. An equality test on the cycle
-    # would exclude every concern anyone ever files about the GRIND they are
-    # standing in.
     opened = foundry_concern(
         casting_id=1,
         cycle=1,
@@ -265,21 +259,50 @@ def test_an_open_concern_naming_the_id_is_the_exit_the_hint_promises(run_env):
     assert opened.get("ok") is True, opened
 
     after = _unrecorded_fix_problem(fdir, project_root)
-    assert after is None, after
+    assert after is not None, "an open concern cleared a refusal AC-039 requires"
+    assert {d["id"] for d in after["defects"]} == {"D-900"}, after["defects"]
+    # The concern is REPORTED, in a field named for what it is, and the id it
+    # names is still in the finding above.
+    assert after["concerns_naming"] == {"D-900": "C-001"}, after["concerns_naming"]
+    assert "context, not an exit" in after["reason"], after["reason"]
 
 
-def test_a_concern_excuses_only_the_id_it_actually_names(run_env):
-    """fallout AC-041 (D-050) — the exit is per ID, and the match is bounded.
+def test_the_only_sanctioned_exit_is_still_the_one_ac_041_names(run_env):
+    """fallout AC-041 (D-074) — removing the invented exit leaves the real one.
 
-    An excuse that leaked across ids would be worse than no exit at all: one
-    concern about one deliberately-partial fix would silently clear every other
-    dispatched id whose fix nobody recorded, which is the exact state
-    `DISPATCHED_DEFECT_UNRECORDED` exists to make visible.
+    A dispatched id that is open with NO commit touching its file does not
+    refuse: the fix was not made, which is not the same as made-and-unrecorded.
+    Driven beside the test above so the two exits cannot be confused for one.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=0)
 
-    Two ids are dispatched and touched; the concern names ONE. The other must
-    still refuse, and the refusal must say which id was excused and by which
-    concern — an operator reading a shrunken count needs to see why, not infer
-    that the check stopped running.
+    base = _repo_with_commit(project_root, "src/one.py", "print('a')\n")
+    (fdir / artifacts.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+        base + "\n", encoding="utf-8"
+    )
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        2: (["FR-008"], ["src/two.py"]),
+    })
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+    ])
+    assert foundry_defects_to_tasks(project_root)["ok"] is True
+    # A commit that touches a DIFFERENT file.
+    _repo_with_commit(project_root, "src/two.py", "print('b')\n")
+
+    assert _unrecorded_fix_problem(fdir, project_root) is None
+
+
+def test_a_concern_is_reported_only_against_the_id_it_actually_names(run_env):
+    """fallout AC-039 (D-074) — the reporting is per ID, and the match is bounded.
+
+    The resolution leaked nothing across ids when it was an exit and must leak
+    nothing now that it is context: an operator reading "D-900 (C-001)" beside a
+    refusal naming two ids has to be able to trust which of them the concern is
+    about. Two ids are dispatched and touched; the concern names ONE, and BOTH
+    still refuse.
     """
     from foundry_mcp.tools.concerns import foundry_concern
 
@@ -309,14 +332,12 @@ def test_a_concern_excuses_only_the_id_it_actually_names(run_env):
     ).get("ok") is True
 
     problem = _unrecorded_fix_problem(fdir, project_root)
-    assert problem is not None, "the unnamed id must still refuse"
+    assert problem is not None, "both ids must still refuse"
     ids = {d["id"] for d in problem["defects"]}
-    assert ids == {"D-901"}, problem["defects"]
-    # ...and the excused one is REPORTED beside the concern that excused it.
-    assert problem["excused"] == {"D-900": "C-001"}, problem["excused"]
-    assert "D-900 (C-001)" in problem["reason"], problem["reason"]
+    assert ids == {"D-900", "D-901"}, problem["defects"]
+    assert problem["concerns_naming"] == {"D-900": "C-001"}, problem["concerns_naming"]
     # The bounded match: `D-9010` in the text is not a mention of `D-901`.
-    assert "D-901" not in problem["excused"], problem["excused"]
+    assert "D-901" not in problem["concerns_naming"], problem["concerns_naming"]
 
 
 def test_the_teardown_door_states_the_call_order_it_enforces(run_env):
