@@ -4844,11 +4844,30 @@ def test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary(run_env):
     old assertion cannot pass however correct the tree is.
 
     Repointing it to the new module would have been the wrong repair, because
-    the contract genuinely moved: turning a fixed collaborator into an injected
-    one turns something the module ENFORCES into something it HOPES its caller
-    passes, and D-212 was precisely a persisted value outside the vocabulary
-    reading as a recorded width. A caller handing over a laxer set is that
-    defect returning by the front door.
+    the vocabulary check can only live where the vocabulary is VISIBLE, and
+    after the hoist that is the callers. `foundry_state.py` imports `json` and
+    `pathlib` and nothing else — `scripts/measure-run.py` reads it with no
+    package on the path — so a default `modes=` would have to NAME the closed
+    set and a refusal on an unknown one would have to KNOW it, and either ends
+    the package-free read the module exists to hold.
+
+    NOT a contract that slipped from ENFORCED to HOPED, which is how this first
+    reads and is worth getting right, because the misreading is what would
+    tempt a later reader to "restore" the check to the leaf. What a module may
+    not delegate is its OWN promise, and this leaf's promise is to be total and
+    never to raise — which it keeps whatever `modes` it is handed. It never
+    promised to know the vocabulary. So the contract moved to the layer that
+    can hold it rather than out of reach, and the pin moves with it.
+
+    WHICH DIRECTION IS DANGEROUS, because the pin guards one of them. A
+    DEGENERATE `modes` — empty, None, a non-collection — fails CLOSED through
+    the leaf already: `not in modes` is then always true, the read returns
+    None, and every door refuses on an unrecorded width. A WIDER set fails
+    OPEN, and the leaf cannot tell a lax set from the real one by inspecting
+    it; only a caller can. D-212 was precisely a persisted value outside the
+    vocabulary reading as a recorded width, so a caller handing over a laxer
+    set is that defect returning by the front door — and a leaf-side shape
+    check would guard the case that is already safe while missing this one.
 
     So the pin follows the property to BOTH of its halves, and judges every
     shipped call site instead of one function body:
