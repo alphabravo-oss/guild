@@ -2475,6 +2475,91 @@ def test_the_f09_step_gates_the_transition_that_actually_opens_cast() -> None:
     )
 
 
+def test_the_f3_close_gates_the_transition_that_reopens_inspect() -> None:
+    """fallout D-059 / GI-001 / AC-059: the GRIND -> INSPECT crossing had no gate.
+
+    GI-001's violation column reads "a casting that ... lets a transition skip
+    its gate". The F3 close read "commit -> `Foundry-Phase(phase='inspect_start')`
+    -> back to F2 INSPECT" and named no gate at all, so the one token AC-059
+    added to `GATE_TO_TRANSITION` for that transition was named by NO
+    lead-facing surface: `guidance.py`'s `transition_to_inspect` imperative
+    named `inspect` (D-058) and this file named nothing.
+
+    Driven at the real door: a lead following the guidance called
+    `Foundry-Gate(phase='inspect')` from F3 and was refused, because `inspect`
+    maps to the `cast` transition -- the F1 -> F2 crossing, whose preconditions
+    are a different question asked two phases earlier. The refusal's own hint
+    had to supply `inspect_start`. Both tokens are valid enum members, so the
+    schema rejects neither and the mistake is invisible until the door.
+
+    The expected token is DERIVED from the mapping table, in the
+    `_PYTEST_DISCOVERY_PHRASE` shape and for the reason
+    `test_the_f09_step_gates_the_transition_that_actually_opens_cast` states:
+    a literal pin would go green the day someone swapped the prose for another
+    valid-but-wrong member, which is exactly the failure being closed here.
+    """
+    from foundry_mcp.tools.orchestration.gates import GATE_TO_TRANSITION
+
+    gates_for_inspect_start = sorted(
+        gate for gate, transitions in GATE_TO_TRANSITION.items()
+        if "inspect_start" in transitions
+    )
+    # Floor: with nothing mapping to `inspect_start` every membership test
+    # below is vacuous -- any token would satisfy an expectation of nothing.
+    assert gates_for_inspect_start, (
+        "No gate token maps to `inspect_start` in GATE_TO_TRANSITION, so the "
+        "transition that closes GRIND back into INSPECT has no gate at all. "
+        "That is the GI-001 violation in the table itself; fix the table, not "
+        "this assertion."
+    )
+
+    section = _section(START_MD, "### F3: GRIND")
+    gate_calls = list(re.finditer(r"Foundry-Gate\(phase='([a-z_]+)'\)", section))
+    assert gate_calls, (
+        f"{_rel(START_MD)}'s F3 section names no `Foundry-Gate(phase='...')` "
+        f"call at all. F3 closes back into F2 INSPECT, and the gate on that "
+        f"crossing is the thing this checks. The gate token(s) that evaluate "
+        f"`_inspect_start_preconditions` are {gates_for_inspect_start}."
+    )
+
+    # The FIRST call, not any call. The section is read top-down and its close
+    # is the crossing instruction, so the first token it hands the lead is the
+    # one the lead calls. Checking every occurrence instead would forbid the
+    # section from ever naming a token NOT to use -- and naming `inspect` as
+    # the trap it is is precisely how a reader is kept off it. `inspect` stays
+    # correct at F1 step 7, where it gates the `cast` transition; inside F3
+    # there is no `cast` transition for it to guard.
+    first_call = gate_calls[0]
+    first_token = first_call.group(1)
+    assert "inspect_start" in GATE_TO_TRANSITION.get(first_token, ()), (
+        f"{_rel(START_MD)}'s F3 section hands the lead "
+        f"`Foundry-Gate(phase='{first_token}')` first, which maps to "
+        f"{GATE_TO_TRANSITION.get(first_token)} rather than to `inspect_start` "
+        f"-- the transition that closes GRIND. `inspect` in particular maps to "
+        f"`cast`, the crossing INTO INSPECT from F1: called from F3 it is "
+        f"refused naming a phase the lead already left, which is how the "
+        f"missing gate stayed invisible for a release. The gate token(s) that "
+        f"evaluate `_inspect_start_preconditions` are {gates_for_inspect_start}."
+    )
+
+    # A gate named AFTER the transition it guards is not a gate. The class this
+    # closes is literally "lead-surface-omits-the-gate-before-the-transition",
+    # so the ORDER is half the property.
+    first_transition = section.find("Foundry-Phase(phase='inspect_start')")
+    assert first_transition != -1, (
+        f"{_rel(START_MD)}'s F3 section no longer names "
+        f"`Foundry-Phase(phase='inspect_start')`. That call is the boundary "
+        f"crossing that advances the cycle counter; the section cannot close "
+        f"without it."
+    )
+    assert first_call.start() < first_transition, (
+        f"{_rel(START_MD)}'s F3 section names its gate AFTER "
+        f"`Foundry-Phase(phase='inspect_start')`. **Gate then Phase** is the "
+        f"protocol's own ordering, and a gate read after the transition "
+        f"reports the preconditions of a crossing that already happened."
+    )
+
+
 def test_the_gate_token_set_the_protocol_describes_is_the_mapping_table() -> None:
     """fallout GI-031 / CT-020: the protocol points at the table, not at a copy.
 
