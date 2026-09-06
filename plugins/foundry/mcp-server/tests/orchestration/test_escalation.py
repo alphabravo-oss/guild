@@ -7,6 +7,7 @@ that no longer exists.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 from pathlib import Path
@@ -112,6 +113,7 @@ def orchestration_has(symbol: str) -> bool:
 from tests.orchestration._env import (  # noqa: F401
     _at_the_phase_for,
     _defect_ledger,
+    shipped_python_files,
     _record_full_inspect_mode,
     _sync_env,
     _write_manifest_with_castings,
@@ -446,3 +448,212 @@ def test_the_budget_arm_is_offered_while_the_class_still_has_work(run_env):
 
     assert "more structural packet(s) (budget arm" in sentence, sentence
     assert "cannot advance this class" not in sentence, sentence
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-014 / AC-022 / OT-018 / CT-012 (D-077, concern C-054) — HARDENING
+# IS NOT LIVE, AND THE PARTITION IS ASKED OF THE VOCABULARY.
+#
+# `_class_info` answered "which of this class's open instances BLOCK" with
+# `defect_tier(d) != "LATENT"`, which is the whole tier axis while there are two
+# tiers and a readmission of the third the day HARDENING joined `DEFECT_TIERS`
+# without joining `BLOCKING_TIERS`. `_class_drew_live_in_cycle` carried the same
+# partition written the other way round — `== "LATENT": continue`.
+#
+# The instances are driven below; the GENERATOR is pinned after them. A negated
+# tier literal is a claim about the SHAPE of the tier space, and the tier space
+# is a closed vocabulary that grows, so the claim goes stale silently on the
+# next member. Selecting ONE named tier is a different act and stays legal:
+# `open_latent_defect_ids` is named for the tier it selects and must keep
+# meaning it, because `foundry_state.escalated_class_rows` carries the field to
+# a report column headed "Open LATENT ids".
+# --------------------------------------------------------------------------- #
+
+
+def _hardening_bucket(ids):
+    return {
+        "declared": "HARDENING_PROBE",
+        "cycles": {3},
+        "open": [
+            {"id": did, "tier": "HARDENING", "cycle": 3, "class": "HARDENING_PROBE"}
+            for did in ids
+        ],
+        "total": len(ids),
+        "files": set(), "symbols": set(), "spec_refs": set(), "sources": set(),
+    }
+
+
+def test_open_hardening_instances_are_not_counted_as_blocking_live_ones():
+    """fallout GI-014 / AC-022 / OT-018 (D-077) — the blocking half, driven.
+
+    `BLOCKING_TIERS` is LIVE plus the unknown sentinel and HARDENING is
+    deliberately not in it, so a class whose every open instance is HARDENING
+    has ZERO blocking instances. `_class_info` said all three were blocking, and
+    `_done_preconditions` printed them as "Blocking LIVE instances" while
+    refusing DONE over records that hold no gate shut.
+    """
+    info = _escalation._class_info(
+        "HARDENING_PROBE", _hardening_bucket(["D-001", "D-002", "D-003"]), {}
+    )
+    assert info["open_live_defect_ids"] == [], info["open_live_defect_ids"]
+    # ...and the vocabulary agrees, which is the point of asking it.
+    assert [
+        d["id"] for d in _hardening_bucket(["D-001"])["open"]
+        if vocab.defect_tier(d) in vocab.BLOCKING_TIERS
+    ] == []
+    # The class is still VISIBLE — nothing is dropped, it is re-labelled.
+    assert info["defect_ids"] == ["D-001", "D-002", "D-003"], info
+    assert info["open_count"] == 3, info
+
+
+def test_the_latent_field_still_means_the_latent_tier_and_not_the_non_blocking_set():
+    """fallout C-054's second constraint — the asymmetry is deliberate.
+
+    Making both halves read `BLOCKING_TIERS` would put HARDENING ids into a
+    field named `open_latent_defect_ids`, which `foundry_state.escalated_class_
+    rows` carries through to a report column headed "Open LATENT ids". The
+    mislabelling would move one module downstream rather than being fixed.
+    """
+    bucket = _hardening_bucket(["D-001"])
+    bucket["open"].append(
+        {"id": "D-002", "tier": "LATENT", "cycle": 3, "class": "HARDENING_PROBE"}
+    )
+    bucket["total"] = 2
+    info = _escalation._class_info("HARDENING_PROBE", bucket, {})
+    assert info["open_latent_defect_ids"] == ["D-002"], info
+    assert info["open_live_defect_ids"] == [], info
+
+
+def test_a_hardening_only_cycle_does_not_reset_the_clean_cycle_counter():
+    """fallout ST-001 / GI-014 (D-077) — the exit arm, driven.
+
+    ST-001 clears a class after consecutive cycles drawing zero LIVE instances.
+    A tier that blocks no gate cannot be the evidence that a cycle was unclean,
+    so a cycle that drew only HARDENING filings is a clean cycle — this returned
+    True for one and held the class escalated on findings that block nothing.
+    """
+    hardening = [{"id": "D-001", "tier": "HARDENING", "cycle": 3, "class": "K"}]
+    live = [{"id": "D-002", "tier": "LIVE", "cycle": 3, "class": "K"}]
+    untiered = [{"id": "D-003", "cycle": 3, "class": "K"}]
+
+    assert _escalation._class_drew_live_in_cycle(hardening, "K", 3) is False
+    # ...while the two tiers that DO block still reset it.
+    assert _escalation._class_drew_live_in_cycle(live, "K", 3) is True
+    assert _escalation._class_drew_live_in_cycle(untiered, "K", 3) is True
+
+
+def _negated_tier_literals(tree: ast.AST) -> list[str]:
+    """Every `<tier expression> != "<literal>"` in `tree`.
+
+    A NEGATED tier literal partitions the tier space into "this one" and
+    "everything else", and everything-else is a set the vocabulary owns and
+    grows. Selecting one named tier with `==` is a different act and is not
+    reported.
+    """
+    out: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        if not _mentions_defect_tier(node.left):
+            continue
+        for op, comparator in zip(node.ops, node.comparators):
+            if isinstance(op, ast.NotEq) and isinstance(comparator, ast.Constant):
+                if isinstance(comparator.value, str):
+                    out.append(comparator.value)
+    return out
+
+
+def _tier_skip_guards(tree: ast.AST) -> list[str]:
+    """Every `if <tier expression> == "<literal>": continue` in `tree`.
+
+    The same partition written the other way round: the body is the skip, so the
+    predicate the code ACTS on is "not this tier", and the set it acts over is
+    again everything the vocabulary holds now or later.
+    """
+    out: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
+            continue
+        body = [s for s in node.body if not isinstance(s, ast.Expr)]
+        if not (len(body) == 1 and isinstance(body[0], (ast.Continue, ast.Pass))):
+            continue
+        if not _mentions_defect_tier(node.test.left):
+            continue
+        for op, comparator in zip(node.test.ops, node.test.comparators):
+            if isinstance(op, ast.Eq) and isinstance(comparator, ast.Constant):
+                if isinstance(comparator.value, str):
+                    out.append(comparator.value)
+    return out
+
+
+def _mentions_defect_tier(node: ast.AST) -> bool:
+    """Is `node` a `defect_tier(...)` call, or an attribute read of one?"""
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.Call):
+            func = inner.func
+            name = func.id if isinstance(func, ast.Name) else (
+                func.attr if isinstance(func, ast.Attribute) else ""
+            )
+            if name == "defect_tier":
+                return True
+    return False
+
+
+def test_no_shipped_module_partitions_the_tier_space_by_negating_a_literal():
+    """fallout GI-014 / AC-022 / CT-012 (D-077, C-054) — the GENERATOR, pinned.
+
+    Three instances of one shape produced this defect and a fourth tier would
+    produce it again, so what is asserted is the shape rather than the three
+    sites. Every decision about whether a defect BLOCKS reads
+    `vocab.BLOCKING_TIERS`; no shipped module says "not LATENT" and means it.
+
+    This is deliberately NOT an allowlist with the known sites recorded in it.
+    C-054 asked for the pin in this commit for that reason: a table of excused
+    negations is a table that fails open on the fourth tier exactly as the
+    comparisons did on the third.
+    """
+    offenders: list[str] = []
+    scanned = 0
+    for path in shipped_python_files():
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover
+            continue
+        scanned += 1
+        for literal in _negated_tier_literals(tree):
+            offenders.append(f"{path.name}: defect_tier(...) != {literal!r}")
+        for literal in _tier_skip_guards(tree):
+            offenders.append(f"{path.name}: if defect_tier(...) == {literal!r}: continue")
+    assert scanned >= 30, f"only {scanned} shipped file(s) parsed; the scan is blind"
+    assert offenders == [], (
+        f"tier-space partition(s) written as a negated literal: {offenders}. "
+        "Whether a defect BLOCKS is `vocab.BLOCKING_TIERS`, which is LIVE plus "
+        "the unknown sentinel and grows with the vocabulary. `!= \"LATENT\"` is "
+        "the two-tier answer and readmits every tier added after it — which is "
+        "D-077, where HARDENING was counted as a blocking LIVE instance by "
+        "three comparisons that predated it. Selecting ONE named tier with "
+        "`==` is fine and is not reported here."
+    )
+
+
+def test_both_partition_recognisers_fire_on_planted_source():
+    """The anchor. A scan over a clean tree is green whether it works or not, so
+    each recogniser is driven over the exact shape it exists to catch — the two
+    spellings `escalation.py` actually carried."""
+    negated = ast.parse('x = [d for d in recs if defect_tier(d) != "LATENT"]\n')
+    assert _negated_tier_literals(negated) == ["LATENT"]
+    assert _tier_skip_guards(negated) == []
+
+    guard = ast.parse(
+        "for d in recs:\n"
+        '    if defect_tier(d) == "LATENT":\n'
+        "        continue\n"
+        "    use(d)\n"
+    )
+    assert _tier_skip_guards(guard) == ["LATENT"]
+    assert _negated_tier_literals(guard) == []
+
+    # ...and a positive SELECTION of one tier is not reported by either.
+    selection = ast.parse('x = [d for d in recs if defect_tier(d) == "LATENT"]\n')
+    assert _negated_tier_literals(selection) == []
+    assert _tier_skip_guards(selection) == []

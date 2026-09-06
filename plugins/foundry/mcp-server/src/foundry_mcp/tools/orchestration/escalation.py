@@ -11,6 +11,7 @@ from pathlib import Path
 
 from collections.abc import Callable
 from foundry_mcp.schemas.vocab import (
+    BLOCKING_TIERS,
     ESCALATION_STATUS_CLEARED,
     ESCALATION_STATUS_ESCALATED,
     LIVE_CLEAN_CYCLES_TO_CLEAR,
@@ -753,13 +754,34 @@ def _class_info(key: str, bucket: dict, recorded: dict) -> dict:
         "escalated_at_cycle": run_end,
         "defect_ids": [d["id"] for d in bucket["open"]],
         # FR-001 / C-3: the two halves of "what is still open", split by the
-        # axis that decides what happens to each. Open LIVE (and untiered)
-        # instances stay blocking defects fixed per-instance; open LATENT
-        # instances go to the F6 named backlog and block nothing. Computed
-        # here, where the bucket is already in hand, rather than re-derived
-        # by every reader of the escalation record.
+        # axis that decides what happens to each. Open BLOCKING instances stay
+        # defects fixed per-instance; open LATENT instances go to the F6 named
+        # backlog and block nothing. Computed here, where the bucket is already
+        # in hand, rather than re-derived by every reader of the escalation
+        # record.
+        #
+        # fallout GI-014 / AC-022 / OT-018 / CT-012 (D-077, concern C-054) —
+        # THE BLOCKING HALF ASKS THE VOCABULARY, NOT A TIER LITERAL.
+        # ------------------------------------------------------------------
+        # `!= "LATENT"` was the whole tier axis while there were two tiers, and
+        # HARDENING made it wrong in the one direction that matters: a probe a
+        # stream drove off-spec is NON-BLOCKING by construction
+        # (`BLOCKING_TIERS` is LIVE plus the unknown sentinel and this member
+        # deliberately did not join it), and this counted every one of them as
+        # a blocking LIVE instance. `_done_preconditions` then refused at
+        # `_GATE_RANK_ESCALATION` printing "Blocking LIVE instances: ..." over
+        # records that block nothing, which is HARDENING readmitted as a
+        # blocking tier through a comparison that predates it.
+        #
+        # THE LATENT HALF STAYS A TIER COMPARISON, and that asymmetry is the
+        # point rather than an oversight. This field is NAMED for a tier and
+        # `foundry_state.escalated_class_rows` carries it through to a report
+        # column headed "Open LATENT ids", so a HARDENING id entering it would
+        # be the same mislabelling one module downstream. HARDENING stays
+        # visible through `defect_ids`, `open_count` and the report's own
+        # HARDENING backlog section (AC-024).
         "open_live_defect_ids": [
-            d["id"] for d in bucket["open"] if defect_tier(d) != "LATENT"
+            d["id"] for d in bucket["open"] if defect_tier(d) in BLOCKING_TIERS
         ],
         "open_latent_defect_ids": [
             d["id"] for d in bucket["open"] if defect_tier(d) == "LATENT"
@@ -1348,13 +1370,21 @@ def _class_drew_live_in_cycle(defects: list, class_key: str, cycle: int) -> bool
     """Did `class_key` draw a LIVE-or-untiered instance stamped `cycle`?
 
     ST-001 counts cycles in which the class drew ZERO LIVE instances, and
-    LATENT instances explicitly do not reset the count — that exemption is the
-    whole mechanism. A prover re-filing the same class at a finer boundary every
-    cycle, never driving a live instance, is precisely the thunder-viper
-    behaviour the exit exists to terminate, and if a LATENT filing reset the
-    counter the class could be held open forever by findings nobody reproduced.
-    An untiered record counts as LIVE here for the same reason it blocks every
-    gate (FR-051): nobody classified it, so it is not evidence of a clean cycle.
+    NON-BLOCKING instances explicitly do not reset the count — that exemption is
+    the whole mechanism. A prover re-filing the same class at a finer boundary
+    every cycle, never driving a live instance, is precisely the thunder-viper
+    behaviour the exit exists to terminate, and if such a filing reset the
+    counter the class could be held open forever by findings that hold no gate
+    shut. An untiered record counts as LIVE here for the same reason it blocks
+    every gate (FR-051): nobody classified it, so it is not evidence of a clean
+    cycle.
+
+    fallout GI-014 / AC-022 / OT-018 (D-077, concern C-054) — THE EXEMPTION IS
+    THE BLOCKING SET, NOT THE WORD "LATENT". This skipped `== "LATENT"` and so
+    let a HARDENING filing — a probe driven off-spec, which `BLOCKING_TIERS`
+    deliberately does not carry — reset a class's clean-cycle counter. A tier
+    that blocks no gate cannot be the evidence that a cycle was unclean; asking
+    `BLOCKING_TIERS` says that once, for every tier the vocabulary ever grows.
 
     Both the filing cycle and the reopen cycle count. A class REOPENING is the
     class recurring, which is what escalation exists to catch, and a regression
@@ -1369,7 +1399,7 @@ def _class_drew_live_in_cycle(defects: list, class_key: str, cycle: int) -> bool
     for d in defects:
         if not isinstance(d, dict) or resolved.get(id(d)) != class_key:
             continue
-        if defect_tier(d) == "LATENT":
+        if defect_tier(d) not in BLOCKING_TIERS:
             continue
         for field in ("cycle", "reopened_in_cycle"):
             value = d.get(field)
