@@ -203,10 +203,10 @@ def _format_init_display(run_name: str, temper: bool = False, nyquist: bool = Fa
 # is what removed the last way to diagnose it.
 #
 # The split mirrors ``tools/artifacts.py``'s BY CONVENTION rather than by
-# import — same four names, same refusal shape — and the two copies STAY two.
-# Holmes `helper-1` records the policy difference as deliberate: THIS module
-# fails CLOSED on a corrupt document (``LedgerShapeError``; D-096 / D-127)
-# while the leaf fails OPEN with ``{}``.
+# import — same refusal shape — and the two GUARDS stay two. Holmes `helper-1`
+# records the policy difference as deliberate: THIS module fails CLOSED on a
+# corrupt document (``LedgerShapeError``; D-096 / D-127) while the leaf fails
+# OPEN with ``{}``.
 #
 # fallout D-011 — THE TOLERANT READ IS IMPORTED, NOT RE-DEFINED. This block
 # used to carry a second body of ``_read_document`` / ``_document_problem`` /
@@ -219,24 +219,39 @@ def _format_init_display(run_name: str, temper: bool = False, nyquist: bool = Fa
 # is the one home (GI-033) and this module imports from it; the leaf imports
 # nothing here, so the import closes no cycle.
 #
-# WHAT STAYS, AND WHY IT IS NOT THE SAME FUNCTION AS THE LEAF'S. The four names
-# collide, but only three of them are one rule:
+# WHAT STAYS, AND WHY IT IS NOT THE SAME FUNCTION AS THE LEAF'S. Three of the
+# four names WERE one rule and are now imported. The fourth never was one rule,
+# and as of D-061 it no longer shares a name with the leaf's either:
 #
 #   ``_read_document``   — the tolerant core: (data, named problem). IMPORTED.
 #   ``_document_problem``— the problem alone. IMPORTED.
 #   ``_load_json``       — total. {} for missing / unreadable / malformed.
 #                          NEVER raises. IMPORTED.
-#   ``_artifact_guard``  — DEFINED HERE, and a different function from the
-#                          leaf's name-alike. The leaf's takes a run dir alone
-#                          and scans the WHOLE run; this one takes ``*names``
-#                          and is scoped to the artifacts the calling tool
-#                          actually touches, because a corrupt roll-up must not
-#                          block a defect filing that never opens it. It also
-#                          runs the ledger-container rung (``_LEDGER_KEYS`` /
+#   ``_named_artifact_guard``
+#                        — DEFINED HERE, and called ``_artifact_guard`` until
+#                          D-061. The leaf's ``_artifact_guard`` takes a run dir
+#                          alone and scans the WHOLE run; this one takes
+#                          ``*names`` and guards only the artifacts the calling
+#                          tool actually touches, because a corrupt roll-up must
+#                          not block a defect filing that never opens it — which
+#                          is what the name now says out loud. It also runs the
+#                          ledger-container rung (``_LEDGER_KEYS`` /
 #                          ``ledger_shape_problem``, D-096), which is LEDGER
 #                          knowledge and so may not move into a leaf — the leaf
 #                          says as much itself: a leaf that knows what a ledger
 #                          is has stopped being one.
+#
+# D-061 — THE RENAME IS THE CLOSURE, AND THE OTHER TWO EXITS WERE BOTH SHUT.
+# One name over two contracts reads to every name-keyed sweep as one rule
+# duplicated, so for three cycles the finding could only be ACCOUNTED for:
+# ``tests/orchestration/test_module_boundaries.py``'s ``_KNOWN_DUPLICATION``
+# row and ``tests/test_artifacts.py``'s ``_SECOND_READ_LAYER`` row both existed
+# to say "not that one", and an inventory that only ever grows is an inventory
+# nobody closes. Deleting either function breaks the other's call sites on
+# ARITY, and folding this one's ledger rung into the leaf is precisely what
+# GI-033 forbids — so the third exit, a name that states the narrower job, is
+# the only one that leaves the package with a single definition of
+# ``_artifact_guard`` and no row for either table to carry.
 #
 # Tolerance ALONE would have turned D-095 into D-096: a corrupt defects.json
 # reads as an empty one, and the next write then replaces the file and reports
@@ -284,7 +299,7 @@ def ledger_shape_problem(path: Path, collection_key: str) -> str | None:
     than the house refusal — the very refusal shape D-095/D-096 were filed to
     establish. The check now lives INSIDE ``ledger_transaction``, where no
     caller can skip it and none has to remember it. This function survives so
-    ``_artifact_guard`` can name a broken ledger BEFORE a tool starts work,
+    ``_named_artifact_guard`` can name a broken ledger BEFORE a tool starts work,
     which is a better message than one raised halfway through.
     """
     data, problem = _read_document(path)
@@ -304,13 +319,22 @@ _LEDGER_KEYS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _artifact_guard(fdir: Path, *names: str) -> dict | None:
-    """Named refusal when an artifact this tool must touch is unreadable.
+def _named_artifact_guard(fdir: Path, *names: str) -> dict | None:
+    """Named refusal when one of the NAMED artifacts is unreadable.
 
     The house refusal shape: ``error`` names the offending FILES and what is
     wrong with each, ``hint`` names the action. Scoped to the artifacts the
     calling tool actually reads or writes — a corrupt roll-up must not block a
     defect filing that never opens it.
+
+    THE NAME IS THE DIFFERENCE FROM THE LEAF'S (D-061). ``artifacts.py`` has an
+    ``_artifact_guard`` that takes a run dir alone and scans the WHOLE run; the
+    two were name-alikes for three cycles and every sweep keyed on names read
+    that as one rule copied twice. They are two rules: this one guards a NAMED
+    subset, and it runs the ledger-container rung below (``_LEDGER_KEYS`` /
+    ``ledger_shape_problem``, D-096), which is ledger knowledge GI-033 keeps
+    out of a leaf. Both differences are why neither could be deleted for the
+    other, and the arity is why the deletion would not even have type-checked.
     """
     problems: list[str] = []
     for name in names:
@@ -332,7 +356,7 @@ def artifact_refusal(problems: list[str]) -> dict:
 
     ``error`` names the offending files and what is wrong with each; ``hint``
     names the action. Two sites raise this shape — the pre-flight
-    ``_artifact_guard`` and ``LedgerShapeError``, which carries it so a refusal
+    ``_named_artifact_guard`` and ``LedgerShapeError``, which carries it so a refusal
     discovered inside the locked primitive reads identically to one caught
     before the tool started (D-127). Written here rather than at each so the
     two cannot drift into telling an operator two different stories about one
@@ -2507,7 +2531,7 @@ def foundry_init(
         # D-095: a corrupt state.json used to raise here, and resuming is
         # exactly when an operator is trying to recover from whatever corrupted
         # it. Naming the file is the whole value of the call at that moment.
-        if (corrupt := _artifact_guard(run_dir, "state.json")):
+        if (corrupt := _named_artifact_guard(run_dir, "state.json")):
             return corrupt
 
         # D-109 — RESUME RUNS THE SAME PREFLIGHT AND RE-RECORDS THE SAME
@@ -3023,7 +3047,7 @@ def foundry_add_defect(
     # this the corrupt file read as an empty one and the write replaced it —
     # the caller got `{"defect_id": "D-001", "total_defects": 1}` over the top
     # of a ledger that had held everything the run had found so far.
-    if (corrupt := _artifact_guard(fdir, "defects.json", "state.json")):
+    if (corrupt := _named_artifact_guard(fdir, "defects.json", "state.json")):
         return corrupt
 
     # D-128 \u2014 EVERY RUNG BELOW APPENDS; NOTHING RETURNS UNTIL THE LADDER IS
@@ -3474,7 +3498,7 @@ def foundry_add_observation(
     # (through `record_denylist_tripwire`) before it ever reaches
     # `observations`, and a refusal after the audit signal has fired would
     # leave the two halves of one decision in different states.
-    if (corrupt := _artifact_guard(fdir, "observations.json", "state.json")):
+    if (corrupt := _named_artifact_guard(fdir, "observations.json", "state.json")):
         return corrupt
 
     if source not in DEFECT_SOURCE_IDS:
@@ -3689,7 +3713,7 @@ def foundry_drive_temper_candidate(
     # the cycle this closure is stamped with comes out of state.json, and a
     # closure stamped from a corrupt counter is a record that cannot be joined
     # against the defects filed beside it.
-    if (corrupt := _artifact_guard(fdir, "observations.json", "state.json")):
+    if (corrupt := _named_artifact_guard(fdir, "observations.json", "state.json")):
         return corrupt
 
     candidate_id = observation_id.strip()
@@ -3804,7 +3828,7 @@ def foundry_query_observations(
     # repair. Guarded rather than merely tolerated, because a query that
     # silently answers "no observations" about an unreadable ledger is worse
     # than one that names the file.
-    if (corrupt := _artifact_guard(fdir, "observations.json")):
+    if (corrupt := _named_artifact_guard(fdir, "observations.json")):
         return corrupt
     data = _load_json(fdir / "observations.json")
     all_observations = _dict_records(data.get("observations", []))
@@ -3852,7 +3876,7 @@ def foundry_query_defects(
     if not fdir:
         return {"error": "No active foundry run. Call Foundry-Init."}
     # D-095 — same reasoning as the observations query above.
-    if (corrupt := _artifact_guard(fdir, "defects.json")):
+    if (corrupt := _named_artifact_guard(fdir, "defects.json")):
         return corrupt
     data = _load_json(fdir / "defects.json")
     defects = _dict_records(data.get("defects", []))
@@ -3919,7 +3943,7 @@ def foundry_add_verdict(
     # D-095 / D-096 — verdicts.json is a ledger too, named here BEFORE the
     # transaction so a corrupt one is reported as a pre-flight refusal rather
     # than out of the primitive's backstop.
-    if (corrupt := _artifact_guard(fdir, "verdicts.json", "state.json")):
+    if (corrupt := _named_artifact_guard(fdir, "verdicts.json", "state.json")):
         return corrupt
     verdicts_path = fdir / "verdicts.json"
 
@@ -3991,7 +4015,7 @@ def foundry_verify_coverage(
 
     # D-095 — this tool reads both ledgers and reports coverage over them; an
     # unreadable one must be named, not silently counted as zero.
-    if (corrupt := _artifact_guard(fdir, "verdicts.json", "defects.json")):
+    if (corrupt := _named_artifact_guard(fdir, "verdicts.json", "defects.json")):
         return corrupt
 
     verdicts_data = _load_json(fdir / "verdicts.json")

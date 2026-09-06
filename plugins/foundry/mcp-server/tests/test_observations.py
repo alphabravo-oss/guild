@@ -67,6 +67,11 @@ One regression test per acceptance criterion:
       CT-002 governs the required class. One test carries both, and says so.
   process-fixes FR-023
       the ledger is typed, per-run, and never mixed into defects.json.
+  fallout FR-008 / GI-024 (D-061)
+      the package defines ``_artifact_guard`` exactly ONCE. This module's
+      scoped guard — the one the refusal test above drives — was a name-alike
+      of the leaf's for three cycles and is now ``_named_artifact_guard``, so
+      no accounting row has to excuse the collision to a name-keyed sweep.
 
 Every filing below goes through ``_file_defect``, which supplies the ``tier``
 (CT-001 / FR-004) and ``class`` (CT-002 / FR-007) both doors now require. Those
@@ -1894,13 +1899,16 @@ def test_the_refusal_a_door_returns_is_the_one_the_guard_would_have_given(
     before the tool starts, the primitive names it once the lock is held. An
     operator must not be able to tell which noticed.
     """
-    from foundry_mcp.tools.foundry import _artifact_guard, ledger_shape_problem
+    from foundry_mcp.tools.foundry import (
+        _named_artifact_guard,
+        ledger_shape_problem,
+    )
 
     path = run / "defects.json"
     prior = {"defects": {"D-001": {"id": "D-001"}}, "sibling": "must survive"}
     path.write_text(json.dumps(prior), encoding="utf-8")
 
-    pre_flight = _artifact_guard(run, "defects.json")
+    pre_flight = _named_artifact_guard(run, "defects.json")
     assert pre_flight is not None
 
     raised = None
@@ -1918,6 +1926,76 @@ def test_the_refusal_a_door_returns_is_the_one_the_guard_would_have_given(
     assert ledger_shape_problem(path, "defects") in raised.refusal["error"]
     # Fails closed: the file is untouched.
     assert json.loads(path.read_text(encoding="utf-8")) == prior
+
+
+def test_the_scoped_guard_and_the_leafs_no_longer_share_a_name() -> None:
+    """fallout FR-008 / GI-024 (D-061) — ONE definition of ``_artifact_guard``.
+
+    The guard the test above drives used to be called ``_artifact_guard``, and
+    so is ``tools/artifacts.py``'s — a different function reachable under the
+    same name. Every sweep keyed on names read that as one rule copied twice,
+    and because neither copy could go (deleting either breaks the other's call
+    sites on ARITY, and folding this one's ledger rung into the leaf is what
+    GI-033 forbids) the finding could only ever be ACCOUNTED for, in two tables
+    in two other modules. Renaming is the exit that closes it.
+
+    THE PIN IS ON THE PACKAGE, not on this module: the duplication was never
+    visible from either file alone, which is exactly how it survived. Asserted
+    over every shipped module so a third definition appearing anywhere fails
+    here rather than in a table that has to be maintained to notice.
+    """
+    import ast
+    import inspect
+
+    from foundry_mcp.tools import artifacts
+    from foundry_mcp.tools import foundry as foundry_module
+    from foundry_mcp.tools.foundry import _named_artifact_guard
+
+    package = Path(artifacts.__file__).resolve().parent.parent
+
+    def defines(path: Path) -> set[str]:
+        """Top-level ``def``/``class`` names. An import is not a definition."""
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        }
+
+    shipped = [
+        path
+        for path in package.rglob("*.py")
+        if "__pycache__" not in path.parts
+    ]
+    assert len(shipped) >= 15, [str(p) for p in shipped]
+
+    homes = sorted(
+        path.relative_to(package).as_posix()
+        for path in shipped
+        if "_artifact_guard" in defines(path)
+    )
+    assert homes == ["tools/artifacts.py"], (
+        f"`_artifact_guard` is defined in {homes}. One name over two functions "
+        "is what D-061 closed; a second definition re-opens it, and no "
+        "name-keyed sweep can tell the two contracts apart."
+    )
+
+    # ...and the scoped guard is still here under its own name, still taking
+    # the ``*names`` that make it a different rule rather than a copy. The
+    # arity is not decoration: it is why neither function could be deleted for
+    # the other, and a signature that lost it would mean the rename had folded
+    # two contracts into one instead of separating them.
+    scoped = defines(Path(foundry_module.__file__).resolve())
+    assert "_named_artifact_guard" in scoped
+    assert "_artifact_guard" not in scoped
+    kinds = [
+        p.kind for p in inspect.signature(_named_artifact_guard).parameters.values()
+    ]
+    assert inspect.Parameter.VAR_POSITIONAL in kinds, kinds
+    leaf_kinds = [
+        p.kind for p in inspect.signature(artifacts._artifact_guard).parameters.values()
+    ]
+    assert inspect.Parameter.VAR_POSITIONAL not in leaf_kinds, leaf_kinds
 
 
 def test_ledger_transaction_yields_only_mapping_records(run: Path) -> None:
