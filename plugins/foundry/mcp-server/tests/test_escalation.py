@@ -128,9 +128,9 @@ from foundry_mcp.tools.orchestration.escalation import (
 from foundry_mcp.tools.orchestration.gates import foundry_gate
 from foundry_mcp.tools.orchestration.transitions import foundry_mark_phase_complete
 
-# `_check_active_teams` is bound by name in five orchestration modules and
-# `STRUCTURAL_PASS_BUDGET` in two, so patching the one that DEFINES either
-# leaves every importer resolving the real one.
+# `_check_active_teams` is bound by name in every orchestration module that
+# reads it, as is `STRUCTURAL_PASS_BUDGET`, so patching the one that DEFINES
+# either leaves every importer resolving the real one.
 from tests.orchestration._env import patch_everywhere
 
 

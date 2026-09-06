@@ -55,8 +55,9 @@ from foundry_mcp.tools.orchestration.gates import foundry_gate
 from foundry_mcp.tools.orchestration.guidance import foundry_next_action
 from foundry_mcp.tools.orchestration.spend import foundry_record_spend
 
-# `_check_active_teams` is bound by name in five orchestration modules, so
-# patching the one that DEFINES it leaves the other four on the real one.
+# `_check_active_teams` is bound by name in every orchestration module that
+# reads it, so patching the one that DEFINES it leaves every importer on the
+# real one.
 from tests.orchestration._env import (
     ORCHESTRATION,
     orchestration_source,

@@ -57,9 +57,10 @@ from foundry_mcp.tools.orchestration.guidance import _compute_next_action
 from foundry_mcp.tools.orchestration.gates import foundry_gate
 from foundry_mcp.tools.orchestration.transitions import foundry_mark_phase_complete
 
-# The team scan is bound by name in five orchestration modules, so patching the
-# one that DEFINES it leaves the other four resolving the real one — a patch
-# that reaches some callers and not others drives a state no run can be in.
+# The team scan is bound by name in every orchestration module that reads it,
+# so patching the one that DEFINES it leaves the importers resolving the real
+# one — a patch that reaches some callers and not others drives a state no run
+# can be in.
 # `patch_everywhere` is the harness casting 2 landed for exactly that.
 from tests.orchestration._env import patch_everywhere
 

@@ -77,8 +77,9 @@ from foundry_mcp.tools.orchestration.fix_gate import (
     foundry_mark_defect_fixed as _mark_defect_fixed,
 )
 
-# `_check_active_teams` is bound by name in five orchestration modules, so
-# patching the one that DEFINES it leaves the other four on the real one.
+# `_check_active_teams` is bound by name in every orchestration module that
+# reads it, so patching the one that DEFINES it leaves every importer on the
+# real one.
 from tests.orchestration._env import patch_everywhere
 
 

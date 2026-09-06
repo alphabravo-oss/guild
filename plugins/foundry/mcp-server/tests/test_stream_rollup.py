@@ -66,8 +66,8 @@ from foundry_mcp.tools import foundry_state
 # symbol: the roll-up and its readers are `orchestration/streams.py`, the
 # document transaction and the marker names are the leaf `tools/artifacts.py`,
 # and the team scan is `orchestration/teams.py` — patched through
-# `patch_everywhere` because five modules bind that name and patching only the
-# definer leaves the other four on the real one.
+# `patch_everywhere` because every module that reads that name binds it, and
+# patching only the definer leaves the importers on the real one.
 from foundry_mcp.tools import artifacts as _artifacts
 from foundry_mcp.tools.orchestration import streams as _streams
 from foundry_mcp.tools.orchestration.streams import (
