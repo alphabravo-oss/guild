@@ -669,8 +669,8 @@ def test_the_temper_roster_section_names_the_call_that_closes_a_candidate() -> N
 # fallout AC-048 / FR-025 -- the PROVE half of fallout marking
 # ---------------------------------------------------------------------------
 
-# fallout D-095 / NFR-011. These three clauses used to live here as a SECOND
-# hand-typed tuple under the same name as `test_protocol_prose.py`'s, so
+# fallout NFR-011, filed as D-095. These three clauses used to live here as a
+# SECOND hand-typed tuple under the same name as `test_protocol_prose.py`'s, so
 # rewording one left the other passing against a different sentence -- two
 # modules pinning one ruling and free to drift, which is the drift fallout
 # NFR-011 forbids and the reason the ruling has one home. The import at the top
