@@ -1847,7 +1847,8 @@ def _normalize(text: str) -> str:
 
     Removes:
       - Leading list markers (`-`, `*`, `+`, `1.`, etc.)
-      - Bold/italic wrappers (`**word**`, `*word*`, `__word__`, `_word_`)
+      - Bold/italic wrappers, in the spelling the substitutions below use:
+        **X**, __X__, *X*, _X_
       - Leading/trailing whitespace on each line
       - Consecutive blank lines (collapsed to single)
 

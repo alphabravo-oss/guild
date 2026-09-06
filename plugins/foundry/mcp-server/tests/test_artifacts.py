@@ -786,8 +786,9 @@ def test_the_only_edge_above_the_leaf_is_the_declared_lazy_one():
 # Both second copies this inventory was written for are GONE, closed by the
 # casting that owns ``tools/foundry.py`` under concern C-003: the tolerant read
 # is imported from here (fallout D-011) and the lock domain is bound from here
-# (fallout D-010), so ``_SECOND_LOCK_DOMAINS`` is empty and
-# ``_SECOND_READ_LAYER``'s one row has shrunk to what it still accounts for.
+# (fallout D-010). The one row that outlived them recorded a shared NAME rather
+# than a shared rule, and it went with the rename that closed fallout D-061 — so
+# ``_SECOND_LOCK_DOMAINS`` and ``_SECOND_READ_LAYER`` are BOTH empty now.
 # The guards stay, in the shape this package already uses for exactly this
 # situation
 # (``tests/orchestration/test_module_boundaries.py#_KNOWN_DUPLICATION``): an
@@ -801,51 +802,58 @@ def test_the_only_edge_above_the_leaf_is_the_declared_lazy_one():
 #     outlives the thing it excuses is how an exception becomes the rule.
 #
 # The name-collision sweep in ``test_module_boundaries`` already covers the READ
-# layer, because those four names collide. It was BLIND to the lock domain: one
-# module spelled it ``_ARTIFACT_LOCK`` and the other ``_LEDGER_LOCK``, so a
-# sweep keyed on names saw two different symbols where there is one rule. That
+# layer, because those four names collide. It was BLIND to the lock domain: the
+# leaf spelled it ``_ARTIFACT_LOCK`` and the other module spelled its own pair
+# under names of its own, so a sweep keyed on names saw two different symbols
+# where there is one rule. That
 # blind spot is why the second guard below is keyed on the SHAPE — a module-top
 # ``threading.RLock()`` / ``threading.local()`` pair — rather than on a name,
 # and it is why the guard outlives the row it was written to hold: the next
 # module to declare a domain of its own will not be named after this one
 # either.
 #
-# AND THE COLLISION SWEEP CANNOT TELL TWO CONTRACTS APART, which is the other
-# half of what the rows below now record. ``_artifact_guard`` is defined here
-# and in ``tools/foundry.py`` and the two are DIFFERENT FUNCTIONS: this one
-# takes a run dir and scans the whole run; that one takes ``*names``, is scoped
-# to the artifacts the calling tool touches, and runs a ledger-container rung
-# that may not move into a leaf (fallout GI-033 — a leaf that knows what a
-# ledger is has stopped being one). A sweep keyed on names reports that as one
-# rule duplicated. It is one NAME shared by two, which is a different finding
-# and is recorded as one rather than closed by deleting a guard the package
-# needs.
+# AND THE COLLISION SWEEP COULD NOT TELL TWO CONTRACTS APART, which is what the
+# last row recorded until fallout D-061 closed it. ``_artifact_guard`` was
+# defined both in the leaf and in ``tools/foundry.py``, and the two were
+# DIFFERENT FUNCTIONS: the leaf's takes a run dir and scans the whole run; the
+# other took ``*names``, was scoped to the artifacts the calling tool touches,
+# and ran a ledger-container rung that may not move into a leaf (fallout
+# GI-033 — a leaf that knows what a ledger is has stopped being one). A sweep
+# keyed on names read that as one rule duplicated when it was one NAME over two
+# contracts, so it was recorded rather than closed by deleting a guard the
+# package needs. Neither deletion was ever on offer — the arities differ — and
+# the exit that did close it was a name stating the narrower job,
+# ``_named_artifact_guard``. Recording a finding is not closing it, and the row
+# below is empty because someone went and closed this one.
 # --------------------------------------------------------------------------- #
 
 
 #: A shipped module keeping its own copy of the tolerant-read layer beside this
 #: one, with the reason it is still there. fallout D-011.
-_SECOND_READ_LAYER: dict[str, str] = {
-    "foundry.py": (
-        "`_artifact_guard` ONLY, and it is not a second copy of this module's — "
-        "it takes `*names`, is scoped to the artifacts the calling tool touches "
-        "so a corrupt roll-up cannot block a filing that never opens it, and it "
-        "runs the ledger-container rung (`_LEDGER_KEYS` / `ledger_shape_problem`, "
-        "D-096) that GI-033 keeps out of a leaf. The three that WERE byte-"
-        "identical — `_read_document`, `_document_problem`, `_load_json` — are "
-        "imported from here as of concern C-003; this row is the shared NAME, "
-        "which the sweep cannot distinguish from a shared rule. Closing it means "
-        "renaming one of the two, which is a decision for the castings that own "
-        "both files rather than for either alone."
-    ),
-}
+#: EMPTY, and like the domain table below that is the state it was written to
+#: reach. Its last row was `foundry.py`, and that row was never a second copy of
+#: the rule: the three byte-identical bodies — `_read_document`,
+#: `_document_problem` and `_load_json` — were imported from the leaf under
+#: concern C-003, which left one shared NAME, `_artifact_guard`, over two
+#: different contracts. A sweep keyed on names cannot see that difference, and
+#: neither function could be deleted into the other — the arities differ, and
+#: the ledger-container rung the other one runs (`_LEDGER_KEYS` /
+#: `ledger_shape_problem`, D-096) is what fallout GI-033 keeps out of a leaf. So
+#: the row said "not that one" for three cycles, until fallout D-061 renamed the
+#: narrower function to `_named_artifact_guard` — the one exit that leaves the
+#: package a single definition of `_artifact_guard` and no row for this table to
+#: carry.
+_SECOND_READ_LAYER: dict[str, str] = {}
 
 
 #: The four names that ARE the tolerant-read layer. A module defining any of
 #: them is answering the same question this module answers under the same name
 #: — which is a finding either way, but not always the SAME finding: three of
-#: the four were byte-identical bodies and were deleted, and the fourth is one
-#: name over two contracts. `_SECOND_READ_LAYER`'s row says which.
+#: the four were byte-identical bodies and were deleted, and the fourth was one
+#: name over two contracts, closed by renaming the other contract rather than by
+#: deleting either function. `_SECOND_READ_LAYER` records why it is empty. The
+#: tuple still names all four, because the guard's subject is the NEXT second
+#: copy and not the ones already closed.
 _READ_LAYER_SYMBOLS = ("_read_document", "_document_problem", "_load_json",
                        "_artifact_guard")
 
@@ -853,10 +861,11 @@ _READ_LAYER_SYMBOLS = ("_read_document", "_document_problem", "_load_json",
 #: A shipped module declaring its own run-artifact lock domain beside this
 #: module's, with the reason it is still there. fallout D-010.
 #: EMPTY, and that is the state this table was written to reach. `foundry.py`
-#: declared `_LEDGER_LOCK` / `_LEDGER_TX` over the same documents — verdicts.json
-#: has one writer in each — and the two excluded on disk only because two
-#: independently typed spellings of the lock filename agreed, one of them a bare
-#: ".lock" literal at `_locked_document` and `write_document`. It now binds this
+#: declared a module-top `threading.RLock()` / `threading.local()` pair of its
+#: own over the same documents — verdicts.json has one writer in each — and the
+#: two excluded on disk only because two independently typed spellings of the
+#: lock filename agreed, one of them a bare ".lock" literal at
+#: `_locked_document` and `write_document`. It now binds this
 #: module's `_ARTIFACT_LOCK` / `_ARTIFACT_TX` and derives the sidecar name from
 #: `_TX_LOCK_SUFFIX` (concern C-003), so there is one domain, one in-flight map
 #: keyed on `str(path)`, and a cross-domain nesting composes into one write
@@ -895,9 +904,10 @@ def _declares_lock_domain(path: Path) -> bool:
     A domain is the PAIR — a re-entrant lock ordering threads and a
     thread-local map making the critical section re-entrant per path. Detected
     by shape rather than by name, which is the whole reason this guard exists
-    beside the name-collision sweep: `_ARTIFACT_LOCK` and `_LEDGER_LOCK` were
-    two names for one rule, and no sweep keyed on names would ever have paired
-    them. That pair is gone (concern C-003) and the rationale is not: the next
+    beside the name-collision sweep: this module's `_ARTIFACT_LOCK` and the
+    other module's differently-named lock were two names for one rule, and no
+    sweep keyed on names would ever have paired them. That pair is gone
+    (concern C-003) and the rationale is not: the next
     module to open a domain of its own will not be named after this one either.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))

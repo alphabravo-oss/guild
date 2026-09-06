@@ -53,9 +53,12 @@ already paid for once.
 AND THE OTHER SECOND COPY IS CLOSED TOO, WHICH THIS SAYS OUT LOUD RATHER THAN
 LEAVING A READER TO INFER IT FROM AN ABSENCE. ``tools/foundry.py`` held a
 parallel stack over the SAME documents: a byte-identical tolerant read
-(fallout D-011) and a lock domain of its own, ``_LEDGER_LOCK`` / ``_LEDGER_TX``
-(fallout D-010). Both closed onto this module — it imports ``_load_json``,
-``_read_document`` and ``_document_problem`` from here, binds
+(fallout D-011) and a lock domain of its own — a module-top
+``threading.RLock()`` / ``threading.local()`` pair under names of its own
+(fallout D-010; the commit that deleted them spells them, which is where a dead
+spelling belongs and why this sentence does not repeat it). Both closed onto
+this module — it imports ``_load_json``, ``_read_document`` and
+``_document_problem`` from here, binds
 ``_ARTIFACT_LOCK`` / ``_ARTIFACT_TX``, and derives its lock sidecar from
 ``_TX_LOCK_SUFFIX``. So those names are a package-wide contract and not this
 module's private business, and there is now ONE in-flight map keyed on
@@ -63,17 +66,21 @@ module's private business, and there is now ONE in-flight map keyed on
 on the same thread compose into one write instead of blocking on a flock the
 thread already holds.
 
-ONE NAME IS STILL SHARED, AND IT IS NOT A SHARED RULE. ``foundry.py`` also
-defines ``_artifact_guard``, and it is a DIFFERENT function from this module's:
-that one takes ``*names`` and is scoped to the artifacts the calling tool
-touches, so a corrupt roll-up cannot block a filing that never opens it, and it
-runs a ledger-container rung that may not move into a leaf (GI-033 — a leaf
-that knows what a ledger is has stopped being one). This module's takes a run
-dir and scans the whole run. A sweep keyed on names cannot tell those apart, so
-the collision is recorded rather than closed by deleting a guard the package
-needs: ``tests/test_artifacts.py#_SECOND_READ_LAYER`` carries the row, and
-``#_SECOND_LOCK_DOMAINS`` is empty. Each inventory FAILS the day its row stops
-accounting for anything, which is what took the other rows out.
+THE ONE SHARED NAME IS GONE TOO, AND A RENAME IS WHAT CLOSED IT (fallout
+D-061). ``foundry.py`` used to define ``_artifact_guard`` as well, and it was
+never a second copy of this module's: that one takes ``*names`` and is scoped
+to the artifacts the calling tool touches, so a corrupt roll-up cannot block a
+filing that never opens it, and it runs a ledger-container rung that may not
+move into a leaf (GI-033 — a leaf that knows what a ledger is has stopped being
+one). This module's takes a run dir and scans the whole run. A sweep keyed on
+names could not tell those two contracts apart and read them as one rule
+duplicated — and neither deletion was on offer, because the arities differ and
+folding that ledger rung in here is the thing GI-033 forbids. The third exit
+was a name that states the narrower job, so that function is
+``_named_artifact_guard`` now and ``_artifact_guard`` has exactly one
+definition, here. Both inventories in ``tests/test_artifacts.py`` are empty as
+a result, which is the state they were written to reach: each one FAILS the day
+a row stops accounting for anything, and that is what took the last rows out.
 """
 
 from __future__ import annotations
@@ -141,7 +148,8 @@ from foundry_mcp.tools.foundry_state import (
 # THERE WERE TWO LOCK DOMAINS OVER ONE DOCUMENT SET, AND THIS IS WHY THAT WAS A
 # DEFECT AND NOT A DESIGN (fallout D-010, closed). ``foundry.py``'s
 # ``_locked_document`` / ``ledger_transaction`` was a SECOND stack over these
-# same paths, with its own ``_LEDGER_LOCK`` and its own ``_LEDGER_TX``. The
+# same paths, with a module-top ``threading.RLock()`` / ``threading.local()``
+# pair of its own, under names of its own. The
 # projection genuinely differs — that primitive yields a list under a collection
 # key, which fits defects.json and observations.json but not state.json /
 # stream-rollup.json / escalation.json, whose payload is the document itself —
@@ -566,9 +574,9 @@ def _manifest_shape_problem_lazy(manifest: object) -> str | None:
     D-134: the validator's membership used to be derived over ``foundry_spawn``
     's OWN functions rather than over every reader of castings/manifest.json in
     the package — so the four doors in that module were guarded while
-    ``_check_sight_required``, ``_trace_skip_check``, ``foundry_gate`` and both
-    ``foundry_validate`` readers indexed the same records with a top-rung-only
-    guard. ``castings: "nope"`` met ``.get()`` and raised AttributeError out of
+    ``_check_sight_required``, the width module's since-deleted TRACE-skip check
+    (fallout D-057), ``foundry_gate`` and both ``foundry_validate`` readers
+    indexed the same records with a top-rung-only guard. ``castings: "nope"`` met ``.get()`` and raised AttributeError out of
     Foundry-Next, the mandatory handshake before EVERY phase transition.
     """
     from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
@@ -824,8 +832,8 @@ ROLLUP_FILENAME = "stream-rollup.json"
 
 #: The HEAD recorded at each INSPECT boundary, so the next crossing knows what
 #: "since the last boundary" means. A marker rather than a state key because
-#: ``_trace_skip_check``'s ``.trace-clean-at`` is the established shape for
-#: exactly this fact, and the two are read by the same fallback ladder.
+#: ``TRACE_CLEAN_AT_MARKER`` is the established shape for exactly this fact, and
+#: the two are read by the same fallback ladder in the width module.
 INSPECT_BOUNDARY_SHA_MARKER = ".inspect-boundary-sha"
 
 #: HEAD at the CAST→INSPECT crossing, and at the last clean TRACE — the two
