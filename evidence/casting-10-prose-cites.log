@@ -16,19 +16,19 @@ _PHASE_NAMES           no backticked cite
 _TEST_BASENAME_RES     no backticked cite
 
 == the successors the prose names now ==
-src/foundry_mcp/tools/foundry_report.py:906:    overlay -- `foundry_state.overlay_unreported`, called from `_spend_summary`
-src/foundry_mcp/tools/foundry_report.py:910:    is the seed `foundry_record_spend` lays down, `foundry_state.spend_bucket`,
-src/foundry_mcp/tools/foundry_report.py:962:    # `foundry_state.overlay_unreported` -- BACK OUT of the orchestrator
-src/foundry_mcp/tools/foundry_report.py:2046:        # `foundry_state.markdown_sections` matches on.
-src/foundry_mcp/tools/foundry_report.py:2414:        # ROLL-UP's number or it is nothing — `foundry_state.spend_bucket`
-tests/test_report.py:39:``foundry_state.markdown_sections``) and the unreported-dispatch walk.
-tests/test_report.py:2030:    nothing: `foundry_state.spend_bucket` seeds it None and `_read_spend`
-tests/test_report.py:2207:    # `foundry_state.overlay_unreported` writes the derived number onto
-tests/test_report.py:3619:    # overlay, now `foundry_state.overlay_unreported`) were both reaches BACK
-tests/test_report.py:3652:        "the overlay is `foundry_state.overlay_unreported` now; a back-import "
-tests/test_report.py:3803:    `foundry_state.overlay_unreported`, then the orchestrator's — runs
-tests/test_report.py:3806:    is `foundry_state.spend_bucket`, which seeds 0 and never increments.
-tests/test_report.py:4755:    D-229 closed the zero rows in `foundry_state.overlay_unreported`,
-tests/test_report.py:4863:    `foundry_state.overlay_unreported`, and `foundry_state.spend_rollup` seeds
-tests/test_report.py:4985:    `foundry_state.markdown_sections` matches a whole trimmed line, and this
-tests/test_foundry_state_readers.py:1213:    find and the seal's splitter -- now `foundry_state.markdown_sections` --
+src/foundry_mcp/tools/foundry_report.py:907:    overlay -- `foundry_state.overlay_unreported`, called from `_spend_summary`
+src/foundry_mcp/tools/foundry_report.py:911:    is the seed `foundry_record_spend` lays down, `foundry_state.spend_bucket`,
+src/foundry_mcp/tools/foundry_report.py:963:    # `foundry_state.overlay_unreported` -- BACK OUT of the orchestrator
+src/foundry_mcp/tools/foundry_report.py:2018:        # `foundry_state.markdown_sections` matches on.
+src/foundry_mcp/tools/foundry_report.py:2386:        # ROLL-UP's number or it is nothing — `foundry_state.spend_bucket`
+tests/test_report.py:38:``foundry_state.markdown_sections``) and the unreported-dispatch walk.
+tests/test_report.py:2033:    nothing: `foundry_state.spend_bucket` seeds it None and `_read_spend`
+tests/test_report.py:2210:    # `foundry_state.overlay_unreported` writes the derived number onto
+tests/test_report.py:3622:    # overlay, now `foundry_state.overlay_unreported`) were both reaches BACK
+tests/test_report.py:3655:        "the overlay is `foundry_state.overlay_unreported` now; a back-import "
+tests/test_report.py:3806:    `foundry_state.overlay_unreported`, then the orchestrator's — runs
+tests/test_report.py:3809:    is `foundry_state.spend_bucket`, which seeds 0 and never increments.
+tests/test_report.py:4758:    D-229 closed the zero rows in `foundry_state.overlay_unreported`,
+tests/test_report.py:4866:    `foundry_state.overlay_unreported`, and `foundry_state.spend_rollup` seeds
+tests/test_report.py:4988:    `foundry_state.markdown_sections` matches a whole trimmed line, and this
+tests/test_foundry_state_readers.py:1391:    find and the seal's splitter -- now `foundry_state.markdown_sections` --
