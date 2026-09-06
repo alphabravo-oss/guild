@@ -1925,11 +1925,13 @@ def get_run_dir(project_root: str, name: str | None = None) -> Path | None:
 #
 # GI-033 lets a verifier module (gates, transitions, width) reach a leaf and
 # nothing in the lifecycle layer, and lets a lifecycle module reach no verifier
-# at all. It permits exactly one exception -- transitions dispatching the halt
-# token and the terminal seal into `halt.py`, one-way -- and none of the reads
-# below is that seam. There is no table to record a second exception in either:
-# D-035 deleted the one that existed, and the boundary pin now says so in its
-# own failure message rather than offering a row to write.
+# at all. It permits exactly one exception, and the boundary guard spells that
+# exception as a one-edge frozenset, `_VERIFIER_TO_LIFECYCLE_SEAM`:
+# transitions dispatching the halt token and the terminal seal into `halt.py`,
+# one-way. None of the reads below is that seam. There is no table to record a
+# SECOND exception in either -- D-035 deleted the one that existed, and the
+# boundary pin now says so in its own failure message rather than offering a
+# row to write.
 #
 # So every read below had to MOVE, and each was the same shape: a PURE READ of
 # a run artifact that happened to be defined in the module whose feature it
