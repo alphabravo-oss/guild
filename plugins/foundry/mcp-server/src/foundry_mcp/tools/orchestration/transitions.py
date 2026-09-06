@@ -11,6 +11,7 @@ from pathlib import Path
 
 from datetime import datetime
 from foundry_mcp.schemas.vocab import (
+    REPORT_MD_FILENAME,
     CONCERN_STATUS_OPEN,
     HALT_REASONS,
     STREAM_WIRE_IDS,
@@ -80,7 +81,7 @@ from foundry_mcp.tools.orchestration.gates import (
     CASTING_KEY_FILE_CAP,
     _active_teams,
     _streams_complete,
-    _halted_refusal,
+    _halted_sentences,
     _halted_state,
     _GATE_RANK_CONFIG,
     _GATE_RANK_CONFLICT,
@@ -124,6 +125,79 @@ def _preconditions_outcome(
     }
     outcome["reason"], outcome["hint"] = ladder.outcome()
     return outcome
+
+
+
+
+def _halted_outcome(fdir: Path) -> dict | None:
+    """The preconditions outcome a HALTED run owes, or None to carry on.
+
+    fallout AC-062 / AC-008 / GI-011 / GI-029 (D-088) — THE HALTED CHECK IS A
+    RUNG THE TOKEN'S ROUTINE MAKES, AND NO LONGER A GUARD THE DOOR MAKES ABOVE
+    IT.
+    -------------------------------------------------------------------------
+    `foundry_gate` and `_phase_transition` both called `_halted_refusal` above
+    their branch chains, which made `_halt_preconditions`' `not_already_halted`
+    rung and `_done_preconditions`' HALTED rung UNREACHABLE through either
+    public door: calling the routine directly returned `passed: False` with a
+    rank-0 refusal, while both doors returned the short-circuit's sentence with
+    no `refusals` key at all. AC-062 says `Foundry-Phase('halt')` "refuses on
+    THAT FUNCTION ALONE", and three of the invariant test's derived cases
+    (halt / done / nyquist_done x `_GATE_RANK_HALTED`) were asserting on the
+    guard rather than on the rung the derivation named — the test's own `else:`
+    branch was written for that path.
+
+    SO EVERY ROUTINE MAKES IT, AND THE SHORT-CIRCUIT SURVIVES. Called first by
+    each `_<token>_preconditions`, returning a complete one-rung outcome, so a
+    halted run costs one `state.json` read and NOT the evidence sweep
+    `_done_preconditions` would otherwise run before refusing. That is the
+    property the door-level guard was really buying, and it is kept here where
+    the rank already says the same thing: `_GATE_RANK_HALTED` is 0, the lowest
+    there is, so no other failing check could out-rank it anyway.
+
+    The refusal's own three fields ride out as non-refusing facts, so both doors
+    still publish `halted`, `halted_at_cycle` and `halted_reason` exactly as the
+    guard did.
+    """
+    halted = _halted_state(fdir)
+    if halted is None:
+        return None
+    cycle_text = (
+        f"cycle {halted['halted_at_cycle']}"
+        if isinstance(halted["halted_at_cycle"], int)
+        else "its cycle cap"
+    )
+    # ONE SPELLING. `_halted_refusal` renders the same pair with its own leading
+    # clause for a door that answers directly; the rung takes it bare and lets
+    # `_transition_refusal` add the clause. Re-wording it here is the drift both
+    # F6 doors have already paid for once.
+    reason, hint = _halted_sentences(fdir, halted, cycle_text)
+    ladder = _GateLadder()
+    ladder.fail(_GATE_RANK_HALTED, reason, hint)
+    checklist = [{
+        "check": f"run_not_halted (halted_at_cycle={halted['halted_at_cycle']})",
+        "ok": False,
+        "halted_reason": halted["halted_reason"],
+    }]
+    # EVERY FACT THE DOOR-LEVEL GUARD PUBLISHED, still published. The guard
+    # returned `_halted_refusal`'s whole dict, so a caller reading `report`,
+    # `report_generated`, `report_error` or `max_cycles` off a halted refusal
+    # kept them; a rung that carried only the reason would have moved the
+    # refusal and lost four fields on the way, which is the shape
+    # `_transition_refusal`'s own docstring warns about.
+    report_path = fdir / REPORT_MD_FILENAME
+    report_present = report_path.exists()
+    return _preconditions_outcome(
+        ladder,
+        checklist,
+        halted=True,
+        halted_at_cycle=halted["halted_at_cycle"],
+        halted_reason=halted["halted_reason"],
+        max_cycles=halted["max_cycles"],
+        report=str(report_path) if report_present else None,
+        report_generated=report_present,
+        report_error=halted["halted_report_error"],
+    )
 
 
 
@@ -365,6 +439,11 @@ def _start_cast_preconditions(fdir: Path, project_root: str) -> dict:
     rungs now, so a run with no manifest still reports what the other checks
     would have said — which is the property `_GateLadder` exists for.
     """
+    # fallout AC-062 / AC-008 / GI-011 (D-088) — THE HALTED RUNG, MADE BY
+    # THE ROUTINE RATHER THAN BY THE DOOR ABOVE IT. Short-circuits, so a
+    # halted run costs one state.json read and none of the work below.
+    if (halted := _halted_outcome(fdir)) is not None:
+        return halted
     from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
 
     checklist: list[dict] = []
@@ -458,6 +537,11 @@ def _cast_preconditions(fdir: Path, project_root: str) -> dict:
     call it precedes. It is reported as the FACT it is: the checklist still
     carries `cast_complete`, and nothing refuses on a post-condition of itself.
     """
+    # fallout AC-062 / AC-008 / GI-011 (D-088) — THE HALTED RUNG, MADE BY
+    # THE ROUTINE RATHER THAN BY THE DOOR ABOVE IT. Short-circuits, so a
+    # halted run costs one state.json read and none of the work below.
+    if (halted := _halted_outcome(fdir)) is not None:
+        return halted
     checklist: list[dict] = []
     ladder = _GateLadder()
 
@@ -512,6 +596,11 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
     rather than through `_source_phase_rung` because `inspect_start` accepts two
     phases for two different reasons and its refusal names both.
     """
+    # fallout AC-062 / AC-008 / GI-011 (D-088) — THE HALTED RUNG, MADE BY
+    # THE ROUTINE RATHER THAN BY THE DOOR ABOVE IT. Short-circuits, so a
+    # halted run costs one state.json read and none of the work below.
+    if (halted := _halted_outcome(fdir)) is not None:
+        return halted
     checklist: list[dict] = []
     ladder = _GateLadder()
 
@@ -672,6 +761,11 @@ def _inspect_clean_preconditions(fdir: Path, project_root: str) -> dict:
     `fixes_after_decision` rung below, which measures the same thing against the
     recorded width decision instead of against a marker.
     """
+    # fallout AC-062 / AC-008 / GI-011 (D-088) — THE HALTED RUNG, MADE BY
+    # THE ROUTINE RATHER THAN BY THE DOOR ABOVE IT. Short-circuits, so a
+    # halted run costs one state.json read and none of the work below.
+    if (halted := _halted_outcome(fdir)) is not None:
+        return halted
     checklist: list[dict] = []
     ladder = _GateLadder()
 
@@ -794,6 +888,11 @@ def _grind_start_preconditions(fdir: Path, project_root: str) -> dict:
     not something a lead can fix at the door: the run stops, with its open work
     written down, and that is a successful transition (FR-045).
     """
+    # fallout AC-062 / AC-008 / GI-011 (D-088) — THE HALTED RUNG, MADE BY
+    # THE ROUTINE RATHER THAN BY THE DOOR ABOVE IT. Short-circuits, so a
+    # halted run costs one state.json read and none of the work below.
+    if (halted := _halted_outcome(fdir)) is not None:
+        return halted
     checklist: list[dict] = []
     ladder = _GateLadder()
 
@@ -869,6 +968,11 @@ def _temper_preconditions(fdir: Path, project_root: str) -> dict:
     fallout AC-010 — D-240 CLOSES HERE. The verdict read was the `temper`
     gate's alone; this transition entered F5 on a ledger full of THIN rows.
     """
+    # fallout AC-062 / AC-008 / GI-011 (D-088) — THE HALTED RUNG, MADE BY
+    # THE ROUTINE RATHER THAN BY THE DOOR ABOVE IT. Short-circuits, so a
+    # halted run costs one state.json read and none of the work below.
+    if (halted := _halted_outcome(fdir)) is not None:
+        return halted
     checklist: list[dict] = []
     ladder = _GateLadder()
     source = _source_phase_rung(ladder, checklist, fdir, "temper")
@@ -899,6 +1003,11 @@ def _nyquist_preconditions(fdir: Path, project_root: str) -> dict:
     neither, so a run that never asked for F5.5 could enter it and generate
     regression tests locking in behaviour a stream had already ruled wrong.
     """
+    # fallout AC-062 / AC-008 / GI-011 (D-088) — THE HALTED RUNG, MADE BY
+    # THE ROUTINE RATHER THAN BY THE DOOR ABOVE IT. Short-circuits, so a
+    # halted run costs one state.json read and none of the work below.
+    if (halted := _halted_outcome(fdir)) is not None:
+        return halted
     checklist: list[dict] = []
     ladder = _GateLadder()
     source = _source_phase_rung(ladder, checklist, fdir, "nyquist")
@@ -982,6 +1091,15 @@ def _halt_preconditions(
     reason no closed set carries. An EMPTY text is not refused either — the
     member alone is a complete answer.
     """
+    # fallout AC-062 (D-088) — THE `not_already_halted` RUNG, FIRST AND
+    # REACHABLE. It was built below, and both doors short-circuited above this
+    # function, so it never spoke through either of them: the routine answered
+    # rank-0 `refusals` and the doors answered a bare sentence with no
+    # `refusals` key. Asked here, in the shared spelling every other routine
+    # uses, so `Foundry-Phase('halt')` refuses on THIS FUNCTION ALONE.
+    if (halted := _halted_outcome(fdir)) is not None:
+        return halted
+
     checklist: list[dict] = []
     ladder = _GateLadder()
 
@@ -1008,15 +1126,10 @@ def _halt_preconditions(
 
     _teams_rung(ladder, checklist, project_root)
 
-    already = _halted_state(fdir)
-    if already is not None:
-        ladder.fail(
-            _GATE_RANK_HALTED,
-            f"the run is already HALTED ({already['halted_reason']})",
-            "HALTED is terminal and there is no second halt. Read REPORT.md; "
-            "start a NEW run if the work continues.",
-        )
-    checklist.append({"check": "not_already_halted", "ok": already is None})
+    # The rung is made ABOVE, by `_halted_outcome`, which is the one spelling
+    # every routine uses. Reaching this line means the run is not halted, so the
+    # checklist records the check that passed.
+    checklist.append({"check": "not_already_halted", "ok": True})
     return _preconditions_outcome(ladder, checklist, halt_reason=member, halt_text=text)
 
 
@@ -1231,32 +1344,75 @@ def foundry_mark_phase_complete(
     fdir = get_run_dir(project_root)
     if not fdir or not fdir.exists():
         return {"error": "No active foundry run"}
-    if (corrupt := _artifact_guard(fdir)):
+    # fallout FR-046 / CT-004 (D-090) \u2014 THE HALT TOKEN REFUSES ON
+    # `_halt_preconditions` AND ON NOTHING ELSE.
+    # ----------------------------------------------------------------------
+    # FR-046 is exact about the size of this door for this token: "refuses ONLY
+    # on `_halt_preconditions` (reason member, no team registered, not already
+    # HALTED)", and CT-004's errors column is "the refusals `_halt_preconditions`
+    # reports". The branch itself was already clean; this PREAMBLE was not. Two
+    # checks the routine does not report refused ahead of it:
+    #
+    #   * `_artifact_guard`, for any unreadable run artifact. Driven:
+    #     `Foundry-Phase('halt', reason='spec_change_required', text=...)` on a
+    #     run with a corrupt verdicts.json returned "Run artifacts cannot be
+    #     read" with `state.json.phase` still F3, and the same for a corrupt
+    #     defects.json or state.json. The halt door exists so a ruling is
+    #     RECORDED in the archive instead of hand-edited (US-006), and a run
+    #     whose ledger will not parse is exactly the run a lead reaches it for
+    #     with `spec_change_required` or `lead_ruling` \u2014 it was the one run
+    #     that could not be sealed. This feature already decouples the same
+    #     thing elsewhere on purpose: `_terminal_outlook` answers on a corrupt
+    #     run, and the cap seal transitions even when the report cannot be
+    #     generated.
+    #   * the `.next-action-called` ordering token. "Call Foundry-Next first" is
+    #     protocol for a run that is CONTINUING; a lead ending the run on a
+    #     ruling is not consulting guidance about what to do next.
+    #
+    # Per the lead's ruling on ST-001 vs FR-046, the halt transition adds no
+    # refusal for report regeneration either: a regeneration failure is carried
+    # as a named fact in the result, never as a refusal that leaves the run
+    # un-halted.
+    halt_scoped = phase == "halt"
+
+    if not halt_scoped and (corrupt := _artifact_guard(fdir)):
         return corrupt
 
-    # ST-008 / CT-016 \u2014 ASKED BEFORE THE ORDERING TOKEN, AND THE ORDER MATTERS.
+    # ST-008 / CT-016 \u2014 THE ORDERING TOKEN IS NOT ASKED OF A RUN THAT HAS
+    # STOPPED, AND THE ORDER MATTERS.
     #
     # The token handshake is a protocol precondition of a transition; the halt
     # is the fact that there are no more transitions. A halted run whose lead
     # called Foundry-Phase without a preceding Foundry-Next would otherwise be
-    # told "Must call Foundry-Next before phase transitions" \u2014 an instruction to
-    # go and arm a token for a call that can never succeed. This is the SAME
-    # `_halted_refusal` the transition itself calls; one rule, one
-    # implementation, and the second call site below is what holds if anything
-    # ever reaches `_phase_transition` by another route.
-    if (halted := _halted_refusal(fdir, f"Foundry-Phase(phase='{phase}')")) is not None:
-        return halted
-
-    nac = fdir / NEXT_ACTION_CALLED_MARKER
-    if not nac.exists():
-        return {
-            "error": "Must call Foundry-Next before phase transitions",
-            "hint": "Call Foundry-Next first \u2014 it shows status and guides you.",
-        }
+    # told "Must call Foundry-Next before phase transitions" \u2014 an
+    # instruction to go and arm a token for a call that can never succeed.
+    #
+    # fallout AC-062 / GI-029 (D-088) \u2014 WHAT MOVED IS THE REFUSAL, NOT THE
+    # ORDERING. This called `_halted_refusal` and RETURNED its sentence, which
+    # made `_halt_preconditions`' `not_already_halted` rung unreachable through
+    # this door: the routine computed a rank-0 refusal nobody could provoke and
+    # the door answered a bare sentence carrying no `refusals` at all. The rung
+    # is the routine's now (`_halted_outcome`, the first thing every
+    # `_<token>_preconditions` asks), so what is left here is ONE read deciding
+    # whether the ORDERING check applies \u2014 a read the routine makes too,
+    # which is what GI-011 asks of a door.
+    if not halt_scoped and _halted_outcome(fdir) is None:
+        nac = fdir / NEXT_ACTION_CALLED_MARKER
+        if not nac.exists():
+            return {
+                "error": "Must call Foundry-Next before phase transitions",
+                "hint": "Call Foundry-Next first \u2014 it shows status and guides you.",
+            }
 
     result = _phase_transition(phase, project_root, fdir, reason=reason, text=text)
     if result.get("ok"):
-        nac.unlink(missing_ok=True)
+        # D-067: consumed by a transition that HAPPENED, and by nothing else.
+        # Unlinked here rather than through the local the check above binds,
+        # because that check no longer runs on every path (D-090): the halt
+        # token is not asked for the token and a halted run is not asked
+        # either, and a success on one of those paths still ends the handshake
+        # the marker records.
+        (fdir / NEXT_ACTION_CALLED_MARKER).unlink(missing_ok=True)
     return result
 
 
@@ -1712,15 +1868,23 @@ def _phase_transition(
 
     D-082 — NO TRANSITION LEAVES HALTED, AND THE GUARD IS STATED ONCE.
     -----------------------------------------------------------------
-    Stated here, above the chain, rather than as an arm inside each of the
-    branches. One copy per branch of one precondition is exactly the shape that
-    produced the defect: `_halt_if_capped` was wired into `grind_start` and
-    `assay_fail` and every other branch silently resumed the run. The next
-    branch added to this chain inherits the guard by standing below it.
+    Stated ONCE, and after D-088 the once is `_halted_outcome`, the first rung
+    of every `_<token>_preconditions`. One copy per branch of one precondition
+    is exactly the shape that produced D-082: `_halt_if_capped` was wired into
+    `grind_start` and `assay_fail` and every other branch silently resumed the
+    run. A new branch inherits the guard by having a routine, which it must have
+    anyway (GI-011).
 
-    It compares no phase literal, so the AST drift guard that derives the
-    accepted token set from this function's own `phase == "<literal>"`
-    comparisons still reads exactly the branches and no phantom one.
+    fallout AC-062 / GI-029 (D-088) — IT IS NOT STATED HERE ANY MORE, AND THAT
+    IS THE FIX. `_halted_refusal` above this chain refused BEFORE the routine
+    ran, so `_halt_preconditions`' `not_already_halted` rung and
+    `_done_preconditions`' HALTED rung were unreachable through this door: the
+    routine computed a rank-0 refusal that nobody could provoke, and the door
+    answered a sentence carrying no `refusals` at all. GI-029 is "exactly the
+    preconditions function; no extra reads or refusals", and a guard the routine
+    also makes is an extra refusal however well it agrees. The short-circuit
+    survives inside `_halted_outcome`, so a halted run still costs one
+    `state.json` read and no sweep.
 
     fallout FR-007 / GI-029 / ST-012 / AC-009 / AC-056 — EVERY BRANCH IS ONE
     CALL, ONE REFUSAL, THEN THE MUTATION.
@@ -1739,9 +1903,6 @@ def _phase_transition(
     `reason` and `text` belong to the `halt` token alone and are passed through
     untouched; every other branch ignores them.
     """
-    if (halted := _halted_refusal(fdir, f"Foundry-Phase(phase='{phase}')")) is not None:
-        return halted
-
     if phase == "start_cast":
         outcome = _start_cast_preconditions(fdir, project_root)
         if not outcome["passed"]:

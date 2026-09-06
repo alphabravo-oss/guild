@@ -1187,15 +1187,33 @@ def test_done_preconditions_names_the_halt_and_lets_it_claim_the_reason(run_env)
 
     assert outcome["passed"] is False
     assert "HALTED" in outcome["reason"], outcome
-    # The open LIVE defect is still REPORTED in the checklist — it is just not
-    # what the lead is told to go and do.
     assert "D-001" not in outcome["reason"], outcome["reason"]
     row = next(c for c in outcome["checklist"] if c["check"].startswith("run_not_halted"))
     assert row["ok"] is False
     assert "max-cycles" in row["halted_reason"]
-    assert any(
-        c["check"].startswith("zero_blocking_defects") for c in outcome["checklist"]
-    )
+
+    # fallout AC-062 (D-088) — AND IT IS THE ONLY RUNG, WHICH IS THE POINT.
+    #
+    # This used to fail the ladder and CARRY ON, so a halted run paid for the
+    # whole evaluation — including the evidence sweep, which re-executes the
+    # committed corpus in a detached worktree — before being refused by a rung
+    # that defeats every other one by rank. `_GATE_RANK_HALTED` is 0 precisely
+    # because "on a run that has already stopped every other remedy is work
+    # that cannot be gated", so computing those remedies is spending a worktree
+    # to publish advice nobody can act on.
+    #
+    # The rung SHORT-CIRCUITS now, which is also what makes it reachable
+    # through both public doors: it is the same `_halted_outcome` every
+    # `_<token>_preconditions` asks first, so the guards those doors used to
+    # state above their branch chains are gone and this rung is what speaks.
+    assert [r["rank"] for r in outcome["refusals"]] == [_GATE_RANK_HALTED], outcome
+    assert [c["check"] for c in outcome["checklist"]] == [
+        "run_not_halted (halted_at_cycle=2)"
+    ], outcome["checklist"]
+    # The halt record rides out as facts, so nothing a caller read off the
+    # retired door-level guard is lost.
+    assert outcome["halted"] is True and outcome["halted_at_cycle"] == 2, outcome
+    assert "report_generated" in outcome and "max_cycles" in outcome, sorted(outcome)
 
 
 
@@ -2098,14 +2116,29 @@ def test_the_halt_outranks_the_evidence_rung_it_used_to_follow(run_env):
     assert "HALTED" in outcome["reason"], outcome["reason"]
     assert "casting-1-alpha.log" not in outcome["reason"], outcome["reason"]
     assert outcome["refusals"][0]["rank"] == _GATE_RANK_HALTED, outcome
-    # The rung it outranks still ran and is still published.
-    assert any(
-        "casting-1-alpha.log" in r["reason"] for r in outcome["refusals"]
-    ), outcome["refusals"]
-    # And the halt is recorded ONCE, not twice: a second `fail` would be the
-    # positional re-assertion this rank replaced.
+
+    # fallout AC-062 (D-088) — THE RUNG IT OUTRANKS IS NO LONGER RUN AT ALL,
+    # AND THAT IS A STRONGER STATEMENT OF THE SAME RULE.
+    #
+    # Ranking said "the halt defeats every other remedy"; short-circuiting says
+    # it and then declines to compute them. The evidence rung is the reason that
+    # matters: it re-executes the committed corpus in a detached worktree, so a
+    # halted run was paying for a sweep to publish a remedy nobody can act on —
+    # the run is over. Nothing is DISCARDED here (D-186's rule), because nothing
+    # else was computed to discard; what the operator gets is the one refusal
+    # that is true of the run's state, at rank 0.
     halts = [r for r in outcome["refusals"] if r["rank"] == _GATE_RANK_HALTED]
     assert len(halts) == 1, outcome["refusals"]
+    assert len(outcome["refusals"]) == 1, outcome["refusals"]
+
+    # ...and on the SAME arrangement without the halt, the evidence rung is
+    # still computed and still published — so this is the halt short-circuiting
+    # and not the rung having gone missing.
+    _write_state(fdir, phase="F4", cycle=2)
+    running = _done_preconditions(fdir, project_root)
+    assert any(
+        "casting-1-alpha.log" in r["reason"] for r in running["refusals"]
+    ), running["refusals"]
 
 
 

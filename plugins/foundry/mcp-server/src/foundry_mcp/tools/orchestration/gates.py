@@ -484,7 +484,19 @@ def _done_preconditions(
     # close a cycle that takes every tool in this server down at once.
     # Unguarded, so a wiring break fails loudly at the one call site that
     # needs the symbol rather than hiding behind a silent fallback.
-    from foundry_mcp.tools.orchestration.transitions import _source_phase_rung
+    from foundry_mcp.tools.orchestration.transitions import (
+        _halted_outcome,
+        _source_phase_rung,
+    )
+
+    # fallout AC-062 / AC-008 (D-088) — THE HALTED RUNG, FIRST AND REACHABLE.
+    # Both F6 doors short-circuited above this function, so the rank-0 refusal
+    # below could not be provoked through either; and failing the ladder without
+    # returning meant a halted run paid for the evidence sweep before being
+    # refused. One spelling for every token, and it returns.
+    if (halted := _halted_outcome(fdir)) is not None:
+        return halted
+
     checklist: list[dict] = []
     # D-190 / D-191: the three locals this used to carry (`passed`, `reason`,
     # `hint`) were a last-writer-wins ladder. Every failing check now enters
@@ -827,24 +839,12 @@ def _done_preconditions(
     # precondition of finishing that only two of its three readers can see is
     # the drift shape this helper exists to prevent, and the checklist a lead
     # reads is produced here.
-    halted = _halted_state(fdir)
-    if halted is not None:
-        refusal = _halted_refusal(fdir, "Foundry-Phase(phase='done')") or {}
-        ladder.fail(
-            _GATE_RANK_HALTED,
-            refusal.get("error") or "the run is HALTED",
-            refusal.get("hint")
-            or "HALTED is terminal. Start a NEW run with a higher --max-cycles.",
-        )
-
-    checklist.append({
-        "check": (
-            "run_not_halted"
-            + (f" (halted_at_cycle={halted['halted_at_cycle']})" if halted else "")
-        ),
-        "ok": halted is None,
-        "halted_reason": (halted or {}).get("halted_reason", ""),
-    })
+    # fallout AC-062 (D-088) — asked THROUGH the shared rung, and short-
+    # circuiting. It used to fail the ladder here and carry on, which meant a
+    # halted run still ran the evidence sweep below before refusing; and both
+    # public doors refused above this function anyway, so the rung never spoke
+    # through either of them.
+    checklist.append({"check": "run_not_halted", "ok": True})
 
     checklist.append({
         "check": f"spec_requirements_parsed (count={spec_count})",
@@ -1304,14 +1304,31 @@ def foundry_gate(
     # close a cycle that takes every tool in this server down at once.
     # Unguarded, so a wiring break fails loudly at the one call site that
     # needs the symbol rather than hiding behind a silent fallback.
-    from foundry_mcp.tools.orchestration.transitions import _token_preconditions
+    from foundry_mcp.tools.orchestration.transitions import (
+        _halted_outcome,
+        _token_preconditions,
+    )
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"phase": phase, "passed": False, "reason": "No active foundry run", "hint": "Call Foundry-Init first"}
 
     if not fdir.exists():
         return {"phase": phase, "passed": False, "reason": "foundry directory not found", "hint": "Run foundry_init first"}
-    if (corrupt := _artifact_guard(fdir)):
+
+    # fallout FR-046 / CT-004 / CT-013 (D-090) — THE HALT TOKEN IS SCOPED OUT OF
+    # THIS DOOR'S OWN PROTOCOL, ON BOTH SIDES.
+    #
+    # FR-046 says `Foundry-Phase('halt', reason, text)` refuses ONLY on
+    # `_halt_preconditions`, and CT-013 says this door and that one refuse the
+    # identical set — so a check this door makes that the halt transition does
+    # not would break the pair. Both the artifact guard and the ordering token
+    # are this door's PROTOCOL, not the token's preconditions, and neither is
+    # something a lead reaching the halt door can act on: a run whose ledgers
+    # will not parse is exactly the run a lead halts with `spec_change_required`
+    # or `lead_ruling`, and it was the one run that could not be sealed.
+    halt_scoped = phase == "halt"
+
+    if not halt_scoped and (corrupt := _artifact_guard(fdir)):
         return {
             "phase": phase,
             "passed": False,
@@ -1320,51 +1337,38 @@ def foundry_gate(
             "corrupt_artifacts": corrupt["corrupt_artifacts"],
         }
 
-    # ST-008 / CT-016 / D-081 — EVERY GATE REFUSES FROM HALTED, NAMING THE HALT.
-    #
-    # Ahead of the ordering-token check for the same reason the transition puts
-    # it there: "you must call Foundry-Next first" is an instruction to prepare
-    # for a call that cannot succeed. `done` and `nyquist_done` are the two that
-    # made this a defect — `Foundry-Gate('done')` returned passed True on a
-    # HALTED run, so the gate agreed the run could finish while state.json said
-    # it had already stopped — but the answer is the same for every phase: a
-    # halted run has no next gate, so no gate may report itself passed.
-    #
-    # Reshaped from `_halted_refusal`'s strings rather than re-worded: the gate
-    # and the transition answering the same question in different words is the
-    # drift this module has paid for at both F6 doors already.
-    if (halted := _halted_refusal(fdir, f"Foundry-Gate(phase='{phase}')")) is not None:
-        return {
-            "phase": phase,
-            "passed": False,
-            "reason": halted["error"],
-            "hint": halted["hint"],
-            "checklist": [{
-                "check": (
-                    f"run_not_halted (halted_at_cycle="
-                    f"{halted['halted_at_cycle']})"
-                ),
-                "ok": False,
-                "halted_reason": halted["halted_reason"],
-            }],
-            "halted": True,
-            "halted_at_cycle": halted["halted_at_cycle"],
-            "halted_reason": halted["halted_reason"],
-        }
-
     if phase not in GATE_TO_TRANSITION:
         return {"phase": phase, "passed": False, "reason": f"Unknown phase: {phase}",
                 "hint": ("Valid phases: " + ", ".join(GATE_TO_TRANSITION))}
 
-    nac = fdir / NEXT_ACTION_CALLED_MARKER
-    if not nac.exists():
-        return {
-            "phase": phase,
-            "passed": False,
-            "reason": "Must call Foundry-Next before any gate check",
-            "hint": "Call Foundry-Next first — it shows the status display and tells you what to do next.",
-            "checklist": [{"check": "next_action_called", "ok": False}],
-        }
+    # ST-008 / CT-016 / D-081 — EVERY GATE REFUSES FROM HALTED, NAMING THE HALT.
+    # A halted run has no next gate, so no gate may report itself passed;
+    # `Foundry-Gate('done')` answering passed True on a HALTED run is what made
+    # that a defect.
+    #
+    # fallout AC-062 / GI-029 (D-088) — BUT THE REFUSAL IS THE ROUTINE'S NOW.
+    # This door called `_halted_refusal` here and returned its sentence, which
+    # made `_halt_preconditions`' `not_already_halted` rung and
+    # `_done_preconditions`' HALTED rung unreachable through it: the routines
+    # computed a rank-0 refusal nobody could provoke and this door answered with
+    # no `refusals` key at all. Every routine makes the rung now
+    # (`_halted_outcome`), so the loop below produces the refusal in the same
+    # ranked shape as every other check and the invariant test walks a real
+    # rung rather than a short-circuit.
+    #
+    # What is kept is the ORDERING the guard was here for: "you must call
+    # Foundry-Next first" is an instruction to prepare for a call that cannot
+    # succeed, so the ordering token is not asked of a run that has stopped.
+    if not halt_scoped and _halted_outcome(fdir) is None:
+        nac = fdir / NEXT_ACTION_CALLED_MARKER
+        if not nac.exists():
+            return {
+                "phase": phase,
+                "passed": False,
+                "reason": "Must call Foundry-Next before any gate check",
+                "hint": "Call Foundry-Next first — it shows the status display and tells you what to do next.",
+                "checklist": [{"check": "next_action_called", "ok": False}],
+            }
     # ST-011 / FR-044 / AC-035 / OT-028 — THE GATE NO LONGER CONSUMES THE TOKEN.
     #
     # This read `nac.unlink(missing_ok=True)`, so the documented sequence
@@ -1581,41 +1585,10 @@ def _halted_refusal(fdir: Path, surface: str) -> dict | None:
     report_path = fdir / REPORT_MD_FILENAME
     report_error = halted["halted_report_error"]
     report_present = report_path.exists()
+    reason, hint = _halted_sentences(fdir, halted, cycle_text)
     return {
-        "error": (
-            f"Cannot call {surface} — this run is HALTED. It stopped at "
-            f"{cycle_text} because {halted['halted_reason']}. HALTED is a "
-            "terminal state and it is NOT DONE: the run ended with open work"
-            + (
-                " and the report says what."
-                if report_present
-                else (
-                    f", and the report was NOT written — {report_error or 'it is not present at ' + str(report_path)}."
-                )
-            )
-        ),
-        "hint": (
-            (
-                f"Nothing leaves HALTED — no phase token, no gate. Read "
-                f"{REPORT_MD_FILENAME}, tell the user what remains open by "
-                "tier, and stop. To carry the remaining work forward, start a "
-                "NEW run (Foundry-Init) with a higher --max-cycles; the cap is "
-                "not overridden in place."
-            )
-            if report_present
-            else (
-                "Nothing leaves HALTED — no phase token, no gate — but the "
-                "report is not a phase transition and Foundry-Report still "
-                "runs on a halted run. Repair what the error above names, call "
-                f"Foundry-Report to write {REPORT_MD_FILENAME}, then read it, "
-                "tell the user what remains open by tier, and stop. Until it "
-                "is written, read defects.json directly: the open work is "
-                "recorded there whatever the report generator could not "
-                "render. To carry the remaining work forward, start a NEW run "
-                "(Foundry-Init) with a higher --max-cycles; the cap is not "
-                "overridden in place."
-            )
-        ),
+        "error": f"Cannot call {surface} \u2014 {reason}",
+        "hint": hint,
         "halted": True,
         "phase": RUN_PHASE_HALTED,
         "halted_at_cycle": halted["halted_at_cycle"],
@@ -1627,3 +1600,63 @@ def _halted_refusal(fdir: Path, surface: str) -> dict | None:
         "report_generated": report_present,
         "report_error": report_error,
     }
+
+
+def _halted_sentences(
+    fdir: Path, halted: dict, cycle_text: str
+) -> tuple[str, str]:
+    """The halt's reason and its remedy, WITHOUT any door's leading clause.
+
+    fallout AC-062 / GI-029 (D-088) \u2014 ONE SPELLING, TWO SHAPES.
+
+    `_halted_refusal` prefixes "Cannot call <surface> \u2014 " and returns the
+    house `{error, hint}` for a door that answers directly.
+    `transitions._halted_outcome` carries this SAME pair as a ranked rung, where
+    the leading clause belongs to the transition (`_transition_refusal` adds it)
+    and the gate renders it bare. Splitting the sentence out is what lets the
+    rung speak from inside the routine without the two doors re-wording it,
+    which is the drift this module has already paid for at both F6 doors.
+
+    D-165 lives here: the report half is read from the FILE's presence, with the
+    recorded generator error supplying the reason only when it is absent. A
+    refusal that said "NOT written" about a file sitting on disk would be that
+    defect with the sign flipped.
+    """
+    report_path = fdir / REPORT_MD_FILENAME
+    report_error = halted["halted_report_error"]
+    report_present = report_path.exists()
+    reason = (
+        f"this run is HALTED. It stopped at "
+        f"{cycle_text} because {halted['halted_reason']}. HALTED is a "
+        "terminal state and it is NOT DONE: the run ended with open work"
+        + (
+            " and the report says what."
+            if report_present
+            else (
+                f", and the report was NOT written \u2014 {report_error or 'it is not present at ' + str(report_path)}."
+            )
+        )
+    )
+    hint = (
+        (
+            f"Nothing leaves HALTED \u2014 no phase token, no gate. Read "
+            f"{REPORT_MD_FILENAME}, tell the user what remains open by "
+            "tier, and stop. To carry the remaining work forward, start a "
+            "NEW run (Foundry-Init) with a higher --max-cycles; the cap is "
+            "not overridden in place."
+        )
+        if report_present
+        else (
+            "Nothing leaves HALTED \u2014 no phase token, no gate \u2014 but the "
+            "report is not a phase transition and Foundry-Report still "
+            "runs on a halted run. Repair what the error above names, call "
+            f"Foundry-Report to write {REPORT_MD_FILENAME}, then read it, "
+            "tell the user what remains open by tier, and stop. Until it "
+            "is written, read defects.json directly: the open work is "
+            "recorded there whatever the report generator could not "
+            "render. To carry the remaining work forward, start a NEW run "
+            "(Foundry-Init) with a higher --max-cycles; the cap is not "
+            "overridden in place."
+        )
+    )
+    return reason, hint

@@ -4368,7 +4368,17 @@ def test_every_gate_refuses_from_halted(run_env, phase):
     assert gate["passed"] is False, (phase, gate)
     assert gate["halted"] is True
     assert "HALTED" in gate["reason"]
-    assert f"Foundry-Gate(phase='{phase}')" in gate["reason"]
+    # fallout AC-062 (D-088) — THE REFUSAL IS THE ROUTINE'S RUNG NOW, so it is
+    # published as a ranked entry rather than as a bare sentence with no
+    # `refusals` key, and it no longer carries this door's surface INSIDE the
+    # reason: `_halted_sentences` is one spelling and the two doors add their
+    # own clause, the transition through `_transition_refusal` and the gate
+    # through the `phase` field the caller already reads. That reachability is
+    # the whole of D-088 — the rung the derivation names is what speaks, rather
+    # than a short-circuit standing above it.
+    assert gate["phase"] == phase, gate
+    assert [r["rank"] for r in gate["refusals"]] == [0], gate["refusals"]
+    assert "HALTED" in gate["refusals"][0]["reason"], gate["refusals"]
     assert [c["check"] for c in gate["checklist"]] == [
         "run_not_halted (halted_at_cycle=2)"
     ]

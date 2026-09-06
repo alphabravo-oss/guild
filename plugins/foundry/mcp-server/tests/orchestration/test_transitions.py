@@ -2189,11 +2189,49 @@ def test_the_halt_is_read_through_one_reader(run_env):
     """
     import inspect as _inspect
 
-    for fn in (_phase_transition, foundry_gate, _done_preconditions,
-               foundry_mark_phase_complete):
+    # fallout AC-062 (D-088) — `_phase_transition` READS IT THROUGH A ROUTINE
+    # NOW, WHICH IS THE ONE READER ONE LAYER IN.
+    #
+    # It called `_halted_refusal` above its branch chain, and that guard was
+    # what made `_halt_preconditions`' `not_already_halted` rung unreachable
+    # through the door. The rung is `_halted_outcome`, the first thing every
+    # `_<token>_preconditions` asks, so this function reads the halt through its
+    # routine exactly as it reads every other precondition — which is what
+    # GI-011 asks for and is a stronger statement than the one this test made.
+    for fn in (foundry_gate, _done_preconditions, foundry_mark_phase_complete):
         source = _inspect.getsource(fn)
         assert "RUN_PHASE_HALTED" not in source, fn.__name__
-        assert ("_halted_refusal(" in source) or ("_halted_state(" in source), fn.__name__
+        assert (
+            "_halted_refusal(" in source
+            or "_halted_state(" in source
+            or "_halted_outcome(" in source
+        ), fn.__name__
+
+    transition_source = _inspect.getsource(_phase_transition)
+    assert "RUN_PHASE_HALTED" not in transition_source
+    assert "_halted_refusal(" not in transition_source, (
+        "the transition composes a halted refusal of its own again; the rung "
+        "belongs to the token's routine (D-088)"
+    )
+
+    # ...and the ONE reader is still one: `_halted_outcome` is the only builder
+    # of a halted rung, and every routine reaches it.
+    # Every token's routine asks the rung, either itself or through the
+    # routine it DELEGATES to — `assay_fail` IS `grind_start`'s evaluation and
+    # `nyquist_done` IS `done`'s, and a delegation is one evaluation with two
+    # names, not a second one that could answer differently.
+    _DELEGATES = {"_grind_start_preconditions", "_done_preconditions"}
+    for token in PHASE_TOKENS:
+        fn = getattr(_transitions, f"_{token}_preconditions", None)
+        assert fn is not None, token
+        body = _inspect.getsource(fn)
+        asks = "_halted_outcome(" in body or any(d + "(" in body for d in _DELEGATES)
+        assert asks, (
+            f"_{token}_preconditions neither makes the halted rung nor "
+            "delegates to a routine that does; a token whose routine skips it "
+            "is a token that can transition out of HALTED (D-082/D-088)."
+        )
+
 
 
 
@@ -3397,30 +3435,146 @@ def test_a_gate_and_its_transition_refuse_the_same_check(run_env, monkeypatch, t
 
 
 
+def _transition_branches() -> dict[str, str]:
+    """`{token: branch source}` for every `phase == "<literal>"` arm.
+
+    fallout AC-009 / FR-041 (D-086) — THE WINDOW IS THE BRANCH, NOT THE
+    FUNCTION.
+
+    The pin below used to assert `f"_{token}_preconditions(" in source` over
+    the WHOLE of `_phase_transition`, which is satisfied by any ONE branch
+    naming any ONE routine: ten branches could share one call and the assertion
+    would still pass ten times. Judged per branch, a branch that skipped its
+    routine is named.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_phase_transition)))
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef))
+    out: dict[str, str] = {}
+
+    def _token_of(test) -> str | None:
+        if not isinstance(test, ast.Compare):
+            return None
+        if not (isinstance(test.left, ast.Name) and test.left.id == "phase"):
+            return None
+        for op, comparator in zip(test.ops, test.comparators):
+            if isinstance(op, ast.Eq) and isinstance(comparator, ast.Constant):
+                if isinstance(comparator.value, str):
+                    return comparator.value
+        return None
+
+    node = None
+    for statement in fn.body:
+        if isinstance(statement, ast.If) and _token_of(statement.test):
+            node = statement
+            break
+    while isinstance(node, ast.If):
+        token = _token_of(node.test)
+        if token:
+            out[token] = "\n".join(ast.unparse(s) for s in node.body)
+        node = node.orelse[0] if len(node.orelse) == 1 else None
+    return out
+
+
+def _split_at_the_refusal(branch: str) -> tuple[str, str]:
+    """A branch's PRECONDITION segment and its EFFECT segment.
+
+    fallout GI-011 / AC-009 / FR-058 (D-086 / D-087) — POSITION IS THE RULE,
+    AND IT REPLACES AN ALLOWLIST.
+    ------------------------------------------------------------------------
+    GI-011's violation column is "a transition branch that reads a ledger or
+    marker its preconditions function does not", and the pin enforcing it
+    hand-exempted `_escalated_classes` in `DOOR_PROTOCOL_READS` — a live
+    instance of the invariant this release exists to establish, excused by name
+    in the very guard written to catch it (D-087).
+
+    The exemption was standing in for a REAL distinction the pin could not
+    express: `inspect_start` calls `_escalated_classes` to RECORD proposals at
+    the boundary that closed a cycle, AFTER the routine passed and after the
+    state transaction. Nothing refuses on its answer. That is an EFFECT, and
+    every branch is full of them — clearing markers, recording widths,
+    transacting, stamping SHAs.
+
+    So the distinction is made structurally instead of by name: everything above
+    the branch's `return _transition_refusal(...)` can influence a refusal and
+    is judged; everything below it runs only on a passing routine and is not.
+    A read moved ABOVE that return is judged the day it moves, whatever it is
+    called, and no name needs excusing.
+    """
+    marker = "return _transition_refusal("
+    index = branch.find(marker)
+    if index == -1:
+        return branch, ""
+    tail = branch.index("\n", index) if "\n" in branch[index:] else len(branch)
+    return branch[:tail], branch[tail:]
+
+
+def _reads_in(segment: str, readers: set[str]) -> set[str]:
+    """Every ledger/marker read `segment` makes, by call name and by path.
+
+    fallout AC-009 (D-086) — `_load_json` IS A LEDGER READ HERE.
+
+    `_SHARED_PRIMITIVES` excuses it, which is right for a routine (every rung
+    loads a document) and wrong for a BRANCH: an inline
+    `_load_json(fdir / "defects.json")` above the refusal is exactly the check
+    re-inlined at the door that this pin exists to catch, and it was invisible.
+    Driven: injecting that call into the `start_cast` branch leaked nothing.
+
+    So the branch window judges the primitives too, plus the marker-existence
+    shape a read can also take (`(fdir / "...").exists()`).
+    """
+    tree = ast.parse(textwrap.dedent(segment))
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = (
+                func.id if isinstance(func, ast.Name)
+                else func.attr if isinstance(func, ast.Attribute)
+                else ""
+            )
+            if name in readers or name in _LEDGER_PRIMITIVES:
+                found.add(name)
+            if name == "exists":
+                found.add("<marker>.exists")
+    return found
+
+
+#: The document primitives a BRANCH may not use above its refusal, even though
+#: a routine may. Named separately from `_SHARED_PRIMITIVES` because the two
+#: windows ask different questions: a rung loading a document is the rung doing
+#: its job, and a branch loading one is the branch deciding something its
+#: routine did not.
+_LEDGER_PRIMITIVES = frozenset({
+    "_load_json", "read_document", "read_jsonl", "read_text_file", "_read_text",
+})
+
+
 def test_neither_door_reads_a_ledger_outside_its_preconditions_routine():
-    """fallout AC-009 — the AST pin.
+    """fallout AC-009 / FR-041 / GI-011 / GI-029 — the AST pin.
 
     `foundry_gate` composes nothing: it looks the token up, calls the routine
     and absorbs what comes back. `_phase_transition`'s branches call their own
-    routine and no OTHER refusal-producing reader. Both are asserted on the
-    SOURCE, because a check re-inlined at either door is exactly how the
+    routine and, ABOVE THE REFUSAL, no other reader at all. Both are asserted on
+    the SOURCE, because a check re-inlined at either door is exactly how the
     disagreement returns — and it returns silently, which is why this is a
     structural assertion and not a behavioural one.
 
-    The named set is the refusal-producing readers, not every function: the
-    branches still clear markers, record widths and transact, and all of that
-    is EFFECT, which runs only after the shared routine passed.
+    THREE MEASURED HOLES CLOSED (D-086 / D-087):
 
-    THE READER SET IS DERIVED, AND BOTH CALL SHAPES ARE WALKED (fallout AC-009
-    / FR-041). This pin was twelve hand-typed names matched against `ast.Name`
-    calls only, and it reported green over three transition branches that swept
-    the evidence corpus themselves and returned `_sweep_refusal(...)`:
-    `_sweep_evidence_at_boundary`, `_sweep_refusal`, `_escalated_classes`,
-    `_load_json` and `current_cycle` were all outside the twelve, and any
-    `module.fn()` spelling was outside the walk. The set now comes from the
-    routines' own ASTs — every helper any `_<token>_preconditions` reaches,
-    transitively, minus the primitives a branch may also use — so a rung added
-    tomorrow is a reader this pin knows about tomorrow.
+      * `_SHARED_PRIMITIVES` contains `_load_json`, so an inline ledger read in
+        a branch was invisible. Driven: `_load_json(fdir / "defects.json")`
+        injected into the `start_cast` branch leaked nothing. The branch window
+        judges the primitives; the routine window still excuses them, because a
+        rung loading a document is a rung doing its job.
+      * The reader set was consulted at FUNCTION scope, so the recording calls
+        `inspect_start` makes after its transaction had to be excused BY NAME —
+        `_escalated_classes` sat in `DOOR_PROTOCOL_READS`, which is a live
+        instance of GI-011's violation clause excused inside the guard written
+        to catch it. Position replaces the name: above the refusal is judged,
+        below it is effect.
+      * "calls its preconditions function" was asserted over the whole source,
+        which one branch naming one routine satisfies for all ten. Per branch
+        now.
     """
     refusal_readers = _refusal_readers()
     # The emptiness guard the derivation needs: a walk that silently returned
@@ -3439,26 +3593,26 @@ def test_neither_door_reads_a_ledger_outside_its_preconditions_routine():
     ):
         assert expected in refusal_readers, (expected, sorted(refusal_readers))
 
-    #: The TWO reads a door may make outside its routine, each with its reason.
-    #: Both are protocol rather than precondition — Holmes `flow-1` names the
-    #: first explicitly — and naming them here, with the reason, is what makes
-    #: adding a third an argument someone has to write down.
-    DOOR_PROTOCOL_READS = {
-        # D-082: the HALTED guard, stated ONCE above each door's branch chain
-        # rather than as an arm inside every branch. It is not a precondition of
-        # any token; it is the statement that a stopped run has no next door.
-        "_halted_refusal",
-        # `inspect_start` calls this to RECORD escalation proposals at the
-        # boundary that closed a cycle — an effect, taken after the routine
-        # passed, and nothing refuses on its answer. A reader set that judged by
-        # name rather than by role would push a recording call into a
-        # preconditions routine to satisfy a pin, which is how a gate acquires a
-        # side effect.
-        "_escalated_classes",
-    }
+    #: fallout GI-011 (D-087) — THE TABLE IS EMPTY, AND THAT IS THE FIX.
+    #:
+    #: It held `_halted_refusal` (the door-level guard, now a rung inside every
+    #: routine — D-088) and `_escalated_classes` (a post-transaction recording
+    #: call, now excused by POSITION rather than by name — D-087). Neither is a
+    #: name this pin needs to know. A row added here is an argument someone has
+    #: to write down, and the argument now has to explain why a read that can
+    #: influence a refusal is not a precondition.
+    DOOR_PROTOCOL_READS: set[str] = set()
     allowed = (
         {f"_{t}_preconditions" for t in PHASE_TOKENS}
-        | {"_token_preconditions"}
+        # ...the mapping from a token to its routine, and the SHARED RUNG every
+        # routine makes. `_halted_outcome` is in this set for the same reason
+        # `_token_preconditions` is, and not as an exemption: a door asking the
+        # rung every routine asks is not asking a check the routine does not
+        # make, which is the whole of what this pin measures. It is what lets a
+        # door decide whether its own PROTOCOL applies — the ordering token is
+        # not demanded of a run that has stopped — without reading a ledger the
+        # routine does not.
+        | {"_token_preconditions", "_halted_outcome"}
         | DOOR_PROTOCOL_READS
     )
 
@@ -3474,16 +3628,74 @@ def test_neither_door_reads_a_ledger_outside_its_preconditions_routine():
                 names.add(node.func.attr)
         return names
 
-    for fn in (foundry_gate, _phase_transition):
-        leaked = sorted((_called(fn) & refusal_readers) - allowed)
-        assert leaked == [], (fn.__name__, leaked)
+    # The GATE composes nothing at any depth, so it is judged whole.
+    leaked = sorted((_called(foundry_gate) & refusal_readers) - allowed)
+    assert leaked == [], ("foundry_gate", leaked)
 
-    # ...and the transition's own branches each name their token's routine.
-    source = inspect.getsource(_phase_transition)
-    for token in PHASE_TOKENS:
-        assert f"_{token}_preconditions(" in source, token
+    # The TRANSITION is judged per branch, above the refusal.
+    branches = _transition_branches()
+    assert set(branches) == set(PHASE_TOKENS), sorted(set(PHASE_TOKENS) ^ set(branches))
+    for token, branch in sorted(branches.items()):
+        preconditions, _effect = _split_at_the_refusal(branch)
+        # ...each branch names ITS OWN routine, in its own window.
+        assert f"_{token}_preconditions(" in preconditions, (
+            f"the {token} branch does not call _{token}_preconditions before "
+            "its refusal; a branch that shares another's call is a branch whose "
+            "checks nobody stated (GI-011)."
+        )
+        reads = _reads_in(preconditions, refusal_readers) - {
+            f"_{token}_preconditions"
+        }
+        assert reads == set(), (token, sorted(reads))
 
 
+def test_the_branch_window_catches_an_inline_ledger_read(monkeypatch):
+    """The anchor for D-086's first measured hole.
+
+    A scan over clean source is green whether it works or not, so the recogniser
+    is driven over the exact plant the defect used: an inline `_load_json` of a
+    ledger inside a branch, above its refusal. `_SHARED_PRIMITIVES` excuses that
+    name, which is why the branch window has its own primitive set.
+    """
+    planted = (
+        "outcome = _start_cast_preconditions(fdir, project_root)\n"
+        "extra = _load_json(fdir / 'defects.json')\n"
+        "if not outcome['passed']:\n"
+        "    return _transition_refusal(outcome, 'Cannot enter CAST')\n"
+        "_update_phase(fdir, 'F1')\n"
+    )
+    preconditions, effect = _split_at_the_refusal(planted)
+    assert "_load_json" in preconditions and "_update_phase" in effect
+    assert "_load_json" in _reads_in(preconditions, set())
+
+    # ...and the SAME read below the refusal is an effect, which is what lets
+    # `_escalated_classes` stop being an allowlist row.
+    below = (
+        "outcome = _inspect_start_preconditions(fdir, project_root)\n"
+        "if not outcome['passed']:\n"
+        "    return _transition_refusal(outcome, 'Cannot start an INSPECT')\n"
+        "_record_escalation_proposals(fdir, _escalated_classes(fdir, project_root))\n"
+    )
+    pre_below, eff_below = _split_at_the_refusal(below)
+    assert "_escalated_classes" not in pre_below, pre_below
+    assert "_escalated_classes" in eff_below, eff_below
+
+
+def test_the_branch_window_catches_a_marker_read_too():
+    """The second half of D-086's first hole: a read need not be a `_load_json`.
+
+    The drive that found this injected a `.exists()` marker read beside an
+    inline refusal, and neither pin saw it.
+    """
+    planted = (
+        "outcome = _cast_preconditions(fdir, project_root)\n"
+        "if (fdir / '.some-marker').exists():\n"
+        "    return _transition_refusal(outcome, 'Cannot mark CAST complete')\n"
+        "if not outcome['passed']:\n"
+        "    return _transition_refusal(outcome, 'Cannot mark CAST complete')\n"
+    )
+    preconditions, _effect = _split_at_the_refusal(planted)
+    assert "<marker>.exists" in _reads_in(preconditions, set()), preconditions
 
 
 def test_the_transition_adds_no_refusal_of_its_own():
@@ -3511,7 +3723,12 @@ def test_the_transition_adds_no_refusal_of_its_own():
         and isinstance(node.func, ast.Name)
         and (node.func.id.endswith("_refusal") or node.func.id.endswith("_problem"))
     }
-    assert composed == {"_transition_refusal", "_halted_refusal"}, sorted(composed)
+    # fallout AC-062 (D-088) — ONE COMPOSER NOW, not two. The `_halted_refusal`
+    # guard above the chain WAS the second, and it was what made
+    # `_halt_preconditions`' own halted rung unreachable through this door. The
+    # rung is the routine's, so every refusal leaving here is the routine's
+    # outcome rendered by the one shape.
+    assert composed == {"_transition_refusal"}, sorted(composed)
 
     # ...and no branch hand-builds one either. A returned dict literal carrying
     # an `error` key IS a refusal, whatever composed it.
