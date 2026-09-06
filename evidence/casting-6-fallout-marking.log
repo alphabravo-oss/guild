@@ -1,8 +1,8 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header -rs tests/test_protocol_prose.py -k 'fallout_marking or unknown_fallout' 2>&1 | tail -7
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header -rs tests/test_protocol_prose.py -k 'fallout_marking or unknown_fallout or fallout_clause_names_the_field or pinned_fallout_field' 2>&1 | tail -7
 # evidence-for: fallout AC-048, FR-025
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: \b\d+ms\b
 # evidence-timeout: 600
 
-....                                                                     [100%]
-4 passed, 659 deselected in 0.09s
+......                                                                   [100%]
+6 passed, 660 deselected in 0.25s
