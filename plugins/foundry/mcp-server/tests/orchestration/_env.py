@@ -758,19 +758,42 @@ _PROSE_CITES_WITH_NO_DEFINITION: dict[str, str] = {
         "`orchestration/width.py` — a VERIFIER module — reached it in "
         "`foundry_spawn`, which is lifecycle."
     ),
-    "_shape_problem": (
-        "the recursive shape walker, hoisted with the predicate it serves to "
-        "`artifacts._document_shape_problem` (C-060 row 3)."
+    # fallout GI-025 / AC-011 (concern C-062) — CASTING 12's CITE, ON A NAME
+    # THIS CASTING JUST DELETED.
+    #
+    # Casting 12 found the duplication and told this casting its own cite was
+    # "CORRECT as it stands, which is exactly why the duplication is silent" —
+    # the underscore made two spellings of one fact look like two symbols.
+    # Deleting the copy makes that sentence true of nothing, and the cite is a
+    # LIVE claim about a coverage threshold rather than a narration, so it
+    # wants the leaf's spelling rather than this table. One line, in a file
+    # this casting may not edit.
+    "_count_spec_requirements": (
+        "casting 12 — `tests/test_inspect_mode.py`'s threshold sentence cites "
+        "the gates-local counter this casting deleted (C-062). One fact, one "
+        "ladder: the count is `artifacts.count_spec_requirements` and the "
+        "sorted list is `gates._sorted_spec_requirement_ids`, and the "
+        "sentence wants whichever it means."
     ),
+    # fallout C-060 row 3 / C-062 — THE LAST OF THE THREE SHAPE-TABLE ROWS, AND
+    # IT IS CASTING 5's TO CLOSE, NOT THIS CASTING'S.
+    #
+    # The other two came OUT of this table when the last cites of them went:
+    # casting 12 moved the suite's ten, and this casting deleted forty lines of
+    # orphaned `#:` documentation its AST-based deletion had left behind in
+    # `foundry_spawn.py` — a statement is an AST node and its comment block is
+    # not. One cite survives, in a file this casting may not edit, and it is a
+    # LIVE claim rather than a narration: `tools/evidence.py` argues that its
+    # housekeeping read goes through the SHARED validator so that "a rung
+    # declared in the table is covered here the day it is declared". That
+    # argument is still true and still worth making; only the table's name has
+    # changed under it.
     "_MANIFEST_SHAPE": (
-        "the manifest shape declaration, hoisted to "
-        "`artifacts._MANIFEST_DOCUMENT_SHAPE` (C-060 row 3) and re-pinned there "
-        "by `tests/test_artifacts.py#test_every_manifest_key_the_declarations_"
-        "readers_index_is_declared`."
-    ),
-    "_REQUIRED": (
-        "the shape grammar's presence sentinel, hoisted beside its declaration "
-        "as `artifacts._REQUIRED_RUNG` (C-060 row 3)."
+        "casting 5 — `tools/evidence.py`'s D-134 argument for reading the "
+        "manifest through the shared validator cites the declaration by its "
+        "old name. The table is `artifacts._MANIFEST_DOCUMENT_SHAPE` since "
+        "C-060 row 3; the claim the comment makes is unchanged and the cite "
+        "wants the new spelling."
     ),
     "_boundary_base_sha": (
         "the three-marker baseline reader, hoisted to "

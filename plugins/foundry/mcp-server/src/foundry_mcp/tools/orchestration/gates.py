@@ -26,6 +26,7 @@ from foundry_mcp.schemas.vocab import (
     halt_reason,
 )
 from foundry_mcp.tools.artifacts import (
+    count_spec_requirements,
     report_document_status,
     GATE_PASSED_MARKER,
     NEXT_ACTION_CALLED_MARKER,
@@ -129,9 +130,30 @@ def _sorted_spec_requirement_ids(project_root: str) -> list[str]:
 
 
 
-def _count_spec_requirements(project_root: str) -> int:
-    """Count requirement IDs (US-N, FR-N, NFR-N, AC-N, VC-N) in the spec file."""
-    return len(_sorted_spec_requirement_ids(project_root))
+# fallout GI-025 / AC-011 / OT-011 (concern C-062, casting 12) — ONE FACT, ONE
+# LADDER, AND THE UNDERSCORE IS WHY NOBODY NOTICED.
+#
+# A private counter stood here returning
+# `len(_sorted_spec_requirement_ids(project_root))` while
+# `artifacts.count_spec_requirements` returned
+# `len(_spec_requirement_ids(project_root)[1])` — two answers to "how many
+# requirement ids does this spec declare", reached through two ladders, agreeing
+# only while both ladders return the same set. C-060 row 3 hoisted the count to
+# the leaf so `streams.py` could ask it without a lifecycle module reaching the
+# verifier set, and this copy was left behind: the leaf's own docstring says the
+# count "sat a layer above the ids, in orchestration/gates.py" as though it had
+# moved, and it had only been added.
+#
+# The package-wide single-definition guard could not see it. That guard is keyed
+# by NAME, and these two differ by a leading underscore, so a semantic
+# duplication wore a spelling the guard reads as two different symbols — which
+# is Holmes naming-6's drifting-same-named-primitives hazard with the sign
+# flipped. `test_the_spec_requirement_count_is_asked_in_one_place` in
+# `tests/orchestration/test_gates.py` states the rule the name hid.
+#
+# `_sorted_spec_requirement_ids` STAYS: it is a different shape with a real
+# second caller (`width.py` needs the sorted list, not the count), and it is
+# already the leaf's climb with a sort on top rather than a second climb.
 
 
 
@@ -274,7 +296,7 @@ def _streams_complete(project_root: str) -> dict:
         modes=INSPECT_MODES,
         marker_of=_stream_marker,
         sight=_sight_required(fdir),
-        spec_requirement_count=_count_spec_requirements(project_root),
+        spec_requirement_count=count_spec_requirements(project_root),
         inspect_phases=_INSPECT_PHASES,
         # DERIVED, never a second hand list: the pre-width roster is exactly the
         # FULL roster minus the two streams DELTA makes conditional.
@@ -541,7 +563,7 @@ def _done_preconditions(
     blocking = _blocking_defects(fdir)
     open_count = blocking["blocking"]
     teams_result = _active_teams(project_root)
-    spec_count = _count_spec_requirements(project_root)
+    spec_count = count_spec_requirements(project_root)
 
     # GI-006 / CT-014 / AC-036 / ST-010 — DONE REQUIRES THE GENERATED REPORT.
     #

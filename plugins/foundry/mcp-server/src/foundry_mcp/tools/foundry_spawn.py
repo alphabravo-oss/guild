@@ -235,9 +235,10 @@ from foundry_mcp.tools.foundry_state import (
 # SYMBOLS LEFT THIS MODULE FOR THE LEAVES, AND THE EDGES LEFT WITH THEM.
 #
 # `_git_changed_paths` and `_skipped_stream_ids` were read from here by
-# `orchestration/width.py`, and `_manifest_shape_problem` (with its
-# `_shape_problem` walker, `_MANIFEST_SHAPE` declaration and `_REQUIRED`
-# sentinel) by width, transitions, gates and teams — four VERIFIER modules
+# `orchestration/width.py`, and the manifest predicate — now
+# `artifacts.manifest_shape_problem`, with its `_document_shape_problem`
+# walker, `_MANIFEST_DOCUMENT_SHAPE` declaration and `_REQUIRED_RUNG`
+# sentinel — by width, transitions, gates and teams: four VERIFIER modules
 # reaching this LIFECYCLE one, which GI-033's violation column names outright
 # and which no module-top import scan could see because every reach was lazy.
 # A symbol read from both layers can live only in a leaf, and each went to the
@@ -1601,47 +1602,25 @@ def foundry_liveness(
     return result
 
 
-#: Sentinel for a mapping key that must be PRESENT and non-null, whose value is
-#: otherwise unconstrained. ``castings[].id`` and ``waves[].wave`` are the two:
-#: every reader in this module locates its record by one of them, so an entry
-#: without one is not a record the readers can address, whatever else it holds.
-
-#: The manifest's structure AS THE READERS IN THIS MODULE INDEX IT. Declared
-#: ONCE, walked recursively by ``_shape_problem``, and consulted by all four
-#: manifest readers here — so a corrupt document produces the same named
-#: refusal at both spawn doors and the same silent degrade in both tolerant
-#: readers BY CONSTRUCTION, not by four guards agreeing with each other.
-#:
-#: This is the ESCALATED class (D-095 / D-098 / D-115 / D-132) answered
-#: structurally. D-115 guarded the top-level container and stopped, so the
-#: RECORDS the readers then index were never guarded: ``castings: "nope"``,
-#: ``[1,2,3]`` and ``[null]`` each reached ``c.get("id")`` and raised
-#: ``AttributeError`` out of Foundry-Spawn-Teammate while Foundry-Cast-Wave
-#: tolerated the identical document — the D-097 asymmetry tell, two doors
-#: disagreeing about one corrupt file. The fix is not a filter at the six
-#: index sites (that is the class); it is one declaration of the shape.
-#:
-#: Grammar, read by ``_shape_problem``:
-#:   ``[shape]``    a list; every element must satisfy the single inner shape
-#:   ``{k: shape}`` a mapping; each key is OPTIONAL, and when present and
-#:                  non-null its value must satisfy its shape
-#:   ``_REQUIRED``  the key must be present and non-null; value unconstrained
-#:   ``None``       unconstrained from here down — an EXPLICIT statement that
-#:                  the reader below this point is on its own. ``stream_skips``
-#:                  entries are None because ``_skipped_stream_ids`` accepts
-#:                  both a mapping and a bare string by documented contract and
-#:                  isinstance-checks each entry itself.
-#:
-#: Every key named here is one a reader in this module actually indexes, and
-#: ``test_every_manifest_key_the_module_indexes_is_declared`` derives that set
-#: from this file's AST and fails if the two ever disagree — so a reader that
-#: starts indexing a new key cannot land without declaring it, and this table
-#: cannot rot into a hand-kept list of the keys some past defect happened to
-#: name. That test is the derivation; the table is only its subject.
-
-
-
-
+# fallout GI-033 / AC-061 (D-080, concern C-060 row 3) — THE DECLARATION AND
+# ITS GRAMMAR WENT WITH THE VALIDATOR, AND SO DID THEIR PROSE.
+#
+# Forty lines of `#:` documentation stood here after the symbols they document
+# left: the presence-sentinel note and the shape table's own block, describing
+# "the readers in this module", a grammar read by a walker that had gone, and a
+# derivation test whose subject had moved. All four names are
+# `tools/artifacts.py`'s now — `_REQUIRED_RUNG`, `_MANIFEST_DOCUMENT_SHAPE`,
+# `_document_shape_problem` and `manifest_shape_problem` — and casting 7
+# carries the prose at the new home,
+# where `tests/test_artifacts.py#test_every_manifest_key_the_declarations_
+# readers_index_is_declared` runs the same derivation over THIS module's
+# readers.
+#
+# Recorded rather than silently deleted, because the miss is worth naming: the
+# deletion that moved those symbols walked the AST, and a `#:` comment is not
+# an AST node. Statements moved and their documentation did not. That is
+# casting 10's rule about resolvers one axis over — prose refers to code
+# without invoking it, and this tree guards prose for exactly that reason.
 
 
 def _manifest_shape_error(manifest: object, manifest_path: Path) -> dict | None:

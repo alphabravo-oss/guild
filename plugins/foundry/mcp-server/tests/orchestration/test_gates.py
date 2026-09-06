@@ -157,6 +157,8 @@ from foundry_mcp.tools.orchestration.report_seal import (  # noqa: F401
     _generate_report,
 )
 
+from foundry_mcp.tools.artifacts import count_spec_requirements  # noqa: F401
+
 from foundry_mcp.tools.orchestration.gates import (  # noqa: F401
     GATE_TO_TRANSITION,
     VERDICT_VALUES,
@@ -165,7 +167,6 @@ from foundry_mcp.tools.orchestration.gates import (  # noqa: F401
     _GATE_RANK_HALTED,
     _TEAMS_DOWN_HINT,
     _blocking_defects,
-    _count_spec_requirements,
     _done_preconditions,
     _open_defects_by_tier,
     _sorted_spec_requirement_ids,
@@ -341,7 +342,7 @@ def test_count_spec_requirements_dedups_after_refactor(run_env):
         "# Spec\n- FR-1 first mention\n- FR-1 again\n- US-2\n- NFR-3\n",
         encoding="utf-8",
     )
-    assert _count_spec_requirements(project_root) == 3
+    assert count_spec_requirements(project_root) == 3
     assert _sorted_spec_requirement_ids(project_root) == ["FR-1", "NFR-3", "US-2"]
 
 
@@ -571,7 +572,7 @@ def test_the_external_input_reader_is_total_on_its_own_merits(tmp_path, monkeypa
     try:
         patch_everywhere(monkeypatch, "_resolve_spec_path", lambda pr: Path(root) / "forge-specs/probe/spec.md")
         assert _sorted_spec_requirement_ids(root) == []
-        assert _count_spec_requirements(root) == 0
+        assert count_spec_requirements(root) == 0
     finally:
         foundry_state.clear_active_run()
 
@@ -592,7 +593,7 @@ def test_the_orchestrator_counts_every_declared_requirement_family(run_env):
     old_half = {i for i in expected if i.split("-")[0] in _OLD_ID_FAMILIES}
     assert old_half <= found, f"NFR-002 narrowing: {sorted(old_half - found)}"
     assert expected <= found, f"still unseen: {sorted(expected - found)}"
-    assert _count_spec_requirements(project_root) == len(expected)
+    assert count_spec_requirements(project_root) == len(expected)
 
 
 
@@ -620,7 +621,7 @@ def test_verdict_synthesis_covers_the_widened_families(run_env):
         f"{sorted(expected - synthesized)} — the count and the rows disagree "
         f"about which families exist."
     )
-    assert written == len(synthesized) == _count_spec_requirements(project_root)
+    assert written == len(synthesized) == count_spec_requirements(project_root)
 
 
 
@@ -657,14 +658,14 @@ def render_requirement_family_table(tmp_path: Path) -> str:
         "-- through the two readers this casting owns --",
     ]
     _write_prove(fdir, items_checked=len(expected), items_total=len(expected), findings=0)
-    out.append(f"   DONE gate requirement count  : {_count_spec_requirements(project_root)}")
+    out.append(f"   DONE gate requirement count  : {count_spec_requirements(project_root)}")
     written = _synthesize_clean_prove_verdicts(fdir, project_root, cycle=1)
     rows = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))
     ids = sorted(r["id"] for r in rows.get("requirements", []))
     out.append(f"   P3 verdict rows synthesized  : {written} -> {ids}")
     out.append(
         f"   count and rows agree         : "
-        f"{written == _count_spec_requirements(project_root)}"
+        f"{written == count_spec_requirements(project_root)}"
     )
 
     out += ["", "-- and no module in the grant re-types the families any more --"]
@@ -2985,3 +2986,72 @@ def test_the_clause_table_covers_the_vocabulary_it_is_built_from():
     assert set(foundry_server._TIERS_OWING_A_REPRODUCTION) == (
         set(vocab.DEFECT_TIERS) - {"LIVE"}
     )
+
+
+def test_the_spec_requirement_count_is_asked_in_one_place():
+    """fallout GI-025 / AC-011 / OT-011 (concern C-062) — ONE FACT, ONE LADDER.
+
+    `gates.py#_count_spec_requirements` returned
+    `len(_sorted_spec_requirement_ids(...))` while
+    `artifacts.count_spec_requirements` returned
+    `len(_spec_requirement_ids(...)[1])` — two answers to "how many requirement
+    ids does this spec declare", through two ladders, agreeing only while both
+    return the same set. C-060 row 3 hoisted the count to the leaf so
+    `streams.py` could ask it without crossing a layer, and this copy stayed:
+    the leaf's own docstring says the count "sat a layer above the ids, in
+    orchestration/gates.py" as though it had moved, and it had only been added.
+
+    THE PACKAGE-WIDE GUARD IS BLIND TO IT, WHICH IS WHY THIS PIN EXISTS.
+    `test_no_top_level_symbol_is_defined_in_two_shipped_modules` keys on the
+    NAME, and these two differ by a leading underscore — so a semantic
+    duplication wore a spelling the guard reads as two unrelated symbols. That
+    is Holmes naming-6's drifting-same-named-primitives hazard with the sign
+    flipped: there, one name and two meanings; here, two names and one meaning.
+
+    So the rule is stated over the FACT rather than the name: exactly one
+    shipped module defines a counter of the spec's requirement ids, and it is
+    the leaf that owns the ladder.
+    """
+    import ast
+
+    pkg = Path(foundry_mcp.__file__).resolve().parent
+    modules = sorted(p for p in pkg.rglob("*.py") if "__pycache__" not in p.parts)
+    assert len(modules) >= 15, [str(m) for m in modules]
+
+    definers: list[str] = []
+    for module in modules:
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if "count_spec_requirement" in node.name.lstrip("_"):
+                definers.append(f"{module.name}#{node.name}")
+
+    assert definers == ["artifacts.py#count_spec_requirements"], (
+        f"the spec's requirement COUNT is defined in {definers}. One fact "
+        "reached through two ladders agrees only while both ladders return the "
+        "same set, and the single-definition guard cannot see it because the "
+        "spellings differ by a leading underscore. The ladder lives in "
+        "`artifacts._spec_requirement_ids`; the count is `count_spec_"
+        "requirements` beside it, and every other module asks that one."
+    )
+
+
+def test_the_count_and_the_sorted_ids_are_one_ladder_not_two(run_env):
+    """fallout GI-025 (C-062) — the anchor, so the pin above is not vacuous.
+
+    `_sorted_spec_requirement_ids` STAYS in gates.py: it is a different shape
+    with a real second caller (`width.py` wants the sorted list, not a count),
+    and it is the leaf's climb with a sort on top rather than a second climb.
+    The property that matters is that the two agree BY CONSTRUCTION, which they
+    do only while the sorted list is derived from the same ladder the count is.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1", "US-2", "NFR-3", "AC-4"])
+
+    assert count_spec_requirements(project_root) == len(
+        _sorted_spec_requirement_ids(project_root)
+    )
+    assert _sorted_spec_requirement_ids(project_root) == [
+        "AC-4", "FR-1", "NFR-3", "US-2"
+    ]
