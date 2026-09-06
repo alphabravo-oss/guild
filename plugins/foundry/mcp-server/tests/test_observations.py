@@ -1936,8 +1936,8 @@ def test_the_scoped_guard_and_the_leafs_no_longer_share_a_name() -> None:
     same name. Every sweep keyed on names read that as one rule copied twice,
     and because neither copy could go (deleting either breaks the other's call
     sites on ARITY, and folding this one's ledger rung into the leaf is what
-    GI-033 forbids) the finding could only ever be ACCOUNTED for, in two tables
-    in two other modules. Renaming is the exit that closes it.
+    fallout GI-033 forbids) the finding could only ever be ACCOUNTED for, in
+    two tables in two other modules. Renaming is the exit that closes it.
 
     THE PIN IS ON THE PACKAGE, not on this module: the duplication was never
     visible from either file alone, which is exactly how it survived. Asserted

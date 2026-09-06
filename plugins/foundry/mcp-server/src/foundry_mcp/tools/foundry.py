@@ -2402,6 +2402,13 @@ def _max_cycles_problem(value: object) -> dict | None:
     `bool` is refused as a non-integer on purpose: `True` IS an `int` in Python
     and would persist a cap of 1, halting the run at the first GRIND door for a
     caller who passed a flag where a ceiling was asked for.
+
+    D-061's sibling, D-067 — THE OMITTED FLAG NEVER REACHES THIS RUNG. "No cap
+    was passed" is spelled `None` at the parameter and the caller skips this
+    check for it; every value that DOES arrive here is one an operator typed,
+    including 0. That separation is what lets the hints below promise an exit
+    the resume branch actually takes: while 0 doubled as "absent", "Pass 0 for
+    unbounded" was advice the door then declined to honour.
     """
     if isinstance(value, bool) or not isinstance(value, int):
         return {
@@ -2410,8 +2417,9 @@ def _max_cycles_problem(value: object) -> dict | None:
                 f"cycle ceiling is a whole number of cycles."
             ),
             "hint": (
-                "Pass an integer at least 0 — 0 is unbounded, which is the "
-                "default and what an omitted --max-cycles flag sends."
+                "Pass an integer at least 0 — 0 means unbounded, and on a "
+                "resume it is honoured as that rather than read as an absent "
+                "flag. OMIT max_cycles to leave a resumed run's cap alone."
             ),
         }
     if value < 0:
@@ -2439,7 +2447,9 @@ def foundry_init(
     description: str = "",
     url: str = "",
     project_root: str = ".",
-    max_cycles: int = 0,
+    # D-067 — `None` is "no cap was passed", 0 is a cap of 0. They were one
+    # value and the resume branch could not tell them apart; see the Args entry.
+    max_cycles: int | None = None,
 ) -> dict:
     """Initialize a foundry run under foundry-archive/.
 
@@ -2453,9 +2463,17 @@ def foundry_init(
             the build it is executing on rather than the one that created it.
         max_cycles: CT-016 / FR-024 — the GRIND cycle ceiling from the
             ``--max-cycles`` flag. Persisted to BOTH state.json and
-            castings/manifest.json. Default 0 means unbounded. The Foundry-Phase
-            call that would exceed it SUCCEEDS, sets phase HALTED and generates
-            the report; HALTED is a named terminal state and is not DONE.
+            castings/manifest.json. 0 means unbounded. The Foundry-Phase call
+            that would exceed it SUCCEEDS, sets phase HALTED and generates the
+            report; HALTED is a named terminal state and is not DONE.
+
+            THE DEFAULT IS ``None``, NOT 0, AND THE TWO ARE DIFFERENT ANSWERS
+            (D-067). ``None`` is "this call passed no cap"; 0 is "this call
+            passed a cap of 0", which is the documented spelling of unbounded.
+            A new run cannot tell the two apart and does not need to — it has no
+            prior ceiling for an omitted flag to leave alone, so both persist 0.
+            A RESUME can and must: ``None`` leaves the persisted cap exactly as
+            it is, and 0 rewrites it to unbounded.
 
             CT-006 / ST-002 / FR-020 / AC-027 — ON A RESUME IT REWRITES THE CAP.
             ``Foundry-Init(resume=…, max_cycles=N)`` writes N to
@@ -2466,16 +2484,28 @@ def foundry_init(
             used to do ``document.update(version_fields)`` and nothing else,
             dropping a parameter of its own signature on the floor.
 
-            A RESUME CARRYING 0 CHANGES NOTHING, and that is forced rather than
-            chosen. ``setup-foundry.sh`` echoes ``FOUNDRY_MAX_CYCLES=0`` when the
-            flag was ABSENT and ``server.py``'s dispatch sends
-            ``args.get("max_cycles", 0)``, so over the wire "no cap requested"
-            and "cap of 0" arrive as the same value — and of the two readings,
-            only this one keeps a bare ``/foundry:resume`` from silently lifting
-            the ceiling the run was launched with. The cost is that a cap cannot
-            be lifted back to unbounded through this door; resume with the
-            ceiling you want instead. A non-integer, or a value below 0, is
-            refused at the door on BOTH branches (``_max_cycles_problem``).
+            D-067 — WHY THAT IS A FIX AND NOT A PREFERENCE. This branch read
+            ``if max_cycles:`` against a default of 0, so a resume carrying an
+            explicit 0 was indistinguishable from one carrying nothing and both
+            left the cap alone. The shared cap rung's own hint said "Pass 0 for
+            unbounded" while this door declined to honour it, and the result
+            echoed the untouched cap back — so an operator who typed
+            ``--max-cycles 0`` to lift a ceiling was told, accurately and
+            uselessly, that the ceiling was still 5. A refusal hint may not name
+            an exit the check never reads, and the reading was never the broken
+            part: the WIRE was, because 0 was carrying two meanings.
+
+            So the distinction is made where the two meanings arrive rather
+            than guessed at further down. ``server.py``'s dispatch must send
+            ``args.get("max_cycles")`` — the absent key as ``None``, not filled
+            in as 0 — and the schema must not default it; the omitted-flag case
+            then never reaches this branch's write at all. ``commands/resume.md``
+            already passes the argument only when ``--max-cycles N`` was
+            invoked, which is the shape this default was written to.
+            A non-integer, or a value below 0, is refused at the door on BOTH
+            branches (``_max_cycles_problem``); ``None`` reaches neither rung
+            nor write, because it is the absence of a value rather than a bad
+            one.
         no_ui: FR-055 / AC-052 — and THIS is the definition every other surface
             quotes, spelled once in ``NO_UI_MEANING``:
 
@@ -2519,8 +2549,14 @@ def foundry_init(
     # check: a value this door will not honour is refused rather than written,
     # and there is no reading under which a new run may store a cap the resume
     # door would refuse.
-    if (cap_problem := _max_cycles_problem(max_cycles)) is not None:
-        return cap_problem
+    #
+    # D-067 — `None` is skipped because it is not a value. An omitted flag has
+    # nothing to validate and nothing to write; every value that reaches the
+    # rung is one a caller typed, 0 included, which is what makes the rung's
+    # hints honest about 0 rather than describing an exit it declines to take.
+    if max_cycles is not None:
+        if (cap_problem := _max_cycles_problem(max_cycles)) is not None:
+            return cap_problem
 
     # --- Resume mode ---
     if resume:
@@ -2588,11 +2624,16 @@ def foundry_init(
             # under its own lock could interleave with a concurrent phase
             # transition reading the old value.
             #
-            # `if max_cycles:` is the 0-means-absent reading the Args block
-            # argues for — the wire cannot distinguish an omitted flag from an
-            # explicit 0, and only this direction keeps a bare resume from
-            # lifting a ceiling nobody asked it to lift.
-            if max_cycles:
+            # D-067 — `is not None`, not truthiness. `if max_cycles:` read an
+            # explicit 0 as an absent flag, so the one value that MEANS
+            # unbounded was the one value this door refused to write, and the
+            # shared rung went on advertising "Pass 0 for unbounded" over it.
+            # The absence is now spelled at the parameter (`None`), which is
+            # the only place it can be spelled without losing a cap of 0 — a
+            # bare resume still leaves the ceiling alone, and that property is
+            # now carried by the default rather than by a coincidence of
+            # falsiness. Both arms are pinned in tests/test_foundry_init.py.
+            if max_cycles is not None:
                 document["max_cycles"] = max_cycles
             # fallout FR-054 / D-052 — AND NOTHING STAMPS
             # `archive_schema_version` HERE, deliberately. The marker records
@@ -2627,6 +2668,16 @@ def foundry_init(
         }
 
     # --- New run ---
+
+    # D-067 — HERE, AND ONLY HERE, `None` AND 0 ARE THE SAME ANSWER. A run
+    # being created has no prior ceiling for an omitted flag to leave alone, so
+    # "no cap was passed" and "a cap of 0 was passed" both persist 0, which is
+    # the documented spelling of unbounded and what every reader below expects
+    # to find in state.json and the manifest. Collapsed once, at the top of the
+    # branch, rather than at each of the three writes that would otherwise have
+    # to remember it.
+    if max_cycles is None:
+        max_cycles = 0
 
     # ST-009 / CT-010 — the self-target preflight, BEFORE anything is created.
     #

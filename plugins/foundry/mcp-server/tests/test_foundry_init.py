@@ -394,8 +394,13 @@ def test_the_version_fields_do_not_disturb_the_existing_state_keys(tmp_path):
 #           fallout CT-006 / ST-002 / FR-020 / AC-027 / OT-025 — the resume
 #           branch honours max_cycles instead of dropping it.
 #   AC10  test_a_resume_carrying_no_cap_leaves_the_persisted_one_alone
-#           the 0-means-absent reading, which is what keeps a bare resume from
-#           lifting a ceiling nobody asked it to lift.
+#           an OMITTED flag leaves the ceiling alone, which is what keeps a
+#           bare `/foundry:resume` from lifting one nobody asked it to lift.
+#   AC10b test_a_resume_carrying_an_explicit_zero_lifts_the_cap_to_unbounded
+#           fallout D-067 — the other half of the same distinction: 0 is a cap
+#           of 0, which is the documented spelling of unbounded, and it is
+#           written. The two arms are what make "N at least 0" true of the
+#           whole accepted range instead of all of it but one value.
 #   AC11  test_a_cap_this_door_will_not_honour_is_refused
 #           fallout CT-006 — 'N not an integer'; and a negative value, which
 #           the persisted-cap reader would silently treat as no cap.
@@ -451,15 +456,13 @@ def test_resume_rewrites_the_persisted_cap(tmp_path):
 
 
 def test_a_resume_carrying_no_cap_leaves_the_persisted_one_alone(tmp_path):
-    """The 0-means-absent reading, and why it is forced rather than chosen.
+    """A bare ``/foundry:resume`` does not lift the ceiling it was launched with.
 
-    ``setup-foundry.sh`` echoes ``FOUNDRY_MAX_CYCLES=0`` when the flag was
-    ABSENT and ``server.py``'s dispatch sends ``args.get("max_cycles", 0)``, so
-    over the wire 'no cap requested' and 'a cap of 0' arrive as one value. Of
-    the two readings only this one keeps a bare ``/foundry:resume`` from
-    silently clearing the ceiling the run was launched with — the cost, stated
-    at the parameter, is that a cap cannot be lifted back to unbounded through
-    this door.
+    ``commands/resume.md`` STEP 5 passes ``max_cycles`` only when
+    ``--max-cycles N`` was invoked, so an omitted flag reaches this function as
+    the parameter's own default and never becomes a write. The property is
+    carried by that default (``None``) rather than by a value happening to be
+    falsy — see the sibling below for why the difference is the whole defect.
     """
     created = foundry_init(project_root=str(tmp_path), max_cycles=7)
 
@@ -469,8 +472,38 @@ def test_a_resume_carrying_no_cap_leaves_the_persisted_one_alone(tmp_path):
     assert resumed["max_cycles"] == 7
 
 
+def test_a_resume_carrying_an_explicit_zero_lifts_the_cap_to_unbounded(tmp_path):
+    """fallout D-067 / CT-006 verbatim: 'integer N at least 0' → 'max_cycles
+    rewritten to N'. 0 is in that range, and it was the one value in it this
+    door refused to write.
+
+    The resume branch read ``if max_cycles:`` against a default of 0, so an
+    explicit 0 and an omitted flag were one case and both left the cap alone.
+    Driven against a run persisting 5, a resume with ``max_cycles=0`` left 5 on
+    disk AND echoed 5 back — accurate, and useless to the operator who had just
+    typed the documented spelling of 'unbounded' to clear the ceiling. The
+    shared rung ``foundry.py#_max_cycles_problem`` went on hinting 'Pass 0 for
+    unbounded' over a door that did not.
+
+    The echo is asserted beside the persisted value on purpose: the two agreed
+    before the fix as well, because the echo has always reported the PERSISTED
+    result rather than the requested one. That is what made the bug quiet, and
+    it is why only the state file can witness it.
+    """
+    created = foundry_init(project_root=str(tmp_path), max_cycles=5)
+    assert _state(created)["max_cycles"] == 5
+
+    resumed = foundry_init(
+        project_root=str(tmp_path), resume=created["run_name"], max_cycles=0
+    )
+
+    assert resumed.get("resumed") is True, resumed
+    assert _state(resumed)["max_cycles"] == 0, "an explicit 0 IS a cap of 0"
+    assert resumed["max_cycles"] == 0, "and the echo is the persisted result"
+
+
 @pytest.mark.parametrize(
-    "bad", ["3", 2.5, True, None, -1], ids=["string", "float", "bool", "none", "negative"]
+    "bad", ["3", 2.5, True, -1], ids=["string", "float", "bool", "negative"]
 )
 def test_a_cap_this_door_will_not_honour_is_refused(tmp_path, bad):
     """fallout CT-006's errors column: 'N not an integer'.
@@ -485,6 +518,14 @@ def test_a_cap_this_door_will_not_honour_is_refused(tmp_path, bad):
     Python, and accepting it would persist a cap of 1 and halt the run at its
     first GRIND door for a caller who passed a flag where a ceiling was asked
     for.
+
+    ``None`` LEFT this list at D-067 and is not a hole. It is no longer a bad
+    value but the absence of one — the parameter's own default, meaning 'this
+    call passed no cap' — and it is driven as such by
+    ``test_a_resume_carrying_no_cap_leaves_the_persisted_one_alone``. Over the
+    wire a JSON ``null`` never reaches the handler at all: ``server.py``'s
+    Foundry-Init schema declares ``max_cycles`` as ``type: integer``, so
+    Draft202012Validator refuses it a layer up.
     """
     created = foundry_init(project_root=str(tmp_path), max_cycles=9)
 
@@ -495,6 +536,36 @@ def test_a_cap_this_door_will_not_honour_is_refused(tmp_path, bad):
     assert "max_cycles" in refusal.get("error", ""), refusal
     assert refusal.get("hint"), refusal
     assert _state(created)["max_cycles"] == 9, "a refused cap may not be written"
+
+
+def test_the_cap_hint_names_an_exit_this_door_actually_takes(tmp_path):
+    """fallout D-067 — the class pin, not just the value pin.
+
+    D-067's class is ``refusal-hint-names-an-exit-the-check-never-reads``, and
+    the shape of that failure is a refusal that hands the operator a remedy the
+    next call declines to honour. So this does not assert on the hint's WORDS:
+    it reads the hint the door gave, TAKES the exit it names, and requires the
+    door to honour it. A hint that promised something this branch would not do
+    would fail here whatever it was phrased as, which is the only form of the
+    check that cannot be satisfied by rewording.
+    """
+    created = foundry_init(project_root=str(tmp_path), max_cycles=5)
+
+    refusal = foundry_init(
+        project_root=str(tmp_path), resume=created["run_name"], max_cycles=-1
+    )
+    hint = refusal.get("hint", "")
+    assert "0 for unbounded" in hint, refusal
+    assert _state(created)["max_cycles"] == 5, "a refused cap may not be written"
+
+    # The exit the hint names, taken.
+    honoured = foundry_init(
+        project_root=str(tmp_path), resume=created["run_name"], max_cycles=0
+    )
+    assert _state(honoured)["max_cycles"] == 0, (
+        f"the door refused with hint {hint!r} and then did not do it. A hint "
+        "naming an exit the door declines to take is the D-067 class."
+    )
 
 
 def test_an_unknown_run_is_still_refused_on_resume(tmp_path):
