@@ -700,10 +700,20 @@ def test_the_no_ui_definition_is_stated_once_where_the_flag_arrives(tmp_path):
     substring against the constant, never against a re-typed copy — the
     ``_PYTEST_DISCOVERY_PHRASE`` shape, where the prose a reader meets is
     derived from the code a test can hold.
+
+    WHICH MODULE HOLDS THE CONSTANT (C-059 row 8, GRIND cycle 4). The sentence
+    is a closed-vocabulary value, so casting 10 landed it in
+    ``schemas/vocab.py`` and that is the single spelling every reader now
+    takes: ``orchestration/width.py`` and ``orchestration/teams.py`` already
+    import it from there, casting 8 repointed its own pin in 292dc0c, and this
+    import followed. ``tools/foundry.py``'s copy is byte-identical and is
+    being deleted; this pin does not care WHICH module defines the sentence,
+    only that the door's docstring quotes the constant rather than a re-typed
+    twin, so it reads the vocabulary and keeps holding through the delete.
     """
     import inspect
 
-    from foundry_mcp.tools.foundry import NO_UI_MEANING
+    from foundry_mcp.schemas.vocab import NO_UI_MEANING
 
     # Compared with whitespace normalised on BOTH sides: the constant is one
     # line and the docstring wraps, so an exact-substring match would be
