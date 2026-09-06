@@ -1139,3 +1139,158 @@ def _spec_requirement_ids(
     if problem is not None:
         return "", set(), spec_path, problem
     return spec_text, set(REQUIREMENT_ID_RE.findall(spec_text)), spec_path, None
+
+
+# ── Hoisted here so both layers may reach them (concern C-060) ────────────
+#
+# WHY THEY MOVED. The boundary guard judged module-top edges only, and only
+# among the orchestration modules, so real cross-layer edges passed unjudged
+# (fallout D-080). Widening it to any depth and both directions makes it TRUE,
+# and what it then reports is verifier modules reaching DOCUMENT READERS
+# through lifecycle modules — GI-033's violation column verbatim. A document
+# reader is leaf material, so the readers come here and both layers reach them
+# legally instead of through each other.
+#
+# THE SECOND WINDOW, NAMED THE WAY THE FIRST ONE WAS. Between this commit and
+# casting 2's repoint, `foundry_spawn` still defines the manifest shape rule and
+# `orchestration/gates.py` still defines the requirement count. The copies here
+# carry DIFFERENT SPELLINGS on purpose: the package-wide single-definition guard
+# is keyed by NAME, so a same-name copy would turn the tree red the hour it
+# landed, and this window is supposed to cost nothing until the originals are
+# deleted and their callers repointed. When that happens, the two spellings
+# below become the only ones and the old names stop existing — which is the
+# point of spelling them differently rather than the price of it.
+
+
+def count_spec_requirements(project_root: str) -> int:
+    """How many requirement ids the run's spec declares.
+
+    The count sat a layer above the ids, in `orchestration/gates.py`, where a
+    lifecycle module had to reach a verifier module to ask it — so the answer
+    to "how many requirements does this spec have" was owned by the module that
+    guards the DONE transition rather than by the module that reads the spec.
+    The ladder is already here (`_spec_requirement_ids`); this is the rest of
+    it, and it is the whole body: sorting a set before counting it changes no
+    count, so the count reads the set the ladder returns.
+
+    D-150's ruling is unchanged and lives one layer further down still: which
+    FAMILIES count is `schemas.vocab`'s declaration and never a literal here.
+    """
+    return len(_spec_requirement_ids(project_root)[1])
+
+
+#: Sentinel for a mapping key that must be PRESENT and non-null, whose value is
+#: otherwise unconstrained. ``castings[].id`` and ``waves[].wave`` are the two:
+#: every reader of this document locates its record by one of them, so an entry
+#: without one is not a record the readers can address, whatever else it holds.
+_REQUIRED_RUNG = object()
+
+#: The manifest's structure AS THE PACKAGE'S READERS INDEX IT. Declared ONCE,
+#: walked recursively by ``_document_shape_problem``, and consulted by every
+#: manifest reader through ``manifest_shape_problem`` — so a corrupt document
+#: produces the same named refusal at both spawn doors and the same silent
+#: degrade in both tolerant readers BY CONSTRUCTION, not by four guards
+#: agreeing with each other.
+#:
+#: This is the ESCALATED class (D-095 / D-098 / D-115 / D-132) answered
+#: structurally. D-115 guarded the top-level container and stopped, so the
+#: RECORDS the readers then index were never guarded: ``castings: "nope"``,
+#: ``[1,2,3]`` and ``[null]`` each reached ``c.get("id")`` and raised
+#: ``AttributeError`` out of Foundry-Spawn-Teammate while Foundry-Cast-Wave
+#: tolerated the identical document — the D-097 asymmetry tell, two doors
+#: disagreeing about one corrupt file. The fix is not a filter at the index
+#: sites (that IS the class); it is one declaration of the shape.
+#:
+#: Grammar, read by ``_document_shape_problem``:
+#:   ``[shape]``      a list; every element must satisfy the single inner shape
+#:   ``{k: shape}``   a mapping; each key is OPTIONAL, and when present and
+#:                    non-null its value must satisfy its shape
+#:   ``_REQUIRED_RUNG`` the key must be present and non-null; value unconstrained
+#:   ``None``         unconstrained from here down — an EXPLICIT statement that
+#:                    the reader below this point is on its own. ``stream_skips``
+#:                    entries are None because ``_skipped_stream_ids`` accepts
+#:                    both a mapping and a bare string by documented contract and
+#:                    isinstance-checks each entry itself.
+#:
+#: WHAT THIS COPY DOES NOT CARRY YET, said plainly rather than left to be found:
+#: ``foundry_spawn``'s copy is pinned by a test that derives the indexed key set
+#: from THAT module's AST, so a reader there cannot start indexing a key without
+#: declaring it. This copy has no such pin, because the readers it serves are
+#: spread across the package rather than gathered in one module. The casting
+#: that deletes the original owes that pin a new subject.
+_MANIFEST_DOCUMENT_SHAPE: dict = {
+    "castings": [{"id": _REQUIRED_RUNG, "key_files": [None]}],
+    "waves": [{"wave": _REQUIRED_RUNG, "casting_ids": [None]}],
+    "stream_skips": [None],
+}
+
+
+def _document_shape_problem(value: object, shape: object, path: str) -> str | None:
+    """The first named reason ``value`` does not satisfy ``shape``, else None.
+
+    Recursive over the shape, so depth is a property of the DECLARATION rather
+    than of this function: the rung below the one a defect was reported at is
+    covered the moment it is declared, which is precisely what a hand-written
+    ``isinstance`` chain at the reported rung cannot do.
+
+    ``path`` is the dotted key path being validated, carried down so the
+    message names WHICH rung failed. That is not cosmetic. The message this
+    replaces was ``"manifest.json is not a JSON object — parsed as {type}"``,
+    and reusing it one rung down produces the self-contradicting
+    ``"manifest.json is not a JSON object — parsed as dict"`` — a refusal that
+    sends the operator to look at a top-level object that is perfectly fine.
+    Each branch below therefore states the shape IT expected.
+    """
+    if shape is None:
+        return None
+
+    if isinstance(shape, list):
+        if not isinstance(value, list):
+            return f"{path} is not a list — parsed as {type(value).__name__}"
+        element = shape[0]
+        for index, item in enumerate(value):
+            problem = _document_shape_problem(item, element, f"{path}[{index}]")
+            if problem is not None:
+                return problem
+        return None
+
+    if not isinstance(value, dict):
+        return f"{path} is not a JSON object — parsed as {type(value).__name__}"
+    for key, sub in shape.items():
+        member = value.get(key)
+        if sub is _REQUIRED_RUNG:
+            # No "parsed as" here, because there is nothing parsed to name —
+            # so the actionable equivalent is the keys the object DOES carry.
+            if member is None:
+                return (
+                    f"{path}.{key} is absent or null — {path} carries "
+                    f"{sorted(str(k) for k in value)} and every reader of this "
+                    f"manifest addresses its record by `{key}`"
+                )
+            continue
+        if member is None:
+            continue
+        problem = _document_shape_problem(member, sub, f"{path}.{key}")
+        if problem is not None:
+            return problem
+    return None
+
+
+def manifest_shape_problem(manifest: object) -> str | None:
+    """The named reason a parsed manifest is unusable, or None.
+
+    The string half, beside ``_document_problem`` and ``_artifact_guard`` in
+    this same module: the TOLERANT readers owe a degrade rather than a refusal,
+    and must decide on exactly the same evidence the refusing doors use. Calling
+    this rather than growing a private ``isinstance`` check is what keeps every
+    reader of castings/manifest.json on one policy (D-132, D-134).
+
+    IT IS HERE BECAUSE OF WHO ASKS. `orchestration/width.py` and
+    `orchestration/transitions.py` are verifier modules and reached this
+    predicate through `foundry_spawn`, which is lifecycle — the edge GI-033
+    forbids. The predicate reads a DOCUMENT and knows nothing about a phase, a
+    gate or a stream, so the leaf is where it always belonged; this module was
+    already half-way to saying so, in ``_manifest_shape_problem_lazy``'s lazy
+    back-reach for exactly this validator.
+    """
+    return _document_shape_problem(manifest, _MANIFEST_DOCUMENT_SHAPE, "manifest.json")

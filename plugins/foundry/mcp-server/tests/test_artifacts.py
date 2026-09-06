@@ -1030,3 +1030,136 @@ def test_the_lock_sidecar_suffix_has_one_spelling_for_every_domain():
         if path == leaf or not _declares_lock_domain(path):
             continue
         assert path.name in _SECOND_LOCK_DOMAINS, path.name
+
+
+# --------------------------------------------------------------------------- #
+# Hoisted for the layering guard (concern C-060)
+# --------------------------------------------------------------------------- #
+#
+# Two readers moved here because verifier modules were reaching them through
+# lifecycle modules, which is `fallout GI-033`'s violation column. Each is
+# pinned twice: on its BEHAVIOUR, which survives the deletion of the definition
+# it was copied from, and — for as long as both exist — on AGREEMENT with that
+# definition, which is what makes the window between this commit and casting 2's
+# repoint cost nothing. The agreement pins retire themselves with a named skip
+# the day the originals go, rather than turning red for having succeeded.
+
+
+def test_the_leaf_counts_the_requirement_ids_its_own_ladder_found(run_env):
+    """`fallout GI-033` — the count reads the ladder that is already here.
+
+    Three distinct ids, one of them quoted a second time mid-prose: the count is
+    of the SET the ladder returns, so a repeat is not a fourth requirement. The
+    ids come from `_spec_requirement_ids`, so which families count is
+    `schemas.vocab`'s declaration and not a literal in either module.
+    """
+    project_root, fdir = run_env
+    (fdir / "spec.md").write_text(
+        "- **US-001** the story\n"
+        "- **FR-009** the requirement\n"
+        "- **AC-042** the criterion, which US-001 also names\n",
+        encoding="utf-8",
+    )
+
+    assert artifacts.count_spec_requirements(project_root) == 3
+
+
+def test_a_run_with_no_spec_counts_no_requirements(run_env):
+    """A run legitimately has no spec before F0, and "none declared" is what is
+    true of it — the ladder answers that without raising and so does the count.
+    """
+    project_root, _fdir = run_env
+
+    assert artifacts.count_spec_requirements(project_root) == 0
+
+
+def test_the_count_agrees_with_the_definition_it_was_hoisted_from(run_env):
+    """The window pin: while `orchestration/gates.py` still defines its own
+    count, the two answers are one answer.
+
+    It is the copy that makes a hoist safe to land before the repoint, and it
+    is the only thing that would catch the two parting while both are live.
+    """
+    gates = pytest.importorskip("foundry_mcp.tools.orchestration.gates")
+    hoisted_from = getattr(gates, "_count_spec_requirements", None)
+    if hoisted_from is None:
+        pytest.skip(
+            "gates._count_spec_requirements is gone: the hoist completed and "
+            "this agreement pin has nothing left to compare"
+        )
+
+    project_root, fdir = run_env
+    (fdir / "spec.md").write_text(
+        "- **US-001** a\n- **FR-009** b\n- **OT-038** c\n", encoding="utf-8"
+    )
+
+    assert artifacts.count_spec_requirements(project_root) == hoisted_from(project_root)
+
+
+#: One malformed manifest per rung the shape declaration names, and the two
+#: shapes that are FINE. Every string is the message the reader must produce;
+#: the point of each is that it names the rung that failed rather than the
+#: document, which is what a message reused one rung down cannot do.
+MANIFEST_SHAPES = {
+    "a-list": ([1, 2, 3], "manifest.json is not a JSON object — parsed as list"),
+    "a-string": ("nope", "manifest.json is not a JSON object — parsed as str"),
+    "castings-not-a-list": (
+        {"castings": "nope"},
+        "manifest.json.castings is not a list — parsed as str",
+    ),
+    "casting-not-an-object": (
+        {"castings": [1]},
+        "manifest.json.castings[0] is not a JSON object — parsed as int",
+    ),
+    "casting-null": (
+        {"castings": [None]},
+        "manifest.json.castings[0] is not a JSON object — parsed as NoneType",
+    ),
+    "empty": ({}, None),
+    "usable": ({"castings": [{"id": 1, "key_files": ["a.py"]}]}, None),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(MANIFEST_SHAPES))
+def test_the_manifest_rule_names_the_rung_that_failed(shape):
+    """`fallout GI-033` — the predicate a verifier module may now ask directly.
+
+    The rung, not the document: a refusal reading "manifest.json is not a JSON
+    object — parsed as dict" sends an operator to look at a top-level object
+    that is perfectly fine, which is why each branch states the shape IT
+    expected and carries the dotted path down.
+    """
+    manifest, expected = MANIFEST_SHAPES[shape]
+
+    assert artifacts.manifest_shape_problem(manifest) == expected
+
+
+def test_a_record_missing_the_rung_its_readers_address_it_by_is_named():
+    """The absent-key branch has no "parsed as" to give, so it gives the keys
+    the object DOES carry — which is the actionable half when the rung a reader
+    indexes by is the one that is missing.
+    """
+    problem = artifacts.manifest_shape_problem({"castings": [{"key_files": []}]})
+
+    assert problem is not None
+    assert problem.startswith("manifest.json.castings[0].id is absent or null")
+    assert "['key_files']" in problem
+
+
+def test_the_manifest_rule_agrees_with_the_definition_it_was_hoisted_from():
+    """The other window pin, and the same retirement.
+
+    Every shape above, through both definitions, while both exist: the copy is
+    the original's body under a different spelling, and the only spellings that
+    differ are the ones the single-definition guard forced apart.
+    """
+    spawn = pytest.importorskip("foundry_mcp.tools.foundry_spawn")
+    hoisted_from = getattr(spawn, "_manifest_shape_problem", None)
+    if hoisted_from is None:
+        pytest.skip(
+            "foundry_spawn._manifest_shape_problem is gone: the hoist completed "
+            "and this agreement pin has nothing left to compare"
+        )
+
+    for name, (manifest, _expected) in sorted(MANIFEST_SHAPES.items()):
+        assert artifacts.manifest_shape_problem(manifest) == hoisted_from(manifest), name
