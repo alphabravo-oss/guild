@@ -685,10 +685,12 @@ def _read_spend(run_dir: Path) -> dict[str, Any] | None:
     `_spend_summary` read ``state.json.spend`` while `foundry_report._read_spend`
     re-aggregated ``spend.jsonl``, and their disagreement is recorded in four
     shipped defects (D-038, D-090, D-162, D-163). This function was the third
-    implementation of the same question, with its own `_new_spend_bucket`,
-    `_as_count` and `_cycle_sort_key` beside it — "three implementations, one
-    question", in the survey's own words. Two of the three now call one reader
-    and so does this one.
+    implementation of the same question, with its own seed for the per-cycle
+    bucket — the copy `foundry_state.spend_bucket` is the successor of, deleted
+    here rather than kept — and its own `_as_count` and `_cycle_sort_key` beside
+    it, both of which are bindings to the leaf's readers now. "Three
+    implementations, one question", in the survey's own words: two of the three
+    now call one reader and so does this one.
 
     WHAT THE SHARED READER ADDS THAT THIS COPY COULD NOT. The reconciliation is
     stated at `spend_rollup` and is not restated here, but the shape of it
