@@ -1098,6 +1098,29 @@ def _run(tmp_path):
     return tmp_path
 
 
+def test_git_changed_paths_tells_a_broken_git_from_a_clean_tree(tmp_path) -> None:
+    """fallout D-080 row 1 — the diff reader, in the leaf both layers can reach.
+
+    Driven against a directory that is not a repository, because that is the
+    case the return shape exists for: ok=False with a NAMED error, never a
+    raise and never an ok=True empty list. Those two are different facts and a
+    caller reading the second as the first would treat a broken git as a tree
+    with nothing changed — which is the direction that fails open.
+    """
+    out = fs.git_changed_paths(str(_run(tmp_path)), "HEAD~1", "HEAD")
+
+    assert set(out) == {"ok", "files", "error"}
+    assert out["files"] == []
+    assert out["ok"] is False and out["error"]
+
+
+def test_git_touching_commit_never_claims_a_commit_it_could_not_read(
+    tmp_path,
+) -> None:
+    """fallout D-080 row 2 — total, and empty never invents a commit."""
+    assert fs.git_touching_commit(str(_run(tmp_path)), "HEAD~1", "some/path.py") == ""
+
+
 def test_boundary_base_sha_prefers_the_newest_marker(tmp_path) -> None:
     """fallout D-080 row 3 — which commit a cycle's diff is measured from.
 

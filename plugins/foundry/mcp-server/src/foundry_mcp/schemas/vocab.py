@@ -1827,6 +1827,31 @@ def never_demote_class(finding: Mapping[str, object]) -> str | None:
     return None
 
 
+#: fallout GI-033 / D-080 (concern C-059 row 8) — THE ONE MEANING OF `--no-ui`.
+#:
+#: `survey/surface.md` FI-2 found the flag meaning THREE different things at
+#: once: setup-foundry.sh's help said "Skip browser audit (SIGHT)", README.md's
+#: table said "Suppress orchestrator banners", and the SIGHT check treated
+#: `manifest.no_ui` as a HARD BLOCK — a refusal, which is neither of the other
+#: two. A flag whose meaning depends on which document the operator read is a
+#: flag nobody can use correctly, and the three readings disagree about the
+#: DIRECTION of the effect, not merely its wording.
+#:
+#: The chosen meaning is the one the flag's own NAME carries and that two of
+#: the three surfaces were already reaching for. It says nothing about banners:
+#: the display is not a UI the run audits, and a flag that suppressed output
+#: would need its own name.
+#:
+#: IT LIVES HERE because `orchestration/width.py` and `orchestration/teams.py`
+#: — the verifier layer — both reach `tools/foundry.py` for it, and GI-033 puts
+#: a closed-vocabulary sentence read across layers in the vocabulary rather than
+#: in the largest lifecycle module in the tree. Extend only via phase-level RFC.
+NO_UI_MEANING = (
+    "`--no-ui` declares that this run has no browsable UI, so the SIGHT "
+    "browser audit is not part of it."
+)
+
+
 def never_demote_claim_class(finding: Mapping[str, object]) -> str | None:
     """The denylist class this finding's CLAIM matches, else None.
 

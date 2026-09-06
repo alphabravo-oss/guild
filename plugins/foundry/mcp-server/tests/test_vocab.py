@@ -421,6 +421,31 @@ def test_a_spec_ref_alone_is_a_spec_required_behaviour_claim() -> None:
     assert not vocab.is_spec_required_behaviour_claim({"spec_ref": "  "})
 
 
+def test_no_ui_meaning_is_the_one_sentence_the_flag_means() -> None:
+    """fallout GI-033 / fallout D-080 (concern C-059 row 8) — one meaning.
+
+    `survey/surface.md` FI-2 found `--no-ui` meaning three different things at
+    once, and the three disagreed about the DIRECTION of the effect: skip the
+    SIGHT audit, suppress banners, or hard-block. It lives here because
+    `orchestration/width.py` and `orchestration/teams.py` both reach for it and
+    they are the verifier layer, so the sentence cannot live in the largest
+    lifecycle module in the tree.
+
+    Pinned on what it SAYS, not merely that it exists: the clause that makes it
+    a declaration about the RUN and the clause that denies it is about output
+    are the two FI-2 turned on.
+    """
+    assert isinstance(vocab.NO_UI_MEANING, str) and vocab.NO_UI_MEANING.strip()
+    assert "no browsable UI" in vocab.NO_UI_MEANING, (
+        "the flag declares a fact about the RUN — the meaning its name carries"
+    )
+    assert "SIGHT" in vocab.NO_UI_MEANING, "and the consequence that follows"
+    assert "banner" not in vocab.NO_UI_MEANING.lower(), (
+        "it says nothing about banners: the display is not a UI the run audits, "
+        "and a flag that suppressed output would need its own name"
+    )
+
+
 def test_every_report_section_has_a_title_and_the_two_are_paired_here() -> None:
     """fallout GI-033 (concern C-060 row 2) — the headings the gate checks.
 

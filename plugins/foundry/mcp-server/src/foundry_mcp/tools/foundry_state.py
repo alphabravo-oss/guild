@@ -1495,15 +1495,100 @@ FULL_CYCLE_RATIO_THRESHOLD = 0.5
 # tier set would end that, so the names arrive as arguments in the shape
 # `unreported_dispatch_summary` and `current_inspect_mode` established.
 #
-# EACH HOISTED NAME DIFFERS FROM THE ONE IT LEAVES BEHIND, and that is not
-# cosmetic. `test_no_top_level_symbol_is_defined_in_two_shipped_modules` fails
-# on a name defined in two shipped modules, and the old copies stay until
-# casting 2 repoints, so a same-name hoist turns that guard red for the whole
-# window. C-059's rows 1, 2 and 8 (`git_changed_paths`, `git_touching_commit`,
-# `NO_UI_MEANING`) are held back for exactly that reason: both remedies the
-# guard names — deleting the old copy, or recording it in
-# `_DELIBERATE_REDEFINITIONS` — are casting 2's files, not this casting's.
+# THE TWO GIT HELPERS KEEP THEIR NAMES, and that is a decision rather than an
+# oversight. `test_no_top_level_symbol_is_defined_in_two_shipped_modules` is RED
+# from this commit until casting 2 deletes `width.py`'s copies in the commit
+# straight after, which casting 2 asked for in that order: deleting first would
+# break every caller in its package at IMPORT time, and a missing symbol is the
+# whole server down where a name collision is one failing test. Renaming them
+# here instead would buy a green guard for one commit at the price of a
+# permanently worse name, which is the trade this run keeps refusing.
 # --------------------------------------------------------------------------- #
+
+
+def git_changed_paths(
+    project_root: str, base: str, head: str = "HEAD", *, timeout: float = 30.0
+) -> dict:
+    """Paths changed between two commits. ``{"ok", "files", "error"}``.
+
+    Total: a missing git, a bad revision or a timeout all return ok=False with a
+    named error and an empty file list, never a raise. ok=False and an empty
+    list are DIFFERENT facts from ok=True and an empty list — the second means
+    nothing changed, and a caller that cannot tell them apart will read a broken
+    git as a clean tree.
+
+    ``-z`` with ``core.quotepath=false`` is what makes a path carrying a space
+    or a non-ASCII byte come back as ONE token rather than a quoted, escaped
+    approximation of itself. ``--end-of-options`` stops a ref beginning with a
+    dash being read as a flag.
+
+    ``subprocess`` is imported in the body, not at the top: `measure-run.py`
+    reads this module with no package on the path, and the import cost belongs
+    to the callers that actually shell out.
+    """
+    import subprocess
+    try:
+        proc = subprocess.run(
+            [
+                "git", "-C", project_root,
+                "-c", "core.quotepath=false",
+                "diff", "--name-only", "-z",
+                "--end-of-options", base, head,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+        return {
+            "ok": False, "files": [],
+            "error": f"git unavailable: {type(exc).__name__}",
+        }
+    if proc.returncode != 0:
+        return {
+            "ok": False, "files": [],
+            "error": f"git diff failed: {proc.stderr.strip()[:120]}",
+        }
+    return {
+        "ok": True,
+        "files": sorted({tok for tok in proc.stdout.split("\0") if tok.strip()}),
+        "error": "",
+    }
+
+
+def git_touching_commit(
+    project_root: str, base: str, path: str, head: str = "HEAD",
+    *, timeout: float = 30.0,
+) -> str:
+    """The newest commit in ``base..head`` touching ``path``, or "".
+
+    Total, and "" means BOTH "no such commit" and "git could not answer". A
+    caller needing to tell those apart asks `git_changed_paths` first, which
+    reports its own failure; empty is the safe answer either way because it
+    never claims a commit that is not there.
+    """
+    import subprocess
+    try:
+        proc = subprocess.run(
+            [
+                "git", "-C", project_root,
+                "-c", "core.quotepath=false",
+                "log", "-1", "--format=%h",
+                "--end-of-options", f"{base}..{head}", "--", path,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
 
 
 def boundary_base_sha(
