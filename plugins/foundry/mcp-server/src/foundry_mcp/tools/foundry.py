@@ -1623,13 +1623,20 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
 
     THE CHECK ORDER IS LOCKED, so that the two doors name the same field first
     for the same bad filing: the security denylist (over every NON-BLOCKING
-    tier), then tier, then class, then — for LIVE only — the prose floor
-    (D-147), then — for HARDENING only — the `spec_ref` refusal, then — for
-    LATENT and HARDENING — reproduction_attempted. There is no rung after
-    those; see the D-101 block at the tail of this function for why a
-    `file_path` rung was added in GRIND cycle 5 and reversed in cycle 6, and
-    the D-147 block at the LIVE rung for why that one is scoped and shaped the
-    way it is rather than as a `description`-key check.
+    tier), then — for HARDENING only — the rest of the never-demote denylist
+    read over the filing's PROSE (D-078), then tier, then class, then — for
+    LIVE only — the prose floor (D-147), then — for HARDENING only — the
+    `spec_ref` refusal, then — for LATENT and HARDENING —
+    reproduction_attempted. There is no rung after those; see the D-101 block
+    at the tail of this function for why a `file_path` rung was added in GRIND
+    cycle 5 and reversed in cycle 6, and the D-147 block at the LIVE rung for
+    why that one is scoped and shaped the way it is rather than as a
+    `description`-key check.
+
+    BOTH DENYLIST RUNGS LEAD for one reason (D-061): the audit tripwire may
+    not be rung-dependent. A filing that asserts something it may never assert
+    from a non-blocking tier is audited whatever ELSE it got wrong, so no
+    filer switches the control off by also omitting `class`.
 
     WHAT THE HARDENING TIER ADDED, AND WHERE (FR-015 / FR-057 / FR-045 /
     GI-004 / GI-014 / GI-022 / GI-028 / CT-012 / AC-023 / AC-055)
@@ -1642,6 +1649,12 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
         security-property claim parked in a tier that holds no gate shut is the
         demotion the denylist exists to refuse, and which non-blocking tier it
         was parked in does not change that.
+      * and, for HARDENING alone, the REST of that denylist — the claim
+        entries `never_demote_class` ranks, read over the filing's prose
+        (D-078). The rung above enforced one of the denylist's four entries;
+        this one enforces the others for the tier whose definition they
+        contradict. See its own block for why `spec_ref` is neutralised and
+        why NON_COMMENT is excluded.
       * a `spec_ref` refusal reachable only from HARDENING, naming
         `TIER_NOT_ALLOWED`.
       * the reproduction rung widened to both tiers that owe evidence in that
@@ -1708,15 +1721,26 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
     naming ``tier`` as it always was — CT-003 scopes the denylist to LATENT.
 
     WHY THE LATENT GATE CONSULTS THE SECURITY PREDICATE AND NOT
-    ``never_demote_class`` (CT-003)
-    -----------------------------------------------------------
+    ``never_demote_class`` — AND WHY THE HARDENING GATE DOES (CT-003 / D-078)
+    --------------------------------------------------------------------------
     ``never_demote_class`` returns SPEC_REQUIRED_BEHAVIOUR_CLAIM for ANY
     finding carrying a non-empty ``spec_ref`` (see
-    ``vocab.is_spec_required_behaviour_claim``). Routing this gate through it
-    would refuse every LATENT filing that cites a requirement — which is the
-    majority of them — and OT-005 requires the exact opposite: a LATENT filing
-    citing NFR-002 with a scan-gap description is ACCEPTED. A spec_ref alone
-    never refuses a LATENT filing. Only the security predicate does.
+    ``vocab.is_spec_required_behaviour_claim``). Routing the LATENT gate
+    through it would refuse every LATENT filing that cites a requirement —
+    which is the majority of them — and OT-005 requires the exact opposite: a
+    LATENT filing citing NFR-002 with a scan-gap description is ACCEPTED. A
+    spec_ref alone never refuses a LATENT filing. Only the security predicate
+    does.
+
+    NONE OF THAT IS TRUE OF HARDENING, and reading it as though it were is
+    what left half the denylist unenforced at both doors (D-078). LATENT means
+    "I looked for this stated failure and did not find one", so citing the
+    requirement is the tier working; HARDENING means "I drove a probe of my
+    own devising on a path NO requirement states", so citing one is the tier
+    being contradicted. The clause that makes the LATENT argument bite —
+    spec_ref alone — is neutralised at the HARDENING rung precisely so that
+    the rung reads the CLAIM and not the citation, and the citation keeps its
+    own named refusal (AC-055's ``TIER_NOT_ALLOWED``) below.
 
     THE TRIPWIRE IS THE CALLER'S TO WRITE. ``record_denylist_tripwire`` needs
     the resolved run dir, the cycle and the source, none of which a pure
@@ -1777,6 +1801,88 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
             "field": "description",
             "denylist_class": SECURITY_PROPERTY_CLAIM,
         }
+
+    # AC-023 / GI-004 / OT-019 / FR-045 (D-078) — THE OTHER HALF OF THE
+    # NEVER-DEMOTE DENYLIST, ENFORCED FOR HARDENING.
+    #
+    # The rung above asks ONE denylist question — is this a security-property
+    # claim — while `never_demote_class` asks four. So of the denylist's
+    # entries only SECURITY_PROPERTY_CLAIM was enforced at either filing door,
+    # and a filing asserting that a STATED requirement's behaviour is absent
+    # landed in the non-blocking tier unopposed. Driven at BOTH doors with
+    # `spec_ref=""` and "AC-022 requires Foundry-Gate('done') to pass with open
+    # HARDENING defects and the gate refuses; the required behaviour is
+    # absent": `never_demote_class` answered SPEC_REQUIRED_BEHAVIOUR_CLAIM,
+    # `foundry_add_defect` returned D-001, `foundry_sync_defects` returned
+    # `{"ok": True, "added": 1}`, and `observations.json` tripwire stayed `[]`.
+    # GI-004's violation column is "filing a security claim OR A SPEC-REQUIRED
+    # BEHAVIOUR FAILURE as HARDENING or LATENT" — half of it was unguarded, so
+    # the tier the release added for OFF-spec findings accepted on-spec ones.
+    #
+    # HARDENING ONLY, and the LATENT section of this docstring is why: routing
+    # LATENT through this dispatcher would refuse every LATENT filing that
+    # cites a requirement, which OT-005 requires ACCEPTED. For HARDENING there
+    # is no such tension — the tier is DEFINED as a driven failure "on a path
+    # NO requirement states", so a spec-required-behaviour claim filed here
+    # contradicts the tier's own definition rather than sitting awkwardly
+    # inside it.
+    #
+    # TWO NARROWINGS, EACH FORCED BY A LOCKED REQUIREMENT RATHER THAN CHOSEN:
+    #
+    #   `spec_ref` NEUTRALISED — `is_spec_required_behaviour_claim` answers
+    #       True for ANY non-empty `spec_ref`, so asking the dispatcher the raw
+    #       finding would refuse every spec_ref-carrying HARDENING filing HERE
+    #       and the `spec_ref` rung below would become unreachable. AC-055
+    #       requires that filing refused "naming the tier rule"
+    #       (`TIER_NOT_ALLOWED`, field `spec_ref`), so the LOCATOR is
+    #       neutralised and this rung reads the PROSE — which is exactly the
+    #       half GI-028 does not already cover, and the half D-078 drove.
+    #   NON_COMMENT EXCLUDED — the four entries are not one rule, and
+    #       `record_denylist_tripwire`'s `comment_subject_required` block
+    #       already draws the line: three of them read what the finding CLAIMS,
+    #       and NON_COMMENT reads its SUBJECT, existing only because recording
+    #       an OBSERVATION used to be a demotion. A defect's `target_kind` says
+    #       what it is about, and this door's own contract is that "any other
+    #       value, or none, means the finding is not demotable and is filed as
+    #       a defect" — so refusing HARDENING for `target_kind="code"` would
+    #       make OT-018 ("a HARDENING defect is accepted with a reproduction")
+    #       unsatisfiable for the DEFAULT shape of every production-code
+    #       filing. Excluded BY NAME, from the dispatcher, so a fifth CLAIM
+    #       entry joins this rung by construction and never by memory.
+    #
+    # ASKED OF `tripwire_finding(finding)` — the exact shape the door hands
+    # `record_denylist_tripwire` on the way out. So the class this refusal
+    # names and the class the audit record RE-DERIVES are equal by
+    # construction rather than by two readings agreeing, which is D-083's
+    # property (and D-147's repair) held one entry along.
+    if tier == TIER_HARDENING:
+        denied = never_demote_class({**tripwire_finding(finding), "spec_ref": ""})
+        if denied is not None and denied != NON_COMMENT:
+            return {
+                "ok": False,
+                "error": (
+                    f"Refused: {denied} — a finding on the never-demote "
+                    f"denylist may never be filed as {TIER_HARDENING}."
+                ),
+                "hint": (
+                    "HARDENING is the tier for a driven failure on a path NO "
+                    "requirement states. A claim that a STATED requirement's "
+                    "behaviour is absent or wrong is on-spec by definition, "
+                    "and this tier holds no gate shut — so filing it here is "
+                    "the demotion the denylist exists to refuse. Drive it and "
+                    "file what you observed as LIVE, citing the requirement "
+                    "in spec_ref and putting the reproduction in the "
+                    "description. Do NOT re-word the claim to get past this "
+                    "refusal: every field that CARRIES a claim is read, not "
+                    "just the description (D-147), and an audit tripwire has "
+                    "already recorded this attempt. What you say you SEARCHED "
+                    "for is never what is refused, so a "
+                    "reproduction_attempted statement naming a requirement "
+                    "you looked for is fine as it stands (D-158)."
+                ),
+                "field": "description",
+                "denylist_class": denied,
+            }
 
     if not isinstance(tier, str) or tier not in DEFECT_TIERS:
         return {
@@ -3034,15 +3140,32 @@ def foundry_add_defect(
             READING pre-change archives.
         tier: a member of ``vocab.DEFECT_TIERS`` — LIVE when the stream drove
             the door and observed the wrong result, LATENT when it looked for
-            the failure and found none. REQUIRED (CT-001 / FR-004). It is NOT
-            a severity: both tiers are defects and both get fixed; the axis
-            decides only which gate a still-open instance blocks.
+            the failure and found none, HARDENING when it drove a probe of its
+            own devising and that probe failed on a path NO requirement states.
+            REQUIRED (CT-001 / FR-004 / CT-012). It is NOT a severity: all
+            three are defects and all three get fixed; the axis decides only
+            which gate a still-open instance blocks, and HARDENING holds none
+            shut. A HARDENING filing carries NO ``spec_ref`` — a reference is
+            the statement that a requirement is at stake, which is the one
+            thing this tier says is not — and a filing whose prose claims a
+            stated requirement's behaviour is absent is refused here for the
+            same reason (D-078).
+
+            D-093 — THIS PARAGRAPH IS A CONTRACT A STREAM READS, NOT A NOTE.
+            It enumerated two tiers after the vocabulary held three, so a
+            stream that read it learned neither what HARDENING means nor that
+            it owes a reproduction, and was then refused for a field the prose
+            had scoped to LATENT. ``server.py``'s ``list_tools`` descriptions
+            are the wire-visible half of the same sentence.
         reproduction_attempted: for a LATENT filing, the statement naming what
             was driven and what it found (e.g. "AST sweep of both roots finds
-            0 sites"). Required on LATENT and refused when it is a placeholder
-            (``vocab.reproduction_attempted_problem`` is the check); stored as
-            ``None`` on a LIVE record, whose reproduction lives in the
-            description.
+            0 sites"); for a HARDENING filing, the probe that was driven and
+            the wrong result it produced — the same evidence standard as LIVE,
+            stated in this field rather than in the description. REQUIRED on
+            BOTH of those tiers (not LATENT alone) and refused when it is a
+            placeholder (``vocab.reproduction_attempted_problem`` is the
+            check); stored as ``None`` on a LIVE record, whose reproduction
+            lives in the description.
 
         fallout_of: optional (CT-019 / FR-025) — the ``D-NNN`` this finding is
             fallout OF: a defect this run already filed whose fix, or whose
@@ -3441,7 +3564,20 @@ def foundry_add_defect(
         # reading forge-log.md to decide what still blocks the run needs
         # LIVE vs LATENT there, not only in defects.json.
         ("Tier", tier),
-        ("Reproduction attempted", reproduction_attempted if tier == "LATENT" else ""),
+        # GI-006 / D-079 — "run artefacts stay complete", and this row is
+        # keyed the way the RECORD LITERAL above is keyed (`!= "LIVE"`) rather
+        # than on `== "LATENT"`. The two disagreed: the validator demands a
+        # reproduction of BOTH non-blocking tiers, the literal persists it for
+        # both, and this row dropped it for HARDENING — so forge-log.md carried
+        # the evidence row for a LATENT filing and no such row for a HARDENING
+        # filing whose reproduction the door had just demanded as a condition
+        # of acceptance. The literal's own comment already forbade exactly this
+        # ("would refuse a HARDENING filing for omitting evidence and then drop
+        # the evidence it supplied"); the mirror is the second place that
+        # sentence has to be true. `""` on LIVE rather than `None` because
+        # `_ledger_mirror` prints a row only for a truthy value and a LIVE
+        # record's reproduction is in its description.
+        ("Reproduction attempted", reproduction_attempted if tier != "LIVE" else ""),
     ]
     if retiered_id is None:
         mirror_rows.append(("Class", defect_class))

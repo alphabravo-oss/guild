@@ -53,6 +53,20 @@ synthetic run and then drift from it.
   fallout ST-006 / GI-022 / OT-020
       a filing citing an open HARDENING id under supersedes closes that record
       as superseded and leaves its tier exactly where the stream put it.
+  fallout AC-023 / GI-004 / OT-019 (defect D-078)
+      the never-demote denylist is enforced at the filing doors in FULL for
+      HARDENING, not only through its security entry: a filing whose PROSE
+      claims a stated requirement's behaviour is absent is refused and
+      audited, while the LATENT contract (a spec_ref alone never refuses) and
+      the tier's ordinary subject (`target_kind="code"`) are untouched.
+  fallout GI-006 (defect D-079)
+      the forge-log mirror carries the reproduction row for every tier the
+      record literal writes it on — HARDENING included, whose evidence the
+      door had just demanded as a condition of acceptance.
+  fallout CT-012 (defect D-093, co-dispatched alignment)
+      the single door's OWN advertised prose names every member of
+      DEFECT_TIERS and scopes the reproduction to both tiers that owe one —
+      the sibling of the wire-schema sentence `server.py#list_tools` carries.
   fallout ST-006 / GI-022 (defect D-053)
       a filing citing the id it is itself about to be given promotes NOTHING,
       at both doors — the transition is stated over two records, and on an
@@ -68,6 +82,7 @@ used in those tests is the shape that door passes through.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from pathlib import Path
@@ -77,6 +92,7 @@ import pytest
 from foundry_mcp.schemas.vocab import (
     DEFECT_TIERS,
     SECURITY_PROPERTY_CLAIM,
+    SPEC_REQUIRED_BEHAVIOUR_CLAIM,
     is_security_property_text,
 )
 from foundry_mcp.tools.foundry import (
@@ -2590,3 +2606,259 @@ def test_a_real_two_record_promotion_still_closes_after_the_self_citation_rung(r
     assert stored[hardening["defect_id"]]["status"] == "superseded", stored
     assert stored[hardening["defect_id"]]["tier"] == "HARDENING", stored
     assert stored[promotion["defect_id"]]["status"] == "open", stored
+
+
+# --- fallout AC-023 / GI-004 / OT-019 (D-078): the OTHER denylist entries ----
+#: The filing D-078 drove at both doors: no spec_ref at all, and prose that
+#: asserts a STATED requirement's behaviour is missing. Spelled once because
+#: four tests below ask different questions of the same sentence.
+_SPEC_CLAIM_PROSE = (
+    "AC-022 requires Foundry-Gate('done') to pass with open HARDENING "
+    "defects and the gate refuses; the required behaviour is absent"
+)
+
+
+def test_a_hardening_filing_claiming_spec_required_behaviour_is_refused(run_env):
+    """fallout AC-023 / GI-004 / OT-019 (D-078): 'a never-demote class match is
+    refused and the tripwire recorded', and fallout GI-004's violation
+    column is 'filing a security claim OR A SPEC-REQUIRED BEHAVIOUR FAILURE as HARDENING
+    or LATENT'.
+
+    The denylist rung consulted `is_security_property_text` alone, so of the
+    four never-demote entries only SECURITY_PROPERTY_CLAIM was enforced at
+    either filing door: driven with this exact finding, `never_demote_class`
+    answered SPEC_REQUIRED_BEHAVIOUR_CLAIM while `foundry_add_defect` returned
+    a defect id, `foundry_sync_defects` returned `{'ok': True, 'added': 1}`,
+    and the tripwire stayed empty. The tier the release added for OFF-spec
+    findings was accepting on-spec ones.
+
+    Driven at BOTH doors, because a rung one door remembers and the other does
+    not is the D-119 class and the batch door is the one a whole INSPECT stream
+    files through.
+    """
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
+
+    project_root, fdir = run_env
+
+    single = foundry_add_defect(
+        **_hardening_arguments(project_root, description=_SPEC_CLAIM_PROSE)
+    )
+    assert single.get("denylist_class") == SPEC_REQUIRED_BEHAVIOUR_CLAIM, single
+    assert single.get("field") == "description", single
+
+    batch = foundry_sync_defects(
+        cycle=1,
+        findings=[_hardening_finding(description=_SPEC_CLAIM_PROSE)],
+        project_root=project_root,
+    )
+    refused = batch.get("refusals") or []
+    assert refused and batch.get("error"), batch
+    assert refused[0]["denylist_class"] == SPEC_REQUIRED_BEHAVIOUR_CLAIM, batch
+    assert refused[0]["field"] == "description", batch
+
+    # The audit record, under the class the refusal named (D-083), once per
+    # door — a refusal that leaves no trace is what D-061 was filed about.
+    fired = _tripwire(fdir)
+    assert [f["denylist_class"] for f in fired] == [
+        SPEC_REQUIRED_BEHAVIOUR_CLAIM,
+        SPEC_REQUIRED_BEHAVIOUR_CLAIM,
+    ], fired
+    assert _defects(fdir) == [], "an on-spec claim may not land in the backlog tier"
+
+
+def test_the_spec_claim_rung_is_reached_before_the_class_rung(run_env):
+    """The ORDERING half of D-078, which is why the rung is placed beside the
+    security one rather than after the `spec_ref` refusal.
+
+    D-061's ruling on the security entry applies unchanged here: 'An audit
+    control a filer can switch off by ALSO omitting a field is not a control.'
+    This filing is wrong twice over — the denylist claim AND a missing `class`
+    — and the shape a stream actually files is the malformed one.
+    """
+    project_root, fdir = run_env
+
+    refusal = foundry_add_defect(
+        **_hardening_arguments(
+            project_root, description=_SPEC_CLAIM_PROSE, defect_class=""
+        )
+    )
+
+    assert refusal.get("denylist_class") == SPEC_REQUIRED_BEHAVIOUR_CLAIM, refusal
+    assert len(_tripwire(fdir)) == 1, "the audit may not depend on the other rungs"
+
+
+def test_a_hardening_filing_whose_only_spec_signal_is_the_locator_names_the_tier_rule(
+    run_env,
+):
+    """The narrowing that keeps fallout AC-055 reachable: the rung reads the
+    CLAIM, never the citation.
+
+    `vocab.is_spec_required_behaviour_claim` answers True for ANY non-empty
+    `spec_ref`, so a rung asking the dispatcher the raw finding would refuse
+    every spec_ref-carrying HARDENING filing HERE and fallout AC-055's own
+    refusal ('naming the tier rule') would become unreachable. `spec_ref` is
+    neutralised at this rung for exactly that reason, and this is the test that
+    fails if it stops being.
+    """
+    from foundry_mcp.tools.foundry import TIER_NOT_ALLOWED
+
+    project_root, _ = run_env
+
+    refusal = foundry_add_defect(**_hardening_arguments(project_root, spec_ref="FR-025"))
+
+    assert refusal.get("field") == "spec_ref", refusal
+    assert TIER_NOT_ALLOWED in refusal["error"], refusal["error"]
+    assert "denylist_class" not in refusal, refusal
+
+
+def test_a_hardening_filing_about_code_is_not_refused_for_its_subject(run_env):
+    """The other narrowing: NON_COMMENT reads the finding's SUBJECT, not its
+    claim, and is excluded from this rung.
+
+    `foundry_add_defect`'s own contract for `target_kind` is that 'any other
+    value, or none, means the finding is not demotable and is filed as a
+    defect', so `code` is the DEFAULT shape of every production-code filing. A
+    rung that refused it would make fallout OT-018 ('A HARDENING defect is
+    accepted with a reproduction') unsatisfiable for the ordinary case, which
+    is a stricter denylist buying an unfileable tier.
+    """
+    project_root, fdir = run_env
+
+    filed = foundry_add_defect(
+        **_hardening_arguments(project_root, target_kind="code")
+    )
+
+    assert filed.get("defect_id"), filed
+    assert _tripwire(fdir) == [], filed
+    assert [d["tier"] for d in _defects(fdir)] == ["HARDENING"]
+
+
+def test_a_latent_filing_citing_a_requirement_in_its_prose_is_still_accepted(run_env):
+    """THE ADJACENT PATH: the LATENT transition through the same validator,
+    which this rung must not have touched.
+
+    convergence CT-003 / OT-005 — 'a spec_ref alone never refuses a LATENT
+    filing', and `validate_defect_filing`'s docstring is explicit that routing
+    the LATENT gate through `never_demote_class` 'would refuse every LATENT
+    filing that cites a requirement — which is the majority of them'. The rung
+    added for D-078 is HARDENING-scoped precisely so that stays true, and the
+    filing below is the one that proves it: the SAME prose that is refused one
+    tier over, plus the spec_ref, accepted here with its negative result.
+    """
+    project_root, fdir = run_env
+
+    filed = foundry_add_defect(
+        **_hardening_arguments(
+            project_root,
+            tier="LATENT",
+            spec_ref="AC-022",
+            description=_SPEC_CLAIM_PROSE,
+            reproduction_attempted=(
+                "drove Foundry-Gate('done') against a seeded HARDENING record; "
+                "the blocking rung did not name it"
+            ),
+        )
+    )
+
+    assert filed.get("defect_id"), filed
+    assert _tripwire(fdir) == [], "the LATENT gate is the security predicate only"
+    assert [d["tier"] for d in _defects(fdir)] == ["LATENT"]
+
+
+# --- fallout GI-006 (D-079): the mirror carries what the door demanded ------
+def _forge_log(fdir: Path) -> str:
+    return (fdir / "forge-log.md").read_text(encoding="utf-8")
+
+
+def test_the_hardening_mirror_carries_the_reproduction_it_demanded(run_env):
+    """fallout GI-006 (D-079): 'Run artefacts stay complete.'
+
+    `mirror_rows` keyed the reproduction row on `tier == "LATENT"` while the
+    record literal thirty lines above wrote the field on `tier != "LIVE"` — and
+    that literal's own comment forbids exactly this, warning that keying on
+    LATENT 'would refuse a HARDENING filing for omitting evidence and then drop
+    the evidence it supplied'. The mirror did what the comment forbade: driven,
+    forge-log.md carried the row for a LATENT filing and no such row for a
+    HARDENING filing whose reproduction the door had just demanded as a
+    condition of acceptance.
+    """
+    project_root, fdir = run_env
+
+    filed = foundry_add_defect(**_hardening_arguments(project_root))
+
+    assert filed.get("defect_id"), filed
+    log = _forge_log(fdir)
+    assert "- **Tier:** HARDENING" in log, log
+    assert (
+        "- **Reproduction attempted:** drove POST /jobs/retry twice" in log
+    ), log
+
+
+def test_the_other_two_tiers_mirror_exactly_as_they_did(run_env):
+    """THE ADJACENT PATH: the LATENT and LIVE transitions through the same
+    `mirror_rows` list, neither of which the D-079 filing walked.
+
+    The row is now keyed the way the record literal is keyed, so LATENT must
+    still print its negative result and LIVE must still print no row at all —
+    a LIVE record's reproduction lives in its description, and `_ledger_mirror`
+    prints a row only for a truthy value.
+    """
+    project_root, fdir = run_env
+
+    foundry_add_defect(
+        **_hardening_arguments(
+            project_root,
+            tier="LATENT",
+            reproduction_attempted="AST sweep of both roots finds 0 sites",
+        )
+    )
+    foundry_add_defect(
+        **_hardening_arguments(
+            project_root,
+            tier="LIVE",
+            symbol="retry_arm",
+            reproduction_attempted="",
+        )
+    )
+
+    log = _forge_log(fdir)
+    assert "- **Reproduction attempted:** AST sweep of both roots" in log, log
+    live = log.split("- **Tier:** LIVE", 1)[1]
+    assert "Reproduction attempted" not in live, live
+
+
+# --- fallout CT-012 (D-093 alignment): the door's own advertised prose -------
+def test_the_single_doors_advertised_tier_prose_names_every_member() -> None:
+    """fallout CT-012's input column: 'tier HARDENING, reproduction_attempted,
+    no spec_ref'.
+
+    D-093 is filed on `server.py#list_tools`, whose wire strings a client
+    reads: the enum accepted three tiers while every description beside it
+    enumerated two and scoped `reproduction_attempted` to LATENT, so a stream
+    reading the published contract learned neither what HARDENING means nor
+    that it owes a reproduction, and was then refused for a field the schema
+    had told it was LATENT-only. That fix is casting 2's. THIS is the same
+    sentence on the surface this casting owns — `foundry_add_defect`'s own Args
+    block, which every in-process caller and every reader of the module meets
+    instead of the wire schema — and it had drifted identically.
+
+    Derived from `DEFECT_TIERS` rather than asserting three names, so a fourth
+    member fails this pin instead of being quietly left out of the prose.
+    """
+    doc = inspect.getdoc(foundry_add_defect) or ""
+    tier_at = doc.index("\n    tier: ")
+    repro_at = doc.index("\n    reproduction_attempted:")
+    fallout_at = doc.index("\n    fallout_of:")
+
+    tier_prose = doc[tier_at:repro_at]
+    missing = sorted(m for m in DEFECT_TIERS if m not in tier_prose)
+    assert not missing, (
+        f"the tier parameter's prose names no {missing} while the vocabulary "
+        f"accepts it:\n{tier_prose}"
+    )
+
+    repro_prose = doc[repro_at:fallout_at]
+    assert "HARDENING" in repro_prose, (
+        "the reproduction is owed by BOTH non-blocking tiers — a paragraph "
+        f"that scopes it to LATENT is the contract D-093 reports:\n{repro_prose}"
+    )
