@@ -758,23 +758,6 @@ _PROSE_CITES_WITH_NO_DEFINITION: dict[str, str] = {
         "`orchestration/width.py` — a VERIFIER module — reached it in "
         "`foundry_spawn`, which is lifecycle."
     ),
-    # fallout GI-025 / AC-011 (concern C-062) — CASTING 12's CITE, ON A NAME
-    # THIS CASTING JUST DELETED.
-    #
-    # Casting 12 found the duplication and told this casting its own cite was
-    # "CORRECT as it stands, which is exactly why the duplication is silent" —
-    # the underscore made two spellings of one fact look like two symbols.
-    # Deleting the copy makes that sentence true of nothing, and the cite is a
-    # LIVE claim about a coverage threshold rather than a narration, so it
-    # wants the leaf's spelling rather than this table. One line, in a file
-    # this casting may not edit.
-    "_count_spec_requirements": (
-        "casting 12 — `tests/test_inspect_mode.py`'s threshold sentence cites "
-        "the gates-local counter this casting deleted (C-062). One fact, one "
-        "ladder: the count is `artifacts.count_spec_requirements` and the "
-        "sorted list is `gates._sorted_spec_requirement_ids`, and the "
-        "sentence wants whichever it means."
-    ),
     # fallout C-060 row 3 / C-062 — THE LAST OF THE THREE SHAPE-TABLE ROWS, AND
     # IT IS CASTING 5's TO CLOSE, NOT THIS CASTING'S.
     #
