@@ -79,10 +79,12 @@ from foundry_mcp.tools import test_deriver
 from foundry_mcp.tools.foundry_validate import foundry_validate_castings
 
 # fallout GI-010 — the monolith this module used to import is DELETED, and
-# the three private symbols pinned below are reached at the module-contract
-# homes casting 2's symbol map records: `_statement_problem` with the
-# fix-gate block, `_recorded_prove_roster` with the streams block,
-# `_maybe_skip_trace` with the width blocks. The call sites stay QUALIFIED
+# the private symbols pinned below are reached at the module-contract homes
+# casting 2's symbol map records: `_statement_problem` with the fix-gate
+# block, `_recorded_prove_roster` with the streams block,
+# `_trace_skip_from_width` with the width blocks and `_stamp_trace_skip` with
+# guidance — the two halves the trace-skip fence split into under ruling
+# `lead_ruling_gi_033_leaf_moves` item 5. The call sites stay QUALIFIED
 # by module rather than importing the three names bare, because a bare
 # `_statement_problem(...)` no longer says which of the thirteen
 # orchestration modules owns it, and this module reaches private symbols
@@ -5766,8 +5768,9 @@ _TRACE_WIDTH_CLAUSES = (
     (
         "walk exactly the symbols declared in `inspect_mode.touched_files`",
         "the surface no longer names the TRACE roster field or says the roster "
-        "is the whole walk on a DELTA cycle. `_maybe_skip_trace` reads exactly "
-        "this list to decide whether TRACE has symbols to walk at all.",
+        "is the whole walk on a DELTA cycle. `_trace_skip_from_width` reads "
+        "exactly this list to decide whether TRACE has symbols to walk at "
+        "all.",
     ),
     (
         "`inspect_mode.diff_base`",
@@ -5867,10 +5870,17 @@ def test_the_trace_roster_key_the_prose_names_is_the_one_the_server_reads(
     indistinguishable from the pre-D-160 behaviour the substring pins above
     would still call green.
 
-    So the key is driven through ``_maybe_skip_trace`` -- the function that
-    decides, from the recorded decision alone, whether a DELTA cycle leaves
-    TRACE any symbols to walk -- rather than being asserted against a constant
-    re-typed here.
+    So the key is driven through the width's own trace-skip fence rather than
+    asserted against a constant re-typed here. fallout GI-008 / GI-009 (ruling
+    `lead_ruling_gi_033_leaf_moves` item 5, concern C-038): that fence is two
+    functions now and the middle of it is a RECORDED FIELD, so both halves are
+    driven. `width._trace_skip_from_width` decides, from the width's own values,
+    whether a DELTA cycle leaves TRACE any symbols to walk, and names the roster
+    back under exactly the key the prose sends the stream to;
+    `guidance._stamp_trace_skip` reads that answer out of the recorded entry at
+    Foundry-Next time and decides nothing. The entry below carries the decision
+    the decider returned and never one computed here, because a test that
+    derived its own would be asserting against a third copy of the rule.
     """
     key = "touched_files"
     for surface in _TRACE_WIDTH_SURFACES:
@@ -5879,21 +5889,29 @@ def test_the_trace_roster_key_the_prose_names_is_the_one_the_server_reads(
             f"derivation and the prose have come apart."
         )
 
+    roster = ["src/handler.py"]
+    decision = width._trace_skip_from_width(False, "delta", roster, "DELTA")
+
+    assert decision["skip"] is False, (
+        f"the width no longer reads a non-empty {key!r} list as symbols for "
+        f"TRACE to walk, so the DELTA cycle it opens skips the stream the two "
+        f"surfaces above were just told to scope."
+    )
+    assert decision["details"][key] == roster, (
+        f"the recorded decision's {key!r} list is not what the server names "
+        f"back when it decides whether TRACE has symbols to walk. Both TRACE "
+        f"surfaces tell the stream to walk exactly that list, so a rename here "
+        f"makes the instruction point at nothing -- silently, because a stream "
+        f"that finds no roster correctly falls back to walking everything. "
+        f"{decision}"
+    )
+
     fdir = tmp_path / foundry_state.ARCHIVE_DIR / "d160-roster"
     fdir.mkdir(parents=True, exist_ok=True)
-    roster = ["src/handler.py"]
-    # The top-level `cycle` is load-bearing here, and its absence is what made
-    # this fixture stop describing a real run. `_maybe_skip_trace` asks
-    # `_current_inspect_mode` about the cycle the COUNTER holds, and since
-    # D-216 that read answers None for an entry stamped for any other crossing
-    # — so a state.json carrying a cycle-9 decision beside a counter reading 0
-    # (the default for an absent key) is an unrecorded width, and this
-    # function returns the `_unrecorded_width_problem` refusal, which carries
-    # a `reason` and a `hint` and no `details` at all. The assertion below then
-    # died on the missing key rather than on the roster it is here to drive.
-    # The repair is the archive, not the read: every transition that opens an
-    # INSPECT stamps the counter it holds inside the same transaction, so a
-    # decision for cycle 9 only ever sits beside a counter at 9.
+    # The top-level `cycle` is load-bearing: since D-216 the leaf read answers
+    # None for an entry stamped for any other crossing, so a decision for cycle
+    # 9 only ever sits beside a counter at 9 -- which is what every transition
+    # that opens an INSPECT writes, inside the one transaction.
     (fdir / "state.json").write_text(
         json.dumps(
             {
@@ -5906,6 +5924,7 @@ def test_the_trace_roster_key_the_prose_names_is_the_one_the_server_reads(
                         "rule": "delta",
                         "stream_scope": {"trace": {"scope": "delta"}},
                         key: roster,
+                        "trace_skip": decision,
                     }
                 ],
             }
@@ -5913,16 +5932,14 @@ def test_the_trace_roster_key_the_prose_names_is_the_one_the_server_reads(
         encoding="utf-8",
     )
 
-    decision = width._maybe_skip_trace(fdir, str(tmp_path))
-
-    assert decision is not None and decision["skip"] is False, (
-        f"the recorded decision's {key!r} list is not what the server reads "
-        f"back when it decides whether TRACE has symbols to walk. Both TRACE "
-        f"surfaces tell the stream to walk exactly that list, so a rename here "
-        f"makes the instruction point at nothing -- silently, because a stream "
-        f"that finds no roster correctly falls back to walking everything."
+    assert guidance._stamp_trace_skip(fdir) == decision, (
+        "Foundry-Next no longer reads the trace-skip answer back out of the "
+        "entry the width recorded. GI-009 leaves it only reporting, so an "
+        "answer it cannot read is one it has to recompute -- the display-time "
+        "width GI-008 names as the violation, and the direction D-117 was "
+        "filed to close after a resumed archive auto-stamped `.trace-complete` "
+        "with TRACE never run."
     )
-    assert decision["details"][key] == roster, decision
 
 
 # ---------------------------------------------------------------------------
