@@ -222,9 +222,12 @@ def test_step_2_defects_gain_the_evidence_tier_fields(archive: Path) -> None:
         for key, value in original.items():
             assert migrated[key] == value, f"{original['id']} lost {key}"
         assert migrated["tier"] == "unknown"
-        # Written as null, not omitted — Foundry-Fix and the LATENT door fill
-        # these in later, and a reader must not have to tell "absent" from
-        # "not yet set".
+        # Written as null, not omitted — the filing and fix doors fill these
+        # in later, and a reader must not have to tell "absent" from "not yet
+        # set". `reproduction_attempted` is the FILING doors' field, written on
+        # `tier != "LIVE"` so HARDENING carries it as LATENT does; the other
+        # three are Foundry-Fix's at close. The stamping under test is keyed on
+        # no tier at all, which is what the HARDENING case below pins.
         for key in ("reproduction_attempted", "regression_test", "authored_by",
                     "fix_commit"):
             assert key in migrated and migrated[key] is None, (
@@ -291,6 +294,47 @@ def test_step_2_leaves_an_already_tiered_record_exactly_as_found(
     assert records[1]["tier"] == "LATENT"
     assert records[1]["reproduction_attempted"] == "AST sweep finds 0 call sites"
     assert summary["steps"]["defect_tier"]["tier_unknown"] == 4
+
+
+def test_step_2_keeps_a_hardening_records_reproduction_exactly_as_found(
+    archive: Path,
+) -> None:
+    """The evidence fields are stamped per FIELD, never per TIER (GI-006).
+
+    `reproduction_attempted` is the filing doors' field on `tier != "LIVE"`,
+    not the LATENT door's: HARDENING owes the same reproduction LATENT does,
+    and both doors demand it as a condition of accepting the filing. Keying
+    anything that touches that field on `== "LATENT"` is how a HARDENING
+    filing's reproduction comes to be demanded at the door and then dropped
+    from the artefact (D-079). The LATENT half of the pair is pinned one test
+    above; this is the half a LATENT-keyed reading loses, and the archive is
+    the artefact it would lose it from.
+
+    The measurer is asserted in the same breath for the reason
+    ``test_step_2_reports_the_unknown_count_the_measurer_will_read`` exists:
+    the record has to survive the migration AND be visible as HARDENING to the
+    tool that reports the non-blocking backlog, or the backlog is readable only
+    by hand-reading defects.json (AC-024).
+    """
+    reproduction = "drove the probe against both roots; the raise is reachable"
+    path = archive / "defects.json"
+    data = json.loads(path.read_text())
+    data["defects"][0]["tier"] = "HARDENING"
+    data["defects"][0]["reproduction_attempted"] = reproduction
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    _migrate(archive)
+    record = json.loads(path.read_text())["defects"][0]
+    assert record["tier"] == "HARDENING"
+    assert record["reproduction_attempted"] == reproduction
+    assert _measure(archive)["defects_by_tier"]["HARDENING"] == 1
+
+    # Idempotency at the record level: a second pass leaves the evidence alone
+    # rather than re-stamping the default over it.
+    _migrate(archive)
+    again = json.loads(path.read_text())["defects"][0]
+    assert again["tier"] == "HARDENING"
+    assert again["reproduction_attempted"] == reproduction
 
 
 def test_step_2_counts_a_hand_edited_bogus_tier_as_unknown(archive: Path) -> None:

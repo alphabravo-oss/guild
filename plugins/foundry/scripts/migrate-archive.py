@@ -12,8 +12,10 @@ idempotent (NFR-003) even against a hand-edited or half-migrated archive:
                         ``classification: "DEFECT"`` when absent
   2. defects.json     — every record gains the evidence-tier fields this
                         release adds: ``tier: "unknown"`` (FR-051 — NEVER
-                        LATENT) plus the four companions Foundry-Fix and the
-                        LATENT door later populate. Shares step 1's single
+                        LATENT) plus the four companions the filing and fix
+                        doors later populate — ``reproduction_attempted`` on
+                        every NON-LIVE tier, HARDENING as much as LATENT, and
+                        the three fix fields at close. Shares step 1's single
                         read/modify/write of the file
   3. observations.json — created as {"observations": []} when absent
   4. stream-rollup.json — the per-cycle roll-up, re-derived from the
@@ -286,9 +288,22 @@ def _as_cycle(value: Any) -> int | None:
 # rather than spelled here so the sentinel has exactly one definition (the same
 # discipline that made the vocabulary module exist).
 #
-# The other four are `null` because that is what Foundry-Fix and the LATENT
-# door write before they are populated — a migrated record and a fresh one then
-# carry the same key set, which is what lets every reader use one shape.
+# The other four are `null` because that is what the filing and fix doors write
+# before they are populated — a migrated record and a fresh one then carry the
+# same key set, which is what lets every reader use one shape.
+#
+# WHICH DOOR WRITES WHICH, AND WHY THIS STAMPING IS KEYED ON NO TIER AT ALL.
+# `reproduction_attempted` belongs to the FILING doors and is written on
+# `tier != "LIVE"`: HARDENING owes the same reproduction LATENT does, and both
+# doors demand it before they accept. So "the LATENT door's field" is a
+# narrowing rather than a shorthand — it is exactly the reading that let a
+# HARDENING filing's reproduction be demanded at the door and then dropped from
+# the human mirror (D-079), and `foundry.py`'s record literal carries the same
+# correction in its own comment. The other three are `Foundry-Fix`'s, set at
+# close on a record of any tier. `_add_missing` therefore keys on the FIELD's
+# absence and never on the record's tier: a stamping that asked which tier a
+# record carries would be that same narrowing arriving one artefact later, on
+# the archive, where GI-006 is what it would cost.
 # Extend only via phase-level RFC.
 DEFECT_TIER_FIELDS: tuple[tuple[str, Any], ...] = (
     ("tier", TIER_UNKNOWN),
