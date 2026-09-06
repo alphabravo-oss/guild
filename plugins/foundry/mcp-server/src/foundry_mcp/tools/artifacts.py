@@ -20,12 +20,14 @@ cycles that created. See ``foundry_handoff``, ``intent_coverage``,
 ``forge_spec`` and ``foundry_validate``: each now takes its primitives from
 here.
 
-THE ONE EXCEPTION TO THE IMPORT RULE, AND WHY IT IS NOT ONE.
-``_manifest_shape_problem_lazy`` keeps its LAZY in-function import of
-``foundry_spawn``. That laziness is what keeps the import graph acyclic —
-``foundry_spawn`` imports the orchestrator at module top — and it is a call-time
-edge, not a load-time one, so this module still loads with nothing above the
-leaf layer in scope.
+THE ONE EXCEPTION TO THE IMPORT RULE IS GONE, AND THIS RECORDS WHAT IT WAS.
+``_manifest_shape_problem_lazy`` used to reach ``foundry_spawn`` from INSIDE its
+body: a call-time edge rather than a load-time one, which is what kept the graph
+acyclic while the manifest validator lived a layer above. Concern C-060 moved
+that validator here (``manifest_shape_problem``), so the edge has no reason to
+exist and does not: this module now reaches nothing above the leaf layer at ANY
+depth, module-top and call-time alike, which is the property
+``tests/test_artifacts.py`` asserts rather than the exception it used to name.
 
 THE DUPLICATE WINDOW IS CLOSED, AND THIS RECORDS WHAT IT WAS. For one wave this
 module and the orchestrator both defined every symbol here, and BOTH copies were
@@ -565,11 +567,17 @@ def _is_binary_artifact(path: Path) -> bool:
 
 
 def _manifest_shape_problem_lazy(manifest: object) -> str | None:
-    """D-132's shared nested-shape validator, reached without an import cycle.
+    """D-132's shared nested-shape validator, now defined one screen below.
 
-    ``foundry_spawn`` imports THIS module at module top, so reading back at
-    module scope would close the graph. The lazy in-function import is the
-    house pattern already used by ``foundry_sync_defects`` for ``foundry.py``.
+    THE NAME IS A RESIDUE, AND SAYING SO IS CHEAPER THAN LEAVING IT TO MISLEAD.
+    It was lazy because the validator lived in ``foundry_spawn``, which imports
+    this module at module top, so reading back at module scope would have closed
+    the graph. Concern C-060 moved the predicate here — ``manifest_shape_problem``
+    at the foot of this file — because verifier modules were reaching it through
+    a lifecycle module, which is GI-033's violation column. There is no import
+    left to be lazy about; what is kept is the NAME, because the artifact-problem
+    table below binds this function by it, and the rename is a separate decision
+    from the repoint.
 
     D-134: the validator's membership used to be derived over ``foundry_spawn``
     's OWN functions rather than over every reader of castings/manifest.json in
@@ -579,9 +587,7 @@ def _manifest_shape_problem_lazy(manifest: object) -> str | None:
     indexed the same records with a top-rung-only guard. ``castings: "nope"`` met ``.get()`` and raised AttributeError out of
     Foundry-Next, the mandatory handshake before EVERY phase transition.
     """
-    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
-
-    return _manifest_shape_problem(manifest)
+    return manifest_shape_problem(manifest)
 
 
 #: The rung BELOW "is this a readable JSON object", for the artifacts that have

@@ -36,6 +36,22 @@ from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
 from foundry_mcp.tools.artifacts import (
     _artifact_guard,
     _load_json,
+    # D-134: the SHARED nested-shape validator, so "unusable manifest" means one
+    # thing in every module that reads castings/manifest.json. It was reached
+    # through `foundry_spawn` until concern C-060 moved it into the leaf, where
+    # the verifier modules that also ask it may reach it legally — this module
+    # imported a LIFECYCLE module to borrow a document predicate, which is the
+    # edge GI-033 forbids and the one the widened boundary guard reports.
+    #
+    # BOUND UNDER THE OLD NAME, AND THAT IS LOAD-BEARING RATHER THAN LAZY.
+    # D-134's scan recognises a reader as guarded by the NAME it calls, and
+    # `test_the_locked_validator_names_are_still_the_ones_the_scan_looks_for`
+    # pins that set to `_manifest_shape_problem` / `_manifest_shape_error`.
+    # Spelling the call sites here `manifest_shape_problem` would leave the
+    # guard in place and the scan blind to it, reporting both of this module's
+    # manifest readers as unguarded — a failure that looks like a finding,
+    # which the pin's own docstring names as worse than an import error.
+    manifest_shape_problem as _manifest_shape_problem,
     # The rungs themselves, for the one reader that needs the PATH and not the
     # text: the cache fingerprint, which hashes the spec's bytes before any
     # dimension has run.
@@ -48,12 +64,6 @@ from foundry_mcp.tools.artifacts import (
     # answer to "which file is this run's spec" has to live below both.
     _spec_requirement_ids,
 )
-# D-134: the SHARED nested-shape validator, so "unusable manifest" means one
-# thing in every module that reads castings/manifest.json. A module-top import
-# is safe here — nothing in the chain below this module imports it back —
-# unlike in the artifact leaf, which foundry_spawn reaches transitively and
-# which therefore takes the same validator through a lazy in-function import.
-from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
 from foundry_mcp.tools.foundry_state import (
     document_refusal,
     get_run_dir,

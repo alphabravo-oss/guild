@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -748,14 +749,20 @@ def test_the_leaf_reaches_for_nothing_above_it_at_module_top():
     assert set(package) <= LEAF_PACKAGE_IMPORTS, package
 
 
-def test_the_only_edge_above_the_leaf_is_the_declared_lazy_one():
-    """The one call-time import, and it is named rather than merely tolerated.
+def test_no_edge_above_the_leaf_survives_at_any_depth():
+    """There is no call-time import out of this module either, and there was.
 
-    ``_manifest_shape_problem_lazy`` reaches ``foundry_spawn`` INSIDE the
-    function because ``foundry_spawn`` imports the orchestrator at module top,
-    and a load-time edge here would close the graph. This asserts there is
-    exactly one such edge and that it sits where it is claimed to sit — a
-    second lazy import added later is a layering decision, not a detail.
+    ``_manifest_shape_problem_lazy`` reached ``foundry_spawn`` INSIDE its body,
+    because ``foundry_spawn`` imports the orchestrator at module top and a
+    load-time edge here would have closed the graph. Concern C-060 moved the
+    validator into this module, so the edge has no reason to exist — and the
+    assertion that used to NAME it now asserts its absence, which is the
+    stronger form: a leaf that reaches nothing above it at any depth.
+
+    THE DEPTH IS THE POINT. `fallout GI-033`'s package-wide guard measures leaf
+    membership at both depths precisely because a module-top reading called
+    `escalation.py` a leaf for a whole split while one lazy import sat inside a
+    function. This module is measured here, by its own suite, on the same rule.
     """
     tree = ast.parse(Path(artifacts.__file__).read_text(encoding="utf-8"))
 
@@ -774,9 +781,7 @@ def test_the_only_edge_above_the_leaf_is_the_declared_lazy_one():
                     if a.name.startswith("foundry_mcp")
                 )
 
-    assert lazy == [
-        "_manifest_shape_problem_lazy -> foundry_mcp.tools.foundry_spawn"
-    ], lazy
+    assert lazy == [], lazy
 
 
 # --------------------------------------------------------------------------- #
@@ -1163,3 +1168,75 @@ def test_the_manifest_rule_agrees_with_the_definition_it_was_hoisted_from():
 
     for name, (manifest, _expected) in sorted(MANIFEST_SHAPES.items()):
         assert artifacts.manifest_shape_problem(manifest) == hoisted_from(manifest), name
+
+
+def test_every_manifest_key_the_declarations_readers_index_is_declared():
+    """The declaration keeps its pin when the definition it came from goes.
+
+    `foundry_spawn._MANIFEST_SHAPE` is pinned by
+    `tests/test_spawn_progress.py::test_every_manifest_key_the_module_indexes_is_declared`,
+    which derives the indexed key paths from THAT module's AST — so a reader
+    there cannot start indexing a rung without declaring it. Concern C-060 put
+    a copy of the declaration in this leaf for the verifier modules that may
+    not reach a lifecycle one, and a copy with no pin is a table free to rot.
+
+    THE SUBJECT IS THE READERS, NOT THIS FILE, and the difference is the whole
+    design of the pin. `artifacts.py` indexes no manifest key at all — measured,
+    not assumed: the derivation below returns the empty set for it — so a pin
+    scoped to this module's own AST would assert nothing and pass forever,
+    which is the failure mode every derived-membership check in this package
+    warns about. What the declaration must cover is what its READERS index, and
+    they live in the modules that call the predicate. `foundry_spawn` is that
+    module today and stays one after the repoint, so it is the subject here.
+
+    ONE DERIVATION, REACHED RATHER THAN COPIED. The taint-following scan lives
+    in `tests/test_spawn_progress.py`; importing it is this suite's house
+    pattern for a shared derivation and is what keeps the two pins measuring
+    the same thing rather than agreeing by convention.
+    """
+    from tests.test_spawn_progress import _manifest_paths_in
+
+    leaf_source = Path(artifacts.__file__).read_text(encoding="utf-8")
+    assert _manifest_paths_in(leaf_source) == set(), (
+        "the leaf has started indexing manifest records itself; this pin's "
+        "subject must widen to include it rather than stay on its readers"
+    )
+
+    spawn = pytest.importorskip("foundry_mcp.tools.foundry_spawn")
+    reader_source = Path(spawn.__file__).read_text(encoding="utf-8")
+    paths = _manifest_paths_in(reader_source)
+
+    # The scan must SEE something, or the assertion below passes vacuously.
+    assert {"castings[].id", "waves[].wave"} <= paths, sorted(paths)
+
+    undeclared = sorted(p for p in paths if not _declaration_covers(p))
+    assert not undeclared, (
+        f"{undeclared} are manifest key paths a reader of "
+        f"`manifest_shape_problem` indexes but `_MANIFEST_DOCUMENT_SHAPE` does "
+        f"not declare. Every such path is a rung the shared predicate does not "
+        f"check and every reader therefore indexes unguarded. Declare the rung, "
+        f"or declare it None to state on the record that the reader guards "
+        f"itself. Do not delete the path from this assertion."
+    )
+
+
+def _declaration_covers(path: str) -> bool:
+    """True when `_MANIFEST_DOCUMENT_SHAPE` declares `path` or frees it.
+
+    "Frees" is the `None` element shape: reaching one means the table has
+    STATED that the reader below it is on its own, which is a decision someone
+    made rather than a rung nobody thought about.
+    """
+    shape: object = artifacts._MANIFEST_DOCUMENT_SHAPE
+    for token in re.findall(r"\[\]|[^.\[\]]+", path):
+        if shape is None:
+            return True
+        if token == "[]":
+            if not isinstance(shape, list):
+                return False
+            shape = shape[0]
+            continue
+        if not isinstance(shape, dict) or token not in shape:
+            return False
+        shape = shape[token]
+    return True
