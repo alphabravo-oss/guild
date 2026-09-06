@@ -5765,32 +5765,21 @@ def test_the_diff_helper_returns_the_paths_git_names(run_env):
     assert unknown["error"], unknown
 
 
-def test_the_trace_skip_reads_the_same_spelling_the_width_does(run_env):
-    """D-239's sibling call site, in this module.
-
-    `_trace_skip_check` ran its own copy of the same unguarded invocation and
-    intersects the result with the manifest `key_files` exactly as the width
-    decision does. An escaped spelling there is a SKIP of the TRACE stream on a
-    cycle that touched a declared file — the stream that would have caught the
-    change, skipped because of how git renders a filename. Both call sites go
-    through the one helper now, and this is what holds them together.
-    """
-    project_root, fdir = run_env
-    _write_state(fdir, phase="F2", cycle=1)
-    _write_manifest(
-        fdir, castings=[{"id": 1, "key_files": [_NON_ASCII_KEY_FILE]}]
-    )
-    root = Path(project_root)
-    (fdir / _artifacts.TRACE_CLEAN_AT_MARKER).write_text(
-        json.dumps({"head_sha": _git(root, "rev-parse", "HEAD")}), encoding="utf-8"
-    )
-    target = root / _NON_ASCII_KEY_FILE
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("x = 1\n", encoding="utf-8")
-    _git(root, "add", "-A")
-    _git(root, "commit", "-qm", "touch the declared file")
-
-    decision = _width._trace_skip_check(fdir, project_root)
-
-    assert decision["skip"] is False, decision
-    assert _NON_ASCII_KEY_FILE in decision["details"]["changed_keyfiles"], decision
+# fallout D-057 (LEAD RULING, GRIND cycle 3) — D-239'S SECOND CALL SITE IS GONE,
+# SO THE PIN THAT HELD IT TO THE FIRST GOES WITH IT.
+#
+# `test_the_trace_skip_reads_the_same_spelling_the_width_does` stood here. It
+# drove `width._trace_skip_check` over a non-ASCII declared file and asserted
+# the skip decision read the same spelling `_grind_diff` reads, because the two
+# were the pair D-239 found running separate copies of one unguarded git
+# invocation. The ruling recorded at `orchestration/width.py`'s D-057 block
+# deleted `_trace_skip_check` outright: no requirement of this run names a
+# last-clean-TRACE skip, and its only historical caller had already gone under
+# the GI-033 leaf-moves ruling.
+#
+# The rule the deleted test served is NOT retired with it, which is why nothing
+# replaces it here. `test_the_diff_helper_returns_the_paths_git_names` above
+# drives `git_changed_paths` directly, and the two arms above that drive it
+# through the width decision — so "every path spelled as it is on disk" is still
+# pinned on the helper itself and on the call site that survives. What is gone
+# is a second caller to hold it to, not the property.

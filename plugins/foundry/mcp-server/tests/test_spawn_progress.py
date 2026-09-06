@@ -3241,14 +3241,27 @@ _D134_FILED_READERS = (
     # All three named the retired orchestrator module and that module is
     # gone. The SYMBOL is the authoritative half of a `path#Symbol` cite, so
     # each keeps its symbol and gains the module that now defines it:
-    # `_trace_skip_check` is the width module, `foundry_gate` the gate ladder. A
-    # roster entry left pointing at a deleted path is GI-026's violation
-    # verbatim — "leaving a mechanism pin pointed at a deleted module path" —
-    # and here it would be worse than cosmetic: this tuple is the anchor that
-    # makes `assert not offenders` a claim about the package rather than about
-    # the scan's eyesight (D-142), and
+    # `_trace_skip_check` went to the width module, `foundry_gate` to the gate
+    # ladder. A roster entry left pointing at a deleted path is GI-026's
+    # violation verbatim — "leaving a mechanism pin pointed at a deleted module
+    # path" — and here it would be worse than cosmetic: this tuple is the anchor
+    # that makes `assert not offenders` a claim about the package rather than
+    # about the scan's eyesight (D-142), and
     # `test_every_manifest_record_reader_in_the_package_establishes_the_shape`
     # fails on a named reader the scan can no longer resolve.
+    #
+    # fallout D-057 (LEAD RULING, GRIND cycle 3) — AND ONE OF THE THREE IS NOW
+    # OUT OF THE ROSTER ALTOGETHER, WHICH IS THE OTHER KIND OF LOSS.
+    # `orchestration/width.py#_trace_skip_check` stood here until the ruling
+    # recorded in that module's D-057 block DELETED the function: no requirement
+    # of this run names a last-clean-TRACE skip, and its only historical caller
+    # had already gone under ruling item 5. The distinction this tuple exists to
+    # force is exactly the one that licenses dropping it — a name the scan can
+    # no longer SEE means the derivation went blind and must fail, while a name
+    # the tree no longer DEFINES means the package got smaller and the row goes
+    # with the symbol. Removing it cannot weaken the anchor: an entry can only
+    # make `missing` longer, never shorter, so the five that remain still fail
+    # this test the moment the scan stops recognising any one of them.
     #
     # fallout GI-033 / GI-024 / AC-061 (ruling item 3) — THE SIGHT READER IS THE
     # LEAF NOW, AND THAT IS A DIFFERENT KIND OF MOVE. The other two changed
@@ -3263,8 +3276,6 @@ _D134_FILED_READERS = (
     # obligation D-134 established did not lapse, it moved down a layer.
     "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py"
     "#sight_required",
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/width.py"
-    "#_trace_skip_check",
     # `foundry_gate` is the one of the three whose SYMBOL moved as well as its
     # module. The gate no longer indexes the manifest itself: casting 4 put the
     # manifest's shape-and-size rungs in the shared preconditions routine
@@ -3556,13 +3567,19 @@ def test_every_manifest_record_reader_in_the_package_establishes_the_shape() -> 
                                                      Foundry-Gate  (found)
       orchestration/width.py#_trace_skip_check       was Foundry-Next's
                                                      TRACE-skip  (found)
-                                     (its one caller, `width._maybe_skip_trace`,
-                                      was deleted under ruling item 5; the
-                                      symbol still defines a manifest read, so
-                                      the scan still sees it and the shape
-                                      obligation still holds, but no door
-                                      reaches it today — see the concern filed
-                                      against casting 2)
+                                     (RETIRED. Its one caller,
+                                      `width._maybe_skip_trace`, went under
+                                      ruling item 5, and D-057's ruling then
+                                      deleted the function itself rather than
+                                      wiring it back — no requirement of this
+                                      run names a last-clean-TRACE skip. Listed
+                                      because this roster records what was RED
+                                      at 9b12e0f, where six functions were, and
+                                      dropping a row would leave the count
+                                      naming more than the list. It is NOT in
+                                      `_D134_FILED_READERS` any more: the live
+                                      anchor names only readers the tree still
+                                      defines.)
       foundry_validate.py#foundry_validate_castings   Foundry-Validate-Castings
                                                                     (reported)
       foundry_validate.py#_fingerprint_inputs         same door, one call deeper
