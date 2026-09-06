@@ -542,23 +542,41 @@ def foundry_mark_stream(
             "hint": "If the stream genuinely checked 0 items, the scope may be wrong.",
         }
 
-    # D-100: the counts accumulate by ADDITION across a cycle's tranches, so a
-    # negative value does not record a tranche — it ERASES earlier ones. The
-    # guard above refused items_checked <= 0 while findings_count had no lower
-    # bound at all, and that asymmetry was load-bearing:
+    # D-100: the guard above refused items_checked <= 0 while findings_count had
+    # no lower bound at all, and that asymmetry was load-bearing:
     # mark_stream("prove", 2, findings=9) then mark_stream("prove", 1,
-    # findings=-9) cancels the cycle's findings to 0 and flips _prove_is_clean
-    # False -> True. On TRACE the same cancellation stamps .trace-clean-at —
-    # the anchor that lets a LATER cycle skip the TRACE stream outright.
+    # findings=-9) drives the cycle's findings to a value `_prove_is_clean` reads
+    # as clean, flipping it False -> True. On TRACE the same value stamps
+    # .trace-clean-at — the anchor that lets a LATER cycle skip the TRACE stream
+    # outright.
+    #
+    # fallout GI-016 / FR-023 / CT-003 (D-096) — THE REFUSAL STATES THE MODEL
+    # THE WRITER ACTUALLY IMPLEMENTS.
+    # ----------------------------------------------------------------------
+    # Both this comment and the sentence below described accumulate-by-ADDITION
+    # across a cycle's tranches — "a negative count would erase findings an
+    # earlier record of this cycle already reported" — which is the arithmetic
+    # `_record_stream_rollup` had before this release and has not had since:
+    # GI-016 made the record REPLACE the cycle's totals, so a negative count
+    # erases nothing and simply BECOMES the cycle's finding count. The refusal
+    # was right and its published reason taught every caller it refused a
+    # contract the door no longer holds, which is the one audience guaranteed to
+    # be reading it. Same rung, same refusal, the model it names corrected.
     if findings_count < 0:
         return {
             "error": (
                 f"Cannot record {stream} with findings_count={findings_count}. "
-                "A cycle's findings accumulate across tranches, so a negative "
-                "count would erase findings an earlier record of this cycle "
-                "already reported."
+                "A record REPLACES this cycle's totals for the stream, so a "
+                "negative count does not offset an earlier record — it becomes "
+                "the cycle's finding count, and a cycle cannot have found less "
+                "than nothing."
             ),
-            "hint": "Report the findings THIS tranche produced — zero or more, never negative.",
+            "hint": (
+                "Report the findings this record covers — zero or more, never "
+                "negative. A stream delivered in parts reports its own RUNNING "
+                "total, because the last record for a (stream, cycle) is the "
+                "one the cycle's totals read."
+            ),
         }
 
     if items_total < 0:

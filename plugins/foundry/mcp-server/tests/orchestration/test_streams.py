@@ -594,3 +594,63 @@ def test_a_stream_total_that_disagrees_with_its_roster_is_refused(run_env):
     # No roster for a stream means no refusal — "no roster" and "a roster of
     # zero items" are different answers and only the second could refuse.
     assert foundry_mark_stream("trace", 1, 3, 3, 0, project_root)["ok"] is True
+
+
+def test_the_negative_findings_refusal_states_the_replace_model_it_enforces():
+    """fallout GI-016 / FR-023 / CT-003 (D-096) — the door teaches the contract
+    it holds, not the one it used to hold.
+
+    The refusal itself was never wrong: a negative finding count is refused
+    before and after GI-016. What was wrong is the reason it PUBLISHES. It read
+    "A cycle's findings accumulate across tranches, so a negative count would
+    erase findings an earlier record of this cycle already reported", which is
+    the accumulate-by-addition model `_record_stream_rollup` implemented before
+    this release and stopped implementing when the totals became the LAST
+    record's values. Under replace semantics nothing is erased — the negative
+    simply becomes the cycle's finding count — so every caller the door refused
+    was handed a correct refusal and an incorrect contract, and the callers a
+    door refuses are the ones reading it hardest.
+
+    Asserted against the SOURCE rather than by driving a run, because this is
+    the sentence a caller reads and the sentence is the defect: the drive that
+    produces it is already pinned by `tests/test_stream_rollup.py`.
+    """
+    import inspect
+
+    source = inspect.getsource(_streams.foundry_mark_stream)
+    head, _, tail = source.partition("if findings_count < 0:")
+    assert tail, "the findings_count rung has moved; this pin has no subject"
+    rung = tail.split("if items_total < 0:")[0]
+
+    # The superseded model is gone from the rung a caller is shown...
+    assert "accumulate" not in rung.lower(), rung
+    assert "erase" not in rung.lower(), rung
+    # ...and the model the writer actually implements is what it names.
+    assert "REPLACES this cycle's totals" in rung, rung
+
+    # ...and the comment above it, which is the other half of what a maintainer
+    # reads, no longer argues from the retired arithmetic either.
+    prologue = head.split("if items_checked <= 0:")[-1]
+    assert "accumulate by ADDITION" not in prologue, prologue
+
+
+def test_the_replace_writer_and_the_refusal_agree_about_what_a_record_does():
+    """fallout GI-016 (D-096) — the pin above is anchored to real behaviour.
+
+    A prose pin over a sentence is only worth its anchor: if `_record_stream_
+    rollup` ever went back to summing, the sentence the test above demands would
+    become the false one. So the arithmetic itself is driven here — two records
+    for one (stream, cycle), and the totals are the SECOND one's values rather
+    than the pair's sum.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        fdir = Path(tmp)
+        first = _streams._record_stream_rollup(fdir, 1, "prove", 10, 20, 3, 1)
+        assert (first["items_checked"], first["findings"]) == (10, 3), first
+        second = _streams._record_stream_rollup(fdir, 1, "prove", 7, 20, 2, 1)
+        # REPLACED, not 17 and not 5.
+        assert (second["items_checked"], second["findings"]) == (7, 2), second
+        assert second["replaced"]["items_checked"] == 10, second
+        assert second["records"] == 2, second
