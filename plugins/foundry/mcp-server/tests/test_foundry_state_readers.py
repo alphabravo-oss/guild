@@ -1834,9 +1834,15 @@ def test_the_halt_modules_read_is_the_leafs_and_supplies_the_vocabulary(
     import ast
     import inspect
 
-    from foundry_mcp.tools.orchestration import halt
+    # fallout GI-033 (concern C-027) — THE DELEGATION MOVED WITH THE READ.
+    # `_halted_state` sat in halt.py while gates.py and transitions.py — both
+    # VERIFIER — were its only remaining callers, so casting 2 moved it to
+    # gates.py the moment `persisted_max_cycles` landed here. This pin follows
+    # the delegation rather than the module it used to live in; what it asserts
+    # is unchanged.
+    from foundry_mcp.tools.orchestration import gates
 
-    tree = ast.parse(inspect.getsource(halt._halted_state).strip())
+    tree = ast.parse(inspect.getsource(gates._halted_state).strip())
     calls = [
         node for node in ast.walk(tree)
         if isinstance(node, ast.Call)
@@ -1844,7 +1850,7 @@ def test_the_halt_modules_read_is_the_leafs_and_supplies_the_vocabulary(
         and node.func.id == "halted_state"
     ]
     assert len(calls) == 1, (
-        "halt._halted_state no longer delegates to `foundry_state.halted_state`. "
+        "gates._halted_state no longer delegates to `foundry_state.halted_state`. "
         "If it grew its own implementation back, that is a SECOND read of the "
         "terminal state and the thing GI-033 moved down; if it delegates by "
         "another spelling, point this pin at that spelling."
@@ -1854,7 +1860,9 @@ def test_the_halt_modules_read_is_the_leafs_and_supplies_the_vocabulary(
     assert isinstance(bound["halted_phase"], ast.Name)
     assert bound["halted_phase"].id == "RUN_PHASE_HALTED"
     assert bound["reason_of"].id == "halt_reason"
-    assert bound["max_cycles_of"].id == "_persisted_max_cycles"
+    # The cap read is the LEAF's now, under its unprefixed name — halt.py's
+    # private copy is gone (C-027), which is the whole point of the move.
+    assert bound["max_cycles_of"].id == "persisted_max_cycles"
 
 
 def test_halted_state_answers_a_hand_built_expected_record(run_env) -> None:
@@ -1867,17 +1875,19 @@ def test_halted_state_answers_a_hand_built_expected_record(run_env) -> None:
     leaf's coercion now fails against a number written down rather than
     against a second copy of itself.
 
-    The vocabulary is the delegation's own, imported here so the drive is the
-    live one: fallout FR-019's four members and the cap normaliser.
+    The vocabulary is the delegation's own, so the drive is the live one:
+    fallout FR-019's four members from `vocab`, and the cap normaliser from
+    this module's own `persisted_max_cycles` — which is where it lives since
+    concern C-027, halt.py's private copy having been the thing that move
+    deleted.
     """
     from foundry_mcp.schemas.vocab import RUN_PHASE_HALTED, halt_reason
-    from foundry_mcp.tools.orchestration.halt import _persisted_max_cycles
 
     def read(state: dict):
         _write_json(run_env, "state.json", state)
         return fs.halted_state(
             run_env, halted_phase=RUN_PHASE_HALTED, reason_of=halt_reason,
-            max_cycles_of=_persisted_max_cycles,
+            max_cycles_of=fs.persisted_max_cycles,
         )
 
     assert read({
