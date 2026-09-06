@@ -35,13 +35,18 @@ def _short_path(p: str) -> str:
 #
 # D-202 — THE PALETTE IS WHAT THE RENDERERS USE, NOT A CATALOGUE OF WHAT ANSI
 # OFFERS. Seven names here had no reader anywhere in the plugin — the five
-# background codes, `_BMAGENTA`, and `_BLUE` (which only `_BG_BLUE` mentioned) —
-# and "it is a named colour table, keep it whole" is the same argument that kept
-# `_spec_relative_path` alive after its caller was rewired away (D-196). A
-# private module-level binding nothing names is dead by definition, whether it
-# holds a function or an escape code, and
+# background codes, bold magenta, and the plain blue that only one of those
+# background codes mentioned — and "it is a named colour table, keep it whole"
+# is the same argument that kept `_spec_relative_path` alive after its caller
+# was rewired away (D-196). A private module-level binding nothing names is
+# dead by definition, whether it holds a function or an escape code, and
 # `test_every_private_function_the_plugin_ships_is_reachable` now says so on
 # both node types. Add a code back the moment a renderer needs it.
+#
+# The seven are spelled in English above rather than as backticked cites,
+# because a code span is a CLAIM that the name resolves. These do not, so a
+# reader who greps one finds nothing and cannot tell a stale comment from a
+# missing file — D-063's class, and this module held an instance of it.
 
 _RESET = "\033[0m"
 _BOLD = "\033[1m"

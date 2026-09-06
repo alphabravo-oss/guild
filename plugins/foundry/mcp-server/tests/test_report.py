@@ -35,7 +35,7 @@ and ten registers stood RED until it landed:
 
 Four reaches were green immediately, because casting 10's own group 1 put their
 symbols in the leaf: ``_now`` (as ``foundry_state.now_iso``),
-``DISPATCH_PHASE_TO_RUN_PHASE``, ``_md_sections`` (as
+``DISPATCH_PHASE_TO_RUN_PHASE``, the REPORT.md heading splitter (as
 ``foundry_state.markdown_sections``) and the unreported-dispatch walk.
 
 All of them are green now, so the list is the record of what the repoint cost
@@ -2027,7 +2027,8 @@ def test_an_unrecorded_agent_count_is_stated_in_words_never_printed_as_None(
     """D-150 — the spend headline printed a Python None as an agent count.
 
     AC-036 / FR-023 / FR-038. `agents` is the roll-up's number or it is
-    nothing: `_new_spend_bucket` seeds it None and `_read_spend` fills it only
+    nothing: `foundry_state.spend_bucket` seeds it None and `_read_spend`
+    fills it only
     from `state.json.spend`, on the stated ground that "nobody recorded how
     many agents" and "no agents ran" are different facts. The headline
     interpolated that None raw — `{total.get('agents')}` — while the `records`
@@ -3614,12 +3615,13 @@ def test_foundry_report_imports_only_the_two_leaf_modules():
     #
     # `foundry_mcp.tools` (`from foundry_mcp.tools import foundry_orchestrator`,
     # the D-047/D-048 read of `DISPATCH_PHASE_TO_RUN_PHASE`) and
-    # `foundry_mcp.tools.foundry_orchestrator` (D-232/D-235's read of
-    # `_overlay_unreported`) were both reaches BACK INTO the module that
-    # imports this one. `survey/architecture.md` §3.2 names that trade for what
-    # it was: the previous fix for the spend duplication "was to import
-    # `_overlay_unreported` back out of the orchestrator, closing the import
-    # cycle rather than sharing the rule". Both symbols live in
+    # `foundry_mcp.tools.foundry_orchestrator` (D-232/D-235's read of the
+    # overlay, now `foundry_state.overlay_unreported`) were both reaches BACK
+    # INTO the module that imports this one. `survey/architecture.md` §3.2
+    # names that trade for what it was: the previous fix for the spend
+    # duplication "was to import [the overlay] back out of the orchestrator,
+    # closing the import cycle rather than sharing the rule". Both symbols
+    # live in
     # `foundry_state` now, so the rule is genuinely shared and this module
     # reaches only the two leaves its own header promises.
     #
@@ -3801,7 +3803,7 @@ def test_the_unreported_count_is_derived_not_copied_from_the_rollup(report_env):
     `foundry_state.overlay_unreported`, then the orchestrator's — runs
     inside `_spend_summary` against a throwaway deep copy, so the derived count
     never reaches the persisted document, and the only writer of the key there
-    is `_empty_spend_bucket`, which seeds 0 and never increments.
+    is `foundry_state.spend_bucket`, which seeds 0 and never increments.
 
     Driven by seeding the roll-up with a number that is provably not the
     dispatch record's: the published value must be the DERIVATION, and the
@@ -4980,8 +4982,8 @@ def test_the_generated_banner_is_absorbed_by_the_seal_never_carried_as_prose(
     `## Lead notes (carried by the seal)` on every terminal transition, the
     document growing a paragraph of its own banner per seal. The banner also
     now SPELLS a `## ` heading inside itself, which must not split a block:
-    `_md_sections` matches a whole trimmed line, and this asserts it stays that
-    way.
+    `foundry_state.markdown_sections` matches a whole trimmed line, and this
+    asserts it stays that way.
     """
     # GI-010 / GI-026 — the wave-2 destinations. Casting 2's split defines
     # these symbols in the modules named below and its completion report's

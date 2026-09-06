@@ -1162,9 +1162,10 @@ def test_the_done_gate_and_the_seal_apply_one_heading_rule(report_run) -> None:
     """Holmes `share-10` — the presence check is DERIVED from the splitter.
 
     `_markdown_missing_sections` decides which sections a reader can still
-    find and `_md_sections` decides which blocks the seal preserves. They were
-    "the same effective rule, coded independently", so the gate could call a
-    section present that the seal did not treat as one.
+    find and the seal's splitter -- now `foundry_state.markdown_sections` --
+    decides which blocks the seal preserves. They were "the same effective
+    rule, coded independently", so the gate could call a section present that
+    the seal did not treat as one.
     """
     from foundry_mcp.tools import foundry_report as fr
 
@@ -1187,7 +1188,7 @@ def test_the_done_gate_and_the_seal_apply_one_heading_rule(report_run) -> None:
 # fallout D-012 / D-013 — the two derivations still held OUTSIDE this module.
 #
 # Both are shrink-only inventories, the shape the package's own boundary guard
-# already uses (`_LAYERING_DEBT`, `_KNOWN_DUPLICATION`): every row is a REAL
+# already uses (`_KNOWN_DUPLICATION`): every row is a REAL
 # second derivation of a rule this module hosts, named with the module that
 # holds it and why this casting could not remove it. A NEW second derivation
 # fails immediately, and a row whose duplicate is GONE fails too — so the table

@@ -765,15 +765,18 @@ def unreported_dispatch_summary(
 # seed, `scripts/measure-run.py`'s third copy); the spend roll-up was aggregated
 # three times off two different ledgers; the inspect-mode census, the
 # unreported-dispatch input assembly, the escalated-class rows, the REPORT.md
-# `## ` heading rule, `_now`, `_current_cycle`, `_prove_is_clean`, the cycle
+# `## ` heading rule, `_now`, `_prove_is_clean`, the cycle-count read, the cycle
 # sort key and `_as_count` each had two. Holmes `share-2` names the pattern:
-# "byte-identical `_current_cycle` / `_server_cycle` ... each kept as a
-# 'deliberate second copy' instead of living in the leaf module built for that".
+# "byte-identical" cycle readers -- the orchestrator's spelling and the
+# server-cycle one -- "each kept as a 'deliberate second copy' instead of living
+# in the leaf module built for that". Both spellings are gone; `current_cycle`
+# below is the one read that replaced them.
 #
 # The previous fix for the spend pair made it worse in a way worth recording:
-# `foundry_report` imported `_overlay_unreported` BACK OUT of the orchestrator
-# through a function-local import, "closing the import cycle rather than sharing
-# the rule". Both halves of that pair now live here, so the report reaches only
+# `foundry_report` imported the overlay -- `overlay_unreported` below, under
+# its private spelling at the time -- BACK OUT of the orchestrator through a
+# function-local import, "closing the import cycle rather than sharing the
+# rule". Both halves of that pair now live here, so the report reaches only
 # the leaf and its own module header — "`schemas.vocab` and
 # `tools.foundry_state`, and nothing else from the package" — is true rather
 # than aspirational.
@@ -1920,12 +1923,19 @@ def get_run_dir(project_root: str, name: str | None = None) -> Path | None:
 # fallout GI-033 / D-021 / D-035 (concern C-017) — THE READS THE LAYERING PUTS
 # HERE.
 #
-# `_LAYERING_DEBT` records edges where a verifier module (gates, transitions,
-# width) reaches into the lifecycle layer, or a lifecycle module reaches into a
-# verifier. GI-033 permits exactly one exception and none of these is it. Every
-# row below was the same shape: a PURE READ of a run artifact that happened to
-# be defined in the module whose feature it serves, so the module that needed
-# the fact had to import the module that owned the feature.
+# GI-033 lets a verifier module (gates, transitions, width) reach a leaf and
+# nothing in the lifecycle layer, and lets a lifecycle module reach no verifier
+# at all. It permits exactly one exception -- transitions dispatching the halt
+# token and the terminal seal into `halt.py`, one-way -- and none of the reads
+# below is that seam. There is no table to record a second exception in either:
+# D-035 deleted the one that existed, and the boundary pin now says so in its
+# own failure message rather than offering a row to write.
+#
+# So every read below had to MOVE, and each was the same shape: a PURE READ of
+# a run artifact that happened to be defined in the module whose feature it
+# serves, so the module that needed the fact had to import the module that
+# owned the feature. A leaf is the layer both sides may reach, which is why
+# hosting the read here costs no exception at all.
 #
 # The reads live here now. This is the leaf GI-033 enumerates and GI-024
 # already designates for consolidated readers, so a verifier reaching one of

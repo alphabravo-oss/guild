@@ -903,12 +903,12 @@ def _read_spend(
     ------------------------------------------------------------
     It was, on the premise stated above — "the orchestrator's derivation and
     the only one" — and the premise was false for this one field. The
-    orchestrator's `_overlay_unreported` runs inside `_spend_summary`, which
-    applies it to a THROWAWAY DEEP COPY ("a reader that mutated the document it
-    read would make every display call a write"), so the derived count never
+    overlay -- `foundry_state.overlay_unreported`, called from `_spend_summary`
+    -- is applied to a THROWAWAY DEEP COPY ("a reader that mutated the document
+    it read would make every display call a write"), so the derived count never
     reached `state.json`. The only writer of the key in the persisted document
-    is `foundry_record_spend`'s `_empty_spend_bucket`, which seeds it to 0 and
-    never increments it. So the field this reader copied was structurally 0 on
+    is the seed `foundry_record_spend` lays down, `foundry_state.spend_bucket`,
+    which seeds it to 0 and never increments it. So the field this reader copied was structurally 0 on
     every run that recorded any spend, and one report.json published
     `total.unreported: 0` and `by_phase {"F1": {"unreported": 0}}` beside its
     own `unreported_dispatches {"count": 1, "by_phase": {"F1":
@@ -958,9 +958,10 @@ def _read_spend(
     # There were three copies of it and the two live ones read DIFFERENT
     # sources: the orchestrator's `_spend_summary` read `state.json.spend` and
     # this reader re-aggregated `spend.jsonl`. The four defects named above are
-    # what that cost, and the previous fix imported `_overlay_unreported` BACK
-    # OUT of the orchestrator (`survey/architecture.md` §3.2: "closing the
-    # import cycle rather than sharing the rule"). Both halves live in the leaf
+    # what that cost, and the previous fix imported the overlay -- now
+    # `foundry_state.overlay_unreported` -- BACK OUT of the orchestrator
+    # (`survey/architecture.md` §3.2: "closing the import cycle rather than
+    # sharing the rule"). Both halves live in the leaf
     # now, so this module reaches only `schemas.vocab` and `tools.foundry_state`
     # — the contract its own header states — and the lazy back-import is gone.
     #
@@ -2041,8 +2042,8 @@ def _render_markdown(run_name: str, generated_at: str, sections: dict) -> str:
         # (`test_orchestrator_gates.py`, two sites). A banner that names the
         # section would then make a purely generated report indistinguishable
         # from a sealed one to those tests. The heading itself is still a whole
-        # trimmed `## ` line and nothing else, which is what `_md_sections`
-        # matches on.
+        # trimmed `## ` line and nothing else, which is what
+        # `foundry_state.markdown_sections` matches on.
         f"Generated {generated_at} by Foundry-Report. Every section below is "
         "generated from the run's own ledgers (GI-006) and no section may be "
         "removed. Append your prose under your OWN `## ` heading, or above the "
@@ -2758,7 +2759,7 @@ def _markdown_missing_sections(run_dir: Path) -> tuple[list[str], str | None]:
         )
     # Holmes `share-10` — ONE heading rule, not two that "agree by convention".
     # This built `{line.strip() for line in text.splitlines()}` while the
-    # seal's `_md_sections` matched a line that STARTS a block: the same
+    # seal's splitter matched a line that STARTS a block: the same
     # effective rule, coded independently, so the gate could call a section
     # present that the seal did not treat as one. `markdown_headings` is
     # DERIVED from the splitter, so the two cannot part.

@@ -2838,8 +2838,9 @@ def test_vocab_mirrors_every_declared_pytest_discovery_setting() -> None:
     D-222 / D-223. The guard this replaces read `python_files` out of ONE
     pyproject.toml and asserted only that every glob pytest collects answers
     `is_test_file` True. That is the safe direction alone, so it passed
-    unchanged however broad the recogniser became: `_TEST_BASENAME_RES` also
-    matched `*_test.py`, and `TEST_DIRECTORY_SEGMENT` matched any path segment
+    unchanged however broad the recogniser became: the re-typed basename
+    regexes it read from also matched `*_test.py`, and `TEST_DIRECTORY_SEGMENT`
+    matched any path segment
     spelled `tests` whatever the file inside it was, and neither surplus could
     fail here. Both surpluses are SUBTRACTED from the lead lane's file and line
     counts, which is how a `fix_commit` over `src/tiny.py` plus a 400-line
@@ -3120,8 +3121,8 @@ def test_display_reads_the_phase_vocabulary_and_declares_none_of_its_own() -> No
 
     The defect is a second DECLARATION, so the pin is on the declaration and
     not on the values: no top-level container in `display.py` may spell a run
-    phase id. Before this change it held `_PHASE_NAMES`, ten rows re-typed
-    beside the renderers that used them, and this failed naming it.
+    phase id. Before this change it held a ten-row phase-name table of its
+    own, re-typed beside the renderers that used it, and this failed naming it.
 
     Scoped to the RUN ladder's ids on purpose. `_FORGE_PHASE_ICONS` is Forge's
     spec phases (S0..S3, READY) — a different vocabulary for a different
