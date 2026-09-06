@@ -3240,7 +3240,10 @@ def test_the_delta_shortfall_names_the_roster_not_the_spec_count(run_env):
 
 def test_the_full_arm_still_measures_prove_against_the_spec(run_env):
     """The FULL half is unchanged: the roster is the whole spec, so the >=95%
-    threshold against `_count_spec_requirements` still applies.
+    threshold against `count_spec_requirements` still applies — the leaf's
+    now (fallout AC-014 / OT-016): the count left `gates.py` for
+    `tools/artifacts.py`, where the module that READS the spec owns it,
+    and the private spelling this cited is gone with the duplicate.
 
     Driven on the F2 entry, which records FULL / first_of_phase, so the DELTA
     reader returns None and the spec arm runs exactly as before.
