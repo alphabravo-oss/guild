@@ -56,6 +56,22 @@ is visible to everyone who reads the run: leaving a candidate alone is a decisio
 prints, not a decision that disappears. No exceptions, no deferrals, no "the domain looked
 fine from outside."
 
+**The call that closes one is `Foundry-Drive-Candidate`, and it is the only writer of that
+closure in the package.** Pass `observation_id` — the `O-NNN` the roster read above handed
+you — and pass `filed` naming the `D-NNN` when the probe produced a finding; OMIT `filed`
+when the probe was driven and found sound, because absence is what says clean and a
+manufactured id is not. Re-driving a candidate already closed is idempotent rather than a
+refusal: the first closure stands and the answer says `already_driven`, so a retry after a
+dropped response never reports failure over work that landed. The door is
+`plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry.py#foundry_drive_temper_candidate`,
+and it refuses two things by name — an `observation_id` naming no record in this run's
+observations ledger, and one classified as anything other than `TEMPER_CANDIDATE`, since the
+driven transition is defined on the one observation class whose subject is CODE. Nothing else
+in the package writes that closure, so a pass that drives every candidate and calls this on
+none of them leaves every record in the shape the report reads as UNDRIVEN: the probes ran,
+and the F6 backlog prints them as probes nobody looked at. No exceptions, no deferrals, no
+"the closure is implied by the finding I filed."
+
 **You record your own stream; the lead only confirms the record exists.** Call
 `Foundry-Stream` yourself once a pass is done, with `stream`, `cycle`, `items_checked`,
 `items_total` and `findings_count` — and `stream` is the WIRE ID OF THE STREAM YOU RAN AS,

@@ -52,11 +52,13 @@ edit -- so its wording is a cross-casting change, not a local one.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
+from foundry_mcp import server as foundry_server
 from foundry_mcp.schemas import vocab
 from foundry_mcp.tools import foundry_report
 from foundry_mcp.tools.orchestration import gates, guidance, streams
@@ -576,6 +578,86 @@ def test_the_temper_roster_section_makes_no_candidate_optional() -> None:
         f"each one that is neither, so a candidate excused here is debt the "
         f"report prints anyway."
     )
+
+
+#: The handler that writes the DRIVEN closure. The HANDLER is what is typed
+#: here and the TOOL name is what is derived from it, which is the way round
+#: the pin needs: looking the tool up by its own name would type the very
+#: string the assertion below exists to recover. The dispatch entries are
+#: lambdas that call their handler by global name, so the handler's name
+#: locates the entry and the entry yields the tool's.
+_CLOSURE_HANDLER = "foundry_drive_temper_candidate"
+
+#: fallout NFR-011 in the `_PYTEST_DISCOVERY_PHRASE` shape, one door out from a
+#: vocabulary: the call `skills/temper/SKILL.md` must NAME, recovered from the
+#: registration in `foundry_mcp/server.py`. Rename the door and this
+#: expectation moves with it, so prose still teaching the old spelling fails
+#: HERE rather than sending a TEMPER pass to a tool the boundary does not
+#: carry.
+_CANDIDATE_CLOSURE_TOOLS = tuple(
+    name
+    for name, dispatch in sorted(foundry_server._DISPATCH.items())
+    if _CLOSURE_HANDLER in getattr(getattr(dispatch, "__code__", None), "co_names", ())
+)
+
+
+def test_the_candidate_closure_tool_is_recovered_from_its_registration() -> None:
+    """Floor check for the pin below: a derivation finding zero doors or two
+    would leave the prose assertion vacuous or ambiguous rather than red."""
+    assert len(_CANDIDATE_CLOSURE_TOOLS) == 1, (
+        f"{_CLOSURE_HANDLER} is reached by {list(_CANDIDATE_CLOSURE_TOOLS)} "
+        f"dispatch entr(y/ies). The pin below tells the temper skill to name "
+        f"ONE call: zero means the closure has no door at all and the prose "
+        f"would teach a tool no run can reach, and two means TEMPER is taught "
+        f"one of several names the same closure answers to."
+    )
+
+
+def test_the_temper_roster_section_names_the_call_that_closes_a_candidate() -> None:
+    """fallout AC-019 / ST-007 / GI-027 -- the WRITE half of the roster rule.
+
+    D-092. Phase C0 opened with the roster READ and stated the closure
+    obligation -- every candidate closed as DRIVEN, filed or clean -- and named
+    the reader that lists the ones left open, but named no writer anywhere. The
+    agent was handed the obligation and not the call that discharges it, so the
+    DRIVEN half of fallout ST-007 rested on it guessing a tool name that
+    appeared in no file it loads: the routing existed only in
+    `commands/start.md`'s LEAD tool table and in the tool's own MCP
+    description, and a TEMPER agent reads neither.
+
+    Both the tool and its arguments are recovered from the registration, never
+    typed, so a door renamed or a required field added fails here beside the
+    prose that still teaches the old shape. The tokens are matched BACKTICKED
+    deliberately: `filed` bare is a substring of "filed a finding against" two
+    paragraphs up, and a pin that its own section satisfies by accident is a
+    pin that would have stayed green through D-092.
+    """
+    (tool,) = _CANDIDATE_CLOSURE_TOOLS
+    schema = {t.name: t for t in asyncio.run(foundry_server.list_tools())}[
+        tool
+    ].inputSchema
+    required = sorted(schema["required"])
+    omittable = sorted(set(schema["properties"]) - set(required))
+    assert required and omittable, schema
+
+    section = _section(TEMPER_SKILL, "## Phase C0: ROSTER")
+    assert f"`{tool}`" in section, (
+        f"skills/temper/SKILL.md's Phase C0 does not name `{tool}`. The "
+        f"section states that every candidate is closed as DRIVEN and names "
+        f"the report that lists the ones that are not; without the call that "
+        f"WRITES the closure the obligation has no discharge in any file "
+        f"TEMPER loads, and every driven probe stays UNDRIVEN on the record."
+    )
+    for argument in (*required, *omittable):
+        assert f"`{argument}`" in section, (
+            f"skills/temper/SKILL.md's Phase C0 names `{tool}` without naming "
+            f"its `{argument}` argument. The door declares "
+            f"{required} required and {omittable} omittable, and the "
+            f"difference between them is the whole ruling: an omitted "
+            f"{omittable} is the CLEAN closure, so a section naming the call "
+            f"and not its fields teaches a stream to guess which absence "
+            f"means what."
+        )
 
 
 # ---------------------------------------------------------------------------
