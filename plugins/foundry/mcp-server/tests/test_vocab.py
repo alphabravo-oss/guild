@@ -43,6 +43,7 @@ because it reads as coverage.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import re
@@ -3307,3 +3308,99 @@ def test_the_prefix_partition_covers_this_runs_own_spec() -> None:
     assert vocab.REQUIREMENT_ID_RE.findall("FR-014 and AC-024") == [
         "FR-014", "AC-024",
     ]
+
+
+# ---------------------------------------------------------------------------
+# fallout GI-033 / D-021 / D-035 (concern C-033) — the concern ledger's
+# lifecycle vocabulary.
+# ---------------------------------------------------------------------------
+
+
+def test_concern_statuses_is_the_three_member_lifecycle_in_order() -> None:
+    """CT-001 / GI-013 — hand-built, and NOT compared against `tools/concerns.py`.
+
+    Casting 1 repoints that module to import from here in this same wave, so a
+    parity assertion would be comparing the declaration to itself and then, a
+    commit later, to nothing. The values below are typed out because the whole
+    point of the move is that this file is now where they are decided.
+
+    ORDER IS THE LIFECYCLE, which is why it is a tuple: a concern opens, is
+    dispatched to the casting its target names (ST-003), and is closed with a
+    reason (ST-004). Refusal hints read out in that order.
+    """
+    assert vocab.CONCERN_STATUSES == ("open", "dispatched", "closed")
+    assert isinstance(vocab.CONCERN_STATUSES, tuple)
+    assert len(vocab.CONCERN_STATUSES) == 3
+    assert len(set(vocab.CONCERN_STATUSES)) == 3
+
+
+def test_each_concern_status_constant_is_its_own_member_of_the_set() -> None:
+    """The three names, unpacked from the declaration rather than re-typed.
+
+    A constant spelled beside the set instead of taken out of it is how a
+    rename leaves a name pointing at a value the set no longer holds — and a
+    door comparing against that name then refuses on a status nothing writes.
+    """
+    assert vocab.CONCERN_STATUS_OPEN == "open"
+    assert vocab.CONCERN_STATUS_DISPATCHED == "dispatched"
+    assert vocab.CONCERN_STATUS_CLOSED == "closed"
+    assert (
+        vocab.CONCERN_STATUS_OPEN,
+        vocab.CONCERN_STATUS_DISPATCHED,
+        vocab.CONCERN_STATUS_CLOSED,
+    ) == vocab.CONCERN_STATUSES
+
+
+def test_dispatched_is_a_status_of_its_own_and_not_a_kind_of_open(tmp_path) -> None:
+    """GI-023 / FR-039 / ST-005 — the member most easily got wrong.
+
+    The INSPECT door refuses while a cross-casting concern from the closing
+    GRIND is unaddressed, and `dispatched` is the mark the co-dispatch set
+    leaves when the concern reached the casting that owns it — so it is
+    addressed by definition. A rung that treated it as still open would hold
+    the phase shut over work already handed to its owner, which is the
+    direction that stalls a run rather than the one that lets a defect through.
+    """
+    assert vocab.CONCERN_STATUS_DISPATCHED != vocab.CONCERN_STATUS_OPEN
+    assert vocab.CONCERN_STATUS_DISPATCHED in vocab.CONCERN_STATUSES
+
+    # Driven through the leaf reader the door consults, so this is the
+    # PROPERTY and not merely two strings being different. One record per
+    # member, all three cross-casting; only the open one is unaddressed.
+    from foundry_mcp.tools import foundry_state as fs
+
+    run_dir = tmp_path
+    (run_dir / "concerns.json").write_text(json.dumps({"concerns": [
+        {"id": f"C-{n}", "status": status, "source_casting": 10,
+         "target_casting_id": 4, "cycle": 2}
+        for n, status in enumerate(vocab.CONCERN_STATUSES, start=1)
+    ]}), encoding="utf-8")
+
+    unaddressed = fs.open_cross_casting_concerns(
+        run_dir, status_open=vocab.CONCERN_STATUS_OPEN
+    )
+    assert [c["id"] for c in unaddressed] == ["C-1"]
+
+
+def test_the_leaf_reader_still_takes_the_member_rather_than_defaulting_to_it() -> None:
+    """fallout GI-033 (concern C-033) — and the reason is not a preference.
+
+    Now that the member is a leaf, a default on
+    `foundry_state.open_cross_casting_concerns` looks like the tidy next step.
+    It is not available: `foundry_state` may import NOTHING from its own
+    package at any depth — that is the whole of the leaf contract, pinned by
+    `test_report.py::test_foundry_state_still_imports_nothing_from_its_own_package`,
+    and it is what lets `scripts/measure-run.py` read that module with no
+    package installed. So the member is passed IN, exactly as `modes`,
+    `shape_problem` and `no_ui_meaning` are, and this pins that it stays that
+    way rather than acquiring a re-typed literal as a default.
+    """
+    from foundry_mcp.tools import foundry_state as fs
+
+    signature = inspect.signature(fs.open_cross_casting_concerns)
+    status_open = signature.parameters["status_open"]
+    assert status_open.kind is inspect.Parameter.KEYWORD_ONLY
+    assert status_open.default is inspect.Parameter.empty, (
+        "a default here would have to be a literal re-typed in the leaf, "
+        "because the leaf may not import the module that declares it"
+    )

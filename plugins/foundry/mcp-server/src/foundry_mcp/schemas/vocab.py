@@ -566,6 +566,44 @@ STRUCTURAL_PASS_BUDGET = 2
 LIVE_CLEAN_CYCLES_TO_CLEAR = 2
 
 # ---------------------------------------------------------------------------
+# CT-001 / GI-013 / GI-023 / ST-003 / ST-004 / ST-005 — the concern ledger's
+# own lifecycle, beside the escalation lifecycle above for the same reason
+# both are here: they are the closed sets a ledger record's `status` field may
+# carry, and every reader of that field derives from the declaration rather
+# than re-typing a literal.
+#
+# fallout GI-033 / D-021 / D-035 (concern C-033) — WHY IT MOVED. It was
+# declared in `tools/concerns.py`, which reaches `tools/foundry.py` at module
+# top for the ledger apparatus — so `orchestration/transitions.py`, a VERIFIER
+# module, could not read the member for GI-023's CONCERN_OPEN rung without
+# pulling the largest lifecycle module in the tree across the layer boundary.
+# Casting 1 had already delegated the READ to
+# `foundry_state.open_cross_casting_concerns`, and this was the last thing
+# standing: the reader takes the member as an argument, and the argument had
+# nowhere to come from. A closed vocabulary is this module's by the house
+# convention, so it comes here and the ledger's writers keep the transaction,
+# the id allocation and the markdown render.
+#
+# A TUPLE, NOT A FROZENSET, and the reason is the same one `BLOCKING_TIERS`
+# gives: the ORDER is the lifecycle, and the refusal hints read out in it.
+# ONE WRITER PER MOVE — `Foundry-Concern` opens, `Foundry-Tasks`' co-dispatch
+# set dispatches, `Foundry-Concern(close=...)` closes — which is what makes
+# each transition attributable to one door.
+#
+# `dispatched` IS ADDRESSED, and that is the member most easily got wrong.
+# FR-039 makes it the mark left when the co-dispatch set carried the concern to
+# the casting that owns it, so the INSPECT door refuses on `open` alone: a rung
+# that also refused on `dispatched` would hold the phase shut over work already
+# handed to its owner.
+#
+# Extend only via phase-level RFC.
+CONCERN_STATUSES: tuple[str, ...] = ("open", "dispatched", "closed")  # 3 items
+
+#: The three members by name, unpacked from the declaration above so a rename
+#: cannot leave a constant pointing at a value the set no longer holds.
+CONCERN_STATUS_OPEN, CONCERN_STATUS_DISPATCHED, CONCERN_STATUS_CLOSED = CONCERN_STATUSES
+
+# ---------------------------------------------------------------------------
 # INSPECT width (ST-006 / ST-007 / GI-008 / GI-009 / FR-032).
 #
 # GI-009: the Foundry-Phase transition that OPENS an INSPECT decides the mode

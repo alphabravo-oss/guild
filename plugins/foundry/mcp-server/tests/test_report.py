@@ -110,6 +110,12 @@ def report_env(tmp_path):
     return run_dir
 
 
+#: The name `orchestration/transitions.py` binds the two-layer team check to.
+#: A from-import makes the binding the CONSUMER's, so this is the attribute a
+#: fixture must patch — not the one on the module that defines it.
+_BOUND_TEAM_SCAN = "_active_teams"
+
+
 @contextlib.contextmanager
 def _no_active_teams():
     """Silence the active-team scan for a drive, patching the CONSUMER module.
@@ -126,23 +132,35 @@ def _no_active_teams():
     patched nothing with, and passed only because the real scan happens to find
     no team in a `tmp_path` run.
 
-    `orchestration/transitions.py` FROM-IMPORTS the symbol
-    (`from ...orchestration.teams import _check_active_teams`), so patching
-    `teams._check_active_teams` would not reach it either — the binding a
-    from-import makes is the consumer's own. `foundry_mark_phase_complete` is
-    the door all three fixtures drive, so `transitions` is the module whose
-    binding has to move, and this states that once instead of three times.
+    `orchestration/transitions.py` FROM-IMPORTS the symbol, so patching the
+    DEFINING module would not reach it either — the binding a from-import
+    makes is the consumer's own. `foundry_mark_phase_complete` is the door all
+    three fixtures drive, so `transitions` is the module whose binding has to
+    move, and this states that once instead of three times.
+
+    THE SYMBOL WAS RENAMED UNDER THE SAME RULE, ONE WAVE LATER. Casting 10's
+    concern C-027 moved the two-layer team check into the leaf as
+    `foundry_state.active_teams`, and casting 2's consumer binding is now
+    `_active_teams`. `getattr` is not used to paper over that: the name is
+    asserted first, so the day the binding moves again this fails LOUDLY here
+    instead of restoring a local it patched nothing with — which is the exact
+    failure this fixture was written for.
     """
     from foundry_mcp.tools.orchestration import transitions as _transitions
 
-    original = _transitions._check_active_teams
-    _transitions._check_active_teams = lambda _pr: {
+    assert hasattr(_transitions, _BOUND_TEAM_SCAN), (
+        f"`transitions.{_BOUND_TEAM_SCAN}` is gone, so this fixture patches "
+        f"nothing and every test using it passes only because a tmp_path run "
+        f"happens to have no team. Re-point it at the new binding."
+    )
+    original = getattr(_transitions, _BOUND_TEAM_SCAN)
+    setattr(_transitions, _BOUND_TEAM_SCAN, lambda _pr: {
         "active": False, "teams": [], "live_panes": []
-    }
+    })
     try:
         yield
     finally:
-        _transitions._check_active_teams = original
+        setattr(_transitions, _BOUND_TEAM_SCAN, original)
 
 
 def _read_json(run_dir: Path, name: str) -> dict:
