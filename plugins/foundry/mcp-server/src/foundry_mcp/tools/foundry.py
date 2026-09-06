@@ -112,6 +112,7 @@ from foundry_mcp.schemas.vocab import (
     canonical_defect_type,
     defect_tier,
     is_security_property_text,
+    never_demote_claim_class,
     never_demote_class,
     observation_class,
     reproduction_attempted_problem,
@@ -1056,23 +1057,27 @@ def record_denylist_tripwire(
     already holds the resolved run dir; re-resolving it here would be another
     derivation of a path the caller has.
     """
-    denied = never_demote_class(finding)
+    denied = never_demote_claim_class(finding)
 
-    # CT-017 / GI-027 / FR-017 — `comment_subject_required=False` IS THE
-    # TEMPER_CANDIDATE DOOR, AND IT LIFTS EXACTLY ONE ENTRY.
+    # CT-017 / GI-027 / FR-017 — TWO QUESTIONS, ASKED SEPARATELY, AND
+    # `comment_subject_required=False` IS THE TEMPER_CANDIDATE DOOR.
     #
     # The four never-demote entries are not one rule. Three of them read what
     # the finding CLAIMS — a security property, a spec-required behaviour, an
     # unresolvable cite — and they are absolute here as everywhere: vocab's
     # OBSERVATION_CLASSES block is explicit that the denylist "is UNCHANGED by
     # the fifth member and still outranks every one of them", and a probe idea
-    # whose description makes a security-property claim is a DEFECT.
+    # whose description makes a security-property claim is a DEFECT. That is
+    # the question `never_demote_claim_class` above answers, for every caller
+    # and every value of this flag.
     #
     # NON_COMMENT reads the finding's SUBJECT, and it is the one entry that
     # exists because recording an observation used to BE a demotion: the four
     # original classes are all "this comment no longer agrees with the code", so
     # a finding about code arriving in that ledger was a defect in hiding, and
-    # the door had to fail closed on an undeclared subject.
+    # the door had to fail closed on an undeclared subject. That is the
+    # question the rung below asks, and it is asked ONLY of a caller that
+    # requires a comment subject.
     #
     # A TEMPER_CANDIDATE is not a demotion of anything. It is "here is a
     # question nobody has asked yet" — nothing has been shown to be wrong, so
@@ -1083,12 +1088,28 @@ def record_denylist_tripwire(
     # observation is accepted") unsatisfiable and TEMPER's roster permanently
     # empty.
     #
-    # LIFTED ONLY ON AN EXPLICIT DECLARATION, never on an inferred one — see the
-    # caller. Absence keeps today's behaviour to the byte, which is D-069's
-    # ruling applied rather than re-argued: a default that decides this question
-    # for a caller who said nothing is how the fabricated declaration got in.
-    if denied == NON_COMMENT and not comment_subject_required:
-        denied = None
+    # THE SUBJECT RUNG IS REACHED ONLY ON AN EXPLICIT DECLARATION, never on an
+    # inferred one — see the caller. Absence keeps today's behaviour to the
+    # byte, which is D-069's ruling applied rather than re-argued: a default
+    # that decides this question for a caller who said nothing is how the
+    # fabricated declaration got in.
+    #
+    # HOW THIS USED TO BE SPELLED, AND WHY IT IS NOT (lead ruling, GRIND cycle
+    # 4). The line above asked `never_demote_class` — the FULL dispatcher — and
+    # a `denied == NON_COMMENT and not comment_subject_required` branch then
+    # took the subject entry back out. That is the claim-vs-subject split
+    # stated in this function's own voice, and D-078's rung in
+    # `validate_defect_filing` stated the same ruling a second time, one
+    # `!= NON_COMMENT` along. One ruling in two voices is the class this
+    # package keeps paying for, so the split now lives in
+    # `vocab.NEVER_DEMOTE_CLAIM_CLASSES` (DERIVED by subtraction from
+    # `NEVER_DEMOTE_CLASSES`, so a fifth CLAIM entry joins both sites by
+    # construction) and both sites ask the dispatcher narrowed to it. The lift
+    # is GONE rather than repointed: with the claim question answered above,
+    # an undeclared or non-comment subject is exactly what the rung below is
+    # for, and the two spellings produced identical answers on every reachable
+    # case — a claim always outranks the subject entry, so a NON_COMMENT
+    # answer from the full dispatcher already MEANT "no claim matched".
     if (
         denied is None
         and comment_subject_required
@@ -1653,8 +1674,9 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
         entries `never_demote_class` ranks, read over the filing's prose
         (D-078). The rung above enforced one of the denylist's four entries;
         this one enforces the others for the tier whose definition they
-        contradict. See its own block for why `spec_ref` is neutralised and
-        why NON_COMMENT is excluded.
+        contradict, through `vocab.never_demote_claim_class`. See its own
+        block for why `spec_ref` is neutralised and why the SUBJECT entry is
+        no part of the question.
       * a `spec_ref` refusal reachable only from HARDENING, naming
         `TIER_NOT_ALLOWED`.
       * the reproduction rung widened to both tiers that owe evidence in that
@@ -1837,18 +1859,27 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
     #       (`TIER_NOT_ALLOWED`, field `spec_ref`), so the LOCATOR is
     #       neutralised and this rung reads the PROSE — which is exactly the
     #       half GI-028 does not already cover, and the half D-078 drove.
-    #   NON_COMMENT EXCLUDED — the four entries are not one rule, and
-    #       `record_denylist_tripwire`'s `comment_subject_required` block
-    #       already draws the line: three of them read what the finding CLAIMS,
-    #       and NON_COMMENT reads its SUBJECT, existing only because recording
-    #       an OBSERVATION used to be a demotion. A defect's `target_kind` says
-    #       what it is about, and this door's own contract is that "any other
-    #       value, or none, means the finding is not demotable and is filed as
-    #       a defect" — so refusing HARDENING for `target_kind="code"` would
-    #       make OT-018 ("a HARDENING defect is accepted with a reproduction")
-    #       unsatisfiable for the DEFAULT shape of every production-code
-    #       filing. Excluded BY NAME, from the dispatcher, so a fifth CLAIM
-    #       entry joins this rung by construction and never by memory.
+    #   THE SUBJECT ENTRY EXCLUDED — the four entries are not one rule: three
+    #       read what the finding CLAIMS, and NON_COMMENT reads its SUBJECT,
+    #       existing only because recording an OBSERVATION used to be a
+    #       demotion. A defect's `target_kind` says what it is about, and this
+    #       door's own contract is that "any other value, or none, means the
+    #       finding is not demotable and is filed as a defect" — so refusing
+    #       HARDENING for `target_kind="code"` would make OT-018 ("a HARDENING
+    #       defect is accepted with a reproduction") unsatisfiable for the
+    #       DEFAULT shape of every production-code filing.
+    #
+    #       THE SPLIT IS THE VOCABULARY'S, NOT THIS RUNG'S (lead ruling, GRIND
+    #       cycle 4). This rung and `record_denylist_tripwire`'s subject rung
+    #       are the two places that turn on it, and each used to spell the
+    #       exclusion for itself — a `!= NON_COMMENT` here, a
+    #       `== NON_COMMENT` lift there. One ruling in two voices is the class
+    #       this package keeps paying for, so both now ask
+    #       `never_demote_claim_class`, the dispatcher narrowed to
+    #       `NEVER_DEMOTE_CLAIM_CLASSES` — which is DERIVED by subtraction
+    #       from `NEVER_DEMOTE_CLASSES` rather than re-listed, so the "by
+    #       construction and never by memory" this comment used to merely
+    #       promise is now the mechanism.
     #
     # ASKED OF `tripwire_finding(finding)` — the exact shape the door hands
     # `record_denylist_tripwire` on the way out. So the class this refusal
@@ -1856,8 +1887,8 @@ def validate_defect_filing(finding: Mapping[str, object]) -> dict | None:
     # construction rather than by two readings agreeing, which is D-083's
     # property (and D-147's repair) held one entry along.
     if tier == TIER_HARDENING:
-        denied = never_demote_class({**tripwire_finding(finding), "spec_ref": ""})
-        if denied is not None and denied != NON_COMMENT:
+        denied = never_demote_claim_class({**tripwire_finding(finding), "spec_ref": ""})
+        if denied is not None:
             return {
                 "ok": False,
                 "error": (

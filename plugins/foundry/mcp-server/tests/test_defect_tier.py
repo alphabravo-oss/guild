@@ -59,6 +59,9 @@ synthetic run and then drift from it.
       claims a stated requirement's behaviour is absent is refused and
       audited, while the LATENT contract (a spec_ref alone never refuses) and
       the tier's ordinary subject (`target_kind="code"`) are untouched.
+  fallout GI-004 (lead ruling, GRIND cycle 4)
+      the claim-vs-subject split is asked of the vocabulary at BOTH sites that
+      turn on it, so a fifth claim entry joins them by construction.
   fallout GI-006 (defect D-079)
       the forge-log mirror carries the reproduction row for every tier the
       record literal writes it on — HARDENING included, whose evidence the
@@ -82,9 +85,11 @@ used in those tests is the shape that door passes through.
 
 from __future__ import annotations
 
+import ast
 import inspect
 import json
 import re
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -98,6 +103,7 @@ from foundry_mcp.schemas.vocab import (
 from foundry_mcp.tools.foundry import (
     foundry_add_defect,
     foundry_init,
+    record_denylist_tripwire,
     validate_defect_filing,
 )
 from foundry_mcp.tools.foundry_state import clear_active_run
@@ -2861,4 +2867,51 @@ def test_the_single_doors_advertised_tier_prose_names_every_member() -> None:
     assert "HARDENING" in repro_prose, (
         "the reproduction is owed by BOTH non-blocking tiers — a paragraph "
         f"that scopes it to LATENT is the contract D-093 reports:\n{repro_prose}"
+    )
+
+
+# --- fallout GI-004 (lead ruling): one voice for the claim-vs-subject split --
+@pytest.mark.parametrize(
+    "site",
+    [validate_defect_filing, record_denylist_tripwire],
+    ids=["validate_defect_filing", "record_denylist_tripwire"],
+)
+def test_both_claim_vs_subject_sites_ask_the_vocabulary(site) -> None:
+    """fallout GI-004, and the lead's ruling on the note this casting raised in
+    GRIND cycle 4: the split between the denylist entries that read a CLAIM and
+    the one that reads a SUBJECT is spelled ONCE, in the vocabulary that owns
+    the dispatcher.
+
+    Two sites in `tools/foundry.py` turn on that difference — the D-078 rung in
+    `validate_defect_filing`, which must refuse a claim and must NOT refuse a
+    `target_kind`, and `record_denylist_tripwire`'s TEMPER_CANDIDATE path,
+    which must admit a subject and must NOT admit a claim. Each used to state
+    the ruling in its own voice against the FULL dispatcher: a
+    `!= NON_COMMENT` guard at one, a `== NON_COMMENT` lift at the other. One
+    ruling in two voices is the divergence class `validate_defect_filing`'s own
+    docstring is written about ('Every check those two doors were each trusted
+    to remember has eventually diverged'), and it is why
+    `vocab.NEVER_DEMOTE_CLAIM_CLASSES` is DERIVED by subtraction rather than
+    re-listed: a fifth claim entry must join both sites by construction.
+
+    Asked of the AST rather than of the source text, because both functions
+    DISCUSS `never_demote_class` at length in prose that must stay readable —
+    it is the calls that may not restate the split, not the sentences that
+    explain why.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(site)))
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+    assert "never_demote_claim_class" in called, (
+        f"{site.__name__} decides the claim question without asking the "
+        f"vocabulary; it calls {sorted(called)}"
+    )
+    assert "never_demote_class" not in called, (
+        f"{site.__name__} asks the FULL dispatcher and must therefore carve "
+        f"the subject entry back out itself — which is the second voice this "
+        f"pin exists to keep out of the module"
     )
