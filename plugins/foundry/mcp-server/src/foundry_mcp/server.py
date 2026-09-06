@@ -70,6 +70,7 @@ from foundry_mcp.tools.orchestration.gates import (
 from foundry_mcp.tools.orchestration.guidance import (
     LEAD_CALLER,
     SUBAGENT_CALLER,
+    SUBAGENT_CALLER_DOOR_CLAUSE,
     SUBAGENT_CALLER_INSTRUCTION,
     foundry_get_context,
     foundry_next_action,
@@ -218,6 +219,8 @@ async def list_tools() -> list[Tool]:
                 "`cycles_to_cap` (null on an unbounded run) — a named backlog is "
                 "a successful end, not a failure to reach DONE. "
                 + SUBAGENT_CALLER_INSTRUCTION
+                + " "
+                + SUBAGENT_CALLER_DOOR_CLAUSE
             ),
             inputSchema={
                 "type": "object",
@@ -235,6 +238,8 @@ async def list_tools() -> list[Tool]:
                         "description": (
                             "Who is calling. Defaults to lead. "
                             + SUBAGENT_CALLER_INSTRUCTION
+                            + " "
+                            + SUBAGENT_CALLER_DOOR_CLAUSE
                         ),
                     },
                 },
@@ -242,8 +247,40 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Context",
-            description="Reload all foundry state in one call. Use after compaction or session start.",
-            inputSchema={"type": "object", "properties": {}},
+            description=(
+                "Reload all foundry state in one call. Use after compaction or "
+                "session start. "
+                + SUBAGENT_CALLER_INSTRUCTION
+                + " "
+                + SUBAGENT_CALLER_DOOR_CLAUSE
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    # fallout FR-034 / FR-055 / AC-053 (D-089) — THE SAME
+                    # ARGUMENT Foundry-Next TAKES, BECAUSE THIS DOOR ARMS THE
+                    # SAME TOKEN.
+                    #
+                    # This published an EMPTY properties object, so there was no
+                    # caller for a sub-agent to pass and every Foundry-Context
+                    # call reached `foundry_next_action` as the lead's — arming
+                    # `.next-action-called`, which is the sole precondition of
+                    # Foundry-Gate and Foundry-Phase. `agents/assayer.md` and
+                    # `skills/prove/SKILL.md` both tell a sub-agent to call this
+                    # door at F2, so the lead's ordering handshake was routinely
+                    # satisfied by an agent that is not the lead.
+                    "caller": {
+                        "type": "string",
+                        "enum": [LEAD_CALLER, SUBAGENT_CALLER],
+                        "description": (
+                            "Who is calling. Defaults to lead. "
+                            + SUBAGENT_CALLER_INSTRUCTION
+                            + " "
+                            + SUBAGENT_CALLER_DOOR_CLAUSE
+                        ),
+                    },
+                },
+            },
         ),
         Tool(
             name="Foundry-Gate",
@@ -1560,7 +1597,8 @@ _DISPATCH = {
         project_root=_project_root),
     "Foundry-Next": lambda args: foundry_next_action(
         project_root=_project_root, caller=args.get("caller", LEAD_CALLER)),
-    "Foundry-Context": lambda args: foundry_get_context(project_root=_project_root),
+    "Foundry-Context": lambda args: foundry_get_context(
+        project_root=_project_root, caller=args.get("caller", LEAD_CALLER)),
     "Foundry-Gate": lambda args: foundry_gate(
         phase=args["phase"], reason=args.get("reason", ""),
         text=args.get("text", ""), project_root=_project_root),

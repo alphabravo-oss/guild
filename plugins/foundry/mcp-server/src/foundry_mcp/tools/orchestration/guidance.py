@@ -374,6 +374,33 @@ SUBAGENT_CALLER_INSTRUCTION = (
     "clock; yours is a read, and passing the argument keeps it one."
 )
 
+#: fallout FR-055 / AC-053 (D-089, concern C-057) — THE DOORS THE ARGUMENT
+#: SCOPES, DECLARED ONCE.
+#:
+#: `Foundry-Next` was the only one until D-089, and the sentence above says so
+#: in as many words. `foundry_get_context` calls `foundry_next_action` for its
+#: `next_action` field, so `Foundry-Context` arms the same ordering token and
+#: takes the same argument — and `agents/assayer.md` and `skills/prove/SKILL.md`
+#: both instruct a sub-agent to call THAT door at F2, which makes it the one
+#: more likely to be reached by an agent that is not the lead.
+#:
+#: A SEPARATE constant rather than an edit to the sentence above, and the reason
+#: is ownership rather than taste: that sentence is quoted BYTE-IDENTICALLY by
+#: five stream agents, the assayer and four skills, and pinned against this
+#: constant by `tests/test_protocol_prose.py` and `tests/test_skill_prose.py` —
+#: files castings 6 and 11 own. Editing it here would redden their suites for a
+#: change they have not made. So the wire surfaces this server owns gain the
+#: clause now, and the quoted sentence gains it in the commit that updates the
+#: files quoting it (concern raised on casting 6).
+SUBAGENT_CALLER_DOORS = ("Foundry-Next", "Foundry-Context")
+
+SUBAGENT_CALLER_DOOR_CLAUSE = (
+    "The same argument scopes "
+    + " and ".join(SUBAGENT_CALLER_DOORS)
+    + f": both arm the lead's ordering token, so a sub-agent passes "
+    f"caller='{SUBAGENT_CALLER}' on either door."
+)
+
 
 
 
@@ -829,10 +856,16 @@ def foundry_next_action(
         # never warned. The clock must measure Foundry-Next to Foundry-Next, and
         # a read-only reorientation call is not one of those.
         #
-        # The ordering token above is deliberately still armed on both paths:
-        # it answers "did the lead consult guidance before transitioning", and
+        # The ordering token above is armed on both paths FOR THE LEAD: it
+        # answers "did the lead consult guidance before transitioning", and
         # Foundry-Context does return the full guidance payload. Only the
         # STALL measurement is Foundry-Next's alone.
+        #
+        # fallout FR-055 / AC-053 (D-089) — "both paths" means both of the
+        # LEAD'S paths, and it did not, because `foundry_get_context` passed no
+        # `caller` and every Foundry-Context call therefore read as the lead's.
+        # A sub-agent reorienting itself now arms neither marker through either
+        # door; see `foundry_get_context`.
         #
         # AC-053: and a sub-agent read does not reset it either. The clock
         # measures the LEAD's silence; a stream orienting itself is not the lead
@@ -2279,6 +2312,78 @@ def _compute_next_action(project_root: str) -> dict:
         non_verified = sum(1 for r in verdicts.get("requirements", []) if r.get("verdict") != "VERIFIED")
         total = len(verdicts.get("requirements", []))
 
+        # P3 (FR-003 / FR-004 / ST-001): the auto-pass path. ``.prove-complete``
+        # stores only aggregate counts, so verdicts.json may be empty (or
+        # partial) even after a clean PROVE — which would make the DONE gate's
+        # verdict_coverage read 0/N and block the transition it just enabled.
+        # On a clean PROVE, synthesize a VERIFIED verdict for every spec
+        # requirement ID BEFORE emitting the auto-pass so the two gates agree.
+        #
+        # fallout GI-001 / NFR-001 (D-070) — HOISTED ABOVE THE COUNTS, BECAUSE
+        # THE COUNTS ARE WHAT IT CHANGES.
+        #
+        # This stood BELOW the `non_verified > 0` return, which is the same
+        # guard `non_verified == 0` states here, so the set of runs it acts on
+        # is unchanged. What changes is that the counts are re-taken afterwards,
+        # so the branch below can tell an EMPTY ledger a clean PROVE has just
+        # filled from one nothing has written to at all. A ledger with
+        # non-VERIFIED rows is still not topped up: ASSAY recorded those
+        # failures, and marking the requirements it never reached VERIFIED on
+        # PROVE's word is the auto-pass reaching past the state it is for.
+        if non_verified == 0 and _prove_is_clean(fdir, project_root):
+            _synthesize_clean_prove_verdicts(
+                fdir, project_root, cycle=current_cycle(fdir)
+            )
+            verdicts = _load_json(fdir / "verdicts.json")
+            requirements = verdicts.get("requirements", [])
+            non_verified = sum(
+                1 for r in requirements if r.get("verdict") != "VERIFIED"
+            )
+            total = len(requirements)
+
+        # fallout GI-001 / NFR-001 (D-070) — AN EMPTY VERDICT LEDGER IS "ASSAY
+        # HAS NOT RUN", NOT "ASSAY PASSED".
+        # ---------------------------------------------------------------------
+        # `non_verified` is a sum over the SAME list `total` counts, so an empty
+        # ledger makes both zero and the `non_verified > 0` test below falls
+        # straight through to the auto-pass tail. On ENTERING F4 that is the
+        # ordinary state — no assayer has run yet — and Foundry-Next answered
+        # "ASSAY passed: all requirements verified" and told the lead to
+        # transition onward. The lead protocol is "call Foundry-Next after each
+        # step and follow it", so the guidance engine instructed the lead to
+        # skip ASSAY: driven with `state.phase` F4 and verdicts.json absent,
+        # `--temper` runs entered F5 having recorded zero verdicts, and
+        # `Foundry-Gate('temper')` passed because it reads the same empty
+        # ledger. Only `Foundry-Gate('done')` caught it, one whole phase later.
+        #
+        # THE ZERO-DENOMINATOR CASE IS ITS OWN ANSWER, and it is the one
+        # `_ACTION_IMPERATIVES["run_assay"]` was written for — an imperative no
+        # branch of this function emitted, which is how a missing branch shows
+        # up in a table that is complete (FR-035 / AC-054). It is asked AFTER
+        # the auto-pass above, because a ledger that clean PROVE has just filled
+        # is no longer empty and must not be answered with "go and run ASSAY".
+        if total == 0:
+            return {
+                "phase": "F4",
+                "action": "run_assay",
+                "instructions": (
+                    "ASSAY has NOT run: verdicts.json records 0 verdicts and "
+                    "PROVE has not been recorded clean, so there is nothing "
+                    "yet to pass. Spawn 4 parallel foundry:assayer agents in a "
+                    "SINGLE message — each reads the spec FIRST, forms "
+                    "expectations, then reads code — and record every verdict "
+                    "with Foundry-Verdict. An empty verdict ledger is not a "
+                    "passing ASSAY: transitioning onward from here leaves F4 "
+                    "with zero requirements verified and the failure is not "
+                    "caught until the DONE gate, a whole phase later."
+                ),
+                # No `agent_config`: `foundry:assayer` holds its own opus /
+                # effort=max frontmatter pin, so this site emits nothing and
+                # lets the pin govern — the same reason `_nyquist_transition`
+                # gives for the auditor.
+                "details": {"non_verified": 0, "total": 0},
+            }
+
         if non_verified > 0:
             return {
                 "phase": "F4",
@@ -2298,17 +2403,6 @@ def _compute_next_action(project_root: str) -> dict:
                     "agent_config": GRIND_AGENT_CONFIG,
                 },
             }
-
-        # P3 (FR-003 / FR-004 / ST-001): the auto-pass path. ``.prove-complete``
-        # stores only aggregate counts, so verdicts.json may be empty (or
-        # partial) even after a clean PROVE — which would make the DONE gate's
-        # verdict_coverage read 0/N and block the transition it just enabled.
-        # On a clean PROVE, synthesize a VERIFIED verdict for every spec
-        # requirement ID BEFORE emitting the auto-pass so the two gates agree.
-        if _prove_is_clean(fdir, project_root):
-            _synthesize_clean_prove_verdicts(
-                fdir, project_root, cycle=current_cycle(fdir)
-            )
 
         temper = state.get("temper", False)
         if temper:
@@ -2416,8 +2510,34 @@ def _compute_next_action(project_root: str) -> dict:
 
 def foundry_get_context(
     project_root: str = ".",
+    *,
+    caller: str = LEAD_CALLER,
 ) -> dict:
-    """Return all foundry state in one call. Use after compaction or session start."""
+    """Return all foundry state in one call. Use after compaction or session start.
+
+    fallout FR-055 / FR-034 / AC-053 (D-089, fallout_of D-047) — THIS DOOR TAKES
+    THE CALLER TOO, BECAUSE IT ARMS THE SAME TOKEN.
+    ------------------------------------------------------------------------
+    FR-055 is one sentence about a distinction, not about a tool: "sub-agent
+    Foundry-Next reads are distinguished ... SO ONLY THE LEAD'S CALL ARMS
+    `.next-action-called` AND RESETS `.last-next-at`". D-047 added `caller` to
+    `Foundry-Next` and this door kept calling `foundry_next_action(project_root,
+    _arm_stall_clock=False)` with no caller at all — so `caller` took its
+    default, `is_lead` was True, and a SUB-AGENT's `Foundry-Context` armed the
+    ordering token on the lead's behalf. That token is the sole precondition of
+    `gates.py#foundry_gate` and `transitions.py#foundry_mark_phase_complete`, so
+    a lead could gate and transition having never called Foundry-Next.
+
+    Not hypothetical: `agents/assayer.md` and `skills/prove/SKILL.md` both
+    instruct the sub-agent to call `Foundry-Context` at F2 to read
+    `state.temper`. This run's own artifacts carry the signature — a
+    `.next-action-called` stamp 19 seconds newer than `.last-next-at`, which is
+    the asymmetric shape only the `_arm_stall_clock=False` path can write.
+
+    ``_arm_stall_clock`` stays False for the reason AC-035 gives — a read-only
+    reorientation call is not a Foundry-Next and must not restart the stall
+    measurement — and is a different question from WHO called.
+    """
     fdir = get_run_dir(project_root)
 
     if not fdir or not fdir.exists():
@@ -2458,7 +2578,9 @@ def foundry_get_context(
     streams = _check_streams_complete(project_root)
     # AC-035 / OT-028: Foundry-Context reorients; it does not reset the stall
     # clock. See the marker block at the end of `foundry_next_action`.
-    next_act = foundry_next_action(project_root, _arm_stall_clock=False)
+    next_act = foundry_next_action(
+        project_root, caller=caller, _arm_stall_clock=False
+    )
 
     return {
         "initialized": True,

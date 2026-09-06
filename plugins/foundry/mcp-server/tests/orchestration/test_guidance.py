@@ -1838,3 +1838,267 @@ def test_the_waiting_check_consults_both_declared_inputs(run_env):
         "progress ledgers are the half that answers that (D-021)."
     )
 
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-001 / NFR-001 (D-070) — AN EMPTY VERDICT LEDGER IS NOT A PASSING
+# ASSAY.
+#
+# GI-001's violation column is "a casting that removes a phase", and the F4
+# branch removed one by arithmetic: `non_verified` sums over the same list
+# `total` counts, so an empty ledger makes both zero, the `non_verified > 0`
+# test falls through, and the auto-pass tail tells the lead "ASSAY passed: all
+# requirements verified". On ENTERING F4 that is the ordinary state.
+# --------------------------------------------------------------------------- #
+
+
+def test_entering_f4_with_no_verdicts_routes_to_assay_not_past_it(run_env):
+    """fallout GI-001 / NFR-001 / FR-035 / AC-054 (D-070).
+
+    The state is the one every run passes through: phase F4, verdicts.json
+    absent, no `.prove-complete` marker — so the documented auto-pass path is
+    NOT what fires. Foundry-Next returned `transition_to_done` with "ASSAY
+    passed: all requirements verified", and the lead protocol is to follow it.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4", temper=False)
+    assert not (fdir / "verdicts.json").exists()
+    assert not (fdir / ".prove-complete").exists()
+
+    result = _compute_next_action(project_root)
+
+    assert result["action"] == "run_assay", result
+    assert "ASSAY has NOT run" in result["instructions"], result["instructions"]
+    assert result["details"] == {"non_verified": 0, "total": 0}, result["details"]
+
+
+def test_a_temper_run_with_no_verdicts_is_not_sent_into_f5(run_env):
+    """fallout GI-001 (D-070) — the harm, on the flag that makes it worst.
+
+    With `--temper` the auto-pass tail answered `transition_to_temper` and
+    `Foundry-Gate('temper')` passed on the same empty ledger, so the run entered
+    F5 having spawned zero assayers and recorded zero verdicts. Nothing caught
+    it until the DONE gate, a whole phase later.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4", temper=True)
+
+    assert _compute_next_action(project_root)["action"] == "run_assay"
+
+
+def test_the_empty_ledger_branch_emits_the_imperative_written_for_it(run_env):
+    """fallout FR-035 / AC-054 (D-070) — `run_assay` had a table entry and no
+    emitter.
+
+    Every action `_compute_next_action` emits has an imperative; the converse
+    held too until this branch existed. `run_assay` was the one key in
+    `_ACTION_IMPERATIVES` that appeared in no `{"action": <literal>}` dict in
+    the module, which is what a MISSING BRANCH looks like from inside a table
+    that is complete.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4", temper=False)
+
+    result = foundry_next_action(project_root)
+    assert result["action"] == "run_assay", result
+    assert _ACTION_IMPERATIVES["run_assay"] in result["instructions"], result
+
+    # ...and the emitted set now covers the table it is measured against.
+    emitted = _actions_emitted_by_compute_next_action()
+    assert "run_assay" in emitted, sorted(emitted)
+
+
+def _actions_emitted_by_compute_next_action() -> set[str]:
+    """Every `"action": "<literal>"` `_compute_next_action` can return.
+
+    Derived from the module's own AST rather than from a hand list, so a branch
+    added later is walked without anyone remembering to add it — the same
+    derivation `_ACTION_IMPERATIVES`'s completeness pin depends on.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_guidance)))
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, value in zip(node.keys, node.values):
+            if (
+                isinstance(key, ast.Constant) and key.value == "action"
+                and isinstance(value, ast.Constant)
+                and isinstance(value.value, str)
+            ):
+                out.add(value.value)
+    return out
+
+
+def test_a_clean_prove_still_tops_the_ledger_up_before_the_empty_branch(run_env):
+    """fallout FR-003 / FR-004 / ST-001 (D-070) — the auto-pass is not lost.
+
+    A ledger a clean PROVE has just filled is no longer empty, so the emptiness
+    branch must be asked AFTER the synthesis and not before it. This is the same
+    arrangement `test_clean_prove_autopass_synthesizes_verified_verdict_per_id`
+    drives; asserted here from the other side, so a fix for D-070 that hoisted
+    the branch above the synthesis fails.
+    """
+    project_root, fdir = run_env
+    ids = ["FR-1", "FR-2"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", temper=False)
+    _write_prove(fdir, items_checked=len(ids), items_total=len(ids), findings=0)
+    assert not (fdir / "verdicts.json").exists()
+
+    result = _compute_next_action(project_root)
+    assert result["action"] == "transition_to_done", result
+
+
+def test_a_partial_ledger_is_still_topped_up_by_a_clean_prove(run_env):
+    """fallout FR-003 / FR-004 (D-070) — the PARTIAL case, which is the one a
+    naive fix loses.
+
+    `.prove-complete` stores aggregates only, so verdicts.json may hold SOME
+    rows after a clean PROVE. Topping up only an EMPTY ledger would leave the
+    DONE gate reading 2/N and refusing the transition the auto-pass just
+    enabled, so the synthesis is guarded on "nothing is non-VERIFIED", which is
+    exactly the guard the retired arrangement expressed by its position.
+    """
+    project_root, fdir = run_env
+    ids = ["FR-1", "FR-2", "FR-3"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", temper=False)
+    _write_prove(fdir, items_checked=len(ids), items_total=len(ids), findings=0)
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": [{"id": "FR-1", "verdict": "VERIFIED"}]}),
+        encoding="utf-8",
+    )
+
+    result = _compute_next_action(project_root)
+    assert result["action"] == "transition_to_done", result
+    rows = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))
+    assert {r["id"] for r in rows["requirements"]} == set(ids), rows
+
+
+def test_a_failed_assay_still_loops_back_and_is_not_topped_up(run_env):
+    """fallout D-070 — the synthesis does not reach past the state it is for.
+
+    A ledger carrying non-VERIFIED rows records what ASSAY saw. Marking the
+    requirements ASSAY never reached VERIFIED on PROVE's word would shrink the
+    `{non_verified}/{total}` the lead is shown and silently verify work nobody
+    assayed, so the guard excludes it — before this change by standing below the
+    loop-back return, now by saying so.
+    """
+    project_root, fdir = run_env
+    ids = ["FR-1", "FR-2", "FR-3"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", temper=False)
+    _write_prove(fdir, items_checked=len(ids), items_total=len(ids), findings=0)
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": [{"id": "FR-1", "verdict": "THIN"}]}),
+        encoding="utf-8",
+    )
+
+    result = _compute_next_action(project_root)
+    assert result["action"] == "assay_failed_loop_back", result
+    assert result["details"]["non_verified"] == 1, result["details"]
+    assert result["details"]["total"] == 1, result["details"]
+    rows = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))
+    assert len(rows["requirements"]) == 1, rows
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-055 / FR-034 / AC-053 (D-089, fallout_of D-047) — THE SIBLING DOOR
+# THAT ARMS THE SAME TOKEN.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_subagents_context_call_arms_neither_marker(run_env):
+    """fallout FR-055 / AC-053 (D-089).
+
+    `foundry_get_context` calls `foundry_next_action` for its `next_action`
+    field and passed no `caller`, so `caller` took its default, `is_lead` was
+    True, and a SUB-AGENT's Foundry-Context armed `.next-action-called` — the
+    sole precondition of Foundry-Gate and Foundry-Phase. A lead could then gate
+    and transition having never called Foundry-Next, because a tracer or an
+    assayer had reoriented itself. Both agent files instruct exactly that call.
+    """
+    from foundry_mcp.tools.orchestration.guidance import (
+        LEAD_CALLER,
+        SUBAGENT_CALLER,
+        foundry_get_context,
+    )
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    token = fdir / artifacts.NEXT_ACTION_CALLED_MARKER
+    stall = fdir / artifacts.LAST_NEXT_AT_MARKER
+    token.unlink(missing_ok=True)
+    stall.unlink(missing_ok=True)
+
+    context = foundry_get_context(project_root, caller=SUBAGENT_CALLER)
+    assert context.get("initialized") is not False, context
+    assert not token.exists(), "a sub-agent's Foundry-Context armed the lead's token"
+    assert not stall.exists(), "a sub-agent's Foundry-Context reset the stall clock"
+
+    # The LEAD's own Foundry-Context still arms the ordering token, because it
+    # does return the full guidance payload...
+    foundry_get_context(project_root, caller=LEAD_CALLER)
+    assert token.exists(), "the lead's Foundry-Context stopped arming the token"
+    # ...and still does NOT reset the stall clock (AC-035 / OT-028), which is a
+    # different question from who called.
+    assert not stall.exists(), "Foundry-Context reset the stall clock"
+
+
+def test_the_context_door_publishes_the_caller_it_now_reads(run_env):
+    """fallout FR-055 / AC-053 (D-089) — an argument nothing advertises is an
+    argument no sub-agent can pass.
+
+    The Tool entry published an empty `properties` object, so the distinction
+    existed in the handler and nowhere a caller could reach it. Driven over
+    `_DISPATCH`, which is the surface the SDK actually calls.
+    """
+    from foundry_mcp import server as foundry_server
+    from foundry_mcp.tools.orchestration.guidance import (
+        LEAD_CALLER,
+        SUBAGENT_CALLER,
+        SUBAGENT_CALLER_INSTRUCTION,
+    )
+
+    tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
+    context_tool = tools["Foundry-Context"]
+    caller_property = context_tool.inputSchema["properties"]["caller"]
+    assert caller_property["enum"] == [LEAD_CALLER, SUBAGENT_CALLER]
+    assert SUBAGENT_CALLER_INSTRUCTION in context_tool.description
+    assert SUBAGENT_CALLER_INSTRUCTION in caller_property["description"]
+
+    # concern C-057 — BOTH doors are named on BOTH wire surfaces, derived from
+    # `SUBAGENT_CALLER_DOORS` so a third door joins the sentence by construction.
+    from foundry_mcp.tools.orchestration.guidance import (
+        SUBAGENT_CALLER_DOOR_CLAUSE,
+        SUBAGENT_CALLER_DOORS,
+    )
+
+    assert set(SUBAGENT_CALLER_DOORS) == {"Foundry-Next", "Foundry-Context"}
+    for door in SUBAGENT_CALLER_DOORS:
+        assert door in SUBAGENT_CALLER_DOOR_CLAUSE, (door, SUBAGENT_CALLER_DOOR_CLAUSE)
+        tool = tools[door]
+        assert SUBAGENT_CALLER_DOOR_CLAUSE in tool.description, tool.description
+        assert SUBAGENT_CALLER_DOOR_CLAUSE in (
+            tool.inputSchema["properties"]["caller"]["description"]
+        ), door
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    token = fdir / artifacts.NEXT_ACTION_CALLED_MARKER
+    token.unlink(missing_ok=True)
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        foundry_server._DISPATCH["Foundry-Context"]({"caller": SUBAGENT_CALLER})
+        assert not token.exists(), "the dispatch dropped the caller argument"
+        foundry_server._DISPATCH["Foundry-Context"]({})
+        assert token.exists(), "the dispatch defaults to something other than lead"
+    finally:
+        foundry_server._project_root = previous_root
