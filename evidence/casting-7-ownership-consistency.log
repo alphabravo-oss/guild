@@ -4,9 +4,9 @@
 # evidence-volatile: test_validate_ownership\.py:\d+
 # evidence-timeout: 600
 
-...................sss..........                                         [100%]
+....................sss..........                                        [100%]
 =========================== short test summary info ============================
-SKIPPED [1] tests/test_validate_ownership.py:1206: daring-orca is not present in this checkout (untracked)
-SKIPPED [1] tests/test_validate_ownership.py:1206: thunder-viper is not present in this checkout (untracked)
-SKIPPED [1] tests/test_validate_ownership.py:1206: grand-vulture is not present in this checkout (untracked)
-29 passed, 3 skipped, 18 deselected in 0.16s
+SKIPPED [1] tests/test_validate_ownership.py:1304: daring-orca is not present in this checkout (untracked)
+SKIPPED [1] tests/test_validate_ownership.py:1304: thunder-viper is not present in this checkout (untracked)
+SKIPPED [1] tests/test_validate_ownership.py:1304: grand-vulture is not present in this checkout (untracked)
+30 passed, 3 skipped, 19 deselected in 2.57s
