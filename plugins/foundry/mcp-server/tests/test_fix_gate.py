@@ -60,10 +60,17 @@ from foundry_mcp.tools import foundry_state
 # `_numstat_measurement` — is `orchestration/fix_gate.py`. So, now, is
 # `_decode_git_path`: it used to be DEFINED in `orchestration/width.py` and
 # only ever READ from here, and GI-033 refuses a lifecycle-to-verifier read
-# with no exception in that direction, so it moved to its sole consumer rather
-# than keeping a `_LAYERING_DEBT` row excusing the edge. The unit test below
-# names fix_gate for the same reason it once named width — a failure there
-# belongs in the module that owns the decoder.
+# with no exception in that direction, so it moved to its sole consumer. There
+# was no row available to keep it where it was. The boundary guard's
+# layering-debt allowlist — a `(home, imported) -> reason` dict the layering
+# assertions consulted before judging an edge — was DELETED at bd6db9d
+# (D-021 / D-035), because every row in it was a real violation wearing an
+# explanation. The only exception the scan honours now is
+# `_VERIFIER_TO_LIFECYCLE_SEAM`: GI-033's own named seam, transitions into
+# halt, one edge and one-way. An edge that is not that seam FAILS whatever
+# reason anyone could write beside it, so the symbol moved rather than the rule
+# bending. The unit test below names fix_gate for the same reason it once named
+# width — a failure there belongs in the module that owns the decoder.
 from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
 from foundry_mcp.tools.orchestration.fix_gate import (
     _PYTEST_DISCOVERY_PHRASE,

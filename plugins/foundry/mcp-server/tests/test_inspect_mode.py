@@ -4839,9 +4839,18 @@ def test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary(run_env):
 # belongs to. `_current_inspect_mode` returned the newest entry whatever cycle
 # it was stamped for, so cycle 1's decision answered "what width is cycle 2" at
 # every door that decides on it — the ASSAY gate's positive FULL assertion, the
-# streams-complete roster, and `_maybe_skip_trace`'s fence — while
+# streams-complete roster, and the TRACE-skip fence — while
 # `_unrecorded_width_problem` implemented D-117 as "is there ANY entry" rather
 # than "is there an entry for THIS one".
+#
+# That third door has since moved, and the cite moves with it: the fence was
+# `width._maybe_skip_trace`, a display-time helper `guidance.py` imported,
+# DELETED under ruling item 5 (GI-008 / GI-009 / GI-033). The decision is made
+# at the transition by `width._trace_skip_from_width` and recorded in the entry
+# as `trace_skip`; `guidance._stamp_trace_skip` reads it back through
+# `foundry_state.current_inspect_mode`, which is where the cycle match this
+# section is about now lives. Same fence, same defect, two live symbols instead
+# of one dead one.
 #
 # The module already held the correct rule twice: `_recorded_stream_scope` and
 # `_recorded_prove_roster` both compare `recorded.get("cycle")` against the

@@ -2367,10 +2367,13 @@ def test_two_cycles_of_a_mixed_cluster_still_do_not_fire(run_env):
 # That wrapper's docstring claimed "Every writer goes through this, so 'which
 # cycle was this?' has one answer per run" — it had two.
 #
-# Neither of those two symbols survives, and this comment names neither: the
-# `foundry.py` reader was `_server_cycle`, deleted by casting 4's f2bbce0 as a
-# byte-equivalent second copy, and the orchestrator's was `_current_cycle`,
-# consolidated by casting 10 (GI-024). Both are now
+# Neither of those two symbols survives, and this comment names neither as a
+# live reader: the `foundry.py` one was `foundry.py#_server_cycle`, deleted by
+# casting 4's f2bbce0 as a byte-equivalent second copy — cited in the
+# path#Symbol form the `_OWNER` block below uses for the same symbol, because a
+# deleted symbol still has to say which file it was deleted FROM — and the
+# orchestrator's was `_current_cycle`, consolidated by casting 10 (GI-024).
+# Both are now
 # plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py#current_cycle,
 # which is the live symbol, the only derivation left, and where any fix to
 # either half goes. One reader is what makes the divergence below
