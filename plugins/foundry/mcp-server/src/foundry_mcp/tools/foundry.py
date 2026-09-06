@@ -1214,10 +1214,11 @@ def record_denylist_tripwire(
 #                        filer's only escape would be to rename the class —
 #                        moving the escalation key mid-run, which is what
 #                        CT-002 exists to stop. That is D-099/D-101's shape
-#                        exactly (a door refusing its own documented example),
-#                        and `tests/test_protocol_prose.py#
-#                        test_every_documented_latent_example_survives_the_
-#                        filing_door` is what fails if this line moves.
+#                        exactly (a door refusing its own documented example).
+#                        What fails if this line moves is the test below, cited
+#                        on ONE line because a symbol broken across comment
+#                        lines resolves to nothing (concern C-048):
+#   `tests/test_protocol_prose.py#test_every_documented_latent_example_survives_the_filing_door`
 #   negative space       reproduction_attempted — the field is a REPORT OF AN
 #                        ABSENCE, not an assertion. FR-005 verbatim scopes the
 #                        predicate to the description ("Server refuses LATENT
@@ -3239,11 +3240,16 @@ def foundry_add_defect(
             # event agree, which is the only thing that makes the audit ledger
             # queryable by class.
             #
-            # Held by `tests/test_vocab.py#test_the_defect_door_audits_under_
-            # the_class_it_refuses` for this door and its `_the_sync_door_`
-            # sibling for the batch one — pinned at the doors rather than only
-            # at the predicate tuple, because it is the DOOR that writes the
-            # two artifacts an auditor later compares.
+            # Held for this door by
+            # `tests/test_vocab.py#test_the_defect_door_audits_under_the_class_it_refuses`
+            # and for the batch one by its sibling
+            # `tests/test_vocab.py#test_the_sync_door_audits_under_the_class_it_refuses`
+            # — pinned at the doors rather than only at the predicate tuple,
+            # because it is the DOOR that writes the two artifacts an auditor
+            # later compares. Both names are written unbroken on purpose: a
+            # symbol split across two comment lines is not a cite a reader or a
+            # guard can resolve, and the halves this replaced resolved to
+            # nothing at all (concern C-048).
             #
             # D-128: `source` here may be the very value the source rung just
             # refused. Recorded RAW, exactly as the batch door records it
