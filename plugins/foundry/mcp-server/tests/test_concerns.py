@@ -36,6 +36,7 @@ from foundry_mcp.tools.concerns import (
     CONCERNS_FILENAME,
     CONCERNS_MARKDOWN_FILENAME,
     CONCERN_CLOSE_REASON_REQUIRED,
+    CONCERN_CYCLE_REQUIRED,
     CONCERN_ID_PREFIX,
     CONCERN_STATUSES,
     CONCERN_STATUS_CLOSED,
@@ -261,6 +262,153 @@ def test_empty_text_is_refused(run_env):
         result = _open_one(project_root, text=empty)
         assert result["phase"] == CONCERN_TEXT_EMPTY, result
     assert not _file(fdir, CONCERNS_FILENAME).exists()
+
+
+# --------------------------------------------------------------------------- #
+# fallout AC-004 / CT-001 — the cycle stamp is REQUIRED, and never defaulted
+#
+# D-060 drove this door three ways with the run at cycle 4. `cycle=4` stored 4
+# and `Foundry-Phase(inspect_start)` refused, which is the behaviour fallout
+# AC-004 asks for. `cycle` OMITTED stored 0 and the gate PASSED. `cycle='4'`
+# as a JSON string stored 0 and the gate PASSED too. The write arm declared
+# `cycle: int = 0` and collapsed every bool, non-int and negative onto 0 with
+# no refusal, so two of the three drives filed a concern into a cycle no door
+# scopes on, and reported success. The READER is right —
+# `open_cross_casting_concerns` scopes by exact equality because fallout
+# GI-023 / ST-005 ask for the concerns "from the closing GRIND" — so the whole
+# of the fix is a refusal at the writer.
+# --------------------------------------------------------------------------- #
+
+
+def test_an_omitted_cycle_is_refused_rather_than_stored_as_zero(run_env):
+    """THE FAILING-THEN-PASSING TEST FOR fallout AC-004's omitted-cycle drive.
+
+    Before this change the call below returned ``ok`` and appended an entry
+    stamped cycle 0, which the cycle-scoped reader then hid from every cycle
+    but 0. ``_open_one`` cannot express this drive because it always supplies a
+    cycle, so the handler is called directly with the argument simply ABSENT —
+    exactly as a dispatch that passes absence through as absence delivers it.
+    """
+    project_root, fdir = run_env
+
+    result = foundry_concern(
+        casting_id=1,
+        target="2",
+        text="casting 2 must register this handler",
+        project_root=project_root,
+    )
+
+    assert result["phase"] == CONCERN_CYCLE_REQUIRED, result
+    assert "not passed" in result["error"]
+    # The hint names the argument the caller left out, in the call form.
+    assert "cycle=" in result["hint"]
+    # And nothing was written: a refused call leaves no stamp to misread.
+    assert not _file(fdir, CONCERNS_FILENAME).exists()
+
+
+@pytest.mark.parametrize(
+    "bad, named",
+    [
+        ("4", "str"),
+        (True, "boolean"),
+        (False, "boolean"),
+        (2.5, "float"),
+        (4.0, "float"),
+        (-1, "before the run"),
+        (None, "not passed"),
+        ([4], "list"),
+    ],
+)
+def test_a_cycle_that_is_not_a_whole_non_negative_number_is_refused(
+    run_env, bad, named
+):
+    """THE REFUSAL TEST FOR ``CONCERN_CYCLE_REQUIRED``, one row per shape the
+    old arm silently coerced.
+
+    ``'4'`` is the string drive D-060 recorded — a transport that hands a JSON
+    value through unconverted delivers exactly this. ``True`` is excluded
+    before ``int`` is tested for ``current_cycle``'s reason: ``True`` is not
+    cycle 1. ``4.0`` is a WHOLE float and still refused, because a stamp read
+    back by exact equality has no room for a value that only equals an integer
+    sometimes. One token covers all of them; the MESSAGE names which arrived.
+    """
+    project_root, fdir = run_env
+
+    result = _open_one(project_root, cycle=bad)
+
+    assert result["phase"] == CONCERN_CYCLE_REQUIRED, result
+    assert named in result["error"], result["error"]
+    assert not _file(fdir, CONCERNS_FILENAME).exists()
+
+
+def test_cycle_zero_is_a_real_cycle_and_is_stored_as_one(run_env):
+    """The door judges the SHAPE of the value, never whether it is zero.
+
+    A concern raised during CAST carries cycle 0, so 0 must pass. Telling that
+    concern apart from one whose cycle was never passed is precisely what
+    ``cycle: int = 0`` destroyed — absent and zero arrived identically, so
+    neither could be refused without refusing both. The sentinel is ``None``
+    for this reason and no other.
+    """
+    project_root, fdir = run_env
+
+    result = foundry_concern(
+        casting_id=1,
+        cycle=0,
+        target="2",
+        text="raised during CAST, before the first GRIND",
+        project_root=project_root,
+    )
+
+    assert result.get("error") is None, result
+    assert _ledger(fdir)[0]["cycle"] == 0
+
+
+def test_the_stored_stamp_is_the_one_the_inspect_start_rung_scopes_on(run_env):
+    """fallout AC-004's harm, asserted at the layer that caused it.
+
+    The rung calls ``open_cross_casting_concerns(fdir, cycle=<current>)``,
+    which filters on exact equality. A stamp the WRITER guessed is a concern
+    that door cannot see. This pins both directions: the cycle the caller
+    declared is the cycle the reader finds the concern under, and no other
+    cycle finds it.
+    """
+    project_root, fdir = run_env
+
+    foundry_concern(
+        casting_id=1,
+        cycle=4,
+        target="2",
+        text="from cycle 4",
+        project_root=project_root,
+    )
+
+    found = open_concerns_for_other_castings(fdir, cycle=4)
+    assert [c["text"] for c in found] == ["from cycle 4"]
+    assert open_concerns_for_other_castings(fdir, cycle=0) == []
+
+
+def test_the_close_arm_asks_for_no_cycle(run_env):
+    """The requirement is the WRITE arm's alone.
+
+    A close moves a record that already carries its stamp, so a close call
+    passes no cycle and must not be refused for the absence of one — the
+    sentinel default would otherwise turn every close into a refusal.
+    """
+    project_root, fdir = run_env
+    opened = _open_one(project_root)["concern"]
+
+    closed = foundry_concern(
+        close=opened["id"],
+        reason="casting 2 landed the registration",
+        project_root=project_root,
+    )
+
+    assert closed.get("error") is None, closed
+    entry = _ledger(fdir)[0]
+    assert entry["status"] == CONCERN_STATUS_CLOSED
+    # The stamp the write arm recorded survives the close untouched.
+    assert entry["cycle"] == 3
 
 
 # --------------------------------------------------------------------------- #

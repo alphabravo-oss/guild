@@ -136,6 +136,11 @@ CONCERN_TARGET_UNRESOLVED = "CONCERN_TARGET_UNRESOLVED"
 #: Named refusal: the concern text was empty or whitespace.
 CONCERN_TEXT_EMPTY = "CONCERN_TEXT_EMPTY"
 
+#: Named refusal: ``cycle`` was missing, or was not a whole non-negative
+#: number. The field is REQUIRED on the write arm and nothing is coerced —
+#: see ``_cycle_refusal`` for what the coercion cost.
+CONCERN_CYCLE_REQUIRED = "CONCERN_CYCLE_REQUIRED"
+
 #: Named refusal: ``close=id`` named an id the ledger does not carry.
 CONCERN_UNKNOWN_ID = "CONCERN_UNKNOWN_ID"
 
@@ -382,7 +387,7 @@ def render_concerns_markdown(fdir: Path, records: list[dict]) -> str | None:
 @ledger_refusals
 def foundry_concern(
     casting_id: str | int = "",
-    cycle: int = 0,
+    cycle: int | None = None,
     target: str = "",
     text: str = "",
     close: str = "",
@@ -395,10 +400,23 @@ def foundry_concern(
     (ST-004); everything else takes the write arm, which needs
     ``casting_id``, ``cycle``, ``target`` and ``text``.
 
-    ``cycle`` is the caller's declaration, exactly as CT-001 lists it. This
-    module does NOT derive one: ``state.json['cycle']`` already has two readers
-    held equal by cross-door pins, and a third derivation here is the shape
-    GI-024 names.
+    ``cycle`` is the caller's declaration, exactly as CT-001 lists it, and on
+    the write arm it is REQUIRED. This module does NOT derive one:
+    ``state.json['cycle']`` already has two readers held equal by cross-door
+    pins, and a third derivation here is the shape GI-024 names — and
+    ``foundry_state.current_cycle`` answers 0 for a malformed state file, so
+    deriving would reintroduce the silent zero by a longer route.
+
+    THE DEFAULT IS A SENTINEL, NOT A CYCLE (fallout D-060 / AC-004). ``None``
+    means "not passed" and is refused by ``_cycle_refusal``; ``0`` is a real
+    cycle a concern raised during CAST carries, and the two must stay
+    distinguishable at this door because nothing downstream can tell them
+    apart once one is written. Callers reaching this over MCP must pass
+    absence THROUGH as absence rather than substituting a default of their
+    own, which is what ``server.py``'s dispatch entry does.
+
+    The close arm takes no ``cycle`` and never asks for one: it moves a
+    record that already carries its stamp.
     """
     fdir = get_run_dir(project_root)
     if not fdir or not fdir.exists():
@@ -409,10 +427,68 @@ def foundry_concern(
     return _open_concern(fdir, casting_id, cycle, target, text)
 
 
+def _cycle_refusal(cycle: object) -> dict | None:
+    """Refuse a ``cycle`` that is missing, or is not a whole non-negative number.
+
+    THE FIELD IS REQUIRED, WITH NO DEFAULT AND NO COERCION (fallout D-060 /
+    AC-004). The write arm used to declare ``cycle: int = 0`` and collapse
+    every bool, non-int and negative onto ``0``, and that is the whole of the
+    defect: a caller who omitted ``cycle`` — or passed the JSON string ``"4"``
+    a transport handed through unconverted — filed a concern stamped cycle 0
+    and was told the call succeeded.
+
+    WHAT THE SILENT ZERO COSTS, because it is not a cosmetic field.
+    ``foundry_state.open_cross_casting_concerns`` scopes by EXACT cycle
+    equality, and it is right to: GI-023 / ST-005 ask for the concerns "from
+    the closing GRIND", and no other reading of that phrase exists. So a
+    concern stamped 0 while the run is at cycle 4 is invisible to the
+    ``inspect_start`` CONCERN_OPEN rung that exists to refuse on it, and
+    INSPECT opens over exactly the tree the concern was filed to hold shut.
+    The reader was never the broken half; the WRITER was, which is why the
+    fix is a refusal here rather than a widened filter there. A silently
+    defaulted scope field is worse than a refused call, because the refusal
+    is visible and the default is not.
+
+    ``0`` IS A LEGAL CYCLE — a concern raised during CAST carries it — so
+    this check is on the SHAPE of the value and never on whether it is zero.
+    Telling an omitted argument from an explicit ``0`` is precisely what the
+    old default destroyed, and it is why the sentinel is ``None``.
+
+    ``bool`` is excluded before ``int`` is tested, for
+    ``foundry_state.current_cycle``'s reason: ``True`` is not cycle 1, and
+    ``isinstance(True, int)`` is ``True``.
+
+    Returns the refusal, or ``None`` when the value may be stored as it is.
+    One token for all four shapes, on the ``CONCERN_TEXT_EMPTY`` precedent:
+    the remedy is the same sentence in every case, and it is the MESSAGE
+    that names which of the four arrived.
+    """
+    if cycle is None:
+        what = "was not passed at all"
+    elif isinstance(cycle, bool):
+        what = f"arrived as the boolean {cycle!r}"
+    elif not isinstance(cycle, int):
+        what = f"arrived as {type(cycle).__name__} {cycle!r}, not an integer"
+    elif cycle < 0:
+        what = f"arrived as {cycle}, which is before the run's first cycle"
+    else:
+        return None
+    return _named_refusal(
+        f"A concern is stamped with the cycle it was raised in, and this "
+        f"one {what}. The stamp is never defaulted or coerced: the "
+        f"inspect_start rung scopes its refusal on exact cycle equality, so "
+        f"a guessed 0 would file the concern where no door is looking.",
+        "Call Foundry-Concern(casting_id=..., cycle=<this cycle, a "
+        "non-negative integer>, target=..., text=...). Foundry-Context "
+        "reports the run's current cycle.",
+        CONCERN_CYCLE_REQUIRED,
+    )
+
+
 def _open_concern(
     fdir: Path,
     casting_id: str | int,
-    cycle: int,
+    cycle: int | None,
     target: str,
     text: str,
 ) -> dict:
@@ -426,6 +502,13 @@ def _open_concern(
             "text='what you found and why it belongs to another casting').",
             CONCERN_TEXT_EMPTY,
         )
+
+    # Both pure input-shape rungs before the first read: a call that can
+    # never succeed does not earn a manifest read, and the cheaper, more
+    # local refusal is the one an operator should see.
+    cycle_refused = _cycle_refusal(cycle)
+    if cycle_refused is not None:
+        return cycle_refused
 
     castings, problem = _manifest_castings(fdir)
     if problem is not None:
@@ -450,9 +533,6 @@ def _open_concern(
             + "; or a `path#Symbol` cited by a casting.",
             CONCERN_TARGET_UNRESOLVED,
         )
-
-    if isinstance(cycle, bool) or not isinstance(cycle, int) or cycle < 0:
-        cycle = 0
 
     path = fdir / CONCERNS_FILENAME
     with ledger_transaction(path, CONCERNS_COLLECTION_KEY) as records:
