@@ -421,3 +421,271 @@ def test_a_concern_targeting_the_casting_that_owns_the_fix_is_already_dispatched
     # owner would have the lead dispatch one casting twice.
     assert 1 not in task["co_dispatch"], task
     assert result["concerns_dispatched"] == [concern_id], result
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-012 / GI-023 / ST-003 / AC-004 (D-068) — THE REFUSAL'S NAMED EXIT,
+# REACHABLE FROM THE STATE THE REFUSAL FIRES IN.
+#
+# The class this closes is `refusal-hint-names-an-exit-the-check-never-reads`,
+# filed in three consecutive cycles. So the pin below is not "the concern gets
+# dispatched": it is that the exit `_inspect_start_preconditions` NAMES can be
+# taken by a lead standing in the state that refusal describes — a GRIND that
+# fixed everything it was handed, which is the only state a lead calls
+# `inspect_start` from.
+# --------------------------------------------------------------------------- #
+
+
+def _clean_grind_with_one_open_concern(project_root, fdir):
+    """A GRIND that fixed every defect it was handed, one concern still open."""
+    from foundry_mcp.tools.concerns import foundry_concern
+
+    _manifest_with_requirement_ids(fdir, {
+        2: (["FR-007"], ["src/two.py"]),
+        5: (["FR-008"], ["src/five.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=2)
+    # FIXED, not open. This is what a clean GRIND's ledger looks like.
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/two.py", spec_ref="FR-007",
+             status="fixed"),
+    ])
+    opened = foundry_concern(
+        casting_id=2, cycle=2, target="5",
+        text="casting 5's file states the same ruling and was not updated",
+        project_root=project_root,
+    )
+    assert opened.get("error") is None, opened
+    return opened["concern"]["id"]
+
+
+def test_a_clean_grind_can_still_dispatch_an_open_cross_casting_concern(run_env):
+    """fallout FR-012 / GI-023 / ST-003 / AC-004 (D-068).
+
+    `foundry_defects_to_tasks` returned early on `not open_defects`, ABOVE the
+    concern read, `_annotate_co_dispatch` and `_dispatch_open_concerns`. A GRIND
+    that fixed every defect it was handed leaves zero open defects, which is
+    exactly the state a lead calls `inspect_start` from — so the exit named in
+    that refusal's own hint was unreachable in the only state it fires in, and
+    the run could cross only by closing the concern by hand.
+    """
+    from foundry_mcp.tools.concerns import open_concerns_for_other_castings
+
+    project_root, fdir = run_env
+    concern_id = _clean_grind_with_one_open_concern(project_root, fdir)
+    assert len(open_concerns_for_other_castings(fdir)) == 1
+
+    result = foundry_defects_to_tasks(project_root)
+
+    assert result["ok"] is True, result
+    assert result["concerns_dispatched"] == [concern_id], result
+    assert open_concerns_for_other_castings(fdir) == [], "the concern stayed open"
+
+
+def test_the_clean_grind_dispatch_is_a_packet_and_not_a_cleared_flag(run_env):
+    """fallout GI-023 / ST-003 (D-068) — "Foundry-Tasks includes the named
+    casting", so there is something to dispatch TO it.
+
+    Marking the concern dispatched with `tasks: []` would clear the refusal and
+    send nobody to casting 5, which is the half of fallout FR-012 the refusal
+    exists to enforce. The concern becomes the packet: the target's own files as the work,
+    the concern text as the description, and a block naming both.
+    """
+    project_root, fdir = run_env
+    concern_id = _clean_grind_with_one_open_concern(project_root, fdir)
+
+    result = foundry_defects_to_tasks(project_root)
+
+    assert result["count"] == 1, result
+    task = result["tasks"][0]
+    assert task["concern_only"] is True, task
+    assert task["concern_id"] == concern_id, task
+    assert task["defect_ids"] == [], task
+    assert task["co_dispatch"] == [5], task
+    assert task["files"] == ["src/five.py"], task
+    assert "same ruling" in task["description"], task["description"]
+
+    block = task["alignment_block"]
+    # The header does NOT claim a fix whose owner could not be resolved.
+    assert "Owning casting: not resolvable" not in block, block
+    assert "carries a cross-casting concern and no defect fix" in block, block
+    assert "Raised by casting 2." in block, block
+    assert "Cross-casting concern(s) carried by this dispatch" in block, block
+    assert concern_id in block and "src/five.py" in block, block
+
+
+def test_the_nothing_to_do_result_carries_the_shape_every_other_call_does(run_env):
+    """fallout CT-008 / AC-006 (D-068) — the early return dropped four fields.
+
+    `co_dispatch_computable`, `concerns_dispatched`, `structural_tasks` and
+    `alignment_instructions` were absent from the nothing-to-do response
+    entirely, so a lead reading it was told nothing about either the co-dispatch
+    join or the concern ledger — on the one call where "nothing to do" is the
+    answer it most needs to be able to trust.
+    """
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {2: (["FR-007"], ["src/two.py"])})
+    _write_state(fdir, phase="F3", cycle=2)
+    _defect_ledger(fdir, [])
+
+    result = foundry_defects_to_tasks(project_root)
+
+    assert result["ok"] is True and result["count"] == 0, result
+    assert result["tasks"] == [], result
+    for field in (
+        "co_dispatch_computable", "concerns_dispatched", "structural_tasks",
+        "alignment_instructions", "escalated_classes",
+    ):
+        assert field in result, (field, sorted(result))
+    assert result["concerns_dispatched"] == [], result
+
+
+def test_a_wave_with_defect_tasks_emits_no_duplicate_concern_packet(run_env):
+    """fallout D-068 — the packet is for a concern nothing else can carry.
+
+    `_concern_carriers` falls back to every task with a computed set, so on a
+    wave WITH defect tasks each open concern already rides one. A second,
+    concern-only packet would dispatch the same casting twice for one concern.
+    """
+    from foundry_mcp.tools.concerns import foundry_concern
+
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        3: (["FR-008"], ["src/three.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+    ])
+    foundry_concern(
+        casting_id=1, cycle=1, target="3",
+        text="casting 3 states the same rule", project_root=project_root,
+    )
+
+    result = foundry_defects_to_tasks(project_root)
+    assert [t.get("concern_only") for t in result["tasks"]] == [None], result["tasks"]
+    assert result["count"] == 1, result
+    assert result["tasks"][0]["co_dispatch"] == [3], result["tasks"][0]
+
+
+def test_the_inspect_start_refusal_and_the_tasks_exit_are_driven_as_a_pair(run_env):
+    """fallout FR-012 / GI-023 / ST-005 / AC-004 (D-068) — THE MECHANISM, not
+    the instance.
+
+    The class is "the refusal hint names an exit the check never reads", so what
+    is asserted is the round trip: the refusal fires, its hint names
+    Foundry-Tasks, that call is made in the state the refusal left the run in,
+    and the same call then succeeds. Anything less pins one half of a contract
+    whose halves were shipped apart three cycles running.
+    """
+    from foundry_mcp.tools.orchestration.transitions import (
+        _inspect_start_preconditions,
+    )
+
+    project_root, fdir = run_env
+    concern_id = _clean_grind_with_one_open_concern(project_root, fdir)
+
+    refused = _inspect_start_preconditions(fdir, project_root)
+    assert refused["passed"] is False, refused
+    concern_rungs = [
+        r for r in refused["refusals"] if concern_id in r.get("reason", "")
+    ]
+    assert concern_rungs, refused["refusals"]
+    # The hint names Foundry-Tasks as an exit...
+    hint = " ".join(r.get("hint", "") for r in concern_rungs)
+    assert "Foundry-Tasks" in hint, hint
+
+    # ...and taking it, from this exact state, clears this exact rung.
+    assert foundry_defects_to_tasks(project_root)["concerns_dispatched"] == [
+        concern_id
+    ]
+
+    after = _inspect_start_preconditions(fdir, project_root)
+    assert not [
+        r for r in after["refusals"] if concern_id in r.get("reason", "")
+    ], after["refusals"]
+
+
+# --------------------------------------------------------------------------- #
+# fallout CT-008 / AC-025 / FR-053 (D-069) — THE OTHER HALF OF THE REPORT'S
+# CO-DISPATCH SECTION.
+# --------------------------------------------------------------------------- #
+
+
+def _grind_dispatch_records(fdir):
+    from foundry_mcp.tools.foundry_state import read_jsonl
+
+    records, problem = read_jsonl(fdir / "handoffs.jsonl")
+    assert problem is None, problem
+    return [r for r in records if r.get("event") == "grind_dispatched"]
+
+
+def test_the_dispatch_record_carries_the_co_dispatch_set_the_report_reads(run_env):
+    """fallout CT-008 / AC-025 / FR-053 (D-069).
+
+    `foundry_report.py#_halt_and_co_dispatch_section` reads `co_dispatch` off
+    each handoff record and SKIPS every record without the key; its docstring
+    said the section stays empty "until casting 2 lands the writer". The writer
+    landed carrying `{handoff_id, timestamp, event, defect_id, file, cycle,
+    casting}` and none of the four keys the reader wants, so the section could
+    not populate on any run — this run's own ledger holds 70 such records and
+    zero with the key, across two GRIND cycles that both dispatched computed
+    sets.
+    """
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        3: (["FR-007"], ["src/three.py"]),
+        5: (["FR-007"], ["src/five.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/three.py", spec_ref="FR-007"),
+    ])
+
+    result = foundry_defects_to_tasks(project_root)
+    task = next(t for t in result["tasks"] if "D-900" in t["defect_ids"])
+    assert task["co_dispatch"] == [5], task
+
+    records = _grind_dispatch_records(fdir)
+    assert len(records) == 1, records
+    record = records[0]
+    # The COMPUTED set, not a recomputation: the same list the task carries.
+    assert record["co_dispatch"] == [5], record
+    assert record["defect_ids"] == ["D-900"], record
+    assert record["requirement_ids"] == ["FR-007"], record
+    assert record["phase"] == "F3", record
+    # ...and the fields Team-Down reads are untouched.
+    assert record["defect_id"] == "D-900" and record["file"] == "src/three.py"
+    assert record["cycle"] == 1 and record["casting"] == 3, record
+
+
+def test_the_report_section_populates_from_a_real_dispatch(run_env):
+    """fallout CT-008 (D-069) — the two sides, driven end to end.
+
+    `tests/test_report.py` covers this section by hand-appending a synthetic
+    record in a shape no shipped writer produced, which is how a one-sided
+    contract passes its own test. This drives the real writer and then the real
+    reader over the ledger it wrote.
+    """
+    from foundry_mcp.tools.foundry_report import _halt_and_co_dispatch_section
+
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        3: (["FR-007"], ["src/three.py"]),
+        5: (["FR-007"], ["src/five.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/three.py", spec_ref="FR-007"),
+    ])
+    foundry_defects_to_tasks(project_root)
+
+    section, problem = _halt_and_co_dispatch_section(fdir, {"phase": "F3"})
+    assert problem is None, problem
+    assert section["co_dispatch_count"] == 1, section
+    row = section["co_dispatch"][0]
+    assert row["co_dispatch"] == [5], row
+    assert row["defect_ids"] == ["D-900"], row
+    assert row["requirement_ids"] == ["FR-007"], row
+    assert row["cycle"] == 1 and row["phase"] == "F3", row

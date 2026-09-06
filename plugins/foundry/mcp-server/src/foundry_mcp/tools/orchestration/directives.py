@@ -191,23 +191,46 @@ def _alignment_block(
     """
     files = _casting_files(fdir)
     carried_concerns = carried_concerns or []
+    # fallout FR-012 / ST-003 (D-068) — A CONCERN-ONLY PACKET HAS NO FIX TO
+    # NAME, AND SAYS SO RATHER THAN FAILING TO RESOLVE ONE.
+    #
+    # Every block until now carried defect ids, so the two lines below always
+    # described a fix. A concern the wave dispatches on its own has no
+    # originating defect and no owning casting, and the standing header would
+    # have read "Owning casting: not resolvable from the manifest" — which
+    # asserts a fix exists whose owner could not be found. The concern section
+    # further down is the whole content of such a block.
+    concern_only = not defect_ids and bool(carried_concerns)
     lines = [
         "## Co-dispatch alignment (server-generated — paste verbatim)",
         "",
-        f"Originating defect(s): {', '.join(defect_ids) or 'none'}",
-        f"Requirement id(s): {', '.join(sorted(requirement_ids)) or 'none'}",
-        (
-            f"Fixed in casting {owning_casting}"
-            + (f", file(s) {', '.join(owning_files)}" if owning_files else "")
-            if owning_casting is not None
-            else "Owning casting: not resolvable from the manifest"
-        ),
-        "",
-        "The SAME requirement is owned by the castings below. Each one carries "
-        "the rule on its own files; make the same change there, in that "
-        "casting's own idiom, in THIS cycle.",
-        "",
     ]
+    if concern_only:
+        raised_by = sorted({
+            str(c.get("source_casting", "?")) for c in carried_concerns
+        })
+        lines.extend([
+            "Originating defect(s): none — this dispatch carries a "
+            "cross-casting concern and no defect fix.",
+            f"Raised by casting {', '.join(raised_by)}.",
+            "",
+        ])
+    else:
+        lines.extend([
+            f"Originating defect(s): {', '.join(defect_ids) or 'none'}",
+            f"Requirement id(s): {', '.join(sorted(requirement_ids)) or 'none'}",
+            (
+                f"Fixed in casting {owning_casting}"
+                + (f", file(s) {', '.join(owning_files)}" if owning_files else "")
+                if owning_casting is not None
+                else "Owning casting: not resolvable from the manifest"
+            ),
+            "",
+            "The SAME requirement is owned by the castings below. Each one "
+            "carries the rule on its own files; make the same change there, in "
+            "that casting's own idiom, in THIS cycle.",
+            "",
+        ])
     concern_castings = {
         int(c["target_casting_id"]) for c in carried_concerns
     }
@@ -278,7 +301,14 @@ def _concern_carriers(tasks: list[dict], concern: dict) -> list[dict]:
         ]
         if owned_by_source:
             return owned_by_source
-    return [t for t in tasks if t.get("co_dispatch") is not None]
+    # fallout D-068 — a concern-only packet carries ITS OWN concern and no
+    # other. It is emitted per concern with that concern's target already in its
+    # set, so letting the wave-level fallback add a second one would put casting
+    # A's concern text into the block dispatched to casting B.
+    return [
+        t for t in tasks
+        if t.get("co_dispatch") is not None and not t.get("concern_only")
+    ]
 
 
 
@@ -320,6 +350,12 @@ def _annotate_co_dispatch(
     """
     owned, ids_declared = _casting_requirement_ids(fdir)
     for task in tasks:
+        # fallout FR-012 / ST-003 (D-068) — a concern-only packet arrives with
+        # its set already computed from the concern record, which is the one
+        # source that does not depend on the requirement-ownership join. Pass
+        # one would overwrite it with the empty intersection of no spec_refs.
+        if task.get("concern_only"):
+            continue
         requirement_ids = {r for r in task.get("spec_refs", []) if r}
         if not ids_declared:
             # AC-006 / OT-006: NOT COMPUTABLE, never an empty set. A lead
@@ -365,7 +401,7 @@ def _annotate_co_dispatch(
             task.setdefault("_carried_concerns", []).append(concern)
 
     for task in tasks:
-        if task.get("co_dispatch") is None:
+        if task.get("co_dispatch") is None or task.get("concern_only"):
             continue
         task["alignment_block"] = _alignment_block(
             fdir,
@@ -382,8 +418,127 @@ def _annotate_co_dispatch(
     return ids_declared
 
 
+def _concern_only_tasks(
+    fdir: Path, tasks: list[dict], concerns: list[dict] | None
+) -> list[dict]:
+    """One task per open cross-casting concern that no defect task can carry.
+
+    fallout FR-012 / GI-023 / ST-003 / AC-004 (D-068) — THE EXIT THE
+    `inspect_start` REFUSAL NAMES, MADE REACHABLE FROM THE STATE IT FIRES IN.
+    ------------------------------------------------------------------------
+    `_inspect_start_preconditions` refuses while a cross-casting concern is open
+    and its hint names two exits, the first being "call Foundry-Tasks, whose
+    co-dispatch set carries the concern to the casting it names and marks it
+    dispatched". That exit was unreachable in EXACTLY the state the refusal
+    fires in. A lead reaches `inspect_start` when the GRIND is done, which is
+    when the defect ledger holds nothing open — and `Foundry-Tasks` returned
+    early on `not open_defects`, above the concern read, above
+    `_annotate_co_dispatch` and above `_dispatch_open_concerns`. So a clean
+    GRIND could never dispatch a concern and the run could not cross into the
+    next INSPECT except by closing the concern by hand.
+
+    REMOVING THE EARLY RETURN IS NOT ENOUGH, and that is why this function
+    exists rather than a moved statement. The dispatch join runs THROUGH tasks:
+    `_concern_carriers` picks tasks, `_annotate_co_dispatch` widens their sets,
+    and `_dispatch_open_concerns` marks a concern whose target one of those sets
+    reaches. With zero tasks every one of those is a loop over an empty list, so
+    the concern stays open however the statements are ordered. A concern with no
+    defect to ride is a concern with nothing to dispatch — unless the concern is
+    itself the packet, which is what ST-003 says it is: "Foundry-Tasks emits the
+    co-dispatch set containing the target casting".
+
+    So the concern becomes a task. It carries the target casting's own key_files
+    as the work, the concern text as the description, and no defect ids — and
+    from there every mechanism downstream treats it as the packet it is: the
+    concern is marked dispatched, the alignment block names it, and the lead has
+    something to hand a teammate rather than a cleared flag and no work.
+
+    EMITTED ONLY FOR A CONCERN NOTHING ELSE CARRIES. `_concern_carriers` falls
+    back to every task with a computed set, so on a wave with defect tasks and a
+    declared manifest each open concern already rides one and a second packet
+    would dispatch the same casting twice. The predicate is that fallback's own:
+    a concern is carried when some task has a set for it to join.
+    """
+    if not concerns:
+        return []
+    if any(task.get("co_dispatch") is not None for task in tasks):
+        # `_annotate_co_dispatch` has not run yet, so `co_dispatch` is absent
+        # rather than None on every task here; this arm is for a caller that
+        # hands in annotated tasks.
+        return []
+    _owned, ids_declared = _casting_requirement_ids(fdir)
+    if tasks and ids_declared:
+        # Every open concern will ride one of these through
+        # `_concern_carriers`' fallback. Nothing to add.
+        return []
+
+    files = _casting_files(fdir)
+    out: list[dict] = []
+    for concern in concerns:
+        try:
+            target = int(concern["target_casting_id"])
+        except (KeyError, TypeError, ValueError):
+            # Unresolvable targets are refused at `Foundry-Concern`'s own door
+            # (CT-001), so one here is a hand-edited ledger. It stays open and
+            # `inspect_start` keeps naming it, which is the honest end for a
+            # record nothing can resolve.
+            continue
+        concern_id = str(concern.get("id", "?"))
+        text = str(concern.get("text", "")).strip()
+        out.append({
+            "structural": False,
+            # NAMED, so a consumer can tell this packet from a defect one
+            # without inferring it from an empty `defect_ids`.
+            "concern_only": True,
+            "concern_id": concern_id,
+            "defect_ids": [],
+            "description": (
+                f"Cross-casting concern {concern_id}, raised by casting "
+                f"{concern.get('source_casting', '?')} against "
+                f"`{concern.get('target', '')}`"
+                + (f": {text}" if text else ".")
+            ),
+            "files": list(files.get(target) or []),
+            "symbols": [],
+            "spec_refs": [],
+            "regression": False,
+            "source": "concern",
+            # Set here rather than left to `_annotate_co_dispatch`: the target
+            # is on the concern record itself and does not depend on the
+            # requirement-ownership join, which is precisely the join that does
+            # not reach a concern about a sibling surface no requirement id
+            # connects (D-054). `owning_casting` is None because no fix
+            # originates this packet — there is no defect and no owner, and
+            # `_alignment_block` says exactly that rather than guessing one.
+            "co_dispatch": [target],
+            "owning_casting": None,
+            "concerns_co_dispatched": [concern_id],
+            "alignment_block": _alignment_block(
+                fdir,
+                defect_ids=[],
+                requirement_ids=set(),
+                owning_casting=None,
+                owning_files=[],
+                co_dispatch=[target],
+                carried_concerns=[concern],
+            ),
+        })
+    return out
+
+
+
+
 def _append_grind_dispatch(
-    fdir: Path, *, defect_id: str, file_path: str, cycle: int, casting: int | None
+    fdir: Path,
+    *,
+    defect_id: str,
+    file_path: str,
+    cycle: int,
+    casting: int | None,
+    co_dispatch: list[int] | None = None,
+    defect_ids: list[str] | None = None,
+    requirement_ids: list[str] | None = None,
+    phase: str = "",
 ) -> None:
     """Record that `defect_id` was dispatched into THIS GRIND cycle.
 
@@ -394,6 +549,29 @@ def _append_grind_dispatch(
     `Foundry-Team-Down`, which refuses while one of these is still open and a
     commit since the cycle baseline touched its file — the shape of "the fix was
     made and nobody closed the ledger".
+
+    fallout CT-008 / AC-025 / FR-053 (D-069) — AND BY THE F6 REPORT, WHICH IS
+    THE OTHER HALF OF THE CONTRACT AND SHIPPED ALONE.
+    ------------------------------------------------------------------------
+    `foundry_report.py#_halt_and_co_dispatch_section` renders the "Halt and
+    co-dispatch" section by reading `co_dispatch` off each `handoffs.jsonl`
+    record and skipping every record without the key. Its docstring said "a run
+    with no such record renders an empty section — which is every run until
+    casting 2 lands the writer", and the writer landed WITHOUT the key: this
+    entry carried `{handoff_id, timestamp, event, defect_id, file, cycle,
+    casting}` and nothing else, so a repo-wide search for a writer of
+    `co_dispatch` into a handoff record found none and the section could not
+    populate on any run ever. This run's own ledger is the proof — 70
+    `grind_dispatched` records, zero carrying the key, over two GRIND cycles
+    that both dispatched computed sets.
+
+    So the four fields the report READS are the four this WRITES:
+    `co_dispatch`, `defect_ids` and `requirement_ids` from the task the defect
+    was dispatched on, and `phase` from the run's own state. The set is
+    computed once, by `_annotate_co_dispatch`, and recorded here rather than
+    recomputed by the report — a report that re-derived it from the manifest
+    would be a second answer to "which castings were dispatched together",
+    available to disagree with the one the lead acted on (GI-021 / CT-008).
 
     Appended to `handoffs.jsonl` through casting 5's writer, so the dispatch
     record lives in the same file, the same format and the same order as every
@@ -412,6 +590,14 @@ def _append_grind_dispatch(
         "file": file_path,
         "cycle": cycle,
         "casting": casting,
+        # fallout CT-008 (D-069) — the report's four read keys, written.
+        # `co_dispatch` is a LIST and may be empty; the reader treats an empty
+        # one as "no row", which is its call to make and not this writer's to
+        # pre-empt by omitting the key.
+        "co_dispatch": list(co_dispatch or []),
+        "defect_ids": list(defect_ids or [defect_id]),
+        "requirement_ids": sorted(requirement_ids or []),
+        "phase": phase,
     }
     try:
         _append_handoff_record(
@@ -422,6 +608,10 @@ def _append_grind_dispatch(
                 ("file", f"`{file_path}`" if file_path else ""),
                 ("cycle", f"`{cycle}`"),
                 ("casting", f"`{casting}`" if casting is not None else ""),
+                (
+                    "co-dispatch",
+                    ", ".join(f"`{c}`" for c in (co_dispatch or [])),
+                ),
             ],
         )
     except OSError:
@@ -549,8 +739,28 @@ def foundry_defects_to_tasks(
     # open work, and the F6 report printed it.
     _record_escalation_proposals(fdir, escalated)
 
-    if not open_defects:
-        return {"ok": True, "tasks": [], "count": 0, "escalated_classes": []}
+    # fallout FR-012 / GI-023 / ST-003 / AC-004 (D-068) — THE NOTHING-TO-DO
+    # BRANCH IS NOT AN EXIT FROM THIS FUNCTION ANY MORE.
+    #
+    # It returned `{"ok", "tasks": [], "count": 0, "escalated_classes": []}`
+    # ABOVE the concern read, `_annotate_co_dispatch` and
+    # `_dispatch_open_concerns` — and a GRIND that fixed every defect it was
+    # handed leaves exactly zero open defects, which is precisely the state a
+    # lead is in when it calls `inspect_start`. So the exit that refusal's own
+    # hint names ("call Foundry-Tasks, whose co-dispatch set carries the concern
+    # to the casting it names and marks it dispatched") could not be taken in
+    # the state the refusal fires in, and the run could only cross by closing
+    # the concern by hand. Driven: a temp run at F3 with one FIXED defect and
+    # one open concern answered `count: 0` and left the concern open, while the
+    # same fixture with the defect OPEN dispatched it correctly.
+    #
+    # The same early return also dropped `co_dispatch_computable`,
+    # `concerns_dispatched`, `structural_tasks` and `alignment_instructions`
+    # from the response, so a lead reading the nothing-to-do result was told
+    # nothing about either. There is no early return now: a run with no open
+    # defects and no open concerns falls through the loops below, every one of
+    # which is a loop over an empty list, and returns the SAME shape every other
+    # call returns with `tasks: []` in it.
 
     # ST-002 / FR-002 — THE STRUCTURAL-PASS BUDGET, SPENT HERE.
     #
@@ -635,8 +845,10 @@ def foundry_defects_to_tasks(
     # The concern join widens `co_dispatch` and the block that names it, so the
     # ledger is read here and handed in rather than consulted after the fact.
     open_concerns = open_concerns_for_other_castings(fdir)
+    tasks.extend(_concern_only_tasks(fdir, tasks, open_concerns))
     ids_declared = _annotate_co_dispatch(fdir, tasks, open_concerns)
     open_by_id = {d["id"]: d for d in open_defects}
+    run_phase = str(_load_json(fdir / "state.json").get("phase", "") or "")
     for task in tasks:
         # fallout FR-048 / GI-017 / ST-011 — the dispatch RECORD, written by the
         # call that dispatches. `Foundry-Team-Down` reads these back and refuses
@@ -659,6 +871,12 @@ def foundry_defects_to_tasks(
                 file_path=str(defect.get("file") or ""),
                 cycle=packet_cycle,
                 casting=task.get("owning_casting"),
+                # fallout CT-008 / AC-025 / FR-053 (D-069) — the computed set,
+                # onto the record the F6 report reads it off.
+                co_dispatch=list(task.get("co_dispatch") or []),
+                defect_ids=list(task.get("defect_ids") or []),
+                requirement_ids=[r for r in task.get("spec_refs") or [] if r],
+                phase=run_phase,
             )
 
     # fallout GI-023 / FR-012 / ST-003 / AC-004 — a concern whose target is in
