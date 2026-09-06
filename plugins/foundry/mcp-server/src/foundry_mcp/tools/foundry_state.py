@@ -1463,6 +1463,21 @@ def stream_rollup_rows(run_dir: Path) -> dict:
     }
 
 
+#: AC-046 / FR-026 — the ratio A-037 states: "FULL cycles / total INSPECT
+#: cycles below 50%". The number appears ONCE in this module and BOTH the
+#: `threshold` this reports and the comparison `passes` applies derive from it,
+#: so the sentence the F6 report prints and the verdict `measure-run.py`
+#: publishes cannot come to disagree — the `foundry_validate.REQUIREMENT_SPAN_MAX`
+#: shape, which is the precedent NFR-011 names for a prose rule pinned to a
+#: constant (concern C-056, fallout D-095).
+#:
+#: THE BOUND IS EXCLUSIVE, which is why this constant carries no MAX suffix. A run at
+#: exactly 0.5 FAILS: A-037 says BELOW 50%, and `REQUIREMENT_SPAN_MAX = 2` — the
+#: constant this one is modelled on — is inclusive, so borrowing its suffix here
+#: would name an exclusive bound with an inclusive word.
+FULL_CYCLE_RATIO_THRESHOLD = 0.5
+
+
 def full_cycle_ratio(inspect_modes: dict, *, full_mode: str = "FULL") -> dict:
     """AC-046 / FR-053 — FULL cycles divided by total INSPECT cycles.
 
@@ -1471,7 +1486,7 @@ def full_cycle_ratio(inspect_modes: dict, *, full_mode: str = "FULL") -> dict:
         {"full_cycles": int,        # cycles carrying at least one FULL decision
          "total_cycles": int,       # cycles carrying any decision
          "ratio": float | None,     # None when no cycle carries a decision
-         "threshold": 0.5,
+         "threshold": FULL_CYCLE_RATIO_THRESHOLD,
          "passes": bool | None}     # None when the ratio cannot be derived
 
     ``inspect_modes`` is ``inspect_mode_rows``' document. A-037's figure is a
@@ -1512,8 +1527,8 @@ def full_cycle_ratio(inspect_modes: dict, *, full_mode: str = "FULL") -> dict:
         "full_cycles": full,
         "total_cycles": total,
         "ratio": None if ratio is None else round(ratio, 4),
-        "threshold": 0.5,
-        "passes": None if ratio is None else ratio < 0.5,
+        "threshold": FULL_CYCLE_RATIO_THRESHOLD,
+        "passes": None if ratio is None else ratio < FULL_CYCLE_RATIO_THRESHOLD,
     }
 
 

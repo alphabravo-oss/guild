@@ -1081,6 +1081,54 @@ def test_the_full_cycle_ratio_is_derived_once(report_run) -> None:
     assert section["full_cycle_ratio"]["total_cycles"] == section["cycle_count"]
 
 
+def test_the_full_cycle_ratio_threshold_is_spelled_once(monkeypatch) -> None:
+    """fallout D-095 / NFR-011 (concern C-056) — the printed figure IS the applied one.
+
+    The threshold used to be typed TWICE — once as the `threshold` this reports
+    and once inside the `ratio < 0.5` the verdict applies — so the F6 report
+    could state one figure against a verdict computed from another. Nothing
+    caught it, because two literals agree right up until someone edits one of
+    them. That is NFR-011's shape and `foundry_validate.REQUIREMENT_SPAN_MAX` is
+    the precedent: one spelling feeding both the message and the table.
+
+    THE PIN IS DERIVATION, NOT EQUALITY. Asserting that both are 0.5 passes just
+    as happily against two literals, so it would not have caught the defect it
+    exists for. Instead the constant is MOVED and the verdict has to move with
+    it. A comparison that re-types the number keeps judging against 0.5 and
+    fails below.
+
+    Moved in BOTH directions, because a hard-coded `< 0.5` still happens to
+    agree with the constant in one of them: at 0.75 the same ratio must pass and
+    at 0.25 it must fail.
+    """
+    doc = {"per_cycle": {"1": [{"mode": "FULL"}], "2": [{"mode": "delta"}]}}
+
+    shipped = fs.full_cycle_ratio(doc)
+    assert shipped["ratio"] == 0.5, "one FULL cycle of two"
+    assert shipped["threshold"] == fs.FULL_CYCLE_RATIO_THRESHOLD, (
+        "the REPORTED threshold reads the module constant rather than a "
+        "literal of its own"
+    )
+
+    monkeypatch.setattr(fs, "FULL_CYCLE_RATIO_THRESHOLD", 0.75)
+    above = fs.full_cycle_ratio(doc)
+    assert above["threshold"] == 0.75
+    assert above["passes"] is True, (
+        "the APPLIED threshold reads the same constant: with the bound at 0.75 "
+        "a ratio of 0.5 is below it. A re-typed `ratio < 0.5` answers False "
+        "here while the line above still reports 0.75 — the drift C-056 names"
+    )
+
+    monkeypatch.setattr(fs, "FULL_CYCLE_RATIO_THRESHOLD", 0.25)
+    below = fs.full_cycle_ratio(doc)
+    assert below["threshold"] == 0.25
+    assert below["passes"] is False, (
+        "and back: with the bound at 0.25 the same ratio is not below it. Both "
+        "directions are driven because a literal 0.5 agrees with the constant "
+        "in one of them by coincidence"
+    )
+
+
 def test_the_report_escalated_rows_are_the_leafs_rows(report_run) -> None:
     """D-214 / D-215 — one resolver, and now one row builder over it.
 
