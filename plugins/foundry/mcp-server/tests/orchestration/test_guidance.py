@@ -149,6 +149,7 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
 )
 
 from foundry_mcp.tools.orchestration.streams import (  # noqa: F401
+    _check_streams_complete,
     foundry_mark_stream,
 )
 
@@ -1528,6 +1529,54 @@ def test_only_the_leads_next_arms_the_ordering_token_and_the_stall_clock(run_env
 # same casting as the source, so they move here — where the module that now
 # defines them already has its test module.
 # --------------------------------------------------------------------------- #
+
+
+
+def test_a_mode_less_inspect_routes_to_the_width_and_not_to_assay(run_env):
+    """fallout GI-008 / D-117 (concern C-040) — Foundry-Next is a THIRD caller.
+
+    `foundry_state.check_streams_complete` holds the unrecorded-width arm behind
+    an INJECTION, and the first version of this cycle's two compositions omitted
+    it. The doors stayed safe — `Foundry-Gate('assay')` and `inspect_clean` ask
+    `_unrecorded_width_problem` themselves — but Foundry-Next asks nothing of its
+    own, so on an INSPECT whose width was never recorded it answered over the
+    PRE-WIDTH roster and routed the lead to ASSAY with `research_audit` and
+    `test01` silently dropped. GI-008 names that shape in as many words: "a
+    streams-complete check that reads a roster nothing recorded".
+
+    DRIVEN THROUGH THE GUIDANCE SURFACE, not through the leaf, because the leaf
+    was never wrong: it is the composition that decides whether the arm can
+    fire, and only a drive of the reporting caller tells the two apart.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/a.py"], no_ui=True)
+    # F2 with NO `inspect_modes` entry at all — the D-117 shape — and the three
+    # pre-width markers on disk, which is what made the fallback look complete.
+    _write_state(fdir, phase="F2", cycle=2)
+    for stream in ("trace", "prove", "test"):
+        (fdir / f".{stream}-complete").write_text(
+            "2020-01-01T00:00:00+00:00 cycle=2\nitems_checked=1\n"
+            "items_total=1\ncoverage=100%\nfindings=0\n",
+            encoding="utf-8",
+        )
+
+    streams = _check_streams_complete(project_root)
+    assert streams["complete"] is False, streams
+    assert streams["missing"] == "inspect_mode", streams
+    assert streams.get("unrecorded_width") is True, streams
+
+    action = foundry_next_action(project_root)
+    assert action["action"] != "transition_to_assay", action
+    # ...and it says WHICH thing is missing, rather than routing on a roster
+    # nothing recorded.
+    assert "width" in action["action"] or "width" in str(action.get("details", {})), action
+
+
+
+
+
+
+
 
 def test_a_registered_team_with_dead_ledgers_does_not_suppress_the_stall(
     run_env, monkeypatch

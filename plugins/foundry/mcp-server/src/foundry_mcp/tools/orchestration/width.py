@@ -174,6 +174,25 @@ def git_touching_commit(
 def _trace_skip_check(fdir: Path, project_root: str) -> dict:
     """Decide whether the current F2 INSPECT can skip the TRACE stream.
 
+    NO DOOR REACHES THIS TODAY, AND NO DOOR REACHED IT BEFORE THIS CYCLE EITHER
+    (concern C-040's second finding). Recorded rather than removed, because
+    "unreferenced" and "retired" are different claims and only the first is
+    measured.
+      * Its sole caller was the display-time TRACE fence that ruling item 5
+        replaced with `_trace_skip_from_width` above.
+      * That fence reached here only when the recorded width's mode was neither
+        FULL nor DELTA AND `_unrecorded_width_problem` returned None. DRIVEN:
+        `foundry_state.current_inspect_mode` validates the mode against
+        `vocab.INSPECT_MODES`, so an out-of-vocabulary entry reads as None; and
+        a None read in F2 is exactly what makes `_unrecorded_width_problem`
+        refuse first. The arm had no reachable input.
+      * So D-071's last-clean-TRACE rule below — the `.trace-clean-at` marker
+        crossed against the manifest's own files — was already unreachable at
+        the tree this cycle inherited. Deleting it here would be retiring a rule
+        nobody ruled on, inside a defect fix that is about layering; it stays,
+        it stays tested, and whether the width should USE it again is a decision
+        for someone holding the width's requirements rather than this one.
+
     Rationale: TRACE is LSP-heavy (EXISTS / SUBSTANTIVE / WIRED / PLACED
     across every manifest symbol). A cycle of TRACE routinely runs 100+
     Serena IPC calls over several minutes. Topology is a pure function of

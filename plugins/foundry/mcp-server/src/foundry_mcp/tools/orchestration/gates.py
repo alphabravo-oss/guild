@@ -50,6 +50,7 @@ from foundry_mcp.tools.orchestration.escalation import (
 )
 from foundry_mcp.tools.orchestration.width import (
     _sight_required,
+    _unrecorded_width_problem,
 )
 from foundry_mcp.tools.orchestration.evidence_boundary import (
     EVIDENCE_STRIPPED_TOKEN,
@@ -253,12 +254,16 @@ def _streams_complete(project_root: str) -> dict:
     reach. What is composed here is the closed-set values and leaf helpers a
     leaf may not import.
 
-    THE UNRECORDED-WIDTH ARM IS NOT ASKED FOR, and that is the pre-existing
-    contract rather than a narrowing. `_inspect_start_preconditions` and
-    `_inspect_clean_preconditions` ask `_unrecorded_width_problem` themselves
-    and rank the refusal on their own ladder — the original said so in its own
-    scoping note — so injecting the shaper here would give them the same
-    refusal twice, once ranked and once as a missing stream.
+    D-117's UNRECORDED-WIDTH ARM IS INJECTED HERE TOO (concern C-040). The
+    first version of this composition omitted it on a double-refusal argument:
+    `_inspect_start_preconditions` and `_inspect_clean_preconditions` ask
+    `_unrecorded_width_problem` themselves and rank it at `_GATE_RANK_WIDTH`,
+    so a second refusal at `_GATE_RANK_STREAMS` says nothing new. The refusal
+    the operator READS is unchanged — width outranks streams, so the width
+    sentence still speaks — but the CHECKLIST is protocol too, and
+    `all_streams_complete ok=True` on an INSPECT whose width was never recorded
+    is a line a lead reads and believes. A checklist that disagrees with the
+    verdict is the shape D-119 is filed under.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -275,6 +280,7 @@ def _streams_complete(project_root: str) -> dict:
         fallback_streams=[
             s for s in FULL_ROSTER_STREAMS if s not in DELTA_CONDITIONAL_STREAMS
         ],
+        unrecorded_width_problem=_unrecorded_width_problem,
     )
 
 

@@ -763,19 +763,40 @@ def _check_streams_complete(project_root: str) -> dict:
     this lifecycle one; two implementations of "are the streams done" is how a
     cycle comes to disagree with itself about what it required.
 
-    THE UNRECORDED-WIDTH ARM IS DEliberately NOT ASKED FOR HERE. Its refusal
-    names the transitions that record a width and the remedy, which is door
-    protocol, so the leaf takes it as an injection and the DOORS pass it. This
-    caller only REPORTS, so it passes nothing and the arm is skipped — which is
-    what the original said in its own scoping note: "the two doors that matter
-    ask `_unrecorded_width_problem` themselves rather than inferring it from
-    this result".
+    D-117's UNRECORDED-WIDTH ARM IS INJECTED, AND OMITTING IT WAS A DEFECT
+    (concern C-040, filed by casting 12 against the first version of this
+    composition).
+    -------------------------------------------------------------------------
+    The leaf still holds the arm, but it is gated on this injection, so a
+    composition that omits it silently gets the PRE-WIDTH fallback roster
+    instead: on a mode-less INSPECT the answer was `complete: True` over
+    trace/prove/test, with `research_audit` and `test01` dropped, and
+    Foundry-Next then routed the lead to ASSAY. That is GI-008's named
+    violation verbatim — "a streams-complete check that reads a roster nothing
+    recorded" — and it is exactly what D-117 was filed for.
+
+    THE SCOPING NOTE THAT LOOKED LIKE PERMISSION SAYS SOMETHING ELSE. "The two
+    doors that matter ask `_unrecorded_width_problem` themselves rather than
+    inferring it from this result" is the tail of the original's paragraph on
+    the `in_inspect` PHASE guard — it justifies the arm firing only in F2/F5,
+    and ends "so nothing rests on the scope being wider than the phase". The
+    three lines under it computed the refusal and returned it from this very
+    function. The doors being safe was never the claim; Foundry-Next is a THIRD
+    caller and it refuses nothing of its own.
 
     LAZY SEAM, written once per symbol: `teams` imports this module, so a
     module-top import here closes a cycle that takes every tool in the server
-    down at load.
+    down at load. `width` is reached the same way and for a second reason —
+    this module is lifecycle and width is a VERIFIER, so a module-top import
+    would be the crossing GI-033 refuses. It is a LAZY reach that the boundary
+    guard does not judge, it predates this cycle, and the principled removal is
+    the leaf firing the arm on its own `current_inspect_mode` read and taking
+    only the PROSE as an injection — `foundry_state.check_streams_complete`'s
+    ground, recorded here so the next reader does not take the seam for a
+    design.
     """
     from foundry_mcp.tools.orchestration.teams import _check_sight_required
+    from foundry_mcp.tools.orchestration.width import _unrecorded_width_problem
 
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -796,4 +817,5 @@ def _check_streams_complete(project_root: str) -> dict:
         fallback_streams=[
             s for s in FULL_ROSTER_STREAMS if s not in DELTA_CONDITIONAL_STREAMS
         ],
+        unrecorded_width_problem=_unrecorded_width_problem,
     )
