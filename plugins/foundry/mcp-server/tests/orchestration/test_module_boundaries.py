@@ -5137,12 +5137,43 @@ def test_the_agent_id_has_one_implementation_however_it_is_spelled():
 #: 10's `VERIFIER_PATH_PATTERNS` narrowed to. Everything else is
 #: LIFECYCLE/PRESENTATION, `halt.py` INCLUDED: GI-033 puts it outside the
 #: verifier set by name, and the transitions reach it through one seam.
-#: The leaf set, declared for the reader and asserted below: every one of these
-#: is a module a verifier may always reach, and the assertion that they exist
-#: keeps the layering rule from being stated over names that have moved.
+#: THE LEAF SET IS A CHECKED PROPERTY, NOT A LIST (fallout GI-033 / AC-061,
+#: ruling `lead_ruling_gi_033_escalation_leaf`).
+#:
+#: GI-033 names four leaf modules parenthetically — artifacts, foundry_state,
+#: vocab, schemas — and this set has carried `findings`, `citation` and
+#: `validation` beside them since the split, because what makes a module a leaf
+#: is not its name: it is that it imports only stdlib, `schemas/`, and other
+#: leaves, AT ANY DEPTH. `test_every_leaf_module_imports_only_leaves` asserts
+#: exactly that for every member below, so this cannot become an allowlist by
+#: someone adding a name to it — a module that reaches the lifecycle layer fails
+#: the property and the addition fails with it.
+#:
+#: `escalation` is the eighth member and the first from inside
+#: `tools/orchestration/`. It qualified by having its ONE disqualifying reach
+#: INVERTED: it used to import `directives.py` lazily for the directive bodies,
+#: and now it owns the directive grammar and the block parse — both pure over
+#: text — and `directives.py` reads them from it. That is what turned
+#: `gates -> escalation` and `transitions -> escalation` from the last two
+#: layering violations into verifier-to-leaf edges, which the rule has never had
+#: anything to say about.
 _LEAF_MODULES = frozenset({
     "artifacts", "foundry_state", "vocab", "findings", "citation", "validation",
+    "escalation",
 })
+
+#: The four GI-033 names in its own parenthetical. They are leaves BY THE
+#: INVARIANT, not by anything this guard measures, so the property assertion
+#: below reports on the other four and not on these.
+#:
+#: THE DISTINCTION IS NOT ACADEMIC, and it is recorded here rather than
+#: discovered later: `artifacts.py` reaches `tools/foundry_spawn.py` lazily
+#: inside `_declared_external_inputs` — the same shape that disqualified
+#: `escalation.py` until this cycle inverted it. GI-033 names artifacts a leaf,
+#: so that reach is not a violation of the rule as written; it is the reason
+#: nobody should read "leaf" as "pure" without checking which half of this set
+#: a module is in.
+_INVARIANT_NAMED_LEAVES = frozenset({"artifacts", "foundry_state", "vocab", "schemas"})
 _VERIFIER_MODULES = frozenset({
     "gates", "transitions", "width", "evidence_boundary",
 })
@@ -5352,7 +5383,13 @@ def test_the_three_layers_hold_with_exactly_one_named_seam():
     tools = Path(artifacts.__file__).resolve().parent
     schemas = tools.parent / "schemas"
     for leaf in sorted(_LEAF_MODULES):
-        assert (tools / f"{leaf}.py").exists() or (schemas / f"{leaf}.py").exists(), leaf
+        assert (
+            (tools / f"{leaf}.py").exists()
+            or (schemas / f"{leaf}.py").exists()
+            # ...and a leaf may live INSIDE the orchestration package: what makes
+            # one is the property asserted above, not the directory it sits in.
+            or (tools / "orchestration" / f"{leaf}.py").exists()
+        ), leaf
 
     violations: list[str] = []
     checked = 0
@@ -5363,6 +5400,11 @@ def test_the_three_layers_hold_with_exactly_one_named_seam():
         ):
             checked += 1
             if (home, imported) in _VERIFIER_TO_LIFECYCLE_SEAM:
+                continue
+            if imported in _LEAF_MODULES:
+                # A leaf is the layer BOTH sides may reach; that is the whole of
+                # what "leaf" means, and the property is asserted above rather
+                # than assumed.
                 continue
             if home in _VERIFIER_MODULES and imported not in _VERIFIER_MODULES:
                 violations.append(
@@ -5390,6 +5432,123 @@ def test_the_three_layers_hold_with_exactly_one_named_seam():
     assert "halt" not in _VERIFIER_MODULES
 
 
+def test_every_leaf_module_imports_only_leaves():
+    """fallout GI-033 / AC-061 / OT-015 — THE LEAF SET IS A PROPERTY.
+
+    `_LEAF_MODULES` is what both layers may reach, so every exception the
+    layering rule grants rests on it. A NAME LIST WOULD BE AN ALLOWLIST: adding
+    a module to it would excuse every edge into that module without anyone
+    having to show the module deserves it, which is exactly the shape the
+    deleted layering-debt table had and exactly why it is gone.
+
+    So membership is asserted rather than declared. A leaf may import stdlib,
+    `foundry_mcp.schemas.*`, and other leaves — AT ANY DEPTH, module-top and
+    lazy alike, because a function-local import is still a dependency and the
+    layering rule this set feeds is asserted at both depths too. A leaf that
+    reaches the lifecycle or verifier layer fails HERE, before its edges are
+    excused anywhere else.
+
+    THE DEPTH IS THE POINT, and `escalation.py` is why it is written down. Its
+    module-top imports were vocab, artifacts and foundry_state — leaves, all
+    three — so by a module-top reading it had looked like a leaf for the whole
+    split. One LAZY import of `orchestration/directives.py` sat inside
+    `_directives_text`, and directives is a lifecycle module GI-033's violation
+    column names outright. Judged at module top it would have joined the set on
+    a false premise and excused two real crossings; judged at every depth it was
+    refused until the reach was inverted.
+    """
+    tools = Path(artifacts.__file__).resolve().parent
+    schemas = tools.parent / "schemas"
+    parsers = tools.parent / "parsers"
+
+    # `foundry_mcp.parsers.*` is BELOW the layered set, and that is asserted
+    # rather than assumed: a parser that imported `tools` would be a lifecycle
+    # dependency wearing a lower-layer name.
+    for parser in sorted(parsers.glob("*.py")):
+        if parser.name == "__init__.py":
+            continue
+        reached = _all_imports(parser)
+        assert not (reached & {p.stem for p in tools.glob("*.py")}), (
+            f"{parser.name} reaches tools/: {sorted(reached)}"
+        )
+
+    homes: dict[str, Path] = {}
+    for leaf in sorted(_LEAF_MODULES):
+        for candidate in (
+            tools / f"{leaf}.py",
+            schemas / f"{leaf}.py",
+            tools / "orchestration" / f"{leaf}.py",
+        ):
+            if candidate.exists():
+                homes[leaf] = candidate
+                break
+    assert sorted(homes) == sorted(_LEAF_MODULES), sorted(set(_LEAF_MODULES) - set(homes))
+
+    offenders: list[str] = []
+    checked = 0
+    for leaf, path in sorted(homes.items()):
+        if leaf in _INVARIANT_NAMED_LEAVES:
+            continue
+        for imported in sorted(_all_imports(path)):
+            checked += 1
+            if imported in _LEAF_MODULES:
+                continue
+            # `schemas/` in full — the vocabulary and the JSON schemas are the
+            # layer GI-033 names beside the leaf modules themselves.
+            if (schemas / f"{imported}.py").exists():
+                continue
+            # Anything outside the plugin's own package is stdlib or a
+            # dependency, and neither has a layer in this rule.
+            if (parsers / f"{imported}.py").exists():
+                continue
+            if not (
+                (tools / f"{imported}.py").exists()
+                or (tools / "orchestration" / f"{imported}.py").exists()
+            ):
+                continue
+            offenders.append(f"{leaf} -> {imported}")
+    assert checked > 10, (
+        f"only {checked} import(s) seen across the property-checked leaves; the "
+        "scan has gone blind and the assertion below proves nothing"
+    )
+    assert offenders == [], (
+        f"leaf module(s) reaching a non-leaf: {offenders}. A leaf is what BOTH "
+        "layers may import, so one that depends on the lifecycle or verifier "
+        "layer hands every importer a transitive dependency on that layer. "
+        "Either invert the reach — the module that owns the file calls the leaf, "
+        "never the reverse — or take the module out of _LEAF_MODULES and let its "
+        "edges be judged as the crossings they are."
+    )
+
+
+
+
+def test_a_planted_lifecycle_reach_disqualifies_a_leaf(tmp_path):
+    """The anchor: the property check above recognises a leaf that is not one.
+
+    A scan over a clean set is green whether it works or not, so the recogniser
+    is driven over a module built to fail it — the exact shape `escalation.py`
+    had before the inversion, a leaf-looking module with one LAZY reach into a
+    lifecycle module buried inside a function.
+    """
+    planted = tmp_path / "pretend_leaf.py"
+    planted.write_text(
+        "from foundry_mcp.tools.artifacts import _load_json\n"
+        "def f(project_root):\n"
+        "    from foundry_mcp.tools.orchestration.directives import _read_directives\n"
+        "    return _read_directives(project_root)\n",
+        encoding="utf-8",
+    )
+    reached = _all_imports(planted)
+    assert "directives" in reached, sorted(reached)
+    assert "directives" not in _LEAF_MODULES
+    # ...and the module-top-only view is what would have MISSED it, which is the
+    # reason the check above walks every depth.
+    assert "directives" not in _module_top_imports(planted)
+
+
+
+
 def test_the_seam_table_names_an_edge_that_exists():
     """A permitted exception that permits nothing is an exception nobody
     removed. Every entry in the seam table must name a real module-top edge, or
@@ -5414,7 +5573,7 @@ def test_no_verifier_module_reaches_a_lifecycle_module_lazily_either():
     """
     lifecycle = {
         p.stem for p in _shipped_orchestration_modules()
-        if p.stem not in _VERIFIER_MODULES
+        if p.stem not in _VERIFIER_MODULES and p.stem not in _LEAF_MODULES
     }
     offenders: list[str] = []
     for path in _shipped_orchestration_modules():

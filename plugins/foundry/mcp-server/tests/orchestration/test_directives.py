@@ -121,11 +121,14 @@ from tests.orchestration._env import (  # noqa: F401
     run_env,
 )
 
+from foundry_mcp.tools.orchestration.escalation import (  # noqa: F401
+    DIRECTIVE_HEADERS,
+)
+
 from foundry_mcp.tools.orchestration.directives import (  # noqa: F401
     DIRECTIVES_CLEARED_FILENAME,
     DISPATCHED_DEFECT_UNRECORDED,
     _DIRECTIVES_PREAMBLE,
-    _DIRECTIVE_HEADERS,
     _directive_header_count,
     _read_directives,
     _unaccounted_directive_text,
@@ -356,13 +359,25 @@ def test_the_injection_guard_and_the_parser_read_one_grammar():
     treated as structure. Two hand-kept copies is the defect; this pins that
     both sides read the same constants."""
     source = orchestration_source()
-    parser = source.split("def _read_directives")[1]
+    parser = source.split("def parse_directive_blocks")[1]
 
-    assert _DIRECTIVE_HEADERS == ("### [URGENT]", "### [DIRECTIVE]")
-    for name in ("_DIRECTIVE_HEADER_URGENT", "_DIRECTIVE_HEADER_NORMAL"):
-        assert name in parser, f"_read_directives re-types the {name} literal"
+    assert DIRECTIVE_HEADERS == ("### [URGENT]", "### [DIRECTIVE]")
+    for name in ("DIRECTIVE_HEADER_URGENT", "DIRECTIVE_HEADER_NORMAL"):
+        assert name in parser, f"parse_directive_blocks re-types the {name} literal"
     assert '"### [URGENT]"' not in parser
     assert '"### [DIRECTIVE]"' not in parser
+
+    # fallout GI-033 / AC-061 (D-021 / D-035) — AND THE READER STILL READS THEM.
+    # `parse_directive_blocks` moved into `escalation.py` when that module was
+    # inverted into a leaf, so the pin follows the parse; `_read_directives`
+    # keeps its name and home and now CALLS it, which is what makes "both sides
+    # read the same constants" true of three surfaces instead of two.
+    reader = source.split("def _read_directives")[1]
+    assert "parse_directive_blocks(" in reader, (
+        "_read_directives no longer reaches the one parse"
+    )
+    assert '"### [URGENT]"' not in reader
+    assert '"### [DIRECTIVE]"' not in reader
 
 
 

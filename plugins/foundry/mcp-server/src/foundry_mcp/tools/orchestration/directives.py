@@ -27,11 +27,15 @@ from foundry_mcp.tools.foundry_state import (
 )
 from pathlib import Path
 from foundry_mcp.tools.orchestration.escalation import (
+    DIRECTIVE_HEADER_NORMAL,
+    DIRECTIVE_HEADER_URGENT,
+    DIRECTIVE_HEADERS,
     _escalated_classes,
     _override_report,
     _record_escalation_proposals,
     _spend_structural_budget,
     _structural_proposal,
+    parse_directive_blocks,
 )
 
 
@@ -711,13 +715,20 @@ def foundry_defects_to_tasks(
 # classes.
 # --------------------------------------------------------------------------- #
 
-_DIRECTIVE_HEADER_URGENT = "### [URGENT]"
-
-
-_DIRECTIVE_HEADER_NORMAL = "### [DIRECTIVE]"
-
-
-_DIRECTIVE_HEADERS = (_DIRECTIVE_HEADER_URGENT, _DIRECTIVE_HEADER_NORMAL)  # 2 markers
+# fallout GI-033 / AC-061 / FR-063 (D-021 / D-035, ruling
+# `lead_ruling_gi_033_escalation_leaf`) — THE GRAMMAR AND THE PARSE LIVE IN
+# `escalation.py`, AND THIS MODULE READS THEM FROM THERE.
+#
+# The direction is the whole point. `escalation.py` needs the directive BODIES
+# to find the escalation-override marker (D-101 / D-133), and it used to reach
+# BACK into this module for them through a lazy import — which made it reach a
+# lifecycle module and kept it out of the leaf set, which in turn kept
+# `gates -> escalation` and `transitions -> escalation` as live layering
+# violations. Inverted: the header grammar and the block parse are pure over
+# text, they sit beside the override grammar that is anchored to them, and this
+# module calls THEM. Nothing flows back. `_read_directives` keeps its name, its
+# signature and its home here, because the FILE and every writer of it are this
+# module's.
 
 
 
@@ -738,7 +749,7 @@ def _directive_header_count(text: str) -> int:
     return sum(
         1
         for line in text.split("\n")
-        if any(line.startswith(h) for h in _DIRECTIVE_HEADERS)
+        if any(line.startswith(h) for h in DIRECTIVE_HEADERS)
     )
 
 
@@ -802,7 +813,7 @@ def _unaccounted_directive_text(path: Path, parsed: dict) -> str | None:
     remainder = "\n".join(
         line
         for line in remainder.split("\n")
-        if not any(line.startswith(h) for h in _DIRECTIVE_HEADERS)
+        if not any(line.startswith(h) for h in DIRECTIVE_HEADERS)
     )
 
     # Longest first, so a directive that is a SUBSTRING of another cannot
@@ -833,7 +844,7 @@ def _forged_header_lines(directive: str) -> list[str]:
         for line in directive.split("\n")
         if any(
             line.startswith(h) or line.lstrip().startswith(h)
-            for h in _DIRECTIVE_HEADERS
+            for h in DIRECTIVE_HEADERS
         )
     ]
 
@@ -865,7 +876,7 @@ def foundry_inject_directive(
                 "and override priority=" + repr(priority) + ": "
                 + "; ".join(repr(line) for line in forged[:3])
                 + ". Lines beginning "
-                + " or ".join(repr(h) for h in _DIRECTIVE_HEADERS)
+                + " or ".join(repr(h) for h in DIRECTIVE_HEADERS)
                 + " are structure in directives.md, not content."
             ),
             "hint": (
@@ -880,7 +891,7 @@ def foundry_inject_directive(
         directives_path.write_text(_DIRECTIVES_PREAMBLE, encoding="utf-8")
 
     with open(directives_path, "a", encoding="utf-8") as f:
-        header = _DIRECTIVE_HEADER_URGENT if priority == "urgent" else _DIRECTIVE_HEADER_NORMAL
+        header = DIRECTIVE_HEADER_URGENT if priority == "urgent" else DIRECTIVE_HEADER_NORMAL
         f.write(f"\n{header} {now_iso()}\n\n{directive}\n")
 
     result = {
@@ -970,7 +981,7 @@ def foundry_clear_directives(
             ),
             "hint": (
                 "The file's header grammar is broken — a directive block opens "
-                + " or ".join(repr(h) for h in _DIRECTIVE_HEADERS)
+                + " or ".join(repr(h) for h in DIRECTIVE_HEADERS)
                 + " at the start of a line. Repair the headers (or move the text "
                 "somewhere safe and reset the file) and retry. Nothing was "
                 "cleared and nothing was written."
@@ -1028,30 +1039,8 @@ def _read_directives(project_root: str) -> dict:
     # here and therefore out of Foundry-Next, the mandatory handshake.
     text = _read_text(directives_path)
 
-    urgent: list[str] = []
-    normal: list[str] = []
-    current_priority = None
-    current_text: list[str] = []
-
-    for line in text.split("\n"):
-        if line.startswith(_DIRECTIVE_HEADER_URGENT):
-            if current_priority and current_text:
-                target = urgent if current_priority == "urgent" else normal
-                target.append("\n".join(current_text).strip())
-            current_priority = "urgent"
-            current_text = []
-        elif line.startswith(_DIRECTIVE_HEADER_NORMAL):
-            if current_priority and current_text:
-                target = urgent if current_priority == "urgent" else normal
-                target.append("\n".join(current_text).strip())
-            current_priority = "normal"
-            current_text = []
-        elif current_priority:
-            current_text.append(line)
-
-    if current_priority and current_text:
-        target = urgent if current_priority == "urgent" else normal
-        target.append("\n".join(current_text).strip())
+    blocks = parse_directive_blocks(text)
+    urgent, normal = blocks["urgent"], blocks["normal"]
 
     has = len(urgent) > 0 or len(normal) > 0
     return {"has_directives": has, "urgent": urgent, "normal": normal, "raw_text": text if has else ""}

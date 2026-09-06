@@ -22,9 +22,11 @@ from foundry_mcp.schemas.vocab import (
 from foundry_mcp.tools.artifacts import (
     _document_transaction,
     _load_json,
+    _read_text,
 )
 from foundry_mcp.tools.foundry_state import (
     current_cycle,
+    get_run_dir,
     now_iso,
 )
 from pathlib import Path
@@ -186,6 +188,10 @@ def _escalation_exit_distances(
 # --------------------------------------------------------------------------- #
 
 ESCALATION_FILENAME = "escalation.json"
+
+
+#: The run artifact the override marker is written into.
+DIRECTIVES_FILENAME = "directives.md"
 
 
 
@@ -444,15 +450,101 @@ def _consecutive_run(cycles: set[int]) -> tuple[int, int | None]:
 
 
 def _directives_text(project_root: str) -> str:
-    """Every active directive's body, urgent first, as one block of text."""
-    # fallout FR-004 / GI-033 -- LAZY SEAM, written once per symbol.
-    # `directives` import(s) this module, so a module-top import here would
-    # close a cycle that takes every tool in this server down at once.
-    # Unguarded, so a wiring break fails loudly at the one call site that
-    # needs the symbol rather than hiding behind a silent fallback.
-    from foundry_mcp.tools.orchestration.directives import _read_directives
-    directives = _read_directives(project_root)
-    return "\n".join(directives.get("urgent", []) + directives.get("normal", []))
+    """Every active directive's body, urgent first, as one block of text.
+
+    fallout GI-033 / AC-061 (D-021 / D-035) — READ HERE, NOT BORROWED FROM THE
+    LIFECYCLE LAYER. This used to call `directives._read_directives` through a
+    lazy seam, and that one reach was the whole of what kept this module out of
+    the leaf set. The file read is two leaf primitives and the split is
+    `parse_directive_blocks` above — the SAME parse `_read_directives` runs, so
+    the bodies this scans are exactly the bodies that module reports, and there
+    is one grammar rather than two.
+    """
+    fdir = get_run_dir(project_root)
+    if not fdir:
+        return ""
+    path = fdir / DIRECTIVES_FILENAME
+    if not path.exists():
+        return ""
+    # D-098: a non-UTF-8 byte in directives.md must not raise out of here — the
+    # override read sits under every gate that asks whether a class escalated.
+    blocks = parse_directive_blocks(_read_text(path))
+    return "\n".join(blocks["urgent"] + blocks["normal"])
+
+
+
+
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-033 / AC-061 / FR-063 (D-021 / D-035, ruling
+# `lead_ruling_gi_033_escalation_leaf`) — THE DIRECTIVE GRAMMAR, HERE, BECAUSE
+# THE OVERRIDE MARKER IS ANCHORED TO IT.
+#
+# This module is a LEAF: it imports stdlib, `schemas/vocab`, `tools/artifacts`
+# and `tools/foundry_state` and nothing else, at any depth. It became one by
+# INVERTING the one reach that disqualified it — it used to import
+# `orchestration/directives.py` lazily for the directive bodies, which made a
+# would-be leaf depend on a lifecycle module and left `gates -> escalation` and
+# `transitions -> escalation` as live layering violations that no leaf move
+# could close.
+#
+# The grammar and the block parse are pure over text and belong beside
+# `_override_markers`, which is stated in terms of them: an override is a
+# line-anchored marker inside a directive BODY, so "what is a body" and "what
+# is a marker" are one rule with two halves. `directives.py` imports them from
+# here, keeps `_read_directives` with its own name and signature, and keeps
+# every writer of the file. Nothing flows back.
+# --------------------------------------------------------------------------- #
+
+#: The two priority headers a directive block opens with.
+DIRECTIVE_HEADER_URGENT = "### [URGENT]"
+
+
+DIRECTIVE_HEADER_NORMAL = "### [DIRECTIVE]"
+
+
+DIRECTIVE_HEADERS = (DIRECTIVE_HEADER_URGENT, DIRECTIVE_HEADER_NORMAL)  # 2 markers
+
+
+def parse_directive_blocks(text: str) -> dict[str, list[str]]:
+    """Split `directives.md` text into its urgent and normal BODIES.
+
+    Returns ``{"urgent": [...], "normal": [...]}``, each body stripped. Text
+    before the first header — the file's preamble — belongs to no block and is
+    dropped, which is what keeps the override scan reading what a human WROTE
+    rather than what the file boilerplate says.
+
+    Pure over text: it opens nothing and reads no run directory, which is what
+    lets it sit in a leaf. The caller that has the file does the read.
+    """
+    urgent: list[str] = []
+    normal: list[str] = []
+    current_priority = None
+    current_text: list[str] = []
+
+    for line in text.split("\n"):
+        if line.startswith(DIRECTIVE_HEADER_URGENT):
+            if current_priority and current_text:
+                target = urgent if current_priority == "urgent" else normal
+                target.append("\n".join(current_text).strip())
+            current_priority = "urgent"
+            current_text = []
+        elif line.startswith(DIRECTIVE_HEADER_NORMAL):
+            if current_priority and current_text:
+                target = urgent if current_priority == "urgent" else normal
+                target.append("\n".join(current_text).strip())
+            current_priority = "normal"
+            current_text = []
+        elif current_priority:
+            current_text.append(line)
+
+    if current_priority and current_text:
+        target = urgent if current_priority == "urgent" else normal
+        target.append("\n".join(current_text).strip())
+    return {"urgent": urgent, "normal": normal}
+
+
 
 
 
