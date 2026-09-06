@@ -3241,16 +3241,28 @@ _D134_FILED_READERS = (
     # All three named the retired orchestrator module and that module is
     # gone. The SYMBOL is the authoritative half of a `path#Symbol` cite, so
     # each keeps its symbol and gains the module that now defines it:
-    # `_check_sight_required` is the teams module, `_trace_skip_check` the width
-    # module, `foundry_gate` the gate ladder. A roster entry left pointing at a
-    # deleted path is GI-026's violation verbatim — "leaving a mechanism pin
-    # pointed at a deleted module path" — and here it would be worse than
-    # cosmetic: this tuple is the anchor that makes `assert not offenders` a
-    # claim about the package rather than about the scan's eyesight (D-142), and
+    # `_trace_skip_check` is the width module, `foundry_gate` the gate ladder. A
+    # roster entry left pointing at a deleted path is GI-026's violation
+    # verbatim — "leaving a mechanism pin pointed at a deleted module path" —
+    # and here it would be worse than cosmetic: this tuple is the anchor that
+    # makes `assert not offenders` a claim about the package rather than about
+    # the scan's eyesight (D-142), and
     # `test_every_manifest_record_reader_in_the_package_establishes_the_shape`
     # fails on a named reader the scan can no longer resolve.
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/teams.py"
-    "#_check_sight_required",
+    #
+    # fallout GI-033 / GI-024 / AC-061 (ruling item 3) — THE SIGHT READER IS THE
+    # LEAF NOW, AND THAT IS A DIFFERENT KIND OF MOVE. The other two changed
+    # MODULE and kept their symbol; this one changed SYMBOL. D-134 was filed on
+    # `_check_sight_required` because it indexed `castings/manifest.json`
+    # itself, and it no longer does — `foundry_state.sight_required` holds the
+    # manifest read and `teams._check_sight_required` is now a composition over
+    # it. So the reader the scan must see is the leaf, and naming the composer
+    # would name a function the scan can no longer find reading a manifest.
+    # Repointed rather than deleted, on this module's own rule that a
+    # derivation going blind is worse than a package getting safer: the
+    # obligation D-134 established did not lapse, it moved down a layer.
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py"
+    "#sight_required",
     "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/width.py"
     "#_trace_skip_check",
     # `foundry_gate` is the one of the three whose SYMBOL moved as well as its
@@ -3535,11 +3547,22 @@ def test_every_manifest_record_reader_in_the_package_establishes_the_shape() -> 
     driven and every one raises ``AttributeError`` across the MCP boundary on
     ``{"castings": [1,2,3]}`` or ``{"castings": "nope"}``:
 
-      orchestration/teams.py#_check_sight_required   Foundry-Next  (reported)
+      foundry_state.py#sight_required                Foundry-Next  (reported)
+                                     (filed on orchestration/teams.py
+                                      #_check_sight_required, which composes
+                                      over this leaf and no longer reads the
+                                      manifest itself — ruling item 3)
       orchestration/transitions.py#_start_cast_preconditions
                                                      Foundry-Gate  (found)
-      orchestration/width.py#_trace_skip_check       Foundry-Next's TRACE-skip
-                                                                    (found)
+      orchestration/width.py#_trace_skip_check       was Foundry-Next's
+                                                     TRACE-skip  (found)
+                                     (its one caller, `width._maybe_skip_trace`,
+                                      was deleted under ruling item 5; the
+                                      symbol still defines a manifest read, so
+                                      the scan still sees it and the shape
+                                      obligation still holds, but no door
+                                      reaches it today — see the concern filed
+                                      against casting 2)
       foundry_validate.py#foundry_validate_castings   Foundry-Validate-Castings
                                                                     (reported)
       foundry_validate.py#_fingerprint_inputs         same door, one call deeper

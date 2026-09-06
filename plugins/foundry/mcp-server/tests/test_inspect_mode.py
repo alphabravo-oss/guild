@@ -93,8 +93,10 @@ from foundry_mcp.tools.orchestration.width import (
     _decide_inspect_mode,
 )
 
-# `_check_active_teams` is bound by name in five orchestration modules, so
-# patching the one that DEFINES it leaves the other four on the real one.
+# `_check_active_teams` and `_active_teams` — the lifecycle and verifier halves
+# of one leaf check — are bound by name across the orchestration modules, so
+# patching the one that DEFINES either leaves every other binding on the real
+# one.
 # `ORCHESTRATION` is what `fo.__file__` used to mean: thirteen files, not one.
 from tests.orchestration._env import ORCHESTRATION, patch_everywhere
 
@@ -124,8 +126,9 @@ def run_env(tmp_path, monkeypatch):
     """Activate a run inside a real git repo; yield (project_root, fdir).
 
     Mirrors `test_escalation.py`'s `run_env` — same active-run activation, same
-    `_check_active_teams` monkeypatch so no test depends on the ambient tmux
-    session — and adds the repository the width decision needs.
+    team-scan monkeypatch (both layer names, plus the pane read) so no test
+    depends on the ambient tmux session — and adds the repository the width
+    decision needs.
     """
     project_root = tmp_path
     _git(project_root, "init", "-q")
@@ -156,15 +159,31 @@ def run_env(tmp_path, monkeypatch):
     # unreachable branch is one nothing can catch. Mirrors
     # `test_orchestrator_gates.py`'s `_TEAM_SCAN` shape exactly, including the
     # reset on every entry so no test leaks its team state into the next.
+    # fallout GI-033 / AC-061 (D-021 / D-035, ruling item 2) — TWO NAMES, ONE
+    # FAKE. The two-layer team check is `foundry_state.active_teams` now, and
+    # each layer composes it under its OWN name because neither may import the
+    # other: `teams._check_active_teams` for lifecycle, `gates._active_teams`
+    # for the verifier — and `transitions.py` binds the verifier one by
+    # from-import, so the binding lives in the CONSUMER. Patching one name and
+    # not the other leaves every gate and transition in this file shelling out
+    # to the ambient tmux, which answers "no teams" and makes the ACTIVE arm
+    # unreachable again — the exact D-186 hole the flippable stub was built to
+    # close. `live_teammate_panes` is the third: it is the pane scan that used
+    # to be `teams._scan_tmux_panes`, ruled leaf material because it is a READ
+    # with no writer, and stubbing it is what keeps a machine with no tmux from
+    # mattering. Mirrors `tests/orchestration/_env.py`'s `run_env` exactly.
     _TEAM_SCAN["active"] = False
+    _fake_teams = lambda _pr: {
+        "active": _TEAM_SCAN["active"],
+        "teams": ["foundry-cast"] if _TEAM_SCAN["active"] else [],
+        "live_panes": [],
+    }
+    patch_everywhere(monkeypatch, "_check_active_teams", _fake_teams)
+    patch_everywhere(monkeypatch, "_active_teams", _fake_teams)
     patch_everywhere(
         monkeypatch,
-        "_check_active_teams",
-        lambda _pr: {
-            "active": _TEAM_SCAN["active"],
-            "teams": ["foundry-cast"] if _TEAM_SCAN["active"] else [],
-            "live_panes": [],
-        },
+        "live_teammate_panes",
+        lambda: {"available": False, "live": [], "zombie": [], "user": [], "lead": None},
     )
 
     foundry_state.set_active_run(RUN_NAME)
@@ -174,7 +193,8 @@ def run_env(tmp_path, monkeypatch):
         foundry_state.clear_active_run()
 
 
-#: Whether the patched `_check_active_teams` reports a registered team.
+#: Whether the patched team scan — both `_check_active_teams` and
+#: `_active_teams`, which share one fake — reports a registered team.
 #: Reset by `run_env` on every test; flipped by `_teams_active` (D-186).
 _TEAM_SCAN = {"active": False}
 
@@ -1938,14 +1958,26 @@ def test_an_unrecorded_inspect_width_is_refused_at_every_door(run_env):
     assert width["ok"] is False, width
     assert "unrecorded" in width["check"], width
 
-    # 4. `_maybe_skip_trace` — no auto-stamp, whatever the legacy markers say
+    # 4. the trace-skip stamp — no auto-stamp, whatever the legacy markers say.
+    #
+    # fallout GI-008 / GI-009 / GI-033 (ruling item 5). `width._maybe_skip_trace`
+    # is DELETED: Foundry-Next only reports, so the fact is decided by
+    # `width._trace_skip_from_width` at the transition that decides the width and
+    # recorded in the `inspect_modes` entry under `trace_skip`, and
+    # `guidance._stamp_trace_skip` READS it through the leaf. The door moved; the
+    # property this step pins did not. There is no recorded entry here at all, so
+    # there is no `trace_skip` field, and an entry with no field licenses NO
+    # answer about TRACE's scope — it returns None and stamps nothing. That is
+    # D-117's direction rather than a gap, and it is a strictly stronger form of
+    # what the old fence returned (a dict saying skip False): the old shape had
+    # to be read to be safe, this one cannot say anything at all. The filesystem
+    # assertion below is unchanged and is still the real subject.
     (fdir / ".trace-complete").unlink(missing_ok=True)
     (fdir / ".trace-clean-at").write_text(
         _git(Path(project_root), "rev-parse", "HEAD") + "\n", encoding="utf-8"
     )
-    decision = _width._maybe_skip_trace(fdir, project_root)
-    assert decision is not None and decision["skip"] is False, decision
-    assert "no recorded width" in decision["reason"], decision
+    decision = _guidance._stamp_trace_skip(fdir)
+    assert decision is None, decision
     assert not (fdir / ".trace-complete").exists(), (
         "TRACE was auto-stamped complete on a width nothing recorded"
     )
@@ -4844,6 +4876,7 @@ def _cycles_recorded_against(
     mode: str = "FULL",
     rule: str = "final_gate",
     required_streams: tuple[str, ...] = ("trace", "prove", "test"),
+    trace_skip: dict | None = None,
 ) -> None:
     """A clean, fully-streamed F2 at `state_cycle` whose recorded decisions are
     stamped for `stamped` instead.
@@ -4851,6 +4884,14 @@ def _cycles_recorded_against(
     Built on `_full_cycle_recorded_with`, so the run differs from the one that
     opens ASSAY in exactly one field — the entry's `cycle` — and in nothing
     else. `stamped=(N,)` where N == `state_cycle` is therefore the control.
+
+    `trace_skip` is the field the width decision now RECORDS (ruling item 5):
+    `_decide_inspect_mode` writes `width._trace_skip_from_width`'s answer into
+    the entry and `guidance._stamp_trace_skip` reads it back. Omitted by
+    default, because most callers here pin the roster rather than the fence —
+    but a test that drives the fence MUST set it, or it proves nothing: an
+    entry with no field stamps nothing whatever the cycle says, so the test
+    would go green without the cycle match ever being consulted.
     """
     _full_cycle_recorded_with(fdir, rule, cycle=state_cycle)
     state = _read_state(fdir)
@@ -4866,6 +4907,8 @@ def _cycles_recorded_against(
             w: {"scope": "full" if mode == "FULL" else "delta", "detail": "fixture"}
             for w in required_streams
         }
+        if trace_skip is not None:
+            entry["trace_skip"] = json.loads(json.dumps(trace_skip))
         entries.append(entry)
     state["inspect_modes"] = entries
     state["cycle"] = state_cycle
@@ -5000,17 +5043,47 @@ def test_the_trace_skip_fence_fails_closed_on_a_width_from_another_cycle(run_env
     The marker is asserted absent afterwards: this fence WRITES `.trace-complete`
     on the skip arms, so "did it fail closed" is a question about the filesystem
     and not only about the returned dict.
+
+    fallout GI-008 / GI-009 / GI-033 (ruling item 5) — WHERE THE FENCE WENT.
+    `width._maybe_skip_trace` is deleted. The decision is made at the transition
+    by `width._trace_skip_from_width`, recorded in the entry as `trace_skip`,
+    and `guidance._stamp_trace_skip` reads it back through
+    `foundry_state.current_inspect_mode` — which is where the cycle match now
+    lives, so this test's subject moved into the read it drives rather than
+    away from it. Failing closed is now a None: no recorded entry for THIS
+    cycle means no answer at all, which is stronger than the old wrong-
+    provenance dict that had to be read to be safe.
+
+    THE ENTRY CARRIES A SKIPPING DECISION ON PURPOSE. An entry with no
+    `trace_skip` field stamps nothing whatever the cycle says, so a fixture
+    without one would pass this test without the cycle match ever being
+    consulted — green for a reason that has nothing to do with the defect. So
+    cycle 1 is recorded DELTA with an empty diff, the one shape
+    `_trace_skip_from_width` answers `skip: True` for: if the cycle match broke,
+    `.trace-complete` WOULD be written for cycle 2 off cycle 1's width, which is
+    exactly the auto-stamp D-071 was filed for.
     """
     project_root, fdir = run_env
-    _cycles_recorded_against(fdir, stamped=(1,), state_cycle=2)
+    _cycles_recorded_against(
+        fdir,
+        stamped=(1,),
+        state_cycle=2,
+        mode="DELTA",
+        rule="delta",
+        trace_skip={
+            "skip": True,
+            "reason": (
+                "DELTA width and the GRIND diff is empty — there are no touched "
+                "symbols for TRACE to walk"
+            ),
+            "details": {"inspect_mode": "DELTA", "touched_files": []},
+        },
+    )
     (fdir / _artifacts._stream_marker("trace")).unlink()
 
-    decision = _width._maybe_skip_trace(fdir, project_root)
+    decision = _guidance._stamp_trace_skip(fdir)
 
-    assert decision is not None, decision
-    assert decision["skip"] is False, decision
-    assert "no recorded width" in decision["reason"], decision
-    assert "cycle 2" in decision["reason"], decision
+    assert decision is None, decision
     assert not (fdir / _artifacts._stream_marker("trace")).exists(), (
         "the fence auto-stamped TRACE complete off another cycle's width"
     )
