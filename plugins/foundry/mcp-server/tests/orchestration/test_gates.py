@@ -7,11 +7,13 @@ that no longer exists.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import inspect
 import json
 import re
 import tempfile
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -172,6 +174,8 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _synthesize_clean_prove_verdicts,
     _ACTION_TO_GATE,
     _compute_next_action,
+    _expected_gate_for_action,
+    _gate_tokens_named,
     foundry_next_action,
 )
 
@@ -2370,11 +2374,18 @@ def test_the_cast_action_names_the_gate_that_guards_the_transition_it_calls():
     the `Foundry-Phase(phase='<token>')` the lead is told to call is read out of
     the string, so rewording the step without moving the gate fails here.
 
-    Scoped to this one action deliberately. The other six actions each name a
-    gate and a phase call too, but several of them span more than one crossing
-    in one step — `transition_to_inspect` gates `inspect` and then calls
-    `inspect_start` — and asserting a one-to-one chain over all of them would
-    be a claim about the guidance sequence, which is not what this defect is.
+    fallout D-058 — AND THE SCOPE NOTE THAT USED TO STAND HERE WAS THE NEXT
+    DEFECT, WRITTEN DOWN.
+
+    It read: "Scoped to this one action deliberately ... several of them span
+    more than one crossing in one step — `transition_to_inspect` gates `inspect`
+    and then calls `inspect_start`". That pair is not a wider chain; it is a
+    gate that does not guard the transition beside it, and it was refused at
+    both of the phases the action is emitted from. The general form of this
+    assertion now lives in
+    `test_every_transition_action_names_the_gate_that_guards_the_crossing_it_calls`
+    below, over every (phase, action) pair the router can emit; this one stays
+    as AC-059's own regression for the `validate`/`start_cast` row.
     """
     gate = _ACTION_TO_GATE["transition_to_cast"]
     assert gate in GATE_TO_TRANSITION, gate
@@ -2395,6 +2406,136 @@ def test_the_cast_action_names_the_gate_that_guards_the_transition_it_calls():
     assert (
         f"Foundry-Gate(phase='{gate}')" in _ACTION_IMPERATIVES["transition_to_cast"]
     ), _ACTION_IMPERATIVES["transition_to_cast"]
+
+
+def _router_phase_action_pairs() -> set[tuple[str | None, str]]:
+    """`(phase, action)` for every response literal the router can return.
+
+    Derived from `_compute_next_action`'s and `_nyquist_transition`'s own AST,
+    in the shape `test_every_action_the_router_emits_has_an_imperative` already
+    uses over the same two functions — a hand list would be a second copy of the
+    branch chain, free to drift from it in exactly the direction that hides a
+    hole.
+
+    A dict whose `phase` is not a literal (``_nyquist_transition`` passes its
+    ``from_phase`` argument through) yields `(None, action)`, which is a REAL
+    answer the assertion below acts on: an action reachable from a phase this
+    scan cannot name must not have a phase-keyed gate, because nothing could
+    resolve it.
+    """
+    pairs: set[tuple[str | None, str]] = set()
+    for name in ("_compute_next_action", "_nyquist_transition"):
+        fn = getattr(_guidance, name)
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            fields: dict[str, ast.expr] = {
+                key.value: value
+                for key, value in zip(node.keys, node.values)
+                if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            }
+            action_node = fields.get("action")
+            if not (
+                isinstance(action_node, ast.Constant)
+                and isinstance(action_node.value, str)
+            ):
+                continue
+            phase_node = fields.get("phase")
+            phase = (
+                phase_node.value
+                if isinstance(phase_node, ast.Constant)
+                and isinstance(phase_node.value, str)
+                else None
+            )
+            pairs.add((phase, action_node.value))
+    return pairs
+
+
+
+
+def test_every_transition_action_names_the_gate_that_guards_the_crossing_it_calls():
+    """fallout D-058 / AC-059 / GI-001 — the general form, over every emission site.
+
+    GI-001's violation column is "a casting that ... lets a transition skip its
+    gate", and naming the WRONG gate is that violation with a step in it: the
+    lead makes a call, is refused, and the refusal's hint is the only place the
+    right token appears.
+
+    `transition_to_inspect` is the only action the router emits from two phases
+    and the two are different crossings — F1 gates `inspect` and calls
+    `Foundry-Phase(phase='cast')`; F3 gates `inspect_start` and calls
+    `Foundry-Phase(phase='inspect_start')`. One entry held `inspect` for both,
+    so from F3 the gate was refused ("accepted from F1 and from nowhere else")
+    and from F1 the phase call was ("accepted from F3, and from F2"). Nothing
+    pinned either string.
+
+    THREE THINGS ARE ASSERTED PER EMISSION SITE, and the chain only closes if
+    all three hold: the gate `_expected_gate_for_action` resolves is a real
+    door; the imperative the lead reads names THAT gate; and every
+    `Foundry-Phase(phase='X')` the same imperative tells them to call is a
+    transition that gate guards. Read off the shipped strings rather than a
+    second hand-typed table, so rewording a step without moving its gate fails
+    here.
+    """
+    pairs = _router_phase_action_pairs()
+    assert len(pairs) >= 20, sorted(pairs)
+
+    gated = sorted(
+        ((phase, action) for phase, action in pairs if action in _ACTION_TO_GATE),
+        key=lambda pair: (pair[1], pair[0] or ""),
+    )
+    assert len(gated) >= len(_ACTION_TO_GATE), {
+        "emission_sites_found": gated,
+        "actions_in_the_map": sorted(_ACTION_TO_GATE),
+    }
+    # The action this defect is about is reachable from BOTH phases, and a scan
+    # that found only one of them would prove nothing about the other.
+    assert {"F1", "F3"} <= {
+        phase for phase, action in gated if action == "transition_to_inspect"
+    }, gated
+
+    problems: dict[str, dict] = {}
+    for phase, action in gated:
+        if phase is None:
+            # Unresolvable phase: the entry must not be keyed by one.
+            if isinstance(_ACTION_TO_GATE[action], dict):
+                problems[action] = {
+                    "reason": "phase-keyed gate for an action emitted with a "
+                              "non-literal phase; nothing can resolve it",
+                }
+            continue
+        gate = _expected_gate_for_action(action, phase)
+        site = f"{action}@{phase}"
+        if gate is None:
+            problems[site] = {"reason": "no gate resolves for this emission site"}
+            continue
+        if gate not in GATE_TO_TRANSITION:
+            problems[site] = {"reason": "gate is not a door", "gate": gate}
+            continue
+        imperative = _guidance._format_imperative_header(
+            action, "", {}, phase=phase
+        )
+        if f"Foundry-Gate(phase='{gate}')" not in imperative:
+            problems[site] = {
+                "reason": "the imperative does not name the gate the map does",
+                "gate": gate,
+                "imperative": imperative,
+            }
+            continue
+        called = set(re.findall(r"Foundry-Phase\(phase='([a-z_]+)'\)", imperative))
+        stray = sorted(called - set(GATE_TO_TRANSITION[gate]))
+        if stray:
+            problems[site] = {
+                "reason": "the imperative calls a transition this gate does not guard",
+                "gate": gate,
+                "gate_guards": list(GATE_TO_TRANSITION[gate]),
+                "imperative_calls": sorted(called),
+                "unguarded": stray,
+            }
+    assert problems == {}, problems
+
+
 
 
 def test_every_gate_token_maps_to_a_transition_and_every_transition_has_a_gate():
@@ -2426,7 +2567,18 @@ def test_every_gate_token_maps_to_a_transition_and_every_transition_has_a_gate()
     # ...and the guidance engine's own action->gate map names only doors that
     # exist. `_ACTION_TO_GATE` is what `.gate-passed` is compared against, so a
     # value missing from the table is a lead sent to a call the server refuses.
-    unknown = sorted(set(_ACTION_TO_GATE.values()) - set(GATE_TO_TRANSITION))
+    #
+    # fallout D-058 — FLATTENED, because a value is one gate or one gate PER
+    # PHASE. `set(_ACTION_TO_GATE.values())` raised on the keyed entry, and the
+    # membership question is about the gates a value can RESOLVE to rather than
+    # about the container holding them.
+    named = sorted({
+        gate
+        for entry in _ACTION_TO_GATE.values()
+        for gate in _gate_tokens_named(entry)
+    })
+    assert named, "the action->gate map names no gate at all"
+    unknown = sorted(set(named) - set(GATE_TO_TRANSITION))
     assert unknown == [], unknown
 
 

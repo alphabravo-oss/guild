@@ -104,14 +104,71 @@ from foundry_mcp.tools.orchestration.directives import _read_directives
 # passed (recorded via the ``.gate-passed`` marker), the next Foundry-Next
 # tells the lead the gate is satisfied and to proceed to the transition step
 # instead of re-running the now-satisfied gate.
-_ACTION_TO_GATE = {
+#
+# fallout D-058 / AC-059 — A VALUE IS EITHER ONE GATE OR ONE GATE PER PHASE,
+# AND THE SECOND SHAPE EXISTS BECAUSE ONE ACTION CAN SERVE TWO CROSSINGS.
+#
+# `transition_to_inspect` is the only action `_compute_next_action` emits from
+# two phases, and the two are different crossings: from F1 the lead gates
+# `inspect` and calls `Foundry-Phase(phase='cast')` (the F1 -> F2 entry, which
+# records the first INSPECT's width), and from F3 it gates `inspect_start` and
+# calls `Foundry-Phase(phase='inspect_start')` (the GRIND -> INSPECT re-open,
+# which advances the cycle counter). A single-valued map cannot hold both, and
+# holding only `inspect` made the pair incoherent at BOTH sites: driven from F3,
+# `Foundry-Gate(phase='inspect')` refuses ("Cannot enter F2 from phase F3 ...
+# accepted from F1 and from nowhere else") while `inspect_start` passes; driven
+# from F1, the gate passes and the imperative's `inspect_start` call is refused.
+#
+# Modelled per PHASE, which is the mirror of `GATE_TO_TRANSITION`'s tuple: that
+# table holds one gate mapping to two transitions (`grind` guards `grind_start`
+# and `assay_fail`), and this one holds one action resolving to two gates. Both
+# tables exist because the gate/transition relation is not one-to-one in either
+# direction, and pretending otherwise is what each of these defects was.
+#: fallout D-058 — THE CROSSING AN ACTION ASKS FOR, ONE ROW PER EMITTING PHASE.
+#:
+#: `{action: {phase: {"gate", "token"}}}`. Both halves of the pair live on one
+#: row because both halves of the imperative are substituted from it: the gate
+#: the lead is told to run and the transition token it is told to call after it
+#: are two fields of one fact, and a row is the only place they can be kept
+#: together. Two tables would be two things to update, which is how the pair
+#: came apart in the first place.
+#:
+#: Only `transition_to_inspect` needs it, because it is the only action
+#: `_compute_next_action` emits from more than one phase. The other six spell
+#: their token literally in their own string and are pinned by the same
+#: invariant test that walks these rows.
+#:
+#: `token` is not derived from `GATE_TO_TRANSITION` here and cannot be: that
+#: table lives in `gates.py`, which is verifier-set, and this module is
+#: lifecycle — GI-033 forbids the import outright. The agreement is asserted in
+#: `tests/orchestration/test_gates.py`, which may import both, exactly as
+#: `_ACTION_TO_GATE`'s membership in the table has always been.
+_ACTION_CROSSINGS: dict[str, dict[str, dict[str, str]]] = {
+    "transition_to_inspect": {
+        # F1 -> F2: the phase ENTRY. `inspect` guards the `cast` transition,
+        # which records the first INSPECT of the phase at FULL width.
+        "F1": {"gate": "inspect", "token": "cast"},
+        # F3 -> F2: the GRIND re-open, and the call that advances the cycle
+        # counter. `inspect_start` guards itself.
+        "F3": {"gate": "inspect_start", "token": "inspect_start"},
+    },
+}
+
+
+_ACTION_TO_GATE: dict[str, str | dict[str, str]] = {
     # fallout AC-059 — `validate`, not `cast`. The gate this action asks for is
     # the one guarding the `start_cast` transition it then tells the lead to
     # call, and `GATE_TO_TRANSITION` assigns `start_cast` to the `validate`
     # token. `cast` maps same-name to the `cast` transition (F1 complete), which
     # is a different question asked one phase later.
     "transition_to_cast": "validate",
-    "transition_to_inspect": "inspect",
+    # DERIVED from the crossings above rather than re-typed beside them, so the
+    # gate `.gate-passed` is compared against and the gate the lead is told to
+    # run are the same value and not two values that agree by inspection.
+    "transition_to_inspect": {
+        phase: crossing["gate"]
+        for phase, crossing in _ACTION_CROSSINGS["transition_to_inspect"].items()
+    },
     "transition_to_grind": "grind",
     "transition_to_assay": "assay",
     "transition_to_temper": "temper",
@@ -120,9 +177,24 @@ _ACTION_TO_GATE = {
 }
 
 
+def _gate_tokens_named(entry: str | dict[str, str] | None) -> list[str]:
+    """Every gate token an `_ACTION_TO_GATE` value can resolve to.
+
+    The flattening the invariant test and the AC-059 membership check both
+    walk, written once so neither has to know which of the two shapes a value
+    carries. `set(_ACTION_TO_GATE.values())` was the spelling before the
+    phase-keyed row existed, and it raises on one — a membership question about
+    the gates a value RESOLVES to is not a question about the container holding
+    them.
+    """
+    if isinstance(entry, dict):
+        return [gate for gate in entry.values() if gate]
+    return [entry] if entry else []
 
 
-def _expected_gate_for_action(action: str) -> str | None:
+
+
+def _expected_gate_for_action(action: str, phase: str = "") -> str | None:
     """Return the gate phase a given transition action asks the lead to run.
 
     fallout AC-059: every value `_ACTION_TO_GATE` names must be a key of
@@ -130,8 +202,26 @@ def _expected_gate_for_action(action: str) -> str | None:
     exist. Asserted by the invariant test rather than here — this stays a total
     lookup, because a guidance surface that raised would take Foundry-Next down
     with it.
+
+    fallout D-058 — ``phase`` IS THE SECOND HALF OF THE QUESTION FOR EXACTLY ONE
+    ACTION, AND OMITTING IT ANSWERS None RATHER THAN GUESSING.
+
+    An action with one gate answers without a phase, which is why every existing
+    caller that names only the action keeps working. An action whose gate
+    depends on the phase it was emitted from CANNOT be answered without one, and
+    the honest answer to an unanswerable question here is None: the one consumer
+    compares this against the `.gate-passed` marker, and a wrong gate there tells
+    a lead who ran the correct door to re-run the refusing one — which is the
+    second half of what D-058 cost, on top of the imperative.
     """
-    return _ACTION_TO_GATE.get(action)
+    return _gate_for_entry(_ACTION_TO_GATE.get(action), phase)
+
+
+def _gate_for_entry(entry: str | dict[str, str] | None, phase: str) -> str | None:
+    """Resolve one `_ACTION_TO_GATE` value against the emitting phase."""
+    if isinstance(entry, dict):
+        return entry.get(phase)
+    return entry
 
 
 
@@ -384,7 +474,15 @@ def foundry_next_action(
     # the lead proceeds to the transition step rather than re-running the gate.
     gate_advance_note = None
     if fdir_stamp and fdir_stamp.exists():
-        expected_gate = _expected_gate_for_action(result.get("action", ""))
+        # fallout D-058 — resolved against the phase the action was emitted
+        # from. At F3 this compared `.gate-passed` against `inspect`, so a lead
+        # who ran the CORRECT door (`inspect_start`) got no advance signal and
+        # was sent back to the one that refuses, while a stale `inspect` marker
+        # produced "ALREADY PASSED — do NOT re-run it" for a gate that never
+        # guarded this crossing.
+        expected_gate = _expected_gate_for_action(
+            result.get("action", ""), str(result.get("phase", ""))
+        )
         if expected_gate:
             gp_marker = fdir_stamp / GATE_PASSED_MARKER
             if gp_marker.exists():
@@ -479,7 +577,13 @@ def foundry_next_action(
     original_instructions = result.get("instructions", "")
     run_name_for_imperative = fdir_stall.name if fdir_stall and fdir_stall.exists() else ""
     imperative_header = _format_imperative_header(
-        action, original_instructions, result.get("details", {}), run_name=run_name_for_imperative
+        action, original_instructions, result.get("details", {}),
+        run_name=run_name_for_imperative,
+        # fallout D-058 — the phase the action was emitted FROM, which is the
+        # other half of the question for `transition_to_inspect`. It is already
+        # on the result, so this reads the router's own answer rather than
+        # re-deriving one that could disagree with it.
+        phase=str(result.get("phase", "")),
     )
 
     directives = _read_directives(project_root)
@@ -872,14 +976,34 @@ _ACTION_IMPERATIVES = {
         "  - IF teammates are currently running: WAIT for all to complete, then TeamDelete + Foundry-Team-Down + "
         "Foundry-Phase(phase='cast'). Do NOT call Foundry-Next while waiting \u2014 it will re-emit this action."
     ),
+    # fallout D-058 / AC-059 — ONE ACTION, TWO CROSSINGS, AND THE STEPS ARE
+    # SUBSTITUTED FROM ONE ROW SO THEY CANNOT NAME DOORS THAT DO NOT MATCH.
+    #
+    # This named `Foundry-Gate(phase='inspect')` above
+    # `Foundry-Phase(phase='inspect_start')` — a pair refused at BOTH emission
+    # sites, because that gate guards the `cast` transition and the call is
+    # `inspect_start`. From F3 the gate is refused ("accepted from F1 and from
+    # nowhere else"); from F1 the phase call is ("accepted from F3, and from
+    # F2"). Its explanatory tail was F3's, printed verbatim to a lead standing in
+    # F1 about a transition F1 does not take.
+    #
+    # `{gate}` and `{token}` come from ONE `_ACTION_CROSSINGS` row, chosen by the
+    # phase the action was emitted from, so step (1) and step (2) are two fields
+    # of one fact rather than two strings that have to be kept in agreement. The
+    # phase-specific detail — what THIS crossing also does — is already on the
+    # branch's own `instructions`, which is where it belongs: this header's job
+    # is the two call names.
     "transition_to_inspect": (
         "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Gate(phase='inspect')\n"
-        "  (2) Foundry-Phase(phase='inspect_start') — crossing GRIND → INSPECT is "
-        "what advances the server-side cycle counter. Every stream record, defect "
-        "and roll-up entry after this point is stamped with the NEW cycle, so "
-        "skipping this call silently files the next cycle's evidence under the "
-        "last one and the recurring-class escalation never accumulates."
+        "  (1) Foundry-Gate(phase='{gate}')\n"
+        "  (2) Foundry-Phase(phase='{token}') — the transition that OPENS this "
+        "INSPECT, and the gate above is the one that guards it. That call sweeps "
+        "the evidence corpus and RECORDS this INSPECT's width and the roster "
+        "every stream then runs; from F3 it also advances the server-side cycle "
+        "counter, so skipping it files the next cycle's stream records, defects "
+        "and roll-up entries under the last one and the recurring-class "
+        "escalation never accumulates. Editing state.json by hand records no "
+        "width at all, and every door that reads one then refuses."
         + _GATE_THEN_PHASE_NOTE
     ),
     "run_streams": (
@@ -945,11 +1069,23 @@ _ACTION_IMPERATIVES = {
         "returned \u2014 pass the model it names, or no model parameter when it names none. This "
         "server owns that decision; never re-derive it here." + _GATE_THEN_PHASE_NOTE
     ),
+    # fallout D-059 / GI-001 / AC-059 — AND THE THREE ARMS THAT REACHED
+    # `inspect_start` WITHOUT NAMING ITS GATE.
+    #
+    # GI-001's violation column reads "a casting that ... lets a transition skip
+    # its gate". AC-059 added `inspect_start` to `GATE_TO_TRANSITION` precisely
+    # so that crossing would have one, and these three told the lead to make the
+    # transition call with no gate before it — so the token existed and no
+    # lead-facing surface named it. Each now names `Foundry-Gate(phase=
+    # 'inspect_start')` first, which is the same pair `transition_to_inspect`'s
+    # F3 half carries; the lead reaching this crossing by any of the four routes
+    # is told to make the same two calls in the same order.
     "fix_defects": (
         "YOUR NEXT ACTION depends on GRIND state:\n"
         "  - IF no GRIND team registered yet: follow the transition_to_grind sequence.\n"
         "  - IF teammates are running: WAIT. When all report complete, TeamDelete + Foundry-Team-Down + "
-        "Foundry-Phase(phase='inspect_start') + re-run INSPECT."
+        "Foundry-Gate(phase='inspect_start') + Foundry-Phase(phase='inspect_start') + re-run INSPECT."
+        + _GATE_THEN_PHASE_NOTE
     ),
     "transition_to_assay": (
         "YOUR NEXT CALLS (in order):\n"
@@ -1044,18 +1180,25 @@ _ACTION_IMPERATIVES = {
         "and it is bounded by the same --max-cycles cap." + _GATE_THEN_PHASE_NOTE
     ),
     "widen_inspect": (
-        "YOUR NEXT CALL: Foundry-Phase(phase='inspect_start') AGAIN, from F2. "
+        "YOUR NEXT CALLS (in order):\n"
+        "  (1) Foundry-Gate(phase='inspect_start')\n"
+        "  (2) Foundry-Phase(phase='inspect_start') AGAIN, from F2. "
         "The DELTA cycle came back clean, which earns the widening re-open "
-        "rather than the gate: that crossing advances the cycle counter, sweeps "
-        "the whole evidence corpus, records FULL and requires the full roster. "
-        "Then run every stream it names — a spot check is not a FULL INSPECT."
+        "rather than the ASSAY gate: that crossing advances the cycle counter, "
+        "sweeps the whole evidence corpus, records FULL and requires the full "
+        "roster. Then run every stream it names — a spot check is not a FULL "
+        "INSPECT."
+        + _GATE_THEN_PHASE_NOTE
     ),
     "record_inspect_width": (
-        "YOUR NEXT CALL: Foundry-Phase(phase='inspect_start') from F2. This "
+        "YOUR NEXT CALLS (in order):\n"
+        "  (1) Foundry-Gate(phase='inspect_start')\n"
+        "  (2) Foundry-Phase(phase='inspect_start') from F2. This "
         "INSPECT has no recorded width, so the roster, the rule and the evidence "
         "sweep it was opened with are all unknown, and every door that reads the "
         "width refuses. Do NOT edit state.json by hand — the transition is what "
         "records the decision."
+        + _GATE_THEN_PHASE_NOTE
     ),
     "done": (
         "YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.md and tell the "
@@ -1075,7 +1218,13 @@ _ACTION_IMPERATIVES = {
 
 
 
-def _format_imperative_header(action: str, instructions: str, details: dict, run_name: str = "") -> str:
+def _format_imperative_header(
+    action: str,
+    instructions: str,
+    details: dict,
+    run_name: str = "",
+    phase: str = "",
+) -> str:
     """Produce the one-line 'YOUR NEXT CALL' header for the given action.
     Falls back to a generic header if the action is unmapped.
 
@@ -1084,8 +1233,35 @@ def _format_imperative_header(action: str, instructions: str, details: dict, run
     concurrent runs. DECOMPOSE no longer uses a team — it spawns background
     Agents (per commands/start.md \u00a7F0.5).
     If no run is active, `{run}` is replaced with `active` as a safe default.
+
+    fallout D-058 — AND ``{gate}`` / ``{token}`` ARE SUBSTITUTED FROM THE
+    CROSSING THE EMITTING PHASE NAMES.
+
+    `transition_to_inspect` is emitted from F1 and from F3, and the two are
+    different crossings: F1 gates `inspect` and calls `Foundry-Phase('cast')`,
+    F3 gates `inspect_start` and calls `Foundry-Phase('inspect_start')`. One
+    frozen pair of literals is refused at BOTH sites, so the pair is taken from
+    one `_ACTION_CROSSINGS` row at emission time. Step (1) and step (2) are two
+    fields of that row, which is what makes them agree by construction rather
+    than by anyone remembering to change both.
+
+    A PLACEHOLDER THAT DOES NOT RESOLVE TAKES THE GENERIC FALLBACK. Printing a
+    literal `{gate}` would be worse than saying nothing — the lead is instructed
+    to "execute the first tool call mentioned", and `Foundry-Gate(phase=
+    '{gate}')` is a call it would try to make. The fallback sends it to the
+    CONTEXT below, which the branch already wrote for this phase.
     """
     imperative = _ACTION_IMPERATIVES.get(action)
+    if imperative:
+        crossing = _ACTION_CROSSINGS.get(action, {}).get(phase)
+        if crossing:
+            imperative = (
+                imperative
+                .replace("{gate}", crossing["gate"])
+                .replace("{token}", crossing["token"])
+            )
+        if "{gate}" in imperative or "{token}" in imperative:
+            imperative = None
     if imperative:
         return imperative.replace("{run}", run_name or "active")
     return f"YOUR NEXT CALL: follow the CONTEXT below (action='{action}'). Execute the first tool call mentioned. Do not deliberate."
@@ -2036,7 +2212,10 @@ def _compute_next_action(project_root: str) -> dict:
             "action": "transition_to_inspect",
             "instructions": (
                 "GRIND complete: all defects fixed. Shut down grind team, "
-                "Foundry-Team-Down, then Foundry-Phase(phase='inspect_start') to "
+                "Foundry-Team-Down, then Foundry-Gate(phase='inspect_start') — "
+                "the gate that guards this crossing, and NOT "
+                "Foundry-Gate(phase='inspect'), which guards the F1 entry and is "
+                "refused from F3 — then Foundry-Phase(phase='inspect_start') to "
                 "cross back into F2 — that call is what advances the run's cycle "
                 "counter, so skipping it leaves every subsequent record stamped "
                 "with the previous cycle. That call also sweeps the evidence "

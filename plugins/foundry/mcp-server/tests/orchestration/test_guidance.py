@@ -1063,6 +1063,88 @@ def test_the_f1_imperative_names_the_tool_that_enters_f2(run_env):
 
 
 
+def test_the_inspect_action_names_its_own_crossing_from_f1_and_from_f3(run_env):
+    """fallout D-058 / AC-059 / GI-001 — driven at BOTH emission sites.
+
+    `transition_to_inspect` is the only action `_compute_next_action` emits from
+    two phases, and the two are different crossings. It carried one frozen pair
+    of literals — `Foundry-Gate(phase='inspect')` above
+    `Foundry-Phase(phase='inspect_start')` — which is refused at both: from F3
+    the gate is refused ("Cannot enter F2 from phase F3 ... accepted from F1 and
+    from nowhere else"), and from F1 the phase call is ("accepted from F3, and
+    from F2"). Both tokens are legal enum members, so nothing rejects either
+    before the door and the mistake is invisible until the lead makes the call.
+
+    Driven through `foundry_next_action`, which is the surface the lead reads,
+    rather than off the constant: the substitution happens at emission and a
+    test that read the table would not exercise it. The stale-literal check is
+    the point of the second assertion in each half — a `{gate}` reaching the
+    lead is a call it would try to make.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+
+    # ── F1: CAST complete, and the crossing is `cast` behind the `inspect` gate.
+    _write_state(fdir, phase="F1", cycle=0)
+    _router_ledger(fdir, [])
+    (fdir / ".cast-complete").write_text("x\n", encoding="utf-8")
+
+    f1 = foundry_next_action(project_root)
+    assert f1["action"] == "transition_to_inspect", f1
+    text = f1["instructions"]
+    assert "Foundry-Gate(phase='inspect')" in text, text
+    assert "Foundry-Phase(phase='cast')" in text, text
+    assert "Foundry-Phase(phase='inspect_start')" not in text.split("CONTEXT")[0], text
+    assert "{gate}" not in text and "{token}" not in text, text
+
+    # ── F3: GRIND closed, and the crossing is `inspect_start` behind its OWN
+    # gate — the token AC-059 added so this transition would have one at all.
+    (fdir / ".cast-complete").unlink()
+    _write_state(fdir, phase="F3", cycle=2)
+    _router_ledger(fdir, [])
+
+    f3 = foundry_next_action(project_root)
+    assert f3["action"] == "transition_to_inspect", f3
+    text = f3["instructions"]
+    assert "Foundry-Gate(phase='inspect_start')" in text, text
+    assert "Foundry-Phase(phase='inspect_start')" in text, text
+    assert "{gate}" not in text and "{token}" not in text, text
+
+
+
+
+def test_the_gate_advance_signal_reads_the_gate_this_crossing_actually_needs(run_env):
+    """fallout D-058 / AC-059 — the second consumer, and it failed both ways.
+
+    `_expected_gate_for_action` is what `.gate-passed` is compared against. With
+    one frozen `inspect` for both phases, a lead at F3 who ran the CORRECT door
+    got `gate_advanced` absent and was told to run the refusing one; and a stale
+    `inspect` marker left over from the F1 entry produced "Foundry-Gate(phase=
+    inspect) ALREADY PASSED — do NOT re-run it" for a gate that never guarded
+    this crossing. Wrong in the reassuring direction is the worse of the two.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _write_state(fdir, phase="F3", cycle=2)
+    _router_ledger(fdir, [])
+    marker = fdir / artifacts.GATE_PASSED_MARKER
+
+    # The gate this crossing needs, passed: the advance signal names it.
+    marker.write_text(json.dumps({"phase": "inspect_start"}), encoding="utf-8")
+    advanced = foundry_next_action(project_root)
+    assert advanced.get("gate_advanced", {}).get("passed_gate") == "inspect_start", (
+        advanced.get("gate_advanced")
+    )
+
+    # The F1 entry's gate, stale on disk: NOT this crossing's, and not vouched
+    # for. The lead is left to run the door that guards what it is about to call.
+    marker.write_text(json.dumps({"phase": "inspect"}), encoding="utf-8")
+    stale = foundry_next_action(project_root)
+    assert "gate_advanced" not in stale, stale.get("gate_advanced")
+
+
+
+
 def test_a_clean_delta_cycle_is_told_to_widen_not_to_open_assay(run_env):
     """AC-016 / D-068's ruling, on the router side: the imperative names the
     crossing that actually works. Naming `inspect_clean` here would send the
