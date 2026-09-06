@@ -113,6 +113,74 @@ _project_root: str = "."
 server = Server("Foundry", version=__version__)
 
 
+# fallout CT-012 / GI-014 / GI-028 (D-093) — THE ADVERTISED FILING CONTRACT IS
+# DERIVED FROM THE VOCABULARY, NOT TYPED BESIDE IT.
+#
+# Both filing doors carried `enum: sorted(DEFECT_TIERS)` — three members since
+# HARDENING landed — beside a description that enumerated two and closed "NOT a
+# severity: both are defects and both get fixed", and a `reproduction_attempted`
+# description scoped to LATENT alone. So a stream reading the published contract
+# learned neither what HARDENING means nor that it owes a reproduction, and was
+# then refused by `validate_defect_filing` for a field the schema had told it was
+# LATENT-only. These are runtime wire strings a client reads before it ever calls,
+# which is why the comment-prose observation channel does not reach them.
+#
+# The enum was already derived and the PROSE was not, which is the whole shape of
+# the defect: a fourth tier would join the enum and be described by nothing. So
+# the sentence is assembled from the same set the enum is, one clause per member,
+# and `tests/orchestration/test_gates.py` pins the clause table equal to
+# `DEFECT_TIERS` — a member with no clause fails the suite rather than shipping a
+# contract that omits it.
+_TIER_WIRE_CLAUSES = {
+    "LIVE": (
+        "LIVE: you drove the door and observed the wrong result - put the "
+        "reproduction in the description."
+    ),
+    "LATENT": (
+        "LATENT: you looked for the failure and did not find one - name what "
+        "you drove in reproduction_attempted."
+    ),
+    "HARDENING": (
+        "HARDENING: you DROVE a probe of your own devising and it failed on a "
+        "path NO REQUIREMENT STATES - same evidence standard as LIVE, so name "
+        "the probe and the wrong result in reproduction_attempted. A HARDENING "
+        "filing carrying any spec_ref is REFUSED (a spec reference says a "
+        "requirement IS at stake); file that as LIVE instead."
+    ),
+}
+
+#: The tiers whose filings owe `reproduction_attempted`. DERIVED as "every tier
+#: that is not the one you drove to a spec-required failure", so it cannot drift
+#: from the door: LIVE puts its reproduction in the description, and the other
+#: two each owe the field for their own reason.
+_TIERS_OWING_A_REPRODUCTION = tuple(
+    t for t in sorted(DEFECT_TIERS) if t != "LIVE"
+)
+
+
+def _tier_description() -> str:
+    """The `tier` property's description, one clause per vocabulary member."""
+    return (
+        "REQUIRED. The evidence you are answerable for. "
+        + " ".join(_TIER_WIRE_CLAUSES[t] for t in sorted(DEFECT_TIERS))
+        + " NOT a severity: all three are defects and all three get fixed."
+    )
+
+
+def _reproduction_description(*, batch: bool = False) -> str:
+    """The `reproduction_attempted` property's description, tiers derived."""
+    tiers = " or ".join(_TIERS_OWING_A_REPRODUCTION)
+    return (
+        f"REQUIRED when tier is {tiers}. What you actually drove and what it "
+        "found - for LATENT the negative result IS the evidence (e.g. 'AST "
+        "sweep of every call site finds 0 reachable paths'); for HARDENING it "
+        "is the probe you ran and the wrong result you saw. 'n/a', 'none' and "
+        "'tbd' are refused."
+        + (" The whole batch is refused if a finding owes it and omits it."
+           if batch else "")
+    )
+
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     return [
@@ -406,24 +474,13 @@ async def list_tools() -> list[Tool]:
                     "tier": {
                         "type": "string",
                         "enum": sorted(DEFECT_TIERS),
-                        "description": (
-                            "REQUIRED. The evidence you are answerable for. LIVE: "
-                            "you drove the door and observed the wrong result - "
-                            "put the reproduction in the description. LATENT: you "
-                            "looked for the failure and did not find one - name "
-                            "what you drove in reproduction_attempted. NOT a "
-                            "severity: both are defects and both get fixed."
-                        ),
+                        # fallout CT-012 (D-093): one clause per member of the
+                        # SAME set the enum derives from.
+                        "description": _tier_description(),
                     },
                     "reproduction_attempted": {
                         "type": "string",
-                        "description": (
-                            "REQUIRED when tier is LATENT. What you actually "
-                            "drove and what it found - the negative result IS the "
-                            "evidence (e.g. 'AST sweep of every call site finds "
-                            "0 reachable paths'). 'n/a', 'none' and 'tbd' are "
-                            "refused."
-                        ),
+                        "description": _reproduction_description(),
                     },
                     "description": {"type": "string"},
                     "spec_ref": {"type": "string"},
@@ -435,7 +492,7 @@ async def list_tools() -> list[Tool]:
                             "the authoritative half: a cite whose symbol "
                             "resolves stays valid however far the code has "
                             "moved inside the file. Expected on every filing, "
-                            "at either tier."
+                            "at any tier."
                         ),
                     },
                     # D-101 — THE D-089 OBLIGATION IS WITHDRAWN, ON THE
@@ -457,7 +514,7 @@ async def list_tools() -> list[Tool]:
                     "file_path": {
                         "type": "string",
                         "description": (
-                            "Expected on every filing, at either tier. "
+                            "Expected on every filing, at any tier. "
                             "Repo-relative path. A LATENT defect is carried to "
                             "the F6 report's backlog and read there by a lead "
                             "with no defects.json to join against (D-029), so a "
@@ -928,7 +985,7 @@ async def list_tools() -> list[Tool]:
                                         "paired with `file` as a `path#Symbol` "
                                         "cite. The symbol is the authoritative "
                                         "half and survives line drift. Expected "
-                                        "on every finding, at either tier."
+                                        "on every finding, at any tier."
                                     ),
                                 },
                                 # D-101 — WITHDRAWN HERE TOO, ON THE SAME TERMS.
@@ -960,21 +1017,20 @@ async def list_tools() -> list[Tool]:
                                 "tier": {
                                     "type": "string",
                                     "enum": sorted(DEFECT_TIERS),
+                                    # fallout CT-012 (D-093): the SAME sentence
+                                    # the single door advertises, from the same
+                                    # table. Two doors describing one vocabulary
+                                    # in two spellings is how this drifted.
                                     "description": (
-                                        "REQUIRED. LIVE: you drove the door and "
-                                        "observed the wrong result. LATENT: you "
-                                        "looked and did not find one - name what "
-                                        "you drove in reproduction_attempted. NOT "
-                                        "a severity. The whole batch is refused if "
-                                        "any finding omits it."
+                                        _tier_description()
+                                        + " The whole batch is refused if any "
+                                        "finding omits it."
                                     ),
                                 },
                                 "reproduction_attempted": {
                                     "type": "string",
-                                    "description": (
-                                        "REQUIRED when tier is LATENT: what you "
-                                        "drove and what it found. 'n/a', 'none' "
-                                        "and 'tbd' are refused."
+                                    "description": _reproduction_description(
+                                        batch=True
                                     ),
                                 },
                                 "class": {

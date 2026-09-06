@@ -2883,3 +2883,102 @@ def test_the_dedupe_keeps_a_genuinely_second_distinct_refusal(run_env):
     reasons = [r["reason"] for r in result["refusals"]]
     assert len(reasons) == 2, reasons
     assert len(set(reasons)) == 2, reasons
+
+
+# --------------------------------------------------------------------------- #
+# fallout CT-012 / GI-014 / GI-028 (D-093) — THE WIRE CONTRACT DESCRIBES THE
+# VOCABULARY IT ADVERTISES.
+# --------------------------------------------------------------------------- #
+
+
+def _filing_tool_schemas():
+    from foundry_mcp import server as foundry_server
+
+    tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
+    single = tools["Foundry-Defect"].inputSchema["properties"]
+    batch = (
+        tools["Foundry-Sync"].inputSchema["properties"]["findings"]["items"]
+        ["properties"]
+    )
+    return single, batch
+
+
+def test_every_advertised_tier_is_described_by_the_contract_that_advertises_it():
+    """fallout CT-012 (D-093).
+
+    The enum was already `sorted(DEFECT_TIERS)` — three members since HARDENING
+    landed — and the prose beside it enumerated two, closing "NOT a severity:
+    both are defects and both get fixed". So a stream reading the published
+    contract learned neither what HARDENING means nor that it owes a
+    reproduction, and was then refused by `validate_defect_filing` for a field
+    the schema had scoped to LATENT. These are runtime wire strings a client
+    reads before it ever calls, which is why the comment-prose observation
+    channel does not reach them.
+    """
+    single, batch = _filing_tool_schemas()
+
+    for properties in (single, batch):
+        tier = properties["tier"]
+        assert set(tier["enum"]) == set(vocab.DEFECT_TIERS), tier["enum"]
+        for member in sorted(vocab.DEFECT_TIERS):
+            assert f"{member}:" in tier["description"], (member, tier["description"])
+        # ...and the retired two-tier sentence is gone.
+        assert "both are defects" not in tier["description"], tier["description"]
+
+
+def test_the_reproduction_field_names_every_tier_that_owes_it():
+    """fallout CT-012 / GI-014 (D-093) — the field the door actually demands.
+
+    `validate_defect_filing` demands `reproduction_attempted` for LATENT and for
+    HARDENING, with a different hint each because the EVIDENCE differs — a
+    LATENT filing owes a negative result, a HARDENING one owes the probe it
+    drove. The schema said "REQUIRED when tier is LATENT", so a HARDENING filer
+    following the contract was refused for a field the contract told it not to
+    send.
+    """
+    single, batch = _filing_tool_schemas()
+
+    for properties in (single, batch):
+        description = properties["reproduction_attempted"]["description"]
+        for member in sorted(vocab.DEFECT_TIERS):
+            if member == "LIVE":
+                continue
+            assert member in description, (member, description)
+
+
+def test_the_hardening_clause_states_the_spec_ref_refusal_it_will_meet():
+    """fallout GI-028 / CT-012 (D-093) — the mechanical discriminator, published.
+
+    GI-028 is "refuse HARDENING whenever spec_ref is set" and it is REFUSED, not
+    down-ranked. A filer that learns that only from the refusal has already lost
+    the filing; the discriminator is the one thing about the tier a client must
+    know before it calls.
+    """
+    single, _batch = _filing_tool_schemas()
+    description = single["tier"]["description"]
+    assert "spec_ref is REFUSED" in description, description
+
+
+def test_the_clause_table_covers_the_vocabulary_it_is_built_from():
+    """fallout CT-012 (D-093) — the GENERATOR, pinned.
+
+    The enum was derived and the prose was not, which is the whole shape of the
+    defect: a fourth tier joins the enum and is described by nothing. The
+    sentence is assembled from the same set, so a member with no clause fails
+    HERE — before it can ship a contract that omits it.
+    """
+    from foundry_mcp import server as foundry_server
+
+    assert set(foundry_server._TIER_WIRE_CLAUSES) == set(vocab.DEFECT_TIERS), {
+        "described_but_not_a_tier": sorted(
+            set(foundry_server._TIER_WIRE_CLAUSES) - set(vocab.DEFECT_TIERS)
+        ),
+        "a_tier_nothing_describes": sorted(
+            set(vocab.DEFECT_TIERS) - set(foundry_server._TIER_WIRE_CLAUSES)
+        ),
+    }
+    # ...and the reproduction roster is derived from the same set rather than
+    # typed, so it grows with it too.
+    assert set(foundry_server._TIERS_OWING_A_REPRODUCTION) == (
+        set(vocab.DEFECT_TIERS) - {"LIVE"}
+    )
