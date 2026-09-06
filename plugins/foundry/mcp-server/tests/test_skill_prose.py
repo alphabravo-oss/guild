@@ -63,6 +63,11 @@ from foundry_mcp.schemas import vocab
 from foundry_mcp.tools import foundry_report
 from foundry_mcp.tools.orchestration import gates, guidance, streams
 
+# The ONE spelling of the fallout-marking clauses, imported rather than
+# re-typed. See the fallout AC-048 section below for why this import is here
+# and not a tuple of its own.
+from tests.test_protocol_prose import _FALLOUT_CLAUSES
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FOUNDRY_ROOT = REPO_ROOT / "plugins" / "foundry"
 
@@ -664,12 +669,20 @@ def test_the_temper_roster_section_names_the_call_that_closes_a_candidate() -> N
 # fallout AC-048 / FR-025 -- the PROVE half of fallout marking
 # ---------------------------------------------------------------------------
 
-_FALLOUT_CLAUSES = (
-    "**Set `fallout_of` when the finding is fallout of an earlier fix.**",
-    "sibling surface left on a contract a previous cycle's fix changed is not a "
-    "fresh defect",
-    "An id the ledger does not carry is REFUSED at the door rather than stored",
-)
+# fallout D-095 / NFR-011. These three clauses used to live here as a SECOND
+# hand-typed tuple under the same name as `test_protocol_prose.py`'s, so
+# rewording one left the other passing against a different sentence -- two
+# modules pinning one ruling and free to drift, which is the drift fallout
+# NFR-011 forbids and the reason the ruling has one home. The import at the top
+# of this module is that home: `test_protocol_prose.py` owns the tuple, builds
+# its `fallout_of` spelling from the filing door rather than typing it, and
+# sweeps the rest of the suite for a third copy -- a sweep that ARMS on this
+# import, so deleting it in favour of a local re-type disarms the guard as well
+# as re-opening the defect.
+#
+# What each module owns stays split: casting 6 pins the clauses on
+# `agents/tracer.md`, and the parametrisation below pins the same three on the
+# three PROVE-side surfaces this module's population covers.
 
 
 @pytest.mark.parametrize("path", FALLOUT_SURFACES, ids=_rel)
