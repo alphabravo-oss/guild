@@ -1387,8 +1387,9 @@ def test_the_report_fallout_section_is_the_leafs_rows(report_run) -> None:
 def test_the_done_gate_and_the_seal_apply_one_heading_rule(report_run) -> None:
     """Holmes `share-10` — the presence check is DERIVED from the splitter.
 
-    `_markdown_missing_sections` decides which sections a reader can still
-    find and the seal's splitter -- now `foundry_state.markdown_sections` --
+    `artifacts._markdown_missing_report_sections` decides which sections a
+    reader can still find and the seal's splitter -- now
+    `foundry_state.markdown_sections` --
     decides which blocks the seal preserves. They were "the same effective
     rule, coded independently", so the gate could call a section present that
     the seal did not treat as one.

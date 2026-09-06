@@ -669,7 +669,7 @@ PROVE_DELTA_SAMPLE_SIZE = 10
 # D-033 WIDENED this to the whole `foundry_mcp/` package. The reasoning was
 # sound for the tree it was written against: the pattern had been an alternation
 # of five `tools/` basenames, `is_verifier_path` answered False for
-# `foundry_report.py` — whose `report_status` IS the DONE precondition —
+# `foundry_report.py` — whose generated documents the DONE precondition reads —
 # `foundry_spawn.py`, `foundry_state.py`, `display.py` and `citation.py`, and
 # naming the five misses would have fixed the instance and kept the class. With
 # one 15,000-line module holding every gate, every transition, the width

@@ -15,7 +15,7 @@ mood is not evidence, it is a press release.
 
 So the SECTIONS are generated and the lead may only APPEND. GI-006 states the
 rule ("the lead may append prose but cannot omit a section") and
-`Foundry-Phase('done')` enforces it by calling `report_status` below — which is
+`Foundry-Phase('done')` enforces it through `artifacts.report_document_status` — which is
 why that function reads `report.json` back off disk rather than trusting
 anything this module remembers about what it just wrote.
 
@@ -76,11 +76,9 @@ from foundry_mcp.tools.foundry_state import (
     handoffs_wall_clock_seconds,
     inspect_decisions,
     inspect_mode_rows,
-    markdown_headings,
     now_iso,
     read_document,
     read_jsonl,
-    read_text_file,
     spend_rollup,
     stream_rollup_rows,
     unreported_dispatch_inputs,
@@ -1957,8 +1955,9 @@ def _render_markdown(run_name: str, generated_at: str, sections: dict) -> str:
 
     THE HEADING TEXT IS LOAD-BEARING, BECAUSE THIS DOCUMENT IS READ BACK
     -------------------------------------------------------------------
-    `report_status` reads BOTH documents off disk — `report.json`'s top-level
-    keys AND this file's headings (`_markdown_missing_sections`) — and the DONE
+    `artifacts.report_document_status` reads BOTH documents off disk —
+    `report.json`'s top-level keys AND this file's headings
+    (`artifacts._markdown_missing_report_sections`) — and the DONE
     gate refuses on the union. So a heading rendered here with different text
     than `REPORT_SECTION_TITLES` holds is a section the gate reports missing, even
     though the JSON carries it.
@@ -1969,12 +1968,12 @@ def _render_markdown(run_name: str, generated_at: str, sections: dict) -> str:
     not a position. What the lead cannot do is delete a heading, or bolt a
     suffix onto one, and still reach DONE.
 
-    D-141 — WHAT THIS PARAGRAPH USED TO SAY. It read "`report_status` reads the
+    D-141 — WHAT THIS PARAGRAPH USED TO SAY. It read "the DONE gate's read reads the
     JSON, not the markdown, so appended prose can never make a section look
     missing", which was true until D-015 moved the read onto both documents and
     is now false on both halves: the markdown IS read, and the reason appended
     prose is harmless is the whole-line match, not an absence of looking.
-    Driven at HEAD: generate, `rm REPORT.md`, and `report_status` returns
+    Driven at HEAD: generate, `rm REPORT.md`, and the gate's read returns
     `present False`, `missing_from_markdown 11`, problem "REPORT.md does not
     exist". A maintainer trusting the retired sentence would have treated the
     heading text as cosmetic.
@@ -2537,7 +2536,8 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
 
     `report.json`'s top-level keys are exactly `REPORT_REQUIRED_SECTIONS` plus
     `generated_at` and `run`. That is asserted here rather than left to a test,
-    because `report_status` compares the SAME tuple and a report written with a
+    because `artifacts.report_document_status` compares the SAME tuple and a
+    report written with a
     twelfth key would pass generation and then be unreadable at the DONE gate.
     """
     run_dir = Path(run_dir)
@@ -2675,7 +2675,7 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
     try:
         # D-015 — THE MARKDOWN IS WRITTEN FIRST, and the order is the point.
         #
-        # `report_status` now requires BOTH documents, so whichever is written
+        # the gate's read now requires BOTH documents, so whichever is written
         # second is the one whose absence holds the DONE gate shut. Writing the
         # JSON first meant an OSError on the markdown left a complete
         # `report.json` behind and a gate that opened on it — a run reaching
@@ -2707,107 +2707,16 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
     }
 
 
-def _markdown_missing_sections(run_dir: Path) -> tuple[list[str], str | None]:
-    """The required `## ` headings REPORT.md does not carry (D-015).
-
-    Returns ``(missing_section_keys, problem)``. A heading counts as present
-    when a line reading exactly `## <title>` is there, at any depth in the
-    document and in any order — because GI-006 licenses the lead to APPEND
-    prose, and appended prose can put arbitrary text between, above and below
-    the generated headings without omitting one.
-
-    The match is on the whole trimmed line rather than a prefix, so a lead's
-    own `## Appendix` never counts as a generated section and a generated
-    heading with a suffix bolted on ("## LATENT backlog (see below)") reads as
-    the edit it is.
-    """
-    text, problem = read_text_file(run_dir / REPORT_MD_FILENAME)
-    if problem is not None:
-        return list(REPORT_REQUIRED_SECTIONS), problem
-    if not (run_dir / REPORT_MD_FILENAME).exists():
-        return (
-            list(REPORT_REQUIRED_SECTIONS),
-            f"{REPORT_MD_FILENAME} does not exist",
-        )
-    # Holmes `share-10` — ONE heading rule, not two that "agree by convention".
-    # This built `{line.strip() for line in text.splitlines()}` while the
-    # seal's splitter matched a line that STARTS a block: the same
-    # effective rule, coded independently, so the gate could call a section
-    # present that the seal did not treat as one. `markdown_headings` is
-    # DERIVED from the splitter, so the two cannot part.
-    headings = markdown_headings(text)
-    return [
-        key
-        for key in REPORT_REQUIRED_SECTIONS
-        if f"## {REPORT_SECTION_TITLES[key]}" not in headings
-    ], None
-
-
-def report_status(run_dir: Path) -> dict:
-    """`{'present': bool, 'missing_sections': [...]}` — the DONE gate's read.
-
-    GI-006 gives the lead permission to APPEND prose and no permission to omit
-    a section, and this is where the second half is checked. Both documents are
-    read off disk every time rather than trusting anything `generate_report`
-    returned, because the gap the check exists to close is exactly the one
-    where somebody edited a file after it was generated.
-
-    BOTH DOCUMENTS, NOT JUST THE JSON (D-015)
-    -----------------------------------------
-    This read the JSON alone, and the docstring argued the case: the JSON's
-    keys are machine-written and machine-read, so they answer the question
-    exactly, while a markdown scan could be confused by a reflowed table.
-
-    The argument was for the wrong question. GI-006's violation column names
-    "a lead-authored REPORT.md that lacks the generated sections" in those
-    words, and REPORT.md is the document a human actually reads — the JSON
-    exists for tools. Driven: delete REPORT.md outright and the DONE gate still
-    passed, so a run could reach DONE with no operator-readable report at all,
-    which is the exact outcome GI-006 exists to prevent.
-
-    So the JSON answers "which sections were generated" and the markdown
-    answers "which sections a reader can still find", and `missing_sections` is
-    the union. The confusability worry is handled by matching whole heading
-    lines (see `_markdown_missing_sections`) rather than by not looking.
-
-    A document that is absent, unreadable, or not an object reports every
-    section missing. That is the honest answer: no section can be shown to be
-    there. `problem` carries the reason when there is one, so a caller refusing
-    the DONE transition can say whether the report was never generated or is
-    corrupt.
-    """
-    run_dir = Path(run_dir)
-    path = run_dir / REPORT_JSON_FILENAME
-    md_path = run_dir / REPORT_MD_FILENAME
-    md_missing, md_problem = _markdown_missing_sections(run_dir)
-
-    data, problem = read_document(path)
-    if problem is not None or not path.exists() or not data:
-        json_problem = problem or (
-            None if path.exists() else f"{REPORT_JSON_FILENAME} does not exist"
-        )
-        return {
-            "present": False,
-            "missing_sections": list(REPORT_REQUIRED_SECTIONS),
-            "report_json": str(path),
-            "report_md": str(md_path),
-            "missing_from_json": list(REPORT_REQUIRED_SECTIONS),
-            "missing_from_markdown": md_missing,
-            "problem": json_problem or md_problem,
-        }
-
-    json_missing = [s for s in REPORT_REQUIRED_SECTIONS if s not in data]
-    # Union, in REPORT_REQUIRED_SECTIONS order — a caller naming the missing
-    # sections in a refusal reads them in the order the report declares them.
-    both = set(json_missing) | set(md_missing)
-    missing = [s for s in REPORT_REQUIRED_SECTIONS if s in both]
-    return {
-        "present": not missing,
-        "missing_sections": missing,
-        "report_json": str(path),
-        "report_md": str(md_path),
-        "missing_from_json": json_missing,
-        "missing_from_markdown": md_missing,
-        "problem": md_problem,
-        "generated_at": data.get("generated_at"),
-    }
+# fallout GI-033 (concern C-060 row 2, C-061) — THE READ LEFT; THE GENERATOR STAYED.
+#
+# The DONE gate's status read and its missing-headings walk used to live here. The
+# DONE gate is a VERIFIER and this module is presentation, so a gate rung
+# reaching in was a verifier-to-presentation edge. They are now
+# `tools/artifacts.py#report_document_status` and
+# `tools/artifacts.py#_markdown_missing_report_sections`, which the gate reaches
+# as a leaf, and the headings both halves agree on are
+# `vocab.REPORT_SECTION_TITLES` — one table by construction rather than two
+# modules agreeing.
+#
+# `generate_report` above is unmoved and stays here: WRITING the two documents
+# is this module's whole subject, and only the read crossed a layer.
