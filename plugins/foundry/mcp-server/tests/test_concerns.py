@@ -167,11 +167,11 @@ def test_the_rendered_file_names_the_status_vocabulary_from_the_constant(run_env
 
     AND THE CONSTANT IS THE LEAF ONE (concern C-033). The set was declared in
     ``tools/concerns.py``, which reaches ``tools/foundry.py`` at module top, so
-    a VERIFIER module could reach the leaf read for GI-023's CONCERN_OPEN rung
-    and still not reach the member that read takes as an argument. It is
-    declared in ``schemas/vocab.py`` now and this module imports it, so the
-    names below are the vocabulary itself rather than a second copy agreeing
-    with it today.
+    a VERIFIER module could reach the leaf read for fallout GI-023's
+    CONCERN_OPEN rung and still not reach the member that read takes as an
+    argument. It is declared in ``schemas/vocab.py`` now and this module
+    imports it, so the names below are the vocabulary itself rather than a
+    second copy agreeing with it today.
     """
     project_root, fdir = run_env
     _open_one(project_root)
@@ -395,7 +395,7 @@ def test_this_module_supplies_its_own_open_status_to_the_leafs_read(run_env):
                     # open, lands elsewhere, cycle 7 — the door's subject.
                     {"id": "C-001", "cycle": 7, "source_casting": 1,
                      "target_casting_id": 2, "status": "open"},
-                    # dispatched: addressed by definition (FR-039).
+                    # dispatched: addressed by definition (fallout FR-039).
                     {"id": "C-002", "cycle": 7, "source_casting": 1,
                      "target_casting_id": 2, "status": "dispatched"},
                     {"id": "C-003", "cycle": 7, "source_casting": 1,
