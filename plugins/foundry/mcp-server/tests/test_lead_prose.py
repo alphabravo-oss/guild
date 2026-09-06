@@ -2750,7 +2750,7 @@ def test_the_no_ui_meaning_is_the_servers_sentence_on_both_owned_surfaces() -> N
     Both READMEs state the same sentence, and casting 9 owns them -- their
     halves are checked there, on the tree that carries them.
     """
-    from foundry_mcp.tools.foundry import NO_UI_MEANING
+    from foundry_mcp.schemas.vocab import NO_UI_MEANING
 
     assert NO_UI_MEANING.startswith("`--no-ui` "), NO_UI_MEANING
     tail = NO_UI_MEANING.split("` ", 1)[1]
