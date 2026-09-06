@@ -474,12 +474,55 @@ def requirement_span_table(project_root=".", fdir: Path | None = None) -> dict:
     return {**payload, "problem": None}
 
 
+#: The run-directory position F0.9 asks about by PRESENCE, not by content: the
+#: directory the research artifacts land in. Spelled once because two surfaces
+#: ask about it — the dimension that reports on it and the cache key that has to
+#: notice it appear — and a second spelling is a second answer waiting to drift.
+#: `foundry_spawn.py#_stream_roster` asks the same question of the same
+#: directory and asks it with `is_dir`, which is the spelling that is total: a
+#: plain FILE at that path answers `exists` yes and then raises out of
+#: `iterdir`, and a tool never raises across the MCP boundary.
+_RESEARCH_DIRNAME = "research"
+
+#: The other one: the F0.7 matrix, whose ABSENCE is what prompt fidelity
+#: refuses on. The refusal below names the path, and derives it from here, so
+#: the file the message tells an operator to look for is the file the check
+#: looked for.
+_INTENT_COVERAGE_BASENAME = "intent-coverage.json"
+
+
+def _run_dir_facts(fdir: Path) -> dict:
+    """What the run DIRECTORY says, for the dimensions that ask it.
+
+    Two of F0.9's dimensions read a fact no document carries — whether the run
+    holds research artifacts, and whether F0.7 emitted the intent matrix — and
+    both facts are cache inputs for exactly the reason they are dimension
+    inputs: the verdict moves when they move. ONE derivation, computed in the
+    prelude and read by both the fingerprint and the dimensions, so the answer
+    the cache is keyed on and the answer the report is written from are the same
+    answer rather than two agreeing statements of the same path.
+
+    Total, like every other read here: an unreadable or vanished run directory
+    answers false rather than raising.
+    """
+    research_dir = fdir / _RESEARCH_DIRNAME
+    try:
+        has_research = research_dir.is_dir() and any(research_dir.iterdir())
+    except OSError:
+        has_research = False
+    return {
+        "has_research": has_research,
+        "has_intent_coverage": (fdir / _INTENT_COVERAGE_BASENAME).exists(),
+    }
+
+
 def _fingerprint_inputs(
     fdir: Path,
     manifest: dict,
     schema_version: int = 0,
     *,
     spec_path: Path | None,
+    run_facts: dict,
 ) -> dict:
     """Hash the inputs that validator dimensions depend on.
 
@@ -529,6 +572,15 @@ def _fingerprint_inputs(
         # it all — a field this misses serves a wrong verdict, a field it need
         # not have hashed costs one re-run.
         "manifest": {k: v for k, v in manifest.items() if k != "castings"},
+        # THE RUN DIRECTORY, hashed as the container for the same reason the
+        # manifest is: a fact added to `_run_dir_facts` is fingerprinted by
+        # construction, where a fact named here would have to be remembered.
+        # These two are the inputs no DOCUMENT carries — research appearing
+        # turns a clean research-integration dimension into a warning, and the
+        # F0.7 matrix going missing turns a passing run into a refusal — so a
+        # fingerprint built from documents alone served the verdict given
+        # before either had moved.
+        "run_dir": run_facts,
     }
     manifest_hash = hashlib.sha256(
         json.dumps(shared_fields, sort_keys=True).encode("utf-8")
@@ -667,11 +719,15 @@ def foundry_validate_castings(
     # documents it takes — the same climb `_spec_requirement_ids` makes below,
     # so the spec the cache is keyed on and the spec the dimensions read are
     # the same file by construction rather than by two agreeing guesses.
+    # Read ONCE, here, because the fingerprint below and the two dimensions
+    # further down are the same two readers of the same two facts.
+    run_facts = _run_dir_facts(fdir)
     fingerprints = _fingerprint_inputs(
         fdir,
         manifest,
         schema_version,
         spec_path=_spec_path_from(project_root, fdir, state),
+        run_facts=run_facts,
     )
     cache = _load_validate_cache(fdir)
     cached_result = cache.get("last_pass")
@@ -689,10 +745,6 @@ def foundry_validate_castings(
     )
     if spec_problem is not None:
         return {"passed": False, **document_refusal(spec_path, spec_problem)}
-
-    # Check for research artifacts
-    research_dir = fdir / "research"
-    has_research = research_dir.exists() and any(research_dir.iterdir()) if research_dir.exists() else False
 
     issues: list[dict] = []
     revision_hints: list[str] = []
@@ -916,7 +968,7 @@ def foundry_validate_castings(
 
     # ── Dimension 6: Research Integration ──
     dim6_issues = []
-    if has_research:
+    if run_facts["has_research"]:
         castings_with_research = sum(1 for c in castings if c.get("research_context"))
         if castings_with_research == 0:
             dim6_issues.append({"issue": "Research artifacts exist but no casting references them"})
@@ -1199,8 +1251,8 @@ def foundry_validate_castings(
         for s in manifest.get("stream_skips", []) or []
     )
     if not intent_in_skips:
-        intent_coverage_path = fdir / "intent-coverage.json"
-        if not intent_coverage_path.exists():
+        intent_coverage_path = fdir / _INTENT_COVERAGE_BASENAME
+        if not run_facts["has_intent_coverage"]:
             dim7_issues.append({
                 "issue": "intent_coverage_record_incomplete",
                 "detail": (

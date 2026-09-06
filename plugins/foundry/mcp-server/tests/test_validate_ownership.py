@@ -728,6 +728,89 @@ def test_a_spec_the_run_never_copied_reaches_the_cache_fingerprint(
     ]
 
 
+def test_a_research_artifact_appearing_invalidates_a_cached_pass(
+    tmp_path: Path,
+):
+    """The run DIRECTORY is an input too, not only the documents in it.
+
+    Research integration reports on a fact no document carries: whether the run
+    holds research artifacts at all. A lead who runs F0.9, then commissions the
+    research the run was missing, then runs F0.9 again is asking a question the
+    first answer cannot contain — and a fingerprint built only from documents
+    hands back the answer given before the research existed.
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])]
+    args = dict(spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True)
+
+    first = _run_validate(tmp_path, castings, **args)
+    assert first["dimensions"]["research_integration"]["ok"] is True
+    assert first["cache"]["hit"] is False
+
+    # Proof the cache is live at all, or the assertion below proves nothing.
+    again = _run_validate(tmp_path, castings, **args)
+    assert again["cache"]["hit"] is True
+
+    research = tmp_path / ARCHIVE_DIR / "ownership-test" / "research"
+    research.mkdir(parents=True, exist_ok=True)
+    (research / "auth.md").write_text("JWT findings", encoding="utf-8")
+
+    after = _run_validate(tmp_path, castings, **args)
+
+    assert after["cache"]["hit"] is False
+    assert after["dimensions"]["research_integration"]["ok"] is False
+    assert any(
+        "no casting references" in i.get("issue", "")
+        for i in after["dimensions"]["research_integration"]["issues"]
+    )
+
+
+def test_the_intent_matrix_going_missing_invalidates_a_cached_pass(
+    tmp_path: Path,
+):
+    """The same axis, on the input whose absence is an ERROR.
+
+    Prompt fidelity refuses when INTENT-01 is an active stream and the F0.7
+    matrix is not on disk. The matrix is a file, so a run can lose it — to a
+    re-decompose, a cleanup, a partial restore — between two calls with no
+    document touched, and the refusal that exists to catch exactly that is the
+    one the cache would skip.
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])]
+    args = dict(
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        # INTENT-01 is NOT skipped, which is what makes the matrix required,
+        # and the summary is stamped, so the run passes while the file is there.
+        manifest_extra={
+            "stream_skips": [],
+            "intent_coverage_summary": {"verdict": "PROPAGATED"},
+        },
+    )
+    matrix = tmp_path / ARCHIVE_DIR / "ownership-test" / "intent-coverage.json"
+    matrix.parent.mkdir(parents=True, exist_ok=True)
+    matrix.write_text("{}", encoding="utf-8")
+
+    first = _run_validate(tmp_path, castings, **args)
+    assert first["passed"] is True, first["issues"]
+    assert first["cache"]["hit"] is False
+
+    # Proof the cache is live at all, or the assertion below proves nothing.
+    again = _run_validate(tmp_path, castings, **args)
+    assert again["cache"]["hit"] is True
+
+    matrix.unlink()
+
+    after = _run_validate(tmp_path, castings, **args)
+
+    assert after["cache"]["hit"] is False
+    assert after["passed"] is False
+    assert any(
+        i.get("issue") == "intent_coverage_record_incomplete"
+        for i in after["dimensions"]["prompt_fidelity"]["issues"]
+    )
+
+
 # ── The span, and the token that fires above the threshold ────────────────
 
 
