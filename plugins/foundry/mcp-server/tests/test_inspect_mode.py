@@ -75,9 +75,11 @@ from foundry_mcp.tools import foundry_state
 # second copy this run just removed.
 from foundry_mcp.tools import artifacts as _artifacts
 from foundry_mcp.tools.foundry_state import current_cycle as _current_cycle
+from foundry_mcp.tools.foundry_state import git_changed_paths
 from foundry_mcp.tools.orchestration import evidence_boundary as _evidence_boundary
 from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
 from foundry_mcp.tools.orchestration import gates as _gates
+from foundry_mcp.tools.orchestration import report_seal as _report_seal
 from foundry_mcp.tools.orchestration import guidance as _guidance
 from foundry_mcp.tools.orchestration import streams as _streams
 from foundry_mcp.tools.orchestration import transitions as _transitions
@@ -88,10 +90,26 @@ from foundry_mcp.tools.orchestration.streams import (
     foundry_mark_stream,
 )
 from foundry_mcp.tools.orchestration.transitions import foundry_mark_phase_complete
-from foundry_mcp.tools.orchestration.width import (
-    _current_inspect_mode,
-    _decide_inspect_mode,
-)
+from foundry_mcp.tools.foundry_state import current_inspect_mode
+from foundry_mcp.tools.orchestration.width import _decide_inspect_mode
+
+
+def _current_inspect_mode(fdir, cycle=None):
+    """The recorded width, read the way every production caller reads it.
+
+    fallout FR-005 / AC-014 / OT-016 — THE SYMBOL MOVED AND TOOK AN ARGUMENT.
+    `width.py#_current_inspect_mode` is now
+    `foundry_state.current_inspect_mode`, on the same reasoning that moved
+    `current_cycle` above: the streams check, the guidance engine and the
+    transitions all read the recorded width, and a verifier module every one of
+    them imports is the lifecycle-to-verifier edge GI-033 refuses outright.
+
+    The vocabulary is no longer named inside the read — the leaf is stdlib-only
+    and takes `modes` from its caller — so this binds `INSPECT_MODES` exactly as
+    the six production call sites do. It is a BINDING, not a reimplementation:
+    every axis the read decides on is still decided in the read.
+    """
+    return current_inspect_mode(fdir, cycle, modes=INSPECT_MODES)
 
 # `_check_active_teams` and `_active_teams` — the lifecycle and verifier halves
 # of one leaf check — are bound by name across the orchestration modules, so
@@ -3483,7 +3501,7 @@ def test_the_terminal_doors_refuse_the_phases_the_defect_drove(run_env):
             {"requirement_id": "FR-001", "verdict": "VERIFIED"},
         ]}), encoding="utf-8"
     )
-    _gates._generate_report(project_root, fdir)
+    _report_seal._generate_report(project_root, fdir)
 
     _write_state(fdir, phase="F4", cycle=2, temper=True, nyquist=True)
     _arm(fdir)
@@ -4820,7 +4838,7 @@ def test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary(run_env):
     import inspect
     import textwrap
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(_width._current_inspect_mode)))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(current_inspect_mode)))
     names = {
         node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
     }
@@ -5136,7 +5154,7 @@ def test_the_cycle_stamp_is_checked_in_the_one_width_read(run_env):
     import inspect
     import textwrap
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(_width._current_inspect_mode)))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(current_inspect_mode)))
     names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
     # fallout FR-005 / AC-014 / OT-016 — THE SPELLING MOVED WITH THE SYMBOL.
     # This pinned the name `_current_cycle`. Casting 10 consolidated the two
@@ -5748,7 +5766,7 @@ def test_the_diff_helper_returns_the_paths_git_names(run_env):
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "non-ascii work")
 
-    diff = _width.git_changed_paths(project_root, base, "HEAD")
+    diff = git_changed_paths(project_root, base, "HEAD")
 
     assert diff["ok"] is True, diff
     assert diff["files"] == sorted(
@@ -5759,7 +5777,7 @@ def test_the_diff_helper_returns_the_paths_git_names(run_env):
     # An UNKNOWN diff is not an empty one, and the two must stay
     # distinguishable — a caller that confused them would run a delta roster off
     # a diff it never obtained.
-    unknown = _width.git_changed_paths(project_root, "0" * 40, "HEAD")
+    unknown = git_changed_paths(project_root, "0" * 40, "HEAD")
     assert unknown["ok"] is False, unknown
     assert unknown["files"] == [], unknown
     assert unknown["error"], unknown

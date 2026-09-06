@@ -49,6 +49,21 @@ from pathlib import Path
 import pytest
 
 import foundry_mcp
+# fallout FR-005 / AC-014 / OT-016 — THE SHAPE TABLE IS THE LEAF'S NOW.
+# The manifest shape declaration and its required-rung sentinel left
+# `foundry_spawn.py` for `tools/artifacts.py`, where they are
+# `_MANIFEST_DOCUMENT_SHAPE` and `_REQUIRED_RUNG`: what they declare is a
+# DOCUMENT's shape, not a spawn fact, and both consumer modules now reach the
+# leaf for it instead of reaching a lifecycle module through each other.
+# Every cite below moved with them — the old spellings are written nowhere in
+# this module, because a cite naming a symbol the tree no longer defines is
+# the stale cite D-217 named, and leaving one here would need an excuse row in
+# `_PROSE_CITES_WITH_NO_DEFINITION` standing in for a rename that is done.
+# The two LOCKED validator names stay bound on `fs` — casting 7 imported them
+# under their private spellings precisely so D-134's scan goes on recognising
+# a reader as guarded by the NAME it calls — so `_shape_validator_names()`
+# still reads the provider module below.
+from foundry_mcp.tools import artifacts as _artifacts
 from foundry_mcp.tools import foundry_spawn as fs
 from foundry_mcp.tools import foundry_state
 
@@ -1307,7 +1322,7 @@ def test_a_wrong_typed_manifest_cannot_reach_the_builder_through_a_door(
 #
 # So the fix is not five filters at five index sites — that is the escalated
 # class itself, a hardening bound by hand to the site a defect was reported at.
-# It is ONE declaration of the shape (`_MANIFEST_SHAPE`) walked by ONE
+# It is ONE declaration of the shape (`_MANIFEST_DOCUMENT_SHAPE`) walked by ONE
 # recursive validator that all four manifest readers in the module consult.
 # `test_every_manifest_key_the_module_indexes_is_declared` is what holds that
 # property: it derives the indexed key paths from the module's own AST, so a
@@ -1758,13 +1773,13 @@ def _manifest_paths_in(source: str) -> set[str]:
 
 
 def _shape_covers(path: str) -> bool:
-    """True when ``_MANIFEST_SHAPE`` declares ``path`` or explicitly frees it.
+    """True when ``_MANIFEST_DOCUMENT_SHAPE`` declares ``path`` or explicitly frees it.
 
     "Explicitly frees" is the ``None`` element shape: reaching one means the
     table has STATED that the reader below it is on its own, which is a
     decision someone made rather than a rung nobody thought about.
     """
-    shape: object = fs._MANIFEST_SHAPE
+    shape: object = _artifacts._MANIFEST_DOCUMENT_SHAPE
     for token in re.findall(r"\[\]|[^.\[\]]+", path):
         if shape is None:
             return True
@@ -1786,7 +1801,7 @@ def test_every_manifest_key_the_module_indexes_is_declared() -> None:
     than by a typed path. The boundary is the module and not the package —
     unlike D-066, where stopping at ``tools/`` excluded the file most on the
     request path for no reason that survived being written down, the boundary
-    here is the write surface of the packet that owns ``_MANIFEST_SHAPE``.
+    here is the write surface of the packet that owns ``_MANIFEST_DOCUMENT_SHAPE``.
     Four more modules index this same document with their own top-rung-only
     guards (``orchestration/gates.py``, ``foundry_validate.py``,
     ``intent_coverage.py``, ``scripts/validate_intent_coverage.py``); widening
@@ -1807,11 +1822,11 @@ def test_every_manifest_key_the_module_indexes_is_declared() -> None:
     undeclared = sorted(p for p in paths if not _shape_covers(p))
     assert not undeclared, (
         f"{undeclared} are manifest key paths foundry_spawn.py indexes but "
-        f"_MANIFEST_SHAPE does not declare. Every such path is a rung the "
+        f"_MANIFEST_DOCUMENT_SHAPE does not declare. Every such path is a rung the "
         f"shared validator does not check and every reader therefore indexes "
         f"unguarded — which is D-115 (container guarded, records not) and "
         f"D-132 (records guarded, their members not) repeating one level "
-        f"further down. Declare the rung in _MANIFEST_SHAPE, or declare it "
+        f"further down. Declare the rung in _MANIFEST_DOCUMENT_SHAPE, or declare it "
         f"None to state on the record that the reader guards itself. Do not "
         f"delete the path from this assertion."
     )
@@ -1856,11 +1871,11 @@ def test_the_shape_table_states_the_two_keys_the_readers_address_records_by() ->
     named refusal about the WRONG THING. It sends the lead to look for a
     missing casting in a manifest whose castings are all corrupt.
     """
-    castings_entry = fs._MANIFEST_SHAPE["castings"][0]
-    waves_entry = fs._MANIFEST_SHAPE["waves"][0]
+    castings_entry = _artifacts._MANIFEST_DOCUMENT_SHAPE["castings"][0]
+    waves_entry = _artifacts._MANIFEST_DOCUMENT_SHAPE["waves"][0]
 
-    assert castings_entry["id"] is fs._REQUIRED
-    assert waves_entry["wave"] is fs._REQUIRED
+    assert castings_entry["id"] is _artifacts._REQUIRED_RUNG
+    assert waves_entry["wave"] is _artifacts._REQUIRED_RUNG
 
 
 # --------------------------------------------------------------------------- #
@@ -2830,7 +2845,7 @@ def defines_a_reader_inside_a_try(p):
 # call the guard -- at the top rung, and then indexed the records below it.
 # Presence of a declaration was never the property; COVERAGE of the rung a
 # reader indexes is. `_check_sight_required` indexes `castings[].key_files`,
-# which _MANIFEST_SHAPE declares perfectly well, and still raises, because that
+# which _MANIFEST_DOCUMENT_SHAPE declares perfectly well, and still raises, because that
 # function never asks the validator anything.
 #
 # So the rule below is: a reader that reaches INSIDE a manifest record must
@@ -2838,7 +2853,7 @@ def defines_a_reader_inside_a_try(p):
 #
 #   which files    rglob over the installed package AND plugins/foundry/scripts,
 #                  both located from the package's own __file__.
-#   which rungs    walked out of _MANIFEST_SHAPE, so a rung added to the table
+#   which rungs    walked out of _MANIFEST_DOCUMENT_SHAPE, so a rung added to the table
 #                  is policed the day it is declared and a rung the table
 #                  explicitly frees (element shape None) is not policed at all.
 #   which readers  taint from the "manifest.json" literal, propagated ACROSS
@@ -2861,7 +2876,7 @@ def defines_a_reader_inside_a_try(p):
 
 
 def _record_rungs(shape: object = None, path: str = "") -> set[str]:
-    """Every ``_MANIFEST_SHAPE`` path whose ELEMENTS a reader indexes as records.
+    """Every ``_MANIFEST_DOCUMENT_SHAPE`` path whose ELEMENTS a reader indexes as records.
 
     Walked out of the shape table rather than listed beside it, so the rungs
     this rule polices are exactly the rungs the validator checks. Today that is
@@ -2872,7 +2887,7 @@ def _record_rungs(shape: object = None, path: str = "") -> set[str]:
     rule rather than by an exception written for it.
     """
     if shape is None and not path:
-        shape = fs._MANIFEST_SHAPE
+        shape = _artifacts._MANIFEST_DOCUMENT_SHAPE
     rungs: set[str] = set()
     if isinstance(shape, list) and shape:
         element = shape[0]
@@ -3526,12 +3541,12 @@ def test_the_record_rungs_come_out_of_the_shape_table() -> None:
     shape is ``None``: the table's explicit statement that the reader below is
     on its own. They are therefore NOT rungs, and ``stream_skips`` is excluded
     by that same rule rather than by an exception written for it. Add a list of
-    objects to ``_MANIFEST_SHAPE`` and this rule polices it the same day.
+    objects to ``_MANIFEST_DOCUMENT_SHAPE`` and this rule polices it the same day.
     """
     assert _record_rungs() == {"castings[]", "waves[]"}
 
-    grown = dict(fs._MANIFEST_SHAPE)
-    grown["teams"] = [{"lead": fs._REQUIRED}]
+    grown = dict(_artifacts._MANIFEST_DOCUMENT_SHAPE)
+    grown["teams"] = [{"lead": _artifacts._REQUIRED_RUNG}]
     assert _record_rungs(grown) == {"castings[]", "waves[]", "teams[]"}
 
     freed = {"castings": [None]}
@@ -4883,7 +4898,7 @@ def test_render_manifest_reader_derivation() -> None:
                 *(f"  {r.relative_to(REPO_ROOT)}" for r in roots),
                 f"  {len(modules)} modules",
                 "",
-                "AXIS 2 — WHICH RUNGS (walked out of _MANIFEST_SHAPE, not typed):",
+                "AXIS 2 — WHICH RUNGS (walked out of _MANIFEST_DOCUMENT_SHAPE, not typed):",
                 f"  {sorted(_record_rungs())}",
                 "  castings[].key_files and waves[].casting_ids are lists of",
                 "  NON-records (element shape None), so they are correctly not rungs",
