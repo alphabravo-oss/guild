@@ -679,37 +679,50 @@ _INSTALLED_DEPENDENCY_DIRS = frozenset({
 # do not have. That is worse than no comment, and no pin that reads only code
 # can see it.
 #
-# THE SUBJECT SET IS THIS CASTING'S EIGHT KEY FILES, NOT THE PLUGIN, AND THAT
-# WAS MEASURED BEFORE IT WAS CHOSEN. D-199's lesson is that scoping a pin to one
-# module is how the class returns elsewhere, so the wider set was tried first:
-# nine unresolved cites across six names sit in files other castings own
-# (foundry_state.py, evidence.py, migrate-archive.py, conftest.py, foundry.py,
-# foundry_validate.py), two of them markdown emphasis rather than symbols. A
+# fallout D-062 / AC-014 — AND THE SUBJECT SET IS THE PLUGIN NOW, NOT ONE
+# CASTING'S KEY FILES.
+#
+# WHAT STOOD HERE, AND WHY IT WAS RIGHT UNTIL IT WAS NOT. The set was this
+# casting's key files, hand-listed, with the reason recorded beside it: "a
 # registry over prose this casting may not edit goes red on its owner's next
 # honest comment, and that owner cannot clear it without editing this file.
 # Recorded in concerns.md: widen the subject set the day the registry can be
-# owned by whoever writes the prose.
+# owned by whoever writes the prose."
+#
+# That day is this one, and the widening was measured before it was taken. The
+# same helpers driven over the whole shipped package found ELEVEN unresolved
+# cites in the 43 modules the server ships — eight removal narratives or regex
+# artefacts, and three PRESENT-TENSE assertions about symbols with zero
+# definitions anywhere in the plugin, every one of them outside the eight-file
+# window, which is why the suite was green over them. That is D-036's shape one
+# guard over: a scan window narrower than the rule it states.
+#
+# The window is now every Python file the plugin ships, which is also the
+# universe the definitions are harvested from, so the two halves of the question
+# are asked over one tree rather than over two. The three castings whose files
+# the widening reached cleaned them in the same cycle (concerns C-045, C-047,
+# C-048), and a cite that survives in a file this casting may not edit goes into
+# the registry below with the owner named — not silently, and not by editing
+# their prose.
 # --------------------------------------------------------------------------- #
 
-#: This casting's key_files — the prose the pin below judges. Hand-listed
-#: because ownership is a fact about the RUN and not about the tree: nothing
-#: under plugins/foundry/ records which casting may edit which file, and a pin
-#: that guessed would either accuse prose this casting cannot fix or silently
-#: stop judging a file it can.
-#: fallout FR-004 / AC-013 — the two directories replace the two files. The
-#: monolith and its test module are GONE; what this casting owns is the package
-#: they became, and the pin below judges every module in it.
-_CASTING_KEY_FILES = tuple(
-    f"mcp-server/src/foundry_mcp/tools/orchestration/{p.name}"
-    for p in sorted(Path(artifacts.__file__).parent.joinpath("orchestration").glob("*.py"))
-) + tuple(
-    f"mcp-server/tests/orchestration/{p.name}"
-    for p in sorted(Path(__file__).parent.glob("*.py"))
-) + (
-    "mcp-server/src/foundry_mcp/server.py",
-    "mcp-server/src/foundry_mcp/tools/foundry_spawn.py",
-    "mcp-server/tests/test_spec_id_convention.py",
-)
+def shipped_python_files() -> list[Path]:
+    """Every `.py` file the plugin ships, sorted, vendored code excluded.
+
+    fallout D-062 / AC-014 — ONE UNIVERSE FOR BOTH HALVES OF THE PROSE PIN.
+
+    The cite side asks "does this backticked private name resolve" and the
+    definition side answers "is it bound anywhere in the Python we ship". Asking
+    those two questions over two different file sets is how the guard came to
+    judge eight files while stating a rule about the package: the answer half
+    was already tree-wide and only the question half was scoped.
+    """
+    root = Path(artifacts.__file__).resolve().parents[4]
+    assert root.name == "foundry", root
+    return [
+        path for path in sorted(root.rglob("*.py"))
+        if _INSTALLED_DEPENDENCY_DIRS.isdisjoint(path.parts)
+    ]
 
 
 
@@ -769,6 +782,18 @@ _PROSE_CITES_WITH_NO_DEFINITION: dict[str, str] = {
         "caller-side wrapper folded back into the cycle reader it wrapped "
         "(D-119); that reader has since moved into the leaf as "
         "`foundry_state.current_cycle`."
+    ),
+    "_overlay_unreported": (
+        "the unreported-dispatch overlay, consolidated into the leaf as "
+        "`foundry_state.overlay_unreported` by the FR-008 / GI-024 pass "
+        "(casting 10). Every surviving cite is past-tense narration of what "
+        "the old one DID — D-162's two axes, D-229's setdefault — which the "
+        "house style requires and this pin therefore has to permit. It is also "
+        "the name that proved the harvester's string-constant tolerance was "
+        "feeding itself: `tests/test_report.py` asserts `\"import "
+        "_overlay_unreported\" not in source`, a literal that parses as an "
+        "Import node, so the guard resolved the symbol off the very assertion "
+        "proving it is gone (casting 10's concern C-049)."
     ),
     "_trace_skip_check": (
         "the last-clean-TRACE skip predicate, DELETED for having no caller "

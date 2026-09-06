@@ -1624,9 +1624,13 @@ def test_the_rename_rule_resolves_the_move_primitive_rather_than_matching_it(tmp
 def test_the_ledger_rule_resolves_the_primitive_rather_than_matching_it(tmp_path):
     """...and the third axis, on a module that really imports the primitive.
 
-    `_tx` is `ledger_transaction`, so the binding is a member; the bare-name
-    fallback stays for a module this resolver cannot import, which is what the
-    synthetic `c.py` plant exercises.
+    The plant aliases `ledger_transaction` on import, so the binding the
+    resolver sees is a member; the bare-name fallback stays for a module this
+    resolver cannot import, which is what the synthetic `c.py` plant exercises.
+    (Named by what it aliases rather than by the alias: an import inside a
+    planted string is not a binding the tree ships, so the prose pin in
+    `test_module_boundaries.py` cannot resolve the local spelling — fallout
+    D-062, casting 10's concern C-049.)
     """
     aliased = _plant(tmp_path, "o.py", _PLANTED_ALIASED_LEDGER_SCAN)
     seen, offenders = _raw_ledger_iterations(aliased)

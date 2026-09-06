@@ -163,7 +163,6 @@ from tests.orchestration._env import (  # noqa: F401
     _BAD_CONTAINERS,
     _BAD_UTF8_DOCUMENT,
     _BAD_UTF8_SPEC,
-    _CASTING_KEY_FILES,
     _DECODE_RAISES,
     _DOCUMENT_LOADERS,
     _DOCUMENT_LOAD_RAISES,
@@ -188,6 +187,7 @@ from tests.orchestration._env import (  # noqa: F401
     _RENAME_PRIMITIVES,
     _populate_sweep_worktree,
     _widened_id_families,
+    shipped_python_files,
 )
 
 
@@ -2135,15 +2135,32 @@ def _private_names_defined_anywhere(plugin_root: Path) -> set[str]:
     """Every private name BOUND by any Python the plugin ships.
 
     Permissive on purpose, and name-keyed like the reachability pin above: defs,
-    classes, assignments, arguments and imports all count, at any nesting depth,
-    in any file. Also the bindings inside a string constant that parses as
-    Python, because this module PLANTS synthetic modules that way and a comment
-    about `_tx` is a comment about a real binding.
+    classes, assignments, arguments and module-level imports all count, at any
+    nesting depth, in any file. Also the DEFINITIONS inside a string constant
+    that parses as Python, because this module PLANTS synthetic modules that way
+    and a comment about a name bound in one is a comment about a real binding.
 
     Permissive can only make the pin miss a stale cite; it can never accuse a
     live one. Resolving imports per file instead would make a comment about a
     sibling module's helper a failure, and cross-module comments are most of
-    what the house style writes.
+    what the house style writes — `escalation.py` aliases `vocab.escalation_
+    status` deliberately, says so out loud, and `tests/test_escalation.py` pins
+    the alias by name, so an alias is a legitimate subject of prose in a module
+    that is not the one making it.
+
+    fallout D-062 (casting 10's concern C-049) — WITH ONE TOLERANCE REMOVED: AN
+    IMPORT INSIDE A STRING CONSTANT IS NOT A BINDING.
+
+    Driven: `_overlay_unreported` had no definition anywhere in the plugin and
+    resolved here anyway, because `tests/test_report.py` asserts
+    ``"import _overlay_unreported" not in source`` — a string literal that
+    parses as an Import node, so the harvest took the name from the very
+    assertion proving the symbol is gone. That is not permissiveness missing a
+    stale cite; it is the guard being fed its answer by the test that removed
+    the thing. A planted module's `def` and its assignments are still harvested,
+    because those really are bindings the plant creates; only the import
+    statements inside one stop counting, and the depth check is the whole of the
+    difference.
     """
     names: set[str] = set()
 
@@ -2155,7 +2172,7 @@ def _private_names_defined_anywhere(plugin_root: Path) -> set[str]:
                 names.add(node.id)
             elif isinstance(node, ast.arg):
                 names.add(node.arg)
-            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            elif isinstance(node, (ast.Import, ast.ImportFrom)) and depth == 0:
                 for alias in node.names:
                     names.add((alias.asname or alias.name).split(".")[0])
             elif (
@@ -2169,11 +2186,8 @@ def _private_names_defined_anywhere(plugin_root: Path) -> set[str]:
                 except (SyntaxError, ValueError, RecursionError):
                     pass
 
-    for path in sorted(plugin_root.rglob("*.py")):
-        # The plugin's own source, not what a virtualenv dropped under it —
-        # the same exclusion, for the same reason, as the pin two sections up.
-        if not _INSTALLED_DEPENDENCY_DIRS.isdisjoint(path.parts):
-            continue
+    for path in shipped_python_files():
+        assert plugin_root in path.parents, (plugin_root, path)
         try:
             harvest(ast.parse(path.read_text(encoding="utf-8")), 0)
         except (OSError, UnicodeDecodeError, SyntaxError):
@@ -2223,34 +2237,52 @@ def _private_names_cited_in_prose(path: Path) -> list[tuple[int, str]]:
 
 
 
-def test_every_private_name_this_castings_prose_cites_has_a_definition():
+def test_every_private_name_the_plugins_prose_cites_has_a_definition():
     """D-217. The mirror of the two pins above, over the prose they exclude.
 
-    Every backtick-quoted private name in a comment or docstring of this
-    casting's eight key_files resolves to a definition somewhere in the Python
-    the plugin ships — or is recorded in `_PROSE_CITES_WITH_NO_DEFINITION` as a
-    name the tree deliberately removed, with the removal named.
+    Every backtick-quoted private name in a comment or docstring of ANY Python
+    file the plugin ships resolves to a definition somewhere in that same
+    Python — or is recorded in `_PROSE_CITES_WITH_NO_DEFINITION` as a name the
+    tree deliberately removed, with the removal named.
 
     A cite that resolves to nothing is a comment asserting a fact about code
-    that is not there. The class it belongs to is
-    `comment-cites-a-symbol-that-does-not-exist`, and it had four instances in
-    these eight files at once.
+    that is not there.
+
+    fallout D-062 / AC-014 — THE WINDOW IS THE PACKAGE, AND IT USED TO BE EIGHT
+    FILES.
+
+    This iterated one casting's key files while stating a rule about "the Python
+    the plugin ships", and the gap was not theoretical: the same helpers driven
+    over the 43 shipped modules found ELEVEN unresolved cites, three of them
+    PRESENT-TENSE assertions about symbols with zero definitions anywhere. All
+    three sat outside the eight-file window, which is exactly why the suite was
+    green over them. D-036 is the same shape one guard over — a scan window
+    narrower than the rule it states — and the answer is the same: measure what
+    the sentence claims.
+
+    Both sides now read `shipped_python_files()`, so the question and the answer
+    are asked over one tree. The floors are what keep a derivation that silently
+    found nothing from passing forever, and they are stated against that tree
+    rather than against a subset of it.
     """
     plugin_root = Path(artifacts.__file__).resolve().parents[4]  # .../plugins/foundry
     assert plugin_root.name == "foundry", plugin_root
 
     defined = _private_names_defined_anywhere(plugin_root)
-    # A derivation that silently found nothing would pass forever, so both
-    # halves carry a floor: the universe cites resolve AGAINST, and the cites.
-    assert len(defined) >= 500, len(defined)
+    # A derivation that silently found nothing would pass forever, so all three
+    # halves carry a floor: the universe cites resolve AGAINST, the files
+    # scanned, and the cites themselves.
+    assert len(defined) >= 1200, len(defined)
+
+    files = shipped_python_files()
+    assert len(files) >= 90, len(files)
 
     cited: dict[str, list[str]] = {}
-    for rel in _CASTING_KEY_FILES:
-        path = plugin_root / rel
-        assert path.exists(), f"key_file missing from the tree: {rel}"
+    for path in files:
+        rel = path.relative_to(plugin_root)
         for lineno, name in _private_names_cited_in_prose(path):
             cited.setdefault(name, []).append(f"{rel}:{lineno}")
-    assert len(cited) >= 100, sorted(cited)
+    assert len(cited) >= 400, len(cited)
 
     unresolved = sorted(
         f"{name} ({', '.join(sites)})"
