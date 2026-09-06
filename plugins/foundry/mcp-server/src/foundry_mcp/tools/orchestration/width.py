@@ -77,12 +77,12 @@ def git_changed_paths(
     line to keep intact, so git emits the bytes and nothing needs decoding —
     which is why this returns paths no caller has to remember to unquote.
 
-    ONE HELPER, NOT ONE PER CALL SITE. `_grind_diff` and `_trace_skip_check`
-    both ran their own copy of this invocation and `foundry_spawn`'s
-    cycle-context diff runs a third. A rule fixed in one copy is this run's
-    repeated failure shape, so the invocation is written once here and imported
-    by the others. Public deliberately: `foundry_spawn` is a sibling casting's
-    module and it imports this name.
+    ONE HELPER, NOT ONE PER CALL SITE. `_grind_diff` ran its own copy of this
+    invocation, the retired trace-skip predicate below ran a second, and
+    `foundry_spawn`'s cycle-context diff runs a third. A rule fixed in one copy
+    is this run's repeated failure shape, so the invocation is written once here
+    and imported by the others. Public deliberately: `foundry_spawn` is a
+    sibling casting's module and it imports this name.
     """
     import subprocess
 
@@ -171,94 +171,43 @@ def git_touching_commit(
 
 
 
-def _trace_skip_check(fdir: Path, project_root: str) -> dict:
-    """Decide whether the current F2 INSPECT can skip the TRACE stream.
-
-    NO DOOR REACHES THIS TODAY, AND NO DOOR REACHED IT BEFORE THIS CYCLE EITHER
-    (concern C-040's second finding). Recorded rather than removed, because
-    "unreferenced" and "retired" are different claims and only the first is
-    measured.
-      * Its sole caller was the display-time TRACE fence that ruling item 5
-        replaced with `_trace_skip_from_width` above.
-      * That fence reached here only when the recorded width's mode was neither
-        FULL nor DELTA AND `_unrecorded_width_problem` returned None. DRIVEN:
-        `foundry_state.current_inspect_mode` validates the mode against
-        `vocab.INSPECT_MODES`, so an out-of-vocabulary entry reads as None; and
-        a None read in F2 is exactly what makes `_unrecorded_width_problem`
-        refuse first. The arm had no reachable input.
-      * So D-071's last-clean-TRACE rule below — the `.trace-clean-at` marker
-        crossed against the manifest's own files — was already unreachable at
-        the tree this cycle inherited. Deleting it here would be retiring a rule
-        nobody ruled on, inside a defect fix that is about layering; it stays,
-        it stays tested, and whether the width should USE it again is a decision
-        for someone holding the width's requirements rather than this one.
-
-    Rationale: TRACE is LSP-heavy (EXISTS / SUBSTANTIVE / WIRED / PLACED
-    across every manifest symbol). A cycle of TRACE routinely runs 100+
-    Serena IPC calls over several minutes. Topology is a pure function of
-    the code on disk — if no file owning a manifest symbol has changed
-    since the last clean TRACE, the verdicts are provably identical.
-
-    Returns {skip: bool, reason: str, details?: {...}}.
-    """
-    marker = fdir / TRACE_CLEAN_AT_MARKER
-    if not marker.exists():
-        return {"skip": False, "reason": "no prior clean TRACE to compare against"}
-    marker_data, marker_problem = read_document(marker)
-    if marker_problem is not None:
-        return {"skip": False, "reason": "unreadable .trace-clean-at marker"}
-    clean_sha = marker_data.get("head_sha", "")
-    if not clean_sha:
-        return {"skip": False, "reason": "no head_sha recorded"}
-
-    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
-
-    manifest = _load_json(fdir / "castings" / "manifest.json")
-    # D-134: same shared validator as every other reader of this document, so
-    # "unusable" means one thing across the package.
-    if _manifest_shape_problem(manifest) is not None:
-        return {"skip": False, "reason": "castings/manifest.json records are unreadable"}
-    key_files: set[str] = set()
-    for c in manifest.get("castings", []):
-        for f in (c.get("key_files") or []):
-            if isinstance(f, str) and f.strip():
-                key_files.add(f.strip())
-    if not key_files:
-        return {"skip": False, "reason": "no key_files declared in manifest — cannot scope diff"}
-
-    # D-239: through the ONE invocation, so this skip decision and the width
-    # decision cannot disagree about whether a non-ASCII key_file was touched.
-    # This ran its own copy with neither `-z` nor `core.quotepath=false`, so a
-    # touched declared file whose name is not ASCII arrived escaped, missed the
-    # `key_files` set it is compared whole against, and read as untouched —
-    # which is a SKIP of the stream that would have caught the change.
-    diff = git_changed_paths(project_root, clean_sha, "HEAD", timeout=10)
-    if not diff["ok"]:
-        return {"skip": False, "reason": diff["error"]}
-
-    changed_files = set(diff["files"])
-    overlap = changed_files & key_files
-    if overlap:
-        return {
-            "skip": False,
-            "reason": f"{len(overlap)} manifest key_file(s) changed since {clean_sha[:8]}",
-            "details": {"changed_keyfiles": sorted(overlap)[:10]},
-        }
-    return {
-        "skip": True,
-        "reason": f"no manifest key_files changed since clean TRACE at {clean_sha[:8]}",
-        "details": {
-            "clean_sha": clean_sha,
-            "total_changed": len(changed_files),
-            "manifest_key_files": len(key_files),
-        },
-    }
-
-
-
-
-
-
+# fallout D-057 (LEAD RULING, GRIND cycle 3) — `_trace_skip_check` IS GONE, AND
+# THIS RECORDS WHY DELETING IT WAS THE ANSWER RATHER THAN WIRING IT BACK.
+#
+# It decided whether an F2 INSPECT could skip the TRACE stream by crossing the
+# `.trace-clean-at` marker's `head_sha` against the manifest's own `key_files`:
+# no declared file changed since the last clean TRACE, so the topology TRACE
+# walks is provably unchanged and its verdicts are provably identical. A real
+# rule, and it had no caller. Its only historical call path was the display-time
+# TRACE fence, which the GI-033 leaf-moves ruling replaced with
+# `_trace_skip_from_width`, and that fence reached it only when the recorded
+# width's mode was neither FULL nor DELTA while `_unrecorded_width_problem`
+# returned None — an input `foundry_state.current_inspect_mode`'s vocabulary
+# validation makes unreachable, since an out-of-vocabulary entry reads as None
+# and a None read in F2 is what makes that refusal fire first.
+#
+# Concern C-040 ruled "neither delete nor wire back", and that ruling was scoped
+# to a layering fix: retiring a rule inside a defect fix about module boundaries
+# would have been a decision taken by whoever happened to be moving the file.
+# The ruling that supersedes it puts the decision where the requirements are,
+# and the requirements are silent: no GI, FR, AC, OT or CT of this run names a
+# last-clean-TRACE skip, and `forge-specs/foundry-run-fallout/spec.md` contains
+# no occurrence of the rule at all. The survey's only mention is a section-map
+# inventory row saying the function exists.
+#
+# WIRING IT BACK WOULD HAVE COST MORE THAN IT PAID. `_trace_skip_from_width` is
+# PURE by construction — it takes the width decision's own values rather than
+# re-reading them, "so this cannot disagree with the entry it is recorded into"
+# — and a marker-and-git arm inside it would end that property and put a second,
+# differently-reasoned answer to one question in one function. D-117 is what the
+# marker-based answer already cost once: a resumed archive auto-stamped
+# `.trace-complete` and TRACE never ran.
+#
+# `TRACE_CLEAN_AT_MARKER` STAYS. `streams.py` writes it when a TRACE cycle comes
+# back clean and `_boundary_base_sha` below reads it as the second rung of the
+# "since when" ladder, so the marker has readers and only this consumer of it is
+# gone.
+# --------------------------------------------------------------------------- #
 
 
 # --------------------------------------------------------------------------- #
@@ -315,7 +264,8 @@ def _boundary_base_sha(fdir: Path) -> tuple[str, str]:
 
       1. the previous INSPECT boundary — the exact answer to "since the last
          sweep" (CT-007);
-      2. the last clean TRACE, which `_trace_skip_check` already keeps;
+      2. the last clean TRACE, whose marker `streams.py` writes when a TRACE
+         cycle comes back clean;
       3. the CAST baseline, written when the run left F1.
 
     Returns ``("", "")`` when none exists, which is a run whose first INSPECT
@@ -1970,10 +1920,11 @@ def _unrecorded_width_problem(fdir: Path) -> dict | None:
       `foundry_gate('assay')` tested `mode != "DELTA"`, which "unrecorded"
       passes; `inspect_clean`'s DELTA refusal tested `== "DELTA"`, which
       "unrecorded" also passes; and the display-time TRACE fence handled FULL
-      and DELTA explicitly then fell through to the legacy
-      `_trace_skip_check` and auto-stamped `.trace-complete`. That fence is
-      gone: `_trace_skip_from_width` decides at the transition and there is no
-      third answer for an unrecorded width to fall into.
+      and DELTA explicitly then fell through to a legacy last-clean-TRACE
+      predicate and auto-stamped `.trace-complete`. That fence is gone, and so
+      is the predicate (fallout D-057): `_trace_skip_from_width` decides at the
+      transition and there is no third answer for an unrecorded width to fall
+      into.
 
     Driven end to end through the shipped `Foundry-Init(resume=...)`, which
     reactivates any archive with whatever `state.json` it holds, on a

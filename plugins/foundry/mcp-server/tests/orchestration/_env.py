@@ -770,6 +770,15 @@ _PROSE_CITES_WITH_NO_DEFINITION: dict[str, str] = {
         "(D-119); that reader has since moved into the leaf as "
         "`foundry_state.current_cycle`."
     ),
+    "_trace_skip_check": (
+        "the last-clean-TRACE skip predicate, DELETED for having no caller "
+        "after the GI-033 leaf-moves ruling replaced the display-time TRACE "
+        "fence with `_trace_skip_from_width` (fallout D-057). No requirement of "
+        "this run names the rule, so retiring it was the lead's ruling rather "
+        "than a silent drop; the block that cites it is that ruling written "
+        "down, and `TRACE_CLEAN_AT_MARKER` outlives it because "
+        "`_boundary_base_sha` still reads it."
+    ),
     "_parse_iso8601": (
         "superseded helper deleted; named here only as a prior instance of the "
         "escalated class this file's pins closed (D-203)."
@@ -1238,7 +1247,7 @@ _RUN_MARKER_POSITIONS = (
     ".cast-complete",          # _done_preconditions and _compute_next_action
     ".cast-baseline-sha",      # the "since when" ladder's CAST rung
     ".inspect-boundary-sha",   # the same ladder's INSPECT-boundary rung
-    ".trace-clean-at",         # _trace_skip_check's clean-TRACE rung
+    ".trace-clean-at",         # _boundary_base_sha's clean-TRACE rung
     ".inspect-clean",          # the gate's INSPECT-clean precondition
     ".tasks-generated",        # the gate's tasks-generated precondition
     ".research-skipped",       # the FULL-roster research exemption

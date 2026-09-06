@@ -2028,11 +2028,13 @@ def _build_grind_cycle_context(fdir, casting_id, project_root: str) -> str:
     # The lane measures a commit in the TARGET repo, which owes this repo no
     # filename charset.
     #
-    # IMPORTED RATHER THAN RE-SPELLED. `_grind_diff` and `_trace_skip_check`
-    # each ran a copy of this invocation and this was the third; a rule fixed
-    # in one copy is this run's repeated failure shape, and PROVE filed the
-    # sibling site under this same defect id. `git_changed_paths` is public
-    # for exactly this import.
+    # IMPORTED RATHER THAN RE-SPELLED. `_grind_diff` and the trace-skip
+    # predicate beside it each ran a copy of this invocation and this was the
+    # third; a rule fixed in one copy is this run's repeated failure shape, and
+    # PROVE filed the sibling site under this same defect id. (The predicate has
+    # since been deleted for having no caller — fallout D-057 — which is one
+    # fewer copy rather than a change to this one.) `git_changed_paths` is
+    # public for exactly this import.
     #
     # `ok` False is an UNKNOWN diff, which is not an empty one — but both
     # degrade HERE to the same "no scoped context" an absent baseline gives,

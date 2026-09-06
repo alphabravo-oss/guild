@@ -188,10 +188,6 @@ from foundry_mcp.tools.orchestration.transitions import (  # noqa: F401
     foundry_mark_phase_complete,
 )
 
-from foundry_mcp.tools.orchestration.width import (  # noqa: F401
-    _trace_skip_check,
-)
-
 from tests.orchestration._env import (  # noqa: F401
     _BAD_UTF8_SPEC,
     _OLD_ID_FAMILIES,
@@ -524,9 +520,12 @@ def test_no_manifest_reader_in_this_module_raises_on_unusable_records(run_env, b
     D-132's validator was bound inside foundry_spawn.py: its four readers were
     guarded and its membership was derived over that module's own functions,
     not over every reader of castings/manifest.json in the package. So
-    `_check_sight_required`, `_trace_skip_check` and `foundry_gate` indexed the
-    same records behind a top-rung-only guard, and `castings: "nope"` met
-    `.get()` and raised AttributeError.
+    `_check_sight_required`, `foundry_gate` and the trace-skip predicate that
+    stood beside them indexed the same records behind a top-rung-only guard, and
+    `castings: "nope"` met `.get()` and raised AttributeError. (That predicate
+    was deleted for having no caller — fallout D-057 — so two of the three
+    readers are driven here; the rule is about every reader in the package, not
+    about a fixed count.)
 
     Foundry-Next is the mandatory handshake before EVERY phase transition, so
     this was reachable on the most-travelled door in the tool surface.
@@ -538,7 +537,6 @@ def test_no_manifest_reader_in_this_module_raises_on_unusable_records(run_env, b
 
     # Each reader answers rather than raising...
     assert _check_sight_required(project_root).get("required") is False
-    assert _trace_skip_check(fdir, project_root)["skip"] is False
     for phase in ("validate", "cast"):
         assert foundry_gate(phase, project_root)["passed"] is False
 
