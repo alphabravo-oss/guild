@@ -1976,7 +1976,7 @@ def test_halted_state_answers_a_hand_built_expected_record(run_env) -> None:
 def test_persisted_max_cycles_reads_a_cap_or_says_there_is_none(
     persisted, expected
 ) -> None:
-    """CT-016 / D-225 — one read of the cap, in the door's terms.
+    """convergence CT-016 — one read of the cap, in the door's terms (D-225).
 
     Zero means unbounded, and anything that is not a usable cap reads as zero
     because this is consulted inside a transition whose only other answer is
@@ -2045,7 +2045,7 @@ def _concern(**fields) -> dict:
 def test_open_cross_casting_concerns_names_only_the_ones_landing_elsewhere(
     run_env,
 ) -> None:
-    """GI-023 / ST-005 — the list the INSPECT door refuses on.
+    """fallout GI-023 / ST-005 — the list the INSPECT door refuses on.
 
     Four records, one qualifying: a concern a casting filed against ITSELF
     lands on nobody else, and one whose target resolved to no casting lands on
@@ -2063,9 +2063,10 @@ def test_open_cross_casting_concerns_names_only_the_ones_landing_elsewhere(
 
 
 def test_a_dispatched_concern_is_addressed_and_leaves_the_list(run_env) -> None:
-    """FR-039 — `dispatched` is the mark Foundry-Tasks leaves when the concern
-    reached the casting that owns it, so it is addressed by definition. Only
-    `open` qualifies; nothing else is treated as open by omission.
+    """fallout FR-039 — `dispatched` is the mark Foundry-Tasks leaves when the
+    concern reached the casting that owns it, so it is addressed by
+    definition. Only `open` qualifies; nothing else is treated as open by
+    omission.
     """
     _write_json(run_env, "concerns.json", {"concerns": [
         _concern(id="C-1", status="dispatched"),
@@ -2453,7 +2454,7 @@ def _complete(run_env, **overrides):
 def test_the_streams_check_reads_the_recorded_roster_and_reports_the_width(
     run_env,
 ) -> None:
-    """GI-008 / AC-017 — the roster is READ, never recomputed.
+    """convergence GI-008 / AC-017 — the roster is READ, never recomputed.
 
     The transition that opened this INSPECT decided which streams it requires
     and recorded them; re-deriving here would let the check disagree with the
@@ -2483,10 +2484,11 @@ def test_the_streams_check_reads_the_recorded_roster_and_reports_the_width(
 def test_a_stream_that_recorded_but_fell_short_is_missing_and_detailed(
     run_env,
 ) -> None:
-    """CT-003 — the thresholds are evaluated HERE, once per cycle, at the one
-    point where every tranche of a partially-delivered stream is in hand. The
-    stream is reported in `missing` so existing callers keep blocking on it,
-    and detailed in `shortfalls` so the lead learns which number was short."""
+    """process-fixes CT-003 — the thresholds are evaluated HERE, once per cycle,
+    at the one point where every tranche of a partially-delivered stream is
+    in hand. The stream is reported in `missing` so existing callers keep
+    blocking on it, and detailed in `shortfalls` so the lead learns which
+    number was short."""
     _write_json(run_env, "state.json", {"phase": "F2", "cycle": 1, "inspect_modes": [
         _decision(cycle=1, required_streams=["trace"]),
     ]})
