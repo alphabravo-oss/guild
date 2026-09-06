@@ -5786,6 +5786,171 @@ def test_no_verifier_module_reaches_a_lifecycle_module_lazily_either():
     )
 
 
+def _layered_modules() -> dict[str, Path]:
+    """Every module GI-033 assigns a layer to, by basename.
+
+    `tools/*.py` and `tools/orchestration/*.py`. The invariant's three layers
+    are stated over this package — leaf, verifier, lifecycle/presentation — and
+    `foundry_mcp/server.py` is deliberately NOT in it: the registrar binds every
+    door in `_DISPATCH` and reaching a gate is its whole job, so judging it as a
+    lifecycle module would make the transport layer the rule's first offender.
+    `parsers/` is not in it either, and it is not unjudged:
+    `test_every_leaf_module_imports_only_leaves` asserts the stronger property
+    that a parser reaches NOTHING under `tools/` at all.
+    """
+    tools = Path(artifacts.__file__).resolve().parent
+    out: dict[str, Path] = {}
+    for path in sorted(
+        list(tools.glob("*.py")) + list((tools / "orchestration").glob("*.py"))
+    ):
+        if path.name == "__init__.py":
+            continue
+        out[path.stem] = path
+    return out
+
+
+#: fallout GI-033 / AC-061 / FR-063 / OT-015 (D-080) — THE VACUITY GUARD FOR THE
+#: LIFECYCLE DIRECTION, STATED AS MODULES RATHER THAN AS A COUNT.
+#:
+#: This suite's own rule, learned on C-062 and written down at
+#: `test_inspect_mode.py`'s width pin: "named modules rather than a count alone,
+#: because a count passes on any roster of the right size". The assertion below
+#: only judges what its scan managed to SEE, so a scan that has gone blind is
+#: indistinguishable from a clean tree unless the modules it must see are named.
+#:
+#: These are the fourteen lifecycle/presentation modules whose crossings the
+#: rule exists for: the eight in `tools/orchestration/` that are neither leaf
+#: nor verifier, plus the six under `tools/` that the survey's section map and
+#: GI-033's violation column name by hand — display, the report seal's writer,
+#: the spawn surface, the concern and roster ledgers and the largest lifecycle
+#: module in the tree. It is a FLOOR, never the roster: the set the scan judges
+#: is derived by `_layered_modules`, so a module the package gains is judged the
+#: day it lands whether or not anyone adds it here.
+_LIFECYCLE_FLOOR = frozenset({
+    "directives", "fix_gate", "guidance", "halt", "report_seal", "spend",
+    "streams", "teams",
+    "concerns", "display", "foundry", "foundry_report", "foundry_spawn",
+    "rosters",
+})
+
+
+def test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth():
+    """fallout GI-033 / AC-061 / FR-063 / OT-015 (D-080) — THE OTHER DIRECTION,
+    AND IT HAS NO SEAM.
+
+    AC-061 says the guard "refuses lifecycle-to-verifier imports ENTIRELY". The
+    two rules above stated it twice and judged it neither time: the three-layer
+    scan reads MODULE TOP only, and its any-depth companion walks the VERIFIER
+    modules and asks where they reach. Nothing walked the lifecycle layer. A
+    lifecycle module could import a gate inside a function and no assertion in
+    this file would have anything to say about it, which is how
+    `streams.py -> width._unrecorded_width_problem` — a lifecycle door reaching
+    into the width DECISION, lazily, for six cycles — sat in a tree whose
+    layering guard reported no violations.
+
+    WHY THIS DIRECTION IS ABSOLUTE WHILE THE OTHER HAS ONE EXCEPTION. The seam
+    above exists because a transition must be able to SEAL: `transitions.py`
+    dispatches the halt token down into `halt.py` and nothing comes back, and it
+    is enumerated, one-way and asserted to exist. There is no matching need in
+    this direction and there is a matching harm: a lifecycle module that can
+    call a gate is a lifecycle module that can decide a width, and the whole
+    value of narrowing `VERIFIER_PATH_PATTERNS` is that the set which forces
+    FULL width is small, stated, and cannot be reached from the presentation
+    layer. So this rule takes no exception table at all — C-054 recorded why the
+    layering-debt allowlist above was deleted rather than extended, and a table
+    added here would fail open in exactly the same way.
+
+    AT ANY DEPTH AND IN BOTH SPELLINGS, through the same `_all_imports` walk the
+    verifier-side companion uses, so the two directions cannot come to see
+    different halves of the same statement — which is the drift D-081 was filed
+    for one rule over.
+
+    THE REMEDY IS ALWAYS A LEAF. GI-033's arithmetic is that the two layers are
+    mutually unreachable, so a symbol read from BOTH can live in neither: it
+    belongs in `artifacts`, `foundry_state`, `vocab` or `schemas`, and which one
+    is a question for the casting that owns it.
+    """
+    layered = _layered_modules()
+    assert _VERIFIER_MODULES <= set(layered), sorted(_VERIFIER_MODULES - set(layered))
+
+    lifecycle = {
+        name: path
+        for name, path in layered.items()
+        if name not in _VERIFIER_MODULES and name not in _LEAF_MODULES
+    }
+    assert _LIFECYCLE_FLOOR <= set(lifecycle), {
+        "expected but not judged as lifecycle": sorted(
+            _LIFECYCLE_FLOOR - set(lifecycle)
+        ),
+        "judged": sorted(lifecycle),
+    }
+
+    offenders: list[str] = []
+    reaching: set[str] = set()
+    for name, path in sorted(lifecycle.items()):
+        imports = _all_imports(path)
+        if imports & set(layered):
+            reaching.add(name)
+        for imported in sorted(imports & _VERIFIER_MODULES):
+            offenders.append(f"{name} (lifecycle) reaches {imported} (verifier)")
+
+    # ...and the walk is SEEING the package, not returning empty sets. Named
+    # modules again: these five each reach a peer under `tools/` in the shipped
+    # tree, so a walk that reports none of them has gone blind rather than found
+    # a package with no edges in it.
+    assert {"guidance", "streams", "teams", "foundry_spawn", "display"} <= reaching, (
+        "the lifecycle-side walk sees no package edge from module(s) that have "
+        f"one — reaching={sorted(reaching)}. A scan that cannot see an import "
+        "cannot judge it, and the assertion below would pass over any tree."
+    )
+
+    assert offenders == [], (
+        f"lifecycle module(s) reaching the verifier layer: {offenders}. This "
+        "direction has NO exception — not a seam, not a table, not a lazy "
+        "import, at no depth. The symbol both layers read belongs in a leaf "
+        "(`artifacts`, `foundry_state`, `vocab` or `schemas`); moving the CALL "
+        "to a leaf is the fix, and an entry excusing the edge is the shape "
+        "C-054 deleted the layering-debt allowlist for."
+    )
+
+
+def test_a_planted_lazy_gate_reach_is_seen_by_the_lifecycle_walk(tmp_path):
+    """The anchor: the rule above recognises the crossing it is named for.
+
+    Once `streams.py` takes the predicate off the leaf the tree is clean, and a
+    scan over a clean set is green whether it works or not. So the recogniser is
+    driven over a module built to fail it — the exact shape the real edge had, a
+    lifecycle door with one LAZY reach into a verifier module buried inside a
+    function, which is where no module-top import scan looks.
+    """
+    planted = tmp_path / "pretend_door.py"
+    planted.write_text(
+        "from foundry_mcp.tools.foundry_state import current_cycle\n"
+        "def door(fdir):\n"
+        "    from foundry_mcp.tools.orchestration.gates import _blocking_defects\n"
+        "    return _blocking_defects(fdir), current_cycle(fdir)\n",
+        encoding="utf-8",
+    )
+    reached = _all_imports(planted)
+    assert "gates" in reached, sorted(reached)
+    assert reached & _VERIFIER_MODULES == {"gates"}, sorted(reached)
+    # ...and the module-top view is what would have MISSED it, which is why the
+    # three-layer rule alone could report no violations over this module.
+    assert "gates" not in _module_top_imports(planted)
+
+    # The second spelling too, since D-081 was one rule's blindness to it: the
+    # walk both directions share must see `import foundry_mcp...width` as
+    # plainly as it sees the `from` form.
+    dotted = tmp_path / "pretend_door_dotted.py"
+    dotted.write_text(
+        "def door():\n"
+        "    import foundry_mcp.tools.orchestration.width\n"
+        "    return foundry_mcp.tools.orchestration.width\n",
+        encoding="utf-8",
+    )
+    assert "width" in _all_imports(dotted), sorted(_all_imports(dotted))
+
+
 #: fallout AC-014 — SHIPPED MODULES NO TEST MODULE IMPORTS, with the reason.
 #:
 #: AC-014's assertion is over EVERY shipped module, not over the thirteen this

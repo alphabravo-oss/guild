@@ -52,7 +52,15 @@ from foundry_mcp.tools.orchestration.escalation import (
 )
 from foundry_mcp.tools.orchestration.width import (
     _sight_required,
-    _unrecorded_width_problem,
+)
+
+# fallout GI-033 / AC-061 / FR-063 (D-080) — the width refusal is the LEAF's.
+# It is read from both layers at once (this module and `transitions.py` are
+# verifier, `streams.py` is lifecycle), and GI-033 makes those two mutually
+# unreachable, so it can live nowhere else. Bound under the name this package's
+# call sites and prose already use.
+from foundry_mcp.tools.foundry_state import (
+    unrecorded_width_problem as _unrecorded_width_problem,
 )
 from foundry_mcp.tools.orchestration.evidence_boundary import (
     EVIDENCE_STRIPPED_TOKEN,
@@ -303,7 +311,12 @@ def _streams_complete(project_root: str) -> dict:
         fallback_streams=[
             s for s in FULL_ROSTER_STREAMS if s not in DELTA_CONDITIONAL_STREAMS
         ],
-        unrecorded_width_problem=_unrecorded_width_problem,
+        # The leaf takes the closed set as an argument — it may not name one —
+        # so the vocabulary is bound HERE, at the caller, exactly as the
+        # `modes=INSPECT_MODES` above it is.
+        unrecorded_width_problem=lambda d: _unrecorded_width_problem(
+            d, modes=INSPECT_MODES
+        ),
     )
 
 

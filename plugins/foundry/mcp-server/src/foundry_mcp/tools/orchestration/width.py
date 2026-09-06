@@ -14,7 +14,6 @@ from foundry_mcp.schemas.vocab import (
     DELTA_CONDITIONAL_STREAMS,
     FULL_ROSTER_STREAMS,
     INSPECT_DELTA_RULE,
-    INSPECT_MODES,
     NO_UI_MEANING,
     PROVE_DELTA_SAMPLE_SIZE,
     STREAM_WIRE_IDS,
@@ -44,8 +43,6 @@ from foundry_mcp.tools.artifacts import (
 )
 from foundry_mcp.tools.foundry_state import (
     boundary_base_sha,
-    current_cycle,
-    current_inspect_mode,
     get_run_dir,
     git_changed_paths,
     now_iso,
@@ -1636,106 +1633,23 @@ def _rollup_sub_for(entry: dict) -> str:
 
 
 
-#: The transitions GI-009 names as the ones that record a width, quoted in
-#: every refusal that finds none, so the remedy is always a call the lead can
-#: make rather than a fact about the archive.
-_WIDTH_RECORDING_TRANSITIONS = (
-    "Foundry-Phase(phase='cast') for the F2 entry, "
-    "Foundry-Phase(phase='temper') for the F5 entry, or "
-    "Foundry-Phase(phase='inspect_start') for a GRIND->INSPECT crossing"
-)
-
-
-
-
-def _inspect_mode_gap(fdir: Path, cycle: int) -> str:
-    """Why the newest `inspect_modes` entry is not cycle `cycle`'s width.
-
-    Diagnosis only — `foundry_state.current_inspect_mode` is the one place the question
-    is DECIDED, and this is called only after it has already answered None. It
-    exists because D-216's refusal reads very differently depending on which of
-    the three ways an archive can fail to carry this INSPECT's width it hit, and
-    "cycle 2 has no recorded width" on a run whose state.json visibly holds
-    thirteen inspect_modes entries sends the lead hunting for a file that is
-    right there. NFR-005: the one line a terminal prints has to say what was
-    found, not only what was missing.
-    """
-    modes = _load_json(fdir / "state.json").get("inspect_modes")
-    if not isinstance(modes, list) or not modes:
-        return "nothing has recorded an inspect_modes entry for it"
-    entry = modes[-1]
-    if not isinstance(entry, dict) or entry.get("mode") not in INSPECT_MODES:
-        return (
-            "the newest inspect_modes entry records no width this server "
-            f"spells — {', '.join(sorted(INSPECT_MODES))} are the only two"
-        )
-    stamped = entry.get("cycle")
-    if isinstance(stamped, bool) or not isinstance(stamped, int):
-        return "the newest inspect_modes entry carries no usable cycle stamp"
-    return (
-        f"the newest inspect_modes entry is stamped for cycle {stamped}, and a "
-        f"width is a fact about ONE crossing — cycle {stamped}'s decision says "
-        f"nothing about what cycle {cycle} was opened with"
-    )
-
-
-
-
-def _unrecorded_width_problem(fdir: Path) -> dict | None:
-    """`{"reason", "hint"}` when this INSPECT has NO recorded width, else None.
-
-    D-117 — AN UNRECORDED WIDTH IS NOT FULL WIDTH.
-    ---------------------------------------------
-    GI-009's named violation is "A first INSPECT of a phase with no recorded
-    mode" and GI-008's is "a streams-complete check that reads a roster nothing
-    recorded". Every consumer degraded PERMISSIVELY instead of refusing, and
-    each degradation was individually defensible — "a resumed archive should get
-    the pre-change behaviour" — while together they admitted a mode-less INSPECT
-    as full width at every door at once:
-
-      `_check_streams_complete` fell back to the pre-width roster
-      trace/prove/test, so `research_audit` and `test01` were never required;
-      `foundry_gate('assay')` tested `mode != "DELTA"`, which "unrecorded"
-      passes; `inspect_clean`'s DELTA refusal tested `== "DELTA"`, which
-      "unrecorded" also passes; and the display-time TRACE fence handled FULL
-      and DELTA explicitly then fell through to a legacy last-clean-TRACE
-      predicate and auto-stamped `.trace-complete`. That fence is gone, and so
-      is the predicate (fallout D-057): `_trace_skip_from_width` decides at the
-      transition and there is no third answer for an unrecorded width to fall
-      into.
-
-    Driven end to end through the shipped `Foundry-Init(resume=...)`, which
-    reactivates any archive with whatever `state.json` it holds, on a
-    legacy-shaped archive with the committed evidence deliberately stale at
-    HEAD: streams-complete required only trace, prove and test and reported
-    complete; `inspect_clean` returned ok and moved the run to F4; and
-    `Foundry-Gate('assay')` PASSED carrying the checklist line
-    `inspect_ran_at_full_width (mode=unrecorded rule=unrecorded) ok=True` — the
-    assertion that is false. With a `.trace-clean-at` marker present TRACE never
-    ran either. ASSAY opened having run PROVE and TEST only, over an evidence
-    corpus no boundary sweep had ever re-executed.
-
-    ONE PREDICATE, SIX CALLERS. The permissive fallbacks were six separate
-    judgement calls in six functions, which is exactly how they came to agree on
-    the wrong answer without any of them saying so. The refusal names the
-    missing record AND the transition that writes it, because "there is no
-    recorded width" is not an action.
-    """
-    if current_inspect_mode(fdir, modes=INSPECT_MODES) is not None:
-        return None
-    cycle = current_cycle(fdir)
-    return {
-        "reason": (
-            f"this INSPECT (cycle {cycle}) has no recorded width — "
-            f"{_inspect_mode_gap(fdir, cycle)}, so the roster, the rule and the "
-            "evidence sweep it was opened with are all unknown"
-        ),
-        "hint": (
-            "An INSPECT is opened by the transition that decides and records "
-            "its width (GI-009), and an unrecorded width is never read as FULL: "
-            "a roster nothing recorded is not a roster that ran. Cross the "
-            f"boundary that records one — {_WIDTH_RECORDING_TRANSITIONS} — "
-            "which also sweeps the evidence corpus at HEAD, then run exactly "
-            "the roster it names."
-        ),
-    }
+# fallout GI-033 / AC-061 / FR-063 (D-080) — THE UNRECORDED-WIDTH REFUSAL
+# LEFT THIS MODULE, AND WHY IT COULD NOT STAY.
+#
+# `_unrecorded_width_problem`, its `_inspect_mode_gap` diagnosis and the
+# width-recording-transitions remedy sentence were defined here and read
+# from BOTH layers: `gates.py` and `transitions.py` are verifier modules
+# like this one, and `streams.py#_check_streams_complete` is a lifecycle
+# door. GI-033 makes those two mutually unreachable, so a predicate read
+# from both can live only in a leaf — and the lifecycle side had been
+# reaching in LAZILY, which put the crossing where no import scan looked
+# rather than removing it.
+#
+# All three moved as ONE unit to `tools/foundry_state.py`, under public
+# spellings; this package's three callers bind
+# `unrecorded_width_problem as _unrecorded_width_problem` at their imports
+# and hand it `modes=INSPECT_MODES`, as every leaf read here does.
+# Splitting the refusal prose per door to leave a pure counter behind was
+# the alternative, and it is the one shape this predicate may not take: six
+# per-door judgements agreeing on the wrong answer is the D-117 defect its
+# "ONE PREDICATE, SIX CALLERS" paragraph was written to end.

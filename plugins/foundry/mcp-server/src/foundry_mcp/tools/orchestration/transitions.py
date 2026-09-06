@@ -64,7 +64,14 @@ from foundry_mcp.tools.orchestration.width import (
     _record_cycle_rollup,
     _record_inspect_mode,
     _sight_required,
-    _unrecorded_width_problem,
+)
+
+# fallout GI-033 / AC-061 / FR-063 (D-080) — the width refusal is the LEAF's,
+# for the reason `gates.py` states at its own import of it: read from both
+# layers, and GI-033 makes those two mutually unreachable. Bound under the name
+# the refusal-readers scan in `test_transitions.py` resolves.
+from foundry_mcp.tools.foundry_state import (
+    unrecorded_width_problem as _unrecorded_width_problem,
 )
 from foundry_mcp.tools.orchestration.evidence_boundary import (
     _sweep_evidence_at_boundary,
@@ -777,7 +784,7 @@ def _inspect_clean_preconditions(fdir: Path, project_root: str) -> dict:
     checklist: list[dict] = []
     ladder = _GateLadder()
 
-    unrecorded = _unrecorded_width_problem(fdir)
+    unrecorded = _unrecorded_width_problem(fdir, modes=INSPECT_MODES)
     if unrecorded is not None:
         ladder.fail(_GATE_RANK_WIDTH, unrecorded["reason"], unrecorded["hint"])
     checklist.append({

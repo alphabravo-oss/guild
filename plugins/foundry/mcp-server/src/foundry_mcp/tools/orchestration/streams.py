@@ -32,6 +32,14 @@ from foundry_mcp.tools.foundry_state import (
     now_iso,
     prove_is_clean,
 )
+
+# fallout GI-033 / AC-061 / FR-063 (D-080) — bound under the name its callers
+# and this package's prose already use. The predicate is the leaf's; the
+# spelling is the one `test_transitions.py`'s refusal-readers scan resolves and
+# the one every `_unrecorded_width_problem` cite in this package names.
+from foundry_mcp.tools.foundry_state import (
+    unrecorded_width_problem as _unrecorded_width_problem,
+)
 from foundry_mcp.tools.rosters import roster_length
 from pathlib import Path
 
@@ -854,19 +862,30 @@ def _check_streams_complete(project_root: str) -> dict:
     function. The doors being safe was never the claim; Foundry-Next is a THIRD
     caller and it refuses nothing of its own.
 
-    LAZY SEAM, written once per symbol: `teams` imports this module, so a
-    module-top import here closes a cycle that takes every tool in the server
-    down at load. `width` is reached the same way and for a second reason —
-    this module is lifecycle and width is a VERIFIER, so a module-top import
-    would be the crossing GI-033 refuses. It is a LAZY reach that the boundary
-    guard does not judge, it predates this cycle, and the principled removal is
-    the leaf firing the arm on its own `current_inspect_mode` read and taking
-    only the PROSE as an injection — `foundry_state.check_streams_complete`'s
-    ground, recorded here so the next reader does not take the seam for a
-    design.
+    fallout GI-033 / AC-061 / FR-063 (D-080) — THE WIDTH SHAPER IS OFF THE LEAF
+    NOW, AND THE SEAM THAT REACHED FOR IT IS GONE.
+    -------------------------------------------------------------------------
+    It used to be a LAZY import of `orchestration/width.py`, and the reason
+    given was that a module-top one would be the crossing GI-033 refuses — this
+    module is lifecycle and `width` is a VERIFIER. Laziness was never a remedy
+    for that; it only put the crossing where no import scan looked, which is
+    precisely what `test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth`
+    now judges. GI-033's arithmetic is that the two layers are mutually
+    unreachable, so a predicate read from BOTH — `gates.py` and
+    `transitions.py` on the verifier side, this door on the lifecycle side —
+    can live only in a leaf, and `foundry_state.unrecorded_width_problem` is
+    where it lives. It moved WHOLE, with `inspect_mode_gap` and
+    `WIDTH_RECORDING_TRANSITIONS`: splitting the refusal prose per door to
+    leave a pure counter behind is the six-permissive-fallbacks shape that
+    predicate's own "ONE PREDICATE, SIX CALLERS" was written to end, so the
+    split that would satisfy the layering rule is the split that reopens D-117.
+
+    THE ONE LAZY SEAM LEFT is `teams`, and it answers an IMPORT CYCLE rather
+    than a layering rule: `teams` imports this module, so a module-top import
+    here closes a cycle that takes every tool in the server down at load. It is
+    lifecycle to lifecycle, which the boundary rule has nothing to say about.
     """
     from foundry_mcp.tools.orchestration.teams import _check_sight_required
-    from foundry_mcp.tools.orchestration.width import _unrecorded_width_problem
 
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -887,5 +906,11 @@ def _check_streams_complete(project_root: str) -> dict:
         fallback_streams=[
             s for s in FULL_ROSTER_STREAMS if s not in DELTA_CONDITIONAL_STREAMS
         ],
-        unrecorded_width_problem=_unrecorded_width_problem,
+        # The leaf takes the closed set as an argument — it may not name one —
+        # so the vocabulary is bound HERE, at the caller, exactly as every
+        # `current_inspect_mode(fdir, modes=INSPECT_MODES)` in this package
+        # binds it.
+        unrecorded_width_problem=lambda d: _unrecorded_width_problem(
+            d, modes=INSPECT_MODES
+        ),
     )
