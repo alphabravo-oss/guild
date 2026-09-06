@@ -11,10 +11,10 @@
 
 ===== test session starts =====
 platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
-rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/c10-recap/plugins/foundry/mcp-server
+rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/wt-c10-green/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
-collected 1120 items / 9 deselected / 1111 selected
+collected 1121 items / 9 deselected / 1112 selected
 
 tests/test_inspect_mode.py ............................................. [  4%]
 ........................................................................ [ 10%]
@@ -31,7 +31,7 @@ tests/orchestration/test_guidance.py ................................... [ 37%]
 ............................................                             [ 41%]
 tests/orchestration/test_halt.py ..                                      [ 41%]
 tests/orchestration/test_module_boundaries.py .......................... [ 44%]
-......................................................................   [ 50%]
+......................................................F...............   [ 50%]
 tests/orchestration/test_report_seal.py ..........                       [ 51%]
 tests/orchestration/test_spend.py ....                                   [ 51%]
 tests/orchestration/test_streams.py .....................                [ 53%]
@@ -85,12 +85,13 @@ tests/test_measure_run.py .........s..........................s......... [ 77%]
 tests/test_lead_prose.py ............................................... [ 85%]
 ........................................................................ [ 91%]
 ........................................................................ [ 98%]
-..................                                                       [100%]
+...................                                                      [100%]
 
 ===== short test summary info =====
-SKIPPED [1] tests/test_measure_run.py:632: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/c10-recap/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:1507: grand-vulture archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/c10-recap/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2236: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/c10-recap/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2295: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/c10-recap/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2364: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/c10-recap/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-===== 1106 passed, 5 skipped, 9 deselected in 57.36s =====
+SKIPPED [1] tests/test_measure_run.py:632: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/wt-c10-green/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:1507: grand-vulture archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/wt-c10-green/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2236: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/wt-c10-green/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2295: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/wt-c10-green/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2364: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/54560ebe-ffc3-4e33-9ead-0e0704c5ca19/scratchpad/wt-c10-green/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+FAILED tests/orchestration/test_module_boundaries.py::test_no_top_level_symbol_is_defined_in_two_shipped_modules
+===== 1 failed, 1106 passed, 5 skipped, 9 deselected in 61.06s =====
