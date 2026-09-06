@@ -3260,8 +3260,11 @@ _D134_FILED_READERS = (
     # no longer SEE means the derivation went blind and must fail, while a name
     # the tree no longer DEFINES means the package got smaller and the row goes
     # with the symbol. Removing it cannot weaken the anchor: an entry can only
-    # make `missing` longer, never shorter, so the five that remain still fail
-    # this test the moment the scan stops recognising any one of them.
+    # make `missing` longer, never shorter, so the entries that remain still
+    # fail this test the moment the scan stops recognising any one of them.
+    # Stated as a property rather than a count: a hand-typed tally beside a
+    # literal tuple is a second copy of `len()`, and the tally is what went
+    # stale when this row was dropped, not the rule.
     #
     # fallout GI-033 / GI-024 / AC-061 (ruling item 3) — THE SIGHT READER IS THE
     # LEAF NOW, AND THAT IS A DIFFERENT KIND OF MOVE. The other two changed
@@ -3293,7 +3296,7 @@ _D134_FILED_READERS = (
     "#foundry_validate_castings",
     "plugins/foundry/mcp-server/src/foundry_mcp/scripts/validate_intent_coverage.py"
     "#load_manifest_casting_ids",
-)  # 7 readers
+)
 
 
 def _package_record_readers(
