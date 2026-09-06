@@ -1393,12 +1393,17 @@ def test_the_done_gate_and_the_seal_apply_one_heading_rule(report_run) -> None:
     rule, coded independently", so the gate could call a section present that
     the seal did not treat as one.
     """
+    from foundry_mcp.tools import artifacts
     from foundry_mcp.tools import foundry_report as fr
 
     _generated(report_run)
     text = (report_run / "REPORT.md").read_text(encoding="utf-8")
 
-    missing, problem = fr._markdown_missing_sections(report_run)
+    # fallout GI-033: the presence check is the LEAF's now (concern C-060 row
+    # 2) — the DONE gate is a verifier and could not reach it here. The rule it
+    # applies is unchanged, which is the whole point of asserting it against
+    # the seal's splitter below.
+    missing, problem = artifacts._markdown_missing_report_sections(report_run)
     assert problem is None and missing == []
     assert fs.markdown_headings(text) >= {
         f"## {vocab.REPORT_SECTION_TITLES[key]}" for key in fr.REPORT_REQUIRED_SECTIONS

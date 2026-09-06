@@ -79,7 +79,8 @@ from foundry_mcp.schemas.vocab import (
 )
 from foundry_mcp.tools import foundry_report as fr
 from foundry_mcp.tools import foundry_state as fs
-from foundry_mcp.tools.foundry_report import generate_report, report_status
+from foundry_mcp.tools.artifacts import report_document_status
+from foundry_mcp.tools.foundry_report import generate_report
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "escalation" / "finer_boundary_run"
 
@@ -1071,7 +1072,7 @@ def test_report_json_top_level_keys_are_exactly_the_required_sections(report_env
     REPORT_REQUIRED_SECTIONS plus `generated_at` and `run`.
 
     Asserted as set EQUALITY, not containment. A twelfth key would pass a
-    containment check and then be a section `report_status` does not know
+    containment check and then be a section `artifacts.report_document_status` does not know
     about, and a missing one would be a section the DONE gate refuses on."""
     _generate(report_env)
     doc = _document(report_env)
@@ -1445,7 +1446,7 @@ def test_the_wall_clock_reader_and_the_lead_fix_reader_share_one_handoff_ledger(
     `_read_lead_fix_records` is not the only thing that walks this ledger.
     `foundry_state.handoffs_wall_clock_seconds` walks the same file for
     NFR-001's wall-clock column, reached through `_archive_metrics` rather
-    than through the lead-fix section, and `report_status` reads the document
+    than through the lead-fix section, and `artifacts.report_document_status` reads the document
     the two of them write into. A lead-fix record appended by the real writer
     carries an ISO timestamp like every other handoff, so it participates in
     the span — and this pins that the D-078 rows changed what the lead-fix
@@ -1474,7 +1475,7 @@ def test_the_wall_clock_reader_and_the_lead_fix_reader_share_one_handoff_ledger(
     assert doc["baseline_comparison"]["current"]["wall_clock_minutes"] == round(
         after / 60.0, 1
     )
-    assert report_status(report_env)["missing_sections"] == []
+    assert report_document_status(report_env)["missing_sections"] == []
 
 
 def test_the_lead_fix_event_token_is_read_from_vocab_not_typed(report_env):
@@ -2175,7 +2176,7 @@ def test_an_unreported_dispatch_is_shown_and_no_gate_refuses_on_it(report_env):
     unreported in Foundry-Next and the report, and no gate refuses on it.'
 
     The 'no gate refuses' half is asserted structurally: generation succeeds
-    with unreported dispatches present, and `report_status` — the read the DONE
+    with unreported dispatches present, and `artifacts.report_document_status` — the read the DONE
     gate actually makes — reports the report complete. An unreported dispatch
     is a gap in the MEASUREMENT, not a defect in the build.
 
@@ -2219,8 +2220,8 @@ def test_an_unreported_dispatch_is_shown_and_no_gate_refuses_on_it(report_env):
         bucket["unreported"] for bucket in rollup["by_phase"].values()
     )
 
-    assert report_status(report_env)["present"] is True
-    assert report_status(report_env)["missing_sections"] == []
+    assert report_document_status(report_env)["present"] is True
+    assert report_document_status(report_env)["missing_sections"] == []
 
 
 def test_the_agent_id_spelling_agrees_with_the_spawn_doors(report_env):
@@ -3246,7 +3247,7 @@ def test_a_stream_agent_is_the_one_thing_the_cycle_axis_does_carry(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# CT-014 / OT-025 — `report_status`, the read the DONE gate makes.
+# CT-014 / OT-025 — `artifacts.report_document_status`, the read the DONE gate makes.
 # --------------------------------------------------------------------------- #
 
 
@@ -3255,16 +3256,16 @@ def test_report_status_reports_absent_before_generation(report_env):
     refused naming the report; after Foundry-Report it succeeds and report.json
     contains every named section.'
 
-    This casting owns `report_status`, which that refusal reads. Before
+    This casting owns `artifacts.report_document_status`, which that refusal reads. Before
     generation EVERY section is missing — the honest answer, since no section
     can be shown to be there."""
-    status = report_status(report_env)
+    status = report_document_status(report_env)
     assert status["present"] is False
     assert status["missing_sections"] == list(REPORT_REQUIRED_SECTIONS)
     assert REPORT_JSON_FILENAME in status["problem"]
 
     _generate(report_env)
-    after = report_status(report_env)
+    after = report_document_status(report_env)
     assert after["present"] is True
     assert after["missing_sections"] == []
     assert after["generated_at"]
@@ -3282,7 +3283,7 @@ def test_report_status_names_the_sections_that_were_removed(report_env):
     del doc["lead_fix_records"]
     _write_json(report_env, REPORT_JSON_FILENAME, doc)
 
-    status = report_status(report_env)
+    status = report_document_status(report_env)
     assert status["present"] is False
     assert status["missing_sections"] == ["latent_backlog", "lead_fix_records"]
 
@@ -3302,7 +3303,7 @@ def test_appended_prose_never_makes_a_section_look_missing(report_env):
         + "\n## Lead's postscript\n\nThe cycle-4 verifier touch was mine.\n",
         encoding="utf-8",
     )
-    status = report_status(report_env)
+    status = report_document_status(report_env)
     assert status["present"] is True
     assert status["missing_sections"] == []
 
@@ -3319,10 +3320,10 @@ def test_the_done_gate_opens_report_md_and_not_only_the_json(report_env):
     tools, and a gate that checks only the tools' copy is not checking the
     thing GI-006 names."""
     _generate(report_env)
-    assert report_status(report_env)["present"] is True
+    assert report_document_status(report_env)["present"] is True
 
     (report_env / REPORT_MD_FILENAME).unlink()
-    status = report_status(report_env)
+    status = report_document_status(report_env)
     assert status["present"] is False
     assert status["missing_sections"] == list(REPORT_REQUIRED_SECTIONS)
     assert status["missing_from_json"] == [], (
@@ -3344,7 +3345,7 @@ def test_a_section_heading_deleted_from_report_md_is_named_back(report_env):
         md_path.read_text(encoding="utf-8").replace("## LATENT backlog", "", 1),
         encoding="utf-8",
     )
-    status = report_status(report_env)
+    status = report_document_status(report_env)
     assert status["present"] is False
     assert status["missing_sections"] == ["latent_backlog"]
     assert status["missing_from_markdown"] == ["latent_backlog"]
@@ -3355,9 +3356,9 @@ def test_the_renderers_docstring_describes_the_read_that_actually_happens(report
     """GI-006 verbatim: 'The lead may append prose but cannot omit a section.'
 
     D-141 — STALE PROSE SURVIVING BESIDE NEW PROSE. `_render_markdown`'s
-    docstring read "`report_status` reads the JSON, not the markdown, so
+    docstring read "`artifacts.report_document_status` reads the JSON, not the markdown, so
     appended prose can never make a section look missing". D-015 moved the read
-    onto BOTH documents and rewrote `report_status`'s own docstring to say so;
+    onto BOTH documents and rewrote `artifacts.report_document_status`'s own docstring to say so;
     this sentence was left describing the retired read, one function away.
 
     So each half of the replacement prose is DRIVEN here rather than grepped
@@ -3371,7 +3372,7 @@ def test_the_renderers_docstring_describes_the_read_that_actually_happens(report
     # 1. The markdown IS read: delete it and the gate says so.
     _generate(report_env)
     (report_env / REPORT_MD_FILENAME).unlink()
-    gone = report_status(report_env)
+    gone = report_document_status(report_env)
     assert gone["present"] is False
     assert len(gone["missing_from_markdown"]) == len(REPORT_REQUIRED_SECTIONS)
     assert gone["problem"] == f"{REPORT_MD_FILENAME} does not exist"
@@ -3390,7 +3391,7 @@ def test_the_renderers_docstring_describes_the_read_that_actually_happens(report
         + "\n## Another appendix\n\nand more.\n",
         encoding="utf-8",
     )
-    assert report_status(report_env)["present"] is True
+    assert report_document_status(report_env)["present"] is True
 
     # 3. ...and a heading with a suffix bolted on reads as the edit it is.
     md_path.write_text(
@@ -3399,7 +3400,7 @@ def test_the_renderers_docstring_describes_the_read_that_actually_happens(report
         ),
         encoding="utf-8",
     )
-    assert report_status(report_env)["missing_sections"] == ["latent_backlog"]
+    assert report_document_status(report_env)["missing_sections"] == ["latent_backlog"]
 
     # 4. The retired claim is not still sitting in the docstring beside the new
     #    one. Both halves of it, because either alone misleads.
@@ -3414,7 +3415,7 @@ def test_a_failed_markdown_write_leaves_no_json_for_the_gate_to_pass(report_env)
     `generate_report` wrote `report.json` first, so an OSError on the markdown
     left a complete JSON behind and a satisfied gate — a half-written report
     that opens DONE. Driven by making the markdown path unwritable: the call
-    must refuse AND leave no `report.json` for a later `report_status` to pass
+    must refuse AND leave no `report.json` for a later `artifacts.report_document_status` to pass
     on."""
     md_path = report_env / REPORT_MD_FILENAME
     md_path.mkdir()          # a directory occupying the name: write_text raises OSError
@@ -3426,7 +3427,7 @@ def test_a_failed_markdown_write_leaves_no_json_for_the_gate_to_pass(report_env)
         "the JSON was written before the markdown failed, so the DONE gate "
         "would open on a report whose readable half does not exist"
     )
-    assert report_status(report_env)["present"] is False
+    assert report_document_status(report_env)["present"] is False
 
 
 def test_report_status_on_a_corrupt_report_names_the_problem(report_env):
@@ -3434,7 +3435,7 @@ def test_report_status_on_a_corrupt_report_names_the_problem(report_env):
     that was never generated, and the DONE refusal has to be able to say which.
     Both report `present: False`; only this one carries a `problem`."""
     (report_env / REPORT_JSON_FILENAME).write_bytes(b"\xff\xfe not json at all")
-    status = report_status(report_env)
+    status = report_document_status(report_env)
     assert status["present"] is False
     assert status["missing_sections"] == list(REPORT_REQUIRED_SECTIONS)
     assert REPORT_JSON_FILENAME in status["problem"]
@@ -3486,7 +3487,7 @@ def test_an_absent_ledger_is_an_empty_section_not_a_refusal(report_env, ledger):
     (report_env / ledger).unlink()
     result = generate_report(report_env.parent.parent, report_env)
     assert result["ok"] is True, result
-    assert report_status(report_env)["present"] is True
+    assert report_document_status(report_env)["present"] is True
 
 
 def test_generate_report_refuses_a_run_directory_that_is_not_there(tmp_path):
@@ -4259,7 +4260,7 @@ def test_demo_report_sections_over_the_frozen_fixture(report_env, capsys):
         print(f"  baseline derived from the archive: {bc['baseline_derived']}")
 
         print("=== report_status, the DONE gate's read (GI-006 / OT-025) ===")
-        status = report_status(report_env)
+        status = report_document_status(report_env)
         print(f"  present={status['present']}  missing_sections={status['missing_sections']}")
 
     # Every printed line is also asserted, so the transcript cannot drift.
@@ -4282,7 +4283,7 @@ def test_demo_report_sections_over_the_frozen_fixture(report_env, capsys):
     )
     assert doc["inspect_modes_per_cycle"]["by_mode"] == {"DELTA": 2, "FULL": 4}
     assert doc["unreported_dispatches"]["count"] > 0
-    assert report_status(report_env)["present"] is True
+    assert report_document_status(report_env)["present"] is True
 
 
 # --------------------------------------------------------------------------- #
@@ -5104,7 +5105,7 @@ def test_the_hardening_backlog_lists_every_open_hardening_defect(report_env) -> 
 def test_the_hardening_backlog_renders_empty_rather_than_missing(report_env) -> None:
     """FR-054 — a ledger with no HARDENING record renders an EMPTY section.
 
-    A missing section holds the DONE gate shut (`report_status` reads both
+    A missing section holds the DONE gate shut (`artifacts.report_document_status` reads both
     documents), so "this run filed no HARDENING defect" has to be a rendered
     measurement rather than an absent heading.
     """
@@ -5114,7 +5115,7 @@ def test_the_hardening_backlog_renders_empty_rather_than_missing(report_env) -> 
     assert section["open_count"] == 0
     assert section["defects"] == []
     assert "## HARDENING backlog" in _markdown(report_env)
-    assert report_status(report_env)["present"] is True
+    assert report_document_status(report_env)["present"] is True
 
 
 def test_a_record_with_no_tier_key_stays_on_the_unknown_sentinel(
@@ -5593,7 +5594,7 @@ def test_stream_coverage_renders_empty_on_a_run_with_no_rollup(
     assert section["rows"] == []
     assert section["row_count"] == 0
     assert "## Stream coverage per cycle" in _markdown(report_env)
-    assert report_status(report_env)["present"] is True
+    assert report_document_status(report_env)["present"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -5836,7 +5837,7 @@ def test_all_four_new_sections_reach_both_documents(report_env) -> None:
     cycle, stream coverage with replaced records, and halt reason plus
     co-dispatch sets."
 
-    Both documents, because `report_status` reads both and the DONE gate
+    Both documents, because `artifacts.report_document_status` reads both and the DONE gate
     refuses on the union: a section in the JSON and not the markdown is a
     section the gate reports missing.
     """
@@ -5855,7 +5856,7 @@ def test_all_four_new_sections_reach_both_documents(report_env) -> None:
         assert f"## {title}" in markdown, title
 
     assert len(REPORT_REQUIRED_SECTIONS) == 16
-    status = report_status(report_env)
+    status = report_document_status(report_env)
     assert status["present"] is True
     assert status["missing_sections"] == []
 
@@ -5870,7 +5871,7 @@ def test_all_four_new_sections_reach_both_documents(report_env) -> None:
 # documenting a consumer nobody had written.
 #
 # Every register below drives `generate_report` and reads BOTH documents back,
-# because the property is what it WROTE: `report_status` reads the JSON keys
+# because the property is what it WROTE: `artifacts.report_document_status` reads the JSON keys
 # AND the markdown headings, and the DONE gate refuses on the union.
 # --------------------------------------------------------------------------- #
 
@@ -6003,7 +6004,7 @@ def test_the_span_section_renders_a_run_with_no_manifest_at_all(report_env) -> N
     assert section["count"] == 0
     assert section["not_computable"] is False
     assert "## Requirement span" in _markdown(report_env)
-    assert report_status(report_env)["missing_sections"] == []
+    assert report_document_status(report_env)["missing_sections"] == []
 
 
 def test_an_undecodable_manifest_refuses_by_name(report_env) -> None:
