@@ -8,22 +8,6 @@
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: \d+\.\d+ seconds
 # evidence-timeout: 900
-# NOTE — the nine deselected node ids, named rather than silently filtered.
-#   All nine are tests/test_inspect_mode.py rows, casting 12's file, RED from
-#   casting 2's 06deed6: the team scan renamed to `_active_teams` and the
-#   trace-skip fact moved to the width decision, with the pins not repointed
-#   alongside (GI-026). Second instance of the C-031 seam; tracked as concern
-#   C-036, which names all nine and the two causes.
-#   tests/test_inspect_mode.py::test_every_verifier_surface_forces_full --
-#   the AC-012 roster row this log exists to carry -- still RUNS and passes.
-#   THREE ROWS THE PREVIOUS CAPTURE DESELECTED ARE BACK IN, all green:
-#   test_no_top_level_symbol_is_defined_in_two_shipped_modules (casting 1
-#   repointed concerns.py at 711bbb4, so CONCERN_STATUSES is defined once),
-#   and the two layering rows (casting 2 made escalation a leaf at 309501b).
-#   The deselect list shrinks and never grows quietly, which is the only way
-#   it stays worth reading.
-#   Deselected by EXACT node id so this log exits 0. Every other row of the
-#   four modules runs: 1106 passed, 5 skipped, 9 deselected.
 
 ===== test session starts =====
 platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
