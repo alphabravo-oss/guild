@@ -1391,6 +1391,45 @@ def test_every_next_response_names_the_terminal_state_it_is_heading_for(run_env)
     _halted_run(fdir)
     assert foundry_next_action(project_root)["heading_for"] == vocab.RUN_PHASE_HALTED
 
+    # fallout D-066 — AND THE TWO RESPONSES THAT USED TO CARRY NONE OF THE THREE.
+    #
+    # "Every response" was asserted here over the shapes a healthy run produces,
+    # and the merge that produced them sat below the only early return, inside a
+    # guard the no-run path does not pass. Driven, the corrupt-artifact response
+    # was exactly ['corrupt_artifacts', 'error', 'hint'] and the no-active-run
+    # response carried none of the three — which are the two responses a lead
+    # reads when something has already gone wrong.
+    fields = ("heading_for", "open_by_tier", "cycles_to_cap")
+
+    # (1) A corrupt artifact somewhere in the run. `state.json` is intact and
+    # every read is tolerant, so the outlook is a real answer here, not a
+    # placeholder: the cap is still 3 and the cycle is still 1.
+    _write_state(fdir, phase="F2", cycle=1, max_cycles=3)
+    (fdir / "verdicts.json").write_text("{ not json", encoding="utf-8")
+    corrupt = foundry_next_action(project_root)
+    assert corrupt.get("corrupt_artifacts"), corrupt
+    for field in fields:
+        assert field in corrupt, (field, sorted(corrupt))
+    assert corrupt["heading_for"] == "DONE", corrupt
+    assert corrupt["cycles_to_cap"] == 2, corrupt
+    (fdir / "verdicts.json").unlink()
+
+    # (2) No active run at all. The three fields are PRESENT and empty rather
+    # than absent — `heading_for` names where a run is heading and there is no
+    # run, and a reader must never have to test for the key itself.
+    foundry_state.clear_active_run()
+    try:
+        empty_root = Path(tempfile.mkdtemp())
+        none_run = foundry_next_action(str(empty_root))
+        assert none_run["action"] == "init", none_run
+        for field in fields:
+            assert field in none_run, (field, sorted(none_run))
+        assert none_run["heading_for"] is None, none_run
+        assert none_run["open_by_tier"] == {}, none_run
+        assert none_run["cycles_to_cap"] is None, none_run
+    finally:
+        foundry_state.set_active_run(fdir.name)
+
 
 
 

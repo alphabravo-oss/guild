@@ -377,11 +377,29 @@ SUBAGENT_CALLER_INSTRUCTION = (
 
 
 
-def _terminal_outlook(fdir: Path) -> dict:
+def _terminal_outlook(fdir: Path | None) -> dict:
     """fallout FR-021 / FR-047 / CT-007 / AC-028 / OT-026 — where this run ENDS.
 
     Returns ``{"heading_for", "open_by_tier", "cycles_to_cap"}`` for every
     `Foundry-Next` response, whatever the phase and whatever the action.
+
+    fallout D-066 — TOTAL OVER ``fdir``, BECAUSE "EVERY RESPONSE" INCLUDES THE
+    ONES THAT NEVER REACHED A RUN.
+
+    This took a `Path` and was called from one place, below every early return,
+    under a comment claiming it covered them. Driven: the corrupt-artifact
+    response carried exactly `['corrupt_artifacts', 'error', 'hint']` and the
+    no-active-run response carried none of the three — so the two responses a
+    lead reads when something is already wrong were the two with no outlook on
+    them. A field that is present on the easy path and absent on the hard one is
+    a field a reader has to test for, which is the same as not having it.
+
+    A CORRUPT RUN STILL HAS AN OUTLOOK, and it is computable: every read below
+    is a tolerant one, so a run whose `verdicts.json` will not parse still
+    answers about its cap, its phase and the defects it has. A run directory
+    that does not exist has NO outlook, and the honest answer is a present key
+    with a null value rather than an absent key: `heading_for` names where a run
+    is heading, and there is no run.
 
     WHY EVERY RESPONSE, AND NOT A SECTION SOMEWHERE. A named backlog is a
     SUCCESSFUL end (FR-047): a run that halts with three LATENT and one
@@ -396,6 +414,9 @@ def _terminal_outlook(fdir: Path) -> dict:
     REAL answer: "no cap" and "zero cycles left" are opposite facts and a
     reader that conflates them halts a run that had no cap at all.
     """
+    if fdir is None or not fdir.exists():
+        return {"heading_for": None, "open_by_tier": {}, "cycles_to_cap": None}
+
     state = _load_json(fdir / "state.json")
     # fallout GI-033 / AC-061 (D-021 / D-035) — THE BUCKETS COME FROM THE LEAF.
     # `gates._open_defects_by_tier` is the same read behind a verifier-set
@@ -459,7 +480,16 @@ def foundry_next_action(
     is_lead = caller == LEAD_CALLER
     fdir_stamp = get_run_dir(project_root)
     if fdir_stamp and (corrupt := _artifact_guard(fdir_stamp)):
-        return corrupt
+        # fallout D-066 / AC-028 / CT-007 — THE OUTLOOK RIDES THIS RETURN TOO.
+        #
+        # This was the one early return in this function, and the merge below
+        # sat under it claiming to cover it. The outlook is fully computable
+        # here: `state.json` is what carries the cap and the phase, the reads
+        # are tolerant, and a corrupt artifact somewhere else in the run does
+        # not make "how many cycles are left" unanswerable. A lead reading a
+        # refusal is exactly the lead who needs to know whether the run is
+        # heading for DONE or HALTED.
+        return {**corrupt, **_terminal_outlook(fdir_stamp)}
     trace_skip_decision: dict | None = None
     if fdir_stamp and fdir_stamp.exists():
         _stamp_subphase_transitions(fdir_stamp)
@@ -760,14 +790,21 @@ def foundry_next_action(
     result["display"] = _format_status_display(project_root)
 
     fdir = get_run_dir(project_root)
+    # fallout FR-021 / CT-007 / AC-028 / OT-026 — on EVERY response, whatever the
+    # phase and whatever the action. Placed here rather than in
+    # `_compute_next_action` for exactly that reason: that function returns from
+    # a dozen branches and a field added to one of them is a field absent from
+    # eleven.
+    #
+    # fallout D-066 — AND OUTSIDE THE `fdir` GUARD, which is what made the claim
+    # above false for two response shapes. The guard belongs to the marker
+    # WRITES below it, which genuinely need a directory to write into; the
+    # outlook is total and needs nothing. Standing inside it meant the
+    # no-active-run response — the one whose action is `init` — carried none of
+    # the three fields, and the comment saying otherwise was the only place the
+    # promise was kept.
+    result.update(_terminal_outlook(fdir))
     if fdir and fdir.exists():
-        # fallout FR-021 / CT-007 / AC-028 / OT-026 — on EVERY response, whatever
-        # the phase and whatever the action, including this one's early returns.
-        # Placed here rather than in `_compute_next_action` for exactly that
-        # reason: that function returns from a dozen branches and a field added
-        # to one of them is a field absent from eleven.
-        result.update(_terminal_outlook(fdir))
-
         now_stamp = f"{now_iso()}\n"
         # Ordering token: armed here, consumed (unlinked) by foundry_gate /
         # foundry_mark_phase_complete to prove Foundry-Next preceded a gate
