@@ -1242,8 +1242,8 @@ def test_skipped_stream_ids_maps_both_spellings_and_degrades(tmp_path) -> None:
 # the lifecycle layer with only their READ moved down. Two facts made it the
 # exception, and the lead ruled on both. It is read from BOTH layers at once —
 # `gates.py` and `transitions.py` are verifier, `streams.py` is lifecycle, and
-# that last edge is the one the widened boundary guard finds — so GI-033's
-# arithmetic leaves it nowhere but a leaf. And its sentence cannot be split per
+# that last edge is the one the widened boundary guard finds — so fallout
+# GI-033's arithmetic leaves it nowhere but a leaf. And its sentence cannot be split per
 # door: SIX permissive per-door fallbacks agreeing on the wrong answer is the
 # defect it exists to end (D-117), so the split that would satisfy the layering
 # rule is the split that reopens it.
