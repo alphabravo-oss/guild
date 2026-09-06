@@ -3075,7 +3075,7 @@ def test_the_f6_seal_carries_the_prose_the_lead_appended(run_env, token, phase, 
     Parametrized over BOTH F6 doors for D-043/D-044's reason — they are two
     transitions into the same state and they drifted the first time.
     """
-    from foundry_mcp.tools.foundry_report import report_status
+    from foundry_mcp.tools.artifacts import report_document_status as report_status
 
     project_root, fdir = run_env
     _write_spec(fdir, ["FR-1"])
@@ -3132,7 +3132,7 @@ def test_a_section_the_lead_deleted_never_reaches_the_seal_at_all(run_env):
     had instead taught the seal to quietly restore the heading would have turned
     a named refusal into a silent repair.
     """
-    from foundry_mcp.tools.foundry_report import report_status
+    from foundry_mcp.tools.artifacts import report_document_status as report_status
 
     project_root, fdir = run_env
     _write_spec(fdir, ["FR-1"])

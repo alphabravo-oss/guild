@@ -491,7 +491,7 @@ def test_the_done_precondition_prose_describes_what_report_status_reads():
     """
     import inspect
 
-    from foundry_mcp.tools.foundry_report import report_status
+    from foundry_mcp.tools.artifacts import report_document_status as report_status
 
     source = inspect.getsource(_done_preconditions)
     assert "never from REPORT.md" not in source, (
@@ -995,7 +995,7 @@ def test_a_report_missing_one_section_is_refused_naming_that_section(run_env):
 def test_appending_prose_to_the_markdown_never_blocks_done(run_env):
     """GI-006 exactly: 'The lead may APPEND prose but cannot OMIT a section.'
 
-    APPENDING is the tolerance, and it is the only one. `_markdown_missing_sections`
+    APPENDING is the tolerance, and it is the only one. `artifacts._markdown_missing_report_sections`
     matches a whole trimmed `## <title>` line anywhere in the document, at any
     depth and in any order, so a lead's own headings and paragraphs can sit
     between, above and below the generated ones without hiding any.
@@ -1037,7 +1037,7 @@ def test_appending_prose_to_the_markdown_never_blocks_done(run_env):
 
     # And the half the retired sentence got wrong: a REWORDED heading is an
     # omitted section, and the check says so by name.
-    from foundry_mcp.tools.foundry_report import report_status
+    from foundry_mcp.tools.artifacts import report_document_status as report_status
 
     reworded = generated.replace(
         "## LATENT backlog", "## Latent backlog (reworded)"

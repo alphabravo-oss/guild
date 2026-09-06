@@ -563,7 +563,7 @@ def _done_preconditions(
     #
     # The prose GI-006 explicitly permits the lead to append BELOW the sections
     # still cannot make a present section look absent, but that is now true for
-    # a stated mechanism rather than by not looking: `_markdown_missing_sections`
+    # a stated mechanism rather than by not looking: `artifacts._markdown_missing_report_sections`
     # matches whole heading lines, so appended paragraphs add headings without
     # removing any.
     #
