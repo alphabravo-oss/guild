@@ -1,4 +1,4 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && out=$(mktemp) && COLUMNS=80 uv run --quiet --with pytest pytest --tb=no -p no:cacheprovider --deselect tests/test_inspect_mode.py::test_a_run_with_no_recorded_decision_is_refused_not_read_as_full --deselect tests/test_inspect_mode.py::test_an_unrecorded_inspect_width_is_refused_at_every_door --deselect tests/test_inspect_mode.py::test_a_delta_cycle_with_an_active_team_still_refuses_on_its_width --deselect tests/test_inspect_mode.py::test_a_full_cycle_with_an_active_team_names_the_team_and_not_the_marker --deselect tests/test_inspect_mode.py::test_teams_active_alone_still_states_what_clears_it --deselect tests/test_inspect_mode.py::test_the_three_gate_branches_that_scan_teams_state_one_remedy --deselect tests/test_inspect_mode.py::test_an_out_of_vocabulary_width_is_refused_at_every_door --deselect tests/test_inspect_mode.py::test_a_delta_roster_stamped_for_another_cycle_is_not_the_roster_read --deselect tests/test_inspect_mode.py::test_the_trace_skip_fence_fails_closed_on_a_width_from_another_cycle tests/test_inspect_mode.py tests/orchestration/ tests/test_measure_run.py tests/test_lead_prose.py > "$out" 2>&1; ec=$?; sed -E -e 's/ \([0-9]+:[0-9]{2}:[0-9]{2}\)//' -e 's/={5,}/=====/g' "$out"; rm -f "$out"; exit $ec
+# evidence-cmd: cd plugins/foundry/mcp-server && out=$(mktemp) && COLUMNS=80 uv run --quiet --with pytest pytest --tb=no -p no:cacheprovider --deselect tests/test_inspect_mode.py::test_a_width_outside_the_vocabulary_is_not_a_recorded_width --deselect tests/test_inspect_mode.py::test_both_vocabulary_members_still_read_as_the_recorded_width --deselect tests/test_inspect_mode.py::test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary --deselect tests/test_inspect_mode.py::test_a_width_stamped_for_an_earlier_cycle_is_not_this_cycles_width --deselect tests/test_inspect_mode.py::test_a_width_stamped_for_a_later_cycle_is_not_this_cycles_width_either --deselect tests/test_inspect_mode.py::test_the_entry_stamped_for_this_cycle_is_still_the_recorded_width tests/test_inspect_mode.py tests/orchestration/ tests/test_measure_run.py tests/test_lead_prose.py > "$out" 2>&1; ec=$?; sed -E -e 's/ \([0-9]+:[0-9]{2}:[0-9]{2}\)//' -e 's/={5,}/=====/g' "$out"; rm -f "$out"; exit $ec
 # evidence-for: FR-003, FR-014, FR-027, AC-012, AC-024, AC-047
 # evidence-volatile: (?:^|\s)platform \S+ -- Python \S+.*
 # evidence-volatile: (?:^|\s)rootdir:.*
@@ -11,19 +11,19 @@
 
 ===== test session starts =====
 platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
-rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev7/plugins/foundry/mcp-server
+rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/65b1a431-f4a5-441c-b1ab-feba720af62e/scratchpad/casting-10-ev8/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
-collected 1193 items / 9 deselected / 1184 selected
+collected 1195 items / 14 deselected / 1181 selected
 
 tests/test_inspect_mode.py ............................................. [  3%]
 ........................................................................ [  9%]
-.........................................                                [ 13%]
-tests/orchestration/test_directives.py ................................. [ 16%]
+....................................                                     [ 12%]
+tests/orchestration/test_directives.py ................................. [ 15%]
 ............................                                             [ 18%]
 tests/orchestration/test_escalation.py .................                 [ 19%]
-tests/orchestration/test_evidence_boundary.py ..                         [ 20%]
-tests/orchestration/test_fix_gate.py ................................... [ 23%]
+tests/orchestration/test_evidence_boundary.py ..                         [ 19%]
+tests/orchestration/test_fix_gate.py ................................... [ 22%]
 ............................                                             [ 25%]
 tests/orchestration/test_gates.py ...................................... [ 28%]
 ..............................................................           [ 33%]
@@ -31,12 +31,13 @@ tests/orchestration/test_guidance.py ................................... [ 36%]
 ......................................................                   [ 41%]
 tests/orchestration/test_halt.py ..                                      [ 41%]
 tests/orchestration/test_module_boundaries.py .......................... [ 43%]
-.......................................................................  [ 49%]
+........................................................................ [ 49%]
+.                                                                        [ 49%]
 tests/orchestration/test_report_seal.py ..........                       [ 50%]
 tests/orchestration/test_shipped_parsers.py .........                    [ 51%]
 tests/orchestration/test_spend.py ....                                   [ 51%]
 tests/orchestration/test_streams.py ..........................           [ 53%]
-tests/orchestration/test_tasks_codispatch.py ..............              [ 55%]
+tests/orchestration/test_tasks_codispatch.py ..............              [ 54%]
 tests/orchestration/test_teams.py .........                              [ 55%]
 tests/orchestration/test_transitions.py ................................ [ 58%]
 ........................................................................ [ 64%]
@@ -89,9 +90,9 @@ tests/test_lead_prose.py ............................................... [ 85%]
 ................................                                         [100%]
 
 ===== short test summary info =====
-SKIPPED [1] tests/test_measure_run.py:632: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev7/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:1507: grand-vulture archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev7/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2236: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev7/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2295: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev7/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2364: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/577097d8-96da-4e19-b9a0-4dd3d2abbcc7/scratchpad/casting-10-ev7/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-===== 1179 passed, 5 skipped, 9 deselected in 63.04s =====
+SKIPPED [1] tests/test_measure_run.py:632: planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/65b1a431-f4a5-441c-b1ab-feba720af62e/scratchpad/casting-10-ev8/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:1507: grand-vulture archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/65b1a431-f4a5-441c-b1ab-feba720af62e/scratchpad/casting-10-ev8/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2236: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/65b1a431-f4a5-441c-b1ab-feba720af62e/scratchpad/casting-10-ev8/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2295: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/65b1a431-f4a5-441c-b1ab-feba720af62e/scratchpad/casting-10-ev8/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2364: thunder-viper archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/65b1a431-f4a5-441c-b1ab-feba720af62e/scratchpad/casting-10-ev8/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+===== 1176 passed, 5 skipped, 14 deselected in 62.46s =====
