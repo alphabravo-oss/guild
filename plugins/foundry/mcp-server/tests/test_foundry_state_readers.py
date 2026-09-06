@@ -1233,6 +1233,147 @@ def test_skipped_stream_ids_maps_both_spellings_and_degrades(tmp_path) -> None:
     assert fs.skipped_stream_ids(fdir, **kw) == set()
 
 
+# --------------------------------------------------------------------------- #
+# fallout GI-033 / AC-061 / FR-063 (D-080, concern C-059 ROW 5) — the width
+# refusal, hoisted with its two companions as ONE unit.
+#
+# Row 5 was the row C-059 could not land alone: `width._unrecorded_width_problem`
+# is a refusal SHAPER, and this module's own section banner sends shapers back to
+# the lifecycle layer with only their READ moved down. Two facts made it the
+# exception, and the lead ruled on both. It is read from BOTH layers at once —
+# `gates.py` and `transitions.py` are verifier, `streams.py` is lifecycle, and
+# that last edge is the one the widened boundary guard finds — so GI-033's
+# arithmetic leaves it nowhere but a leaf. And its sentence cannot be split per
+# door: SIX permissive per-door fallbacks agreeing on the wrong answer is the
+# defect it exists to end (D-117), so the split that would satisfy the layering
+# rule is the split that reopens it.
+#
+# So all three moved together — the predicate, the diagnosis clause it calls,
+# and the remedy sentence it quotes — because the predicate reads the other two
+# and a unit that arrives in pieces is a unit that can arrive half-wrong.
+# --------------------------------------------------------------------------- #
+
+
+def _state(run_dir: Path, cycle: int, entries: object) -> None:
+    """`state.json` carrying one counter and one `inspect_modes` section."""
+    _write_json(run_dir, "state.json", {"cycle": cycle, "inspect_modes": entries})
+
+
+def test_unrecorded_width_problem_is_silent_on_a_recorded_width(tmp_path) -> None:
+    """fallout D-080 row 5 — None when THIS cycle's crossing recorded a width.
+
+    None is the answer that lets a door pass, so it is the one that must be
+    hardest to get: the entry has to be the newest, carry a mode this server
+    spells, and be stamped for the cycle being asked about. Both members of the
+    vocabulary answer None, because a DELTA that was DECIDED is a recorded width
+    exactly as a FULL is — the refusal is about the absence of a record, never
+    about which width the record names.
+    """
+    fdir = _run(tmp_path)
+    for mode in sorted(INSPECT_MODES):
+        _state(fdir, 4, [{"cycle": 4, "mode": mode, "rule": "first_of_phase"}])
+        assert fs.unrecorded_width_problem(fdir, modes=INSPECT_MODES) is None, mode
+
+
+def test_unrecorded_width_problem_names_the_missing_record_and_the_remedy(
+    tmp_path,
+) -> None:
+    """fallout D-080 row 5 — the refusal names the cycle AND the way out.
+
+    "There is no recorded width" is not an action, so the hint quotes
+    `WIDTH_RECORDING_TRANSITIONS` — the three crossings that write one — rather
+    than reporting a fact about the archive and stopping. The reason carries the
+    cycle it is refusing FOR, because D-216 was a gate passing an assertion about
+    cycle 2 answered by cycle 1's record.
+    """
+    fdir = _run(tmp_path)
+    _state(fdir, 2, [{"cycle": 1, "mode": "FULL"}])
+
+    problem = fs.unrecorded_width_problem(fdir, modes=INSPECT_MODES)
+
+    assert set(problem) == {"reason", "hint"}
+    assert "cycle 2" in problem["reason"]
+    assert "stamped for cycle 1" in problem["reason"], (
+        "the diagnosis clause has to say what WAS found, not only what was "
+        f"missing (NFR-005): {problem['reason']}"
+    )
+    assert fs.WIDTH_RECORDING_TRANSITIONS in problem["hint"], (
+        "the remedy is quoted from the one constant, never re-typed"
+    )
+
+
+def test_an_absent_and_a_torn_state_document_both_refuse_rather_than_raise(
+    tmp_path,
+) -> None:
+    """The empty and malformed drives this module owes every reader.
+
+    Both directions matter here and they are not symmetric. A raise would take
+    `Foundry-Next` down, which is the handshake before every transition; and an
+    unreadable state.json resolving to None — "no problem found" — is D-117's
+    own failure, an unrecorded width read as full width. So the totality promise
+    and the fail-CLOSED promise are asserted together.
+    """
+    fdir = _run(tmp_path)
+
+    absent = fs.unrecorded_width_problem(fdir, modes=INSPECT_MODES)
+    assert absent is not None and set(absent) == {"reason", "hint"}
+    assert "nothing has recorded an inspect_modes entry" in absent["reason"]
+
+    (fdir / "state.json").write_text('{"inspect_modes": ', encoding="utf-8")
+    torn = fs.unrecorded_width_problem(fdir, modes=INSPECT_MODES)
+    assert torn is not None and set(torn) == {"reason", "hint"}
+    assert "cycle 0" in torn["reason"], (
+        "a torn document reads as the counter's degraded 0, not as a raise"
+    )
+
+
+@pytest.mark.parametrize(
+    "entries, expected",
+    [
+        ([], "nothing has recorded an inspect_modes entry for it"),
+        ("not a list", "nothing has recorded an inspect_modes entry for it"),
+        (["not a mapping"], "records no width this server spells"),
+        ([{"cycle": 1, "mode": "BOGUS"}], "records no width this server spells"),
+        ([{"mode": "FULL"}], "carries no usable cycle stamp"),
+        ([{"cycle": True, "mode": "FULL"}], "carries no usable cycle stamp"),
+        ([{"cycle": 1, "mode": "FULL"}], "stamped for cycle 1"),
+    ],
+)
+def test_inspect_mode_gap_tells_the_three_absences_apart(
+    tmp_path, entries, expected
+) -> None:
+    """fallout D-080 row 5, the diagnosis half — one clause per way of missing.
+
+    D-216's refusal reads very differently depending on WHICH of the three ways
+    an archive can fail to carry this INSPECT's width it hit, and "cycle 2 has no
+    recorded width" on a run whose state.json visibly holds thirteen entries
+    sends the lead hunting for a file that is right there. Diagnosis only: the
+    question is DECIDED by `current_inspect_mode`, and this is reached only after
+    that has already answered None.
+    """
+    fdir = _run(tmp_path)
+    _state(fdir, 2, entries)
+
+    assert expected in fs.inspect_mode_gap(fdir, 2, modes=INSPECT_MODES)
+
+
+def test_the_gap_clause_spells_the_vocabulary_it_was_handed(tmp_path) -> None:
+    """The fourth clause this family owes: the closed set is PASSED IN.
+
+    A mode literal spelled in this module would be the second opinion of a field
+    D-210 and D-212 were each filed over, and it would end the leaf contract that
+    keeps `scripts/measure-run.py`'s package-free read working. So the sentence
+    names the members it was GIVEN — driven with a set that is not the shipped
+    one, which a hard-coded "FULL, DELTA" would pass anyway.
+    """
+    fdir = _run(tmp_path)
+    _state(fdir, 1, [{"cycle": 1, "mode": "FULL"}])
+
+    gap = fs.inspect_mode_gap(fdir, 1, modes=frozenset({"WIDE", "NARROW"}))
+
+    assert "NARROW, WIDE are the only two" in gap, gap
+
+
 def test_the_leaf_still_imports_nothing_from_the_package(tmp_path) -> None:
     """fallout GI-033 / FR-008 — the hoist did not cost the leaf its contract.
 
@@ -2027,6 +2168,76 @@ def test_the_leafs_width_read_is_the_width_readers_answer(run_env) -> None:
         assert fs.current_inspect_mode(
             run_env, modes=INSPECT_MODES
         ) == _current_inspect_mode(run_env), entries
+
+
+def test_the_leafs_width_refusal_is_the_width_modules_refusal(run_env) -> None:
+    """fallout GI-033 / D-080 row 5 — the hoisted refusal, word for word.
+
+    AN AGREEMENT PIN, in the shape of the one above it: it compares the leaf
+    against the copy it was hoisted from while BOTH exist, which is the only
+    thing showing the move preserved BEHAVIOUR rather than merely compiling, and
+    casting 2 deletes the width copy as it repoints. A hard import would turn
+    this red on that commit and read as a regression in the leaf, which is the
+    opposite of what it would mean, so it skips with a reason naming why.
+
+    Word for word matters more here than for a fact reader. What moved is a
+    SENTENCE a lead acts on — the cycle it names, which of the three absences it
+    diagnoses, and the three crossings it offers as the remedy. A refusal that
+    still refuses on the same inputs while wording the way out differently would
+    pass a shape assertion and fail the operator, so both keys are compared as
+    strings over every shape the archive can be in, and the diagnosis clause is
+    driven at four cycle numbers because the clause exists to tell them apart.
+    """
+    try:
+        from foundry_mcp.tools.orchestration.width import (
+            _WIDTH_RECORDING_TRANSITIONS,
+            _inspect_mode_gap,
+            _unrecorded_width_problem,
+        )
+    except ImportError:
+        pytest.skip(
+            "width's copies of the width refusal are gone — casting 2 "
+            "repointed to the leaf (C-059 row 5). Nothing is left to agree "
+            "with, and the leaf predicate is driven directly above."
+        )
+
+    for document in (
+        None,
+        "torn",
+        {"cycle": 0},
+        {"cycle": 0, "inspect_modes": []},
+        {"cycle": 0, "inspect_modes": "not a list"},
+        {"cycle": 0, "inspect_modes": ["not a mapping"]},
+        {"cycle": 0, "inspect_modes": [{"cycle": 0, "mode": "FULL",
+                                        "rule": "first_of_phase"}]},
+        {"cycle": 0, "inspect_modes": [{"cycle": 0, "mode": "DELTA"}]},
+        {"cycle": 2, "inspect_modes": [{"cycle": 1, "mode": "FULL"}]},
+        {"cycle": 0, "inspect_modes": [{"cycle": 0, "mode": "BOGUS"}]},
+        {"cycle": 0, "inspect_modes": [{"mode": "FULL"}]},
+        {"cycle": 0, "inspect_modes": [{"cycle": True, "mode": "FULL"}]},
+        {"cycle": 3, "inspect_modes": [{"cycle": 1, "mode": "FULL"},
+                                       {"cycle": 3, "mode": "DELTA"}]},
+    ):
+        state = run_env / "state.json"
+        if document is None:
+            state.unlink(missing_ok=True)
+        elif document == "torn":
+            state.write_text('{"inspect_modes": ', encoding="utf-8")
+        else:
+            _write_json(run_env, "state.json", document)
+
+        assert fs.unrecorded_width_problem(
+            run_env, modes=INSPECT_MODES
+        ) == _unrecorded_width_problem(run_env), document
+        for cycle in (0, 1, 2, 3):
+            assert fs.inspect_mode_gap(
+                run_env, cycle, modes=INSPECT_MODES
+            ) == _inspect_mode_gap(run_env, cycle), (document, cycle)
+
+    assert fs.WIDTH_RECORDING_TRANSITIONS == _WIDTH_RECORDING_TRANSITIONS, (
+        "the remedy sentence is the third member of the unit, and a hoist that "
+        "reworded it would send the lead to a different call"
+    )
 
 
 def test_the_leafs_tier_buckets_are_the_gates_buckets(run_env) -> None:
