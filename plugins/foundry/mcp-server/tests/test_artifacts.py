@@ -1300,8 +1300,8 @@ def test_a_report_with_no_markdown_is_not_present_however_complete_the_json(
 
     Delete REPORT.md outright and the JSON still answers every section — the
     read that trusted the JSON alone passed here, so a run could reach DONE
-    with no operator-readable report at all, which is the outcome GI-006 exists
-    to prevent.
+    with no operator-readable report at all, which is the outcome
+    `convergence GI-006` exists to prevent.
     """
     run_dir = _complete_report(tmp_path / "run")
     (run_dir / "REPORT.md").unlink()
@@ -1315,7 +1315,7 @@ def test_a_report_with_no_markdown_is_not_present_however_complete_the_json(
 
 
 def test_prose_the_lead_appended_hides_no_generated_section(tmp_path):
-    """GI-006 licenses the lead to APPEND, so a document with the lead's own
+    """`convergence GI-006` licenses the lead to APPEND, so a document with its own
     sections above, below and between the generated ones is still complete —
     the heading is found at any depth and in any order.
     """

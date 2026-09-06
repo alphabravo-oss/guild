@@ -1327,8 +1327,8 @@ def _markdown_missing_report_sections(run_dir: Path) -> tuple[list[str], str | N
 
     Returns ``(missing_section_keys, problem)``. A heading counts as present
     when a line reading exactly `## <title>` is there, at any depth in the
-    document and in any order — because GI-006 licenses the lead to APPEND
-    prose, and appended prose can put arbitrary text between, above and below
+    document and in any order — because `convergence GI-006` licenses the lead
+    to APPEND prose, and appended prose can put arbitrary text between, above and below
     the generated headings without omitting one.
 
     The match is on the whole trimmed line rather than a prefix, so a lead's
@@ -1355,8 +1355,8 @@ def _markdown_missing_report_sections(run_dir: Path) -> tuple[list[str], str | N
 def report_document_status(run_dir: Path) -> dict:
     """`{'present': bool, 'missing_sections': [...]}` — the DONE gate's read.
 
-    GI-006 gives the lead permission to APPEND prose and no permission to omit
-    a section, and this is where the second half is checked. Both documents are
+    `convergence GI-006` gives the lead permission to APPEND prose and no
+    permission to omit a section, and this is where the second half is checked. Both documents are
     read off disk every time rather than trusting anything the generator
     returned, because the gap the check exists to close is exactly the one
     where somebody edited a file after it was generated.
@@ -1373,12 +1373,13 @@ def report_document_status(run_dir: Path) -> dict:
     keys are machine-written and machine-read, so they answer the question
     exactly, while a markdown scan could be confused by a reflowed table.
 
-    The argument was for the wrong question. GI-006's violation column names
+    The argument was for the wrong question. `convergence GI-006`'s violation
+    column names
     "a lead-authored REPORT.md that lacks the generated sections" in those
     words, and REPORT.md is the document a human actually reads — the JSON
     exists for tools. Driven: delete REPORT.md outright and the DONE gate still
     passed, so a run could reach DONE with no operator-readable report at all,
-    which is the exact outcome GI-006 exists to prevent.
+    which is the exact outcome `convergence GI-006` exists to prevent.
 
     So the JSON answers "which sections were generated" and the markdown
     answers "which sections a reader can still find", and `missing_sections` is
