@@ -15,7 +15,10 @@ from foundry_mcp.schemas.vocab import (
     FULL_ROSTER_STREAMS,
     INSPECT_DELTA_RULE,
     INSPECT_MODES,
+    NO_UI_MEANING,
     PROVE_DELTA_SAMPLE_SIZE,
+    STREAM_WIRE_IDS,
+    WIRE_TO_CANONICAL,
     is_verifier_path,
 )
 from foundry_mcp.tools.artifacts import (
@@ -27,16 +30,28 @@ from foundry_mcp.tools.artifacts import (
     _document_problem,
     _document_transaction,
     _load_json,
-    _read_text,
     _resolve_spec_path,
+    # fallout GI-033 / AC-061 (D-080, concern C-060) — ALIASED, and the alias
+    # is load-bearing rather than a leftover. D-134's scan recognises a manifest
+    # reader as GUARDED by the NAME it calls, and
+    # `tests/test_spawn_progress.py#test_the_locked_validator_names_are_still_
+    # the_ones_the_scan_looks_for` pins that set to `_manifest_shape_problem`
+    # and `_manifest_shape_error`. Calling casting 7's new public spelling
+    # directly would leave every reader in this package reported as UNGUARDED —
+    # which its own docstring calls worse than an import error, because it
+    # looks like a finding.
+    manifest_shape_problem as _manifest_shape_problem,
 )
 from foundry_mcp.tools.foundry_state import (
+    boundary_base_sha,
     current_cycle,
+    current_inspect_mode,
     get_run_dir,
+    git_changed_paths,
     now_iso,
-    read_document,
     read_text_file,
     sight_required,
+    skipped_stream_ids,
 )
 from pathlib import Path
 
@@ -45,128 +60,10 @@ from pathlib import Path
 
 
 
-def git_changed_paths(
-    project_root: str, base: str, head: str = "HEAD", *, timeout: float = 30.0
-) -> dict:
-    """Repo-relative paths changed between two revisions, spelled as they ARE.
-
-    Returns ``{"ok": bool, "files": [sorted paths], "error": str}``. ``ok``
-    False means the diff is UNKNOWN, which is not the same answer as an empty
-    diff — every caller must keep the two apart.
-
-    D-239 — THE ONE INVOCATION, BECAUSE THE ESCAPED FORM WAS BEING MATCHED ON.
-    -------------------------------------------------------------------------
-    `git diff --name-only` prints a path for a HUMAN to read: with
-    `core.quotepath` at its default (true) a non-ASCII path arrives wrapped in
-    quotes with its bytes octal-escaped — `"schemas/mod\\303\\250le.py"` — and
-    every consumer of this list matches that string against something. Driven in
-    a throwaway repo at git 2.50.1: a commit touching a verifier file with a
-    non-ASCII name printed `"schemas/mod\\303\\250le.py"`, and
-    `vocab.is_verifier_path` on it is False because the leading quote defeats
-    the `(?:^|/)schemas/` anchor — so the transition recorded DELTA immediately
-    after the machinery that judges the build was modified, which is exactly
-    what ST-006 / AC-016 exist to prevent. The same strings are compared whole
-    against manifest `key_files` and `test01_scope`, so a touched declared file
-    read as untouched and `select_sweep_scope` returned [], re-executing none of
-    that casting's evidence logs at a boundary GI-002 says sweeps them.
-
-    BOTH DEFENCES, because either alone leaves a hole. `core.quotepath=false`
-    stops the octal escaping of non-ASCII bytes; `-z` stops the quoting
-    ALTOGETHER, including for a path holding a double quote or a control
-    character, which quotepath does not govern. With NUL separators there is no
-    line to keep intact, so git emits the bytes and nothing needs decoding —
-    which is why this returns paths no caller has to remember to unquote.
-
-    ONE HELPER, NOT ONE PER CALL SITE. `_grind_diff` ran its own copy of this
-    invocation, the retired trace-skip predicate below ran a second, and
-    `foundry_spawn`'s cycle-context diff runs a third. A rule fixed in one copy
-    is this run's repeated failure shape, so the invocation is written once here
-    and imported by the others. Public deliberately: `foundry_spawn` is a
-    sibling casting's module and it imports this name.
-    """
-    import subprocess
-
-    try:
-        proc = subprocess.run(
-            [
-                "git", "-C", project_root,
-                # BEFORE the subcommand: it is a git-wide config override.
-                "-c", "core.quotepath=false",
-                "diff", "--name-only", "-z",
-                # Everything after this is a revision or a path, never a flag.
-                "--end-of-options", base, head,
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-        )
-    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
-        return {
-            "ok": False, "files": [],
-            "error": f"git unavailable: {type(exc).__name__}",
-        }
-    if proc.returncode != 0:
-        return {
-            "ok": False, "files": [],
-            "error": f"git diff failed: {proc.stderr.strip()[:120]}",
-        }
-    return {
-        "ok": True,
-        "files": sorted({tok for tok in proc.stdout.split("\0") if tok.strip()}),
-        "error": "",
-    }
 
 
 
 
-def git_touching_commit(
-    project_root: str, base: str, path: str, head: str = "HEAD",
-    *, timeout: float = 30.0,
-) -> str:
-    """The most recent commit in `base..head` that touched `path`, or "".
-
-    fallout AC-039 — THE COMMIT, NOT THE BASELINE.
-    ---------------------------------------------
-    "Team-Down refuses naming the id AND the commit" and the refusal named the
-    BASELINE — the revision the diff is measured FROM, which is by construction
-    the one commit that did NOT make the change. The operator was handed a SHA
-    and told a commit since it touched their file, leaving them to run the log
-    themselves to find out which. `git_changed_paths` cannot answer it: the
-    diff it runs prints paths and no revisions at all, which is why the commit
-    was never resolved rather than resolved wrongly.
-
-    Written here beside `git_changed_paths` for the reason that helper's own
-    docstring gives — one place for one git invocation — and public for the
-    same reason: a lifecycle module reaches it through a lazy seam.
-
-    Returns "" for every way the question has no answer (no git, a bad
-    revision, a path with no commit in the range). The caller's refusal is
-    advisory and reports what it could resolve; a commit it could not name is
-    an absent field, never a raise and never a wrong SHA.
-    """
-    import subprocess
-
-    try:
-        proc = subprocess.run(
-            [
-                "git", "-C", project_root,
-                "-c", "core.quotepath=false",
-                "log", "-1", "--format=%h",
-                "--end-of-options", f"{base}..{head}", "--", path,
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-        )
-    except (FileNotFoundError, OSError, subprocess.SubprocessError):
-        return ""
-    if proc.returncode != 0:
-        return ""
-    return proc.stdout.strip()
 
 
 
@@ -256,37 +153,6 @@ def _head_sha(project_root: str) -> str:
 
 
 
-def _boundary_base_sha(fdir: Path) -> tuple[str, str]:
-    """The commit a GRIND diff is measured from, and where it came from.
-
-    Three sources in descending precedence, all of them commits this run itself
-    recorded:
-
-      1. the previous INSPECT boundary — the exact answer to "since the last
-         sweep" (CT-007);
-      2. the last clean TRACE, whose marker `streams.py` writes when a TRACE
-         cycle comes back clean;
-      3. the CAST baseline, written when the run left F1.
-
-    Returns ``("", "")`` when none exists, which is a run whose first INSPECT
-    has not happened — and that INSPECT is FULL by `first_of_phase` anyway.
-    """
-    marker = fdir / INSPECT_BOUNDARY_SHA_MARKER
-    if marker.exists():
-        sha = _read_text(marker).strip()
-        if sha:
-            return sha, INSPECT_BOUNDARY_SHA_MARKER
-    trace_marker = fdir / TRACE_CLEAN_AT_MARKER
-    if trace_marker.exists():
-        data, problem = read_document(trace_marker)
-        if problem is None and data.get("head_sha"):
-            return str(data["head_sha"]), TRACE_CLEAN_AT_MARKER
-    cast_marker = fdir / CAST_BASELINE_SHA_MARKER
-    if cast_marker.exists():
-        sha = _read_text(cast_marker).strip()
-        if sha:
-            return sha, CAST_BASELINE_SHA_MARKER
-    return "", ""
 
 
 
@@ -299,7 +165,12 @@ def _grind_diff(fdir: Path, project_root: str) -> dict:
     opposite answers and the callers must not confuse them: an unknown diff
     cannot support a delta roster, so it forces FULL and a whole-corpus sweep.
     """
-    base, source = _boundary_base_sha(fdir)
+    base, source = boundary_base_sha(
+        fdir,
+        boundary_marker=INSPECT_BOUNDARY_SHA_MARKER,
+        trace_marker=TRACE_CLEAN_AT_MARKER,
+        cast_marker=CAST_BASELINE_SHA_MARKER,
+    )
     if not base:
         return {"files": [], "base": "", "source": "",
                 "problem": "no recorded boundary, clean TRACE or CAST baseline to diff from"}
@@ -417,9 +288,13 @@ def _research_skipped(fdir: Path) -> bool:
 
 def _skipped_streams(fdir: Path) -> set[str]:
     """`manifest.stream_skips` as wire ids — casting 4's reader, lazily."""
-    from foundry_mcp.tools.foundry_spawn import _skipped_stream_ids
 
-    return _skipped_stream_ids(fdir)
+    return skipped_stream_ids(
+        fdir,
+        wire_ids=STREAM_WIRE_IDS,
+        wire_to_canonical=WIRE_TO_CANONICAL,
+        shape_problem=_manifest_shape_problem,
+    )
 
 
 
@@ -1204,16 +1079,20 @@ def _sight_required(fdir: Path) -> dict:
     implementation, and `teams._check_sight_required` delegates to the same
     reader for its own callers.
 
-    THE TWO CLOSED-SET VALUES ARE IMPORTED LAZILY AND THAT IS NOT THE LAYERING
-    DODGE IT LOOKS LIKE. `foundry_spawn` and `tools/foundry.py` both import from
-    this package, so a module-top import here closes an import cycle that takes
-    every tool in the server down at load. It is the `Lazy cross-module seam`
-    house pattern, written ONCE per symbol, and `teams.py` reaches the same two
-    names the same way for the same reason.
-    """
-    from foundry_mcp.tools.foundry import NO_UI_MEANING
-    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+    fallout GI-033 / AC-061 / FR-063 (D-080, concerns C-059 / C-060) — THE TWO
+    CLOSED-SET VALUES COME OFF THE LEAF NOW, AND THE LAZINESS IS GONE WITH THE
+    CYCLE THAT FORCED IT.
 
+    They were imported lazily from `tools/foundry.py` and `tools/foundry_spawn.py`
+    — both LIFECYCLE — which is a verifier module reaching the presentation
+    layer, and GI-033's violation column names it outright. The laziness was
+    never the dodge; it was an honest workaround for a real import cycle, and it
+    hid the crossing from every scan that only reads module-top imports (D-080).
+    `NO_UI_MEANING` is a closed-vocabulary sentence and lives in `vocab.py`;
+    `manifest_shape_problem` is a manifest-document reader and lives in
+    `artifacts.py`. Both are leaves, so the imports are module-top and the edge
+    is gone rather than deferred.
+    """
     return sight_required(
         fdir, shape_problem=_manifest_shape_problem, no_ui_meaning=NO_UI_MEANING
     )
@@ -1753,107 +1632,6 @@ def _rollup_sub_for(entry: dict) -> str:
 
 
 
-def _current_inspect_mode(fdir: Path, cycle: int | None = None) -> dict | None:
-    """The decision the last INSPECT-opening transition recorded, or None.
-
-    THE ONLY READ. GI-008 and GI-009 both name a lazily-computed mode as the
-    violation, so every consumer — the streams-complete check, the guidance
-    engine, the status display — comes through here and none of them re-derives
-    anything. None means a run whose INSPECT has not been opened since this
-    landed, and each caller degrades to its pre-change behaviour rather than
-    guessing a width.
-
-    ``cycle`` is WHICH crossing is being asked about, and it defaults to the
-    server counter (D-216). Almost every caller is asking "what width is the
-    INSPECT this run is in", which is the counter's crossing and nobody's
-    judgement call, so it passes nothing. The two NARROW readers —
-    `_recorded_stream_scope` and `_recorded_prove_roster` — are asking about a
-    named cycle instead, because their callers measure one cycle's coverage
-    against that cycle's roster, and they pass it. Making the subject an
-    argument rather than a second reader is what keeps this THE only read: the
-    alternative was a helper that resolves the entry a different way, which is
-    the two-readers-disagree shape D-117 was filed to close.
-    """
-    modes = _load_json(fdir / "state.json").get("inspect_modes")
-    if not isinstance(modes, list) or not modes:
-        return None
-    # D-212 (same class as the escalation-status read) — THE WIDTH IS RESOLVED
-    # AGAINST `INSPECT_MODES`, AND THE LAST ENTRY IS THE ONE THAT DECIDES.
-    #
-    # `inspect_modes` is append-only and the last entry IS the current
-    # decision — `_note_fix_after_inspect_decision` stamps `fixes_after_decision`
-    # onto that same entry, reading it the same way and testing neither the
-    # vocabulary nor the cycle stamp itself. That stays inert because the stamp
-    # is read back only HERE, at `inspect_clean`, which asks
-    # `_unrecorded_width_problem` first: the states where a bare `modes[-1]` and
-    # this function would disagree are exactly the states that door has already
-    # refused. This walked BACKWARDS past any entry with a falsy `mode`, and tested that
-    # `mode` for truthiness rather than for membership of the vocabulary that
-    # spells it, so a hand-edited or foreign-written `"delta"` (lowercase) or
-    # `"BOGUS"` was a recorded width. `_unrecorded_width_problem` then answered
-    # None, and `inspect_clean`'s refusal — `recorded_mode.get("mode") ==
-    # "DELTA"` — is false for such a value, so a narrow INSPECT closed and the
-    # run reached F4.
-    #
-    # BOTH AXES. WHAT is compared: `INSPECT_MODES`, by membership, so the
-    # vocabulary decides rather than the two literals typed beside it at five
-    # doors. WHICH entry answers: the last one, so a malformed current decision
-    # cannot be answered with an older cycle's valid one — walking back would
-    # report cycle N-1's FULL as cycle N's width and PASS the ASSAY gate that
-    # refuses today, which is a worse door than the one being closed.
-    #
-    # An unusable record reads as NO record, which is D-117's ruling ("an
-    # unrecorded width is not full width") applied to the value that is present
-    # and wrong rather than to the one that is absent: every door refuses
-    # through `_unrecorded_width_problem`, naming the transition that records a
-    # width. Every entry this module writes carries a member of the vocabulary,
-    # so a well-formed archive reads exactly as before.
-    entry = modes[-1]
-    if not isinstance(entry, dict):
-        return None
-    if entry.get("mode") not in INSPECT_MODES:
-        return None
-    # D-216 — AND IT IS THE ENTRY STAMPED FOR **THIS** CYCLE.
-    #
-    # THE THIRD AXIS. D-212 settled WHICH entry answers (the last one) and WHAT
-    # its mode is resolved against (`INSPECT_MODES`). It left WHICH CYCLE the
-    # entry belongs to, and this returned the newest entry whatever crossing had
-    # written it — so cycle 1's decision answered "what width is cycle 2" at
-    # every door that decides on one.
-    #
-    # The module already held the rule twice, in the two helpers that read a
-    # NARROW slice of a decision: `_recorded_stream_scope` and
-    # `_recorded_prove_roster` both compare the entry's cycle against the cycle
-    # being measured, and the first names the omission as GI-008's violation in
-    # its own docstring — "a caller reading a scope off a decision made for
-    # another cycle would be narrowing this one against a width nothing recorded
-    # for it". The narrow helpers guarded it; the read they are built on did not.
-    #
-    # Driven through `server.call_tool` at F2 cycle 2 with a single
-    # `{cycle: 1, mode: FULL, rule: first_of_phase}` entry and every stream
-    # complete: `Foundry-Gate('assay')` PASSED carrying
-    # `inspect_ran_at_full_width (mode=FULL rule=first_of_phase) ok=True`, an
-    # assertion about cycle 2 answered by cycle 1's record. With a cycle-1 DELTA
-    # entry, `_check_streams_complete` reported complete True over cycle 1's
-    # roster — GI-008's named violation verbatim — and the F2->F2 widening arm
-    # accepted the re-open and advanced the counter to 3, stamping a FULL
-    # decision for a crossing whose own width nothing had recorded.
-    #
-    # EARLIER OR LATER, both. Every entry this module writes carries the counter
-    # the crossing that wrote it holds (`cast` and `temper` stamp
-    # `_current_cycle`; `inspect_start` stamps the counter it advanced inside the
-    # same transaction), so a stamp ahead of the counter cannot arise on the live
-    # path at all — which is why tolerating one is tolerating something no
-    # transition produced. A stale stamp is D-117's ruling ("an unrecorded width
-    # is not full width") applied to the value that belongs to a different
-    # crossing: it reads as NO record, and every door refuses through
-    # `_unrecorded_width_problem`.
-    stamped = entry.get("cycle")
-    if isinstance(stamped, bool) or not isinstance(stamped, int):
-        return None
-    if stamped != (current_cycle(fdir) if cycle is None else cycle):
-        return None
-    return entry
 
 
 
@@ -1873,7 +1651,7 @@ _WIDTH_RECORDING_TRANSITIONS = (
 def _inspect_mode_gap(fdir: Path, cycle: int) -> str:
     """Why the newest `inspect_modes` entry is not cycle `cycle`'s width.
 
-    Diagnosis only — `_current_inspect_mode` is still the one place the question
+    Diagnosis only — `foundry_state.current_inspect_mode` is the one place the question
     is DECIDED, and this is called only after it has already answered None. It
     exists because D-216's refusal reads very differently depending on which of
     the three ways an archive can fail to carry this INSPECT's width it hit, and
@@ -1943,7 +1721,7 @@ def _unrecorded_width_problem(fdir: Path) -> dict | None:
     missing record AND the transition that writes it, because "there is no
     recorded width" is not an action.
     """
-    if _current_inspect_mode(fdir) is not None:
+    if current_inspect_mode(fdir, modes=INSPECT_MODES) is not None:
         return None
     cycle = current_cycle(fdir)
     return {

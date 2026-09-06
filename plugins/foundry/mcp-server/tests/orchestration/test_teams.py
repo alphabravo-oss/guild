@@ -88,7 +88,7 @@ def test_sight_is_not_required_when_the_run_declares_no_ui(run_env):
     extension scan returns "No frontend files in castings" before the flag is
     read at all. The arm needed a UI extension AND the flag together.
     """
-    from foundry_mcp.tools.foundry import NO_UI_MEANING
+    from foundry_mcp.schemas.vocab import NO_UI_MEANING
 
     project_root, fdir = run_env
 

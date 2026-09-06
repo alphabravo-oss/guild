@@ -132,11 +132,11 @@ from foundry_mcp.tools.orchestration.fix_gate import (  # noqa: F401
 
 from foundry_mcp.tools.orchestration.gates import (  # noqa: F401
     GATE_TO_TRANSITION,
-    _generate_report,
 )
 
 from foundry_mcp.tools.orchestration.report_seal import (  # noqa: F401
     _LEAD_NOTES_HEADING,
+    _generate_report,
 )
 
 from foundry_mcp.tools.orchestration.transitions import (  # noqa: F401
@@ -742,6 +742,42 @@ def shipped_python_files() -> list[Path]:
 #: pins up: these keys are string constants that ARE names, so an entry would
 #: vouch for its own name the day someone redefines it.
 _PROSE_CITES_WITH_NO_DEFINITION: dict[str, str] = {
+    # fallout GI-033 / AC-061 / FR-063 (D-080, concerns C-059 / C-060) — SIX
+    # NAMES THAT WENT TO A LEAF, narrated in past tense by the comments that
+    # cite them. Each was read from BOTH layers, which by GI-033's arithmetic
+    # means it could live in neither, and each went to the leaf its subject
+    # names.
+    "_git_changed_paths": (
+        "foundry_spawn's own wrapper over the git diff, deleted when the "
+        "helper itself went to `foundry_state.git_changed_paths` (C-059 row 1); "
+        "the module calls the leaf directly now."
+    ),
+    "_skipped_stream_ids": (
+        "the predictive skip-list reader, hoisted to "
+        "`foundry_state.skipped_stream_ids` (C-059 row 7) because "
+        "`orchestration/width.py` — a VERIFIER module — reached it in "
+        "`foundry_spawn`, which is lifecycle."
+    ),
+    "_shape_problem": (
+        "the recursive shape walker, hoisted with the predicate it serves to "
+        "`artifacts._document_shape_problem` (C-060 row 3)."
+    ),
+    "_MANIFEST_SHAPE": (
+        "the manifest shape declaration, hoisted to "
+        "`artifacts._MANIFEST_DOCUMENT_SHAPE` (C-060 row 3) and re-pinned there "
+        "by `tests/test_artifacts.py#test_every_manifest_key_the_declarations_"
+        "readers_index_is_declared`."
+    ),
+    "_REQUIRED": (
+        "the shape grammar's presence sentinel, hoisted beside its declaration "
+        "as `artifacts._REQUIRED_RUNG` (C-060 row 3)."
+    ),
+    "_boundary_base_sha": (
+        "the three-marker baseline reader, hoisted to "
+        "`foundry_state.boundary_base_sha` (C-059 row 3) with the marker "
+        "BASENAMES passed in, because the stdlib-only leaf may not import "
+        "`artifacts.py` where they are declared."
+    ),
     "_concerns_excusing": (
         "the Team-Down concern EXIT, deleted with the exit itself (D-074, "
         "superseding D-050): AC-039 admits one exit and AC-041 names it, and "

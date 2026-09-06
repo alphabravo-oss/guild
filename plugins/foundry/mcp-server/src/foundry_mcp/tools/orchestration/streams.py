@@ -16,6 +16,7 @@ from foundry_mcp.schemas.vocab import (
 from foundry_mcp.tools.artifacts import (
     ROLLUP_FILENAME,
     _spec_requirement_ids,
+    count_spec_requirements,
     TRACE_CLEAN_AT_MARKER,
     _artifact_guard,
     _document_transaction,
@@ -25,6 +26,7 @@ from foundry_mcp.tools.artifacts import (
 )
 from foundry_mcp.tools.foundry_state import (
     check_streams_complete,
+    current_inspect_mode,
     current_cycle,
     get_run_dir,
     now_iso,
@@ -85,7 +87,6 @@ def _prove_is_clean(fdir: Path, project_root: str) -> bool:
     # close a cycle that takes every tool in this server down at once.
     # Unguarded, so a wiring break fails loudly at the one call site that
     # needs the symbol rather than hiding behind a silent fallback.
-    from foundry_mcp.tools.orchestration.gates import _count_spec_requirements
     marker = fdir / _stream_marker("prove")
     if not marker.exists():
         return False
@@ -104,7 +105,7 @@ def _prove_is_clean(fdir: Path, project_root: str) -> bool:
     return prove_is_clean(
         totals=_rollup_totals(fdir, current_cycle(fdir), "prove")
         or _marker_counts(marker),
-        spec_requirement_count=_count_spec_requirements(project_root),
+        spec_requirement_count=count_spec_requirements(project_root),
     )
 
 
@@ -219,8 +220,7 @@ def _recorded_stream_scope(fdir: Path, cycle: int, stream: str) -> str:
     # close a cycle that takes every tool in this server down at once.
     # Unguarded, so a wiring break fails loudly at the one call site that
     # needs the symbol rather than hiding behind a silent fallback.
-    from foundry_mcp.tools.orchestration.width import _current_inspect_mode
-    recorded = _current_inspect_mode(fdir, cycle)
+    recorded = current_inspect_mode(fdir, cycle, modes=INSPECT_MODES)
     if not isinstance(recorded, dict):
         return ""
     scope = recorded.get("stream_scope")
@@ -376,8 +376,7 @@ def _recorded_prove_roster(fdir: Path, cycle: int) -> list[str] | None:
     # close a cycle that takes every tool in this server down at once.
     # Unguarded, so a wiring break fails loudly at the one call site that
     # needs the symbol rather than hiding behind a silent fallback.
-    from foundry_mcp.tools.orchestration.width import _current_inspect_mode
-    recorded = _current_inspect_mode(fdir, cycle)
+    recorded = current_inspect_mode(fdir, cycle, modes=INSPECT_MODES)
     if not recorded or recorded.get("mode") != "DELTA":
         return None
     sample = recorded.get("prove_sample")
@@ -411,7 +410,7 @@ def _coverage_shortfall(fdir: Path, project_root: str, stream: str, cycle: int) 
     names "a streams-complete check that reads a roster nothing recorded" as
     the violation — and then handed each member of that roster to this
     function, which measured PROVE against
-    `_count_spec_requirements(project_root) * 0.95` and consulted no recorded
+    `count_spec_requirements(project_root) * 0.95` and consulted no recorded
     decision at all. So the one check that CONSUMES the roster ignored the
     width the `inspect_start` transition had just decided, and a PROVE that
     checked exactly the roster the server itself recorded was reported
@@ -442,7 +441,6 @@ def _coverage_shortfall(fdir: Path, project_root: str, stream: str, cycle: int) 
     # close a cycle that takes every tool in this server down at once.
     # Unguarded, so a wiring break fails loudly at the one call site that
     # needs the symbol rather than hiding behind a silent fallback.
-    from foundry_mcp.tools.orchestration.gates import _count_spec_requirements
     totals = _rollup_totals(fdir, cycle, stream) or _marker_counts(
         fdir / _stream_marker(stream)
     )
@@ -478,7 +476,7 @@ def _coverage_shortfall(fdir: Path, project_root: str, stream: str, cycle: int) 
                 }
             return None
 
-        spec_count = _count_spec_requirements(project_root)
+        spec_count = count_spec_requirements(project_root)
         if spec_count > 0 and checked < spec_count * 0.95:
             return {
                 "stream": "prove",

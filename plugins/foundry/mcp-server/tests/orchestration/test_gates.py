@@ -153,6 +153,10 @@ from foundry_mcp.tools.orchestration.fix_gate import (  # noqa: F401
     foundry_sync_defects,
 )
 
+from foundry_mcp.tools.orchestration.report_seal import (  # noqa: F401
+    _generate_report,
+)
+
 from foundry_mcp.tools.orchestration.gates import (  # noqa: F401
     GATE_TO_TRANSITION,
     VERDICT_VALUES,
@@ -163,7 +167,6 @@ from foundry_mcp.tools.orchestration.gates import (  # noqa: F401
     _blocking_defects,
     _count_spec_requirements,
     _done_preconditions,
-    _generate_report,
     _open_defects_by_tier,
     _sorted_spec_requirement_ids,
     foundry_gate,

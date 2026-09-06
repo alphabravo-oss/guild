@@ -5109,6 +5109,41 @@ def test_no_top_level_symbol_is_defined_in_two_shipped_modules():
         f"_DELIBERATE_REDEFINITIONS: {duplicated}"
     )
 
+    # fallout AC-015 / GI-025 (D-083) — A ROW IS EXCUSABLE ONLY WHILE IT IS
+    # SOMEBODY ELSE'S TO CLOSE.
+    # ----------------------------------------------------------------------
+    # The table's own comment says "every one of them is a file this casting may
+    # not edit", and that was prose. It is the predicate now: a row survives
+    # only while EVERY module defining the name is outside this casting's
+    # key_files. The day a forked symbol moves into `tools/orchestration/`,
+    # `tests/orchestration/`, `server.py` or `foundry_spawn.py`, the excuse
+    # stops being true and the row fails — which is the difference between an
+    # inventory of other people's debt and an allowlist for one's own.
+    #
+    # AC-015 states a property of the GUARD ("each symbol defined once"), not of
+    # the survey's inventory, so a row is a deferral and has to keep earning it.
+    # D-061 closed the third row this way rather than by argument: casting 4
+    # renamed its `_artifact_guard` and the stale assertion below deleted the
+    # row for us.
+    ours = ("orchestration/", "server.py", "foundry_spawn.py")
+    module_paths = {m.name: m for m in modules}
+    not_ours = []
+    for name in sorted(_KNOWN_DUPLICATION):
+        homes = defined.get(name, [])
+        for home in homes:
+            path = module_paths.get(home)
+            relative = "" if path is None else str(
+                path.relative_to(Path(foundry_mcp.__file__).resolve().parent)
+            )
+            if any(part in relative for part in ours):
+                not_ours.append(f"{name} in {relative}")
+    assert not_ours == [], (
+        f"_KNOWN_DUPLICATION row(s) whose fork now lives in THIS casting's own "
+        f"files: {not_ours}. The table records duplication another casting must "
+        "close, and a row over a file this casting can edit is an allowlist for "
+        "its own debt. Close it here."
+    )
+
     # ...and neither table outlives what it accounts for. This is what makes the
     # inventory shrink: closing a duplication and leaving its row here fails.
     stale = sorted(name for name in accounted if len(defined.get(name, [])) < 2)
@@ -5380,13 +5415,41 @@ def _module_top_imports(path: Path) -> set[str]:
     says which cycle it avoids. What this scan measures is what Python actually
     executes when the package loads.
     """
+    return {
+        module.rsplit(".", 1)[-1]
+        for module in _module_top_dotted_imports(path)
+        if module.startswith("foundry_mcp.tools.orchestration.")
+    }
+
+
+def _module_top_dotted_imports(path: Path) -> set[str]:
+    """Every dotted module name `path` imports AT MODULE TOP, both spellings.
+
+    fallout AC-015 / FR-006 / GI-025 / OT-015 (D-081) — `ast.Import` IS A
+    MODULE-TOP IMPORT, AND THE SCAN COULD NOT SEE ONE.
+
+    Both callers of this walk tested `isinstance(node, ast.ImportFrom)` and
+    nothing else, so `import foundry_mcp.tools.orchestration.zz_b` — a real
+    import Python executes at package load — was invisible to the acyclicity
+    check AND to the layering scan. Driven on an isolated copy: two modules
+    importing each other in the `ast.Import` spelling gave `pytest -k acyclic`
+    ONE PASSED, while the identical cycle written `from ... import ...` failed
+    correctly and named it. A second plant put a module-top
+    `import foundry_mcp.tools.display` at the top of `gates.py` and the seam
+    test stayed green over an edge GI-033's violation column names by hand.
+
+    The helper's own docstring claimed "what this scan measures is what Python
+    actually executes when the package loads", which was the promise and not the
+    behaviour. Both spellings are walked now, in ONE place, so the two callers
+    cannot drift into seeing different halves of the same statement.
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"))
     out: set[str] = set()
     for node in tree.body:
-        if not isinstance(node, ast.ImportFrom) or not node.module:
-            continue
-        if node.module.startswith("foundry_mcp.tools.orchestration."):
-            out.add(node.module.rsplit(".", 1)[-1])
+        if isinstance(node, ast.ImportFrom) and node.module:
+            out.add(node.module)
+        elif isinstance(node, ast.Import):
+            out.update(alias.name for alias in node.names)
     return out
 
 
@@ -5408,16 +5471,13 @@ def _module_top_package_imports(path: Path) -> set[str]:
     has moved. Everything else under `foundry_mcp.tools` and
     `foundry_mcp.parsers` is lifecycle by elimination.
     """
-    tree = ast.parse(path.read_text(encoding="utf-8"))
     out: set[str] = set()
-    for node in tree.body:
-        if not isinstance(node, ast.ImportFrom) or not node.module:
+    for module in _module_top_dotted_imports(path):
+        if module.startswith("foundry_mcp.tools.orchestration"):
             continue
-        if node.module.startswith("foundry_mcp.tools.orchestration"):
+        if not module.startswith(("foundry_mcp.tools.", "foundry_mcp.parsers.")):
             continue
-        if not node.module.startswith(("foundry_mcp.tools.", "foundry_mcp.parsers.")):
-            continue
-        stem = node.module.rsplit(".", 1)[-1]
+        stem = module.rsplit(".", 1)[-1]
         if stem in _LEAF_MODULES:
             continue
         out.add(stem)
@@ -5732,21 +5792,23 @@ def test_no_verifier_module_reaches_a_lifecycle_module_lazily_either():
 #: casting carved, and widening the window is what found this one. Same
 #: shrink-only discipline as the tables above: a NEW unimported module fails
 #: immediately, and an entry whose module has gained an importer ALSO fails.
-_SHIPPED_WITHOUT_A_TEST_MODULE: dict[str, str] = {
-    "parsers/report.py": (
-        "the report parser. `tools/validation.py` imports `extract_last_json` "
-        "from it and `Validate-Report` runs through that, so the module is "
-        "REACHED over MCP and named by no test module. In no casting's "
-        "key_files this run."
-    ),
-    "parsers/prove.py": (
-        "the PROVE report parser. `tools/citation.py` imports `Verdict` and "
-        "`parse_prove_report` from it, and no test module in this suite names "
-        "the module at all — so the parser that reads a verification stream's "
-        "own report is driven by nothing. It is in no casting's key_files this "
-        "run; recorded here rather than left invisible."
-    ),
-}
+#: fallout AC-014 / OT-015 (D-082) — THE TABLE IS EMPTY, AND IT IS EMPTY
+#: BECAUSE THE MODULES ARE DRIVEN.
+#:
+#: It held `parsers/report.py` and `parsers/prove.py`, and the assertion below
+#: ends `sorted(unimported) == named` — so the guard's PASSING state was a tree
+#: in which both had no test module at all. Both are reached over MCP
+#: (`tools/validation.py` takes `extract_last_json`, `tools/citation.py` takes
+#: `Verdict` and `parse_prove_report`), and a grep of the whole `tests/` tree
+#: for either module returned only the two rows themselves. Each row named an
+#: honest reason, which is exactly what made the guard HOLLOW rather than
+#: lenient: it passed, so nothing downstream could tell the tree had the gap.
+#:
+#: `tests/orchestration/test_shipped_parsers.py` drives both. The rule AC-014
+#: states is now true of the tree rather than true of the tree minus a table,
+#: and an entry added here would have to argue why a module nobody drives is
+#: acceptable when writing the test took an hour.
+_SHIPPED_WITHOUT_A_TEST_MODULE: dict[str, str] = {}
 
 
 def test_every_shipped_module_is_imported_by_some_test_module():
@@ -5895,7 +5957,22 @@ def test_the_package_marker_re_exports_nothing():
 #: is preserved, and preserved means every edge of it is a NAMED lazy seam that
 #: does not exist at import time — not that the back edges happen to be lazy
 #: while the forward ones are module-top.
-_SPAWN_SEAM_MODULES = ("teams", "spend", "width", "transitions")
+# fallout GI-033 / AC-061 / FR-063 (D-080) — THREE MEMBERS LEFT THIS ROSTER
+# WITH THEIR SEAMS, AND ONE REMAINS.
+#
+# `teams`, `width` and `transitions` each reached `foundry_spawn` lazily for
+# `_manifest_shape_problem` or `_skipped_stream_ids` — predicates BOTH layers
+# read, two of them from the verifier side, which GI-033 refuses outright and
+# which no module-top import scan could see because every reach was lazy. Both
+# are leaf symbols now (`artifacts.manifest_shape_problem`,
+# `foundry_state.skipped_stream_ids`), reached at module top, so the coupling
+# is gone rather than deferred and the roster shrinks with it.
+#
+# `spend` stays, and it is a different shape: `_agent_id_for_casting` is a
+# spawn-time identity that only the lifecycle layer asks about, so the seam is
+# lifecycle-to-lifecycle and the laziness answers an import cycle rather than a
+# layering rule.
+_SPAWN_SEAM_MODULES = ("spend",)
 
 
 def test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions():

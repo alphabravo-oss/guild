@@ -8,9 +8,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from foundry_mcp.schemas.vocab import REPORT_MD_FILENAME
+from foundry_mcp.schemas.vocab import (
+    DEFECT_TIERS,
+    REPORT_MD_FILENAME,
+    TIER_UNKNOWN,
+    defect_tier,
+)
 from foundry_mcp.tools.artifacts import _document_transaction
 from foundry_mcp.tools.foundry_state import (
+    blocking_defects,
     markdown_sections,
     now_iso,
     read_text_file,
@@ -165,6 +171,34 @@ def _seal_lead_prose(on_disk: str, generated: str) -> tuple[str, int]:
 
 
 
+def _generate_report(project_root: str, fdir: Path) -> dict:
+    """C-10's ``generate_report`` \u2014 writes REPORT.md and report.json.
+
+    fallout GI-033 / AC-061 / FR-063 (D-080) \u2014 THE SEAM LIVES WITH ITS
+    CALLER NOW, AND THE CALLER IS LIFECYCLE.
+
+    This function stood in `gates.py`, and this module imported it from there:
+    a LIFECYCLE module reaching into the VERIFIER set to borrow a one-line
+    wrapper around a lifecycle function. AC-061 refuses that direction with no
+    exception, and the detour bought nothing \u2014 `foundry_report.py` is
+    presentation, this module is presentation, and the edge between them has
+    never been a crossing. `gates.py` no longer generates a report at all; what
+    it still needs is `report_status`, which is a READ and is on its way to the
+    leaf (concern C-060 row 2).
+
+    STILL LAZY, and written ONCE per symbol, in the shape the shared pattern
+    shows: `foundry_report` imports from this package, so a module-top import
+    here closes a cycle that takes every tool in this server down at load.
+    Unguarded, so a wiring break fails loudly at the one call site that needs
+    the symbol rather than hiding behind a silent fallback.
+    """
+    from foundry_mcp.tools.foundry_report import generate_report
+
+    return generate_report(Path(project_root), fdir)
+
+
+
+
 def _regenerate_report_preserving_lead_prose(
     project_root: str, fdir: Path
 ) -> dict:
@@ -195,12 +229,19 @@ def _regenerate_report_preserving_lead_prose(
     left the run's final artifact carrying two values for one question. Nothing
     below compares a generated line with anything.
     """
-    # fallout FR-004 / GI-033 -- LAZY SEAM, written once per symbol.
-    # `gates` import(s) this module, so a module-top import here would
-    # close a cycle that takes every tool in this server down at once.
-    # Unguarded, so a wiring break fails loudly at the one call site that
-    # needs the symbol rather than hiding behind a silent fallback.
-    from foundry_mcp.tools.orchestration.gates import _generate_report
+    # fallout GI-033 / AC-061 / FR-063 (D-080) — LAZY SEAM TO THE GENERATOR'S
+    # OWN MODULE, NOT THROUGH THE VERIFIER SET.
+    #
+    # This reached `gates._generate_report`, which is itself a one-line lazy
+    # wrapper over `foundry_report.generate_report` — so a LIFECYCLE module was
+    # importing a VERIFIER one to borrow its wrapper around a lifecycle
+    # function. AC-061 refuses that direction outright and the detour bought
+    # nothing: `foundry_report.py` is lifecycle, this module is lifecycle, and
+    # the edge between them has never been a crossing.
+    #
+    # STILL LAZY, for the reason the seam at the bottom of this file spells out:
+    # `foundry_report` imports from this package, so a module-top import here
+    # closes a cycle that takes every tool in the server down at once.
     md_path = fdir / REPORT_MD_FILENAME
     # BEFORE the generator runs, because the generator is what overwrites it.
     on_disk, _problem = read_text_file(md_path)
@@ -334,12 +375,15 @@ def _sealed_report_sentence(sealed: dict, fdir: Path) -> str:
     Names the LATENT backlog count because that is the fact FR-001 puts in the
     report and the fact a stale report got wrong.
     """
-    # fallout FR-004 / GI-033 -- LAZY SEAM, written once per symbol.
-    # `gates` import(s) this module, so a module-top import here would
-    # close a cycle that takes every tool in this server down at once.
-    # Unguarded, so a wiring break fails loudly at the one call site that
-    # needs the symbol rather than hiding behind a silent fallback.
-    from foundry_mcp.tools.orchestration.gates import _blocking_defects
+    # fallout GI-033 / AC-061 (D-080, concern C-059) — THE FACTS COME OFF THE
+    # LEAF, AND THE SENTENCE STAYS WITH WHOEVER SPEAKS IT.
+    #
+    # This reached `gates._blocking_defects`, a LIFECYCLE module importing a
+    # VERIFIER one, which AC-061 refuses with no exception at all. Casting 10
+    # hoisted the READ to `foundry_state.blocking_defects` as a pure counter —
+    # facts only, no reason and no hint — because the refusal PROSE is
+    # lifecycle knowledge and belongs where the refusal is spoken. This module
+    # needs only the count, so it takes the numbers and crosses nothing.
     if not sealed["report_generated"]:
         return (
             "The report could NOT be regenerated at F6: "
@@ -347,7 +391,9 @@ def _sealed_report_sentence(sealed: dict, fdir: Path) -> str:
             "this transition — repair what the error names and call "
             "Foundry-Report, which is not a phase transition and still runs."
         )
-    latent = _blocking_defects(fdir)["latent"]
+    latent = blocking_defects(
+        fdir, tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN, tier_of=defect_tier
+    )["latent"]
     sentence = (
         f"The report was regenerated as part of this transition, naming "
         f"{len(latent)} open LATENT defect(s) in the F6 backlog"

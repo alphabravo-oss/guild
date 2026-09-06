@@ -9,15 +9,30 @@ import os
 import re
 from pathlib import Path
 
+from foundry_mcp.schemas.vocab import NO_UI_MEANING
 from foundry_mcp.tools.artifacts import (
+    CAST_BASELINE_SHA_MARKER,
+    INSPECT_BOUNDARY_SHA_MARKER,
+    TRACE_CLEAN_AT_MARKER,
+    # fallout GI-033 / AC-061 (D-080, concern C-060) — ALIASED, and the alias
+    # is load-bearing rather than a leftover: D-134's scan recognises a manifest
+    # reader as GUARDED by the NAME it calls, and
+    # `tests/test_spawn_progress.py` pins that set to `_manifest_shape_problem`
+    # and `_manifest_shape_error`. Calling the leaf's public spelling directly
+    # would report every reader here as UNGUARDED, which is worse than an
+    # import error because it looks like a finding.
+    manifest_shape_problem as _manifest_shape_problem,
     _artifact_guard,
     _document_transaction,
     _load_json,
 )
 from foundry_mcp.tools.foundry_state import (
     active_teams,
+    boundary_base_sha,
     current_cycle,
     get_run_dir,
+    git_changed_paths,
+    git_touching_commit,
     live_teammate_panes,
     sight_required,
 )
@@ -375,11 +390,6 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
     # Unguarded, so a wiring break fails loudly at the one call site that
     # needs the symbol rather than hiding behind a silent fallback.
     from foundry_mcp.tools.orchestration.directives import DISPATCHED_DEFECT_UNRECORDED, _grind_dispatches
-    from foundry_mcp.tools.orchestration.width import (
-        _boundary_base_sha,
-        git_changed_paths,
-        git_touching_commit,
-    )
     cycle = current_cycle(fdir)
     dispatched = _grind_dispatches(fdir, cycle)
     if not dispatched:
@@ -394,7 +404,12 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
     if not still_open:
         return None
 
-    base, base_source = _boundary_base_sha(fdir)
+    base, base_source = boundary_base_sha(
+        fdir,
+        boundary_marker=INSPECT_BOUNDARY_SHA_MARKER,
+        trace_marker=TRACE_CLEAN_AT_MARKER,
+        cast_marker=CAST_BASELINE_SHA_MARKER,
+    )
     if not base:
         return None
     diff = git_changed_paths(project_root, base)
@@ -649,8 +664,6 @@ def _check_sight_required(project_root: str) -> dict:
     if not fdir:
         return {"required": False}
 
-    from foundry_mcp.tools.foundry import NO_UI_MEANING
-    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
 
     return sight_required(
         fdir, shape_problem=_manifest_shape_problem, no_ui_meaning=NO_UI_MEANING

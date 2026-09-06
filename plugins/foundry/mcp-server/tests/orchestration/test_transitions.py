@@ -153,9 +153,12 @@ from foundry_mcp.tools.orchestration.directives import (  # noqa: F401
     foundry_defects_to_tasks,
 )
 
+from foundry_mcp.tools.orchestration.report_seal import (  # noqa: F401
+    _generate_report,
+)
+
 from foundry_mcp.tools.orchestration.gates import (  # noqa: F401
     _done_preconditions,
-    _generate_report,
     foundry_gate,
 )
 

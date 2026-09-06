@@ -26,6 +26,7 @@ from foundry_mcp.schemas.vocab import (
     halt_reason,
 )
 from foundry_mcp.tools.artifacts import (
+    report_document_status,
     GATE_PASSED_MARKER,
     NEXT_ACTION_CALLED_MARKER,
     _artifact_guard,
@@ -377,19 +378,36 @@ def _blocking_defects(fdir: Path) -> dict:
 
 
 def _report_status(fdir: Path) -> dict:
-    """C-10's ``report_status`` — {"present", "missing_sections", ...}."""
-    from foundry_mcp.tools.foundry_report import report_status
+    """C-10's report read — {"present", "missing_sections", ...}.
 
-    return report_status(fdir)
+    fallout GI-033 / AC-061 / FR-063 (D-080, concern C-060 row 2) — THE READ
+    COMES OFF THE LEAF NOW.
+
+    This lazily imported `foundry_report.report_status`, which is a VERIFIER
+    module reaching PRESENTATION and is GI-033's violation column by name. The
+    obstacle was never the layering: the read needs the section TITLES, and a
+    copy of that table would have the seal writing headings from one and this
+    gate checking them against another, so a renamed heading would refuse a run
+    for a document the seal had just written correctly. Casting 10 moved
+    `REPORT_SECTION_TITLES` into `schemas/vocab.py` beside
+    `REPORT_REQUIRED_SECTIONS`, after which the read was leaf material and
+    casting 7 took it. The GENERATOR stays in `foundry_report`; only the read
+    was ever the crossing.
+    """
+    return report_document_status(fdir)
 
 
 
 
-def _generate_report(project_root: str, fdir: Path) -> dict:
-    """C-10's ``generate_report`` — writes REPORT.md and report.json."""
-    from foundry_mcp.tools.foundry_report import generate_report
-
-    return generate_report(Path(project_root), fdir)
+# fallout GI-033 / AC-061 / FR-063 (D-080, concern C-060) — THE GENERATOR SEAM
+# IS GONE FROM THIS MODULE.
+#
+# `_generate_report` stood here and `report_seal.py` — LIFECYCLE — imported it,
+# so a presentation module reached into the verifier set to borrow a one-line
+# wrapper around a presentation function. It lives with its caller now
+# (`report_seal.py#_generate_report`), which is a lifecycle-to-lifecycle edge
+# and never was a crossing. This module does not generate a report: the DONE
+# rung READS one, and that read is the leaf's `report_document_status`.
 
 
 

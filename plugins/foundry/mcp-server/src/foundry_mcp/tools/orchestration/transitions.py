@@ -11,6 +11,7 @@ from pathlib import Path
 
 from datetime import datetime
 from foundry_mcp.schemas.vocab import (
+    INSPECT_MODES,
     REPORT_MD_FILENAME,
     CONCERN_STATUS_OPEN,
     HALT_REASONS,
@@ -19,6 +20,14 @@ from foundry_mcp.schemas.vocab import (
     halt_reason_phrase,
 )
 from foundry_mcp.tools.artifacts import (
+    # fallout GI-033 / AC-061 (D-080, concern C-060) — ALIASED, and the alias
+    # is load-bearing rather than a leftover: D-134's scan recognises a manifest
+    # reader as GUARDED by the NAME it calls, and
+    # `tests/test_spawn_progress.py` pins that set to `_manifest_shape_problem`
+    # and `_manifest_shape_error`. Calling the leaf's public spelling directly
+    # would report every reader here as UNGUARDED, which is worse than an
+    # import error because it looks like a finding.
+    manifest_shape_problem as _manifest_shape_problem,
     CAST_BASELINE_SHA_MARKER,
     CAST_COMPLETE_MARKER,
     GATE_PASSED_MARKER,
@@ -32,6 +41,7 @@ from foundry_mcp.tools.artifacts import (
     _stream_marker,
 )
 from foundry_mcp.tools.foundry_state import (
+    current_inspect_mode,
     clear_active_run,
     current_cycle,
     finalize_open_phase_entry,
@@ -49,7 +59,6 @@ from foundry_mcp.tools.orchestration.escalation import (
 from foundry_mcp.tools.orchestration.width import (
     NYQUIST_ENTRY_ROLLUP_KEY,
     TEMPER_ENTRY_ROLLUP_KEY,
-    _current_inspect_mode,
     _decide_inspect_mode,
     _head_sha,
     _record_cycle_rollup,
@@ -444,7 +453,6 @@ def _start_cast_preconditions(fdir: Path, project_root: str) -> dict:
     # halted run costs one state.json read and none of the work below.
     if (halted := _halted_outcome(fdir)) is not None:
         return halted
-    from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
 
     checklist: list[dict] = []
     ladder = _GateLadder()
@@ -633,7 +641,7 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
 
     widening = phase == "F2"
     if widening:
-        recorded_now = _current_inspect_mode(fdir) or {}
+        recorded_now = current_inspect_mode(fdir, modes=INSPECT_MODES) or {}
         if recorded_now.get("mode") != "DELTA":
             ladder.fail(
                 _GATE_RANK_WIDTH,
@@ -800,7 +808,7 @@ def _inspect_clean_preconditions(fdir: Path, project_root: str) -> dict:
 
     _blocking_defects_rung(ladder, checklist, fdir)
 
-    recorded_mode = _current_inspect_mode(fdir) or {}
+    recorded_mode = current_inspect_mode(fdir, modes=INSPECT_MODES) or {}
     superseded = recorded_mode.get("fixes_after_decision") or []
     if superseded:
         # RANKED AT WIDTH, and DECLARED BEFORE the DELTA arm below — which is
@@ -2221,7 +2229,10 @@ def _phase_transition(
         outcome = _grind_start_preconditions(fdir, project_root)
         if not outcome["passed"]:
             return _transition_refusal(outcome, "Cannot open a GRIND")
-        if (halt := _halt_if_capped(fdir, project_root, "grind_start", outcome)) is not None:
+        if (halt := _halt_if_capped(
+            fdir, project_root, "grind_start", outcome,
+            update_phase=_update_phase,
+        )) is not None:
             return halt
         # Every recordable stream marker is cleared (derived from the canonical
         # stream vocabulary so new streams cannot go stale across GRIND cycles),
@@ -2245,7 +2256,10 @@ def _phase_transition(
         outcome = _assay_fail_preconditions(fdir, project_root)
         if not outcome["passed"]:
             return _transition_refusal(outcome, "Cannot open a GRIND from an ASSAY rejection")
-        if (halt := _halt_if_capped(fdir, project_root, "assay_fail", outcome)) is not None:
+        if (halt := _halt_if_capped(
+            fdir, project_root, "assay_fail", outcome,
+            update_phase=_update_phase,
+        )) is not None:
             return halt
         _clear_stream_completion_markers(fdir)
         _update_phase(fdir, "F3")
@@ -2485,12 +2499,25 @@ def _phase_transition(
         outcome = _halt_preconditions(fdir, project_root, reason=reason, text=text)
         if not outcome["passed"]:
             return _transition_refusal(outcome, "Cannot halt the run")
+        # fallout GI-033 / AC-061 / FR-063 (D-080) — THE SEAM IS ONE-WAY, AND
+        # THE PHASE WRITER TRAVELS ALONG IT.
+        #
+        # `halt.py` is LIFECYCLE by GI-033's own naming and reached through one
+        # seam from here, "and nothing flows back". It reached back: two lazy
+        # imports inside `_seal_halted` pulled `gates._blocking_defects` and
+        # `transitions._update_phase` into it, so the seam the invariant calls
+        # one-way was bidirectional in fact and a lifecycle module could write a
+        # phase and read the defect ledger through the verifier set. The defect
+        # read now comes off the leaf (`foundry_state.blocking_defects`); the
+        # WRITER is passed down the seam it is dispatched through, which is what
+        # makes the direction a property of the code rather than of a comment.
         return _seal_halted(
             fdir,
             project_root,
             reason=outcome["halt_reason"],
             text=outcome["halt_text"],
             token="halt",
+            update_phase=_update_phase,
         )
 
     else:

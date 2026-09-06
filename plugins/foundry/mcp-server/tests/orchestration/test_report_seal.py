@@ -114,15 +114,12 @@ from tests.orchestration._env import (  # noqa: F401
     run_env,
 )
 
-from foundry_mcp.tools.orchestration.gates import (  # noqa: F401
-    _generate_report,
-)
-
 from foundry_mcp.tools.orchestration.halt import (  # noqa: F401
     _seal_halted,
 )
 
-from foundry_mcp.tools.orchestration.report_seal import (  # noqa: F401
+from foundry_mcp.tools.orchestration.report_seal import (
+    _generate_report,  # noqa: F401
     _LEAD_NOTES_HEADING,
     _lead_prose_clause,
     _seal_lead_prose,

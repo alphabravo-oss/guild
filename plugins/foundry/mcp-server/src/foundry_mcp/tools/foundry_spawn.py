@@ -220,26 +220,40 @@ def _agent_model(subagent_type: str, baseline: str = "") -> dict:
     return agent_model(subagent_type, baseline)
 
 
-def _git_changed_paths(
-    project_root: str, base: str, head: str = "HEAD", **kw
-) -> dict:
-    """`orchestration.width`' one git diff invocation, through the same seam.
-
-    Thin, so the lazy import is written ONCE rather than at each call site, and
-    so nothing here re-decides what that helper already decided about quoting,
-    NUL separation or the unknown-diff answer.
-    """
-    from foundry_mcp.tools.orchestration.width import git_changed_paths
-
-    return git_changed_paths(project_root, base, head, **kw)
 
 
 from foundry_mcp.tools.foundry_state import (
     document_refusal,
     get_run_dir,
+    git_changed_paths,
     read_document,
     read_json,
     read_text_file,
+    skipped_stream_ids,
+)
+# fallout GI-033 / AC-061 / FR-063 (D-080, concerns C-059 / C-060) — FOUR
+# SYMBOLS LEFT THIS MODULE FOR THE LEAVES, AND THE EDGES LEFT WITH THEM.
+#
+# `_git_changed_paths` and `_skipped_stream_ids` were read from here by
+# `orchestration/width.py`, and `_manifest_shape_problem` (with its
+# `_shape_problem` walker, `_MANIFEST_SHAPE` declaration and `_REQUIRED`
+# sentinel) by width, transitions, gates and teams — four VERIFIER modules
+# reaching this LIFECYCLE one, which GI-033's violation column names outright
+# and which no module-top import scan could see because every reach was lazy.
+# A symbol read from both layers can live only in a leaf, and each went to the
+# leaf its subject names: the git and run-state readers to `foundry_state.py`,
+# the manifest-document predicate to `artifacts.py`.
+#
+# THE ALIAS IS LOAD-BEARING. D-134's scan recognises a manifest reader as
+# GUARDED by the NAME it calls, pinned by
+# `tests/test_spawn_progress.py#test_the_locked_validator_names_are_still_the_
+# ones_the_scan_looks_for` to `_manifest_shape_problem` and
+# `_manifest_shape_error`. Importing the leaf's public spelling under its own
+# name would report every reader in this module as UNGUARDED with the guard
+# still standing there — which its own docstring calls worse than an import
+# error, because it looks like a finding.
+from foundry_mcp.tools.artifacts import (
+    manifest_shape_problem as _manifest_shape_problem,
 )
 
 
@@ -1071,47 +1085,6 @@ def _load_run_state(fdir: Path) -> dict:
     return read_document(fdir / "state.json")[0]
 
 
-def _skipped_stream_ids(fdir: Path) -> set[str]:
-    """Return the wire ids of streams this run declared it would not spawn.
-
-    ``manifest.stream_skips`` is F0.5's predictive skip list (entries carry a
-    ``stream_id`` in the canonical UPPERCASE spelling plus a ``reason``); a
-    bare string entry is accepted too, so an older manifest still reads. The
-    canonical spelling is mapped back to its wire id through
-    ``vocab.WIRE_TO_CANONICAL`` rather than by lowercasing, because the two
-    spellings are not related by case alone (``TEST-01`` / ``test01``).
-
-    Degrades to "no declared skips" on any shape this module's readers cannot
-    index, decided by the SHARED validator rather than by the private
-    ``isinstance(manifest, dict)`` this used to hold. That private check is the
-    reason ``stream_skips: 42`` reached ``for entry in 42`` and raised
-    ``TypeError`` out of Foundry-Liveness — from the very reader the module's
-    own prose held up as the one that had always guarded this (D-132).
-    """
-    read = read_json(fdir / "castings" / "manifest.json")
-    if read[1] is not None:
-        return set()
-    manifest = read[0]
-    if _manifest_shape_problem(manifest) is not None:
-        return set()
-
-    canonical_to_wire = {
-        canonical: wire for wire, canonical in vocab.WIRE_TO_CANONICAL.items()
-    }
-    skipped: set[str] = set()
-    for entry in manifest.get("stream_skips") or []:
-        if isinstance(entry, dict):
-            raw = entry.get("stream_id") or entry.get("stream") or entry.get("id")
-        else:
-            raw = entry
-        if not isinstance(raw, str) or not raw.strip():
-            continue
-        token = raw.strip()
-        if token.lower() in vocab.STREAM_WIRE_IDS:
-            skipped.add(token.lower())
-        elif token.upper() in canonical_to_wire:
-            skipped.add(canonical_to_wire[token.upper()])
-    return skipped
 
 
 def _expected_inspect_stream_agents(fdir: Path) -> list[str]:
@@ -1127,7 +1100,12 @@ def _expected_inspect_stream_agents(fdir: Path) -> list[str]:
       * FLOW_TRACE is "V3 only, when ``flow-delta.json`` exists";
       * RESEARCH_AUDIT is skipped when the run gathered no research.
     """
-    skipped = _skipped_stream_ids(fdir)
+    skipped = skipped_stream_ids(
+        fdir,
+        wire_ids=vocab.STREAM_WIRE_IDS,
+        wire_to_canonical=vocab.WIRE_TO_CANONICAL,
+        shape_problem=_manifest_shape_problem,
+    )
     expected: list[str] = []
     for wire_id in INSPECT_STREAM_AGENT_IDS:
         if wire_id in skipped:
@@ -1627,7 +1605,6 @@ def foundry_liveness(
 #: otherwise unconstrained. ``castings[].id`` and ``waves[].wave`` are the two:
 #: every reader in this module locates its record by one of them, so an entry
 #: without one is not a record the readers can address, whatever else it holds.
-_REQUIRED = object()
 
 #: The manifest's structure AS THE READERS IN THIS MODULE INDEX IT. Declared
 #: ONCE, walked recursively by ``_shape_problem``, and consulted by all four
@@ -1661,75 +1638,10 @@ _REQUIRED = object()
 #: starts indexing a new key cannot land without declaring it, and this table
 #: cannot rot into a hand-kept list of the keys some past defect happened to
 #: name. That test is the derivation; the table is only its subject.
-_MANIFEST_SHAPE: dict = {
-    "castings": [{"id": _REQUIRED, "key_files": [None]}],
-    "waves": [{"wave": _REQUIRED, "casting_ids": [None]}],
-    "stream_skips": [None],
-}
 
 
-def _shape_problem(value: object, shape: object, path: str) -> str | None:
-    """The first named reason ``value`` does not satisfy ``shape``, else None.
-
-    Recursive over the shape, so depth is a property of the DECLARATION rather
-    than of this function: the rung below the one a defect was reported at is
-    covered the moment it is declared, which is precisely what a hand-written
-    ``isinstance`` chain at the reported rung cannot do.
-
-    ``path`` is the dotted key path being validated, carried down so the
-    message names WHICH rung failed. That is not cosmetic. The message this
-    replaces was ``"manifest.json is not a JSON object — parsed as {type}"``,
-    and reusing it one rung down produces the self-contradicting
-    ``"manifest.json is not a JSON object — parsed as dict"`` — a refusal that
-    sends the operator to look at a top-level object that is perfectly fine.
-    Each branch below therefore states the shape IT expected.
-    """
-    if shape is None:
-        return None
-
-    if isinstance(shape, list):
-        if not isinstance(value, list):
-            return f"{path} is not a list — parsed as {type(value).__name__}"
-        element = shape[0]
-        for index, item in enumerate(value):
-            problem = _shape_problem(item, element, f"{path}[{index}]")
-            if problem is not None:
-                return problem
-        return None
-
-    if not isinstance(value, dict):
-        return f"{path} is not a JSON object — parsed as {type(value).__name__}"
-    for key, sub in shape.items():
-        member = value.get(key)
-        if sub is _REQUIRED:
-            # No "parsed as" here, because there is nothing parsed to name —
-            # so the actionable equivalent is the keys the object DOES carry.
-            if member is None:
-                return (
-                    f"{path}.{key} is absent or null — {path} carries "
-                    f"{sorted(str(k) for k in value)} and every reader of this "
-                    f"manifest addresses its record by `{key}`"
-                )
-            continue
-        if member is None:
-            continue
-        problem = _shape_problem(member, sub, f"{path}.{key}")
-        if problem is not None:
-            return problem
-    return None
 
 
-def _manifest_shape_problem(manifest: object) -> str | None:
-    """The named reason a parsed manifest is unusable, or None.
-
-    The string half, mirroring ``foundry.py``'s ``_document_problem`` beside
-    its ``_artifact_guard``: the two TOLERANT readers here
-    (``_build_grind_cycle_context``, ``_skipped_stream_ids``) owe a degrade
-    rather than a refusal, and must decide on exactly the same evidence the
-    refusing doors use. Calling this rather than growing a private
-    ``isinstance`` check is what keeps all four readers on one policy.
-    """
-    return _shape_problem(manifest, _MANIFEST_SHAPE, "manifest.json")
 
 
 def _manifest_shape_error(manifest: object, manifest_path: Path) -> dict | None:
@@ -2041,7 +1953,7 @@ def _build_grind_cycle_context(fdir, casting_id, project_root: str) -> str:
     # because this helper's standing contract is that it never fails a spawn.
     # The orchestrator, whose delta roster cannot rest on a diff it does not
     # know, is the caller that must keep the two apart and forces FULL instead.
-    diff = _git_changed_paths(project_root, baseline_sha, "HEAD", timeout=10.0)
+    diff = git_changed_paths(project_root, baseline_sha, "HEAD", timeout=10.0)
     if not diff["ok"]:
         return ""
 

@@ -9,13 +9,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from foundry_mcp.schemas.vocab import (
+    DEFECT_TIERS,
     HALT_REASON_CAP_REACHED,
     RUN_PHASE_HALTED,
+    TIER_UNKNOWN,
+    defect_tier,
 )
 from foundry_mcp.tools.artifacts import (
     _document_transaction,
 )
 from foundry_mcp.tools.foundry_state import (
+    blocking_defects,
     current_cycle,
     now_iso,
 )
@@ -48,6 +52,7 @@ def _seal_halted(
     text: str = "",
     token: str,
     detail: str = "",
+    update_phase,
 ) -> dict:
     """fallout FR-046 / CT-004 / ST-001 / AC-025 / AC-029 — THE ONE HALTED WRITER.
 
@@ -81,17 +86,10 @@ def _seal_halted(
     bare f-string archives written before this release carry (FR-054); see
     `gates.py#_halted_state`.
     """
-    # fallout FR-004 / GI-033 -- LAZY SEAM, written once per symbol.
-    # `gates, transitions` import(s) this module, so a module-top import here would
-    # close a cycle that takes every tool in this server down at once.
-    # Unguarded, so a wiring break fails loudly at the one call site that
-    # needs the symbol rather than hiding behind a silent fallback.
-    from foundry_mcp.tools.orchestration.gates import _blocking_defects
-    from foundry_mcp.tools.orchestration.transitions import _update_phase
     cycle = current_cycle(fdir)
     sentence = f"{reason}: {text}" if text else (detail or reason)
 
-    _update_phase(fdir, RUN_PHASE_HALTED)
+    update_phase(fdir, RUN_PHASE_HALTED)
     with _document_transaction(fdir / "state.json") as doc:
         doc["halted_at_cycle"] = cycle
         doc["halted_reason"] = {"reason": reason, "text": text or detail}
@@ -137,7 +135,9 @@ def _seal_halted(
         with _document_transaction(fdir / "state.json") as doc:
             doc["halted_report_error"] = report_error
             doc["updated_at"] = now_iso()
-    blocking = _blocking_defects(fdir)
+    blocking = blocking_defects(
+        fdir, tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN, tier_of=defect_tier
+    )
 
     counts = (
         f"{len(blocking['live'])} open LIVE, "
@@ -193,7 +193,7 @@ def _seal_halted(
 
 
 def _halt_if_capped(
-    fdir: Path, project_root: str, token: str, outcome: dict
+    fdir: Path, project_root: str, token: str, outcome: dict, *, update_phase
 ) -> dict | None:
     """ST-008 / CT-016 — halt the run instead of opening GRIND number N+1.
 
@@ -231,6 +231,7 @@ def _halt_if_capped(
             f"would exceed it"
         ),
         token=token,
+        update_phase=update_phase,
     )
     # The cap this run was HELD to, on the result the operator reads, beside the
     # cycle the seal recorded. `_seal_halted` cannot name it: a lead's ruling has
