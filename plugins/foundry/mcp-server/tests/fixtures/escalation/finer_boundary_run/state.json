@@ -132,7 +132,11 @@
       },
       "touched_files": [],
       "prove_sample": [],
-      "diff_base": ""
+      "diff_base": "",
+      "trace_skip": {
+        "skip": false,
+        "reason": "this INSPECT is recorded FULL (rule first_of_phase) \u2014 the full roster runs, and TRACE is in it"
+      }
     },
     {
       "cycle": 2,
@@ -175,7 +179,11 @@
         "plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py"
       ],
       "prove_sample": [],
-      "diff_base": "ac27f69b48850c71e9778d891b22bc49145f0a07"
+      "diff_base": "ac27f69b48850c71e9778d891b22bc49145f0a07",
+      "trace_skip": {
+        "skip": false,
+        "reason": "this INSPECT is recorded FULL (rule verifier_touched) \u2014 the full roster runs, and TRACE is in it"
+      }
     },
     {
       "cycle": 3,
@@ -229,7 +237,16 @@
         "NFR-003",
         "NFR-004"
       ],
-      "diff_base": "6d839c60f6001f9424cc6d6d05ddbbbdaf91afd7"
+      "diff_base": "6d839c60f6001f9424cc6d6d05ddbbbdaf91afd7",
+      "trace_skip": {
+        "skip": false,
+        "reason": "DELTA width over 1 touched file(s) \u2014 TRACE runs over the symbols the GRIND commits touched",
+        "details": {
+          "touched_files": [
+            "plugins/foundry/mcp-server/tests/test_report.py"
+          ]
+        }
+      }
     },
     {
       "cycle": 4,
@@ -283,7 +300,16 @@
         "GI-006",
         "NFR-002"
       ],
-      "diff_base": "08ce784b7a760d7161a4859d5d63f996caff37a1"
+      "diff_base": "08ce784b7a760d7161a4859d5d63f996caff37a1",
+      "trace_skip": {
+        "skip": false,
+        "reason": "DELTA width over 1 touched file(s) \u2014 TRACE runs over the symbols the GRIND commits touched",
+        "details": {
+          "touched_files": [
+            "plugins/foundry/mcp-server/tests/test_evidence.py"
+          ]
+        }
+      }
     },
     {
       "cycle": 5,
@@ -324,7 +350,11 @@
       },
       "touched_files": [],
       "prove_sample": [],
-      "diff_base": "ef7ecda3a25223784d333248f57fb4f2c320b564"
+      "diff_base": "ef7ecda3a25223784d333248f57fb4f2c320b564",
+      "trace_skip": {
+        "skip": false,
+        "reason": "this INSPECT is recorded FULL (rule final_gate) \u2014 the full roster runs, and TRACE is in it"
+      }
     },
     {
       "cycle": 5,
@@ -365,7 +395,11 @@
       },
       "touched_files": [],
       "prove_sample": [],
-      "diff_base": "ef7ecda3a25223784d333248f57fb4f2c320b564"
+      "diff_base": "ef7ecda3a25223784d333248f57fb4f2c320b564",
+      "trace_skip": {
+        "skip": false,
+        "reason": "this INSPECT is recorded FULL (rule first_of_phase) \u2014 the full roster runs, and TRACE is in it"
+      }
     }
   ],
   "spend": {
