@@ -152,7 +152,7 @@ The `skills/` directory carries the Lead's verification-stream methodology refer
 - `skills/temper/` — micro-domain stress-testing methodology
 - `skills/trace/` — LSP-anchored upstream wiring methodology
 
-Foundry-Sight runs these as Claude Code skills directly during the corresponding INSPECT streams.
+None of these is a tool — no Foundry MCP door runs a skill. The lead runs SIGHT directly in its own thread, because Playwright MCP is reachable only from the main thread; TRACE and PROVE reach a run through the `tracer` and `assayer` agents that wrap them; and TEMPER runs at F5 on a `--temper` run, after ASSAY rather than inside INSPECT.
 
 ---
 
