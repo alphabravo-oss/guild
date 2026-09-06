@@ -8,15 +8,10 @@
 # other assertion of the guard runs here, including the two both edges would
 # be hiding behind.
 # evidence-for: fallout GI-007, GI-008, FR-037, NFR-001, NFR-007
-# NOTE: the ONE remaining failure, test_no_top_level_symbol_is_defined_in_two_shipped_modules,
-# is NOT this casting's and is not deselected: `CONCERN_STATUSES` is declared in
-# both concerns.py and vocab.py while casting 1's half of C-032 is in flight
-# (concern C-039 carries the two-line edit). It is a real duplicate and the guard
-# is right to say so; the count moves the day concerns.py imports the vocabulary.
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: \b\d+ms\b
 # evidence-timeout: 300
 
-=========================== short test summary info ============================
-FAILED tests/orchestration/test_module_boundaries.py::test_no_top_level_symbol_is_defined_in_two_shipped_modules
-1 failed, 655 passed, 2 deselected in 29.54s
+........................................................................ [ 98%]
+........                                                                 [100%]
+656 passed, 2 deselected in 26.98s
