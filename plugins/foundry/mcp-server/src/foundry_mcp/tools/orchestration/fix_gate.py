@@ -2960,7 +2960,7 @@ def foundry_sync_defects(
 # `width.py` is in the VERIFIER set and this module is not, so every import of
 # a width symbol from here was a lifecycle-to-verifier edge — the direction
 # GI-033's violation column refuses with NO exception at all — excused by a
-# `_LAYERING_DEBT` row instead of removed. Neither symbol is a width fact:
+# guard's allowlist row instead of removed. Neither symbol is a width fact:
 # `_decode_git_path` is git's own quoting grammar and is reached only by the
 # `git show --numstat` parse below, and `_note_fix_after_inspect_decision` is
 # what `foundry_mark_defect_fixed` stamps when a fix lands mid-INSPECT. Their

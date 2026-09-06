@@ -1432,7 +1432,7 @@ def foundry_gate(
 #
 # GI-033 names ONE seam, `transitions.py` -> `halt.py`, one-way. A gate reaching
 # into halt.py for the halt record was a SECOND crossing that the seam table
-# never covered and `_LAYERING_DEBT` excused. Neither symbol had a halt.py
+# never covered and the guard's allowlist excused. Neither had a halt.py
 # caller: `_halted_state`'s only one was `_halted_refusal`, and `_halted_refusal`
 # had none at all. Their real callers are `foundry_gate` in this module and the
 # three transition doors — every one of them a VERIFIER — so the pair moves to

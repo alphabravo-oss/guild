@@ -2284,7 +2284,7 @@ def foundry_get_context(
 #
 # `width.py` is in the VERIFIER set and this module is not, so importing them
 # from there was a lifecycle-to-verifier edge — the direction GI-033's violation
-# column refuses with NO exception — excused by a `_LAYERING_DEBT` row rather
+# column refuses with NO exception — excused by an allowlist row rather
 # than removed. Neither is a width fact: "is the lead waiting on live agents or
 # deliberating" is the watchdog line this module prints, and the threshold is
 # how long a gap has to be before it prints it. Their SOLE consumer is

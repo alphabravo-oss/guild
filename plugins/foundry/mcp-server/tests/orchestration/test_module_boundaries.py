@@ -5155,53 +5155,24 @@ _VERIFIER_MODULES = frozenset({
 #: verifier module fails the rule exactly as any other lifecycle module does.
 _VERIFIER_TO_LIFECYCLE_SEAM = frozenset({("transitions", "halt")})
 
-#: fallout GI-033 / AC-061 — EDGES THE LAYERING FORBIDS AND THIS TREE STILL HAS.
+#: fallout GI-033 / AC-061 / FR-063 / OT-015 (D-021 / D-035) — THERE IS NO
+#: LAYERING-DEBT ALLOWLIST ANY MORE, AND THAT IS THE FIX.
 #:
-#: NOT an exemption list, and not a second seam table. Every row is a real
-#: violation of the three-layer rule, named here with the symbols that cross it
-#: and the reason it could not be removed inside this casting. It behaves like
-#: `_KNOWN_DUPLICATION` above: a NEW edge fails immediately, and an entry whose
-#: edge is gone ALSO fails, so this shrinks and never grows quietly.
+#: It was a dict of `(home, imported) -> reason` that the two assertions below
+#: consulted BEFORE judging an edge, so `test_the_three_layers_hold_...`
+#: reported `violations == []` against a tree in which fourteen module-top
+#: crossings broke the rule it is named for. Every row was a real violation
+#: wearing an explanation, which is what made it a HOLLOW guard rather than a
+#: lenient one: the assertion passed, so nothing downstream could tell the tree
+#: had the coupling.
 #:
-#: WHY IT IS AN INVENTORY AND NOT A CLEAN SWEEP, AND WHAT EACH ROW IS WAITING
-#: ON. It is still an allowlist and it is still the defect (D-021 / D-035); what
-#: changed is that no row is a shrug any more. Every one names the ONE symbol
-#: left crossing and the ONE move that closes it, and each move is filed as a
-#: cross-casting concern against the casting that owns the file it lands in:
-#:
-#:   C-027 -> casting 10 (`foundry_state.py` / `vocab.py`): `persisted_max_cycles`
-#:            closes ('gates','halt'); `BLOCKING_TIERS` into vocab closes
-#:            `_blocking_defects` out of ('guidance','gates');
-#:            `finalize_open_phase_entry` closes ('guidance','transitions');
-#:            the whole `active_teams` and `check_streams_complete` are the
-#:            expensive pair behind ('gates','teams'), ('transitions','teams')
-#:            and ('transitions','streams'), and are for the lead to rule on.
-#:   C-030 -> casting 1 (`concerns.py`): ('transitions','concerns') — and that
-#:            row is a genuine SPEC tension, because this casting's own
-#:            key_links table mandates the very import GI-033 forbids.
-#:   The escalation rows are the writer/effect packet the lead already ruled
-#:   structural: `_record_escalation_proposals` and `_advance_escalation_exits`
-#:   are writers, so no leaf can hold them.
-#:
-#: THE ARITHMETIC THAT MAKES THE RESIDUE A LEAF PROBLEM RATHER THAN A LAZY ONE.
-#: The rule forbids verifier->lifecycle AND lifecycle->verifier at module top,
-#: so the two layers are mutually unreachable and a symbol read from BOTH can
-#: live in neither. It must live in a leaf, and no orchestration module can be
-#: one without widening the leaf set — which is this rule's own named failure
-#: mode. So every remaining row is exactly one shared symbol, and the fix for
-#: each is one leaf move by the casting that owns the leaf.
-_LAYERING_DEBT: dict[tuple[str, str], str] = {
-    ("gates", "escalation"): (
-        "_escalated_classes, _persisted_escalations, _escalation_exit_distances "
-        "— AC-011: the run cannot reach DONE while an escalated class is open, "
-        "so the closure evaluation reads the escalation ledger."
-    ),
-    ("transitions", "escalation"): (
-        "_record_escalation_proposals, _advance_escalation_exits — the "
-        "GRIND->INSPECT crossing is the one event that knows a cycle ENDED, "
-        "which is what both escalation exit arms are stated in terms of."
-    ),
-}
+#: The rule is asserted DIRECTLY now. The only exception the scan honours is
+#: `_VERIFIER_TO_LIFECYCLE_SEAM` above — GI-033's own named seam, one edge,
+#: one-way — and an edge that is not that seam FAILS, whatever reason anyone
+#: could write beside it. A row that cannot be closed is a failing test and a
+#: filed concern, never a table entry: the arithmetic is that the two layers
+#: are mutually unreachable at module top, so a symbol read from BOTH can live
+#: only in a leaf, and which leaf is a question for the casting that owns it.
 
 
 #: fallout FR-004 / AC-013 / OT-012 — THE REPOINT ROSTER IS EMPTY, AND THAT IS
@@ -5393,8 +5364,6 @@ def test_the_three_layers_hold_with_exactly_one_named_seam():
             checked += 1
             if (home, imported) in _VERIFIER_TO_LIFECYCLE_SEAM:
                 continue
-            if (home, imported) in _LAYERING_DEBT:
-                continue
             if home in _VERIFIER_MODULES and imported not in _VERIFIER_MODULES:
                 violations.append(
                     f"{home} (verifier) imports {imported} (lifecycle) at module top"
@@ -5407,23 +5376,12 @@ def test_the_three_layers_hold_with_exactly_one_named_seam():
         f"only {checked} orchestration import edge(s) seen; the scan is blind"
     )
     assert violations == [], (
-        f"NEW layering violation(s): {violations}. Either the symbol belongs in "
-        "a leaf, or the edge is genuinely irreducible and belongs in "
-        "_LAYERING_DEBT with the symbols that cross it and the reason."
-    )
-
-    # THE DEBT SHRINKS AND NEVER GROWS QUIETLY. An entry whose edge is gone is
-    # an entry excusing nothing, and tolerating one is how an inventory becomes
-    # an exemption list.
-    live = {
-        (p.stem, imported)
-        for p in modules
-        for imported in _module_top_imports(p) | _module_top_package_imports(p)
-    }
-    stale = sorted(edge for edge in _LAYERING_DEBT if edge not in live)
-    assert stale == [], (
-        f"_LAYERING_DEBT entr(y/ies) naming an edge that no longer exists: "
-        f"{stale}. The coupling was removed; take the row with it."
+        f"layering violation(s): {violations}. The symbol belongs in a leaf — "
+        "`artifacts`, `foundry_state`, `vocab` or `schemas` — because the two "
+        "layers are mutually unreachable at module top and a symbol read from "
+        "BOTH can live in neither. There is no table to record an exception in: "
+        "the one exception GI-033 names is the transitions-to-halt seam above, "
+        "and an edge that is not it fails here however good the reason is."
     )
 
     # ...and `halt.py` is OUTSIDE the verifier set, which is the half of GI-033
@@ -5464,8 +5422,6 @@ def test_no_verifier_module_reaches_a_lifecycle_module_lazily_either():
             continue
         for imported in sorted(_all_imports(path) & lifecycle):
             if (path.stem, imported) in _VERIFIER_TO_LIFECYCLE_SEAM:
-                continue
-            if (path.stem, imported) in _LAYERING_DEBT:
                 continue
             offenders.append(f"{path.stem} -> {imported}")
     assert offenders == [], (

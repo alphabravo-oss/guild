@@ -1228,7 +1228,7 @@ def _sight_required(fdir: Path) -> dict:
     fire, and GI-033 says a verifier module reaches leaf modules and nothing in
     the lifecycle layer. `orchestration/teams.py` is named lifecycle by GI-033's
     own violation column, so `from ...teams import _check_sight_required` was a
-    layering violation that `_LAYERING_DEBT` excused rather than closed.
+    layering violation the guard's allowlist excused rather than closed.
 
     `foundry_state.sight_required` is casting 10's leaf reader and holds the
     whole rule, `--no-ui` declaration and all — this is a repoint, not a second

@@ -2322,7 +2322,7 @@ def _phase_transition(
 #
 # This module is in the VERIFIER set and `streams.py` is not, so
 # `from ...streams import _clear_stream_completion_markers` was a
-# verifier-to-lifecycle edge that `_LAYERING_DEBT` excused rather than closed.
+# verifier-to-lifecycle edge the guard's allowlist excused rather than closed.
 # The clear is not a stream fact: it is what an INSPECT-OPENING TRANSITION does
 # to the completion state of the INSPECT that is ending (D-221), and the four
 # branches that do it are all below in this file. The roster it walks comes from
