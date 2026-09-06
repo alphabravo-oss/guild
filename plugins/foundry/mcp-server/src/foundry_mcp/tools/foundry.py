@@ -2505,25 +2505,14 @@ def _generate_run_name(ticket: str = "", description: str = "") -> str:
     return f"{adj}-{noun}"
 
 
-#: FR-055 / AC-052 — THE ONE MEANING OF `--no-ui`, and the sentence every other
-#: surface quotes rather than re-words.
-#:
-#: `survey/surface.md` FI-2 found the flag meaning THREE different things at
-#: once: setup-foundry.sh's help said "Skip browser audit (SIGHT)", README.md's
-#: table said "Suppress orchestrator banners", and the SIGHT check treated
-#: `manifest.no_ui` as a HARD BLOCK — a refusal, which is neither of the other
-#: two. A flag whose meaning depends on which document the operator read is a
-#: flag nobody can use correctly, and the three readings disagree about the
-#: direction of the effect, not merely its wording.
-#:
-#: The chosen meaning is the one the flag's own NAME carries and that two of the
-#: three surfaces were already reaching for. It says nothing about banners: the
-#: display is not a UI the run audits, and a flag that suppressed output would
-#: need its own name.
-NO_UI_MEANING = (
-    "`--no-ui` declares that this run has no browsable UI, so the SIGHT "
-    "browser audit is not part of it."
-)
+#: FR-055 / AC-052 — THE ONE MEANING OF `--no-ui` USED TO BE DEFINED HERE, and
+#: it now lives at `foundry_mcp/schemas/vocab.py#NO_UI_MEANING` (concern C-059
+#: row 8, GI-033). The sentence is a closed-vocabulary value read ACROSS layers
+#: — `orchestration/width.py` and `orchestration/teams.py` both take it — and
+#: GI-033 puts such a value in the vocabulary rather than in the largest
+#: lifecycle module in the tree. This module defined a byte-identical twin,
+#: which is what the duplicate-symbol guard is for; the definition and every
+#: word of its FI-2 rationale moved intact, so read it there.
 
 
 def _max_cycles_problem(value: object) -> dict | None:
@@ -2644,8 +2633,10 @@ def foundry_init(
             branches (``_max_cycles_problem``); ``None`` reaches neither rung
             nor write, because it is the absence of a value rather than a bad
             one.
-        no_ui: FR-055 / AC-052 — and THIS is the definition every other surface
-            quotes, spelled once in ``NO_UI_MEANING``:
+        no_ui: FR-055 / AC-052 — and this is the sentence every other surface
+            quotes, spelled once at
+            ``foundry_mcp/schemas/vocab.py#NO_UI_MEANING`` and reproduced here
+            verbatim because this door is where the flag is received:
 
             `--no-ui` declares that this run has no browsable UI, so the SIGHT
             browser audit is not part of it.
