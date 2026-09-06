@@ -1,23 +1,8 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q --tb=no -p no:cacheprovider --deselect tests/test_report.py::test_the_fixture_state_is_what_production_writes tests/test_foundry_state_readers.py tests/test_vocab.py tests/test_report.py
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q --tb=no -p no:cacheprovider tests/test_foundry_state_readers.py tests/test_vocab.py tests/test_report.py
 # evidence-for: US-002, US-003, US-004, US-005, US-006, US-011, FR-003, FR-008, FR-014, FR-017, FR-019, FR-027, FR-037, FR-053, AC-012, AC-017, AC-020, AC-022, AC-024, AC-046, AC-047, GI-004, GI-009, GI-014, GI-024, GI-027, OT-010, OT-022, OT-041
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: \d+\.\d+ seconds
 # evidence-timeout: 900
-# NOTE — the one deselected node id, named rather than silently filtered.
-#   tests/test_report.py::test_the_fixture_state_is_what_production_writes
-#   is RED because casting 2's 06deed6 landed the `trace_skip` fact into
-#   every recorded inspect_mode entry (the lead's ruling item 5) and the
-#   frozen fixture those entries are compared against was not regenerated
-#   with it. The test is doing its job: it exists to catch exactly this
-#   drift. The equality fails on the six added keys and nothing else.
-#   GI-026 puts the repoint with the source move, so the regeneration is
-#   casting 2's; tracked as concern C-034, which names the exact close
-#   (drive `drive_finer_boundary_run` and write its state.json output over
-#   tests/fixtures/escalation/finer_boundary_run/state.json). Not done here
-#   because regenerating another casting's output to silence one's own red
-#   hides a drift rather than reporting it.
-#   Deselected by EXACT node id so this log exits 0. Every other row of the
-#   three modules runs: 643 passed, 1 deselected.
 
 ........................................................................ [ 11%]
 ........................................................................ [ 22%]
@@ -27,7 +12,7 @@
 ........................................................................ [ 67%]
 ........................................................................ [ 78%]
 ........................................................................ [ 89%]
-..................
+...................
 === report.json top-level keys ===
   generated_at
   run
@@ -221,5 +206,5 @@
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-..............................................      [100%]
-643 passed, 1 deselected in 3.86s
+..............................................     [100%]
+644 passed in 4.08s
