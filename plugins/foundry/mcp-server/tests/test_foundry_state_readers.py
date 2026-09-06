@@ -1082,13 +1082,13 @@ def test_the_full_cycle_ratio_is_derived_once(report_run) -> None:
 
 
 def test_the_full_cycle_ratio_threshold_is_spelled_once(monkeypatch) -> None:
-    """fallout D-095 / NFR-011 (concern C-056) — the printed figure IS the applied one.
+    """fallout D-095 / fallout NFR-011 (concern C-056) — the printed figure IS the applied one.
 
     The threshold used to be typed TWICE — once as the `threshold` this reports
     and once inside the `ratio < 0.5` the verdict applies — so the F6 report
     could state one figure against a verdict computed from another. Nothing
     caught it, because two literals agree right up until someone edits one of
-    them. That is NFR-011's shape and `foundry_validate.REQUIREMENT_SPAN_MAX` is
+    them. That is fallout NFR-011's shape and `foundry_validate.REQUIREMENT_SPAN_MAX` is
     the precedent: one spelling feeding both the message and the table.
 
     THE PIN IS DERIVATION, NOT EQUALITY. Asserting that both are 0.5 passes just

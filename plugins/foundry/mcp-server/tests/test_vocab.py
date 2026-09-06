@@ -421,6 +421,86 @@ def test_a_spec_ref_alone_is_a_spec_required_behaviour_claim() -> None:
     assert not vocab.is_spec_required_behaviour_claim({"spec_ref": "  "})
 
 
+def test_the_claim_half_of_the_denylist_is_derived_not_re_listed() -> None:
+    """fallout GI-004 / AC-023 / OT-019 (D-078) — the split has one home.
+
+    Three entries read what a finding CLAIMS and one reads its SUBJECT. Two
+    doors need the claim half alone and each used to spell the exclusion for
+    itself, which is one ruling in two voices.
+
+    DERIVED, so a fifth CLAIM entry joins every rung that reads it by
+    construction. That is asserted here by subtraction rather than by naming
+    the three: an assertion listing them would go stale in exactly the case
+    the derivation exists for.
+    """
+    assert vocab.NEVER_DEMOTE_SUBJECT_CLASSES == frozenset({vocab.NON_COMMENT})
+    assert vocab.NEVER_DEMOTE_CLAIM_CLASSES == (
+        vocab.NEVER_DEMOTE_CLASSES - vocab.NEVER_DEMOTE_SUBJECT_CLASSES
+    )
+    assert vocab.NEVER_DEMOTE_CLAIM_CLASSES <= vocab.NEVER_DEMOTE_CLASSES
+    assert vocab.NON_COMMENT not in vocab.NEVER_DEMOTE_CLAIM_CLASSES
+    assert len(vocab.NEVER_DEMOTE_CLAIM_CLASSES) == 3
+
+
+@pytest.mark.parametrize("class_name", sorted(DENYLIST_CASES))
+def test_never_demote_claim_class_answers_every_claim_and_drops_the_subject(
+    class_name: str,
+) -> None:
+    """fallout D-078 — the dispatcher both doors read instead of re-typing it.
+
+    Every CLAIM entry answers itself; the SUBJECT entry answers None. Driven
+    over the same `DENYLIST_CASES` the full dispatcher is driven over, so a
+    new entry joins this pin with its case rather than needing one written.
+    """
+    finding = DENYLIST_CASES[class_name]
+    claim = vocab.never_demote_claim_class(finding)
+
+    if class_name in vocab.NEVER_DEMOTE_SUBJECT_CLASSES:
+        assert claim is None, (
+            f"{class_name} reads the finding's SUBJECT, not its claim: the "
+            f"HARDENING rung must not refuse a defect for being about code"
+        )
+    else:
+        assert claim == class_name
+        assert claim == vocab.never_demote_class(finding), (
+            "a claim entry answers identically through both dispatchers"
+        )
+
+
+def test_the_claim_dispatcher_depends_on_the_catch_all_being_ordered_last() -> None:
+    """fallout D-078 / D-083 — why dropping NON_COMMENT does not drop a claim.
+
+    `never_demote_claim_class` is safe ONLY because `never_demote_class`
+    returns the first match and the generic subject catch-all is evaluated
+    after every claim entry, so an answer of NON_COMMENT already means no
+    claim matched. Move the catch-all earlier and the narrowed dispatcher
+    starts answering None for findings that DO make a security claim — the
+    exact signal D-083 was filed over — so the ordering is pinned here, beside
+    the function that rests on it.
+    """
+    order = [name for name, _ in vocab._NEVER_DEMOTE_PREDICATES]
+    assert order[-1] == vocab.NON_COMMENT, (
+        f"{order} — the subject catch-all must be evaluated LAST"
+    )
+    assert set(order[:-1]) == vocab.NEVER_DEMOTE_CLAIM_CLASSES
+
+    # The case that proves it: a security claim whose SUBJECT is code matches
+    # both entries, and the claim must survive the narrowing.
+    both = {
+        "description": DENYLIST_CASES[vocab.SECURITY_PROPERTY_CLAIM]["description"],
+        "target_kind": "code",
+    }
+    assert vocab.is_non_comment(both), "the subject entry really does match too"
+    assert vocab.never_demote_claim_class(both) == vocab.SECURITY_PROPERTY_CLAIM
+
+
+def test_never_demote_claim_class_is_total_over_junk() -> None:
+    """The house rule: a vocabulary predicate never raises across the boundary."""
+    assert vocab.never_demote_claim_class({}) is None
+    assert vocab.never_demote_claim_class({"description": None}) is None
+    assert vocab.never_demote_claim_class({"target_kind": ["code"]}) is None
+
+
 def test_never_demote_class_returns_none_for_a_plain_comment_finding() -> None:
     finding = {
         "description": OBSERVATION_CASES[vocab.PROSE_COUNT],

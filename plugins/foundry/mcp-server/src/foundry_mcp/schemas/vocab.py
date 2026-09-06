@@ -1286,6 +1286,29 @@ NEVER_DEMOTE_CLASSES = frozenset(
     }
 )  # 4 items
 
+#: fallout GI-004 / AC-023 / OT-019 (D-078, concern from casting 4) — WHICH
+#: ENTRIES READ THE FINDING'S SUBJECT RATHER THAN ITS CLAIM.
+#:
+#: The four entries are not one rule. Three of them read what the finding
+#: CLAIMS — a security property, a stated requirement's behaviour, a cite that
+#: does not resolve — and one reads its SUBJECT: NON_COMMENT exists only
+#: because recording an OBSERVATION used to be a demotion, so a finding about
+#: code arriving in the observation ledger was a defect in hiding.
+#:
+#: Two doors need the CLAIM half alone and each used to spell the exclusion for
+#: itself — `validate_defect_filing`'s HARDENING rung and
+#: `record_denylist_tripwire`'s `comment_subject_required` lift. That is one
+#: ruling in two voices, so the split is declared HERE, where the entries are.
+#: Extend only via phase-level RFC.
+NEVER_DEMOTE_SUBJECT_CLASSES = frozenset({NON_COMMENT})  # 1 item
+
+#: The CLAIM half, DERIVED rather than re-listed, so a fifth claim entry joins
+#: every rung that reads it by construction and never by memory — which is the
+#: property the D-078 rung asks for in prose and could not previously enforce.
+NEVER_DEMOTE_CLAIM_CLASSES = frozenset(
+    NEVER_DEMOTE_CLASSES - NEVER_DEMOTE_SUBJECT_CLASSES
+)  # 3 items
+
 # ---------------------------------------------------------------------------
 # Field readers — total, never-raising accessors over a finding mapping.
 # ---------------------------------------------------------------------------
@@ -1762,6 +1785,33 @@ def never_demote_class(finding: Mapping[str, object]) -> str | None:
         if predicate(finding):
             return name
     return None
+
+
+def never_demote_claim_class(finding: Mapping[str, object]) -> str | None:
+    """The denylist class this finding's CLAIM matches, else None.
+
+    `never_demote_class` narrowed to `NEVER_DEMOTE_CLAIM_CLASSES`: the answer
+    when a claim entry matched, and None when the only thing that matched was
+    the SUBJECT entry (or nothing did). Total; never raises.
+
+    THIS IS SAFE ONLY BECAUSE NON_COMMENT IS ORDERED LAST, and that is a real
+    dependency rather than a coincidence worth noting. `never_demote_class`
+    returns the FIRST match and `_NEVER_DEMOTE_PREDICATES` evaluates the
+    generic subject catch-all after every claim entry (D-083), so an answer of
+    NON_COMMENT already MEANS "no claim entry matched". Dropping it therefore
+    yields the claim class exactly. Were the catch-all moved earlier, this
+    would start returning None for findings that DO make a claim — which is
+    the security signal D-083 was filed for — so the ordering is pinned in
+    `tests/test_vocab.py` beside this.
+
+    THE CALLER STILL SHAPES THE FINDING. `validate_defect_filing`'s HARDENING
+    rung neutralises `spec_ref` before asking, because AC-055 gives the
+    locator its own named refusal; `record_denylist_tripwire` asks the raw
+    finding. What is shared is WHICH ENTRIES ARE CLAIMS, and that is all this
+    answers — the shaping belongs to the door and stays there.
+    """
+    matched = never_demote_class(finding)
+    return matched if matched in NEVER_DEMOTE_CLAIM_CLASSES else None
 
 
 def canonical_defect_type(value: str) -> str | None:
