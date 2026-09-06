@@ -112,7 +112,17 @@ from tests.orchestration._env import (  # noqa: F401
 )
 
 from foundry_mcp.tools.orchestration.width import (  # noqa: F401
-    _maybe_skip_trace,
+    _trace_skip_from_width,
+)
+
+# fallout GI-008 / GI-009 / GI-033 (D-021 / D-035, ruling item 5) — the fence
+# split in two. `width._trace_skip_from_width` DECIDES at the transition and the
+# answer is recorded in the `inspect_modes` entry; `guidance._stamp_trace_skip`
+# READS the recorded answer and performs the stamp. Both halves are driven
+# below, and the entries the fixtures write now carry the field a real decision
+# would have written.
+from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
+    _stamp_trace_skip,
 )
 
 
@@ -135,10 +145,14 @@ def test_the_trace_skip_fires_on_a_delta_cycle_with_an_empty_diff(run_env):
         "decided_by": "inspect_start",
         "required_streams": ["trace", "prove", "test"],
         "stream_scope": {}, "prove_sample": [], "touched_files": [],
+        "trace_skip": {"skip": True, "reason": "DELTA width and the GRIND diff is empty — there are no touched symbols for TRACE to walk"},
     }])
     _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
 
-    decision = _maybe_skip_trace(fdir, project_root)
+    # The DECISION, at the transition that records the width...
+    assert _trace_skip_from_width(False, "delta", [], "DELTA")["skip"] is True
+    # ...and the EFFECT, at the surface that reads what was recorded.
+    decision = _stamp_trace_skip(fdir)
 
     assert decision["skip"] is True, decision
     assert (fdir / ".trace-complete").exists()
@@ -155,10 +169,12 @@ def test_the_trace_skip_does_not_fire_on_a_delta_cycle_with_a_diff(run_env):
         "required_streams": ["trace", "prove", "test"],
         "stream_scope": {}, "prove_sample": [],
         "touched_files": ["src/api/a.py"],
+        "trace_skip": {"skip": False, "reason": "DELTA width over 1 touched file(s) — TRACE runs over the symbols the GRIND commits touched"},
     }])
     _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
 
-    decision = _maybe_skip_trace(fdir, project_root)
+    assert _trace_skip_from_width(False, "delta", ["src/api/a.py"], "DELTA")["skip"] is False
+    decision = _stamp_trace_skip(fdir)
 
     assert decision["skip"] is False, decision
     assert not (fdir / ".trace-complete").exists()

@@ -5201,29 +5201,6 @@ _LAYERING_DEBT: dict[tuple[str, str], str] = {
         "GRIND->INSPECT crossing is the one event that knows a cycle ENDED, "
         "which is what both escalation exit arms are stated in terms of."
     ),
-    ("transitions", "concerns"): (
-        "open_concerns_for_other_castings — GI-023's CONCERN_OPEN rung, which "
-        "`inspect_start` refuses on. THE READ IS ALREADY IN THE LEAF: casting 1 "
-        "landed the delegation, so `foundry_state.open_cross_casting_concerns` "
-        "holds the body. What is left is the WORD: the leaf takes its status "
-        "member as a required argument, `CONCERN_STATUSES` is declared in "
-        "`tools/concerns.py`, and that module imports `tools/foundry.py` at "
-        "module top so it is not a leaf. A verifier can reach the read and not "
-        "the member, and the three ways round it — respelling \"open\", "
-        "importing the member here, importing it lazily — are each worse than "
-        "waiting. Concern C-032 moves `CONCERN_STATUSES` to `vocab.py`; this "
-        "row closes on one import line the day it lands."
-    ),
-    ("guidance", "width"): (
-        "_maybe_skip_trace — ALL THAT IS LEFT OF THIS ROW. The recorded width "
-        "now comes from `foundry_state.current_inspect_mode`, and "
-        "`_waiting_on_agents` and `STALL_NOTICE_SECONDS` have moved into "
-        "`guidance.py` beside their only caller. `_maybe_skip_trace` cannot "
-        "follow them: it is built on `_trace_skip_check` and "
-        "`_unrecorded_width_problem`, which are width contract symbols, so "
-        "moving it would drag the whole width read into the presentation "
-        "layer. It closes when the TRACE-skip decision answers from a leaf."
-    ),
 }
 
 

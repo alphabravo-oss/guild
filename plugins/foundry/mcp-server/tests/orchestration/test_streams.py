@@ -140,8 +140,8 @@ from foundry_mcp.tools.orchestration.teams import (  # noqa: F401
     _check_sight_required,
 )
 
-from foundry_mcp.tools.orchestration.width import (  # noqa: F401
-    _maybe_skip_trace,
+from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
+    _stamp_trace_skip,
 )
 
 from tests.orchestration._env import (  # noqa: F401
@@ -512,13 +512,14 @@ def test_the_trace_skip_never_fires_on_a_full_cycle(run_env):
         "decided_by": "inspect_start",
         "required_streams": ["trace", "prove", "test"],
         "stream_scope": {}, "prove_sample": [], "touched_files": [],
+        "trace_skip": {"skip": False, "reason": "this INSPECT is recorded FULL (rule final_gate) — the full roster runs, and TRACE is in it"},
     }])
     _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
     (fdir / ".trace-clean-at").write_text(
         json.dumps({"head_sha": "0" * 40}), encoding="utf-8"
     )
 
-    decision = _maybe_skip_trace(fdir, project_root)
+    decision = _stamp_trace_skip(fdir)
 
     assert decision["skip"] is False, decision
     assert "FULL" in decision["reason"]

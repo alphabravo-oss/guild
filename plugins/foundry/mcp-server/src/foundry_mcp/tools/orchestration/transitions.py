@@ -11,6 +11,7 @@ from pathlib import Path
 
 from datetime import datetime
 from foundry_mcp.schemas.vocab import (
+    CONCERN_STATUS_OPEN,
     HALT_REASONS,
     STREAM_WIRE_IDS,
     halt_reason,
@@ -29,13 +30,13 @@ from foundry_mcp.tools.artifacts import (
     _load_json,
     _stream_marker,
 )
-from foundry_mcp.tools.concerns import open_concerns_for_other_castings
 from foundry_mcp.tools.foundry_state import (
     clear_active_run,
     current_cycle,
     finalize_open_phase_entry,
     get_run_dir,
     now_iso,
+    open_cross_casting_concerns,
     persisted_max_cycles,
 )
 from pathlib import Path
@@ -585,7 +586,18 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
     # or close it with a reason. Neither is "fix everything"; both are decisions
     # that leave a record.
     open_concerns = [
-        c for c in open_concerns_for_other_castings(fdir, cycle=current_cycle(fdir))
+        # fallout GI-033 / AC-061 / FR-063 (D-021 / D-035, ruling item 3,
+        # concerns C-030 and C-032) — THE READ FROM THE LEAF, THE MEMBER FROM
+        # THE VOCABULARY. `tools/concerns.py` imports `tools/foundry.py` at
+        # module top, so a verifier reaching the ledger through it pulled the
+        # largest lifecycle module in the tree into this layer transitively.
+        # `foundry_state.open_cross_casting_concerns` holds the one body of the
+        # filter and takes its status member as an argument, and
+        # `vocab.CONCERN_STATUSES` is where the closed set lives — so nothing
+        # here respells "open" and nothing reaches a lifecycle module for it.
+        c for c in open_cross_casting_concerns(
+            fdir, status_open=CONCERN_STATUS_OPEN, cycle=current_cycle(fdir)
+        )
     ]
     if open_concerns:
         named = ", ".join(str(c.get("id")) for c in open_concerns)

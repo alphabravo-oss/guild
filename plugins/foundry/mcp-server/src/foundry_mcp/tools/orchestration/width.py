@@ -29,7 +29,6 @@ from foundry_mcp.tools.artifacts import (
     _load_json,
     _read_text,
     _resolve_spec_path,
-    _stream_marker,
 )
 from foundry_mcp.tools.foundry_state import (
     current_cycle,
@@ -239,119 +238,6 @@ def _trace_skip_check(fdir: Path, project_root: str) -> dict:
 
 
 
-def _maybe_skip_trace(fdir: Path, project_root: str) -> dict | None:
-    """If the TRACE skip gate fires, auto-stamp .trace-complete as skipped.
-
-    Called from foundry_next_action so the decision is made deterministically
-    before any stream dispatching instructions go out. No-op when TRACE is
-    already complete or skip preconditions aren't met.
-
-    D-071 — THE RECORDED WIDTH FENCES THE SKIP.
-    -------------------------------------------
-    This skip predates the FULL/DELTA rule and referenced it not at all, so it
-    satisfied a FULL roster's trace requirement without TRACE running — at the
-    INSPECT before ASSAY included. Driven on a cycle recorded FULL/final_gate
-    whose GRIND touched a non-key_file: Foundry-Next auto-stamped
-    `.trace-complete` and `_check_streams_complete` returned complete True,
-    missing "", with TRACE never run. AC-017 and FR-012 sanction exactly two
-    exceptions to the FULL roster — a stream in `manifest.stream_skips`, or a
-    `research_skipped` record — and this is neither; GI-007 forbids any casting
-    from disabling or downweighting a stream; US-004's premise is that "every
-    final gate still runs everything at full width".
-
-    So the new rule fences it rather than removing it. At FULL the skip never
-    fires. At DELTA it fires only when the GRIND diff is EMPTY — TRACE's DELTA
-    scope is "the symbols the GRIND commits touched" (AC-019), and when nothing
-    was touched there are no symbols to walk, which is the one case where
-    skipping and running are the same answer. A run with NO recorded decision
-    keeps the pre-change `_trace_skip_check` behaviour, which is what a resumed
-    archive should get.
-    """
-    if not fdir or not fdir.exists():
-        return None
-    if (fdir / _stream_marker("trace")).exists():
-        return None
-    state = _load_json(fdir / "state.json")
-    if state.get("phase") != "F2":
-        return None
-
-    recorded = _current_inspect_mode(fdir)
-    mode = (recorded or {}).get("mode", "")
-    if mode == "FULL":
-        return {
-            "skip": False,
-            "reason": (
-                "this INSPECT is recorded FULL (rule "
-                f"{(recorded or {}).get('rule', '?')}) — the full roster runs, "
-                "and TRACE is in it"
-            ),
-        }
-    if mode == "DELTA":
-        touched = [
-            f for f in (recorded or {}).get("touched_files") or []
-            if isinstance(f, str) and f.strip()
-        ]
-        if touched:
-            return {
-                "skip": False,
-                "reason": (
-                    f"DELTA width over {len(touched)} touched file(s) — TRACE "
-                    "runs over the symbols the GRIND commits touched"
-                ),
-                "details": {"touched_files": sorted(touched)[:10]},
-            }
-        decision = {
-            "skip": True,
-            "reason": (
-                "DELTA width and the GRIND diff is empty — there are no touched "
-                "symbols for TRACE to walk"
-            ),
-            "details": {"inspect_mode": "DELTA", "touched_files": []},
-        }
-        (fdir / _stream_marker("trace")).write_text(
-            f"{now_iso()} cycle=skipped\n"
-            f"items_checked=0\n"
-            f"items_total=0\n"
-            f"coverage=SKIPPED\n"
-            f"findings=0\n"
-            f"skipped=true\n"
-            f"reason={decision['reason']}\n",
-            encoding="utf-8",
-        )
-        return decision
-
-    # D-117 — AN UNRECORDED WIDTH NO LONGER FALLS THROUGH TO THE LEGACY RULE.
-    #
-    # This arm read "A run with NO recorded decision keeps the pre-change
-    # `_trace_skip_check` behaviour, which is what a resumed archive should
-    # get", and `_trace_skip_check` skips on a `.trace-clean-at` marker plus an
-    # untouched key_file set — so a resumed legacy archive auto-stamped
-    # `.trace-complete` and TRACE never ran, reaching D-071's own defect through
-    # the width the fence forgot to name. FULL and DELTA are the only two
-    # answers that license a decision about TRACE's scope; there is no third.
-    #
-    # `_trace_skip_check` keeps its definition: it is the pre-width rule this
-    # fence replaced, it is directly tested, and `tests/test_spawn_progress.py`
-    # names it in the D-134 manifest-reader roster that scan asserts it still
-    # sees.
-    if (unrecorded := _unrecorded_width_problem(fdir)) is not None:
-        return {"skip": False, "reason": unrecorded["reason"], "hint": unrecorded["hint"]}
-
-    decision = _trace_skip_check(fdir, project_root)
-    if not decision.get("skip"):
-        return decision
-
-    (fdir / _stream_marker("trace")).write_text(
-        f"{now_iso()} cycle=skipped\n"
-        f"items_checked=0\n"
-        f"items_total=0\n"
-        f"coverage=SKIPPED\n"
-        f"findings=0\n"
-        f"skipped=true\n"
-        f"reason={decision['reason']}\n",
-        encoding="utf-8",
-    )
-    return decision
 
 
 
@@ -1386,6 +1272,54 @@ def _base_required_streams(project_root: str) -> list[str]:
 
 
 
+def _trace_skip_from_width(full: bool, rule: str, touched: list, mode: str) -> dict:
+    """Can TRACE be skipped for the INSPECT this width opens? Pure.
+
+    fallout GI-008 / GI-009 (ruling `lead_ruling_gi_033_leaf_moves` item 5).
+    Returns ``{"skip": bool, "reason": str}`` plus ``details`` when it skips.
+
+    THE TWO ANSWERS THE WIDTH LICENSES, and there is no third (D-117). A FULL
+    INSPECT runs the full roster and TRACE is in it. A DELTA INSPECT runs TRACE
+    over the symbols the GRIND commits touched — so it skips exactly when that
+    set is EMPTY, because there is nothing for TRACE to walk. A run with no
+    recorded width has no answer here at all: the caller sees no field and
+    stamps nothing, which is the safe direction and the one D-117 was filed to
+    establish after a resumed archive auto-stamped `.trace-complete` and TRACE
+    never ran.
+
+    Takes the decision's own values rather than re-reading them, so this cannot
+    disagree with the entry it is recorded into.
+    """
+    if full:
+        return {
+            "skip": False,
+            "reason": (
+                f"this INSPECT is recorded FULL (rule {rule or '?'}) — the full "
+                "roster runs, and TRACE is in it"
+            ),
+        }
+    live = [f for f in (touched or []) if isinstance(f, str) and f.strip()]
+    if live:
+        return {
+            "skip": False,
+            "reason": (
+                f"DELTA width over {len(live)} touched file(s) — TRACE runs over "
+                "the symbols the GRIND commits touched"
+            ),
+            "details": {"touched_files": sorted(live)[:10]},
+        }
+    return {
+        "skip": True,
+        "reason": (
+            "DELTA width and the GRIND diff is empty — there are no touched "
+            "symbols for TRACE to walk"
+        ),
+        "details": {"inspect_mode": mode, "touched_files": []},
+    }
+
+
+
+
 def _decide_inspect_mode(
     fdir: Path,
     project_root: str,
@@ -1673,6 +1607,22 @@ def _decide_inspect_mode(
         "touched_files": touched,
         "prove_sample": prove_sample,
         "diff_base": diff["base"],
+        # fallout GI-008 / GI-009 / GI-033 / AC-061 (D-021 / D-035, ruling
+        # `lead_ruling_gi_033_leaf_moves` item 5) — DECIDED HERE, RECORDED HERE,
+        # REPORTED BY Foundry-Next.
+        #
+        # "Whether TRACE can be skipped this cycle" is a function of the width
+        # and of nothing else, so it is decided by the transition that decides
+        # the width and travels in the entry the transition writes. It used to
+        # be computed at DISPLAY time by `width._maybe_skip_trace`, which
+        # `guidance.py` imported — a lifecycle module reaching into the verifier
+        # set for a decision, which is both GI-033's refused direction and
+        # GI-008's named violation ("a decision computed inside Foundry-Next").
+        # Foundry-Next now reads this field through
+        # `foundry_state.current_inspect_mode` and performs only the stamp.
+        "trace_skip": _trace_skip_from_width(
+            full, rule, touched, "FULL" if full else "DELTA"
+        ),
     }
 
 
@@ -2000,9 +1950,11 @@ def _unrecorded_width_problem(fdir: Path) -> dict | None:
       trace/prove/test, so `research_audit` and `test01` were never required;
       `foundry_gate('assay')` tested `mode != "DELTA"`, which "unrecorded"
       passes; `inspect_clean`'s DELTA refusal tested `== "DELTA"`, which
-      "unrecorded" also passes; and `_maybe_skip_trace`'s D-071 fence handled
-      FULL and DELTA explicitly then fell through to the legacy
-      `_trace_skip_check` and auto-stamped `.trace-complete`.
+      "unrecorded" also passes; and the display-time TRACE fence handled FULL
+      and DELTA explicitly then fell through to the legacy
+      `_trace_skip_check` and auto-stamped `.trace-complete`. That fence is
+      gone: `_trace_skip_from_width` decides at the transition and there is no
+      third answer for an unrecorded width to fall into.
 
     Driven end to end through the shipped `Foundry-Init(resume=...)`, which
     reactivates any archive with whatever `state.json` it holds, on a

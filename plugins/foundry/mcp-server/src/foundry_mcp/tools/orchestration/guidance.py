@@ -36,6 +36,7 @@ from foundry_mcp.tools.artifacts import (
     _load_json,
     _read_text,
     _spec_requirement_ids,
+    _stream_marker,
 )
 # fallout research/holmes-orchestrator.md#coh-8 (D-014) / GI-024 — THE PALETTE
 # AND THE PHASE VOCABULARY ARE READ, NOT DECLARED.
@@ -88,9 +89,6 @@ from foundry_mcp.tools.orchestration.streams import (
 from foundry_mcp.tools.orchestration.teams import (
     _check_active_teams,
     agent_model,
-)
-from foundry_mcp.tools.orchestration.width import (
-    _maybe_skip_trace,
 )
 from foundry_mcp.tools.orchestration.spend import _spend_summary
 
@@ -375,7 +373,7 @@ def foundry_next_action(
     trace_skip_decision: dict | None = None
     if fdir_stamp and fdir_stamp.exists():
         _stamp_subphase_transitions(fdir_stamp)
-        trace_skip_decision = _maybe_skip_trace(fdir_stamp, project_root)
+        trace_skip_decision = _stamp_trace_skip(fdir_stamp)
     result = _compute_next_action(project_root)
     if trace_skip_decision and trace_skip_decision.get("skip"):
         result["trace_skip"] = trace_skip_decision
@@ -1291,6 +1289,64 @@ def _escalation_notice(fdir: Path, project_root: str) -> str:
         "split it back apart. Every listed defect must still close. To restore "
         f"per-instance packets: {restores}."
     )
+
+
+
+
+def _stamp_trace_skip(fdir: Path) -> dict | None:
+    """Act on the trace-skip fact the width decision RECORDED. Reports, never decides.
+
+    fallout GI-008 / GI-009 / GI-033 / AC-061 / FR-063 (D-021 / D-035, ruling
+    `lead_ruling_gi_033_leaf_moves` item 5).
+
+    Returns the recorded decision, or None when there is nothing to say. When it
+    says skip, `.trace-complete` is stamped so the roster is satisfiable — the
+    same effect this surface has always had, and the only thing left here.
+
+    THE DECISION IS NOT MADE HERE, WHICH IS THE WHOLE CHANGE. It used to be:
+    `guidance.py` imported `width._maybe_skip_trace`, a lifecycle module
+    reaching into the verifier set to compute a width-derived answer at DISPLAY
+    time. GI-008 names that shape outright — "a FULL versus DELTA decision
+    computed inside Foundry-Next" — and GI-009 says the transition that opens
+    an INSPECT records the mode and Foundry-Next only reports. So the fact is
+    computed by `width._trace_skip_from_width` at the transition, written into
+    the `inspect_modes` entry as `trace_skip`, and READ here through
+    `foundry_state.current_inspect_mode`.
+
+    A RUN WITH NO RECORDED FIELD STAMPS NOTHING, and that is D-117's direction
+    rather than a gap: an entry written before this field existed licenses no
+    answer about TRACE's scope, and guessing one is exactly how a resumed
+    archive came to auto-stamp `.trace-complete` with TRACE never run.
+
+    THE THREE GUARDS THE OLD FENCE HELD ARE ALL STILL HERE — already stamped,
+    not in F2, no run — because they are facts about the moment of the call
+    rather than about the width.
+    """
+    if not fdir.exists():
+        return None
+    if (fdir / _stream_marker("trace")).exists():
+        return None
+    if _load_json(fdir / "state.json").get("phase") != "F2":
+        return None
+
+    recorded = _recorded_inspect_mode(fdir) or {}
+    decision = recorded.get("trace_skip")
+    if not isinstance(decision, dict):
+        return None
+    if not decision.get("skip"):
+        return decision
+
+    (fdir / _stream_marker("trace")).write_text(
+        f"{now_iso()} cycle=skipped\n"
+        f"items_checked=0\n"
+        f"items_total=0\n"
+        f"coverage=SKIPPED\n"
+        f"findings=0\n"
+        f"skipped=true\n"
+        f"reason={decision.get('reason', '')}\n",
+        encoding="utf-8",
+    )
+    return decision
 
 
 
