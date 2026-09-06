@@ -209,5 +209,5 @@
 ................................ [ 97%]
 ..............                                                           [100%]
 =========================== short test summary info ============================
-SKIPPED [1] tests/test_foundry_state_readers.py:2011: width._current_inspect_mode is gone — casting 2 repointed to the leaf (C-059 row 4). Nothing is left to agree with, and the leaf reader is driven directly above.
-661 passed, 1 skipped in 4.26s
+SKIPPED [1] tests/test_foundry_state_readers.py:2012: width._current_inspect_mode is gone — casting 2 repointed to the leaf (C-059 row 4). Nothing is left to agree with, and the leaf reader is driven directly above.
+661 passed, 1 skipped in 3.94s

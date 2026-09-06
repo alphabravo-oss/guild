@@ -16,11 +16,11 @@ _PHASE_NAMES           no backticked cite
 _TEST_BASENAME_RES     no backticked cite
 
 == the successors the prose names now ==
-src/foundry_mcp/tools/foundry_report.py:907:    overlay -- `foundry_state.overlay_unreported`, called from `_spend_summary`
-src/foundry_mcp/tools/foundry_report.py:911:    is the seed `foundry_record_spend` lays down, `foundry_state.spend_bucket`,
-src/foundry_mcp/tools/foundry_report.py:963:    # `foundry_state.overlay_unreported` -- BACK OUT of the orchestrator
-src/foundry_mcp/tools/foundry_report.py:2018:        # `foundry_state.markdown_sections` matches on.
-src/foundry_mcp/tools/foundry_report.py:2386:        # ROLL-UP's number or it is nothing — `foundry_state.spend_bucket`
+src/foundry_mcp/tools/foundry_report.py:905:    overlay -- `foundry_state.overlay_unreported`, called from `_spend_summary`
+src/foundry_mcp/tools/foundry_report.py:909:    is the seed `foundry_record_spend` lays down, `foundry_state.spend_bucket`,
+src/foundry_mcp/tools/foundry_report.py:961:    # `foundry_state.overlay_unreported` -- BACK OUT of the orchestrator
+src/foundry_mcp/tools/foundry_report.py:2017:        # `foundry_state.markdown_sections` matches on.
+src/foundry_mcp/tools/foundry_report.py:2385:        # ROLL-UP's number or it is nothing — `foundry_state.spend_bucket`
 tests/test_report.py:38:``foundry_state.markdown_sections``) and the unreported-dispatch walk.
 tests/test_report.py:2033:    nothing: `foundry_state.spend_bucket` seeds it None and `_read_spend`
 tests/test_report.py:2210:    # `foundry_state.overlay_unreported` writes the derived number onto
@@ -31,4 +31,4 @@ tests/test_report.py:3809:    is `foundry_state.spend_bucket`, which seeds 0 and
 tests/test_report.py:4758:    D-229 closed the zero rows in `foundry_state.overlay_unreported`,
 tests/test_report.py:4866:    `foundry_state.overlay_unreported`, and `foundry_state.spend_rollup` seeds
 tests/test_report.py:4988:    `foundry_state.markdown_sections` matches a whole trimmed line, and this
-tests/test_foundry_state_readers.py:1391:    find and the seal's splitter -- now `foundry_state.markdown_sections` --
+tests/test_foundry_state_readers.py:1392:    `foundry_state.markdown_sections` --
