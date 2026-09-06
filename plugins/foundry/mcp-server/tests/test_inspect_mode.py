@@ -4828,24 +4828,101 @@ def test_a_malformed_current_width_is_not_answered_with_an_older_valid_one(
 def test_the_width_read_is_the_one_path_and_it_consults_the_vocabulary(run_env):
     """THE PROPERTY, derived from the source rather than from the symptom.
 
-    `_current_inspect_mode`'s docstring calls itself THE ONLY READ, and GI-008
-    and GI-009 both name a lazily-computed mode as the violation. The
-    vocabulary check therefore belongs in it and nowhere else: a door that
-    re-tested the raw field would be a sixth opinion of one string, which is
-    how D-117's five permissive fallbacks came to agree on the wrong answer.
+    The one width read calls itself THE ONLY READ, and GI-008 and GI-009 both
+    name a lazily-computed mode as the violation. The vocabulary check
+    therefore belongs in it and nowhere else: a door that re-tested the raw
+    field would be a sixth opinion of one string, which is how D-117's five
+    permissive fallbacks came to agree on the wrong answer.
+
+    fallout FR-005 / AC-014 / OT-016 — THE SUBJECT IS TWO THINGS NOW.
+    ----------------------------------------------------------------
+    This asserted `"INSPECT_MODES" in names` over the read's own source. The
+    read moved to `foundry_state.py`, which is the stdlib-only leaf and may not
+    import `schemas/vocab.py`, so casting 10 gave it the vocabulary as an
+    ARGUMENT: `current_inspect_mode(run_dir, cycle=None, *, modes)`. The name
+    is now in every CALL SITE's namespace and in none of the callee's, so the
+    old assertion cannot pass however correct the tree is.
+
+    Repointing it to the new module would have been the wrong repair, because
+    the contract genuinely moved: turning a fixed collaborator into an injected
+    one turns something the module ENFORCES into something it HOPES its caller
+    passes, and D-212 was precisely a persisted value outside the vocabulary
+    reading as a recorded width. A caller handing over a laxer set is that
+    defect returning by the front door.
+
+    So the pin follows the property to BOTH of its halves, and judges every
+    shipped call site instead of one function body:
+
+      * the read still RESOLVES against the set it is handed — membership of
+        `modes`, never truthiness;
+      * and every shipped caller HANDS IT THE CLOSED SET, derived from the
+        source rather than listed here, so a fourth call site is judged the day
+        it lands.
+
+    The leaf's own two calls forward the `modes` their caller supplied, which is
+    the same guarantee one frame further out, so they are required to forward
+    and not to name the vocabulary they cannot import.
     """
     import ast
     import inspect
     import textwrap
 
+    # Half one — the read resolves against the set it is handed.
     tree = ast.parse(textwrap.dedent(inspect.getsource(current_inspect_mode)))
-    names = {
-        node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
-    }
-    assert "INSPECT_MODES" in names, (
-        "_current_inspect_mode no longer resolves the persisted mode against "
-        "the closed vocabulary, so a value outside it reads as a recorded "
-        "width again — D-212."
+    resolves = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Compare)
+        and any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops)
+        and any(
+            isinstance(c, ast.Name) and c.id == "modes" for c in node.comparators
+        )
+    ]
+    assert resolves, (
+        "the width read no longer tests the persisted mode for MEMBERSHIP of "
+        "the vocabulary it is handed, so a value outside it reads as a "
+        "recorded width again — D-212."
+    )
+
+    # Half two — every shipped caller hands it the closed set. Derived from the
+    # package's own source: a listed roster could not fail on a call site added
+    # after it was written, which is the whole of what this half protects.
+    leaf = Path(foundry_state.__file__).resolve()
+    package = leaf.parent.parent
+    offenders: list[str] = []
+    call_sites = 0
+    for path in sorted(package.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            called = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if called != "current_inspect_mode":
+                continue
+            call_sites += 1
+            handed = next(
+                (kw.value for kw in node.keywords if kw.arg == "modes"), None
+            )
+            spelling = getattr(handed, "id", None)
+            # The leaf forwards its OWN parameter — the vocabulary is still the
+            # caller's, one frame further out — and cannot name a set it may
+            # not import. Everyone else names the closed set itself.
+            wanted = "modes" if path == leaf else "INSPECT_MODES"
+            if spelling != wanted:
+                offenders.append(
+                    f"{path.name}:{node.lineno} passes modes={spelling!r}, "
+                    f"expected {wanted!r}"
+                )
+
+    assert call_sites >= 3, (
+        f"only {call_sites} call site(s) of the one width read found; the scan "
+        "has gone blind and the assertion below proves nothing"
+    )
+    assert offenders == [], (
+        f"width read(s) handed something other than the closed vocabulary: "
+        f"{offenders}. The read resolves against whatever set it is given, so "
+        "a caller passing a laxer one is D-212 returning through the argument "
+        "the leaf cannot refuse for itself."
     )
 
 
