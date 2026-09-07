@@ -6442,6 +6442,22 @@ _SPEC_ID_DECLARATIONS = (
 )
 
 
+#: This run's spec, relative to the repo root, spelled ONCE.
+#:
+#: The skip below names it, and an ABSOLUTE path in a skip reason is not a
+#: stable thing to name. The gate re-executes every evidence command inside a
+#: detached worktree, and `worktree_helpers.py#_claim_worktree_path` suffixes
+#: that worktree's directory name when a peer already holds the claim
+#: (`sweep-evidence` becomes `sweep-evidence-1`). Interpolating the resolved
+#: path therefore wrote the checkout's location into the body of every
+#: committed evidence log that reports this skip, and those logs then failed
+#: to reproduce on the suffix alone whenever two sweeps overlapped — a
+#: byte-mismatch about nothing, in logs whose commands were entirely correct.
+#: A repo-relative name is identical in every checkout and still says which
+#: file is missing, which the bare wording its sibling skip uses does not.
+_RUN_SPEC_RELATIVE = "forge-specs/foundry-run-fallout/spec.md"
+
+
 def _run_spec_path() -> Path:
     """This run's spec.
 
@@ -6452,9 +6468,7 @@ def _run_spec_path() -> Path:
     """
     plugin_root = Path(artifacts.__file__).resolve().parents[4]
     assert plugin_root.name == "foundry", plugin_root
-    return (
-        plugin_root.parents[1] / "forge-specs" / "foundry-run-fallout" / "spec.md"
-    )
+    return plugin_root.parents[1] / _RUN_SPEC_RELATIVE
 
 
 def test_every_requirement_id_the_orchestration_prose_cites_exists():
@@ -6482,7 +6496,7 @@ def test_every_requirement_id_the_orchestration_prose_cites_exists():
     """
     spec = _run_spec_path()
     if not spec.exists():
-        pytest.skip(f"this checkout carries no {spec.name} at {spec}")
+        pytest.skip(f"this checkout carries no {_RUN_SPEC_RELATIVE}")
     text = spec.read_text(encoding="utf-8")
 
     declared: set[str] = set()
