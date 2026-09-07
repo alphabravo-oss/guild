@@ -98,6 +98,29 @@ reported; it is never a refusal. The whole ``baseline_comparison`` object is
 this CLI and the F6 report cannot print different comparisons of the same two
 archives (D-085 / D-088).
 
+NFR-007 IS READ THROUGH NFR-008 — A RECORDED RESIDUAL RISK (D-186)
+------------------------------------------------------------------
+NFR-007 states this effort's acceptance as a COMPARISON: a terminal state
+(DONE, or HALTED with a named backlog) "in materially fewer FULL-width cycles".
+Three of its four terms are measured — the terminal state and the named backlog
+by the F6 report, and THIS run's FULL-width count by ``full_cycle_ratio`` above.
+The fourth is not, and cannot be. The predecessor's FULL-width count does not
+exist anywhere: ``vocab.THUNDER_VIPER_BASELINE`` records ``grind_cycles`` and
+``post_verification_cycles`` and no width at all, for the reason the paragraphs
+above give — thunder-viper ran on the 4.7.3 cache with no ``inspect_modes`` in
+its archive, so its widths were never recorded and no migration can recover
+them. ``baseline_comparison`` therefore publishes no FULL-width column, and
+this note is what stands in its place: a column of nulls would read as a
+measurement still pending rather than as one nobody ever took.
+
+So NFR-007 is read through NFR-008's ratio — below 50% FULL is this release's
+operational spelling of "materially fewer FULL-width cycles". That substitution
+is a JUDGEMENT and not a derivation: NFR-008 is its own Locked row, and the
+spec records no rule mapping one onto the other, so this paragraph is the whole
+of where the mapping is written down. Nothing mitigates it beyond the ratio,
+and that is an accepted residual risk of measuring against an archive older
+than the measurement rather than a gap someone is going to close later.
+
 ``cycles`` in the payload is a COUNT. The server's counter is 0-based, so the
 count is the final index + 1 — the conversion happens exactly once, in
 _extract_per_run. NFR-001 states grand-vulture's baseline as "18 cycles, 168
@@ -919,6 +942,15 @@ def _baseline_comparison(run_dir: Path) -> dict[str, Any]:
     recorded constant is now the baseline COLUMN unconditionally and the
     archive's own derivation is published beside it as `baseline_derived`; a
     floor that could be EXCEEDED did not protect the constant it named.
+
+    NO FULL-WIDTH COLUMN HERE, AND NONE COMING (D-186 / NFR-007). This section
+    is where the second operand of NFR-007's comparison would sit if it
+    existed; `THUNDER_VIPER_BASELINE` holds two numbers and neither is a width,
+    because the archive behind them predates width recording. The module
+    docstring's residual-risk record is where that is written down and where
+    NFR-007's surrogate — NFR-008's `full_cycle_ratio` — is named. A reader who
+    came here for the comparison should read that rather than take the absence
+    for an oversight nobody noticed.
     """
     return _baseline_comparison_section(run_dir)
 
@@ -988,7 +1020,13 @@ _FALLOUT_VERDICTS = {
 
 
 def _fallout_verdict(fallout: dict[str, Any] | None) -> str:
-    """The fallout acceptance verdict (NFR-006 / NFR-007), in this vocabulary.
+    """The fallout acceptance verdict (NFR-006), in this vocabulary.
+
+    NFR-006 AND NOT NFR-007. This verdict answers "zero filings across the last
+    two INSPECT cycles" and nothing else; NFR-007's comparison is read through
+    `full_cycle_ratio`, on the substitution the module docstring's residual-risk
+    record states (D-186). A verdict cited to two requirements is a verdict
+    whose FAIL nobody can attribute, and this one used to carry both names.
 
     MISSING for an archive whose defect ledger will not read at all, and MISSING
     for the reader's own `not_measurable` — a run with fewer than two INSPECT

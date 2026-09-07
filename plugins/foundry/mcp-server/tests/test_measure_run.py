@@ -2741,6 +2741,15 @@ def test_demo_grind_cycle_12_the_widened_rollup_at_the_real_door(
 # so an archive that never measured them and reported 0 would show the strongest
 # possible result on no evidence. Every "no data" case below therefore asserts
 # the MISSING verdict explicitly, and never merely that the number is absent.
+#
+# NFR-007 IS NOT A THIRD FIGURE HERE. It asks for a terminal state "in
+# materially fewer FULL-width cycles" — a comparison whose second operand, a
+# predecessor's FULL-width count, exists in no archive, because width recording
+# postdates thunder-viper. It is read through NFR-008's ratio instead, and that
+# substitution is RECORDED in measure-run.py's module docstring rather than
+# assumed here (D-186). `test_the_nfr_007_substitution_is_recorded_where_the_
+# figures_are_published` is the pin that keeps the record from being tidied
+# away as prose that duplicates nothing.
 # ---------------------------------------------------------------------------
 
 
@@ -2919,6 +2928,54 @@ def test_an_archive_with_no_recorded_widths_has_no_ratio_and_does_not_pass(
     assert payload["gate_verdicts"]["full_cycle_ratio"] == "MISSING"
 
 
+def test_the_nfr_007_substitution_is_recorded_where_the_figures_are_published(
+) -> None:
+    """D-186 / NFR-007 / FR-036 — the residual risk is WRITTEN DOWN.
+
+    NFR-007 is Locked and states this effort's acceptance as a COMPARISON: a
+    terminal state "in materially fewer FULL-width cycles". Three of its four
+    terms are measured — the terminal state and the named backlog by the F6
+    report, this run's own FULL-width count by `full_cycle_ratio` above. The
+    fourth, the predecessor's FULL-width count, exists in no archive: width
+    recording postdates thunder-viper, so there is nothing to compare against
+    and no migration that could recover it.
+
+    The release therefore reads NFR-007 through NFR-008's ratio — and NFR-008
+    is its own Locked row, so substituting one for the other is a JUDGEMENT.
+    A judgement nobody wrote down is indistinguishable from an oversight six
+    months later, which is why the deliverable here is the RECORD, in FR-036's
+    shape, and this test is its pin.
+
+    BEHAVIOUR CANNOT HOLD THIS DOWN. Every figure the script publishes is
+    correct whether the record is present or absent — which is exactly what
+    makes the record the thing at risk of being tidied away as redundant prose.
+    """
+    source = SCRIPT.read_text(encoding="utf-8")
+    for fragment in (
+        "NFR-007",
+        "read through NFR-008",
+        "accepted residual risk",
+    ):
+        assert fragment in source, (
+            f"measure-run.py no longer records {fragment!r}: NFR-007's "
+            f"substitution by NFR-008's ratio is undocumented again (D-186)"
+        )
+
+    # AND THE RECORD'S PREMISE, structurally. The note records an ABSENCE — no
+    # predecessor FULL-width figure exists anywhere — so the day a width lands
+    # on the baseline constant the note stops being true, and a note that says
+    # a number does not exist standing beside that number is worse than none.
+    from foundry_mcp.schemas import vocab
+
+    assert not any(
+        "width" in key or "full" in key for key in vocab.THUNDER_VIPER_BASELINE
+    ), (
+        "THUNDER_VIPER_BASELINE grew a width figure: retire the residual-risk "
+        "record in measure-run.py's module docstring rather than leave it "
+        "asserting the absence of a number the constant now holds"
+    )
+
+
 def test_fallout_is_counted_per_cycle_from_the_defect_ledger(
     make_run_dir: Callable[..., Path],
 ) -> None:
@@ -2995,12 +3052,16 @@ def test_a_ledger_that_predates_the_field_is_unmeasured_not_zero(
 def test_the_fallout_verdict_passes_only_on_a_clean_closing_pair(
     make_run_dir: Callable[..., Path],
 ) -> None:
-    """NFR-006 / NFR-007 — zero across the LAST TWO INSPECT cycles.
+    """NFR-006 — zero across the LAST TWO INSPECT cycles.
 
     Three drives against one axis: a clean pair passes, a single filing in
     either cycle of the pair fails, and an earlier cycle's filing does not —
     the criterion is about where the run FINISHED, which is the whole point of
     a convergence figure.
+
+    NFR-006 alone: this docstring used to name NFR-007 beside it, and NFR-007
+    is a comparison in FULL-width cycles that nothing here drives. It is read
+    through the ratio, on the record in the script's module docstring (D-186).
     """
     run_dir = make_run_dir()
 
@@ -3261,11 +3322,16 @@ def test_demo_the_two_acceptance_figures_on_one_archive(
     """FR-026 / FR-025 / NFR-008 / NFR-006 / OT-040 / OT-039 — both figures.
 
     A demonstration, printed, because these two numbers are what the release is
-    measured BY: NFR-007 asks for "a terminal state in materially fewer
-    FULL-width cycles" and NFR-006 for "zero filings across its last two INSPECT
-    cycles", and neither existed anywhere in the tree before this casting —
+    measured BY: NFR-008 asks for "FULL cycles ÷ total INSPECT cycles below
+    50%" and NFR-006 for "zero filings across its last two INSPECT cycles", and
+    neither existed anywhere in the tree before this casting —
     `survey/infra.md` §9: "There is no 'fallout' column, metric, or concept
     anywhere in the codebase."
+
+    NFR-007's comparison rides on the ratio rather than being a third figure
+    driven here, on the substitution recorded in the script's module docstring
+    (D-186) — this docstring used to attribute the ratio straight to NFR-007,
+    which is the reading that record exists to stop being silent.
 
     Driven through the real CLI on one archive, twice: a run that fails both,
     and then the same archive rewritten to a converging shape. Everything
