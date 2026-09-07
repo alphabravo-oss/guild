@@ -1372,12 +1372,20 @@ def test_step_10_transcribes_ownership_from_the_castings_own_blocks(
     """FR-054 / AC-049 — the field is filled from the archive, not computed.
 
     `foundry_handoff.declared_requirement_ids` is the ONE derivation in the tree
-    of which ids a `<spec_requirements>` block declares, and it is the same
-    function F0.9's ownership dimension uses to decide what a casting declared.
-    Reading the archive's own answer into the archive's own field is
-    transcription; computing one would be manufacturing, and the door would then
-    be checking this tool's opinion against the prose instead of the prose
-    against itself.
+    of which ids a `<spec_requirements>` block DECLARES — subject position on
+    the line, so an id quoted inside another requirement's prose is not
+    collected (D-180). Reading the archive's own answer into the archive's own
+    field is transcription; computing one would be manufacturing, and the door
+    would then be checking this tool's opinion against the prose instead of the
+    prose against itself.
+
+    F0.9's ownership dimension reads the OTHER derivation now — what a block
+    CITES rather than what it declares (fallout D-181) — so the fill and that
+    door agree only where the two coincide, as they do on this fixture's
+    bold-bullet blocks. Where they diverge the ruling is
+    `test_step_10_transcribes_declarations_and_not_the_ids_a_block_merely_quotes`
+    below, and the argument for it is in `_migrate_casting_ownership`'s
+    docstring.
     """
     (archive / "castings").mkdir()
     (archive / "castings" / "manifest.json").write_text(
@@ -1420,7 +1428,7 @@ def test_step_10_never_fills_an_empty_list_or_leaves_the_field_absent(
         `missing_requirement_ids` per casting;
       * `[]` — a casting positively CLAIMING it owns nothing, which the door
         checks against the casting's own prose and refuses id by id as
-        `declared_but_not_owned`.
+        `cited_but_not_owned`.
 
     A casting whose block genuinely declares nothing DOES get `[]`, and that is
     not the same claim: it is the transcription of an empty declaration, and the
@@ -1479,17 +1487,23 @@ def test_the_migrated_manifest_does_not_trip_the_f0_9_ownership_or_span_door(
     """AC-049 / FR-054 — "a migrated archive does not trip it".
 
     Driven through the door's OWN helpers rather than a restatement of its
-    rules: `_owned_requirement_ids` decides presence, `_recorded_split_reasons`
-    collects the waivers from both the manifest and the castings, and
-    `_requirement_span_rows` computes the spans. If casting 7 changes any of the
-    three, this test changes with it instead of quietly asserting a rule the
-    door no longer applies.
+    rules: `_owned_requirement_ids` decides presence, `cited_requirement_ids`
+    is the population dimension 11 compares the field against in both
+    directions, `_recorded_split_reasons` collects the waivers from both the
+    manifest and the castings, and `_requirement_span_rows` computes the spans.
+    If casting 7 changes any of the four, this test changes with it instead of
+    quietly asserting a rule the door no longer applies — which is what this
+    test did between D-181 and concern C-096, comparing against declarations
+    while the door had moved to cites.
 
     The fixture is the shape that makes both dimensions bite: FR-001 owned by
     three castings, which is above `REQUIREMENT_SPAN_MAX` and would be refused
     with no reason recorded against it.
     """
-    from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
+    from foundry_mcp.tools.foundry_handoff import (
+        cited_requirement_ids,
+        declared_requirement_ids,
+    )
     from foundry_mcp.tools.foundry_validate import (
         REQUIREMENT_IDS_SCHEMA_FLOOR,
         REQUIREMENT_SPAN_MAX,
@@ -1522,9 +1536,17 @@ def test_the_migrated_manifest_does_not_trip_the_f0_9_ownership_or_span_door(
     )
     for casting in castings:
         _present, owned = ownership[str(casting["id"])]
-        declared = set(declared_requirement_ids(casting["spec_text"]))
-        assert owned == declared, (
-            "neither `declared_but_not_owned` nor `owned_but_not_declared`"
+        # TWO FACTS, NOT ONE, because two derivations are in play. Step 10
+        # fills the field from what the block DECLARES; dimension 11 compares
+        # the field against what the block CITES. On these bold-bullet blocks
+        # the two populations coincide, and that coincidence is the whole
+        # reason the door reports nothing here — asserting only the first
+        # would leave this test passing for a reason it never checked.
+        assert owned == set(declared_requirement_ids(casting["spec_text"])), (
+            "step 10 transcribed exactly what the block declares"
+        )
+        assert owned == set(cited_requirement_ids(casting["spec_text"])), (
+            "neither `cited_but_not_owned` nor `owned_but_not_cited`"
         )
 
     spec_ids = {
@@ -1537,6 +1559,90 @@ def test_the_migrated_manifest_does_not_trip_the_f0_9_ownership_or_span_door(
     assert [row["id"] for row in over] == ["FR-001"], "the fixture's shared id"
     assert all(row["split_reason"] for row in over), (
         "a span above the maximum with no recorded reason is what F0.9 refuses"
+    )
+
+
+def test_step_10_transcribes_declarations_and_not_the_ids_a_block_merely_quotes(
+    archive: Path,
+) -> None:
+    """C-096's ruling, pinned — the fill stays on declarations after D-181.
+
+    D-181 split one derivation in two: `declared_requirement_ids` answers what
+    a casting is ANSWERABLE for, `cited_requirement_ids` answers what its
+    excerpt MENTIONS, and F0.9's ownership dimension moved to the second while
+    this step stayed on the first. Casting 7 raised the divergence as concern
+    C-096 and could not rule on it, because the fill is on this casting's file.
+
+    THE RULING IS "DECLARATIONS", and this test is what makes it a decision
+    rather than an accident. Moving the fill to mentions would silence the door
+    by construction, and `commands/start.md` F0.5 refuses it in the field's own
+    definition — "prose that merely quotes an id is not a claim to own it".
+    Ownership is ACTED on: `Foundry-Tasks` co-dispatches a defect to every
+    casting whose `requirement_ids` name the id, and the span table counts each
+    of them an owner. On this fixture that would route a fix for AC-042 to a
+    casting that only mentioned it, and make AC-042 span two castings when one
+    owns it.
+
+    WHAT THE RULING LEAVES IS ASSERTED HERE RATHER THAN DESCRIBED:
+    `cited_but_not_owned` on the quoting casting, and nothing in the other
+    direction, because a cite is a superset of a declaration by construction.
+    That finding is true of the legacy decomposition — daring-orca castings 2
+    and 7, thunder-viper 1/2/3/5, grand-vulture 3/4/5, measured at 65ce47f —
+    and it is the report a lead validating a resumed legacy manifest should
+    see. If a later change moves the fill to mentions, this test fails and the
+    ruling is re-taken deliberately instead of drifting.
+    """
+    from foundry_mcp.tools.foundry_handoff import (
+        cited_requirement_ids,
+        declared_requirement_ids,
+    )
+    from foundry_mcp.tools.foundry_validate import _owned_requirement_ids
+
+    # The legacy shape the three real archives carry: an id named inside
+    # another requirement's own statement, with the spec's `Maps to:`
+    # back-pointer under it. `_casting` cannot build this one — its blocks
+    # declare every id they name, which is the coincidence that hid C-096.
+    quoting = (
+        "- **FR-001** [from A-001]: persist the ids, the way AC-042 already\n"
+        "  demands of the span table\n"
+        "  - Maps to: US-003\n"
+    )
+    (archive / "castings").mkdir()
+    (archive / "castings" / "manifest.json").write_text(
+        json.dumps(_manifest(
+            {"id": 1, "title": "The quoting casting", "spec_text": quoting},
+            _casting(2, "AC-042"),
+        )),
+        encoding="utf-8",
+    )
+    _migrate(archive)
+    castings = json.loads(
+        (archive / "castings" / "manifest.json").read_text()
+    )["castings"]
+
+    assert castings[0]["requirement_ids"] == ["FR-001"], (
+        "AC-042 is quoted here, not owned, and the fill does not credit it"
+    )
+    assert castings[1]["requirement_ids"] == ["AC-042"], "its actual owner"
+    assert castings[0]["split_reason"] == {}, (
+        "span counts owners, and a casting that quotes an id is not one — so "
+        "no waiver is recorded against a split that was never made"
+    )
+
+    # The two populations, from the door's own derivations rather than a
+    # restatement of their rules.
+    assert declared_requirement_ids(quoting) == ["FR-001"]
+    assert cited_requirement_ids(quoting) == ["AC-042", "FR-001"], (
+        "the `Maps to:` back-pointer is exempt, so US-003 is not a cite"
+    )
+
+    _present, owned = _owned_requirement_ids(castings[0])
+    cited = set(cited_requirement_ids(quoting))
+    assert sorted(cited - owned) == ["AC-042"], (
+        "the one dimension-11 finding this fill can leave: `cited_but_not_owned`"
+    )
+    assert owned - cited == set(), (
+        "and never `owned_but_not_cited` — every declaration is also a cite"
     )
 
 

@@ -61,9 +61,17 @@ what "fills defaults" can mean here.
 What the archive already states IS its ownership: each casting entry carries the
 verbatim ``<spec_requirements>`` block its prompt was built from, and
 ``foundry_handoff.declared_requirement_ids`` is the ONE derivation in the tree of
-which ids a block declares — the same function the F0.9 door itself uses to
-decide what a casting declared (D-180). Step 10 transcribes that answer into the
-field. It reads ownership out of the archive; it does not compute one.
+which ids a block DECLARES — the id in subject position on its own line, so one
+quoted inside another requirement's prose is not collected (D-180). Step 10
+transcribes that answer into the field. It reads ownership out of the archive;
+it does not compute one.
+
+DECLARATIONS, AND NOT THE IDS A BLOCK MERELY QUOTES. F0.9's ownership dimension
+no longer reads the same derivation this step does — it compares the field
+against ``cited_requirement_ids`` (fallout D-181) — so the fill and that door
+agree only where a block's declarations and its mentions coincide. Keeping the
+fill on declarations is a ruling with its argument stated in
+``_migrate_casting_ownership``'s docstring, beside the code that acts on it.
 
 ``split_reason`` rides with it for the same reason and in the same breath, which
 is why CT-018 names the pair. A pre-field manifest was decomposed with no span
@@ -945,13 +953,49 @@ def _migrate_casting_ownership(
     lists the two together for that reason.
 
     IT TRANSCRIBES. ``declared_requirement_ids`` is the one derivation in the
-    tree of which ids a `<spec_requirements>` block declares, and it is the same
-    function the F0.9 door uses to decide what each casting declared. Reading
-    the archive's own answer into the archive's own field is not manufacturing
-    ownership; computing one would be, and the two shapes that would have to
-    compute one are refused here: ``[]`` is a casting positively claiming it owns
-    nothing (a claim the door checks against the prose and refuses), and a
-    ``null`` reads as un-migrated at a schema that says otherwise.
+    tree of which ids a `<spec_requirements>` block DECLARES — the id in subject
+    position on its own line, so one quoted inside another requirement's prose
+    is not collected (D-180). Reading the archive's own answer into the
+    archive's own field is not manufacturing ownership; computing one would be,
+    and the two shapes that would have to compute one are refused here: ``[]``
+    is a casting positively claiming it owns nothing (a claim the door checks
+    against the prose and refuses), and a ``null`` reads as un-migrated at a
+    schema that says otherwise.
+
+    DECLARATIONS, NOT MENTIONS — the ruling on concern C-096, raised against
+    this step by the casting that owns the door (fallout D-181). F0.9's
+    ownership dimension used to compare `requirement_ids` against what a block
+    DECLARES and now compares it against what the block CITES — every mention
+    but a `Maps to:` back-pointer — because AC-001, OT-001 and FR-040 all say
+    CITES. So the sentence that used to describe this seam, that the fill and
+    that door read one derivation, is now conditional: they agree exactly where
+    a block's declarations and its mentions coincide.
+
+    Transcribing mentions here would restore the agreement by construction, and
+    is refused for a reason that outranks agreeing with one reader.
+    `commands/start.md` F0.5 defines this field as the ids a casting OWNS and
+    gives the reason in the same breath — "prose that merely quotes an id is not
+    a claim to own it". The field's other readers ACT on what it says: a defect
+    is co-dispatched to every casting whose `requirement_ids` name the id, and
+    the span table counts each of them an owner. Filling from mentions would
+    route a fix to a casting that only quoted the requirement, and push shared
+    ids past the span maximum — so the door that stopped reporting would be
+    replaced by one refusing a split nobody made, with a `split_reason` that
+    would have to be invented to clear it. A quiet true line traded for a loud
+    false one.
+
+    WHAT THE RULING LEAVES VISIBLE, AND WHY THAT IS THE RIGHT REPORT. A cite is
+    a superset of a declaration by construction, so this fill can never produce
+    `owned_but_not_cited`; the single finding it can leave is
+    `cited_but_not_owned`, on a casting whose legacy block quotes an id another
+    casting owns. Measured at 65ce47f across the three archives NFR-010 names,
+    that is daring-orca castings 2 and 7, thunder-viper 1/2/3/5 and
+    grand-vulture 3/4/5 — and `foundry-run-fallout` itself, decomposed under the
+    rule, is clean in both directions. The finding is TRUE of the legacy
+    decomposition; this tool neither invented it nor can clear it, because the
+    excerpt is a frozen historical record and the only other exit is recorded
+    false ownership. Reporting it to a lead who validates a resumed legacy
+    manifest is where a fact about an old decomposition belongs.
 
     THE SPAN REASON IS RECORDED PER CASTING AND ONLY WHERE OWNERSHIP IS SHARED.
     An id owned by one casting needs no reason and gets none — a waiver on
