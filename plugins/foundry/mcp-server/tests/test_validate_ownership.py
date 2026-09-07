@@ -274,6 +274,16 @@ GROWN_ROW = "\n- **NFR-777** [from A-000]: a row no casting owns\n"
 #: The excerpt shape F0.5 emits: bold bullets, typed-table rows and story
 #: headings all declare, and the two shapes that are NOT declarations sit in it
 #: as controls — a `Maps to:` cross-reference and an id quoted mid-prose.
+#:
+#: fallout D-181 — THE TWO CONTROLS NO LONGER CONTROL FOR THE SAME THING, and
+#: that is the whole of what changed. This dimension asks what the excerpt
+#: CITES, which is the verb fallout AC-001 / OT-001 / FR-040 all use. The id on
+#: the `Maps to:` line is still not a citation: it is DECOMPOSE transcribing
+#: the spec's own back-pointer to the user story the bullet above it serves, a
+#: fact about the cited requirement rather than a claim by this casting. The id
+#: in the closing sentence now IS one — an id this casting's text names and its
+#: ownership list must account for. So a casting carrying this excerpt cites
+#: three ids, and the positive control below owns exactly those three.
 DECLARES_TWO = (
     "### US-001: A fix reaches every surface of its rule\n"
     "\n"
@@ -281,6 +291,34 @@ DECLARES_TWO = (
     "  - Maps to: US-777\n"
     "\n"
     "The gate refuses a filing that cites FR-888 with no reproduction.\n"
+)
+
+#: The same excerpt with ONLY the cross-reference control, so the test that
+#: isolates it is not also carrying the mid-prose one. It cites the story
+#: heading and the bullet, and nothing else.
+CROSS_REFERENCED = (
+    "### US-001: A fix reaches every surface of its rule\n"
+    "\n"
+    "- **FR-009** [from A-009]: persist the ownership list at decompose time\n"
+    "  - Maps to: US-777\n"
+)
+
+#: The three shapes fallout D-181 drove at HEAD 6244c04 and found invisible:
+#: an id named later on a declaration's own line, one named mid-sentence in
+#: running prose, and one inside inline code backticks. Each cites one id no
+#: ownership list in these tests names.
+CITES_MID_LINE = (
+    "- **FR-009** [from A-009]: persist ids, the way AC-042 already demands\n"
+)
+CITES_MID_PROSE = (
+    "- **FR-009** [from A-009]: persist the ownership list\n"
+    "\n"
+    "This casting also touches the behaviour AC-042 states.\n"
+)
+CITES_IN_CODE = (
+    "- **FR-009** [from A-009]: persist the ownership list\n"
+    "\n"
+    "The `AC-042` rule, restated for the reader who arrives here first.\n"
 )
 
 #: The same two declarations with the two control lines removed, so the spec
@@ -303,10 +341,15 @@ def test_a_manifest_whose_lists_match_its_excerpts_passes_the_ownership_check(
     """The positive control, and it comes first: a dimension that refused
     everything would pass every negative test below and block every run.
 
-    The excerpt declares exactly two ids, the ownership list names exactly
-    those two, and the dimension is clean.
+    The excerpt cites exactly three ids — two declared and one named in its
+    prose — the ownership list names exactly those three, and the dimension is
+    clean. The id on the `Maps to:` line is in nobody's list and must stay out
+    of the reckoning for this to pass at all, so the exemption is under test
+    here as much as in the control that names it.
     """
-    castings = [_casting(1, excerpt=DECLARES_TWO, owns=["US-001", "FR-009"])]
+    castings = [
+        _casting(1, excerpt=DECLARES_TWO, owns=["US-001", "FR-009", "FR-888"])
+    ]
 
     result = _run_validate(tmp_path, castings, state=CURRENT_RUN)
     dim = _ownership(result)
@@ -316,7 +359,7 @@ def test_a_manifest_whose_lists_match_its_excerpts_passes_the_ownership_check(
     assert dim["not_computable"] is False
 
 
-def test_a_declaration_the_ownership_list_omits_is_refused_naming_both(
+def test_a_citation_the_ownership_list_omits_is_refused_naming_both(
     tmp_path: Path,
 ):
     """"a manifest whose casting cites an id in `spec_text` that is absent from
@@ -325,6 +368,11 @@ def test_a_declaration_the_ownership_list_omits_is_refused_naming_both(
 
     Nobody is answerable for it: the acceptance gate demands no evidence and a
     fix is routed to no casting.
+
+    Both citation shapes are named in one issue, which is the point of reading
+    CITES rather than DECLARATIONS (fallout D-181): one id is declared on its
+    own line and the other is named in the excerpt's closing prose, and the
+    ownership list has to account for each.
     """
     castings = [_casting(1, excerpt=DECLARES_TWO, owns=["US-001"])]
 
@@ -332,10 +380,10 @@ def test_a_declaration_the_ownership_list_omits_is_refused_naming_both(
     dim = _ownership(result)
 
     assert dim["ok"] is False
-    assert _issue_kinds(dim) == ["declared_but_not_owned"]
+    assert _issue_kinds(dim) == ["cited_but_not_owned"]
     issue = dim["issues"][0]
     assert issue["casting"] == 1
-    assert issue["ids"] == ["FR-009"]
+    assert issue["ids"] == ["FR-009", "FR-888"]
     assert "FR-009" in issue["detail"]
     assert "Casting 1" in issue["detail"]
     # A blocking error, and the whole report still renders.
@@ -350,7 +398,7 @@ def test_a_declaration_the_ownership_list_omits_is_refused_naming_both(
     )
 
 
-def test_an_owned_id_the_excerpt_never_declares_is_refused_naming_both(
+def test_an_owned_id_the_excerpt_never_cites_is_refused_naming_both(
     tmp_path: Path,
 ):
     """"and a casting whose `requirement_ids` names an id its `spec_text` never
@@ -361,14 +409,18 @@ def test_an_owned_id_the_excerpt_never_declares_is_refused_naming_both(
     because it reports success.
     """
     castings = [
-        _casting(1, excerpt=DECLARES_TWO, owns=["US-001", "FR-009", "AC-042"])
+        _casting(
+            1,
+            excerpt=DECLARES_TWO,
+            owns=["US-001", "FR-009", "FR-888", "AC-042"],
+        )
     ]
 
     result = _run_validate(tmp_path, castings, state=CURRENT_RUN)
     dim = _ownership(result)
 
     assert dim["ok"] is False
-    assert _issue_kinds(dim) == ["owned_but_not_declared"]
+    assert _issue_kinds(dim) == ["owned_but_not_cited"]
     issue = dim["issues"][0]
     assert issue["casting"] == 1
     assert issue["ids"] == ["AC-042"]
@@ -387,44 +439,196 @@ def test_both_directions_are_reported_together_rather_than_one_at_a_time(
 
     dim = _ownership(_run_validate(tmp_path, castings, state=CURRENT_RUN))
 
-    assert _issue_kinds(dim) == ["declared_but_not_owned", "owned_but_not_declared"]
+    assert _issue_kinds(dim) == ["cited_but_not_owned", "owned_but_not_cited"]
 
 
-def test_a_cross_reference_line_is_not_a_declaration(tmp_path: Path):
-    """A `Maps to:` line names a requirement in a position that is not a
-    declaration, so the casting is NOT answerable for it.
+def test_a_cross_reference_line_is_not_a_citation(tmp_path: Path):
+    """A `Maps to:` line names a requirement without citing it, so the casting
+    is NOT answerable for it and F0.9 does not ask it to be.
 
-    This is the negative control that separates "which requirements does this
-    casting own" from "which ones appear anywhere in this blob". A bare scan
-    over the excerpt would credit this casting with a requirement another
-    casting owns, then demand evidence for it at the acceptance gate — a green
-    gate recording a lie.
+    This is the one exemption in the cite rule and the only negative control
+    left after fallout D-181. `Maps to:` is not a sentence the casting wrote:
+    it is DECOMPOSE transcribing the spec's own back-pointer from a requirement
+    to the user story that requirement serves, so its object is a fact about
+    the CITED row rather than a claim by the casting carrying it.
 
-    The cross-reference the fixture carries is the second line of
-    ``DECLARES_TWO``, which is CODE and not a citation.
+    Counting it would not make F0.9 stricter, it would make F0.9 unpassable.
+    Six of this run's own twelve castings carry a `Maps to:` naming a user
+    story they do not own, and the only exit the refusal offers — add the id to
+    `requirement_ids` — drives four user stories past the span fallout AC-042
+    refuses without a recorded reason. fallout AC-001 / AC-042 would then be
+    mutually destructive, and the manifest satisfying one would be the manifest
+    the other rejects.
     """
-    castings = [_casting(1, excerpt=DECLARES_TWO, owns=["US-001", "FR-009"])]
+    castings = [_casting(1, excerpt=CROSS_REFERENCED, owns=["US-001", "FR-009"])]
 
     dim = _ownership(_run_validate(tmp_path, castings, state=CURRENT_RUN))
 
     assert dim["ok"] is True, dim["issues"]
 
 
-def test_an_id_quoted_mid_prose_is_not_a_declaration(tmp_path: Path):
-    """The fixture's last line quotes a requirement inside another
-    requirement's own statement text, mid-sentence and mid-line.
+def test_a_cross_reference_skip_cannot_swallow_a_declaration(tmp_path: Path):
+    """The cross-reference skip drops a LINE, so the rule it is exempting has
+    to be one no declaration can ever sit on.
 
-    Same control, the other shape, and it is the one the position rule was
-    filed against: a requirement mentioned once inside a truth's prose was
-    collected as one of the casting's demanded ones, and the teammate's only
-    way through the gate was to bind a knowingly false evidence header to an
-    unrelated log.
+    It is: `Maps to:` opens the line, and a declaration is an id immediately
+    after the structural markdown, so the two shapes are disjoint by
+    construction rather than by luck. Driven here because "skip the line" is
+    the kind of shortcut that silently loses a declaration the day the grammar
+    grows a field, and this assertion is what would notice.
     """
-    castings = [_casting(1, excerpt=DECLARES_TWO, owns=["US-001", "FR-009"])]
+    castings = [_casting(1, excerpt=CROSS_REFERENCED, owns=["US-001"])]
 
     dim = _ownership(_run_validate(tmp_path, castings, state=CURRENT_RUN))
 
-    assert dim["issues"] == []
+    assert _issue_kinds(dim) == ["cited_but_not_owned"]
+    assert dim["issues"][0]["ids"] == ["FR-009"], (
+        "the declaration on the line ABOVE the cross-reference is still seen"
+    )
+
+
+@pytest.mark.parametrize(
+    "excerpt, shape",
+    [
+        (CITES_MID_LINE, "later on a declaration's own line"),
+        (CITES_MID_PROSE, "mid-sentence in running prose"),
+        (CITES_IN_CODE, "inside inline code backticks"),
+    ],
+    # Explicit ids, because the default ones inline the excerpt — and this
+    # module's two evidence logs are split by a `-k` filter, so a case whose id
+    # carried the excerpt's own words would drift between the two logs on a
+    # wording change that has nothing to do with either.
+    ids=["mid_line", "mid_prose", "in_backticks"],
+)
+def test_an_id_named_anywhere_but_a_cross_reference_is_a_citation(
+    tmp_path: Path, excerpt: str, shape: str
+):
+    """fallout D-181, driven in each of the three shapes it found invisible.
+
+    "a manifest whose casting cites an id in `spec_text` that is absent from
+    its `requirement_ids` is refused by F0.9 VALIDATE naming the casting and
+    id" (fallout AC-001); "F0.9 refuses a casting whose prose CITES an id
+    outside that list" (fallout OT-001); fallout FR-040 the same verb in both
+    directions.
+
+    At HEAD 6244c04 this dimension read the SUBJECT-POSITION derivation the
+    acceptance gate needs, so an id named in any of these three positions was
+    counted by nothing and a casting citing a requirement it did not own passed
+    F0.9 clean — the state fallout AC-001 says is refused. Each excerpt here
+    names one id the ownership list does not.
+    """
+    castings = [_casting(1, excerpt=excerpt, owns=["FR-009"])]
+
+    dim = _ownership(_run_validate(tmp_path, castings, state=CURRENT_RUN))
+
+    assert dim["ok"] is False, f"a citation {shape} is still invisible"
+    assert _issue_kinds(dim) == ["cited_but_not_owned"]
+    assert dim["issues"][0]["ids"] == ["AC-042"]
+    assert "AC-042" in dim["issues"][0]["detail"]
+
+
+def test_the_gate_the_citation_rule_must_not_widen_still_reads_declarations(
+    tmp_path: Path,
+):
+    """fallout D-181's standing hazard, pinned rather than argued.
+
+    D-180 is what happens when ONE derivation answers both questions: a bare
+    scan made the acceptance gate demand evidence for a requirement another
+    casting owned, and the teammate's only way through was a knowingly false
+    `# evidence-for:` header. The remedy for D-181 is a SECOND derivation, so
+    the first one has to still answer the way the gate needs — an id merely
+    named in prose is not a requirement this casting owes evidence for.
+
+    Asserted against the derivations themselves, because that is where the two
+    populations are decided; the dimension above only reads them.
+    """
+    from foundry_mcp.tools.foundry_handoff import (
+        cited_requirement_ids,
+        declared_requirement_ids,
+    )
+
+    for excerpt in (CITES_MID_LINE, CITES_MID_PROSE, CITES_IN_CODE):
+        assert declared_requirement_ids(excerpt) == ["FR-009"], (
+            "the gate's population must not grow: that is D-180"
+        )
+        assert "AC-042" in cited_requirement_ids(excerpt), (
+            "the F0.9 population must: that is D-181"
+        )
+        assert set(cited_requirement_ids(excerpt)) >= set(
+            declared_requirement_ids(excerpt)
+        ), "a declaration is always a citation"
+
+
+def test_a_cited_id_has_an_exit_the_other_direction_does_not_refuse(
+    tmp_path: Path,
+):
+    """The two directions read the SAME population, and this is why.
+
+    A forward check on citations with a reverse check on declarations gives a
+    cited-but-undeclared id no accepting state at all: owning it trips the
+    reverse refusal, disowning it trips the forward one, and a lead loops
+    between two refusals forever with no edit that satisfies both. So the exit
+    the forward hint names — add the id to `requirement_ids` — is driven here
+    and the manifest has to come out clean.
+    """
+    refused = _ownership(
+        _run_validate(
+            tmp_path,
+            [_casting(1, excerpt=CITES_MID_PROSE, owns=["FR-009"])],
+            state=CURRENT_RUN,
+        )
+    )
+    assert refused["ok"] is False
+    assert any(
+        "AC-042" in h and "requirement_ids" in h
+        for h in _run_validate(
+            tmp_path,
+            [_casting(1, excerpt=CITES_MID_PROSE, owns=["FR-009"])],
+            state=CURRENT_RUN,
+        )["revision_hints"]
+    ), "the hint has to name the exit this test then takes"
+
+    taken = _ownership(
+        _run_validate(
+            tmp_path,
+            [_casting(1, excerpt=CITES_MID_PROSE, owns=["FR-009", "AC-042"])],
+            state=CURRENT_RUN,
+        )
+    )
+
+    assert taken["ok"] is True, taken["issues"]
+
+
+def test_a_requirement_nobody_declares_is_still_reported_uncovered(
+    tmp_path: Path,
+):
+    """The harm the reverse direction used to guard, caught one dimension over.
+
+    Reading CITES in both directions means an id a casting owns and merely
+    quotes no longer refuses there — so the check that a teammate is handed
+    real text for what they own has to live somewhere. It does:
+    `requirement_coverage` is built from DECLARATIONS, so a spec requirement
+    no casting declares is reported uncovered even when a casting owns it and
+    its prose names it.
+    """
+    castings = [_casting(1, excerpt=CITES_MID_PROSE, owns=["FR-009", "AC-042"])]
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=(
+            "- **FR-009** [from A-009]: persist the ownership list\n"
+            "- **AC-042** [from A-017]: refuse a span above two\n"
+        ),
+        state=CURRENT_RUN,
+    )
+
+    assert _ownership(result)["ok"] is True, "cites agree in both directions"
+    coverage = result["dimensions"]["requirement_coverage"]
+    assert coverage["ok"] is False
+    assert coverage["issues"][0]["ids"] == ["AC-042"], (
+        "quoted is not declared, and the coverage verdict still says so"
+    )
 
 
 def test_every_casting_is_judged_not_only_the_first(tmp_path: Path):
@@ -432,9 +636,13 @@ def test_every_casting_is_judged_not_only_the_first(tmp_path: Path):
     leave the rest of the manifest unexamined.
     """
     castings = [
-        _casting(1, excerpt=DECLARES_TWO, owns=["US-001", "FR-009"]),
+        _casting(1, excerpt=DECLARES_TWO, owns=["US-001", "FR-009", "FR-888"]),
         _casting(2, excerpt=DECLARES_TWO, owns=["US-001"]),
-        _casting(3, excerpt=DECLARES_TWO, owns=["US-001", "FR-009", "OT-038"]),
+        _casting(
+            3,
+            excerpt=DECLARES_TWO,
+            owns=["US-001", "FR-009", "FR-888", "OT-038"],
+        ),
     ]
 
     dim = _ownership(_run_validate(tmp_path, castings, state=CURRENT_RUN))
@@ -603,7 +811,7 @@ def test_a_partly_filled_manifest_is_judged_whatever_the_schema(tmp_path: Path):
     incompleteness.
     """
     castings = [
-        _casting(1, excerpt=DECLARES_TWO, owns=["US-001", "FR-009"]),
+        _casting(1, excerpt=DECLARES_TWO, owns=["US-001", "FR-009", "FR-888"]),
         _casting(2, excerpt=DECLARES_TWO, include_owns=False),
     ]
 
@@ -616,7 +824,7 @@ def test_a_partly_filled_manifest_is_judged_whatever_the_schema(tmp_path: Path):
 
 def test_an_empty_list_is_a_claim_and_an_absent_one_is_not(tmp_path: Path):
     """Presence and emptiness are different claims. A casting that owns nothing
-    and says so is checkable — and is checked: its excerpt must declare nothing
+    and says so is checkable — and is checked: its excerpt must cite nothing
     either.
     """
     castings = [_casting(1, excerpt="Nothing declared here.\n", owns=[])]
@@ -633,7 +841,7 @@ def test_a_requirement_ids_field_of_the_wrong_type_is_reported_not_raised(
     """A `requirement_ids` that is a string is not a shape the manifest's own
     nested-shape guard judges, and a tool never raises across the MCP boundary.
 
-    It reads as present-and-empty, so every id the excerpt declares is reported
+    It reads as present-and-empty, so every id the excerpt cites is reported
     unowned by name — the operator learns what is wrong with the file rather
     than receiving a traceback.
     """
@@ -644,14 +852,16 @@ def test_a_requirement_ids_field_of_the_wrong_type_is_reported_not_raised(
     dim = _ownership(result)
 
     assert isinstance(result, dict)
-    assert _issue_kinds(dim) == ["declared_but_not_owned"]
-    assert dim["issues"][0]["ids"] == ["FR-009", "US-001"]
+    assert _issue_kinds(dim) == ["cited_but_not_owned"]
+    assert dim["issues"][0]["ids"] == ["FR-009", "FR-888", "US-001"]
 
 
 def test_a_spec_text_of_the_wrong_type_is_reported_not_raised(tmp_path: Path):
     """The sibling read, guarded the same way. A `spec_text` that is not a
-    string reaches a line-splitting derivation, so an unguarded read raises out
-    of F0.9 rather than rendering the report.
+    string reaches TWO line-splitting derivations now (fallout D-181), so an
+    unguarded read raises out of F0.9 rather than rendering the report — and
+    the guard has to sit above both, which is why it stays in the one loop that
+    fills them.
     """
     castings = [_casting(1, owns=["US-001"])]
     castings[0]["spec_text"] = {"not": "a string"}
@@ -660,7 +870,7 @@ def test_a_spec_text_of_the_wrong_type_is_reported_not_raised(tmp_path: Path):
     dim = _ownership(result)
 
     assert isinstance(result, dict)
-    assert _issue_kinds(dim) == ["owned_but_not_declared"]
+    assert _issue_kinds(dim) == ["owned_but_not_cited"]
     assert dim["issues"][0]["ids"] == ["US-001"]
 
 
@@ -1305,8 +1515,8 @@ def test_the_span_is_computed_from_the_persisted_field_and_not_the_prose(
     assert _span(result)["ok"] is True
     # ...and the disagreement IS reported, by the dimension whose question it is.
     assert _issue_kinds(_ownership(result)) == [
-        "declared_but_not_owned",
-        "declared_but_not_owned",
+        "cited_but_not_owned",
+        "cited_but_not_owned",
     ]
 
 

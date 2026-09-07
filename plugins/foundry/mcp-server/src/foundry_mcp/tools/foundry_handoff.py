@@ -150,6 +150,97 @@ def declared_requirement_ids(block_text: str) -> list[str]:
     return sorted(ids)
 
 
+#: The one line shape in a `<spec_requirements>` excerpt that NAMES a
+#: requirement id without CITING it: the `Maps to:` back-pointer F0.5 DECOMPOSE
+#: transcribes under each requirement row, whose object is the user story that
+#: requirement serves.
+#:
+#: It is a property OF the row, copied verbatim out of the spec — not a
+#: sentence the casting wrote about a requirement — and it is the only field of
+#: its kind in the grammar: a scan of every sub-bullet field name in the spec
+#: finds `Maps to` and nothing else. The prefix before it is the same
+#: structural-markdown run `_DECLARED_REQUIREMENT_ID_RE` allows, so the two
+#: rules read a line's opening the same way.
+_CROSS_REFERENCE_LINE_RE: re.Pattern[str] = re.compile(
+    r"^[\s>|*+#-]*Maps to:", re.IGNORECASE
+)
+
+
+def cited_requirement_ids(block_text: str) -> list[str]:
+    """The requirement IDs a casting's excerpt MENTIONS, sorted and deduped.
+
+    THE SECOND POPULATION, AND WHY THERE ARE TWO (D-181)
+    ----------------------------------------------------
+    ``declared_requirement_ids`` above answers "which requirements is this
+    casting ANSWERABLE for" and has three consumers that need exactly that
+    reading — the acceptance gate's citation window, EVID-02's per-requirement
+    evidence binding, and the legacy ownership fill in
+    ``scripts/migrate-archive.py``. Every one of them turns an ID in that list
+    into a DEMAND on a teammate, which is why it judges position: an ID quoted
+    inside another requirement's prose is not work this casting owes.
+
+    F0.9's ownership dimension asks a different question. AC-001 —
+    "a manifest whose casting CITES an id in `spec_text` that is absent from
+    its `requirement_ids` is refused" — OT-001 ("whose prose CITES an id
+    outside that list") and FR-040 (same verb, both directions) are about what
+    the excerpt MENTIONS, not what it assigns. One derivation served both, so
+    the three shapes below were invisible to F0.9 and a casting citing an id it
+    did not own validated clean::
+
+        - **FR-009**: persist ids, the way FR-007 already demands   mid-line
+        This casting also touches what AC-042 states about span.    mid-prose
+        The `AC-042` rule, restated.                                in code
+
+    Widening the DECLARATION rule to reach them is the fix this function
+    exists to avoid: that is D-180 verbatim, where a bare ``findall`` made the
+    acceptance gate demand evidence for a requirement another casting owned and
+    left a teammate no way through but a knowingly false ``# evidence-for:``
+    header. Two questions, two derivations, each read by the callers that ask
+    it.
+
+    THE ONE EXEMPTION, AND WHY IT IS NOT A NARROWING (start.md F0.5)
+    ---------------------------------------------------------------
+    A ``Maps to:`` line is skipped, and it is the only thing skipped. The rule
+    F0.5 states in its own words is that "prose that merely quotes an id is not
+    a claim to own it"; a ``Maps to:`` line is not even prose the casting
+    wrote. It is DECOMPOSE transcribing the spec's own back-pointer from a
+    requirement to the user story it serves, so its object is a fact about the
+    CITED requirement rather than a claim by the casting carrying it.
+
+    Counting it would not make F0.9 stricter, it would make F0.9 unpassable.
+    Driven on this run's own manifest: six of twelve castings carry a
+    ``Maps to:`` naming a user story they do not own, and the only exit the
+    refusal offers — add the id to ``requirement_ids`` — drives US-001 to a
+    span of five, US-007 to six, US-011 to five and US-012 to six, every one of
+    them above the span AC-042 refuses without a recorded reason. AC-001 and
+    AC-042 would then be mutually destructive: the manifest satisfying one is
+    the manifest the other rejects. An exemption is what keeps both reachable.
+
+    A CITE IS A SUPERSET OF A DECLARATION, BY CONSTRUCTION
+    -----------------------------------------------------
+    Every declaration is also a cite: a subject-position ID is on a line this
+    scan reads, and a ``Maps to:`` line can never carry one, because
+    ``_DECLARED_REQUIREMENT_ID_RE`` needs the ID immediately after the
+    structural markdown and those lines open with the field name instead. So
+    skipping cross-references cannot drop a declaration, and F0.9 comparing
+    this list against ``requirement_ids`` in BOTH directions is strictly
+    kinder in one and strictly stricter in the other — never inconsistent
+    between them. That symmetry is load-bearing: a forward check on cites with
+    a reverse check on declarations gives a cited-but-undeclared ID no
+    accepting state at all, since owning it trips one refusal and disowning it
+    trips the other.
+
+    Deduped and sorted for the same reason the sibling is: the caller compares
+    it as a set and prints it to a lead.
+    """
+    ids: set[str] = set()
+    for line in block_text.splitlines():
+        if _CROSS_REFERENCE_LINE_RE.match(line):
+            continue
+        ids.update(REQUIREMENT_ID_RE.findall(line))
+    return sorted(ids)
+
+
 def _reserved_event_key(event: object) -> str:
     """The spelling-insensitive key of a handoff event name.
 

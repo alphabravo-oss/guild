@@ -72,7 +72,7 @@ from foundry_mcp.tools.artifacts import (
 )
 # D-180: the ONE derivation of "which requirement IDs does this casting own",
 # shared with the acceptance gate that demands evidence for each of them. See
-# `declared_requirement_ids`' docstring for the driven case, and the ownership
+# `declared_requirement_ids`' docstring for the driven case, and the coverage
 # dimension below, which is its third caller. The edge is acyclic: foundry_handoff
 # imports the artifact leaf and foundry_state, and nothing in that chain imports
 # foundry_validate (only server.py does).
@@ -90,7 +90,18 @@ from foundry_mcp.tools.artifacts import (
 # dispatch, not one file. THIS import is legal either way, both ends being
 # lifecycle, which is exactly why it would have gone on pointing at the old home
 # unnoticed.
-from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
+# fallout D-181 — AND ITS SIBLING, WHICH ANSWERS THE OTHER QUESTION. "Which
+# ids is this casting ANSWERABLE for" (position) and "which ids does its
+# excerpt MENTION" (every occurrence but a `Maps to:` cross-reference) are two
+# questions, and AC-001 / OT-001 / FR-040 all ask the second one in the word
+# CITES. One derivation served both until D-181, so an id cited mid-line, mid-
+# prose or inside backticks was invisible to the ownership dimension and a
+# casting citing an id it did not own validated clean. Widening the first
+# reader is what re-files D-180; importing the second is what closes D-181.
+from foundry_mcp.tools.foundry_handoff import (
+    cited_requirement_ids,
+    declared_requirement_ids,
+)
 from foundry_mcp.tools.foundry_state import (
     # fallout D-172: the surface walk excludes the run archive by the name
     # the state module gives it, never by a second spelling of it here.
@@ -1133,8 +1144,12 @@ def foundry_validate_castings(
     # ── Dimension 1: Requirement Coverage ──
     covered_reqs: set[str] = set()
     #: casting id -> the ids that casting's own excerpt DECLARES. Filled by the
-    #: loop below and read by the ownership and span dimensions.
+    #: loop below; read by the coverage verdict here and by nothing else, which
+    #: is the whole of what "answerable for" is allowed to decide at F0.9.
     declared_by_casting: dict[str, set[str]] = {}
+    #: casting id -> the ids that casting's own excerpt CITES. The same loop,
+    #: the other question (fallout D-181), read by the ownership dimension.
+    cited_by_casting: dict[str, set[str]] = {}
     for c in castings:
         # D-180: a casting's `spec_text` IS the verbatim `<spec_requirements>`
         # block its prompt carries, so "which requirements does this casting
@@ -1159,6 +1174,9 @@ def foundry_validate_castings(
             spec_text_field = ""
         casting_reqs = set(declared_requirement_ids(spec_text_field))
         declared_by_casting[str(c.get("id", "?"))] = casting_reqs
+        cited_by_casting[str(c.get("id", "?"))] = set(
+            cited_requirement_ids(spec_text_field)
+        )
         covered_reqs.update(casting_reqs)
         # Also check observable truths text.
         #
@@ -2114,21 +2132,40 @@ def foundry_validate_castings(
     # answerable: it must agree, in BOTH directions, with what the casting's
     # own excerpt declares.
     #
-    #   declared but not owned — the excerpt assigns the casting a requirement
-    #       its ownership list omits. Nobody is answerable for it: the
-    #       acceptance gate will not demand evidence for it and the
-    #       co-dispatch set will not route a fix to this casting.
-    #   owned but not declared — the ownership list claims a requirement the
-    #       excerpt never assigns. The teammate is handed no text for it and
+    #   cited but not owned — the excerpt names a requirement its ownership
+    #       list omits. Nobody is answerable for it: the acceptance gate will
+    #       not demand evidence for it and the co-dispatch set will not route a
+    #       fix to this casting.
+    #   owned but not cited — the ownership list claims a requirement the
+    #       excerpt never names. The teammate is handed no text for it and
     #       cannot build it, while the manifest reports it covered.
     #
-    # THROUGH THE ONE DERIVATION, NOT A SECOND SCAN. `declared_by_casting` is
-    # filled by dimension 1 from `declared_requirement_ids` — the same answer
-    # the acceptance gate uses, reading ids in SUBJECT POSITION on their own
-    # line, so `  - Maps to: US-003` and an id quoted mid-prose are correctly
-    # NOT declarations. A bare `REQUIREMENT_ID_RE.findall` over the block would
-    # credit a casting with ids another casting owns; that is D-180 exactly,
-    # and re-introducing it here would be the same defect twice.
+    # CITES, NOT DECLARES — AND THEY ARE DIFFERENT QUESTIONS (fallout D-181).
+    # All three sources use the same verb: AC-001 "cites an id in `spec_text`
+    # that is absent from its `requirement_ids`", OT-001 "whose prose CITES an
+    # id outside that list", FR-040 the same word in both directions. This
+    # dimension read `declared_by_casting` instead — the SUBJECT-POSITION
+    # reading the acceptance gate needs — so an id named mid-line, mid-prose or
+    # inside backticks was invisible here and a casting citing an id it did not
+    # own passed F0.9 clean, which is the state AC-001 says is refused.
+    #
+    # The fix is a second derivation, never a wider first one. Widening
+    # `declared_requirement_ids` is D-180 verbatim: the acceptance gate would
+    # demand evidence for a requirement another casting owns and leave the
+    # teammate no exit but a false `# evidence-for:` header. So
+    # `cited_requirement_ids` answers "what does this excerpt MENTION" for this
+    # dimension, `declared_requirement_ids` goes on answering "what is this
+    # casting ANSWERABLE for" for the gate and for the coverage verdict above,
+    # and neither reader has to compromise for the other.
+    #
+    # BOTH DIRECTIONS READ THE SAME POPULATION, and that is not tidiness. A
+    # forward check on cites with a reverse check on declarations leaves a
+    # cited-but-undeclared id with NO accepting state: owning it trips
+    # `owned_but_not_cited`, disowning it trips `cited_but_not_owned`, and the
+    # lead loops between two refusals forever. The harm the reverse direction
+    # guards — a teammate handed no text — is still caught, one dimension over:
+    # `covered_reqs` above is built from DECLARATIONS, so a requirement no
+    # casting declares is still reported uncovered by dimension 1.
     dim11_issues: list[dict] = []
     # ONE DERIVATION, shared with the F6 span section — see
     # `_ownership_and_computability`, which carries the FR-054 rule about which
@@ -2156,7 +2193,7 @@ def foundry_validate_castings(
             cid = c.get("id", "?")
             title = c.get("title", "Untitled")
             present, owned = ownership[str(cid)]
-            declared = declared_by_casting.get(str(cid), set())
+            cited = cited_by_casting.get(str(cid), set())
             if not present:
                 dim11_issues.append({
                     "severity": "error",
@@ -2174,19 +2211,19 @@ def foundry_validate_castings(
                 revision_hints.append(
                     f"Casting #{cid} '{title}': add a `requirement_ids` list to the "
                     f"manifest entry naming every requirement id the casting's "
-                    f"<spec_requirements> block declares."
+                    f"<spec_requirements> block cites."
                 )
                 continue
-            unowned = sorted(declared - owned)
+            unowned = sorted(cited - owned)
             if unowned:
                 dim11_issues.append({
                     "severity": "error",
                     "casting": cid,
                     "title": title,
-                    "issue": "declared_but_not_owned",
+                    "issue": "cited_but_not_owned",
                     "ids": unowned,
                     "detail": (
-                        f"Casting #{cid} '{title}' declares {', '.join(unowned)} in "
+                        f"Casting #{cid} '{title}' cites {', '.join(unowned)} in "
                         f"its <spec_requirements> block but does not name "
                         f"{'them' if len(unowned) > 1 else 'it'} in "
                         f"`requirement_ids`. Nobody is answerable for "
@@ -2195,28 +2232,28 @@ def foundry_validate_castings(
                 })
                 revision_hints.append(
                     f"Casting #{cid} '{title}': add {', '.join(unowned)} to "
-                    f"`requirement_ids`, or remove the declaration(s) from its "
+                    f"`requirement_ids`, or remove the citation(s) from its "
                     f"<spec_requirements> block."
                 )
-            undeclared = sorted(owned - declared)
+            undeclared = sorted(owned - cited)
             if undeclared:
                 dim11_issues.append({
                     "severity": "error",
                     "casting": cid,
                     "title": title,
-                    "issue": "owned_but_not_declared",
+                    "issue": "owned_but_not_cited",
                     "ids": undeclared,
                     "detail": (
                         f"Casting #{cid} '{title}' names {', '.join(undeclared)} in "
                         f"`requirement_ids` but its <spec_requirements> block never "
-                        f"declares "
+                        f"cites "
                         f"{'them' if len(undeclared) > 1 else 'it'}. The teammate is "
                         f"handed no text to build from while the manifest reports "
                         f"the requirement covered."
                     ),
                 })
                 revision_hints.append(
-                    f"Casting #{cid} '{title}': declare {', '.join(undeclared)} in its "
+                    f"Casting #{cid} '{title}': cite {', '.join(undeclared)} in its "
                     f"<spec_requirements> block, or remove "
                     f"{'them' if len(undeclared) > 1 else 'it'} from `requirement_ids`."
                 )
