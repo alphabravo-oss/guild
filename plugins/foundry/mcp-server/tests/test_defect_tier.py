@@ -70,6 +70,13 @@ synthetic run and then drift from it.
       the single door's OWN advertised prose names every member of
       DEFECT_TIERS and scopes the reproduction to both tiers that owe one —
       the sibling of the wire-schema sentence `server.py#list_tools` carries.
+  fallout GI-004 / GI-028 / AC-055 / OT-019 (defect D-157)
+      the tier rules are asked of the RECORD an untiered re-tier classifies
+      and not only of the filing that classifies it: a record whose own
+      spec_ref or own claim prose the declared tier forbids is refused at both
+      doors, the tripwire records the attempt, and nothing is appended beside
+      the record that was not classified. The scope is NON_BLOCKING_TIERS, so
+      a re-tier into LIVE — where such a finding belongs — is untouched.
   fallout ST-006 / GI-022 (defect D-053)
       a filing citing the id it is itself about to be given promotes NOTHING,
       at both doors — the transition is stated over two records, and on an
@@ -3358,3 +3365,220 @@ def test_the_retier_never_moves_provenance_the_record_already_declared(run_env):
         "the re-tier moved provenance the record already declared"
     )
     assert "supersedes" in retiered, retiered
+
+
+# --- fallout D-157: the tier rules are asked of the RECORD a re-tier -------
+# --- classifies, not only of the filing that classifies it ------------------
+#
+# Both doors validate the INCOMING mapping before they open a transaction, and
+# `validate_defect_filing` "reads the mapping and nothing else" by contract. So
+# every rung that judges CLAIM PROSE or a CITATION was asked about the filing
+# and never about the stored record — and a re-tier keeps the record's own
+# `description` and `spec_ref` exactly where the earlier filing put them. The
+# tier arrived; the prose that tier forbids stayed.
+#
+# DRIVEN twice before the guard, against fresh run directories: an untiered
+# D-001 whose stored record cited fallout FR-014, re-filed as HARDENING with no
+# citation of its own, came out `{'id': 'D-001', 'tier': 'HARDENING',
+# 'spec_ref': <the record's own cite>, 'status': 'open'}`; an untiered D-001
+# whose OWN description asserted an authentication property came out tier
+# HARDENING with the claim intact and `observations.json` tripwire length 0.
+
+#: The claim on the SEEDED record, spelled once. It is the register
+#: `agents/*.md` use, and it is the RECORD's prose — every re-filing below
+#: carries innocent prose of its own, which is the whole point.
+_RECORD_CLAIM = (
+    "the auth token is never verified, so an attacker reaches the handler"
+)
+
+#: A HARDENING reproduction that names a probe and its wrong result without
+#: naming a requirement — so the rung under test is the one the test is about
+#: and not the never-demote claim rung reading this field (which HARDENING,
+#: alone among the tiers, does read).
+_PROBE = "drove the off-spec probe 40 times; the row came back empty every time"
+
+
+def test_the_retier_refuses_a_record_whose_own_spec_ref_the_new_tier_forbids(run_env):
+    """fallout AC-055 / GI-028 / FR-057 / OT-019 verbatim: 'both filing doors
+    refuse a HARDENING record that carries any `spec_ref`, naming the tier
+    rule.'
+
+    fallout GI-028's violation column is 'a HARDENING record carrying a
+    `spec_ref` for context' — a RECORD, which is what this exit mints. The
+    seeded record carries a citation of its own and the re-filing carries none,
+    so the door's own rung has nothing to refuse and the record's citation is
+    the only thing standing between the ledger and a HARDENING row carrying a
+    spec_ref.
+    """
+    from foundry_mcp.tools.foundry import TIER_NOT_ALLOWED
+
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+
+    result = _refile(
+        project_root, tier="HARDENING", reproduction_attempted=_PROBE
+    )
+
+    assert "defect_id" not in result, result
+    assert TIER_NOT_ALLOWED in result["error"], result
+    assert result["field"] == "spec_ref", result
+    assert result["retier_target"] == "D-001", result
+    # The refusal names the RECORD, or a filer carrying no spec_ref has nothing
+    # to act on.
+    assert "D-001" in result["error"], result
+
+    records = _defects(fdir)
+    assert len(records) == 1, "nothing was appended beside the refused re-tier"
+    assert "tier" not in records[0], "and the record was not classified"
+    assert records[0]["spec_ref"] == "CT-013", records[0]
+
+
+def test_the_batch_door_refuses_the_same_re_tier_on_the_same_field(run_env):
+    """fallout AC-055 / GI-028 — 'at BOTH doors, naming the same field first'.
+
+    The batch door consumes the shared helper's result as
+    ``if retier_id is not None``, so the refusal cannot be a return value there
+    without being counted as a successful re-tier. It travels the seam both
+    doors already have instead: the raise aborts the transaction (nothing is
+    written, which is what keeps this door's refusal all-or-nothing) and
+    ``@ledger_refusals`` turns it into the house refusal.
+    """
+    from foundry_mcp.tools.foundry import TIER_NOT_ALLOWED
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
+
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+
+    result = foundry_sync_defects(
+        cycle=3,
+        findings=[
+            _finding(
+                source="trace", type="UNWIRED", tier="HARDENING",
+                spec_ref="", symbol="foundry_next", file="src/api/a.py",
+                **{"class": "UNWIRED_SURFACE"},
+                description="re-filed with the tier the record never carried",
+                reproduction_attempted=_PROBE,
+            )
+        ],
+        project_root=project_root,
+    )
+
+    assert result.get("retiered_ids") in (None, []), result
+    assert TIER_NOT_ALLOWED in result["error"], result
+    assert result["field"] == "spec_ref", result
+    assert result["retier_target"] == "D-001", result
+
+    records = _defects(fdir)
+    assert len(records) == 1 and "tier" not in records[0], records
+
+
+def test_the_retier_refuses_a_record_whose_own_prose_is_a_security_claim(run_env):
+    """fallout GI-004 / NFR-004 / OT-019: 'A HARDENING filing carrying any
+    `spec_ref`, or matching a never-demote class, is refused.'
+
+    The claim is on the RECORD and the re-filing's prose is innocent, so the
+    door's own denylist rung — which reads the filing — has nothing to match.
+    Driven before the guard: retiered=1, tier HARDENING persisted with the
+    claim intact, `observations.json` tripwire length 0. A security-property
+    claim parked in a tier that holds no gate shut, with the audit control
+    silent, is the outcome the denylist is absolute about.
+    """
+    project_root, fdir = run_env
+    _seed_untiered(fdir, description=_RECORD_CLAIM, spec_ref="")
+
+    result = _refile(
+        project_root, tier="HARDENING", reproduction_attempted=_PROBE
+    )
+
+    assert "defect_id" not in result, result
+    assert SECURITY_PROPERTY_CLAIM in result["error"], result
+    assert result["denylist_class"] == SECURITY_PROPERTY_CLAIM, result
+    assert result["retier_target"] == "D-001", result
+
+    records = _defects(fdir)
+    assert len(records) == 1 and "tier" not in records[0], records
+
+    # D-061: the ATTEMPT is what the audit record exists to capture, and it is
+    # written even though nothing reached the defect ledger.
+    fired = _tripwire(fdir)
+    assert len(fired) == 1, fired
+    assert fired[0]["denylist_class"] == SECURITY_PROPERTY_CLAIM, fired[0]
+    assert fired[0]["tier"] == "HARDENING", fired[0]
+    assert _RECORD_CLAIM in fired[0]["description"], fired[0]
+
+
+def test_the_retier_refuses_a_security_claim_record_at_latent_too(run_env):
+    """fallout GI-004's OTHER half: the violation is 'filing a security claim
+    ... as HARDENING **or LATENT**', so the guard is scoped to
+    NON_BLOCKING_TIERS and not to the new tier alone.
+
+    LATENT is the older of the two non-blocking tiers and the one every
+    pre-change stream reached for, so a re-tier into it is the likelier route
+    to the same parked claim.
+    """
+    project_root, fdir = run_env
+    _seed_untiered(fdir, description=_RECORD_CLAIM, spec_ref="")
+
+    result = _refile(project_root)  # tier LATENT, by default
+
+    assert "defect_id" not in result, result
+    assert SECURITY_PROPERTY_CLAIM in result["error"], result
+    assert _defects(fdir)[0].get("tier") is None, _defects(fdir)[0]
+    assert len(_tripwire(fdir)) == 1, _tripwire(fdir)
+
+
+def test_the_batch_door_refuses_the_security_claim_re_tier_as_well(run_env):
+    """fallout GI-004 at the door a whole INSPECT stream files through.
+
+    The ENFORCEMENT half needs nothing from the run dir, so it is closed at
+    this door by the raise alone; the AUDIT half is asserted at the single door
+    above and reaches this one when its call site passes `fdir` (cross-casting
+    concern to casting 2, whose file `orchestration/fix_gate.py` is). This test
+    deliberately makes no claim about the tripwire here — a pin that asserted
+    it is EMPTY would pin the gap as correct.
+    """
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
+
+    project_root, fdir = run_env
+    _seed_untiered(fdir, description=_RECORD_CLAIM, spec_ref="")
+
+    result = foundry_sync_defects(
+        cycle=3,
+        findings=[
+            _finding(
+                source="trace", type="UNWIRED", tier="HARDENING",
+                spec_ref="", symbol="foundry_next", file="src/api/a.py",
+                **{"class": "UNWIRED_SURFACE"},
+                description="re-filed with the tier the record never carried",
+                reproduction_attempted=_PROBE,
+            )
+        ],
+        project_root=project_root,
+    )
+
+    assert SECURITY_PROPERTY_CLAIM in result["error"], result
+    records = _defects(fdir)
+    assert len(records) == 1 and "tier" not in records[0], records
+
+
+def test_the_record_tier_guard_leaves_the_live_re_tier_exactly_as_it_was(run_env):
+    """fallout GI-004 — the SCOPE, pinned as a rule rather than left to read as
+    an omission.
+
+    `NON_BLOCKING_TIERS`' own block states the reason: 'what the denylist
+    exists to stop is a claim filed where it holds no gate shut, and LIVE — the
+    one tier that does hold one shut — is therefore the exclusion.' A security
+    claim's correct home is LIVE, so a guard that refused the re-tier INTO it
+    would leave the record permanently untiered and hand the stream no exit at
+    all. It also keeps the LIVE prose floor unreachable by construction, so a
+    description-less record still classifies exactly as it did.
+    """
+    project_root, fdir = run_env
+    _seed_untiered(fdir, description=_RECORD_CLAIM, spec_ref="")
+
+    result = _refile(project_root, tier="LIVE", reproduction_attempted="")
+
+    assert result["defect_id"] == "D-001", result
+    assert result["retiered_ids"] == ["D-001"], result
+    assert _defects(fdir)[0]["tier"] == "LIVE", _defects(fdir)[0]
+    assert _tripwire(fdir) == [], "a re-tier into the blocking tier demotes nothing"

@@ -1691,6 +1691,7 @@ import inspect  # noqa: E402
 import foundry_mcp.server as foundry_server  # noqa: E402
 from foundry_mcp.tools import foundry as foundry_module  # noqa: E402
 from foundry_mcp.tools.foundry import (  # noqa: E402
+    LedgerRefusal,
     LedgerShapeError,
     _dict_records,
     _locked_document,
@@ -2208,14 +2209,33 @@ def test_seeding_re_writes_a_corrupt_artifact_the_transaction_would_refuse(
         assert document["requirements"] == []
 
 
-def test_ledger_refusals_converts_only_the_shape_error() -> None:
+def test_ledger_refusals_converts_only_a_ledger_refusal() -> None:
     """The decorator is a translation, not a swallow. Anything that is not a
-    ledger-shape refusal must still propagate, or a real bug would come back as
-    a tidy dict and be read as a refusal."""
+    ledger refusal must still propagate, or a real bug would come back as a
+    tidy dict and be read as a refusal.
+
+    fallout D-157 — AND IT CONVERTS THE BASE, NOT ONE SUBCLASS. The shape error
+    was the only in-transaction refusal when this pin was written, so the
+    ``except`` clause named it and a second one had to be REMEMBERED there.
+    `retier_matching_untiered`'s tier guard is that second one: it can only ask
+    its question with the ledger open, and it must abort the transaction rather
+    than persist a record the doors would refuse. Catching ``LedgerRefusal``
+    makes the decorator's own promise — "every path through the function,
+    present and future, converts" — the mechanism rather than a habit.
+
+    ``LedgerShapeError``'s ``str()`` is asserted here too: it is what a
+    traceback shows and what every existing reader of this exception matches
+    on, and giving it a base whose ``str()`` is the refusal's ``error`` is
+    exactly how that would have been rewritten silently.
+    """
 
     @ledger_refusals
     def _shape() -> dict:
         raise LedgerShapeError("defects.json has a 'defects' key holding dict")
+
+    @ledger_refusals
+    def _in_transaction() -> dict:
+        raise LedgerRefusal({"ok": False, "error": "refused", "hint": "re-file"})
 
     @ledger_refusals
     def _bug() -> dict:
@@ -2223,6 +2243,11 @@ def test_ledger_refusals_converts_only_the_shape_error() -> None:
 
     refusal = _shape()
     assert "error" in refusal and "hint" in refusal
+    assert str(LedgerShapeError("a named problem")) == "a named problem"
+    assert issubclass(LedgerShapeError, LedgerRefusal)
+
+    assert _in_transaction() == {"ok": False, "error": "refused", "hint": "re-file"}
+
     with pytest.raises(ZeroDivisionError):
         _bug()
 

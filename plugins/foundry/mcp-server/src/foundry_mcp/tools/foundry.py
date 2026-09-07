@@ -462,7 +462,41 @@ def _atomic_rename_write(path: Path, data: dict) -> None:
 _RECORD_ID_RE = re.compile(r"\A([A-Za-z]+)-(\d+)\Z")
 
 
-class LedgerShapeError(RuntimeError):
+class LedgerRefusal(RuntimeError):
+    """A house refusal DISCOVERED INSIDE a locked transaction, carried in-band.
+
+    The house rule is that a tool returns ``{error, hint}`` and never raises
+    across the MCP boundary. Some refusals cannot be decided before the lock is
+    open: they are questions about the LEDGER, and the answer arrives several
+    frames below the entry point, inside a transaction that must abort without
+    writing. This is the carrier for those — ``.refusal`` is the dict the door
+    returns, and ``@ledger_refusals`` is what turns the raise into that return
+    for every path through a door, present and future.
+
+    fallout D-157 — WHY THIS IS A BASE CLASS AND NOT A SECOND ``except`` NAME.
+    ``LedgerShapeError`` was the only such refusal and the decorator named it
+    directly, so a second one had to be remembered in the ``except`` clause by
+    whoever added it. That is the arrangement this package keeps paying for
+    (see ``validate_defect_filing``: "Every check those two doors were each
+    trusted to remember has eventually diverged"), and the decorator's own
+    docstring already promises the opposite — "every path through the
+    function, present and future, converts". A base class makes the promise
+    structural: a third in-transaction refusal joins by construction.
+
+    ``message`` exists so a subclass whose ``str(exc)`` is load-bearing keeps
+    it. Without it every subclass would stringify as its refusal's ``error``,
+    which would silently rewrite what a traceback and a ``pytest.raises``
+    match on.
+    """
+
+    def __init__(self, refusal: dict, message: str | None = None) -> None:
+        super().__init__(
+            message if message is not None else str(refusal.get("error", ""))
+        )
+        self.refusal = refusal
+
+
+class LedgerShapeError(LedgerRefusal):
     """A run artifact cannot be read as the ledger a writer needs it to be.
 
     Raised inside the locked primitive rather than coerced away, because the
@@ -483,13 +517,16 @@ class LedgerShapeError(RuntimeError):
     """
 
     def __init__(self, problem: str) -> None:
-        super().__init__(problem)
+        # ``problem`` stays this exception's ``str()`` — it is what a traceback
+        # and every existing reader show — while the refusal it carries is
+        # built by ``artifact_refusal`` so it is word-for-word what the
+        # pre-flight guard would have said about the same file.
+        super().__init__(artifact_refusal([problem]), problem)
         self.problem = problem
-        self.refusal = artifact_refusal([problem])
 
 
 def ledger_refusals(fn):
-    """Return a tool entry point that answers ``LedgerShapeError`` in-band.
+    """Return a tool entry point that answers ``LedgerRefusal`` in-band.
 
     The house rule is that a tool never raises across the MCP boundary: it
     returns ``{error, hint}``. A ledger whose container shape is wrong is
@@ -505,13 +542,23 @@ def ledger_refusals(fn):
     ``test_every_ledger_writing_door_answers_in_band`` derives the set from
     ``server.py``'s ``_DISPATCH`` table crossed with this module's call graph,
     and fails on a door that reaches a transaction without it.
+
+    fallout D-157 — IT CATCHES THE BASE, NOT ONE SUBCLASS. The shape error was
+    the only in-transaction refusal when this was written, so the clause named
+    it. `retier_matching_untiered`'s tier guard is the second: it can only ask
+    its question with the ledger open, and it must abort the transaction rather
+    than persist a record the doors would refuse. Naming each subclass here
+    would make "every path converts" a promise somebody has to keep by hand;
+    naming ``LedgerRefusal`` makes it the mechanism. Anything that is NOT a
+    ledger refusal still propagates — the decorator is a translation, not a
+    swallow, and a real bug returned as a tidy dict would be read as a refusal.
     """
 
     @wraps(fn)
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except LedgerShapeError as exc:
+        except LedgerRefusal as exc:
             return exc.refusal
 
     return wrapper
@@ -1042,6 +1089,17 @@ def record_denylist_tripwire(
         handler; this fires the tripwire for a refused filing whose prose
         matches the security predicate, so a filer cannot switch the audit
         record off by also getting an unrelated field wrong.
+      * ``retier_matching_untiered``'s tier guard (fallout D-157) — the one
+        caller INSIDE a transaction, and the one that audits a claim the
+        FILING does not carry. A re-tier keeps the stored record's own prose
+        and spec_ref, so a denylisted claim already in the ledger could be
+        classified into a non-blocking tier by an innocent re-filing that
+        every rung above had already passed. It fires here and then raises, so
+        the attempt is recorded on ``observations.json`` (a different path,
+        written on its own clean exit) while ``defects.json`` is aborted
+        unwritten. It takes the run dir as a defaulted argument, so the batch
+        door audits once its call site passes one (concern C-075); the REFUSAL
+        reaches both doors either way.
 
     This roster is load-bearing and it has been WRONG once. It used to name
     "``foundry_sync_defects``'s auto-demotion branch", which D-098 deleted when
@@ -2319,6 +2377,17 @@ def retier_matching_untiered(
     # behind. See the write below.
     fallout_of: str | None = None,
     supersedes: str | None = None,
+    # fallout D-157 / GI-004 — the run dir the denylist tripwire is written to,
+    # and the ONLY reason this pure list mutator takes a path. DEFAULTED for
+    # exactly the reason the two provenance keys above are: the batch door in
+    # `orchestration/fix_gate.py` is casting 2's file and is repointed
+    # separately, and a default keeps it compiling meanwhile. The ENFORCEMENT
+    # half needs nothing from it — the refusal below is raised whether or not a
+    # run dir was supplied — so a door that has not been repointed still cannot
+    # park a denylisted claim in a non-blocking tier; what it cannot do yet is
+    # AUDIT the attempt. See the block at the guard for why the two halves
+    # separate cleanly here and did not at D-061.
+    fdir: Path | None = None,
 ) -> str | None:
     """Classify an open untiered record in place. Returns its id, or None.
 
@@ -2397,6 +2466,81 @@ def retier_matching_untiered(
     ``type`` shadows the builtin inside this frame. The name is the record's
     own field name and is fixed by the cross-module contract casting 3 calls
     against; nothing in this body needs ``type()``.
+
+    fallout D-157 / GI-004 / GI-028 / AC-055 / OT-019 — THE TIER RULES ARE
+    ASKED OF THE RECORD THIS CLASSIFIES, AND NOT ONLY OF THE FILING
+    ----------------------------------------------------------------------
+    Both doors run ``validate_defect_filing`` over the INCOMING mapping before
+    they open a transaction, and by contract that function "reads the mapping
+    and nothing else". So every rung that judges CLAIM PROSE or a CITATION was
+    asked about the filing and never about the stored record the filing
+    classifies — and a re-tier keeps the record's own ``description`` and
+    ``spec_ref`` exactly where the earlier filing put them. The tier arrives;
+    the prose that tier forbids stays.
+
+    DRIVEN twice, at both doors, before this guard:
+
+      * open untiered D-001 carrying ``spec_ref="FR-014"``, re-filed on the
+        same identity with ``tier=HARDENING`` and no spec_ref of its own —
+        ``retiered: 1``, and the persisted record read
+        ``{"id": "D-001", "tier": "HARDENING", "spec_ref": "FR-014",
+        "status": "open"}``. GI-028's violation column is "a HARDENING record
+        carrying a ``spec_ref`` for context", and this exit minted one.
+      * open untiered D-001 whose OWN description read "the auth token is
+        never verified so an attacker reaches the handler", re-filed with an
+        innocent description and ``tier=HARDENING`` — ``retiered: 1``, tier
+        HARDENING persisted with the security claim intact, and
+        ``observations.json`` tripwire length 0. A security-property claim
+        parked in a tier that holds no gate shut, with the audit control
+        silent, is the one outcome the never-demote denylist is absolute
+        about.
+
+    The direct doors were airtight for both shapes; only this exit was open.
+    So the guard asks THE ONE VALIDATOR — never a rung re-spelled here — about
+    the record the mutation would leave behind, projected through
+    ``_finding_mapping``, the same shape both doors and ``server.py``'s
+    pre-dispatch rung judge. A rung added to that validator tomorrow guards
+    this exit the same day, which is the whole reason the check order lives in
+    one function.
+
+    WHY THE PROJECTION AND NOT THE RAW MERGED RECORD. ``security_scan_text``
+    partitions the keys a FILING carries; a persisted record also carries
+    ``id``, ``created_at`` and ``retiered_in_cycle``, which are in no
+    partition and would be scanned as claim prose. That costs nothing on the
+    denylist rungs and would make the LIVE prose floor unfireable by accident
+    rather than by rule. Nothing is lost by projecting: ``new_defect_record``
+    takes named parameters and splats no caller dict, so ``description`` is a
+    persisted record's only prose field.
+
+    WHY IT IS SCOPED TO ``NON_BLOCKING_TIERS``, which is a rule and not a
+    convenience. That constant's own block says what the denylist exists to
+    stop: "a claim filed where it holds no gate shut, and LIVE — the one tier
+    that does hold one shut — is therefore the exclusion". A re-tier to LIVE
+    demotes nothing, so there is nothing here for this guard to prevent. It is
+    also what keeps the LIVE prose floor unreachable BY CONSTRUCTION rather
+    than by the accident above, so classifying a description-less record as
+    LIVE behaves exactly as it did.
+
+    IT RAISES, and that is the only shape that reaches both doors. This
+    function is called from inside each door's transaction, and the batch door
+    consumes its result as ``if retier_id is not None`` — so a refusal returned
+    as a dict would be counted there as a successful re-tier. A raise instead
+    travels the seam both doors already have: ``_locked_document`` writes
+    NOTHING when an exception leaves the block, so the whole batch is refused
+    atomically (which is what ``test_sync_refusal_is_all_or_nothing`` is
+    about), and ``@ledger_refusals`` turns the raise into the house
+    ``{error, hint}`` refusal at each door without either call site changing.
+
+    THE TRIPWIRE IS FIRED HERE, NOT DEFERRED (D-061). "The audit tripwire may
+    not be rung-dependent", and a control a filer can switch off by ALSO
+    getting something else wrong is not a control. It goes through the one
+    exported writer, on the same ``tripwire_finding`` shape both doors pass, so
+    the class the refusal names and the class the audit record re-derives are
+    equal by construction. It writes ``observations.json`` — a different path
+    from the transaction this is called inside, whose lock is re-entrant per
+    path — so the audit record persists on its own clean exit and the raise
+    then aborts only ``defects.json``: the ATTEMPT is recorded and nothing is
+    filed, which is exactly what the two direct doors already do.
     """
     for d in _dict_records(records):
         if d.get("status") != "open" or defect_tier(d) != TIER_UNKNOWN:
@@ -2416,6 +2560,63 @@ def retier_matching_untiered(
             # report, so an id-less historical record is left for the migration
             # path rather than half-handled here.
             continue
+
+        # fallout D-157 / GI-004 / GI-028 / AC-055 / OT-019 — THE RECORD THIS
+        # WOULD CLASSIFY IS PUT THROUGH THE ONE VALIDATOR, UNDER THE TIER THE
+        # RE-FILING DECLARES. See this function's docstring for both driven
+        # before/afters, for why the projection rather than the raw record, for
+        # why NON_BLOCKING_TIERS is the scope, and for why this raises.
+        #
+        # The class and reproduction values are the ones the mutation below
+        # would leave: `class` is the record's when it declared one and the
+        # re-filing's otherwise (the same `or` the fill uses, one expression
+        # up), and `reproduction_attempted` is the re-filing's, since this arm
+        # is by definition not LIVE.
+        if tier in NON_BLOCKING_TIERS:
+            classified = _finding_mapping(
+                str(d.get("description") or ""),
+                str(d.get("spec_ref") or ""),
+                str(d.get("target_kind") or ""),
+                symbol=str(d.get("symbol") or ""),
+                file_path=str(d.get("file") or ""),
+                tier=tier,
+                defect_class=str(d.get("class") or "").strip() or defect_class,
+                reproduction_attempted=reproduction_attempted,
+            )
+            refusal = validate_defect_filing(classified)
+            if refusal is not None:
+                if refusal.get("denylist_class") and fdir is not None:
+                    record_denylist_tripwire(
+                        fdir,
+                        tripwire_finding(classified),
+                        cycle=cycle,
+                        source=source,
+                    )
+                raise LedgerRefusal({
+                    **refusal,
+                    # The refusal the validator wrote is about a filing, and the
+                    # filer's own filing passed it at the door — so it is said
+                    # again here NAMING THE RECORD, or the filer reads "this one
+                    # carries 'FR-014'" against a filing that carries no
+                    # spec_ref and has nothing to act on. The validator's own
+                    # sentences are carried through verbatim rather than
+                    # re-worded, so both doors and both paths still say one
+                    # thing about one rule.
+                    "error": (
+                        f"Refused: the open untiered record {record_id} may not "
+                        f"be classified {tier}. {refusal.get('error', '')}"
+                    ),
+                    "hint": (
+                        f"A re-tier writes the tier onto {record_id} and leaves "
+                        f"its description and spec_ref exactly where the "
+                        f"earlier filing put them, so classifying it would "
+                        f"persist a {tier} record both doors refuse. The field "
+                        f"named above is {record_id}'s, not your filing's. "
+                        f"{refusal.get('hint', '')}"
+                    ),
+                    "retier_target": record_id,
+                })
+
         d["tier"] = tier
         # GI-014: `!= "LIVE"`, not `== "LATENT"`. HARDENING owes the same
         # reproduction LATENT does — vocab's DEFECT_TIERS block calls it "the
@@ -3885,6 +4086,12 @@ def foundry_add_defect(
             # the ledger three lines up and then dropped on the floor.
             fallout_of=defect["fallout_of"],
             supersedes=defect["supersedes"],
+            # fallout D-157 — the run dir the tier guard's denylist tripwire is
+            # written to. This door already holds it (`defects_path` above is
+            # derived from it), so passing it is not a second derivation of a
+            # path; it is the same one the pre-transaction refusal three frames
+            # up already audits through.
+            fdir=fdir,
         )
         if retiered_id is not None:
             defect_id = retiered_id
