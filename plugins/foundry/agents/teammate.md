@@ -439,6 +439,32 @@ Update the task status via TaskUpdate:
     header that, combined across all evidence files, covers every cited
     ID.
 
+    **The environment you capture in, and the two the server re-runs
+    in.** Capture from the repository root with every file your command
+    reads TRACKED and going into your own commit: the server materialises
+    the commit with `git worktree add --detach`
+    (`plugins/foundry/mcp-server/src/foundry_mcp/tools/worktree_helpers.py#_setup_worktree`),
+    so the re-execution sees that commit's tracked files and nothing else
+    — an untracked script, fixture or artefact your command reads, and any
+    edit still sitting uncommitted in the shared tree, are present when
+    you capture and absent when the door re-runs, and the disagreement
+    surfaces a gate later as `EVIDENCE_OUTPUT_MISMATCH` naming nothing
+    that explains it. The two doors also run in DIFFERENT directories
+    under the run dir — acceptance in `worktrees/casting-{id}`, the
+    boundary and terminal sweeps in `worktrees/sweep-evidence`
+    (`plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py#SWEEP_WORKTREE_PREFIX`)
+    — and a path a peer invocation already holds steps to
+    `worktrees/sweep-evidence-1`
+    (`plugins/foundry/mcp-server/src/foundry_mcp/tools/worktree_helpers.py#_claim_worktree_path`),
+    so the directory name is not stable even within one door. Both doors
+    run your command with the worktree root as its working directory:
+    write every path in the command relative to that root, let no absolute
+    path and no worktree directory name reach the log BODY, and declare a
+    `# evidence-volatile:` regex for any the output prints anyway. A log
+    carrying one passes the door it was captured for and fails the other.
+    No exceptions, no deferrals, no "it reproduced in my tree."
+    (fallout GI-006)
+
     **The sweep shell, and the parse you owe before committing.** The
     server re-runs every `# evidence-cmd:` under `/bin/sh -c` — that one
     shell, never the interactive shell you authored the command in — so

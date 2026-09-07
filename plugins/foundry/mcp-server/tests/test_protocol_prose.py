@@ -76,6 +76,7 @@ from foundry_mcp.tools import foundry_spawn as fs
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools import rosters
 from foundry_mcp.tools import test_deriver
+from foundry_mcp.tools import worktree_helpers
 from foundry_mcp.tools.foundry_validate import foundry_validate_castings
 
 # fallout GI-010 — the monolith this module used to import is DELETED, and
@@ -7899,3 +7900,219 @@ def test_the_unknown_fallout_id_the_tracer_promises_is_the_refusal_the_door_give
         "stands on its own -- so refusing the empty value would make every "
         "standalone finding unfilable."
     )
+
+
+# ---------------------------------------------------------------------------
+# fallout GI-006 -- the environment an evidence log is captured in
+#
+# The capture instruction named the file to write and the header to carry, and
+# never the tree to stand in while writing it. Everything a builder needs in
+# order to capture a log that reproduces is a property of the SERVER's
+# re-execution -- a detached worktree, two door-specific directory names, a
+# suffix under contention -- and none of it is visible from the builder's side.
+# So these pins are the prose half, and the joins below drive or read each
+# claim at the door that makes it: a rule about an environment nobody can
+# observe is a rule that rots without anybody noticing.
+# ---------------------------------------------------------------------------
+
+_CAPTURE_ENVIRONMENT_CLAUSES = (
+    (
+        "Capture from the repository root with every file your command reads "
+        "TRACKED and going into your own commit",
+        "the environment to capture IN, which the instruction never named -- "
+        "so a builder captured in whatever tree it happened to be standing in",
+    ),
+    (
+        "the server materialises the commit with `git worktree add --detach`",
+        "the one property that makes capture and verification disagree: a "
+        "detached worktree carries tracked files only",
+    ),
+    (
+        "so the re-execution sees that commit's tracked files and nothing else",
+        "what `--detach` COSTS, spelled out -- the fact a builder cannot infer "
+        "from being told the re-execution happens in an isolated worktree",
+    ),
+    (
+        "The two doors also run in DIFFERENT directories under the run dir",
+        "why an absolute path in a log body passes one door and fails the "
+        "other, which is not a thing either door's refusal explains",
+    ),
+    (
+        "so the directory name is not stable even within one door",
+        "the contention suffix: a peer invocation moves the path, so even one "
+        "door's directory name is not a constant to write into a log",
+    ),
+    (
+        "let no absolute path and no worktree directory name reach the log BODY",
+        "the instruction the three facts exist to support -- the only thing a "
+        "builder has to DO differently",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "clause,why", _CAPTURE_ENVIRONMENT_CLAUSES, ids=lambda v: v[:44]
+)
+def test_teammate_names_the_environment_the_evidence_is_captured_in(
+    clause: str, why: str
+) -> None:
+    """fallout GI-006: the corpus stays re-executable only if capture matches.
+
+    A log captured against files the verifying worktree will not contain is
+    stale the moment it is committed, and the staleness surfaces a gate later
+    as a byte mismatch that names the log and not the reason.
+    """
+    assert clause in _flat(TEAMMATE), (
+        f"agents/teammate.md's evidence-capture rule no longer states: "
+        f"{clause!r}. That clause is {why}."
+    )
+
+
+def _sweep_worktree_dir() -> str | None:
+    """The sweep's worktree directory name, DERIVED from the call that makes it.
+
+    The name has two sources and neither is a single constant: the prefix is
+    ``evidence.SWEEP_WORKTREE_PREFIX``, and the id concatenated onto it is a
+    literal at the ``_setup_worktree`` call site inside
+    ``sweep_evidence_at_head``. Re-typing the joined name here would pin the
+    prose against a third copy that agrees with neither, so it is read off the
+    call. ``None`` when the call cannot be found in that shape, which the
+    caller reports as the drift it is.
+    """
+    tree = ast.parse(Path(evidence_doors.__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if node.name != "sweep_evidence_at_head":
+            continue
+        for call in ast.walk(node):
+            if not isinstance(call, ast.Call):
+                continue
+            if getattr(call.func, "id", None) != "_setup_worktree":
+                continue
+            named = any(
+                kw.arg == "dir_prefix"
+                and isinstance(kw.value, ast.Name)
+                and kw.value.id == "SWEEP_WORKTREE_PREFIX"
+                for kw in call.keywords
+            )
+            ident = call.args[1] if len(call.args) > 1 else None
+            if named and isinstance(ident, ast.Constant):
+                return (
+                    f"worktrees/"
+                    f"{evidence_doors.SWEEP_WORKTREE_PREFIX}{ident.value}"
+                )
+    return None
+
+
+def test_the_two_worktree_directories_the_teammate_names_are_the_doors_own() -> None:
+    """fallout GI-006: the prose's two directory names, read off the two doors.
+
+    Both are derived rather than typed. The acceptance name is the default
+    ``_setup_worktree`` gives ``dir_prefix``; the sweep name is that same
+    parameter passed ``SWEEP_WORKTREE_PREFIX`` with the id its call site
+    supplies. A builder told the wrong pair writes a path that reproduces at
+    one crossing and fails at the next, which is the failure this rule exists
+    to prevent -- so the two spellings have to be the doors' own or the warning
+    points at directories nothing uses.
+    """
+    flat = _flat(TEAMMATE)
+    accept_prefix = (worktree_helpers._setup_worktree.__kwdefaults__ or {}).get(
+        "dir_prefix"
+    )
+    assert accept_prefix, (
+        "worktree_helpers._setup_worktree no longer carries a keyword default "
+        "for `dir_prefix`. agents/teammate.md names the acceptance door's "
+        "worktree directory from that default; with no default there is no "
+        "acceptance directory name to name."
+    )
+    assert f"worktrees/{accept_prefix}" in flat, (
+        f"agents/teammate.md no longer names the acceptance door's worktree "
+        f"directory `worktrees/{accept_prefix}`, which is where "
+        f"`_setup_worktree`'s `dir_prefix` default puts it."
+    )
+    sweep_dir = _sweep_worktree_dir()
+    assert sweep_dir is not None, (
+        "`sweep_evidence_at_head` no longer calls `_setup_worktree` with a "
+        "literal id and `dir_prefix=SWEEP_WORKTREE_PREFIX`, so the sweep's "
+        "worktree directory name cannot be derived. agents/teammate.md warns "
+        "builders about that exact name; a name nothing derives is a name that "
+        "drifts."
+    )
+    assert sweep_dir in flat, (
+        f"agents/teammate.md no longer names the sweep's worktree directory "
+        f"`{sweep_dir}`. That name and the acceptance door's differ on purpose, "
+        f"and the difference is the whole reason an absolute path in a log body "
+        f"passes one crossing and fails the other."
+    )
+
+
+def test_the_worktree_the_teammate_is_told_about_is_really_detached() -> None:
+    """fallout GI-006: `--detach` is the claim, and it is the door's own argv.
+
+    Read off the prose the tracked-files-only consequence is unfalsifiable. It
+    follows from ONE flag in one `git worktree add`, so the flag is what gets
+    joined -- a setup that grew a `--force`-style checkout of the working tree
+    would make the warning wrong while leaving it perfectly readable.
+    """
+    source = Path(worktree_helpers.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    argv_strings: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_setup_worktree":
+            argv_strings = {
+                child.value
+                for child in ast.walk(node)
+                if isinstance(child, ast.Constant) and isinstance(child.value, str)
+            }
+            break
+    assert "--detach" in argv_strings, (
+        "`_setup_worktree` no longer passes `--detach` to `git worktree add`. "
+        "agents/teammate.md tells every builder the re-execution sees the "
+        "commit's tracked files and nothing else, and that consequence is this "
+        "flag's."
+    )
+    assert "`git worktree add --detach`" in _flat(TEAMMATE), (
+        "agents/teammate.md no longer names `git worktree add --detach` as the "
+        "way the server materialises the commit. Without the flag the builder "
+        "has no reason to believe an untracked file will be missing."
+    )
+
+
+def test_the_contention_suffix_the_teammate_is_warned_about_is_the_claims_own(
+    tmp_path: Path,
+) -> None:
+    """fallout GI-006: driven, because a suffix nobody produces is a false warning.
+
+    The prose tells builders the directory name is not stable even within one
+    door. That is a claim about `_claim_worktree_path`, so it is driven here
+    against a real claim rather than read out of its docstring: the second
+    claim on one base takes `{base}-1`, which is the spelling the warning uses.
+    """
+    base = tmp_path / "worktrees" / "sweep-evidence"
+    first = worktree_helpers._claim_worktree_path(base, tmp_path)
+    try:
+        second = worktree_helpers._claim_worktree_path(base, tmp_path)
+        try:
+            assert first == base, (
+                f"the first claim on an uncontended path returned {first}, not "
+                f"the base {base}. agents/teammate.md names the unsuffixed "
+                f"directory as the ordinary case; a claim that suffixes "
+                f"unconditionally would make the ordinary name wrong too."
+            )
+            assert second.name == f"{base.name}-1", (
+                f"a second claim on a held path returned {second.name}, not "
+                f"`{base.name}-1`. agents/teammate.md warns builders with that "
+                f"exact spelling, and a warning naming a suffix the claim never "
+                f"produces teaches a directory that cannot appear."
+            )
+            assert f"worktrees/{base.name}-1" in _flat(TEAMMATE), (
+                f"agents/teammate.md no longer names "
+                f"`worktrees/{base.name}-1`, the path a contended claim steps "
+                f"to. Three logs failed on that segment alone in the cycle this "
+                f"rule was filed against."
+            )
+        finally:
+            worktree_helpers._release_claim(second)
+    finally:
+        worktree_helpers._release_claim(first)
