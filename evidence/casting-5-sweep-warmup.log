@@ -1,0 +1,20 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -v -p no:cacheprovider tests/test_evidence.py::test_the_worktree_is_warmed_before_the_first_compared_command_runs tests/test_evidence.py::test_the_warm_up_never_executes_a_command_that_does_not_parse tests/test_evidence.py::test_the_warm_up_is_the_cheapest_log_of_the_corpus_dominant_toolchain tests/test_evidence.py::test_every_caller_of_the_runner_parses_the_command_first 2>&1
+# evidence-for: GI-006, NFR-005, FR-002, CT-015
+# evidence-volatile: (?:^|\s)platform \S+ -- Python \S+.*
+# evidence-volatile: (?:^|\s)rootdir:.*
+# evidence-volatile: (?:^|\s)plugins:.*
+# evidence-volatile: \d+\.\d+s
+
+============================= test session starts ==============================
+platform darwin -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server/.venv/bin/python
+rootdir: /Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server
+configfile: pyproject.toml
+plugins: anyio-4.14.2
+collecting ... collected 4 items
+
+tests/test_evidence.py::test_the_worktree_is_warmed_before_the_first_compared_command_runs PASSED [ 25%]
+tests/test_evidence.py::test_the_warm_up_never_executes_a_command_that_does_not_parse PASSED [ 50%]
+tests/test_evidence.py::test_the_warm_up_is_the_cheapest_log_of_the_corpus_dominant_toolchain PASSED [ 75%]
+tests/test_evidence.py::test_every_caller_of_the_runner_parses_the_command_first PASSED [100%]
+
+============================== 4 passed in 0.57s ===============================

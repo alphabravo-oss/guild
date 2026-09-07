@@ -27,6 +27,7 @@ import re
 import shlex
 import subprocess
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -3816,6 +3817,145 @@ def _shell_parse_problem(cmd: str) -> str | None:
     )
 
 
+def _sweep_warm_worktree(
+    order: list[Path],
+    *,
+    project_root: Path,
+    worktree_path: Path,
+    timeout_seconds: float | None,
+) -> str | None:
+    """Run ONE corpus command and THROW IT AWAY, to warm the sweep's worktree.
+
+    Returns the command it warmed with, or None when it warmed with nothing.
+
+    WHAT IT REMOVES (fallout NFR-005 / D-176). The sweep runs inside a
+    ``git worktree add --detach`` checkout, so every build artefact the project
+    keeps OUTSIDE git — a ``.venv``, a ``node_modules``, a ``target/`` — is
+    absent from it. The FIRST command that needs one CONSTRUCTS it, and the
+    construction prints into the merged stdout/stderr this sweep byte-compares.
+    Driven on the one-log DELTA scope the width rule produces on a quiet cycle:
+    ``evidence/casting-11-hardening-reproduction-door.log`` failed
+    EVIDENCE_OUTPUT_MISMATCH on five ``uv`` lines it never captured, one of them
+    naming the worktree's own absolute path — a path that differs on every
+    sweep and that no capture could ever have contained.
+
+    WHY THE FULL SWEEP PASSED ANYWAY, AND WHY THAT WAS NOT HEALTH. The
+    construction is paid ONCE per worktree, by whichever of the eight pool
+    workers reaches the toolchain first, and it happened to be a
+    ``uv run --quiet`` log whose flag suppresses exactly those lines. Nothing
+    enforced that ordering: the pool size, the machine's core count, the corpus
+    contents, or one log being narrowed all reorder it, and the sweep then
+    refuses a log that is correct. Warming here removes the race rather than
+    reordering it.
+
+    WHY THE COMMAND COMES FROM THE CORPUS RATHER THAN BEING NAMED HERE. This
+    sweep runs against whatever repository the run is building, and it has no
+    way to know that THIS one's Python project lives under
+    ``plugins/foundry/mcp-server`` — the repo root carries no ``pyproject.toml``
+    at all, so a root-level ``uv sync`` would warm nothing while putting one
+    toolchain's name into machinery that must serve every toolchain. The corpus
+    is the one thing that does know: its commands ARE the project's toolchain.
+    Running one of them warms the tree with the project's own build and leaves
+    no toolchain name in this module.
+
+    WHICH ONE, AND WHY NOT SIMPLY THE CHEAPEST. The candidate is the cheapest —
+    by ``_sweep_submission_order``'s own weight, so no second notion of cost is
+    invented — among the logs invoking the corpus's most common command-position
+    program (``_command_position_programs``, which steps over ``cd`` and env
+    assignments and recurses into ``sh -c`` payloads). DOMINANCE is what makes
+    the choice stable: picking the cheapest log outright would hand the warm-up
+    to the next tiny ``grep`` log somebody commits, the tree would go cold
+    again, and the failure would come back silently. That is the fragility
+    D-176 was filed about, not a fix for it.
+
+    PARSED FIRST, LIKE EVERY OTHER COMMAND. ``_shell_parse_problem`` runs over
+    the candidate before anything warms with it, because FR-002's "NOT executed"
+    is a property of this door and not only of ``_sweep_one_log``: a warm-up
+    that ran ``touch x && (`` would perform the ``touch`` the parse check exists
+    to prevent, FIRST, outside any per-log result, and the sweep would then
+    report EVIDENCE_COMMAND_SYNTAX for a command it had already partly run. A
+    candidate that will not parse is skipped, not warmed with.
+
+    SELECTING AND EXECUTING ARE ONE FUNCTION ON PURPOSE.
+    ``test_every_caller_of_the_runner_parses_the_command_first`` derives its
+    rule from the tree rather than from a list — every function reaching
+    ``_run_command_with_timeout`` must also reach ``_shell_parse_problem`` —
+    and that rule is what caught D-107, where two doors disagreed about
+    whether a command could run. A warm-up that chose here and executed at the
+    call site would put the runner in a function the parse check is not in,
+    and the third executor added tomorrow would inherit the same gap.
+
+    WHY RUNNING A CORPUS COMMAND TWICE IS SAFE. The corpus's own contract says
+    so. Every one of these commands is already re-executed on every FULL sweep,
+    eight at a time in one shared checkout, and byte-compared against its
+    capture; a command that changed the tree could not be in the corpus at all.
+
+    WHAT IT CANNOT DO, said plainly so the next reader does not over-trust it.
+    It warms the toolchain THAT command uses. A corpus mixing two toolchains
+    warms one of them, and the second still pays its construction inside a
+    compared capture — the remedy there is a second warm-up rule, not a wider
+    reading of this one. And a warm-up that fails leaves the sweep exactly
+    where it stood without one, which is why the caller discards its outcome:
+    a warm-up is evidence of nothing, and a sweep that refused because one
+    failed would refuse for a reason no log owns.
+    """
+    commands: list[tuple[str, dict[str, Any]]] = []
+    programs: list[set[str]] = []
+    for log in order:
+        head_log = _sweep_head_log_path(log, project_root, worktree_path)
+        try:
+            header = _parse_evidence_header(
+                head_log.read_text(encoding="utf-8", errors="replace")
+            )
+        except (OSError, ValueError):
+            # A log that is absent, unreadable or malformed at HEAD is
+            # `_sweep_one_log`'s to refuse, by name, with its own token. It is
+            # not this function's to report, and it is certainly not the tree's
+            # to warm with.
+            continue
+        cmd = header.get("cmd")
+        if not isinstance(cmd, str) or not cmd.strip():
+            continue
+        commands.append((cmd, header))
+        programs.append(set(_command_position_programs(cmd) or ()))
+
+    counts: Counter[str] = Counter()
+    for names in programs:
+        counts.update(names)
+    if not counts:
+        return None
+    # Counted per LOG, not per occurrence, so a command naming its program
+    # twice does not out-vote two logs that name another once. The name breaks
+    # ties, so a corpus with no dominant program still picks deterministically
+    # rather than following dict insertion order.
+    dominant = min(counts, key=lambda name: (-counts[name], name))
+
+    # `order` is heaviest-first (NFR-004's makespan heuristic), so walking it
+    # backwards is cheapest-first — the warm-up should cost the least the
+    # corpus can offer while still exercising the dominant toolchain.
+    for index in range(len(commands) - 1, -1, -1):
+        if dominant not in programs[index]:
+            continue
+        cmd, header = commands[index]
+        if _shell_parse_problem(cmd) is not None:
+            continue
+        try:
+            _run_command_with_timeout(
+                cmd=cmd,
+                cwd=worktree_path,
+                timeout=_sweep_log_timeout(header, timeout_seconds),
+            )
+        except (subprocess.SubprocessError, OSError):
+            # The same rule `_prune_orphaned_worktrees` holds one frame up:
+            # housekeeping must never decide a verdict. The exit code, the
+            # output and a timeout kill are discarded here for that reason too
+            # — a warm-up is evidence of nothing, and a sweep that refused
+            # because one failed would refuse for a reason no log owns.
+            return None
+        return cmd
+    return None
+
+
 def _sweep_one_log(
     log: Path,
     *,
@@ -4025,7 +4165,10 @@ def sweep_evidence_at_head(
     """Re-execute the in-scope corpus at HEAD (GI-002 / ST-005 / CT-007).
 
     ONE detached worktree at HEAD of ``project_root`` for the whole sweep, torn
-    down on the success path and on every failure path. Each log's
+    down on the success path and on every failure path. It is WARMED once,
+    serially, before the pool opens — `_sweep_warm_worktree` picks the corpus
+    command whose throwaway run pays whatever one-time construction a fresh
+    checkout owes, so no compared capture ever carries it (D-176). Each log's
     ``# evidence-cmd:`` is PARSED with `_shell_parse_problem` before it is run —
     a command that will not parse is refused as EVIDENCE_COMMAND_SYNTAX and
     never reaches the runner (CT-015) — then runs inside the worktree in a
@@ -4158,6 +4301,22 @@ def sweep_evidence_at_head(
         order = _sweep_submission_order(
             logs, project_root=project_root, worktree_path=worktree_path
         )
+
+        # D-176 — WARM THE TREE BEFORE ANY COMPARED COMMAND RUNS IN IT. A
+        # detached checkout carries none of the project's gitignored build
+        # artefacts, so the first command that needs one builds it and prints
+        # the build into the bytes this sweep compares. Serial, and BEFORE the
+        # pool opens, because the whole failure is eight workers racing to be
+        # the one that pays that cost. Which command pays it, whether it may
+        # run at all, and what becomes of its output are all that function's
+        # to decide; nothing about the sweep's verdict is.
+        _sweep_warm_worktree(
+            order,
+            project_root=project_root,
+            worktree_path=worktree_path,
+            timeout_seconds=timeout_seconds,
+        )
+
         outcomes: dict[Path, tuple[dict[str, Any], dict[str, Any] | None]] = {}
         with ThreadPoolExecutor(max_workers=pool) as executor:
             futures = {

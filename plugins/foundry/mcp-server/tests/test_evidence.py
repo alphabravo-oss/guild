@@ -7317,6 +7317,160 @@ def test_the_sweep_kills_a_log_that_exceeds_its_declared_timeout(tmp_path):
     assert mismatch["elapsed_seconds"] < 30, "the killer did not fire"
 
 
+def test_the_worktree_is_warmed_before_the_first_compared_command_runs(
+    tmp_path, monkeypatch
+):
+    """fallout NFR-005 / D-176 — a build must never land in a compared capture.
+
+    The sweep runs inside a `git worktree add --detach` checkout, so every
+    build artefact the project keeps OUTSIDE git is missing from it and the
+    FIRST command that needs one BUILDS it — printing the build into the merged
+    stdout/stderr this sweep byte-compares. Driven at 4066599 on the one-log
+    DELTA scope the width rule produces on a quiet cycle: a corpus log whose
+    command omits `uv run --quiet` failed EVIDENCE_OUTPUT_MISMATCH on five uv
+    lines it never captured, one of them naming the worktree's own absolute
+    path — a path that differs on every sweep and that no capture could have
+    contained. The FULL sweep passed only because a `--quiet` log happened to
+    win the race to the toolchain and swallow the chatter, which nothing
+    enforced.
+
+    Modelled here with the only property that matters and no toolchain in
+    sight: a command whose output SAYS which execution of itself it is. The
+    committed body says execution number 2, so it reproduces only if something
+    ran the command once before the compared run — which is the whole claim.
+
+    BOTH halves are driven, because a pass alone cannot tell a warmed tree from
+    a command that would have matched cold. With the warm-up suppressed the
+    same corpus mismatches and the diff says number 1.
+    """
+    cmd = (
+        "printf 'x\\n' >> tally.txt && "
+        "printf 'this capture is execution number %s in this worktree\\n"
+        "the body is padded so nothing but that count can differ between a\\n"
+        "warmed run and a cold one\\n' "
+        "\"$(wc -l < tally.txt | tr -d ' ')\""
+    )
+    body = (
+        "this capture is execution number 2 in this worktree\n"
+        "the body is padded so nothing but that count can differ between a\n"
+        "warmed run and a cold one\n"
+    )
+    corpus = {
+        "casting-1-alpha.log": _sweep_log(
+            "casting-1-alpha", for_ids="CT-007", cmd=cmd, body=body,
+        )
+    }
+
+    warmed = _sweep(_build_sweep_repo(tmp_path / "warm", logs=corpus), full=True)
+    assert warmed["ok"] is True, warmed["mismatches"]
+
+    cold_env = _build_sweep_repo(tmp_path / "cold", logs=corpus)
+    monkeypatch.setattr(evidence, "_sweep_warm_worktree", lambda *a, **k: None)
+    cold = _sweep(cold_env, full=True)
+    assert cold["ok"] is False, (
+        "the corpus reproduced with nothing warming the tree, so this log "
+        "cannot witness the warm-up at all"
+    )
+    assert cold["mismatches"][0]["failure_token"] == "EVIDENCE_OUTPUT_MISMATCH"
+    assert "execution number 1" in cold["mismatches"][0]["reason"]
+
+
+def test_the_warm_up_never_executes_a_command_that_does_not_parse(
+    tmp_path, monkeypatch
+):
+    """FR-002's "NOT executed" is a property of the DOOR, not of one function.
+
+    `_sweep_one_log` refuses an unparseable command before the runner sees it.
+    A warm-up that reached for the same command without asking would perform
+    the side effect that check exists to prevent — and it would do it FIRST,
+    outside any per-log result, so the sweep would go on to report
+    EVIDENCE_COMMAND_SYNTAX for a command it had already partly run. That is a
+    worse failure than the one the token describes, because the result would
+    say nothing ran.
+
+    Driven on a corpus of ONE log, so the unparseable command is the only
+    candidate the warm-up could pick, and spied at the runner rather than
+    inferred: a command `_run_command_with_timeout` never sees is a command
+    nothing could have executed, at any content.
+    """
+    corpus = {
+        "casting-1-alpha.log": _sweep_log(
+            "casting-1-alpha", for_ids="CT-015",
+            cmd="touch never-created.txt && (",
+        )
+    }
+    env = _build_sweep_repo(tmp_path, logs=corpus)
+
+    ran: list[str] = []
+    real_runner = evidence._run_command_with_timeout
+
+    def _spy(*, cmd, cwd, timeout):
+        ran.append(cmd)
+        return real_runner(cmd=cmd, cwd=cwd, timeout=timeout)
+
+    monkeypatch.setattr(evidence, "_run_command_with_timeout", _spy)
+
+    result = _sweep(env, full=True)
+
+    assert ran == [], (
+        f"the runner was handed {ran!r} — the warm-up skipped the parse check "
+        f"the per-log path applies, so the `touch` ran before anything refused "
+        f"the command"
+    )
+    assert result["ok"] is False
+    assert result["mismatches"][0]["failure_token"] == "EVIDENCE_COMMAND_SYNTAX"
+
+
+def test_the_warm_up_is_the_cheapest_log_of_the_corpus_dominant_toolchain(
+    tmp_path
+):
+    """The choice that keeps the fix from being one more accidental ordering.
+
+    Warming with simply the cheapest log would hand the job to the next tiny
+    `grep` somebody commits: the tree would go cold again and the failure would
+    come back silently, which is the fragility D-176 was FILED about rather
+    than a fix for it. So the candidate is the cheapest log among those
+    invoking the corpus's MOST COMMON command-position program, and this pins
+    exactly that — the smallest log in the corpus is deliberately NOT chosen,
+    because its program is not the one the corpus mostly runs.
+
+    Driven against the working tree rather than a worktree: `_sweep_head_log_path`
+    resolves each log relative to `project_root`, so handing it the tree the
+    corpus already sits in exercises the selection without paying for a
+    checkout. The chosen command really does run there — selecting and
+    executing are one function by design, and the command it picks is a `cat`
+    of a file that tree already carries.
+    """
+    corpus = {
+        "casting-1-alpha.log": _sweep_log("casting-1-alpha", for_ids="CT-007"),
+        "casting-2-beta.log": _sweep_log("casting-2-beta", for_ids="CT-014"),
+        # The smallest log in the corpus by a wide margin, and the only one
+        # whose program is not the dominant one.
+        "wave-report-sections.log": _sweep_log(
+            "wave-report-sections", for_ids="AC-036",
+            cmd="grep -c x replay-wave-report-sections.txt", body="x\n",
+        ),
+    }
+    env = _build_sweep_repo(tmp_path, logs=corpus)
+    root = env["project_root"]
+    logs = sorted(env["evidence_dir"].glob("*.log"))
+    order = evidence._sweep_submission_order(
+        logs, project_root=root, worktree_path=root
+    )
+    assert order[-1].name == "wave-report-sections.log", (
+        "the grep log is no longer the cheapest by the sweep's own weight, so "
+        "this test would pass for the wrong reason"
+    )
+
+    chosen = evidence._sweep_warm_worktree(
+        order, project_root=root, worktree_path=root, timeout_seconds=None
+    )
+    assert chosen == "cat replay-casting-2-beta.txt", (
+        f"the warm-up did not pick the cheapest log of the DOMINANT program; "
+        f"it picked {chosen!r}"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # AC-014 / NFR-004 / FR-031 — cost, and where it does not go.
 # --------------------------------------------------------------------------- #
