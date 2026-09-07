@@ -12,7 +12,8 @@ effort: max
 
 Temper activates after F4 ASSAY terminates. What terminates ASSAY is the tier-aware
 gates, not a count of every finding ever filed: ASSAY passes when no `LIVE` defect and no
-unknown-tier defect is open, and an open `LATENT` backlog does not hold it shut — the same
+unknown-tier defect is open, and an open backlog of the non-blocking tiers, `LATENT` and
+`HARDENING` alike, does not hold it shut — the same
 rule that ends temper itself, stated once more under **When the sweep ends** below. Broad
 audits miss things because they look at too much at once. Temper zooms into the smallest units of
 functionality and proves they work — or proves they don't.
@@ -302,8 +303,9 @@ defect is open and EVERY escalated class is `CLEARED`. Both halves are read from
 run's own ledgers, so neither is a judgement call: `LIVE` defects are counted by the
 same tier-aware gates that count them everywhere else, and a class clears by drawing
 zero `LIVE` instances for two consecutive INSPECT cycles or by exhausting its
-structural-pass budget. An open `LATENT` backlog does NOT hold temper open — those
-defects stay tracked and land in the F6 report's named backlog. Until both conditions
+structural-pass budget. An open backlog of the non-blocking tiers does NOT hold temper
+open — `LATENT` and `HARDENING` defects alike stay tracked and land in the F6 report's
+named backlogs. Until both conditions
 hold, keep sweeping; once they do, temper is finished and says so.
 
 ---
@@ -320,8 +322,9 @@ hold, keep sweeping; once they do, temper is finished and says so.
   commit it was written at.
 - **Every temper finding carries a `tier`, like any other stream's.** Probing IS driving the
   domain, so most temper findings are `LIVE`. Temper gets no separate tier vocabulary and no
-  discretion the other streams lack: escalation exits by the same rule everywhere, and both
-  tiers are defects that get fixed. The five rules below are the ones every defect-filing
+  discretion the other streams lack: escalation exits by the same rule everywhere, and every
+  tier `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS` declares is
+  a defect that gets fixed. The five rules below are the ones every defect-filing
   stream carries, word-identically, and they are reproduced here rather than summarised:
   temper files into the same ledger through the same doors, so a micro-domain probe is a
   different lens on the code, not a different contract with the defect ledger. A rule restated

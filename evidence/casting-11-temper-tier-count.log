@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -q tests/test_protocol_prose.py tests/test_lead_prose.py tests/test_skill_prose.py tests/test_findings_schemas.py -k "tier or temper" 2>&1 | tail -1
+# evidence-for: AC-022, AC-019, NFR-011
+# evidence-volatile: \d+\.\d+s
+
+317 passed, 810 deselected in 0.50s
