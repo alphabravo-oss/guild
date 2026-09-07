@@ -8,4 +8,4 @@
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_artifacts.py:1099: gates._count_spec_requirements is gone: the hoist completed and this agreement pin has nothing left to compare
 SKIPPED [1] tests/test_artifacts.py:1368: foundry_report.report_status is gone: the hoist completed and this agreement pin has nothing left to compare
-73 passed, 2 skipped in 1.39s
+73 passed, 2 skipped in 1.03s
