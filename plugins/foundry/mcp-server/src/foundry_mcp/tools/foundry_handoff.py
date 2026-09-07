@@ -179,11 +179,12 @@ def cited_requirement_ids(block_text: str) -> list[str]:
     into a DEMAND on a teammate, which is why it judges position: an ID quoted
     inside another requirement's prose is not work this casting owes.
 
-    F0.9's ownership dimension asks a different question. AC-001 —
-    "a manifest whose casting CITES an id in `spec_text` that is absent from
-    its `requirement_ids` is refused" — OT-001 ("whose prose CITES an id
-    outside that list") and FR-040 (same verb, both directions) are about what
-    the excerpt MENTIONS, not what it assigns. One derivation served both, so
+    F0.9's ownership dimension asks a different question.
+    `forge-specs/foundry-run-fallout/spec.md` AC-001 — "a manifest whose
+    casting CITES an id in `spec_text` that is absent from its
+    `requirement_ids` is refused" — OT-001 ("whose prose CITES an id outside
+    that list") and FR-040 (same verb, both directions) are about what the
+    excerpt MENTIONS, not what it assigns. One derivation served both, so
     the three shapes below were invisible to F0.9 and a casting citing an id it
     did not own validated clean::
 
@@ -212,9 +213,10 @@ def cited_requirement_ids(block_text: str) -> list[str]:
     ``Maps to:`` naming a user story they do not own, and the only exit the
     refusal offers — add the id to ``requirement_ids`` — drives US-001 to a
     span of five, US-007 to six, US-011 to five and US-012 to six, every one of
-    them above the span AC-042 refuses without a recorded reason. AC-001 and
-    AC-042 would then be mutually destructive: the manifest satisfying one is
-    the manifest the other rejects. An exemption is what keeps both reachable.
+    them above the span that spec's AC-042 refuses without a recorded reason.
+    AC-001 and AC-042 would then be mutually destructive: the manifest
+    satisfying one is the manifest the other rejects. An exemption is what
+    keeps both reachable.
 
     A CITE IS A SUPERSET OF A DECLARATION, BY CONSTRUCTION
     -----------------------------------------------------
