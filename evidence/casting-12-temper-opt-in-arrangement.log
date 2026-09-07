@@ -1,0 +1,7 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q "tests/test_inspect_mode.py::test_the_f5_entry_records_full_on_the_same_terms" "tests/test_inspect_mode.py::test_the_temper_entry_keeps_the_preceding_inspects_rollup_row" "tests/test_inspect_mode.py::test_temper_is_refused_from_every_phase_but_f4" "tests/test_inspect_mode.py::test_the_f5_entry_clears_the_previous_inspects_completion_markers" "tests/test_inspect_mode.py::test_the_f5_entry_sweeps_and_refuses_a_log_that_no_longer_reproduces" "tests/test_inspect_mode.py::test_the_f5_entry_leaves_completion_state_alone_when_it_refuses" 2>&1 | tail -3
+# evidence-for: FR-005, FR-037, US-003
+# evidence-volatile: [0-9]+\.[0-9]+s
+# evidence-timeout: 300
+
+......                                                                   [100%]
+6 passed in 0.96s
