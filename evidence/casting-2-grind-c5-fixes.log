@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/orchestration/test_streams.py tests/orchestration/test_transitions.py tests/orchestration/test_halt.py tests/orchestration/test_evidence_boundary.py tests/orchestration/test_keyfiles.py tests/orchestration/test_guidance.py tests/orchestration/test_module_boundaries.py tests/orchestration/test_fix_gate.py -k 'no_upper_bound or server_narrowed or roster_rung_still_refuses or stand_down_reaches or wrong_shaped_concern or scope_still_narrows or clean_seal or no_verdict_on_its_report or stdlib_spellings or tracked_files_only or directory_key_file or narrower_claim or one_statement or validate_gate_and_the_validate_tool or research_casting_owning or sight_shim or requires_sight or sight_an_exit or rewrites_the_tree or two_copies_of_one_body or named_refusal_forks or batch_door_audits or batch_door_writes_no' 2>&1 | tail -3
+# evidence-for: fallout FR-050, FR-023, FR-049, ST-008, ST-009, CT-003, GI-016, ST-005, GI-023, FR-012, ST-001, FR-046, CT-004, AC-009, FR-041, GI-011, GI-029, AC-015, OT-011, GI-025, GI-033, AC-061, FR-063, AC-030, CT-021, AC-004
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 300
+
+.....................                                                    [100%]
+21 passed, 530 deselected in 0.93s
