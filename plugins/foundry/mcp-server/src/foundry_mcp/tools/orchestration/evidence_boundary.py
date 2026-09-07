@@ -714,9 +714,45 @@ _SWEEP_REMEDIES = {
 #: the checks, because it is the one the output itself can settle, and the
 #: reader is pointed at the diff the sweep already returns rather than at a
 #: guess about which cause applies.
+#:
+#: fallout GI-006 (C-091, from D-175) — AND A FOURTH FAMILY THAT IS A PROPERTY
+#: OF NEITHER THE TREE NOR THE LOG.
+#:
+#: The three causes above are each a property of the TREE the log was captured
+#: in or of the LOG itself, and the enumeration was CLOSED — "THREE causes, and
+#: the mismatch itself tells them apart". A mismatch caused by the sweep's own
+#: execution context therefore matched none of them and the reader was routed
+#: to the residual, (3) stale log, whose remedy is re-capture — the single
+#: action that makes such a mismatch PERMANENT. That is not hypothetical: at
+#: 72b4963 `Foundry-Gate(phase='inspect_start')` refused on exactly one of 96
+#: logs, and the whole diff was one leading line — uv's `VIRTUAL_ENV=… does not
+#: match the project environment path .venv` warning, emitted because the
+#: runner inherited the lead shell's `VIRTUAL_ENV`. The log, the tree and the
+#: behaviour were all untouched. Re-capturing would have baked the warning into
+#: the committed bytes and INVERTED the bug: the log would then reproduce only
+#: for an operator whose shell exports that exact path and refuse for everyone
+#: else, CI included.
+#:
+#: NARROWED, NOT ELIMINATED, which is why this is a cause and not a footnote.
+#: `worktree_helpers.py#_child_environment` made the child environment a closed
+#: allowlist, so the variable half is largely shut — but `PATH` and `HOME` stay
+#: on that allowlist because nothing runs without them, so a pyenv/mise shim or
+#: a `~/.gitconfig` still reaches the child; and the sweep's checkout is FRESH,
+#: so the first `uv run` in it builds the project environment from scratch and
+#: any command that does not pass `--quiet` prints that construction into the
+#: bytes being compared. Both are properties of the RUN, not of what was
+#: committed.
+#:
+#: PLACED SECOND, ON THE ORDERING RULE THE PARAGRAPH ABOVE ALREADY STATES: the
+#: output-settleable causes come first. This one is settleable from the diff —
+#: its tells are lines about tool configuration, environment or interpreter
+#: selection that the log's body never had a reason to carry — so it stands
+#: beside (1) rather than after the two that need a guess. Its remedy is stated
+#: as a prohibition because the harm is asymmetric: the other three are fixed
+#: by acting, this one is CREATED by acting.
 _SWEEP_REMEDY_REEXECUTED = (
     "Each log's `# evidence-cmd:` was re-executed in a detached worktree at "
-    "HEAD and its output no longer matches what was committed. THREE causes, "
+    "HEAD and its output no longer matches what was committed. FOUR causes, "
     "and the mismatch itself tells them apart — read the diff before acting. "
     "(1) The log was captured in a tree carrying files the sweep's checkout "
     "does not have: `git worktree add --detach` checks out TRACKED FILES ONLY, "
@@ -725,7 +761,18 @@ _SWEEP_REMEDY_REEXECUTED = (
     "branch — usually a SKIP whose own reason line says so, which is what the "
     "differing line will read. Re-capturing changes nothing; the log must "
     "either not depend on that file or declare the difference. (2) The "
-    "behaviour the log demonstrates regressed — fix that. (3) The log is stale "
+    "difference is a property of THE SWEEP'S OWN EXECUTION CONTEXT rather than "
+    "of the tree or the log — the environment the runner hands the child, or "
+    "the state of the fresh checkout it builds in. The tell is a differing "
+    "line about tool configuration, environment or interpreter selection that "
+    "the log's body never had a reason to carry: an environment-mismatch "
+    "warning, an interpreter being selected, a project environment being "
+    "built, packages being installed. Its remedy is NEVER re-capture — "
+    "re-capturing pins the log to the context that produced it, so it would "
+    "then reproduce only where that context recurs and refuse everywhere else, "
+    "CI included. Fix the runner, or the log's own command, so that context "
+    "cannot reach the compared bytes. (3) The "
+    "behaviour the log demonstrates regressed — fix that. (4) The log is stale "
     "and its owning casting must re-capture it."
 )
 

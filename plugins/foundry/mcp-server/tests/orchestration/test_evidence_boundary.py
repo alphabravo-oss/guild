@@ -338,6 +338,26 @@ def test_the_re_execution_remedy_names_the_tracked_files_only_checkout():
 
     The two causes it already carried must SURVIVE: naming only the new one
     would be this defect with the sign flipped.
+
+    fallout GI-006 (C-091, from D-175) — AND THE FOURTH CAUSE, ON THE SAME
+    TERMS. This node is where the sentence's CAUSE LIST is pinned, which is why
+    it already asserted the two causes it was not filed for. A fourth family
+    joined them: a mismatch that is a property of the sweep's own execution
+    context rather than of the tree or the log. The enumeration was CLOSED at
+    three, so a reader who hit that family was routed to the residual member —
+    the stale log, whose remedy is re-capture, which for this family is the one
+    action that makes the mismatch permanent. DRIVEN at 72b4963:
+    `Foundry-Gate(phase='inspect_start')` refused on one of 96 logs over a
+    single leading line, uv's `VIRTUAL_ENV=… does not match the project
+    environment path .venv` warning, produced because the runner inherited the
+    lead shell's environment — the log, the tree and the behaviour all
+    untouched.
+
+    THE COUNT WORD IS PINNED TO THE ENUMERATION, not merely present. "THREE
+    causes" outliving a fourth member is the same misdirection in miniature: a
+    reader who counts three and finds three stops reading. Both are derived
+    from the string below rather than hand-listed here, so a fifth cause fails
+    this node until its count word moves with it.
     """
     sweep = {
         "error": "",
@@ -367,6 +387,35 @@ def test_the_re_execution_remedy_names_the_tracked_files_only_checkout():
     assert "stale and its owning casting must re-capture it" in hint, hint
     # ...and the sentence the two sibling tests pin is unchanged.
     assert "re-executed in a detached worktree" in hint, hint
+
+    # fallout GI-006 (C-091) — THE FOURTH CAUSE. Named as what it is a property
+    # OF, because that is the distinction the reader has to make; "the
+    # environment differed" is the sentence nobody can act on.
+    assert "SWEEP'S OWN EXECUTION CONTEXT" in hint, hint
+    assert "rather than of the tree or the log" in hint, hint
+    # The tells, so the reader can settle it from the diff the sweep returns
+    # rather than guessing which of four causes applies.
+    assert "tool configuration, environment or interpreter selection" in hint, hint
+    # ...and the prohibition, which is the half that matters: for this family
+    # the remedy the other three share is what makes the mismatch permanent.
+    assert "remedy is NEVER re-capture" in hint, hint
+    assert "pins the log to the context that produced it" in hint, hint
+
+    # fallout GI-006 (C-091) — THE COUNT WORD AGREES WITH THE ENUMERATION.
+    #
+    # Both sides are DERIVED from the sentence: the members from its own `(N) `
+    # markers, the word from the count. A hand-listed "assert FOUR in hint"
+    # would go stale the same way "THREE" did, which is the drift this guards.
+    members = [n for n in range(1, 10) if f"({n}) " in hint]
+    assert members == list(range(1, len(members) + 1)), (
+        f"the cause list is not numbered contiguously from 1: {members}"
+    )
+    counts = {2: "TWO", 3: "THREE", 4: "FOUR", 5: "FIVE", 6: "SIX"}
+    assert f"{counts[len(members)]} causes" in hint, (
+        f"the sentence enumerates {len(members)} causes but its count word is "
+        f"not {counts[len(members)]!r} — a reader who counts the word and finds "
+        f"that many stops reading. Move the count word with the member."
+    )
 
 
 def test_a_mixed_sweep_names_every_remedy_it_needs():
