@@ -7,6 +7,8 @@ that no longer exists.
 """
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 
 
@@ -256,3 +258,74 @@ def test_the_two_sets_are_disjoint_and_neither_is_empty():
     """The emptiness guard on both axes at once."""
     assert set(_DELTA_SURFACES).isdisjoint(_VERIFIER_SURFACES)
     assert len(_DELTA_SURFACES) >= 6 and len(_VERIFIER_SURFACES) >= 6
+
+
+
+
+# --------------------------------------------------------------------------- #
+# fallout research/holmes-orchestrator.md#acc-3 (D-097) — the research-skip
+# record's accepted spellings are declared once and honoured as declared.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_research_skip_read_honours_exactly_its_declared_spellings(run_env):
+    """fallout research/holmes-orchestrator.md#acc-3 / RA-6 (D-097).
+
+    RA-6 names `_research_skipped` reading three uncoordinated storage locations
+    as a cohesion defect. The accepted set is now DECLARED — the marker plus
+    `_RESEARCH_SKIPPED_KEY` in each of `_RESEARCH_SKIPPED_DOCUMENTS` — instead of
+    being spelled inline in a loop, so the set a reader must satisfy is stated in
+    one place rather than discovered by reading the reader.
+
+    THIS IS THE PIN ON THE DECLARATION. It drives every declared spelling in
+    isolation and asserts each one alone is enough, and it drives an UNdeclared
+    document to assert the read is not simply scanning everything. A spelling
+    silently dropped from the declaration fails here, and a fourth location
+    added to the reader without joining the declaration fails here too.
+
+    WHAT IS NOT CLOSED, recorded so nobody reads this pin as saying it is: no
+    shipped writer writes ANY of the three (swept across `plugins/foundry/**`
+    for both spellings — the only writes are test fixtures), so the single WRITE
+    point RA-6 also asks for belongs at `foundry_init` in casting 4's
+    `tools/foundry.py` and is raised as a cross-casting concern.
+    """
+    _project_root, fdir = run_env
+
+    documents = _width._RESEARCH_SKIPPED_DOCUMENTS
+    key = _width._RESEARCH_SKIPPED_KEY
+    assert documents, "the accepted-document set is empty; the read is blind"
+    assert key == "research_skipped", key
+
+    def _clear() -> None:
+        (fdir / artifacts.RESEARCH_SKIPPED_MARKER).unlink(missing_ok=True)
+        for document in documents:
+            path = fdir / document
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({}), encoding="utf-8")
+
+    # Nothing recorded anywhere: the read says no.
+    _clear()
+    assert _width._research_skipped(fdir) is False
+
+    # The marker alone.
+    _clear()
+    (fdir / artifacts.RESEARCH_SKIPPED_MARKER).write_text("x\n", encoding="utf-8")
+    assert _width._research_skipped(fdir) is True, "the marker spelling stopped counting"
+
+    # Each declared document alone — driven per member, so a spelling dropped
+    # from the tuple is named by the parametrised failure rather than hidden by
+    # another member still answering yes.
+    for document in documents:
+        _clear()
+        (fdir / document).write_text(json.dumps({key: True}), encoding="utf-8")
+        assert _width._research_skipped(fdir) is True, document
+
+    # ...and an UNdeclared document does not count, which is what makes the
+    # declaration a set rather than a description of a scan.
+    _clear()
+    undeclared = fdir / "verdicts.json"
+    undeclared.write_text(json.dumps({key: True}), encoding="utf-8")
+    assert undeclared.name not in documents, undeclared.name
+    assert _width._research_skipped(fdir) is False, (
+        "the read counted a document the declaration does not name"
+    )
