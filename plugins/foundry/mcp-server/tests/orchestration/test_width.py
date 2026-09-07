@@ -8,6 +8,7 @@ that no longer exists.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 
 
@@ -45,6 +46,7 @@ from foundry_mcp.tools.orchestration import width as _width
 # directory now, so there is one of it and it cannot go stale.
 
 from tests.orchestration._env import (  # noqa: F401
+    ORCHESTRATION,
     _write_manifest_with_castings,
     _write_state,
     run_env,
@@ -123,18 +125,38 @@ def test_the_trace_skip_does_not_fire_on_a_delta_cycle_with_a_diff(run_env):
 # fallout OT-013 / OT-014 / FR-043 — ONLY THE VERIFIER FORCES FULL WIDTH.
 # --------------------------------------------------------------------------- #
 
-#: The surfaces a GRIND may touch and still earn a DELTA INSPECT. Every one of
-#: them is a module this casting created, and the point of creating them was
-#: that the monolith made this list impossible: one file held the gate ladder
-#: AND the report seal AND the spend ledger, so a diff touching the spend door
-#: forced a FULL cycle over everything.
+#: The one spelling of where this casting's modules live, so the roster rows
+#: below and the derivation in
+#: `test_every_shipped_orchestration_module_is_classified_by_one_roster` cannot
+#: disagree about what a package module's path looks like.
+_ORCHESTRATION = (
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/"
+)
+
+#: The surfaces a GRIND may touch and still earn a DELTA INSPECT. Every module
+#: row is one this casting created, and the point of creating them was that the
+#: monolith made this list impossible: one file held the gate ladder AND the
+#: report seal AND the spend ledger, so a diff touching the spend door forced a
+#: FULL cycle over everything.
+#:
+#: EVERY delta-side orchestration module, not a sample of them (concern C-094).
+#: This roster and its sibling below are a claim about the WHOLE package — each
+#: module either forces FULL or deliberately does not — and it named five of the
+#: nine that deliberately do not. `fix_gate.py`, `guidance.py`, `keyfiles.py`
+#: and `streams.py` sat on neither side, so no test asked whether a diff
+#: touching them earns the DELTA cycle the split exists to buy. Coverage is
+#: derived below now; what is typed here is only the CLASSIFICATION.
 _DELTA_SURFACES = (
     "plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py",
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/report_seal.py",
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/spend.py",
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/halt.py",
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/directives.py",
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/teams.py",
+    f"{_ORCHESTRATION}report_seal.py",
+    f"{_ORCHESTRATION}spend.py",
+    f"{_ORCHESTRATION}halt.py",
+    f"{_ORCHESTRATION}directives.py",
+    f"{_ORCHESTRATION}teams.py",
+    f"{_ORCHESTRATION}fix_gate.py",
+    f"{_ORCHESTRATION}guidance.py",
+    f"{_ORCHESTRATION}keyfiles.py",
+    f"{_ORCHESTRATION}streams.py",
     "plugins/foundry/commands/start.md",
     "plugins/foundry/agents/teammate.md",
     "plugins/foundry/references/lead-discipline.md",
@@ -142,11 +164,19 @@ _DELTA_SURFACES = (
 
 #: The surfaces whose diff makes a verdict already reached UNTRUSTWORTHY, which
 #: is the only thing `verifier_touched` is for.
+#:
+#: `escalation.py` is the FIFTH DECIDING MODULE (concern C-094).
+#: `VERIFIER_PATH_PATTERNS` names five orchestration modules and this roster
+#: named four, so a diff touching the module whose rung readers decide which
+#: class is ESCALATED forced FULL with nothing here driving it — and the
+#: emptiness guard that was supposed to catch a too-narrow roster counted
+#: instead of deriving, so it passed on the wrong shape.
 _VERIFIER_SURFACES = (
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/gates.py",
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/transitions.py",
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/width.py",
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/evidence_boundary.py",
+    f"{_ORCHESTRATION}gates.py",
+    f"{_ORCHESTRATION}transitions.py",
+    f"{_ORCHESTRATION}width.py",
+    f"{_ORCHESTRATION}evidence_boundary.py",
+    f"{_ORCHESTRATION}escalation.py",
     "plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py",
     "plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py",
     "plugins/foundry/mcp-server/src/foundry_mcp/schemas/findings.py",
@@ -191,10 +221,97 @@ def test_every_verifier_surface_still_forces_full_after_the_split():
     )
 
 
-def test_the_two_sets_are_disjoint_and_neither_is_empty():
-    """The emptiness guard on both axes at once."""
+def test_the_two_sets_are_disjoint_and_the_underivable_rows_are_anchored():
+    """The emptiness guard on both axes at once — ANCHORED, NOT COUNTED.
+
+    concern C-094 — A COUNT PASSES ON ANY ROSTER OF THE RIGHT SIZE.
+    -------------------------------------------------------------
+    This read `len(_DELTA_SURFACES) >= 6 and len(_VERIFIER_SURFACES) >= 6`, and
+    both rosters were the wrong SHAPE while it was green: `escalation.py` was
+    absent from the verifier side and `fix_gate.py`, `guidance.py`,
+    `keyfiles.py` and `streams.py` from the delta side. A floor cannot tell a
+    roster that is small from one that is wrong, which is the failure D-226
+    named in its own domain and D-183 named in this one.
+
+    The package half is derived by the test below. What is anchored HERE is the
+    half no glob over `tools/orchestration/` will ever reach: the leaf module,
+    the evidence corpus, the schemas and the loaded prose. Those are named
+    individually rather than counted, because a named row says which surface
+    went missing and a number says only that one did.
+    """
     assert set(_DELTA_SURFACES).isdisjoint(_VERIFIER_SURFACES)
-    assert len(_DELTA_SURFACES) >= 6 and len(_VERIFIER_SURFACES) >= 6
+
+    for anchor in (
+        # Renders refusals, never defines them — the distinction that keeps a
+        # presentation module off the verifier side.
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py",
+        # The three loaded-prose surfaces A-005 puts on the delta side.
+        "plugins/foundry/commands/start.md",
+        "plugins/foundry/agents/teammate.md",
+        "plugins/foundry/references/lead-discipline.md",
+    ):
+        assert anchor in _DELTA_SURFACES, anchor
+
+    for anchor in (
+        # The module that re-executes the evidence corpus decides whether a log
+        # passes (GI-006).
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py",
+        # The closed vocabularies and finding shapes every stream validates on.
+        "plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/schemas/findings.py",
+    ):
+        assert anchor in _VERIFIER_SURFACES, anchor
+
+
+def test_every_shipped_orchestration_module_is_classified_by_one_roster():
+    """concern C-094 (fallout D-183) — A SHIPPED MODULE CANNOT GO UNDRIVEN.
+
+    The two rosters above are hand-typed, and the PAIR of them is a claim about
+    the whole package: every orchestration module either forces FULL or
+    deliberately does not, and both halves are driven by the tests above.
+    Nothing asserted the pair covered what SHIPS, so the package could outgrow
+    them silently — and had. `escalation.py` matched `VERIFIER_PATH_PATTERNS`
+    with no row driving it; `fix_gate.py`, `guidance.py`, `keyfiles.py` and
+    `streams.py` sat on neither side; and the only guard on the pair counted
+    rows instead of comparing them to the package.
+
+    Derived membership is what makes that lag impossible rather than merely
+    recorded — a module that ships without a row here fails on the commit that
+    ships it, not a wave later. `ORCHESTRATION` is the directory imported (see
+    `tests/orchestration/_env.py`), and `test_module_boundaries.py` pins that
+    roster equal to its own independent glob, so this walks what ships rather
+    than what someone remembered.
+
+    THE SPLIT IS `is_verifier_path`'S AND NOT THIS MODULE'S. A roster that
+    asserted its own classification would pass on any self-consistent pair,
+    which is exactly how a roster drifts from the rule it samples without
+    anything going red. So membership is derived and classification is typed,
+    and each is checked against the other.
+
+    ONE-DIRECTIONAL BY DESIGN: the rosters also carry the leaf, the schemas and
+    the loaded prose, which are not package modules and must not be demanded
+    here. `test_the_two_sets_are_disjoint_and_the_underivable_rows_are_anchored`
+    is that half.
+    """
+    from foundry_mcp.schemas.vocab import is_verifier_path
+
+    shipped = {
+        f"{_ORCHESTRATION}{Path(module.__file__).name}"
+        for module in ORCHESTRATION
+    }
+    assert shipped, "the orchestration package is empty; this claim covers nothing"
+
+    verifier = set(_VERIFIER_SURFACES)
+    delta = set(_DELTA_SURFACES)
+    assert verifier.isdisjoint(delta), sorted(verifier & delta)
+    assert not shipped - (verifier | delta), {
+        "shipped but driven by neither roster": sorted(shipped - (verifier | delta)),
+    }
+
+    # Both directions against the RULE, so a row on the WRONG side is as loud as
+    # a row that is missing.
+    assert not [p for p in sorted(shipped & verifier) if not is_verifier_path(p, None)]
+    assert not [p for p in sorted(shipped & delta) if is_verifier_path(p, None)]
 
 
 

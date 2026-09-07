@@ -612,6 +612,66 @@ def test_both_filing_doors_name_the_same_rung_first_for_one_bad_filing(run_env):
 
 
 
+def test_the_refusal_labels_the_printed_set_as_the_observation_classes(run_env):
+    """concern C-095 (fallout D-182) — THE PRINTED SET AND ITS LABEL AGREE.
+
+    The refusal carries two clauses and only the FIRST is about
+    `refused_class`. The second names the set the filer is being ROUTED to, and
+    it read "The comment-prose classes are:" over a `sorted(OBSERVATION_CLASSES)`
+    that has held five members since casting 10 landed TEMPER_CANDIDATE — the
+    member `schemas/vocab.py` describes in its own words as the one that is not
+    about comment prose at all, a probe idea nobody has driven rather than a
+    comment that stopped agreeing with its code. So a stream refused here was
+    told a probe idea is comment prose, on the one surface a stream reads when
+    it is being told its finding is not a defect. The same shape as D-182: a
+    published routing sentence that a fifth vocabulary member falsified.
+
+    Nothing pinned that clause, which is why it could go stale in silence. The
+    membership half is DERIVED from the vocabulary rather than spelled here, so
+    a sixth member joins the printed set with nothing to remember; the label is
+    asserted as the one that stays true when it does.
+
+    THE FIRST CLAUSE IS ASSERTED TOO. Six sites pin it by substring and the fix
+    must not have moved it: `observation_class` walks the four comment-prose
+    predicates and can never return TEMPER_CANDIDATE, so "X is a comment-prose
+    observation class" is true of every value that can reach this sentence.
+    """
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    result = _sync(
+        0,
+        [_finding(
+            description="the docstring says 8 items but there are 9 now",
+            target_kind="comment",
+        )],
+        project_root,
+    )
+
+    reason = result["refusals"][0]["reason"]
+
+    # The pinned half, unmoved.
+    assert "is a comment-prose observation class, not a defect" in reason, reason
+
+    # The half that lied. Every member is printed...
+    for member in sorted(vocab.OBSERVATION_CLASSES):
+        assert member in reason, (member, reason)
+    # ...including the one whose arrival made the old label false...
+    assert vocab.TEMPER_CANDIDATE in reason, reason
+    # ...and the label no longer claims all of them are comment prose.
+    assert "The comment-prose classes are" not in reason, reason
+    assert "The observation classes are" in reason, reason
+
+    # The structured field beside it, which carried the correct name for this
+    # same set all along — which is the evidence the prose label was the half
+    # that was wrong, not the set.
+    assert result["refusals"][0]["observation_classes"] == sorted(
+        vocab.OBSERVATION_CLASSES
+    ), result
+
+
+
+
 def test_sync_keeps_a_denylisted_finding_as_a_defect(run_env):
     """AC-002 precedence, applied at this filing path too: a security-property
     claim stays a DEFECT even when its prose reads like comment drift."""

@@ -2550,9 +2550,39 @@ def foundry_sync_defects(
         # behaviour claim or a finding asserting what the code does still
         # reaches the tier rung below and is still filed as a defect.
         #
-        # THE REFUSAL TEXT IS THE OTHER DOOR'S, VERBATIM. "Identical outcomes"
-        # is the ruling's test, and a stream that files the same finding through
-        # either door now reads the same sentence and is sent to the same place.
+        # THE REFUSAL TEXT IS THE OTHER DOOR'S. "Identical outcomes" is the
+        # ruling's test, and a stream that files the same finding through either
+        # door reads the same sentence and is sent to the same place.
+        #
+        # concern C-095 (fallout of D-182) — THE SECOND CLAUSE NAMED A SET IT
+        # NO LONGER DESCRIBED.
+        # ------------------------------------------------------------------
+        # It read "The comment-prose classes are:" and then printed
+        # `OBSERVATION_CLASSES`. Those two agreed while the vocabulary held four
+        # members and stopped agreeing the moment casting 10 landed
+        # TEMPER_CANDIDATE, which `schemas/vocab.py` describes in its own words
+        # as the one that is not about comment prose at all — a probe idea
+        # nobody has driven, not a comment that stopped agreeing with its code.
+        # So the sentence told a stream that a probe idea was comment prose, on
+        # the one surface a stream reads when it is being told its finding is
+        # not a defect. Same class of error as D-182: a published routing
+        # sentence the fifth member falsified.
+        #
+        # THE FIRST CLAUSE IS UNCHANGED AND IS THE LOAD-BEARING ONE.
+        # `refused_class` comes from `observation_class`, which walks the four
+        # COMMENT-PROSE predicates and can never return TEMPER_CANDIDATE, so
+        # "{refused_class} is a comment-prose observation class" is true of
+        # every value that can reach it and is pinned by substring at six test
+        # sites. Only the LABEL on the printed set was wrong, and the structured
+        # `observation_classes` field two lines below has carried the correct
+        # name for the same set all along.
+        #
+        # `tools/foundry.py#foundry_add_defect` spells the identical sentence
+        # and is casting 4's file, so it cannot move in this commit. The two
+        # doors are carried together by the concern raised against casting 4
+        # naming this exact spelling, because moving one door's wording and not
+        # the other is what the shared-validator "one rung, one spelling, N
+        # callers" discipline exists to prevent.
         refused_class = _observation_refusal(finding)
         if refused_class is not None:
             refusals.append({
@@ -2561,7 +2591,7 @@ def foundry_sync_defects(
                 "value": finding.get("description", ""),
                 "reason": (
                     f"Refused: {refused_class} is a comment-prose observation "
-                    f"class, not a defect. The comment-prose classes are: "
+                    f"class, not a defect. The observation classes are: "
                     f"{', '.join(sorted(OBSERVATION_CLASSES))}."
                 ),
                 "refused_class": refused_class,
