@@ -73,6 +73,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,7 @@ import pytest
 from foundry_mcp import server as foundry_server
 from foundry_mcp.schemas import vocab
 from foundry_mcp.tools import foundry_report
+from foundry_mcp.tools.foundry import validate_defect_filing
 from foundry_mcp.tools.orchestration import gates, guidance, streams
 
 # The ONE spelling of the fallout-marking clauses, imported rather than
@@ -133,6 +135,75 @@ def _flat(path: Path) -> str:
     file's line breaks would be a pin on the formatter.
     """
     return " ".join(_read(path).split())
+
+
+def _declared_tier_enum(path: Path) -> frozenset[str] | None:
+    """The `tier` enum a skill's findings schema declares, or None.
+
+    Returns None rather than raising for a file with no single parseable
+    ```json block, because absence is what the roster derivation reads -- a
+    skill that documents no wire shape is not a narrower version of one that
+    does.
+    """
+    blocks = re.findall(r"```json\n(.*?)\n```", _read(path), re.S)
+    if len(blocks) != 1:
+        return None
+    try:
+        schema = json.loads(blocks[0])
+    except json.JSONDecodeError:
+        return None
+    found = _first_property(schema, "tier")
+    members = (found or {}).get("enum")
+    return frozenset(members) if isinstance(members, list) else None
+
+
+def _first_property(node: object, name: str) -> dict | None:
+    """The first `properties[name]` mapping anywhere in a parsed schema.
+
+    Walked rather than indexed at a fixed depth: the two files nest their
+    findings item one level apart today, and a pin on the nesting would fail on
+    a reshape that changed no contract.
+    """
+    if isinstance(node, dict):
+        properties = node.get("properties")
+        if isinstance(properties, dict) and isinstance(properties.get(name), dict):
+            return properties[name]
+        for value in node.values():
+            found = _first_property(value, name)
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for value in node:
+            found = _first_property(value, name)
+            if found is not None:
+                return found
+    return None
+
+
+def _reproduction_description(path: Path) -> str:
+    """The `reproduction_attempted` description the skill's schema states."""
+    found = _first_property(_schema_of(path), "reproduction_attempted")
+    assert found is not None, (
+        f"{_rel(path)}'s findings schema declares no `reproduction_attempted` "
+        f"property, so the field the doors refuse a filing without has no "
+        f"description for a stream to read."
+    )
+    description = found.get("description")
+    assert isinstance(description, str) and description.strip(), (
+        f"{_rel(path)}'s `reproduction_attempted` property carries no "
+        f"description. An undescribed required-on-some-tiers field is one a "
+        f"stream omits and a door refuses."
+    )
+    return description
+
+
+def _schema_of(path: Path) -> dict:
+    """The one parsed findings schema in a schema-bearing skill."""
+    blocks = re.findall(r"```json\n(.*?)\n```", _read(path), re.S)
+    assert len(blocks) == 1, (
+        f"{_rel(path)} has {len(blocks)} ```json blocks, expected exactly 1."
+    )
+    return json.loads(blocks[0])
 
 
 @pytest.mark.parametrize("path", PINNED_FILES, ids=_rel)
@@ -346,6 +417,16 @@ STREAM_RECORDING_SURFACES = (ASSAYER, *VERIFICATION_SKILLS)
 #: below holds all three inside this module's population instead.
 FALLOUT_SURFACES = (ASSAYER, PROVE_SKILL, TRACE_SKILL)
 
+#: The skills that hand their stream a normative wire shape carrying the tier
+#: vocabulary, derived by exactly that property. `sight` and `temper` document
+#: no findings schema and declare no tier enum, so sweeping them would pin
+#: prose that never claims what a tier is. A skill joins by declaring the enum
+#: and leaves by dropping it -- and dropping it is itself the defect, because
+#: the block is the shape a stream copies onto the wire.
+SCHEMA_BEARING_SKILLS = tuple(
+    p for p in VERIFICATION_SKILLS if _declared_tier_enum(p) is not None
+)
+
 
 def test_the_verification_skill_roster_is_derived() -> None:
     """Floor check: every clause pin below sweeps all four skills."""
@@ -382,6 +463,254 @@ def test_the_fallout_surfaces_are_all_in_this_modules_population() -> None:
         f"`agents/tracer.md` is the fourth surface and is pinned in "
         f"tests/test_protocol_prose.py; sweeping it here would pin one ruling "
         f"in two modules free to drift apart."
+    )
+
+
+# ---------------------------------------------------------------------------
+# fallout AC-022 (D-163 / D-164) -- the tier vocabulary, wherever a schema-
+# bearing skill states it
+# ---------------------------------------------------------------------------
+#
+# `test_protocol_prose.py` sweeps its tier pins over `DEFECT_FILING_AGENTS`,
+# derived from a filing-door mention AND a documented `defects` array, and over
+# the span `_tier_rule` cuts between the shared no-severity bullet and its
+# no-discretion close. `skills/prove/SKILL.md` and `skills/trace/SKILL.md` are
+# in neither: they document a `findings` array rather than a `defects` one, and
+# they state the tier ruling in a paragraph and a constraint bullet that carry
+# no shared-bullet opener for that span to find. So both files went on
+# describing two members and closing "Both tiers are defects, both get fixed"
+# for the whole life of the HARDENING tier, with every existing pin green --
+# which is the gap these assertions close rather than the two sentences.
+#
+# The sweep is over SPANS as well as files, because the ruling is stated twice
+# in each file (beside the JSON block, and again in the constraint list a
+# stream re-reads while working) and a fix to one is invisible to a pin on the
+# other. Both spans, both files, or the pair is not implemented.
+
+
+#: The two regions of a schema-bearing skill that state what a tier IS, each
+#: cut between two fixed sentences the file already carries. Named rather than
+#: merged because a stream reads them at different moments -- the paragraph
+#: once, beside the block it explains; the constraint every time it re-reads
+#: its obligations -- and D-163 is exactly one of the two going stale.
+_TIER_SPANS = (
+    (
+        "no-severity paragraph",
+        "**There is no `severity` field, and adding one is a vocabulary violation.**",
+        "coerced onto something known.",
+    ),
+    (
+        "evidence-axis constraint",
+        "- **Grade the evidence, never the effort**",
+        'no "this one is only cosmetic."',
+    ),
+)
+
+
+def _tier_span(path: Path, opener: str, closer: str) -> str:
+    """One bounded tier region of a file, flattened, or "" if absent."""
+    flat = _flat(path)
+    start = flat.find(opener)
+    if start == -1:
+        return ""
+    stop = flat.find(closer, start)
+    return "" if stop == -1 else flat[start : stop + len(closer)]
+
+
+def test_the_schema_bearing_skill_roster_is_derived() -> None:
+    """Floor check: the tier pins below sweep the two skills that declare the
+    vocabulary, and neither of the two that do not.
+
+    The narrowing is the whole risk here. `sight` and `temper` state the tier
+    ruling through the shared filing bullets `test_protocol_prose.py` already
+    holds; `prove` and `trace` state it in their own voice and are pinned
+    nowhere else. A roster that quietly lost one of the two would leave that
+    file free to drift back, with every assertion below still green.
+    """
+    rel = {_rel(p) for p in SCHEMA_BEARING_SKILLS}
+    assert rel == {_rel(PROVE_SKILL), _rel(TRACE_SKILL)}, (
+        f"SCHEMA_BEARING_SKILLS derived {sorted(rel)}. A skill leaves this "
+        f"roster by dropping the `tier` enum from its findings schema, which "
+        f"is itself the defect: the block is the shape a stream copies onto "
+        f"the wire, and one without a tier is refused at both filing doors."
+    )
+    for path in SCHEMA_BEARING_SKILLS:
+        assert _declared_tier_enum(path) == frozenset(vocab.DEFECT_TIERS), (
+            f"{_rel(path)}'s findings schema advertises "
+            f"{sorted(_declared_tier_enum(path) or ())} against "
+            f"vocab.DEFECT_TIERS {sorted(vocab.DEFECT_TIERS)}. The prose pins "
+            f"below read the vocabulary, so a schema out of step with it would "
+            f"make them demand prose about a tier the block never offers."
+        )
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+@pytest.mark.parametrize("span_name,opener,closer", _TIER_SPANS, ids=lambda v: v[:24])
+def test_every_tier_region_is_findable(
+    path: Path, span_name: str, opener: str, closer: str
+) -> None:
+    """Floor check for the two pins below: an unfindable span asserts nothing.
+
+    Both are cut between sentences other pins already hold -- the opener of the
+    first is `test_skill_schemas_carry_no_severity_axis`'s, the closer of the
+    second is `test_skill_evidence_axis_constraint_closes_on_no_discretion`'s
+    -- so a span that stops resolving here means one of those moved, and the
+    member sweep below would otherwise pass over an empty string.
+    """
+    assert _tier_span(path, opener, closer), (
+        f"{_rel(path)}'s {span_name} no longer runs from {opener!r} to "
+        f"{closer!r}. The pins below read this region; unfindable, they sweep "
+        f"an empty string and report green over prose nobody checked."
+    )
+
+
+#: DERIVED from the vocabulary, never re-typed -- the `_PYTEST_DISCOVERY_PHRASE`
+#: shape fallout NFR-011 requires. A member added to DEFECT_TIERS fails here
+#: until both regions of both files describe it, which is the half D-163 and
+#: D-164 record: fallout GI-014 added HARDENING, the schema enum learned it,
+#: and the prose either side of the block went on describing the two it knew.
+_DECLARED_TIERS = tuple(sorted(vocab.DEFECT_TIERS))
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+@pytest.mark.parametrize("span_name,opener,closer", _TIER_SPANS, ids=lambda v: v[:24])
+@pytest.mark.parametrize("member", _DECLARED_TIERS)
+def test_every_tier_region_names_every_declared_member(
+    path: Path, span_name: str, opener: str, closer: str, member: str
+) -> None:
+    """fallout AC-022 (D-163 / D-164): prose describing fewer tiers than the
+    doors accept.
+
+    The enum in the block between these two regions has been correct since
+    fallout GI-014; both regions describing it stayed two-membered. A stream
+    reads the prose to decide which tier to SET and the enum only to check the
+    spelling, so the region is where the member exists or does not.
+    """
+    span = _tier_span(path, opener, closer)
+    assert f"`{member}`" in span, (
+        f"{_rel(path)}'s {span_name} never names `{member}`, a member both "
+        f"filing doors accept ({sorted(vocab.DEFECT_TIERS)}). This region is "
+        f"where a stream learns the member exists and when to set it, so an "
+        f"undescribed member is one no stream ever files -- and the enum in "
+        f"the block beside it offering a value the prose never explains is "
+        f"how the tier went unused for the life of this file."
+    )
+
+
+#: The counted spellings, in the two shapes this population reaches for: a
+#: hyphenated member count ("two-member vocabulary") and the paired quantifier
+#: that says the same thing in English ("Both tiers are defects"). The second
+#: is what D-163 and D-164 found; the first is what `test_protocol_prose.py`
+#: found in seven files at once, and it is pinned here so the fix does not
+#: swap one count for the other.
+_TIER_COUNT_RE = re.compile(
+    r"\b(?:both|either|neither|one|two|three|four|five|\d+)[- ]tiers?\b"
+    r"|\b(?:one|two|three|four|five|\d+)[- ]member\b",
+    re.I,
+)
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+@pytest.mark.parametrize("span_name,opener,closer", _TIER_SPANS, ids=lambda v: v[:24])
+def test_no_tier_region_counts_the_members(
+    path: Path, span_name: str, opener: str, closer: str
+) -> None:
+    """fallout AC-022's absence half: a counted vocabulary is a re-typed one.
+
+    The positive pin above is satisfied by adding a sentence, and adding one
+    leaves "Both tiers are defects, both get fixed" standing four clauses
+    later -- a universal claim scoped to a count that is now wrong, in the same
+    breath as prose naming three members. A deletion is invisible to every
+    positive test, and so is a contradiction left beside one.
+    """
+    span = _tier_span(path, opener, closer)
+    hit = _TIER_COUNT_RE.search(span)
+    assert hit is None, (
+        f"{_rel(path)}'s {span_name} counts the tier vocabulary "
+        f"({hit.group(0)!r}) instead of citing DEFECT_TIERS, which declares "
+        f"{len(vocab.DEFECT_TIERS)}. A count is a second copy of len() that no "
+        f"door reads and nothing updates: it was right when it was written, "
+        f"wrong the moment GI-014 landed, and green in every test until now. "
+        f"State the claim over every tier and let the vocabulary carry the "
+        f"number."
+    )
+
+
+def _tiers_the_doors_demand_a_reproduction_of() -> tuple[str, ...]:
+    """The tiers the SHIPPED filing check refuses without a reproduction.
+
+    DRIVEN rather than declared: the obligation is not a property of the
+    vocabulary (LIVE is a member and owes nothing) and it is not written down
+    anywhere a test could read it -- `validate_defect_filing` reaches the rung
+    for LATENT and again for HARDENING, and which tiers those are is the answer
+    this returns. Widening the rung to a third tier then fails the pin below
+    until both skills say so, which is the direction the drift actually runs.
+    """
+    probe = {
+        "id": "D-000",
+        "classification": "DEFECT",
+        "type": "WRONG",
+        "class": "PROSE_CONTRACT_DRIFT",
+        "file": "a.py",
+        "symbol": "f",
+        "description": (
+            "The pagination cursor repeats the last row whenever the page size "
+            "divides the total exactly, on every page after the first."
+        ),
+    }
+    return tuple(
+        tier
+        for tier in sorted(vocab.DEFECT_TIERS)
+        if (refusal := validate_defect_filing({**probe, "tier": tier}))
+        and refusal.get("field") == "reproduction_attempted"
+    )
+
+
+_REPRODUCTION_TIERS = _tiers_the_doors_demand_a_reproduction_of()
+
+
+def test_the_reproduction_obligation_is_driven_and_not_universal() -> None:
+    """Floor check: the derivation above found a real, proper subset.
+
+    Empty, the pin below sweeps nothing and passes over any description at
+    all. Equal to DEFECT_TIERS, it has stopped distinguishing the tiers that
+    owe evidence from the one that owes none, and the prose it demands would
+    be wrong about LIVE.
+    """
+    assert _REPRODUCTION_TIERS, (
+        "validate_defect_filing refuses no tier for a missing "
+        "`reproduction_attempted`. That rung is CT-001's, shared by both "
+        "filing doors; if it really went away the prose below is stale in the "
+        "other direction and these pins should be rewritten, not deleted."
+    )
+    assert set(_REPRODUCTION_TIERS) < set(vocab.DEFECT_TIERS), (
+        f"every member of vocab.DEFECT_TIERS now owes a reproduction "
+        f"({sorted(_REPRODUCTION_TIERS)}). LIVE carries its evidence in the "
+        f"description and owed none; a rung that refuses it too is a contract "
+        f"change no prose here has been told about."
+    )
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+@pytest.mark.parametrize("tier", _REPRODUCTION_TIERS)
+def test_the_reproduction_description_names_every_tier_the_doors_demand_it_of(
+    path: Path, tier: str
+) -> None:
+    """fallout AC-022 (D-163 / D-164): the field description scoped to one of
+    the two tiers that owe it.
+
+    Both files described the obligation as LATENT's alone. A HARDENING filing
+    is refused on the same rung, with a hint about a probe the skill never told
+    the stream to record -- so the stream reads a description saying the field
+    does not apply to it, and meets a refusal saying it does.
+    """
+    description = _reproduction_description(path)
+    assert tier in description, (
+        f"{_rel(path)}'s `reproduction_attempted` description never names "
+        f"{tier}, a tier `validate_defect_filing` refuses without the field "
+        f"(it demands one of {list(_REPRODUCTION_TIERS)}). A description that "
+        f"scopes the obligation to fewer tiers than the rung does sends the "
+        f"stream into a refusal its own schema told it could not happen."
     )
 
 

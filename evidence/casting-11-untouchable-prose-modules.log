@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -q tests/test_skill_prose.py tests/test_protocol_prose.py tests/test_lead_prose.py 2>&1 | tail -1
+# evidence-for: AC-022, AC-031, AC-048, NFR-011
+# evidence-volatile: \d+\.\d+s
+
+1032 passed, 4 skipped in 1.36s
