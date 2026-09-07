@@ -1,11 +1,25 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && COLUMNS=80 uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_concerns.py tests/test_rosters.py && echo && echo "== casting 2 guards over the new arrangement ==" && COLUMNS=80 uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/orchestration/test_module_boundaries.py -k "named_refusal or deliberate_redefinition_row or no_top_level_symbol"
+# evidence-cmd: cd plugins/foundry/mcp-server && COLUMNS=80 uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_concerns.py tests/test_rosters.py && echo && echo "== casting 2 guards over the new arrangement ==" && echo "   The -k selection below reaches tests/orchestration/test_module_boundaries.py," && echo "   which is casting 2's module. Its DESELECTED count is a population this" && echo "   casting does not own and cannot recapture when it moves -- it read 102 when" && echo "   this log was committed and 103 at 438de87, staled by tests this command" && echo "   never ran (casting 2's concern C-102). So the body carries a derived" && echo "   verdict with a floor on the SELECTED count instead of that number." && echo "" && echo "   The 84 above is kept EXACT, deliberately. tests/test_concerns.py and" && echo "   tests/test_rosters.py are this casting's own key_files, and a population" && echo "   only its owner can move is not fragile: it goes stale only when its owner" && echo "   changes something, and its owner recaptures in the same commit. The" && echo "   fragility is peer-ownership, not counting. The ruling in full, including" && echo "   the two rejected repairs, is in evidence/casting-1-no-degradation.log." && echo && out=$(mktemp) && COLUMNS=80 uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/orchestration/test_module_boundaries.py -k "named_refusal or deliberate_redefinition_row or no_top_level_symbol" > "$out" 2>&1; ec=$?; tail -1 "$out" | awk -v ec="$ec" '{ if (ec != 0 || $0 ~ /failed|error/) { print "VERDICT: FAIL -- exit " ec " -- " $0 } else if ($2 ~ /^passed/ && $1+0 >= 4) { print "VERDICT: PASS -- exit 0, casting 2 guards over the new arrangement green, selected floor >= 4 met" } else { print "VERDICT: FAIL -- floor not met: " $0 } }'; rm -f "$out"; exit $ec
 # evidence-for: CT-001, CT-002, FR-010, FR-024
 # evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
 
 ........................................................................ [ 85%]
 ............                                                             [100%]
-84 passed in 0.28s
+84 passed in 0.32s
 
 == casting 2 guards over the new arrangement ==
-....                                                                     [100%]
-4 passed, 102 deselected in 0.85s
+   The -k selection below reaches tests/orchestration/test_module_boundaries.py,
+   which is casting 2's module. Its DESELECTED count is a population this
+   casting does not own and cannot recapture when it moves -- it read 102 when
+   this log was committed and 103 at 438de87, staled by tests this command
+   never ran (casting 2's concern C-102). So the body carries a derived
+   verdict with a floor on the SELECTED count instead of that number.
+
+   The 84 above is kept EXACT, deliberately. tests/test_concerns.py and
+   tests/test_rosters.py are this casting's own key_files, and a population
+   only its owner can move is not fragile: it goes stale only when its owner
+   changes something, and its owner recaptures in the same commit. The
+   fragility is peer-ownership, not counting. The ruling in full, including
+   the two rejected repairs, is in evidence/casting-1-no-degradation.log.
+
+VERDICT: PASS -- exit 0, casting 2 guards over the new arrangement green, selected floor >= 4 met
