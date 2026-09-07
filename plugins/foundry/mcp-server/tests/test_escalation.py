@@ -4613,9 +4613,20 @@ def _shared_prose_scan(monkeypatch):
     `_CONVERGENCE_IDS` is the only file-specific datum the scan takes, and it is
     a module global there, so it is patched rather than passed. That is the
     whole of what "share the machinery, declare the data" means here: the
-    qualification grammar — the `process-fixes ` prefix, the `A / B / C` chain
-    whose head governs the tail, the wrap-collapse — has ONE implementation, and
-    each module states which bare ids it owns.
+    qualification grammar — the `process-fixes ` prefix, the `A / B / C` chain,
+    the wrap-collapse — has ONE implementation, and each module states which
+    bare ids it owns.
+
+    THE CHAIN INHERITS THROUGH REQUIREMENT IDS AND NOTHING ELSE, and the head
+    does NOT govern the tail (fallout NFR-011, D-174). `_chain_pattern` strips
+    only `<REQUIREMENT-ID> / ` segments off the prefix, so a RUN-LOCAL id — a
+    concern `C-NNN`, a defect `D-NNN` — is unstrippable and ENDS the inheritance
+    WHEREVER IT SITS: every requirement id after it is reported however the run
+    began. An all-requirement-family run is the one shape that cannot exhibit
+    that, being silent whatever the reader believes about why, which is why the
+    drive below pairs one with a mixed run.
+    `tests/test_spec_id_convention.py#CHAIN_PHRASE` is the sentence the refusal
+    prints when it bites.
     """
     from tests import test_observations as shared
 
@@ -4650,8 +4661,10 @@ def test_the_pin_reports_the_bare_tag_it_was_written_for(monkeypatch) -> None:
     """The pin's own fail-safe: a guard that cannot fail guards nothing.
 
     Driven over the exact prose D-181 was filed against, which must be reported,
-    and over each legal form, which must not be. Without this the pin would go
-    green on a file whose ids were all declared away, and nobody would know.
+    over each legal form, which must not be, and over a `/` run whose middle is
+    run-local, which must be reported despite a qualified head. Without this the
+    pin would go green on a file whose ids were all declared away, and nobody
+    would know.
     """
     _, unqualified_ids = _shared_prose_scan(monkeypatch)
 
@@ -4665,8 +4678,9 @@ def test_the_pin_reports_the_bare_tag_it_was_written_for(monkeypatch) -> None:
     assert unqualified_ids("AC-010 / FR-008 / ST-003 / OT-003 — one structural packet")
     assert unqualified_ids("NFR-002 / the house rule: never raise across MCP")
 
-    # ...and the qualified forms stay silent, including across a `/` chain whose
-    # head governs its tail and across a source line wrap.
+    # ...and the qualified forms stay silent, across a source line wrap and
+    # across a `/` chain — which inherits its head's qualification THROUGH
+    # REQUIREMENT IDS AND NOTHING ELSE.
     assert not unqualified_ids(
         "process-fixes AC-008 verbatim: 'After a GRIND->INSPECT transition, "
         "the server-side cycle counter has incremented without any "
@@ -4675,6 +4689,23 @@ def test_the_pin_reports_the_bare_tag_it_was_written_for(monkeypatch) -> None:
     assert not unqualified_ids(
         "process-fixes AC-010 / FR-008 / ST-003 / OT-003 — one structural packet"
     )
+    # That run is four requirement ids, which is the ONE shape that cannot
+    # exhibit the rule: it stays silent whatever the reader believes about why.
+    # A reader who learned "the head governs the tail" from it wrote a run whose
+    # head WAS qualified and whose middle was run-local, and was refused by the
+    # sentence that taught them (fallout NFR-011, D-174). So a MIXED run is
+    # driven beside it: a run-local segment is not a requirement id,
+    # `_chain_pattern` cannot strip it, and the inheritance ends THERE — as the
+    # exact reported list rather than merely truthy, so the pair cannot go green
+    # for some other reason. Mirrors
+    # tests/test_spec_id_convention.py#test_a_run_local_id_breaks_the_chain_however_the_run_began.
+    mixed_run = "process-fixes AC-010 / C-088 / ST-003"
+    assert unqualified_ids(mixed_run) == [f"ST-003 in ...{mixed_run}..."]
+    # POSITION IS THE WHOLE RULE, and it cuts both ways: a run-local segment
+    # breaks every requirement id BEHIND it and nothing in front of it, so
+    # putting the requirement ids first and the run-local ids last is the
+    # repair the refusal prescribes.
+    assert not unqualified_ids("process-fixes AC-010 / ST-003 / C-088")
     # A declared convergence id needs no prefix — that is the convention.
     assert not unqualified_ids("AC-004 verbatim: 'escalation.json records'")
 
