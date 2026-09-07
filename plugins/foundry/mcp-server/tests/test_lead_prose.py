@@ -1219,6 +1219,44 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         "**F0.9 REFUSES a shipped surface that no casting's `key_files` "
         "covers.**",
     ),
+    # The dimension measures a DECLARED surface -- `surface_globs` on the
+    # manifest -- and F0.5 is the only place that claim can be written, for the
+    # same reason `requirement_ids` is. Absent, the dimension reports NOT
+    # COMPUTABLE and refuses nothing, so a decompose that omits the field does
+    # not satisfy this rule: it turns the check off. That is the gap the check
+    # was added to close, reproduced one level down, which is why the prose has
+    # to say the absent case out loud rather than only the refusing one.
+    (
+        "f05-declares-the-shipped-surface-rather-than-guessing-it",
+        "FR-009",
+        START_MD,
+        "**The surface is DECLARED, never guessed — write `surface_globs` on "
+        "the manifest.**",
+    ),
+    # Why a DERIVED surface is not an acceptable substitute. Pinned because it
+    # is the clause a later reader is most likely to drop as verbose, and
+    # dropping it makes the field look like ceremony.
+    (
+        "f05-a-derived-surface-breaks-brownfield",
+        "FR-009",
+        START_MD,
+        "refusing a brownfield casting for the fifty-seven files of a "
+        "directory it deliberately touched three of",
+    ),
+    (
+        "f05-absent-surface-globs-is-not-a-pass",
+        "FR-009",
+        START_MD,
+        "**A manifest with no `surface_globs` is not a manifest that passes "
+        "this check; it is a manifest the check cannot run on.**",
+    ),
+    (
+        "f09-undeclared-surface-is-not-computable",
+        "FR-009",
+        START_MD,
+        "**a manifest declaring none is reported NOT COMPUTABLE rather than "
+        "passing**",
+    ),
     # The CHECK half, in the F0.9 dimension list -- the lead-facing statement
     # of what that door refuses. A door refusing on something the lead's own
     # protocol never mentions is D-172's own shape one level up: a rule with no

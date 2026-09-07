@@ -1,4 +1,4 @@
-# evidence-cmd: cd plugins/foundry && printf "%s\n" "--- commands/start.md: the F0.5 producer rule ---" && for p in "And \`key_files\` must cover the SHIPPED SURFACE, not just the files the spec names." "a file in no casting's \`key_files\` is a file the manifest cannot route a defect to." "a directory entry covers every path beneath it" "F0.9 REFUSES a shipped surface that no casting's \`key_files\` covers." "it routes by import coupling rather than by the requirement the defect was filed under"; do printf "%s\t%s\n" "$(grep -c -F -- "$p" commands/start.md)" "$p"; done && printf "%s\n" "--- commands/start.md: the F0.9 check the lead is told about ---" && for p in "Surface ownership — the map is not the shipped surface." "REFUSES any shipped surface no casting's \`key_files\` covers" "Coverage, never equality: a directory entry covers what is beneath it"; do printf "%s\t%s\n" "$(grep -c -F -- "$p" commands/start.md)" "$p"; done && printf "%s\n" "--- references/lead-discipline.md: the rationale ---" && for p in "## Why every shipped surface needs an owner" "Adjacency is not ownership" "owning a package costs one of a casting's eight entries, not one per file"; do printf "%s\t%s\n" "$(grep -c -F -- "$p" references/lead-discipline.md)" "$p"; done && printf "%s\n" "--- the pins that refuse each clause ---" && cd mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_lead_prose.py -k "shipped or unowned or ownership or adjacency or beneath" 2>&1 | grep -o "^[0-9]* passed"
+# evidence-cmd: cd plugins/foundry && printf "%s\n" "--- commands/start.md: the F0.5 producer rule ---" && for p in "And \`key_files\` must cover the SHIPPED SURFACE, not just the files the spec names." "a file in no casting's \`key_files\` is a file the manifest cannot route a defect to." "a directory entry covers every path beneath it" "F0.9 REFUSES a shipped surface that no casting's \`key_files\` covers." "it routes by import coupling rather than by the requirement the defect was filed under"; do printf "%s\t%s\n" "$(grep -c -F -- "$p" commands/start.md)" "$p"; done && printf "%s\n" "--- commands/start.md: the surface is DECLARED, and absent is not a pass ---" && for p in "The surface is DECLARED, never guessed — write \`surface_globs\` on the manifest." "refusing a brownfield casting for the fifty-seven files of a directory it deliberately touched three of" "A manifest with no \`surface_globs\` is not a manifest that passes this check; it is a manifest the check cannot run on." "a manifest declaring none is reported NOT COMPUTABLE rather than passing"; do printf "%s\t%s\n" "$(grep -c -F -- "$p" commands/start.md)" "$p"; done && printf "%s\n" "--- commands/start.md: the F0.9 check the lead is told about ---" && for p in "Surface ownership — the map is not the shipped surface." "REFUSES any shipped surface no casting's \`key_files\` covers" "Coverage, never equality: a directory entry covers what is beneath it"; do printf "%s\t%s\n" "$(grep -c -F -- "$p" commands/start.md)" "$p"; done && printf "%s\n" "--- references/lead-discipline.md: the rationale ---" && for p in "## Why every shipped surface needs an owner" "Adjacency is not ownership" "owning a package costs one of a casting's eight entries, not one per file"; do printf "%s\t%s\n" "$(grep -c -F -- "$p" references/lead-discipline.md)" "$p"; done && printf "%s\n" "--- the field name the prose writes is the field the F0.9 door reads ---" && printf "%s\tsurface_globs in commands/start.md\n" "$(grep -c -F -- "surface_globs" commands/start.md)" && printf "%s\tmanifest.get(\"surface_globs\") in the dimension that reads it\n" "$(grep -c -F -- 'manifest.get("surface_globs")' mcp-server/src/foundry_mcp/tools/foundry_validate.py)" && printf "%s\n" "--- the pins that refuse each clause ---" && cd mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_lead_prose.py -k "shipped or unowned or ownership or adjacency or beneath or surface or computable or brownfield" 2>&1 | grep -o "^[0-9]* passed"
 # evidence-for: FR-009, FR-037
 # evidence-timeout: 300
 
@@ -8,6 +8,11 @@
 1	a directory entry covers every path beneath it
 1	F0.9 REFUSES a shipped surface that no casting's `key_files` covers.
 1	it routes by import coupling rather than by the requirement the defect was filed under
+--- commands/start.md: the surface is DECLARED, and absent is not a pass ---
+1	The surface is DECLARED, never guessed — write `surface_globs` on the manifest.
+1	refusing a brownfield casting for the fifty-seven files of a directory it deliberately touched three of
+1	A manifest with no `surface_globs` is not a manifest that passes this check; it is a manifest the check cannot run on.
+1	a manifest declaring none is reported NOT COMPUTABLE rather than passing
 --- commands/start.md: the F0.9 check the lead is told about ---
 1	Surface ownership — the map is not the shipped surface.
 1	REFUSES any shipped surface no casting's `key_files` covers
@@ -16,5 +21,8 @@
 1	## Why every shipped surface needs an owner
 1	Adjacency is not ownership
 1	owning a package costs one of a casting's eight entries, not one per file
+--- the field name the prose writes is the field the F0.9 door reads ---
+2	surface_globs in commands/start.md
+1	manifest.get("surface_globs") in the dimension that reads it
 --- the pins that refuse each clause ---
-10 passed
+25 passed
