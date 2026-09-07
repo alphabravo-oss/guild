@@ -705,18 +705,37 @@ def foundry_next_action(
     # stopped and will be called at most a handful more times.
     halted_now = result.get("phase") == RUN_PHASE_HALTED
     if halted_now:
+        # fallout US-006 / FR-019 / CT-005 (D-147) \u2014 THE SECOND SURFACE THAT
+        # ASSERTED THE CAP FOR EVERY ENDING, through the same one spelling the
+        # imperative header takes. This line read "The run stopped at its
+        # configured --max-cycles." and was emitted for `lead_ruling`,
+        # `spec_change_required` and `user_stop` alike; see
+        # `_HALT_CAUSE_SENTENCES` for the drive.
         critical_rules = (
             "\n\nCRITICAL RULES \u2014 THIS RUN IS HALTED:"
-            "\n- The run stopped at its configured --max-cycles. HALTED is a "
+            "\n- The run stopped because "
+            + _halt_cause((result.get("details") or {}).get("halted_reason_member"))
+            + ". HALTED is a "
             "terminal state, distinct from DONE and reached by a successful "
-            "transition rather than an error (FR-024 / CT-016)."
+            "transition rather than an error (ST-001 / CT-004 / CT-007)."
             "\n- Do NOT dispatch another wave, do NOT call Foundry-Phase, and "
             "do NOT call Foundry-Next in a loop. There is no next transition "
             "to make."
             "\n- The report has been generated as part of the halt and names "
             "every open LIVE and LATENT defect. Read it."
-            "\n- Hand the remaining work to a new run, or re-run with a higher "
-            "--max-cycles. Nothing below asks you to keep going."
+            # fallout US-006 (D-147): the cap RAISE is a remedy for exactly one
+            # of the four endings. Offering it on a `spec_change_required` halt
+            # tells the lead to re-run the work the ruling just said is not
+            # useful until the spec moves — the cause claim above, said as
+            # advice.
+            "\n- Hand the remaining work to a new run"
+            + (
+                ", or re-run with a higher --max-cycles"
+                if (result.get("details") or {}).get("halted_reason_member")
+                == "cap_reached"
+                else ""
+            )
+            + ". Nothing below asks you to keep going."
         )
     else:
         critical_rules = _STANDING_CRITICAL_RULES
@@ -978,18 +997,78 @@ _STANDING_CRITICAL_RULES = (
 # MUST enumerate every call — compressing a multi-step sequence into a
 # single-line imperative causes the lead to follow the first tool call
 # literally and improvise the rest by guessing.
+#: fallout US-006 / FR-019 / CT-005 (D-147) — ONE SPELLING OF WHY THIS RUN
+#: ENDED, KEYED BY THE VOCABULARY MEMBER.
+#:
+#: Both lead-facing surfaces a halted `Foundry-Next` emits — the imperative
+#: header below and the CRITICAL RULES block in `foundry_next_action` — asserted
+#: the cap outright ("it reached its --max-cycles limit", "The run stopped at
+#: its configured --max-cycles"). THREE OF THE FOUR MEMBERS ARE NOT THE CAP.
+#: Driven on a run at F3 cycle 2 with `max_cycles` 3 — the cap NOT reached, one
+#: cycle still left — sealed with `Foundry-Phase('halt',
+#: reason='spec_change_required')`: `Foundry-Next` returned heading_for HALTED,
+#: cycles_to_cap 1, and instructions opening "The run stopped at its configured
+#: --max-cycles" followed by "it reached its --max-cycles limit". Both false.
+#:
+#: US-006 asks for "a halt door with a named reason ... SO THAT A RULING IS
+#: RECORDED IN THE ARCHIVE INSTEAD OF A HAND-EDITED CAP". The archive was always
+#: right — REPORT.md and report.json carry the member and the lead's text — so
+#: what these two strings did was overwrite the ruling on the one surface the
+#: lead is REQUIRED to read before its next call. Both predate FR-018, when the
+#: cap was the only route to HALTED, and neither was revisited when the halt
+#: door landed beside it.
+#:
+#: KEYED BY MEMBER, PINNED TO THE VOCABULARY. `tests/orchestration/
+#: test_guidance.py#test_every_halt_reason_has_its_own_cause_sentence` derives
+#: the key set from `HALT_REASONS`, so a member added to the closed vocabulary
+#: fails there rather than falling through to a sentence written for a
+#: different ending — the `_PYTEST_DISCOVERY_PHRASE` discipline, one rung along.
+_HALT_CAUSE_SENTENCES = {
+    "cap_reached": (
+        "it reached its --max-cycles limit and stopped with open work"
+    ),
+    "lead_ruling": (
+        "the lead ended it on a ruling and its open work is recorded"
+    ),
+    "spec_change_required": (
+        "it ended because the spec has to change before more work is useful"
+    ),
+    "user_stop": (
+        "the user stopped it and its open work is recorded"
+    ),
+}
+
+#: The answer for a `halted_reason` carrying text and no member — the shape
+#: every archive written before FR-019 carries. It says the run stopped and
+#: declines to name WHICH of the four endings it was, which is the same
+#: abstention `vocab.halt_reason` makes rather than guessing a member out of a
+#: pre-release sentence. Naming the cap here is how the defect above started.
+_HALT_CAUSE_UNNAMED = "it stopped with open work"
+
+
+def _halt_cause(member: object) -> str:
+    """The cause clause for a recorded halt reason member (fallout D-147)."""
+    return _HALT_CAUSE_SENTENCES.get(member, _HALT_CAUSE_UNNAMED)
+
+
 _ACTION_IMPERATIVES = {
     "init": "YOUR NEXT CALL: Foundry-Init (start a new run)",
     # ST-008 / AC-037: the one action whose imperative is to STOP. The generic
     # fallback header says "Execute the first tool call mentioned. Do not
     # deliberate.", which on a halted run would push the lead straight back into
     # the loop the cap ended — so this action gets an explicit entry.
+    #
+    # fallout US-006 (D-147): `{halt_cause}` is substituted from the RECORDED
+    # reason member. Unlike `{gate}` / `{token}`, an unresolved `{halt_cause}`
+    # may NOT fall back to the generic header — that header says "Execute the
+    # first tool call mentioned. Do not deliberate.", which is the exact push
+    # back into the loop this entry exists to stop — so `_halt_cause` is total
+    # over every input and always resolves.
     "halted": (
-        "YOUR NEXT CALL: NONE. This run is HALTED — it reached its --max-cycles "
-        "limit and stopped with open work. The report is generated. Do NOT "
-        "dispatch a wave, do NOT call Foundry-Phase, do NOT call Foundry-Next in "
-        "a loop. Read REPORT.md, tell the user what remains open by tier, and "
-        "stop."
+        "YOUR NEXT CALL: NONE. This run is HALTED — {halt_cause}. The report is "
+        "generated. Do NOT dispatch a wave, do NOT call Foundry-Phase, do NOT "
+        "call Foundry-Next in a loop. Read REPORT.md, tell the user what "
+        "remains open by tier, and stop."
     ),
     "cleanup_teams": (
         "YOUR NEXT CALLS (in order \u2014 do NOT wait for shutdown acks):\n"
@@ -1322,6 +1401,16 @@ def _format_imperative_header(
     CONTEXT below, which the branch already wrote for this phase.
     """
     imperative = _ACTION_IMPERATIVES.get(action)
+    if imperative and "{halt_cause}" in imperative:
+        # fallout US-006 / FR-019 (D-147) — substituted from the RECORDED
+        # member, which the halted branch publishes in `details` beside the
+        # sentence. Resolved BEFORE the crossing substitution and outside the
+        # unresolved-placeholder fallback below, because `_halt_cause` is total:
+        # there is no input for which this leaves a literal `{halt_cause}` in
+        # the header, and a halted run must never take the generic fallback.
+        imperative = imperative.replace(
+            "{halt_cause}", _halt_cause(details.get("halted_reason_member"))
+        )
     if imperative:
         crossing = _ACTION_CROSSINGS.get(action, {}).get(phase)
         if crossing:
@@ -1839,19 +1928,52 @@ def _compute_next_action(project_root: str) -> dict:
         report_path = fdir / REPORT_MD_FILENAME
         report_present = report_path.exists()
         report_error = halted.get("halted_report_error", "")
+        # fallout FR-019 / CT-004 / CT-007 (D-103) — THE NORMALISED SENTENCE IS
+        # WHAT AN OPERATOR READS, AND IT WAS COMPUTED AND THEN DISCARDED.
+        #
+        # `_leaf_halted_state` folds BOTH persisted shapes — this release's
+        # `{"reason": <member>, "text": <the lead's words>}` and every earlier
+        # archive's bare f-string — through `vocab.halt_reason` into one
+        # sentence, and this branch then interpolated `state["halted_reason"]`
+        # RAW beside it. Driven on a halted run: the instruction read
+        # "Run HALTED at cycle ? — {'reason': 'lead_ruling', 'text': 'the lead
+        # stopped it'}." and `details.halted_reason` was the dict, which
+        # `display.py#_fmt_foundry_next_lines` prints verbatim. Both surfaces a
+        # lead actually reads rendered a Python dict repr as prose, and the
+        # cycle rendered as "?" beside it because the raw read reached for a key
+        # the leaf had already resolved.
+        #
+        # Read from `halted` on BOTH surfaces now, so the reader that knows how
+        # to read the field is the only one that does.
+        halted_cycle = halted.get("halted_at_cycle")
+        halted_sentence = halted.get(
+            "halted_reason", "the configured cycle cap was reached"
+        )
+        halted_member = halted.get("halted_reason_member", "")
+        # fallout US-006 (D-147) — ONE SPELLING OF THE HAND-OFF, and the cap
+        # RAISE is part of it only when the cap is what ended the run. Both
+        # arms below offered "re-run with a higher --max-cycles" to every
+        # ending, which on a `spec_change_required` halt tells the lead to
+        # re-run the work the ruling just said is not useful until the spec
+        # moves. Said once, so the two arms cannot come to offer different
+        # remedies for one ending.
+        hand_off = "hand the remaining work to a new run" + (
+            ", or re-run with a higher --max-cycles"
+            if halted_member == "cap_reached"
+            else ""
+        )
         return {
             "phase": RUN_PHASE_HALTED,
             "action": "halted",
             "instructions": (
-                f"Run HALTED at cycle {state.get('halted_at_cycle', '?')} — "
-                f"{state.get('halted_reason', 'the configured cycle cap was reached')}. "
+                f"Run HALTED at cycle {halted_cycle if halted_cycle is not None else '?'} — "
+                f"{halted_sentence}. "
                 "HALTED is NOT DONE: this run stopped with open work. "
                 + (
                     f"The report has been generated at {REPORT_MD_FILENAME} and "
                     "names every open defect by tier. Do NOT dispatch another "
                     "wave, do NOT call Foundry-Phase again — read the report "
-                    "and hand the remaining work to a new run, or re-run with a "
-                    "higher --max-cycles."
+                    f"and {hand_off}."
                     if report_present
                     else (
                         f"The report was NOT generated — "
@@ -1863,15 +1985,21 @@ def _compute_next_action(project_root: str) -> dict:
                         f"call Foundry-Report to write {REPORT_MD_FILENAME}, "
                         "then read it. Until it exists, read defects.json "
                         "directly — the open work is recorded there whatever "
-                        "the generator could not render — and hand the "
-                        "remaining work to a new run, or re-run with a higher "
-                        "--max-cycles."
+                        f"the generator could not render — and {hand_off}."
                     )
                 )
             ),
             "details": {
-                "halted_at_cycle": state.get("halted_at_cycle"),
-                "halted_reason": state.get("halted_reason", ""),
+                "halted_at_cycle": halted_cycle,
+                "halted_reason": halted_sentence,
+                # fallout FR-019 / CT-005 (D-147) — the MEMBER beside the
+                # sentence, because the sentence is for a human and the member
+                # is what the two lead-facing surfaces below key on. Published
+                # rather than re-derived at each of them: a grouper reading
+                # `halted_reason` prose to decide which of the four endings this
+                # was is how a run's ending gets reclassified by a reader, which
+                # is the thing `vocab.halt_reason` refuses to do.
+                "halted_reason_member": halted_member,
                 # D-225: `persisted_max_cycles`, the one read, so this display
                 # cannot state a cap the halt did not act on.
                 "max_cycles": persisted_max_cycles(state),

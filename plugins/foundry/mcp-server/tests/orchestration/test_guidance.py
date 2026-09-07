@@ -1314,6 +1314,154 @@ def test_the_standing_rules_name_all_three_endings(run_env):
 
 
 
+# --------------------------------------------------------------------------- #
+# fallout FR-019 / US-006 / CT-005 / CT-007 (D-103 / D-147) — the halted notice
+# reads the RECORDED reason, in prose, and does not assert the cap for the three
+# endings that are not the cap.
+# --------------------------------------------------------------------------- #
+
+
+def _halted_by_ruling(fdir: Path, member: str, text: str, **over) -> None:
+    """A run sealed through the halt DOOR — the `{reason, text}` shape.
+
+    `_halted_run` writes the CAP's shape (a bare f-string), which is the only
+    shape that existed before FR-018. Both are live on disk, which is why
+    `foundry_state.halted_state` folds them into one sentence, and this is the
+    half the notice had never been driven on.
+    """
+    _write_state(
+        fdir, phase=RUN_PHASE_HALTED, cycle=over.pop("cycle", 2),
+        halted_at_cycle=over.pop("halted_at_cycle", 2),
+        halted_reason={"reason": member, "text": text},
+        **over,
+    )
+
+
+def test_the_halted_notice_renders_the_reason_as_prose_not_a_dict(run_env):
+    """fallout FR-019 / CT-004 (D-103) — the normalised sentence, not the record.
+
+    `_leaf_halted_state` already folds both persisted shapes through
+    `vocab.halt_reason` into one sentence, and this branch computed it and then
+    interpolated `state['halted_reason']` RAW instead. Driven before the fix:
+    the instruction read "Run HALTED at cycle ? — {'reason': 'lead_ruling',
+    'text': 'the lead stopped it'}." and `details.halted_reason` was the dict,
+    which `display.py#_fmt_foundry_next_lines` prints verbatim.
+
+    TWO SURFACES, and both are asserted: the instruction a lead reads and the
+    detail a display renders. The cycle is asserted too — it rendered "?"
+    beside the dict, from the same raw read.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _halted_by_ruling(fdir, "lead_ruling", "the lead stopped it", cycle=2)
+    _defect_ledger(fdir, [])
+
+    nxt = foundry_next_action(project_root)
+
+    assert nxt["action"] == "halted", nxt
+    # No Python repr anywhere a human reads.
+    assert "{'reason'" not in nxt["instructions"], nxt["instructions"]
+    assert "{'reason'" not in str(nxt["details"]["halted_reason"]), nxt["details"]
+    assert isinstance(nxt["details"]["halted_reason"], str), nxt["details"]
+    # The normalised sentence: the member, then the lead's own words.
+    assert nxt["details"]["halted_reason"] == "lead_ruling: the lead stopped it", nxt
+    assert "lead_ruling: the lead stopped it" in nxt["instructions"], nxt["instructions"]
+    # ...and the cycle beside it is the recorded number, not "?".
+    assert "Run HALTED at cycle 2" in nxt["instructions"], nxt["instructions"]
+    assert nxt["details"]["halted_at_cycle"] == 2, nxt["details"]
+
+
+def test_the_legacy_free_string_halt_still_renders_its_own_text(run_env):
+    """fallout FR-019 (D-103) — the ADJACENT shape, which must not regress.
+
+    Every archive written before FR-018 carries `halted_reason` as a bare
+    f-string and no member at all. `vocab.halt_reason` refuses to guess a member
+    out of one, so the sentence IS the text — and a fix that reached for
+    `halted_reason_member` unconditionally would print an empty cause for every
+    pre-release run. Driven on `_halted_run`, the cap's own shape.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _halted_run(fdir, cycle=2)
+    _defect_ledger(fdir, [])
+
+    nxt = foundry_next_action(project_root)
+
+    assert nxt["details"]["halted_reason"].startswith("--max-cycles 2 reached"), nxt
+    assert nxt["details"]["halted_reason_member"] == "", nxt["details"]
+    assert "--max-cycles 2 reached" in nxt["instructions"], nxt["instructions"]
+    # A record with no member names no ending, rather than being sorted into one.
+    assert "it stopped with open work" in _plain(nxt["instructions"]), nxt["instructions"]
+
+
+def test_every_halt_reason_has_its_own_cause_sentence():
+    """fallout US-006 / CT-005 (D-147) — the table is pinned to the vocabulary.
+
+    Derived from `HALT_REASONS`, never a hand list: a member added to the closed
+    set fails HERE rather than falling through to `_HALT_CAUSE_UNNAMED` and
+    telling the lead nothing about the ending its own door just recorded.
+    """
+    assert vocab.HALT_REASONS, "the halt vocabulary is empty; the derivation is blind"
+    assert set(_guidance._HALT_CAUSE_SENTENCES) == set(vocab.HALT_REASONS), {
+        "member_without_a_sentence": sorted(
+            set(vocab.HALT_REASONS) - set(_guidance._HALT_CAUSE_SENTENCES)
+        ),
+        "sentence_without_a_member": sorted(
+            set(_guidance._HALT_CAUSE_SENTENCES) - set(vocab.HALT_REASONS)
+        ),
+    }
+    # Each sentence is distinct: four members that read the same say nothing.
+    assert len(set(_guidance._HALT_CAUSE_SENTENCES.values())) == len(vocab.HALT_REASONS)
+    # ...and only the cap's names the cap, which is the whole of D-147.
+    for member, sentence in _guidance._HALT_CAUSE_SENTENCES.items():
+        if member != "cap_reached":
+            assert "--max-cycles" not in sentence, (member, sentence)
+
+
+@pytest.mark.parametrize("member", sorted(vocab.HALT_REASONS))
+def test_the_halted_surfaces_name_the_recorded_ending_not_the_cap(run_env, member):
+    """fallout US-006 / FR-019 (D-147) — both lead-facing sentences, every member.
+
+    US-006 wants "a halt door with a named reason ... SO THAT A RULING IS
+    RECORDED IN THE ARCHIVE INSTEAD OF A HAND-EDITED CAP". The archive was
+    always right; the two sentences Foundry-Next emits before the lead's next
+    call were not. `_ACTION_IMPERATIVES['halted']` read "it reached its
+    --max-cycles limit" and the halted CRITICAL RULES block read "The run
+    stopped at its configured --max-cycles" — for all four members.
+
+    DRIVEN on a run at F3 cycle 2 with `max_cycles` 3, so the cap is NOT reached
+    and one cycle is still left: any surface naming the cap on a
+    `spec_change_required` halt is saying something the run itself refutes.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _halted_by_ruling(
+        fdir, member, "the recorded words", cycle=2, halted_at_cycle=2, max_cycles=3,
+    )
+    _defect_ledger(fdir, [])
+
+    nxt = foundry_next_action(project_root)
+    text = _plain(nxt["instructions"])
+
+    assert nxt["details"]["halted_reason_member"] == member, nxt["details"]
+    # The member's own cause clause reaches BOTH surfaces.
+    cause = _guidance._HALT_CAUSE_SENTENCES[member]
+    assert f"This run is HALTED — {cause}." in text, text
+    assert f"The run stopped because {cause}." in text, text
+    # ...and the lead's own words survive beside it.
+    assert "the recorded words" in text, text
+
+    if member == "cap_reached":
+        assert "--max-cycles limit" in text, text
+        assert "re-run with a higher --max-cycles" in text, text
+    else:
+        # The cap is not claimed as the cause, and the cap RAISE is not offered
+        # as the remedy for an ending a bigger cap would not have changed.
+        assert "reached its --max-cycles limit" not in text, text
+        assert "stopped at its configured --max-cycles" not in text, text
+        assert "re-run with a higher --max-cycles" not in text, text
+
+
 def test_the_status_header_renders_halted_once(run_env):
     """NFR-005 / CT-016: HALTED is a named terminal state Foundry-Next reports.
     D-137.
