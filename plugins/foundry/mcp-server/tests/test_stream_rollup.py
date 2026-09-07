@@ -46,6 +46,34 @@ must never fail. Three behaviours changed again, for that one reason:
 
 The register for those is at the foot of this module, driving the real door
 against a ``tmp_path`` run dir and reading the persisted document back.
+
+fallout ST-008 / CT-003 (D-159, concern C-076) — AND ``items_total`` IS NOT
+OPTIONAL HERE EITHER.
+
+ST-008's guard column reads "items_checked at most items_total" with no
+qualifier, so the `items_checked <= items_total` bound is UNCONDITIONAL and a
+record declaring no population is refused. This module asserted the opposite
+rule outright in one node and leaned on it by accident in eight more, and the
+two failures do not look alike. The accidental ones omitted ``items_total`` as
+a convenience and now declare it. ``test_a_stream_with_no_declared_population``
+stated the exemption in its name and its docstring, so it is INVERTED rather
+than repaired: a test pinning a rule the spec withholds is worse than a red
+one, because it makes the wrong rule look verified.
+
+Five of the accidental eight were GREEN throughout, which is the sharper half.
+Three are the drop-warning tests, and a refusal carries no ``warning`` key at
+all — so every ``assert "Coverage dropped" not in result.get("warning", "")``
+passed on the door refusing the call rather than on the comparison running.
+This module is the only home that assertion has (`tests/orchestration/
+test_streams.py` sent it here on purpose), so all three would have stayed green
+with the drop comparison deleted outright. Each now asserts ``ok`` first. The
+other two were merely over-determined: scaffolding records that were absent
+instead of complete, and a refusal the bound could have claimed instead of the
+rung the test names.
+
+The rule that leaves behind, greppable: EVERY ``foundry_mark_stream`` call in
+this module declares ``items_total`` — the ones that must succeed, and the ones
+whose refusal must come from a named rung that is not the bound.
 """
 
 from __future__ import annotations
@@ -277,9 +305,13 @@ def test_records_in_different_cycles_land_in_different_buckets(run_env):
     _write_spec(fdir, 10)
 
     _set_cycle(fdir, 0)
-    foundry_mark_stream("trace", cycle=0, items_checked=30, project_root=project_root)
+    foundry_mark_stream(
+        "trace", cycle=0, items_checked=30, items_total=30, project_root=project_root
+    )
     _set_cycle(fdir, 1)
-    foundry_mark_stream("trace", cycle=1, items_checked=28, project_root=project_root)
+    foundry_mark_stream(
+        "trace", cycle=1, items_checked=28, items_total=30, project_root=project_root
+    )
 
     assert _rollup_totals(fdir, 0, "trace")["items_checked"] == 30
     assert _rollup_totals(fdir, 1, "trace")["items_checked"] == 28
@@ -308,8 +340,17 @@ def test_threshold_shortfall_blocks_at_the_streams_complete_check(run_env):
     foundry_mark_stream(
         "prove", cycle=0, items_checked=40, items_total=100, project_root=project_root
     )
-    foundry_mark_stream("trace", cycle=0, items_checked=10, project_root=project_root)
-    foundry_mark_stream("test", cycle=0, items_checked=10, project_root=project_root)
+    # TRACE and TEST are scaffolding: recorded at their full declared
+    # population so PROVE is the only stream short, which is what the
+    # `== ["prove"]` below claims. Left at the default `items_total=0` these
+    # two calls were REFUSED (fallout ST-008), so the assertion held because
+    # the records were absent rather than because they were complete.
+    foundry_mark_stream(
+        "trace", cycle=0, items_checked=10, items_total=10, project_root=project_root
+    )
+    foundry_mark_stream(
+        "test", cycle=0, items_checked=10, items_total=10, project_root=project_root
+    )
 
     streams = _check_streams_complete(project_root)
     assert streams["complete"] is False
@@ -334,8 +375,14 @@ def test_a_later_record_clears_the_shortfall_the_earlier_one_caused(run_env):
     project_root, fdir = run_env
     _write_spec(fdir, 100)
     _write_castings(fdir, ["src/api/login.py"])
-    foundry_mark_stream("trace", cycle=0, items_checked=10, project_root=project_root)
-    foundry_mark_stream("test", cycle=0, items_checked=10, project_root=project_root)
+    # Scaffolding, at its full declared population — see the same pair in
+    # `test_threshold_shortfall_blocks_at_the_streams_complete_check`.
+    foundry_mark_stream(
+        "trace", cycle=0, items_checked=10, items_total=10, project_root=project_root
+    )
+    foundry_mark_stream(
+        "test", cycle=0, items_checked=10, items_total=10, project_root=project_root
+    )
 
     foundry_mark_stream(
         "prove", cycle=0, items_checked=40, items_total=100, project_root=project_root
@@ -471,11 +518,13 @@ def test_drop_warning_compares_cycle_n_to_cycle_n_minus_one(run_env):
     _write_spec(fdir, 10)
 
     _set_cycle(fdir, 0)
-    foundry_mark_stream("trace", cycle=0, items_checked=100, project_root=project_root)
+    foundry_mark_stream(
+        "trace", cycle=0, items_checked=100, items_total=100, project_root=project_root
+    )
 
     _set_cycle(fdir, 1)
     result = foundry_mark_stream(
-        "trace", cycle=1, items_checked=20, project_root=project_root
+        "trace", cycle=1, items_checked=20, items_total=100, project_root=project_root
     )
 
     assert "Coverage dropped" in result.get("warning", "")
@@ -486,47 +535,82 @@ def test_drop_warning_compares_cycle_n_to_cycle_n_minus_one(run_env):
 def test_a_second_tranche_of_the_same_cycle_is_not_a_drop(run_env):
     """The false positive the old marker comparison produced: a second partial
     record of the SAME cycle looked like a collapse, because 'the previous
-    write of this file' is not 'the previous cycle'."""
+    write of this file' is not 'the previous cycle'.
+
+    Both calls declare their population. Left at the default `items_total=0`
+    both were REFUSED (fallout ST-008), and a refusal carries no `warning` key
+    at all — so this assertion passed without the drop comparison ever running,
+    and would have kept passing had that comparison been deleted outright.
+    """
     project_root, fdir = run_env
     _write_spec(fdir, 10)
     _set_cycle(fdir, 0)
 
-    foundry_mark_stream("trace", cycle=0, items_checked=100, project_root=project_root)
+    foundry_mark_stream(
+        "trace", cycle=0, items_checked=100, items_total=100, project_root=project_root
+    )
     result = foundry_mark_stream(
-        "trace", cycle=0, items_checked=5, project_root=project_root
+        "trace", cycle=0, items_checked=5, items_total=100, project_root=project_root
     )
 
+    assert result.get("ok") is True, result
     assert "Coverage dropped" not in result.get("warning", "")
 
 
 def test_no_drop_warning_when_the_previous_cycle_never_ran_the_stream(run_env):
-    """Nothing to compare against is not a drop."""
+    """Nothing to compare against is not a drop.
+
+    The record declares its population: at the default `items_total=0` the call
+    was REFUSED (fallout ST-008), and the absent `warning` key satisfied this
+    assertion without cycle 2 ever being consulted.
+    """
     project_root, fdir = run_env
     _write_spec(fdir, 10)
     _set_cycle(fdir, 3)
 
     result = foundry_mark_stream(
-        "trace", cycle=3, items_checked=1, project_root=project_root
+        "trace", cycle=3, items_checked=1, items_total=1, project_root=project_root
     )
 
+    assert result.get("ok") is True, result
     assert "Coverage dropped" not in result.get("warning", "")
 
 
 def test_cycle_totals_are_what_the_drop_compares_not_single_records(run_env):
-    """Cycle 0 delivered as two tranches totalling 100 is not a drop when
-    cycle 1 delivers 90 in one — comparing single records would say it was."""
+    """The drop reads cycle N-1's TOTALS, and under replace semantics those
+    totals are the LAST record for the pair — not the first, and not a sum.
+
+    fallout AC-030 / OT-028 — THE ARITHMETIC THIS TEST NAMED IS GONE.
+    It used to read "cycle 0 delivered as two tranches totalling 100", which is
+    the `+= items_checked` model GI-016 replaced: cycle 0's two records now
+    leave the cycle at 20, the second one's value. The distinction the test
+    NAMES still has a subject, and this drive is what isolates it — cycle 1's
+    30 is no drop against the cycle total (20), but would be a drop against the
+    single earlier record of cycle 0 (100) that a per-record comparison would
+    have reached for.
+
+    Both cycles declare their population. Left at the default `items_total=0`
+    all three calls were REFUSED (fallout ST-008) and the absent `warning` key
+    passed this assertion with no comparison performed at all.
+    """
     project_root, fdir = run_env
     _write_spec(fdir, 10)
 
     _set_cycle(fdir, 0)
-    foundry_mark_stream("trace", cycle=0, items_checked=50, project_root=project_root)
-    foundry_mark_stream("trace", cycle=0, items_checked=50, project_root=project_root)
+    foundry_mark_stream(
+        "trace", cycle=0, items_checked=100, items_total=100, project_root=project_root
+    )
+    foundry_mark_stream(
+        "trace", cycle=0, items_checked=20, items_total=100, project_root=project_root
+    )
 
     _set_cycle(fdir, 1)
     result = foundry_mark_stream(
-        "trace", cycle=1, items_checked=90, project_root=project_root
+        "trace", cycle=1, items_checked=30, items_total=100, project_root=project_root
     )
 
+    assert result.get("ok") is True, result
+    assert _rollup_totals(fdir, 0, "trace")["items_checked"] == 20
     assert "Coverage dropped" not in result.get("warning", "")
 
 
@@ -661,15 +745,25 @@ def test_a_negative_findings_count_is_refused(run_env):
 
 def test_the_refusal_names_the_offending_value_and_the_action(run_env):
     """The house refusal shape: `error` names the offending value, `hint` names
-    the action. Same rung as the items_checked guard beside it."""
+    the action. Same rung as the items_checked guard beside it.
+
+    Both calls declare a population they are well inside, so the rung each one
+    NAMES is the rung that refuses it. At the default `items_total=0` the first
+    call was over-determined — 1 checked against 0 declared trips the
+    unconditional ST-008 bound too — and a reordering that moved the
+    findings_count guard below it would have left this test green while the
+    refusal it pins had stopped happening.
+    """
     project_root, fdir = run_env
     _write_spec(fdir, 10)
 
     negative = foundry_mark_stream(
-        "prove", cycle=0, items_checked=1, findings_count=-1, project_root=project_root
+        "prove", cycle=0, items_checked=1, items_total=10,
+        findings_count=-1, project_root=project_root,
     )
     zero_checked = foundry_mark_stream(
-        "prove", cycle=0, items_checked=0, findings_count=1, project_root=project_root
+        "prove", cycle=0, items_checked=0, items_total=10,
+        findings_count=1, project_root=project_root,
     )
 
     for refusal in (negative, zero_checked):
@@ -774,16 +868,48 @@ def test_partial_records_of_one_cycle_are_still_accepted(run_env):
     assert totals["records"] == 2
 
 
-def test_a_stream_with_no_declared_population_is_still_accepted(run_env):
-    """items_total=0 means "no fixed denominator", not "checked more than
-    exist" — the ratio guard must not fire on it."""
-    project_root, fdir = run_env
+def test_a_stream_with_no_declared_population_is_refused(run_env):
+    """fallout ST-008 / CT-003 (D-159, concern C-076) — THE EXEMPTION THIS
+    MODULE ASSERTED IS NOT IN THE SPEC.
 
-    result = foundry_mark_stream(
-        "sight", cycle=0, items_checked=12, items_total=0, project_root=project_root
+    This node used to read "items_total=0 means 'no fixed denominator', not
+    'checked more than exist' — the ratio guard must not fire on it", and the
+    rung it described opened `if items_total > 0 and ...`. Nothing grants that.
+    ST-008's guard column is "items_checked at most items_total"; CT-003's
+    errors column is "items_checked above items_total"; and CT-003's output
+    column requires "totals at most 100%", which is unmeasurable against a
+    denominator nobody declared. A test stating a contract the spec withholds
+    is worse than a failing one, because it pins the wrong rule as correct.
+
+    The drive is repeated here rather than left at the door — the door's own is
+    `tests/orchestration/test_streams.py#test_a_record_declaring_no_population_has_no_upper_bound_and_is_refused`
+    — because the COST lands in this module's read path. `_coverage_shortfall`
+    measures TRACE as `declared > 0 and checked < declared * 0.95`, so a record
+    carrying items_total=0 stands that rung down entirely: driven before the
+    fix, `Foundry-Stream(trace, items_checked=9999, items_total=0)` returned ok
+    with coverage "N/A" and the streams-complete check raised no shortfall for
+    it, while the same call with items_total=10 was correctly refused. The
+    coverage rung was satisfied by a record that checked nothing against
+    nothing.
+    """
+    project_root, fdir = run_env
+    _write_spec(fdir, 100)
+    _write_castings(fdir, ["src/api/login.py"])
+
+    refused = foundry_mark_stream(
+        "trace", cycle=0, items_checked=9999, items_total=0, project_root=project_root
     )
 
-    assert result.get("ok") is True, result
+    assert refused.get("ok") is not True, refused
+    assert "items_checked=9999" in refused["error"], refused
+    assert "items_total=0" in refused["error"], refused
+
+    # Nothing was written, so the rungs this module owns have nothing to be
+    # satisfied by: the stream is still OWED, not silently complete.
+    assert _rollup_totals(fdir, 0, "trace") is None, "the record was written"
+    streams = _check_streams_complete(project_root)
+    assert streams["complete"] is False, streams
+    assert "trace" in streams["missing"], streams
 
 
 # --------------------------------------------------------------------------- #
