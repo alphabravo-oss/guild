@@ -1712,6 +1712,62 @@ def test_reproduction_placeholders_are_all_refused_by_their_own_rule() -> None:
         assert vocab.reproduction_attempted_problem(f"  {placeholder.upper()}  ") is not None
 
 
+def test_the_shared_reproduction_refusal_names_no_tier() -> None:
+    """fallout D-115 / CT-012 — one rung, two tiers, and the sentence must fit both.
+
+    `foundry.py` splits the HINT in two on the filing's own tier, because "a
+    single hint would tell half its readers to write the wrong thing": a LATENT
+    filing owes a negative result, a HARDENING filing owes the probe it drove
+    and the wrong result it saw. The ERROR beside that hint came from here and
+    was fixed LATENT text — "A LATENT filing must say what was driven and what
+    it found (e.g. 'AST sweep of both roots finds 0 sites')" — so a HARDENING
+    filing missing its reproduction was refused with the correct HARDENING hint
+    and, one field over, an instruction to satisfy it with a negative-result AST
+    sweep. That is the one kind of evidence a HARDENING record must NOT carry:
+    the refusal told the stream to write the thing that would make the filing
+    wrong.
+
+    Neutral, not silent: the obligation both tiers share is still stated, and
+    the sentence points at the hint for which evidence THIS tier owes.
+    """
+    for statement in ("", "none", "n/a", "short"):
+        problem = vocab.reproduction_attempted_problem(statement)
+        assert problem is not None, statement
+        assert "LATENT" not in problem, (
+            f"the shared refusal names LATENT to a HARDENING filer: {problem}"
+        )
+        assert "AST sweep" not in problem, (
+            f"the shared refusal offers a NEGATIVE-RESULT example, which is "
+            f"exactly what a HARDENING filing may not carry: {problem}"
+        )
+        assert "DRIVEN" in problem or "driven" in problem, (
+            f"neutral is not empty — the shared obligation must still be "
+            f"stated: {problem}"
+        )
+
+
+def test_the_two_tier_hints_beside_that_refusal_do_name_their_tier() -> None:
+    """fallout D-115 — the tier-specific half lives at the door, and still does.
+
+    Neutralising the shared sentence is only correct because the doors already
+    carry the tier-correct instruction. If those two hints ever merged, this
+    module's refusal would be the only text a filer got and it would name
+    neither tier — so the split is asserted here, beside the neutrality it
+    depends on.
+    """
+    from foundry_mcp.tools import foundry
+
+    latent = foundry._LATENT_REPRODUCTION_HINT
+    hardening = foundry._HARDENING_REPRODUCTION_HINT
+    assert latent != hardening, "one hint for two tiers is what D-115 undid"
+    assert "LATENT" in latent and "negative result" in latent
+    assert "HARDENING" in hardening and "DROVE" in hardening
+    assert "wrong result" in hardening, (
+        "the HARDENING hint must ask for the wrong result the probe produced, "
+        "which is the evidence the neutral refusal deliberately does not name"
+    )
+
+
 def test_is_security_property_text_is_the_same_predicate_as_the_denylist() -> None:
     """CT-003 — the LATENT denylist reuses the existing security predicate.
 
@@ -2228,6 +2284,33 @@ VERIFIER_SET = (
     "plugins/foundry/skills/temper/SKILL.md",
     "plugins/foundry/scripts/validate-test-observations.py",
     "plugins/foundry/scripts/validate-intent-coverage.py",
+    # fallout D-125 (of D-080) — THE THREE LEAVES THE GI-033 LAYERING HOISTED
+    # THE GATE AND WIDTH PREDICATES INTO. `unrecorded_width_problem`,
+    # `inspect_mode_gap` and `WIDTH_RECORDING_TRANSITIONS` — the width refusal,
+    # moved wholesale out of `width.py` — plus `check_streams_complete`,
+    # `persisted_max_cycles`, `open_cross_casting_concerns`, `active_teams`,
+    # `halted_state`, `current_inspect_mode`, `git_changed_paths` and
+    # `boundary_base_sha` are defined in `foundry_state.py`;
+    # `report_document_status`, `count_spec_requirements` and
+    # `_spec_requirement_ids` in `artifacts.py`; the escalation rung readers in
+    # `orchestration/escalation.py`. Each is called from a live refusal path in
+    # `gates.py` or `transitions.py`, so a GRIND diff confined to one of these
+    # three changed the machinery that JUDGES and recorded rule `delta`.
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/artifacts.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/escalation.py",
+)
+
+#: fallout D-113 — the sibling plugins in this repo. Every rule in
+#: `VERIFIER_PATH_PATTERNS` is segment-anchored so it survives being installed
+#: at a different root, and in the Guild source tree that anchor also matched
+#: another plugin's identically-named file. No foundry stream loads crucible's
+#: assayer or shells out to forge's spec validators, so each of these bought a
+#: five-stream FULL INSPECT for a diff that touched no foundry surface at all.
+SIBLING_PLUGIN_LOOKALIKES = (
+    "plugins/crucible/agents/assayer.md",
+    "plugins/forge/scripts/validate-spec.py",
+    "plugins/forge/scripts/validate_spec_review.py",
 )
 
 #: The four modules casting 2 carves out of the monolith in WAVE 2. They are
@@ -2384,9 +2467,13 @@ def test_every_post_split_lifecycle_module_earns_delta(path: str) -> None:
         # The whole-package rule's cost, module by module. These are renderers,
         # ledgers and readers: they act on verdicts, and moving one leaves
         # every verdict already reached as sound as it was.
+        # `foundry_state.py` LEFT THIS LIST at D-125 and did not leave it
+        # quietly: the GI-033 layering hoisted the width refusal and nine other
+        # gate predicates into it, so it stopped being a reader of verdicts and
+        # became one of the modules that reach them. It is in `VERIFIER_SET`
+        # above now. The four that remain are renderers and ledgers still.
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py",
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_report.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py",
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py",
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_handoff.py",
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/citation.py",
@@ -2484,10 +2571,13 @@ def test_the_server_package_is_no_longer_matched_whole() -> None:
     machinery: under the package rule such a path could not exist, and under
     the narrowed rule it must.
     """
+    # fallout D-125 — `foundry_state.py` is off this list because it now DEFINES
+    # the width refusal and nine other gate predicates (GI-033's hoist), not
+    # because the package rule came back. The four below still carry the
+    # property: real modules under `foundry_mcp/` that answer False.
     lifecycle = (
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py",
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_report.py",
-        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py",
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py",
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/citation.py",
     )
@@ -2720,6 +2810,154 @@ def test_every_validator_a_stream_shells_out_to_is_a_verifier_path() -> None:
         assert not vocab.is_verifier_path(rel), (
             f"{rel} moves no judgement, so sweeping it in deletes a real DELTA "
             f"case and every GRIND cycle pays for a five-stream INSPECT"
+        )
+
+
+@pytest.mark.parametrize("path", SIBLING_PLUGIN_LOOKALIKES)
+def test_another_plugins_lookalike_is_not_this_verifier(path: str) -> None:
+    """fallout D-113 — a segment anchor cannot tell two plugins apart on its own.
+
+    `(?:^|/)agents/(?:assayer|…)\\.md$` and `(?:^|/)scripts/validate[-_]…\\.py$`
+    are written with a segment anchor so they still match when the plugin is
+    installed at a different root, and in THIS repo that anchor also matched
+    `plugins/crucible/agents/assayer.md` and forge's two spec validators. No
+    foundry stream loads crucible's assayer or shells out to forge's
+    validators, so each of these charged a five-stream FULL INSPECT against the
+    AC-046 ceiling for a diff that touched no foundry surface.
+
+    Driven as REAL repo paths, like the positive rows: a rule that excludes a
+    path git never prints is a rule that never fires.
+    """
+    assert (REPO_ROOT / path).exists(), (
+        f"{path} is gone; re-point this row at a sibling plugin's lookalike or "
+        f"drop it — an exclusion asserted over a path that does not exist "
+        f"proves nothing about a real diff"
+    )
+    assert not vocab.is_verifier_path(path), (
+        f"{path} belongs to another plugin in this repo and answers True, so a "
+        f"forge-only or crucible-only GRIND diff records rule verifier_touched "
+        f"and pays for a full five-stream INSPECT (AC-012 / AC-046)"
+    )
+
+
+def test_the_foundry_twin_of_every_lookalike_still_answers_true() -> None:
+    """fallout D-113 — the exclusion must not take the real file with it.
+
+    The whole risk of a negative rule is that it is too wide. Each row above has
+    a foundry twin that is genuinely stream-contract surface, and asserting the
+    exclusion without asserting the twin would let a rule that matched
+    `agents/assayer.md` everywhere pass this file.
+    """
+    for path in (
+        "plugins/foundry/agents/assayer.md",
+        "plugins/foundry/scripts/validate-test-observations.py",
+        "plugins/foundry/scripts/validate-intent-coverage.py",
+    ):
+        assert vocab.is_verifier_path(path), (
+            f"{path} is foundry's own and stopped matching; the D-113 "
+            f"exclusion is too wide and has deleted the rule it was narrowing"
+        )
+
+    # And the PLUGIN-RELATIVE spellings still match, which is what
+    # `tests/test_inspect_mode.py` drives the width decision with and the reason
+    # the fix is an exclusion rather than a `foundry/` prefix on each rule.
+    assert vocab.is_verifier_path("agents/assayer.md")
+    assert vocab.is_verifier_path("skills/prove/SKILL.md")
+
+
+def test_the_exclusion_gates_the_patterns_and_not_the_runs_own_spec() -> None:
+    """fallout D-113 — FR-032's spec arm is not a name match and is not gated.
+
+    A run whose spec lives under another plugin is still that run's own spec,
+    and `verifier_touched` on the spec is the whole of FR-032. The exclusion
+    exists to stop a rule matching by NAME; it has no business answering for a
+    path the caller has named as this run's spec.
+    """
+    spec = "plugins/crucible/specs/mini-foundry/spec.md"
+    assert not vocab.is_verifier_path(spec), "no pattern should claim it"
+    assert vocab.is_verifier_path(spec, spec_path=spec), (
+        "the spec arm was gated by the sibling-plugin exclusion, so a run "
+        "building another plugin would judge its own spec's edits with a DELTA "
+        "roster"
+    )
+
+
+def test_the_exclusion_set_is_a_constant_the_predicate_reads() -> None:
+    """fallout D-113 — same rule as the pattern tuple: one constant, compiled once."""
+    assert isinstance(vocab.VERIFIER_PATH_EXCLUSIONS, tuple)
+    assert vocab.VERIFIER_PATH_EXCLUSIONS, "an empty exclusion set excludes nothing"
+    for pattern in vocab.VERIFIER_PATH_EXCLUSIONS:
+        re.compile(pattern)
+    assert len(vocab._VERIFIER_PATH_EXCLUSION_RES) == len(
+        vocab.VERIFIER_PATH_EXCLUSIONS
+    ), "the compiled set is derived from the constant, never typed twice"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_state.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/artifacts.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/escalation.py",
+    ],
+)
+def test_the_hoisted_gate_predicates_host_module_forces_full(path: str) -> None:
+    """fallout D-125 (of D-080) — the verifier set follows the machinery.
+
+    FR-043: "the verifier set is exactly the gates/transitions module(s), THE
+    WIDTH DECISION, the evidence sweep, schemas/, vocab.py, and the loaded
+    prose". The GI-033 layering moved sixteen gate and width predicates OUT of
+    the four decider modules — a symbol both the verifier layer and the
+    lifecycle layer read can live in neither, so it went to a leaf — and this
+    tuple did not follow them.
+
+    The consequence is the self-hosting hazard A-032 names, at its sharpest: a
+    GRIND diff touching only `unrecorded_width_problem`, the predicate that
+    decides whether a cycle's verification was COMPLETE, recorded rule `delta`,
+    so the next INSPECT ran narrow having just changed the thing that judges
+    completeness. `verifier_touched` forcing FULL is the only accepted
+    mitigation for exactly that.
+    """
+    assert (REPO_ROOT / path).exists(), f"{path} is gone; re-point this row"
+    assert vocab.is_verifier_path(path), (
+        f"{path} defines predicates called from a live refusal path in "
+        f"gates.py or transitions.py and answers False, so a GRIND diff moving "
+        f"one would be judged by a DELTA roster (FR-043 / AC-012 / ST-006)"
+    )
+
+
+def test_each_hoisted_predicate_named_by_d125_is_defined_where_the_rule_says() -> None:
+    """fallout D-125 — the rows above are widened for a REASON, and it is checkable.
+
+    A path added to `VERIFIER_SET` on a hunch is the D-033 staleness this file
+    exists to catch, one direction over. These are the symbols the filing named
+    — the width refusal, the streams-complete check, the cap behind `would_halt`,
+    the CONCERN_OPEN rung, the halt rungs, the recorded-width reader, the DONE
+    gate's report read — so if a later casting moves them somewhere else, the
+    row above stops being justified HERE rather than going quietly stale.
+    """
+    from foundry_mcp.tools import artifacts, foundry_state
+    from foundry_mcp.tools.orchestration import escalation
+
+    for module, symbols in (
+        (foundry_state, (
+            "unrecorded_width_problem", "inspect_mode_gap",
+            "WIDTH_RECORDING_TRANSITIONS", "current_inspect_mode",
+            "check_streams_complete", "persisted_max_cycles",
+            "open_cross_casting_concerns", "active_teams", "halted_state",
+            "git_changed_paths", "boundary_base_sha", "sight_required",
+        )),
+        (artifacts, (
+            "report_document_status", "count_spec_requirements",
+        )),
+        (escalation, ("_persisted_escalations",)),
+    ):
+        missing = [name for name in symbols if not hasattr(module, name)]
+        assert not missing, (
+            f"{module.__name__} no longer defines {missing}. D-125 widened "
+            f"VERIFIER_PATH_PATTERNS to this module BECAUSE it defines them; "
+            f"if they moved, move the pattern with them rather than leaving a "
+            f"rule that names a file for a reason that is no longer true."
         )
 
 

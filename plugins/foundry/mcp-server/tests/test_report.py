@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import inspect
 import json
 import re
 import subprocess
@@ -3642,7 +3643,17 @@ def test_foundry_report_imports_only_the_two_leaf_modules():
     # the answer F0.9 passed or refused on. Body-level for this test's own
     # stated reason and no other: `foundry_validate` imports `foundry_spawn`,
     # which is already one of the two deferred reaches below.
+    #
+    # concern C-069 — `foundry_mcp.tools.foundry` joins them, on the D-013
+    # ground exactly: `temper_candidate_is_driven` is a SPELLING owned by the
+    # module that WRITES the driven marker, not a derived table. Casting 4's
+    # D-114 fix made it the one predicate the drive door's idempotence rung and
+    # the roster both ask, and this module kept a private copy of the same two
+    # markers — the second derivation GI-024 forbids. Body-level because
+    # `foundry.py` is where the MCP doors live and a module-level reach from a
+    # renderer into a door layer is how a cycle gets closed.
     assert nested == {
+        "foundry_mcp.tools.foundry",
         "foundry_mcp.tools.foundry_handoff",
         "foundry_mcp.tools.foundry_spawn",
         "foundry_mcp.tools.foundry_validate",
@@ -5224,6 +5235,55 @@ def test_a_candidate_with_no_driven_marker_at_all_reads_as_undriven(
     assert section["driven_candidate_count"] == 0
 
 
+def test_the_report_asks_the_same_driven_predicate_the_doors_ask(
+    report_env,
+) -> None:
+    """concern C-069 (casting 4's D-114) / GI-024 — one derivation, two surfaces.
+
+    "Has this TEMPER candidate been driven" is asked by three places: the drive
+    door's idempotence rung, the roster `foundry_query_observations` hands
+    TEMPER, and this section. D-114 closed the first two onto
+    `tools/foundry.py#temper_candidate_is_driven`; this reader kept a private
+    copy of the two-marker rule, which is the second derivation GI-024's
+    violation column names and exactly the state D-114 was filed over — a
+    roster and a report answering different questions about one ledger, with
+    nothing comparing them.
+
+    Driven rather than asserted by inspection, because "they agree today" is
+    the property that was already true when D-114 was filed. Every marker
+    spelling the predicate accepts must retire the candidate HERE too, and the
+    one it rejects must not.
+    """
+    from foundry_mcp.tools.foundry import temper_candidate_is_driven
+
+    _observation(report_env, id="O-1", description="driven by the status marker",
+                 status="DRIVEN")
+    _observation(report_env, id="O-2", description="driven by the boolean marker",
+                 driven=True)
+    _observation(report_env, id="O-3", description="no marker anywhere")
+    _generate(report_env)
+    section = _document(report_env)["hardening_backlog"]
+
+    assert [c["id"] for c in section["undriven_temper_candidates"]] == ["O-3"]
+    assert section["driven_candidate_count"] == 2
+
+    # And the predicate itself agrees, record for record, so a third spelling
+    # added at the door reaches this section with no edit here.
+    assert temper_candidate_is_driven({"status": "DRIVEN"}) is True
+    assert temper_candidate_is_driven({"driven": True}) is True
+    assert temper_candidate_is_driven({"id": "O-3"}) is False
+
+    source = inspect.getsource(fr._read_undriven_temper_candidates)
+    assert "temper_candidate_is_driven(" in source, (
+        "the report re-typed the driven rule instead of reading the one "
+        "definition; that is concern C-069 back"
+    )
+    assert '"DRIVEN"' not in source, (
+        "a literal marker spelling in this reader IS the private copy, however "
+        "well it agrees with the door today"
+    )
+
+
 def test_a_non_candidate_observation_is_not_in_the_list(report_env) -> None:
     """The four comment-prose classes are a different question entirely."""
     _observation(report_env, id="O-1", classification="LINE_DRIFT_CITE",
@@ -5450,6 +5510,42 @@ def test_an_absent_fallout_field_is_never_a_measured_zero(report_env) -> None:
     )[1]
 
 
+def test_an_absent_defect_ledger_is_never_a_clean_census(report_env) -> None:
+    """fallout D-104 / FR-053 / GI-024 — no ledger is not an empty ledger.
+
+    The rung above catches a record that carries no `fallout_of`. This catches
+    the rung under it: a run directory with no `defects.json` AT ALL. Every
+    reader here is total, so `read_document` answers `({}, None)` for a file
+    that is not there — the right contract for a reader that must not raise,
+    and the wrong INPUT for an acceptance verdict. With no records, nothing is
+    unmeasured and nothing carries the field, so every rung fell through to
+    `pass` and the section certified AC-045/NFR-006 with "cycles [0, 1] … each
+    recorded zero filings carrying `fallout_of`" over a directory holding one
+    file.
+
+    `scripts/measure-run.py#_read_fallout` refused exactly this and said why in
+    its own docstring — publishing the census for such a directory "would put
+    the strongest acceptance result against the weakest possible evidence" — so
+    one acceptance figure had two surfaces and they answered PASS and MISSING.
+    That is the divergence FR-053 and GI-024 exist to end, which is why the
+    guard now lives in the reader both surfaces read rather than in either
+    caller.
+    """
+    (report_env / "defects.json").unlink()
+    assert not (report_env / "defects.json").exists()
+
+    _generate(report_env)
+    section = _document(report_env)["fallout_per_cycle"]
+
+    assert section["verdict"] == "not_measurable", section
+    assert section["per_cycle"] == {}
+    assert section["measured_records"] == 0 and section["unmeasured_records"] == 0
+    assert "no defects.json" in section["verdict_reason"], section["verdict_reason"]
+    rendered = _markdown(report_env).split("## Fallout per cycle")[1]
+    assert "NOT MEASURABLE" in rendered
+    assert "PASS" not in rendered.split("\n")[0]
+
+
 def test_a_run_with_fewer_than_two_inspect_cycles_cannot_pass(report_env) -> None:
     """"A run with fewer than two INSPECT cycles cannot pass and says so."
 
@@ -5538,11 +5634,34 @@ def test_stream_coverage_renders_an_over_total_bucket_without_clamping(
 def test_a_bucket_with_no_records_list_is_the_additive_writers_shape(
     report_env,
 ) -> None:
-    """FR-054's absent-field case for this section.
+    """FR-054's absent-field case for this section — fallout D-111.
 
     A bucket written before the replace semantics carries no `records[]` at
     all. `record_count` 0 is not the same fact as "recorded once", so it is
-    listed rather than reported as a single un-replaced tranche.
+    LISTED — in the table and in `buckets_without_records` — rather than
+    reported as a single un-replaced tranche.
+
+    WHAT THIS TEST USED TO ASSERT, AND WHY IT WAS THE DEFECT
+    --------------------------------------------------------
+    It asserted the pair "drops out of the table entirely", on the reading that
+    a value without `records` is not a stream tranche by `is_stream_record`'s
+    rule (D-182). That reading is right about the VALUE and wrong about the
+    BUCKET: the additive writer is the only thing that ever produced this shape,
+    so the dropped pair is a stream's real work, and `stream_rollup_rows`' own
+    docstring had promised the opposite in prose — "a bucket with no `records`
+    key at all reports `record_count` 0 and is listed in
+    `buckets_without_records`, so 'written by the additive writer' stays
+    distinguishable from 'recorded once'". The branch was unreachable, and this
+    test pinned the unreachability. FR-054 is that readers TOLERATE a ledger
+    lacking the new fields; silently dropping the row is not tolerance, and the
+    migration that repairs the shape is not a precondition of reading it — the
+    F6 report runs on unmigrated runs.
+
+    The KEY is what tells an additive tranche from a cycle-level fact, which is
+    the rule `measure-run.py` and `migrate-archive.py` already apply and the one
+    `is_stream_record`'s docstring assigns to the call site. The sibling test
+    below is the other direction and is untouched: a key the roster does NOT
+    know still drops.
     """
     rollup = _read_json(report_env, "stream-rollup.json")
     del rollup["cycles"]["1"]["trace"]["records"]
@@ -5552,11 +5671,17 @@ def test_a_bucket_with_no_records_list_is_the_additive_writers_shape(
     _generate(report_env)
     section = _document(report_env)["stream_coverage_per_cycle"]
 
-    # No `records` key means the value is no longer a stream tranche by
-    # `is_stream_record`'s rule (D-182), so the pair drops out of the table
-    # entirely rather than being reported as coverage nobody can source.
-    assert not [r for r in section["rows"]
-                if r["cycle"] == "1" and r["stream"] == "trace"]
+    row = [r for r in section["rows"]
+           if r["cycle"] == "1" and r["stream"] == "trace"]
+    assert len(row) == 1, "the additive writer's tranche is a stream's real work"
+    assert row[0]["items_checked"] == 48
+    assert row[0]["record_count"] == 0, "no `records[]`, so no records counted"
+    assert row[0]["replaced_count"] == 0, "nothing was replaced; nothing is claimed"
+    assert {"cycle": "1", "stream": "trace"} in section["buckets_without_records"], (
+        "`record_count` 0 and 'recorded once' are different facts, and the "
+        "section names the difference rather than leaving the reader to infer "
+        "it from a count"
+    )
     assert any(r["stream"] == "prove" for r in section["rows"]), (
         "the siblings in the same bucket are unaffected"
     )
@@ -5744,6 +5869,102 @@ def test_a_run_with_no_co_dispatch_record_renders_an_empty_table(
     assert "_None recorded._" in _markdown(report_env).split(
         "## Halt and co-dispatch"
     )[1]
+
+
+def test_a_computed_empty_co_dispatch_set_is_a_row_and_not_a_silence(
+    report_env,
+) -> None:
+    """fallout D-112 / AC-049 — "the casting owned its requirements alone".
+
+    `_annotate_co_dispatch` computes the set by intersecting the defect's
+    requirement ids against every OTHER casting's ownership, and an empty
+    intersection is an ANSWER: this fix reaches one casting, and the server
+    checked. `_append_grind_dispatch` records the key with an empty list on
+    purpose, noting that the reader "treats an empty one as no row, which is
+    its call to make and not this writer's to pre-empt by omitting the key".
+
+    The reader's call was `if not sets: continue`, which published that
+    measurement as `_None recorded._` — the same three words a run that
+    dispatched nothing gets, and the same three a run whose manifest could not
+    be joined gets. A lead routes differently on all three, and could not tell
+    them apart.
+    """
+    with (report_env / "handoffs.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "event": "grind_dispatched", "cycle": 4, "phase": "F3",
+            "timestamp": "2026-09-02T07:00:00+00:00",
+            "co_dispatch": [],
+            "defect_ids": ["D-112"], "requirement_ids": ["AC-049"],
+        }) + "\n")
+
+    _generate(report_env)
+    section = _document(report_env)["halt_and_co_dispatch"]
+
+    assert section["co_dispatch_count"] == 1, (
+        "a computed empty set is a dispatch that was measured, not one that "
+        "was never made"
+    )
+    assert section["co_dispatch"][0]["co_dispatch"] == []
+    assert section["co_dispatch_owned_alone_count"] == 1
+    assert section["co_dispatch_not_computable"] is False, (
+        "the manifest declares requirement_ids, so the question WAS answerable"
+    )
+
+    rendered = _markdown(report_env).split("## Halt and co-dispatch")[1]
+    assert "_None recorded._" not in rendered
+    assert "(owned alone)" in rendered, (
+        "an empty cell reads as 'the report lost it', which is the one thing "
+        "this row is not"
+    )
+    assert "owned alone" in rendered
+
+
+def test_an_unjoinable_manifest_makes_co_dispatch_not_computable(
+    report_env,
+) -> None:
+    """fallout D-112 / AC-006 / OT-006 — not computable, never an empty set.
+
+    A lead reading "no other casting owns this" when the truth is "nobody
+    recorded who owns anything" dispatches one casting for a rule that lives in
+    four. `_annotate_co_dispatch` already refuses to publish an empty set for
+    that case — it sets `co_dispatch` to None and says why — and then
+    `foundry_defects_to_tasks` skips the dispatch record entirely for a None
+    set, so `handoffs.jsonl` carries NOTHING and the fact lives only on a tool
+    result that is never persisted.
+
+    So the report cannot learn it from the ledger and must read it from the
+    manifest — the same reading `_read_requirement_span` already made, passed
+    down rather than made twice, because two answers to "does this manifest
+    declare ownership" is the GI-024 shape.
+    """
+    manifest_path = report_env / "castings" / "manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps({
+        "schema_version": 1,
+        "castings": [
+            {"id": 1, "name": "a", "key_files": ["src/a.py"]},
+            {"id": 2, "name": "b", "key_files": ["src/b.py"]},
+        ],
+    }, indent=2), encoding="utf-8")
+
+    _generate(report_env)
+    document = _document(report_env)
+    section = document["halt_and_co_dispatch"]
+
+    assert document["requirement_span"]["not_computable"] is True, (
+        "the fixture manifest must actually be unjoinable, or this test is "
+        "asserting the default rather than the derivation"
+    )
+    assert section["co_dispatch_not_computable"] is True
+    assert "requirement_ids" in section["co_dispatch_not_computable_reason"]
+    assert "F0.5" in section["co_dispatch_not_computable_reason"], (
+        "the reason has to name the remedy; a not-computable a lead cannot act "
+        "on is a silence with more words"
+    )
+
+    rendered = _markdown(report_env).split("## Halt and co-dispatch")[1]
+    assert "not computable" in rendered
+    assert "Re-run F0.5 DECOMPOSE" in rendered
 
 
 # ---------------------------------------------------------------------------

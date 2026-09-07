@@ -61,6 +61,7 @@ from foundry_mcp.schemas.vocab import (
     THUNDER_VIPER_BASELINE,
     TIER_HARDENING,
     TIER_UNKNOWN,
+    canonical_stream_id,
     defect_tier,
     escalation_status,
     halt_reason,
@@ -1067,7 +1068,10 @@ def _read_dispatch_summary(run_dir: Path) -> tuple[dict, str | None]:
     the degradation it bought ("the verbs pass through as spelled") is a
     `by_phase` bucket keyed `grind`, which is not a phase.
     """
-    inputs = unreported_dispatch_inputs(run_dir)
+    # D-111 — the roster resolver, so a stream tranche written before the
+    # replace semantics still puts its agent in the F2 roster. The vocabulary
+    # travels IN because the leaf reaches none; see `stream_rollup_rows`.
+    inputs = unreported_dispatch_inputs(run_dir, stream_id_of=canonical_stream_id)
     if inputs["problem"] is not None:
         return {}, inputs["problem"]
 
@@ -1232,14 +1236,34 @@ def _read_undriven_temper_candidates(run_dir: Path) -> tuple[dict, str | None]:
     becomes write-only debt", applies to both, and the cadence's visible half
     is that they are printed together.
 
-    BOTH LEDGER SHAPES (FR-054). The observation record shipped today carries
-    no driven marker at all, and casting 4's door plus casting 11's TEMPER add
-    one. A record with neither `driven` nor `status` is UNDRIVEN, which is the
-    correct reading of every archive written before this release: nothing
-    recorded that it was driven, so nothing may claim it was. Both spellings
-    are accepted because the two castings land at different waves and a report
-    that knew only one would silently list a driven candidate as open.
+    BOTH LEDGER SHAPES (FR-054), AND ONE DERIVATION OF THEM (concern C-069).
+    ------------------------------------------------------------------------
+    The observation record shipped today carries no driven marker at all, and
+    casting 4's door plus casting 11's TEMPER add one. A record with neither
+    `driven` nor `status` is UNDRIVEN, which is the correct reading of every
+    archive written before this release: nothing recorded that it was driven,
+    so nothing may claim it was. Both spellings are accepted because the two
+    castings land at different waves and a report that knew only one would
+    silently list a driven candidate as open.
+
+    That two-spelling rule used to be SPELLED HERE, and casting 4's D-114 fix
+    is why it no longer is. `tools/foundry.py#temper_candidate_is_driven` is now
+    the one predicate the drive door's idempotence rung and the roster
+    `foundry_query_observations` hands TEMPER both ask, and a private copy in
+    the presentation layer is the second derivation GI-024's violation column
+    names. The two agreed today by inspection, which is precisely the state
+    D-114 was filed over — a roster and a report answering different questions
+    about one ledger with nothing comparing them — so the copy is gone and a
+    third spelling can no longer appear.
+
+    BODY-LEVEL, which is this module's rule for a `foundry_mcp` import beyond
+    its declared few (D-013): a module-level one risks closing a cycle in the
+    import graph, while a body-level one runs when every module in the chain is
+    already built and closes nothing. `_read_requirement_span` reaches
+    `foundry_validate` the same way, for the same reason.
     """
+    from foundry_mcp.tools.foundry import temper_candidate_is_driven
+
     document, problem = read_document(run_dir / OBSERVATIONS_FILENAME)
     if problem is not None:
         return {"candidates": [], "count": 0, "driven_count": 0}, problem
@@ -1254,10 +1278,7 @@ def _read_undriven_temper_candidates(run_dir: Path) -> tuple[dict, str | None]:
             continue
         if record.get("classification") != TEMPER_CANDIDATE:
             continue
-        status = record.get("status")
-        if record.get("driven") or (
-            isinstance(status, str) and status.upper() == "DRIVEN"
-        ):
+        if temper_candidate_is_driven(record):
             driven += 1
             continue
         candidates.append(
@@ -1339,8 +1360,16 @@ def _stream_coverage_section(run_dir: Path) -> tuple[dict, str | None]:
     — because a coverage figure quietly clamped to its total is a measurement
     replaced by an assertion, and the whole point of the replace semantics
     casting 2 lands is that a run can see which records were superseded.
+
+    D-111 — AND THE ADDITIVE BUCKET HAS TO REACH THE TABLE TO BE NAMED IN IT.
+    The paragraph above was true of the prose and false of the code: the leaf's
+    value test drops a bucket carrying no `records[]`, which is the only kind
+    the additive writer ever produced, so the row it promises to render was
+    unreachable. `canonical_stream_id` is handed down as the roster resolver —
+    the vocabulary this module can reach and the leaf cannot — and the key
+    decides what the value could not.
     """
-    table = stream_rollup_rows(run_dir)
+    table = stream_rollup_rows(run_dir, stream_id_of=canonical_stream_id)
     problem = table.get("problem")
     if problem is not None:
         return {}, problem
@@ -1385,7 +1414,9 @@ def _stream_coverage_section(run_dir: Path) -> tuple[dict, str | None]:
     }, None
 
 
-def _halt_and_co_dispatch_section(run_dir: Path, state: dict) -> tuple[dict, str | None]:
+def _halt_and_co_dispatch_section(
+    run_dir: Path, state: dict, *, requirements_not_computable: bool = False
+) -> tuple[dict, str | None]:
     """CT-004 / AC-025's report half / CT-008 — how the run ended, and what it dispatched.
 
     Returns the halt reason as a MEMBER of `HALT_REASONS` plus the lead's own
@@ -1408,6 +1439,38 @@ def _halt_and_co_dispatch_section(run_dir: Path, state: dict) -> tuple[dict, str
     lead actually acted on. A run with no such record renders an empty section
     — which is every run until casting 2 lands the writer, and is why this
     section reads a missing field as missing rather than as an error.
+
+    THREE FACTS, THREE RENDERINGS, AND ONE OF THEM IS "NOT COMPUTABLE"
+    (D-112 / AC-049 / AC-006 / OT-006).
+    ------------------------------------------------------------------
+    This walked `if not sets: continue` and published nothing else, so three
+    different things about a GRIND all came out as `_None recorded._`:
+
+      1. THE MANIFEST COULD NOT BE JOINED. `castings/manifest.json` declares no
+         `requirement_ids`, so which castings own a defect's requirements is not
+         computable at all. `directives._annotate_co_dispatch` sets the task's
+         `co_dispatch` to None for exactly this and says so in its own refusal
+         text — and then `foundry_defects_to_tasks` skips the dispatch record
+         for a None set, so NOTHING is written and the ledger cannot tell this
+         case from case 3. The fact lives on the tool result and is never
+         persisted, so it is read here from the SAME manifest computation the
+         span section already made (`requirement_span.not_computable`) — one
+         read, two sections, no second answer to "does this manifest declare
+         ownership".
+      2. THE CASTING OWNED ITS REQUIREMENTS ALONE. `co_dispatch: []` is a set
+         the server COMPUTED and found empty. The writer records the key with an
+         empty list deliberately, noting the reader "treats an empty one as no
+         row, which is its call to make"; this is that call, made the other way,
+         because a computed empty set is a measurement and dropping it publishes
+         it as an absence.
+      3. NOTHING WAS DISPATCHED. No `co_dispatch` key on any handoff — every run
+         until casting 2 lands the writer.
+
+    A lead routes differently on each: case 1 means re-run F0.5 DECOMPOSE, case
+    2 means the fix really does reach one casting, case 3 means no GRIND
+    dispatched. `_read_requirement_span` has carried `not_computable` since
+    AC-044 and this sibling carried nothing, so the one case AC-006/OT-006 exist
+    to keep visible was the one the report hid.
     """
     records, problem = read_jsonl(run_dir / HANDOFFS_FILENAME)
     if problem is not None:
@@ -1430,9 +1493,12 @@ def _halt_and_co_dispatch_section(run_dir: Path, state: dict) -> tuple[dict, str
 
     dispatched: list[dict] = []
     for record in records:
-        sets = record.get("co_dispatch")
-        if not sets:
+        # THE KEY'S PRESENCE, NOT THE SET'S TRUTH (D-112). A recorded empty set
+        # is case 2 above and belongs in the table; a record with no key at all
+        # is a handoff that is not a dispatch and belongs nowhere.
+        if not isinstance(record.get("co_dispatch"), list):
             continue
+        sets = record["co_dispatch"]
         dispatched.append({
             "cycle": record.get("cycle"),
             "phase": record.get("phase"),
@@ -1443,6 +1509,7 @@ def _halt_and_co_dispatch_section(run_dir: Path, state: dict) -> tuple[dict, str
             "requirement_ids": record.get("requirement_ids"),
         })
 
+    owned_alone = [row for row in dispatched if not row["co_dispatch"]]
     halted = state.get("phase") == RUN_PHASE_HALTED
     return {
         "halted": halted,
@@ -1453,6 +1520,17 @@ def _halt_and_co_dispatch_section(run_dir: Path, state: dict) -> tuple[dict, str
         "max_cycles": state.get("max_cycles"),
         "co_dispatch_count": len(dispatched),
         "co_dispatch": dispatched,
+        # D-112 — the three facts, as three fields rather than one silence.
+        "co_dispatch_not_computable": bool(requirements_not_computable),
+        "co_dispatch_not_computable_reason": (
+            "castings/manifest.json declares no requirement_ids, so which "
+            "castings own a dispatched defect's requirements is not computable "
+            "and no co-dispatch set was written for any GRIND. Re-run F0.5 "
+            "DECOMPOSE, or accept that each fix reached one casting only."
+            if requirements_not_computable
+            else ""
+        ),
+        "co_dispatch_owned_alone_count": len(owned_alone),
         "note": (
             "HALTED is a named terminal state and is NOT DONE (ST-008): the "
             "report is generated and every open defect is named in it. `Reason` "
@@ -1463,7 +1541,12 @@ def _halt_and_co_dispatch_section(run_dir: Path, state: dict) -> tuple[dict, str
             "sets the SERVER computed at each Foundry-Tasks call and the lead "
             "acted on — read from the handoff ledger, never recomputed here, "
             "because a second answer to 'which castings went out together' "
-            "could disagree with the one that was actually dispatched."
+            "could disagree with the one that was actually dispatched. A row "
+            "with an EMPTY set is a set the server computed and found empty — "
+            "the casting owned its requirements alone — and is a different "
+            "fact from a run that dispatched nothing, which is different again "
+            "from `co_dispatch_not_computable`, where the manifest declares no "
+            "requirement_ids and the question could not be asked (AC-049)."
         ),
     }, None
 
@@ -2342,13 +2425,37 @@ def _render_section(key: str, value: dict) -> list[str]:
                 "text is printed as recorded rather than guessed onto a "
                 f"member: {text or value.get('reason_recorded') or NO_LOCATION_CELL}"
             )
+        dispatched = value.get("co_dispatch", [])
         rows = [[d.get("cycle"), d.get("phase"), d.get("event"),
-                 ", ".join(str(c) for c in (d.get("co_dispatch") or [])),
+                 # D-112: an empty computed set is not a blank cell. A blank
+                 # reads as "the report lost it", which is the one thing this
+                 # row is not — the server asked and the answer was nobody.
+                 ", ".join(str(c) for c in (d.get("co_dispatch") or []))
+                 or "(owned alone)",
                  ", ".join(str(i) for i in (d.get("defect_ids") or [])),
                  ", ".join(str(i) for i in (d.get("requirement_ids") or []))]
-                for d in value.get("co_dispatch", [])]
+                for d in dispatched]
+        # D-112 — which of the three facts this table is showing, said in words
+        # above it, because `_None recorded._` under an empty table says only
+        # that the table is empty.
+        if value.get("co_dispatch_not_computable"):
+            census = str(value.get("co_dispatch_not_computable_reason", ""))
+        elif dispatched:
+            census = (
+                f"{len(dispatched)} GRIND dispatch(es) carry a computed "
+                f"co-dispatch set; "
+                f"{value.get('co_dispatch_owned_alone_count', 0)} of them "
+                "computed to the EMPTY set, meaning the owning casting held "
+                "those requirements alone — a measurement, not an absence."
+            )
+        else:
+            census = (
+                "No GRIND dispatch on this run carries a co-dispatch set. The "
+                "manifest DOES declare requirement_ids, so the question was "
+                "answerable; nothing was dispatched with one."
+            )
         return (
-            [headline, "", str(value.get("note", "")), ""]
+            [headline, "", census, "", str(value.get("note", "")), ""]
             + _md_table(
                 ["Cycle", "Phase", "Event", "Co-dispatched castings",
                  "Originating defects", "Requirement IDs"],
@@ -2598,7 +2705,17 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
     if problem is not None:
         return _refusal(ROLLUP_FILENAME, problem)
 
-    halt_section, problem = _halt_and_co_dispatch_section(run_dir, state)
+    # D-112 / AC-049 — the co-dispatch not-computable fact is the SAME manifest
+    # reading the span section made above, passed down rather than re-derived:
+    # a manifest declaring no `requirement_ids` is why `co_dispatch` is None on
+    # every task and why no dispatch record carries a set at all.
+    halt_section, problem = _halt_and_co_dispatch_section(
+        run_dir,
+        state,
+        requirements_not_computable=bool(
+            requirement_span.get("not_computable", False)
+        ),
+    )
     if problem is not None:
         return _refusal(HANDOFFS_FILENAME, problem)
 
@@ -2619,6 +2736,14 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
     # SAME reading `inspect_modes_per_cycle` and `baseline_comparison` sit on —
     # so the three sections cannot publish three different ideas of which
     # cycles this run ran.
+    #
+    # D-104 — AND THE READER ANSWERS `not_measurable` WHEN THERE IS NO LEDGER,
+    # which is why this call stays unconditional. The guard is inside
+    # `fallout_rows` rather than here because `scripts/measure-run.py` reads the
+    # same figure through the same reader: a guard on this side would have left
+    # the census PASS for anyone who did not write one, which is exactly how the
+    # report certified AC-045/NFR-006 on a directory holding only a state.json
+    # while measure-run reported MISSING.
     fallout = fallout_rows(run_dir, axis_top=derive_cycle_count(run_dir)["index"])
     if fallout.get("problem") is not None:
         return _refusal(DEFECTS_FILENAME, fallout["problem"])

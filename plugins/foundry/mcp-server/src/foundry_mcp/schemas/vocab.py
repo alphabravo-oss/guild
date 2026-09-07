@@ -378,10 +378,10 @@ def defect_tier(record: Mapping[str, object]) -> str:
     return value if isinstance(value, str) and value in DEFECT_TIERS else TIER_UNKNOWN
 
 
-#: Statements that name no evidence at all. A LATENT filing must say what was
-#: DRIVEN and what it found; these are the spellings of "I did not". Matched
-#: against the whole stripped, lowercased statement, so a real sentence that
-#: happens to contain "none" is unaffected.
+#: Statements that name no evidence at all. A filing on either tier that owes
+#: this field must say what was DRIVEN and what it produced; these are the
+#: spellings of "I did not". Matched against the whole stripped, lowercased
+#: statement, so a real sentence that happens to contain "none" is unaffected.
 #: Extend only via phase-level RFC.
 REPRODUCTION_PLACEHOLDERS = frozenset(
     {"", "-", "--", "n/a", "n.a.", "na", "nil", "none", "no", "not attempted",
@@ -406,6 +406,32 @@ def reproduction_attempted_problem(statement: object) -> str | None:
     Returns None when the statement is acceptable, else the refusal reason,
     phrased for the `error` field of the door's own refusal shape. Never
     raises: the JSON layer can hand this anything.
+
+    THE SENTENCE IS TIER-NEUTRAL, AND THAT IS THE WHOLE POINT (D-115 / CT-012).
+    ---------------------------------------------------------------------------
+    Two tiers reach this rung and they owe DIFFERENT evidence: a LATENT filing
+    owes a negative result ("what I drove and did not find"), a HARDENING filing
+    owes a probe it drove and the wrong result it saw. `foundry.py` already
+    picks between `_LATENT_REPRODUCTION_HINT` and `_HARDENING_REPRODUCTION_HINT`
+    on the filing's own tier for exactly that reason — "a single hint would tell
+    half its readers to write the wrong thing".
+
+    This function does not know the tier and must not name one. It used to: the
+    placeholder branch read "A LATENT filing must say what was driven and what
+    it found (e.g. 'AST sweep of both roots finds 0 sites')", and a HARDENING
+    filing missing its reproduction was refused with that sentence sitting
+    BESIDE the correct HARDENING hint. A negative-result AST sweep is precisely
+    the evidence a HARDENING filing must NOT offer, so the refusal instructed
+    the stream to satisfy it with the one thing that would make the filing
+    wrong — the two halves of one refusal contradicting each other.
+
+    Taking a `tier` argument was the alternative and it is worse: this is the
+    ONE check both doors share, the tier-specific wording already exists at the
+    doors where the tier is known, and re-spelling it here would put two
+    statements of one instruction in two modules — the drift shape this module
+    exists to stop. So the error states the OBLIGATION (a statement of what was
+    driven and what it produced, which both tiers owe) and the hint beside it
+    states which evidence that is.
     """
     if not isinstance(statement, str):
         return (
@@ -416,15 +442,16 @@ def reproduction_attempted_problem(statement: object) -> str | None:
     if stripped.lower() in REPRODUCTION_PLACEHOLDERS:
         return (
             f"reproduction_attempted is the placeholder {stripped!r}, which "
-            f"names no evidence. A LATENT filing must say what was driven and "
-            f"what it found (e.g. 'AST sweep of both roots finds 0 sites')."
+            f"names no evidence. The tier you filed under owes a statement of "
+            f"what was DRIVEN and what it produced; the hint beside this names "
+            f"which evidence that tier owes."
         )
     if len(stripped) < REPRODUCTION_ATTEMPTED_MIN_CHARS:
         return (
             f"reproduction_attempted is {len(stripped)} characters; at least "
             f"{REPRODUCTION_ATTEMPTED_MIN_CHARS} are needed to name what was "
-            f"driven and what it found. Either state the negative result, or "
-            f"file the defect as LIVE with its reproduction."
+            f"driven and what it produced. The hint beside this names the "
+            f"evidence the tier you filed under owes."
         )
     return None
 
@@ -730,6 +757,48 @@ PROVE_DELTA_SAMPLE_SIZE = 10
 # for the reason below. And the server's own tests are still out: they are the
 # pins, not the judgement, and the TEST stream re-runs them at every width.
 #
+# THE SET FOLLOWS THE MACHINERY, NOT THE MODULE NAMES (D-125, fallout of
+# D-080). The GI-033 layering hoisted sixteen gate and width predicates OUT of
+# the four decider modules and into three leaves, and this tuple did not
+# follow — so `is_verifier_path` answered False for `tools/foundry_state.py`,
+# `tools/artifacts.py` and `orchestration/escalation.py` while those three
+# DEFINED the streams-complete check, the persisted cap behind `would_halt`,
+# the CONCERN_OPEN rung, the halt rungs, the recorded-width reader, the width
+# refusal itself (`unrecorded_width_problem` + `inspect_mode_gap` +
+# `WIDTH_RECORDING_TRANSITIONS`, moved wholesale by D-080), the diff the width
+# rule scans, the boundary base SHA, the DONE gate's report read and the
+# escalation rung readers — each called from a live refusal path in `gates.py`
+# or `transitions.py`. A GRIND diff touching only the predicate that decides
+# whether a cycle's verification was complete recorded rule `delta`, so the
+# next INSPECT ran narrow having just changed the thing that judges
+# completeness. That is the hazard A-032 names and whose only accepted
+# mitigation is `verifier_touched` forcing FULL.
+#
+# WHY THE WHOLE LEAF AND NOT THE PREDICATES. A pattern matches a path, and a
+# path is a file: there is no regex over `foundry_state.py#check_streams_complete`
+# that leaves `foundry_state.py#spend_rollup` on the delta side. The two live in
+# one module because GI-033 put them there — a symbol both layers read can live
+# in neither — so the file is the smallest unit the rule can name, and naming it
+# is the honest reading of FR-043's "the width decision" once the width decision
+# moved. The cost is real and is the intended one: a diff that only touches a
+# report table in these two leaves now forces FULL. The alternative — moving the
+# predicates back — is D-080's fix reversed.
+#
+# SIBLING PLUGINS ARE NOT THIS VERIFIER (D-113). Every rule above is written
+# with a `(?:^|/)` segment anchor so it matches however the plugin is installed,
+# and in the Guild source repo that anchor also matches a SIBLING plugin's
+# identically-named file: `plugins/crucible/agents/assayer.md` matched the
+# agent-prose rule and `plugins/forge/scripts/validate-spec.py` matched the
+# validator rule. No foundry stream loads crucible's assayer or shells out to
+# forge's validators, so a forge-only or crucible-only diff recorded
+# `verifier_touched` and charged a full five-stream cycle against the AC-046
+# ceiling this narrowing exists to make reachable. That is stated ONCE below as
+# an exclusion rather than by anchoring each rule to `foundry/`, because the
+# cause is neither the agent rule nor the script rule — it is that this repo
+# hosts several plugins — and because the anchored spelling would stop matching
+# the plugin-relative paths (`agents/assayer.md`, `skills/prove/SKILL.md`) that
+# `tests/test_inspect_mode.py` drives the width decision with.
+#
 # An enumeration is an enumeration, so the anti-staleness mechanism is not here:
 # `tests/test_vocab.py` asserts the set in BOTH directions — every member
 # answers True, every named non-member answers False — and derives the verifying
@@ -743,15 +812,20 @@ VERIFIER_PATH_PATTERNS: tuple[str, ...] = (
     r"(?:^|/)vocab\.py$",
     # Any schema module — the finding/report shapes every stream validates on.
     r"(?:^|/)schemas/",
-    # THE FOUR MODULES THAT DECIDE. The gate ladder, the phase transitions, the
-    # INSPECT width decision and the evidence-sweep boundary: a diff moving any
-    # of them can make a verdict already reached wrong, which is the only thing
-    # `verifier_touched` is for. Named as an alternation under one directory
-    # rather than as a `orchestration/` segment rule, because that package also
-    # holds the halt door, the report seal, spend, directives and teams — every
-    # one of which A-005 puts on the delta side.
+    # THE MODULES THAT DECIDE. The gate ladder, the phase transitions, the
+    # INSPECT width decision, the evidence-sweep boundary and the escalation
+    # rung readers: a diff moving any of them can make a verdict already
+    # reached wrong, which is the only thing `verifier_touched` is for. Named
+    # as an alternation under one directory rather than as a `orchestration/`
+    # segment rule, because that package also holds the halt door, the report
+    # seal, spend, directives and teams — every one of which A-005 puts on the
+    # delta side.
     r"(?:^|/)foundry_mcp/tools/orchestration/"
-    r"(?:gates|transitions|width|evidence_boundary)\.py$",
+    r"(?:gates|transitions|width|evidence_boundary|escalation)\.py$",
+    # THE TWO LEAVES THE GI-033 LAYERING HOISTED THE PREDICATES INTO (D-125).
+    # See the note above for why a leaf earns this and `display.py` does not:
+    # these two DEFINE refusals, they do not render them.
+    r"(?:^|/)foundry_mcp/tools/(?:foundry_state|artifacts)\.py$",
     # The evidence corpus itself. GI-006 keeps it re-executable at every
     # crossing, and the module that re-executes it decides whether a log
     # passes.
@@ -772,10 +846,28 @@ VERIFIER_PATH_PATTERNS: tuple[str, ...] = (
     # spellings, because the two halves of that pair disagree about hyphen
     # versus underscore already.
     r"(?:^|/)scripts/validate[-_][^/]+\.py$",
-)  # 7 patterns
+)  # 8 patterns
 
 _VERIFIER_PATH_RES: tuple[re.Pattern[str], ...] = tuple(
     re.compile(pattern) for pattern in VERIFIER_PATH_PATTERNS
+)
+
+# CLOSED VOCABULARY — paths no rule above may claim, however well it matches
+# (D-113). Checked BEFORE the patterns and only against them; the `spec_path`
+# argument is untouched by this, because a run whose spec lives under another
+# plugin is still that run's own spec and must still force FULL.
+#
+# The one member says: a file under a plugin that is not foundry is not this
+# verifier's machinery, whatever it is called. Sibling plugins in this repo ship
+# an `agents/assayer.md` and two `scripts/validate*.py` of their own, and the
+# segment anchors above — which exist so the rules survive being installed at a
+# different root — matched them. Extend only via phase-level RFC.
+VERIFIER_PATH_EXCLUSIONS: tuple[str, ...] = (
+    r"(?:^|/)plugins/(?!foundry/)[^/]+/",
+)  # 1 pattern
+
+_VERIFIER_PATH_EXCLUSION_RES: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern) for pattern in VERIFIER_PATH_EXCLUSIONS
 )
 
 
@@ -804,11 +896,23 @@ def is_verifier_path(path: str, spec_path: str | None = None) -> bool:
 
     `spec_path` is the run's own spec, passed at call time rather than matched
     by pattern: see the note on VERIFIER_PATH_PATTERNS. Never raises.
+
+    THE EXCLUSIONS GATE THE PATTERNS AND NOT THE SPEC (D-113). A sibling
+    plugin's identically-named file is not this verifier's machinery however
+    well it matches a rule above; a run whose spec happens to live under one is
+    still that run's own spec, and `verifier_touched` on the spec is FR-032's
+    whole point. So the exclusion is applied to the pattern arm alone, which is
+    the arm that matched by NAME.
     """
     normalised = _normalise_path(path)
     if not normalised:
         return False
-    if any(pattern.search(normalised) for pattern in _VERIFIER_PATH_RES):
+    excluded = any(
+        pattern.search(normalised) for pattern in _VERIFIER_PATH_EXCLUSION_RES
+    )
+    if not excluded and any(
+        pattern.search(normalised) for pattern in _VERIFIER_PATH_RES
+    ):
         return True
     spec = _normalise_path(spec_path)
     return bool(spec) and normalised == spec

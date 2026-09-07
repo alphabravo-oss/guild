@@ -265,6 +265,36 @@ def handoffs_wall_clock_seconds(run_dir: Path) -> tuple[float | None, str | None
     return float(span), None
 
 
+def _halt_recorded(value: object) -> bool:
+    """True when a persisted ``halted_reason`` records a halt, EITHER shape.
+
+    Total over any JSON type, and pure. FR-019 changed the field from a free
+    f-string — "--max-cycles 2 reached: opening GRIND cycle 3 would exceed it"
+    — to ``{"reason": <HALT_REASONS member>, "text": <the lead's words>}``, and
+    every archive written before that release carries the string. Both are a
+    halt, so both answer True and neither is guessed onto the other.
+
+    MEMBERSHIP IS NOT CHECKED HERE, and that is the leaf contract rather than a
+    shortcut: this module imports ``json`` and ``pathlib`` and nothing else, so
+    ``HALT_REASONS`` is not reachable from it (see the module docstring). The
+    question this answers is "did something record a halt", which any non-blank
+    reason or text settles; "is that reason a member" is
+    ``vocab.halt_reason``'s, asked by the surfaces that can reach it.
+
+    A dict carrying a blank reason AND a blank text is not a halt record — it
+    is an empty mapping with two keys, and reading it as a halt would subtract
+    a GRIND cycle from every run that ever wrote one.
+    """
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return any(
+            isinstance(field, str) and field.strip()
+            for field in (value.get("reason"), value.get("text"))
+        )
+    return False
+
+
 def derive_cycle_count(run_dir: Path) -> dict:
     """The run's GRIND cycle count. ONE derivation, read by every surface.
 
@@ -403,13 +433,25 @@ def derive_cycle_count(run_dir: Path) -> dict:
             if value is not None and (defect_max is None or value > defect_max):
                 defect_max = value
 
-    # D-175 — the two fields `_halt_if_capped` writes beside `phase` HALTED, in
-    # the same transaction. Either one present is a halt: a run may be halted
-    # by hand with only the reason recorded, and a report that then claimed the
-    # refused GRIND is the defect either way.
-    halted_reason = state.get("halted_reason")
-    halted = _cycle(state.get("halted_at_cycle")) is not None or bool(
-        isinstance(halted_reason, str) and halted_reason.strip()
+    # D-175 — the two fields the halt writes beside `phase` HALTED, in the same
+    # transaction. Either one present is a halt: a run may be halted by hand
+    # with only the reason recorded, and a report that then claimed the refused
+    # GRIND is the defect either way.
+    #
+    # BOTH PERSISTED SHAPES, BECAUSE BOTH EXIST (D-102 / FR-019 / FR-054). This
+    # tested `isinstance(halted_reason, str)` alone, which was the whole of the
+    # field before FR-019; `orchestration/halt.py#_halt_run` now writes
+    # `{"reason": <member>, "text": <the lead's words>}`, and a dict is not a
+    # str. So a halted run read as still running: `count` came back `index + 1`
+    # — one phantom GRIND cycle, the very cycle the halt refused to open — and
+    # `halted` came back False, on the two figures that feed
+    # `baseline_comparison.current.grind_cycles` and measure-run's `cycles`
+    # gate verdict. Driven at the reader with the FR-019 shape it returned
+    # {'count': 6, 'halted': False} where the legacy string returned
+    # {'count': 5, 'halted': True}: one run, one halt, two answers.
+    halted = (
+        _cycle(state.get("halted_at_cycle")) is not None
+        or _halt_recorded(state.get("halted_reason"))
     )
 
     known = [v for v in (state_cycle, rollup_highest, defect_max) if v is not None]
@@ -486,6 +528,27 @@ def is_stream_record(entry: object) -> bool:
     docstring), so ``vocab`` is not reachable from here and must not become so.
     """
     return isinstance(entry, dict) and "records" in entry
+
+
+def _resolves_to_stream(key: object, stream_id_of) -> bool:
+    """True when the roster resolver recognises this cycle-bucket KEY.
+
+    The second half ``is_stream_record``'s docstring assigns to the call site,
+    written once here because BOTH walkers in this module need it (D-111).
+    ``stream_id_of`` is the caller's resolver — ``vocab.canonical_stream_id`` at
+    every real call site — handed in because this module reaches no vocabulary.
+
+    Total, and False whenever no resolver was supplied: a walker with no roster
+    cannot tell an additive tranche from a cycle-level fact and must not guess.
+    A resolver that raises on an odd key answers False rather than taking the
+    whole read down with it — this module's rule for every derivation.
+    """
+    if stream_id_of is None or not isinstance(key, str):
+        return False
+    try:
+        return stream_id_of(key) is not None
+    except Exception:
+        return False
 
 
 def unreported_dispatch_pairs(
@@ -1361,7 +1424,7 @@ def inspect_decisions(inspect_modes: dict) -> list[dict]:
     ]
 
 
-def stream_rollup_rows(run_dir: Path) -> dict:
+def stream_rollup_rows(run_dir: Path, *, stream_id_of=None) -> dict:
     """CT-003 / AC-030 — per (stream, cycle) coverage, with replacements named.
 
     Returns, and never raises::
@@ -1398,6 +1461,36 @@ def stream_rollup_rows(run_dir: Path) -> dict:
     all reports ``record_count`` 0 and is listed in ``buckets_without_records``,
     so "written by the additive writer" stays distinguishable from "recorded
     once".
+
+    ``stream_id_of`` IS WHAT MAKES THAT LAST SENTENCE TRUE (D-111 / FR-054).
+    ---------------------------------------------------------------------
+    It was prose and not code. ``is_stream_record`` tests the VALUE — a mapping
+    carrying ``records`` — so a bucket written by the ADDITIVE writer, which is
+    the only kind that lacks the key, failed it and was ``continue``d before the
+    ``buckets_without_records`` branch could ever run. Driven on
+    ``{"trace": {"items_checked": 40, "items_total": 50, "findings": 3}}`` the
+    pair was absent from ``cycles``, absent from ``buckets_without_records`` and
+    counted in neither total: the reader silently dropped the exact ledger shape
+    FR-054 tells it to tolerate, and the migration that repairs the shape is not
+    a precondition of reading it — the F6 report runs on unmigrated runs.
+
+    Widening ``is_stream_record`` was the alternative and is wrong: its rule is
+    read by ``measure-run.py`` and twice by ``migrate-archive.py``, and one of
+    those cases is `prove` holding a bare string, which is a BROKEN record and
+    not a cycle-level fact. Its own docstring says where the second half goes —
+    "a caller that must also tell a CORRUPT tranche from a cycle-level fact
+    resolves the KEY against the stream roster after this returns False" — and
+    both sibling walkers under ``plugins/foundry/scripts/`` already do exactly
+    that, resolving the bucket KEY through ``canonical_stream_id`` before the
+    value test is allowed to decide. So this walker does it too, and the
+    resolver is HANDED IN because the roster is
+    a vocabulary and this module reaches no vocabulary: the same shape
+    ``current_inspect_mode(modes=...)`` and ``escalated_class_rows(status_of=...)``
+    already take.
+
+    Omitted, the walk is exactly what it was — value test only, additive buckets
+    dropped — so a caller with no roster to offer gets a narrower answer and
+    never a wrong one.
     """
     document, problem = read_document(run_dir / "stream-rollup.json")
     cycles_out: dict[str, dict] = {}
@@ -1416,7 +1509,15 @@ def stream_rollup_rows(run_dir: Path) -> dict:
             for stream in sorted(bucket):
                 entry = bucket.get(stream)
                 if not is_stream_record(entry):
-                    continue
+                    # The KEY decides the leftovers, and only when a resolver
+                    # was handed in. A mapping the roster knows is a stream
+                    # tranche written before `records[]` existed; anything else
+                    # is a cycle-level fact sitting beside the streams (D-182).
+                    if not (
+                        isinstance(entry, dict)
+                        and _resolves_to_stream(stream, stream_id_of)
+                    ):
+                        continue
                 streams.add(str(stream))
                 records = entry.get("records")
                 records = records if isinstance(records, list) else []
@@ -1816,7 +1917,45 @@ def fallout_rows(run_dir: Path, *, axis_top: int | None = None) -> dict:
     ONE axis. Omitted, the axis falls back to the highest cycle the defect
     ledger names, which is honest for a count and is stated in
     ``verdict_reason`` when it changes the answer.
+
+    NO LEDGER IS NOT AN EMPTY LEDGER (D-104 / FR-053 / GI-024). ``read_document``
+    is total and answers ``({}, None)`` for a file that is not there, which is
+    the right contract for a reader that must not raise and the wrong INPUT for
+    an acceptance verdict: with no records at all, nothing is unmeasured and
+    nothing carries ``fallout_of``, so every rung below falls through to
+    ``pass`` and the census certifies AC-045/NFR-006 — "cycles [0, 1] ... each
+    recorded zero filings carrying `fallout_of`" — on a directory holding only
+    a `state.json`. That is the strongest acceptance result in the document put
+    against the weakest possible evidence.
+
+    ``scripts/measure-run.py#_read_fallout`` already refused exactly this, with
+    that sentence in its own docstring, by testing ``path.exists()`` before
+    calling here — so the two surfaces published PASS and MISSING for one
+    figure on one archive, which is the divergence FR-053 and GI-024 exist to
+    end. The test belongs in the reader both surfaces read, so it is here: the
+    absence of the ledger is a property of the run directory, not of the
+    command that happened to ask. measure-run's guard still fires first and
+    still answers None; it now agrees with this reader instead of correcting
+    it.
     """
+    if not (run_dir / "defects.json").exists():
+        return {
+            "per_cycle": {},
+            "total": 0,
+            "measured_records": 0,
+            "unmeasured_records": 0,
+            "last_two_cycles": [],
+            "verdict": "not_measurable",
+            "verdict_reason": (
+                "this run directory holds no defects.json at all, so there is "
+                "no ledger to count `fallout_of` in; an absent ledger is not an "
+                "empty one, and certifying the acceptance figure on it would "
+                "put the strongest result in the report against the weakest "
+                "possible evidence"
+            ),
+            "problem": None,
+        }
+
     document, problem = read_document(run_dir / "defects.json")
     records = document.get("defects")
     records = records if isinstance(records, list) else []
@@ -1905,7 +2044,7 @@ def fallout_rows(run_dir: Path, *, axis_top: int | None = None) -> dict:
     }
 
 
-def unreported_dispatch_inputs(run_dir: Path) -> dict:
+def unreported_dispatch_inputs(run_dir: Path, *, stream_id_of=None) -> dict:
     """The three ledgers ``unreported_dispatch_summary`` runs over, assembled ONCE.
 
     Returns, and never raises::
@@ -1922,6 +2061,14 @@ def unreported_dispatch_inputs(run_dir: Path) -> dict:
     `_spend_ledger_rows` and `foundry_report._read_dispatch_summary` built it
     again from three inline walks. Hosting it beside the rule is what makes
     "one derivation, two renderings" true of the INPUT as well as the output.
+
+    ``stream_id_of`` is the roster resolver, optional, and it means here what it
+    means at ``stream_rollup_rows``: with it, a cycle-bucket mapping whose KEY
+    the roster knows counts as a stream even when it carries no ``records[]``,
+    which is every bucket written before the replace semantics (D-111 / FR-054).
+    Without it the walk is value-test-only, exactly as before. See that
+    function's docstring for why the resolver is handed in rather than imported
+    and why the shared predicate was not widened instead.
 
     fallout D-013 — ONE HALF IS CLOSED AND THE OTHER IS NAMED.
     ----------------------------------------------------------
@@ -1973,7 +2120,17 @@ def unreported_dispatch_inputs(run_dir: Path) -> dict:
             if not isinstance(bucket, dict):
                 continue
             for stream in bucket:
-                if is_stream_record(bucket.get(stream)):
+                entry = bucket.get(stream)
+                # D-111 — the same two-part test `stream_rollup_rows` makes, so
+                # the roster and the coverage table cannot come to disagree
+                # about which keys in one bucket are streams. A tranche written
+                # before `records[]` existed carries the stream's WORK, and
+                # dropping it here dropped that stream's agent out of the
+                # unreported-dispatch derivation entirely.
+                if is_stream_record(entry) or (
+                    isinstance(entry, dict)
+                    and _resolves_to_stream(stream, stream_id_of)
+                ):
                     stream_roster.setdefault("F2", []).append(str(stream))
                     cycles_of_agent.setdefault(str(stream), []).append(str(cycle_key))
 

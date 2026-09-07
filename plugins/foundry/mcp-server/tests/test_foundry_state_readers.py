@@ -52,6 +52,7 @@ from foundry_mcp.schemas.vocab import (
     ESCALATION_STATUSES,
     INSPECT_MODES,
     TIER_UNKNOWN,
+    canonical_stream_id,
     defect_tier,
     escalation_status,
 )
@@ -515,6 +516,195 @@ def test_stream_rollup_rows_names_what_was_replaced(run_env) -> None:
     assert table["cycle_count"] == 1
     assert table["stream_count"] == 2
     assert table["problem"] is None
+
+
+def test_derive_cycle_count_reads_both_spellings_of_the_halt(run_env) -> None:
+    """fallout FR-019 / FR-054 (D-102) — a halted run is halted in either shape.
+
+    The halt subtracts exactly the GRIND it prevented: `count` is `index` on a
+    halted run and `index + 1` on every other (D-175). Which arm runs turned on
+    `isinstance(halted_reason, str)`, and that was the WHOLE of the field before
+    the fallout FR-019 shape landed — `orchestration/halt.py#_halt_run` now writes
+    `{"reason": <member>, "text": <the lead's words>}`, and a dict is not a str.
+
+    So a halted run read as still running and published a phantom cycle: the one
+    the cap refused to open. Both figures travel — `count` into
+    `baseline_comparison.current.grind_cycles` and into measure-run's `cycles`
+    gate verdict, `halted` into the verdict itself — so every halted run measured
+    through this reader was one cycle over and reported halted=False.
+    """
+    legacy = {"phase": "HALTED", "cycle": 5,
+              "halted_reason": "--max-cycles 2 reached: opening GRIND 3"}
+    _write_json(run_env, "state.json", legacy)
+    old_shape = fs.derive_cycle_count(run_env)
+
+    current = {"phase": "HALTED", "cycle": 5,
+               "halted_reason": {"reason": "lead_ruling",
+                                 "text": "the lead stopped it"}}
+    _write_json(run_env, "state.json", current)
+    new_shape = fs.derive_cycle_count(run_env)
+
+    assert old_shape["halted"] is True and old_shape["count"] == 5
+    assert new_shape["halted"] is True, (
+        "the FR-019 dict shape read as no halt at all, so the run counted the "
+        "GRIND the cap refused to open"
+    )
+    assert new_shape["count"] == 5
+    assert new_shape["count"] == old_shape["count"], (
+        "one run, one halt, two persisted spellings — and they must not "
+        "produce two different cycle counts"
+    )
+
+
+def test_a_halt_record_with_neither_a_reason_nor_text_is_not_a_halt(
+    run_env,
+) -> None:
+    """fallout D-102 — tolerating the new shape is not accepting an empty one.
+
+    A mapping whose `reason` and `text` are both blank records nothing. Reading
+    it as a halt would subtract a GRIND cycle from every run that ever wrote
+    one, which is the same fabrication in the other direction.
+    """
+    _write_json(run_env, "state.json", {
+        "phase": "F3", "cycle": 5, "halted_reason": {"reason": "", "text": ""},
+    })
+    derived = fs.derive_cycle_count(run_env)
+
+    assert derived["halted"] is False
+    assert derived["count"] == 6, "a run that did not halt still counts its GRIND"
+
+
+def test_fallout_rows_answers_not_measurable_when_there_is_no_ledger(
+    run_env,
+) -> None:
+    """fallout FR-053 / GI-024 (D-104) — an absent ledger is not an empty one.
+
+    `read_document` is total and answers `({}, None)` for a file that is not
+    there, which is right for a reader that must not raise and wrong as the
+    INPUT to an acceptance verdict: with no records, nothing is unmeasured and
+    nothing carries `fallout_of`, so every rung fell through to `pass` and the
+    census certified the fallout AC-045 / NFR-006 acceptance figure over a
+    directory holding one file.
+
+    `scripts/measure-run.py#_read_fallout` refused exactly this and said why —
+    publishing the census for such a directory "would put the strongest
+    acceptance result against the weakest possible evidence" — so one figure had
+    two surfaces answering PASS and MISSING. The guard belongs in the reader both
+    surfaces read, because the absence of the ledger is a property of the run
+    directory and not of the command that asked.
+    """
+    _write_json(run_env, "state.json", {"phase": "F3", "cycle": 1})
+    assert not (run_env / "defects.json").exists()
+
+    rows = fs.fallout_rows(run_env, axis_top=1)
+
+    assert rows["verdict"] == "not_measurable", rows
+    assert rows["per_cycle"] == {} and rows["total"] == 0
+    assert rows["measured_records"] == 0 and rows["unmeasured_records"] == 0
+    assert rows["problem"] is None, "an absent ledger is not a broken one"
+    assert "no defects.json" in rows["verdict_reason"]
+
+    # And a ledger that IS there still answers for what it holds.
+    _write_json(run_env, "defects.json", {"defects": [
+        {"id": "D-1", "cycle": 0, "fallout_of": None},
+        {"id": "D-2", "cycle": 1, "fallout_of": None},
+    ]})
+    assert fs.fallout_rows(run_env, axis_top=1)["verdict"] == "pass"
+
+
+def test_a_bucket_the_roster_knows_with_no_records_key_is_listed(
+    run_env,
+) -> None:
+    """fallout FR-054 (D-111) — the branch the docstring promised, made reachable.
+
+    `stream_rollup_rows`' own docstring says "a bucket with no `records` key at
+    all reports `record_count` 0 and is listed in `buckets_without_records`, so
+    'written by the additive writer' stays distinguishable from 'recorded
+    once'". `is_stream_record` tests the VALUE for that key, so such a bucket
+    failed it and was skipped before the branch could run: the tolerance the
+    fallout FR-054 rung asks for was asserted in prose and not implemented.
+
+    The KEY decides the leftovers, which is the rule `measure-run.py` and
+    `migrate-archive.py` already apply and the one `is_stream_record`'s
+    docstring assigns to the call site. The resolver is handed IN, the way this
+    module hands in every vocabulary.
+    """
+    _write_json(run_env, "stream-rollup.json", {"cycles": {
+        "1": {
+            # The additive writer's shape: totals, no `records[]`.
+            "trace": {"items_checked": 40, "items_total": 50, "findings": 3},
+            "prove": _tranche(71, 71, 0, 1),
+            "inspect_mode": "FULL",
+            "stream_scope": {"trace": {"scope": "delta"}},
+        },
+    }})
+
+    table = fs.stream_rollup_rows(run_env, stream_id_of=canonical_stream_id)
+
+    assert sorted(table["cycles"]["1"]) == ["prove", "trace"]
+    assert table["stream_count"] == 2, "the stream's real work was being dropped"
+    row = table["cycles"]["1"]["trace"]
+    assert row["items_checked"] == 40 and row["items_total"] == 50
+    assert row["record_count"] == 0 and row["replaced_count"] == 0
+    assert row["records"] == []
+    assert table["buckets_without_records"] == [{"cycle": "1", "stream": "trace"}]
+
+    # The cycle-level facts beside it are STILL not streams: the value test is
+    # the first rung and the key only decides what it left over, so a mapping
+    # the roster does not know drops exactly as it did (D-182).
+    assert "stream_scope" not in table["cycles"]["1"]
+    assert "inspect_mode" not in table["cycles"]["1"]
+
+
+def test_the_additive_bucket_drops_when_no_roster_was_handed_in(run_env) -> None:
+    """fallout D-111 — a walker with no roster answers narrowly, never wrongly.
+
+    The resolver is optional because `orchestration/spend.py` and
+    `scripts/measure-run.py` also call the assembler and carry their own view of
+    the roster. Without one, the walk cannot tell an additive tranche from a
+    cycle-level fact and must not guess — so it is the value test alone, exactly
+    as before, and this pins that the fix widened nothing by default.
+    """
+    _write_json(run_env, "stream-rollup.json", {"cycles": {
+        "1": {"trace": {"items_checked": 40, "items_total": 50, "findings": 3}},
+    }})
+
+    table = fs.stream_rollup_rows(run_env)
+
+    assert table["cycles"] == {} and table["stream_count"] == 0
+    assert table["buckets_without_records"] == []
+
+
+def test_unreported_dispatch_inputs_keep_the_additive_writers_stream(
+    run_env,
+) -> None:
+    """fallout D-111 — the two walkers of one bucket answer alike.
+
+    The roster and the coverage table are built by two walks of the SAME cycle
+    bucket, and D-182 is what happens when they answer differently. A tranche
+    written before `records[]` existed dropped out of the roster too, so that
+    stream's agent vanished from the unreported-dispatch derivation: a stream
+    that reported no spend for a phase it was dispatched into stopped being
+    counted, which is the one thing that derivation is for.
+    """
+    _write_json(run_env, "stream-rollup.json", {"cycles": {
+        "1": {
+            "trace": {"items_checked": 40, "items_total": 50, "findings": 3},
+            "prove": _tranche(71, 71, 0, 1),
+            "evidence_sweep": {"scope": "full", "corpus_size": 12},
+        },
+    }})
+
+    inputs = fs.unreported_dispatch_inputs(run_env, stream_id_of=canonical_stream_id)
+
+    assert sorted(inputs["stream_roster"]["F2"]) == ["prove", "trace"]
+    assert sorted(inputs["cycles_of_agent"]) == ["prove", "trace"]
+    assert "evidence_sweep" not in inputs["cycles_of_agent"]
+
+    # And the two walkers agree, which is the property D-182 filed and this
+    # keeps: one bucket, one answer about which keys are streams.
+    table = fs.stream_rollup_rows(run_env, stream_id_of=canonical_stream_id)
+    assert set(inputs["cycles_of_agent"]) == set(table["cycles"]["1"])
 
 
 def test_stream_rollup_rows_renders_an_over_total_bucket_and_names_it(
