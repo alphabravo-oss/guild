@@ -2051,16 +2051,14 @@ def _phase_transition(
         # (phase='grind') to build a cycle-context block the lead appends to
         # the GRIND prompt, saving redundant re-exploration of files that
         # earlier cycles already touched.
-        import subprocess as _sp
-        try:
-            _rev = _sp.run(
-                ["git", "-C", project_root, "rev-parse", "HEAD"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if _rev.returncode == 0 and _rev.stdout.strip():
-                (fdir / CAST_BASELINE_SHA_MARKER).write_text(_rev.stdout.strip(), encoding="utf-8")
-        except (FileNotFoundError, _sp.TimeoutExpired, OSError):
-            pass
+        # fallout research/holmes-orchestrator.md#share-4 (D-098) — THROUGH THE
+        # ONE ADAPTER, which this module already imports and already uses at the
+        # `inspect_start` boundary. An inline copy beside an import of the same
+        # helper is the shape share-4 names: `_head_sha` existed and was not the
+        # exclusive point, so the same invocation carried four timeouts and four
+        # exception tuples across the package.
+        if (baseline := _head_sha(project_root)):
+            (fdir / CAST_BASELINE_SHA_MARKER).write_text(baseline, encoding="utf-8")
         _update_phase(fdir, "F2")
         _record_inspect_mode(fdir, entry)
         _record_cycle_rollup(

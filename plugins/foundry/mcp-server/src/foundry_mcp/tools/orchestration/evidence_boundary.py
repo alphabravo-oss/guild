@@ -13,6 +13,14 @@ from foundry_mcp.tools.artifacts import (
     _save_json,
 )
 from foundry_mcp.tools.foundry_state import now_iso
+# fallout research/holmes-orchestrator.md#share-4 (D-098) — THE ONE `git
+# rev-parse HEAD` ADAPTER, imported rather than re-spelled.
+#
+# `width.py` is a VERIFIER module and so is this one, so this is a
+# verifier-to-verifier edge at module top, which GI-033's rule has nothing to
+# say about — no seam, no lazy import, no cycle: `width.py` imports no
+# orchestration module at module top at all.
+from foundry_mcp.tools.orchestration.width import _head_sha
 from pathlib import Path
 
 
@@ -50,17 +58,16 @@ def _boundary_sweep_head(project_root: str) -> str:
 
     A HEAD that cannot be read is not a cache key, so nothing is remembered and
     nothing is served — the same ruling `_terminal_evidence_sweep` makes.
-    """
-    import subprocess
 
-    try:
-        rev = subprocess.run(
-            ["git", "-C", project_root, "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5,
-        )
-        return rev.stdout.strip() if rev.returncode == 0 else ""
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return ""
+    fallout research/holmes-orchestrator.md#share-4 (D-098) — THROUGH THE ONE
+    ADAPTER. This spelled its own `subprocess.run(["git", …, "rev-parse",
+    "HEAD"])`, one of four such copies across the package beside the
+    `width._head_sha` adapter that already existed for exactly this. Four copies
+    of one invocation is four timeouts, four exception tuples and four rulings
+    about what a non-zero return means; `_head_sha` is a verifier-to-verifier
+    import, which the layering permits without a seam.
+    """
+    return _head_sha(project_root)
 
 
 def _sweep_evidence_at_boundary(
@@ -336,18 +343,9 @@ def _terminal_evidence_sweep(fdir: Path, project_root: str) -> dict:
     only THEN the strip — and `tests/test_lead_prose.py#
     test_the_f6_sequence_sweeps_before_it_strips` fails if the two ever swap.
     """
-    import subprocess
-
-    head = ""
-    try:
-        rev = subprocess.run(
-            ["git", "-C", project_root, "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if rev.returncode == 0:
-            head = rev.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        head = ""
+    # fallout research/holmes-orchestrator.md#share-4 (D-098) — the second of
+    # this module's two copies, through the same one adapter.
+    head = _head_sha(project_root)
 
     memo_path = fdir / TERMINAL_SWEEP_FILENAME
     memo = _load_json(memo_path)
@@ -624,14 +622,98 @@ def _sweep_refusal(sweep: dict, cycle: int, token: str = "inspect_start") -> dic
             f"no longer reproduce at HEAD: {', '.join(named)}"
         ),
         "hint": (
-            "Each log's `# evidence-cmd:` was re-executed in a detached "
-            "worktree at HEAD and its output no longer matches what was "
-            "committed. Either the behaviour it demonstrates regressed — fix "
-            "that — or the log is stale and its owning casting must re-capture "
-            f"it. The phase has NOT advanced and the cycle counter has NOT "
+            _sweep_remedy(sweep["mismatches"])
+            + " The phase has NOT advanced and the cycle counter has NOT "
             f"moved; re-call Foundry-Phase(phase='{token}') when it reproduces."
         ),
         "cycle": cycle,
         "mismatches": sweep["mismatches"],
         "evidence_sweep": sweep["record"],
     }
+
+
+#: fallout AC-035 / US-008 / CT-015 (D-148) — THE REMEDY IS KEYED TO THE
+#: FAILURE TOKEN, because one of them is not a re-execution failure at all.
+#:
+#: `EVIDENCE_COMMAND_SYNTAX` is raised BEFORE the command runs: CT-015 says a
+#: log whose command fails `/bin/sh -n` "is refused with token
+#: EVIDENCE_COMMAND_SYNTAX before execution", and the sweep's own
+#: `mismatches[].reason` says so in the same return value. The hint said the
+#: opposite — "was RE-EXECUTED in a detached worktree at HEAD and its output no
+#: longer matches what was committed" — and offered two remedies, neither of
+#: which resolves the token: re-capturing a log whose command does not parse
+#: reproduces the identical refusal, and there is no behaviour to fix because
+#: nothing ran. DRIVEN: a committed log with an unparseable `# evidence-cmd:`
+#: swept at HEAD refused with failure_token EVIDENCE_COMMAND_SYNTAX, a spy on
+#: `_run_command_with_timeout` proved the command never reached the runner, and
+#: the side-effect marker was not created.
+#:
+#: US-008 is "so that a syntax mistake costs a commit, not a cycle", and this is
+#: exactly where that has to hold: a log predating the pre-commit guard, or one
+#: committed with the hook skipped, reaches this door and the lead was sent to
+#: re-capture it. The actual remedy — fix the command's syntax — appeared
+#: nowhere in `error` or `hint`, only in `mismatches[].reason`, which a consumer
+#: rendering error+hint never shows.
+#:
+#: KEYED BY TOKEN, PINNED TO THE VOCABULARY. `tests/orchestration/
+#: test_evidence_boundary.py#test_every_evidence_failure_token_has_a_remedy`
+#: derives the key set from `evidence.KNOWN_EVIDENCE_FAILURE_TOKENS`, so a
+#: token added to that closed set fails there rather than silently taking the
+#: re-execution sentence written for a different failure.
+_SWEEP_REMEDIES = {
+    "EVIDENCE_COMMAND_SYNTAX": (
+        "The log's `# evidence-cmd:` does not PARSE under `/bin/sh -n`, so it "
+        "was refused BEFORE execution and nothing was run. Re-capturing the log "
+        "reproduces this refusal — fix the command's syntax in the log, parse "
+        "it yourself with `/bin/sh -n`, then re-capture."
+    ),
+    "EVIDENCE_COMMAND_MISSING": (
+        "The log carries no `# evidence-cmd:` header, so there is nothing to "
+        "re-execute. Its owning casting must add the header naming the command "
+        "that produces the body, and re-capture."
+    ),
+    "EVIDENCE_VOLATILE_MALFORMED": (
+        "A `# evidence-volatile:` line is not a usable regex, so the output "
+        "could not be redacted before comparison. Fix the pattern in the log's "
+        "header and re-capture."
+    ),
+    "EVIDENCE_FOR_MALFORMED": (
+        "The log's `# evidence-for:` header names no valid requirement id. Fix "
+        "the header and re-capture."
+    ),
+    "EVIDENCE_TIMEOUT": (
+        "The log's `# evidence-cmd:` did not finish inside its timeout. Either "
+        "the behaviour it demonstrates got slower — fix that — or the command "
+        "genuinely needs longer and its `# evidence-timeout:` must say so."
+    ),
+}
+
+#: Every other member of the closed set IS a re-execution result, and this is
+#: the sentence they have always carried.
+_SWEEP_REMEDY_REEXECUTED = (
+    "Each log's `# evidence-cmd:` was re-executed in a detached worktree at "
+    "HEAD and its output no longer matches what was committed. Either the "
+    "behaviour it demonstrates regressed — fix that — or the log is stale and "
+    "its owning casting must re-capture it."
+)
+
+
+def _sweep_remedy(mismatches: list) -> str:
+    """The remedy sentence(s) for what actually went wrong (fallout D-148).
+
+    One sentence when every mismatch shares a token, and one per DISTINCT token
+    otherwise — a mixed sweep whose logs failed for different reasons has more
+    than one remedy, and collapsing them onto the majority is the same harm as
+    naming the wrong one.
+    """
+    tokens: list[str] = []
+    for mismatch in mismatches:
+        token = (mismatch or {}).get("failure_token") if isinstance(mismatch, dict) else None
+        key = token if token in _SWEEP_REMEDIES else ""
+        if key not in tokens:
+            tokens.append(key)
+    if not tokens:
+        return _SWEEP_REMEDY_REEXECUTED
+    return " ".join(
+        _SWEEP_REMEDIES[t] if t else _SWEEP_REMEDY_REEXECUTED for t in tokens
+    )

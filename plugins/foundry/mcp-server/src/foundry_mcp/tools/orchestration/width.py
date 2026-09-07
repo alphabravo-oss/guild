@@ -264,21 +264,48 @@ def _spec_relative_paths(project_root: str) -> list[str]:
 
 
 
+#: fallout research/holmes-orchestrator.md#acc-3 (D-097) — THE ACCEPTED
+#: SPELLINGS OF THE RESEARCH-SKIP RECORD, DECLARED ONCE.
+#:
+#: RA-6 names the three-location read as a cohesion defect and asks for a single
+#: source. What is TRUE of the tree is narrower and worse than "three sources":
+#: no writer in the plugin writes ANY of them. `RESEARCH_SKIPPED_MARKER` is
+#: declared in `artifacts.py` and written nowhere; `research_skipped` appears in
+#: no shipped writer at all (swept across `plugins/foundry/**` for both
+#: spellings — the only writes are test fixtures). So this is a HAND-RECORDED
+#: fact with three readers' worth of spellings and no write discipline to make
+#: consistent, which is why the docstring below could honestly say "no single
+#: one owns it".
+#:
+#: WHAT IS CLOSED HERE is the half that is this module's: the accepted set is
+#: declared once, as data, instead of being spelled inline in a loop — so the
+#: set a reader must satisfy is stated in one place and pinned, rather than
+#: discovered by reading the reader. WHAT IS NOT is the write point. That
+#: belongs at `foundry_init`, in casting 4's `tools/foundry.py`, and is raised
+#: as a cross-casting concern; until a door writes one of these, narrowing the
+#: read would only decide which hand-recorded spelling stops working.
+#:
+#: The marker is listed FIRST because it is the shape every other per-run fact
+#: in the run directory takes; the two document keys are where `foundry_init`
+#: writes run-level flags and are what the suite's own fixtures record.
+_RESEARCH_SKIPPED_DOCUMENTS = ("state.json", "castings/manifest.json")
+_RESEARCH_SKIPPED_KEY = "research_skipped"
+
+
 def _research_skipped(fdir: Path) -> bool:
     """Does this run carry a record that RESEARCH was skipped (AC-017)?
 
-    Read from three places because no single one owns it: `castings/manifest.json`
-    and `state.json` are where `foundry_init` writes run-level flags, and a
-    `.research-skipped` marker is the shape every other per-run fact in this
-    directory takes. Any of them saying so is enough — a run that recorded the
-    skip anywhere recorded it.
+    Any accepted spelling saying so is enough — a run that recorded the skip
+    anywhere recorded it. The accepted set is `RESEARCH_SKIPPED_MARKER` plus
+    `_RESEARCH_SKIPPED_KEY` in each of `_RESEARCH_SKIPPED_DOCUMENTS`; see that
+    declaration for why it is three and what would make it one.
     """
     if (fdir / RESEARCH_SKIPPED_MARKER).exists():
         return True
-    for document in ("state.json", "castings/manifest.json"):
-        if bool(_load_json(fdir / document).get("research_skipped")):
-            return True
-    return False
+    return any(
+        bool(_load_json(fdir / document).get(_RESEARCH_SKIPPED_KEY))
+        for document in _RESEARCH_SKIPPED_DOCUMENTS
+    )
 
 
 

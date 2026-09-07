@@ -768,6 +768,27 @@ def foundry_mark_stream(
     # current HEAD SHA. Future F2 entries can compare HEAD vs this SHA
     # restricted to manifest key_files — if no overlap, skip TRACE.
     # Deterministic, verbatim the same as re-running LSP: topology unchanged.
+    #
+    # fallout research/holmes-orchestrator.md#share-4 (D-098) — THE ONE COPY OF
+    # THIS INVOCATION THIS CASTING CANNOT CLOSE, AND SAYING SO IS THE POINT.
+    #
+    # share-4 asks that `git rev-parse HEAD` route through one adapter. Three of
+    # the four copies now do: `evidence_boundary.py`'s two and `transitions.py`'s
+    # one all call `width._head_sha`, which is a verifier-to-verifier import the
+    # layering permits. This module is LIFECYCLE, and GI-033's second rule —
+    # "a lifecycle module reaches no verifier module AT ALL", the direction
+    # AC-061 refuses ENTIRELY, with no seam and no table — forbids the same
+    # import from here.
+    #
+    # GI-033's arithmetic gives one remedy: a symbol both layers read "can live
+    # only in a leaf". The right leaf already exists and already owns this
+    # package's git reads — `foundry_state.py` holds `git_changed_paths`,
+    # `git_touching_commit` and `boundary_base_sha`, and its own header says
+    # "EVERY ONE IS A READ" — so `head_sha` belongs beside them. That file is
+    # casting 10's, so this is raised as a cross-casting concern rather than
+    # reached for here, and the copy stays until the leaf carries it. Forking a
+    # fourth adapter into a leaf of this package's own would close the research
+    # row and re-open the duplication it is about.
     if stream == "trace" and totals["findings"] == 0:
         import subprocess
         try:
