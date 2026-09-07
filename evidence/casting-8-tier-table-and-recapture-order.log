@@ -1,0 +1,17 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet python -c "from foundry_mcp.schemas import vocab; print('DEFECT_TIERS   =', sorted(vocab.DEFECT_TIERS)); print('BLOCKING_TIERS =', list(vocab.BLOCKING_TIERS))" && cd .. && sed -n '/^| Tier | Blocks /,/^$/p' commands/start.md && grep -o -e 'materialises `git rev-parse HEAD` at CROSSING time' -e 'Dispatch stale-log recaptures ONE CASTING AT A TIME' -e 'hold under an explicit GRANT' -e 'Parallel recapture is not the fast path' commands/start.md
+# evidence-for: AC-022
+# evidence-timeout: 300
+
+DEFECT_TIERS   = ['HARDENING', 'LATENT', 'LIVE']
+BLOCKING_TIERS = ['LIVE', 'unknown']
+| Tier | Blocks `inspect_clean`, ASSAY, TEMPER, NYQUIST and DONE? | Where it shows up |
+|---|---|---|
+| `LIVE` | Yes | Counted by every gate; must be fixed before the run proceeds |
+| unknown | Yes — counted exactly like `LIVE` | A record filed before this release carries no tier and reads as unknown. It is NOT waved through, and the F6 report lists it separately so it can be re-tiered rather than guessed at |
+| `LATENT` | No | Stays open, stays tracked, named in the F6 report's `latent_backlog` |
+| `HARDENING` | No | Stays open, stays tracked, named in the F6 report's `hardening_backlog`. A probe a stream DROVE and watched fail on a path no requirement states — so it carries no `spec_ref`, and a filing that sets one is refused at both doors rather than recorded with it |
+
+materialises `git rev-parse HEAD` at CROSSING time
+Dispatch stale-log recaptures ONE CASTING AT A TIME
+hold under an explicit GRANT
+Parallel recapture is not the fast path

@@ -773,6 +773,44 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         START_MD,
         "the casting that OWNS it re-captures it",
     ),
+    # fallout D-155 / GI-006: naming the OWNER of a stale log answered whose
+    # job the re-capture is and left the lead free to dispatch every owner at
+    # once, which is the obvious and token-efficient reading. It cannot work.
+    # The boundary sweep materialises `git rev-parse HEAD` at CROSSING time --
+    # `evidence.py#sweep_evidence_at_head` checks out "HEAD of THIS repo ...
+    # not any casting's own commit, which is acceptance's question and a
+    # different one" -- so a log owes reproduction at a tree that does not
+    # exist yet when it is captured. DRIVEN: three recapture teammates
+    # dispatched concurrently, each verified its own logs green and committed
+    # (20a387d, 71787e9, 885c375), and the set was still incoherent because a
+    # peer's in-flight edit moved a line another casting's log had pinned.
+    # These four pins are the ordering discipline the spec already carried as
+    # survey text (spec.md's "the shared suite log recaptured last under a
+    # grant") and nothing had ever mechanised.
+    (
+        "sweep-recapture-head-is-materialised-at-crossing",
+        "GI-006",
+        START_MD,
+        "materialises `git rev-parse HEAD` at CROSSING time",
+    ),
+    (
+        "sweep-recapture-is-serial",
+        "GI-006",
+        START_MD,
+        "Dispatch stale-log recaptures ONE CASTING AT A TIME",
+    ),
+    (
+        "sweep-shared-log-is-held-under-a-grant",
+        "GI-006",
+        START_MD,
+        "hold under an explicit GRANT",
+    ),
+    (
+        "sweep-parallel-recapture-is-not-the-fast-path",
+        "GI-006",
+        START_MD,
+        "Parallel recapture is not the fast path",
+    ),
     # D-025 / FR-007: the tier paragraph copied the observation paragraph's
     # COUNT of the roster without its BINDING CLAUSE, so one file carried two
     # derivations of the same roster that disagreed about the members neither
@@ -1604,6 +1642,19 @@ _RETIRED_START_MD_SPELLINGS: tuple[tuple[str, str, str], ...] = (
         "F0.7 is not a gated phase transition: run the check with "
         "Foundry-Intent-Coverage, then Foundry-Gate(phase='validate') to "
         "cross into F0.9",
+    ),
+    # fallout D-162 / AC-022: the sentence beneath the tier table counted the
+    # vocabulary it was describing, and `DEFECT_TIERS` outgrew the count when
+    # HARDENING joined it. A count is the half that rots silently -- the
+    # members carry their own names into the prose, a number beside them is a
+    # second copy of len() that no door reads -- so the retirement is asserted
+    # as an absence here, and the membership is DERIVED below.
+    (
+        "Both tiers are defects and both get fixed",
+        "AC-022",
+        "every member of DEFECT_TIERS is a defect and every one of them gets "
+        "fixed; the blocking set is BLOCKING_TIERS and it is a different, "
+        "smaller set that HARDENING deliberately did not join",
     ),
 )
 
@@ -2556,6 +2607,132 @@ def test_start_md_names_every_halt_reason_the_door_accepts() -> None:
         f"member of HALT_REASONS is a value the lead may have to pass at "
         f"`Foundry-Phase(phase='halt')`; a member the protocol never mentions "
         f"is one the lead discovers from a refusal."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The lead's tier table, joined against the two vocabularies it describes
+# ---------------------------------------------------------------------------
+#
+# fallout D-162 / AC-022 / GI-014. The table under "What the tier changes is
+# which gate counts the defect, and nothing else" is the ONE document that
+# tells the LEAD which tier blocks which gate, and it rotted unseen:
+# `DEFECT_TIERS` gained `HARDENING`, the table kept its three rows, and the
+# sentence beneath still read "Both tiers are defects and both get fixed". A
+# lead reading it learned either that HARDENING does not exist or that its
+# blocking status is unknown -- on a run where the whole point of the tier is
+# that ASSAY, TEMPER, NYQUIST and DONE all pass with HARDENING records open.
+#
+# WHY THE EXISTING SWEEP DID NOT REACH IT. `test_protocol_prose.py`'s
+# `test_the_tier_rule_names_every_declared_member` IS parametrised over
+# `sorted(vocab.DEFECT_TIERS)` -- but it sweeps `DEFECT_FILING_AGENTS`, the
+# files that FILE a defect, and `commands/start.md` is not one of them because
+# the lead files nothing. The lead-facing half of the same vocabulary had no
+# derived pin of any kind. Two populations, two modules, and this is the module
+# that pins what the LEAD is told.
+#
+# DERIVED ON BOTH AXES rather than pinned to the literal "HARDENING": the row
+# SET comes from `DEFECT_TIERS` plus the read-side sentinel, and each row's
+# blocks-or-not cell is joined against `BLOCKING_TIERS`. A fourth filing tier
+# fails the first test; a tier moved into or out of the blocking tuple fails
+# the second. Hard-coding either would go green the day someone edited this
+# file instead of the prose, which is the exact failure AC-022 exists to close.
+
+#: The tier table's header, which is also the anchor the parser finds it by.
+_TIER_TABLE_HEADER = "| Tier | Blocks "
+
+
+def _tier_rows() -> dict[str, str]:
+    """``{tier name: its blocks-or-not cell}`` from start.md's tier table."""
+    lines = _read(START_MD).splitlines()
+    starts = [i for i, ln in enumerate(lines) if ln.startswith(_TIER_TABLE_HEADER)]
+    assert len(starts) == 1, (
+        f"{_rel(START_MD)} carries {len(starts)} table(s) whose header starts "
+        f"{_TIER_TABLE_HEADER!r}; this parser needs exactly one. If the tier "
+        f"briefing was restructured, repoint the parser -- never delete it, "
+        f"because a parser that finds nothing is a check that passes."
+    )
+    rows: dict[str, str] = {}
+    for line in lines[starts[0] + 2 :]:  # skip the header and its separator
+        if not line.startswith("|"):
+            break
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        rows[cells[0].strip("`")] = cells[1]
+    assert rows, (
+        f"{_rel(START_MD)}'s tier table has no data rows. An empty table makes "
+        f"every membership check below vacuous."
+    )
+    return rows
+
+
+def test_start_md_tier_table_has_a_row_for_every_declared_tier() -> None:
+    """fallout D-162 / AC-022 / GI-014: a tier with no row is a tier the lead
+    reads as not existing.
+
+    Derived from ``DEFECT_TIERS`` plus ``TIER_UNKNOWN`` -- the filing
+    vocabulary and the read-side sentinel every reader resolves an untiered
+    record to. Both belong in the table for the same reason: the lead's
+    question at a gate is "does this open record stop me", and a record whose
+    tier the table never mentions has no answer.
+    """
+    from foundry_mcp.schemas import vocab
+
+    # Vacuity floor: an empty vocabulary would make every membership test pass.
+    assert len(vocab.DEFECT_TIERS) >= 3, sorted(vocab.DEFECT_TIERS)
+    rows = _tier_rows()
+    expected = set(vocab.DEFECT_TIERS) | {vocab.TIER_UNKNOWN}
+    missing = sorted(expected - set(rows))
+    assert not missing, (
+        f"{_rel(START_MD)}'s tier table has no row for {missing}. The table is "
+        f"the one place the lead learns which tier blocks which gate, so a "
+        f"member of DEFECT_TIERS ({sorted(vocab.DEFECT_TIERS)}) with no row is "
+        f"a tier the lead reads as not existing -- and `{vocab.TIER_UNKNOWN}` "
+        f"is what every reader resolves a record with no tier key to."
+    )
+    extra = sorted(set(rows) - expected)
+    assert not extra, (
+        f"{_rel(START_MD)}'s tier table carries row(s) for {extra}, which no "
+        f"filing door writes and no reader resolves to. A tier the protocol "
+        f"describes and the vocabulary does not hold is one a lead expects a "
+        f"stream to file and the server rejects."
+    )
+
+
+def test_start_md_tier_table_blocks_exactly_the_blocking_tiers() -> None:
+    """fallout D-162 / AC-022's second clause: ``DEFECT_TIERS`` grew by
+    ``HARDENING`` and ``BLOCKING_TIERS`` deliberately did not.
+
+    The two constants are the whole ruling, and they are easy to conflate:
+    every tier is a defect, only some of them stop the run. This joins the
+    table's own yes/no cell against the blocking tuple per row, so prose that
+    promises a gate refuses on a tier the gate waves through -- or waves
+    through one it refuses on -- fails here rather than at the door.
+    """
+    from foundry_mcp.schemas import vocab
+
+    assert vocab.BLOCKING_TIERS, (
+        "vocab.BLOCKING_TIERS is empty, which would let every row below read "
+        "as non-blocking. An empty blocking set is a defect in vocab.py, not a "
+        "licence to skip this assertion."
+    )
+    wrong: dict[str, str] = {}
+    for tier, cell in _tier_rows().items():
+        assert cell.lower().startswith(("yes", "no")), (
+            f"{_rel(START_MD)}'s tier table row for {tier!r} answers "
+            f"{cell!r}, which is neither yes nor no. The column asks whether "
+            f"the tier blocks a gate; that question has two answers."
+        )
+        says_blocks = cell.lower().startswith("yes")
+        if says_blocks != (tier in vocab.BLOCKING_TIERS):
+            wrong[tier] = cell
+    assert not wrong, (
+        f"{_rel(START_MD)}'s tier table disagrees with BLOCKING_TIERS "
+        f"({list(vocab.BLOCKING_TIERS)}) on {sorted(wrong)}: {wrong}. The "
+        f"gates count a defect by membership in that tuple and nothing else, "
+        f"so a row that answers the other way sends the lead to a door "
+        f"expecting the opposite of what it does."
     )
 
 
