@@ -84,6 +84,29 @@ from foundry_mcp.tools.foundry_state import (
     read_document,
     read_text_file,
 )
+# fallout FR-009 (D-170, casting 7's concern C-080) — WHAT A ``key_files`` ENTRY
+# IS, READ FROM THE ONE MODULE THAT SAYS IT.
+#
+# C-080 asked whether this module could depend on an existing statement of the
+# rule or had to write its own, and named the hazard: four spellings already
+# exist and adding a fifth closes the concern while growing the problem. The
+# answer is the leaf. ``orchestration/keyfiles.py`` imports NOTHING, which is
+# the strongest form of the property ``_LEAF_MODULES`` is checked on, and a leaf
+# is the layer BOTH sides of GI-033 may reach — the package-wide
+# single-definition guard states the outcome in its own words: "an IMPORT is not
+# a definition: a module that imports a name is reaching the one definition,
+# which is the outcome this guard exists to produce rather than to forbid".
+# ``foundry_spawn.py`` reaches it the same way, at module top, from outside the
+# orchestration package.
+#
+# ``orchestration/__init__.py`` re-exports nothing and ``keyfiles.py`` imports
+# nothing, so this edge reaches no module that can reach back: there is no cycle
+# for a lazy seam to defer, and deferring it would be a seam written for a
+# hazard that is not there.
+from foundry_mcp.tools.orchestration.keyfiles import (
+    DIRECTORY_ENTRY_SUFFIX,
+    covers_path,
+)
 
 # --------------------------------------------------------------------------- #
 # Constants — declared FIRST so every message, every reader and every test
@@ -152,15 +175,6 @@ TARGET_KIND_CASTING = "casting"
 TARGET_KIND_FILE = "file"
 TARGET_KIND_SYMBOL = "symbol"
 
-#: fallout FR-009 (D-170, casting 7's concern C-080) — THE ONE CHARACTER THAT
-#: DECIDES WHAT A ``key_files`` ENTRY IS. An entry ending in it names a
-#: DIRECTORY and stands for every path beneath it; every other entry names a
-#: file. That is the manifest format, not a convenience: ``Foundry-Gate('cast')``
-#: caps a casting at eight entries, so a casting carving a whole package fits
-#: under the cap by naming the package once, and this run's own manifest carries
-#: ``.../tools/orchestration/`` for exactly that reason.
-_DIRECTORY_ENTRY_MARK = "/"
-
 #: The sentence the unresolved-target hint adds WHEN THE MANIFEST ACTUALLY HAS
 #: a directory entry (fallout FR-009, the second half of C-080's ask).
 #:
@@ -168,12 +182,16 @@ _DIRECTORY_ENTRY_MARK = "/"
 #: and says nothing else, so a filer who typed ``streams.py`` reads a list of
 #: paths, sees nothing resembling what they meant, and goes looking for a file
 #: path the manifest will never contain — because a covered file appears in
-#: nobody's ``key_files`` list literally. Derived from the mark above rather
-#: than re-typing the character, and emitted only when there IS such an entry:
-#: a run whose castings all name files gets the hint it always got.
+#: nobody's ``key_files`` list literally.
+#:
+#: Built from ``DIRECTORY_ENTRY_SUFFIX`` rather than re-typing the character —
+#: the ``_PYTEST_DISCOVERY_PHRASE`` rule: prose that names a rule is derived
+#: from the constant that DEFINES it, so the sentence and the reading cannot
+#: come to say two things. Emitted only when there IS such an entry: a hint
+#: describes the run it was built from, not the format in general.
 _DIRECTORY_ENTRY_MEANING = (
     "a key file ending in "
-    f"'{_DIRECTORY_ENTRY_MARK}' names a DIRECTORY and stands for every path "
+    f"'{DIRECTORY_ENTRY_SUFFIX}' names a DIRECTORY and stands for every path "
     "beneath it, so name such a path IN FULL rather than by its basename"
 )
 
@@ -266,58 +284,6 @@ def _named_refusal(error: str, hint: str, phase: str) -> dict:
 def _normalise_path(value: str) -> str:
     """A path as the manifest and a human would each spell it."""
     return value.strip().replace("\\", "/").removeprefix("./")
-
-
-def _key_file_reaches(key_file: object, wanted_path: object) -> bool:
-    """Does this ``key_files`` entry REACH ``wanted_path``? (fallout FR-009 — D-170.)
-
-    THE QUESTION IS COVERAGE, NEVER EQUALITY. An entry naming a directory
-    covers every path beneath it; for an entry naming a file the two questions
-    are the same one, which is why a manifest with no directory entry is
-    answered exactly as it was before this function existed.
-
-    The prefix is a SEGMENT boundary rather than a string prefix, because the
-    trailing mark is part of the comparison: ``tools/orchestration/`` reaches
-    ``tools/orchestration/streams.py`` and does NOT reach
-    ``tools/orchestrationXX/a.py``. An empty entry reaches NOTHING rather than
-    everything, which is what a bare ``startswith("")`` would have done — a
-    manifest cell nobody filled in must not silently claim the tree.
-
-    Both arguments are normalised HERE rather than by the caller, because a
-    predicate that expects prepared input is a predicate every caller can
-    forget to prepare for, and the forgetting is silent.
-
-    WHY THIS IS A FOURTH SPELLING OF ONE RULE, AND WHAT STOPS IT DRIFTING.
-    C-080 asked for the judgement rather than the code, so it is recorded here.
-    The rule has a stated home already — ``foundry_validate.py#_key_file_covers``
-    landed it at F0.9 in 5f6e7e9 — and two more sites read it, and casting 2 is
-    landing ``orchestration/keyfiles.py#covers_path`` as the leaf both layers
-    may reach. Importing one of those is the right end state and neither is
-    available to this module today: ``keyfiles.py`` is not committed, and a
-    module-top import of a module that does not exist takes ``server.py`` down
-    at startup for every tool, not just this one; ``foundry_validate``'s is
-    private and documents that its arguments arrive through that module's own
-    normaliser, which returns "" for a path containing a space — F0.9
-    validation policy, which is not what a concern target means.
-
-    So the fork is real and the pin is behavioural rather than structural:
-    ``test_concerns.py#test_the_coverage_reading_agrees_with_every_committed_statement_of_it``
-    drives this body and every committed statement of the same rule over ONE
-    corpus and fails the day they answer differently — which is what a drift
-    would actually break. The exit is one repoint onto the leaf on the day it
-    is committed, and the name here is deliberately distinct from every peer's
-    so the package-wide single-definition guard keeps seeing four names rather
-    than one name defined four times.
-    """
-    key = _normalise_path(str(key_file))
-    if not key:
-        return False
-    subject = _normalise_path(str(wanted_path))
-    if not subject:
-        return False
-    if key.endswith(_DIRECTORY_ENTRY_MARK):
-        return subject.startswith(key)
-    return key == subject
 
 
 def _manifest_castings(fdir: Path) -> tuple[list[dict], str | None]:
@@ -422,11 +388,17 @@ def resolve_target(castings: list[dict], target: str) -> dict | None:
     # `matched` carries the ENTRY, not the target: the covered path appears in
     # nobody's `key_files` list literally, so a record naming only the path
     # sends a lead looking for a manifest line that is not there.
+    #
+    # THE READING IS THE LEAF'S, BY IMPORT RATHER THAN BY AGREEMENT. C-080 asked
+    # for the judgement and the import block above records it: a fourth spelling
+    # pinned by a behaviour test would close this concern and grow the problem
+    # the concern is about, and the leaf that ends the problem is committed and
+    # reachable from this layer.
     for casting in castings:
         for key_file in casting.get("key_files") or []:
             if not isinstance(key_file, str):
                 continue
-            if _key_file_reaches(key_file, wanted_path):
+            if covers_path(key_file, wanted_path):
                 return {
                     "kind": TARGET_KIND_FILE,
                     "casting_id": casting.get("id"),
@@ -461,7 +433,7 @@ def _known_targets(castings: list[dict]) -> tuple[list[str], list[str], str]:
             if isinstance(key_file, str) and key_file not in files:
                 files.append(key_file)
     has_directory = any(
-        _normalise_path(f).endswith(_DIRECTORY_ENTRY_MARK) for f in files
+        _normalise_path(f).endswith(DIRECTORY_ENTRY_SUFFIX) for f in files
     )
     return ids, files, (_DIRECTORY_ENTRY_MEANING if has_directory else "")
 

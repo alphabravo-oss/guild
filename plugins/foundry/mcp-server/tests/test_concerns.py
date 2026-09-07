@@ -376,7 +376,7 @@ def test_the_hint_says_a_directory_entry_stands_for_everything_beneath_it(run_en
 
     assert result["phase"] == CONCERN_TARGET_UNRESOLVED
     assert _concerns._DIRECTORY_ENTRY_MEANING in result["hint"]
-    assert _concerns._DIRECTORY_ENTRY_MARK in _concerns._DIRECTORY_ENTRY_MEANING
+    assert _concerns.DIRECTORY_ENTRY_SUFFIX in _concerns._DIRECTORY_ENTRY_MEANING
     assert _DIRECTORY_KEY_FILE in result["hint"]
 
 
@@ -401,84 +401,37 @@ def test_the_hint_stays_silent_about_directories_a_manifest_does_not_have(
     assert _concerns._DIRECTORY_ENTRY_MEANING not in result["hint"]
 
 
-def test_the_coverage_reading_agrees_with_every_committed_statement_of_it():
-    """fallout FR-009 — THE PIN THAT STOPS A FOURTH SPELLING DRIFTING.
+def test_the_coverage_reading_is_the_leafs_and_not_a_copy_that_agrees_with_it():
+    """fallout FR-009 — THE JUDGEMENT C-080 ASKED FOR, held to what it claims.
 
-    C-080 asked whether this module could depend on an existing statement of
-    "does this `key_files` entry cover this path" rather than adding a fifth.
-    It cannot today, and the reasons are in `_key_file_reaches`'s own docstring:
-    `orchestration/keyfiles.py#covers_path` is the right home and is not
-    committed — a module-top import of a module that does not exist takes
-    `server.py` down at startup for every tool — and `foundry_validate`'s is
-    private and documents that its arguments arrive through that module's own
-    normaliser, which is F0.9 validation policy rather than what a concern
-    target means.
+    C-080's ask was not only the rung: it was to decide whether this module
+    could depend on an existing statement of "does this `key_files` entry cover
+    this path" or had to write its own, given that four spellings already
+    existed and only one consumer read the directory form correctly. A fifth
+    would have closed the concern and grown the problem the concern is about.
 
-    So the fork is pinned by BEHAVIOUR instead of by import, which is the
-    remedy this package already uses for a rule two layers read and neither may
-    import (`_DELIBERATE_REDEFINITIONS['_INSPECT_PHASES']`). One corpus, every
-    committed body, and a failure the day any two answer differently — which is
-    what a drift would actually break, as opposed to a comment saying they
-    agree.
+    So this asserts IDENTITY rather than agreement. A copy pinned by a corpus
+    fails on the day it drifts; an import cannot drift at all, and the
+    difference is visible only in an assertion that names the object. The leaf
+    is reachable from here because it imports NOTHING — the strongest form of
+    the property `_LEAF_MODULES` is checked on — and the package-wide
+    single-definition guard states the outcome itself: "an IMPORT is not a
+    definition: a module that imports a name is reaching the one definition,
+    which is the outcome this guard exists to produce rather than to forbid".
 
-    THE CORPUS ARRIVES PRE-NORMALISED, on purpose. What is held equal here is
-    the COVERAGE reading; the path normalisers are separately spelled and their
-    duplication is its own recorded row. Feeding raw spellings would make this
-    fail on a normaliser difference and report it as a coverage disagreement.
-
-    `keyfiles.covers_path` is driven TOO when it is importable, so the pin
-    widens by itself on the day casting 2 commits the leaf. It is conditional
-    only because that module does not exist in the committed tree yet, and the
-    assertion below refuses to pass on a corpus no peer body saw — a pin that
-    can go vacuous is a pin that stops being one.
+    THE HINT IS PINNED TO THE SAME DECLARATION, because prose that names a rule
+    and a reading that implements it are the pair that drifts: `_PYTEST_
+    DISCOVERY_PHRASE` is the house pattern and this is that pattern over the
+    mark that decides what a `key_files` entry is.
     """
-    from foundry_mcp.tools.foundry_validate import _key_file_covers
+    from foundry_mcp.tools.orchestration import keyfiles
 
-    peers = [("foundry_validate._key_file_covers", _key_file_covers)]
-    try:  # pragma: no cover - present only once casting 2 commits the leaf
-        from foundry_mcp.tools.orchestration.keyfiles import covers_path
-    except ImportError:
-        pass
-    else:
-        peers.append(("keyfiles.covers_path", covers_path))
-
-    entries = [
-        "src/foundry_mcp/tools/orchestration/",
-        "tests/orchestration/",
-        "src/foundry_mcp/server.py",
-        "src/one.py",
-        "",
-        "   ",
-    ]
-    paths = [
-        "src/foundry_mcp/tools/orchestration/streams.py",
-        "src/foundry_mcp/tools/orchestration/sub/deeper.py",
-        "src/foundry_mcp/tools/orchestration",
-        "src/foundry_mcp/tools/orchestrationXX/a.py",
-        "src/foundry_mcp/server.py",
-        "src/one.py",
-        "src/one.pyc",
-        "other/src/one.py",
-        "",
-    ]
-
-    disagreements = []
-    for entry in entries:
-        for path in paths:
-            mine = _concerns._key_file_reaches(entry, path)
-            for name, body in peers:
-                if body(entry, path) != mine:
-                    disagreements.append(f"{name}({entry!r}, {path!r}) != {mine}")
-
-    assert disagreements == [], (
-        "the coverage reading has forked: " + "; ".join(disagreements) + ". "
-        "One of these bodies changed without the others. The exit is one "
-        "repoint of tools/concerns.py onto the committed leaf, not a second "
-        "edit here."
-    )
-    # ...and the corpus reached a real peer, so this cannot pass on an empty
-    # comparison the day an import quietly stops resolving.
-    assert peers, "no committed statement of the rule was driven"
+    assert _concerns.covers_path is keyfiles.covers_path
+    assert _concerns.DIRECTORY_ENTRY_SUFFIX is keyfiles.DIRECTORY_ENTRY_SUFFIX
+    assert keyfiles.DIRECTORY_ENTRY_SUFFIX in _concerns._DIRECTORY_ENTRY_MEANING
+    # ...and this module defines no second body for the reading, which is the
+    # thing an identity assertion alone could not tell you.
+    assert not hasattr(_concerns, "_key_file_reaches")
 
 
 def test_empty_text_is_refused(run_env):
