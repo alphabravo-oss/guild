@@ -8116,3 +8116,290 @@ def test_the_contention_suffix_the_teammate_is_warned_about_is_the_claims_own(
             worktree_helpers._release_claim(second)
     finally:
         worktree_helpers._release_claim(first)
+
+
+# ---------------------------------------------------------------------------
+# C-078 / fallout GI-014 / AC-022 -- the FILE axis of the tier vocabulary
+#
+# Every tier pin above is derived on the VALUE axis (parametrised over
+# `_DECLARED_TIERS = sorted(vocab.DEFECT_TIERS)`, so a new member fails until
+# the prose describes it) and hand-scoped on the FILE axis: it sweeps
+# `DEFECT_FILING_AGENTS`, which derives to the six surfaces documenting a
+# `defects` array. D-162, D-163 and D-164 were one fault -- a surface stating
+# the vocabulary as two members -- and all three escaped through that scoping,
+# not through the value axis. `commands/start.md` is not a filing agent because
+# the lead files nothing; `skills/prove/SKILL.md` and `skills/trace/SKILL.md`
+# document a `findings` array, not a `defects` one. Every pin was perfectly
+# correct about the values it swept and swept none of the three files.
+#
+# So the population here is asked by PROPERTY rather than by role: a surface
+# that names TWO OR MORE declared members is enumerating the vocabulary, and a
+# surface enumerating it owes every member. That predicate is derivable, needs
+# no roster to maintain, and holds whatever register or directory the surface
+# writes in -- which is the whole of what the three escapes had in common. A
+# file naming ONE member is making a point about that tier rather than
+# enumerating the set, and is deliberately not swept: demanding the full
+# vocabulary of every passing mention would make the rule unfollowable and the
+# roster would be narrowed back the first time it fired wrongly.
+#
+# ON THE SPAN (the second half of C-078's question). `_tier_rule` stays, for
+# the one thing only it can do: `test_stream_agents_share_one_tier_rule_verbatim`
+# compares the six spans against EACH OTHER for byte-identity, which is a
+# property of a shared paragraph and cannot be asked of a whole file. What the
+# span stops being is the only scope the VOCABULARY is checked in. D-163 and
+# D-164 lived in a findings-schema description, a no-severity paragraph and a
+# `## Key Constraints` bullet -- three regions outside it -- so the completeness
+# and count pins below read the whole file and let the span keep the job it
+# does honestly.
+#
+# ON THE DIRECTORY. The roster spans agents/, skills/, commands/, references/
+# and the plugin README on purpose. Excluding commands/ because another module
+# owns the lead's prose would re-introduce the exact hand-scoping this closes,
+# and these are floor assertions about a closed vocabulary rather than pins on
+# any audience's protocol: `test_lead_prose.py` pins what start.md's tier table
+# SAYS row by row, and this asks only that a file enumerating the vocabulary
+# enumerate all of it.
+# ---------------------------------------------------------------------------
+
+#: Every prose surface the plugin ships, in the four directories a ruling can
+#: be written into plus the README. Globbed, never listed: a new agent, skill
+#: or command joins the sweep by existing.
+PROSE_SURFACES = tuple(
+    sorted(
+        (
+            *AGENTS.glob("*.md"),
+            *SKILLS.glob("*/SKILL.md"),
+            *COMMANDS.glob("*.md"),
+            *REFERENCES.glob("*.md"),
+            *FOUNDRY_ROOT.glob("*.md"),
+        ),
+        key=_rel,
+    )
+)
+
+
+def _named_tiers(path: Path) -> tuple[str, ...]:
+    """The declared tier members a surface names, as whole words.
+
+    Whole-word because the members are ALL-CAPS tokens that occur inside longer
+    identifiers (`NEVER_DEMOTE_CLASSES` carries no tier, but a laxer match
+    would find one), and a false member here would put a file in the roster on
+    a mention it never made.
+    """
+    text = _read(path)
+    return tuple(
+        member
+        for member in _DECLARED_TIERS
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(member)}(?![A-Za-z0-9_])", text)
+    )
+
+
+#: DERIVED: the surfaces that ENUMERATE the tier vocabulary, being those naming
+#: two or more of its declared members. Two is the threshold because it is the
+#: smallest count that is an enumeration rather than a mention.
+TIER_STATING_SURFACES = tuple(
+    path for path in PROSE_SURFACES if len(_named_tiers(path)) >= 2
+)
+
+#: Surfaces KNOWN to enumerate the vocabulary incompletely, with the exact
+#: members each omits. Recorded rather than excused, and compared as an EXACT
+#: set for the reason `_KNOWN_SUBSTANCE_GAPS` is: closing a gap fails this
+#: until the entry is deleted, and opening a new one fails immediately. An
+#: entry here is a FINDING carried in the open, never a narrowing of the roster
+#: to make it green -- C-078 asks for the files to be reported, not hidden.
+#:
+#: `commands/help.md` describes the HALTED report as "naming every open `LIVE`
+#: and `LATENT` defect". `foundry_report.py` builds a `hardening_backlog`
+#: beside `latent_backlog`, so the sentence is short by a member AND wrong
+#: about the shipped report. It is another casting's file; raised as a
+#: cross-casting concern rather than edited here.
+_KNOWN_TIER_GAPS: dict[str, frozenset[str]] = {
+    "plugins/foundry/commands/help.md": frozenset({"HARDENING"}),
+}
+
+
+def test_the_tier_stating_roster_is_derived_and_spans_its_directories() -> None:
+    """C-078's floor: the roster that missed three files must not narrow again.
+
+    Every assertion below is vacuous over an empty or one-directory roster, and
+    a narrowing is invisible everywhere else -- which is how `commands/start.md`
+    and the two skills stayed unswept while every tier pin was green. The three
+    escapees are named individually because they are the measured population
+    this exists for; the directory check is what fails a regression back to an
+    `agents/` glob.
+    """
+    assert TIER_STATING_SURFACES, (
+        "no prose surface names two declared tier members, which cannot be "
+        "true while `DEFECT_TIERS` has members and the stream agents state the "
+        "rule. The derivation has come apart from the vocabulary."
+    )
+    for escapee in (START_MD, PROVE_SKILL, TRACE_SKILL):
+        assert escapee in TIER_STATING_SURFACES, (
+            f"{_rel(escapee)} is not in TIER_STATING_SURFACES. It is one of "
+            f"the three surfaces D-162/D-163/D-164 were filed against, and a "
+            f"roster that cannot see it is the roster that let them rot."
+        )
+    directories = {
+        p.parent.name if p.name == "SKILL.md" else p.parent.name
+        for p in TIER_STATING_SURFACES
+    }
+    assert len(directories) > 1, (
+        f"TIER_STATING_SURFACES spans one directory ({sorted(directories)}). "
+        f"The tier rule is stated by agents, by skills AND by the lead's "
+        f"command prose; a roster that sees one of those is the hand-scoping "
+        f"C-078 closed, re-opened."
+    )
+
+
+def test_the_known_tier_gap_ledger_names_real_surfaces_and_members() -> None:
+    """Floor check: a ledger keyed on an unswept path or a fake member excuses nothing."""
+    swept = {_rel(p) for p in TIER_STATING_SURFACES}
+    stale = sorted(set(_KNOWN_TIER_GAPS) - swept)
+    assert not stale, (
+        f"{stale} carry recorded tier gaps and no longer enumerate the "
+        f"vocabulary. Delete the entries -- a gap recorded against a file this "
+        f"module does not sweep is a debt nothing will ever collect."
+    )
+    for rel, gaps in _KNOWN_TIER_GAPS.items():
+        unknown = sorted(gaps - set(_DECLARED_TIERS))
+        assert not unknown, (
+            f"{rel} is excused members {unknown} that `DEFECT_TIERS` does not "
+            f"declare ({sorted(vocab.DEFECT_TIERS)}), so the exemption covers "
+            f"nothing this test would have checked."
+        )
+
+
+@pytest.mark.parametrize("path", TIER_STATING_SURFACES, ids=_rel)
+def test_every_tier_stating_surface_names_every_declared_member(path: Path) -> None:
+    """C-078 / fallout GI-014 / AC-022: the file axis, whole-file.
+
+    Whole-file rather than span-scoped: D-163 and D-164 stated the vocabulary
+    in a findings-schema description, a no-severity paragraph and a
+    `## Key Constraints` bullet, none of which `_tier_rule` bounds. A span that
+    misses the region it guards is worse than no span, because it reads as
+    coverage.
+    """
+    missing = frozenset(_DECLARED_TIERS) - frozenset(_named_tiers(path))
+    known = _KNOWN_TIER_GAPS.get(_rel(path), frozenset())
+    assert missing == known, {
+        "file": _rel(path),
+        "why": (
+            "this surface enumerates the tier vocabulary and must enumerate "
+            "all of it: a reader learns the members exist here or not at all, "
+            "and a member no surface describes is one no stream ever files. "
+            "Compared as an EXACT set against the recorded-gap ledger so a "
+            "closed gap fails here too."
+        ),
+        "declared": sorted(vocab.DEFECT_TIERS),
+        "named": sorted(_named_tiers(path)),
+        "missing_and_not_recorded": sorted(missing - known),
+        "recorded_but_now_present": sorted(known - missing),
+    }
+
+
+#: The count spelling that carried all three drifts: "Both tiers are defects
+#: and both get fixed", closing a vocabulary that had declared three since
+#: fallout GI-014. Scoped to the word `tier` rather than to `member`, which the
+#: span-bounded `_MEMBER_COUNT_RE` above can afford and a whole-file sweep
+#: cannot -- `agents/test-observations-adjudicator.md` legitimately says "three
+#: members" of a different closed vocabulary, and a pin that fired on it would
+#: be narrowed away the first time it did.
+#:
+#: `neither` is deliberately NOT a member of the quantifier set, and the reason
+#: is structural rather than a convenience. What rots is a count standing in
+#: for the SET -- a phrase that has to be edited when a member is added.
+#: `neither tier` in this corpus is anaphoric to two tiers named in the same
+#: sentence and stays true at any vocabulary size; `both tiers are defects` is
+#: a claim about the class and was false the moment there were three. The
+#: distinction is not academic here: the one occurrence sits inside a sentence
+#: THIS MODULE already pins as required wording, so a regex that matched it
+#: would make the module demand and forbid the same sentence at once. The
+#: self-consistency assertion below drives that rather than asserting it.
+_TIER_COUNT_RE = re.compile(
+    r"\b(?:both|either|one|two|three|four|five|six|\d+)[- ]tiers?\b", re.I
+)
+
+#: Surfaces KNOWN to count the vocabulary, with the exact phrase each carries.
+#: Recorded, not excused, and compared EXACTLY: rewording the sentence fails
+#: this until the entry is updated or deleted, and a new count fails at once.
+#:
+#: `skills/temper/SKILL.md` says "both tiers are defects that get fixed" with
+#: no pair named in the sentence, so the count stands for the vocabulary and
+#: was short by one from the release that added `HARDENING`. It is casting 11's
+#: file; raised as a cross-casting concern rather than edited here.
+_KNOWN_TIER_COUNT_GAPS: dict[str, str] = {
+    "plugins/foundry/skills/temper/SKILL.md": "both tiers",
+}
+
+
+def test_the_tier_count_ledger_names_surfaces_this_module_sweeps() -> None:
+    """Floor check: a recorded count against an unswept file collects nothing."""
+    swept = {_rel(p) for p in TIER_STATING_SURFACES}
+    stale = sorted(set(_KNOWN_TIER_COUNT_GAPS) - swept)
+    assert not stale, (
+        f"{stale} carry recorded tier counts and no longer enumerate the "
+        f"vocabulary. Delete the entries -- a debt recorded against a file "
+        f"this module does not read is a debt nothing will ever collect."
+    )
+
+
+def test_the_count_rule_does_not_forbid_the_sentence_this_module_requires() -> None:
+    """C-078: the two rules in this module must not contradict each other.
+
+    ``test_trace_skill_states_plumber_findings_are_defects_not_a_tier``
+    REQUIRES trace/SKILL.md's PL-N sentence verbatim, and that sentence closes
+    on "neither tier is a grade on how much the fix is worth". A count rule
+    that matched it would make this module unsatisfiable -- and the only way to
+    satisfy it would be editing another casting's file to drop a clause this
+    module demands. Driven here so the boundary is a measured property of the
+    regex rather than a claim in a comment.
+    """
+    anaphoric = (
+        "one you derived from the wiring with no reachable path is `LATENT` "
+        "and carries a `reproduction_attempted` statement — and neither tier "
+        "is a grade on how much the fix is worth."
+    )
+    assert anaphoric in _flat(TRACE_SKILL), (
+        "trace/SKILL.md no longer carries the PL-N evidence-axis sentence this "
+        "module pins, so the contradiction this test guards cannot be measured "
+        "against the real file any more."
+    )
+    assert _TIER_COUNT_RE.search(anaphoric) is None, (
+        f"_TIER_COUNT_RE matches the PL-N sentence "
+        f"({_TIER_COUNT_RE.search(anaphoric).group(0)!r}), which "
+        f"test_trace_skill_states_plumber_findings_are_defects_not_a_tier "
+        f"requires verbatim. This module now demands and forbids one sentence. "
+        f"A count that stands for the SET is the target; an anaphoric "
+        f"quantifier over tiers named in the same sentence is not."
+    )
+    counted = "escalation exits by the same rule everywhere, and both tiers are defects"
+    assert _TIER_COUNT_RE.search(counted) is not None, (
+        "_TIER_COUNT_RE no longer matches 'both tiers are defects', the exact "
+        "spelling D-162, D-163 and D-164 all carried. Narrowing it past that "
+        "phrase leaves the rule with nothing to catch."
+    )
+
+
+@pytest.mark.parametrize("path", TIER_STATING_SURFACES, ids=_rel)
+def test_no_tier_stating_surface_counts_the_vocabulary(path: Path) -> None:
+    """C-078's absence half: a counted vocabulary is a re-typed vocabulary.
+
+    The count is the half that rots silently -- the members carry their own
+    names into the prose, but a number beside them is a second copy of `len()`
+    that no door reads and nothing updates.
+    """
+    hit = _TIER_COUNT_RE.search(_flat(path))
+    found = hit.group(0).lower() if hit else None
+    known = _KNOWN_TIER_COUNT_GAPS.get(_rel(path))
+    assert found == known, {
+        "file": _rel(path),
+        "why": (
+            "a surface that enumerates the tier vocabulary must not also count "
+            "it: a count is a second copy of `len()` that no door reads and "
+            "nothing updates. Compared EXACTLY against the recorded-count "
+            "ledger so a fixed file fails here too."
+        ),
+        "declared_member_count": len(vocab.DEFECT_TIERS),
+        "counted_phrase_found": found,
+        "counted_phrase_recorded": known,
+    }

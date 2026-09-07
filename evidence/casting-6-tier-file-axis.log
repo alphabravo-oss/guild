@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_protocol_prose.py -k 'tier_stating or tier_gap_ledger or tier_count_ledger or counts_the_vocabulary or names_every_declared_member or count_rule_does_not_forbid' 2>&1 | tail -3
+# evidence-for: fallout NFR-011
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 600
+
+................................................                         [100%]
+48 passed, 663 deselected in 0.36s
