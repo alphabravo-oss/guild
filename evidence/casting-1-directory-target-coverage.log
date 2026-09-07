@@ -1,0 +1,21 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && COLUMNS=80 uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_concerns.py && echo && echo "== the C-080 rung, by node id ==" && COLUMNS=80 uv run --quiet --with pytest pytest -q -p no:cacheprovider --collect-only tests/test_concerns.py -k "director or coverage_reading or answered_exactly"
+# evidence-for: AC-005, CT-001, FR-039
+# evidence-volatile: \d+\.\d+s
+
+.........................................................                [100%]
+57 passed in 0.12s
+
+== the C-080 rung, by node id ==
+tests/test_concerns.py::test_a_target_beneath_a_directory_key_file_resolves_to_its_owner[src/foundry_mcp/tools/orchestration/streams.py]
+tests/test_concerns.py::test_a_target_beneath_a_directory_key_file_resolves_to_its_owner[src/foundry_mcp/tools/orchestration/transitions.py]
+tests/test_concerns.py::test_a_target_beneath_a_directory_key_file_resolves_to_its_owner[src/foundry_mcp/tools/orchestration/sub/deeper.py]
+tests/test_concerns.py::test_a_target_beneath_a_directory_key_file_resolves_to_its_owner[./src/foundry_mcp/tools/orchestration/halt.py]
+tests/test_concerns.py::test_a_directory_entry_reaches_downward_and_not_sideways[src/foundry_mcp/tools/orchestrationXX/a.py]
+tests/test_concerns.py::test_a_directory_entry_reaches_downward_and_not_sideways[src/foundry_mcp/tools/orchestration]
+tests/test_concerns.py::test_a_directory_entry_reaches_downward_and_not_sideways[streams.py]
+tests/test_concerns.py::test_a_file_entry_is_answered_exactly_as_it_always_was
+tests/test_concerns.py::test_the_hint_says_a_directory_entry_stands_for_everything_beneath_it
+tests/test_concerns.py::test_the_hint_stays_silent_about_directories_a_manifest_does_not_have
+tests/test_concerns.py::test_the_coverage_reading_agrees_with_every_committed_statement_of_it
+
+11/57 tests collected (46 deselected) in 0.04s

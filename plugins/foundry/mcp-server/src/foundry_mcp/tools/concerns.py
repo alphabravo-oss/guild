@@ -152,6 +152,31 @@ TARGET_KIND_CASTING = "casting"
 TARGET_KIND_FILE = "file"
 TARGET_KIND_SYMBOL = "symbol"
 
+#: fallout FR-009 (D-170, casting 7's concern C-080) — THE ONE CHARACTER THAT
+#: DECIDES WHAT A ``key_files`` ENTRY IS. An entry ending in it names a
+#: DIRECTORY and stands for every path beneath it; every other entry names a
+#: file. That is the manifest format, not a convenience: ``Foundry-Gate('cast')``
+#: caps a casting at eight entries, so a casting carving a whole package fits
+#: under the cap by naming the package once, and this run's own manifest carries
+#: ``.../tools/orchestration/`` for exactly that reason.
+_DIRECTORY_ENTRY_MARK = "/"
+
+#: The sentence the unresolved-target hint adds WHEN THE MANIFEST ACTUALLY HAS
+#: a directory entry (fallout FR-009, the second half of C-080's ask).
+#:
+#: Without it the hint lists ``.../tools/orchestration/`` among "the key files"
+#: and says nothing else, so a filer who typed ``streams.py`` reads a list of
+#: paths, sees nothing resembling what they meant, and goes looking for a file
+#: path the manifest will never contain — because a covered file appears in
+#: nobody's ``key_files`` list literally. Derived from the mark above rather
+#: than re-typing the character, and emitted only when there IS such an entry:
+#: a run whose castings all name files gets the hint it always got.
+_DIRECTORY_ENTRY_MEANING = (
+    "a key file ending in "
+    f"'{_DIRECTORY_ENTRY_MARK}' names a DIRECTORY and stands for every path "
+    "beneath it, so name such a path IN FULL rather than by its basename"
+)
+
 #: The handoff event a close appends (ST-004: "a handoff record is appended").
 HANDOFF_EVENT_CONCERN_CLOSED = "concern_closed"
 
@@ -243,6 +268,58 @@ def _normalise_path(value: str) -> str:
     return value.strip().replace("\\", "/").removeprefix("./")
 
 
+def _key_file_reaches(key_file: object, wanted_path: object) -> bool:
+    """Does this ``key_files`` entry REACH ``wanted_path``? (fallout FR-009 — D-170.)
+
+    THE QUESTION IS COVERAGE, NEVER EQUALITY. An entry naming a directory
+    covers every path beneath it; for an entry naming a file the two questions
+    are the same one, which is why a manifest with no directory entry is
+    answered exactly as it was before this function existed.
+
+    The prefix is a SEGMENT boundary rather than a string prefix, because the
+    trailing mark is part of the comparison: ``tools/orchestration/`` reaches
+    ``tools/orchestration/streams.py`` and does NOT reach
+    ``tools/orchestrationXX/a.py``. An empty entry reaches NOTHING rather than
+    everything, which is what a bare ``startswith("")`` would have done — a
+    manifest cell nobody filled in must not silently claim the tree.
+
+    Both arguments are normalised HERE rather than by the caller, because a
+    predicate that expects prepared input is a predicate every caller can
+    forget to prepare for, and the forgetting is silent.
+
+    WHY THIS IS A FOURTH SPELLING OF ONE RULE, AND WHAT STOPS IT DRIFTING.
+    C-080 asked for the judgement rather than the code, so it is recorded here.
+    The rule has a stated home already — ``foundry_validate.py#_key_file_covers``
+    landed it at F0.9 in 5f6e7e9 — and two more sites read it, and casting 2 is
+    landing ``orchestration/keyfiles.py#covers_path`` as the leaf both layers
+    may reach. Importing one of those is the right end state and neither is
+    available to this module today: ``keyfiles.py`` is not committed, and a
+    module-top import of a module that does not exist takes ``server.py`` down
+    at startup for every tool, not just this one; ``foundry_validate``'s is
+    private and documents that its arguments arrive through that module's own
+    normaliser, which returns "" for a path containing a space — F0.9
+    validation policy, which is not what a concern target means.
+
+    So the fork is real and the pin is behavioural rather than structural:
+    ``test_concerns.py#test_the_coverage_reading_agrees_with_every_committed_statement_of_it``
+    drives this body and every committed statement of the same rule over ONE
+    corpus and fails the day they answer differently — which is what a drift
+    would actually break. The exit is one repoint onto the leaf on the day it
+    is committed, and the name here is deliberately distinct from every peer's
+    so the package-wide single-definition guard keeps seeing four names rather
+    than one name defined four times.
+    """
+    key = _normalise_path(str(key_file))
+    if not key:
+        return False
+    subject = _normalise_path(str(wanted_path))
+    if not subject:
+        return False
+    if key.endswith(_DIRECTORY_ENTRY_MARK):
+        return subject.startswith(key)
+    return key == subject
+
+
 def _manifest_castings(fdir: Path) -> tuple[list[dict], str | None]:
     """The run's castings, read through the leaf. Never a new prelude.
 
@@ -322,6 +399,40 @@ def resolve_target(castings: list[dict], target: str) -> dict | None:
                     "matched": key_file,
                 }
 
+    # fallout FR-009 (D-170, casting 7's concern C-080) — AND THEN DOWNWARD.
+    #
+    # The two readings above go UP a path and sideways; neither goes down into
+    # a directory entry. Casting 2's `key_files` are `.../tools/orchestration/`
+    # and `tests/orchestration/`, so a concern naming any of the thirteen
+    # modules beneath them resolved to nothing and was refused — the refusal a
+    # stream or teammate hits at precisely the moment it has found something
+    # inside that package. C-079 had to be filed against the directory STRING
+    # for that reason: naming the module it actually meant would have been
+    # refused, which is this door failing exactly when it is most needed.
+    #
+    # A SECOND PASS RATHER THAN A WIDER FIRST ONE, so the fix cannot change any
+    # answer that already existed. The pass above returns on its first hit, so
+    # folding coverage into it would let an earlier casting's directory entry
+    # beat a later casting's exact entry — an over-match, which is the worse
+    # direction for a resolver to be wrong in: it attaches a concern to a
+    # casting that does not own it, silently. Reaching this line at all means
+    # no entry equalled or tailed the target, so only a directory entry can
+    # match here.
+    #
+    # `matched` carries the ENTRY, not the target: the covered path appears in
+    # nobody's `key_files` list literally, so a record naming only the path
+    # sends a lead looking for a manifest line that is not there.
+    for casting in castings:
+        for key_file in casting.get("key_files") or []:
+            if not isinstance(key_file, str):
+                continue
+            if _key_file_reaches(key_file, wanted_path):
+                return {
+                    "kind": TARGET_KIND_FILE,
+                    "casting_id": casting.get("id"),
+                    "matched": key_file,
+                }
+
     for casting in castings:
         if wanted in _casting_symbols(casting):
             return {
@@ -332,15 +443,27 @@ def resolve_target(castings: list[dict], target: str) -> dict | None:
     return None
 
 
-def _known_targets(castings: list[dict]) -> tuple[list[str], list[str]]:
-    """The casting ids and key files this run knows, for the refusal hint."""
+def _known_targets(castings: list[dict]) -> tuple[list[str], list[str], str]:
+    """The casting ids, key files and directory note this run knows, for the hint.
+
+    The third element is the other half of C-080 (fallout FR-009). Listing
+    ``.../tools/orchestration/`` among "the key files" and saying nothing else
+    tells a filer who typed a module name that their target is absent, when
+    what is true is that it is COVERED under a spelling the list does not
+    explain. The note says what a trailing mark means, and it is "" for a
+    manifest that has no directory entry — a hint must describe the run it was
+    built from, not the format in general.
+    """
     ids = [str(c.get("id")) for c in castings if c.get("id") is not None]
     files: list[str] = []
     for casting in castings:
         for key_file in casting.get("key_files") or []:
             if isinstance(key_file, str) and key_file not in files:
                 files.append(key_file)
-    return ids, files
+    has_directory = any(
+        _normalise_path(f).endswith(_DIRECTORY_ENTRY_MARK) for f in files
+    )
+    return ids, files, (_DIRECTORY_ENTRY_MEANING if has_directory else "")
 
 
 # --------------------------------------------------------------------------- #
@@ -585,7 +708,7 @@ def _open_concern(
 
     resolution = resolve_target(castings, str(target or ""))
     if resolution is None:
-        ids, files = _known_targets(castings)
+        ids, files, directory_note = _known_targets(castings)
         return _named_refusal(
             f"Concern target {str(target)!r} names no casting id, no key file "
             f"and no cited symbol in this run's casting manifest.",
@@ -593,7 +716,8 @@ def _open_concern(
             + (", ".join(ids) if ids else "(none — run F0.5 DECOMPOSE first)")
             + "; or one of the key files "
             + (", ".join(files) if files else "(none)")
-            + "; or a `path#Symbol` cited by a casting.",
+            + "; or a `path#Symbol` cited by a casting."
+            + (f" Note that {directory_note}." if directory_note else ""),
             CONCERN_TARGET_UNRESOLVED,
         )
 

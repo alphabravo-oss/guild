@@ -80,8 +80,23 @@ def run_env(tmp_path):
         foundry_state.clear_active_run()
 
 
+#: fallout FR-009 (D-170, casting 7's concern C-080) — THE DIRECTORY ENTRY THE
+#: REAL MANIFEST CARRIES, spelled here because the bug only exists under it.
+#:
+#: `Foundry-Gate('cast')` caps a casting at eight `key_files`, so a casting
+#: carving a whole package names the package once. This run's own manifest does
+#: exactly that for casting 2, and a fixture with only file entries cannot show
+#: the door failing on the spelling the cap pushes a lead into.
+_DIRECTORY_KEY_FILE = "src/foundry_mcp/tools/orchestration/"
+
+
 def _write_manifest(fdir: Path) -> None:
-    """Two castings: ids, key files, and a `path#Symbol` cite in spec_text."""
+    """Three castings: ids, key files, and a `path#Symbol` cite in spec_text.
+
+    The third owns a DIRECTORY entry (fallout FR-009). Its files are never
+    named in the manifest — that is the whole point of the spelling, and the
+    reason a resolver comparing entries as bare strings misses them.
+    """
     (fdir / "castings" / "manifest.json").write_text(
         json.dumps(
             {
@@ -99,6 +114,12 @@ def _write_manifest(fdir: Path) -> None:
                         "title": "Server registration",
                         "key_files": ["src/foundry_mcp/server.py"],
                         "spec_text": "registers in src/foundry_mcp/server.py#list_tools",
+                    },
+                    {
+                        "id": 3,
+                        "title": "The orchestration package",
+                        "key_files": [_DIRECTORY_KEY_FILE, "tests/orchestration/"],
+                        "spec_text": "carves the package",
                     },
                 ]
             }
@@ -250,6 +271,214 @@ def test_a_file_target_matches_only_on_a_segment_boundary(run_env):
     result = _open_one(project_root, target="erver.py")
 
     assert result["phase"] == CONCERN_TARGET_UNRESOLVED
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-009 (D-170, casting 7's concern C-080) — the file rung reaches
+# DOWNWARD into a directory entry
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        _DIRECTORY_KEY_FILE + "streams.py",
+        _DIRECTORY_KEY_FILE + "transitions.py",
+        _DIRECTORY_KEY_FILE + "sub/deeper.py",
+        "./" + _DIRECTORY_KEY_FILE + "halt.py",
+    ],
+)
+def test_a_target_beneath_a_directory_key_file_resolves_to_its_owner(
+    run_env, target
+):
+    """THE FAILING-THEN-PASSING TEST FOR fallout FR-009 (concern C-080).
+
+    Before this rung, `resolve_target` matched a target against `key_files` as
+    exact-or-tail — up a path and sideways, never down — so every one of these
+    was refused with ``CONCERN_TARGET_UNRESOLVED``. The failure is
+    self-referential: the concern ledger's own door refused a concern about a
+    file inside casting 2's package, which is precisely when a filer most needs
+    it. C-079 had to be filed against the DIRECTORY STRING for that reason,
+    because naming the module it meant would have been refused.
+    """
+    project_root, _fdir = run_env
+
+    result = _open_one(project_root, target=target)
+
+    assert result.get("ok") is True, result
+    assert result["concern"]["target_kind"] == TARGET_KIND_FILE
+    assert result["concern"]["target_casting_id"] == 3
+    # `matched` carries the manifest ENTRY, not the target: the covered path
+    # appears in nobody's `key_files` list literally, so a record naming only
+    # the path sends a lead looking for a line that is not there.
+    assert result["concern"]["target_matched"] == _DIRECTORY_KEY_FILE
+    # ...and the target the filer typed survives verbatim beside it.
+    assert result["concern"]["target"] == target.strip()
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        # A sibling directory sharing a string prefix but not a SEGMENT.
+        _DIRECTORY_KEY_FILE.rstrip("/") + "XX/a.py",
+        # The directory itself with its mark stripped is not a path beneath it.
+        _DIRECTORY_KEY_FILE.rstrip("/"),
+        # A bare basename: the manifest alone cannot say WHICH directory holds
+        # a `streams.py`, and guessing attaches the concern to a casting that
+        # may not own it. Refused, and the hint teaches the spelling instead.
+        "streams.py",
+    ],
+)
+def test_a_directory_entry_reaches_downward_and_not_sideways(run_env, target):
+    """fallout FR-009 — the widening must not become an over-match.
+
+    Under-matching costs a refusal a filer can read and act on. Over-matching
+    files the concern against a casting that does not own it, with nothing to
+    say so — which is the direction D-170 was filed for, one character over.
+    """
+    project_root, _fdir = run_env
+
+    result = _open_one(project_root, target=target)
+
+    assert result["phase"] == CONCERN_TARGET_UNRESOLVED, result
+
+
+def test_a_file_entry_is_answered_exactly_as_it_always_was(run_env):
+    """fallout FR-009 — the fix WIDENS what matches and changes nothing that did.
+
+    The exact-or-tail pass runs FIRST and over every casting, so a manifest
+    with no directory entry is resolved exactly as it was before the coverage
+    rung existed, and an exact entry can never lose to another casting's
+    directory.
+    """
+    project_root, _fdir = run_env
+
+    exact = _open_one(project_root, target="src/foundry_mcp/server.py")
+    assert exact["concern"]["target_casting_id"] == 2
+    assert exact["concern"]["target_matched"] == "src/foundry_mcp/server.py"
+
+    tail = _open_one(project_root, target="server.py")
+    assert tail["concern"]["target_casting_id"] == 2
+
+
+def test_the_hint_says_a_directory_entry_stands_for_everything_beneath_it(run_env):
+    """fallout FR-009, the second half of C-080's ask.
+
+    A hint that lists `.../orchestration/` among "the key files" and explains
+    nothing sends a filer who typed a module name looking for a file path the
+    manifest will never contain — a covered file is in nobody's `key_files`
+    list literally. The sentence is derived from the mark that decides the
+    reading, so the two cannot drift into two answers.
+    """
+    project_root, _fdir = run_env
+
+    result = _open_one(project_root, target="streams.py")
+
+    assert result["phase"] == CONCERN_TARGET_UNRESOLVED
+    assert _concerns._DIRECTORY_ENTRY_MEANING in result["hint"]
+    assert _concerns._DIRECTORY_ENTRY_MARK in _concerns._DIRECTORY_ENTRY_MEANING
+    assert _DIRECTORY_KEY_FILE in result["hint"]
+
+
+def test_the_hint_stays_silent_about_directories_a_manifest_does_not_have(
+    run_env,
+):
+    """fallout FR-009 — the hint describes THIS run, not the format in general.
+
+    A note about directory entries on a manifest whose castings all name files
+    is prose the reader must first disprove, which is the cost every hint pays
+    for saying more than it measured.
+    """
+    project_root, fdir = run_env
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({"castings": [{"id": 1, "key_files": ["src/only/a/file.py"]}]}),
+        encoding="utf-8",
+    )
+
+    result = _open_one(project_root, target="nowhere.py")
+
+    assert result["phase"] == CONCERN_TARGET_UNRESOLVED
+    assert _concerns._DIRECTORY_ENTRY_MEANING not in result["hint"]
+
+
+def test_the_coverage_reading_agrees_with_every_committed_statement_of_it():
+    """fallout FR-009 — THE PIN THAT STOPS A FOURTH SPELLING DRIFTING.
+
+    C-080 asked whether this module could depend on an existing statement of
+    "does this `key_files` entry cover this path" rather than adding a fifth.
+    It cannot today, and the reasons are in `_key_file_reaches`'s own docstring:
+    `orchestration/keyfiles.py#covers_path` is the right home and is not
+    committed — a module-top import of a module that does not exist takes
+    `server.py` down at startup for every tool — and `foundry_validate`'s is
+    private and documents that its arguments arrive through that module's own
+    normaliser, which is F0.9 validation policy rather than what a concern
+    target means.
+
+    So the fork is pinned by BEHAVIOUR instead of by import, which is the
+    remedy this package already uses for a rule two layers read and neither may
+    import (`_DELIBERATE_REDEFINITIONS['_INSPECT_PHASES']`). One corpus, every
+    committed body, and a failure the day any two answer differently — which is
+    what a drift would actually break, as opposed to a comment saying they
+    agree.
+
+    THE CORPUS ARRIVES PRE-NORMALISED, on purpose. What is held equal here is
+    the COVERAGE reading; the path normalisers are separately spelled and their
+    duplication is its own recorded row. Feeding raw spellings would make this
+    fail on a normaliser difference and report it as a coverage disagreement.
+
+    `keyfiles.covers_path` is driven TOO when it is importable, so the pin
+    widens by itself on the day casting 2 commits the leaf. It is conditional
+    only because that module does not exist in the committed tree yet, and the
+    assertion below refuses to pass on a corpus no peer body saw — a pin that
+    can go vacuous is a pin that stops being one.
+    """
+    from foundry_mcp.tools.foundry_validate import _key_file_covers
+
+    peers = [("foundry_validate._key_file_covers", _key_file_covers)]
+    try:  # pragma: no cover - present only once casting 2 commits the leaf
+        from foundry_mcp.tools.orchestration.keyfiles import covers_path
+    except ImportError:
+        pass
+    else:
+        peers.append(("keyfiles.covers_path", covers_path))
+
+    entries = [
+        "src/foundry_mcp/tools/orchestration/",
+        "tests/orchestration/",
+        "src/foundry_mcp/server.py",
+        "src/one.py",
+        "",
+        "   ",
+    ]
+    paths = [
+        "src/foundry_mcp/tools/orchestration/streams.py",
+        "src/foundry_mcp/tools/orchestration/sub/deeper.py",
+        "src/foundry_mcp/tools/orchestration",
+        "src/foundry_mcp/tools/orchestrationXX/a.py",
+        "src/foundry_mcp/server.py",
+        "src/one.py",
+        "src/one.pyc",
+        "other/src/one.py",
+        "",
+    ]
+
+    disagreements = []
+    for entry in entries:
+        for path in paths:
+            mine = _concerns._key_file_reaches(entry, path)
+            for name, body in peers:
+                if body(entry, path) != mine:
+                    disagreements.append(f"{name}({entry!r}, {path!r}) != {mine}")
+
+    assert disagreements == [], (
+        "the coverage reading has forked: " + "; ".join(disagreements) + ". "
+        "One of these bodies changed without the others. The exit is one "
+        "repoint of tools/concerns.py onto the committed leaf, not a second "
+        "edit here."
+    )
+    # ...and the corpus reached a real peer, so this cannot pass on an empty
+    # comparison the day an import quietly stops resolving.
+    assert peers, "no committed statement of the rule was driven"
 
 
 def test_empty_text_is_refused(run_env):
