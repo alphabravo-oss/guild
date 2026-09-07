@@ -76,6 +76,7 @@ from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools import artifacts as _artifacts
 from foundry_mcp.tools.foundry_state import current_cycle as _current_cycle
 from foundry_mcp.tools.foundry_state import git_changed_paths
+from foundry_mcp.tools import orchestration as _orchestration_pkg
 from foundry_mcp.tools.orchestration import evidence_boundary as _evidence_boundary
 from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
 from foundry_mcp.tools.orchestration import gates as _gates
@@ -139,13 +140,46 @@ def _unrecorded_width_problem(fdir):
 # of one leaf check — are bound by name across the orchestration modules, so
 # patching the one that DEFINES either leaves every other binding on the real
 # one.
-# `ORCHESTRATION` is what `fo.__file__` used to mean: thirteen files, not one.
+# `ORCHESTRATION` is what `fo.__file__` used to mean: a package, not one file.
 from tests.orchestration._env import ORCHESTRATION, patch_everywhere
 
 
 def _plugin_root() -> Path:
     """`plugins/foundry/`, from this file."""
     return Path(__file__).resolve().parents[3] / "foundry"
+
+
+def _shipped_orchestration_modules() -> list[Path]:
+    """Every module the orchestration package SHIPS — what `fo` used to mean.
+
+    fallout FR-005 / AC-014 / OT-016 (D-183) — DERIVED FROM WHAT SHIPS, NOT
+    FROM A ROSTER SOMEBODY HAS TO REMEMBER.
+
+    Every whole-orchestrator scan in this module read `ORCHESTRATION`, a
+    hand-typed tuple of module objects in `tests/orchestration/_env.py`, and
+    said in prose that it "stays all thirteen when a fourteenth is added". The
+    fourteenth had already landed outside it — `keyfiles.py`, shipped in cycle
+    5 — so every scan rooted on the tuple was a module short of its own
+    subject while reading green. Read off the package directory, a module
+    cannot ship without entering the corpus.
+
+    Same derivation as `tests/test_spend.py#_server_package_modules`, one
+    directory down: the package's own `__file__` rather than parent-counting
+    from a module, so no future move changes what this names.
+    """
+    pkg_dir = Path(_orchestration_pkg.__file__).resolve().parent
+    assert pkg_dir.name == "orchestration", pkg_dir
+    modules = sorted(p for p in pkg_dir.glob("*.py") if p.name != "__init__.py")
+    assert modules, f"the orchestration package is empty; the scan reads nothing: {pkg_dir}"
+
+    # The corpus can only be WIDER than the tuple the suite imports, never
+    # narrower — the direction D-183 broke. Asserted rather than assumed, so a
+    # glob that stopped matching is loud instead of green.
+    unscanned = {Path(m.__file__).name for m in ORCHESTRATION} - {
+        p.name for p in modules
+    }
+    assert not unscanned, sorted(unscanned)
+    return modules
 
 RUN_NAME = "inspect-mode-run"
 
@@ -561,17 +595,37 @@ def test_a_grind_touching_vocab_records_full_with_rule_verifier_touched(run_env)
 #: here BY DESIGN, and `_NO_LONGER_VERIFIER_SURFACES` below asserts the same
 #: narrowing from the other side: a roster that only shrinks is a roster that
 #: cannot tell a deliberate removal from an accidental one.
+#:
+#: fallout FR-042 (D-049) — WHICH WAVE, RECORDED HONESTLY.
+#: FR-042 records the narrowing on wave 2 and the monolith's per-token
+#: preconditions on wave 1. The run inverted both: casting 10 narrowed
+#: `VERIFIER_PATH_PATTERNS` in wave 1 and casting 2 landed the preconditions in
+#: wave 2 alongside the split. The OUTCOME held anyway — casting 2's own commit
+#: order lands the invariant on the monolith before deleting it into the
+#: package — so what differs from FR-042 is the recorded wave order and not the
+#: ordering the requirement is for. Said here rather than left implicit,
+#: because "casting 10 narrowed this in wave 1" reads as a contradiction of the
+#: spec to anyone who checks, and a reader who cannot tell a recorded-order
+#: deviation from a broken invariant has to re-derive the answer every time.
 _VERIFIER_SURFACES = [
     "schemas/vocab.py",
     "foundry_mcp/schemas/findings.py",
-    # THE FOUR MODULES THAT DECIDE, which is what the monolith row became: the
-    # gate ladder, the phase transitions, the INSPECT width decision and the
-    # evidence-sweep boundary. The other nine orchestration modules are on the
-    # delta side and are named below.
+    # THE MODULES THAT DECIDE, which is what the monolith row became: the gate
+    # ladder, the phase transitions, the INSPECT width decision, the
+    # evidence-sweep boundary and the escalation rung readers. Every other
+    # module the package ships is on the delta side and is named below —
+    # asserted, not asserted-in-prose, by
+    # `test_every_shipped_orchestration_module_is_classified_by_one_roster`.
     "foundry_mcp/tools/orchestration/gates.py",
     "foundry_mcp/tools/orchestration/transitions.py",
     "foundry_mcp/tools/orchestration/width.py",
     "foundry_mcp/tools/orchestration/evidence_boundary.py",
+    # fallout AC-012 / AC-017 (D-183) — THE FIFTH DECIDING MODULE.
+    # `VERIFIER_PATH_PATTERNS` names five orchestration modules and this roster
+    # named four: a diff touching `escalation.py` — whose rung readers decide
+    # which class is escalated — forced FULL and nothing here drove it. The
+    # same hand-typed-roster-outgrown shape D-183 was filed on.
+    "foundry_mcp/tools/orchestration/escalation.py",
     "foundry_mcp/tools/evidence.py",
     "agents/assayer.md",
     "skills/prove/SKILL.md",
@@ -581,6 +635,12 @@ _VERIFIER_SURFACES = [
 #: the negative case, so the narrowing is asserted in BOTH directions here as
 #: well as in `vocab.py`'s own tests: a row silently dropped from the roster
 #: above would otherwise be indistinguishable from one the run meant to drop.
+#:
+#: Every orchestration module on this side, not a sample of them: the monolith
+#: matched the verifier pattern whole, so each module carved out of it used to
+#: force FULL, and "the narrowing is deliberate" is a claim about all of them.
+#: `fix_gate.py`, `guidance.py`, `keyfiles.py` and `streams.py` were the four
+#: this roster had never learned about (D-183, D-094).
 _NO_LONGER_VERIFIER_SURFACES = [
     "foundry_mcp/server.py",
     "commands/start.md",
@@ -590,6 +650,10 @@ _NO_LONGER_VERIFIER_SURFACES = [
     "foundry_mcp/tools/orchestration/halt.py",
     "foundry_mcp/tools/orchestration/report_seal.py",
     "foundry_mcp/tools/orchestration/directives.py",
+    "foundry_mcp/tools/orchestration/fix_gate.py",
+    "foundry_mcp/tools/orchestration/guidance.py",
+    "foundry_mcp/tools/orchestration/keyfiles.py",
+    "foundry_mcp/tools/orchestration/streams.py",
 ]
 
 
@@ -643,6 +707,51 @@ def test_a_narrowed_surface_no_longer_forces_full(run_env, path):
     result = foundry_mark_phase_complete("inspect_start", project_root)
 
     assert result["inspect_rule"] != "verifier_touched", (path, result)
+
+
+def test_every_shipped_orchestration_module_is_classified_by_one_roster():
+    """fallout AC-014 / OT-016 / GI-026 (D-183, D-094) — A SHIPPED MODULE
+    CANNOT GO UNDRIVEN.
+
+    The two rosters above are hand-typed, and the PAIR of them is a claim about
+    the whole package: every orchestration module either forces FULL or
+    deliberately does not, and both halves are driven through the real door.
+    Nothing asserted the pair covered what ships, so the package could outgrow
+    them silently — and had. `escalation.py` matched `VERIFIER_PATH_PATTERNS`
+    with no row driving it, `fix_gate.py`, `guidance.py`, `keyfiles.py` and
+    `streams.py` sat on neither side, and the positive roster's own comment
+    said "the other nine ... are named below" while five were.
+
+    D-094 is the same lag one level up: these sibling suites learned about the
+    split a WAVE after the source move, and the record of that lag lived only
+    in the guard that caught it. Derived membership is what makes the lag
+    impossible rather than merely recorded — a module that ships without a row
+    here fails on the commit that ships it, not a wave later.
+
+    The split between the rosters is `is_verifier_path`'s and not this
+    module's: a roster that asserted its own classification would pass on any
+    self-consistent pair, which is how a roster drifts from the rule it samples
+    without anything going red.
+    """
+    from foundry_mcp.schemas.vocab import is_verifier_path
+
+    shipped = {
+        f"foundry_mcp/tools/orchestration/{path.name}"
+        for path in _shipped_orchestration_modules()
+    }
+    assert shipped, "the orchestration package is empty; this claim covers nothing"
+
+    verifier = set(_VERIFIER_SURFACES)
+    delta = set(_NO_LONGER_VERIFIER_SURFACES)
+    assert verifier.isdisjoint(delta), sorted(verifier & delta)
+    assert not shipped - (verifier | delta), {
+        "shipped but driven by neither roster": sorted(shipped - (verifier | delta)),
+    }
+
+    # Both directions against the RULE, so a row on the wrong side is as loud
+    # as a row that is missing.
+    assert not [p for p in sorted(shipped & verifier) if not is_verifier_path(p, None)]
+    assert not [p for p in sorted(shipped & delta) if is_verifier_path(p, None)]
 
 
 def test_the_runs_own_spec_forces_full_though_it_is_no_static_pattern(run_env):
@@ -4078,24 +4187,30 @@ def test_no_shipped_surface_states_the_rule_as_the_assay_condition():
     is a sentence the server can EMIT, and every one of those is a string
     literal.
 
-    fallout FR-005 / AC-014 / OT-016 — THIRTEEN FILES, NOT ONE.
+    fallout FR-005 / AC-014 / OT-016 — THE PACKAGE, NOT ONE FILE.
     This read `Path(fo.__file__)` — the orchestrator's single module. The claim
     it scans is about the strings the SERVER can emit, and those are spread
     across `gates.py`, `transitions.py`, `width.py` and `guidance.py` now. So
-    the file is `ORCHESTRATION`, all thirteen, and it stays all thirteen when a
-    fourteenth is added; repointing at any single module would have left the
-    sentence legal in the other twelve while the pin went green. The failure
-    names the MODULE as well as the line, because "which file" is the first
-    thing a reader of this failure needs and a concatenated scan cannot say it.
+    the file is every module `orchestration/` ships; repointing at any single
+    module would have left the sentence legal in the rest while the pin went
+    green. The failure names the MODULE as well as the line, because "which
+    file" is the first thing a reader of this failure needs and a concatenated
+    scan cannot say it.
+
+    fallout AC-014 (D-183) — AND THE CORPUS IS DERIVED, NOT REMEMBERED.
+    The corpus was `ORCHESTRATION`, a hand-typed thirteen, under a comment
+    saying "it stays all thirteen when a fourteenth is added". A fourteenth
+    had been added: `keyfiles.py` shipped in cycle 5 outside the tuple, so the
+    retired sentence would have been legal there while this pin read green.
     """
     import ast
 
     # The scan must SEE something, or every assertion below is vacuous — the
     # failure mode of every derived pin in this suite.
-    assert ORCHESTRATION, "the orchestration set is empty; this scan reads nothing"
+    modules = _shipped_orchestration_modules()
+    assert modules, "the orchestration package is empty; this scan reads nothing"
     scanned = 0
-    for module in ORCHESTRATION:
-        path = Path(module.__file__)
+    for path in modules:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         scanned += 1
         for node in ast.walk(tree):
@@ -4111,7 +4226,7 @@ def test_no_shipped_surface_states_the_rule_as_the_assay_condition():
                     "recorded MODE, and `inspect_ran_at_full_width` is the name "
                     "of the check that decides it"
                 )
-    assert scanned == len(ORCHESTRATION), scanned
+    assert scanned == len(modules), scanned
 
 
 # --------------------------------------------------------------------------- #

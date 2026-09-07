@@ -49,6 +49,7 @@ from foundry_mcp.tools import foundry_state
 # unreported-dispatch overlay — are `tools/foundry_state.py` (GI-024, Holmes
 # `share-2`), not an `orchestration/` module: reaching a split module for a leaf
 # fact would recreate the second copy casting 10 just removed.
+from foundry_mcp.tools import orchestration as _orchestration_pkg
 from foundry_mcp.tools.orchestration import guidance as _guidance
 from foundry_mcp.tools.orchestration import spend as _spend
 from foundry_mcp.tools.orchestration.gates import foundry_gate
@@ -58,11 +59,7 @@ from foundry_mcp.tools.orchestration.spend import foundry_record_spend
 # `_check_active_teams` is bound by name in every orchestration module that
 # reads it, so patching the one that DEFINES it leaves every importer on the
 # real one.
-from tests.orchestration._env import (
-    ORCHESTRATION,
-    orchestration_source,
-    patch_everywhere,
-)
+from tests.orchestration._env import ORCHESTRATION, patch_everywhere
 
 RUN_NAME = "spend-run"
 
@@ -707,6 +704,40 @@ def _server_package_modules() -> list[Path]:
     return modules
 
 
+def _shipped_orchestration_modules() -> list[Path]:
+    """Every module the orchestration package SHIPS — what `fo` used to mean.
+
+    fallout FR-005 / AC-014 / OT-016 (D-183) — DERIVED FROM WHAT SHIPS, NOT
+    FROM A ROSTER SOMEBODY HAS TO REMEMBER.
+
+    The two scans below read `ORCHESTRATION`, a hand-typed tuple of module
+    objects in `tests/orchestration/_env.py`, and said so in a docstring
+    promising that "a fourteenth module is required to be scanned the day it
+    lands". The fourteenth module had already landed unscanned: `keyfiles.py`
+    shipped in cycle 5 and no rule required the tuple to grow, so a
+    `context_budget` block or an unnamed module there passed both scans while
+    the prose said neither could happen. That is the silent shrinkage OT-016
+    exists to catch, in the two pins written to catch it.
+
+    Same derivation as `_server_package_modules` above, one directory down: a
+    module cannot ship without entering this corpus, so the promise costs
+    nobody a memory.
+    """
+    pkg_dir = Path(_orchestration_pkg.__file__).resolve().parent
+    assert pkg_dir.name == "orchestration", pkg_dir
+    modules = sorted(p for p in pkg_dir.glob("*.py") if p.name != "__init__.py")
+    assert modules, f"the orchestration package is empty; the scan reads nothing: {pkg_dir}"
+
+    # The corpus can only be WIDER than the tuple the suite imports, never
+    # narrower — the direction D-183 broke. Asserted rather than assumed, so a
+    # glob that stopped matching is loud instead of green.
+    unscanned = {Path(m.__file__).name for m in ORCHESTRATION} - {
+        p.name for p in modules
+    }
+    assert not unscanned, sorted(unscanned)
+    return modules
+
+
 #: Literal spellings only a reader of a harness-owned format carries: the
 #: session transcript's directory and compressed form, and the line the Agent
 #: usage block prints. Scanned over source with comment lines stripped, because
@@ -808,15 +839,17 @@ def test_the_parser_guard_covers_the_whole_server_package(run_env):
     GI-005's subject is the server and neither touches spend at all.
 
     fallout FR-005 / OT-016 — THE ORCHESTRATOR WAS ONE OF THESE NAMES.
-    It is thirteen modules now, and the roster names them all rather than only
-    `orchestration/spend.py`: a roster narrowed to the split module that
-    touches spend would be D-226 recommitted one directory down, which is the
-    same defect the docstring above refuses one step out. Derived from
-    `ORCHESTRATION` rather than typed, so a fourteenth module is required to be
-    scanned the day it lands and nobody has to remember a second list.
+    It is the whole `orchestration/` package now, and the roster names every
+    module of it rather than only `orchestration/spend.py`: a roster narrowed
+    to the split module that touches spend would be D-226 recommitted one
+    directory down, which is the same defect the docstring above refuses one
+    step out. Derived from the SHIPPED PACKAGE rather than typed, so a
+    fourteenth module is required to be scanned the day it lands and nobody
+    has to remember a second list — which is the promise D-183 found this
+    roster making while `keyfiles.py` sat outside it.
     """
     scanned = {path.name for path in _server_package_modules()}
-    orchestration = {Path(m.__file__).name for m in ORCHESTRATION}
+    orchestration = {path.name for path in _shipped_orchestration_modules()}
     assert orchestration, "the orchestration set is empty; this roster names nothing"
     assert "spend.py" in orchestration, sorted(orchestration)
     for module in (
@@ -908,12 +941,20 @@ def test_the_estimated_usage_block_is_gone(run_env):
     # explaining why the block was removed necessarily names it.
     #
     # fallout FR-005 / OT-016 — READ OVER THE SET, NOT OVER ONE MODULE.
-    # This read the orchestrator's own source, and the orchestrator is thirteen
-    # modules now. `orchestration_source()` concatenates all thirteen, so a
-    # `context_budget` block reintroduced in `guidance.py` — the module that
-    # actually renders the next action — is caught where a scan repointed at
+    # This read the orchestrator's own source, and the orchestrator is the
+    # whole `orchestration/` package now. Concatenating every module it ships
+    # catches a `context_budget` block reintroduced in `guidance.py` — the
+    # module that actually renders the next action — where a scan repointed at
     # any single module would have missed it.
-    source = orchestration_source()
+    #
+    # fallout AC-014 (D-183) — CONCATENATED FROM WHAT SHIPS, NOT FROM A TUPLE.
+    # This called `orchestration_source()`, whose corpus is the hand-typed
+    # `ORCHESTRATION`, so `keyfiles.py` — shipped in cycle 5 and never added —
+    # was outside the only scan that could have caught a budget block in it.
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in _shipped_orchestration_modules()
+    )
     assert source.strip(), "the orchestration source is empty; the scan reads nothing"
     code = "\n".join(
         line for line in source.splitlines()

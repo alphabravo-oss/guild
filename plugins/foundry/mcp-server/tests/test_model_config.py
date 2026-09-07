@@ -42,6 +42,7 @@ from foundry_mcp.tools import foundry_state
 # model policy — `ACCEPTED_MODELS`, `MODEL_ENV_VAR`, `STEERABLE_SUBAGENT_TYPES`,
 # `configured_model`, `agent_model` — now lives in `orchestration/teams.py`, and
 # `_ACTION_IMPERATIVES` / `_compute_next_action` in `orchestration/guidance.py`.
+from foundry_mcp.tools import orchestration as _orchestration_pkg
 from foundry_mcp.tools.orchestration import guidance as _guidance
 from foundry_mcp.tools.orchestration import teams as _teams
 
@@ -54,18 +55,47 @@ from tests.orchestration._env import ORCHESTRATION, patch_everywhere
 REPO_ROOT = Path(__file__).resolve().parents[4]
 TESTS_DIR = Path(__file__).resolve().parent
 
+
+def _shipped_orchestration_sources() -> tuple[Path, ...]:
+    """Every module the orchestration package SHIPS, read off the package.
+
+    fallout FR-005 / AC-014 / OT-016 (D-183) — DERIVED FROM WHAT SHIPS, NOT
+    FROM A ROSTER SOMEBODY HAS TO REMEMBER.
+
+    The corpus below used to be `ORCHESTRATION`, a hand-typed tuple of module
+    objects in `tests/orchestration/_env.py`, and the comment on it promised
+    "a fourteenth module is scanned the day it lands". The fourteenth module
+    had already landed: `keyfiles.py` shipped in cycle 5 and nothing required
+    it to be added to the tuple, so a hardcoded model literal planted there
+    would have passed this scan while the docstring said it could not. That is
+    the silent shrinkage OT-016 exists to catch, in the pin written to catch
+    it.
+
+    Read off the package directory, a module cannot ship without entering this
+    corpus, and the promise costs nobody a memory. `Path(pkg.__file__).parent`
+    follows the imported package rather than counting parents from a module,
+    so no future move of a module can change what this names — the same
+    derivation `tests/test_spend.py#_server_package_modules` already uses one
+    directory up.
+    """
+    pkg_dir = Path(_orchestration_pkg.__file__).resolve().parent
+    assert pkg_dir.name == "orchestration", pkg_dir
+    sources = tuple(
+        sorted(p for p in pkg_dir.glob("*.py") if p.name != "__init__.py")
+    )
+    assert sources, f"the orchestration package is empty; the scan reads nothing: {pkg_dir}"
+    return sources
+
+
 #: fallout FR-005 / OT-016 — WHAT `ORCHESTRATOR_SRC` USED TO NAME.
 #:
 #: This was a hand-built path to the single orchestrator module, and the guard
 #: below scanned that ONE file for a hardcoded model literal. The subject was
-#: "the orchestrator", which is thirteen modules now — so the honest translation
-#: is all thirteen, and pointing the literal at `teams.py` alone would silently
-#: shrink a whole-orchestrator scan to one thirteenth of it while still passing.
-#:
-#: DERIVED from `ORCHESTRATION` rather than typed, so a fourteenth module is
-#: scanned the day it lands. `Path(m.__file__)` follows the imported module
-#: object, which is why this needs no repo-relative path arithmetic at all.
-ORCHESTRATION_SRCS = tuple(Path(m.__file__) for m in ORCHESTRATION)
+#: "the orchestrator", which is the whole `orchestration/` package now — so the
+#: honest translation is every module of it, and pointing the literal at
+#: `teams.py` alone would silently shrink a whole-orchestrator scan to one
+#: module's worth of it while still passing.
+ORCHESTRATION_SRCS = _shipped_orchestration_sources()
 START_MD = REPO_ROOT / "plugins" / "foundry" / "commands" / "start.md"
 
 # The exact pattern both sibling test modules must use for their frontmatter
@@ -471,17 +501,28 @@ def test_orchestrator_has_no_hardcoded_model_literal() -> None:
     """Every model decision routes through ``agent_model`` — no second source.
 
     fallout FR-005 / OT-016 — SCANNED OVER THE SET, NOT OVER ONE MODULE.
-    The subject is the orchestrator, and the orchestrator is thirteen modules.
-    A scan repointed at `teams.py` alone — the module that holds the policy —
-    would pass on a literal planted in `guidance.py` or `transitions.py`, which
-    is the whole class of silent shrinkage a repointed file scan can produce.
-    The offender is named by MODULE, so a failure says where to go.
+    The subject is the orchestrator, and the orchestrator is every module of
+    the `orchestration/` package. A scan repointed at `teams.py` alone — the
+    module that holds the policy — would pass on a literal planted in
+    `guidance.py` or `transitions.py`, which is the whole class of silent
+    shrinkage a repointed file scan can produce. The offender is named by
+    MODULE, so a failure says where to go.
     """
     # The scan must SEE its subject, or `assert not stray` is a claim about
-    # nothing. Both directions: the corpus is non-empty AND every member is a
-    # readable orchestration module.
+    # nothing. Three directions: the corpus is non-empty, it NAMES the module
+    # that holds the policy rather than merely counting to the right size, and
+    # it misses nothing the suite itself imports.
     assert ORCHESTRATION_SRCS, "the orchestration set is empty; the scan reads nothing"
-    assert len(ORCHESTRATION_SRCS) == len(ORCHESTRATION)
+    scanned = {path.name for path in ORCHESTRATION_SRCS}
+    assert "teams.py" in scanned, sorted(scanned)
+
+    # fallout AC-014 / OT-016 (D-183) — THE DIRECTION THE OLD CORPUS BROKE.
+    # `ORCHESTRATION` is a hand-typed tuple, and a shipped module absent from
+    # it was a module this scan could not read. Rooted on the package the
+    # corpus can only be wider than the tuple, never narrower; this asserts
+    # that, so a glob that stopped matching would be loud rather than green.
+    unscanned = {Path(m.__file__).name for m in ORCHESTRATION} - scanned
+    assert not unscanned, sorted(unscanned)
 
     stray: list[tuple[str, list[str]]] = []
     for path in ORCHESTRATION_SRCS:
