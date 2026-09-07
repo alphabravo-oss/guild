@@ -1,0 +1,22 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -v tests/test_validate_ownership.py::test_a_manifest_that_declares_no_surface_reports_not_computable_and_passes tests/test_validate_ownership.py::test_a_declared_surface_every_casting_reaches_passes tests/test_validate_ownership.py::test_a_shipped_file_no_casting_owns_refuses_with_the_token tests/test_validate_ownership.py::test_the_surface_refusal_hint_names_the_two_exits_a_lead_can_take tests/test_validate_ownership.py::test_a_directory_entry_owns_every_surface_beneath_it tests/test_validate_ownership.py::test_tool_cache_and_run_archive_are_never_shipped_surface tests/test_validate_ownership.py::test_a_pattern_that_matches_nothing_is_named_rather_than_passing_quietly tests/test_validate_ownership.py::test_an_absolute_or_escaping_pattern_is_reported_not_raised tests/test_validate_ownership.py::test_a_surface_globs_of_the_wrong_type_is_reported_not_raised tests/test_validate_ownership.py::test_a_declared_but_empty_surface_says_so tests/test_validate_ownership.py::test_every_unowned_surface_reaches_the_payload_however_many_get_prose tests/test_validate_ownership.py::test_a_new_unowned_surface_invalidates_a_cached_pass
+# evidence-for: FR-009, US-001, FR-037
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 600
+
+============================= test session starts ==============================
+collecting ... collected 12 items
+
+tests/test_validate_ownership.py::test_a_manifest_that_declares_no_surface_reports_not_computable_and_passes PASSED [  8%]
+tests/test_validate_ownership.py::test_a_declared_surface_every_casting_reaches_passes PASSED [ 16%]
+tests/test_validate_ownership.py::test_a_shipped_file_no_casting_owns_refuses_with_the_token PASSED [ 25%]
+tests/test_validate_ownership.py::test_the_surface_refusal_hint_names_the_two_exits_a_lead_can_take PASSED [ 33%]
+tests/test_validate_ownership.py::test_a_directory_entry_owns_every_surface_beneath_it PASSED [ 41%]
+tests/test_validate_ownership.py::test_tool_cache_and_run_archive_are_never_shipped_surface PASSED [ 50%]
+tests/test_validate_ownership.py::test_a_pattern_that_matches_nothing_is_named_rather_than_passing_quietly PASSED [ 58%]
+tests/test_validate_ownership.py::test_an_absolute_or_escaping_pattern_is_reported_not_raised PASSED [ 66%]
+tests/test_validate_ownership.py::test_a_surface_globs_of_the_wrong_type_is_reported_not_raised PASSED [ 75%]
+tests/test_validate_ownership.py::test_a_declared_but_empty_surface_says_so PASSED [ 83%]
+tests/test_validate_ownership.py::test_every_unowned_surface_reaches_the_payload_however_many_get_prose PASSED [ 91%]
+tests/test_validate_ownership.py::test_a_new_unowned_surface_invalidates_a_cached_pass PASSED [100%]
+
+============================== 12 passed in 0.20s ==============================
