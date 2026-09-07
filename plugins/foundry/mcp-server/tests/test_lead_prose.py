@@ -2736,6 +2736,81 @@ def test_start_md_tier_table_blocks_exactly_the_blocking_tiers() -> None:
     )
 
 
+#: The clause both lead-facing files use to introduce what the halt-transition
+#: report names. One line each, so the sentence can be isolated from the file.
+_HALT_REPORT_ANCHOR = "the report is generated as part of that"
+
+
+def _halt_report_sentence(path: Path) -> str:
+    """The PARAGRAPH stating what the report the halt transition writes names.
+
+    Paragraph-scoped, never line-scoped: `commands/help.md` is hard-wrapped at
+    ~95 columns, so its halt description splits the anchor from the section
+    names it has to carry across two source lines, and a line-based isolation
+    reports a sentence that omits everything the wrap pushed downward. Blank
+    lines bound a markdown paragraph in both files; whitespace inside one is
+    collapsed so a wrap cannot hide a phrase from the membership test either.
+    """
+    paragraphs = [
+        " ".join(block.split())
+        for block in _read(path).split("\n\n")
+        if block.strip()
+    ]
+    hits = [p for p in paragraphs if _HALT_REPORT_ANCHOR in p]
+    assert len(hits) == 1, (
+        f"{_rel(path)} carries {len(hits)} paragraphs containing "
+        f"{_HALT_REPORT_ANCHOR!r}; this check needs exactly one to isolate. If "
+        f"the halt description was restructured, repoint the anchor -- never "
+        f"delete it, because a parser that finds nothing is a check that passes."
+    )
+    return hits[0]
+
+
+@pytest.mark.parametrize("path", (START_MD, HELP_MD), ids=_rel)
+def test_the_halt_report_sentence_names_every_backlog_section(path: Path) -> None:
+    """fallout C-084 / AC-022: a whole-FILE tier sweep cannot see a SENTENCE.
+
+    ``test_protocol_prose.py#test_every_tier_stating_surface_names_every_declared_member``
+    asks whether a FILE names every declared tier, which is the right question
+    at the file axis and the wrong granularity for this claim.
+    ``commands/start.md`` passed it the whole time its one sentence about the
+    halt report still read "naming every open `LIVE` and every open `LATENT`
+    defect" -- because `HARDENING` occurs elsewhere in that file. Whole-file
+    coverage READS as coverage here and is not: nobody reads a file for a word,
+    they read the sentence that answers their question, and the sentence was
+    wrong. ``commands/help.md`` carried the identical sentence and was caught
+    only because it names no tier anywhere else (C-084).
+
+    So this pins the SENTENCE, and derives what it must name from
+    ``REPORT_REQUIRED_SECTIONS`` rather than from the tier vocabulary: the halt
+    transition regenerates the report, so a lead told which defects that report
+    names has to be told about every backlog the report is REQUIRED to carry.
+    Deriving it means a new ``*_backlog`` section fails here on the day it is
+    declared, instead of shipping a halt description short by one -- which is
+    exactly how this one got short.
+    """
+    from foundry_mcp.schemas import vocab
+
+    backlogs = sorted(
+        s for s in vocab.REPORT_REQUIRED_SECTIONS if s.endswith("_backlog")
+    )
+    # Floor: with no backlog sections derived, every membership test is vacuous.
+    assert len(backlogs) >= 2, (
+        f"REPORT_REQUIRED_SECTIONS declares {backlogs} backlog section(s). The "
+        f"report carries a per-tier backlog for each non-blocking tier; a set "
+        f"this small means the derivation has come apart from the vocabulary."
+    )
+    sentence = _halt_report_sentence(path)
+    missing = [s for s in backlogs if f"`{s}`" not in sentence]
+    assert not missing, (
+        f"{_rel(path)}'s halt-report sentence does not name {missing}. It "
+        f"reads: {sentence.strip()!r}. The transition regenerates the report, "
+        f"and that report emits {backlogs} -- so a lead told this sentence and "
+        f"then handed the report finds a whole backlog section nobody "
+        f"mentioned. Name every section the report is required to carry."
+    )
+
+
 def test_the_f07_step_calls_a_gate_token_the_schema_accepts() -> None:
     """fallout AC-051 / FR-032: the F0.7 step named a token the enum rejects.
 

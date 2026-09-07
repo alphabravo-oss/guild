@@ -8208,14 +8208,14 @@ TIER_STATING_SURFACES = tuple(
 #: entry here is a FINDING carried in the open, never a narrowing of the roster
 #: to make it green -- C-078 asks for the files to be reported, not hidden.
 #:
-#: `commands/help.md` describes the HALTED report as "naming every open `LIVE`
-#: and `LATENT` defect". `foundry_report.py` builds a `hardening_backlog`
-#: beside `latent_backlog`, so the sentence is short by a member AND wrong
-#: about the shipped report. It is another casting's file; raised as a
-#: cross-casting concern rather than edited here.
-_KNOWN_TIER_GAPS: dict[str, frozenset[str]] = {
-    "plugins/foundry/commands/help.md": frozenset({"HARDENING"}),
-}
+#: EMPTY, and that is the ledger working. Its one entry recorded
+#: `commands/help.md` as short of `HARDENING` while describing the HALTED
+#: report; C-084 carried that to casting 8, which corrected the sentence to
+#: name all three tiers and both backlog sections the report actually emits.
+#: The EXACT-set comparison then required this entry to go in the same commit,
+#: which is the property it was written for: a closed gap cannot rot here any
+#: more than an open one can.
+_KNOWN_TIER_GAPS: dict[str, frozenset[str]] = {}
 
 
 def test_the_tier_stating_roster_is_derived_and_spans_its_directories() -> None:
@@ -8323,13 +8323,13 @@ _TIER_COUNT_RE = re.compile(
 #: Recorded, not excused, and compared EXACTLY: rewording the sentence fails
 #: this until the entry is updated or deleted, and a new count fails at once.
 #:
-#: `skills/temper/SKILL.md` says "both tiers are defects that get fixed" with
-#: no pair named in the sentence, so the count stands for the vocabulary and
-#: was short by one from the release that added `HARDENING`. It is casting 11's
-#: file; raised as a cross-casting concern rather than edited here.
-_KNOWN_TIER_COUNT_GAPS: dict[str, str] = {
-    "plugins/foundry/skills/temper/SKILL.md": "both tiers",
-}
+#: EMPTY, and the emptiness is the assertion: no swept surface counts the
+#: vocabulary today. It held one entry -- `skills/temper/SKILL.md` saying "both
+#: tiers are defects that get fixed" with no pair named in the sentence, the
+#: fifth instance of the D-162/D-163/D-164 class -- raised as C-085 because the
+#: file is casting 11's, and deleted by casting 11 with the sentence, which is
+#: the collection this ledger's exact comparison exists to force.
+_KNOWN_TIER_COUNT_GAPS: dict[str, str] = {}
 
 
 def test_the_tier_count_ledger_names_surfaces_this_module_sweeps() -> None:

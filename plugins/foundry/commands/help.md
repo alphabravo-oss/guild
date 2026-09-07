@@ -90,8 +90,10 @@ Start a new build run.
 **`--max-cycles N` and the HALTED state.** `N` caps the verify-fix cycles; the default `0` is
 unbounded. The phase transition that would open a GRIND cycle beyond the cap **succeeds** — it
 is a successful transition, not a refusal. The run's phase becomes `HALTED`, the report is
-generated as part of that transition naming every open `LIVE` and `LATENT` defect, and the next
-guidance call reports the run halted and issues no further dispatch. **`HALTED` is a named
+generated as part of that transition naming every open defect at every tier — the blocking
+`LIVE` ones, and the `LATENT` and `HARDENING` ones the run carried rather than blocked on, each
+in its own `latent_backlog` and `hardening_backlog` section — and the next guidance call reports
+the run halted and issues no further dispatch. **`HALTED` is a named
 terminal state distinct from `DONE`:** a halted run stopped with open work, and calling it
 "finished" is the one reading the state exists to prevent.
 
