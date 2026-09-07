@@ -209,6 +209,6 @@
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
 ...................................................      [100%]
 =========================== short test summary info ============================
-SKIPPED [1] tests/test_foundry_state_readers.py:2458: width._current_inspect_mode is gone — casting 2 repointed to the leaf (C-059 row 4). Nothing is left to agree with, and the leaf reader is driven directly above.
-SKIPPED [1] tests/test_foundry_state_readers.py:2503: width's copies of the width refusal are gone — casting 2 repointed to the leaf (C-059 row 5). Nothing is left to agree with, and the leaf predicate is driven directly above.
-713 passed, 2 skipped in 3.78s
+SKIPPED [1] tests/test_foundry_state_readers.py:2459: width._current_inspect_mode is gone — casting 2 repointed to the leaf (C-059 row 4). Nothing is left to agree with, and the leaf reader is driven directly above.
+SKIPPED [1] tests/test_foundry_state_readers.py:2504: width's copies of the width refusal are gone — casting 2 repointed to the leaf (C-059 row 5). Nothing is left to agree with, and the leaf predicate is driven directly above.
+713 passed, 2 skipped in 3.61s

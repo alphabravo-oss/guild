@@ -33,39 +33,40 @@
 
 ===== test session starts =====
 platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
-rootdir: /Users/rayjanoka/ab/code/guild/foundry-archive/foundry-run-fallout/worktrees/sweep-evidence/plugins/foundry/mcp-server
+rootdir: /Users/rayjanoka/ab/code/guild/foundry-archive/foundry-run-fallout/worktrees/recapture-recapture-c10/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
-collected 1240 items / 4 deselected / 1236 selected
+collected 1293 items / 4 deselected / 1289 selected
 
 tests/test_inspect_mode.py ............................................. [  3%]
 ........................................................................ [  9%]
-..............................................                           [ 13%]
+..............................................                           [ 12%]
 tests/orchestration/test_directives.py ................................. [ 15%]
-............................                                             [ 18%]
-tests/orchestration/test_escalation.py .................                 [ 19%]
-tests/orchestration/test_evidence_boundary.py ........                   [ 20%]
+............................                                             [ 17%]
+tests/orchestration/test_escalation.py .................                 [ 18%]
+tests/orchestration/test_evidence_boundary.py .........                  [ 19%]
 tests/orchestration/test_fix_gate.py ................................... [ 22%]
-...................................                                      [ 25%]
-tests/orchestration/test_gates.py ...................................... [ 28%]
-..............................................................           [ 33%]
-tests/orchestration/test_guidance.py ................................... [ 36%]
-.............................................................            [ 41%]
-tests/orchestration/test_halt.py ..                                      [ 41%]
+.....................................                                    [ 24%]
+tests/orchestration/test_gates.py ...................................... [ 27%]
+..............................................................           [ 32%]
+tests/orchestration/test_guidance.py ................................... [ 35%]
+...............................................................          [ 40%]
+tests/orchestration/test_halt.py ....                                    [ 40%]
+tests/orchestration/test_keyfiles.py ...........                         [ 41%]
 tests/orchestration/test_module_boundaries.py .......................... [ 43%]
 ........................................................................ [ 49%]
-..ss..                                                                   [ 50%]
-tests/orchestration/test_report_seal.py ..........                       [ 51%]
+....ss..                                                                 [ 49%]
+tests/orchestration/test_report_seal.py ..........                       [ 50%]
 tests/orchestration/test_shipped_parsers.py .........                    [ 51%]
-tests/orchestration/test_spend.py ....                                   [ 52%]
-tests/orchestration/test_streams.py ..........................           [ 54%]
-tests/orchestration/test_tasks_codispatch.py ...............             [ 55%]
+tests/orchestration/test_spend.py ....                                   [ 51%]
+tests/orchestration/test_streams.py ................................     [ 53%]
+tests/orchestration/test_tasks_codispatch.py .................           [ 55%]
 tests/orchestration/test_teams.py .........                              [ 56%]
 tests/orchestration/test_transitions.py ................................ [ 58%]
 ........................................................................ [ 64%]
-........................................................................ [ 70%]
-..........................................                               [ 73%]
-tests/orchestration/test_width.py ......                                 [ 74%]
+........................................................................ [ 69%]
+.............................................                            [ 73%]
+tests/orchestration/test_width.py ......                                 [ 73%]
 tests/test_measure_run.py .........s..........................s......... [ 77%]
 ..........ss.s.....
 === D-182 — a cycle bucket carrying its own C-6 facts ===
@@ -105,18 +106,18 @@ tests/test_measure_run.py .........s..........................s......... [ 77%]
   the same three keys, from the rule stated once rather than
   hand-typed a third time — which is how the third walker of
   this bucket came to be missing it.
-.................                                     [ 80%]
-tests/test_lead_prose.py ............................................... [ 84%]
-........................................................................ [ 90%]
-........................................................................ [ 96%]
-.............................................                            [100%]
+.................                                     [ 79%]
+tests/test_lead_prose.py ............................................... [ 83%]
+........................................................................ [ 89%]
+........................................................................ [ 94%]
+...................................................................      [100%]
 
 ===== short test summary info =====
-SKIPPED [1] tests/orchestration/test_module_boundaries.py:6499: this checkout carries no forge-specs/foundry-run-fallout/spec.md
-SKIPPED [1] tests/orchestration/test_module_boundaries.py:6547: this checkout carries no run spec
-SKIPPED [1] tests/test_measure_run.py:632: planning cohort stubs not present in this checkout: /Users/rayjanoka/ab/code/guild/foundry-archive/foundry-run-fallout/worktrees/sweep-evidence/.planning/phases/09-milestone-real-run-consolidation/runs
-SKIPPED [1] tests/test_measure_run.py:1507: grand-vulture archive not present in this checkout: /Users/rayjanoka/ab/code/guild/foundry-archive/foundry-run-fallout/worktrees/sweep-evidence/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2236: thunder-viper archive not present in this checkout: /Users/rayjanoka/ab/code/guild/foundry-archive/foundry-run-fallout/worktrees/sweep-evidence/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2295: thunder-viper archive not present in this checkout: /Users/rayjanoka/ab/code/guild/foundry-archive/foundry-run-fallout/worktrees/sweep-evidence/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-SKIPPED [1] tests/test_measure_run.py:2364: thunder-viper archive not present in this checkout: /Users/rayjanoka/ab/code/guild/foundry-archive/foundry-run-fallout/worktrees/sweep-evidence/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
-===== 1229 passed, 7 skipped, 4 deselected in 66.48s =====
+SKIPPED [1] tests/orchestration/test_module_boundaries.py:6650: this checkout carries no forge-specs/foundry-run-fallout/spec.md
+SKIPPED [1] tests/orchestration/test_module_boundaries.py:6698: this checkout carries no run spec
+SKIPPED [1] tests/test_measure_run.py:632: planning cohort stubs not present in this checkout: /Users/rayjanoka/ab/code/guild/foundry-archive/foundry-run-fallout/worktrees/recapture-recapture-c10/.planning/phases/09-milestone-real-run-consolidation/runs
+SKIPPED [1] tests/test_measure_run.py:1507: grand-vulture archive not present in this checkout: /Users/rayjanoka/ab/code/guild/foundry-archive/foundry-run-fallout/worktrees/recapture-recapture-c10/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2236: thunder-viper archive not present in this checkout: /Users/rayjanoka/ab/code/guild/foundry-archive/foundry-run-fallout/worktrees/recapture-recapture-c10/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2295: thunder-viper archive not present in this checkout: /Users/rayjanoka/ab/code/guild/foundry-archive/foundry-run-fallout/worktrees/recapture-recapture-c10/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+SKIPPED [1] tests/test_measure_run.py:2364: thunder-viper archive not present in this checkout: /Users/rayjanoka/ab/code/guild/foundry-archive/foundry-run-fallout/worktrees/recapture-recapture-c10/foundry-archive/thunder-viper (foundry-archive/ is git-ignored)
+===== 1282 passed, 7 skipped, 4 deselected in 61.15s =====
