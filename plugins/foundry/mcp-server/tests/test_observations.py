@@ -72,6 +72,13 @@ One regression test per acceptance criterion:
       scoped guard — the one the refusal test above drives — was a name-alike
       of the leaf's for three cycles and is now ``_named_artifact_guard``, so
       no accounting row has to excuse the collision to a name-keyed sweep.
+  fallout CT-017 / GI-027 (D-182, co-dispatched from casting 2)
+      the observation door's own prose agrees with the observation door. Both
+      refusal arms offer the TEMPER_CANDIDATE lane, in ONE spelling
+      (``_TEMPER_CANDIDATE_ROUTE``), and the handler docstring's three
+      pre-fifth-class absolutes each carry the lane they are true of. D-182
+      was filed against server.py's wire description; the same rule is carried
+      on this casting's files and is pinned at the tail of this module.
 
 Every filing below goes through ``_file_defect``, which supplies the ``tier``
 (CT-001 / FR-004) and ``class`` (CT-002 / FR-007) both doors now require. Those
@@ -3000,3 +3007,208 @@ def test_the_roster_and_the_idempotence_rung_ask_one_predicate(run, tmp_path):
             f"{site.__name__} decides the driven question in its own voice; it "
             f"calls {sorted(called)}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# fallout D-182 (co-dispatched from casting 2; fallout CT-017) — THE DOOR'S OWN PROSE
+# HAS TO AGREE WITH THE DOOR.
+#
+# D-182 was filed against the PUBLISHED wire description in server.py, whose
+# target_kind text said an omitted field "is refused server-side under the
+# NON_COMMENT denylist entry ... exactly as a present non-comment value does"
+# and then closed with "A finding about code — a function, a handler, a wiring
+# path — is a defect and belongs in Foundry-Defect". Both sentences are false
+# for a declared TEMPER_CANDIDATE, which the handler accepts with no
+# target_kind at all, and the second one instructs fallout GI-027's named
+# violation: "PROVE filing a candidate as a defect".
+#
+# The same rule is carried on THIS casting's files, so it is fixed here in this
+# module's own idiom: the handler's docstring is foundry.py's published
+# contract, and the two refusal HINTS are what a PROVE agent actually reads at
+# the moment it is deciding where a finding goes. Both hints offered exactly
+# two destinations, neither of them the candidate ledger, on the door that is
+# the only writer of candidates.
+#
+# These tests are the pins that keep the three surfaces agreeing. They assert
+# the constant, never a copy of its text, so a re-wording moves them with it
+# and a DELETION fails them.
+# --------------------------------------------------------------------------- #
+
+
+def _one_line(text: str) -> str:
+    """Prose with its line wrapping removed, so a pin survives a re-flow.
+
+    A docstring assertion that matches the source's line breaks is a pin on
+    the formatter, not on the sentence: re-wrapping a paragraph would fail it
+    while changing nothing a reader relies on.
+    """
+    return " ".join(text.split())
+
+
+def test_both_refusal_arms_offer_the_candidate_lane_in_one_spelling(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout CT-017 / GI-027 verbatim: 'PROVE filing a candidate as a defect'
+    is the violation, and a refusal naming only two doors is that violation
+    written as an instruction.
+
+    Both arms driven, and the SHARED CONSTANT asserted rather than a copy of
+    its words — this module's third convention. Two arms spelling the same
+    routing rule in two places is how they drift; ``_TEAMS_DOWN_HINT`` is the
+    pattern (D-186: three gate arms, three spellings, one of them missing
+    entirely), and this pin is what makes the single spelling load-bearing
+    rather than tidy.
+
+    The arms are reached differently and that is the point of driving both.
+    The FIRST is the denylist tripwire arm, reached with ``target_kind``
+    omitted — the caller declared no subject, so the NON_COMMENT rung fires.
+    The SECOND is the no-class arm, reached with ``target_kind="comment"``
+    declared and no comment-prose predicate matching. A PROVE agent holding an
+    undriven probe idea lands on one or the other depending only on whether it
+    guessed at the subject field, and before this fix both told it to file a
+    defect.
+    """
+    from foundry_mcp.schemas.vocab import TEMPER_CANDIDATE
+    from foundry_mcp.tools.foundry import _TEMPER_CANDIDATE_ROUTE
+
+    probe = (
+        "nobody has driven what the reaper does to a session the purge "
+        "cascade is halfway through"
+    )
+
+    # Arm 1 — the tripwire refusal, subject undeclared.
+    tripwire_arm = foundry_add_observation(
+        cycle=1, source="prove", description=probe, project_root=str(tmp_path)
+    )
+    # Arm 2 — the no-class refusal, subject declared a comment, no predicate
+    # matching. `target_kind="comment"` is the only value that reaches here:
+    # any other trips NON_COMMENT one rung above.
+    no_class_arm = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=probe,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+
+    assert tripwire_arm.get("denylist_class") == "NON_COMMENT", tripwire_arm
+    assert "No comment-prose observation class matches" in no_class_arm["error"]
+
+    for arm, refusal in (("tripwire", tripwire_arm), ("no-class", no_class_arm)):
+        assert _TEMPER_CANDIDATE_ROUTE in refusal["hint"], (
+            f"the {arm} arm no longer offers the candidate lane, or offers it "
+            f"in a second spelling: {refusal['hint']}"
+        )
+
+    # The constant names the class by deriving it from the vocabulary, so the
+    # sentence an operator reads cannot name a member that does not exist.
+    assert TEMPER_CANDIDATE in _TEMPER_CANDIDATE_ROUTE
+
+    # The two pins this hint already carried must survive the third door being
+    # added — the missing field is still named, and the defect door is still
+    # one of the destinations.
+    assert "target_kind" in tripwire_arm["hint"], tripwire_arm
+    assert "Foundry-Defect" in tripwire_arm["hint"], tripwire_arm
+
+    # Nothing was recorded by either attempt; this is about the refusal text.
+    assert _observations(run)["observations"] == []
+
+
+def test_the_no_class_refusal_no_longer_contradicts_the_set_it_names(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout CT-017 — a refusal that contradicts itself inside one message.
+
+    The error lists the classes a caller may declare, derived from
+    ``OBSERVATION_CLASSES``, so it gained ``TEMPER_CANDIDATE`` the moment
+    casting 10 added the member. The hint one line below it read 'Only comment
+    prose is an observation.' — flatly false about the very set the line above
+    had just printed, and false in the direction that costs: the reader it
+    misinforms is a PROVE agent holding a probe idea, and the door it sends
+    them to is the blocking one.
+
+    Pinned on the dead sentence BY NAME. A test that only asserted the new text
+    would pass again the day somebody re-added the old one beside it.
+    """
+    from foundry_mcp.schemas.vocab import OBSERVATION_CLASSES, TEMPER_CANDIDATE
+
+    refusal = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=(
+            "nobody has driven what the reaper does to a session the purge "
+            "cascade is halfway through"
+        ),
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+
+    # Every member the error offers is still offered...
+    for member in OBSERVATION_CLASSES:
+        assert member in refusal["error"], (member, refusal["error"])
+
+    # ...and the one that is NOT comment prose is the one the hint has to
+    # explain, because it is the only member of that list an operator cannot
+    # reach by re-wording anything.
+    assert TEMPER_CANDIDATE in refusal["hint"], refusal["hint"]
+    assert "Only comment prose is an observation" not in refusal["hint"], (
+        "the refusal has gone back to denying the existence of the class it "
+        "lists one line above"
+    )
+
+    assert _observations(run)["observations"] == []
+
+
+def test_the_handler_docstring_states_the_candidate_lane_beside_its_absolutes(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout D-182 verbatim: 'the PUBLISHED wire description contradicts it'.
+
+    ``foundry.py``'s published contract is this docstring — it is what a
+    ``path#Symbol`` cite resolves to and what a reader auditing the door
+    reaches first. It carried three absolutes written before the fifth class
+    existed: the summary said the door records 'a comment-prose finding', the
+    denylist paragraph said 'anything that is not a declared comment' is
+    rejected, and the fail-closed paragraph said 'RECORDING AN OBSERVATION *IS*
+    THE DEMOTION'. A declared ``TEMPER_CANDIDATE`` falsifies all three, and the
+    only qualification appeared three paragraphs later under ``target_kind``.
+
+    The pin is on the QUALIFICATION, not on the wording: each absolute must
+    carry the lane it is true of, in the same sentence, so a reader cannot take
+    one on its own. Asserted against the behaviour in the same test, so the
+    docstring cannot pass while the door disagrees with it.
+    """
+    import inspect
+
+    from foundry_mcp.schemas.vocab import TEMPER_CANDIDATE
+    from foundry_mcp.tools.foundry import foundry_add_observation as door
+
+    doc = _one_line(inspect.getdoc(door) or "")
+
+    # The summary names both lanes, not just the first.
+    assert "or an undriven probe idea" in doc, doc[:200]
+    # The two-lane paragraph exists, names the class, and states the routing
+    # rule fallout GI-027's violation column is about.
+    assert TEMPER_CANDIDATE in doc
+    assert "a probe idea is not a defect and must not be filed as one" in doc
+    # The denylist absolute carries its lane.
+    assert "in the comment-prose lane — anything that is not a declared comment" in doc
+    # ...as does the fail-closed absolute.
+    assert "RECORDING A COMMENT-PROSE OBSERVATION *IS* THE DEMOTION" in doc
+
+    # And the door actually behaves the way the docstring now claims: a
+    # declared candidate is recorded with no target_kind at all. This is the
+    # half D-182 drove — the handler was right and only the prose was wrong —
+    # and it is asserted HERE so the two can never be checked apart again.
+    accepted = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=(
+            "nobody has driven what the reaper does to a session the purge "
+            "cascade is halfway through"
+        ),
+        classification=TEMPER_CANDIDATE,
+        project_root=str(tmp_path),
+    )
+    assert accepted.get("observation_id"), accepted
+    assert _observations(run)["tripwire"] == [], "no demotion was attempted"

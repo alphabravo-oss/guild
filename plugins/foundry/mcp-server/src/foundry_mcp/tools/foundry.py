@@ -4195,6 +4195,34 @@ def foundry_add_defect(
     }
 
 
+#: CT-017 / GI-027 — THE CANDIDATE LANE, IN ONE SPELLING, because BOTH of the
+#: observation door's refusal arms have to offer it and neither of them did.
+#:
+#: GI-027's violation column names two harms and they are different. One is
+#: "TEMPER ignoring recorded candidates". The other is "PROVE filing a
+#: candidate as a defect" — and a refusal that hands a PROVE agent exactly two
+#: destinations, neither of them this ledger, is that violation written as an
+#: instruction rather than committed as a mistake. Both arms below used to do
+#: precisely that: the tripwire arm said "comment prose, or Foundry-Defect",
+#: the no-class arm said "only comment prose is an observation ... file it as a
+#: defect", and the class that exists to catch an undriven probe idea appeared
+#: in neither, on the door that is the only writer of it.
+#:
+#: One constant rather than two sentences, for the reason `_TEAMS_DOWN_HINT`
+#: is one: two arms spelling the same routing rule is how they drift, and a
+#: reader who meets one spelling here and another there learns that the lane is
+#: approximate. `_HARDENING_REPRODUCTION_HINT` is this sentence's mirror on the
+#: defect door ("A worry you did not drive is not a HARDENING record — record
+#: it as a TEMPER_CANDIDATE observation through Foundry-Observation instead"),
+#: so the two doors now point at each other with one rule between them.
+_TEMPER_CANDIDATE_ROUTE = (
+    "If nobody has DRIVEN it — a probe idea, a question about code you have "
+    f'not yet answered — declare classification="{TEMPER_CANDIDATE}" and it '
+    "belongs HERE: that class is not about comment prose at all, so the "
+    "comment-subject rung does not apply to it and no target_kind is owed."
+)
+
+
 @ledger_refusals
 def foundry_add_observation(
     cycle: int,
@@ -4214,26 +4242,39 @@ def foundry_add_observation(
     file_path: str = "",
     project_root: str = ".",
 ) -> dict:
-    """Record a comment-prose finding in the run's observations ledger.
+    """Record a comment-prose finding \u2014 or an undriven probe idea \u2014 in the
+    run's observations ledger.
 
     The non-blocking half of the FR-001 split. Observations are typed,
     persisted per run in ``observations.json``, and NEVER mixed into
     ``defects.json``.
 
+    TWO LANES REACH THIS DOOR, AND EVERY ABSOLUTE BELOW IS WRITTEN FOR THE
+    FIRST (CT-017 / GI-027). The four COMMENT-PROSE classes are demotions of a
+    finding about a comment, and the whole fail-closed regime exists for them.
+    ``TEMPER_CANDIDATE`` is the fifth class and it demotes NOTHING: it is "here
+    is a question nobody has asked yet", its subject is CODE by definition, and
+    it is reachable only by DECLARING it. So a probe idea is not a defect and
+    must not be filed as one \u2014 that is GI-027's named violation \u2014 and it owes
+    no ``target_kind="comment"``. The three CLAIM entries of the never-demote
+    denylist apply to it unchanged.
+
     The never-demote denylist is enforced here and is absolute (FR-002 /
     AC-002): a security-property claim, a spec-required-behaviour claim, an
-    unresolvable cite, and anything that is not a declared comment are
-    rejected, and the audit tripwire fires \u2014 durably, into the ledger's
-    ``tripwire`` array and forge-log.md \u2014 naming which entry matched. A
-    ``spec_ref`` is itself a spec-required-behaviour claim, so citing a
-    requirement is by construction enough to keep a finding a defect.
+    unresolvable cite, and \u2014 in the comment-prose lane \u2014 anything that is not
+    a declared comment are rejected, and the audit tripwire fires \u2014 durably,
+    into the ledger's ``tripwire`` array and forge-log.md \u2014 naming which entry
+    matched. A ``spec_ref`` is itself a spec-required-behaviour claim, so
+    citing a requirement is by construction enough to keep a finding a defect.
 
-    RECORDING AN OBSERVATION *IS* THE DEMOTION, so this path fails CLOSED on an
-    undeclared subject: the default is "not demotable unless declared", never
-    "demotable unless declared". That is the opposite of ``foundry_add_defect``
-    on purpose \u2014 there, absence must not license a refusal, because refusing a
-    defect is also a demotion. Both surfaces read the same predicate and both
-    fail in the direction that keeps a finding blocking.
+    RECORDING A COMMENT-PROSE OBSERVATION *IS* THE DEMOTION, so that lane fails
+    CLOSED on an undeclared subject: the default is "not demotable unless
+    declared", never "demotable unless declared". That is the opposite of
+    ``foundry_add_defect`` on purpose \u2014 there, absence must not license a
+    refusal, because refusing a defect is also a demotion. Both surfaces read
+    the same predicate and both fail in the direction that keeps a finding
+    blocking. The candidate lane sits outside that regime because it demotes
+    nothing there is a finding to hide behind.
 
     Args:
         classification: optional; a member of ``vocab.OBSERVATION_CLASSES``.
@@ -4312,11 +4353,21 @@ def foundry_add_observation(
             ),
             "hint": (
                 # Name the missing field and the action, not just the refusal:
-                # an omitted target_kind is a caller bug with two legitimate
+                # an omitted target_kind is a caller bug with THREE legitimate
                 # repairs, and the wrong one to guess is "re-word it".
+                #
+                # CT-017 \u2014 the third repair was missing for as long as the
+                # fifth class has existed, and its absence made this sentence
+                # read as "code means Foundry-Defect", which is GI-027's named
+                # violation stated as an instruction to the one stream that
+                # files candidates. "About code" is not the question; "did you
+                # drive it" is.
                 'Pass target_kind="comment" if the finding really is about '
-                "comment prose; if it is about code \u2014 a function, a handler, a "
-                "wiring path \u2014 it is a defect and belongs in Foundry-Defect. "
+                "comment prose. "
+                + _TEMPER_CANDIDATE_ROUTE
+                + " If you DROVE the code and it came back wrong \u2014 a function, "
+                "a handler, a wiring path \u2014 it is a defect and belongs in "
+                "Foundry-Defect. "
                 "The audit tripwire has fired and is recorded in "
                 "observations.json and forge-log.md."
                 if undeclared
@@ -4344,9 +4395,18 @@ def foundry_add_observation(
                 f"Must be one of: {', '.join(sorted(OBSERVATION_CLASSES))}"
             ),
             "hint": (
-                "Only comment prose is an observation. If this finding is "
-                "about behaviour, wiring, or a security property, file it as "
-                "a defect via Foundry-Defect."
+                # CT-017 — this used to open "Only comment prose is an
+                # observation", one line above an error that lists
+                # TEMPER_CANDIDATE among the classes the caller may declare.
+                # The two sentences contradicted each other inside a single
+                # refusal, and the false half is the one that routes: a PROVE
+                # agent holding an undriven probe idea read "file it as a
+                # defect" from the door that is the only writer of candidates.
+                "Comment prose and undriven probe ideas are the two things "
+                "this ledger holds. " + _TEMPER_CANDIDATE_ROUTE + " If you "
+                "DROVE the behaviour, the wiring or a security property and it "
+                "came back wrong, that is a finding rather than a question: "
+                "file it as a defect via Foundry-Defect."
             ),
         }
     if resolved not in OBSERVATION_CLASSES:

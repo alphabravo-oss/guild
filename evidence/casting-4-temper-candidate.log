@@ -1,8 +1,8 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_observations.py
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider --no-header tests/test_observations.py 2>&1 | tail -1 | awk '{ if ($0 ~ /failed|error/) { print "VERDICT: FAIL -- " $0 } else if ($2 ~ /^passed/ && $1+0 >= 136) { print "VERDICT: PASS -- observation-door suite green, collected floor >= 136 met" } else { print "VERDICT: FAIL -- floor not met: " $0 } }' && echo && echo "== fallout D-182 -- the three pins that keep the door prose agreeing with the door ==" && uv run --quiet --with pytest pytest -q -p no:cacheprovider --no-header tests/test_observations.py -k 'candidate_lane_in_one_spelling or no_longer_contradicts_the_set or docstring_states_the_candidate_lane' 2>&1 | tail -1 | awk '{ if ($1 == "3" && $2 ~ /^passed/) { print "VERDICT: PASS -- 3/3 fallout D-182 pins green" } else { print "VERDICT: FAIL -- " $0 } }'
 # evidence-for: NFR-004, FR-037, CT-017, GI-004, GI-027, ST-007, AC-019, AC-020
-# evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
-........................................................................ [ 54%]
-.............................................................            [100%]
-133 passed in 1.91s
+VERDICT: PASS -- observation-door suite green, collected floor >= 136 met
+
+== fallout D-182 -- the three pins that keep the door prose agreeing with the door ==
+VERDICT: PASS -- 3/3 fallout D-182 pins green
