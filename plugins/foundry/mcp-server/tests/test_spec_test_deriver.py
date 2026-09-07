@@ -46,6 +46,21 @@ Phase 1+2+3+4+5+6 byte-equivalence is preserved by living in a NEW
 module — no edits to test_evidence.py / test_evidence_for.py /
 test_validate_spec.py / test_typed_sections.py /
 test_versioned_spec_format.py / test_spec_review.py.
+
+fallout D-168 — the observation-emitting layer, driven rather than stubbed
+(3 tests at the foot of this module):
+
+  16. test_parse_header_reads_the_binding_from_a_path_it_is_handed
+  17. test_the_emitter_binds_its_requirements_from_a_cwd_that_is_not_the_test_root
+  18. test_the_emitted_test_path_stays_the_nodeid_pytest_reported
+
+Those three carry NO ``pytest.skip`` and no ``try/except`` around the
+entry point. The 15 stubs above are gated that way because the code they
+describe had not shipped when they were written; ``foundry_mcp.tools.
+test_deriver`` has shipped, and a test that can skip itself when the
+module changes shape is a test that cannot report the module changing
+shape — which is the coverage hole D-168 was filed on. The import below
+is therefore hard.
 """
 
 from __future__ import annotations
@@ -56,6 +71,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pytest
+
+# Hard, module-level, unguarded (fallout D-168). Every other reach into this
+# module in this file is wrapped in a skip; those wrappers date from when the
+# module was unshipped territory, and the three tests at the foot of this file
+# exist precisely because a guarded reach cannot go red.
+from foundry_mcp.tools import test_deriver
 
 # tests/test_spec_test_deriver.py -> parents: [0]=tests, [1]=mcp-server,
 # [2]=foundry, [3]=plugins, [4]=repo-root.
@@ -704,3 +725,168 @@ def test_assay_routing_extension() -> None:
         "or test-observations-adjudicator.md (Plan 07-04 routing "
         "verdict surface incomplete)"
     )
+
+
+# ---------------------------------------------------------------------------
+# fallout D-168 — the observation-emitting layer.
+#
+# `tools/test_deriver.py` was the lowest-covered module in the tree at 30%,
+# and `_parse_header` / `_parse_reportlog` were at zero: no test in the
+# 55-module roster named either. What that hole hid was not a corner case but
+# the stream's entire output. A reportlog nodeid is relative to the ROOTDIR
+# pytest chose; `_parse_reportlog` runs back in the SERVER process, whose cwd
+# is a different directory; so the header read missed every time and every
+# observation shipped with an empty `tests_spec`, which
+# `validate-test-observations.py` rejects with TEST_HEADER_MISSING and
+# WRONG_TEST_HEADER_MISSING before the ASSAY adjudicator ever sees it.
+#
+# THE CWD IS THE WHOLE TEST. A test that chdir'd into the generated-test root
+# first would have passed against the broken code, which is why none of these
+# chdir and why each one asserts that it did not.
+# ---------------------------------------------------------------------------
+
+
+def _write_reportlog(path: Path, nodeid: str, outcome: str = "failed") -> None:
+    """One pytest-reportlog line, in the shape pytest-reportlog 1.0.0 emits."""
+    path.write_text(
+        json.dumps(
+            {
+                "$report_type": "TestReport",
+                "nodeid": nodeid,
+                "outcome": outcome,
+                "longrepr": "assert 200 == 401",
+                "when": "call",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_parse_header_reads_the_binding_from_a_path_it_is_handed(
+    tmp_path: Path,
+) -> None:
+    """The parser itself is correct, and this pins that it is.
+
+    Worth its own test because it is the half that made the defect hard to
+    see: `_parse_header` handed an absolute path does exactly what its
+    docstring claims, so anyone reading it in isolation concludes the binding
+    works. The fault was never here -- it was in what the caller handed it.
+    """
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    test_file = generated / "test_derived_login.py"
+    test_file.write_text(
+        "# tests-spec: FR-019, US-006\n"
+        "def test_login_rejects_empty():\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+
+    assert test_deriver._parse_header(test_file) == ["FR-019", "US-006"]
+
+    # And the total-read contract: a path naming nothing, and a path naming a
+    # DIRECTORY, both read as "no header" rather than raising. `Path("")`
+    # normalises to the cwd, which exists and whose read_text raises.
+    assert test_deriver._parse_header(generated / "absent.py") == []
+    assert test_deriver._parse_header(Path("")) == []
+
+
+def test_the_emitter_binds_its_requirements_from_a_cwd_that_is_not_the_test_root(
+    tmp_path: Path,
+) -> None:
+    """fallout D-168, driven: the observation carries its `tests_spec`.
+
+    The reportlog nodeid below is rootdir-relative and names a file that does
+    not exist relative to this process's cwd -- which is the production
+    arrangement exactly, since `derive_and_run_tests` runs pytest with
+    `cwd=worktree_path` against a `generated_dir` outside it and then parses
+    the reportlog back here.
+
+    RED before the fix: `_parse_reportlog` built `Path("tests/test_derived_login.py")`
+    and let `_parse_header` resolve it against the ambient cwd, so `tests_spec`
+    came back `[]` and the validator refused the observation channel-side.
+    """
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    (generated / "test_derived_login.py").write_text(
+        "# tests-spec: FR-019, US-006\n"
+        "def test_login_rejects_empty():\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    report_log = tmp_path / "report.jsonl"
+    _write_reportlog(
+        report_log, "tests/test_derived_login.py::test_login_rejects_empty"
+    )
+
+    # The precondition that makes this test mean anything. If it ever stops
+    # holding, the test is passing for the wrong reason and says so here.
+    assert Path.cwd() != generated, (
+        "this test drives the bug's own arrangement -- a parse from a cwd that "
+        "is NOT the generated-test root. Running it from inside that root "
+        "would make it pass against the broken code."
+    )
+
+    observations = test_deriver._parse_reportlog(
+        report_log, generated_dir=generated
+    )
+
+    assert len(observations) == 1, observations
+    obs = observations[0]
+    assert obs["tests_spec"] == ["FR-019", "US-006"], (
+        "the observation shipped with an empty requirement binding, which "
+        "`validate-test-observations.py` refuses with TEST_HEADER_MISSING and "
+        "WRONG_TEST_HEADER_MISSING -- so the whole TEST-01 stream's output is "
+        "rejected channel-side and ASSAY has nothing left to adjudicate"
+    )
+    assert obs["status"] == "FAIL"
+
+    # The other rootdir pytest actually picks when it finds no ini file above
+    # the argument: rootdir == generated_dir, so the nodeid is a bare
+    # basename. Same call, same root, still bound.
+    _write_reportlog(
+        report_log, "test_derived_login.py::test_login_rejects_empty"
+    )
+    bare = test_deriver._parse_reportlog(report_log, generated_dir=generated)
+    assert bare[0]["tests_spec"] == ["FR-019", "US-006"]
+
+    # And the resolver does not invent a binding: a nodeid naming a file that
+    # is not under the generated root reads as no header, not as someone
+    # else's header.
+    _write_reportlog(report_log, "tests/test_absent.py::test_nothing")
+    missing = test_deriver._parse_reportlog(report_log, generated_dir=generated)
+    assert missing[0]["tests_spec"] == []
+
+
+def test_the_emitted_test_path_stays_the_nodeid_pytest_reported(
+    tmp_path: Path,
+) -> None:
+    """Only the header READ is resolved; the emitted field is not.
+
+    `validate-test-observations.py` scans `test_path` for forbidden roots
+    (WRONG_TEST_SOURCE_LEAK). Resolving the nodeid onto an absolute machine
+    path and then emitting THAT would push an ephemeral path into a committed
+    artefact and hand that scan a string it never had to judge before. So the
+    fix moves the resolution and leaves the field alone, and this is what says
+    so.
+    """
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    (generated / "test_derived_login.py").write_text(
+        "# tests-spec: FR-019\ndef test_x():\n    assert True\n",
+        encoding="utf-8",
+    )
+    report_log = tmp_path / "report.jsonl"
+    _write_reportlog(
+        report_log, "tests/test_derived_login.py::test_login_rejects_empty"
+    )
+
+    obs = test_deriver._parse_reportlog(report_log, generated_dir=generated)[0]
+
+    assert obs["test_path"] == "tests/test_derived_login.py"
+    assert not Path(obs["test_path"]).is_absolute(), (
+        f"an absolute path reached the emitted artefact: {obs['test_path']!r}"
+    )
+    assert str(tmp_path) not in obs["test_path"]
+

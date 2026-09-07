@@ -2655,7 +2655,8 @@ def test_a_same_casting_peer_cannot_destroy_a_live_worktree(tmp_path, dir_prefix
 
     Driven at the HELPER, over BOTH prefixes, because the helper is the whole
     surface the two production callers share: ``verify_evidence`` passes the
-    default ``casting-`` and Phase 7's ``test_deriver.run_test_deriver`` passes
+    default ``casting-`` and Phase 7's ``test_deriver.derive_and_run_tests``
+    passes
     ``test-deriver-cycle-``, and the latter has no test module of its own — so
     a guarantee pinned only through ``verify_evidence`` would leave the second
     caller's collision unasserted.
@@ -6451,6 +6452,26 @@ def test_the_syntax_check_never_executes_what_it_parses(tmp_path):
     )
 
 
+#: The population floor for the corpus-wide lint below (fallout D-166).
+#:
+#: A verdict is only as good as the population it was computed over, and the
+#: rule below used to record one without the other: it asserted that the logs
+#: it found all parsed, and "all of them" is true of one log and true of none
+#: that carry a command. A corpus that lost 77 of its 78 logs would have gone
+#: green here, and the committed witness log that renders the same sweep in
+#: `evidence/casting-5-corpus-lint.log` would have reproduced byte-identically
+#: while doing it. GI-006 -- "Run artefacts stay complete" -- is what makes
+#: that a defect rather than a tolerance.
+#:
+#: A RATCHET, not an equality: growth is the normal state of this corpus and
+#: pinning the exact count would turn every casting's new log into a failure
+#: here. It may be RAISED when someone wants a tighter floor. It is never
+#: lowered -- a corpus that shrank below it is the event this constant exists
+#: to report, and editing the number to make the report go away is the one
+#: response that is always wrong.
+_CORPUS_POPULATION_FLOOR = 78
+
+
 def test_every_committed_evidence_command_parses_under_the_host_shell():
     """AC-038 verbatim, over the corpus as it actually stands.
 
@@ -6464,6 +6485,13 @@ def test_every_committed_evidence_command_parses_under_the_host_shell():
 
     Run on the host, so "both fleet hosts" is a property this suite re-decides
     wherever it runs rather than a claim about somebody else's machine.
+
+    And judged against `_CORPUS_POPULATION_FLOOR`, so the verdict names the
+    population it was computed over (fallout D-166). "Every log parsed" is a
+    claim about a set, and until the floor landed nothing here said how big
+    that set had to be -- so the rule could keep passing over a corpus that had
+    quietly collapsed to a single log, which is the one circumstance in which
+    its answer would be worthless.
     """
     evidence_dir = REPO_ROOT / "evidence"
     if not evidence_dir.exists():
@@ -6488,6 +6516,14 @@ def test_every_committed_evidence_command_parses_under_the_host_shell():
     assert checked, (
         "no committed log declared a `# evidence-cmd:` — the header parse is "
         "reading nothing and this rule would pass over any corpus at all"
+    )
+    assert len(checked) >= _CORPUS_POPULATION_FLOOR, (
+        f"the lint ran over {len(checked)} commands from {len(logs)} committed "
+        f"logs, below the floor of {_CORPUS_POPULATION_FLOOR}. Either the "
+        f"corpus SHRANK or logs stopped declaring a `# evidence-cmd:`; either "
+        f"way a green verdict over what is left says nothing about what was "
+        f"lost. Raise the floor only to tighten it — never lower it to restore "
+        f"green."
     )
     assert failures == [], (
         f"committed evidence commands do not parse under "

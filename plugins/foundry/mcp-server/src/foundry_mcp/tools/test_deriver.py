@@ -80,7 +80,10 @@ def _parse_header(test_path: Path) -> list[str]:
     ``validate-test-observations.py`` so observations emitted by this module
     pass the validator's header check.
     """
-    if not test_path.exists():
+    # ``is_file()`` rather than ``exists()``: an empty nodeid resolves to
+    # ``Path("")``, which pathlib normalises to the CWD -- a directory that
+    # exists, whose ``read_text`` raises ``IsADirectoryError`` two lines below.
+    if not test_path.is_file():
         return []
     for line in test_path.read_text(encoding="utf-8", errors="replace").splitlines():
         stripped = line.strip()
@@ -94,7 +97,60 @@ def _parse_header(test_path: Path) -> list[str]:
     return []
 
 
-def _parse_reportlog(report_log_path: Path) -> list[dict[str, Any]]:
+def _resolve_nodeid_path(nodeid_path: Path, generated_dir: Path) -> Path:
+    """Resolve a pytest nodeid's path component onto a file this process can read.
+
+    A reportlog nodeid is relative to the ROOTDIR pytest chose, and nothing in
+    this process knows what that was. ``derive_and_run_tests`` launches pytest
+    with ``cwd=worktree_path`` against an ABSOLUTE ``generated_dir`` that lives
+    outside that worktree, and pytest then picks a rootdir by walking up from
+    the argument looking for an ini file -- of which this repository has none at
+    its root. ``_parse_reportlog`` then runs back in the SERVER process, whose
+    cwd is a third directory again. Three candidate roots, no two of them the
+    same, and the nodeid names none of them.
+
+    So a bare ``Path(nodeid)`` handed to ``_parse_header`` resolves against
+    whatever the ambient cwd happens to be, the header read always misses, and
+    every observation ships with an empty ``tests_spec``. That is not a cosmetic
+    loss: ``scripts/validate-test-observations.py`` fires both
+    ``TEST_HEADER_MISSING`` and ``WRONG_TEST_HEADER_MISSING`` on an empty
+    binding, so the whole stream's output is refused channel-side and the ASSAY
+    adjudicator has no requirement-bound finding left to adjudicate.
+
+    The one directory this process DOES know is ``generated_dir`` -- the agent
+    writes its generated tests there and this module hands that same path to
+    pytest. Whatever rootdir pytest picked, the nodeid it reported ends with the
+    file's path relative to some ancestor of that file, so a TAIL of the nodeid
+    path is what joins onto ``generated_dir``. Tails are tried longest first, so
+    a nodeid that carries directory structure keeps it and a bare basename
+    (which is what a rootdir equal to ``generated_dir`` produces) still lands.
+
+    Total, like the readers in this module: an absolute nodeid is returned
+    untouched, and a path that resolves nowhere is returned unchanged for
+    ``_parse_header`` to reject. Nothing here raises.
+
+    Named for the NODEID rather than for the test, because
+    ``orchestration/fix_gate.py#_resolve_test_path`` already holds the shorter
+    name and answers a different question: which file a teammate's
+    ``path::test`` locator names, tried against each root a teammate might have
+    rooted it at. Two resolutions of two different inputs -- a locator a person
+    typed, against candidate roots; a nodeid a tool emitted, against the one
+    root this process knows -- and the boundary guard's single-definition rule
+    is what forced the distinction to be spelled out rather than assumed.
+    """
+    if nodeid_path.is_absolute():
+        return nodeid_path
+    parts = nodeid_path.parts
+    for start in range(len(parts)):
+        candidate = generated_dir.joinpath(*parts[start:])
+        if candidate.is_file():
+            return candidate
+    return nodeid_path
+
+
+def _parse_reportlog(
+    report_log_path: Path, *, generated_dir: Path
+) -> list[dict[str, Any]]:
     """Convert pytest-reportlog JSON-lines events to observation dicts.
 
     pytest-reportlog emits events with ``$report_type`` discriminator:
@@ -102,6 +158,13 @@ def _parse_reportlog(report_log_path: Path) -> list[dict[str, Any]]:
 
     We collect ``TestReport`` events (one per test outcome). Each event maps
     to one observation dict with the closed-vocabulary status token.
+
+    ``generated_dir`` is REQUIRED and keyword-only rather than defaulted,
+    because there is no safe default: a nodeid is rootdir-relative and this
+    function runs in a process whose cwd is not that rootdir, so a caller that
+    omitted the root would silently emit observations with an empty
+    ``tests_spec``. See ``_resolve_nodeid_path`` for the three-roots problem it
+    solves.
     """
     observations: list[dict[str, Any]] = []
     if not report_log_path.exists():
@@ -129,7 +192,11 @@ def _parse_reportlog(report_log_path: Path) -> list[dict[str, Any]]:
         nodeid = event.get("nodeid", "") or ""
         test_path_str = nodeid.split("::")[0] if "::" in nodeid else nodeid
         test_path = Path(test_path_str) if test_path_str else Path("")
-        tests_spec = _parse_header(test_path)
+        # The EMITTED ``test_path`` below stays the nodeid path; only the header
+        # READ is resolved. Emitting the resolved absolute path instead would
+        # push an ephemeral machine path into a committed artefact and hand the
+        # validator's forbidden-root scan a string it never had to judge before.
+        tests_spec = _parse_header(_resolve_nodeid_path(test_path, generated_dir))
         # longrepr can be a string OR a structured dict depending on
         # pytest-reportlog version; coerce to string.
         longrepr = event.get("longrepr", "") or ""
@@ -231,7 +298,7 @@ def derive_and_run_tests(
             timeout=timeout_seconds,
         )
         uvx_elapsed = time.monotonic() - uvx_start
-        observations = _parse_reportlog(report_log)
+        observations = _parse_reportlog(report_log, generated_dir=generated_dir)
     finally:
         if worktree_path is not None:
             _teardown_worktree(run_dir.parent.parent, worktree_path)
