@@ -5,14 +5,15 @@
 # evidence-timeout: 900
 
 ........................................................................ [ 10%]
-..........................................................ss............ [ 20%]
+.............................................................ss......... [ 20%]
 ........................................................................ [ 30%]
-........................................................................ [ 41%]
-........................................................................ [ 51%]
-........................................................................ [ 61%]
-........................................................................ [ 72%]
-........................................................................ [ 82%]
-.....................................................................
+........................................................................ [ 40%]
+........................................................................ [ 50%]
+........................................................................ [ 60%]
+........................................................................ [ 70%]
+........................................................................ [ 80%]
+........................................................................ [ 90%]
+.............
 === report.json top-level keys ===
   generated_at
   run
@@ -174,8 +175,7 @@
   the axis is narrowed, not emptied — a stream agent IS stamped, by the roll-up's own cycle bucket:
   one stream pair over two cycles + one teammate pair: total=2  cycle rows={'1': 1, '2': 1}  without a cycle=1
   the cycle column still does not add up to the total, and now the note says why rather than only that it does not.
-. [ 92%]
-
+.
 === D-193 — the filing run's own shape: a counter that reached 14, an inspect_modes ledger that starts at 10 ===
   report.json inspect_modes_per_cycle.count       5
   report.json inspect_modes_per_cycle.cycle_count 5   <- cycles that CARRY a decision
@@ -207,8 +207,8 @@
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-..................................................                       [100%]
+...................................................      [100%]
 =========================== short test summary info ============================
-SKIPPED [1] tests/test_foundry_state_readers.py:2343: width._current_inspect_mode is gone — casting 2 repointed to the leaf (C-059 row 4). Nothing is left to agree with, and the leaf reader is driven directly above.
-SKIPPED [1] tests/test_foundry_state_readers.py:2388: width's copies of the width refusal are gone — casting 2 repointed to the leaf (C-059 row 5). Nothing is left to agree with, and the leaf predicate is driven directly above.
-696 passed, 2 skipped in 4.08s
+SKIPPED [1] tests/test_foundry_state_readers.py:2458: width._current_inspect_mode is gone — casting 2 repointed to the leaf (C-059 row 4). Nothing is left to agree with, and the leaf reader is driven directly above.
+SKIPPED [1] tests/test_foundry_state_readers.py:2503: width's copies of the width refusal are gone — casting 2 repointed to the leaf (C-059 row 5). Nothing is left to agree with, and the leaf predicate is driven directly above.
+713 passed, 2 skipped in 3.78s
