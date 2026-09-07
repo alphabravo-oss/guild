@@ -20,13 +20,6 @@ from pathlib import Path
 # casting that cites them. NFR-002: the canonical pattern is a strict
 # SUPERSET, so no ID that matched before stops matching.
 from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
-# D-180: the ONE derivation of "which requirement IDs does this casting own",
-# shared with the acceptance gate that demands evidence for each of them. See
-# `declared_requirement_ids`' docstring for the driven case, and the ownership
-# dimension below, which is its third caller. The edge is acyclic: foundry_handoff
-# imports the artifact leaf and foundry_state, and nothing in that chain imports
-# foundry_validate (only server.py does).
-from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
 # The artifact leaf, `tools/artifacts.py`: the house door guard and the total,
 # tolerant document read. Both were reached at the top of the stack until the
 # leaf existed — this module wanted two document utilities and imported a
@@ -34,7 +27,13 @@ from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
 # the package's de-facto persistence layer. The bodies are the same bodies;
 # only the module that defines them changed.
 from foundry_mcp.tools.artifacts import (
+    # fallout D-117: the marker's one spelling and the one digest spelling. The
+    # F0.7 gate writes the matrix digest into `INTENT_CLEAN_MARKER` and sub-check
+    # 7m below recomputes it with the same `_hash_file`, so the two sides of that
+    # comparison cannot drift into two answers.
+    INTENT_CLEAN_MARKER,
     _artifact_guard,
+    _hash_file,
     _load_json,
     # D-134: the SHARED nested-shape validator, so "unusable manifest" means one
     # thing in every module that reads castings/manifest.json. It was reached
@@ -64,6 +63,27 @@ from foundry_mcp.tools.artifacts import (
     # answer to "which file is this run's spec" has to live below both.
     _spec_requirement_ids,
 )
+# D-180: the ONE derivation of "which requirement IDs does this casting own",
+# shared with the acceptance gate that demands evidence for each of them. See
+# `declared_requirement_ids`' docstring for the driven case, and the ownership
+# dimension below, which is its third caller. The edge is acyclic: foundry_handoff
+# imports the artifact leaf and foundry_state, and nothing in that chain imports
+# foundry_validate (only server.py does).
+#
+# fallout concern C-067 — AND IT IS STILL THE WRONG HOME, WHICH IS RECORDED HERE
+# BECAUSE THE MOVE DID NOT FIT IN ONE CASTING. `tools/evidence.py` reads the same
+# function across the layer boundary fallout GI-033 draws, and the one remedy
+# that invariant admits is a leaf move. It was driven in this cycle and backed
+# out: `tests/test_handoff_records.py#test_neither_reader_derives_the_declared_set_inline`
+# and `tests/test_evidence.py#test_no_reader_of_the_owned_set_derives_it_inline`
+# each assert the function is defined exactly once across a scan set of
+# `foundry_handoff` and THIS module, so a definition in a third makes both read
+# zero. fallout GI-026 requires an AST pin to be repointed in the same casting as
+# the source move, and neither test module is casting 7's — so the move is one
+# dispatch, not one file. THIS import is legal either way, both ends being
+# lifecycle, which is exactly why it would have gone on pointing at the old home
+# unnoticed.
+from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
 from foundry_mcp.tools.foundry_state import (
     document_refusal,
     get_run_dir,
@@ -500,6 +520,61 @@ _RESEARCH_DIRNAME = "research"
 #: the file the message tells an operator to look for is the file the check
 #: looked for.
 _INTENT_COVERAGE_BASENAME = "intent-coverage.json"
+
+#: fallout D-117 — the token sub-check 7m refuses a STALE F0.7 verdict with,
+#: spelled once here and derived by both the issue and the hint below. It is a
+#: different finding from `INTENT_COVERAGE_RECORD_INCOMPLETE`, which says F0.7
+#: left no record; this one says F0.7 left a record for a DIFFERENT matrix, and
+#: a lead reading the two needs to be told apart which of "run it" and "run it
+#: AGAIN" they are being told.
+INTENT_COVERAGE_STALE = "INTENT_COVERAGE_STALE"
+
+
+def _intent_marker_staleness(fdir: Path, coverage_path: Path) -> str | None:
+    """Why the standing F0.7 verdict does not answer for the matrix on disk.
+
+    Returns the reason, or None when the marker vouches for exactly this
+    matrix.
+
+    fallout D-117 — WHAT MADE THE ANTI-SKIP GUARD FAIL OPEN WAS THAT NOTHING
+    READ THE MARKER. `intent_coverage.py`'s docstring said "Orchestrator's F0.9
+    sub-check 7m reads this marker to confirm F0.7 actually ran (anti-skip
+    discipline)" and 7m did not: it read whether intent-coverage.json exists
+    and whether the manifest carries a summary, both of them absent-value
+    predicates that any earlier pass satisfies forever. A run that passed F0.7,
+    regenerated its matrix and re-entered F0.9 was waved through on a verdict
+    about a document that no longer existed.
+
+    So the marker is read, and it carries the digest of the matrix it passed on
+    rather than the word "ok". Recomputing that digest here is what turns
+    "F0.7 ran at some point" into "F0.7 ran on THIS matrix" — the only one of
+    the two that is an anti-skip check, and the only one a lead who edits the
+    matrix and skips the gate cannot satisfy by doing nothing.
+
+    Total, like every other read in this module: an unreadable marker is a
+    stale marker, never a raise across the MCP boundary. A marker written by a
+    release before the digest existed reads as its own literal (`ok`) and is
+    named as such — re-running the gate is the fix in both cases, and it is the
+    same fix, so the two do not need separate tokens.
+    """
+    marker = fdir / INTENT_CLEAN_MARKER
+    try:
+        recorded = marker.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        recorded = ""
+    if not recorded:
+        return (
+            f"{marker.name} is missing or unreadable, so nothing records that "
+            f"F0.7 INTENT-CARRIER ever ran on {coverage_path.name}"
+        )
+
+    actual = _hash_file(coverage_path)
+    if recorded != actual:
+        return (
+            f"{marker.name} vouches for matrix {recorded}, but "
+            f"{coverage_path.name} now hashes to {actual}"
+        )
+    return None
 
 
 def _run_dir_facts(fdir: Path) -> dict:
@@ -1288,6 +1363,18 @@ def foundry_validate_castings(
                 "INTENT_COVERAGE_RECORD_INCOMPLETE: re-run Foundry-Intent-Coverage to stamp "
                 ".f07-intent-clean marker and append manifest.intent_coverage_summary."
             )
+        else:
+            stale = _intent_marker_staleness(fdir, intent_coverage_path)
+            if stale is not None:
+                dim7_issues.append({
+                    "issue": "intent_coverage_stale",
+                    "detail": f"{INTENT_COVERAGE_STALE}: {stale}",
+                })
+                revision_hints.append(
+                    f"{INTENT_COVERAGE_STALE}: re-run Foundry-Intent-Coverage. The "
+                    "matrix on disk is not the matrix F0.7 passed on, so the standing "
+                    "verdict answers for a document that has since changed."
+                )
 
     dim7_ok = len(dim7_issues) == 0
     if not dim7_ok:

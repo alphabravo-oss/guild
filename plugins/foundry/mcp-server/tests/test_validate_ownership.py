@@ -56,13 +56,16 @@ from pathlib import Path
 
 import pytest
 
+from foundry_mcp.tools.artifacts import INTENT_CLEAN_MARKER, _hash_file
 from foundry_mcp.tools.foundry import foundry_init
+from foundry_mcp.tools.intent_coverage import _clear_intent_verdict
 from foundry_mcp.tools.foundry_state import (
     ARCHIVE_DIR,
     clear_active_run,
     set_active_run,
 )
 from foundry_mcp.tools.foundry_validate import (
+    INTENT_COVERAGE_STALE,
     REQUIREMENT_IDS_SCHEMA_FLOOR,
     REQUIREMENT_SPAN_EXCEEDED,
     REQUIREMENT_SPAN_MAX,
@@ -217,6 +220,24 @@ def _sharers(count: int, *, reason_on=None, reason: str = "") -> list[dict]:
             entry["split_reason"] = {"FR-009": reason}
         out.append(entry)
     return out
+
+
+def _stamp_intent_marker(matrix: Path, digest: str | None = None) -> Path:
+    """Stamp `.f07-intent-clean` beside ``matrix`` the way the F0.7 gate does.
+
+    fallout D-117 — the marker's CONTENT is the digest of the matrix the gate
+    passed on, so a test that wants a standing F0.7 verdict has to produce the
+    same thing the gate produces. Computed through the leaf's `_hash_file`
+    rather than re-typed here: a test that hashes the matrix its own way would
+    agree with the reader by coincidence, which is the drift these two sides
+    were split apart to avoid.
+
+    ``digest`` overrides it, for the tests that want a marker vouching for a
+    matrix that is not the one on disk.
+    """
+    marker = matrix.parent / INTENT_CLEAN_MARKER
+    marker.write_text(f"{digest or _hash_file(matrix)}\n", encoding="utf-8")
+    return marker
 
 
 #: A run created under the current release: the schema marker at the floor.
@@ -790,6 +811,10 @@ def test_the_intent_matrix_going_missing_invalidates_a_cached_pass(
     matrix = tmp_path / ARCHIVE_DIR / "ownership-test" / "intent-coverage.json"
     matrix.parent.mkdir(parents=True, exist_ok=True)
     matrix.write_text("{}", encoding="utf-8")
+    # fallout D-117: and the marker vouching for THIS matrix, because the
+    # summary alone no longer carries the dimension. Stamped the way the F0.7
+    # gate stamps it — the digest, not the word "ok".
+    _stamp_intent_marker(matrix)
 
     first = _run_validate(tmp_path, castings, **args)
     assert first["passed"] is True, first["issues"]
@@ -809,6 +834,164 @@ def test_the_intent_matrix_going_missing_invalidates_a_cached_pass(
         i.get("issue") == "intent_coverage_record_incomplete"
         for i in after["dimensions"]["prompt_fidelity"]["issues"]
     )
+
+
+# ── The F0.7 anti-skip guard, which used to be able only to fail open ─────
+#
+# fallout D-117. Sub-check 7m's own prose in `intent_coverage.py` claimed
+# "Orchestrator's F0.9 sub-check 7m reads this marker to confirm F0.7 actually
+# ran (anti-skip discipline)" while nothing anywhere read `.f07-intent-clean`.
+# The two keys 7m did read — the matrix's presence and the manifest summary —
+# are both ABSENT-VALUE predicates, so any earlier pass satisfied them forever
+# and no failing path ever withdrew either. The tests below drive the state that
+# made that a hole: a verdict standing over a matrix that has since changed.
+
+
+def _matrix_and_marker(tmp_path: Path, body: str = "{}") -> Path:
+    """A run holding an F0.7 matrix and a marker vouching for exactly it."""
+    matrix = tmp_path / ARCHIVE_DIR / "ownership-test" / "intent-coverage.json"
+    matrix.parent.mkdir(parents=True, exist_ok=True)
+    matrix.write_text(body, encoding="utf-8")
+    _stamp_intent_marker(matrix)
+    return matrix
+
+
+#: What the two tests below hold constant: INTENT-01 active, so the matrix is
+#: required, and a stamped summary, so the only thing left to decide the
+#: dimension is whether the verdict answers for the matrix on disk.
+_INTENT_ACTIVE = {
+    "stream_skips": [],
+    "intent_coverage_summary": {"verdict": "PROPAGATED"},
+}
+
+
+def test_a_marker_vouching_for_this_matrix_passes_the_intent_check(
+    tmp_path: Path,
+):
+    """The positive control. A guard that refused every run would pass the
+    negative below and block F0.9 for everyone.
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])]
+    _matrix_and_marker(tmp_path)
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra=_INTENT_ACTIVE,
+    )
+
+    assert result["dimensions"]["prompt_fidelity"]["ok"] is True, result["issues"]
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_regenerated_matrix_withdraws_the_standing_f07_verdict(
+    tmp_path: Path,
+):
+    """THE HOLE, DRIVEN. F0.7 passed; the matrix was then regenerated and F0.7
+    was NOT re-run — which is precisely the skip the marker is named for.
+
+    Before this fix the run validated: intent-coverage.json still existed and
+    manifest.intent_coverage_summary still said PROPAGATED, and those were the
+    only two things 7m asked. Now the marker vouches for a digest the matrix no
+    longer has, and the refusal names both sides so a lead can see WHICH
+    document moved.
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])]
+    matrix = _matrix_and_marker(tmp_path)
+    stale_digest = _hash_file(matrix)
+
+    # The regeneration. Nothing else about the run changes — no document the
+    # old dimension read is touched.
+    matrix.write_text('{"matrix": [{"answer_id": "A-001"}]}', encoding="utf-8")
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra=_INTENT_ACTIVE,
+    )
+
+    assert result["passed"] is False
+    stale = [
+        i
+        for i in result["dimensions"]["prompt_fidelity"]["issues"]
+        if i.get("issue") == "intent_coverage_stale"
+    ]
+    assert stale, result["dimensions"]["prompt_fidelity"]["issues"]
+    detail = stale[0]["detail"]
+    assert INTENT_COVERAGE_STALE in detail
+    # Both sides named: what the marker vouches for, and what is on disk.
+    assert stale_digest in detail, detail
+    assert _hash_file(matrix) in detail, detail
+    assert any(
+        INTENT_COVERAGE_STALE in hint for hint in result["revision_hints"]
+    )
+
+
+def test_a_verdict_with_no_marker_at_all_does_not_carry_the_dimension(
+    tmp_path: Path,
+):
+    """The summary alone is not a verdict.
+
+    A manifest can be copied, restored or hand-edited into a run whose F0.7
+    never ran — the summary is a key in a document, and a key is cheap. The
+    marker is what the gate leaves behind, so its absence is the absence of a
+    verdict however complete the manifest looks.
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])]
+    matrix = _matrix_and_marker(tmp_path)
+    (matrix.parent / INTENT_CLEAN_MARKER).unlink()
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra=_INTENT_ACTIVE,
+    )
+
+    assert result["passed"] is False
+    assert any(
+        i.get("issue") == "intent_coverage_stale"
+        for i in result["dimensions"]["prompt_fidelity"]["issues"]
+    )
+
+
+def test_the_f07_gate_withdraws_its_own_standing_verdict_before_it_runs(
+    tmp_path: Path,
+):
+    """The other half of the same fix, driven at the writer.
+
+    `.validate-passed` is unlinked when F0.9 fails "so the marker only reflects
+    the latest verdict", and F0.7 had no such rule at all: both of its records
+    were written on the pass branch and removed by nothing. Withdrawal happens
+    on ENTRY, which covers the exits no return statement owns — a validator
+    crash, a raise, an interrupted run — and not only the six returns.
+    """
+    fdir = tmp_path / ARCHIVE_DIR / "ownership-test"
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    matrix = _matrix_and_marker(tmp_path)
+    manifest_path = fdir / "castings" / "manifest.json"
+    manifest_path.write_text(
+        json.dumps({"castings": [], "intent_coverage_summary": {"passed": True}}),
+        encoding="utf-8",
+    )
+
+    _clear_intent_verdict(fdir)
+
+    assert not (fdir / INTENT_CLEAN_MARKER).exists()
+    assert "intent_coverage_summary" not in json.loads(
+        manifest_path.read_text(encoding="utf-8")
+    )
+    # The matrix itself is the agent's artifact, not the gate's verdict, and is
+    # left exactly where it was.
+    assert matrix.is_file()
 
 
 # ── The span, and the token that fires above the threshold ────────────────
