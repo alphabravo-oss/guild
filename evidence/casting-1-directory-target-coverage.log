@@ -2,8 +2,8 @@
 # evidence-for: AC-005, CT-001, FR-039
 # evidence-volatile: \d+\.\d+s
 
-.........................................................                [100%]
-57 passed in 0.12s
+..........................................................               [100%]
+58 passed in 0.25s
 
 == the C-080 rung, by node id ==
 tests/test_concerns.py::test_a_target_beneath_a_directory_key_file_resolves_to_its_owner[src/foundry_mcp/tools/orchestration/streams.py]
@@ -18,4 +18,4 @@ tests/test_concerns.py::test_the_hint_says_a_directory_entry_stands_for_everythi
 tests/test_concerns.py::test_the_hint_stays_silent_about_directories_a_manifest_does_not_have
 tests/test_concerns.py::test_the_coverage_reading_is_the_leafs_and_not_a_copy_that_agrees_with_it
 
-11/57 tests collected (46 deselected) in 0.04s
+11/58 tests collected (47 deselected) in 0.04s
