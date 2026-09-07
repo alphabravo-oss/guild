@@ -202,11 +202,13 @@ def test_a_cap_that_is_not_a_whole_number_is_no_cap_and_says_so_at_the_door(run_
 
 
 def test_a_halt_whose_report_could_not_be_written_is_never_a_clean_seal(run_env):
-    """fallout ST-001 / FR-046 / CT-004 (D-160) — the ruling, both halves.
+    """fallout ST-001 / fallout FR-046 / fallout CT-004 (D-160) — the ruling, both halves.
 
-    ST-001's guard column names three conditions and FR-046 forbids the third
+    fallout ST-001's guard column names three conditions and fallout FR-046
+    forbids the third
     being a refusal ("refuses ONLY on `_halt_preconditions`"). The lead ruling
-    made on casting 2's GRIND cycle-5 dispatch settles it in FR-046's favour —
+    made on casting 2's GRIND cycle-5 dispatch settles it in fallout FR-046's
+    favour —
     a run that cannot write its report must still be able to STOP — and asks in
     exchange that the incompleteness be legible "at the surfaces a human or a
     later door actually reads", because a caller reading only `ok` sees success.
@@ -226,7 +228,7 @@ def test_a_halt_whose_report_could_not_be_written_is_never_a_clean_seal(run_env)
         text="the spec needs an edit before this run can continue",
     )
 
-    # FR-046's half: the transition HAPPENED. A refusal here would strand the
+    # fallout FR-046's half: the transition HAPPENED. A refusal here would strand the
     # run neither halted nor reported, which is worse than the state the guard
     # is trying to prevent.
     assert sealed["ok"] is True, sealed
@@ -234,7 +236,7 @@ def test_a_halt_whose_report_could_not_be_written_is_never_a_clean_seal(run_env)
     assert json.loads((fdir / "state.json").read_text())["phase"] == RUN_PHASE_HALTED
     assert not (fdir / "REPORT.md").exists()
 
-    # ST-001's half, surface by surface. (1) The transition's own display:
+    # fallout ST-001's half, surface by surface. (1) The transition's own display:
     # `display.py#_fmt_foundry_mark_phase_complete` renders `message` and no
     # other field, so a fact absent from it is a fact the operator never sees.
     assert sealed["report_generated"] is False, sealed

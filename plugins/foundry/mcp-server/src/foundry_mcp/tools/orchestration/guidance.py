@@ -1216,6 +1216,43 @@ _ACTION_IMPERATIVES = {
         "to retrieve its findings, then CONFIRM THE STREAM'S OWN RECORD EXISTS \u2014 "
         "Foundry-Context shows the cycle's roll-up. Do NOT poll \u2014 the harness notifies you.\n"
         "\n"
+        # fallout AC-031 / GI-016 / FR-049 (D-169) \u2014 THE READING STREAMS ARE
+        # TOLD THAT ONE OF THEIR PEERS REWRITES THE TREE.
+        #
+        # This imperative dispatches every stream in ONE parallel message and
+        # named no ordering, no exclusion and no snapshot discipline \u2014 while
+        # TEST verifies a GRIND's fixes by REVERTING each one and re-running,
+        # in the shared working tree the reading streams are walking.
+        #
+        # DRIVEN in cycle 5 of this run by following the imperative literally:
+        # TRACE hit an AttributeError that did not reproduce at HEAD, and
+        # independently reported the tree churning between 04:20 and 04:26 UTC
+        # with `tools/foundry_validate.py` showing a PRE-bac2c12 state and six
+        # orchestration modules modified, before settling clean. It recovered
+        # ONLY because it re-verified everything against a `git archive HEAD`
+        # snapshot on its own initiative and pinned its findings to 13164ab.
+        # Nothing here required that recovery or would have caught its absence:
+        # a stream that trusted the tree would have filed a phantom defect
+        # against a mutation a peer was about to revert, or missed a real one
+        # masked by it, and neither is distinguishable in the ledger from an
+        # honest finding.
+        #
+        # Same shared-mutable-state family as D-155 (concurrent evidence
+        # recapture), one rung in: there the racing writers were recapture
+        # teammates, here they are the verification streams this imperative
+        # dispatches together. Named rather than serialised, per GI-007: the
+        # parallel dispatch is what makes an INSPECT one wall-clock unit, and
+        # the hazard is answered by telling every reader to pin.
+        "THE TREE MOVES UNDER YOU WHILE THESE RUN. TEST verifies a GRIND's "
+        "fixes by REVERTING each one and re-running, in the same working tree "
+        "TRACE and PROVE are reading. Tell every reading stream, in its own "
+        "dispatch, to PIN ITS WORK TO A SNAPSHOT: take the HEAD sha once at "
+        "start, verify findings against `git archive HEAD` (or an equivalent "
+        "detached checkout) rather than the live tree, and cite that sha in "
+        "the report. A finding read off the live tree during an INSPECT may be "
+        "a peer's mutation that is about to be reverted, and that is "
+        "indistinguishable in the ledger from an honest one.\n"
+        "\n"
         "fallout FR-023 / FR-049 / GI-016 \u2014 YOU DO NOT RECORD A STREAM. THE AGENT "
         "DOES.\n"
         "Every verifying stream calls Foundry-Stream itself, with the counts it "
@@ -1223,8 +1260,39 @@ _ACTION_IMPERATIVES = {
         "REPLACES the first rather than summing with it. A lead that records on "
         "an agent's behalf is asserting numbers it did not measure, and when the "
         "agent then records its own the cycle carries two accounts of one run. "
-        "If a stream finished and no record exists, that is a finding about the "
-        "stream \u2014 re-dispatch it, or file it \u2014 not a gap for you to fill in."
+        "If an AGENT stream finished and no record exists, that is a finding "
+        "about the stream \u2014 re-dispatch it, or file it \u2014 not a gap for you to "
+        "fill in.\n"
+        # fallout AC-031 / GI-016 / AC-030 (D-165) \u2014 AND THE ONE STREAM WHOSE
+        # EXECUTOR IS YOU.
+        #
+        # The rule above is sound and AC-030 requires its wording, but stated
+        # unqualified it closed every exit SIGHT has. SIGHT runs in the lead's
+        # own thread \u2014 `commands/start.md`'s F2 roster calls it "the only
+        # exception to 'lead never does work'", and Playwright MCP works
+        # nowhere else \u2014 so it has no agent to re-dispatch and this same
+        # imperative forbids spawning one. Meanwhile `skills/sight/SKILL.md`,
+        # which the lead is executing, says "Mark the stream complete via the
+        # foundry MCP `Foundry-Stream` tool with `stream='sight'`" and "You
+        # record your own stream". So on a --url run the lead executed the
+        # skill, read this imperative, and every exit was closed: with no sight
+        # record the streams-complete rung stays short and
+        # `Foundry-Phase('inspect_clean')` refuses with no sanctioned move \u2014 a
+        # STALLED INSPECT rather than a wrong number.
+        #
+        # What GI-016 protects is that nobody reports numbers they did not
+        # measure. The lead driving Playwright MEASURED them. So the rule is
+        # stated as what it is \u2014 never on an AGENT's behalf \u2014 and the one
+        # stream the lead executes is named with its reason, which is the
+        # sentence that was missing rather than a carve-out.
+        "\n"
+        "SIGHT IS THE ONE STREAM YOU EXECUTE, SO YOU ARE ITS EXECUTOR AND ITS "
+        "RECORD IS YOURS. Playwright runs only in the main thread; there is no "
+        "sight agent to re-dispatch and you must not spawn one. When you have "
+        "driven the sight skill, the numbers you report are numbers YOU "
+        "measured, which is the whole of what the rule above protects \u2014 it "
+        "forbids recording on an AGENT's behalf, and there is no agent here. "
+        "Every OTHER stream records its own and you only confirm."
     ),
     "transition_to_grind": (
         "YOUR NEXT CALLS (in order):\n"
@@ -2254,9 +2322,22 @@ def _compute_next_action(project_root: str) -> dict:
                     "Spawn agents using the agent_configs below (model and type are ENFORCED). "
                     "SIGHT runs in MAIN THREAD (Playwright MCP only works here) \u2014 "
                     "navigate to URL, snapshot every page, exercise all elements, check console. "
-                    "Each stream records its OWN run with Foundry-Stream (fallout "
-                    "GI-016) — confirm the record exists when the stream reports; "
-                    "do not record on its behalf."
+                    # fallout AC-031 / GI-016 (D-165) — the same qualification the
+                    # `run_streams` imperative carries, on the OTHER surface that
+                    # states this rule. Left unqualified here it would re-close the
+                    # exits the imperative just opened, one field along, and this is
+                    # the string a lead reads FIRST.
+                    "Each AGENT stream records its OWN run with Foundry-Stream "
+                    "(fallout GI-016) — confirm the record exists when the stream "
+                    "reports; never record on an AGENT's behalf. SIGHT is the "
+                    "exception and the reason is that you EXECUTED it: there is no "
+                    "sight agent, so its record is yours to make from what you "
+                    "measured. "
+                    # fallout AC-031 (D-169) — and the hazard the parallel dispatch
+                    # creates, named where the dispatch is described.
+                    "TEST rewrites the shared tree to verify the GRIND's fixes, so "
+                    "tell every reading stream to pin its findings to the HEAD sha "
+                    "and verify them against a snapshot, not the live tree."
                 ),
                 "details": {
                     "missing_streams": streams["missing"].split(),

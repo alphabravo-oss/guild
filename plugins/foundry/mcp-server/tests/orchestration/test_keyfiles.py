@@ -1,7 +1,7 @@
 """What a `key_files` entry is — the one statement, and the four sites reading it.
 
-fallout FR-009 (D-170, casting 7's concern C-079) / GI-026 / FR-005 / AC-014:
-each new module gets its own test module, landed in the same casting as the
+fallout FR-009 (D-170, casting 7's concern C-079) / fallout GI-026 /
+fallout FR-005 / fallout AC-014: each new module gets its own test module, landed in the same casting as the
 source move.
 """
 from __future__ import annotations
@@ -117,14 +117,14 @@ def test_owning_entries_names_the_entry_a_covered_path_came_through():
 
 
 def test_this_module_imports_nothing_which_is_what_makes_it_a_leaf():
-    """fallout GI-033 / AC-061 (C-079) — the property, asserted rather than
+    """fallout GI-033 / fallout AC-061 (C-079) — the property, asserted rather than
     claimed.
 
     The leaf set is a CHECKED PROPERTY — imports only leaves, at any depth — and
     this module qualifies in the strongest way available: it imports nothing at
     all. That is what lets `transitions.py` and `width.py` (VERIFIER) and
     `directives.py` and `foundry_spawn.py` (lifecycle) all read one body, when
-    GI-033 makes the two layers mutually unreachable at module top and therefore
+    fallout GI-033 makes the two layers mutually unreachable at module top and therefore
     makes `foundry_validate.py#_key_file_covers` unusable from the verifier
     half however convenient it would be.
     """

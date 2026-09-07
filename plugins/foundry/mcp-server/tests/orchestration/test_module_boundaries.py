@@ -4983,32 +4983,6 @@ _DELIBERATE_REDEFINITIONS: dict[str, str] = {
         "these are call-through bindings and `test_the_timestamp_has_one_"
         "implementation_however_it_is_spelled` pins that they resolve to it."
     ),
-    # fallout NFR-011 (casting 1's concern C-066) — THE COUNT IS GONE, AND THE
-    # CLAIM THAT SURVIVES IS THE ONE THE ROW IS ACTUALLY MAKING.
-    #
-    # This read "each shape their own FOUR-TOKEN refusal set", and the number was
-    # wrong in both directions: concerns.py has carried FIVE tokens since before
-    # this cycle (CONCERN_TARGET_UNRESOLVED, CONCERN_TEXT_EMPTY,
-    # CONCERN_CYCLE_REQUIRED, CONCERN_UNKNOWN_ID, CONCERN_CLOSE_REASON_REQUIRED)
-    # and rosters.py went from four to SEVEN at b40256b (adding
-    # ROSTER_ITEMS_EMPTY, ROSTER_ITEMS_DUPLICATED, ROSTER_ITEM_NOT_NAMED). No
-    # assertion failed — this guard checks that the name is duplicated and that
-    # the row is not stale, and both still held — so it was prose beside code of
-    # the escalated class `stale-prose-survives-beside-new-prose`, and it would
-    # have drifted again every time either door grew a refusal.
-    #
-    # The load-bearing half never depended on the number: the SHAPE is the house
-    # one and the vocabularies are DISJOINT, which is the whole reason there is
-    # nothing for one definition to say for both. Said without a count, it
-    # cannot go stale.
-    "_named_refusal": (
-        "tools/concerns.py and tools/rosters.py each shape their own refusal "
-        "token set; the SHAPE is the house one and the token vocabularies are "
-        "disjoint, so there is nothing for one definition to say for both. "
-        "tools/display.py's is a third thing again and not a refusal SHAPER at "
-        "all — it READS the refusal text a handler already named, so it shares "
-        "the noun and nothing else."
-    ),
     "_agent_id_for_casting": (
         "tools/foundry_spawn.py holds the ONE implementation, because it is the "
         "door that seeds the progress ledger with the id. "
@@ -5064,6 +5038,51 @@ _KNOWN_DUPLICATION: dict[str, str] = {
     ),
     "_normalise_path": (
         "casting 1 — tools/concerns.py and schemas/vocab.py spell one rule twice"
+    ),
+    # fallout AC-015 / OT-011 (D-167) — MOVED FROM `_DELIBERATE_REDEFINITIONS`,
+    # BECAUSE THE ROW'S OWN STATED REASON DENIED THE DUPLICATION IT EXCUSED.
+    #
+    # It read: "tools/concerns.py and tools/rosters.py each shape their own
+    # refusal token set; the SHAPE is the house one and the token vocabularies
+    # are disjoint, so there is nothing for one definition to say for both."
+    # DRIVEN at HEAD 13164ab by parsing all three shipped definitions and
+    # comparing the unparsed bodies: `rosters._named_refusal` and
+    # `concerns._named_refusal` are the same function TO THE CHARACTER —
+    # `def _named_refusal(error: str, hint: str, phase: str) -> dict:` returning
+    # `{"error": error, "hint": hint, "phase": phase}`, docstring included — a
+    # single statement holding no token, no vocabulary and no per-module
+    # decision. The disjoint token sets are what the CALLERS pass in as `phase`
+    # (ROSTER_EXISTS, CONCERN_TARGET_UNRESOLVED and the rest), not anything
+    # either definition holds. So "nothing for one definition to say for both"
+    # is exactly backwards: one definition says the whole of what both say.
+    #
+    # `tools/display.py`'s third fork genuinely IS a different function —
+    # `(result: object) -> str | None`, reading `_REFUSAL_TEXT_KEYS` off a dict
+    # a handler already named — and that half of the old row was sound. It is
+    # not what put the row in the wrong table.
+    #
+    # THE COMPARISON WITH THE ROW IT SAT BESIDE IS THE MEASURE. `_now` also has
+    # three definitions and also has a `_DELIBERATE_REDEFINITIONS` row, but that
+    # row is BACKED by `test_the_timestamp_has_one_implementation_however_it_is_spelled`
+    # and all three `_now` bodies are call-throughs to `foundry_state.now_iso` —
+    # one implementation, three bindings. `_named_refusal` has no such pin and
+    # is not one implementation; it is two.
+    #
+    # WHY THE GUARD DID NOT CATCH IT: the "a row is excusable only while it is
+    # somebody else's to close" predicate tests membership of `orchestration/`,
+    # `server.py` and `foundry_spawn.py` only, and `tools/concerns.py` and
+    # `tools/rosters.py` are casting 1's brand-new files created BY this run —
+    # so this effort's own duplication was sitting in the table meant for other
+    # castings' debt. Moving it here is what makes it visible as debt, and the
+    # stale-row assertion below is what will delete this line the day casting 1
+    # closes it.
+    "_named_refusal": (
+        "casting 1 — tools/concerns.py and tools/rosters.py hold BYTE-IDENTICAL "
+        "definitions of the house refusal shaper, docstring included; one "
+        "definition says the whole of what both say and the disjoint token sets "
+        "are what the callers pass IN. tools/display.py's third definition is a "
+        "genuinely different function (it READS a refusal a handler already "
+        "named) and is not part of this duplication. See concern C-083."
     ),
 }
 
@@ -5218,6 +5237,103 @@ def test_no_top_level_symbol_is_defined_in_two_shipped_modules():
     )
 
 
+
+
+def test_a_deliberate_redefinition_row_is_not_two_copies_of_one_body():
+    """fallout AC-015 / OT-011 (D-167) — the two tables mean different things,
+    and a row in the wrong one excuses a live violation.
+
+    `_DELIBERATE_REDEFINITIONS` means "these two CANNOT be one".
+    `_KNOWN_DUPLICATION` means "these two SHOULD be one and somebody else owns
+    the file". A duplication in the first table is not deferred debt — it is
+    debt declared impossible, and nothing will ever come back for it.
+
+    `_named_refusal` sat in the first with a reason its own subject denied: the
+    row said "the token vocabularies are disjoint, so there is nothing for one
+    definition to say for both", while `concerns._named_refusal` and
+    `rosters._named_refusal` are the same function TO THE CHARACTER, docstring
+    included, and the token sets are what the CALLERS pass in as `phase`.
+
+    So the predicate is structural rather than a re-reading of the prose: a
+    `_DELIBERATE_REDEFINITIONS` row whose bodies are byte-identical is a row in
+    the wrong table, whatever it says about itself. `_now` — the row that sat
+    directly above it — passes because its three bodies are DIFFERENT: three
+    call-throughs to `foundry_state.now_iso`, which is one implementation and
+    three bindings, and which its own named pin asserts.
+    """
+    modules = _package_source_modules()
+    bodies: dict[str, list[tuple[str, str]]] = {}
+    for module in modules:
+        source = module.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:  # pragma: no cover - a shipped module always parses
+            continue
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name not in _DELIBERATE_REDEFINITIONS:
+                continue
+            segment = ast.get_source_segment(source, node) or ""
+            bodies.setdefault(node.name, []).append((module.name, segment.strip()))
+
+    identical: dict[str, list[str]] = {}
+    for name, found in bodies.items():
+        seen: dict[str, list[str]] = {}
+        for home, body in found:
+            seen.setdefault(body, []).append(home)
+        for homes in seen.values():
+            if len(homes) > 1:
+                identical.setdefault(name, []).extend(sorted(homes))
+
+    assert identical == {}, (
+        f"_DELIBERATE_REDEFINITIONS row(s) whose bodies are BYTE-IDENTICAL: "
+        f"{identical}. That table means the two definitions cannot be one, and "
+        "two identical bodies are the proof that they can — one of them says "
+        "the whole of what both say. Move the row to _KNOWN_DUPLICATION naming "
+        "the casting that owns the file, or close the duplication."
+    )
+
+    # The derivation's own input exists, so the assertion cannot go quietly
+    # vacuous if a row is renamed out from under the scan. `_now` is the anchor
+    # because it is the row this predicate must NOT fire on — three bodies, all
+    # different, all call-throughs to one implementation — so a scan that found
+    # nothing would be reporting the wrong kind of green.
+    assert "_now" in bodies, sorted(bodies)
+    assert len(bodies["_now"]) >= 2, bodies["_now"]
+    assert set(bodies) <= set(_DELIBERATE_REDEFINITIONS), sorted(bodies)
+
+
+def test_the_named_refusal_forks_are_the_two_the_row_names_and_not_the_third():
+    """fallout AC-015 (D-167) — display.py's is a different function, and the
+    row must not sweep it in.
+
+    Half of the old row was sound: `tools/display.py#_named_refusal` is
+    `(result: object) -> str | None` and READS the refusal text a handler
+    already named, so it shares the noun with the other two and nothing else.
+    A `_KNOWN_DUPLICATION` row that implied all three were one fork would be
+    asking casting 1 to consolidate a function it does not own and that does not
+    do the same thing.
+    """
+    signatures: dict[str, tuple[list[str], int]] = {}
+    for module in _package_source_modules():
+        source = module.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:  # pragma: no cover
+            continue
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == "_named_refusal":
+                args = [a.arg for a in node.args.args]
+                signatures[module.name] = (args, len(node.body))
+
+    assert set(signatures) == {"concerns.py", "rosters.py", "display.py"}, signatures
+    # The two the row names take the SAME three arguments...
+    assert signatures["concerns.py"][0] == ["error", "hint", "phase"]
+    assert signatures["rosters.py"][0] == ["error", "hint", "phase"]
+    assert signatures["concerns.py"] == signatures["rosters.py"], signatures
+    # ...and the third takes one argument of a different kind entirely.
+    assert signatures["display.py"][0] == ["result"], signatures["display.py"]
 
 
 def test_both_streams_complete_compositions_answer_the_same_thing(run_env):

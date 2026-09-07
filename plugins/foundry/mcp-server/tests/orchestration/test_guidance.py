@@ -121,6 +121,7 @@ from tests.orchestration._env import (  # noqa: F401
     _halted_run,
     _teams_active,
     _tiered,
+    _record_full_inspect_mode,
     _write_manifest_with_castings,
     _write_prove,
     _write_spec,
@@ -2250,3 +2251,122 @@ def test_the_context_door_publishes_the_caller_it_now_reads(run_env):
         assert token.exists(), "the dispatch defaults to something other than lead"
     finally:
         foundry_server._project_root = previous_root
+
+
+# --------------------------------------------------------------------------- #
+# fallout AC-031 / GI-016 / AC-030 (D-165) — THE ONE STREAM THE LEAD EXECUTES.
+# --------------------------------------------------------------------------- #
+
+
+def _run_streams_instructions(run_env) -> str:
+    """The `instructions` string the F2 `run_streams` action actually carries.
+
+    Built through `_compute_next_action` rather than read off a constant,
+    because the claim is about what a LEAD is handed at that phase — a pin on
+    the literal would pass while the branch stopped emitting it.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/handler.py"], no_ui=True)
+    _write_spec(fdir, ["FR-001"])
+    _write_state(fdir, phase="F2", cycle=1)
+    # D-117: an INSPECT with no recorded width routes to `record_inspect_width`,
+    # not to `run_streams`. The width is what this branch stands behind.
+    _record_full_inspect_mode(fdir, cycle=1)
+    result = _compute_next_action(project_root)
+    assert result["action"] == "run_streams", result
+    return result["instructions"]
+
+
+def test_the_run_streams_imperative_leaves_sight_an_exit(run_env):
+    """fallout AC-031 / GI-016 / AC-030 (D-165) — every exit was closed, and the
+    consequence was a STALLED INSPECT rather than a wrong number.
+
+    The imperative listed "SIGHT: runs in MAIN THREAD via Playwright — execute
+    while the four background streams run" and then, unqualified, "YOU DO NOT
+    RECORD A STREAM. THE AGENT DOES. ... If a stream finished and no record
+    exists, that is a finding about the stream — re-dispatch it, or file it —
+    not a gap for you to fill in."
+
+    SIGHT has no agent to re-dispatch: `commands/start.md`'s F2 roster calls it
+    "the only exception to 'lead never does work'", and this same imperative
+    forbids spawning one. The other half of the contract points the opposite
+    way — `skills/sight/SKILL.md` says "Mark the stream complete via the foundry
+    MCP `Foundry-Stream` tool with `stream='sight'`" and "You record your own
+    stream; the lead only confirms the record exists" — and AC-031 names `sight`
+    in the roster of surfaces that must state they record. So on a --url run the
+    lead executed the skill, read this, and had no sanctioned move: with no
+    sight record the streams-complete rung stays short and
+    `Foundry-Phase('inspect_clean')` refuses.
+
+    The rule the imperative states is SOUND and AC-030 requires its wording — a
+    lead must not record on an AGENT's behalf, because it did not measure those
+    numbers. What was missing is the sentence that makes it consistent: the lead
+    running SIGHT in its own thread IS that stream's executor, and the numbers
+    it reports are ones it measured.
+    """
+    imperative = _ACTION_IMPERATIVES["run_streams"]
+
+    # AC-030's wording survives verbatim: this is a qualification, not a repeal.
+    assert "YOU DO NOT RECORD A STREAM. THE AGENT DOES." in imperative
+    assert "records on an agent's behalf" in imperative.lower(), imperative
+
+    # ...and the exit SIGHT needs is stated WITH its reason, rather than as a
+    # bare carve-out that the next reader would be free to read as sloppiness.
+    assert "SIGHT IS THE ONE STREAM YOU EXECUTE" in imperative, imperative
+    assert "there is no agent here" in imperative, imperative
+    assert "Every OTHER stream records its own and you only confirm." in imperative
+
+    # The re-dispatch remedy is scoped to the streams that HAVE an agent, so it
+    # no longer names a move SIGHT cannot make.
+    assert "If an AGENT stream finished and no record exists" in imperative, imperative
+
+    # The same qualification reaches the `instructions` string, which is the
+    # surface a lead reads FIRST and which stated the rule unqualified too.
+    instructions = _run_streams_instructions(run_env)
+    assert "never record on an AGENT's behalf" in instructions, instructions
+    assert "SIGHT is the exception" in instructions, instructions
+    assert "there is no sight agent" in instructions, instructions
+
+
+def test_the_run_streams_dispatch_names_the_peer_that_rewrites_the_tree(run_env):
+    """fallout AC-031 / GI-016 (D-169) — the readers were not told a mutating
+    peer exists.
+
+    The imperative orders every INSPECT stream dispatched in ONE parallel
+    message. One of them — TEST — verifies a GRIND's fixes by REVERTING each one
+    and re-running, in the shared working tree the reading streams are walking.
+    The imperative named no ordering, no exclusion and no snapshot discipline.
+
+    DRIVEN in cycle 5 of this run by following it literally: TRACE hit an
+    AttributeError that did not reproduce at HEAD, and independently reported
+    the tree churning between 04:20 and 04:26 UTC with tools/foundry_validate.py
+    showing a PRE-bac2c12 state and six orchestration modules modified, before
+    settling clean. TRACE recovered only because it re-verified everything
+    against a `git archive HEAD` snapshot on its own initiative and pinned its
+    findings to 13164ab. Nothing required that recovery or would have caught its
+    absence — a stream that trusted the tree files a phantom defect against a
+    mutation about to be reverted, or misses a real one masked by it, and
+    neither is distinguishable in the ledger from an honest finding.
+
+    Named rather than serialised (GI-007): the parallel dispatch is what makes
+    an INSPECT one wall-clock unit, so the hazard is answered by telling every
+    reader to pin rather than by spending a cycle's wall-clock on ordering.
+    """
+    imperative = _ACTION_IMPERATIVES["run_streams"]
+
+    assert "THE TREE MOVES UNDER YOU WHILE THESE RUN" in imperative, imperative
+    # The mutating peer is NAMED, and so is what it does: "a peer may write" is
+    # not something a reader can act on.
+    assert "TEST verifies a GRIND's fixes by REVERTING each one" in imperative
+    # The discipline is concrete enough to follow — a sha, a snapshot, a cite.
+    assert "PIN ITS WORK TO A SNAPSHOT" in imperative, imperative
+    assert "git archive HEAD" in imperative, imperative
+    assert "cite that sha" in imperative, imperative
+    # ...and it says why, so a stream that skips it knows what it is risking.
+    assert "indistinguishable in the ledger from an honest one" in imperative
+
+    # The `instructions` string carries it too, for the same reason the SIGHT
+    # qualification does.
+    instructions = _run_streams_instructions(run_env)
+    assert "TEST rewrites the shared tree" in instructions, instructions
+    assert "pin its findings to the HEAD sha" in instructions, instructions
