@@ -517,6 +517,30 @@ def _coverage_shortfall(fdir: Path, project_root: str, stream: str, cycle: int) 
 
 
 
+#: fallout ST-008 / CT-003 (D-159, casting 12's concern C-087) — ONE SPELLING OF
+#: WHAT TO REPORT, for the two rungs that refuse an unusable `items_total`.
+#:
+#: Both the negative rung and the bound rung answer the same question — "what
+#: number belongs here" — and they answered it differently, one of them with an
+#: exemption the other refuses. Said once, they cannot drift again, which is the
+#: `_TEAMS_DOWN_HINT` pattern applied to the advice rather than to a remedy.
+#:
+#: THE ZERO ARM IS GONE AND IS NOT COMING BACK. `items_checked` is required
+#: above zero and `items_checked <= items_total` is unconditional, so 0 is a
+#: value this door can never accept; a hint offering it names a call that is
+#: refused one rung on.
+_ITEMS_TOTAL_HINT = (
+    "Report items_total — the size of the population this tranche was drawn "
+    "from. It is not optional: the coverage threshold is evaluated against it, "
+    "and a record with no denominator clears every threshold by having none. "
+    "Where the stream has a persisted roster, that roster's length IS the "
+    "number. Where the server narrowed this stream's width for the cycle, it is "
+    "the size of the width it drew. Where the stream knows no WIDER population "
+    "than the items it reached, it is items_checked itself — never 0, which "
+    "declares no population at all."
+)
+
+
 def foundry_mark_stream(
     stream: str,
     cycle: int,
@@ -592,13 +616,37 @@ def foundry_mark_stream(
             ),
         }
 
+    # fallout ST-008 / CT-003 (D-159, casting 12's concern C-087) — THE HINT
+    # SAYS WHAT THIS DOOR DOES, AND IT USED TO SAY THE OPPOSITE.
+    # ----------------------------------------------------------------------
+    # It read "Report the size of the population, or 0 when this stream has no
+    # fixed denominator" — the exact sentence the D-159 comment one rung below
+    # names as where the exemption was INVENTED. D-159 removed the exemption
+    # from the bound and left it standing here, so the door instructed a caller
+    # into a guaranteed refusal: report -1, get told to report 0, report 0, get
+    # refused. And `items_checked` is already required above zero, so
+    # `items_total=0` can never be accepted — the advice was unreachable for
+    # every caller that could ever read it.
+    #
+    # A HINT IS THE ONE PIECE OF PROSE A READER MEETS AT THE MOMENT THEY ARE
+    # ALREADY WRONG, which makes it the worst place in this system for a false
+    # statement: a caller who disbelieves the error still follows the hint.
+    #
+    # WHAT REPLACES IT IS NOT THE EXEMPTION RESTORED. ST-008's guard, CT-003's
+    # errors column AND CT-003's output column ("totals at most 100%") all read
+    # the same way, so a record with no denominator is not a shape this contract
+    # has. The honest advice for a stream that knows no WIDER population is
+    # `items_total = items_checked` — "I checked N of the N I could reach",
+    # which is a true statement about a real population — never 0, which is a
+    # statement about nothing and clears every threshold by having no
+    # denominator to be measured against.
     if items_total < 0:
         return {
             "error": (
                 f"Cannot record {stream} with items_total={items_total}. "
                 "The population a tranche was drawn from cannot be negative."
             ),
-            "hint": "Report the size of the population, or 0 when this stream has no fixed denominator.",
+            "hint": _ITEMS_TOTAL_HINT,
         }
 
     # The near-miss beside the same guard: 1667% coverage was accepted in
@@ -648,15 +696,10 @@ def foundry_mark_stream(
                 "Either items_checked is overstated or items_total understates "
                 "the population."
                 if items_total > 0
-                else (
-                    f"Report items_total — the size of the population {stream} "
-                    "was drawn from. It is not optional: the coverage threshold "
-                    "is evaluated against it, and a record with no denominator "
-                    "clears every threshold by having none. Where the stream "
-                    "has a persisted roster, that roster's length IS the "
-                    "number; where the server narrowed this stream's width for "
-                    "the cycle, it is the size of the width it drew."
-                )
+                # C-087: through the ONE spelling, so the rung that refuses a
+                # negative and the rung that refuses an undeclared population
+                # cannot advise differently about the same field again.
+                else _ITEMS_TOTAL_HINT
             ),
         }
 

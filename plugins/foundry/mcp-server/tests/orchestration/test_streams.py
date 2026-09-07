@@ -936,3 +936,81 @@ def test_the_stand_down_reaches_only_the_streams_the_server_narrows(run_env):
     assert narrowed <= {"trace", "prove"}, entry["stream_scope"]
     for wire in sorted(vocab.DELTA_CONDITIONAL_STREAMS):
         assert wire not in narrowed, (wire, entry["stream_scope"])
+
+
+def test_the_items_total_hint_names_a_call_this_door_actually_accepts(run_env):
+    """fallout ST-008 / CT-003 (D-159, casting 12's concern C-087) — a hint that
+    instructs a caller into a guaranteed refusal.
+
+    The `items_total < 0` hint read "Report the size of the population, or 0 when
+    this stream has no fixed denominator" — the exact sentence the D-159 comment
+    one rung below names as where the exemption was INVENTED. D-159 removed the
+    exemption from the bound and left it standing in the advice, so the door
+    said: report -1, get told to report 0, report 0, get refused. And because
+    `items_checked` is required above zero, `items_total=0` can NEVER be
+    accepted, so the advice was unreachable for every caller that could read it.
+
+    A hint is the one piece of prose a reader meets at the moment they are
+    already wrong, which makes it the worst place in the system for a false
+    statement: a caller who disbelieves the error still follows the hint.
+
+    DRIVEN AS A ROUND TRIP rather than as a string comparison, because the claim
+    is not "the sentence changed" but "obeying it works" — and only the round
+    trip can fail when a future edit makes the two rungs disagree again.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2")
+
+    negative = foundry_mark_stream(
+        "trace", cycle=1, items_checked=9, items_total=-1, project_root=project_root
+    )
+    assert negative.get("ok") is not True, negative
+
+    # The sentence that made the round trip a dead end is gone...
+    assert "or 0 when this stream has no fixed denominator" not in negative["hint"]
+    # ...and 0 is named as what it IS rather than offered as a value.
+    assert "never 0" in negative["hint"], negative["hint"]
+
+    # THE ROUND TRIP: the number the hint names is a number this door takes.
+    # "items_checked itself" is the arm a caller with no wider population reads.
+    obeyed = foundry_mark_stream(
+        "trace", cycle=1, items_checked=9, items_total=9, project_root=project_root
+    )
+    assert obeyed["ok"] is True, obeyed
+    assert obeyed["coverage"] == "100%", obeyed
+    assert obeyed["measured_against"] == "declared", obeyed
+
+    # ...and the value the OLD hint named is still refused, which is why the
+    # sentence had to change rather than the bound.
+    assert foundry_mark_stream(
+        "trace", cycle=1, items_checked=9, items_total=0, project_root=project_root
+    ).get("ok") is not True
+
+
+def test_both_rungs_that_refuse_an_items_total_give_one_answer(run_env):
+    """fallout CT-003 (C-087) — two rungs, one question, one sentence.
+
+    The negative rung and the bound rung both answer "what number belongs in
+    items_total", and they answered it differently — one offering an exemption
+    the other refuses. That is how the contradiction survived D-159: the fix
+    changed the rung that enforced the rule and not the rung that described it.
+    Said once, they cannot drift again.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2")
+
+    negative = foundry_mark_stream(
+        "trace", cycle=1, items_checked=9, items_total=-1, project_root=project_root
+    )
+    undeclared = foundry_mark_stream(
+        "trace", cycle=1, items_checked=9, items_total=0, project_root=project_root
+    )
+
+    assert negative["hint"] == undeclared["hint"], (negative["hint"], undeclared["hint"])
+    assert negative["hint"] == _streams._ITEMS_TOTAL_HINT
+
+    # The two ERRORS still differ, which is the half that must NOT be collapsed:
+    # a negative population and an undeclared one are different mistakes.
+    assert negative["error"] != undeclared["error"]
+    assert "cannot be negative" in negative["error"], negative["error"]
+    assert "cannot check more items" in undeclared["error"], undeclared["error"]
