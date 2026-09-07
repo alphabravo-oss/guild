@@ -177,6 +177,10 @@ from foundry_mcp.tools.orchestration.streams import (  # noqa: F401
 
 from foundry_mcp.tools.orchestration.transitions import (  # noqa: F401
     PHASE_TOKENS,
+    # fallout ST-005 (D-158) — the routine, called directly, because the two
+    # fail-open routes are properties of the ROUTINE both doors share and a
+    # drive through one door would leave the other unasserted.
+    _inspect_start_preconditions,
     _phase_transition,
     _token_preconditions,
     _update_phase,
@@ -3684,8 +3688,29 @@ def _reads_in(segment: str, readers: set[str]) -> set[str]:
 #: windows ask different questions: a rung loading a document is the rung doing
 #: its job, and a branch loading one is the branch deciding something its
 #: routine did not.
+#:
+#: fallout AC-009 / FR-041 (D-161) — AND THE STDLIB SPELLINGS, WHICH ARE THE
+#: TWO MOST ORDINARY WAYS TO READ A LEDGER.
+#:
+#: The set held the project's own helpers and nothing else, so the recogniser
+#: this pin depends on did not know what a ledger read LOOKS LIKE when it is
+#: written the way Python writes one. DRIVEN over `_reads_in` at the branch
+#: window: a planted `extra = json.loads((fdir / 'defects.json').read_text(
+#: encoding='utf-8'))` above a refusal returned the EMPTY SET, and so did
+#: `json.load(open(fdir / 'defects.json'))`. This is the same scan-window class
+#: D-086 closed one generation of — the docstring below already says "a read
+#: need not be a `_load_json`" — and no shipped branch uses either spelling
+#: today, so the guard was green while the rule it encodes was narrower than
+#: AC-009 states.
+#:
+#: `open` is here as a READ even though it also writes: a branch that OPENS a
+#: file above its refusal is either reading a ledger the routine did not or
+#: mutating before a refusal, and the second is worse than the first. Matched by
+#: call NAME (`ast.Name.id`) and by attribute (`ast.Attribute.attr`), so
+#: `json.loads`, `p.read_text()` and a bare `open(...)` are all reached.
 _LEDGER_PRIMITIVES = frozenset({
     "_load_json", "read_document", "read_jsonl", "read_text_file", "_read_text",
+    "read_text", "read_bytes", "open", "load", "loads",
 })
 
 
@@ -3836,6 +3861,56 @@ def test_the_branch_window_catches_a_marker_read_too():
     )
     preconditions, _effect = _split_at_the_refusal(planted)
     assert "<marker>.exists" in _reads_in(preconditions, set()), preconditions
+
+
+def test_the_branch_window_catches_the_stdlib_spellings_of_a_ledger_read():
+    """fallout AC-009 / FR-041 (D-161) — a read need not be one of OUR helpers.
+
+    AC-009 requires an AST pin asserting that each gate branch and each
+    transition branch "performs no other ledger or marker read". The recogniser
+    knew `_load_json`, `read_document`, `read_jsonl`, `read_text_file`,
+    `_read_text` and `<marker>.exists` — every reader this project wrote, and
+    none of the two ways Python itself spells the same act.
+
+    DRIVEN before the fix, both spellings returned the EMPTY SET from
+    `_reads_in` over the branch window. No shipped branch uses either today,
+    which is exactly why this is planted rather than scanned: a guard that is
+    green over clean source is green whether it works or not.
+    """
+    readers = _refusal_readers()
+
+    dunder_read = (
+        "outcome = _start_cast_preconditions(fdir, project_root)\n"
+        "extra = json.loads((fdir / 'defects.json').read_text(encoding='utf-8'))\n"
+        "if extra:\n"
+        "    return _transition_refusal(outcome, 'Cannot enter CAST')\n"
+        "_update_phase(fdir, 'F1')\n"
+    )
+    pre, effect = _split_at_the_refusal(dunder_read)
+    found = _reads_in(pre, readers)
+    assert "loads" in found and "read_text" in found, (found, pre)
+    # ...and the split still works, so the plant is judged in the right window.
+    assert "_update_phase" in effect, effect
+
+    open_read = (
+        "outcome = _cast_preconditions(fdir, project_root)\n"
+        "extra = json.load(open(fdir / 'defects.json'))\n"
+        "if extra:\n"
+        "    return _transition_refusal(outcome, 'Cannot mark CAST complete')\n"
+    )
+    pre_open, _ = _split_at_the_refusal(open_read)
+    found_open = _reads_in(pre_open, readers)
+    assert "load" in found_open and "open" in found_open, (found_open, pre_open)
+
+    # The recogniser stays a NAME test, not a heuristic over argument shapes:
+    # a call that is not a read leaks nothing.
+    innocent = (
+        "outcome = _done_preconditions(fdir, project_root)\n"
+        "if not outcome['passed']:\n"
+        "    return _transition_refusal(outcome, 'Cannot mark run DONE')\n"
+    )
+    pre_innocent, _ = _split_at_the_refusal(innocent)
+    assert _reads_in(pre_innocent, readers) - {"_done_preconditions"} == set()
 
 
 def test_the_transition_adds_no_refusal_of_its_own():
@@ -4343,6 +4418,112 @@ def test_a_concern_closed_with_a_reason_also_clears_the_door(run_env):
     assert "cross-casting concern" not in str(result.get("error", "")), result
 
 
+
+
+def test_a_wrong_shaped_concern_ledger_refuses_instead_of_answering_none(run_env):
+    """fallout ST-005 / GI-023 / AC-004 (D-158) — the rung failed OPEN on a
+    concerns.json that is valid JSON and the wrong shape.
+
+    ST-005's guard is "`_inspect_start_preconditions` finds a concern from the
+    closing GRIND still open" and GI-023's violation column is "opening INSPECT
+    with an open cross-casting concern from the closing GRIND". The rung built
+    its list from `foundry_state.open_cross_casting_concerns`, which reads the
+    document and DISCARDS the problem — so every `concerns` cell that is not a
+    list of mappings answered as the empty list and the door opened.
+
+    DRIVEN before the fix at F3 cycle 4 with a manifest of two castings: a filed
+    C-001 refused by id, and rewriting concerns.json to {"concerns": "C-001
+    open"} or {"concerns": ["C-001"]} made the SAME call pass. Unparseable JSON
+    was caught by `_artifact_guard`, so the hole was exactly the
+    valid-JSON-wrong-shape route. Each shape below is one of the three ways that
+    route is reachable.
+    """
+    from foundry_mcp.tools.concerns import foundry_concern
+
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        2: (["FR-007"], ["src/two.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+    opened = foundry_concern(
+        casting_id=1, cycle=1, target="src/two.py",
+        text="the fix reaches casting 2's own spelling of this rule",
+        project_root=project_root,
+    )
+    concern_id = opened["concern"]["id"]
+
+    # The control: an intact ledger refuses by id, as it always has.
+    assert concern_id in _inspect_start_preconditions(fdir, project_root)["reason"]
+
+    for body in (
+        '{"concerns": "C-001 open"}',      # the cell is a string
+        '{"concerns": ["C-001"]}',         # a list of non-records
+        '{"filed": []}',                   # no cell at all
+    ):
+        (fdir / "concerns.json").write_text(body, encoding="utf-8")
+        outcome = _inspect_start_preconditions(fdir, project_root)
+        assert outcome["passed"] is False, (body, outcome)
+        assert "concern ledger cannot be read" in outcome["reason"], (body, outcome)
+        # ...and the refusal names the FILE, so the operator repairs the
+        # artifact rather than hunting for a concern that cannot be read.
+        assert "concerns.json" in outcome["reason"] + outcome["hint"], outcome
+
+    # ABSENT IS STILL ABSENT: a run that filed no concern has no ledger, and
+    # every run starts that way. If this rung fired on absence it would block
+    # the first INSPECT of every run, which is the opposite failure.
+    (fdir / "concerns.json").unlink()
+    assert _inspect_start_preconditions(fdir, project_root)["passed"] is True
+
+
+def test_the_concern_scope_still_narrows_to_the_counter_the_leaf_reports(run_env):
+    """fallout ST-005 / GI-023 (D-158, concern C-077) — the route this fix does
+    NOT close, pinned so it cannot be mistaken for closed.
+
+    The rung scopes on exact cycle equality and `foundry_state.current_cycle`
+    answers 0 for a MALFORMED counter as well as an absent one, so a `state.json`
+    carrying a non-integer `cycle` makes the rung look for cycle-0 concerns only
+    and a concern filed at cycle 4 goes unseen. The honest reading of an unknown
+    scope is every open cross-casting concern.
+
+    Closing it needs the raw value, and
+    `test_module_boundaries.py#test_every_state_cycle_read_goes_through_a_guarded_reader`
+    forbids that read outside the leaf's total readers — it caught the first
+    attempt at this arm by name. The distinguisher belongs beside `current_cycle`
+    in the (value, problem) shape `rosters.roster_length` uses; that file is
+    casting 10's, so C-077 carries it. This test asserts the CURRENT behaviour
+    so the gap is recorded rather than silent, and it INVERTS the day the leaf
+    reader lands — which is what makes it the anchor for that change rather than
+    an excuse for the gap.
+    """
+    from foundry_mcp.tools.concerns import foundry_concern
+
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        2: (["FR-007"], ["src/two.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=4)
+    opened = foundry_concern(
+        casting_id=1, cycle=4, target="src/two.py",
+        text="the fix reaches casting 2's own spelling of this rule",
+        project_root=project_root,
+    )
+    concern_id = opened["concern"]["id"]
+    # The control: with the counter intact the rung refuses by id.
+    assert concern_id in _inspect_start_preconditions(fdir, project_root)["reason"]
+
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    state["cycle"] = "four"
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    # The arrangement reaches the route: the counter reads 0, not 4, and it is
+    # the leaf's documented answer for a malformed value rather than a bug here.
+    assert current_cycle(fdir) == 0
+
+    outcome = _inspect_start_preconditions(fdir, project_root)
+    named = [c for c in outcome["checklist"]
+             if c["check"].startswith("no_open_cross_casting_concerns")]
+    assert named and named[0]["ok"] is True, outcome["checklist"]
 
 
 def test_a_crossing_already_refused_does_not_re_execute_the_corpus(run_env, monkeypatch):

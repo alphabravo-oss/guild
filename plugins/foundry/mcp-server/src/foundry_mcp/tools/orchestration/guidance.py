@@ -442,7 +442,12 @@ def _terminal_outlook(fdir: Path | None) -> dict:
     reader that conflates them halts a run that had no cap at all.
     """
     if fdir is None or not fdir.exists():
-        return {"heading_for": None, "open_by_tier": {}, "cycles_to_cap": None}
+        return {
+            "heading_for": None,
+            "open_by_tier": {},
+            "cycles_to_cap": None,
+            "report_written": None,
+        }
 
     state = _load_json(fdir / "state.json")
     # fallout GI-033 / AC-061 (D-021 / D-035) — THE BUCKETS COME FROM THE LEAF.
@@ -458,7 +463,8 @@ def _terminal_outlook(fdir: Path | None) -> dict:
     max_cycles = persisted_max_cycles(state)
     cycles_to_cap = None if max_cycles <= 0 else max(0, max_cycles - current_cycle(fdir))
 
-    if state.get("phase") == RUN_PHASE_HALTED:
+    halted = state.get("phase") == RUN_PHASE_HALTED
+    if halted:
         heading_for = RUN_PHASE_HALTED
     elif cycles_to_cap == 0:
         # The next GRIND door would seal HALTED, and that is what the run is
@@ -471,6 +477,37 @@ def _terminal_outlook(fdir: Path | None) -> dict:
         "heading_for": heading_for,
         "open_by_tier": open_by_tier,
         "cycles_to_cap": cycles_to_cap,
+        # fallout ST-001 / CT-004 / CT-007 (D-160, lead ruling
+        # `lead_ruling_st_001_vs_fr_046`) — THE ENDING'S DELIVERABLE, ON THE
+        # BLOCK THAT REPORTS THE ENDING.
+        #
+        # The ruling keeps the halt transition NON-REFUSING on a failed report
+        # regeneration — FR-046 governs the refusal question — and asks in
+        # exchange that the incompleteness be legible "at the surfaces a human
+        # or a later door actually reads … so a halt with no report announces
+        # itself as such rather than requiring someone to notice a False buried
+        # in a payload". This is that block: `heading_for` says WHERE the run
+        # ends, and HALTED exists to record a named backlog, so whether the
+        # backlog was actually written down belongs beside it.
+        #
+        # THE SURFACE THAT MISSED IT WAS THIS ONE, and the case is not
+        # hypothetical: the run most likely to halt with no report is the run
+        # whose ledger will not render, and `foundry_next_action`'s
+        # corrupt-artifact early return merges exactly this dict and never
+        # reaches `_compute_next_action`'s HALTED branch — the branch that DOES
+        # name the missing report (D-171). So on the one run where the fact
+        # matters most, `heading_for: HALTED` was the whole of what a lead was
+        # told.
+        #
+        # None on a run that has not ended, because "was the report written" is
+        # not a question about a run still going: a live run's REPORT.md is
+        # whatever the last Foundry-Report left, and reporting False for it
+        # would read as a failure that has not happened. THE FILE'S PRESENCE is
+        # the ground truth on a halted run, the same source `_halted_refusal`
+        # and the HALTED branch read, so the three cannot say different things
+        # about one file — and a lead who repairs the cause and calls
+        # Foundry-Report sees this flip without anything having to re-record it.
+        "report_written": (fdir / REPORT_MD_FILENAME).exists() if halted else None,
     }
 
 

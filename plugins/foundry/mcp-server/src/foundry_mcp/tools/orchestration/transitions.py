@@ -49,6 +49,10 @@ from foundry_mcp.tools.foundry_state import (
     now_iso,
     open_cross_casting_concerns,
     persisted_max_cycles,
+    # fallout ST-005 (D-158) — the leaf's (document, problem) read, so the
+    # CONCERN_OPEN rung can name a ledger it could not read instead of
+    # inheriting the tolerant reader's empty list for it.
+    read_document,
 )
 from pathlib import Path
 from foundry_mcp.tools.orchestration.escalation import (
@@ -597,6 +601,79 @@ def _cast_preconditions(fdir: Path, project_root: str) -> dict:
 
 
 
+#: fallout ST-005 / GI-033 (D-158) — THE LEDGER'S TWO NAMES, SPELLED HERE
+#: BECAUSE THE MODULE THAT DECLARES THEM IS ON THE OTHER SIDE OF THE LAYERING.
+#:
+#: `tools/concerns.py` declares `CONCERNS_FILENAME` and
+#: `CONCERNS_COLLECTION_KEY`, and it imports `tools/foundry.py` at module top —
+#: so a VERIFIER module importing the declaration pulls the largest lifecycle
+#: module in the tree across the boundary GI-033 draws, which is the crossing
+#: AC-061 refuses entirely. `foundry_state.open_cross_casting_concerns` spells
+#: the same two literals for the same reason, so this is the second spelling and
+#: not the first. The honest home is `schemas/vocab.py`, beside
+#: `CONCERN_STATUSES`, which every layer may read; that file is casting 10's and
+#: the move is raised as a cross-casting concern rather than forked into a leaf
+#: of this package's own.
+_CONCERNS_FILENAME = "concerns.json"
+_CONCERNS_COLLECTION_KEY = "concerns"
+
+
+def _concern_ledger_problem(fdir: Path) -> str | None:
+    """Why `concerns.json` is not a ledger this door can read, else None.
+
+    fallout ST-005 / GI-023 / AC-004 (D-158) — the shape check the tolerant
+    reader deliberately does not make.
+
+    `foundry_state.open_cross_casting_concerns` and `concerns.read_concerns`
+    both answer the EMPTY LIST for a `concerns` cell that is not a list of
+    mappings, which is correct for a reader that degrades and wrong for a rung
+    that REFUSES on the list being non-empty: "no open concern" and "no concern
+    I could read" are opposite facts, and the second arriving as the first is
+    the whole of D-158.
+
+    ABSENT IS NOT A PROBLEM. A run that has filed no concern has no
+    `concerns.json`, and every run starts that way. The problem is a document
+    that EXISTS and cannot be read as this ledger — the parse failure the
+    artifact guard already names, and the valid-JSON-wrong-shape route it does
+    not.
+
+    Read through `foundry_state.read_document` rather than through
+    `concerns.read_concerns`: this is a VERIFIER module and `tools/concerns.py`
+    imports `tools/foundry.py` at module top, so reaching the named reader would
+    pull the largest lifecycle module in the tree across the layering
+    (GI-033 / AC-061). The leaf read plus the shape test is the same answer
+    without the crossing.
+    """
+    path = fdir / _CONCERNS_FILENAME
+    if not path.exists():
+        return None
+    document, problem = read_document(path)
+    if problem is not None:
+        return problem
+    records = document.get(_CONCERNS_COLLECTION_KEY)
+    if records is None:
+        return (
+            f"{_CONCERNS_FILENAME} carries no `{_CONCERNS_COLLECTION_KEY}` cell, "
+            "so no concern can be read from it"
+        )
+    if not isinstance(records, list):
+        return (
+            f"{_CONCERNS_FILENAME}'s `{_CONCERNS_COLLECTION_KEY}` cell is a "
+            f"{type(records).__name__}, not the list of records this ledger is"
+        )
+    bad = [i for i, record in enumerate(records) if not isinstance(record, dict)]
+    if bad:
+        return (
+            f"{_CONCERNS_FILENAME} holds {len(bad)} entr(y/ies) that are not "
+            f"records (positions {', '.join(str(i) for i in bad[:5])}"
+            + (", ..." if len(bad) > 5 else "")
+            + "); a concern is a mapping and nothing else can be read as one"
+        )
+    return None
+
+
+
+
 def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
     """Preconditions for `inspect_start`, the GRIND -> INSPECT crossing.
 
@@ -709,6 +786,73 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
     # `Foundry-Tasks` dispatch it (the co-dispatch set carries it to its target),
     # or close it with a reason. Neither is "fix everything"; both are decisions
     # that leave a record.
+    # fallout ST-005 / GI-023 / AC-004 (D-158) — A LEDGER THIS DOOR CANNOT READ
+    # IS A REFUSAL, NOT AN EMPTY LIST.
+    # ------------------------------------------------------------------------
+    # `foundry_state.open_cross_casting_concerns` is a TOLERANT reader by
+    # design: it calls `read_document` and discards the problem, so every
+    # `concerns` value that is not a list of mappings answers as the empty list.
+    # That is the right contract for the reader and the wrong one for THIS rung,
+    # whose whole subject is "is a concern from the closing GRIND still open" —
+    # an answer of "none" from a document nobody could read is the fail-open
+    # ST-005's guard exists to prevent.
+    #
+    # DRIVEN on a run at F3 cycle 4 with a manifest of castings 3 and 5: C-001
+    # filed from casting 3 targeting src/five.py made this rung refuse by id,
+    # and rewriting concerns.json to {"concerns": "C-001 open"} or to
+    # {"concerns": ["C-001"]} made it PASS — both are valid JSON, so
+    # `_artifact_guard` reported no problem and the route stayed open. Only
+    # UNPARSEABLE JSON was caught, which is the one broken shape the guard above
+    # already handles; the valid-JSON-wrong-shape route reached here untouched.
+    #
+    # SAME RULING `streams.py` TOOK FOR THE ROSTER (C-058): the leaf answers
+    # tolerantly and the DOOR refuses on the problem, naming the file, so the
+    # operator repairs the artifact rather than discovering a cycle later that
+    # the rung was measuring nothing.
+    ledger_problem = _concern_ledger_problem(fdir)
+    if ledger_problem is not None:
+        ladder.fail(
+            _GATE_RANK_MARKER,
+            (
+                "Cannot start an INSPECT — the cross-casting concern ledger "
+                f"cannot be read as one: {ledger_problem}"
+            ),
+            (
+                "This rung refuses while a concern from the closing GRIND is "
+                "open, and a ledger nothing can read answers 'none' for a "
+                "reason that is not 'none'. Repair "
+                "concerns.json — its `concerns` cell is a LIST OF RECORDS, one "
+                "mapping per concern — or delete it if this run filed none. "
+                "The cycle counter has NOT moved."
+            ),
+        )
+    checklist.append({
+        "check": f"concern_ledger_readable ({ledger_problem or 'ok'})",
+        "ok": ledger_problem is None,
+    })
+
+    # fallout ST-005 / GI-023 (D-158, concern C-077) — THE SECOND ROUTE TO THE
+    # SAME FAIL-OPEN IS STILL OPEN, AND CLOSING IT IS THE LEAF'S TO DO.
+    #
+    # This rung scopes on EXACT cycle equality and `foundry_state.current_cycle`
+    # answers 0 for a missing, absent OR MALFORMED counter — deliberately, so
+    # every reader gets a usable integer — so a `state.json` carrying
+    # `"cycle": "four"` makes this look for cycle-0 concerns only, and a concern
+    # filed at cycle 5 is invisible. The honest reading of an unknown scope is
+    # EVERY open cross-casting concern (`cycle=None`), the same fail-closed
+    # direction `_decide_inspect_mode` takes on an uncomputable diff and
+    # `_sweep_evidence_at_boundary` takes on an entry with no mode.
+    #
+    # WHAT THIS MODULE MAY NOT DO IS TELL THE TWO APART. The only distinguisher
+    # is the RAW `state.json["cycle"]` value, and
+    # `test_module_boundaries.py#test_every_state_cycle_read_goes_through_a_
+    # guarded_reader` forbids exactly that read outside the leaf's total readers
+    # — correctly: a raw read hands on whatever the file holds. It caught the
+    # first attempt at this arm here, by name. The distinction belongs beside
+    # `current_cycle` as a total reader in the shape `rosters.roster_length`
+    # already uses — `(value, problem)` — which is `tools/foundry_state.py`, and
+    # so is raised as a cross-casting concern rather than forked into a second
+    # counter read here. Until it lands the scope stays the counter's answer.
     open_concerns = [
         # fallout GI-033 / AC-061 / FR-063 (D-021 / D-035, ruling item 3,
         # concerns C-030 and C-032) — THE READ FROM THE LEAF, THE MEMBER FROM
@@ -1465,10 +1609,45 @@ def foundry_mark_phase_complete(
     #     protocol for a run that is CONTINUING; a lead ending the run on a
     #     ruling is not consulting guidance about what to do next.
     #
-    # Per the lead's ruling on ST-001 vs FR-046, the halt transition adds no
-    # refusal for report regeneration either: a regeneration failure is carried
-    # as a named fact in the result, never as a refusal that leaves the run
-    # un-halted.
+    # fallout ST-001 / FR-046 / CT-004 (D-160) — THE THIRD CHECK ST-001'S GUARD
+    # NAMES, AND WHY THIS DOOR DOES NOT MAKE IT.
+    # ----------------------------------------------------------------------
+    # ST-001's guard column names three conditions — "`_halt_preconditions`
+    # passes …; report regeneration succeeds; written through `_update_phase`"
+    # — and only two are enforced here. That is deliberate and it is a
+    # spec-INTERNAL conflict rather than an omission: FR-046 says this token
+    # "refuses ONLY on `_halt_preconditions` (reason member, no team
+    # registered, not already HALTED)", which forbids the guard ST-001 asserts.
+    #
+    # This comment used to cite "the lead's ruling on ST-001 vs FR-046" and no
+    # such ruling existed — grep for "regeneration succeeds" returned the ST-001
+    # row and nothing else, so the citation resolved to nothing and the choice
+    # was, in effect, unrecorded. D-160 filed exactly that. The ruling now
+    # exists; it was made on the GRIND cycle-5 dispatch of casting 2 and is
+    # recorded in the run's handoffs as `lead_ruling_st_001_vs_fr_046`. Quoted
+    # here rather than only cited, so a reader resolves it without leaving the
+    # file:
+    #
+    #   "FR-046 governs the refusal question. The halt token must NOT refuse
+    #    because report regeneration failed. A run that cannot write its report
+    #    must still be able to stop; refusing the halt would strand it in a
+    #    worse state than the one the guard is trying to prevent — neither
+    #    halted nor reported, with the operator holding a refusal instead of a
+    #    backlog. ST-001's intent is nonetheless real: HALTED exists to record a
+    #    named backlog, and a seal that returns ok: True while REPORT.md is
+    #    absent asserts the deliverable exists when it does not. So: keep the
+    #    transition non-refusing, and make the failed seal impossible to mistake
+    #    for a clean one."
+    #
+    # WHERE THE SECOND HALF IS DISCHARGED, because a ruling with no enforcement
+    # is the same phantom by another route: `halt._seal_halted` carries
+    # `report_generated` False and `report_error` and SAYS so in the `message`
+    # `display.py` renders; `gates._halted_refusal` and
+    # `_halted_outcome` below read the FILE's presence and name the one call
+    # that can still write it; and `guidance._terminal_outlook` — the block on
+    # every `Foundry-Next` response — carries `report_written`, so the surface
+    # that reports the run's ending reports whether the ending was recorded.
+    # `state.json.halted_report_error` persists across all of them.
     halt_scoped = phase == "halt"
 
     if not halt_scoped and (corrupt := _artifact_guard(fdir)):
