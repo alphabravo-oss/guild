@@ -1005,6 +1005,42 @@ def _temper_preconditions(fdir: Path, project_root: str) -> dict:
         full=True,
         token="temper",
     )
+
+    # fallout FR-016 / FR-060 / GI-015 / GI-030 / AC-021 (D-143 / D-144) — THE
+    # OPT-IN RUNG, AT THE DOOR RATHER THAN IN THE ROUTER.
+    #
+    # FR-016 is "Same split, but TEMPER STAYS OPT-IN" and FR-060 restates it.
+    # The routing half was implemented — `_compute_next_action` sends F4 to F6
+    # without the flag — and the DOOR was not, so the opt-in was enforced only
+    # for a lead that followed the guidance. `_nyquist_preconditions`, the
+    # sibling optional phase, has carried this rung all along.
+    #
+    # DRIVEN on a run with `state.json.temper` false: `Foundry-Gate('temper')`
+    # returned passed=True with no `temper_enabled` row (control:
+    # `Foundry-Gate('nyquist')` on the same run returned passed=False with
+    # `nyquist_enabled` ok=False), and `Foundry-Phase('temper')` then moved the
+    # run to F5.
+    #
+    # AND THE RUN IS THEN TRAPPED, which is why this is a refusal rather than a
+    # tidiness. `PHASE_TOKENS['done']`'s accepted_from is `('F5.5',)` if nyquist
+    # else `('F5',)` if temper else `('F4',)` — with temper false that is
+    # `('F4',)`, so `Foundry-Gate('done')` is refused FROM F5 and the run can
+    # never reach F6, while `Foundry-Next` at F5 keeps returning `run_temper`.
+    # A crossing that strands a run is worse than one that refuses it.
+    #
+    # RANKED AT `_GATE_RANK_CONFIG`, shaped on the nyquist rung it mirrors:
+    # below the defect and verdict ladders, because the remedy offered here —
+    # leave through `done` — is itself refused while a blocking defect is open,
+    # and rendering a remedy the next check rejects is what the ranking exists
+    # to prevent.
+    temper_on = bool(_load_json(fdir / "state.json").get("temper", False))
+    if not temper_on:
+        ladder.fail(
+            _GATE_RANK_CONFIG,
+            "F5 TEMPER is opt-in and this run was not started with --temper",
+            "Re-run with --temper, or skip F5: call Foundry-Gate(phase='done').",
+        )
+    checklist.append({"check": "temper_enabled", "ok": temper_on})
     return _preconditions_outcome(ladder, checklist, **source, **evidence)
 
 
@@ -1101,10 +1137,31 @@ def _halt_preconditions(
     the identical set, which is the whole point of the token existing rather
     than the halt being a special case with inline refusals.
 
-    ``text`` is accepted and not checked: CT-004 makes the member the thing a
-    grouper reads and the text the thing a human reads, and a run may end for a
-    reason no closed set carries. An EMPTY text is not refused either — the
-    member alone is a complete answer.
+    ``text`` is accepted and REPORTED, never refused (fallout D-121). CT-004
+    makes the member the thing a grouper reads and the text the thing a human
+    reads, and a run may end for a reason no closed set carries.
+
+    fallout FR-046 / CT-021 / AC-062 / OT-045 (D-121) — WHY THE EMPTINESS IS A
+    FACT AND NOT A FOURTH REFUSAL.
+    ------------------------------------------------------------------------
+    This door's refusal hint reads "plus `text` saying why THIS run ended, which
+    no closed set can carry", and the door then accepted no text at all: driven
+    with `reason='lead_ruling'` and no `text` argument, the transition returned
+    ok=True, sealed the report and wrote `halted_reason {"reason":
+    "lead_ruling", "text": ""}`. HALTED is irreversible — every subsequent
+    Foundry-Phase token and all eleven Foundry-Gate tokens are refused with
+    "Nothing leaves HALTED" — so that run's only free-text explanation is
+    permanently the empty string. Prose said required; behaviour said optional.
+
+    THE PROSE IS WHAT MOVED, because the behaviour is specified. FR-046 says
+    this token "refuses only on `_halt_preconditions` (reason member, no team
+    registered, not already HALTED)", and CT-021, AC-062 and OT-045 each name
+    THREE checks. A fourth refusal would close the contradiction by falsifying
+    four spec rows, so the emptiness is published the way GI-032 publishes
+    `would_halt`: a NON-REFUSING checklist fact the caller sees before it seals,
+    while the hint stops claiming an enforcement this door does not make and
+    says instead what an empty text COSTS — which is the thing a lead about to
+    end a run irreversibly actually needs to know.
     """
     # fallout AC-062 (D-088) — THE `not_already_halted` RUNG, FIRST AND
     # REACHABLE. It was built below, and both doors short-circuited above this
@@ -1130,13 +1187,37 @@ def _halt_preconditions(
             # Derived from the constant, never re-typed: the `_PYTEST_DISCOVERY_
             # PHRASE` shape, so the door that refuses an unknown reason cannot
             # advertise a set the vocabulary no longer holds.
+            #
+            # fallout D-121: the hint says what `text` IS and what omitting it
+            # costs, and no longer implies this door enforces it. It does not
+            # (FR-046 names three refusals and this is not one of them), and a
+            # hint that names a requirement the door declines to make sends the
+            # caller looking for a refusal that will never arrive.
             f"Pass one of: {halt_reason_phrase()} — plus `text` saying why THIS "
-            "run ended, which no closed set can carry.",
+            "run ended, which no closed set can carry. `text` is recorded, not "
+            "required: omit it and the archive's stated cause is the bare "
+            "vocabulary member, permanently, because nothing leaves HALTED.",
         )
     checklist.append({
         "check": f"halt_reason_is_a_member (reason={reason or 'absent'})",
         "ok": member is not None,
         "accepted": sorted(HALT_REASONS),
+    })
+
+    # fallout D-121 — REPORTED, NOT ACTED ON, exactly as `would_halt` is at the
+    # GRIND door (GI-032). `ok: False` here refuses nothing and the crossing
+    # still succeeds; what it does is put the emptiness in front of a lead
+    # calling `Foundry-Gate('halt', ...)` BEFORE the irreversible transition,
+    # which is the only moment at which it can still be supplied.
+    checklist.append({
+        "check": f"halt_text_present (chars={len(text.strip()) if isinstance(text, str) else 0})",
+        "ok": bool(isinstance(text, str) and text.strip()),
+        "refuses": False,
+        "note": (
+            "not a refusal — FR-046 gives this door three checks and this is "
+            "not one of them. An empty text seals a terminal record whose only "
+            "stated cause is the vocabulary member."
+        ),
     })
 
     _teams_rung(ladder, checklist, project_root)

@@ -3848,6 +3848,130 @@ def test_the_four_open_live_defects_are_closed_as_one_class(run_env):
 
 
 
+def test_the_temper_door_refuses_a_run_that_did_not_ask_for_temper(run_env):
+    """fallout FR-016 / FR-060 / GI-015 / GI-030 (D-143 / D-144) — the opt-in
+    rung, at the DOOR.
+
+    FR-016 is "Same split, but TEMPER STAYS OPT-IN"; FR-060 restates it and adds
+    the PROVE arm, which was already implemented. Only the routing half of the
+    opt-in existed: `_compute_next_action` sends F4 to F6 without the flag, so
+    the rule held for a lead that followed the guidance and for nobody else.
+
+    DRIVEN before the fix on a run with `state.json.temper` false:
+    `Foundry-Gate('temper')` returned passed=True with NO `temper_enabled` row,
+    and `Foundry-Phase('temper')` moved the run to F5.
+
+    THE CONTROL is its sibling optional phase on the same run — `nyquist` has
+    carried this rung all along — because "temper has no such rung" and "this
+    fixture cannot provoke a config rung" look identical from a single failure.
+    """
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "temper")
+    _write_state(fdir, phase="F4", cycle=1, temper=False, nyquist=False)
+    _record_full_inspect_mode(fdir, cycle=1)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("temper", project_root)
+    assert gate["passed"] is False, gate
+    rows = {c["check"]: c for c in gate["checklist"]}
+    assert rows["temper_enabled"]["ok"] is False, rows
+    assert "opt-in" in gate["reason"], gate
+
+    # The control: the sibling optional phase behaves the same way, which is
+    # what makes this a rung and not a fixture artefact.
+    _arm_ordering_token(fdir)
+    control = foundry_gate("nyquist", project_root)
+    assert control["passed"] is False, control
+    assert {c["check"] for c in control["checklist"]} >= {"nyquist_enabled"}, control
+
+    # And the TRANSITION refuses on the same named check, leaving F4 intact.
+    _arm_ordering_token(fdir)
+    result = foundry_mark_phase_complete("temper", project_root)
+    assert result.get("ok") is not True, result
+    assert "opt-in" in result["error"], result
+    assert json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"] == "F4"
+
+
+def test_a_temper_off_run_that_entered_f5_could_never_reach_f6(run_env):
+    """fallout FR-016 (D-143) — WHY the opt-in is a refusal and not a tidiness.
+
+    `PHASE_TOKENS['done']`'s accepted_from is `('F5.5',)` if nyquist else
+    `('F5',)` if temper else `('F4',)`. On a temper-off run that is `('F4',)`,
+    so a run that crossed into F5 through the unguarded door was STRANDED:
+    `Foundry-Gate('done')` refuses from F5 and F6 is unreachable, while
+    `Foundry-Next` at F5 keeps returning `run_temper`.
+
+    The trap is driven directly by putting a temper-off run at F5 — the state
+    the old door produced — rather than by re-opening the door the fix closed.
+    """
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "done")
+    _write_state(fdir, phase="F5", cycle=1, temper=False, nyquist=False)
+    _record_full_inspect_mode(fdir, cycle=1)
+
+    _arm_ordering_token(fdir)
+    done = foundry_gate("done", project_root)
+    assert done["passed"] is False, done
+    # ...and the same run WITH the flag leaves through F5 cleanly, so the trap
+    # is the missing opt-in and not something else about F5.
+    _write_state(fdir, phase="F5", cycle=1, temper=True, nyquist=False)
+    _record_full_inspect_mode(fdir, cycle=1)
+    _arm_ordering_token(fdir)
+    assert foundry_gate("done", project_root)["passed"] is True
+
+
+def test_the_halt_door_reports_an_empty_text_without_refusing_it(run_env):
+    """fallout FR-046 / CT-021 / AC-062 / OT-045 (D-121) — prose and behaviour.
+
+    The door's refusal hint said `text` was required and the door accepted no
+    text at all: driven with `reason='lead_ruling'` and no `text`, the
+    transition returned ok=True and wrote `halted_reason {"reason":
+    "lead_ruling", "text": ""}` — permanently, since nothing leaves HALTED.
+
+    THE BEHAVIOUR IS SPECIFIED, so the prose is what moved. FR-046 gives this
+    token three refusals and CT-021 / AC-062 / OT-045 each name three checks, so
+    the emptiness is published as a NON-REFUSING fact — the shape GI-032 uses
+    for `would_halt` — and the hint says what omitting `text` costs instead of
+    claiming an enforcement this door does not make.
+    """
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+
+    # (1) The fact is reported, ok=False, and the gate still PASSES: three
+    #     refusing checks, and this is not one of them.
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("halt", project_root, reason="lead_ruling", text="")
+    assert gate["passed"] is True, gate
+    row = next(c for c in gate["checklist"] if c["check"].startswith("halt_text_present"))
+    assert row["ok"] is False, row
+    assert row["refuses"] is False, row
+    assert "halt_text_present (chars=0)" == row["check"], row
+
+    # (2) With text, the same row reports the length and passes.
+    _arm_ordering_token(fdir)
+    with_text = foundry_gate("halt", project_root, reason="lead_ruling", text="enough")
+    row = next(c for c in with_text["checklist"] if c["check"].startswith("halt_text_present"))
+    assert row["ok"] is True and "chars=6" in row["check"], row
+
+    # (3) The hint no longer claims a requirement the door declines to make, and
+    #     says what the omission costs instead.
+    _arm_ordering_token(fdir)
+    refused = foundry_gate("halt", project_root, reason="", text="")
+    assert refused["passed"] is False, refused
+    hint = refused["hint"]
+    assert "recorded, not required" in hint, hint
+    assert "nothing leaves HALTED" in hint, hint
+
+    # (4) FR-046's three refusals are still exactly three: the new row refuses
+    #     nothing, so an empty text still seals.
+    _arm_ordering_token(fdir)
+    sealed = foundry_mark_phase_complete("halt", project_root, reason="lead_ruling", text="")
+    assert sealed.get("ok") is True, sealed
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == vocab.RUN_PHASE_HALTED, state
+    assert state["halted_reason"] == {"reason": "lead_ruling", "text": ""}, state
+
+
 def test_a_gated_transition_still_crosses_on_a_clean_ledger(run_env):
     """The passing half, driven all the way through the two cheapest doors.
 

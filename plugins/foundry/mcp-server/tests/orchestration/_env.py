@@ -1884,9 +1884,18 @@ def _phase_accepting(fdir: Path, gate: str) -> str:
 
 
 def _at_the_phase_for(fdir: Path, gate: str) -> None:
-    """Put the fixture in the phase `gate`'s transition is accepted from."""
+    """Put the fixture in the phase `gate`'s transition is accepted from.
+
+    fallout FR-016 / FR-060 (D-143 / D-144) — AND IN THE OPT-IN STATE ITS DOOR
+    NOW READS. The two optional phases refuse a run that did not ask for them,
+    and a caller reaching this helper is arranging a run to CROSS the gate, not
+    to be refused by its configuration. `nyquist` has always needed the flag
+    here; `temper` needs it now for the same reason and by the same rung.
+    """
     state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
     state["phase"] = _phase_accepting(fdir, gate)
+    if gate in ("temper", "nyquist"):
+        state[gate] = True
     (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
 
@@ -2865,7 +2874,15 @@ def _arrange_passing(project_root: str, fdir: Path, token: str) -> None:
         "temper": "F4", "nyquist": "F4", "nyquist_done": "F5.5",
         "done": "F4", "halt": "F3",
     }[token]
-    _write_state(fdir, phase=phase, cycle=1, **({"nyquist": True} if token in ("nyquist", "nyquist_done") else {}))
+    # fallout FR-016 / FR-060 (D-143 / D-144) — `temper` is opt-in at its DOOR
+    # now, not only in the router, so the passing baseline for that token has to
+    # carry the flag its own routine reads — exactly as `nyquist`'s always has.
+    flags: dict = {}
+    if token in ("nyquist", "nyquist_done"):
+        flags["nyquist"] = True
+    if token == "temper":
+        flags["temper"] = True
+    _write_state(fdir, phase=phase, cycle=1, **flags)
     if token == "nyquist_done":
         # The only token whose accepted source phase is decided by the run's own
         # flags AND that is asked from F5.5; `done` is asked from the phase the
@@ -3062,9 +3079,14 @@ def _break_config(project_root, fdir, token, monkeypatch) -> bool:
     if token == "cast":
         _write_manifest_with_castings(fdir, ["src/App.tsx"], no_ui=False)
         return True
-    if token == "nyquist":
+    if token in ("temper", "nyquist"):
+        # fallout FR-016 / FR-060 (D-143 / D-144) — `temper` joins its sibling
+        # optional phase here. Both rungs read the run's own opt-in flag off
+        # `state.json`, and the arranger clears whichever flag the token's
+        # routine reads. The arrangement below sets `temper` true for the
+        # `nyquist` token's source phase, so clearing the right key matters.
         state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
-        state["nyquist"] = False
+        state[token] = False
         (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
         return True
     if token == "halt":
