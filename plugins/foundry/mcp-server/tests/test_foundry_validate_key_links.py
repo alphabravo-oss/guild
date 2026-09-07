@@ -311,3 +311,141 @@ def test_the_span_table_is_present_and_says_it_cannot_be_computed(tmp_path: Path
     assert result["requirement_span"]["not_computable"] is True
     assert result["requirement_span"]["rows"] == []
     assert "not computable" in result["requirement_span"]["text"]
+
+
+# ── fallout GI-004 (D-151 / concern C-072): the same rule, one rung up ─────
+#
+# The module above guards the ENTRIES of `must_haves.artifacts` and
+# `must_haves.key_links`. Three reachable raises sat one rung ABOVE that, on
+# the containers themselves, and casting 2 drove the first of them against the
+# shipped validator: a casting whose `must_haves` is a LIST reached
+# `must_haves.get("truths", [])` and raised `AttributeError: 'list' object has
+# no attribute 'get'` across the MCP boundary. `observable_truths` as an
+# integer raised `TypeError: 'int' object is not iterable` in dimension 1, and
+# `must_haves.truths` as an integer raised `TypeError: object of type 'int' has
+# no len()` in dimension 2.
+#
+# Each landed BEFORE the ownership and span dimensions, so F0.9 returned an
+# unhandled-error banner and reported nothing at all — strictly worse than the
+# named refusal every other dimension produces. A-000's sentence is unqualified:
+# a reachable raise remains a blocking defect at full weight.
+#
+# The tests below drive each shape and assert two things every time: the call
+# RETURNS, and the report NAMES the casting. Either alone would pass while the
+# other failed — a bare isinstance guard returns and says nothing, and that is
+# the failure mode the operator actually pays for.
+
+
+def _dim2(result: dict) -> dict:
+    return result["dimensions"]["casting_completeness"]
+
+
+def _malformed(**bad) -> dict:
+    """A casting that is well-formed except for the one shape under test."""
+    casting = _casting("m", key_links=[{"from": "a", "to": "b"}])
+    casting.update(bad)
+    return casting
+
+
+def test_a_must_haves_that_is_a_list_is_named_rather_than_raised(tmp_path: Path):
+    """C-072's driven shape, verbatim: `"must_haves": ["a list, not a mapping"]`."""
+    result = _run_validate(tmp_path, [_malformed(must_haves=["a list, not a mapping"])])
+
+    rows = [i["issue"] for i in _dim2(result)["issues"]]
+    assert any("must_haves is of type list, not a mapping" in r for r in rows), rows
+    assert any(i.get("casting") == "m" for i in _dim2(result)["issues"])
+    assert any("must_haves must be a mapping" in h for h in result["revision_hints"])
+
+
+def test_a_must_haves_that_is_a_string_is_named_the_same_way(tmp_path: Path):
+    """The other non-mapping JSON container reaches the same read."""
+    result = _run_validate(tmp_path, [_malformed(must_haves="truths, artifacts")])
+
+    rows = [i["issue"] for i in _dim2(result)["issues"]]
+    assert any("must_haves is of type str, not a mapping" in r for r in rows), rows
+
+
+def test_observable_truths_that_is_not_a_list_is_named_rather_than_raised(
+    tmp_path: Path,
+):
+    """The raise one line above C-072's, in dimension 1 rather than dimension 2.
+
+    This one is reached FIRST — `for truth in c.get("observable_truths", [])`
+    runs in the coverage fold — so a fix that guarded only `must_haves` would
+    have left the report unrenderable for a manifest carrying this instead.
+    """
+    result = _run_validate(tmp_path, [_malformed(observable_truths=3)])
+
+    rows = [i["issue"] for i in _dim2(result)["issues"]]
+    assert any("observable_truths is of type int, not a list" in r for r in rows), rows
+
+
+def test_a_non_string_observable_truth_is_scanned_rather_than_raised(
+    tmp_path: Path,
+):
+    """One rung further down, and it is the module's own established answer.
+
+    Dimension 4 already records a non-dict artifacts ENTRY as a plain
+    description via `str(...)` rather than refusing it. A non-string truth is
+    read the same way, so the requirement-id scan and the user-facing scan both
+    see text instead of raising on an integer.
+    """
+    result = _run_validate(tmp_path, [_malformed(observable_truths=[1, 2, 3])])
+
+    assert isinstance(result, dict) and "dimensions" in result
+
+
+def test_a_must_haves_key_that_is_not_a_list_is_named_rather_than_raised(
+    tmp_path: Path,
+):
+    """The mapping is fine; the value under one of its keys is not."""
+    result = _run_validate(
+        tmp_path,
+        [
+            _malformed(
+                must_haves={
+                    "truths": 5,
+                    "artifacts": [{"path": "src/m.ts"}],
+                    "key_links": [{"from": "a", "to": "b"}],
+                }
+            )
+        ],
+    )
+
+    rows = [i["issue"] for i in _dim2(result)["issues"]]
+    assert any("must_haves.truths is of type int, not a list" in r for r in rows), rows
+    # The shape row SUPERSEDES the emptiness row: reporting both would tell the
+    # operator to fill a key whose real problem is that it is not a list.
+    assert not any("must_haves.truths is empty" in r for r in rows), rows
+
+
+def test_a_non_list_artifacts_container_does_not_reach_the_entry_guard(
+    tmp_path: Path,
+):
+    """Dimensions 4's entry loop is fed a list or nothing, never a string.
+
+    `for art in "notalist"` iterates CHARACTERS, so an unguarded container
+    turned one malformed value into one warning per character.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_malformed(must_haves={"truths": ["t"], "artifacts": "notalist", "key_links": {"a": 1}})],
+    )
+
+    rows = [i["issue"] for i in _dim2(result)["issues"]]
+    assert any("must_haves.artifacts is of type str, not a list" in r for r in rows), rows
+    assert any("must_haves.key_links is of type dict, not a list" in r for r in rows), rows
+    dim4_rows = [i.get("issue", "") for i in _dim4(result)["issues"]]
+    assert not any("'n'" in r for r in dim4_rows), dim4_rows
+
+
+def test_a_well_formed_casting_is_completely_unchanged_by_the_guards(
+    tmp_path: Path,
+):
+    """The positive control. A guard that reported on every casting would pass
+    every test above and make F0.9 unusable for every real run."""
+    result = _run_validate(tmp_path, [_casting("ok", key_links=[{"from": "a", "to": "b"}])])
+
+    rows = [i["issue"] for i in _dim2(result)["issues"]]
+    assert not any("is of type" in r for r in rows), rows
+    assert _dim2(result)["ok"] is True, _dim2(result)["issues"]

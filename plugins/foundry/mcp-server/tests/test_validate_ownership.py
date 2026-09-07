@@ -994,6 +994,48 @@ def test_the_f07_gate_withdraws_its_own_standing_verdict_before_it_runs(
     assert matrix.is_file()
 
 
+def test_a_malformed_casting_does_not_stop_the_ownership_and_span_dimensions(
+    tmp_path: Path,
+):
+    """fallout GI-004 (D-151 / concern C-072) — WHAT THE RAISE ACTUALLY COST.
+
+    A casting whose `must_haves` is a list raised AttributeError out of
+    dimension 2, which runs BEFORE these two. So F0.9 answered an
+    unhandled-error banner and reported NOTHING — not the ownership check, not
+    the span table, not the requirement coverage — where the malformed casting
+    should have produced one named row and left every other verdict standing.
+
+    That is why the repair is a tolerant read plus a report rather than a
+    stricter manifest guard: refusing the whole document would have replaced a
+    traceback with a refusal and still told a lead nothing about the eleven
+    castings that are fine. Driven here rather than in the type-guard module
+    because the loss this defect caused is measured in THESE dimensions.
+    """
+    good = _casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])
+    broken = _casting(2, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])
+    broken["must_haves"] = ["a list, not a mapping"]
+
+    result = _run_validate(
+        tmp_path, [good, broken], spec_text=CLEAN_EXCERPT, state=CURRENT_RUN
+    )
+
+    # The malformed casting is NAMED, and named as itself.
+    completeness = result["dimensions"]["casting_completeness"]["issues"]
+    assert any(
+        i.get("casting") == 2 and "must_haves is of type list" in i.get("issue", "")
+        for i in completeness
+    ), completeness
+
+    # ...and both dimensions the raise used to pre-empt still answer.
+    assert result["dimensions"]["requirement_ownership"]["ok"] is True, result[
+        "dimensions"
+    ]["requirement_ownership"]
+    spans = {row["id"]: row for row in result["requirement_span"]["rows"]}
+    assert set(spans) >= {"US-001", "FR-009"}, sorted(spans)
+    assert spans["FR-009"]["owners"] == [1, 2], spans["FR-009"]
+    assert spans["FR-009"]["span"] == 2
+
+
 # ── The span, and the token that fires above the threshold ────────────────
 
 

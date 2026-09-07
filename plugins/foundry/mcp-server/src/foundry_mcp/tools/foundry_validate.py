@@ -577,6 +577,81 @@ def _intent_marker_staleness(fdir: Path, coverage_path: Path) -> str | None:
     return None
 
 
+# --------------------------------------------------------------------------- #
+# fallout GI-004 (D-151, concern C-072) — THE DIMENSIONS READ A CASTING
+# TOLERANTLY AND REPORT WHAT THEY FOUND. THEY DO NOT RAISE ON IT.
+#
+# `must_haves = c.get("must_haves", {})` supplies a mapping when the key is
+# ABSENT and passes a present non-mapping straight through, so a manifest
+# carrying `"must_haves": ["a list, not a mapping"]` reached
+# `must_haves.get("truths", [])` and raised `AttributeError: 'list' object has
+# no attribute 'get'` across the MCP boundary — call_tool's unhandled-error
+# banner where the house shape is `{error, hint}`. Driven by casting 2 against
+# the shipped validator and filed as C-072. Two more of the same shape sat
+# beside it in the same loop, one line apart and equally reachable:
+# `observable_truths` as an integer raised `TypeError: 'int' object is not
+# iterable`, and `must_haves.truths` as an integer raised `TypeError: object of
+# type 'int' has no len()`.
+#
+# A-000's sentence, which GI-004 carries, is unqualified: "A REACHABLE RAISE ...
+# REMAINS A BLOCKING DEFECT AT FULL WEIGHT." No writer in the plugin emits any
+# of these shapes, so reaching one needs a hand-edited, migrated or
+# partially-written manifest — which is exactly the population
+# `scripts/migrate-archive.py` and the resume path operate on.
+#
+# WHY A TOLERANT READER AND NOT A RUNG ON `_MANIFEST_DOCUMENT_SHAPE`. Declaring
+# `must_haves` in the leaf's manifest shape would be the stronger check and the
+# wrong one HERE: `manifest_shape_problem` refuses the WHOLE DOCUMENT, so a
+# malformed `must_haves` would stop dimension 1 as well and F0.9 would again
+# report nothing. What C-072 asks for is the opposite — that the ownership and
+# span dimensions keep running and the operator is told WHICH casting is
+# malformed, in the same issue shape every other dimension already uses. So
+# these two readers degrade, exactly as `_load_json` degrades, and dimension 2
+# below carries the refusal, exactly as `_artifact_guard` carries it there.
+# The tolerance and the report are a pair; neither is the other's substitute.
+# --------------------------------------------------------------------------- #
+
+
+def _must_haves(casting: dict) -> dict:
+    """A casting's ``must_haves`` as a MAPPING — ``{}`` when it is not one.
+
+    Every dimension that reads the block reads it through here, so "present but
+    the wrong type" answers the same way at all four sites rather than at
+    whichever one a defect was reported against.
+    """
+    value = casting.get("must_haves", {})
+    return value if isinstance(value, dict) else {}
+
+
+def _listed(container: dict, key: str) -> list:
+    """``container[key]`` as a LIST — ``[]`` when it is not one.
+
+    The rung below ``_must_haves``: a mapping whose ``truths`` is an integer is
+    a shape the reader above cannot catch, because the block itself is fine.
+    """
+    value = container.get(key, [])
+    return value if isinstance(value, list) else []
+
+
+def _shape_issue(cid: object, title: str, key: str, value: object) -> dict:
+    """The dimension-2 row naming a casting whose ``key`` is the wrong type.
+
+    One spelling, because three checks emit it and a fourth will: the operator
+    needs the casting, the key and what was actually found, and a row that
+    named only two of the three would send them to read the manifest to learn
+    the third.
+    """
+    return {
+        "casting": cid,
+        "title": title,
+        "issue": (
+            f"{key} is of type {type(value).__name__}, not "
+            f"{'a mapping' if key == 'must_haves' else 'a list'} — "
+            f"the entry is ignored and every check that reads it is skipped"
+        ),
+    }
+
+
 def _run_dir_facts(fdir: Path) -> dict:
     """What the run DIRECTORY says, for the dimensions that ask it.
 
@@ -873,8 +948,8 @@ def foundry_validate_castings(
         # tier is absent (AC-006, CT-001, FR-004)" names its requirements
         # mid-line by design — so the position rule that separates a
         # declaration from a quotation has nothing to bite on here.
-        for truth in c.get("observable_truths", []):
-            truth_reqs = set(REQUIREMENT_ID_RE.findall(truth))
+        for truth in _listed(c, "observable_truths"):
+            truth_reqs = set(REQUIREMENT_ID_RE.findall(str(truth)))
             covered_reqs.update(truth_reqs)
 
     uncovered = spec_req_ids - covered_reqs
@@ -895,23 +970,51 @@ def foundry_validate_castings(
         title = c.get("title", "Untitled")
 
         # Check observable truths
-        truths = c.get("observable_truths", [])
-        if len(truths) < 3:
-            dim2_issues.append({"casting": cid, "issue": f"Only {len(truths)} observable truths (min 3)", "title": title})
-            revision_hints.append(f"Casting #{cid} '{title}': add more observable truths (currently {len(truths)}, need 3+)")
+        declared_truths = c.get("observable_truths", [])
+        if declared_truths and not isinstance(declared_truths, list):
+            # fallout GI-004 (C-072): reported, not raised. `len()` on an
+            # integer is the raise; a row naming the casting is the refusal.
+            dim2_issues.append(
+                _shape_issue(cid, title, "observable_truths", declared_truths)
+            )
+            revision_hints.append(
+                f"Casting #{cid} '{title}': observable_truths must be a list of "
+                f"strings, not a {type(declared_truths).__name__}"
+            )
+        else:
+            truths = _listed(c, "observable_truths")
+            if len(truths) < 3:
+                dim2_issues.append({"casting": cid, "issue": f"Only {len(truths)} observable truths (min 3)", "title": title})
+                revision_hints.append(f"Casting #{cid} '{title}': add more observable truths (currently {len(truths)}, need 3+)")
 
         # Check must_haves if present
-        must_haves = c.get("must_haves", {})
+        declared_must_haves = c.get("must_haves", {})
+        if declared_must_haves and not isinstance(declared_must_haves, dict):
+            dim2_issues.append(
+                _shape_issue(cid, title, "must_haves", declared_must_haves)
+            )
+            revision_hints.append(
+                f"Casting #{cid} '{title}': must_haves must be a mapping with "
+                f"truths / artifacts / key_links, not a "
+                f"{type(declared_must_haves).__name__}"
+            )
+        must_haves = _must_haves(c)
         if must_haves:
-            mh_truths = must_haves.get("truths", [])
-            mh_artifacts = must_haves.get("artifacts", [])
-            mh_links = must_haves.get("key_links", [])
-            if len(mh_truths) < 1:
-                dim2_issues.append({"casting": cid, "issue": "must_haves.truths is empty", "title": title})
-            if len(mh_artifacts) < 1:
-                dim2_issues.append({"casting": cid, "issue": "must_haves.artifacts is empty", "title": title})
-            if len(mh_links) < 1:
-                dim2_issues.append({"casting": cid, "issue": "must_haves.key_links is empty", "title": title})
+            # One loop over the three keys rather than three copies of the
+            # guard: the emptiness rule and the shape rule are the same rule at
+            # two depths, and the messages below are the ones they always were.
+            for key in ("truths", "artifacts", "key_links"):
+                declared = must_haves.get(key, [])
+                if declared and not isinstance(declared, list):
+                    dim2_issues.append(
+                        _shape_issue(cid, title, f"must_haves.{key}", declared)
+                    )
+                    revision_hints.append(
+                        f"Casting #{cid} '{title}': must_haves.{key} must be a "
+                        f"list, not a {type(declared).__name__}"
+                    )
+                elif len(_listed(must_haves, key)) < 1:
+                    dim2_issues.append({"casting": cid, "issue": f"must_haves.{key} is empty", "title": title})
 
     dim2_ok = len(dim2_issues) == 0
     if dim2_issues:
@@ -959,8 +1062,8 @@ def foundry_validate_castings(
     for c in castings:
         cid = c.get("id", "?")
         title = c.get("title", "Untitled")
-        must_haves = c.get("must_haves", {})
-        for art in must_haves.get("artifacts", []):
+        must_haves = _must_haves(c)
+        for art in _listed(must_haves, "artifacts"):
             if isinstance(art, dict):
                 all_artifacts.add(art.get("path", ""))
             else:
@@ -973,7 +1076,7 @@ def foundry_validate_castings(
                         f"plain artifact description"
                     ),
                 })
-        for link in must_haves.get("key_links", []):
+        for link in _listed(must_haves, "key_links"):
             if isinstance(link, dict):
                 all_link_targets.add(link.get("from", ""))
                 all_link_targets.add(link.get("to", ""))
@@ -991,9 +1094,9 @@ def foundry_validate_castings(
     for c in castings:
         cid = c.get("id", "?")
         title = c.get("title", "Untitled")
-        must_haves = c.get("must_haves", {})
-        artifacts = must_haves.get("artifacts", [])
-        links = must_haves.get("key_links", [])
+        must_haves = _must_haves(c)
+        artifacts = _listed(must_haves, "artifacts")
+        links = _listed(must_haves, "key_links")
         if len(artifacts) >= 2 and len(links) == 0:
             dim4_issues.append({"casting": cid, "title": title,
                                "issue": f"Has {len(artifacts)} artifacts but no key_links — isolated"})
@@ -1033,7 +1136,7 @@ def foundry_validate_castings(
             revision_hints.append(f"Casting #{cid} '{title}': split into smaller castings (currently {kf} files)")
 
         # Check observable truths are user-facing
-        truths = c.get("observable_truths", [])
+        truths = _listed(c, "observable_truths")
         impl_detail_patterns = [
             r"import\b", r"export\b", r"function\b", r"class\b",
             r"instanceof", r"typeof", r"\.ts\b", r"\.js\b",
@@ -1041,7 +1144,7 @@ def foundry_validate_castings(
         non_user_facing = []
         for truth in truths:
             for pattern in impl_detail_patterns:
-                if re.search(pattern, truth, re.IGNORECASE):
+                if re.search(pattern, str(truth), re.IGNORECASE):
                     non_user_facing.append(truth)
                     break
         if non_user_facing:
@@ -1401,7 +1504,7 @@ def foundry_validate_castings(
         for c in castings:
             cid = c.get("id", "?")
             title = c.get("title", "Untitled")
-            mh = c.get("must_haves", {})
+            mh = _must_haves(c)
             cov = mh.get("coverage_list", [])
 
             if not isinstance(cov, list) or not cov:
