@@ -824,3 +824,152 @@ def test_a_resume_does_not_stamp_the_marker_onto_a_legacy_archive(tmp_path):
 
     assert _state(resumed)["max_cycles"] == 3, resumed
     assert "archive_schema_version" not in _state(resumed), _state(resumed)
+
+
+# --- fallout D-118: the three run-mode switches survive a resume ------------
+#     fallout FR-047 / FR-055 / AC-052 / GI-015 --------------------------------
+#
+# `server.py` forwards `temper`, `nyquist`, `no_ui` and `max_cycles` to this
+# handler; the resume branch wrote `version_fields` and `max_cycles` and
+# returned, so three parameters of its own signature were accepted and dropped
+# without a word. Each is read at a phase decision — `state["temper"]` and
+# `state["nyquist"]` by the transition table, `manifest.no_ui` by the
+# SIGHT-requirement reader — so a resume asking for a TEMPER pass, or declaring
+# that this run has no browsable UI, was acknowledged and had no effect.
+
+
+def _manifest_of(result: dict) -> dict:
+    return json.loads(
+        (Path(result["foundry_dir"]) / "castings" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+
+def test_a_resume_raises_the_three_run_mode_switches(tmp_path):
+    """fallout D-118 / FR-047: the driven reproduction.
+
+    On a run whose persisted state had all four false/zero,
+    ``foundry_init(resume=…, temper=True, nyquist=True, no_ui=True,
+    max_cycles=9)`` left max_cycles 9 as asked while temper, nyquist and no_ui
+    were ALL STILL FALSE, and the result carried no error and no note of the
+    loss.
+    """
+    created = foundry_init(project_root=str(tmp_path))
+    assert _state(created)["temper"] is False, _state(created)
+
+    resumed = foundry_init(
+        project_root=str(tmp_path),
+        resume=created["run_name"],
+        temper=True,
+        nyquist=True,
+        no_ui=True,
+        max_cycles=9,
+    )
+
+    state = _state(resumed)
+    assert state["max_cycles"] == 9, state
+    for flag in ("temper", "nyquist", "no_ui"):
+        assert state[flag] is True, f"{flag} was accepted and dropped: {state}"
+    # The answer says what changed, so a dropped parameter is visible in it.
+    assert sorted(resumed["raised"]) == ["no_ui", "nyquist", "temper"], resumed
+    assert resumed["temper"] is True and resumed["nyquist"] is True, resumed
+
+
+def test_a_resume_raises_no_ui_in_the_store_the_sight_reader_loads(tmp_path):
+    """fallout FR-055 / AC-052: ``no_ui`` has ONE meaning and one reader.
+
+    That reader — the SIGHT-requirement reader reached through
+    ``orchestration/teams.py#_check_sight_required`` — loads
+    ``castings/manifest.json``, not state.json, which is why
+    ``foundry_init`` writes all three switches to BOTH documents on a new run.
+    A resume that raised the flag in state.json alone would still have no
+    effect on the gate this defect names, so the REAL gate is driven here.
+    """
+    created = foundry_init(project_root=str(tmp_path))
+    manifest_path = Path(created["foundry_dir"]) / "castings" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["castings"] = [
+        {"id": 1, "key_files": ["src/app/Page.tsx"]},
+    ]
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    set_active_run(created["run_name"])
+    blocked = _check_sight_required(str(tmp_path))
+    assert blocked.get("required") is True, blocked
+
+    resumed = foundry_init(
+        project_root=str(tmp_path), resume=created["run_name"], no_ui=True
+    )
+
+    assert _manifest_of(resumed)["no_ui"] is True, _manifest_of(resumed)
+    assert resumed["manifest_raised"] == ["no_ui"], resumed
+    after = _check_sight_required(str(tmp_path))
+    assert after.get("required") is False and after.get("no_ui") is True, after
+
+
+def test_a_bare_resume_leaves_an_opted_in_switch_alone(tmp_path):
+    """fallout GI-015 / D-118: a resume RAISES a switch and there is no
+    lowering door — the ruling, driven.
+
+    Every surface an operator meets these on is a CLI switch: ``--temper``,
+    ``--nyquist``, ``--no-ui``, none of which has an off spelling. So a false
+    is "not typed" rather than "turn it off", and a branch that wrote the false
+    as an instruction would turn a bare ``/foundry:resume`` into a silent
+    downgrade of an opted-in TEMPER run — a capability removed to satisfy an
+    item, which GI-007 forbids. The shipped dispatch fills an omitted boolean
+    with ``False``, so this is the reachable path and not a corner of one.
+    """
+    created = foundry_init(project_root=str(tmp_path), temper=True, nyquist=True)
+    assert _state(created)["temper"] is True
+
+    resumed = foundry_init(project_root=str(tmp_path), resume=created["run_name"])
+
+    state = _state(resumed)
+    assert state["temper"] is True, "a bare resume turned an opted-in TEMPER off"
+    assert state["nyquist"] is True, state
+    assert resumed["raised"] == [], resumed
+    assert _manifest_of(resumed)["temper"] is True, _manifest_of(resumed)
+
+
+def test_a_resume_raises_nothing_it_was_not_asked_for(tmp_path):
+    """fallout D-118: the raise is per switch, not a mode word.
+
+    A resume carrying one switch must not carry the other two along with it —
+    a call that turned on NYQUIST because the operator asked for TEMPER would
+    be the dropped-parameter defect inverted.
+    """
+    created = foundry_init(project_root=str(tmp_path))
+
+    resumed = foundry_init(
+        project_root=str(tmp_path), resume=created["run_name"], nyquist=True
+    )
+
+    state = _state(resumed)
+    assert state["nyquist"] is True, state
+    assert state["temper"] is False, state
+    assert state["no_ui"] is False, state
+    assert resumed["raised"] == ["nyquist"], resumed
+
+
+def test_a_resume_still_succeeds_when_the_manifest_cannot_be_read(tmp_path):
+    """fallout D-118: resume is the RECOVERY door, so the second store is
+    SKIPPED rather than refused.
+
+    ``_locked_document`` fails CLOSED on a corrupt document (Holmes helper-1),
+    so reaching for the manifest unguarded would turn a resume that succeeds
+    today into a refusal over a file this branch never used to touch. The
+    answer says which store actually took the write.
+    """
+    created = foundry_init(project_root=str(tmp_path))
+    manifest_path = Path(created["foundry_dir"]) / "castings" / "manifest.json"
+    manifest_path.write_text("{ not json at all", encoding="utf-8")
+
+    resumed = foundry_init(
+        project_root=str(tmp_path), resume=created["run_name"], temper=True
+    )
+
+    assert "error" not in resumed, resumed
+    assert _state(resumed)["temper"] is True, _state(resumed)
+    assert resumed["raised"] == ["temper"], resumed
+    assert resumed["manifest_raised"] == [], resumed

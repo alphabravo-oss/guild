@@ -2820,3 +2820,158 @@ def test_a_malformed_historical_record_does_not_derail_the_closure(
     record = next(o for o in stored if isinstance(o, dict))
     assert record["status"] == "DRIVEN", record
     assert record["driven_finding"] == "D-404", record
+
+
+# --- fallout D-114: the door provides the roster its own hint names ---------
+#     (fallout FR-017 / GI-027, fallout ST-007 / CT-017) -------------------
+#
+# `_CANDIDATE_ROSTER_HINT` is spelled ONCE precisely so the three arms of
+# `foundry_drive_temper_candidate` cannot drift, and it said "Read the OPEN
+# candidates with Foundry-Observations(classification=TEMPER_CANDIDATE)". That
+# call filtered on cycle, source and classification and nothing else, so an
+# already-driven candidate came back in TEMPER's roster. The only "undriven"
+# derivation in the package was a private second one in
+# `foundry_mcp/tools/foundry_report.py#_read_undriven_temper_candidates`, so
+# the surface TEMPER read and the surface the report rendered answered
+# different questions about one ledger. A hint naming an exit its door does not
+# provide is this package's own recorded failure shape.
+
+
+def test_a_driven_candidate_leaves_the_roster_the_hint_names(run, tmp_path):
+    """fallout FR-017: TEMPER's roster is the OPEN candidates.
+
+    DRIVEN: file one candidate, close it through the real drive door (status
+    becomes 'DRIVEN'), then query with classification=TEMPER_CANDIDATE. Before
+    the fix the record was still returned, statuses ['DRIVEN'].
+    """
+    from foundry_mcp.tools.foundry import OPEN_CANDIDATES_KEY
+
+    open_id = _open_candidate(tmp_path)
+    driven_id = _open_candidate(tmp_path, description=CANDIDATE_PROBE + " (second)")
+    foundry_drive_temper_candidate(
+        observation_id=driven_id, project_root=str(tmp_path)
+    )
+
+    result = foundry_query_observations(
+        classification="TEMPER_CANDIDATE", project_root=str(tmp_path)
+    )
+
+    assert [o["id"] for o in result[OPEN_CANDIDATES_KEY]] == [open_id], result
+    assert sorted(o["id"] for o in result["observations"]) == sorted(
+        [open_id, driven_id]
+    ), "the general query stopped answering the general question"
+
+
+def test_the_hint_names_the_key_the_door_returns(run, tmp_path):
+    """fallout D-114: the hint and the result read ONE spelling.
+
+    `OPEN_CANDIDATES_KEY` is the constant both sides derive from, so a rename
+    cannot leave the hint pointing at a key the door stopped returning — which
+    is the shape of the defect, one field along.
+    """
+    from foundry_mcp.tools.foundry import (
+        OPEN_CANDIDATES_KEY,
+        _CANDIDATE_ROSTER_HINT,
+    )
+
+    _open_candidate(tmp_path)
+    result = foundry_query_observations(
+        classification="TEMPER_CANDIDATE", project_root=str(tmp_path)
+    )
+
+    assert OPEN_CANDIDATES_KEY in result, sorted(result)
+    assert OPEN_CANDIDATES_KEY in _CANDIDATE_ROSTER_HINT, _CANDIDATE_ROSTER_HINT
+    assert "Foundry-Observations(classification=TEMPER_CANDIDATE)" in (
+        _CANDIDATE_ROSTER_HINT
+    ), _CANDIDATE_ROSTER_HINT
+
+
+def test_the_roster_counts_both_halves_of_the_partition(run, tmp_path):
+    """fallout ST-007: 'TEMPER_CANDIDATE observation open' -> 'DRIVEN'.
+
+    The two halves are reported beside each other and the driven count is the
+    COMPLEMENT rather than a second scan, so the pair can never sum to
+    something other than the candidate count.
+    """
+    first = _open_candidate(tmp_path)
+    _open_candidate(tmp_path, description=CANDIDATE_PROBE + " (second)")
+    foundry_drive_temper_candidate(observation_id=first, project_root=str(tmp_path))
+
+    summary = foundry_query_observations(project_root=str(tmp_path))["summary"]
+
+    assert summary["temper_candidates"] == 2, summary
+    assert summary["open_temper_candidates"] == 1, summary
+    assert summary["driven_temper_candidates"] == 1, summary
+    assert (
+        summary["open_temper_candidates"] + summary["driven_temper_candidates"]
+        == summary["temper_candidates"]
+    ), summary
+
+
+def test_the_roster_ignores_the_filter_this_call_happened_to_pass(run, tmp_path):
+    """fallout D-114: the roster is a property of the RUN, not of the query.
+
+    A caller that narrowed by cycle must not be told the candidates from other
+    cycles are driven — which is precisely how a roster and a report come to
+    answer different questions about one ledger.
+    """
+    from foundry_mcp.tools.foundry import OPEN_CANDIDATES_KEY
+
+    candidate = _open_candidate(tmp_path)
+
+    narrowed = foundry_query_observations(cycle=99, project_root=str(tmp_path))
+
+    assert narrowed["observations"] == [], narrowed
+    assert [o["id"] for o in narrowed[OPEN_CANDIDATES_KEY]] == [candidate], narrowed
+
+
+def test_the_roster_and_the_idempotence_rung_ask_one_predicate(run, tmp_path):
+    """fallout D-114: BOTH driven spellings, ONE derivation.
+
+    `foundry_drive_temper_candidate` writes `status`; casting 11's TEMPER prose
+    may write `driven`; the report reader tolerates either. The roster and the
+    idempotence rung must therefore agree about a record spelled either way, and
+    a second inline `or` is how they would come to disagree — so both ask
+    `temper_candidate_is_driven`.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from foundry_mcp.tools.foundry import (
+        OPEN_CANDIDATES_KEY,
+        foundry_drive_temper_candidate as drive_door,
+        foundry_query_observations as query_door,
+        temper_candidate_is_driven,
+    )
+
+    assert temper_candidate_is_driven({"status": "DRIVEN"}) is True
+    assert temper_candidate_is_driven({"driven": True}) is True
+    assert temper_candidate_is_driven({}) is False
+
+    # The OTHER spelling, written into the ledger by hand the way an archive or
+    # a later tool would, and read back through the real query door.
+    candidate = _open_candidate(tmp_path)
+    path = run / "observations.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    for record in document["observations"]:
+        if record.get("id") == candidate:
+            record["driven"] = True
+    path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+
+    result = foundry_query_observations(project_root=str(tmp_path))
+    assert result[OPEN_CANDIDATES_KEY] == [], (
+        "the roster offers TEMPER a candidate the drive door would refuse to "
+        "close as already driven"
+    )
+
+    for site in (drive_door, query_door):
+        called = {
+            node.func.id
+            for node in ast.walk(ast.parse(textwrap.dedent(inspect.getsource(site))))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "temper_candidate_is_driven" in called, (
+            f"{site.__name__} decides the driven question in its own voice; it "
+            f"calls {sorted(called)}"
+        )

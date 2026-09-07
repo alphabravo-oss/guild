@@ -2915,3 +2915,446 @@ def test_both_claim_vs_subject_sites_ask_the_vocabulary(site) -> None:
         f"the subject entry back out itself — which is the second voice this "
         f"pin exists to keep out of the module"
     )
+
+
+# --- fallout D-135 / D-152: the claim scan reads the fields HARDENING states --
+#     its claim in (fallout AC-023 / GI-004 / OT-019 / CT-012 / FR-045 / US-005) -
+#
+# The HARDENING never-demote rung scanned `security_scan_text(finding)`, the
+# COMPLEMENT of NON_CLAIM_FILING_KEYS — which excludes `reproduction_attempted`
+# and `class`. Both exclusions were keyed by FIELD while their whole
+# justification was keyed by TIER (LATENT's negative space, D-158; a documented
+# LATENT example's class, D-099). So the one field HARDENING's own wire contract
+# points the claim into ("name the probe you ran and the wrong result you
+# observed") was the one field the denylist never read, and a security-property
+# claim placed there landed in the tier that holds no gate shut with an EMPTY
+# tripwire. The controls below are the other half of the fix: the identical
+# statements still file at LATENT, so D-158's repair is untouched.
+
+#: The claim D-135 drove, in the shape a HARDENING filing is TOLD to write:
+#: a probe and the wrong result it produced.
+_HARDENING_SMUGGLED_CLAIM = (
+    "drove the cookie issuer 40x: the session cookie is issued with no "
+    "signature, so an attacker can forge one"
+)
+
+#: The negative-result statement D-158 requires ACCEPTED at LATENT — the same
+#: security vocabulary, reporting an ABSENCE rather than asserting a break.
+_LATENT_NEGATIVE_RESULT = (
+    "grepped both roots for a signature check on the session cookie and found "
+    "0 sites"
+)
+
+
+def test_a_hardening_claim_in_the_reproduction_is_refused_at_both_doors(run_env):
+    """fallout AC-023 / GI-004 / OT-019: 'a never-demote class match is REFUSED
+    and the tripwire recorded'.
+
+    THE DRIVEN CASE, both doors. Description innocent, the security-property
+    claim in `reproduction_attempted` — the field
+    `_HARDENING_REPRODUCTION_HINT` sends a HARDENING filer to. Before the fix
+    this was ACCEPTED as D-001, open and non-blocking, with
+    `observations.json.tripwire` EMPTY; the control (the identical claim in
+    `description`) was refused. A tier is never a route around the never-weaken
+    guarantee, and via this field it was one.
+    """
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
+
+    project_root, fdir = run_env
+
+    single = foundry_add_defect(
+        **_hardening_arguments(
+            project_root,
+            description="off-spec probe of the cookie issuer",
+            reproduction_attempted=_HARDENING_SMUGGLED_CLAIM,
+        )
+    )
+    assert single.get("denylist_class") == SECURITY_PROPERTY_CLAIM, single
+    assert _defects(fdir) == [], "the claim landed in the backlog tier"
+    assert [t["denylist_class"] for t in _tripwire(fdir)] == [
+        SECURITY_PROPERTY_CLAIM
+    ], _tripwire(fdir)
+
+    batch = foundry_sync_defects(
+        cycle=1,
+        findings=[
+            _hardening_finding(
+                description="off-spec probe of the cookie issuer",
+                reproduction_attempted=_HARDENING_SMUGGLED_CLAIM,
+            )
+        ],
+        project_root=project_root,
+    )
+    assert SECURITY_PROPERTY_CLAIM in batch.get("error", ""), batch
+    assert _defects(fdir) == [], "the batch door persisted the refused claim"
+    assert len(_tripwire(fdir)) == 2, "the batch door did not audit the attempt"
+
+
+def test_the_same_statement_still_files_as_latent_at_both_doors(run_env):
+    """fallout D-158's repair, held: the scoping is `tier == HARDENING` and
+    NOTHING else.
+
+    convergence AC-007 / convergence OT-005, clause 2 of each, require a LATENT filing whose
+    `reproduction_attempted` names a security term it searched for and did not
+    find to be ACCEPTED. This is the control for the test above: the same
+    field, the same vocabulary, the tier the exclusion was written for.
+    """
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
+
+    project_root, fdir = run_env
+
+    single = foundry_add_defect(
+        cycle=1,
+        source="prove",
+        defect_type="PARTIAL",
+        description="The report renderer omits the per-cycle minutes column.",
+        file_path="src/report/render.py",
+        defect_class="report-renderer-gap",
+        tier="LATENT",
+        spec_ref="NFR-002",
+        reproduction_attempted=_LATENT_NEGATIVE_RESULT,
+        project_root=project_root,
+    )
+    assert "defect_id" in single, single
+
+    batch = foundry_sync_defects(
+        cycle=1,
+        findings=[
+            _finding(
+                source="prove",
+                type="PARTIAL",
+                tier="LATENT",
+                spec_ref="NFR-002",
+                **{"class": "report-renderer-gap"},
+                description="The report renderer omits the per-cycle minutes column.",
+                file="src/report/render2.py",
+                reproduction_attempted=_LATENT_NEGATIVE_RESULT,
+            )
+        ],
+        project_root=project_root,
+    )
+    assert batch.get("added") == 1, batch
+    assert _tripwire(fdir) == [], "a negative result fired the audit tripwire"
+
+
+def test_a_hardening_claim_in_the_class_is_refused_at_both_doors(run_env):
+    """fallout D-152 window 1 / fallout GI-004: the ESCALATION KEY was unscanned too.
+
+    Driven with `defect_class="the-auth-token-signature-is-never-verified"` and
+    innocent prose everywhere else: accepted at both doors, tripwire empty. The
+    `class` exclusion was written over `agents/assayer.md`'s documented LATENT
+    example, whose LIVE sibling shares the class — a shape the surface ships.
+    No surface documents a HARDENING example, and a finding that could
+    legitimately share a class with a security finding may never be HARDENING
+    at all, so at this tier the exclusion protected nothing.
+    """
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
+
+    project_root, fdir = run_env
+    claim_class = "the-auth-token-signature-is-never-verified"
+
+    single = foundry_add_defect(
+        **_hardening_arguments(
+            project_root,
+            description="drove the token refresh loop 40x and it never settled",
+            defect_class=claim_class,
+        )
+    )
+    assert single.get("denylist_class") == SECURITY_PROPERTY_CLAIM, single
+    assert _defects(fdir) == [], single
+
+    batch = foundry_sync_defects(
+        cycle=1,
+        findings=[
+            _hardening_finding(
+                description="drove the token refresh loop 40x and it never settled",
+                **{"class": claim_class},
+            )
+        ],
+        project_root=project_root,
+    )
+    assert SECURITY_PROPERTY_CLAIM in batch.get("error", ""), batch
+    assert len(_tripwire(fdir)) == 2, _tripwire(fdir)
+
+
+def test_the_documented_latent_class_still_files(run_env):
+    """fallout D-099's repair, held: the class scoping is HARDENING-only.
+
+    `agents/assayer.md` ships `class: "no-auth-guard-on-destructive-endpoints"`
+    on BOTH a LATENT example and its LIVE sibling, and `_SECURITY_RE` matches
+    the bounded token `auth` inside it. A door that refused its own documented
+    example teaches the stream that the prose is wrong; that is why the
+    exclusion exists at every tier but the one above.
+    """
+    project_root, fdir = run_env
+    documented_class = "no-auth-guard-on-destructive-endpoints"
+
+    latent = foundry_add_defect(
+        cycle=1,
+        source="assay",
+        defect_type="PARTIAL",
+        description="the destructive-endpoint sweep found no reachable instance",
+        file_path="src/api/delete.py",
+        defect_class=documented_class,
+        tier="LATENT",
+        reproduction_attempted=(
+            "drove every destructive route in the router table; all 9 are "
+            "behind the guard"
+        ),
+        project_root=project_root,
+    )
+    assert "defect_id" in latent, latent
+
+    live = foundry_add_defect(
+        cycle=1,
+        source="assay",
+        defect_type="PARTIAL",
+        description="drove DELETE /projects/1 unauthenticated and it returned 204",
+        file_path="src/api/delete.py",
+        defect_class=documented_class,
+        tier="LIVE",
+        project_root=project_root,
+    )
+    assert "defect_id" in live, live
+    assert _tripwire(fdir) == [], "a documented class fired the audit tripwire"
+
+
+def test_a_hardening_spec_claim_in_the_reproduction_is_refused(run_env):
+    """fallout OT-019 / FR-045 / CT-012, clause 2 of the first: the never-demote rung reads
+    the whole denylist, and now over the whole claim.
+
+    D-078 widened the HARDENING rung from the security predicate to
+    `never_demote_claim_class`. It still read a field set that excluded the
+    tier's own evidence field, so a spec-required-behaviour claim placed there
+    was accepted exactly as the security one was. Both halves are needed: the
+    dispatcher AND the fields it is asked about.
+    """
+    project_root, fdir = run_env
+
+    refusal = foundry_add_defect(
+        **_hardening_arguments(
+            project_root,
+            description="off-spec probe of the terminal gate",
+            reproduction_attempted=(
+                "AC-022 requires Foundry-Gate('done') to pass with open "
+                "HARDENING defects and the gate refuses; the required "
+                "behaviour is absent"
+            ),
+        )
+    )
+    assert refusal.get("denylist_class") == SPEC_REQUIRED_BEHAVIOUR_CLAIM, refusal
+    assert _defects(fdir) == [], refusal
+    assert _tripwire(fdir)[0]["denylist_class"] == SPEC_REQUIRED_BEHAVIOUR_CLAIM
+
+
+def test_the_claim_scan_field_set_is_scoped_by_the_declared_tier():
+    """fallout D-135 / D-152: the two tier-dependent partitions, DERIVED.
+
+    `non_claim_filing_keys` is the one derivation every rung consults, and
+    `_CLAIM_BEARING_AT_HARDENING` is subtracted from the two partitions rather
+    than re-listed — so a member joining either one joins the scoping by
+    construction. What fails here is a member added to a partition and missed
+    in the scoping, or a scoping that leaked to a tier it was never written
+    for.
+    """
+    from foundry_mcp.tools.foundry import (
+        _CLAIM_BEARING_AT_HARDENING,
+        _FILING_ESCALATION_KEYS,
+        _FILING_NEGATIVE_SPACE_KEYS,
+        NON_CLAIM_FILING_KEYS,
+        non_claim_filing_keys,
+    )
+
+    assert _CLAIM_BEARING_AT_HARDENING == (
+        _FILING_ESCALATION_KEYS | _FILING_NEGATIVE_SPACE_KEYS
+    ), "the scoping re-lists its members instead of deriving them"
+
+    for tier in sorted(DEFECT_TIERS - {"HARDENING"}):
+        assert non_claim_filing_keys({"tier": tier}) == NON_CLAIM_FILING_KEYS, (
+            f"the HARDENING scoping leaked to {tier}, which is D-158 returning"
+        )
+    assert non_claim_filing_keys({}) == NON_CLAIM_FILING_KEYS
+    assert non_claim_filing_keys({"tier": "HARDENING"}) == (
+        NON_CLAIM_FILING_KEYS - _CLAIM_BEARING_AT_HARDENING
+    )
+    # An unhashable declared tier reaches this before any rung validates it,
+    # and a validator whose contract is "never raises" may not raise on one.
+    assert non_claim_filing_keys({"tier": ["HARDENING"]}) == NON_CLAIM_FILING_KEYS
+
+
+# --- fallout D-119: the tripwire records the tier the filing attempted -------
+def test_the_tripwire_record_names_the_tier_the_filing_attempted(run_env):
+    """fallout GI-004: the violation is stated OVER the attempted tier —
+    'filing a security claim or a spec-required behaviour failure as HARDENING
+    or LATENT' — so which one was attempted is part of the fact recorded.
+
+    DRIVEN: the same never-demote description filed twice, once LATENT and once
+    HARDENING. Both were correctly refused, and both wrote a record whose field
+    set was exactly ['cycle', 'denylist_class', 'description', 'detail', 'file',
+    'fired_at', 'source', 'spec_ref', 'symbol'] — no tier key and no field
+    anywhere holding either string, so the two records were indistinguishable
+    and `observations.json.tripwire` could not answer the question fallout GI-004 is
+    written over.
+    """
+    project_root, fdir = run_env
+    claim = "the login endpoint does not verify the authentication token signature"
+
+    foundry_add_defect(
+        cycle=1, source="prove", defect_type="PARTIAL", description=claim,
+        file_path="src/api/login.py", defect_class="AUTH_GAP", tier="LATENT",
+        reproduction_attempted="drove the endpoint; nothing reproduced",
+        project_root=project_root,
+    )
+    foundry_add_defect(
+        **_hardening_arguments(project_root, description=claim)
+    )
+
+    fired = _tripwire(fdir)
+    assert len(fired) == 2, fired
+    assert [t["tier"] for t in fired] == ["LATENT", "HARDENING"], fired
+    assert fired[0] != fired[1], (
+        "two materially different violations are still recorded identically"
+    )
+
+
+def test_an_observation_tripwire_records_no_attempted_tier(run_env):
+    """fallout D-119: `""` is honest, not a default this writer invented.
+
+    `foundry_add_observation` is a caller of the same writer and an observation
+    attempts no tier at all, so the record says so rather than borrowing one.
+    """
+    from foundry_mcp.tools.foundry import foundry_add_observation
+
+    project_root, fdir = run_env
+
+    refusal = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        classification="LINE_DRIFT_CITE",
+        description=(
+            "the login endpoint does not verify the authentication token "
+            "signature"
+        ),
+        target_kind="comment",
+        project_root=project_root,
+    )
+    assert refusal.get("denylist_class") == SECURITY_PROPERTY_CLAIM, refusal
+    fired = _tripwire(fdir)
+    assert len(fired) == 1 and fired[0]["tier"] == "", fired
+
+
+# --- fallout D-101: the re-tier exit carries the provenance ------------------
+def test_a_retiered_record_carries_the_provenance_the_refiling_declared(run_env):
+    """fallout FR-025 / CT-019 / AC-045: `fallout_of` is accepted and
+    ledger-validated at both doors, and was then silently discarded whenever
+    the filing took the re-tier exit.
+
+    DRIVEN at both doors with `fallout_of="D-001"` against a matching untiered
+    record: both reported success, the persisted record carried no `fallout_of`
+    key at all, and neither result mentioned the loss.
+    """
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+    parent = foundry_add_defect(
+        cycle=3, source="trace", defect_type="PARTIAL",
+        description="drove the parent door and it returned the wrong row",
+        file_path="src/api/parent.py", defect_class="PARENT", tier="LIVE",
+        project_root=project_root,
+    )
+    assert "defect_id" in parent, parent
+
+    result = _refile(project_root, fallout_of=parent["defect_id"])
+    assert result["defect_id"] == "D-001", result
+
+    retiered = next(d for d in _defects(fdir) if d["id"] == "D-001")
+    assert retiered["fallout_of"] == parent["defect_id"], retiered
+    assert retiered["tier"] == "LATENT", retiered
+
+
+def test_every_retiered_record_carries_the_provenance_keys(run_env):
+    """fallout AC-045: an ABSENT key is not a measured zero.
+
+    `foundry_state.fallout_rows` counts key-PRESENCE as measured and returns
+    verdict `not_measurable` for any cycle pair holding a record with no such
+    key — so a re-tiering filing was exactly the shape that made every
+    post-change cycle read as unmeasured forever, which is fallout FR-025's acceptance
+    figure. Both keys land whether the re-filing declared either or not.
+    """
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+
+    result = _refile(project_root)
+    assert result["defect_id"] == "D-001", result
+
+    retiered = next(d for d in _defects(fdir) if d["id"] == "D-001")
+    for key in ("fallout_of", "supersedes"):
+        assert key in retiered, (
+            f"{key} is absent from a re-tiered record, which the measurement "
+            f"reads as never measured"
+        )
+        assert retiered[key] is None
+
+
+def test_the_batch_door_retier_leaves_the_provenance_keys_measured(run_env):
+    """fallout AC-045, at the door a whole INSPECT stream files through.
+
+    The two provenance parameters default so the batch door in
+    `orchestration/fix_gate.py` (casting 2's file) keeps compiling while it is
+    repointed — and because the KEY's presence is what the measurement reads,
+    the measurability half is closed at that door by the defaults alone.
+    """
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
+
+    project_root, fdir = run_env
+    _seed_untiered(fdir)
+
+    result = foundry_sync_defects(
+        cycle=3,
+        findings=[
+            _finding(
+                source="trace", type="UNWIRED", tier="LATENT",
+                spec_ref="CT-013", symbol="foundry_next", file="src/api/a.py",
+                **{"class": "UNWIRED_SURFACE"},
+                description="re-filed with the tier the record never carried",
+                reproduction_attempted=(
+                    "drove every caller of the display path; none reaches the "
+                    "branch, so nothing reproduced"
+                ),
+            )
+        ],
+        project_root=project_root,
+    )
+    assert result.get("retiered_ids") == ["D-001"], result
+
+    retiered = next(d for d in _defects(fdir) if d["id"] == "D-001")
+    for key in ("fallout_of", "supersedes"):
+        assert key in retiered, retiered
+
+
+def test_the_retier_never_moves_provenance_the_record_already_declared(run_env):
+    """fallout D-101: the `class` rule, one field along.
+
+    Provenance an earlier filing declared is what a later reader has been
+    citing; overwriting it on a re-tier would move it mid-run. A NULL is not a
+    declaration — `scripts/migrate-archive.py` fills `fallout_of: null` as a
+    schema-4 default — so that one is filled and a real value is not.
+    """
+    project_root, fdir = run_env
+    # Seeded with ONE of the two keys, so this also proves the other lands.
+    _seed_untiered(fdir, fallout_of="D-900")
+    # `D-900` is not in the ledger; the rung that would refuse it reads the
+    # RE-FILING's value, and this record's own value is not re-validated.
+    parent = foundry_add_defect(
+        cycle=3, source="trace", defect_type="PARTIAL",
+        description="drove the parent door and it returned the wrong row",
+        file_path="src/api/parent.py", defect_class="PARENT", tier="LIVE",
+        project_root=project_root,
+    )
+
+    _refile(project_root, fallout_of=parent["defect_id"])
+
+    retiered = next(d for d in _defects(fdir) if d["id"] == "D-001")
+    assert retiered["fallout_of"] == "D-900", (
+        "the re-tier moved provenance the record already declared"
+    )
+    assert "supersedes" in retiered, retiered
