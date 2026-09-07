@@ -88,6 +88,7 @@ a row stops accounting for anything, and that is what took the last rows out.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import threading
@@ -215,9 +216,14 @@ from foundry_mcp.tools.foundry_state import (
 # thread cannot deadlock against itself.
 _ARTIFACT_LOCK = threading.RLock()
 
-# path -> in-flight document, per thread. A nested transaction on a path already
+# Per thread: ``.docs`` maps path -> in-flight document, and ``.locks`` holds
+# the paths ``_artifact_lock`` has taken. A nested transaction on a path already
 # open on this thread yields the SAME dict and defers the write to the outermost
-# exit, so nesting composes instead of deadlocking on our own flock.
+# exit, and a nested lock on a path either primitive already holds yields
+# straight through — so nesting composes instead of deadlocking on our own
+# flock. ONE thread-local, not one per primitive, for the reason the domain
+# above is one and not two: two maps would let a path be held in one and unseen
+# in the other, which is the whole of what fallout D-010 cost.
 _ARTIFACT_TX = threading.local()
 
 
@@ -468,6 +474,127 @@ def _document_transaction(path: Path) -> Iterator[dict]:
             finally:
                 held.pop(key, None)
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _artifact_lock(path: Path) -> Iterator[None]:
+    """Exclusive critical section over a run artifact that is NOT a document.
+
+    ``_document_transaction`` is the read-modify-write for a JSON document. A
+    run also holds APPEND-ONLY artifacts — ``handoffs.jsonl`` and its
+    ``handoffs.md`` mirror — which have no document to read back and no
+    snapshot to compare, and which therefore had no locked primitive to reach
+    for at all. fallout D-123 is what that absence cost: ``foundry_handoff``
+    was the one run-artifact writer in this package holding no lock, appending
+    the human mirror through four to six separate ``f.write`` calls and
+    bootstrapping its header on a bare ``not md_path.exists()`` — a TOCTOU
+    between the check and the first write, in a package whose teammates share
+    one working tree and whose GI-003 record added a SECOND writer to that one
+    function.
+
+    Same domain as the transaction above, deliberately: ``_ARTIFACT_LOCK``
+    orders threads, the flock sidecar is spelled through ``_TX_LOCK_SUFFIX``,
+    and the held map lives on ``_ARTIFACT_TX``. A second domain over the same
+    documents is the D-010 shape, and a lock that excludes only writers who
+    remembered to use it is not a lock.
+
+    ONE LOCK FOR A RECORD THAT SPANS TWO FILES. A caller writing two channels
+    that must agree takes the lock on ONE of them — the machine-read channel,
+    by convention, since that is the one a reader joins on — and holds it
+    across both. Locking each file separately would order each write and still
+    let two records interleave between the channels, which is the failure the
+    lock is being taken against.
+
+    Re-entrant per path, against BOTH primitives: a path this thread already
+    holds — through a nested ``_artifact_lock`` or through an open
+    ``_document_transaction`` — yields immediately rather than blocking on a
+    flock this thread will not release until the outer block exits. The one
+    nesting this does NOT compose is a ``_document_transaction`` opened INSIDE
+    an ``_artifact_lock`` on the same path; no caller does that (a document and
+    an append-only channel are different files), and the day one wants to, the
+    transaction grows the same check rather than this one growing a special
+    case.
+    """
+    held_docs = getattr(_ARTIFACT_TX, "docs", None) or {}
+    held_locks = getattr(_ARTIFACT_TX, "locks", None)
+    if held_locks is None:
+        held_locks = _ARTIFACT_TX.locks = set()
+    key = str(path)
+    if key in held_locks or key in held_docs:
+        # Already exclusive on this thread for this path — same critical
+        # section, and re-taking the flock would block on ourselves.
+        yield
+        return
+
+    lock_path = path.with_name(path.name + _TX_LOCK_SUFFIX)
+    with _ARTIFACT_LOCK:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        # Binary, and never read through: see the transaction above for why the
+        # handle exists for its file descriptor and nothing else.
+        with open(lock_path, "ab+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            held_locks.add(key)
+            try:
+                yield
+            finally:
+                held_locks.discard(key)
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+# --------------------------------------------------------------------------- #
+# THE PUBLISHED DIGEST SPELLING — ONE RULE, TWO ARITIES (fallout D-128 / D-117)
+#
+# These two were defined at the top of ``tools/foundry_handoff.py``, and both
+# layers read them: ``foundry_handoff`` and ``foundry_validate`` from the
+# lifecycle side, ``tools/evidence.py`` from the verifier side, and — since
+# fallout D-117 bound the F0.7 marker to the matrix it was computed from —
+# ``intent_coverage`` and ``foundry_validate``'s F0.9 rung need the FILE digest
+# in one spelling on both sides of that comparison.
+#
+# GI-033's arithmetic is what decides the home, in the same words
+# ``_spec_requirement_ids`` below records for the requirement-id climb: the two
+# layers are mutually unreachable at module top, so a symbol read from BOTH can
+# live in neither and belongs in a leaf. Reaching a digest helper out of a
+# lifecycle module is the Holmes `pkg-1` disease exactly — "every sibling that
+# imports the orchestrator at module top wants a leaf utility".
+#
+# THE PAIR MOVES TOGETHER because it is one rule. Each docstring names the
+# other as the wrong choice for the other's input, and D-108 is the defect that
+# pairing exists to prevent; splitting them across two modules would leave each
+# warning pointing somewhere else. ``foundry_handoff`` imports both back and
+# keeps using them, so every existing caller — including the one line in
+# ``evidence.py`` this casting may not edit — still resolves while that
+# module's owner repoints it at this leaf.
+# --------------------------------------------------------------------------- #
+
+
+def _hash_file(path: Path) -> str | None:
+    """The published spelling of a FILE's digest: sha256 over its bytes.
+
+    ``None`` when there is no file to hash. This is the value a shell's
+    ``sha256sum`` / ``shasum -a 256`` prints (truncated to the published 16
+    characters), which is why it — and never ``_hash_str`` on decoded text —
+    is what ``check_reported_prompt_hash`` compares a teammate's report
+    against (D-108). Text and bytes differ for any file whose line endings are
+    not already LF, and only one of the two can be computed from outside this
+    process.
+    """
+    if not path.exists() or not path.is_file():
+        return None
+    h = hashlib.sha256(path.read_bytes()).hexdigest()
+    return f"sha256:{h[:16]}"
+
+
+def _hash_str(text: str) -> str:
+    """The published spelling of a STRING's digest.
+
+    For values that are strings in the first place — a handoff id assembled
+    from a timestamp and an event, an evidence log's redacted body. NOT for
+    hashing a file: see ``_hash_file`` and D-108. Passing decoded file text
+    here re-introduces the newline-translation gap that made an honest
+    teammate's report of a CRLF prompt read as stale.
+    """
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 def _text_problem(path: Path) -> str | None:

@@ -21,7 +21,6 @@ readable) and mirrored to `handoffs.md` (human readable).
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -35,7 +34,39 @@ from foundry_mcp.tools.citation import CITATION_PATTERN, unresolved_symbol_cites
 # state machine to get them, which is what made the orchestrator the package's
 # de-facto persistence layer. The bodies are the same bodies; only the module
 # that defines them changed.
-from foundry_mcp.tools.artifacts import _artifact_guard, _load_json
+#
+# fallout D-123 — ``_artifact_lock`` joins them: the append-only half of the
+# leaf's lock domain, taken by ``_append_handoff_record`` below. This module was
+# the one run-artifact writer in the package holding no lock at all.
+#
+# fallout D-128 / concern C-067 — SO DO ``_hash_file`` AND ``_hash_str``, WHICH
+# WERE DEFINED HERE. Both layers read them — this module and
+# ``foundry_validate`` from the lifecycle side, ``tools/evidence.py`` from the
+# verifier side — and fallout GI-033's arithmetic says a symbol read from BOTH
+# can live in neither, because the two layers are mutually unreachable at module
+# top. C-067 is casting 5 saying the same thing from the other end: they closed
+# their ``foundry_spawn`` edge by reading the leaf and could not close this one,
+# because the definitions were here. Two of the three now are not, so their
+# import narrows to the one symbol below. The bodies moved unchanged, and they
+# are still this module's to USE: the import is the fix, not a facade.
+#
+# ``declared_requirement_ids`` IS THE THIRD, AND IT DID NOT FIT. The move was
+# driven in this cycle and backed out:
+# ``tests/test_handoff_records.py#test_neither_reader_derives_the_declared_set_inline``
+# and ``tests/test_evidence.py#test_no_reader_of_the_owned_set_derives_it_inline``
+# each assert the function is defined exactly once across a scan set of THIS
+# module and ``foundry_validate``, so a definition in a third module makes both
+# read zero rather than one. fallout GI-026 requires an AST pin to be repointed
+# in the same casting as the source move, and neither test module belongs to
+# this casting — so the move is one dispatch (source, two pins, one import),
+# not one file, and it is recorded rather than half-taken.
+from foundry_mcp.tools.artifacts import (
+    _artifact_guard,
+    _artifact_lock,
+    _hash_file,
+    _hash_str,
+    _load_json,
+)
 from foundry_mcp.tools.foundry_state import (
     document_refusal,
     get_run_dir,
@@ -119,35 +150,6 @@ def declared_requirement_ids(block_text: str) -> list[str]:
     return sorted(ids)
 
 
-def _hash_file(path: Path) -> str | None:
-    """The published spelling of a FILE's digest: sha256 over its bytes.
-
-    ``None`` when there is no file to hash. This is the value a shell's
-    ``sha256sum`` / ``shasum -a 256`` prints (truncated to the published 16
-    characters), which is why it — and never ``_hash_str`` on decoded text —
-    is what ``check_reported_prompt_hash`` compares a teammate's report
-    against (D-108). Text and bytes differ for any file whose line endings are
-    not already LF, and only one of the two can be computed from outside this
-    process.
-    """
-    if not path.exists() or not path.is_file():
-        return None
-    h = hashlib.sha256(path.read_bytes()).hexdigest()
-    return f"sha256:{h[:16]}"
-
-
-def _hash_str(text: str) -> str:
-    """The published spelling of a STRING's digest.
-
-    For values that are strings in the first place — a handoff id assembled
-    from a timestamp and an event, an evidence log's redacted body. NOT for
-    hashing a file: see ``_hash_file`` and D-108. Passing decoded file text
-    here re-introduces the newline-translation gap that made an honest
-    teammate's report of a CRLF prompt read as stale.
-    """
-    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-
-
 def _reserved_event_key(event: object) -> str:
     """The spelling-insensitive key of a handoff event name.
 
@@ -208,24 +210,48 @@ def _append_handoff_record(
     is the ordered human mirror; empty values are skipped, mirroring
     ``foundry._ledger_mirror``'s rule so an absent field prints nothing rather
     than an empty bullet.
+
+    WHY THE LOCK (fallout D-123)
+    ----------------------------
+    Every other run-artifact write in this package goes through the leaf's
+    flock'd primitives. This one went through a bare ``open("a")``, in a
+    package whose teammates share one working tree and whose GI-003 record
+    added a SECOND writer to this very function. The JSONL channel survived
+    that on its own — one ``write`` per record, and an O_APPEND write of a
+    short line does not interleave — but the md mirror is four to six separate
+    ``f.write`` calls, so two concurrent ``grind_dispatched`` records could
+    interleave mid-record in the human channel; and ``header_needed`` is a
+    TOCTOU between the ``exists`` check and the first write, so both writers
+    could emit the header.
+
+    ONE LOCK FOR THE WHOLE RECORD, taken on the JSONL path and held across BOTH
+    channels. It is a record that spans two files, so locking each file
+    separately would order each write and still let two records interleave
+    between the channels. The JSONL path is the lock's name because that is the
+    channel a reader joins on — ``Foundry-Team-Down`` reads
+    ``grind_dispatched`` out of it (FR-048) — and one name is what makes two
+    writers exclude each other rather than agree by coincidence.
     """
     fdir.mkdir(parents=True, exist_ok=True)
 
     jsonl_path = fdir / "handoffs.jsonl"
-    with jsonl_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
-
     md_path = fdir / "handoffs.md"
-    header_needed = not md_path.exists()
-    with md_path.open("a", encoding="utf-8") as f:
-        if header_needed:
-            f.write("# Foundry Handoff Audit Log\n\n")
-            f.write("Every transition between phases or artifacts is recorded here.\n\n")
-        f.write(f"## {entry['event']} — {entry['timestamp']}\n")
-        for label, value in md_fields:
-            if value:
-                f.write(f"- {label}: {value}\n")
-        f.write("\n")
+    with _artifact_lock(jsonl_path):
+        with jsonl_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+
+        header_needed = not md_path.exists()
+        with md_path.open("a", encoding="utf-8") as f:
+            if header_needed:
+                f.write("# Foundry Handoff Audit Log\n\n")
+                f.write(
+                    "Every transition between phases or artifacts is recorded here.\n\n"
+                )
+            f.write(f"## {entry['event']} — {entry['timestamp']}\n")
+            for label, value in md_fields:
+                if value:
+                    f.write(f"- {label}: {value}\n")
+            f.write("\n")
 
 
 MEASUREMENT_UNAVAILABLE = "measurement unavailable — git could not read the commit"
@@ -1018,6 +1044,39 @@ def foundry_accept_casting(
     evidence_provenance: list[dict] = []
     evidence_spec_path: Path | None = None
     evidence_stream_skips: list[dict] = []
+    # fallout D-128 / GI-033 — THE SEAM INTO THE EVIDENCE ENGINE, NAMED.
+    #
+    # A call-time import is not a load-time edge, which is why the boundary
+    # guard measures module-top imports and says so
+    # (`tests/orchestration/test_module_boundaries.py#_module_top_imports`:
+    # "a function-local import is NOT an edge here, and that is the whole point
+    # of the lazy seam ... the comment at each seam says which cycle it
+    # avoids"). This is that comment, and it was missing — which is how an edge
+    # GI-033's violation column names outright ("any lifecycle module importing
+    # a verifier module") sat here unremarked while every layering assertion
+    # read past it.
+    #
+    # THE CYCLE IT AVOIDS. `tools/evidence.py` imports `_hash_str` and
+    # `declared_requirement_ids` from THIS module at module top. Promote this
+    # import and the package stops loading: `foundry_handoff` -> `evidence` ->
+    # `foundry_handoff`. So the laziness is structural, not stylistic, and it
+    # cannot be removed from this side alone.
+    #
+    # THE ENGINE IS REACHED THIS WAY FROM BOTH LAYERS, which is the fact that
+    # decides how to read it: `orchestration/evidence_boundary.py` — a member of
+    # the guard's own `_VERIFIER_MODULES` — reaches
+    # `evidence.select_sweep_scope` / `sweep_evidence_at_head` through exactly
+    # the same call-time import inside `_sweep_evidence_at_boundary`. Two lazy
+    # reachers, no module-top reacher anywhere in the package, and
+    # `tests/test_artifacts.py#test_the_evidence_engine_is_reached_by_the_named_seams_only`
+    # pins that roster so a third one cannot appear unnoticed.
+    #
+    # THE REMEDY IS NOT THIS CASTING'S TO TAKE. GI-033's arithmetic — a symbol
+    # read from both layers belongs in a leaf — closes the reverse edge, and the
+    # digest pair moved to `tools/artifacts.py` above for exactly that reason.
+    # `declared_requirement_ids` is the one that remains, and repointing its
+    # reader edits `tools/evidence.py`, which another casting owns; it is filed
+    # as a cross-casting concern rather than reached for here.
     from foundry_mcp.tools.evidence import (
         _declared_spec_format_version,
         _read_spec_format_version,

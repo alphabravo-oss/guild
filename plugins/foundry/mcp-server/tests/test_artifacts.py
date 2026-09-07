@@ -57,10 +57,13 @@ from foundry_mcp.tools import artifacts
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools.artifacts import (
     _artifact_guard,
+    _artifact_lock,
     _document_problem,
     _document_transaction,
     _is_write_sidecar,
     _load_json,
+    _hash_file,
+    _hash_str,
     _resolve_spec_path,
     _run_artifact_problems,
     _save_json,
@@ -1379,3 +1382,278 @@ def test_the_report_read_agrees_with_the_definition_it_was_hoisted_from(tmp_path
 
     for run_dir in (_complete_report(tmp_path / "run"), empty, blank, corrupt):
         assert artifacts.report_document_status(run_dir) == hoisted_from(run_dir), run_dir
+
+
+# --------------------------------------------------------------------------- #
+# fallout D-123 — THE APPEND-ONLY HALF OF THE LOCK DOMAIN
+#
+# `_document_transaction` is the read-modify-write for a JSON document. A run
+# also holds APPEND-ONLY artifacts — `handoffs.jsonl` and its `handoffs.md`
+# mirror — and until this cycle there was no locked primitive for them at all,
+# so `foundry_handoff._append_handoff_record` was the one run-artifact writer in
+# the package holding no lock: four to six separate `f.write` calls into the
+# human mirror, plus a header bootstrap on a bare `not md_path.exists()`, in a
+# tree several teammates share and a function fallout GI-003 gave a second
+# writer.
+#
+# The tests below drive the primitive and then assert the writer takes it,
+# because either one alone is half a guard: a lock nobody holds excludes
+# nothing, and a `with` block over a primitive that does not really exclude is
+# a comment.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_append_lock_is_the_document_name_plus_the_declared_suffix(run_env):
+    """One spelling for both primitives, or they exclude by coincidence.
+
+    The whole reason `_TX_LOCK_SUFFIX` is a constant is that two independently
+    typed spellings of a lock filename order two writers only until one of them
+    is edited (fallout D-010). A second primitive that built its own name would
+    reopen exactly that.
+    """
+    _project_root, fdir = run_env
+    ledger = fdir / "handoffs.jsonl"
+
+    with _artifact_lock(ledger):
+        present = {p.name for p in fdir.iterdir()}
+
+    assert f"handoffs.jsonl{_TX_LOCK_SUFFIX}" in present, sorted(present)
+
+
+def test_the_append_lock_excludes_a_second_thread_until_it_is_released(run_env):
+    """The property the whole fix rests on, driven rather than assumed."""
+    _project_root, fdir = run_env
+    ledger = fdir / "handoffs.jsonl"
+
+    holder_inside = threading.Event()
+    release = threading.Event()
+    second_entered = threading.Event()
+
+    def hold():
+        with _artifact_lock(ledger):
+            holder_inside.set()
+            release.wait(5)
+
+    def contend():
+        with _artifact_lock(ledger):
+            second_entered.set()
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    assert holder_inside.wait(5), "the holder never entered its critical section"
+
+    other = threading.Thread(target=contend)
+    other.start()
+    # While the first thread holds it, the second must not get in.
+    assert not second_entered.wait(0.3), "the lock let a second thread through"
+
+    release.set()
+    other.join(5)
+    holder.join(5)
+    assert second_entered.is_set(), "the lock never released"
+
+
+def test_a_nested_append_lock_on_one_path_does_not_block_on_itself(run_env):
+    """Re-entrancy per path, against BOTH primitives.
+
+    `flock` is held per open file description, so a second acquire on the same
+    path from the same thread would block on a lock that thread will not release
+    until the outer block exits — the deadlock fallout D-010 records as "one
+    call away from reachable". Asserted for a nested lock and for a lock taken
+    inside an open document transaction on the same path.
+    """
+    _project_root, fdir = run_env
+    ledger = fdir / "handoffs.jsonl"
+
+    reached = []
+    with _artifact_lock(ledger):
+        with _artifact_lock(ledger):
+            reached.append("nested")
+    assert reached == ["nested"]
+
+    state = fdir / "state.json"
+    _save_json(state, {"phase": "F0"})
+    with _document_transaction(state) as doc:
+        doc["phase"] = "F1"
+        with _artifact_lock(state):
+            reached.append("inside a transaction")
+    assert reached == ["nested", "inside a transaction"]
+    # And the transaction still wrote what it mutated.
+    assert _load_json(state)["phase"] == "F1"
+
+
+def test_the_handoff_ledger_writes_both_channels_under_one_lock(run_env):
+    """fallout D-123 — the writer takes it, and takes ONE for the record.
+
+    A handoff record spans two files. Locking each file separately would order
+    each write and still let two records interleave BETWEEN the channels, which
+    is the failure the lock is taken against — so the assertion is that both
+    channel writes sit inside a single `_artifact_lock` block, not merely that
+    the name appears in the function.
+
+    Read off the source: what is being asserted is the STRUCTURE of the
+    critical section, and a behavioural test for an interleaving is a race
+    either way it comes out.
+    """
+    handoff = pytest.importorskip("foundry_mcp.tools.foundry_handoff")
+    tree = ast.parse(Path(handoff.__file__).read_text(encoding="utf-8"))
+    fn = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_append_handoff_record"
+    )
+
+    locks = [
+        node
+        for node in ast.walk(fn)
+        if isinstance(node, ast.With)
+        and any(
+            isinstance(item.context_expr, ast.Call)
+            and isinstance(item.context_expr.func, ast.Name)
+            and item.context_expr.func.id == "_artifact_lock"
+            for item in node.items
+        )
+    ]
+    assert len(locks) == 1, (
+        f"{len(locks)} _artifact_lock block(s) in _append_handoff_record; the "
+        "record spans two channels and takes ONE lock across both"
+    )
+
+    opened = {
+        node.func.value.id
+        for node in ast.walk(locks[0])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "open"
+        and isinstance(node.func.value, ast.Name)
+    }
+    assert opened == {"jsonl_path", "md_path"}, sorted(opened)
+
+
+def test_the_ledger_writer_holds_no_lock_domain_of_its_own(run_env):
+    """The fix is a shared domain, not a second one.
+
+    `_declares_lock_domain` above is the guard for a module opening its own
+    `threading.RLock()` / `threading.local()` pair; this is the same rule asked
+    of the module the fix landed in, from the other end — it binds the leaf's
+    lock and spells the sidecar through the leaf's suffix, or it excludes
+    nothing that matters.
+    """
+    handoff = pytest.importorskip("foundry_mcp.tools.foundry_handoff")
+    path = Path(handoff.__file__)
+    assert not _declares_lock_domain(path)
+    assert handoff._artifact_lock is _artifact_lock
+
+
+# --------------------------------------------------------------------------- #
+# fallout D-128 — THE EVIDENCE ENGINE IS REACHED THROUGH NAMED SEAMS ONLY
+#
+# fallout GI-033's violation column names "any lifecycle module importing a verifier
+# module", and `tools/evidence.py` is a decider by `VERIFIER_PATH_PATTERNS` —
+# "the module that re-executes it decides whether a log passes". Two modules
+# reach it, one from each layer, and BOTH do so through a call-time import: the
+# boundary guard in `tests/orchestration/` measures module-top edges by design
+# ("a function-local import is NOT an edge here, and that is the whole point of
+# the lazy seam"), so neither reacher was visible to any layering assertion.
+#
+# The roster is pinned here rather than left implicit. A THIRD reacher, or the
+# promotion of either of these to module top, is a layering decision someone has
+# to make on purpose.
+# --------------------------------------------------------------------------- #
+
+#: (module basename, function) for every call-time reach into the evidence
+#: engine, with what each one is. Not an allowlist: the assertion is equality,
+#: so a row that stops accounting for anything fails exactly as a new reacher
+#: does.
+_EVIDENCE_ENGINE_SEAMS = {
+    # LIFECYCLE. The acceptance gate re-executes a casting's evidence corpus
+    # before it will accept the casting (fallout CT-015 / FR-010). Lazy because
+    # `evidence.py` imports `declared_requirement_ids` from `foundry_handoff` at
+    # module top, so promoting this closes a cycle and the package stops
+    # loading.
+    ("foundry_handoff", "foundry_accept_casting"),
+    # VERIFIER. The boundary sweep, a rung of three preconditions functions.
+    ("evidence_boundary", "_sweep_evidence_at_boundary"),
+}
+
+
+def test_the_evidence_engine_is_reached_by_the_named_seams_only():
+    """fallout D-128 / fallout GI-033 — the edge exists; what it may not be is unseen."""
+    module_top: list[str] = []
+    lazy: set[tuple[str, str]] = set()
+
+    for path in _shipped_modules():
+        if path.stem == "evidence":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if node.module == "foundry_mcp.tools.evidence":
+                    module_top.append(path.stem)
+            elif isinstance(node, ast.Import):
+                module_top.extend(
+                    path.stem
+                    for a in node.names
+                    if a.name == "foundry_mcp.tools.evidence"
+                )
+        for parent in ast.walk(tree):
+            if not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(parent):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    if node.module == "foundry_mcp.tools.evidence":
+                        lazy.add((path.stem, parent.name))
+                elif isinstance(node, ast.Import):
+                    lazy |= {
+                        (path.stem, parent.name)
+                        for a in node.names
+                        if a.name == "foundry_mcp.tools.evidence"
+                    }
+
+    assert module_top == [], (
+        f"module(s) importing the evidence engine AT MODULE TOP: {module_top}. "
+        "`evidence.py` imports `foundry_handoff` at module top, so a load-time "
+        "edge back into it stops the package loading — and a lifecycle module "
+        "reaching a decider at load time is GI-033's violation column besides."
+    )
+    assert lazy == _EVIDENCE_ENGINE_SEAMS, (
+        f"the evidence-engine seam roster moved: {sorted(lazy)}. Each seam is a "
+        "lifecycle-or-verifier module reaching the module that decides whether "
+        "an evidence log passes; add the row with what it is and why it must be "
+        "lazy, or take the row with the edge."
+    )
+
+
+def test_the_published_digest_spelling_has_one_home(run_env):
+    """fallout D-128 — the pair moved to the leaf, and it moved TOGETHER.
+
+    Both layers read these: `foundry_handoff` and `foundry_validate` from the
+    lifecycle side, `tools/evidence.py` from the verifier side. fallout GI-033's
+    arithmetic gives one home for a symbol read from both, and it is a leaf.
+    The pair is one rule with two arities — each docstring names the other as
+    the wrong choice for the other's input, and D-108 is the defect that
+    pairing prevents — so a split home would leave each warning pointing at a
+    module that no longer holds the thing it warns about.
+    """
+    _project_root, fdir = run_env
+    leaf = Path(artifacts.__file__).resolve()
+    assert {"_hash_file", "_hash_str"} <= _top_level_bindings(leaf)
+
+    elsewhere = sorted(
+        path.name
+        for path in _shipped_modules()
+        if path != leaf and {"_hash_file", "_hash_str"} & _top_level_bindings(path)
+    )
+    assert elsewhere == [], (
+        f"module(s) keeping a second copy of the digest spelling: {elsewhere}"
+    )
+
+    # The bodies are the bodies, not a rewrite: bytes for a file, encoded text
+    # for a string, and the published 16-character prefix on both.
+    doc = fdir / "state.json"
+    doc.write_bytes(b"payload\r\n")
+    assert _hash_file(doc) == _hash_str("payload\r\n")
+    assert _hash_file(doc).startswith("sha256:")
+    assert len(_hash_file(doc)) == len("sha256:") + 16
+    assert _hash_file(fdir / "absent.json") is None
