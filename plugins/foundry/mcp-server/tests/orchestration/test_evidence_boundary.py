@@ -261,7 +261,7 @@ def test_a_syntax_refusal_does_not_claim_the_command_was_re_executed():
     """fallout AC-035 / US-008 / CT-015 (D-148) — the mechanism was right and
     the door's own account of it was wrong.
 
-    CT-015: a log whose command fails to parse "is refused with token
+    fallout CT-015: a log whose command fails to parse "is refused with token
     EVIDENCE_COMMAND_SYNTAX BEFORE execution", and the sweep's own
     `mismatches[].reason` says so in the same return value. The hint said the
     opposite — "was RE-EXECUTED in a detached worktree at HEAD and its output no
@@ -270,7 +270,7 @@ def test_a_syntax_refusal_does_not_claim_the_command_was_re_executed():
     reproduces the identical refusal, and no behaviour regressed because nothing
     ran.
 
-    US-008 is "so that a syntax mistake costs a commit, not a cycle". A log
+    fallout US-008 is "so that a syntax mistake costs a commit, not a cycle". A log
     predating the pre-commit guard, or one committed with the hook skipped,
     reaches this door — and the lead was sent to re-capture it.
     """
@@ -339,7 +339,9 @@ def test_a_mixed_sweep_names_every_remedy_it_needs():
 
     assert "does not PARSE" in hint["hint"], hint
     assert "re-executed in a detached worktree" in hint["hint"], hint
-    # Both logs are still named in the error, which is CT-007's own clause.
+    # Both logs are still named in the error, which is fallout CT-015's own
+    # per-log clause -- NOT fallout CT-007, which in this run's spec is
+    # Foundry-Next's heading_for and has nothing to say about a sweep.
     assert "a.log" in hint["error"] and "b.log" in hint["error"], hint
 
 

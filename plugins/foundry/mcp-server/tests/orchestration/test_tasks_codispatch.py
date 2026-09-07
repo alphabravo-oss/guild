@@ -704,7 +704,7 @@ def test_a_concern_record_with_no_id_does_not_raise_out_of_the_door(run_env):
     holding one id-less record raised `KeyError: 'id'` across the MCP boundary
     as call_tool's unhandled-error banner rather than the house refusal.
 
-    GI-004 carries A-000's sentence without qualification: "A reachable raise
+    fallout GI-004 carries A-000's sentence without qualification: "A reachable raise
     ... REMAINS A BLOCKING DEFECT AT FULL WEIGHT." No writer in the plugin emits
     this shape, so reaching it needs a hand-edited, migrated or
     partially-written ledger — which is the population `migrate-archive.py` and
