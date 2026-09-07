@@ -2,7 +2,7 @@
 # evidence-for: GI-003, NFR-003, NFR-011
 # evidence-volatile: \d+\.\d+s
 
-====================== 7 passed, 665 deselected in 0.28s =======================
+====================== 7 passed, 706 deselected in 0.12s =======================
 tests/test_protocol_prose.py::test_a_deriver_ruling_section_sanctions_no_implementation_source_read[## Roster] PASSED [ 85%]
 tests/test_protocol_prose.py::test_a_deriver_ruling_section_sanctions_no_implementation_source_read[## Stream Recording] PASSED [100%]
 tests/test_protocol_prose.py::test_each_source_citing_stream_agent_cites_the_stream_vocabulary[coverage-diff.md] PASSED [ 28%]

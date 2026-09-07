@@ -1,0 +1,17 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c "import sys; sys.path[:0]=['src','tests']; import test_protocol_prose as m; print('open gap, one member recorded  :', tuple(sorted(s) for s in m._ledger_verdict(frozenset({'HARDENING','LATENT'}), frozenset({'LATENT'})))); print('gap CLOSED, row still standing :', tuple(sorted(s) for s in m._ledger_verdict(frozenset(), frozenset({'HARDENING'})))); print('gap open and fully recorded    :', tuple(sorted(s) for s in m._ledger_verdict(frozenset({'HARDENING'}), frozenset({'HARDENING'})))); print('count with no row              :', m._count_ledger_verdict('both tiers', None)); print('count dropped, row standing    :', m._count_ledger_verdict(None, 'both tiers')); print('count reworded, row standing   :', m._count_ledger_verdict('three tiers', 'both tiers')); print('ledgers read by                :', len(m._functions_reading_a_gap_ledger()), sorted(m._functions_reading_a_gap_ledger())); print('collection channel base        :', m.StaleGapLedgerWarning.__mro__[1].__name__); print('all three ledgers today        :', m._KNOWN_SUBSTANCE_GAPS, m._KNOWN_TIER_GAPS, m._KNOWN_TIER_COUNT_GAPS)" 2>&1 && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_protocol_prose.py::test_a_recorded_gap_is_an_exemption_and_never_an_obligation tests/test_protocol_prose.py::test_no_gap_ledger_is_read_by_exact_equality_again tests/test_protocol_prose.py::test_the_known_substance_gap_ledger_names_real_surfaces tests/test_protocol_prose.py::test_the_known_tier_gap_ledger_names_real_surfaces_and_members tests/test_protocol_prose.py::test_the_tier_count_ledger_names_surfaces_this_module_sweeps 2>&1 | tail -2
+# evidence-for: fallout FR-037
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \b\d+ms\b
+# evidence-timeout: 600
+
+open gap, one member recorded  : (['HARDENING'], [])
+gap CLOSED, row still standing : ([], ['HARDENING'])
+gap open and fully recorded    : ([], [])
+count with no row              : ('both tiers', None)
+count dropped, row standing    : (None, 'both tiers')
+count reworded, row standing   : (None, 'both tiers')
+ledgers read by                : 6 ['test_every_filing_surface_carries_the_tier_substance', 'test_every_tier_stating_surface_names_every_declared_member', 'test_no_tier_stating_surface_counts_the_vocabulary', 'test_the_known_substance_gap_ledger_names_real_surfaces', 'test_the_known_tier_gap_ledger_names_real_surfaces_and_members', 'test_the_tier_count_ledger_names_surfaces_this_module_sweeps']
+collection channel base        : UserWarning
+all three ledgers today        : {} {} {}
+.....                                                                    [100%]
+5 passed in 0.19s
