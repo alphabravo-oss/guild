@@ -4,7 +4,7 @@ description: "Trace every function, every data flow, and simulate user workflows
 user_invocable: true
 model: opus
 effort: high
-allowed-tools: Read, Grep, Glob, Bash
+allowed-tools: Read, Grep, Glob, Bash, mcp__plugin_foundry_foundry__Foundry-Context, mcp__plugin_foundry_foundry__Foundry-Defect, mcp__plugin_foundry_foundry__Foundry-Next, mcp__plugin_foundry_foundry__Foundry-Stream, mcp__plugin_foundry_foundry__Foundry-Sync, mcp__plugin_foundry_foundry__Validate-Report, mcp__foundry__Foundry-Context, mcp__foundry__Foundry-Defect, mcp__foundry__Foundry-Next, mcp__foundry__Foundry-Stream, mcp__foundry__Foundry-Sync, mcp__foundry__Validate-Report
 context: fork
 ---
 

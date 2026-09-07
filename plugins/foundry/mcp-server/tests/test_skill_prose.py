@@ -5,9 +5,28 @@ Why a third prose module rather than more assertions in the two that exist.
 ---------------------------------------------------------------------------
 ``test_protocol_prose.py`` pins what the NON-PROVE stream agents and the
 teammate are told; ``test_lead_prose.py`` pins what the LEAD is told. This one
-pins ``agents/assayer.md`` and ``skills/{prove,trace,sight,temper}/SKILL.md`` --
-the surfaces that decide, before anything is written to a ledger, whether a
-finding is a defect, an observation, or a probe idea nobody has driven yet.
+pins ``agents/assayer.md``, ``skills/prove/SKILL.md``,
+``skills/trace/SKILL.md``, ``skills/sight/SKILL.md`` and
+``skills/temper/SKILL.md`` -- the surfaces that decide, before anything is
+written to a ledger, whether a finding is a defect, an observation, or a probe
+idea nobody has driven yet. All five are spelled out rather than brace-globbed,
+and that is asserted below: a home whose population is written as a glob cannot
+be searched for the path a reader is holding, so the rule pinned in it is
+pinned somewhere nobody can find.
+
+Where fallout NFR-011 says a rule is pinned, and why this module counts
+----------------------------------------------------------------------
+fallout NFR-011 names ``test_protocol_prose.py`` and ``test_lead_prose.py`` as
+the two homes a prose rule may be pinned in. It was written before this module
+existed, and ``_BRANCH_CLAUSES`` below is pinned in neither -- the fallout
+AC-018 / AC-058 branch is stated on two files no other home owns, and
+D-149 is the record of the gap. The requirement is Flexible on mechanism and binding on
+outcome, so its two-name list is GENERALISED here rather than contradicted:
+the homes are discovered by glob, each declares the population it pins, the two
+names the requirement carries are asserted to still be members, and no rule is
+carried by two of them. That is the shape Holmes ``pin-4`` prescribed when it
+sent this module into existence -- per-population homes -- expressed as an
+assertion instead of a convention.
 
 The three populations drift independently and fail for different reasons. A
 lead file rots when a tool is added and its row is not; a stream-agent file
@@ -853,4 +872,291 @@ def test_a_prove_side_surface_states_the_subagent_caller_rule(path: Path) -> Non
         f"stating the caller argument, so the read takes the lead default and "
         f"moves the lead's protocol on. Quote the constant rather than "
         f"paraphrasing it: {_SUBAGENT_CALLER_SENTENCE!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# fallout NFR-011 -- the home a prose rule is pinned in is DISCOVERED
+# ---------------------------------------------------------------------------
+
+#: This suite's test directory, the population the roster below is drawn from.
+_SUITE_TESTS = Path(__file__).resolve().parent
+
+#: Every prose-pin home the suite carries, DISCOVERED rather than listed. D-149
+#: found `_BRANCH_CLAUSES` pinned in a module fallout NFR-011 does not name; a
+#: third literal name would have gone stale the same way the second did, so the
+#: roster is a glob and a fourth population that earns its own home joins it by
+#: existing.
+PROSE_PIN_MODULES = tuple(
+    sorted(_SUITE_TESTS.glob("test_*_prose.py"), key=lambda p: p.name)
+)
+
+#: The two homes fallout NFR-011 names by literal. Asserted to be MEMBERS of
+#: the discovered roster, never asserted to be the whole of it: generalising
+#: the requirement is licensed, contradicting it is not.
+_NFR_011_NAMED_MODULES = ("test_protocol_prose.py", "test_lead_prose.py")
+
+
+def test_the_prose_pin_homes_are_discovered_and_carry_the_two_named_ones() -> None:
+    """fallout NFR-011: the roster is a glob, and the requirement's own two
+    names are still inside it.
+
+    Floor check for the two assertions below. A glob that matched nothing, or
+    that had quietly stopped matching the modules the requirement names, would
+    leave both of them passing over an empty or wrong population.
+    """
+    found = {p.name for p in PROSE_PIN_MODULES}
+    missing = sorted(set(_NFR_011_NAMED_MODULES) - found)
+    assert not missing, (
+        f"{missing} no longer discover into PROSE_PIN_MODULES. fallout "
+        f"NFR-011 names them as homes a prose rule may be pinned in; this "
+        f"module generalises that list to whatever the glob finds, which is "
+        f"only honest while the two it names are among them. A renamed module "
+        f"is fixed by renaming it back or by amending the requirement -- not "
+        f"by dropping the name from here. Found: {sorted(found)}"
+    )
+    assert Path(__file__).name in found, (
+        f"this module is not in its own discovered roster, so the glob "
+        f"{_SUITE_TESTS.name}/test_*_prose.py no longer describes where prose "
+        f"rules live. Found: {sorted(found)}"
+    )
+
+
+@pytest.mark.parametrize("path", PINNED_FILES, ids=_rel)
+def test_this_module_declares_the_population_it_pins(path: Path) -> None:
+    """fallout NFR-011 / D-149: a home states, in full, which files it pins.
+
+    This is what makes a discovered roster usable in place of the two-name
+    literal. A reader holding `skills/prove/SKILL.md` and asking which module
+    pins its rulings gets an answer by searching the homes for that path --
+    which only works if every home spells its population out. The docstring
+    said ``skills/{prove,trace,sight,temper}/SKILL.md`` until D-149, and a
+    brace-glob answers no such search.
+    """
+    declared = path.relative_to(FOUNDRY_ROOT).as_posix()
+    assert declared in __doc__, (
+        f"this module's docstring does not name {declared}, which it pins "
+        f"throughout. fallout NFR-011 admits a home outside the two it names "
+        f"only while that home DECLARES its "
+        f"population; an undeclared file is pinned somewhere no audit of the "
+        f"requirement would look, which is the whole of D-149."
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [p for p in PROSE_PIN_MODULES if p.name != Path(__file__).name],
+    ids=lambda p: p.name,
+)
+def test_no_other_prose_home_carries_a_second_branch_clause_tuple(path: Path) -> None:
+    """fallout NFR-011, the one-spelling half: pinned in a home, not in two.
+
+    D-095 is the record of what a second copy costs -- two independent tuples
+    of one name, so rewording one surface left the other module green against
+    a sentence no file says any more. The remedy D-149 asks for is a rule
+    pinned in exactly one discovered home, so the check is for the tuple's
+    NAME rather than its interpolated strings: two of the five clauses are
+    f-strings over the vocabulary, and a text search for their values would
+    match any module that merely mentions a tier.
+    """
+    assert "_BRANCH_CLAUSES" not in path.read_text(encoding="utf-8"), (
+        f"{path.name} carries a second `_BRANCH_CLAUSES`. The AC-018 / AC-058 "
+        f"branch is pinned in this module and in no other; a second tuple is "
+        f"two spellings of one ruling free to drift apart, which is D-095 "
+        f"repeated rather than D-149 closed. Import this module's tuple if a "
+        f"second home genuinely needs it."
+    )
+
+
+# ---------------------------------------------------------------------------
+# fallout AC-031 / GI-002 -- a skill's tool grant reaches the doors its own
+# body sends it to
+# ---------------------------------------------------------------------------
+#
+# D-108 / D-109. `skills/trace/SKILL.md` and `skills/prove/SKILL.md` declared
+# `allowed-tools: Read, Grep, Glob, Bash` with `context: fork` while their
+# bodies mandated `Foundry-Next`, `Foundry-Defect` and `Foundry-Stream` -- so
+# the recording obligation fallout AC-031 puts on each of them was unreachable
+# on the file's own stated contract. Both are `user_invocable`, so a direct
+# `/foundry:trace` runs on that grant; the F2 streams survived only because
+# the tracer and assayer agents that wrap them carry a broader one, which made
+# the skill's stated contract and the only path it works on two different
+# things.
+#
+# The grant is not widened to a wildcard. Each skill is a READ-ONLY stream that
+# says so in its own body, and the narrow grant is the only machinery behind
+# that sentence; the doors added are exactly the ones the body sends the runner
+# to, and the run-lifecycle doors stay out.
+
+#: Every door the server registers, read from the dispatch table rather than
+#: typed -- the `_PYTEST_DISCOVERY_PHRASE` shape. A door renamed moves this set
+#: with it, so a grant left on the old spelling fails HERE rather than sending
+#: a stream to a tool the boundary does not carry.
+_REGISTERED_DOORS = frozenset(foundry_server._DISPATCH)
+
+#: The run-lifecycle doors a verification stream only ever reads ABOUT. Both
+#: skills name all three while describing what the LEAD does with them, and
+#: neither is ever told to call one: `Foundry-Phase` transitions the run,
+#: `Foundry-Gate` reports a transition's preconditions and `Foundry-Init`
+#: writes the run's settings before any stream exists. Granting them to a
+#: forked read-only stream would let an INSPECT pass move the phase it is
+#: verifying. Subtracting them is what makes the derivation below reproduce
+#: D-108's and D-109's own enumerations exactly.
+_LIFECYCLE_DOORS = frozenset({"Foundry-Phase", "Foundry-Gate", "Foundry-Init"})
+
+#: The two MCP server aliases every grant must name a door under: the plugin
+#: registration and a direct `.mcp.json` one. `agents/spec-test-deriver.md`
+#: narrows a verification stream the same way and names both, because a run
+#: reaching the server by the other route finds the door ungranted.
+_ALIAS_PREFIXES = ("mcp__plugin_foundry_foundry__", "mcp__foundry__")
+
+#: Tools that mutate the working tree. A stream granted one can fix what it was
+#: sent to report, which is the first sentence of `skills/trace/SKILL.md`'s own
+#: stream paragraph ("DO NOT fix findings") losing its enforcement.
+_MUTATION_TOOLS = frozenset({"Write", "Edit", "NotebookEdit", "Agent", "Task"})
+
+
+def _frontmatter_and_body(path: Path) -> tuple[str, str]:
+    """A prose file split at its frontmatter fence.
+
+    The split is load-bearing rather than tidy: a grant entry spells its door
+    name in full, so a body scan run over the whole file would find every door
+    the grant already names and report a grant that satisfies itself.
+    """
+    text = _read(path)
+    assert text.startswith("---\n"), f"{_rel(path)} opens with no frontmatter fence"
+    front, _, body = text[4:].partition("\n---\n")
+    assert body, f"{_rel(path)} has an unterminated frontmatter block"
+    return front, body
+
+
+def _declared_grant(path: Path) -> tuple[str, ...] | None:
+    """The file's `allowed-tools` entries, or None when it declares no grant.
+
+    None is not an empty grant -- a skill declaring no `allowed-tools` inherits
+    the session's tools and excludes nothing, which is why `sight` and `temper`
+    are outside the roster below rather than failing it.
+    """
+    front, _ = _frontmatter_and_body(path)
+    for line in front.split("\n"):
+        if line.startswith("allowed-tools:"):
+            return tuple(
+                entry.strip()
+                for entry in line.split(":", 1)[1].split(",")
+                if entry.strip()
+            )
+    return None
+
+
+def _doors_the_body_sends_the_runner_to(path: Path) -> tuple[str, ...]:
+    """Registered doors named in the file's body, minus the lifecycle three."""
+    _, body = _frontmatter_and_body(path)
+    return tuple(
+        sorted(
+            door
+            for door in _REGISTERED_DOORS - _LIFECYCLE_DOORS
+            if door in body
+        )
+    )
+
+
+#: The skills whose grant can EXCLUDE something, derived. A skill joins by
+#: declaring `allowed-tools` at all; `sight` and `temper` declare none and
+#: exclude nothing, and their absence here is the evidence D-108 read the two
+#: declarations as an error rather than a policy.
+GRANT_DECLARING_SKILLS = tuple(
+    p for p in VERIFICATION_SKILLS if _declared_grant(p) is not None
+)
+
+
+def test_the_grant_declaring_skill_roster_is_derived() -> None:
+    """Floor check: the grant assertions below sweep the two skills that have
+    one, and deleting a grant is not how they are made to pass.
+
+    A skill leaves this roster by dropping its `allowed-tools` line, which
+    reaches green by widening the grant to everything -- including the doors
+    that move the phase and the tools that edit the tree. The two skills are
+    named here so that the deletion fails rather than passes.
+    """
+    rel = {_rel(p) for p in GRANT_DECLARING_SKILLS}
+    assert rel == {_rel(PROVE_SKILL), _rel(TRACE_SKILL)}, (
+        f"GRANT_DECLARING_SKILLS derived {sorted(rel)}. `prove` and `trace` "
+        f"declare a narrow grant and `sight` and `temper` declare none. A "
+        f"skill that dropped its declaration widened its grant to the whole "
+        f"session -- every lifecycle door and every mutation tool included -- "
+        f"and the remedy for an under-granted read-only stream is naming the "
+        f"doors it calls, never deleting the line that keeps the rest out."
+    )
+    assert _LIFECYCLE_DOORS <= _REGISTERED_DOORS, (
+        f"{sorted(_LIFECYCLE_DOORS - _REGISTERED_DOORS)} are not registered "
+        f"doors. The subtraction they perform is what keeps a lifecycle door "
+        f"out of a verification stream's grant; a name the server no longer "
+        f"carries subtracts nothing and the exclusion goes quiet."
+    )
+
+
+@pytest.mark.parametrize("path", GRANT_DECLARING_SKILLS, ids=_rel)
+def test_a_skill_grants_every_door_its_body_sends_it_to(path: Path) -> None:
+    """fallout AC-031 / GI-002 (D-108, D-109): the stated contract and the
+    path it works on are the same thing.
+
+    Derived from the body rather than listed, so a clause added later that
+    names a new door fails here until the grant catches up -- which is the
+    class, not the two instances. `Validate-Report` is in both required sets
+    for exactly that reason: both bodies give it a direct imperative and
+    neither defect's `Foundry-`-prefixed sweep saw it.
+    """
+    grant = set(_declared_grant(path) or ())
+    required = _doors_the_body_sends_the_runner_to(path)
+    assert required, (
+        f"{_rel(path)} names no registered door in its body, so this "
+        f"assertion is sweeping nothing. A verification skill that names no "
+        f"door records no stream, which fallout AC-031 does not permit."
+    )
+    missing = sorted(
+        f"{prefix}{door}"
+        for door in required
+        for prefix in _ALIAS_PREFIXES
+        if f"{prefix}{door}" not in grant
+    )
+    assert not missing, (
+        f"{_rel(path)} declares `allowed-tools` and omits {missing}. Its own "
+        f"body sends the runner to {list(required)}, and `user_invocable` "
+        f"means a direct invocation runs on this grant and nothing else -- so "
+        f"an omitted door is a stream that cannot record itself, file a "
+        f"finding, or read its own width. Both aliases are required: a run "
+        f"reaching the server through the other registration finds the door "
+        f"ungranted and fails the same way."
+    )
+
+
+@pytest.mark.parametrize("path", GRANT_DECLARING_SKILLS, ids=_rel)
+def test_a_skill_grant_stays_read_only_and_stays_a_list(path: Path) -> None:
+    """The absence half of D-108's remedy: widen the grant, do not open it.
+
+    Positive assertions cannot see the shape this guards -- a grant rewritten
+    to a wildcard satisfies every door check above while re-admitting the
+    lifecycle doors and the mutation tools the narrow grant existed to keep
+    out. The read-only property is the skills' own: `skills/trace/SKILL.md`
+    opens its stream paragraph with "DO NOT fix findings. DO NOT spawn agents".
+    """
+    grant = set(_declared_grant(path) or ())
+    wildcards = sorted(entry for entry in grant if "*" in entry)
+    assert not wildcards, (
+        f"{_rel(path)}'s grant carries {wildcards}. A wildcard grants every "
+        f"door the server registers, `Foundry-Phase` included, so an INSPECT "
+        f"stream could transition the run it is verifying. Name the doors the "
+        f"body sends the runner to instead."
+    )
+    forbidden = sorted(
+        entry
+        for entry in grant
+        if entry in _MUTATION_TOOLS
+        or any(entry == f"{prefix}{door}" for prefix in _ALIAS_PREFIXES for door in _LIFECYCLE_DOORS)
+    )
+    assert not forbidden, (
+        f"{_rel(path)}'s grant carries {forbidden}. This skill is a read-only "
+        f"verification stream that says so in its own body; a grant carrying "
+        f"a mutation tool lets it fix what it was sent to report, and one "
+        f"carrying a lifecycle door lets it move the phase it is verifying."
     )

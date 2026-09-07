@@ -4,7 +4,7 @@ description: "Relentless spec-to-code verification with fresh eyes. Reads the sp
 user_invocable: true
 model: opus
 effort: max
-allowed-tools: Read, Grep, Glob, Bash
+allowed-tools: Read, Grep, Glob, Bash, mcp__plugin_foundry_foundry__Foundry-Context, mcp__plugin_foundry_foundry__Foundry-Defect, mcp__plugin_foundry_foundry__Foundry-Next, mcp__plugin_foundry_foundry__Foundry-Observation, mcp__plugin_foundry_foundry__Foundry-Stream, mcp__plugin_foundry_foundry__Foundry-Sync, mcp__plugin_foundry_foundry__Foundry-Verdict, mcp__plugin_foundry_foundry__Validate-Report, mcp__foundry__Foundry-Context, mcp__foundry__Foundry-Defect, mcp__foundry__Foundry-Next, mcp__foundry__Foundry-Observation, mcp__foundry__Foundry-Stream, mcp__foundry__Foundry-Sync, mcp__foundry__Foundry-Verdict, mcp__foundry__Validate-Report
 context: fork
 ---
 
