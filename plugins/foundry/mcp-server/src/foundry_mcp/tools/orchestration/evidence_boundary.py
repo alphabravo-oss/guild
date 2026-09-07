@@ -552,6 +552,32 @@ def _terminal_sweep_refusal(sweep: dict, door: str) -> dict:
 
     Names each log, exactly as `_sweep_refusal` does at the INSPECT boundaries,
     and names the door it refused so the lead knows which call to re-make.
+
+    fallout AC-035 / US-008 / CT-015 (D-148, then D-185) — AND IT BUILDS ITS
+    REMEDY THE SAME WAY, BECAUSE AC-035 NAMES BOTH DOORS.
+    ------------------------------------------------------------------------
+    D-148 was filed for exactly this shape — "the mechanism is right and the
+    door's own account of it is wrong" — and its fix reached ONE of the two
+    doors AC-035 names. `_sweep_refusal`, the INSPECT boundary, went through
+    `_sweep_remedy`; this function, the ASSAY / NYQUIST / DONE half of the same
+    rule, did not call it at all and hard-coded the very sentence the
+    `_SWEEP_REMEDIES` comment above names as wrong.
+
+    DRIVEN at the terminal door with an unparseable committed log:
+    `_terminal_evidence_refusal(...)` returned "Each log's `# evidence-cmd:` was
+    re-executed in a detached worktree at HEAD and its output no longer matches
+    what was committed ... Either the behaviour regressed, or the owning casting
+    must re-capture the log; then retry." A side-effect sentinel proved nothing
+    was re-executed, nothing had regressed, and re-capturing reproduces the
+    identical refusal — so the remedy the terminal door handed the lead was a
+    LOOP, on the one token whose whole point (US-008) is that a syntax mistake
+    costs a commit rather than a cycle.
+
+    The mechanical half of AC-035 was met at both doors all along — both parse
+    before executing and both refuse with the token — which is why the row's
+    behaviour passed while its sibling surface stayed wrong. That is the shape
+    US-001 exists to eliminate: a fix reaches every surface of its rule in the
+    same GRIND.
     """
     if sweep["error"]:
         return {
@@ -573,11 +599,8 @@ def _terminal_sweep_refusal(sweep: dict, door: str) -> dict:
         ),
         "hint": (
             "GI-002 sweeps the WHOLE corpus before ASSAY, NYQUIST and DONE. "
-            "Each log's `# evidence-cmd:` was re-executed in a detached "
-            "worktree at HEAD and its output no longer matches what was "
-            "committed — most often because a fix landed after the log was "
-            "captured. Either the behaviour regressed, or the owning casting "
-            "must re-capture the log; then retry."
+            + _sweep_remedy(sweep["mismatches"])
+            + " The phase has NOT advanced; retry when it reproduces."
         ),
         "mismatches": sweep["mismatches"],
         "evidence_sweep": sweep["record"],

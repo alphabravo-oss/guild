@@ -38,19 +38,7 @@ from foundry_mcp.tools.display import format_result
 # module for the rest of its function. The aliases are what `ORCHESTRATION`,
 # `owning_module` and every `monkeypatch.setattr` resolve through; individual
 # SYMBOLS are imported by name below, which is how the carved modules read.
-from foundry_mcp.tools.orchestration import directives as _directives
-from foundry_mcp.tools.orchestration import escalation as _escalation
-from foundry_mcp.tools.orchestration import evidence_boundary as _evidence_boundary
-from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
-from foundry_mcp.tools.orchestration import gates as _gates
-from foundry_mcp.tools.orchestration import guidance as _guidance
-from foundry_mcp.tools.orchestration import halt as _halt
-from foundry_mcp.tools.orchestration import report_seal as _report_seal
-from foundry_mcp.tools.orchestration import spend as _spend
-from foundry_mcp.tools.orchestration import streams as _streams
-from foundry_mcp.tools.orchestration import teams as _teams
 from foundry_mcp.tools.orchestration import transitions as _transitions
-from foundry_mcp.tools.orchestration import width as _width
 
 # fallout AC-014 — THE TWO SIBLING SUITES THE CARVE MUST KEEP REACHING.
 #
@@ -62,67 +50,18 @@ from foundry_mcp.tools.orchestration import width as _width
 # is. If either renames a symbol the ImportError says so by name, which is the
 # loud failure rather than the silent one.
 
-#: fallout FR-004 / AC-014 — WHAT `fo` USED TO MEAN, NOW THAT IT MEANS THIRTEEN
-#: THINGS.
-#:
-#: Every pin that read `Path(fo.__file__).read_text()` was asking about THE
-#: ORCHESTRATOR. That is thirteen files now, so the honest translation of the
-#: question is all thirteen — and it stays the honest translation when a
-#: fourteenth is added, which a hand-listed pair of modules would not.
-ORCHESTRATION = (
-    _report_seal, _escalation, _streams, _teams, _width, _evidence_boundary,
-    _spend, _halt, _gates, _transitions, _fix_gate, _directives, _guidance,
-)
-
-
-def orchestration_source() -> str:
-    """The concatenated source of every shipped orchestration module."""
-    return chr(10).join(
-        Path(m.__file__).read_text(encoding="utf-8") for m in ORCHESTRATION
-    )
-
-
-def owning_module(symbol: str):
-    """The orchestration module that DEFINES `symbol`.
-
-    A patch has to reach the module each CALLER resolves the name through, and
-    after the carve that is a binding per importer rather than one module
-    attribute. Patching only the module that defines a symbol leaves every
-    importer on the real one, which is the silent half of a broken pin.
-    """
-    for module in ORCHESTRATION:
-        value = vars(module).get(symbol)
-        if value is None:
-            continue
-        if getattr(value, "__module__", module.__name__) == module.__name__:
-            return module
-    for module in ORCHESTRATION:
-        if symbol in vars(module):
-            return module
-    raise AssertionError(f"no orchestration module defines {symbol!r}")
-
-
-def patch_everywhere(monkeypatch, name: str, value) -> None:
-    """Patch `name` in EVERY module that carries it.
-
-    fallout FR-004 / AC-014 — WHAT A MODULE-ATTRIBUTE PATCH USED TO MEAN.
-
-    There was one module, so patching it patched the only binding. After the
-    carve a symbol is imported BY NAME into each caller's namespace, so patching
-    the module that DEFINES it leaves every importer resolving the real one —
-    and a patch that reaches some callers and not others is worse than no patch,
-    because the drive then exercises a state no run can be in. This patches
-    every binding, which is the same fact the single module used to make true by
-    construction.
-    """
-    for module in (*ORCHESTRATION, artifacts, foundry_state):
-        if name in vars(module):
-            monkeypatch.setattr(module, name, value)
-
-
-def orchestration_has(symbol: str) -> bool:
-    """True when any orchestration module carries `symbol`."""
-    return any(symbol in vars(m) for m in ORCHESTRATION)
+# fallout FR-004 / AC-014 (D-183) — THE ROSTER AND ITS HELPERS COME FROM
+# `tests/orchestration/_env.py`, WHICH IS THE ONE PLACE THEY ARE STATED.
+#
+# This module carried its own byte-identical copy of a hand-typed thirteen-tuple
+# and of `orchestration_source`, `owning_module`, `patch_everywhere` and
+# `orchestration_has`. Fourteen copies of one roster is fourteen places to
+# forget a module, and `keyfiles.py` — shipped in cycle 5 — was forgotten in
+# every one of them: `owning_module` answered the IMPORTING module for
+# `covers_path` and raised for `owning_entries`, and `patch_everywhere` could
+# not reach a binding inside it. The roster is derived from the package
+# directory now, so there is one of it and it cannot go stale.
+from tests.orchestration._env import orchestration_has, owning_module, patch_everywhere  # noqa: F401
 
 from tests.orchestration._env import (  # noqa: F401
     _arm_ordering_token,
@@ -3714,6 +3653,88 @@ _LEDGER_PRIMITIVES = frozenset({
 })
 
 
+#: fallout AC-009 / FR-041 (D-177) — WHAT AN ENTRY POINT IS ALLOWED TO NAME
+#: BESIDES A READ: its own dispatch, and the shared rung every routine makes.
+#:
+#: `_token_preconditions` is the gate's dispatch and `_phase_transition` is the
+#: transition door's; `_halted_outcome` is the rung EVERY routine asks, so a
+#: door asking it is not asking a check the routine does not make — it is how a
+#: door decides whether its own protocol applies (the ordering token is not
+#: demanded of a run that has stopped). `_GateLadder` is a constructor.
+#:
+#: DELIBERATELY NOT `_SHARED_PRIMITIVES`: that set excuses `_load_json`, which
+#: is right for a rung loading a document and wrong for a DOOR loading one, for
+#: exactly the reason the branch window states one line up.
+_DOOR_DISPATCH = frozenset(
+    {"_token_preconditions", "_phase_transition", "_halted_outcome", "_GateLadder"}
+    | {f"_{token}_preconditions" for token in PHASE_TOKENS}
+)
+
+#: fallout AC-009 / CT-013 / FR-046 (D-177) — THE TWO READS BOTH DOORS MAKE
+#: OUTSIDE ANY ROUTINE, AND THE WHOLE OF WHAT IS TOLERATED THERE.
+#:
+#: `_artifact_guard` is the total parse check and `<marker>.exists` is the
+#: `.next-action-called` ordering token. Both are scoped `not halt_scoped` at
+#: BOTH doors — FR-046 says the halt token refuses on `_halt_preconditions` and
+#: nothing else, and CT-013 says the pair refuses the identical set, so a check
+#: one door makes and the other does not would break the pair.
+#:
+#: NAMED AS WELL AS COMPARED. Equality between the two doors alone would license
+#: a read added to both at once; naming them means a third entry is an edit
+#: somebody has to write an argument for, in a file whose subject is that
+#: neither door composes anything.
+_DOOR_PROTOCOL_READS = frozenset({"_artifact_guard", "<marker>.exists"})
+
+
+def _door_reads(source: str) -> set[str]:
+    """Every ledger or marker read an ENTRY POINT makes, minus its dispatch.
+
+    fallout AC-009 / FR-041 (D-177) — THE DOOR WINDOW, WHICH IS WIDER THAN THE
+    BRANCH WINDOW ON PURPOSE.
+
+    A branch is judged against `refusal_readers`, the set derived from what the
+    preconditions routines reach. That is right for a branch and blind at a
+    DOOR: `_artifact_guard` is a total read of every run artifact that REFUSES,
+    no routine calls it, so it can never enter a set derived from the routines —
+    and it sat at both doors invisible to the pin whose subject it is. Here the
+    subject is "does this door touch an artifact at all", so every private call
+    it makes counts, plus the stdlib spellings and the marker shape `_reads_in`
+    already knows.
+    """
+    found = _reads_in(source, set())
+    for node in ast.walk(ast.parse(textwrap.dedent(source))):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = (
+            func.id if isinstance(func, ast.Name)
+            else func.attr if isinstance(func, ast.Attribute)
+            else ""
+        )
+        if name.startswith("_"):
+            found.add(name)
+    return found - _DOOR_DISPATCH
+
+
+def _marker_receivers(source: str) -> list[str]:
+    """The expression each `.exists()` in `source` is asked of.
+
+    fallout AC-009 (D-177) — BECAUSE `<marker>.exists` IS ONE ENTRY HOWEVER MANY
+    MARKERS A DOOR READS. `_door_reads` collapses every marker read onto that
+    one name, so a SECOND marker read is invisible to it by name and a plant
+    beside the real one would pass. The receiver expression is what tells them
+    apart: both doors ask `fdir` (is there a run at all) and `nac` (the ordering
+    token), and a plant asks something else.
+    """
+    return sorted(
+        ast.unparse(node.func.value)
+        for node in ast.walk(ast.parse(textwrap.dedent(source)))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "exists"
+    )
+
+
 def test_neither_door_reads_a_ledger_outside_its_preconditions_routine():
     """fallout AC-009 / FR-041 / GI-011 / GI-029 — the AST pin.
 
@@ -3781,21 +3802,75 @@ def test_neither_door_reads_a_ledger_outside_its_preconditions_routine():
         | DOOR_PROTOCOL_READS
     )
 
-    def _called(fn) -> set[str]:
-        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
-        names: set[str] = set()
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            if isinstance(node.func, ast.Name):
-                names.add(node.func.id)
-            elif isinstance(node.func, ast.Attribute):
-                names.add(node.func.attr)
-        return names
+    # fallout AC-009 / FR-041 (D-177) — THE GATE HALF, WHICH USED TO ASSERT
+    # NEITHER OF AC-009's TWO CLAUSES.
+    # ----------------------------------------------------------------------
+    # AC-009 is "each gate branch AND each transition branch for a token calls
+    # its preconditions function and performs no other ledger or marker read".
+    # The transition half below does exactly that. The gate half was one line —
+    # `(_called(foundry_gate) & refusal_readers) - allowed` — and it asserted
+    # neither clause:
+    #
+    #   * NO PRESENCE ASSERTION AT ALL. Driven at HEAD by replacing
+    #     `_token_preconditions(` with `dict(` in a copy of the gate's source,
+    #     so the door called no routine whatsoever: the intersection stayed
+    #     empty and the pin stayed green.
+    #   * THE READER SET COULD ONLY EVER CONTAIN A READ SOME ROUTINE ALREADY
+    #     MAKES. `refusal_readers` is derived from what the routines reach, so
+    #     an inline read the routines do NOT make — which is precisely the read
+    #     AC-009 forbids — is outside it by construction. Driven with the two
+    #     plants D-161 taught this file to recognise at the branch window:
+    #     `json.loads((fdir / 'defects.json').read_text(...))` and a
+    #     `(fdir / '.planted-marker').exists()` beside a refusal. Both leaked
+    #     NOTHING through the gate half while the branch half names either one.
+    #
+    # AND THE TWO READS THE SHIPPED GATE ACTUALLY MAKES WERE INVISIBLE TO IT.
+    # `_artifact_guard(fdir)` — a total read of every run artifact, which
+    # REFUSES — and `nac.exists()` are both outside `refusal_readers` (58
+    # entries; neither name is in it). They are not a parity break today because
+    # `foundry_mark_phase_complete` makes the identical two, under the identical
+    # `halt_scoped` scoping. But "identical at both doors" was a fact nothing
+    # asserted, and it is the whole of CT-013 — so it is asserted here, from the
+    # SIBLING DOOR rather than from a list: the gate's reads outside its routine
+    # must be exactly the transition door's, and the pair must be exactly the
+    # two named below.
+    #
+    # THIS IS NOT `DOOR_PROTOCOL_READS` COMING BACK. That table excused a name
+    # inside a BRANCH, where the routine is the only thing entitled to read; the
+    # window here is the ENTRY POINT, whose preamble the transition half already
+    # does not judge (it judges branches). What is new is that the preamble is
+    # judged at all, that the two doors are held equal, and that the residue is
+    # two named entries rather than an open list.
+    gate_src = textwrap.dedent(inspect.getsource(foundry_gate))
+    door_src = textwrap.dedent(inspect.getsource(foundry_mark_phase_complete))
 
-    # The GATE composes nothing at any depth, so it is judged whole.
-    leaked = sorted((_called(foundry_gate) & refusal_readers) - allowed)
-    assert leaked == [], ("foundry_gate", leaked)
+    # (1) The gate NAMES its routine. One line, and the one the plant defeated.
+    assert "_token_preconditions(" in gate_src, (
+        "foundry_gate does not call _token_preconditions. A door that composes "
+        "its own checks is the disagreement CT-013 forbids, and it is the shape "
+        "this pin exists to make impossible (AC-009)."
+    )
+
+    # (2) Its reads outside that routine are the SIBLING DOOR's, exactly.
+    gate_protocol = _door_reads(gate_src)
+    door_protocol = _door_reads(door_src)
+    assert gate_protocol == door_protocol, {
+        "gate_only": sorted(gate_protocol - door_protocol),
+        "transition_only": sorted(door_protocol - gate_protocol),
+    }
+    assert gate_protocol == set(_DOOR_PROTOCOL_READS), sorted(gate_protocol)
+    # `fdir` is the run directory itself — "there is no run to gate at all",
+    # which precedes every question either door could ask — and `nac` is the
+    # ordering token. A third receiver is a marker one door consults and the
+    # other does not, which is the shape this whole pin measures.
+    assert (
+        _marker_receivers(gate_src) == _marker_receivers(door_src) == ["fdir", "nac"]
+    ), (_marker_receivers(gate_src), _marker_receivers(door_src))
+    # ...and `nac` is the ordering token at both, not some other marker wearing
+    # the same local name.
+    for name, src in (("foundry_gate", gate_src),
+                      ("foundry_mark_phase_complete", door_src)):
+        assert "nac = fdir / NEXT_ACTION_CALLED_MARKER" in src, name
 
     # The TRANSITION is judged per branch, above the refusal.
     branches = _transition_branches()
@@ -3861,6 +3936,70 @@ def test_the_branch_window_catches_a_marker_read_too():
     )
     preconditions, _effect = _split_at_the_refusal(planted)
     assert "<marker>.exists" in _reads_in(preconditions, set()), preconditions
+
+
+def test_the_door_window_catches_what_the_gate_half_used_to_miss():
+    """fallout AC-009 / FR-041 (D-177) — THE ANCHOR FOR THE GATE HALF.
+
+    A scan over clean source is green whether it works or not, and the gate half
+    of the pin above was green for three plants at once. Each is driven here
+    over a COPY of `foundry_gate`'s real source, so the recogniser is measured
+    on the exact shapes rather than asserted about.
+
+    The three, as D-177 drove them at HEAD against the old one-line gate half:
+
+      1. an inline ledger read spelled the way Python spells one;
+      2. a second marker-existence read beside the real one;
+      3. `_token_preconditions(` replaced outright, so the door called no
+         routine at all.
+
+    Every one of them left `leaked == []`. All three are named now, and the
+    third is named by the presence assertion rather than by a reader set, which
+    is why it needed a separate clause instead of a wider one.
+    """
+    real = textwrap.dedent(inspect.getsource(foundry_gate))
+
+    # (1) The stdlib spelling of a ledger read. Outside `refusal_readers` by
+    # construction — no routine makes it — so only the door window sees it.
+    ledger = real.replace(
+        "    if phase not in GATE_TO_TRANSITION:",
+        "    extra = json.loads((fdir / 'defects.json').read_text(encoding='utf-8'))\n"
+        "    if extra or phase not in GATE_TO_TRANSITION:",
+        1,
+    )
+    assert ledger != real, "the plant did not apply; the anchor is measuring nothing"
+    assert {"loads", "read_text"} <= _door_reads(ledger), sorted(_door_reads(ledger))
+    assert _door_reads(ledger) != set(_DOOR_PROTOCOL_READS)
+
+    # (2) A SECOND marker read. `_door_reads` collapses it onto the one
+    # `<marker>.exists` entry the real gate already earns, which is exactly why
+    # the receivers are compared as well.
+    marker = real.replace(
+        "    if phase not in GATE_TO_TRANSITION:",
+        "    if (fdir / '.planted-marker').exists():\n"
+        "        return {'phase': phase, 'passed': False, 'reason': 'planted'}\n"
+        "    if phase not in GATE_TO_TRANSITION:",
+        1,
+    )
+    assert marker != real, "the plant did not apply"
+    assert _door_reads(marker) == set(_DOOR_PROTOCOL_READS), (
+        "the name-level window cannot tell one marker read from two — which is "
+        "the whole reason `_marker_receivers` exists"
+    )
+    assert "fdir / '.planted-marker'" in _marker_receivers(marker), (
+        _marker_receivers(marker)
+    )
+    assert _marker_receivers(marker) != _marker_receivers(real)
+
+    # (3) The dispatch removed. No reader set can see this: the door simply
+    # stops calling anything, and an intersection with an empty side is empty.
+    dropped = real.replace("_token_preconditions(", "dict(")
+    assert dropped != real, "the plant did not apply"
+    assert "_token_preconditions(" not in dropped
+    assert _door_reads(dropped) == set(_DOOR_PROTOCOL_READS), (
+        "the reader set is unchanged by removing the dispatch, which is why the "
+        "presence assertion is a separate clause"
+    )
 
 
 def test_the_branch_window_catches_the_stdlib_spellings_of_a_ledger_read():
@@ -4390,6 +4529,76 @@ def test_inspect_start_is_refused_while_a_cross_casting_concern_is_open(run_env)
 
 
 
+@pytest.mark.parametrize("counter", ["four", None, -3, 2.5, [5], {"n": 5}])
+def test_an_unusable_cycle_counter_does_not_open_the_concern_door(run_env, counter):
+    """fallout ST-005 / GI-023 / AC-004 / OT-004 (D-180, concern C-082) — THE
+    SECOND ROUTE TO D-158's FAIL-OPEN.
+
+    D-158 closed the route through an unreadable LEDGER and named this one in a
+    comment, deferring it to C-082 because the distinguisher belonged to another
+    casting's file. C-082 is closed and the fail-open was still live, so it is
+    closed here from the leaf reader that already answers the question.
+
+    THE ROUTE. The rung scopes on exact cycle equality, and `current_cycle`
+    answers 0 for a missing, absent OR MALFORMED counter — deliberately, so
+    every reader gets a usable integer. A `state.json` carrying `"cycle":
+    "four"` therefore made the rung look for CYCLE-0 concerns only, and the
+    concern filed at cycle 5 was invisible: `no_open_cross_casting_concerns (0)`
+    ok True, the routine passed, and the real `Foundry-Phase('inspect_start')`
+    SUCCEEDED — F3 to F2 with the cross-casting concern still open, which is
+    GI-023's named violation reached through the counter instead of the ledger.
+
+    Driven over every shape `as_count` folds onto 0 — a string, null, a
+    negative, a float, a list and a mapping — because "malformed" is a set, not
+    an example, and a fix keyed to one spelling would leave the other five.
+    """
+    from foundry_mcp.tools.concerns import foundry_concern
+
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        2: (["FR-007"], ["src/two.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=5)
+    opened = foundry_concern(
+        casting_id=1, cycle=5, target="src/two.py",
+        text="the fix reaches casting 2's own spelling of this rule",
+        project_root=project_root,
+    )
+    assert opened.get("error") is None, opened
+    concern_id = opened["concern"]["id"]
+
+    # The control, on the untouched counter: the rung refuses by id.
+    _arm_ordering_token(fdir)
+    control = foundry_mark_phase_complete("inspect_start", project_root)
+    assert control.get("ok") is not True and concern_id in control["error"], control
+
+    # Now break the counter and nothing else.
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    state["cycle"] = counter
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    assert current_cycle(fdir) == 0, (counter, current_cycle(fdir))
+
+    # The GATE reports it as a failing rung...
+    reported = foundry_gate("inspect_start", project_root)
+    rung = [c for c in reported.get("checklist", [])
+            if c["check"].startswith("no_open_cross_casting_concerns")]
+    assert rung and rung[0]["ok"] is False, (counter, reported)
+
+    # ...and the TRANSITION refuses on it, naming the concern, with the run's
+    # recorded phase unchanged. This is the assertion that was False for all
+    # six shapes: the call SUCCEEDED and the phase advanced to F2.
+    _arm_ordering_token(fdir)
+    refused = foundry_mark_phase_complete("inspect_start", project_root)
+    assert refused.get("ok") is not True, (counter, refused)
+    assert concern_id in refused["error"], (counter, refused)
+    assert json.loads(
+        (fdir / "state.json").read_text(encoding="utf-8")
+    )["phase"] == "F3", counter
+
+
+
+
 def test_a_concern_closed_with_a_reason_also_clears_the_door(run_env):
     """fallout ST-004 / AC-004 — the OTHER exit, which costs a decision."""
     from foundry_mcp.tools.concerns import foundry_concern
@@ -4477,24 +4686,25 @@ def test_a_wrong_shaped_concern_ledger_refuses_instead_of_answering_none(run_env
 
 
 def test_the_concern_scope_still_narrows_to_the_counter_the_leaf_reports(run_env):
-    """fallout ST-005 / GI-023 (D-158, concern C-082) — the route this fix does
-    NOT close, pinned so it cannot be mistaken for closed.
+    """fallout ST-005 / GI-023 / AC-004 (D-158, D-180, concern C-082) — THE
+    INVERSION THIS TEST WAS WRITTEN TO WAIT FOR, AND THE HALF IT MUST KEEP.
 
-    The rung scopes on exact cycle equality and `foundry_state.current_cycle`
-    answers 0 for a MALFORMED counter as well as an absent one, so a `state.json`
-    carrying a non-integer `cycle` makes the rung look for cycle-0 concerns only
-    and a concern filed at cycle 4 goes unseen. The honest reading of an unknown
-    scope is every open cross-casting concern.
+    It used to assert the FAIL-OPEN: with a malformed counter the rung reported
+    `no_open_cross_casting_concerns` ok True and a concern filed at cycle 4 went
+    unseen. Its own docstring said it "INVERTS the day the leaf reader lands —
+    which is what makes it the anchor for that change rather than an excuse for
+    the gap". The reader landed (`derive_cycle_count`'s `sources.state_cycle`,
+    which is the (value, problem) distinction C-082 asked for, already in the
+    leaf), so this is the inverted half; the malformed shapes themselves are
+    driven one file down in
+    `test_an_unusable_cycle_counter_does_not_open_the_concern_door`.
 
-    Closing it needs the raw value, and
-    `test_module_boundaries.py#test_every_state_cycle_read_goes_through_a_guarded_reader`
-    forbids that read outside the leaf's total readers — it caught the first
-    attempt at this arm by name. The distinguisher belongs beside `current_cycle`
-    in the (value, problem) shape `rosters.roster_length` uses; that file is
-    casting 10's, so C-082 carries it. This test asserts the CURRENT behaviour
-    so the gap is recorded rather than silent, and it INVERTS the day the leaf
-    reader lands — which is what makes it the anchor for that change rather than
-    an excuse for the gap.
+    WHAT THIS ASSERTS NOW IS THE OTHER DIRECTION, which the widening must not
+    have destroyed: on a HEALTHY counter the scope still NARROWS. ST-005 is
+    about "a concern from the closing GRIND", so a concern stamped with a
+    different cycle does not hold this door — and a fix that answered "every
+    open concern, always" would have closed the fail-open by blocking crossings
+    ST-005 never asked to block.
     """
     from foundry_mcp.tools.concerns import foundry_concern
 
@@ -4510,16 +4720,13 @@ def test_the_concern_scope_still_narrows_to_the_counter_the_leaf_reports(run_env
         project_root=project_root,
     )
     concern_id = opened["concern"]["id"]
-    # The control: with the counter intact the rung refuses by id.
+    # The control: with the counter intact and the stamps agreeing, it refuses.
     assert concern_id in _inspect_start_preconditions(fdir, project_root)["reason"]
 
-    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
-    state["cycle"] = "four"
-    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
-    # The arrangement reaches the route: the counter reads 0, not 4, and it is
-    # the leaf's documented answer for a malformed value rather than a bug here.
-    assert current_cycle(fdir) == 0
-
+    # The counter moves on, honestly. The concern is now from an EARLIER GRIND,
+    # and this door is about the one that just closed.
+    _write_state(fdir, phase="F3", cycle=5)
+    assert current_cycle(fdir) == 5
     outcome = _inspect_start_preconditions(fdir, project_root)
     named = [c for c in outcome["checklist"]
              if c["check"].startswith("no_open_cross_casting_concerns")]

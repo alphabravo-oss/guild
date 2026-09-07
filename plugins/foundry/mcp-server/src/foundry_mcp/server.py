@@ -720,7 +720,29 @@ async def list_tools() -> list[Tool]:
                     "classification": {
                         "type": "string",
                         "enum": sorted(OBSERVATION_CLASSES),
-                        "description": "Optional — derived from the description when omitted.",
+                        # fallout CT-017 / GI-027 / AC-018 (D-182) — THE WHOLE
+                        # TEMPER_CANDIDATE CONTRACT WAS INVISIBLE ON THE SURFACE
+                        # OF THE DOOR THAT OWNS IT.
+                        #
+                        # "Optional — derived from the description when omitted"
+                        # was the entirety of what a PROVE sub-agent reading
+                        # this schema learned, and only the four COMMENT-PROSE
+                        # classes are derivable: `TEMPER_CANDIDATE` is reachable
+                        # ONLY by declaring it, so a caller who read this
+                        # sentence and omitted the field could never record one.
+                        "description": (
+                            "Optional for the four comment-prose classes — "
+                            "derived from the description when omitted. "
+                            "TEMPER_CANDIDATE is NOT derivable and is reachable "
+                            "only by declaring it here: it is CT-017's channel "
+                            "for a probe idea PROVE has not driven, and TEMPER "
+                            "reads it back with "
+                            "Foundry-Observations(classification=TEMPER_CANDIDATE). "
+                            "Declaring it also lifts the target_kind='comment' "
+                            "requirement below, because a candidate's subject is "
+                            "code and nothing has been shown to be wrong about "
+                            "it yet."
+                        ),
                     },
                     # D-074 — NO "default" KEY. jsonschema.validate never
                     # applies schema defaults, so this one was inert as
@@ -729,19 +751,46 @@ async def list_tools() -> list[Tool]:
                     # dispatch lambda below then made that true. Absence must
                     # travel to the writer AS absence, so it reaches the
                     # NON_COMMENT branch that fails the demotion closed.
+                    # fallout CT-017 / GI-027 / AC-018 / FR-044 (D-182) — THE
+                    # ONE EXCEPTION THE HANDLER HAS AND THIS SENTENCE DENIED.
+                    #
+                    # Every clause below was true for the comment-prose classes
+                    # and FALSE for TEMPER_CANDIDATE, whose whole subject is
+                    # code. Driven twice at HEAD: in-process,
+                    # `foundry_add_observation(classification='TEMPER_CANDIDATE')`
+                    # with NO target_kind was ACCEPTED with no tripwire, and so
+                    # was the same call with target_kind='code'; and over the
+                    # real wire this cycle PROVE recorded a TEMPER_CANDIDATE
+                    # with no target_kind at all.
+                    #
+                    # It mattered past cosmetics because this schema is the
+                    # surface a PROVE sub-agent reads at dispatch, and the last
+                    # sentence instructed precisely GI-027's named violation —
+                    # "PROVE filing a candidate as a defect". A TEMPER-on run
+                    # whose PROVE obeyed it routed every off-row probe idea into
+                    # Foundry-Defect instead of the candidate ledger, which is
+                    # the outcome AC-018 and FR-044 exist to prevent.
                     "target_kind": {
                         "type": "string",
                         "description": (
-                            "REQUIRED IN PRACTICE, and only 'comment' is "
-                            "accepted: recording an observation IS a demotion "
-                            "out of the blocking defect ledger, so the "
-                            "declaration must be made rather than assumed. "
-                            "Omitting the field is refused server-side under "
-                            "the NON_COMMENT denylist entry and fires the "
-                            "audit tripwire, exactly as a present non-comment "
-                            "value does. A finding about code — a function, a "
-                            "handler, a wiring path — is a defect and belongs "
-                            "in Foundry-Defect."
+                            "REQUIRED IN PRACTICE for every comment-prose "
+                            "class, and only 'comment' is accepted there: "
+                            "recording an observation IS a demotion out of the "
+                            "blocking defect ledger, so the declaration must be "
+                            "made rather than assumed. Omitting the field is "
+                            "refused server-side under the NON_COMMENT denylist "
+                            "entry and fires the audit tripwire, exactly as a "
+                            "present non-comment value does. A finding that "
+                            "something about code IS WRONG — a function, a "
+                            "handler, a wiring path — is a defect and belongs in "
+                            "Foundry-Defect. THE ONE EXCEPTION is a declared "
+                            "classification='TEMPER_CANDIDATE': that class is "
+                            "not about comment prose at all but about a probe "
+                            "nobody has driven yet, so the subject rung does not "
+                            "apply to it and this field may be omitted. A "
+                            "candidate is NOT a defect and must not be filed as "
+                            "one; the three never-demote CLAIM entries still "
+                            "apply to it unchanged."
                         ),
                     },
                     "spec_ref": {"type": "string"},

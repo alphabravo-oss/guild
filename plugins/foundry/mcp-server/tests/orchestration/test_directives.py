@@ -8,6 +8,7 @@ that no longer exists.
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import re
 import tempfile
@@ -26,18 +27,6 @@ from foundry_mcp.tools.display import format_result
 # `owning_module` and every `monkeypatch.setattr` resolve through; individual
 # SYMBOLS are imported by name below, which is how the carved modules read.
 from foundry_mcp.tools.orchestration import directives as _directives
-from foundry_mcp.tools.orchestration import escalation as _escalation
-from foundry_mcp.tools.orchestration import evidence_boundary as _evidence_boundary
-from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
-from foundry_mcp.tools.orchestration import gates as _gates
-from foundry_mcp.tools.orchestration import guidance as _guidance
-from foundry_mcp.tools.orchestration import halt as _halt
-from foundry_mcp.tools.orchestration import report_seal as _report_seal
-from foundry_mcp.tools.orchestration import spend as _spend
-from foundry_mcp.tools.orchestration import streams as _streams
-from foundry_mcp.tools.orchestration import teams as _teams
-from foundry_mcp.tools.orchestration import transitions as _transitions
-from foundry_mcp.tools.orchestration import width as _width
 
 # fallout AC-014 — THE TWO SIBLING SUITES THE CARVE MUST KEEP REACHING.
 #
@@ -49,68 +38,17 @@ from foundry_mcp.tools.orchestration import width as _width
 # is. If either renames a symbol the ImportError says so by name, which is the
 # loud failure rather than the silent one.
 
-#: fallout FR-004 / AC-014 — WHAT `fo` USED TO MEAN, NOW THAT IT MEANS THIRTEEN
-#: THINGS.
-#:
-#: Every pin that read `Path(fo.__file__).read_text()` was asking about THE
-#: ORCHESTRATOR. That is thirteen files now, so the honest translation of the
-#: question is all thirteen — and it stays the honest translation when a
-#: fourteenth is added, which a hand-listed pair of modules would not.
-ORCHESTRATION = (
-    _report_seal, _escalation, _streams, _teams, _width, _evidence_boundary,
-    _spend, _halt, _gates, _transitions, _fix_gate, _directives, _guidance,
-)
-
-
-def orchestration_source() -> str:
-    """The concatenated source of every shipped orchestration module."""
-    return chr(10).join(
-        Path(m.__file__).read_text(encoding="utf-8") for m in ORCHESTRATION
-    )
-
-
-def owning_module(symbol: str):
-    """The orchestration module that DEFINES `symbol`.
-
-    A patch has to reach the module each CALLER resolves the name through, and
-    after the carve that is a binding per importer rather than one module
-    attribute. Patching only the module that defines a symbol leaves every
-    importer on the real one, which is the silent half of a broken pin.
-    """
-    for module in ORCHESTRATION:
-        value = vars(module).get(symbol)
-        if value is None:
-            continue
-        if getattr(value, "__module__", module.__name__) == module.__name__:
-            return module
-    for module in ORCHESTRATION:
-        if symbol in vars(module):
-            return module
-    raise AssertionError(f"no orchestration module defines {symbol!r}")
-
-
-def patch_everywhere(monkeypatch, name: str, value) -> None:
-    """Patch `name` in EVERY module that carries it.
-
-    fallout FR-004 / AC-014 — WHAT A MODULE-ATTRIBUTE PATCH USED TO MEAN.
-
-    There was one module, so patching it patched the only binding. After the
-    carve a symbol is imported BY NAME into each caller's namespace, so patching
-    the module that DEFINES it leaves every importer resolving the real one —
-    and a patch that reaches some callers and not others is worse than no patch,
-    because the drive then exercises a state no run can be in. This patches
-    every binding, which is the same fact the single module used to make true by
-    construction.
-    """
-    for module in (*ORCHESTRATION, artifacts, foundry_state):
-        if name in vars(module):
-            monkeypatch.setattr(module, name, value)
-
-
-def orchestration_has(symbol: str) -> bool:
-    """True when any orchestration module carries `symbol`."""
-    return any(symbol in vars(m) for m in ORCHESTRATION)
-
+# fallout FR-004 / AC-014 (D-183) — THE ROSTER AND ITS HELPERS COME FROM
+# `tests/orchestration/_env.py`, WHICH IS THE ONE PLACE THEY ARE STATED.
+#
+# This module carried its own byte-identical copy of a hand-typed thirteen-tuple
+# and of `orchestration_source`, `owning_module`, `patch_everywhere` and
+# `orchestration_has`. Fourteen copies of one roster is fourteen places to
+# forget a module, and `keyfiles.py` — shipped in cycle 5 — was forgotten in
+# every one of them: `owning_module` answered the IMPORTING module for
+# `covers_path` and raised for `owning_entries`, and `patch_everywhere` could
+# not reach a binding inside it. The roster is derived from the package
+# directory now, so there is one of it and it cannot go stale.
 from tests.orchestration._env import (  # noqa: F401
     _arm_ordering_token,
     _defect_ledger,
@@ -123,6 +61,7 @@ from tests.orchestration._env import (  # noqa: F401
 
 from foundry_mcp.tools.orchestration.escalation import (  # noqa: F401
     DIRECTIVE_HEADERS,
+    parse_directive_blocks,
 )
 
 from foundry_mcp.tools.orchestration.directives import (  # noqa: F401
@@ -358,8 +297,20 @@ def test_the_injection_guard_and_the_parser_read_one_grammar():
     """The forgery worked because the writer did not know what the reader
     treated as structure. Two hand-kept copies is the defect; this pins that
     both sides read the same constants."""
-    source = orchestration_source()
-    parser = source.split("def parse_directive_blocks")[1]
+    # fallout AC-014 / OT-016 (D-183) — THE SUBJECT IS THE FUNCTION, NOT
+    # "EVERYTHING AFTER ITS `def` IN A CONCATENATION".
+    #
+    # These two windows were `orchestration_source().split("def <name>")[1]`,
+    # which is the WHOLE REST of the concatenated package — every module joined
+    # after the one holding the def. That was only ever narrow by accident of
+    # the roster's hand-typed order: `directives` sat second-to-last, so the
+    # tail happened to be short. The moment the roster became derived (and so
+    # alphabetical) the `_read_directives` window swallowed twelve more modules
+    # and the "re-types the literal" assertion failed on a literal three files
+    # away. `inspect.getsource` asks for the function, which is what the pin
+    # means and what reality.md's monolith-split note says survives a move: a
+    # getsource pin follows the function object.
+    parser = inspect.getsource(parse_directive_blocks)
 
     assert DIRECTIVE_HEADERS == ("### [URGENT]", "### [DIRECTIVE]")
     for name in ("DIRECTIVE_HEADER_URGENT", "DIRECTIVE_HEADER_NORMAL"):
@@ -372,7 +323,7 @@ def test_the_injection_guard_and_the_parser_read_one_grammar():
     # inverted into a leaf, so the pin follows the parse; `_read_directives`
     # keeps its name and home and now CALLS it, which is what makes "both sides
     # read the same constants" true of three surfaces instead of two.
-    reader = source.split("def _read_directives")[1]
+    reader = inspect.getsource(_read_directives)
     assert "parse_directive_blocks(" in reader, (
         "_read_directives no longer reaches the one parse"
     )

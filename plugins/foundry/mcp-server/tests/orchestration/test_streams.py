@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 from foundry_mcp.schemas import vocab
-from foundry_mcp.tools import artifacts, foundry_state
+from foundry_mcp.tools import artifacts
 
 # fallout FR-004 / AC-013 — THE MODULE OBJECTS, UNDER UNDERSCORE ALIASES.
 #
@@ -22,18 +22,7 @@ from foundry_mcp.tools import artifacts, foundry_state
 # module for the rest of its function. The aliases are what `ORCHESTRATION`,
 # `owning_module` and every `monkeypatch.setattr` resolve through; individual
 # SYMBOLS are imported by name below, which is how the carved modules read.
-from foundry_mcp.tools.orchestration import directives as _directives
-from foundry_mcp.tools.orchestration import escalation as _escalation
-from foundry_mcp.tools.orchestration import evidence_boundary as _evidence_boundary
-from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
-from foundry_mcp.tools.orchestration import gates as _gates
-from foundry_mcp.tools.orchestration import guidance as _guidance
-from foundry_mcp.tools.orchestration import halt as _halt
-from foundry_mcp.tools.orchestration import report_seal as _report_seal
-from foundry_mcp.tools.orchestration import spend as _spend
 from foundry_mcp.tools.orchestration import streams as _streams
-from foundry_mcp.tools.orchestration import teams as _teams
-from foundry_mcp.tools.orchestration import transitions as _transitions
 from foundry_mcp.tools.orchestration import width as _width
 
 # fallout AC-014 — THE TWO SIBLING SUITES THE CARVE MUST KEEP REACHING.
@@ -46,67 +35,17 @@ from foundry_mcp.tools.orchestration import width as _width
 # is. If either renames a symbol the ImportError says so by name, which is the
 # loud failure rather than the silent one.
 
-#: fallout FR-004 / AC-014 — WHAT `fo` USED TO MEAN, NOW THAT IT MEANS THIRTEEN
-#: THINGS.
-#:
-#: Every pin that read `Path(fo.__file__).read_text()` was asking about THE
-#: ORCHESTRATOR. That is thirteen files now, so the honest translation of the
-#: question is all thirteen — and it stays the honest translation when a
-#: fourteenth is added, which a hand-listed pair of modules would not.
-ORCHESTRATION = (
-    _report_seal, _escalation, _streams, _teams, _width, _evidence_boundary,
-    _spend, _halt, _gates, _transitions, _fix_gate, _directives, _guidance,
-)
-
-
-def orchestration_source() -> str:
-    """The concatenated source of every shipped orchestration module."""
-    return chr(10).join(
-        Path(m.__file__).read_text(encoding="utf-8") for m in ORCHESTRATION
-    )
-
-
-def owning_module(symbol: str):
-    """The orchestration module that DEFINES `symbol`.
-
-    A patch has to reach the module each CALLER resolves the name through, and
-    after the carve that is a binding per importer rather than one module
-    attribute. Patching only the module that defines a symbol leaves every
-    importer on the real one, which is the silent half of a broken pin.
-    """
-    for module in ORCHESTRATION:
-        value = vars(module).get(symbol)
-        if value is None:
-            continue
-        if getattr(value, "__module__", module.__name__) == module.__name__:
-            return module
-    for module in ORCHESTRATION:
-        if symbol in vars(module):
-            return module
-    raise AssertionError(f"no orchestration module defines {symbol!r}")
-
-
-def patch_everywhere(monkeypatch, name: str, value) -> None:
-    """Patch `name` in EVERY module that carries it.
-
-    fallout FR-004 / AC-014 — WHAT A MODULE-ATTRIBUTE PATCH USED TO MEAN.
-
-    There was one module, so patching it patched the only binding. After the
-    carve a symbol is imported BY NAME into each caller's namespace, so patching
-    the module that DEFINES it leaves every importer resolving the real one —
-    and a patch that reaches some callers and not others is worse than no patch,
-    because the drive then exercises a state no run can be in. This patches
-    every binding, which is the same fact the single module used to make true by
-    construction.
-    """
-    for module in (*ORCHESTRATION, artifacts, foundry_state):
-        if name in vars(module):
-            monkeypatch.setattr(module, name, value)
-
-
-def orchestration_has(symbol: str) -> bool:
-    """True when any orchestration module carries `symbol`."""
-    return any(symbol in vars(m) for m in ORCHESTRATION)
+# fallout FR-004 / AC-014 (D-183) — THE ROSTER AND ITS HELPERS COME FROM
+# `tests/orchestration/_env.py`, WHICH IS THE ONE PLACE THEY ARE STATED.
+#
+# This module carried its own byte-identical copy of a hand-typed thirteen-tuple
+# and of `orchestration_source`, `owning_module`, `patch_everywhere` and
+# `orchestration_has`. Fourteen copies of one roster is fourteen places to
+# forget a module, and `keyfiles.py` — shipped in cycle 5 — was forgotten in
+# every one of them: `owning_module` answered the IMPORTING module for
+# `covers_path` and raised for `owning_entries`, and `patch_everywhere` could
+# not reach a binding inside it. The roster is derived from the package
+# directory now, so there is one of it and it cannot go stale.
 
 from tests.orchestration._env import (  # noqa: F401
     _old_marker_body,
@@ -875,6 +814,60 @@ def test_a_server_narrowed_stream_records_the_width_it_was_given(run_env):
     # number a later reader cannot interpret.
     assert narrowed["measured_against"] == "delta_width", narrowed
     assert narrowed["roster_length"] == 84, narrowed
+
+
+def test_the_narrowed_cycle_still_bounds_items_total_by_the_roster(run_env):
+    """fallout ST-008 / CT-003 / FR-050 / OT-031 (D-179) — THE STAND-DOWN
+    LOWERED THE BOUND; IT DID NOT REMOVE IT.
+
+    D-156's fix wrote `and not narrowed_by_the_server` onto an EQUALITY, which
+    left a DELTA cycle's declared population unconstrained in BOTH directions.
+    Driven at HEAD against exactly the arrangement above — an 84-item
+    `rosters/trace.json` with the cycle recorded DELTA for trace —
+    `items_total=999` and `items_total=100000` both returned ok True: a declared
+    population larger than the FULL roster, on a cycle whose width is by
+    definition NARROWER than it.
+
+    The direction is what survives the narrowing. A width drawn FROM the roster
+    cannot exceed it, so `items_total <= roster_len` holds on a DELTA cycle
+    exactly as `items_total == roster_len` holds on a FULL one, and nothing in
+    ST-008's guard or CT-003's errors column sanctions a total above the roster
+    at any width.
+
+    THE FAILING-THEN-PASSING PAIR IS IN ONE TEST because the bound has two
+    sides and only one of them moved: 6 of 84 stays accepted (D-156's whole
+    point), and 999 of 84 is refused.
+    """
+    from foundry_mcp.tools.rosters import foundry_roster
+
+    project_root, fdir = run_env
+    _delta_scope(fdir, "trace")
+    assert foundry_roster(
+        stream="trace", items=[f"src/f{n}.py#S{n}" for n in range(84)],
+        project_root=project_root,
+    ).get("error") is None
+
+    # The side D-156 opened, unchanged: a narrower total is the drawn width.
+    assert foundry_mark_stream("trace", 0, 6, 6, 0, project_root).get("ok") is True
+
+    # The side D-156 opened by accident, closed.
+    for over in (85, 999, 100000):
+        refused = foundry_mark_stream("trace", 0, 1, over, 0, project_root)
+        assert refused.get("ok") is not True, (over, refused)
+        assert refused["error"] == ROSTER_MISMATCH, (over, refused)
+        assert refused["roster_length"] == 84, refused
+        assert refused["items_total"] == over, refused
+        # The refusal says which population it was measured against and why the
+        # narrowing does not excuse this direction.
+        assert refused["measured_against"] == "delta_width", refused
+        assert "DELTA" in refused["reason"], refused["reason"]
+        # ...and the hint names a number this door actually accepts, rather
+        # than the roster length a narrowed cycle must not report.
+        assert "at most 84" in refused["hint"], refused["hint"]
+
+    # The boundary itself is accepted: 84 of 84 is a DELTA that happened to draw
+    # the whole roster, which is a width, not an over-declaration.
+    assert foundry_mark_stream("trace", 0, 84, 84, 0, project_root).get("ok") is True
 
 
 def test_the_roster_rung_still_refuses_on_a_width_the_server_did_not_narrow(run_env):

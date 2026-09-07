@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import json
 
-from pathlib import Path
 
 
-from foundry_mcp.tools import artifacts, foundry_state
+from foundry_mcp.tools import artifacts
 
 # fallout FR-004 / AC-013 — THE MODULE OBJECTS, UNDER UNDERSCORE ALIASES.
 #
@@ -21,18 +20,6 @@ from foundry_mcp.tools import artifacts, foundry_state
 # module for the rest of its function. The aliases are what `ORCHESTRATION`,
 # `owning_module` and every `monkeypatch.setattr` resolve through; individual
 # SYMBOLS are imported by name below, which is how the carved modules read.
-from foundry_mcp.tools.orchestration import directives as _directives
-from foundry_mcp.tools.orchestration import escalation as _escalation
-from foundry_mcp.tools.orchestration import evidence_boundary as _evidence_boundary
-from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
-from foundry_mcp.tools.orchestration import gates as _gates
-from foundry_mcp.tools.orchestration import guidance as _guidance
-from foundry_mcp.tools.orchestration import halt as _halt
-from foundry_mcp.tools.orchestration import report_seal as _report_seal
-from foundry_mcp.tools.orchestration import spend as _spend
-from foundry_mcp.tools.orchestration import streams as _streams
-from foundry_mcp.tools.orchestration import teams as _teams
-from foundry_mcp.tools.orchestration import transitions as _transitions
 from foundry_mcp.tools.orchestration import width as _width
 
 # fallout AC-014 — THE TWO SIBLING SUITES THE CARVE MUST KEEP REACHING.
@@ -45,67 +32,17 @@ from foundry_mcp.tools.orchestration import width as _width
 # is. If either renames a symbol the ImportError says so by name, which is the
 # loud failure rather than the silent one.
 
-#: fallout FR-004 / AC-014 — WHAT `fo` USED TO MEAN, NOW THAT IT MEANS THIRTEEN
-#: THINGS.
-#:
-#: Every pin that read `Path(fo.__file__).read_text()` was asking about THE
-#: ORCHESTRATOR. That is thirteen files now, so the honest translation of the
-#: question is all thirteen — and it stays the honest translation when a
-#: fourteenth is added, which a hand-listed pair of modules would not.
-ORCHESTRATION = (
-    _report_seal, _escalation, _streams, _teams, _width, _evidence_boundary,
-    _spend, _halt, _gates, _transitions, _fix_gate, _directives, _guidance,
-)
-
-
-def orchestration_source() -> str:
-    """The concatenated source of every shipped orchestration module."""
-    return chr(10).join(
-        Path(m.__file__).read_text(encoding="utf-8") for m in ORCHESTRATION
-    )
-
-
-def owning_module(symbol: str):
-    """The orchestration module that DEFINES `symbol`.
-
-    A patch has to reach the module each CALLER resolves the name through, and
-    after the carve that is a binding per importer rather than one module
-    attribute. Patching only the module that defines a symbol leaves every
-    importer on the real one, which is the silent half of a broken pin.
-    """
-    for module in ORCHESTRATION:
-        value = vars(module).get(symbol)
-        if value is None:
-            continue
-        if getattr(value, "__module__", module.__name__) == module.__name__:
-            return module
-    for module in ORCHESTRATION:
-        if symbol in vars(module):
-            return module
-    raise AssertionError(f"no orchestration module defines {symbol!r}")
-
-
-def patch_everywhere(monkeypatch, name: str, value) -> None:
-    """Patch `name` in EVERY module that carries it.
-
-    fallout FR-004 / AC-014 — WHAT A MODULE-ATTRIBUTE PATCH USED TO MEAN.
-
-    There was one module, so patching it patched the only binding. After the
-    carve a symbol is imported BY NAME into each caller's namespace, so patching
-    the module that DEFINES it leaves every importer resolving the real one —
-    and a patch that reaches some callers and not others is worse than no patch,
-    because the drive then exercises a state no run can be in. This patches
-    every binding, which is the same fact the single module used to make true by
-    construction.
-    """
-    for module in (*ORCHESTRATION, artifacts, foundry_state):
-        if name in vars(module):
-            monkeypatch.setattr(module, name, value)
-
-
-def orchestration_has(symbol: str) -> bool:
-    """True when any orchestration module carries `symbol`."""
-    return any(symbol in vars(m) for m in ORCHESTRATION)
+# fallout FR-004 / AC-014 (D-183) — THE ROSTER AND ITS HELPERS COME FROM
+# `tests/orchestration/_env.py`, WHICH IS THE ONE PLACE THEY ARE STATED.
+#
+# This module carried its own byte-identical copy of a hand-typed thirteen-tuple
+# and of `orchestration_source`, `owning_module`, `patch_everywhere` and
+# `orchestration_has`. Fourteen copies of one roster is fourteen places to
+# forget a module, and `keyfiles.py` — shipped in cycle 5 — was forgotten in
+# every one of them: `owning_module` answered the IMPORTING module for
+# `covers_path` and raised for `owning_entries`, and `patch_everywhere` could
+# not reach a binding inside it. The roster is derived from the package
+# directory now, so there is one of it and it cannot go stale.
 
 from tests.orchestration._env import (  # noqa: F401
     _write_manifest_with_castings,

@@ -46,18 +46,9 @@ from foundry_mcp.tools.display import format_result
 # module for the rest of its function. The aliases are what `ORCHESTRATION`,
 # `owning_module` and every `monkeypatch.setattr` resolve through; individual
 # SYMBOLS are imported by name below, which is how the carved modules read.
-from foundry_mcp.tools.orchestration import directives as _directives
-from foundry_mcp.tools.orchestration import escalation as _escalation
-from foundry_mcp.tools.orchestration import evidence_boundary as _evidence_boundary
-from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
 from foundry_mcp.tools.orchestration import gates as _gates
-from foundry_mcp.tools.orchestration import guidance as _guidance
-from foundry_mcp.tools.orchestration import halt as _halt
-from foundry_mcp.tools.orchestration import report_seal as _report_seal
-from foundry_mcp.tools.orchestration import spend as _spend
+from foundry_mcp.tools.orchestration import keyfiles as _keyfiles
 from foundry_mcp.tools.orchestration import streams as _streams
-from foundry_mcp.tools.orchestration import teams as _teams
-from foundry_mcp.tools.orchestration import transitions as _transitions
 from foundry_mcp.tools.orchestration import width as _width
 
 # fallout AC-014 — THE TWO SIBLING SUITES THE CARVE MUST KEEP REACHING.
@@ -71,67 +62,18 @@ from foundry_mcp.tools.orchestration import width as _width
 # loud failure rather than the silent one.
 from tests.test_spawn_progress import _scanned_modules, _scanned_roots  # noqa: F401
 
-#: fallout FR-004 / AC-014 — WHAT `fo` USED TO MEAN, NOW THAT IT MEANS THIRTEEN
-#: THINGS.
-#:
-#: Every pin that read `Path(fo.__file__).read_text()` was asking about THE
-#: ORCHESTRATOR. That is thirteen files now, so the honest translation of the
-#: question is all thirteen — and it stays the honest translation when a
-#: fourteenth is added, which a hand-listed pair of modules would not.
-ORCHESTRATION = (
-    _report_seal, _escalation, _streams, _teams, _width, _evidence_boundary,
-    _spend, _halt, _gates, _transitions, _fix_gate, _directives, _guidance,
-)
-
-
-def orchestration_source() -> str:
-    """The concatenated source of every shipped orchestration module."""
-    return chr(10).join(
-        Path(m.__file__).read_text(encoding="utf-8") for m in ORCHESTRATION
-    )
-
-
-def owning_module(symbol: str):
-    """The orchestration module that DEFINES `symbol`.
-
-    A patch has to reach the module each CALLER resolves the name through, and
-    after the carve that is a binding per importer rather than one module
-    attribute. Patching only the module that defines a symbol leaves every
-    importer on the real one, which is the silent half of a broken pin.
-    """
-    for module in ORCHESTRATION:
-        value = vars(module).get(symbol)
-        if value is None:
-            continue
-        if getattr(value, "__module__", module.__name__) == module.__name__:
-            return module
-    for module in ORCHESTRATION:
-        if symbol in vars(module):
-            return module
-    raise AssertionError(f"no orchestration module defines {symbol!r}")
-
-
-def patch_everywhere(monkeypatch, name: str, value) -> None:
-    """Patch `name` in EVERY module that carries it.
-
-    fallout FR-004 / AC-014 — WHAT A MODULE-ATTRIBUTE PATCH USED TO MEAN.
-
-    There was one module, so patching it patched the only binding. After the
-    carve a symbol is imported BY NAME into each caller's namespace, so patching
-    the module that DEFINES it leaves every importer resolving the real one —
-    and a patch that reaches some callers and not others is worse than no patch,
-    because the drive then exercises a state no run can be in. This patches
-    every binding, which is the same fact the single module used to make true by
-    construction.
-    """
-    for module in (*ORCHESTRATION, artifacts, foundry_state):
-        if name in vars(module):
-            monkeypatch.setattr(module, name, value)
-
-
-def orchestration_has(symbol: str) -> bool:
-    """True when any orchestration module carries `symbol`."""
-    return any(symbol in vars(m) for m in ORCHESTRATION)
+# fallout FR-004 / AC-014 (D-183) — THE ROSTER AND ITS HELPERS COME FROM
+# `tests/orchestration/_env.py`, WHICH IS THE ONE PLACE THEY ARE STATED.
+#
+# This module carried its own byte-identical copy of a hand-typed thirteen-tuple
+# and of `orchestration_source`, `owning_module`, `patch_everywhere` and
+# `orchestration_has`. Fourteen copies of one roster is fourteen places to
+# forget a module, and `keyfiles.py` — shipped in cycle 5 — was forgotten in
+# every one of them: `owning_module` answered the IMPORTING module for
+# `covers_path` and raised for `owning_entries`, and `patch_everywhere` could
+# not reach a binding inside it. The roster is derived from the package
+# directory now, so there is one of it and it cannot go stale.
+from tests.orchestration._env import ORCHESTRATION, orchestration_has, orchestration_source, owning_module  # noqa: F401
 
 from tests.orchestration._env import (  # noqa: F401
     _arm_ordering_token,
@@ -822,6 +764,56 @@ def test_the_observation_schema_advertises_no_target_kind_default(run_env):
     description = prop["description"]
     assert "REQUIRED IN PRACTICE" in description, description
     assert "Foundry-Defect" in description, description
+
+    # fallout CT-017 / GI-027 / AC-018 / FR-044 (D-182) — AND IT CARRIES THE ONE
+    # EXCEPTION THE HANDLER HAS, WHICH THIS PIN USED TO FREEZE OUT.
+    # ----------------------------------------------------------------------
+    # `foundry_add_observation` passes
+    # `comment_subject_required=classification != TEMPER_CANDIDATE` and its
+    # docstring names the exception; the published sentence said the opposite in
+    # two places — "Omitting the field is refused" and "A finding about code ...
+    # belongs in Foundry-Defect" — and this pin asserted both substrings, so the
+    # error was held in place by the guard. Driven at HEAD: a
+    # TEMPER_CANDIDATE with no target_kind was ACCEPTED with no tripwire, both
+    # in-process and over the real wire.
+    #
+    # It is not cosmetic: this schema is what a PROVE sub-agent reads at
+    # dispatch, and "a finding about code is a defect" is GI-027's own violation
+    # clause ("PROVE filing a candidate as a defect") written as an instruction.
+    assert "TEMPER_CANDIDATE" in description, description
+    assert "EXCEPTION" in description, description
+    # ...and the DERIVABILITY half, on the field that decides it: only the four
+    # comment-prose classes are derived, so a caller told "derived when omitted"
+    # and nothing else can never reach the candidate channel at all.
+    classification = tools["Foundry-Observation"].inputSchema["properties"]["classification"]
+    assert "TEMPER_CANDIDATE" in classification["description"], classification
+    assert "Foundry-Observations" in classification["description"], classification
+    assert vocab.TEMPER_CANDIDATE in classification["enum"], classification
+
+    # THE PUBLISHED SURFACE AND THE HANDLER, DRIVEN TOGETHER — because two
+    # sentences agreeing is not the claim; the claim is that the door behaves
+    # the way the sentence says.
+    from foundry_mcp.tools.foundry import foundry_add_observation
+
+    accepted = foundry_add_observation(
+        cycle=0, source="prove",
+        description="probe the roster rung against a revised roster",
+        classification=vocab.TEMPER_CANDIDATE,
+        project_root=str(project_root),
+    )
+    assert accepted.get("error") is None, accepted
+    assert accepted["observation_id"], accepted
+    ledger = json.loads((fdir / "observations.json").read_text(encoding="utf-8"))
+    assert ledger.get("tripwire", []) == [], ledger["tripwire"]
+
+    # ...and the comment-prose lane is unchanged: omission is still refused
+    # there, which is what keeps the first half of this description true.
+    refused = foundry_add_observation(
+        cycle=0, source="prove", description="the comment cites a line that moved",
+        project_root=str(project_root),
+    )
+    assert refused.get("error"), refused
+    assert refused["denylist_class"] == "NON_COMMENT", refused
 
     # The SDK validates before dispatch; an omitted target_kind must survive
     # that step, or the handler's named refusal is unreachable.
@@ -5120,6 +5112,60 @@ def _package_source_modules() -> list[Path]:
 _CONSOLIDATION_SCRIPTS = ("measure-run.py",)
 
 
+#: fallout AC-011 / OT-011 / GI-024 (D-178) — GI-024's INVENTORY, ONE NAME AT A
+#: TIME, WITH AC-011's FIVE ALL PRESENT.
+#:
+#: AC-011 names five consolidated derivations — "spend aggregation, inspect-mode
+#: rows, unreported dispatches, escalated classes and markdown-section
+#: splitting" — and `inspect_mode_rows`, the inspect-mode member, was the one
+#: nobody typed here. The rule held (it is defined once, in
+#: `tools/foundry_state.py`), so nothing was red; the guard whose job is to KEEP
+#: it holding simply had no row for it, which is exactly the failure the comment
+#: above `_CONSOLIDATION_SCRIPTS` says a scan over clean source cannot
+#: distinguish from a working one.
+#:
+#: Typed rather than derived, because the message is the point: a future author
+#: who re-inlines `now_iso` fails here with the helper's name in the assertion.
+#: The derivation that keeps the typing honest is one test below.
+_CONSOLIDATED_HELPERS = (
+    "now_iso", "current_cycle", "prove_is_clean", "overlay_unreported",
+    "spend_bucket", "markdown_sections", "inspect_mode_rows",
+    "unreported_dispatch_pairs", "unreported_dispatch_summary",
+    "escalated_class_rows", "spend_rollup",
+    "_save_json", "_document_transaction", "_resolve_spec_path",
+    "_declared_external_inputs", "_run_artifact_problems",
+)
+
+
+def _leaf_symbols_the_consolidation_scripts_import() -> set[str]:
+    """Every `foundry_state` name the consolidation scripts import at module top.
+
+    fallout AC-011 / GI-024 (D-178) — THE DERIVATION THAT KEEPS THE TYPED
+    INVENTORY HONEST.
+
+    A leaf symbol one of these scripts imports at module scope is a consolidated
+    reader by construction: that import is what makes the script a CONSUMER of
+    the one implementation, and a top-level `def` of the same name in the script
+    shadows it — which is D-131's exact shape and the shape `inspect_mode_rows`
+    was one forgotten row away from repeating.
+
+    Module-scope only. A function-local import is not the shadowing hazard: the
+    name is bound inside the call, where a module-level `def` cannot reach it.
+    """
+    names: set[str] = set()
+    for script in _consolidation_scan_modules():
+        if script.name not in _CONSOLIDATION_SCRIPTS:
+            continue
+        tree = ast.parse(script.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            if node.module != "foundry_mcp.tools.foundry_state":
+                continue
+            names |= {alias.name for alias in node.names}
+    return names
+
+
 def _consolidation_scan_modules() -> list[Path]:
     """The package, plus the plugin scripts GI-024's applies-to column names.
 
@@ -5392,15 +5438,42 @@ def test_the_helpers_group_zero_consolidated_have_exactly_one_definition():
     # fallout AC-011 / OT-011 / GI-024 (D-131 / D-132) — over the window the
     # RULE is stated across, which includes `scripts/measure-run.py`.
     modules = _consolidation_scan_modules()
-    for helper in (
-        "now_iso", "current_cycle", "prove_is_clean", "overlay_unreported",
-        "spend_bucket", "markdown_sections", "unreported_dispatch_pairs",
-        "unreported_dispatch_summary", "escalated_class_rows", "spend_rollup",
-        "_save_json", "_document_transaction", "_resolve_spec_path",
-        "_declared_external_inputs", "_run_artifact_problems",
-    ):
+    for helper in _CONSOLIDATED_HELPERS:
         where = [m.name for m in modules if helper in _top_level_definitions(m)]
         assert len(where) == 1, (helper, where)
+
+    # fallout AC-011 / OT-011 / GI-024 (D-178) — AND THE TYPED INVENTORY IS NOT
+    # ALLOWED TO FALL BEHIND THE SCRIPT.
+    # ----------------------------------------------------------------------
+    # The list above is GI-024's inventory said one name at a time, which is
+    # what makes a regression name the helper instead of appearing in a dict of
+    # forty. What a typed list cannot do is notice a member nobody typed:
+    # `inspect_mode_rows` — the INSPECT-MODE member of AC-011's own five, and a
+    # symbol `scripts/measure-run.py` imports at module scope — was simply
+    # absent, and the wider sweep could not cover for it because
+    # `test_no_top_level_symbol_is_defined_in_two_shipped_modules` walks
+    # `_package_source_modules()` (the installed package) rather than this
+    # window (the package PLUS the script GI-024 names). DRIVEN: a copy of
+    # `measure-run.py` with an appended top-level `def inspect_mode_rows` —
+    # shadowing the module-scope import it already makes, which is D-131's exact
+    # shape — was invisible to the named pin (not in its list) and invisible to
+    # the package sweep (file outside its window). Both guards stayed green.
+    #
+    # So the script's OWN import list is the derivation that keeps the typed one
+    # honest: a leaf symbol the script imports at module scope is a consolidated
+    # reader by construction — that import is what makes the script a consumer —
+    # and each is held to one definition whether or not anyone remembered to
+    # type it. The next reader `measure-run.py` reaches for is checked the day
+    # it lands.
+    imported = _leaf_symbols_the_consolidation_scripts_import()
+    assert len(imported) >= 15, sorted(imported)
+    for helper in sorted(imported):
+        where = [m.name for m in modules if helper in _top_level_definitions(m)]
+        assert len(where) == 1, (helper, where)
+    # ...and the one AC-011 names by concern is in the TYPED list too, so a
+    # regression on it fails with its own name rather than inside the sweep.
+    assert "inspect_mode_rows" in _CONSOLIDATED_HELPERS
+    assert imported & set(_CONSOLIDATED_HELPERS), sorted(imported)
 
 
 
@@ -6396,6 +6469,51 @@ def test_every_shipped_orchestration_module_has_a_test_module_that_imports_it():
         )
 
 
+def test_the_orchestration_roster_is_the_shipped_package():
+    """fallout AC-014 / OT-016 / GI-026 (D-183) — THE ASSERTION WHOSE ABSENCE
+    LET A MODULE GO UNSEEN FOR THREE CYCLES.
+
+    ORCHESTRATION is what every `Path(fo.__file__)` pin in this suite was
+    translated into at the carve, and it was a hand-typed thirteen-tuple whose
+    own comment promised it "stays the honest translation when a fourteenth is
+    added". `keyfiles.py` was added in cycle 5 by the D-170 fix and the tuple
+    was not, and NOTHING compared the two — so `owning_module('covers_path')`
+    answered `width`, the module that merely IMPORTS the symbol, while its own
+    docstring says it answers the module that DEFINES it;
+    `owning_module('owning_entries')` raised for a symbol the package plainly
+    defines; `orchestration_source()` silently omitted a whole file; and
+    `patch_everywhere` could not reach a binding inside it, reintroducing the
+    exact "a patch reaches some callers and not others" hazard it was written
+    to close.
+
+    TWO DERIVATIONS, PINNED EQUAL, AND NEITHER TYPED.
+    `tests/orchestration/_env.py` imports the package directory;
+    `_shipped_orchestration_modules` globs the same
+    directory from the leaf's own location. They are separate walks reaching
+    the same tree, which is what makes this a comparison rather than a
+    tautology — and either one going blind fails here instead of somewhere a
+    reader would have to already suspect.
+    """
+    roster = {Path(m.__file__).resolve() for m in ORCHESTRATION}
+    shipped = {p.resolve() for p in _shipped_orchestration_modules()}
+    assert roster == shipped, {
+        "in_the_roster_only": sorted(p.name for p in roster - shipped),
+        "shipped_but_unrostered": sorted(p.name for p in shipped - roster),
+    }
+    # The anchor: a scan over a set that agreed with itself while both were
+    # empty would be green and worthless, and `keyfiles.py` is named because it
+    # is the module the hand-typed roster missed.
+    assert len(roster) >= 14, sorted(p.name for p in roster)
+    assert "keyfiles.py" in {p.name for p in roster}, sorted(p.name for p in roster)
+
+    # ...and the consequence the staleness actually had, driven rather than
+    # asserted about the roster: the two symbols `keyfiles.py` defines and
+    # `width.py` merely imports now resolve to the module that DEFINES them.
+    assert owning_module("covers_path") is _keyfiles, owning_module("covers_path")
+    assert owning_module("owning_entries") is _keyfiles, owning_module("owning_entries")
+    assert "covers_path" in vars(_width), "the drive no longer crosses an importer"
+
+
 def test_the_package_marker_re_exports_nothing():
     """fallout FR-004 / GI-010 / AC-013 / OT-012 — NO FACADE, and this is where
     that is either true or not.
@@ -6768,10 +6886,21 @@ def test_a_second_definition_in_measure_run_is_refused(tmp_path):
     assert "measure-run.py" in names, names[-5:]
     assert len(window) == len(_package_source_modules()) + len(_CONSOLIDATION_SCRIPTS)
 
-    # The real file defines neither name today — the one implementation exists,
+    # fallout AC-011 / OT-011 (D-178) — `inspect_mode_rows` JOINS THE PLANT.
+    #
+    # D-131's plant was `spend_rollup` and `markdown_sections`, and both were in
+    # the named inventory, so the recogniser was driven only over rows it
+    # already had. `inspect_mode_rows` is the third: AC-011 names it by concern
+    # ("inspect-mode rows"), `measure-run.py` imports it at module scope, and it
+    # was in NEITHER guard — not in the typed list, and not in the package sweep
+    # whose window excludes this file. Driving it here is what makes this anchor
+    # cover the row that was missing rather than only the rows that were there.
+    plants = {"spend_rollup", "markdown_sections", "inspect_mode_rows"}
+
+    # The real file defines none of them today — the one implementation exists,
     # which is why only the guard needed fixing.
     real = next(p for p in window if p.name == "measure-run.py")
-    assert {"spend_rollup", "markdown_sections"}.isdisjoint(
+    assert plants.isdisjoint(
         _top_level_definitions(real)
     ), "measure-run.py has grown a second definition; that is the real finding"
 
@@ -6779,17 +6908,26 @@ def test_a_second_definition_in_measure_run_is_refused(tmp_path):
     planted = tmp_path / "measure-run.py"
     planted.write_text(
         real.read_text(encoding="utf-8")
-        + "\n\ndef spend_rollup(*a, **k):\n    return {}\n"
-        + "\n\ndef markdown_sections(*a, **k):\n    return {}\n",
+        + "".join(f"\n\ndef {name}(*a, **k):\n    return {{}}\n" for name in sorted(plants)),
         encoding="utf-8",
     )
     defined = _top_level_definitions(planted)
-    assert {"spend_rollup", "markdown_sections"} <= defined, sorted(defined)[:8]
+    assert plants <= defined, sorted(defined)[:8]
 
     # ...and each name really is one the leaf already owns, so the plant is a
     # SECOND definition rather than a first.
     leaf = Path(artifacts.__file__).resolve().parent / "foundry_state.py"
     owned = _top_level_definitions(leaf)
-    assert {"spend_rollup", "markdown_sections"} <= owned, sorted(
-        {"spend_rollup", "markdown_sections"} - owned
-    )
+    assert plants <= owned, sorted(plants - owned)
+
+    # ...and the two the derivation covers really are names the script IMPORTS
+    # at module scope, which is what makes a top-level def of either a SHADOWING
+    # second definition rather than an unrelated helper sharing a spelling.
+    # `markdown_sections` is deliberately outside that set: the script does not
+    # name it at all, so it is a second definition the TYPED inventory catches
+    # and the derivation cannot — which is why AC-011's five stay typed rather
+    # than being replaced by the import walk.
+    imported = _leaf_symbols_the_consolidation_scripts_import()
+    assert {"spend_rollup", "inspect_mode_rows"} <= imported, sorted(imported)
+    assert "markdown_sections" not in imported
+    assert "markdown_sections" in _CONSOLIDATED_HELPERS

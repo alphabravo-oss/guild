@@ -806,23 +806,69 @@ def foundry_mark_stream(
     # number a later reader cannot interpret. `measured_against` is on the
     # result and `_record_stream_rollup` keeps the per-record numbers as it
     # always has.
+    # fallout FR-050 / CT-003 / ST-008 / OT-031 (D-179) — AND STANDING DOWN
+    # LOWERED THE BOUND; IT DID NOT REMOVE IT.
+    # ------------------------------------------------------------------------
+    # D-156 established that a DELTA cycle's denominator is the width the server
+    # drew, not the roster, and its fix wrote `and not narrowed_by_the_server`
+    # onto the equality — which stands the rung down ENTIRELY rather than
+    # relaxing it to what is still knowable. What is still knowable is the
+    # direction: the drawn width is by definition NARROWER than the roster it
+    # was drawn from, so `items_total <= roster_len` holds on a DELTA cycle
+    # exactly as `items_total == roster_len` holds on a FULL one.
+    #
+    # DRIVEN with an 84-item `rosters/trace.json` and cycle 4 recorded DELTA for
+    # trace: `Foundry-Stream(trace, 4, items_checked=1, items_total=N)` returned
+    # ok True for N=999 and for N=100000 — a declared population TWELVE HUNDRED
+    # TIMES the full roster, on a cycle whose width is narrower than it, and
+    # `_coverage_shortfall` then measured 1/999 against a threshold that reads
+    # the record's own total. Neither ST-008's "items_total equals the persisted
+    # roster length when a roster exists" nor CT-003's errors column sanctions a
+    # total ABOVE the roster on any cycle, at any width.
+    #
+    # THE SAME TOKEN, BECAUSE THE REMEDY IS THE SAME ONE. `ROSTER_MISMATCH` is
+    # "this record disagrees with the roster"; over-declaring on a narrowed
+    # cycle is that disagreement in the one direction the narrowing cannot
+    # explain. The two agent prose files that name the token —
+    # `agents/research-auditor.md` and `agents/spec-test-deriver.md` — speak for
+    # `research_audit` and `test01`, which `width.py` never records as "delta",
+    # so their sentence stays literally true and no second token is owed.
     narrowed_by_the_server = _recorded_stream_scope(fdir, server_cycle, stream) == "delta"
-    if roster_len is not None and items_total != roster_len and not narrowed_by_the_server:
+    over_declared = roster_len is not None and items_total > roster_len
+    disagrees = roster_len is not None and items_total != roster_len
+    if over_declared or (disagrees and not narrowed_by_the_server):
         return {
             "error": ROSTER_MISMATCH,
             "reason": (
                 f"Cannot record {stream} with items_total={items_total}: the "
-                f"persisted roster for this stream names {roster_len} item(s)."
+                f"persisted roster for this stream names {roster_len} item(s)"
+                + (
+                    ", and this cycle's recorded width is DELTA — a narrowed "
+                    "width cannot be LARGER than the roster it was drawn from."
+                    if over_declared and narrowed_by_the_server
+                    else "."
+                )
             ),
             "hint": (
-                f"Report items_total={roster_len} — the roster is the population "
-                "this stream agreed to check, and a smaller total clears the "
-                "coverage threshold on a smaller set. If the roster itself is "
-                "wrong, revise it: Foundry-Roster(stream, items, revise=true, "
-                "reason=...)."
+                (
+                    f"Report the number of items the DELTA width actually drew, "
+                    f"which is at most {roster_len}. If this stream really did "
+                    f"walk more than the roster holds, the roster is stale: "
+                    f"revise it with Foundry-Roster(stream, items, revise=true, "
+                    f"reason=...)."
+                )
+                if over_declared and narrowed_by_the_server
+                else (
+                    f"Report items_total={roster_len} — the roster is the population "
+                    "this stream agreed to check, and a smaller total clears the "
+                    "coverage threshold on a smaller set. If the roster itself is "
+                    "wrong, revise it: Foundry-Roster(stream, items, revise=true, "
+                    "reason=...)."
+                )
             ),
             "roster_length": roster_len,
             "items_total": items_total,
+            "measured_against": "delta_width" if narrowed_by_the_server else "roster",
         }
 
     prev_totals = _rollup_totals(fdir, server_cycle - 1, stream) if server_cycle > 0 else None

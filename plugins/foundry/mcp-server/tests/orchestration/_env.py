@@ -29,26 +29,19 @@ from foundry_mcp.tools.foundry_state import (  # noqa: F401
 )
 from foundry_mcp.tools.foundry import foundry_add_defect
 
-# fallout FR-004 / AC-013 — THE MODULE OBJECTS, UNDER UNDERSCORE ALIASES.
+# fallout FR-004 / AC-013 — THE MODULE OBJECT, UNDER AN UNDERSCORE ALIAS.
 #
 # `streams`, `spend`, `width`, `gates`, `directives` and `teams` are all LOCAL
 # variable names somewhere in this suite, and a local rebinding shadows a
-# module for the rest of its function. The aliases are what `ORCHESTRATION`,
-# `owning_module` and every `monkeypatch.setattr` resolve through; individual
-# SYMBOLS are imported by name below, which is how the carved modules read.
-from foundry_mcp.tools.orchestration import directives as _directives
-from foundry_mcp.tools.orchestration import escalation as _escalation
-from foundry_mcp.tools.orchestration import evidence_boundary as _evidence_boundary
-from foundry_mcp.tools.orchestration import fix_gate as _fix_gate
+# module for the rest of its function — which is why every module object this
+# suite holds is aliased with a leading underscore. Individual SYMBOLS are
+# imported by name below, which is how the carved modules read.
+#
+# fallout AC-014 (D-183): the twelve siblings that used to be listed here were
+# imported for one purpose — to be typed into `ORCHESTRATION` — and that roster
+# is DERIVED from the package now, so they are gone with the tuple they fed.
+# `_gates` stays because this module reads its namespace directly.
 from foundry_mcp.tools.orchestration import gates as _gates
-from foundry_mcp.tools.orchestration import guidance as _guidance
-from foundry_mcp.tools.orchestration import halt as _halt
-from foundry_mcp.tools.orchestration import report_seal as _report_seal
-from foundry_mcp.tools.orchestration import spend as _spend
-from foundry_mcp.tools.orchestration import streams as _streams
-from foundry_mcp.tools.orchestration import teams as _teams
-from foundry_mcp.tools.orchestration import transitions as _transitions
-from foundry_mcp.tools.orchestration import width as _width
 
 # fallout AC-014 — THE TWO SIBLING SUITES THE CARVE MUST KEEP REACHING.
 #
@@ -60,17 +53,67 @@ from foundry_mcp.tools.orchestration import width as _width
 # is. If either renames a symbol the ImportError says so by name, which is the
 # loud failure rather than the silent one.
 
-#: fallout FR-004 / AC-014 — WHAT `fo` USED TO MEAN, NOW THAT IT MEANS THIRTEEN
-#: THINGS.
+def _shipped_orchestration_package() -> tuple:
+    """Every module the orchestration package SHIPS, imported, in name order.
+
+    fallout AC-014 / OT-016 / GI-026 (D-183) — DERIVED FROM THE DIRECTORY,
+    BECAUSE A HAND-TYPED ROSTER CANNOT KNOW ABOUT A MODULE IT PREDATES.
+    ------------------------------------------------------------------------
+    `ORCHESTRATION` was a hand-typed thirteen-tuple whose own comment promised
+    it "stays the honest translation when a fourteenth is added". The fourteenth
+    arrived — `keyfiles.py`, created in cycle 5 by the D-170 fix — and the tuple
+    did not, so for three cycles the set said thirteen while the package shipped
+    fourteen. Nothing failed, because nothing compared the two.
+
+    WHAT THE STALENESS COST, all of it silent:
+
+      * `owning_module('covers_path')` answered `width` — the module that
+        IMPORTS the symbol — because the first loop correctly rejected every
+        listed module and the fallback loop then returned the importer. Its own
+        docstring says "the module that DEFINES symbol".
+      * `owning_module('owning_entries')` raised "no orchestration module
+        defines owning_entries" for a symbol the package plainly defines.
+      * `orchestration_source()`, documented as "the concatenated source of
+        every shipped orchestration module", omitted `keyfiles.py` entirely.
+      * `patch_everywhere` — written to close the post-carve "a patch reaches
+        some callers and not others" hazard — could not reach a binding inside
+        `keyfiles.py`, reintroducing exactly that hazard.
+
+    So the roster is no longer typed. It is the directory, imported: a
+    fifteenth module joins the day it lands and no author has to remember a
+    list. `tests/orchestration/test_module_boundaries.py` pins this answer
+    equal to its own `_shipped_orchestration_modules()` glob, which is the
+    assertion whose absence let the drift run.
+
+    `importlib` returns the module SINGLETONS the alias imports above bind, so
+    `monkeypatch.setattr` through this tuple reaches the same objects it always
+    did.
+    """
+    import importlib
+
+    from foundry_mcp.tools import orchestration as _package
+
+    directory = Path(_package.__file__).resolve().parent
+    names = sorted(
+        path.stem for path in directory.glob("*.py") if path.name != "__init__.py"
+    )
+    # The emptiness guard every derived roster in this suite carries: a glob
+    # that found nothing would make `orchestration_source`, `owning_module` and
+    # `patch_everywhere` all answer about nothing, silently.
+    assert len(names) >= 13, (directory, names)
+    return tuple(
+        importlib.import_module(f"{_package.__name__}.{name}") for name in names
+    )
+
+
+#: fallout FR-004 / AC-014 — WHAT `fo` USED TO MEAN, NOW THAT IT MEANS THE
+#: WHOLE PACKAGE.
 #:
 #: Every pin that read `Path(fo.__file__).read_text()` was asking about THE
-#: ORCHESTRATOR. That is thirteen files now, so the honest translation of the
-#: question is all thirteen — and it stays the honest translation when a
-#: fourteenth is added, which a hand-listed pair of modules would not.
-ORCHESTRATION = (
-    _report_seal, _escalation, _streams, _teams, _width, _evidence_boundary,
-    _spend, _halt, _gates, _transitions, _fix_gate, _directives, _guidance,
-)
+#: ORCHESTRATOR. That is a package of modules now, so the honest translation of
+#: the question is all of them — which is why the roster is derived from the
+#: directory rather than written down. See `_shipped_orchestration_package`.
+ORCHESTRATION = _shipped_orchestration_package()
 
 
 def orchestration_source() -> str:

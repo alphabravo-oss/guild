@@ -44,6 +44,12 @@ from foundry_mcp.tools.foundry_state import (
     current_inspect_mode,
     clear_active_run,
     current_cycle,
+    # fallout ST-005 / GI-023 (D-180, concern C-082) — the leaf's total read of
+    # the SAME field `current_cycle` reads, keeping the one distinction
+    # `current_cycle` folds away on purpose: `sources.state_cycle` is an int
+    # when `state.json` carries one and None when it does not, which is what
+    # lets the CONCERN_OPEN rung tell "cycle 0" from "no usable counter".
+    derive_cycle_count,
     finalize_open_phase_entry,
     get_run_dir,
     now_iso,
@@ -885,28 +891,43 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
         "ok": ledger_problem is None,
     })
 
-    # fallout ST-005 / GI-023 (D-158, concern C-082) — THE SECOND ROUTE TO THE
-    # SAME FAIL-OPEN IS STILL OPEN, AND CLOSING IT IS THE LEAF'S TO DO.
-    #
+    # fallout ST-005 / GI-023 / AC-004 / OT-004 (D-158, D-179's sibling D-180,
+    # concern C-082) — THE SECOND ROUTE TO THE SAME FAIL-OPEN, CLOSED FROM THE
+    # LEAF THAT ALREADY ANSWERED THE QUESTION.
+    # ------------------------------------------------------------------------
     # This rung scopes on EXACT cycle equality and `foundry_state.current_cycle`
     # answers 0 for a missing, absent OR MALFORMED counter — deliberately, so
     # every reader gets a usable integer — so a `state.json` carrying
-    # `"cycle": "four"` makes this look for cycle-0 concerns only, and a concern
-    # filed at cycle 5 is invisible. The honest reading of an unknown scope is
-    # EVERY open cross-casting concern (`cycle=None`), the same fail-closed
-    # direction `_decide_inspect_mode` takes on an uncomputable diff and
+    # `"cycle": "four"` made this look for cycle-0 concerns only, and a concern
+    # filed at cycle 5 was invisible. DRIVEN on a run at F3 with C-001 filed at
+    # cycle 5 against another casting's file, with the counter rewritten to each
+    # of "four", null, -3, 2.5 and [5]: all five reported
+    # `no_open_cross_casting_concerns (0)` ok True, the whole routine passed,
+    # and the real `Foundry-Phase('inspect_start')` SUCCEEDED — F3 to F2 with
+    # the cross-casting concern still open in the ledger, which is GI-023's
+    # named violation reached through the counter rather than through the
+    # ledger. The unchanged control (`"cycle": 5`) refuses by id.
+    #
+    # THE HONEST READING OF AN UNKNOWN SCOPE IS EVERY OPEN CROSS-CASTING
+    # CONCERN — `cycle=None` — the same fail-closed direction
+    # `_decide_inspect_mode` takes on an uncomputable diff and
     # `_sweep_evidence_at_boundary` takes on an entry with no mode.
     #
-    # WHAT THIS MODULE MAY NOT DO IS TELL THE TWO APART. The only distinguisher
-    # is the RAW `state.json["cycle"]` value, and
-    # `test_module_boundaries.py#test_every_state_cycle_read_goes_through_a_
-    # guarded_reader` forbids exactly that read outside the leaf's total readers
-    # — correctly: a raw read hands on whatever the file holds. It caught the
-    # first attempt at this arm here, by name. The distinction belongs beside
-    # `current_cycle` as a total reader in the shape `rosters.roster_length`
-    # already uses — `(value, problem)` — which is `tools/foundry_state.py`, and
-    # so is raised as a cross-casting concern rather than forked into a second
-    # counter read here. Until it lands the scope stays the counter's answer.
+    # AND THE DISTINGUISHER IS THE LEAF'S, NOT A SECOND COUNTER READ HERE.
+    # C-082 asked for a `(value, problem)` reader beside `current_cycle` and the
+    # leaf already holds one: `derive_cycle_count`'s `sources.state_cycle` is
+    # that same total read of that same field, returning an int when the file
+    # carries one and None when it does not — which is exactly the distinction
+    # `current_cycle` folds away on purpose. So nothing here reads
+    # `state.json["cycle"]` raw (`test_module_boundaries.py#test_every_state_
+    # cycle_read_goes_through_a_guarded_reader` forbids that, correctly, and it
+    # caught the first attempt at this arm by name), nothing forks a second
+    # counter, and the degraded case is decided by the leaf that owns the field.
+    #
+    # ON A HEALTHY RUN NOTHING MOVES: `Foundry-Init` writes `"cycle": 0`, so
+    # `state_cycle` is an int from the first crossing onward and the scope is
+    # the counter's answer exactly as before.
+    recorded_cycle = derive_cycle_count(fdir)["sources"]["state_cycle"]
     open_concerns = [
         # fallout GI-033 / AC-061 / FR-063 (D-021 / D-035, ruling item 3,
         # concerns C-030 and C-032) — THE READ FROM THE LEAF, THE MEMBER FROM
@@ -918,7 +939,7 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
         # `vocab.CONCERN_STATUSES` is where the closed set lives — so nothing
         # here respells "open" and nothing reaches a lifecycle module for it.
         c for c in open_cross_casting_concerns(
-            fdir, status_open=CONCERN_STATUS_OPEN, cycle=current_cycle(fdir)
+            fdir, status_open=CONCERN_STATUS_OPEN, cycle=recorded_cycle
         )
     ]
     if open_concerns:
