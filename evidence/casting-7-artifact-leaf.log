@@ -3,8 +3,9 @@
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 600
 
-...................................................s...............s     [100%]
+...................................................s...............s.... [ 96%]
+...                                                                      [100%]
 =========================== short test summary info ============================
-SKIPPED [1] tests/test_artifacts.py:1096: gates._count_spec_requirements is gone: the hoist completed and this agreement pin has nothing left to compare
-SKIPPED [1] tests/test_artifacts.py:1365: foundry_report.report_status is gone: the hoist completed and this agreement pin has nothing left to compare
-66 passed, 2 skipped in 0.44s
+SKIPPED [1] tests/test_artifacts.py:1099: gates._count_spec_requirements is gone: the hoist completed and this agreement pin has nothing left to compare
+SKIPPED [1] tests/test_artifacts.py:1368: foundry_report.report_status is gone: the hoist completed and this agreement pin has nothing left to compare
+73 passed, 2 skipped in 1.39s
