@@ -641,8 +641,35 @@ _VERIFIER_SURFACES = [
 #: force FULL, and "the narrowing is deliberate" is a claim about all of them.
 #: `fix_gate.py`, `guidance.py`, `keyfiles.py` and `streams.py` were the four
 #: this roster had never learned about (D-183, D-094).
+#:
+#: fallout AC-012 / AC-017 / GI-009 (C-093) — AND THE PRESENTATION MODULES THE
+#: SPLIT NEVER MOVED. The paragraph above scopes this side to the orchestration
+#: package, and that scope is exactly what left `display.py` off it. GI-009's
+#: violation column OPENS with the renderer — "a display, report-seal, spend,
+#: halt, directives or teams module ... still matching a verifier pattern after
+#: the split" — and display is the one member of that list the split left in
+#: `tools/` rather than carving into `orchestration/`. The rule this side
+#: samples is `is_verifier_path`'s, and that rule is about what a module DOES:
+#: a module that ACTS ON a verdict or RENDERS one cannot make a verdict already
+#: reached wrong, which is the only thing `verifier_touched` is for. So the
+#: delta side is every such module wherever the split left it, and a row is
+#: earned by the module's job rather than by its directory.
+#:
+#: THE EXISTENCE HALF OF THE DISPLAY ROW IS NOT HERE, AND DELIBERATELY SO.
+#: `tests/test_vocab.py#POST_SPLIT_DELTA_MODULES` asserts the file is really on
+#: disk — that is D-184, filed because that roster kept naming
+#: `orchestration/display.py`, a path the split never produced, so the row
+#: answered False and passed forever while pinning nothing. Repeating the
+#: assertion here would be a second copy of one claim, which is the drift shape
+#: this suite spends itself avoiding. What lands here is the half no pin can
+#: spell: the REAL width transition, reached with a diff confined to the
+#: renderer, answering `delta` rather than `verifier_touched`.
 _NO_LONGER_VERIFIER_SURFACES = [
     "foundry_mcp/server.py",
+    # The renderer, which never moved into `orchestration/` — see the note
+    # above for why the delta side is a claim about the job and not about the
+    # package.
+    "foundry_mcp/tools/display.py",
     "commands/start.md",
     "agents/teammate.md",
     "foundry_mcp/tools/orchestration/spend.py",
