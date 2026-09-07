@@ -8,6 +8,7 @@ that no longer exists.
 from __future__ import annotations
 
 import ast
+import re
 import asyncio
 import builtins
 import importlib
@@ -6213,3 +6214,117 @@ def test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions():
         assert f"`{name}.py`" in source, (
             f"the seam comment does not name {name}.py as one of the back edges"
         )
+
+
+
+
+# --------------------------------------------------------------------------- #
+# fallout NFR-011 (D-150) — every requirement id a shipped module's prose cites
+# resolves to a row in THIS run's spec.
+# --------------------------------------------------------------------------- #
+
+#: The two id families this pin resolves, and where each is declared.
+#:
+#: Requirement ids are declared in the spec three ways — `**FR-007**` in a bullet
+#: list, `### US-001:` as a heading, and `| GI-033 |` as a table's first cell —
+#: and all three are harvested, because a pin that knew only one spelling would
+#: report two thirds of a correct spec as unresolvable.
+_SPEC_ID_DECLARATIONS = (
+    r"\*\*((?:US|FR|NFR|AC|GI|CT|ST|OT)-\d+)\*\*",
+    r"^#+\s*((?:US|FR|NFR|AC|GI|CT|ST|OT)-\d+)",
+    r"^\|\s*((?:GI|CT|ST|OT)-\d+)\s*\|",
+)
+
+
+def _run_spec_path() -> Path:
+    """This run's spec.
+
+    Derived from the plugin root the way `shipped_python_files` derives it — up
+    to the directory ASSERTED to be `foundry`, then out of `plugins/` — rather
+    than by counting `parents[N]` from this file, which is the count that goes
+    wrong silently when a directory is added and turns this pin into a skip.
+    """
+    plugin_root = Path(artifacts.__file__).resolve().parents[4]
+    assert plugin_root.name == "foundry", plugin_root
+    return (
+        plugin_root.parents[1] / "forge-specs" / "foundry-run-fallout" / "spec.md"
+    )
+
+
+def test_every_requirement_id_the_orchestration_prose_cites_exists():
+    """fallout NFR-011 (D-150) — an attribution that resolves to nothing.
+
+    NFR-011: "Every prose rule this effort states is DERIVED FROM or pinned to a
+    code constant." Docstring headers in the shipped modules attributed their
+    rules to identifiers carried over from the PREDECESSOR run's spec, which
+    name unrelated rows in this one — `halt.py#_halt_if_capped` headed "ST-008 /
+    CT-016" where ST-008 is the stream-record transition and CT-016 is
+    `scripts/measure-run.py`; `gates.py#_halted_refusal` put quoted sentences in
+    the mouths of FR-024 (rosters here) and FR-052 (Foundry-Validate-Castings
+    here) — and `halt.py#_seal_halted` cited `A-048`, which DOES NOT EXIST: this
+    run's transcript ends at A-047, so that attribution resolved to nothing at
+    all.
+
+    THIS PIN CATCHES THE RESOLVES-TO-NOTHING HALF, which is the half a
+    mechanism can decide. "Cites a row that exists and means something else" is
+    a judgement, and the `fallout ` qualifier convention
+    (`tests/test_spec_id_convention.py`) is what carries that half; between them
+    a maintainer resolving a cite lands on a real row of the right spec.
+
+    DERIVED FROM THE SPEC ITSELF, never a hand list, so a row the spec gains is
+    citable the day it lands and a row it loses fails the cites that named it.
+    """
+    spec = _run_spec_path()
+    if not spec.exists():
+        pytest.skip(f"this checkout carries no {spec.name} at {spec}")
+    text = spec.read_text(encoding="utf-8")
+
+    declared: set[str] = set()
+    for pattern in _SPEC_ID_DECLARATIONS:
+        declared |= set(re.findall(pattern, text, re.M))
+    assert len(declared) > 100, (
+        f"only {len(declared)} requirement id(s) harvested from {spec}; the "
+        "declaration patterns have gone blind and the assertion below would "
+        "report every cite in the package as unresolvable"
+    )
+    answers = set(re.findall(r"\bA-\d{3}\b", text))
+    assert answers, "no transcript answer ids in the spec; the harvest is blind"
+
+    unresolvable: dict[str, list[str]] = {}
+    cited = 0
+    for module in _shipped_orchestration_modules():
+        source = module.read_text(encoding="utf-8")
+        for match in re.finditer(
+            r"\b((?:US|FR|NFR|AC|GI|CT|ST|OT)-\d+|A-\d{3})\b", source
+        ):
+            name = match.group(1)
+            cited += 1
+            known = answers if name.startswith("A-") else declared
+            if name not in known:
+                unresolvable.setdefault(name, []).append(module.name)
+    assert cited > 200, (
+        f"only {cited} requirement cite(s) seen across the package; the scan is "
+        "blind and this assertion would pass over any tree"
+    )
+    assert unresolvable == {}, (
+        f"requirement id(s) cited by shipped prose that this run's spec does "
+        f"not declare: { {k: sorted(set(v)) for k, v in unresolvable.items()} }. "
+        "An attribution a maintainer cannot resolve sends them to an unrelated "
+        "requirement or to nothing at all; re-attribute the comment to the row "
+        "that actually states the rule."
+    )
+
+
+def test_the_citation_pin_recognises_an_id_the_spec_does_not_declare(tmp_path):
+    """The anchor: the harvest above rejects a cite that resolves to nothing.
+
+    A scan over a clean package is green whether it works or not, so the
+    recogniser is driven over the exact string D-150 was filed on — `A-048`,
+    one past the last answer this run's transcript carries.
+    """
+    spec = _run_spec_path()
+    if not spec.exists():
+        pytest.skip("this checkout carries no run spec")
+    answers = set(re.findall(r"\bA-\d{3}\b", spec.read_text(encoding="utf-8")))
+    assert "A-047" in answers, sorted(answers)[-3:]
+    assert "A-048" not in answers, "the transcript grew; re-check D-150's example"

@@ -2808,6 +2808,23 @@ def foundry_sync_defects(
             # re-implements nothing. It returns the id of the record it
             # re-tiered, or None when no open untiered record matches on
             # (source, type, file, symbol).
+            # fallout D-101 / FR-025 / CT-019 / ST-006 (concern C-070) — THE
+            # RE-FILING'S PROVENANCE REACHES THE RECORD IT CLASSIFIES.
+            #
+            # Casting 4's D-101 fix gave `retier_matching_untiered` the two
+            # provenance fields and DEFAULTED them so this door kept compiling
+            # while it was repointed. Defaulted is not passed: left unrepointed,
+            # a batch re-filing that declared `fallout_of` or `supersedes` would
+            # classify the record and drop both, so the same finding through the
+            # single door and through this one would leave differently-measured
+            # records — the door divergence D-099 and D-100 are about, one field
+            # set along.
+            #
+            # Through `defect_provenance`, the same one spelling the append path
+            # gets via `new_defect_record` and the closure above gets for its
+            # cite, so a third provenance field joining the contract reaches all
+            # three by construction.
+            provenance = defect_provenance(finding)
             retier_id = retier_matching_untiered(
                 records,
                 source=norm["source"],
@@ -2818,6 +2835,8 @@ def foundry_sync_defects(
                 reproduction_attempted=norm["reproduction_attempted"],
                 defect_class=norm["class"],
                 cycle=server_cycle,
+                fallout_of=provenance["fallout_of"],
+                supersedes=provenance["supersedes"],
             )
             if retier_id is not None:
                 retiered += 1
@@ -2828,9 +2847,7 @@ def foundry_sync_defects(
                 # whichever of the two records ends up carrying the finding. The
                 # single door reaches its one closure from this branch by
                 # falling through; this one reaches the same closure by name.
-                _close_promotion(
-                    defect_provenance(finding)["supersedes"], retier_id
-                )
+                _close_promotion(provenance["supersedes"], retier_id)
                 continue
 
             # Comment-prose findings are OBSERVATIONS, not defects, and are

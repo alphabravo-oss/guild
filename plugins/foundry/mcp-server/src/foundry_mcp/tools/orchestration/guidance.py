@@ -683,7 +683,7 @@ def foundry_next_action(
                 override["decisions"]
             )
 
-    # FR-052 / FR-045 / AC-037 / NFR-005 \u2014 THE RULES BLOCK ON A HALTED RUN
+    # fallout CT-007 / AC-028 / OT-026 \u2014 THE RULES BLOCK ON A HALTED RUN
     # SAYS WHAT A HALTED RUN NEEDS. D-136.
     #
     # The standing block heads EVERY Foundry-Next payload, and on a halted run
@@ -695,8 +695,9 @@ def foundry_next_action(
     # imperative "YOUR NEXT CALL: NONE ... do NOT call Foundry-Next in a loop
     # ... stop". Dispatch was correctly withheld; the lead-facing TEXT told the
     # lead to do the opposite of the one thing the halt exists to make it do,
-    # and the last of those three sentences was false outright \u2014 FR-024 made
-    # HALTED a THIRD ending beside DONE and error.
+    # and the last of those three sentences was false outright \u2014 ST-001 and
+    # CT-004 make HALTED a THIRD ending beside DONE and error, reached by a
+    # SUCCESSFUL transition.
     #
     # Two changes, because the defect has two halves. The standing line now
     # names all three endings, and a halted run gets its own block: the caching
@@ -977,7 +978,7 @@ _STANDING_CRITICAL_RULES = (
     "\n- NEVER modify, paraphrase, or augment a prompt returned by Foundry-Spawn-Teammate. Pass it to Agent VERBATIM. GRIND is the only exception: append (a) the `grind_cycle_context` block if returned (prior-cycle file changes) and (b) the '## Defects to fix this cycle:' block BELOW the prompt, in that order. Never inside the prompt."
     "\n- If the user typed a message, treat it as a directive. Absorb and keep going."
     # D-136 — THE THIRD ENDING. This read "The foundry runs until F6 DONE or an
-    # error stops it", which FR-024 made false: --max-cycles ends a run in a
+    # error stops it", which ST-001 / CT-004 made false: a halt ends a run in a
     # named HALTED state reached by a SUCCESSFUL transition, which is neither
     # DONE nor an error. A lead reading the old sentence and then receiving a
     # halt has been told the halt cannot happen.
@@ -1053,7 +1054,8 @@ def _halt_cause(member: object) -> str:
 
 _ACTION_IMPERATIVES = {
     "init": "YOUR NEXT CALL: Foundry-Init (start a new run)",
-    # ST-008 / AC-037: the one action whose imperative is to STOP. The generic
+    # fallout FR-035 / AC-054 / CT-007: the one action whose imperative is to
+    # STOP. The generic
     # fallback header says "Execute the first tool call mentioned. Do not
     # deliberate.", which on a halted run would push the lead straight back into
     # the loop the cap ended — so this action gets an explicit entry.
@@ -1465,15 +1467,16 @@ def _format_status_display(project_root: str) -> str:
     # a step missing — and the two would agree only by inspection.
     phases = PHASE_LADDER
 
-    # NFR-005 / CT-016 — HALTED IS IN THE DISPLAY VOCABULARY. D-137.
+    # fallout CT-007 / AC-028 — HALTED IS IN THE DISPLAY VOCABULARY. D-137.
     #
     # The header read `{phase} {phase_names.get(phase, phase)}`, whose fallback
     # is the token itself — fine for every member of `phases`, where the token
     # and the name differ ("F2 INSPECT"), and wrong for the one phase that has
     # no ladder row. Driven on a halted state, the banner read
-    # "F O U N D R Y  HALTED HALTED". CT-016 makes HALTED a named terminal
-    # state Foundry-Next reports and NFR-005 requires every new notice to read
-    # correctly in the terminal; a stutter is what a fallback produces when a
+    # "F O U N D R Y  HALTED HALTED". CT-007 makes HALTED a named terminal
+    # state every `Foundry-Next` response reports through `heading_for`, and a
+    # notice a lead reads has to read correctly in a terminal;
+    # a stutter is what a fallback produces when a
     # value it never anticipated reaches it.
     #
     # The label is built as ONE string rather than by adding a HALTED row to
@@ -1889,7 +1892,7 @@ def _compute_next_action(project_root: str) -> dict:
     state = _load_json(fdir / "state.json")
     phase = state.get("phase", "F0")
 
-    # ST-008 / CT-016 / AC-037 — A HALTED RUN ISSUES NO DISPATCH.
+    # fallout CT-007 / AC-028 / OT-026 — A HALTED RUN ISSUES NO DISPATCH.
     #
     # Checked before anything else, including the active-teams branch: a run
     # that hit its cycle cap is over, and the next thing to do is read the

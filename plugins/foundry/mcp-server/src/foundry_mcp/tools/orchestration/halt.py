@@ -63,7 +63,7 @@ def _seal_halted(
     second writer is how two endings come to disagree about what HALTED means.
 
     THIS IS A TRANSITION, NOT A REFUSAL, and the distinction is the whole
-    requirement (FR-045 / A-048). A refusal would leave the run sitting where it
+    requirement (fallout ST-001 / CT-004 / AC-025). A refusal would leave the run sitting where it
     was with the lead free to call the same token again, having produced nothing
     — a cap that only annoys. Instead `state.json` becomes HALTED, the report is
     generated naming every open LIVE and LATENT defect, and the call returns
@@ -95,7 +95,8 @@ def _seal_halted(
         doc["halted_reason"] = {"reason": reason, "text": text or detail}
         doc["updated_at"] = now_iso()
 
-    # FR-045: "the report is written naming every open LIVE and LATENT defect".
+    # fallout CT-004 / AC-025 / OT-023: the seal "regenerat[es] REPORT.md with
+    # lead prose preserved" as part of the transition.
     # Generated as PART of this transition rather than left to the lead, because
     # a halted run whose open work was never written down is the outcome the
     # halt is supposed to prevent, not a variant of it.
@@ -110,8 +111,9 @@ def _seal_halted(
     # carried ok False, "verdicts.json is not valid JSON". Every later call then
     # compounded it: `_halted_refusal` told the operator to read a report that
     # was never written, and HALTED has no exit by design, so nothing would ever
-    # regenerate it. CT-014 SPECIFIES that failure branch (the unreadable-ledger
-    # refusal), so it is designed and reachable, not a theoretical one.
+    # regenerate it. CT-004 makes the regenerated report part of what this
+    # transition PRODUCES, so a generation that fails is a designed and
+    # reachable branch of it rather than a theoretical one.
     #
     # The transition still HAPPENS — a run that ran out of cycles has run out of
     # cycles whether or not its ledgers can be rendered. What changes is that
@@ -195,7 +197,8 @@ def _seal_halted(
 def _halt_if_capped(
     fdir: Path, project_root: str, token: str, outcome: dict, *, update_phase
 ) -> dict | None:
-    """ST-008 / CT-016 — halt the run instead of opening GRIND number N+1.
+    """fallout ST-002 / ST-015 / FR-062 / AC-060 — halt the run instead of
+    opening GRIND number N+1.
 
     Returns None when the run may proceed, otherwise the SUCCESS result of the
     HALTED transition. Called from both transitions that open a GRIND.
@@ -211,7 +214,7 @@ def _halt_if_capped(
     counter advances only at `inspect_start`, so the GRIND a call is about to
     open is always `cycle + 1`. With `max_cycles` 2: GRIND 1 opens at counter 0,
     GRIND 2 at counter 1, and the call at counter 2 would open GRIND 3 — which
-    is the one that halts (AC-037 / OT-026). ``max_cycles`` 0 is unbounded and
+    is the one that halts (fallout ST-015 / AC-060 / OT-044). ``max_cycles`` 0 is unbounded and
     is the default, so a run that never passed the flag is unaffected.
     """
     if not outcome.get("would_halt"):

@@ -578,7 +578,7 @@ def _done_preconditions(
     teams_result = _active_teams(project_root)
     spec_count = count_spec_requirements(project_root)
 
-    # GI-006 / CT-014 / AC-036 / ST-010 — DONE REQUIRES THE GENERATED REPORT.
+    # fallout GI-006 / CT-004 — DONE REQUIRES THE GENERATED REPORT.
     #
     # Its own named precondition, because it is the one refusal a lead clears
     # with a tool call rather than with work: `Foundry-Report`. Read through
@@ -871,7 +871,7 @@ def _done_preconditions(
         )
         verdicts_complete = False
 
-    # ST-008 / CT-016 / FR-024 / D-081 — "HALTED IS NOT DONE", AS A PRECONDITION
+    # fallout ST-001 / CT-004 / CT-013 / D-081 — "HALTED IS NOT DONE", AS A PRECONDITION
     # OF BEING DONE.
     #
     # `_GATE_RANK_HALTED` is the lowest rank there is, which is how this keeps
@@ -1394,7 +1394,8 @@ def foundry_gate(
         return {"phase": phase, "passed": False, "reason": f"Unknown phase: {phase}",
                 "hint": ("Valid phases: " + ", ".join(GATE_TO_TRANSITION))}
 
-    # ST-008 / CT-016 / D-081 — EVERY GATE REFUSES FROM HALTED, NAMING THE HALT.
+    # fallout ST-001 / CT-013 / CT-020 / D-081 — EVERY GATE REFUSES FROM HALTED,
+    # NAMING THE HALT.
     # A halted run has no next gate, so no gate may report itself passed;
     # `Foundry-Gate('done')` answering passed True on a HALTED run is what made
     # that a defect.
@@ -1573,7 +1574,7 @@ def _halted_state(fdir: Path) -> dict | None:
 
 
 def _halted_refusal(fdir: Path, surface: str) -> dict | None:
-    """ST-008 / CT-016 / FR-024 / FR-045 / FR-052 — HALTED is terminal, and
+    """fallout ST-001 / CT-004 / CT-007 / CT-013 / AC-025 — HALTED is terminal, and
     every door that could leave it reads THIS.
 
     Returns None when the run may proceed, otherwise the refusal `surface`
@@ -1583,9 +1584,10 @@ def _halted_refusal(fdir: Path, surface: str) -> dict | None:
 
     D-081 / D-082 — HALTED WAS WRITTEN AND READ BY NOTHING.
     ------------------------------------------------------
-    ST-008 says "HALTED is not DONE", CT-016 calls it "a named terminal state
-    distinct from DONE", FR-024 says "the run ends in a named HALTED state
-    rather than DONE" — and `_halt_if_capped` was the only code in the server
+    ST-001 makes HALTED a to-state reached from "any live run phase (F1..F5.5)",
+    CT-004 gives it its own door and record, and CT-007 makes `heading_for` say
+    "DONE or HALTED" — so the two are named endings and not one. Yet
+    `_halt_if_capped` was the only code in the server
     that mentioned the state at all. It wrote `phase = HALTED` from the two
     doors that open a GRIND and then nothing, anywhere, asked.
 
@@ -1601,9 +1603,9 @@ def _halted_refusal(fdir: Path, surface: str) -> dict | None:
     `grind_start` and `assay_fail` re-halted, because only they call
     `_halt_if_capped`; every other branch had no HALTED precondition at all. So
     a halted run resumed and kept dispatching with no refusal and no record
-    that the cap had been overridden — and FR-052's "Foundry-Next reports
-    halted and stops dispatching" rested on lead discipline, which is the thing
-    the cap exists to replace.
+    that the cap had been overridden — and CT-007's promise that every
+    `Foundry-Next` response carries `heading_for` rested on lead discipline,
+    which is the thing the cap exists to replace.
 
     NOT A WAIVER AND NOT A RESUME PATH. There is deliberately no token, flag or
     argument that leaves HALTED, because "the operator may override the cap
@@ -1624,7 +1626,7 @@ def _halted_refusal(fdir: Path, surface: str) -> dict | None:
     #
     # This said "the report says what" and pointed at REPORT.md unconditionally,
     # because `_halt_if_capped` asserted the same thing unconditionally. On a
-    # halt whose report generation failed (CT-014's designed unreadable-ledger
+    # halt whose report generation failed (CT-004's designed report-regeneration
     # branch) the operator was sent to read a file that does not exist, from a
     # state with no exit, with no reason given to regenerate it. Both halves are
     # read from the record the transition now leaves: the presence of the file,

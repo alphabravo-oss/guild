@@ -901,7 +901,7 @@ def _grind_start_preconditions(fdir: Path, project_root: str) -> dict:
     acted on by the two transitions that open a GRIND. `Foundry-Gate('grind')`
     PASSES at the cap and shows `would_halt: true`, because reaching the cap is
     not something a lead can fix at the door: the run stops, with its open work
-    written down, and that is a successful transition (FR-045).
+    written down, and that is a successful transition (fallout ST-001 / CT-004).
     """
     # fallout AC-062 / AC-008 / GI-011 (D-088) — THE HALTED RUNG, MADE BY
     # THE ROUTINE RATHER THAN BY THE DOOR ABOVE IT. Short-circuits, so a
@@ -1474,7 +1474,7 @@ def foundry_mark_phase_complete(
     if not halt_scoped and (corrupt := _artifact_guard(fdir)):
         return corrupt
 
-    # ST-008 / CT-016 \u2014 THE ORDERING TOKEN IS NOT ASKED OF A RUN THAT HAS
+    # fallout ST-001 / CT-004 \u2014 THE ORDERING TOKEN IS NOT ASKED OF A RUN THAT HAS
     # STOPPED, AND THE ORDER MATTERS.
     #
     # The token handshake is a protocol precondition of a transition; the halt
@@ -2331,7 +2331,7 @@ def _phase_transition(
                 "message": "All markers cleared \u2192 phase is now F3 (GRIND). Full INSPECT must re-run after."}
 
     elif phase == "assay_fail":
-        # ST-008 / CT-016 - AND ON THIS DOOR TOO.
+        # fallout ST-001 / CT-004 - AND ON THIS DOOR TOO.
         #
         # `assay_fail` clears the same markers and calls the same
         # `_update_phase(fdir, "F3")` as `grind_start`; it is a second door into

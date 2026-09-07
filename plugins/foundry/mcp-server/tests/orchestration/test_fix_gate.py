@@ -1348,3 +1348,71 @@ def test_both_filing_doors_audit_under_the_class_their_refusal_names(run_env):
     classes = _tripwire_classes(fdir)
     assert classes, "neither door wrote an audit record"
     assert set(classes) == {"SECURITY_PROPERTY_CLAIM"}, classes
+
+
+
+
+def test_the_batch_re_tier_carries_the_re_filings_provenance(run_env):
+    """fallout D-101 / FR-025 / CT-019 (concern C-070) — the second call site.
+
+    Casting 4's D-101 fix gave `retier_matching_untiered` `fallout_of` and
+    `supersedes`, DEFAULTED so this door kept compiling while it was repointed.
+    Defaulted is not passed: unrepointed, a batch re-filing that declared either
+    field classified the record and dropped both, so the same finding through
+    the two doors left differently-measured records.
+
+    Driven at BOTH doors over the same arrangement, because "the batch door
+    writes it" and "the two doors write the same thing" are separate claims and
+    only the pair is the contract.
+    """
+    project_root, fdir = run_env
+
+    def _untiered_pair() -> None:
+        (fdir / "defects.json").write_text(
+            json.dumps({"defects": [
+                {
+                    "id": "D-001", "status": "open", "tier": "LIVE",
+                    "source": "prove", "type": "WRONG", "file": "src/parent.py",
+                    "symbol": "parent", "class": "c", "cycle": 0,
+                    "description": "the parent this finding is fallout of",
+                },
+                {
+                    "id": "D-002", "status": "open",
+                    "source": "trace", "type": "UNWIRED", "file": "src/api/a.py",
+                    "symbol": "handle", "class": "c", "cycle": 0,
+                    "description": "handler never calls the store",
+                },
+            ]}),
+            encoding="utf-8",
+        )
+        _write_state(fdir, phase="F2", cycle=0)
+
+    _untiered_pair()
+    batch = _sync(0, [_finding(tier="LIVE", fallout_of="D-001")], project_root)
+    assert batch["retiered_ids"] == ["D-002"], batch
+    from_batch = {
+        d["id"]: d
+        for d in json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    }["D-002"]
+
+    _untiered_pair()
+    single = foundry_add_defect(
+        cycle=0, source="trace", defect_type="UNWIRED",
+        description="handler never calls the store", symbol="handle",
+        file_path="src/api/a.py", defect_class="c", tier="LIVE",
+        fallout_of="D-001", project_root=project_root,
+    )
+    assert single["retiered_ids"] == ["D-002"], single
+    from_single = {
+        d["id"]: d
+        for d in json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    }["D-002"]
+
+    # The declared parent reaches the record the batch door classified...
+    assert from_batch["fallout_of"] == "D-001", from_batch
+    # ...and BOTH keys are present whatever the filing declared, because
+    # `fallout_rows` reads key PRESENCE as "this record was measured".
+    assert "supersedes" in from_batch, from_batch
+    # ...and the two doors leave the same provenance behind.
+    for key in ("fallout_of", "supersedes"):
+        assert from_batch[key] == from_single[key], (key, from_batch, from_single)

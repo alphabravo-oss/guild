@@ -674,10 +674,34 @@ def _dispatch_open_concerns(
             reached_castings.add(int(task["owning_casting"]))
         for path in task.get("files") or []:
             reached_files.add(str(path))
+    # fallout GI-004 (D-151) — `.get`, LIKE THIS MODULE'S TWO SIBLING CONCERN
+    # LOOPS, BECAUSE A REACHABLE RAISE IS A BLOCKING DEFECT AT FULL WEIGHT.
+    #
+    # This indexed `c["id"]` directly while the module's other two concern
+    # walks — the alignment-block render and the co-dispatch annotate — both
+    # read `concern.get("id", "?")` over the same records. So a `concerns.json`
+    # holding one record with no `id` key raised `KeyError: 'id'` out of
+    # Foundry-Tasks, across the MCP boundary, as call_tool's unhandled-error
+    # banner rather than the house `{error, hint}` refusal.
+    #
+    # A-000's sentence, which GI-004 carries, is unqualified: "A REACHABLE RAISE
+    # ... REMAINS A BLOCKING DEFECT AT FULL WEIGHT." No writer in the plugin
+    # emits an id-less record, so reaching this needs a hand-edited, migrated or
+    # partially-written ledger — which is precisely the population
+    # `scripts/migrate-archive.py` and the resume path operate on.
+    #
+    # A RECORD WITH NO ID IS SKIPPED, not defaulted to "?" as the two render
+    # sites do. Those print; this one MARKS, and `mark_concerns_dispatched("?")`
+    # would ask the ledger to close a concern by an id no record carries — a
+    # write on a guess, where the readers only ever showed one.
+    reached_ids = {str(cid) for cid in reached_castings}
     hit = [
-        c["id"] for c in concerns
-        if str(c.get("target", "")) in reached_files
-        or str(c.get("target_casting_id", "")) in {str(cid) for cid in reached_castings}
+        str(c["id"]) for c in concerns
+        if isinstance(c, dict) and c.get("id")
+        and (
+            str(c.get("target", "")) in reached_files
+            or str(c.get("target_casting_id", "")) in reached_ids
+        )
     ]
     if not hit:
         return []

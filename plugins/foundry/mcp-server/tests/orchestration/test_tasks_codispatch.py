@@ -7,6 +7,8 @@ that no longer exists.
 """
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 
 
@@ -689,3 +691,63 @@ def test_the_report_section_populates_from_a_real_dispatch(run_env):
     assert row["defect_ids"] == ["D-900"], row
     assert row["requirement_ids"] == ["FR-007"], row
     assert row["cycle"] == 1 and row["phase"] == "F3", row
+
+
+
+
+def test_a_concern_record_with_no_id_does_not_raise_out_of_the_door(run_env):
+    """fallout GI-004 (D-151) — a reachable raise is a blocking defect.
+
+    `foundry_defects_to_tasks`' dispatch loop indexed `c["id"]` on every concern
+    record while the module's two sibling concern walks both read
+    `concern.get("id", "?")` over the same records — so a `concerns.json`
+    holding one id-less record raised `KeyError: 'id'` across the MCP boundary
+    as call_tool's unhandled-error banner rather than the house refusal.
+
+    GI-004 carries A-000's sentence without qualification: "A reachable raise
+    ... REMAINS A BLOCKING DEFECT AT FULL WEIGHT." No writer in the plugin emits
+    this shape, so reaching it needs a hand-edited, migrated or
+    partially-written ledger — which is the population `migrate-archive.py` and
+    the resume path operate on.
+
+    THE MALFORMED RECORD IS SKIPPED, NOT DEFAULTED TO "?" as the render sites
+    do: this loop MARKS rather than prints, and marking "?" dispatched would ask
+    the ledger to close a concern by an id no record carries. So the well-formed
+    concern beside it must still be dispatched, which is the half that says the
+    guard tolerates rather than bails.
+    """
+    from foundry_mcp.tools.concerns import foundry_concern
+
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        2: (["FR-007"], ["src/two.py"]),
+        3: (["FR-008"], ["src/three.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+    ])
+    opened = foundry_concern(
+        casting_id=1, cycle=1, target="src/three.py",
+        text="the well-formed concern beside the malformed one",
+        project_root=project_root,
+    )
+    concern_id = opened["concern"]["id"]
+
+    # The shape no writer emits: a record with no `id` key at all, alongside a
+    # real one. Written directly, because the door refuses to create it.
+    ledger = json.loads((fdir / "concerns.json").read_text(encoding="utf-8"))
+    ledger["concerns"].insert(0, {
+        "cycle": 1, "source_casting": 1, "target": "src/three.py",
+        "target_casting_id": 3, "text": "hand-edited: no id", "status": "open",
+    })
+    (fdir / "concerns.json").write_text(json.dumps(ledger), encoding="utf-8")
+
+    result = foundry_defects_to_tasks(project_root)
+
+    # No raise, and the house shape rather than an error banner.
+    assert result["ok"] is True, result
+    # The well-formed concern is still dispatched: the malformed record is
+    # skipped, not treated as a bail-out.
+    assert result["concerns_dispatched"] == [concern_id], result
