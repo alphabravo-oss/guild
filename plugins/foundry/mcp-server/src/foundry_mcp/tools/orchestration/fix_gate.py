@@ -2430,7 +2430,32 @@ def foundry_sync_defects(
                 ),
             })
 
-        raw_type = finding.get("type") or "MISSING"
+        # fallout GI-022 / ST-006 (D-100) — AN ABSENT `type` IS REFUSED, NOT
+        # COERCED ONTO `MISSING`.
+        #
+        # This read `finding.get("type") or "MISSING"`, and MISSING is a real
+        # member of `DEFECT_TYPES` — so a finding that named no type at all was
+        # filed as one that named the WRONG one. Driven on the two doors:
+        # `foundry_add_defect(defect_type="")` returns
+        # {'error': "Invalid defect_type: ''...", 'field': 'defect_type'};
+        # `foundry_sync_defects` with no `type` key, and again with `type: ""`,
+        # both returned {'ok': True, 'added': 1} and both persisted
+        # `type: "MISSING"`. Same finding, two doors, opposite outcomes — the
+        # door divergence ST-006 and GI-022 are stated over.
+        #
+        # IT IS LOAD-BEARING BEYOND ATTRIBUTION. `type` is one of the four
+        # identity fields `retier_matching_untiered` matches on (source, type,
+        # file, symbol), so a finding filed batch-side as MISSING can never be
+        # re-tiered by a later single-door filing that names its real type: the
+        # untiered record stays open, blocking, with no cheap exit — which is
+        # the exact harm FR-051's re-tier branch exists to remove.
+        #
+        # This is the `source -> "trace"` coercion one field along, and it is
+        # closed the same way: refused by name, never rewritten. The absent and
+        # the unknown case are told apart in the sentence, exactly as the
+        # `source` rung above tells them apart, because "you left it out" and
+        # "that is not a member" send the filer to different places.
+        raw_type = finding.get("type")
         canonical = canonical_defect_type(raw_type)
         if canonical is None:
             refusals.append({
@@ -2438,8 +2463,18 @@ def foundry_sync_defects(
                 "field": "type",
                 "value": raw_type,
                 "reason": (
-                    f"Unknown defect_type: {raw_type}. Must be one of: "
-                    f"{', '.join(sorted(DEFECT_TYPES))}"
+                    (
+                        "type is required — an unattributed finding used to be "
+                        "recorded as 'MISSING', which is a real member of the "
+                        "set and therefore a wrong answer rather than an empty "
+                        "one. Must be one of: "
+                        f"{', '.join(sorted(DEFECT_TYPES))}"
+                    )
+                    if not (isinstance(raw_type, str) and raw_type.strip())
+                    else (
+                        f"Unknown defect_type: {raw_type}. Must be one of: "
+                        f"{', '.join(sorted(DEFECT_TYPES))}"
+                    )
                 ),
             })
 
@@ -2675,6 +2710,38 @@ def foundry_sync_defects(
         # was refused. `test_sync_refusal_is_all_or_nothing` is the pin, and it
         # is about exactly this.
         superseded: list[str] = []
+
+        # fallout ST-006 / GI-022 (D-099) — ONE SPELLING OF THE CLOSURE FOR BOTH
+        # OF THE WRITE LOOP'S EXITS.
+        #
+        # The loop below leaves by two paths — a re-tier of an existing untiered
+        # record, or an append of a new one — and the closure was written under
+        # the append alone, BELOW a `continue` the re-tier path took. So a
+        # promotion filed batch-side left its HARDENING parent open. Driven on
+        # identical ledgers (open HARDENING D-001 + open untiered D-002,
+        # identical finding, supersedes="D-001"): `foundry_add_defect` returned
+        # {'retiered_ids': ['D-002'], 'superseded': 'D-001', 'open_defects': 1}
+        # with D-001 `superseded`; `foundry_sync_defects` returned
+        # {'retiered_ids': ['D-002'], 'superseded_ids': [], 'total_open': 2} with
+        # D-001 still `open` — so it kept blocking every `status == "open"`
+        # census, but only on the batch path.
+        #
+        # The single door has no `continue` there: it sets `defect_id` on each
+        # branch and FALLS THROUGH to one closure. This is the same shape said
+        # as a closure over the loop's own locals, so the two exits cannot come
+        # to disagree by anyone indenting one of them — which is the mistake
+        # that produced the divergence in the first place.
+        #
+        # `defect_provenance` normalises the cite on BOTH paths (the append path
+        # gets it through `new_defect_record`), so the re-tier path cannot come
+        # to accept a spelling the append path refuses.
+        def _close_promotion(cite: object, by_id: str) -> None:
+            closed = close_superseded_record(
+                records, cite, by_id=by_id, cycle=server_cycle
+            )
+            if closed is not None:
+                superseded.append(closed)
+
         for finding in findings:
             unknown_parent = fallout_parent_problem(
                 finding.get("fallout_of"), records
@@ -2755,6 +2822,15 @@ def foundry_sync_defects(
             if retier_id is not None:
                 retiered += 1
                 retiered_ids.append(retier_id)
+                # fallout ST-006 / GI-022 (D-099) — THE EXIT THE CLOSURE USED TO
+                # SKIP. A re-filing that CLASSIFIES an untiered record is still a
+                # new filing, and a filing that cites a HARDENING id promotes it
+                # whichever of the two records ends up carrying the finding. The
+                # single door reaches its one closure from this branch by
+                # falling through; this one reaches the same closure by name.
+                _close_promotion(
+                    defect_provenance(finding)["supersedes"], retier_id
+                )
                 continue
 
             # Comment-prose findings are OBSERVATIONS, not defects, and are
@@ -2904,14 +2980,7 @@ def foundry_sync_defects(
             # The TIER is not touched (OT-020 / GI-022): promotion is a NEW
             # filing that CITES the earlier record, never a rewrite of what a
             # stream said it saw.
-            superseded_id = close_superseded_record(
-                records,
-                defect["supersedes"],
-                by_id=defect["id"],
-                cycle=defect["cycle"],
-            )
-            if superseded_id is not None:
-                superseded.append(superseded_id)
+            _close_promotion(defect["supersedes"], defect["id"])
 
         total_open = sum(1 for d in _dict_records(records) if d.get("status") == "open")
 

@@ -278,19 +278,210 @@ def test_sync_canonicalizes_the_misplaced_alias(run_env):
 
 
 
-def test_sync_defaults_an_absent_type_to_missing(run_env):
-    """NFR-002: the pre-existing default is a legal member and keeps working."""
+@pytest.mark.parametrize("absent", ["missing_key", "", "   "])
+def test_sync_refuses_an_absent_type_rather_than_defaulting_it_to_missing(
+    run_env, absent
+):
+    """fallout ST-006 / GI-022 (D-100) — the batch door stops coercing `type`.
+
+    What stood here asserted the coercion as a contract ("the pre-existing
+    default is a legal member and keeps working"), and that is the defect
+    written down: `MISSING` is a real member of `DEFECT_TYPES`, so defaulting to
+    it does not record "no type given" — it records a type the filer never
+    named. The single door refuses the same input by name
+    (`{'error': "Invalid defect_type: ''...", 'field': 'defect_type'}`), so the
+    two doors gave opposite answers to one finding, which is the divergence
+    ST-006 and GI-022 are stated over.
+
+    IT IS NOT ONLY ATTRIBUTION. `type` is one of the four identity fields
+    `retier_matching_untiered` matches on, so a record filed batch-side as
+    MISSING can never be re-tiered by a later single-door filing naming its real
+    type — the untiered record stays open and blocking with no cheap exit.
+
+    All three spellings of absence are driven, because `.get("type") or ...` and
+    `.get("type") is None` are different predicates and only the first is what
+    the door had.
+    """
     project_root, fdir = run_env
     _sync_env(fdir)
 
     f = _finding()
-    del f["type"]
-    _sync(0, [f], project_root)
+    if absent == "missing_key":
+        del f["type"]
+    else:
+        f["type"] = absent
+    result = _sync(0, [f], project_root)
 
-    record = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"][0]
-    assert record["type"] == "MISSING"
+    assert "error" in result, result
+    assert result["refusals"][0]["field"] == "type", result
+    assert "type is required" in result["refusals"][0]["reason"], result
+    # ALL-OR-NOTHING: a refused batch writes no record at all.
+    assert json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"] == []
 
 
+def test_both_doors_refuse_an_absent_type_naming_their_own_field(run_env):
+    """fallout ST-006 / GI-022 (D-100) — the parity half, driven at both doors.
+
+    The refusal above is only half the requirement: what ST-006 asks is that ONE
+    finding gets ONE answer whichever door it arrives at. Both are driven on the
+    same empty `type` over the same ledger, and both must refuse — the field
+    each names is its own argument spelling, which is the only difference the
+    contract admits.
+    """
+    project_root, fdir = run_env
+    _sync_env(fdir)
+
+    single = foundry_add_defect(
+        cycle=0, source="trace", defect_type="", description="d",
+        defect_class="c", tier="LIVE", project_root=project_root,
+    )
+    batch = _sync(0, [_finding(type="")], project_root)
+
+    assert "error" in single, single
+    assert single["field"] == "defect_type", single
+    assert "error" in batch, batch
+    assert batch["refusals"][0]["field"] == "type", batch
+    assert json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"] == []
+
+
+
+
+def _hardening_plus_untiered(fdir: Path) -> None:
+    """One open HARDENING record and one open untiered record on the SAME path.
+
+    The arrangement both doors are driven over below: the untiered D-002 is what
+    the incoming finding re-tiers, and D-001 is the HARDENING record its
+    `supersedes` promotes. Both must happen, and the whole of D-099 is that only
+    one of them did on the batch path.
+    """
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [
+            {
+                "id": "D-001", "status": "open", "tier": "HARDENING",
+                "source": "prove", "type": "UNWIRED", "file": "src/api/a.py",
+                "symbol": "handle", "class": "c", "cycle": 0,
+                "description": "probe failed on a path no requirement states",
+                "reproduction_attempted": "drove the probe; it failed",
+            },
+            {
+                "id": "D-002", "status": "open",
+                "source": "trace", "type": "UNWIRED", "file": "src/api/a.py",
+                "symbol": "handle", "class": "c", "cycle": 0,
+                "description": "handler never calls the store",
+            },
+        ]}),
+        encoding="utf-8",
+    )
+    _write_state(fdir, phase="F2", cycle=0)
+
+
+def test_the_batch_door_closes_a_superseded_record_it_also_re_tiers(run_env):
+    """fallout ST-006 / GI-022 (D-099) — the closure the `continue` skipped.
+
+    ST-006's transition is "HARDENING defect open -> superseded (closed)",
+    triggered by "a new filing on the same path that cites the HARDENING id via
+    `supersedes`". The batch door's write loop leaves by two paths — re-tier an
+    existing untiered record, or append a new one — and the closure was written
+    under the append alone, BELOW a `continue` the re-tier path took.
+
+    DRIVEN on identical ledgers before the fix: `foundry_add_defect` returned
+    {'retiered_ids': ['D-002'], 'superseded': 'D-001', 'open_defects': 1} with
+    D-001 `superseded`; `foundry_sync_defects` returned {'retiered_ids':
+    ['D-002'], 'superseded_ids': [], 'total_open': 2} with D-001 still `open` —
+    so the HARDENING record kept blocking every `status == "open"` census, on
+    the batch path only.
+    """
+    project_root, fdir = run_env
+    _hardening_plus_untiered(fdir)
+
+    result = _sync(
+        0,
+        [_finding(tier="LIVE", supersedes="D-001", **{"class": "c"})],
+        project_root,
+    )
+
+    assert result["retiered_ids"] == ["D-002"], result
+    # The row this defect is: the promotion the filing CITED actually happened.
+    assert result["superseded_ids"] == ["D-001"], result
+    records = {
+        d["id"]: d
+        for d in json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    }
+    assert records["D-001"]["status"] == "superseded", records["D-001"]
+    assert records["D-001"]["superseded_by"] == "D-002", records["D-001"]
+    # ...and the HARDENING record stops blocking, which is what the closure is
+    # FOR: every gate and census in the package counts `status == "open"`.
+    assert result["total_open"] == 1, result
+    # The tier is NOT touched (OT-020 / GI-022): promotion cites, never rewrites.
+    assert records["D-001"]["tier"] == "HARDENING", records["D-001"]
+
+
+def test_both_doors_supersede_on_the_re_tier_path(run_env):
+    """fallout ST-006 / GI-022 (D-099) — the parity half, over one arrangement.
+
+    The divergence was door-shaped, not path-shaped: the single door has no
+    `continue` at the re-tier branch and falls through to its one closure. So
+    the pin drives BOTH doors over the byte-identical ledger and asserts the
+    same three outcomes, which is what makes it an assertion about the rule
+    rather than about one implementation of it.
+    """
+    project_root, fdir = run_env
+
+    _hardening_plus_untiered(fdir)
+    single = foundry_add_defect(
+        cycle=0, source="trace", defect_type="UNWIRED",
+        description="handler never calls the store", symbol="handle",
+        file_path="src/api/a.py", defect_class="c", tier="LIVE",
+        supersedes="D-001", project_root=project_root,
+    )
+
+    _hardening_plus_untiered(fdir)
+    batch = _sync(
+        0,
+        [_finding(tier="LIVE", supersedes="D-001", **{"class": "c"})],
+        project_root,
+    )
+
+    assert single["retiered_ids"] == batch["retiered_ids"] == ["D-002"], (single, batch)
+    assert single["superseded"] == "D-001", single
+    assert batch["superseded_ids"] == ["D-001"], batch
+    assert single["open_defects"] == batch["total_open"] == 1, (single, batch)
+
+
+def test_the_append_exit_still_closes_its_superseded_record(run_env):
+    """fallout ST-006 / GI-022 (D-099) — the ADJACENT exit of the same loop.
+
+    D-099's fix gave the write loop's two exits one closure, and the exit that
+    already worked is the one a shared spelling could break. So the APPEND path
+    is driven on its own arrangement: an open HARDENING record with NO untiered
+    twin, so `retier_matching_untiered` finds no match and the finding is
+    appended under a freshly minted id — the branch that reaches
+    `_close_promotion` by falling out of the re-tier arm rather than through it.
+    """
+    project_root, fdir = run_env
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [{
+            "id": "D-001", "status": "open", "tier": "HARDENING",
+            "source": "prove", "type": "UNWIRED", "file": "src/other.py",
+            "symbol": "other", "class": "c", "cycle": 0,
+            "description": "probe failed on a path no requirement states",
+            "reproduction_attempted": "drove the probe; it failed",
+        }]}),
+        encoding="utf-8",
+    )
+    _write_state(fdir, phase="F2", cycle=0)
+
+    result = _sync(0, [_finding(supersedes="D-001")], project_root)
+
+    assert result["added"] == 1, result
+    assert result["retiered_ids"] == [], result
+    assert result["superseded_ids"] == ["D-001"], result
+    records = {
+        d["id"]: d
+        for d in json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    }
+    assert records["D-001"]["status"] == "superseded", records["D-001"]
+    assert records["D-001"]["superseded_by"] == "D-002", records["D-001"]
 
 
 def test_sync_stamps_the_server_cycle_not_the_caller_value(run_env):
