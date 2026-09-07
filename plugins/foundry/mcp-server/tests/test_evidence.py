@@ -6839,11 +6839,18 @@ _D175_POLLUTION: dict[str, str] = {
     "VIRTUAL_ENV": "/somewhere/else/plugins/foundry/mcp-server/.venv",
     # Same class, different tool: each one redirects an interpreter, a
     # resolver or a test runner at state outside the checkout.
+    #
+    # `COLUMNS` belongs to this class and is deliberately NOT here. Setting it
+    # mid-run changes the width PYTEST ITSELF renders its result lines at, so
+    # the evidence log capturing this test would carry ~900 columns of padding
+    # produced by the test rather than by the behaviour — a log whose bytes are
+    # an artefact of its own assertion. The launch drops it either way: the
+    # allowlist decides that, not this dict.
     "PYTHONPATH": "/somewhere/else/src",
     "PYTHONWARNINGS": "error",
     "UV_PROJECT_ENVIRONMENT": "/somewhere/else/.venv",
     "PYTEST_ADDOPTS": "-p no:randomly",
-    "COLUMNS": "997",
+    "CONDA_PREFIX": "/somewhere/else/miniconda3/envs/guild",
     # Not a reproducibility hazard — a capability one. An evidence command is
     # arbitrary committed shell; it has no business holding the lead's tokens.
     "GITHUB_TOKEN": "ghp_not_a_real_token",
