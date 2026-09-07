@@ -338,6 +338,105 @@ def test_comment_prose_filed_as_defect_is_refused(
     assert _defects(run) == []
 
 
+def test_both_doors_label_the_printed_set_as_the_observation_classes(
+    run: Path, tmp_path: Path
+) -> None:
+    """concern C-100 (sibling half of C-095, fallout of D-182) — THE PRINTED
+    SET AND ITS LABEL AGREE, AT BOTH DOORS.
+
+    The refusal above asserts that every member of the set is PRINTED. This one
+    asserts what the sentence CALLS that set, which is the half nothing pinned
+    and the half that went stale in silence.
+
+    It read "The comment-prose classes are:" over a
+    ``sorted(OBSERVATION_CLASSES)`` that has held five members since casting 10
+    landed ``TEMPER_CANDIDATE`` — the member ``schemas/vocab.py`` describes in
+    its own words as the one that is not about comment prose at all, a probe
+    idea nobody has driven rather than a comment that stopped agreeing with its
+    code. So a stream refused here was told a probe idea is comment prose, on
+    the one surface a stream reads when it is being told its finding is not a
+    defect. The same shape as D-182: a published routing sentence that a fifth
+    vocabulary member falsified.
+
+    THE FIRST CLAUSE IS ASSERTED TOO, BECAUSE IT MUST NOT MOVE. Seven sites pin
+    "is a comment-prose observation class" by substring, and it is true of
+    every value that can reach it: ``_observation_refusal`` ends in
+    ``vocab.observation_class``, which walks the four comment-prose predicates
+    in ``_OBSERVATION_PREDICATES`` and can never answer ``TEMPER_CANDIDATE``.
+    Only the label on the printed set was ever wrong.
+
+    DRIVEN AT BOTH DOORS IN ONE TEST, which is the property the concern is
+    actually about. ``tools/foundry.py#foundry_add_defect`` and
+    ``tools/orchestration/fix_gate.py#foundry_sync_defects`` spell this sentence
+    twice, in two castings' files, and casting 2 landed the reworded label on
+    its copy a cycle before this one followed. A pin on either door alone would
+    have stayed green through exactly that interval, with the two doors telling
+    the same stream two different things about the same finding. So the
+    assertion is EQUALITY between the doors, not a substring at one of them —
+    and the membership half is derived from the vocabulary rather than spelled
+    here, so a sixth member joins both sentences with nothing to remember.
+    """
+    from foundry_mcp.schemas.vocab import TEMPER_CANDIDATE
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
+
+    single = _file_defect(
+        cycle=1,
+        source="trace",
+        defect_type="WRONG",
+        description=COUNT,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+    batch = foundry_sync_defects(
+        cycle=1,
+        findings=[{
+            "source": "trace",
+            "type": "WRONG",
+            "description": COUNT,
+            "spec_ref": "",
+            "symbol": "",
+            "file": "",
+            "class": FIXTURE_CLASS,
+            "tier": "LIVE",
+            "target_kind": "comment",
+        }],
+        project_root=str(tmp_path),
+    )
+
+    single_sentence = single["error"]
+    batch_sentence = batch["refusals"][0]["reason"]
+
+    # The two doors say the SAME thing, which is what the concern is about.
+    assert single_sentence == batch_sentence, (single_sentence, batch_sentence)
+
+    for sentence in (single_sentence, batch_sentence):
+        # The pinned half, unmoved.
+        assert "is a comment-prose observation class, not a defect" in sentence, (
+            sentence
+        )
+        # The half that lied. Every member is printed...
+        for member in OBSERVATION_CLASSES:
+            assert member in sentence, (member, sentence)
+        # ...including the one whose arrival made the old label false...
+        assert TEMPER_CANDIDATE in sentence, sentence
+        # ...and the label no longer claims all of them are comment prose.
+        # Pinned on the DEAD spelling by name: a test that only asserted the new
+        # text would pass again the day somebody re-added the old one beside it.
+        assert "The comment-prose classes are" not in sentence, sentence
+        assert "The observation classes are" in sentence, sentence
+
+    # The structured field beside the prose, which carried the correct name for
+    # this same set at both doors all along — the evidence that the label was
+    # the half that was wrong and not the set.
+    assert single["observation_classes"] == sorted(OBSERVATION_CLASSES), single
+    assert batch["refusals"][0]["observation_classes"] == sorted(
+        OBSERVATION_CLASSES
+    ), batch
+
+    # process-fixes OT-001 — neither door let it reach defects.json.
+    assert _defects(run) == []
+
+
 def test_refused_finding_is_accepted_as_an_observation(
     run: Path, tmp_path: Path
 ) -> None:

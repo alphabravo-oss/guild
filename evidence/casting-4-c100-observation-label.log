@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider --no-header tests/test_observations.py -k 'both_doors_label_the_printed_set' 2>&1 | tail -1 | awk '{ if ($1 == "1" && $2 ~ /^passed/) { print "VERDICT: PASS -- the cross-door label pin is green" } else { print "VERDICT: FAIL -- " $0 } }' && echo && echo "== concern C-100 -- one sentence, two doors, one spelling ==" && live=$(grep -c 'The observation classes are: ' src/foundry_mcp/tools/foundry.py src/foundry_mcp/tools/orchestration/fix_gate.py | awk -F: '{s+=$2} END{print s+0}') && dead=$(grep -c 'The comment-prose classes are: ' src/foundry_mcp/tools/foundry.py src/foundry_mcp/tools/orchestration/fix_gate.py | awk -F: '{s+=$2} END{print s+0}') && awk -v l="$live" -v d="$dead" 'BEGIN { if (l == 2 && d == 0) print "VERDICT: PASS -- both doors carry the live label, neither carries the dead one"; else print "VERDICT: FAIL -- live=" l " dead=" d }'
+# evidence-for: CT-017, GI-027, NFR-004, FR-037
+# evidence-timeout: 300
+
+VERDICT: PASS -- the cross-door label pin is green
+
+== concern C-100 -- one sentence, two doors, one spelling ==
+VERDICT: PASS -- both doors carry the live label, neither carries the dead one

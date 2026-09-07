@@ -3839,10 +3839,55 @@ def foundry_add_defect(
     )
     refused_class = _observation_refusal(finding)
     if refused_class is not None:
+        # concern C-100 (sibling half of C-095, fallout of D-182) — THE SECOND
+        # CLAUSE NAMED A SET IT NO LONGER DESCRIBED.
+        #
+        # The sentence has two clauses and they answer different questions.
+        # The FIRST is about `refused_class` and is unchanged: it is the
+        # load-bearing half, pinned by substring at seven test sites, and it
+        # is true of every value that can reach it — `_observation_refusal`
+        # ends in `vocab.observation_class`, which walks the four COMMENT-PROSE
+        # predicates in `_OBSERVATION_PREDICATES` and can never answer
+        # TEMPER_CANDIDATE.
+        #
+        # The SECOND clause names the set the filer is being ROUTED TO, and it
+        # read "The comment-prose classes are:" over a
+        # `sorted(OBSERVATION_CLASSES)` that has held five members since
+        # casting 10 landed TEMPER_CANDIDATE — the member `schemas/vocab.py`
+        # describes in its own words as "the one that is not about comment
+        # prose at all", a probe idea nobody has driven rather than a comment
+        # that stopped agreeing with its code. So the label was false of a
+        # member the same sentence printed, on the one surface a stream reads
+        # when it is being told its finding is not a defect. No caller is
+        # misrouted by it — `refused_class` cannot be the fifth member — but a
+        # reader is, which is the whole cost of a published routing sentence
+        # that a later vocabulary member falsified.
+        #
+        # ONE SENTENCE, TWO DOORS.
+        # `orchestration/fix_gate.py#foundry_sync_defects` spells the identical
+        # sentence and landed this same one-token change first; this copy
+        # follows in the co-dispatch that carried the concern, because moving
+        # one door's wording and not the other is exactly the drift the
+        # shared-validator discipline (one rung, one spelling, N callers)
+        # exists to prevent.
+        #
+        # LEAD RULING, GRIND cycle 7: the reworded label, NOT a
+        # `COMMENT_PROSE_CLASSES` constant in `schemas/vocab.py` that both
+        # doors derive from. `observation_class` already enforces the
+        # four-vs-five distinction structurally by walking
+        # `_OBSERVATION_PREDICATES`, so a constant would encode in data what
+        # the predicate list already guarantees.
+        #
+        # The structured `observation_classes` key in this same refusal dict
+        # has carried the correct name for this set all along, which is the
+        # evidence that the prose label was the half that was wrong and not the
+        # set. Stated by NAME rather than by an offset from here, because a
+        # count that goes stale beside the code it counts is the very class of
+        # finding this refusal exists to route.
         problems.append({
             "error": (
                 f"Refused: {refused_class} is a comment-prose observation "
-                f"class, not a defect. The comment-prose classes are: "
+                f"class, not a defect. The observation classes are: "
                 f"{', '.join(sorted(OBSERVATION_CLASSES))}."
             ),
             "hint": (
