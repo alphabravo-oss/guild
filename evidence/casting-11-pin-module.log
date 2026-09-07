@@ -1,4 +1,4 @@
 # evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_skill_prose.py 2>&1 | tail -1 | sed 's/ in [0-9.]*s$//'
 # evidence-for: AC-018, AC-019, AC-031, AC-048, AC-058, FR-037, NFR-011
 
-86 passed
+112 passed
