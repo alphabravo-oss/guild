@@ -1,0 +1,21 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -v --no-header --tb=short -p no:cacheprovider tests/test_vocab.py -k 'post_split_lifecycle_module_earns_delta or verifier_rule_answers_in_both_directions or nfr_007s_missing_baseline_width_is_recorded or baseline_and_target_carry_nfr_001s'
+# evidence-for: AC-012, FR-003, NFR-007, US-003
+# evidence-volatile: \d+\.\d+s
+# evidence-volatile: \d+\.\d+ seconds
+# evidence-timeout: 600
+
+============================= test session starts ==============================
+collecting ... collected 376 items / 366 deselected / 10 selected
+
+tests/test_vocab.py::test_every_post_split_lifecycle_module_earns_delta[plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py] PASSED [ 10%]
+tests/test_vocab.py::test_every_post_split_lifecycle_module_earns_delta[plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/report_seal.py] PASSED [ 20%]
+tests/test_vocab.py::test_every_post_split_lifecycle_module_earns_delta[plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/spend.py] PASSED [ 30%]
+tests/test_vocab.py::test_every_post_split_lifecycle_module_earns_delta[plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/halt.py] PASSED [ 40%]
+tests/test_vocab.py::test_every_post_split_lifecycle_module_earns_delta[plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/directives.py] PASSED [ 50%]
+tests/test_vocab.py::test_every_post_split_lifecycle_module_earns_delta[plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/teams.py] PASSED [ 60%]
+tests/test_vocab.py::test_every_post_split_lifecycle_module_earns_delta[plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py] PASSED [ 70%]
+tests/test_vocab.py::test_the_verifier_rule_answers_in_both_directions PASSED [ 80%]
+tests/test_vocab.py::test_the_baseline_and_target_carry_nfr_001s_four_numbers PASSED [ 90%]
+tests/test_vocab.py::test_nfr_007s_missing_baseline_width_is_recorded_as_a_residual_risk PASSED [100%]
+
+====================== 10 passed, 366 deselected in 0.03s ======================
