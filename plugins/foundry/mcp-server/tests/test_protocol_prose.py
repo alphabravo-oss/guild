@@ -7320,6 +7320,23 @@ _ROSTER_CLAUSES = (
         "the roster it wrote, or it reports a shrunken population as full "
         "coverage",
     ),
+    (
+        f"the population is judged at publication: `{rosters.ROSTER_ITEMS_EMPTY}`, "
+        f"`{rosters.ROSTER_ITEM_NOT_NAMED}` and `{rosters.ROSTER_ITEMS_DUPLICATED}` "
+        f"refuse the list before either arm writes",
+        "concern C-065: the three rungs `rosters._items_refusal` judges the "
+        "population on, named where the agent can still fix the list. They fire "
+        "on BOTH arms and before any filesystem read, so an agent learning them "
+        "from the refusal has already lost the call",
+    ),
+    (
+        "record that on the stream's own record rather than publishing an empty "
+        "roster",
+        "concern C-065, the exit the empty rung leaves: an empty roster WEDGES "
+        "the stream -- the real derivation is then refused ROSTER_EXISTS, its "
+        "items_total refused ROSTER_MISMATCH and items_checked=0 refused by the "
+        "roll-up's positive-count guard, so no legal recording is left at all",
+    ),
 )
 
 

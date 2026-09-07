@@ -338,7 +338,15 @@ prior items are kept under `revisions[]` rather than replaced. This rule
 and § Stream Recording are one rule: `Foundry-Stream` refuses
 `ROSTER_MISMATCH` when `items_total` differs from the persisted roster's
 length, so a re-derived shorter list cannot be reported as full coverage
-of a population it quietly shrank.
+of a population it quietly shrank. The door judges what you pass before
+it writes anything: the population is judged at publication:
+`ROSTER_ITEMS_EMPTY`, `ROSTER_ITEM_NOT_NAMED` and
+`ROSTER_ITEMS_DUPLICATED` refuse the list before either arm writes, so a
+row you will SKIP still earns its item and a row named twice does not
+earn two. If the spec's `## Contracts` table names no row at all, record
+that on the stream's own record rather than publishing an empty roster —
+an empty roster wedges the stream, since the real derivation is then
+refused `ROSTER_EXISTS` and no legal recording is left.
 
 **The roster is spec-derived, and reading it opens no source.** Every
 item comes from `## Contracts` — the row, its surface cell, its citation

@@ -201,7 +201,14 @@ Every item in `defects` flows through `Foundry-Sync` and becomes grist for F3 GR
   items are kept under `revisions[]` rather than replaced. This rule and the stream record above
   are one rule: `Foundry-Stream` refuses `ROSTER_MISMATCH` when `items_total` differs from the
   persisted roster's length, so a shorter list you re-derived cannot be reported as full
-  coverage of a population it quietly shrank. No exceptions, no deferrals, no "the research had
+  coverage of a population it quietly shrank. The door judges what you pass before it writes
+  anything: the population is judged at publication: `ROSTER_ITEMS_EMPTY`, `ROSTER_ITEM_NOT_NAMED`
+  and `ROSTER_ITEMS_DUPLICATED` refuse the list before either arm writes, so two research files
+  stating one recommendation must not arrive as two identically worded `RA-n` items. If
+  `research/` and the spec's `## Informational` section genuinely name nothing to audit, record
+  that on the stream's own record rather than publishing an empty roster — an empty roster wedges
+  the stream, since the real derivation is then refused `ROSTER_EXISTS` and no legal recording is
+  left. No exceptions, no deferrals, no "the research had
   obviously not changed."
 - **Log your own progress, don't just verify everyone else's.** Append a ledger line at every new step, per the `## Progress ledger` section. You demand a grep behind every claim; the lead is owed the same evidence that you are still running.
 

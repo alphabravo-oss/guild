@@ -1,0 +1,6 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/test_protocol_prose.py::test_each_deriving_agent_states_the_roster_rule -v --no-header 2>&1 | grep -cE "PASSED" && uv run --with pytest pytest tests/test_protocol_prose.py -q 2>&1 | tail -1
+# evidence-for: AC-033, FR-024, FR-050, NFR-011
+# evidence-volatile: \d+\.\d+s
+
+12
+668 passed, 4 skipped in 1.07s
