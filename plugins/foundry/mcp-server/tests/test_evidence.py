@@ -6735,6 +6735,58 @@ def test_the_runner_states_the_shell_the_lint_models():
     )
 
 
+#: The executors of an evidence command, derived from the shipped module and
+#: never typed out: ``{function name: whether it also reaches the shared
+#: lint}``.
+#:
+#: fallout AC-035 / US-008 — ONE DERIVATION FOR BOTH HALVES OF THE RULE. The
+#: rule has a mechanical half (every executor LINTS) and a prose half (every
+#: executor is NAMED where the launch documents the obligation), and each half
+#: had its own reader: the first walked the tree, the second carried a typed
+#: pair. So when `_sweep_warm_worktree` landed as a third executor (D-176) the
+#: walk judged it the day it arrived and the typed pair could not — it asked
+#: for two names the discipline block already had, and the block went on
+#: saying "the count is TWO" for a cycle with nothing red. That is the shape
+#: D-185 was filed on one module over: a sibling surface deriving what its
+#: neighbour hard-codes. Both halves now read this.
+def _evidence_command_executors() -> dict[str, bool]:
+    """Every function in the shipped `evidence.py` that reaches the runner.
+
+    Maps the function's name to whether it also reaches `_shell_parse_problem`.
+    `_run_command_with_timeout` is the server's only executor of an evidence
+    command, so reaching it is what makes a function an executor; the lint lives
+    in the callers, so reaching the lint is what makes that executor safe.
+    """
+    tree = ast.parse(Path(evidence.__file__).read_text(encoding="utf-8"))
+
+    def _names_called(node: ast.AST) -> set[str]:
+        return {
+            call.func.id
+            for call in ast.walk(node)
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+        }
+
+    found: dict[str, bool] = {}
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        called = _names_called(func)
+        if "_run_command_with_timeout" not in called:
+            continue
+        found[func.name] = "_shell_parse_problem" in called
+    return found
+
+
+#: The two executors that have been in the tree since D-107 closed. This is a
+#: FLOOR on what the walk above must see — an AST walk that has gone blind
+#: returns an empty mapping, and every assertion below is vacuously true of it
+#: — never the list of executors, which is exactly the distinction the two
+#: tests kept losing.
+_LONG_STANDING_EXECUTORS = frozenset(
+    {"_sweep_one_log", "_verify_one_evidence_file"}
+)
+
+
 def test_every_caller_of_the_runner_parses_the_command_first():
     """fallout FR-002 / GI-019 (D-107) — "server refuses at EVERY crossing", as
     a property of the tree rather than of the two crossings anyone remembered.
@@ -6752,31 +6804,12 @@ def test_every_caller_of_the_runner_parses_the_command_first():
     lands, and it fails here rather than at whichever crossing first hands a
     typo to a shell.
     """
-    tree = ast.parse(
-        Path(evidence.__file__).read_text(encoding="utf-8")
-    )
-
-    def _names_called(node: ast.AST) -> set[str]:
-        return {
-            call.func.id
-            for call in ast.walk(node)
-            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
-        }
-
-    executors, unlinted = set(), []
-    for func in ast.walk(tree):
-        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        called = _names_called(func)
-        if "_run_command_with_timeout" not in called:
-            continue
-        executors.add(func.name)
-        if "_shell_parse_problem" not in called:
-            unlinted.append(func.name)
+    executors = _evidence_command_executors()
+    unlinted = sorted(name for name, linted in executors.items() if not linted)
 
     # Named rather than counted: an AST walk that has gone blind returns an
     # empty set, and "no unlinted executors" is true of nothing at all.
-    assert executors >= {"_sweep_one_log", "_verify_one_evidence_file"}, (
+    assert set(executors) >= _LONG_STANDING_EXECUTORS, (
         f"the scan cannot see the two known executors, so it is proving "
         f"nothing about the tree: {sorted(executors)}"
     )
@@ -6809,7 +6842,23 @@ def test_the_runner_documents_the_callers_that_must_lint():
         "the launch does not tell a new caller that it must parse the command "
         "first, which is the omission D-107 was filed over"
     )
-    for caller in ("_sweep_one_log", "_verify_one_evidence_file"):
+    # fallout AC-035 (D-185's shape, one module over) — THE REQUIRED NAMES ARE
+    # DERIVED, NOT TYPED HERE. This loop read ("_sweep_one_log",
+    # "_verify_one_evidence_file") while `_sweep_warm_worktree` — a third
+    # executor, added by D-176 one cycle after this test was written — went
+    # unnamed in the discipline block. The block said "the count is TWO" and
+    # this test asked for exactly those two, so the assertion message below
+    # ("short by one again") described a state the assertion could not reach.
+    # A hard-coded enumeration checking a hard-coded enumeration proves the two
+    # agree with each other and nothing about the code. The sibling test above
+    # already derives the executor set to prove each one LINTS; this derives the
+    # same set, from the same walk, to prove each one is WRITTEN DOWN.
+    executors = set(_evidence_command_executors())
+    assert executors >= _LONG_STANDING_EXECUTORS, (
+        f"the scan cannot see the two known executors, so it is requiring "
+        f"nothing of the documentation: {sorted(executors)}"
+    )
+    for caller in sorted(executors):
         assert caller in documentation, (
             f"{caller} executes an evidence command and the launch does not "
             f"name it, so the enumeration is short by one again"

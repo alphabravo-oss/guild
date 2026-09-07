@@ -3791,13 +3791,24 @@ def _shell_parse_problem(cmd: str) -> str | None:
 
     Never raises. A shell that cannot be spawned at all is reported AS a problem
     rather than swallowed, because a door that cannot answer this question must
-    not answer it with silence — BOTH callers' whole contract is that a command
-    reaching the runner has been parsed. There are two: `_sweep_one_log` at the
-    boundary and terminal crossings, and `_verify_one_evidence_file` at casting
-    acceptance (fallout FR-002 / D-107, which is what the second one was
-    missing). A third door, the commit guard, parses the same way and cannot
-    call this — it is a shell script — so it spells `/bin/sh -n` out and
-    `tests/test_commit_guard.py` pins the two spellings against each other.
+    not answer it with silence — EVERY caller's whole contract is that a command
+    reaching the runner has been parsed.
+
+    WHICH CALLERS THOSE ARE IS DERIVED, NEVER COUNTED (fallout AC-035). Both
+    crossings turn a problem here into a named `EVIDENCE_COMMAND_SYNTAX`
+    refusal: `_sweep_one_log` at the boundary and terminal sweeps, and
+    `_verify_one_evidence_file` at casting acceptance (FR-002 / D-107, which is
+    what the acceptance door was missing). `_sweep_warm_worktree` calls this too
+    and refuses nothing — a warm-up owns no verdict, so it skips a candidate it
+    cannot parse (D-176). This paragraph said "there are two" while that third
+    caller sat one screen below it; the enumeration is now derived from the tree
+    in
+    `tests/test_evidence.py#test_the_runner_documents_the_callers_that_must_lint`
+    rather than from what the last editor remembered.
+
+    The commit guard parses the same way and cannot call this — it is a shell
+    script — so it spells `/bin/sh -n` out and `tests/test_commit_guard.py` pins
+    the two spellings against each other.
     """
     try:
         proc = subprocess.run(

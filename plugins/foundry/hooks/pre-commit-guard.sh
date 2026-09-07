@@ -234,8 +234,12 @@ for path in "${STAGED[@]}"; do
   # by RUNNING it, a crossing later, as an opaque non-zero exit — by which time
   # the teammate who wrote it was gone and the refusal named a failure mode
   # rather than a typo. This is the commit-time half of one rule; the other half
-  # is the server's, which parses before executing and refuses with
-  # EVIDENCE_COMMAND_SYNTAX (evidence.py#_sweep_one_log).
+  # is the server's, where EVERY door that executes an evidence command parses
+  # it first and refuses with EVIDENCE_COMMAND_SYNTAX: evidence.py#_sweep_one_log
+  # at the boundary and terminal sweeps, and evidence.py#_verify_one_evidence_file
+  # at casting acceptance. This line used to cite the sweep alone, and citing one
+  # door as though it were the rule is how the acceptance door came to execute
+  # what it could not parse for a whole run (D-107).
   #
   # WHICH TEXT IS THE COMMAND — the grammar below is the server's, transcribed,
   # and D-076 is what an approximation of it cost. Every clause here answers to

@@ -323,19 +323,36 @@ def _run_command_with_timeout(
         under another would pass constructs that fail and block constructs that
         work — so if this call ever DOES pin ``executable=``, both of those must
         be repointed in the same change.
-      - EVERY CALLER LINTS BEFORE IT CALLS, AND THE COUNT IS TWO (fallout
-        FR-002 / D-107). This function is the server's only executor of an
-        evidence command, and it is reached from both crossings:
-        ``evidence.py#_sweep_one_log`` at the boundary and terminal sweeps, and
-        ``evidence.py#_verify_one_evidence_file`` at casting acceptance. Both
-        call ``_shell_parse_problem`` first and refuse
-        ``EVIDENCE_COMMAND_SYNTAX`` without reaching here. That sentence used to
-        name the sweep alone and call the lint "the sweep's own", which is how
-        the acceptance door came to execute what it could not parse for a whole
-        run: the enumeration was the only place the rule was written down, and
-        it was short by one. A THIRD caller added here inherits nothing — the
-        lint lives in the callers, so a new one that skips it runs unparsed
-        commands with no door left to notice.
+      - EVERY EVIDENCE-COMMAND CALLER LINTS BEFORE IT CALLS, AND WHICH
+        CALLERS THOSE ARE IS DERIVED, NEVER COUNTED (fallout FR-002 / D-107,
+        and AC-035 for the counting). This function is the server's only
+        executor of an evidence command, and every function in ``evidence.py``
+        that reaches it calls ``evidence.py#_shell_parse_problem`` first:
+        ``_sweep_one_log`` at the boundary and terminal sweeps and
+        ``_verify_one_evidence_file`` at casting acceptance, each turning a
+        parse failure into a named per-log ``EVIDENCE_COMMAND_SYNTAX`` refusal
+        without reaching here, and ``_sweep_warm_worktree``, which owns no
+        verdict and so skips a candidate it cannot parse rather than refusing
+        it. (``test_deriver.py`` reaches this launch too, with a derived test
+        command rather than a committed evidence command; it is outside the
+        claim above, which is why the claim names the module it binds.)
+        THE ENUMERATION IS NOT THE RULE, AND WRITING IT AS ONE IS WHAT KEEPS
+        GOING WRONG HERE. It first named the sweep alone and called the lint
+        "the sweep's own", which is how the acceptance door came to execute
+        what it could not parse for a whole run (D-107). It then said the count
+        was TWO and treated a third caller as hypothetical — and the third
+        landed in ``evidence.py`` one cycle later (D-176), lint and all, with
+        this paragraph unchanged and nothing red, because the only test reading
+        it asked for two names it already had. So the rule is now a property of
+        the tree, derived twice from one walk: ``tests/test_evidence.py``
+        proves each executor LINTS in
+        ``test_every_caller_of_the_runner_parses_the_command_first`` and proves
+        each executor is WRITTEN DOWN HERE in
+        ``test_the_runner_documents_the_callers_that_must_lint``. A fourth
+        caller fails both the day it lands — the lint lives in the callers, so
+        one that skips it runs unparsed commands with no door left to notice,
+        and one that is merely unwritten leaves the next reader an enumeration
+        that has now been short twice.
       - ``stderr=subprocess.STDOUT`` merges streams (single-string compare).
       - ``text=True, encoding='utf-8', errors='replace'`` makes binary or
         non-UTF-8 output survive comparator entry.
