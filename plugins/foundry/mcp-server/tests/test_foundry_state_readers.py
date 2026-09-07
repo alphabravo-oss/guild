@@ -2188,6 +2188,121 @@ def test_sight_required_honours_the_no_ui_declaration(run_env) -> None:
     }
 
 
+def test_sight_required_does_not_read_a_directory_entry_as_no_frontend(
+    run_env,
+) -> None:
+    """fallout C-081 / D-170 / GI-002 — a whole stream was failing open, silently.
+
+    A `key_files` entry is a file path OR a directory spelled with a trailing
+    slash (`foundry_validate._key_file_covers` states the format). The scan
+    asked `endswith(ui_exts)` of every entry, so a directory — which ends in a
+    slash — contributed no ui_files, and a casting that owns a UI package by
+    naming it once got `required: False, "No frontend files in castings"`.
+    SIGHT skipped on a run with a frontend, under a reason that reads as a
+    measurement. GI-002 is that every verification stream keeps existing; this
+    was a way for one to stop existing with nobody deciding to drop it.
+
+    The verdict here is still False, and deliberately: the extension of a
+    directory is unknowable from the manifest alone, and answering True would
+    block the cast gate of every backend run that names a package once — this
+    run's own manifest carries `tools/orchestration/`. What changes is that
+    the skip is VISIBLE. The real answer is the test below.
+    """
+    (run_env / "castings").mkdir()
+    _write_json(run_env, "castings/manifest.json", {
+        "castings": [{"id": 1, "key_files": ["src/ui/", "src/api.py"]}],
+    })
+
+    answer = fs.sight_required(
+        run_env, shape_problem=lambda _d: None, no_ui_meaning="unused"
+    )
+
+    assert answer["required"] is False
+    assert answer["undetermined_directories"] == 1, (
+        "the directory was silently counted as evidence of no frontend"
+    )
+    assert "src/ui/" in answer["reason"], (
+        "the reason must name the entry that was not inspected — a reader "
+        "cannot act on a count alone"
+    )
+    assert "NOT inspected" in answer["reason"]
+    assert answer["reason"] != "No frontend files in castings", (
+        "that sentence is a measurement, and nothing measured the directory"
+    )
+
+
+def test_sight_required_walks_a_declared_directory_when_given_the_root(
+    run_env, tmp_path,
+) -> None:
+    """fallout C-081 — the real answer, when the caller can supply the disk.
+
+    `orchestration/gates.py` already holds `project_root` at the call site
+    (it passes it to `count_spec_requirements` on the next line), so this is
+    one argument away from being answered for real on every run.
+
+    Both directions are driven, because only the pair is the property: a
+    directory of frontend files requires SIGHT, and a directory with none does
+    not — and the second answer is now a MEASUREMENT rather than the absence
+    of one, so it carries no `undetermined_directories` key.
+    """
+    project_root = tmp_path / "repo"
+    (project_root / "src" / "ui" / "nested").mkdir(parents=True)
+    (project_root / "src" / "ui" / "nested" / "App.tsx").write_text("x")
+    (project_root / "src" / "server").mkdir(parents=True)
+    (project_root / "src" / "server" / "api.py").write_text("x")
+
+    (run_env / "castings").mkdir()
+    _write_json(run_env, "castings/manifest.json", {
+        "target_url": "http://localhost:3000",
+        "castings": [{"id": 1, "key_files": ["src/ui/"]}],
+    })
+    found = fs.sight_required(
+        run_env, shape_problem=lambda _d: None, no_ui_meaning="unused",
+        project_root=project_root,
+    )
+    assert found["required"] is True, (
+        "a directory of .tsx files is a frontend, whoever spelled it as one "
+        "entry"
+    )
+    assert found["ui_files"] == 1
+    assert "undetermined_directories" not in found
+
+    _write_json(run_env, "castings/manifest.json", {
+        "castings": [{"id": 1, "key_files": ["src/server/"]}],
+    })
+    absent = fs.sight_required(
+        run_env, shape_problem=lambda _d: None, no_ui_meaning="unused",
+        project_root=project_root,
+    )
+    assert absent == {"required": False, "reason": "No frontend files in castings"}, (
+        "walked and found none IS the measurement that sentence claims"
+    )
+
+
+def test_sight_required_never_raises_on_a_directory_it_cannot_walk(
+    run_env, tmp_path,
+) -> None:
+    """The total-reader rule this module owes every caller.
+
+    A manifest naming a directory that is not in this checkout is a legal
+    manifest — a resumed archive, a partial clone — and it must answer, not
+    raise. An unwalkable entry stays UNDETERMINED rather than being counted as
+    evidence of no frontend, which is the same fail-visible direction.
+    """
+    (run_env / "castings").mkdir()
+    _write_json(run_env, "castings/manifest.json", {
+        "castings": [{"id": 1, "key_files": ["does/not/exist/"]}],
+    })
+
+    answer = fs.sight_required(
+        run_env, shape_problem=lambda _d: None, no_ui_meaning="unused",
+        project_root=tmp_path / "no-such-repo",
+    )
+
+    assert answer["required"] is False
+    assert answer["undetermined_directories"] == 1
+
+
 def test_sight_required_reads_the_extensions_when_nothing_was_declared(
     run_env,
 ) -> None:

@@ -114,7 +114,7 @@ from foundry_mcp.schemas import vocab
 # ---------------------------------------------------------------------------
 
 
-def _tier_description() -> str:
+def _finding_tier_description() -> str:
     """The `tier` property's published description, tiers NAMED from vocab.
 
     fallout D-171 — this is a WIRE STRING, which is why the stale version
@@ -146,7 +146,7 @@ def _tier_description() -> str:
     )
 
 
-def _reproduction_description() -> str:
+def _finding_reproduction_description() -> str:
     """The `reproduction_attempted` property's description, scope DERIVED.
 
     fallout D-171 / D-163 / D-164 — this read "Required on a LATENT filing ...
@@ -275,11 +275,11 @@ _FINDING_ITEM: dict = {
             # grade by name; this axis is not that axis. See the module
             # docstring's "WHY `tier` IS NOT THE ABOLISHED AXIS" note.
             "enum": sorted(vocab.DEFECT_TIERS),
-            "description": _tier_description(),
+            "description": _finding_tier_description(),
         },
         "reproduction_attempted": {
             "type": "string",
-            "description": _reproduction_description(),
+            "description": _finding_reproduction_description(),
         },
         "file": {
             "type": "string",

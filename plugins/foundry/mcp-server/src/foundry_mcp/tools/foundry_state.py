@@ -2710,13 +2710,24 @@ def registered_team_dirs(run_dir: Path, *, teams_dir: Path) -> list[str]:
 
 
 def sight_required(
-    run_dir: Path, *, shape_problem, no_ui_meaning: str
+    run_dir: Path,
+    *,
+    shape_problem,
+    no_ui_meaning: str,
+    project_root: Path | None = None,
+    directory_suffix: str = "/",
 ) -> dict:
     """Whether the SIGHT browser audit is part of this run, from the manifest.
 
     Returns ``{"required": bool}`` plus, as they apply, ``blocked``, ``no_ui``,
-    ``ui_files``, ``url`` and ``reason``. A run with no manifest yet requires
-    nothing, which is what is true of it.
+    ``ui_files``, ``url``, ``undetermined_directories`` and ``reason``. A run
+    with no manifest yet requires nothing, which is what is true of it.
+
+    ``project_root`` and ``directory_suffix`` are optional and both concern
+    DIRECTORY `key_files` entries; see the C-081 note in the body for why a
+    directory entry used to read as "no frontend files" and what each argument
+    buys. A caller that passes neither gets the same verdicts it always did,
+    with a reason that no longer overstates what was measured.
 
     `--no-ui` IS A DECLARATION AND THIS HONOURS IT (AC-052 / FR-055). The flag
     is read BEFORE the extension scan's own answer, because the flag is the
@@ -2750,13 +2761,81 @@ def sight_required(
         }
 
     ui_exts = (".tsx", ".jsx", ".vue", ".svelte", ".css", ".scss", ".html", ".astro")
-    ui_files = [
+    entries = [
         f
         for casting in data.get("castings", [])
         if isinstance(casting, dict)
         for f in (casting.get("key_files") or [])
-        if isinstance(f, str) and f.endswith(ui_exts)
+        if isinstance(f, str) and f.strip()
     ]
+    # fallout C-081 / D-170 — A DIRECTORY ENTRY IS NOT "NO FRONTEND FILES".
+    #
+    # A `key_files` entry is a file path OR a directory spelled with a trailing
+    # slash covering everything beneath it (`foundry_validate._key_file_covers`
+    # states the format). This scan asked `f.endswith(ui_exts)` of every entry,
+    # and a directory ends in a slash, so a casting that owns a UI package by
+    # naming it once contributed ZERO ui_files — the spelling the cast gate's
+    # eight-entry cap pushes a lead into, and the one this run's own manifest
+    # uses. The answer was then `required: False, "No frontend files in
+    # castings"`: a whole verification stream skipped on a run that has a
+    # frontend, under a reason that reads as a measurement rather than a miss.
+    # GI-002 is that every verification stream keeps existing, and this was a
+    # way for one to stop existing with nobody deciding to drop it.
+    #
+    # A directory's extension is unknowable from the manifest alone, so there
+    # are exactly two honest answers and this returns whichever it can:
+    #
+    #   * WALK IT, when the caller passes `project_root`. Then the question is
+    #     answered for real and a directory of `.tsx` files requires SIGHT.
+    #   * SAY SO, when it does not. The entries are counted, reported on the
+    #     answer as `undetermined_directories`, and named in `reason` — so the
+    #     skip is visible instead of silent.
+    #
+    # `required: True` on an undetermined directory was considered and is
+    # wrong: this run's own manifest names `tools/orchestration/` with no
+    # frontend anywhere, so it would block the cast gate of every backend run
+    # that fits under the cap. Fail-VISIBLE is the improvement available to a
+    # reader that cannot see the disk; fail-CLOSED here would be fail-wrong.
+    #
+    # `directory_suffix` is injected with a default rather than imported: this
+    # module holds the leaf contract (no package imports, so `measure-run.py`
+    # keeps its package-free read), which is why `shape_problem` and
+    # `no_ui_meaning` arrive the same way. The default is the format's actual
+    # spelling, so a caller that passes neither new argument gets today's
+    # behaviour plus the honest reason.
+    directories = [f for f in entries if f.endswith(directory_suffix)]
+    ui_files = [f for f in entries if f.endswith(ui_exts)]
+
+    undetermined: list[str] = []
+    for entry in directories:
+        if project_root is None:
+            undetermined.append(entry)
+            continue
+        # AN ABSENT DIRECTORY IS UNDETERMINED, NOT EMPTY, and this is the case
+        # that matters most. `rglob` on a path that does not exist yields
+        # nothing and raises nothing, so a missing directory would otherwise
+        # read as "walked it, no frontend" — which is the SAME fail-open in a
+        # new costume, and it fires exactly where C-081 hurts: at the CAST
+        # gate of a greenfield run, where the UI package the manifest declares
+        # has not been built yet. Existence is checked first so "not there" is
+        # reported as not measured. Total: never raises, whatever the path is.
+        try:
+            root = Path(project_root) / entry
+            walkable = root.is_dir()
+            found = (
+                [
+                    str(p)
+                    for p in root.rglob("*")
+                    if p.is_file() and p.name.endswith(ui_exts)
+                ]
+                if walkable
+                else []
+            )
+        except (OSError, ValueError):
+            walkable, found = False, []
+        if not walkable:
+            undetermined.append(entry)
+        ui_files.extend(found)
 
     if data.get("no_ui", False):
         return {
@@ -2767,6 +2846,22 @@ def sight_required(
             "reason": no_ui_meaning,
         }
     if not ui_files:
+        if undetermined:
+            # The miss, named. Every word here is a fact the reader can act on:
+            # which entries were not inspected, and the one argument that would
+            # have inspected them.
+            return {
+                "required": False,
+                "undetermined_directories": len(undetermined),
+                "reason": (
+                    f"No frontend files among the "
+                    f"{len(entries) - len(directories)} file entries in "
+                    f"castings; {len(undetermined)} directory entry(s) "
+                    f"({', '.join(sorted(undetermined))}) were NOT inspected, "
+                    f"so this is not a measurement that the run has no "
+                    f"frontend. Pass project_root to walk them."
+                ),
+            }
         return {"required": False, "reason": "No frontend files in castings"}
 
     url = data.get("target_url", "")
