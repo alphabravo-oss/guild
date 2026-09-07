@@ -1,0 +1,22 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -v -p no:cacheprovider tests/test_spec_test_deriver.py::test_parse_header_reads_the_binding_from_a_path_it_is_handed tests/test_spec_test_deriver.py::test_the_emitter_binds_its_requirements_from_a_cwd_that_is_not_the_test_root tests/test_spec_test_deriver.py::test_the_emitted_test_path_stays_the_nodeid_pytest_reported tests/test_evidence.py::test_every_committed_evidence_command_parses_under_the_host_shell tests/test_evidence.py::test_the_lint_judges_syntax_only_so_a_pipefail_command_survives 2>&1
+# evidence-for: GI-006, GI-003, NFR-005, AC-038, OT-035
+# evidence-volatile: (?:^|\s)platform \S+ -- Python \S+.*
+# evidence-volatile: (?:^|\s)rootdir:.*
+# evidence-volatile: (?:^|\s)plugins:.*
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+============================= test session starts ==============================
+platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmpi7TtDQ/bin/python
+rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/4f6f8a0a-bd6a-493a-8e8a-8189f550bfb0/scratchpad/capwt/plugins/foundry/mcp-server
+configfile: pyproject.toml
+plugins: anyio-4.14.2
+collecting ... collected 5 items
+
+tests/test_spec_test_deriver.py::test_parse_header_reads_the_binding_from_a_path_it_is_handed PASSED [ 20%]
+tests/test_spec_test_deriver.py::test_the_emitter_binds_its_requirements_from_a_cwd_that_is_not_the_test_root PASSED [ 40%]
+tests/test_spec_test_deriver.py::test_the_emitted_test_path_stays_the_nodeid_pytest_reported PASSED [ 60%]
+tests/test_evidence.py::test_every_committed_evidence_command_parses_under_the_host_shell PASSED [ 80%]
+tests/test_evidence.py::test_the_lint_judges_syntax_only_so_a_pipefail_command_survives PASSED [100%]
+
+============================== 5 passed in 2.76s ===============================

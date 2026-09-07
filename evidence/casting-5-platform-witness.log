@@ -1,14 +1,17 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -v -p no:cacheprovider tests/test_evidence_for.py::test_failure_tokens_includes_unbound_and_malformed tests/test_evidence.py::test_the_syntax_refusal_names_a_token_in_the_closed_allowlist tests/test_evidence.py::test_every_declared_grammar_has_a_live_witness tests/test_evidence.py::test_a_grammar_with_no_live_witness_is_reported_by_name tests/test_evidence.py::test_every_grammar_admits_its_witness_pair_and_refuses_its_falsifier 2>&1
-# evidence-for: GI-006, NFR-005, FR-051, CT-015, OT-034
+# evidence-cmd: floor=78; lint() { if [ ! -x "$1" ]; then echo "$* -n: SHELL ABSENT — this host is not a fleet host"; return 0; fi; checked=0; fails=0; for log in evidence/*.log; do cmd=$(sed -n 's/^# evidence-cmd: //p' "$log" | head -1); [ -n "$cmd" ] || continue; checked=$((checked+1)); "$@" -n -c "$cmd" || fails=$((fails+1)); done; [ "$checked" -ge "$floor" ] || echo "$* -n: POPULATION COLLAPSE — only $checked logs carried a command, below the floor of $floor"; echo "$* -n: $fails syntax failures over a corpus at or above the floor of $floor logs carrying a command"; }; lint /bin/sh; lint /bin/dash; lint /bin/bash --posix; cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -v -p no:cacheprovider tests/test_evidence_for.py::test_failure_tokens_includes_unbound_and_malformed tests/test_evidence.py::test_the_syntax_refusal_names_a_token_in_the_closed_allowlist tests/test_evidence.py::test_every_declared_grammar_has_a_live_witness tests/test_evidence.py::test_a_grammar_with_no_live_witness_is_reported_by_name tests/test_evidence.py::test_every_grammar_admits_its_witness_pair_and_refuses_its_falsifier 2>&1
+# evidence-for: GI-006, NFR-005, FR-051, CT-015, OT-034, AC-038, OT-035
 # evidence-volatile: (?:^|\s)platform \S+ -- Python \S+.*
 # evidence-volatile: (?:^|\s)rootdir:.*
 # evidence-volatile: (?:^|\s)plugins:.*
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
+/bin/sh -n: 0 syntax failures over a corpus at or above the floor of 78 logs carrying a command
+/bin/dash -n: 0 syntax failures over a corpus at or above the floor of 78 logs carrying a command
+/bin/bash --posix -n: 0 syntax failures over a corpus at or above the floor of 78 logs carrying a command
 ============================= test session starts ==============================
-platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmpTsTdxQ/bin/python
-rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/39673651-ff42-4fe3-b594-41865eb2b7d1/scratchpad/wt/plugins/foundry/mcp-server
+platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/rayjanoka/.cache/uv/builds-v0/.tmprlNNch/bin/python
+rootdir: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/4f6f8a0a-bd6a-493a-8e8a-8189f550bfb0/scratchpad/capwt/plugins/foundry/mcp-server
 configfile: pyproject.toml
 plugins: anyio-4.14.2
 collecting ... collected 5 items
@@ -19,4 +22,4 @@ tests/test_evidence.py::test_every_declared_grammar_has_a_live_witness PASSED [ 
 tests/test_evidence.py::test_a_grammar_with_no_live_witness_is_reported_by_name PASSED [ 80%]
 tests/test_evidence.py::test_every_grammar_admits_its_witness_pair_and_refuses_its_falsifier PASSED [100%]
 
-============================== 5 passed in 0.07s ===============================
+============================== 5 passed in 0.28s ===============================
