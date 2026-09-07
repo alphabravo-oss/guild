@@ -517,8 +517,10 @@ def test_orchestrator_has_no_hardcoded_model_literal() -> None:
     assert "teams.py" in scanned, sorted(scanned)
 
     # fallout AC-014 / OT-016 (D-183) — THE DIRECTION THE OLD CORPUS BROKE.
-    # `ORCHESTRATION` is a hand-typed tuple, and a shipped module absent from
-    # it was a module this scan could not read. Rooted on the package the
+    # `ORCHESTRATION` WAS a hand-typed tuple, and a shipped module absent from
+    # it was a module this scan could not read; D-183 rederived it off the same
+    # package directory, so the two corpora are equal today and no reader
+    # should go looking for a typed roster. Rooted on the package the
     # corpus can only be wider than the tuple, never narrower; this asserts
     # that, so a glob that stopped matching would be loud rather than green.
     unscanned = {Path(m.__file__).name for m in ORCHESTRATION} - scanned

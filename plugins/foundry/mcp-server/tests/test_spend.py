@@ -948,9 +948,11 @@ def test_the_estimated_usage_block_is_gone(run_env):
     # any single module would have missed it.
     #
     # fallout AC-014 (D-183) — CONCATENATED FROM WHAT SHIPS, NOT FROM A TUPLE.
-    # This called `orchestration_source()`, whose corpus is the hand-typed
+    # This called `orchestration_source()`, whose corpus WAS the hand-typed
     # `ORCHESTRATION`, so `keyfiles.py` — shipped in cycle 5 and never added —
     # was outside the only scan that could have caught a budget block in it.
+    # D-183 has since rederived that tuple off the package too, so the roster a
+    # reader would go looking for no longer exists to be found.
     source = "\n".join(
         path.read_text(encoding="utf-8")
         for path in _shipped_orchestration_modules()
