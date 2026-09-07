@@ -606,14 +606,58 @@ def foundry_mark_stream(
     # "checked more than exist" is unambiguous — the cycle TOTAL is deliberately
     # not judged here, because a legitimate re-record of a cycle would trip it
     # and CT-003 requires tranches be stored, not refused.
-    if items_total > 0 and items_checked > items_total:
+    #
+    # fallout ST-008 / CT-003 (D-159) — THE BOUND IS UNCONDITIONAL, BECAUSE
+    # ST-008 IS.
+    # ----------------------------------------------------------------------
+    # This opened `if items_total > 0 and ...`, so a record declaring NO
+    # population had no upper bound at all — and `items_total` defaults to 0
+    # because the `Foundry-Stream` schema requires only stream, cycle and
+    # items_checked. ST-008's guard column is "items_checked at most
+    # items_total" with no qualifier, and CT-003's errors column is
+    # "items_checked above items_total"; neither carves out the undeclared
+    # denominator. DRIVEN on a run with no roster for trace:
+    # `Foundry-Stream(trace, cycle=1, items_checked=9999, items_total=0)`
+    # returned ok True with coverage "N/A" and `_coverage_shortfall` answered
+    # None for that (stream, cycle) — so the coverage rung was satisfied by a
+    # record that checked nothing against nothing, while the SAME call with
+    # items_total=10 was correctly refused.
+    #
+    # THE EXEMPTION WAS INVENTED ONE RUNG UP, in the `items_total < 0` hint's
+    # "or 0 when this stream has no fixed denominator". A stream with no
+    # persisted roster has no roster-length refusal to hold it — `roster_length`
+    # answers (None, None) and the rung below stands down — so 0 was the one
+    # value that bought a record BOTH exits at once. `items_checked` is already
+    # required above zero, so the floor this establishes is 1, which is the
+    # smallest honest population a record that checked something can declare.
+    if items_checked > items_total:
         return {
             "error": (
                 f"Cannot record {stream} with items_checked={items_checked} against "
                 f"items_total={items_total}: a tranche cannot check more items than "
                 "the population it declares."
+                + (
+                    " A record that declares NO population declares no coverage "
+                    "denominator either, so nothing can be measured against it."
+                    if items_total == 0
+                    else ""
+                )
             ),
-            "hint": "Either items_checked is overstated or items_total understates the population.",
+            "hint": (
+                "Report the size of the population this tranche was drawn from. "
+                "Either items_checked is overstated or items_total understates "
+                "the population."
+                if items_total > 0
+                else (
+                    f"Report items_total — the size of the population {stream} "
+                    "was drawn from. It is not optional: the coverage threshold "
+                    "is evaluated against it, and a record with no denominator "
+                    "clears every threshold by having none. Where the stream "
+                    "has a persisted roster, that roster's length IS the "
+                    "number; where the server narrowed this stream's width for "
+                    "the cycle, it is the size of the width it drew."
+                )
+            ),
         }
 
     # The roll-up is keyed by the SERVER counter, never by the caller's `cycle`
@@ -677,7 +721,50 @@ def foundry_mark_stream(
             "items_total": items_total,
         }
 
-    if roster_len is not None and items_total != roster_len:
+    # fallout FR-050 / FR-023 / CT-003 / ST-008 (D-156) — AND IT STANDS DOWN
+    # ON A WIDTH THE SERVER ITSELF DREW, FOR THE REASON THE TWO RUNGS BESIDE IT
+    # ALREADY DO.
+    # ------------------------------------------------------------------------
+    # The roster is "the population this stream agreed to check" and it is the
+    # denominator on every cycle the server did not narrow. On a DELTA cycle it
+    # is not: `_decide_inspect_mode` writes `stream_scope[wire]["scope"] =
+    # "delta"` for the streams whose population it deliberately cut, and the
+    # stream is then owed the width the server drew and nothing else — which is
+    # what `agents/tracer.md` and `skills/trace/SKILL.md` tell TRACE to count
+    # against, and what `_recorded_prove_roster` already makes true for PROVE
+    # one rung down.
+    #
+    # Unconditional, this rung left TRACE two moves on a DELTA cycle and both
+    # were wrong. DRIVEN against a run carrying an 84-item `rosters/trace.json`
+    # and a recorded DELTA decision whose `stream_scope.trace` is
+    # {scope: "delta"}: `Foundry-Stream(trace, cycle=0, items_checked=6,
+    # items_total=6)` returned ROSTER_MISMATCH "the persisted roster for this
+    # stream names 84 item(s)" — no record at all, so `_check_streams_complete`
+    # stays short and `inspect_clean` cannot pass — while items_total=84 was
+    # accepted at 100%, which asserts a full walk the DELTA width forbade.
+    #
+    # THE MODULE ALREADY HELD THIS RULE IN TWO PLACES AND NOT IN THE THIRD. The
+    # drop-warning rung reads the same recorded scope and stands down on
+    # "delta" (D-139), and `_coverage_shortfall` measures a DELTA PROVE against
+    # `prove_sample` rather than against the spec (D-080). This was the one rung
+    # that consulted no recorded decision, so the door refused the only number
+    # the width the server drew could produce.
+    #
+    # THE NARROWNESS IS THE SERVER'S, NOT A JUDGEMENT MADE HERE. `width.py`
+    # writes scope "delta" for `trace` and `prove` only: `test` is held FULL and
+    # cold (AC-019), `DELTA_CONDITIONAL_STREAMS` (research_audit, test01) record
+    # "full" or "skipped", and `_base_required_streams` records "full". So the
+    # two streams whose loaded prose names ROSTER_MISMATCH by token —
+    # `agents/research-auditor.md` and `agents/spec-test-deriver.md` — are never
+    # reached by this arm and their sentence stays literally true.
+    #
+    # THE RECORD SAYS WHICH POPULATION IT WAS MEASURED AGAINST, because a total
+    # that means the roster on one cycle and the drawn width on the next is a
+    # number a later reader cannot interpret. `measured_against` is on the
+    # result and `_record_stream_rollup` keeps the per-record numbers as it
+    # always has.
+    narrowed_by_the_server = _recorded_stream_scope(fdir, server_cycle, stream) == "delta"
+    if roster_len is not None and items_total != roster_len and not narrowed_by_the_server:
         return {
             "error": ROSTER_MISMATCH,
             "reason": (
@@ -733,9 +820,10 @@ def foundry_mark_stream(
     # and cold — still gets the drop rung, because its denominator did not
     # move. So does every stream on a FULL cycle, and every stream on a run
     # with no recorded decision.
+    # D-156: the same fact the roster rung above stood down on, read once. Two
+    # reads of one recorded decision inside one call is the shape this module
+    # has paid for twice already (`_current_inspect_mode`'s cycle stamp, D-216).
     coverage_warning = ""
-    recorded_scope = _recorded_stream_scope(fdir, server_cycle, stream)
-    narrowed_by_the_server = recorded_scope == "delta"
     if (
         not narrowed_by_the_server
         and prev_totals is not None
@@ -825,6 +913,20 @@ def foundry_mark_stream(
         # Named at the door rather than left in the artifact, because a
         # replacement a caller cannot see is a replacement it will make twice.
         "replaced": totals["replaced"],
+        # fallout FR-050 / FR-023 / ST-008 (D-156) — WHICH POPULATION THIS
+        # TOTAL IS. "roster" when the persisted roster's length is what the
+        # record had to equal, "delta_width" when this cycle's recorded decision
+        # narrowed the stream and the drawn width is the denominator instead,
+        # "declared" when the stream has no roster and nothing narrowed it. A
+        # number that means the roster on one cycle and the drawn width on the
+        # next is a number a later reader cannot interpret, and the reader that
+        # most needs to is the F6 report comparing two cycles.
+        "measured_against": (
+            "delta_width" if narrowed_by_the_server
+            else "roster" if roster_len is not None
+            else "declared"
+        ),
+        "roster_length": roster_len,
         "recorded": {
             "items_checked": items_checked,
             "items_total": items_total,

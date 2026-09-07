@@ -203,7 +203,9 @@ def test_readonly_intervening_call_does_not_reset_ordering(run_env):
     stall_before = (fdir / ".last-next-at").read_text(encoding="utf-8")
 
     # Read-only intervening call.
-    stream = foundry_mark_stream("test", cycle=1, items_checked=5, project_root=project_root)
+    stream = foundry_mark_stream(
+        "test", cycle=1, items_checked=5, items_total=5, project_root=project_root
+    )
     assert stream.get("ok") is True
 
     # Neither marker was reset by the read-only call.
@@ -238,7 +240,8 @@ def test_research_audit_stream_recordable(run_env):
     """AC-013: recording research_audit succeeds instead of 'Invalid stream'."""
     project_root, fdir = run_env
     result = foundry_mark_stream(
-        "research_audit", cycle=1, items_checked=7, project_root=project_root
+        "research_audit", cycle=1, items_checked=7, items_total=7,
+        project_root=project_root
     )
     assert result.get("ok") is True, result
     assert result["stream"] == "research_audit"
@@ -251,7 +254,8 @@ def test_flow_trace_stream_recordable_writes_marker(run_env):
     """AC-013: recording flow_trace succeeds and writes .flow_trace-complete."""
     project_root, fdir = run_env
     result = foundry_mark_stream(
-        "flow_trace", cycle=1, items_checked=4, project_root=project_root
+        "flow_trace", cycle=1, items_checked=4, items_total=4,
+        project_root=project_root
     )
     assert result.get("ok") is True, result
     marker = fdir / ".flow_trace-complete"
@@ -267,7 +271,8 @@ def test_coverage_diff_stream_recordable_writes_marker(run_env):
     names) and writes .coverage_diff-complete."""
     project_root, fdir = run_env
     result = foundry_mark_stream(
-        "coverage_diff", cycle=1, items_checked=9, project_root=project_root
+        "coverage_diff", cycle=1, items_checked=9, items_total=9,
+        project_root=project_root
     )
     assert result.get("ok") is True, result
     assert result["stream"] == "coverage_diff"
@@ -285,7 +290,8 @@ def test_every_stream_in_the_vocabulary_is_recordable(run_env):
     project_root, fdir = run_env
     for stream in sorted(VALID_STREAMS):
         result = foundry_mark_stream(
-            stream, cycle=1, items_checked=3, project_root=project_root
+            stream, cycle=1, items_checked=3, items_total=3,
+            project_root=project_root
         )
         assert result.get("ok") is True, (stream, result)
         assert (fdir / f".{stream}-complete").exists()
@@ -360,9 +366,13 @@ def test_old_marker_state_still_loads_and_gates(run_env):
     counts = _marker_counts(fdir / ".trace-complete")
     assert counts == {"items_checked": 10, "items_total": 10, "findings": 0}
 
-    # Re-recording over an old-format marker still succeeds.
+    # Re-recording over an old-format marker still succeeds. `items_total` is
+    # DECLARED here rather than left at 0: fallout ST-008 (D-159) made the
+    # `items_checked <= items_total` bound unconditional, so a record that
+    # declares no population is refused whatever it is recording over. The
+    # subject of this test is the OLD MARKER BODY, not the exemption.
     result = foundry_mark_stream(
-        "trace", cycle=2, items_checked=3, items_total=0, project_root=project_root
+        "trace", cycle=2, items_checked=3, items_total=3, project_root=project_root
     )
     assert result.get("ok") is True, result
 
@@ -421,7 +431,8 @@ def test_new_streams_recordable_but_not_required(run_env):
     project_root, fdir = run_env
     for new in ["research_audit", "flow_trace", "coverage_diff"]:
         result = foundry_mark_stream(
-            new, cycle=1, items_checked=2, project_root=project_root
+            new, cycle=1, items_checked=2, items_total=2,
+            project_root=project_root
         )
         assert result.get("ok") is True, result
 
@@ -454,7 +465,8 @@ def test_every_roster_stream_is_recordable_including_test01(run_env):
     project_root, fdir = run_env
     for stream in ("research_audit", "coverage_diff", "flow_trace", "test01"):
         result = foundry_mark_stream(
-            stream, cycle=0, items_checked=3, project_root=project_root
+            stream, cycle=0, items_checked=3, items_total=3,
+            project_root=project_root
         )
         assert result.get("ok") is True, (stream, result)
         assert (fdir / f".{stream}-complete").exists()
@@ -751,3 +763,176 @@ def test_the_two_roster_refusals_carry_different_tokens_and_remedies(run_env):
     assert unreadable["error"] == _streams.ROSTER_UNREADABLE, unreadable
     assert "roster_length" not in unreadable, unreadable
     assert _streams.ROSTER_UNREADABLE != ROSTER_MISMATCH
+
+
+# --------------------------------------------------------------------------- #
+# fallout ST-008 / CT-003 (D-159) — THE UPPER BOUND IS UNCONDITIONAL.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_record_declaring_no_population_has_no_upper_bound_and_is_refused(run_env):
+    """fallout ST-008 / CT-003 (D-159) — `items_checked` at most `items_total`,
+    with no exemption for the denominator nobody declared.
+
+    ST-008's guard column reads "items_checked at most items_total" and CT-003's
+    errors column reads "items_checked above items_total"; neither carves out
+    the undeclared case, and the `Foundry-Stream` schema requires only stream,
+    cycle and items_checked, so `items_total` arrives as 0 whenever a caller
+    omits it. The rung opened `if items_total > 0 and ...`, so 0 bought a record
+    BOTH exits at once — no ratio bound, and no denominator for the coverage
+    threshold to be evaluated against.
+
+    DRIVEN before the fix on a run with no roster for trace: this exact call
+    returned ok True with coverage "N/A" and `_coverage_shortfall` answered None
+    for the (stream, cycle), while the same call with items_total=10 was
+    correctly refused. The control below is that same refusal, which must not
+    have changed.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2")
+
+    refused = foundry_mark_stream(
+        "trace", cycle=1, items_checked=9999, items_total=0, project_root=project_root
+    )
+    assert refused.get("ok") is not True, refused
+    assert "items_total=0" in refused["error"], refused
+    # The refusal names what an undeclared population actually costs, rather
+    # than reporting a ratio against a number the caller never gave.
+    assert "declares no coverage denominator" in refused["error"], refused
+    assert "not optional" in refused["hint"], refused
+    # ...and nothing was written, so the coverage rung has nothing to be
+    # satisfied by.
+    assert _streams._rollup_totals(fdir, 0, "trace") is None, "the record was written"
+
+    # The control: a DECLARED population still refuses on the ratio, in the
+    # sentence it has always used.
+    over = foundry_mark_stream(
+        "trace", cycle=1, items_checked=9999, items_total=10, project_root=project_root
+    )
+    assert over.get("ok") is not True, over
+    assert "a tranche cannot check more items than the population it declares" in over["error"]
+
+    # ...and an honest record is unaffected.
+    ok = foundry_mark_stream(
+        "trace", cycle=1, items_checked=9, items_total=10, project_root=project_root
+    )
+    assert ok["ok"] is True, ok
+    assert ok["coverage"] == "90%", ok
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-050 / FR-023 / ST-008 (D-156) — THE ROSTER IS NOT THE DENOMINATOR
+# ON A WIDTH THE SERVER ITSELF NARROWED.
+# --------------------------------------------------------------------------- #
+
+
+def _delta_scope(fdir, stream: str, cycle: int = 0) -> None:
+    """Record an INSPECT decision that narrowed `stream` to DELTA width."""
+    _write_state(fdir, phase="F2", cycle=cycle, inspect_modes=[{
+        "cycle": cycle,
+        "mode": "DELTA",
+        "rule": "",
+        "decided_by": "inspect_start",
+        "required_streams": [stream],
+        "stream_scope": {
+            stream: {"scope": "delta", "detail": "symbols in the 3 file(s) touched"}
+        },
+        "touched_files": ["src/a.py", "src/b.py", "src/c.py"],
+    }])
+
+
+def test_a_server_narrowed_stream_records_the_width_it_was_given(run_env):
+    """fallout FR-050 / FR-023 / CT-003 / ST-008 (D-156) — the DELTA width is
+    this cycle's population, and the roster rung stands down for it.
+
+    DRIVEN before the fix, on a run carrying an 84-item `rosters/trace.json` and
+    a recorded DELTA decision whose `stream_scope.trace` is {scope: "delta"}:
+    `Foundry-Stream(trace, items_checked=6, items_total=6)` returned
+    ROSTER_MISMATCH "the persisted roster for this stream names 84 item(s)", so
+    the stream had exactly two moves and both were wrong — report the width it
+    was given and be refused (no record at all, so `_check_streams_complete`
+    stays short and `inspect_clean` cannot pass), or report 84/84 and assert a
+    full walk the DELTA width forbade.
+
+    `agents/tracer.md` and `skills/trace/SKILL.md` both bind `items_total` to
+    `inspect_mode.touched_files` on a DELTA cycle, and this is the door that
+    made that instruction unfollowable.
+    """
+    from foundry_mcp.tools.rosters import foundry_roster
+
+    project_root, fdir = run_env
+    _delta_scope(fdir, "trace")
+    assert foundry_roster(
+        stream="trace", items=[f"src/f{n}.py#S{n}" for n in range(84)],
+        project_root=project_root,
+    ).get("error") is None
+
+    narrowed = foundry_mark_stream("trace", 0, 6, 6, 0, project_root)
+    assert narrowed.get("ok") is True, narrowed
+    assert narrowed["coverage"] == "100%", narrowed
+    # The record SAYS which population it was measured against, because a total
+    # that means the roster on one cycle and the drawn width on the next is a
+    # number a later reader cannot interpret.
+    assert narrowed["measured_against"] == "delta_width", narrowed
+    assert narrowed["roster_length"] == 84, narrowed
+
+
+def test_the_roster_rung_still_refuses_on_a_width_the_server_did_not_narrow(run_env):
+    """fallout FR-050 / OT-031 (D-156) — the control, on the same run.
+
+    The stand-down is keyed to the server's OWN recorded decision, not to the
+    presence of a roster and not to the stream's name. With the same roster and
+    the same stream recorded `full` for the cycle, `ROSTER_MISMATCH` is
+    unchanged — which is what keeps OT-031 true everywhere the width was not
+    narrowed.
+    """
+    from foundry_mcp.tools.rosters import foundry_roster
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=0, inspect_modes=[{
+        "cycle": 0, "mode": "FULL", "rule": "final_gate",
+        "decided_by": "inspect_start", "required_streams": ["trace"],
+        "stream_scope": {"trace": {"scope": "full", "detail": "every item in scope"}},
+    }])
+    assert foundry_roster(
+        stream="trace", items=[f"src/f{n}.py#S{n}" for n in range(84)],
+        project_root=project_root,
+    ).get("error") is None
+
+    refused = foundry_mark_stream("trace", 0, 6, 6, 0, project_root)
+    assert refused["error"] == ROSTER_MISMATCH, refused
+    assert refused["roster_length"] == 84, refused
+
+    full = foundry_mark_stream("trace", 0, 84, 84, 0, project_root)
+    assert full["ok"] is True, full
+    assert full["measured_against"] == "roster", full
+
+
+def test_the_stand_down_reaches_only_the_streams_the_server_narrows(run_env):
+    """fallout FR-050 (D-156) — `research_audit` and `test01` are never `delta`.
+
+    `width._decide_inspect_mode` writes scope "delta" for `trace` and `prove`
+    only: `test` is held FULL and cold (AC-019), the two
+    `DELTA_CONDITIONAL_STREAMS` record "full" or "skipped", and
+    `_base_required_streams` records "full". So the two streams whose loaded
+    prose names `ROSTER_MISMATCH` by token — `agents/research-auditor.md` and
+    `agents/spec-test-deriver.md` — cannot reach the stand-down, and their
+    sentence stays literally true.
+
+    Asserted on the DECISION rather than on the door, because the claim is about
+    which scopes the server ever writes; a door drive would pass while the
+    decision started writing "delta" for a third stream.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, key_files=["src/a.py"], no_ui=True)
+    _write_spec(fdir, ["FR-001", "FR-002"])
+    entry = _width._decide_inspect_mode(
+        fdir, project_root, decided_by="inspect_start", phase="F2", cycle=1,
+    )
+    narrowed = {
+        wire for wire, cell in (entry.get("stream_scope") or {}).items()
+        if isinstance(cell, dict) and cell.get("scope") == "delta"
+    }
+    assert narrowed <= {"trace", "prove"}, entry["stream_scope"]
+    for wire in sorted(vocab.DELTA_CONDITIONAL_STREAMS):
+        assert wire not in narrowed, (wire, entry["stream_scope"])
