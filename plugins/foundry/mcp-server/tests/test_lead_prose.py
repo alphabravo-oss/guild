@@ -1171,6 +1171,86 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         START_MD,
         "**F0.9 REFUSES a span above two without one**",
     ),
+    # --- D17b: the key_files union is measured against the SHIPPED surface ---
+    # fallout FR-009 / D-172. The two fields above record which requirements a
+    # casting owns; NOTHING recorded which FILES the manifest fails to own at
+    # all. Measured on this run's own manifest, well over a third of the
+    # shipped .py/.md/.sh surfaces were covered by no casting's `key_files`,
+    # and no door said so: F0.9's map cross-check refuses only files the spec's
+    # `## File Change Map` NAMES, so a file absent from both the map and every
+    # key_files list is invisible to it BY CONSTRUCTION, and `Foundry-Fix` keys
+    # on who authored a fix rather than on who owns the file. The consequence
+    # is not cosmetic -- four defects in two cycles landed on unowned files and
+    # each was routed by a lead ruling on ADJACENCY, which routes by import
+    # coupling rather than by the requirement the defect was filed under.
+    #
+    # These pin the PRODUCER half. F0.5 is the only place `key_files` can be
+    # authored (there is no decompose tool -- the manifest is hand-written per
+    # this very prose), so an instruction that does not ask for the whole
+    # surface produces a manifest no later dimension can repair.
+    (
+        "f05-key-files-cover-the-shipped-surface",
+        "FR-009",
+        START_MD,
+        "**And `key_files` must cover the SHIPPED SURFACE, not just the files "
+        "the spec names.**",
+    ),
+    (
+        "f05-an-unowned-file-cannot-be-routed-to",
+        "FR-009",
+        START_MD,
+        "**a file in no casting's `key_files` is a file the manifest cannot "
+        "route a defect to.**",
+    ),
+    # The affordability clause, pinned separately: without the directory form
+    # the instruction collides with the eight-entry cap and a lead reading it
+    # concludes the rule is unsatisfiable rather than that the entry is a
+    # directory. `_key_file_covers` is the reading that makes it true.
+    (
+        "f05-a-directory-entry-covers-what-is-beneath-it",
+        "FR-009",
+        START_MD,
+        "a directory entry covers every path beneath it",
+    ),
+    (
+        "f09-refuses-an-unowned-shipped-surface",
+        "FR-009",
+        START_MD,
+        "**F0.9 REFUSES a shipped surface that no casting's `key_files` "
+        "covers.**",
+    ),
+    # The CHECK half, in the F0.9 dimension list -- the lead-facing statement
+    # of what that door refuses. A door refusing on something the lead's own
+    # protocol never mentions is D-172's own shape one level up: a rule with no
+    # surface stating it.
+    (
+        "f09-names-why-the-map-is-not-the-shipped-surface",
+        "FR-009",
+        START_MD,
+        "**Surface ownership — the map is not the shipped surface.**",
+    ),
+    (
+        "f09-surface-dimension-refuses-by-path",
+        "FR-009",
+        START_MD,
+        "**REFUSES any shipped surface no casting's `key_files` covers**, "
+        "naming the paths",
+    ),
+    # The rationale half. Named here as well as in the house-shape parametrize
+    # below, because that test proves the section has the two markers and this
+    # proves the section is the one that exists.
+    (
+        "rationale-surface-ownership",
+        "FR-009",
+        LEAD_DISCIPLINE,
+        "## Why every shipped surface needs an owner",
+    ),
+    (
+        "rationale-adjacency-is-not-ownership",
+        "FR-009",
+        LEAD_DISCIPLINE,
+        "Adjacency is not ownership",
+    ),
     # --- D18: the two flags that were parsed and read by nothing -------------
     # fallout FR-044 / GI-015 (temper) and AC-052 / FR-033 / FR-055 (no_ui).
     # GI-015 is a global invariant rather than a preference: a paragraph that
@@ -2161,6 +2241,10 @@ def test_the_f6_evidence_rung_names_every_terminal_crossing_in_order() -> None:
         # releases of the flow changing underneath it. It joins the parametrize
         # rather than getting a bespoke check, for the reason above.
         "## Why the concern ledger exists",
+        # fallout FR-009 / D-172 -- the surface-ownership section. Same reason
+        # again: the property belongs to the FILE, and a section carrying its
+        # own bespoke check is a section free to drift into its own shape.
+        "## Why every shipped surface needs an owner",
     ),
 )
 def test_new_rationale_sections_keep_the_house_shape(heading: str) -> None:

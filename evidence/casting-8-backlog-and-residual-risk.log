@@ -7,5 +7,5 @@
 1	an empty PROVE is not the goal
 1	Nothing mitigates this beyond `FULL` width on `verifier_touched`
 1	accepted residual risk of self-hosting
-6	The failure mode. markers
-7	The fix. markers
+7	The failure mode. markers
+8	The fix. markers
