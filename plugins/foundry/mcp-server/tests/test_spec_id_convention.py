@@ -22,8 +22,18 @@ spec.
     fallout AC-056           cites forge-specs/foundry-run-fallout
 
 Three spellings, no fourth, and no default. A ``/``-joined run inherits the
-qualification of its head -- ``convergence CT-002 / AC-019 / OT-008`` qualifies
-all three -- which is how section headers are written. Ids in CODE are not
+qualification of its head THROUGH REQUIREMENT IDS AND NOTHING ELSE: every
+segment between the qualification and the id has to itself be a requirement id
+of one of the families above, which is why ``convergence CT-002 / AC-019 /
+OT-008`` qualifies all three and is how section headers are written. A
+RUN-LOCAL id in the run -- a concern ``C-NNN``, a defect ``D-NNN`` -- is not one
+of those families, so it ENDS the inheritance where it stands and every
+requirement id after it is reported however the run began. ``fallout AC-022 /
+C-081 / GI-002`` is qualified at its head and still reports its last id; put
+the requirement ids first and the run-local ids last, ``fallout AC-022 /
+GI-002 / C-081``, or give each id its own qualification. The refusal prints
+this as ``CHAIN_PHRASE`` and the two runs it names are driven, so the one it
+calls broken is a run that actually breaks. Ids in CODE are not
 citations and are never scanned: a ``spec_ref=`` fixture literal, a
 ``parametrize`` entry, a module constant, an assertion's expected string. Those
 are input handed to a door under test, not a claim about which requirement a
@@ -92,6 +102,44 @@ QUALIFIER_SPECS = {
 #: The accepted spellings, one per line, as the refusal prints them.
 QUALIFIER_PHRASE = "\n".join(
     f"    {q.strip()!r:<22} -> {QUALIFIER_SPECS[q]}" for q in QUALIFIERS
+)
+
+#: The three `/`-joined runs `CHAIN_PHRASE` names, held as data so the test can
+#: drive the EXACT strings the refusal prints rather than a paraphrase of them.
+CHAIN_COVERED = "convergence CT-002 / AC-019 / OT-008"
+CHAIN_BROKEN = "fallout AC-022 / C-081 / GI-002"
+CHAIN_REPAIRED = "fallout AC-022 / GI-002 / C-081"
+
+#: What a `/`-joined run does and does not carry, as the refusal prints it.
+#:
+#: fallout NFR-011 (D-174). The sentence this replaces said only that a run
+#: "inherits its head's qualification" and illustrated it with `CHAIN_COVERED`
+#: -- three requirement ids, which is the ONE shape that cannot exhibit the
+#: constraint, because it is true of itself whatever the reader believes about
+#: why. `_chain_pattern` strips only `<REQUIREMENT-ID> / ` segments, so a
+#: run-local id ends the inheritance where it stands; the reader who learned
+#: "the head qualifies the run" therefore wrote a run whose head WAS qualified
+#: and whose middle was run-local, and it was refused. It defeated the author
+#: of the offending line and the lead diagnosing it, which is why the fix is
+#: this sentence rather than the regex: widening the chain to step over
+#: run-local segments would let a qualification travel further than any pin
+#: asks it to.
+#:
+#: Derived from `ID_FAMILIES` rather than typed beside it -- the
+#: `QUALIFIER_PHRASE` shape one axis over -- and both runs it names are driven
+#: by `test_a_run_local_id_breaks_the_chain_however_the_run_began`, so the run
+#: this phrase calls broken has to be one that actually breaks.
+CHAIN_PHRASE = (
+    "A `/`-joined run inherits its head's qualification only THROUGH "
+    "REQUIREMENT IDS: every segment between the qualification and the id must "
+    "itself be one of "
+    + ", ".join(f"{family}-NNN" for family in sorted(ID_FAMILIES))
+    + f", so one prefix covers '{CHAIN_COVERED}'. Anything else in the run -- a "
+    "concern id, a defect id -- ends the inheritance where it stands, and every "
+    "requirement id AFTER it is reported however the run began: "
+    f"'{CHAIN_BROKEN}' is qualified at its head and still reports its last id. "
+    "Put the requirement ids first and the run-local ids last, "
+    f"'{CHAIN_REPAIRED}', or give each id its own qualification."
 )
 
 PIN_SENTINEL = "# D-178 — THE TWO-SPEC ID CONVENTION IS PINNED, NOT MERELY DOCUMENTED."
@@ -422,9 +470,8 @@ def test_every_requirement_id_in_this_module_names_its_spec(module: str) -> None
         f"of the id. Exactly {len(QUALIFIERS)} spellings are accepted:\n"
         f"{QUALIFIER_PHRASE}\n"
         f"There is no bare form and no per-file default; open the specs and "
-        f"cite the one the surrounding prose actually describes. A `/`-joined "
-        f"run inherits its head's qualification, so one prefix covers "
-        f"'convergence CT-002 / AC-019 / OT-008'.\n"
+        f"cite the one the surrounding prose actually describes.\n"
+        f"{CHAIN_PHRASE}\n"
         f"{len(offenders)} unqualified id(s) in tests/{module}:\n  "
         + "\n  ".join(offenders)
     )
@@ -527,6 +574,48 @@ def test_the_pin_reports_the_three_tags_it_was_written_for() -> None:
     assert not unqualified_ids("convergence US-002 / FR-004 — symbol-anchored")
     assert not unqualified_ids("evaded process-fixes ST-002 escalation while")
     assert not unqualified_ids("evaded convergence ST-002 escalation while")
+
+
+def test_a_run_local_id_breaks_the_chain_however_the_run_began() -> None:
+    """fallout NFR-011 -- the refusal's own examples, driven.
+
+    The sentence `CHAIN_PHRASE` replaces illustrated the chain rule with three
+    requirement ids, which is the one shape that cannot exhibit it: such a run
+    inherits whatever the reader believes about why. So a reader learned "the
+    head qualifies the run", wrote a run whose head was qualified and whose
+    middle was run-local, and was refused by the sentence that taught them.
+    An example that cannot fail teaches nothing, and this drives the examples
+    the refusal actually prints so a run it calls broken is one that breaks.
+
+    Every id below is CODE -- input to the scan, not a citation -- which is why
+    none of the strings carries a qualification of this module's own.
+    """
+    # The covered run: a qualification, then requirement ids the whole way.
+    assert not unqualified_ids(CHAIN_COVERED)
+
+    # The broken run, and it is the line the replaced sentence denied: a
+    # properly qualified HEAD does not rescue what sits behind a run-local
+    # segment. Asserted as the exact reported list, not merely as truthy, so
+    # the phrase cannot start naming a run that fails for a different reason.
+    assert unqualified_ids(CHAIN_BROKEN) == [f"GI-002 in ...{CHAIN_BROKEN}..."]
+
+    # The repair the phrase prescribes, driven rather than claimed.
+    assert not unqualified_ids(CHAIN_REPAIRED)
+
+    # POSITION IS THE WHOLE RULE, and it is position-independent in both
+    # directions: a run-local segment at the front breaks everything after it,
+    # and one at the back breaks nothing, because nothing after it is scanned.
+    assert unqualified_ids("fallout C-081 / D-170 / GI-002")
+    assert not unqualified_ids("fallout GI-002 / C-081 / D-170")
+    assert not unqualified_ids("fallout GI-002 / AC-022 / C-081")
+
+    # And the phrase states exactly that, with the family set derived rather
+    # than typed beside it -- so a family added to `ID_FAMILIES` widens the
+    # sentence a teammate reads instead of leaving it a member short.
+    for family in ID_FAMILIES:
+        assert f"{family}-NNN" in CHAIN_PHRASE, family
+    for run in (CHAIN_COVERED, CHAIN_BROKEN, CHAIN_REPAIRED):
+        assert run in CHAIN_PHRASE, run
 
 
 def test_a_dual_cited_id_is_pinnable_now_that_the_convention_is_total() -> None:
