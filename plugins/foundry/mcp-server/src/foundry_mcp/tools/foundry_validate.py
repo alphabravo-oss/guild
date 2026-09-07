@@ -1142,11 +1142,16 @@ def foundry_validate_castings(
     dimensions: dict[str, dict] = {}
 
     # ── Dimension 1: Requirement Coverage ──
+    #: The union of every id some casting's excerpt DECLARES, plus the ids its
+    #: observable truths name. Filled by the loop below; read by the coverage
+    #: verdict here and by the payload's `covered_requirements` count, and by
+    #: nothing else, which is the whole of what "answerable for" is allowed to
+    #: decide at F0.9. There is deliberately NO per-casting map of the declared
+    #: side beside it: the ownership dimension asks its question of
+    #: `cited_by_casting` and of the manifest's persisted `requirement_ids`, so
+    #: a second dict keyed by casting would be a derivation with no reader —
+    #: which is what it was, until concern C-099 found it (fallout GI-024).
     covered_reqs: set[str] = set()
-    #: casting id -> the ids that casting's own excerpt DECLARES. Filled by the
-    #: loop below; read by the coverage verdict here and by nothing else, which
-    #: is the whole of what "answerable for" is allowed to decide at F0.9.
-    declared_by_casting: dict[str, set[str]] = {}
     #: casting id -> the ids that casting's own excerpt CITES. The same loop,
     #: the other question (fallout D-181), read by the ownership dimension.
     cited_by_casting: dict[str, set[str]] = {}
@@ -1165,15 +1170,18 @@ def foundry_validate_castings(
         # `_manifest_shape_problem` judges, and `declared_requirement_ids`
         # splits it into lines — so reading it totally here is what keeps a
         # malformed excerpt a REPORTED gap rather than a traceback across the
-        # MCP boundary. The ownership and span dimensions below read
-        # `declared_by_casting` rather than scanning the same blob again: one
-        # question, one derivation, no surface where two readers of it can
-        # disagree with nothing comparing them.
+        # MCP boundary. This blob is scanned ONCE, here, for both questions the
+        # excerpt can answer: the ownership dimension below reads
+        # `cited_by_casting` off this same loop rather than opening the blob a
+        # second time, and it takes the OWNED side from the manifest's
+        # persisted `requirement_ids` through `_ownership_and_computability`,
+        # never from this prose at all. One question, one derivation, no
+        # surface where two readers of it can disagree with nothing comparing
+        # them.
         spec_text_field = c.get("spec_text", "")
         if not isinstance(spec_text_field, str):
             spec_text_field = ""
         casting_reqs = set(declared_requirement_ids(spec_text_field))
-        declared_by_casting[str(c.get("id", "?"))] = casting_reqs
         cited_by_casting[str(c.get("id", "?"))] = set(
             cited_requirement_ids(spec_text_field)
         )
@@ -2144,7 +2152,7 @@ def foundry_validate_castings(
     # All three sources use the same verb: AC-001 "cites an id in `spec_text`
     # that is absent from its `requirement_ids`", OT-001 "whose prose CITES an
     # id outside that list", FR-040 the same word in both directions. This
-    # dimension read `declared_by_casting` instead — the SUBJECT-POSITION
+    # dimension read `declared_requirement_ids` instead — the SUBJECT-POSITION
     # reading the acceptance gate needs — so an id named mid-line, mid-prose or
     # inside backticks was invisible here and a casting citing an id it did not
     # own passed F0.9 clean, which is the state AC-001 says is refused.
