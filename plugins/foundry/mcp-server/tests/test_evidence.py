@@ -6302,6 +6302,134 @@ def test_the_sweep_refuses_an_unparseable_command_before_running_it(
     ]
 
 
+def test_the_acceptance_door_refuses_an_unparseable_command_before_running_it(
+    tmp_path, monkeypatch
+):
+    """FR-002's "EVERY crossing", at the crossing the sweep is not (D-107).
+
+    THE SWEEP IS ONE OF TWO SERVER-SIDE EXECUTORS, AND ONLY IT WAS PARSING.
+    `_sweep_one_log` calls `_shell_parse_problem` before the runner;
+    `_verify_one_evidence_file` — the door `verify_evidence` walks, which
+    `foundry_handoff#foundry_accept_casting` calls at F1 acceptance — went from
+    `header["cmd"]` straight to `_run_command_with_timeout`. So a casting could
+    be REFUSED at the boundary sweep for a command that had already been RUN at
+    its own acceptance, which is the same command reaching two doors that
+    disagree about whether it may execute.
+
+    Driven the way the damage happens rather than on a command that merely
+    fails: the `touch` before the unclosed subshell is a side effect the shell
+    performs and THEN abandons the script, so a door that executes leaves the
+    file behind and reports EVIDENCE_EXIT_NONZERO. Both halves are asserted for
+    the reason the sweep's own test states — the token alone cannot tell
+    "parsed first" from "ran and happened to fail", so the runner is spied and
+    the side effect is looked for on disk.
+    """
+    worktree = tmp_path / "worktree"
+    (worktree / "evidence").mkdir(parents=True)
+    witness = worktree / "the-acceptance-door-executed-it"
+    log = worktree / "evidence" / "casting-5-unparseable.log"
+    log.write_text(
+        f"# evidence-cmd: touch {witness.name} && (\n"
+        "# evidence-for: FR-002\n"
+        "\n"
+        "a body long enough to clear the stub library's 128-byte TOO_SMALL "
+        "floor, so nothing but the parse check can be what refuses this log\n",
+        encoding="utf-8",
+    )
+
+    ran: list[str] = []
+    real_runner = evidence._run_command_with_timeout
+
+    def _spy(*, cmd, cwd, timeout):
+        ran.append(cmd)
+        return real_runner(cmd=cmd, cwd=cwd, timeout=timeout)
+
+    monkeypatch.setattr(evidence, "_run_command_with_timeout", _spy)
+
+    record = evidence._verify_one_evidence_file(
+        evidence_path=log, worktree_path=worktree, casting_commit="0" * 40,
+    )
+
+    assert record["verdict"] == "rejected", record
+    assert record["failure_token"] == "EVIDENCE_COMMAND_SYNTAX", (
+        "the acceptance door executed the command and reported the shell's "
+        "exit code instead of parsing it first"
+    )
+    assert record["failure_token"] in evidence.KNOWN_EVIDENCE_FAILURE_TOKENS
+    # The refusal names the log, the shell, and the fact that nothing ran —
+    # the same three things the sweep's refusal names, so an operator reading
+    # either door reads one sentence.
+    assert "casting-5-unparseable.log" in record["failure_detail"]
+    assert "/bin/sh -n" in record["failure_detail"]
+    assert "NOT executed" in record["failure_detail"]
+
+    # BEFORE: neither the runner nor the shell ever saw it.
+    assert ran == [], f"the unparseable command reached the runner: {ran}"
+    assert not witness.exists(), (
+        "the leading `touch` ran, so the door executed a command it could not "
+        "parse — 'it only failed to parse' is never 'it had no effect'"
+    )
+
+
+def test_a_parseable_command_still_reaches_the_acceptance_runner(tmp_path):
+    """The other side: the new rung refuses SYNTAX and nothing else.
+
+    A check that returned a problem for every command would satisfy the test
+    above and break the door, so a well-formed command is driven through the
+    same entry point and has to arrive at the comparison — which it can only do
+    by having been executed.
+    """
+    worktree = tmp_path / "worktree"
+    (worktree / "evidence").mkdir(parents=True)
+    body = (
+        "a body long enough to clear the stub library's 128-byte TOO_SMALL "
+        "floor so the verdict below is decided by the comparison and not by "
+        "the stub library\n"
+    )
+    log = worktree / "evidence" / "casting-5-parseable.log"
+    log.write_text(
+        "# evidence-cmd: python3 -c \"print(open('evidence/body.txt').read(), "
+        "end='')\"\n"
+        "# evidence-for: FR-002\n"
+        "\n" + body,
+        encoding="utf-8",
+    )
+    (worktree / "evidence" / "body.txt").write_text(body, encoding="utf-8")
+
+    record = evidence._verify_one_evidence_file(
+        evidence_path=log, worktree_path=worktree, casting_commit="0" * 40,
+    )
+
+    assert record["verdict"] == "accepted", record
+    assert record["failure_token"] is None, record
+    assert record["exit_code"] == 0, record
+
+
+def test_both_server_side_doors_parse_with_the_same_one_lint():
+    """GI-019's "server refuses at EVERY crossing", as a property of the code.
+
+    The two tests above drive each door once. This one asserts they cannot come
+    apart: both bodies name `_shell_parse_problem`, so a future edit that gives
+    one door its own inline parse — a second `sh -n`, a dialect grep, a
+    remembered try/except — leaves this red rather than leaving the two doors
+    quietly judging commands by different rules.
+    """
+    for door in (
+        evidence._verify_one_evidence_file,
+        evidence._sweep_one_log,
+    ):
+        source = inspect.getsource(door)
+        assert "_shell_parse_problem(" in source, (
+            f"{door.__name__} does not reach the shared lint; a crossing that "
+            "parses with anything else is a crossing that disagrees with the "
+            "commit guard about which shell judges the command"
+        )
+        assert "EVIDENCE_COMMAND_SYNTAX" in source, (
+            f"{door.__name__} parses but does not name the token, so its "
+            "refusal reaches the operator unnamed"
+        )
+
+
 def test_the_syntax_check_never_executes_what_it_parses(tmp_path):
     """The property `-n` is carried for, driven directly on the helper.
 
@@ -6561,6 +6689,87 @@ def test_the_runner_states_the_shell_the_lint_models():
     assert "Popen(shell=True)" in documentation, (
         "the statement no longer says WHICH call the /bin/sh fact is about"
     )
+
+
+def test_every_caller_of_the_runner_parses_the_command_first():
+    """fallout FR-002 / GI-019 (D-107) — "server refuses at EVERY crossing", as
+    a property of the tree rather than of the two crossings anyone remembered.
+
+    D-107 was not a missing check so much as a missing RULE: the lint lived in
+    `_sweep_one_log`, the discipline block in `worktree_helpers` described it as
+    "the sweep's own", and `_verify_one_evidence_file` — the acceptance door,
+    the other caller of the same runner — executed what it could not parse for a
+    whole run. Nothing was wrong with either function on its own reading. What
+    was missing was anything that looked at BOTH.
+
+    So the rule is derived, never listed: every function in the shipped module
+    that reaches `_run_command_with_timeout` must also reach
+    `_shell_parse_problem`. A third executor added tomorrow is judged the day it
+    lands, and it fails here rather than at whichever crossing first hands a
+    typo to a shell.
+    """
+    tree = ast.parse(
+        Path(evidence.__file__).read_text(encoding="utf-8")
+    )
+
+    def _names_called(node: ast.AST) -> set[str]:
+        return {
+            call.func.id
+            for call in ast.walk(node)
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+        }
+
+    executors, unlinted = set(), []
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        called = _names_called(func)
+        if "_run_command_with_timeout" not in called:
+            continue
+        executors.add(func.name)
+        if "_shell_parse_problem" not in called:
+            unlinted.append(func.name)
+
+    # Named rather than counted: an AST walk that has gone blind returns an
+    # empty set, and "no unlinted executors" is true of nothing at all.
+    assert executors >= {"_sweep_one_log", "_verify_one_evidence_file"}, (
+        f"the scan cannot see the two known executors, so it is proving "
+        f"nothing about the tree: {sorted(executors)}"
+    )
+    assert unlinted == [], (
+        f"function(s) that execute an evidence command without parsing it "
+        f"first: {unlinted}. Every crossing refuses EVIDENCE_COMMAND_SYNTAX "
+        f"before the runner, or the server refuses at some crossings and "
+        f"discovers at the rest."
+    )
+
+
+def test_the_runner_documents_the_callers_that_must_lint():
+    """The prose half of the rule above, kept honest by the rule above.
+
+    `_run_command_with_timeout` cannot enforce anything — the lint is in its
+    callers, by design, because only they can turn a parse failure into a named
+    per-log refusal. What it CAN do is tell the next person adding a caller that
+    the obligation exists, which is exactly what its discipline block failed to
+    do when it named one caller and called the shared lint "the sweep's own".
+    """
+    from foundry_mcp.tools import worktree_helpers
+
+    documentation = ast.get_docstring(
+        ast.parse(
+            inspect.getsource(worktree_helpers._run_command_with_timeout)
+        ).body[0]
+    ) or ""
+
+    assert "_shell_parse_problem" in documentation, (
+        "the launch does not tell a new caller that it must parse the command "
+        "first, which is the omission D-107 was filed over"
+    )
+    for caller in ("_sweep_one_log", "_verify_one_evidence_file"):
+        assert caller in documentation, (
+            f"{caller} executes an evidence command and the launch does not "
+            f"name it, so the enumeration is short by one again"
+        )
 
 
 def test_a_mismatch_record_carries_both_hash_vocabularies(tmp_path):

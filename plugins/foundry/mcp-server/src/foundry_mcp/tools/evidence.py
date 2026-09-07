@@ -40,8 +40,57 @@ from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
 # from this module all along — and it stays acyclic: `foundry_handoff` reaches
 # BACK into this module only through a lazy in-function import inside
 # `foundry_accept_casting`, never at module top.
+#
+# fallout FR-063 / GI-033 / D-127 — THIS EDGE IS THE HALF OF D-127 THIS CASTING
+# CANNOT CLOSE, AND SAYING SO IS THE POINT.
+#
+# `foundry_handoff` is lifecycle by GI-033's elimination rule, so a verifier
+# module reading two symbols out of it is the invariant's violation column
+# however pure the symbols are. GI-033's arithmetic gives exactly one remedy —
+# "the two layers are mutually unreachable, so a symbol read from BOTH can live
+# in neither: it belongs in a leaf" — and a lazy import is not that remedy:
+# `tests/orchestration/test_module_boundaries.py#test_no_verifier_module_
+# reaches_a_lifecycle_module_lazily_either` says in its own words that a lazy
+# import is still a reach, "asserted over EVERY import in the file". Inverting
+# is not it either: that is the lifecycle-to-verifier direction, which the
+# companion rule states without any seam at all, and `escalation.py`'s
+# inversion worked only because escalation BECAME a leaf — which this module,
+# spawning subprocesses into git worktrees, cannot.
+#
+# Both symbols ARE leaf material. `_hash_str` is the published spelling of a
+# digest and `declared_requirement_ids` already builds its position rule from
+# `REQUIREMENT_ID_RE.pattern`, imported above from `schemas/vocab.py` — the leaf
+# that owns the requirement grammar and the natural home for both. Moving them
+# edits `foundry_handoff.py` and `vocab.py`, which belong to castings 7 and 10,
+# so it is raised as cross-casting concern C-067 rather than reached for here.
+# When that move lands, this import repoints to the leaf and the comment goes
+# with it — the concern is the record that the edge is known and owned, not a
+# licence for it to stay.
 from foundry_mcp.tools.foundry_handoff import _hash_str, declared_requirement_ids
-from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
+# fallout FR-063 / GI-033 / D-127 — READ FROM THE LEAF, NOT THROUGH A LIFECYCLE
+# MODULE THAT RE-EXPORTS IT.
+#
+# This line used to be `from foundry_mcp.tools.foundry_spawn import
+# _manifest_shape_problem`, and `foundry_spawn` is a lifecycle module by GI-033
+# and a member of the boundary guard's own `_LIFECYCLE_FLOOR` by name. It was
+# never a lifecycle SYMBOL: concern C-060 moved the predicate into the leaf
+# `artifacts.py` precisely "because verifier modules were reaching it through a
+# lifecycle module, which is GI-033's violation column", and `foundry_spawn`'s
+# own import of it has been a bare re-export alias ever since — the two names
+# are the same object. This module was simply not repointed with the others, so
+# the edge outlived the reason for it.
+#
+# THE ALIAS IS LOAD-BEARING, for the reason `foundry_spawn` and
+# `foundry_validate` both record at their copies of this line: D-134's scan
+# recognises a manifest reader as GUARDED by the NAME it calls, pinned to
+# `_manifest_shape_problem` / `_manifest_shape_error` by
+# `tests/test_spawn_progress.py#test_the_locked_validator_names_are_still_the_
+# ones_the_scan_looks_for`. Importing the leaf's public spelling under its own
+# name would leave the guard standing and report this module's manifest reader
+# as UNGUARDED — a failure that looks like a finding.
+from foundry_mcp.tools.artifacts import (
+    manifest_shape_problem as _manifest_shape_problem,
+)
 from foundry_mcp.tools.foundry_state import get_run_dir, read_document
 from foundry_mcp.tools.worktree_helpers import (
     _PRUNE_DONE_FOR,
@@ -1984,10 +2033,12 @@ def _make_provenance_record(
 # Decomposed from ``verify_evidence`` so the iteration loop stays readable.
 # Each evidence file goes through:
 #
-#   parse header → run cmd → compare → check stub patterns → produce record
+#   parse header → parse cmd → run cmd → compare → check stub patterns
+#                                                            → produce record
 #
-# Failures short-circuit: header parse failure → no re-exec; non-zero exit →
-# no comparison (would always mismatch on error output anyway); timeout →
+# Failures short-circuit: header parse failure → no re-exec; COMMAND parse
+# failure → no re-exec either (fallout FR-002 / D-107); non-zero exit → no
+# comparison (would always mismatch on error output anyway); timeout →
 # returns -1 from the executor.
 # ---------------------------------------------------------------------------
 def _verify_one_evidence_file(
@@ -2045,6 +2096,52 @@ def _verify_one_evidence_file(
             verdict="rejected",
             failure_token="EVIDENCE_COMMAND_MISSING",
             failure_detail=f"no `# evidence-cmd:` header in {evidence_path.name}",
+            evidence_for=header.get("evidence_for", []),
+        )
+
+    # Step 2b: fallout FR-002 / GI-019 / D-107 — PARSED BEFORE IT IS EXECUTED,
+    # AT THIS CROSSING TOO.
+    #
+    # `_sweep_one_log` has parsed first since CT-015 landed; this door — the one
+    # `verify_evidence` walks, reached from `foundry_handoff#foundry_accept_
+    # casting` at F1 acceptance — went from `header["cmd"]` straight to the
+    # runner. So the SAME command met two server-side executors that disagreed
+    # about whether it could run: refused unexecuted at the boundary sweep,
+    # executed and then called `EVIDENCE_EXIT_NONZERO` at acceptance. FR-002 is
+    # "server refuses at every crossing", and a crossing that runs what it
+    # cannot parse is not refusing, it is discovering.
+    #
+    # The cost of discovering it by running it is not the wrong token. It is
+    # that everything BEFORE the syntax error in a partially-valid script has
+    # already happened — `touch x && (` creates the file and then abandons the
+    # script — so "it only failed to parse" was never "it had no effect", and
+    # the effect landed inside the casting's own worktree.
+    #
+    # ONE LINT, NOT A SECOND COPY OF ONE. `_shell_parse_problem` is the single
+    # spelling both doors call and the one the commit guard's Check 4 models, so
+    # the three cannot come to judge a command by different rules; the record
+    # below is the ordinary rejected provenance record, so nothing downstream of
+    # here — the manifest write, the gate's reading of `failure_token` — is
+    # re-decided.
+    parse_problem = _shell_parse_problem(header["cmd"])
+    if parse_problem is not None:
+        return _make_provenance_record(
+            evidence_path=evidence_path,
+            evidence_cmd=header["cmd"],
+            casting_commit=casting_commit,
+            log_text=log_text,
+            captured_text="",
+            redacted_log="",
+            redacted_captured="",
+            exit_code=None,
+            elapsed_seconds=0.0,
+            verdict="rejected",
+            failure_token="EVIDENCE_COMMAND_SYNTAX",
+            failure_detail=(
+                f"`# evidence-cmd:` in {evidence_path.name} does not parse "
+                f"under `{_EVIDENCE_SHELL} -n`, so it was NOT executed: "
+                f"{parse_problem}"
+            ),
             evidence_for=header.get("evidence_for", []),
         )
 
@@ -3646,6 +3743,13 @@ def _sweep_submission_order(
 
 #: The shell every `# evidence-cmd:` is parsed with AND executed by, named once.
 #
+# BOTH SERVER-SIDE DOORS READ IT (fallout FR-002 / D-107). `_sweep_one_log` at
+# the boundary and terminal crossings, and `_verify_one_evidence_file` at
+# casting acceptance: two executors, one constant, so neither can drift onto a
+# shell the other does not run. The commit guard's Check 4 is the third reader
+# and cannot import this module, which is why its `/bin/sh -n` is written out
+# there and pinned against this constant by `tests/test_commit_guard.py`.
+#
 # `worktree_helpers._run_command_with_timeout` launches the command through
 # `Popen(shell=True)` with no `executable=` argument — there is none anywhere in
 # the plugin — which on POSIX is `['/bin/sh', '-c', cmd]`. The lint below has to
@@ -3678,9 +3782,14 @@ def _shell_parse_problem(cmd: str) -> str | None:
     would race the writer against a reader that has already gone.
 
     Never raises. A shell that cannot be spawned at all is reported AS a problem
-    rather than swallowed, because a sweep that cannot answer this question must
-    not answer it with silence — the caller's whole contract is that a command
-    reaching the runner has been parsed.
+    rather than swallowed, because a door that cannot answer this question must
+    not answer it with silence — BOTH callers' whole contract is that a command
+    reaching the runner has been parsed. There are two: `_sweep_one_log` at the
+    boundary and terminal crossings, and `_verify_one_evidence_file` at casting
+    acceptance (fallout FR-002 / D-107, which is what the second one was
+    missing). A third door, the commit guard, parses the same way and cannot
+    call this — it is a shell script — so it spells `/bin/sh -n` out and
+    `tests/test_commit_guard.py` pins the two spellings against each other.
     """
     try:
         proc = subprocess.run(

@@ -197,15 +197,28 @@ def _run_command_with_timeout(
       - THE SHELL IS ``/bin/sh``, and that is a fact, not a preference. On
         POSIX, ``Popen(shell=True)`` with no ``executable=`` argument runs
         ``['/bin/sh', '-c', cmd]``; there is no ``executable=`` anywhere in this
-        plugin and none is wanted here. Stated at the launch because two other
-        places have to agree with it and neither can see this call: the commit
-        guard (``hooks/pre-commit-guard.sh`` Check 4) and the sweep's own
-        pre-execution lint (``evidence.py#_shell_parse_problem``, whose
-        ``_EVIDENCE_SHELL`` constant is this same path) both parse an evidence
-        command with ``/bin/sh -n``. A lint that parsed with one shell while the
-        command ran under another would pass constructs that fail and block
-        constructs that work — so if this call ever DOES pin ``executable=``,
-        both of those must be repointed in the same change.
+        plugin and none is wanted here. Stated at the launch because the places
+        that have to agree with it cannot see this call: the commit guard
+        (``hooks/pre-commit-guard.sh`` Check 4) and the shared pre-execution
+        lint (``evidence.py#_shell_parse_problem``, whose ``_EVIDENCE_SHELL``
+        constant is this same path) both parse an evidence command with
+        ``/bin/sh -n``. A lint that parsed with one shell while the command ran
+        under another would pass constructs that fail and block constructs that
+        work — so if this call ever DOES pin ``executable=``, both of those must
+        be repointed in the same change.
+      - EVERY CALLER LINTS BEFORE IT CALLS, AND THE COUNT IS TWO (fallout
+        FR-002 / D-107). This function is the server's only executor of an
+        evidence command, and it is reached from both crossings:
+        ``evidence.py#_sweep_one_log`` at the boundary and terminal sweeps, and
+        ``evidence.py#_verify_one_evidence_file`` at casting acceptance. Both
+        call ``_shell_parse_problem`` first and refuse
+        ``EVIDENCE_COMMAND_SYNTAX`` without reaching here. That sentence used to
+        name the sweep alone and call the lint "the sweep's own", which is how
+        the acceptance door came to execute what it could not parse for a whole
+        run: the enumeration was the only place the rule was written down, and
+        it was short by one. A THIRD caller added here inherits nothing — the
+        lint lives in the callers, so a new one that skips it runs unparsed
+        commands with no door left to notice.
       - ``stderr=subprocess.STDOUT`` merges streams (single-string compare).
       - ``text=True, encoding='utf-8', errors='replace'`` makes binary or
         non-UTF-8 output survive comparator entry.
