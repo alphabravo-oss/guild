@@ -552,7 +552,7 @@ Call `Foundry-Gate(phase='validate')`.
    - GRIND phase or single re-dispatch: fall back to per-casting `Foundry-Spawn-Teammate(casting_id=N, phase="cast"|"grind")`.
 4. Wait for teammates to finish their **work** (report "complete" or task list empty). If the wave goes quiet longer than feels right, call `Foundry-Liveness` before concluding anything — see **Teammate liveness** below. Then send shutdown in ONE parallel SendMessage batch and **immediately** `TeamDelete` + `Foundry-Team-Down` — do NOT wait for shutdown_response/ack/idle confirmations. Idle panes are the signal; `TeamDelete` kills zombies.
 5. Build + test → commit → advance to next wave
-6. After all waves: review `concerns.md`. Any concern that relaxes the spec is a decompose failure — re-run F0.5.
+6. After all waves: review the concern ledger. `Foundry-Concern` writes `concerns.json` — the structured ledger the server reads — and `concerns.md` is its prose rendering; read the rendering, act on the ledger. Any concern that relaxes the spec is a decompose failure — re-run F0.5. Every other open concern has exactly two exits, both leaving a record: `Foundry-Tasks` carries it to the casting it names in that task's co-dispatch set and marks it dispatched, or `Foundry-Concern(close=<id>, reason=…)` closes it on your ruling and is refused without a reason. **Leaving one open is not deferring it:** `Foundry-Phase(phase='inspect_start')` refuses by id while a cross-casting concern from the closing GRIND is still open.
 7. Call `Foundry-Gate(phase='inspect')`.
 
 **Acceptance check per casting:**
@@ -633,7 +633,7 @@ Same router principle as F1. Lead does NOT draft GRIND prompts.
 
 **A refused sweep means the run did NOT move.** The refusal NAMES each log that no longer reproduces, and a sweep that could not RUN at all refuses on the same footing — a sweep that could not run is not a sweep that passed. On either refusal the cycle counter has NOT advanced, no INSPECT mode was recorded, and no boundary marker was written, so nothing about the failed attempt narrows the next sweep. Read the named log and take one of exactly two actions. If the behaviour it demonstrates has REGRESSED, that is a defect — file it and fix it through GRIND. If the log is merely STALE, the casting that OWNS it re-captures it: dispatch that casting, exactly as you would for any other defect in its files. **Never re-capture a log yourself, never edit one to match, and never delete one to clear the refusal** — each of those makes the transition succeed while destroying the only evidence that the behaviour ever held. Then re-call `Foundry-Phase(phase='inspect_start')`.
 
-If a teammate says "this defect requires a spec change": halt, log `SPEC_CHANGE_REQUIRED` to concerns.md, return to F0.5 DECOMPOSE for the affected castings.
+If a teammate says "this defect requires a spec change": that is a ruling to END the run on, not a grind fix. `spec_change_required` is a member of `HALT_REASONS`, so the exit is `Foundry-Phase(phase='halt', reason='spec_change_required', text=…)` — a successful transition into `HALTED` that seals the report, never a quiet return to F0.5. File the concern through `Foundry-Concern` first so the ledger names the casting it landed on, then halt, then update the spec and start a NEW run.
 
 ### F4: ASSAY
 

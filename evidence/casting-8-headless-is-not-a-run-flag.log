@@ -1,0 +1,21 @@
+# evidence-cmd: cd plugins/foundry && printf "%s\n" "--- the alias construct in the argument loop ---" && for p in "--no-ui|--headless" "    --no-ui)" "    --headless)"; do printf "%s\t%s\n" "$(grep -c -F -- "$p" scripts/setup-foundry.sh)" "$p"; done && printf "%s\n" "--- driving --headless ---" && (bash scripts/setup-foundry.sh --headless "some scope" 2>&1; printf "exit=%s\n" "$?") && printf "%s\n" "--- driving --no-ui: still one meaning, still threaded ---" && bash scripts/setup-foundry.sh --no-ui --skip-start-backend "some scope" 2>&1 | grep -E "^FOUNDRY_NO_UI=|no_ui="
+# evidence-for: FR-055, AC-052, FR-037
+
+--- the alias construct in the argument loop ---
+0	--no-ui|--headless
+1	    --no-ui)
+1	    --headless)
+--- driving --headless ---
+Error: --headless is not a /foundry:start flag
+
+   --no-ui declares that this run has no browsable UI, so the SIGHT
+   browser audit is not part of it. That is what --headless silently
+   did here, and it is not what --headless means anywhere else.
+
+   --headless and --headed choose the BROWSER MODE the SIGHT stream
+   drives. The sight skill documents where those are set, and it is
+   never this command line.
+exit=1
+--- driving --no-ui: still one meaning, still threaded ---
+FOUNDRY_NO_UI=true
+Thread the invocation flags into that call: url=, temper=false, nyquist=false, max_cycles=0, no_ui=true

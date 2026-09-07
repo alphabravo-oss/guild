@@ -1402,6 +1402,74 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         START_MD,
         "**Never transition out of F4 on a count you did not watch go up.**",
     ),
+    # --- GRIND cycle 4 -----------------------------------------------------
+    #
+    # D-110 / FR-055: `--headless` was an undocumented alias for `--no-ui` in
+    # the argument loop, and `--headless` is the SIGHT SKILL's browser-mode
+    # flag everywhere else in this plugin. One spelling, two opposite meanings,
+    # and the losing reading removed a verification stream from the run. The
+    # alias is gone (swept below); these two pin that the script SAYS SO rather
+    # than letting the flag fall silently into the scope string.
+    (
+        "headless-is-refused-by-name",
+        "FR-055",
+        SETUP_SH,
+        "Error: --headless is not a /foundry:start flag",
+    ),
+    (
+        "headless-names-the-browser-mode-owner",
+        "FR-055",
+        SETUP_SH,
+        "--headless and --headed choose the BROWSER MODE the SIGHT stream",
+    ),
+    # D-120 / FR-029: the printed PHASES list ran F0..F6 with no F5.5, while
+    # the OPTIONS block three lines above it documents `--nyquist` as "(F5.5)"
+    # and `Foundry-Phase` registers both `nyquist` and `nyquist_done`. An
+    # operator was told the run has no such phase by the same screen that
+    # offered the flag that reaches it.
+    (
+        "help-lists-the-nyquist-phase",
+        "FR-029",
+        SETUP_SH,
+        "F5.5: NYQUIST — Generate regression tests for verified requirements",
+    ),
+    # D-116 / FR-010: the loaded lead reference described the pre-4.11.0
+    # concern flow -- a prose file a lead reviews after CAST -- and named
+    # neither `Foundry-Concern`, nor `concerns.json`, nor the rung that refuses
+    # on an open one. `agents/teammate.md` had already been rewritten, so the
+    # two halves of the protocol contradicted each other.
+    (
+        "ledger-is-the-thing-the-server-reads",
+        "FR-010",
+        LEAD_DISCIPLINE,
+        "`concerns.md` stays the prose RENDERING of that ledger",
+    ),
+    (
+        "an-open-concern-is-a-phase-the-lead-cannot-open",
+        "FR-010",
+        LEAD_DISCIPLINE,
+        "`Foundry-Phase(phase='inspect_start')` REFUSES by id while a "
+        "cross-casting concern from the closing GRIND is still open",
+    ),
+    (
+        "spec-change-names-its-halt-member",
+        "FR-010",
+        LEAD_DISCIPLINE,
+        "`Foundry-Phase(phase='halt', reason='spec_change_required', text=…)`",
+    ),
+    (
+        "start-md-concern-review-reads-the-ledger",
+        "FR-010",
+        START_MD,
+        "`Foundry-Concern` writes `concerns.json` — the structured ledger the "
+        "server reads",
+    ),
+    (
+        "start-md-spec-change-names-its-halt-member",
+        "FR-010",
+        START_MD,
+        "`spec_change_required` is a member of `HALT_REASONS`",
+    ),
 )
 
 
@@ -2037,6 +2105,11 @@ def test_the_f6_evidence_rung_names_every_terminal_crossing_in_order() -> None:
         # bespoke check is a section free to drift into its own shape.
         "## Why a named backlog is a successful end",
         "## Why a self-hosting run carries a residual risk",
+        # fallout D-116 / FR-010 -- the concern section was a two-sentence rule
+        # statement in a file of rationale, which is how it survived four
+        # releases of the flow changing underneath it. It joins the parametrize
+        # rather than getting a bespoke check, for the reason above.
+        "## Why the concern ledger exists",
     ),
 )
 def test_new_rationale_sections_keep_the_house_shape(heading: str) -> None:
@@ -2941,4 +3014,160 @@ def test_start_md_quotes_the_refusals_the_doors_actually_emit() -> None:
         f"{_rel(RESUME_MD)} no longer quotes the gate's ordering refusal. A "
         f"resuming lead is exactly the one who has not called `Foundry-Next` "
         f"yet, so this is the door where the refusal is most likely to be met."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The setup script's printed help, derived from the stream vocabulary (D-120)
+# ---------------------------------------------------------------------------
+#
+# `setup-foundry.sh --help` printed "F2: INSPECT — 4-stream verification (TRACE
+# + PROVE + SIGHT + TEST)". `schemas/vocab.py` carries NINE stream wire ids and
+# the plugin's own manifest description says eight named streams, so the one
+# screen an operator reads before starting a run understated the verification
+# it was about to launch by more than half. That list had been hand-typed since
+# before FLOW_TRACE, COVERAGE_DIFF, RESEARCH_AUDIT, PROBE-01 and TEST-01
+# existed, and nothing was watching it.
+#
+# So the expected names are DERIVED from `WIRE_TO_CANONICAL` rather than typed
+# here -- convention 3, the same shape `_PYTEST_DISCOVERY_PHRASE` uses. A tenth
+# stream fails this test on the day the vocabulary gains it, which is the only
+# arrangement under which the help stays true without someone remembering it.
+
+
+def _phases_entry(label: str, next_label: str) -> str:
+    """One row of the help heredoc's PHASES block, label to next label."""
+    text = _read(SETUP_SH)
+    start = text.find(label)
+    assert start != -1, (
+        f"{_rel(SETUP_SH)}'s printed help has no {label!r} row. The PHASES "
+        f"block is where an operator learns the shape of the run; a phase that "
+        f"leaves it is a phase they are told does not exist."
+    )
+    end = text.find(next_label, start)
+    assert end != -1, f"{_rel(SETUP_SH)} has no {next_label!r} row after {label!r}."
+    return text[start:end]
+
+
+def test_the_help_names_every_verification_stream() -> None:
+    """fallout D-120 / FR-029: the F2 row lists the streams the run really has."""
+    from foundry_mcp.schemas.vocab import WIRE_TO_CANONICAL
+
+    expected = set(WIRE_TO_CANONICAL.values())
+    assert len(expected) >= 9, sorted(expected)  # floor: the derivation resolved
+
+    entry = _phases_entry("F2: INSPECT", "F3: GRIND")
+    # Tokenised rather than substring-matched, because `TEST` is a substring of
+    # `TEST-01`: a naive `"TEST" in entry` passes on a row that names only the
+    # deriver stream, which is exactly the half-listed state being fixed.
+    tokens = set(re.findall(r"[A-Z][A-Z0-9_-]*[A-Z0-9]", entry))
+    missing = sorted(expected - tokens)
+    assert not missing, (
+        f"{_rel(SETUP_SH)}'s F2 help row omits {missing}. Every value of "
+        f"`WIRE_TO_CANONICAL` is a stream a cycle can run and a `source` a "
+        f"defect can carry; a row that names fewer tells an operator the run "
+        f"verifies less than it does. Add the name -- do not narrow this test."
+    )
+
+
+def test_the_f2_help_row_states_no_stream_count() -> None:
+    """fallout D-120: the COUNT is what went stale, not the names.
+
+    "4-stream verification" was true, then five streams were added and the
+    sentence stayed. A count is a second derivation of the vocabulary that
+    nothing joins to it, and the plugin manifest folds the same nine wire ids
+    into eight NAMES -- so a count printed here would disagree with the
+    README's count while both were honest. Name the streams; count nothing.
+    """
+    entry = _phases_entry("F2: INSPECT", "F3: GRIND")
+    stale = re.search(r"\b\d+[- ]stream", entry)
+    assert stale is None, (
+        f"{_rel(SETUP_SH)}'s F2 help row is back to claiming a stream count "
+        f"({stale.group(0)!r} at {stale.start()}). The names are the closed "
+        f"vocabulary and the count is a copy of it that drifts silently."
+    )
+
+
+# ---------------------------------------------------------------------------
+# `--headless` is not a foundry run flag (D-110 / FR-055)
+# ---------------------------------------------------------------------------
+#
+# The argument loop's arm read `--no-ui|--headless)`, so `--headless` set
+# `NO_UI=true` and was threaded to `Foundry-Init` as the no-browsable-UI
+# DECLARATION -- removing the SIGHT stream from the run. `--headless` means the
+# opposite kind of thing everywhere else in this plugin: `skills/sight/SKILL.md`
+# documents it as the browser MODE ("Override with `--headless` or `--headed`
+# flags"). The alias appeared in no OPTIONS block, no `argument-hint` and no
+# README, so no surface disclosed which of the two readings the script had
+# picked. This is the one-flag-one-meaning failure FR-055 / AC-052 closed for
+# `--no-ui` itself, surviving in the second spelling nobody deleted.
+
+
+def test_the_headless_alias_is_gone_from_the_argument_loop() -> None:
+    """fallout D-110 / FR-055: one flag, one meaning -- and a loud door.
+
+    The absence is asserted on the ALIAS CONSTRUCT rather than on the word,
+    because the fix ADDS `--headless` to this file: it now has an arm of its
+    own that refuses and names both flags. A sweep for the bare word would
+    forbid the fix, and a sweep for nothing at all would let the alias back in
+    the next time someone reaches for a convenient synonym.
+    """
+    text = _read(SETUP_SH)
+    for alias in ("--no-ui|--headless", "--headless|--no-ui"):
+        assert alias not in text, (
+            f"{_rel(SETUP_SH)} parses {alias!r} again (FR-055). `--headless` is "
+            f"the SIGHT skill's browser-mode flag; wiring it to `NO_UI` means "
+            f"an operator asking for a headless BROWSER silently removes the "
+            f"SIGHT stream. Refuse the flag and name both meanings instead."
+        )
+    assert "NO_UI=true" in text, (
+        f"{_rel(SETUP_SH)} no longer sets `NO_UI` at all, so the sweep above "
+        f"passed because the subject left the file. `--no-ui` is still a real "
+        f"flag with one real meaning; it is the ALIAS that had to go."
+    )
+
+
+# ---------------------------------------------------------------------------
+# No lead-facing surface names a tool that does not exist (D-122 / FR-029)
+# ---------------------------------------------------------------------------
+#
+# `plugins/foundry/README.md` said "Foundry-Sight runs these as Claude Code
+# skills directly during the corresponding INSPECT streams." There is no such
+# door -- `server.py` registers thirty-odd tools and none is `Foundry-Sight` --
+# so a reader who followed the README went looking for a call that has never
+# existed. Casting 9 owns that file and rewrote the sentence; this is the
+# co-dispatched half, and it is a SWEEP rather than a pin on the retired
+# spelling because the failure is not one wrong name. It is that nothing at all
+# joined a tool NAME in lead prose to the registration list, so any of the six
+# files could invent a door and no test would notice.
+
+
+#: The prefixes a reader parses as "this is an MCP door I can call". Both are
+#: swept; `Validate-Report` and `Verify-Citations` register under neither, and
+#: an unprefixed capitalised word in prose is a noun rather than a call.
+_TOOL_TOKEN = re.compile(r"\b(?:Foundry|Forge)-[A-Z][A-Za-z0-9]*(?:-[A-Z][A-Za-z0-9]*)*")
+
+
+def test_no_owned_lead_prose_names_a_tool_the_server_does_not_register() -> None:
+    """fallout D-122 / FR-029: every named door is a door that exists."""
+    registered = _registered_tool_names()
+    assert len(registered) >= 30, sorted(registered)  # floor, per the check above
+
+    seen: set[str] = set()
+    for path in _LEAD_PROSE_CORPUS:
+        found = set(_TOOL_TOKEN.findall(_read(path)))
+        seen |= found
+        phantom = sorted(name for name in found if name not in registered)
+        assert not phantom, (
+            f"{_rel(path)} names {phantom}, which {_rel(SERVER_PY)} does not "
+            f"register. A lead or a reader following that sentence looks for a "
+            f"call that does not exist. Name the actor that really does the "
+            f"work -- an agent, a skill, the lead's own thread -- and do not "
+            f"leave the token standing even inside a denial that it exists."
+        )
+    assert len(seen) >= 10, (
+        f"the lead-prose corpus names only {sorted(seen)} as tools, so this "
+        f"sweep asserted almost nothing. Either the corpus roster narrowed or "
+        f"the token pattern stopped matching; check both before trusting a "
+        f"pass."
     )

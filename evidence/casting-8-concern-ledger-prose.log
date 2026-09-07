@@ -1,0 +1,18 @@
+# evidence-cmd: cd plugins/foundry && printf "%s\n" "--- references/lead-discipline.md ---" && for p in "## Why the concern ledger exists" "writes \`concerns.json\`" "stays the prose RENDERING of that ledger" "REFUSES by id while a cross-casting concern from the closing GRIND is still open" "reason='spec_change_required'" "is a member of the halt vocabulary"; do printf "%s\t%s\n" "$(grep -c -F -- "$p" references/lead-discipline.md)" "$p"; done && printf "%s\n" "--- commands/start.md, the same rule on the lead protocol ---" && for p in "review the concern ledger" "the structured ledger the server reads" "refuses by id while a cross-casting concern from the closing GRIND is still open" "\`spec_change_required\` is a member of \`HALT_REASONS\`"; do printf "%s\t%s\n" "$(grep -c -F -- "$p" commands/start.md)" "$p"; done && printf "%s\n" "--- the retired pre-4.11.0 spelling, in both files ---" && for f in references/lead-discipline.md commands/start.md; do printf "%s\t%s SPEC_CHANGE_REQUIRED\n" "$(grep -c -F -- "SPEC_CHANGE_REQUIRED" "$f")" "$f"; done
+# evidence-for: FR-010, FR-037
+
+--- references/lead-discipline.md ---
+1	## Why the concern ledger exists
+1	writes `concerns.json`
+1	stays the prose RENDERING of that ledger
+1	REFUSES by id while a cross-casting concern from the closing GRIND is still open
+1	reason='spec_change_required'
+1	is a member of the halt vocabulary
+--- commands/start.md, the same rule on the lead protocol ---
+1	review the concern ledger
+1	the structured ledger the server reads
+1	refuses by id while a cross-casting concern from the closing GRIND is still open
+1	`spec_change_required` is a member of `HALT_REASONS`
+--- the retired pre-4.11.0 spelling, in both files ---
+0	references/lead-discipline.md SPEC_CHANGE_REQUIRED
+0	commands/start.md SPEC_CHANGE_REQUIRED

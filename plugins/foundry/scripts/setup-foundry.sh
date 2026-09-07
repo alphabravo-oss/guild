@@ -72,10 +72,14 @@ OPTIONS:
 PHASES:
   F0: DECOMPOSE  — Break spec into castings with observable truths
   F1: CAST       — Build castings with parallel teams
-  F2: INSPECT    — 4-stream verification (TRACE + PROVE + SIGHT + TEST)
+  F2: INSPECT    — Parallel verification streams: TRACE, FLOW_TRACE, PROVE,
+                   RESEARCH_AUDIT, COVERAGE_DIFF, SIGHT, TEST, PROBE-01 and
+                   TEST-01. Which of them a cycle runs is the INSPECT width
+                   rule's answer, not a fixed list
   F3: GRIND      — Fix defects, loop back to INSPECT
   F4: ASSAY      — Final spec-before-code verification (4 parallel agents)
   F5: TEMPER     — Micro-domain stress testing (optional)
+  F5.5: NYQUIST  — Generate regression tests for verified requirements (optional)
   F6: DONE       — Report and archive
 
 BUILDING FOUNDRY ITSELF:
@@ -123,9 +127,29 @@ HELP_EOF
       MAX_CYCLES="$2"
       shift 2
       ;;
-    --no-ui|--headless)
+    --no-ui)
       NO_UI=true
       shift
+      ;;
+    --headless)
+      # ONE FLAG, ONE MEANING. `--headless` was wired here as a silent alias for
+      # `--no-ui`, and it is the SIGHT SKILL's browser-mode flag everywhere else
+      # in this plugin -- skills/sight/SKILL.md says "Override with --headless or
+      # --headed flags". The two mean opposite kinds of thing, so an operator
+      # asking for a headless BROWSER was removing the SIGHT stream from the run
+      # entirely: the alias appeared in no OPTIONS block, no argument-hint and no
+      # README, so nothing on any surface said which of the two it had picked.
+      # Refuse and name both rather than guess.
+      echo "Error: --headless is not a /foundry:start flag" >&2
+      echo "" >&2
+      echo "   --no-ui declares that this run has no browsable UI, so the SIGHT" >&2
+      echo "   browser audit is not part of it. That is what --headless silently" >&2
+      echo "   did here, and it is not what --headless means anywhere else." >&2
+      echo "" >&2
+      echo "   --headless and --headed choose the BROWSER MODE the SIGHT stream" >&2
+      echo "   drives. The sight skill documents where those are set, and it is" >&2
+      echo "   never this command line." >&2
+      exit 1
       ;;
     --ticket)
       TICKET="$2"

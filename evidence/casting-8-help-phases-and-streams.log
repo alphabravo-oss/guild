@@ -1,0 +1,22 @@
+# evidence-cmd: printf "%s\n" "--- the PHASES block an operator is shown ---" && bash plugins/foundry/scripts/setup-foundry.sh --help | sed -n "/^PHASES:/,/^$/p" && printf "%s\n" "--- every WIRE_TO_CANONICAL value in the F2 row; no stream count; no phantom tool ---" && cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_lead_prose.py::test_the_help_names_every_verification_stream tests/test_lead_prose.py::test_the_f2_help_row_states_no_stream_count tests/test_lead_prose.py::test_no_owned_lead_prose_names_a_tool_the_server_does_not_register
+# evidence-for: FR-029, FR-037, US-012
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+--- the PHASES block an operator is shown ---
+PHASES:
+  F0: DECOMPOSE  — Break spec into castings with observable truths
+  F1: CAST       — Build castings with parallel teams
+  F2: INSPECT    — Parallel verification streams: TRACE, FLOW_TRACE, PROVE,
+                   RESEARCH_AUDIT, COVERAGE_DIFF, SIGHT, TEST, PROBE-01 and
+                   TEST-01. Which of them a cycle runs is the INSPECT width
+                   rule's answer, not a fixed list
+  F3: GRIND      — Fix defects, loop back to INSPECT
+  F4: ASSAY      — Final spec-before-code verification (4 parallel agents)
+  F5: TEMPER     — Micro-domain stress testing (optional)
+  F5.5: NYQUIST  — Generate regression tests for verified requirements (optional)
+  F6: DONE       — Report and archive
+
+--- every WIRE_TO_CANONICAL value in the F2 row; no stream count; no phantom tool ---
+...                                                                      [100%]
+3 passed in 0.03s
