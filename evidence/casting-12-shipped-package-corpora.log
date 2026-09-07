@@ -1,0 +1,11 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c "import sys; sys.path[:0]=['src','.']; from pathlib import Path; from foundry_mcp.tools import orchestration as pkg; from foundry_mcp.schemas.vocab import is_verifier_path; from tests.test_spend import _shipped_orchestration_modules as S; from tests.test_model_config import ORCHESTRATION_SRCS as M; from tests.test_inspect_mode import _VERIFIER_SURFACES as V, _NO_LONGER_VERIFIER_SURFACES as N, _shipped_orchestration_modules as I; ship={p.name for p in Path(pkg.__file__).parent.glob('*.py')} - {'__init__.py'}; full={'foundry_mcp/tools/orchestration/'+n for n in ship}; print('shipped modules >= 13: %s' % (len(ship) >= 13)); print('spend corpus == shipped: %s' % ({p.name for p in S()} == ship)); print('model-config corpus == shipped: %s' % ({p.name for p in M} == ship)); print('inspect-mode corpus == shipped: %s' % ({p.name for p in I()} == ship)); print('rosters disjoint: %s' % set(V).isdisjoint(N)); print('shipped but classified by neither roster = %s' % sorted(full - set(V) - set(N))); print('forces FULL but no row drives it = %s' % sorted(p for p in full if is_verifier_path(p, None) and p not in set(V)))"
+# evidence-for: AC-014, FR-005, OT-016, US-003
+# evidence-timeout: 300
+
+shipped modules >= 13: True
+spend corpus == shipped: True
+model-config corpus == shipped: True
+inspect-mode corpus == shipped: True
+rosters disjoint: True
+shipped but classified by neither roster = []
+forces FULL but no row drives it = []
