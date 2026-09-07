@@ -94,6 +94,7 @@ from foundry_mcp.tools.artifacts import (
 from foundry_mcp.tools.foundry_state import get_run_dir, read_document
 from foundry_mcp.tools.worktree_helpers import (
     _PRUNE_DONE_FOR,
+    _child_environment,
     _prune_orphaned_worktrees,
     _run_command_with_timeout,
     _setup_worktree,
@@ -1987,9 +1988,15 @@ def _make_provenance_record(
         soft-companion to failure_token; tests only require the 13 above.)
 
     ``env_keys_present`` carries the SORTED list of env-var NAMES present
-    at re-exec time (NEVER values — abuse trail per CONTEXT.md). The
-    redacted_* SHA256s let auditors verify the comparator decision after
-    the fact without re-deriving regex application.
+    at re-exec time (NEVER values — abuse trail per CONTEXT.md), and it is
+    read from ``worktree_helpers#_child_environment`` — THE SAME FUNCTION THE
+    LAUNCH USES — not from ``os.environ``. Those stopped being the same list
+    at fallout D-175, when the runner's inherited copy of the server's whole
+    environment became a closed allowlist: a record still built from
+    ``os.environ`` would name variables the command could not see and would
+    hide the fact that this door drops them, which is the opposite of what an
+    abuse trail is for. The redacted_* SHA256s let auditors verify the
+    comparator decision after the fact without re-deriving regex application.
 
     Plan 05-03 / EVID-02: ``evidence_for`` field carries the requirement
     IDs declared in the artifact's ``# evidence-for:`` header (parsed
@@ -2007,7 +2014,7 @@ def _make_provenance_record(
         rel_path = str(evidence_path.relative_to(evidence_path.parents[1]))
     except (ValueError, IndexError):
         rel_path = str(evidence_path)
-    env_keys = sorted(os.environ.keys())
+    env_keys = sorted(_child_environment())
     return {
         "evidence_path": rel_path,
         "evidence_cmd": evidence_cmd,

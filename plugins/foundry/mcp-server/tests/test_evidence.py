@@ -724,6 +724,7 @@ def _build_divergent_spec_repo(
     req_ids: tuple = ("AC-023",),
     evidence_body: str = _EVIDENCE_BODY,
     header_prose: str = "",
+    evidence_cmd: str = "cat replay.txt",
 ) -> dict:
     """A repo whose stale ``specs/spec.md`` is v2.0 and whose RUN spec is v2.1.
 
@@ -738,6 +739,13 @@ def _build_divergent_spec_repo(
     the stub detector could not tell a ``#`` line in one position from a ``#``
     line in the other, so a test that pins the distinction has to be able to
     put a comment line on either side of the separator.
+
+    ``evidence_cmd`` is the committed log's ``# evidence-cmd:``. It defaults to
+    the deterministic ``cat replay.txt`` replay every other caller wants; a
+    caller overrides it when the property under test is a property of the
+    EXECUTION rather than of the comparison — D-175's environment scrub, whose
+    whole question is what the child process could see, cannot be asked of a
+    command that only reads a file back.
     """
     from foundry_mcp.tools.foundry import foundry_init
     from foundry_mcp.tools.foundry_handoff import _hash_str, foundry_spec_hash
@@ -772,7 +780,7 @@ def _build_divergent_spec_repo(
     # whole log rather than just its body — same discipline as conftest's
     # ``use_cat_replay`` harness.
     evidence_log = (
-        "# evidence-cmd: cat replay.txt\n"
+        f"# evidence-cmd: {evidence_cmd}\n"
         f"# evidence-for: {', '.join(req_ids)}\n"
         + header_prose
         + "\n" + evidence_body
@@ -6806,6 +6814,231 @@ def test_the_runner_documents_the_callers_that_must_lint():
             f"{caller} executes an evidence command and the launch does not "
             f"name it, so the enumeration is short by one again"
         )
+
+
+# ---------------------------------------------------------------------------
+# fallout D-175 — the environment the runner hands a command.
+#
+# The launch used to pass `os.environ.copy()`, so whether the committed corpus
+# reproduced was a function of HOW THE MCP SERVER HAPPENED TO BE LAUNCHED. The
+# observed instance: a lead with `plugins/foundry/mcp-server/.venv` activated
+# exported `VIRTUAL_ENV` naming the MAIN checkout, the sweep's detached
+# worktree has its own `.venv` at a different absolute path, and `uv` wrote a
+# one-line warning onto stderr — merged into the capture — for a log nothing
+# in the tree had touched. `Foundry-Gate('inspect_start')` refused the
+# crossing on it.
+#
+# These four are unit-level and cheap on purpose. The property is a property
+# of one function, and pinning it at the executor rather than through a sweep
+# means a regression is named at the line that caused it instead of arriving
+# as one mismatched log out of ninety-six.
+# ---------------------------------------------------------------------------
+_D175_POLLUTION: dict[str, str] = {
+    # The variable actually observed, spelled with the path shape that
+    # produced the warning.
+    "VIRTUAL_ENV": "/somewhere/else/plugins/foundry/mcp-server/.venv",
+    # Same class, different tool: each one redirects an interpreter, a
+    # resolver or a test runner at state outside the checkout.
+    "PYTHONPATH": "/somewhere/else/src",
+    "PYTHONWARNINGS": "error",
+    "UV_PROJECT_ENVIRONMENT": "/somewhere/else/.venv",
+    "PYTEST_ADDOPTS": "-p no:randomly",
+    "COLUMNS": "997",
+    # Not a reproducibility hazard — a capability one. An evidence command is
+    # arbitrary committed shell; it has no business holding the lead's tokens.
+    "GITHUB_TOKEN": "ghp_not_a_real_token",
+}
+
+
+def _pollute(monkeypatch) -> None:
+    """Put every D-175-class variable into the server's own environment."""
+    for name, value in _D175_POLLUTION.items():
+        monkeypatch.setenv(name, value)
+
+
+def test_the_runner_hands_a_closed_allowlist_not_the_servers_environment(
+    tmp_path, monkeypatch
+):
+    """D-175 REGRESSION, driven rather than read.
+
+    The environment is asked of the CHILD, not of `_child_environment`'s return
+    value, because the only thing that matters is what the process on the far
+    side of `Popen` could see. A helper that computed the right mapping and a
+    launch that ignored it would pass a test written the other way.
+    """
+    from foundry_mcp.tools.worktree_helpers import _run_command_with_timeout
+
+    _pollute(monkeypatch)
+    probe = " ".join(
+        f'"{name}=${{{name}:-<absent>}}"' for name in sorted(_D175_POLLUTION)
+    )
+    exit_code, captured, _elapsed = _run_command_with_timeout(
+        f"printf '%s\n' {probe} \"HOME=${{HOME:+<present>}}\" "
+        f"\"PATH=${{PATH:+<present>}}\"",
+        tmp_path,
+        30,
+    )
+    assert exit_code == 0, captured
+    lines = captured.splitlines()
+    for name in sorted(_D175_POLLUTION):
+        assert f"{name}=<absent>" in lines, (
+            f"{name} reached the command. The runner is handing the child the "
+            f"server's own environment again, which is what made a committed "
+            f"log's reproducibility a property of the operator's shell "
+            f"(D-175). Captured:\n{captured}"
+        )
+    assert "HOME=<present>" in lines, (
+        "HOME did not reach the command; every cache and config lookup a "
+        "corpus command makes is under it"
+    )
+    assert "PATH=<present>" in lines, (
+        "PATH did not reach the command; nothing at all is found without it"
+    )
+
+
+def test_the_same_command_under_a_polluted_and_a_clean_environment_matches(
+    tmp_path, monkeypatch
+):
+    """The pin D-175's fix shape asks for, in its own words: 'the same command
+    run under a polluted environment and a clean one must produce identical
+    bytes'.
+
+    `env` is the command precisely because its whole output IS the environment,
+    so this is the strongest form of the claim available — not "the variables I
+    thought to check are absent" but "the child could not tell the two server
+    processes apart at all". The shell's own additions (`PWD`, `SHLVL`, `_`)
+    are constant across the pair because the cwd and the invocation are.
+    """
+    from foundry_mcp.tools.worktree_helpers import _run_command_with_timeout
+
+    for name in _D175_POLLUTION:
+        monkeypatch.delenv(name, raising=False)
+    _, clean, _ = _run_command_with_timeout("env | sort", tmp_path, 30)
+
+    _pollute(monkeypatch)
+    _, polluted, _ = _run_command_with_timeout("env | sort", tmp_path, 30)
+
+    assert polluted == clean, (
+        "the same command produced different bytes under two server "
+        "environments, so whether a committed log reproduces still depends on "
+        "how the server was launched rather than on the tree (D-175). "
+        f"Lines only the polluted run emitted: "
+        f"{sorted(set(polluted.splitlines()) - set(clean.splitlines()))}"
+    )
+
+
+def test_the_allowlist_is_closed_so_an_unnamed_variable_never_reaches_a_command(
+    monkeypatch,
+):
+    """The membership rule, stated as a property rather than as a list.
+
+    A denylist would have to name `VIRTUAL_ENV`, then the next `UV_*` uv
+    invents, then the one after. This asserts the shape that makes those
+    future variables somebody else's non-problem: the child's environment is a
+    SUBSET of the declared allowlist, so a name nobody has thought of is
+    dropped before it is invented — which is the only reading under which
+    D-175's 'closes one door in a corridor' is answered.
+    """
+    from foundry_mcp.tools.worktree_helpers import (
+        _CHILD_ENV_ALLOWLIST,
+        _child_environment,
+    )
+
+    _pollute(monkeypatch)
+    monkeypatch.setenv("UV_A_VARIABLE_UV_HAS_NOT_INVENTED_YET", "1")
+
+    leaked = set(_child_environment()) - set(_CHILD_ENV_ALLOWLIST)
+    assert not leaked, (
+        f"{sorted(leaked)} reached a command without being declared. The "
+        f"allowlist is the whole mechanism: an environment assembled any other "
+        f"way fails open on the variable nobody has met yet."
+    )
+    assert set(_child_environment()) <= set(os.environ), (
+        "a name the server does not have was invented for the child; 'unset' "
+        "and 'set to empty' are different questions to every shell"
+    )
+
+
+def test_the_provenance_env_trail_names_what_the_command_saw(tmp_path, monkeypatch):
+    """`env_keys_present` is documented as the names present AT RE-EXEC TIME.
+
+    That field and `os.environ` stopped being the same list when the runner's
+    inherited copy became an allowlist, so a record still built from
+    `os.environ` would name variables the command could not see and would hide
+    the fact that the door drops them — an abuse trail describing a process
+    that never ran.
+    """
+    from foundry_mcp.tools.evidence import _make_provenance_record
+    from foundry_mcp.tools.worktree_helpers import _child_environment
+
+    _pollute(monkeypatch)
+    record = _make_provenance_record(
+        evidence_path=tmp_path / "evidence" / "casting-1-x.log",
+        evidence_cmd="cat replay.txt",
+        casting_commit="0" * 40,
+        log_text="body\n",
+        captured_text="body\n",
+        redacted_log="body\n",
+        redacted_captured="body\n",
+        exit_code=0,
+        elapsed_seconds=0.1,
+        verdict="verified",
+        failure_token=None,
+        failure_detail=None,
+    )
+    assert record["env_keys_present"] == sorted(_child_environment()), (
+        "the provenance trail is not derived from the function the launch "
+        "uses, so the two can drift into describing different processes"
+    )
+    for name in _D175_POLLUTION:
+        assert name not in record["env_keys_present"], (
+            f"the trail names {name}, which the command could not see"
+        )
+
+
+def test_the_acceptance_door_scrubs_the_environment_too(tmp_path, monkeypatch):
+    """D-175 ADJACENT-PATH TEST.
+
+    The defect was driven at the BOUNDARY SWEEP — `_sweep_one_log`, reached
+    from `Foundry-Gate('inspect_start')`. The adjacent path driven here is the
+    OTHER door onto the same executor: `_verify_one_evidence_file`, reached
+    from `foundry_handoff#foundry_accept_casting` at casting acceptance. Both
+    call `_run_command_with_timeout`, so a fix applied at either caller instead
+    of at the launch would leave this one inheriting the operator's shell, and
+    a casting would be ACCEPTED or REJECTED on the strength of how the server
+    was started.
+
+    The committed log's command emits nothing when the environment is clean and
+    one `LEAKED:` line per inherited variable when it is not, so the verdict
+    itself is the assertion: a leak is a body the comparison has never seen.
+    """
+    from foundry_mcp.tools.evidence import verify_evidence
+    from foundry_mcp.tools.foundry_state import clear_active_run
+
+    _pollute(monkeypatch)
+    leak_probe = (
+        "env | sed -n 's/^\\(VIRTUAL_ENV\\|PYTHONPATH\\|GITHUB_TOKEN\\)=.*/LEAKED: \\1/p'"
+        "; cat replay.txt"
+    )
+    env = _build_divergent_spec_repo(
+        tmp_path, replay_body_only=True, evidence_cmd=leak_probe
+    )
+    clear_active_run()
+    run_dir = tmp_path / "run-env-scrub"
+    run_dir.mkdir()
+
+    result = verify_evidence(
+        casting_id=1,
+        project_root=env["project_root"],
+        casting_commit=env["casting_commit"],
+        spec_path=env["run_spec"],
+        run_dir=run_dir,
+    )
+    assert result["verdict"] == "accepted", (
+        "the acceptance door's re-execution saw the server's own environment: "
+        f"{result}"
+    )
+    assert result["failure_token"] is None, result
 
 
 def test_a_mismatch_record_carries_both_hash_vocabularies(tmp_path):
