@@ -1110,8 +1110,24 @@ PHASE_NAMES: dict[str, str] = dict(PHASE_LADDER)
 
 #: ST-008 — a run that hits `max_cycles` reaches this phase by a SUCCESSFUL
 #: transition, not a refusal. HALTED is a named terminal state and is NOT
-#: DONE: the report is generated and every open LIVE and LATENT defect is
-#: named in it.
+#: DONE: the report is generated and every open defect is named in it, at
+#: EVERY tier `DEFECT_TIER_OR_UNKNOWN` admits.
+#:
+#: THE TIER COUNT HERE IS THE WHOLE VOCABULARY, NOT THE BLOCKING HALF.
+#: This sentence read "every open LIVE and LATENT defect is named in it",
+#: which is the prior spec's FR-045 ("Not a refusal: state.json phase becomes
+#: HALTED, the report is written naming every open LIVE and LATENT defect")
+#: carried forward verbatim from a release where `DEFECT_TIERS` had two
+#: members. It has three: `foundry_report._read_defect_sections` buckets the
+#: cross-tab over `DEFECT_TIER_OR_UNKNOWN` and renders a HARDENING backlog
+#: beside the LATENT one (AC-024), so a halted run's report has named every
+#: open HARDENING record since that section landed. Describing the tier set
+#: as two members in the one file a maintainer reads to learn what a tier IS
+#: is the D-148 shape — stale prose surviving beside new prose — and it is
+#: what the count pin in `test_vocab.py` now refuses across this module.
+#: Where FR-045 is QUOTED it stays verbatim, because a locked requirement is
+#: not rewritten by a later release; this is not a quote, it is the module's
+#: own statement, and the module's own statement has to be true today.
 RUN_PHASE_HALTED = "HALTED"
 
 # CLOSED VOCABULARY — FR-019 / CT-005 / ST-001: why a run ended on a ruling.

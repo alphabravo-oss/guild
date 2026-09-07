@@ -2975,14 +2975,28 @@ def test_the_report_copies_the_baseline_dicts_rather_than_embedding_them(report_
 # --------------------------------------------------------------------------- #
 
 
-def test_a_halted_run_report_names_every_open_live_and_latent_defect(report_env):
-    """C-14 / ST-008: 'the report names every open LIVE and LATENT defect' —
-    that is what makes the HALTED transition auditable.
+def test_a_halted_run_report_names_every_open_defect_at_every_tier(report_env):
+    """C-14 / ST-008 — the report is what makes the HALTED transition auditable.
+
+    The prior spec's FR-045 words it as "the report is written naming every
+    open LIVE and LATENT defect", and that quote stays a quote: it was locked
+    when `DEFECT_TIERS` had two members. The PROPERTY it is reaching for is
+    that a halted run writes its open work down, and the vocabulary has three
+    members now — `_read_defect_sections` buckets the cross-tab over
+    `DEFECT_TIER_OR_UNKNOWN`, so HARDENING and the unknown sentinel are named
+    on the same page.
+
+    This test asserted only the LIVE and LATENT rows, which is how it could
+    have gone on passing while a halted run stopped naming a whole tier — the
+    same under-statement the cycle-5 filings found in the lead and stream prose
+    (fallout D-162, D-163, D-164 / fallout AC-022). Every tier the vocabulary
+    admits is asserted here now, derived from the constant rather than listed,
+    so adding a fourth tier fails HERE rather than silently going unreported.
 
     Driven by re-opening a LIVE defect and halting the run, because on the
     fixture as shipped every LIVE record is fixed and the assertion would be
     vacuous. The ids are named in the cross-tab on EVERY run, halted or not,
-    which is why this needs no twelfth section."""
+    which is why this needs no section of its own."""
     state = _read_json(report_env, "state.json")
     state["phase"] = RUN_PHASE_HALTED
     state["halted_at_cycle"] = 5
@@ -2995,6 +3009,18 @@ def test_a_halted_run_report_names_every_open_live_and_latent_defect(report_env)
         if record["id"] == "D-006":
             record["status"] = "open"
             record["fixed_in_cycle"] = None
+    # The fixture predates the tier, so the HARDENING row is seeded here rather
+    # than assumed. A halted run is precisely where an open HARDENING record
+    # is most likely to exist — it blocks no gate, so nothing forced it closed
+    # before the run stopped, and the report is the only artefact that carries
+    # it to the next run's lead.
+    defects["defects"].append({
+        "id": "D-900", "cycle": 5, "source": "prove", "type": "WRONG",
+        "status": "open", "tier": "HARDENING", "class": "PROBE_WRONG_RESULT",
+        "description": "A probe drove the retry arm and it double-counted.",
+        "reproduction_attempted": "Drove the retry arm twice and read the "
+                                  "counter; it advanced by two.",
+    })
     _write_json(report_env, "defects.json", defects)
 
     _generate(report_env)
@@ -3007,9 +3033,22 @@ def test_a_halted_run_report_names_every_open_live_and_latent_defect(report_env)
     cross = doc["defects_by_tier_and_status"]["cross_tab"]
     assert cross["LIVE"]["open"]["ids"] == ["D-006"]
     assert set(cross["LATENT"]["open"]["ids"]) == {"D-004", "D-005"}
+    assert cross["HARDENING"]["open"]["ids"] == ["D-900"], (
+        "a halted run stopped naming its open HARDENING work and nothing "
+        "said so — the tier is non-blocking, which is exactly why the report "
+        "is the only place it is ever seen"
+    )
+
+    # Derived from the vocabulary, not listed: every tier a reader can SEE is
+    # a bucket the halted report carries, so a tier added later cannot go
+    # unnamed here just because nobody remembered to add a line.
+    assert set(cross) == set(DEFECT_TIER_OR_UNKNOWN), (
+        f"the cross-tab omits a tier the vocabulary admits: "
+        f"{sorted(set(DEFECT_TIER_OR_UNKNOWN) - set(cross))}"
+    )
 
     md = _markdown(report_env)
-    for did in ("D-006", "D-004", "D-005"):
+    for did in ("D-006", "D-004", "D-005", "D-900"):
         assert did in md, did
 
 
@@ -5111,6 +5150,75 @@ def test_the_hardening_backlog_lists_every_open_hardening_defect(report_env) -> 
     assert "D-902" not in markdown.split("## Unknown-tier defects")[0].split(
         "## HARDENING backlog"
     )[1]
+
+
+def test_the_hardening_backlog_prints_the_spec_ref_a_door_would_have_refused(
+    report_env,
+) -> None:
+    """fallout D-157 / GI-004 / GI-028 — an illegal row must not print CLEAN.
+
+    GI-028 / AC-055 / FR-057 make both filing doors REFUSE a HARDENING filing
+    carrying any `spec_ref`: the tier is for a driven failure NO requirement
+    asks about, so a record citing a requirement is by construction not one.
+    D-157 found the exit that produces one anyway —
+    `foundry.py#retier_matching_untiered` classified an ALREADY-OPEN untiered
+    record into HARDENING without re-asking the HARDENING rungs of the record
+    it mutated, so a record carrying `spec_ref: FR-014` reached the ledger.
+
+    The door is casting 4's to close. This is the report's half of the same
+    invariant, and it is why the omission mattered: the backlog row dropped
+    `spec_ref`, so the illegal record rendered as an ordinary HARDENING row
+    with nothing on the page to distinguish it from a legal one. A backlog is
+    read by a lead who has no defects.json to join against (D-029), so a field
+    this list omits is a field that reader does not have.
+
+    Both directions are driven, because only the pair is the property: the
+    legal row (no `spec_ref`) prints the required-absence cell, and the illegal
+    row prints the requirement id.
+    """
+    _defect(
+        report_env, id="D-901", tier="HARDENING", status="open",
+        **{"class": "PROBE_WRONG_RESULT"},
+        file="src/foundry_mcp/tools/evidence.py", symbol="verify_evidence",
+        reproduction_attempted="Drove the sweep with a zero-byte log and it "
+                               "reported ok rather than naming the log.",
+        description="A zero-byte evidence log passes the sweep.",
+        spec_ref="",
+    )
+    _defect(
+        report_env, id="D-902", tier="HARDENING", status="open",
+        **{"class": "PROBE_WRONG_RESULT"},
+        file="src/foundry_mcp/tools/foundry.py", symbol="retier_matching_untiered",
+        reproduction_attempted="Seeded an open untiered record carrying "
+                               "spec_ref FR-014 and re-filed it as HARDENING; "
+                               "the re-tier persisted both.",
+        description="A re-tier parks a spec-bound record in a non-blocking tier.",
+        spec_ref="FR-014",
+    )
+
+    _generate(report_env)
+    rows = {d["id"]: d for d in _document(report_env)["hardening_backlog"]["defects"]}
+
+    assert rows["D-901"]["spec_ref"] == "", (
+        "the legal row carries the field, empty — omitting the key would make "
+        "'this record cites no requirement' indistinguishable from 'this "
+        "report does not report that'"
+    )
+    assert rows["D-902"]["spec_ref"] == "FR-014", (
+        "the report dropped the one field that shows the record is illegal, "
+        "which is the D-157 close"
+    )
+
+    section = _markdown(report_env).split("## HARDENING backlog")[1].split("\n## ")[0]
+    assert "Spec ref" in section, "the column is not rendered at all"
+    assert "FR-014" in section, (
+        "report.json carries it and REPORT.md does not; the F6 artefact a lead "
+        "actually reads is the markdown"
+    )
+    assert fr.NO_SPEC_REF_CELL in section, (
+        "the legal row must say the absence is REQUIRED, not merely 'none "
+        "recorded' — that spelling is for a location a filing was free to omit"
+    )
 
 
 def test_the_hardening_backlog_renders_empty_rather_than_missing(report_env) -> None:

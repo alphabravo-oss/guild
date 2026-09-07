@@ -136,6 +136,19 @@ from foundry_mcp.tools.orchestration.escalation import ESCALATION_FILENAME
 #: dropped value; this reads as the measurement it is.
 NO_LOCATION_CELL = "(none recorded)"
 
+#: What a HARDENING backlog row prints in its Spec ref cell when the record
+#: carries none — which is every record a filing door wrote. D-157.
+#:
+#: A SEPARATE SPELLING FROM `NO_LOCATION_CELL`, and the difference is the whole
+#: point. An absent location is a legal-but-lossy filing the report renders as
+#: the measurement it is; an absent `spec_ref` on a HARDENING row is the
+#: REQUIRED state — GI-028 / AC-055 / FR-057 refuse the filing outright when it
+#: is set, because the tier is for a driven failure no requirement asks about.
+#: Rendering both with one string would tell a reader that a blank Spec ref is
+#: the same kind of gap as a blank Symbol, when one is a filing that recorded
+#: less than it could and the other is the invariant holding.
+NO_SPEC_REF_CELL = "(none, as required)"
+
 
 def _agent_id_for_casting(casting_id: int | str) -> str:
     """The ledger agent id for a casting's teammate — the CANONICAL spelling.
@@ -407,6 +420,23 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
             # `supersedes` travels with it because GI-022 makes promotion a NEW
             # filing that cites this id, never a re-tier in place: a reader
             # asking "did anything supersede this?" is asking about the id.
+            #
+            # `spec_ref` IS ON THE ROW PRECISELY BECAUSE IT SHOULD ALWAYS BE
+            # EMPTY (GI-004 / GI-028 / AC-055 / FR-057). Both filing doors
+            # refuse a HARDENING filing carrying any `spec_ref` — the tier is
+            # for a driven failure NO requirement asks about, so a record that
+            # cites a requirement is by construction not one. This list omitted
+            # the field, and D-157 is what that cost: `retier_matching_untiered`
+            # classified an already-open untiered record into HARDENING without
+            # re-asking the HARDENING rungs of the record it mutated, so a
+            # record carrying `spec_ref: FR-014` reached the ledger — and
+            # printed here as a clean HARDENING row, with the one field that
+            # would have shown it was illegal dropped on the way to the page.
+            # The doors are casting 4's to close; the row is this module's, and
+            # a report that cannot show an illegal record is a report that
+            # certifies it. The column below renders every row's value, so the
+            # anomaly is legible without a reader joining back to defects.json
+            # — which is the whole premise of a backlog list (D-029).
             hardening_backlog.append(
                 {
                     "id": record.get("id"),
@@ -414,6 +444,7 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
                     **_location_fields(record),
                     "source": record.get("source"),
                     "type": record.get("type"),
+                    "spec_ref": record.get("spec_ref"),
                     "description": record.get("description"),
                     "reproduction_attempted": record.get("reproduction_attempted"),
                     "supersedes": record.get("supersedes"),
@@ -2243,13 +2274,22 @@ def _render_section(key: str, value: dict) -> list[str]:
              "the evidence the row rests on. None of these blocks a gate — "
              "`BLOCKING_TIERS` holds LIVE and the unknown sentinel and nothing "
              "else — and promotion is a NEW filing that cites the id through "
-             "`supersedes`, never a re-tier in place (GI-022).", ""]
+             "`supersedes`, never a re-tier in place (GI-022). The Spec ref "
+             f"column reads `{NO_SPEC_REF_CELL}` on every legally filed row: "
+             "GI-028 makes both doors REFUSE a HARDENING filing carrying any "
+             "`spec_ref`, because a failure some requirement asks about is not "
+             "a failure no requirement asks about. A requirement id in that "
+             "column is therefore a record no door would have written, and it "
+             "is printed rather than dropped so the reader can see it (D-157).",
+             ""]
             + _md_table(
                 ["ID", "Class", "Cycle", "File", "Symbol", "Source",
-                 "Reproduction attempted", "Supersedes", "Description"],
+                 "Spec ref", "Reproduction attempted", "Supersedes",
+                 "Description"],
                 [[d.get("id"), d.get("class"), d.get("cycle"),
                   d.get("file") or NO_LOCATION_CELL,
                   d.get("symbol") or NO_LOCATION_CELL, d.get("source"),
+                  d.get("spec_ref") or NO_SPEC_REF_CELL,
                   d.get("reproduction_attempted") or NO_LOCATION_CELL,
                   d.get("supersedes"), d.get("description")]
                  for d in value.get("defects", [])],
@@ -2783,10 +2823,21 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
             "phase": phase,
             "cycle": state.get("cycle"),
             # ST-008: HALTED is a named terminal state, not DONE. The section
-            # bodies name every open LIVE and every open LATENT defect on every
-            # run, so a halted run's report is auditable without a twelfth
-            # section — this flag only tells the reader which kind of ending
-            # they are looking at.
+            # bodies name every open defect at EVERY tier on every run — the
+            # cross-tab buckets over `DEFECT_TIER_OR_UNKNOWN`, and the LATENT
+            # and HARDENING backlogs list their own — so a halted run's report
+            # is auditable without a section of its own, and this flag only
+            # tells the reader which kind of ending they are looking at.
+            #
+            # This comment read "every open LIVE and every open LATENT defect
+            # ... without a twelfth section", and both counts had gone stale:
+            # `DEFECT_TIERS` holds three members and AC-047 grew
+            # `REPORT_REQUIRED_SECTIONS` to sixteen. Naming the tier set as
+            # two members is the drift AC-022 is about, and naming a section
+            # ordinal is the `PROSE_COUNT` class this repo declares — so
+            # neither number is spelled here any more. The rule is stated
+            # against the vocabulary that carries it, which is the one thing
+            # that cannot fall behind the vocabulary.
             "halted": phase == RUN_PHASE_HALTED,
             "halted_at_cycle": state.get("halted_at_cycle"),
             "halted_reason": state.get("halted_reason"),

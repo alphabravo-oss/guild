@@ -1679,6 +1679,196 @@ def test_the_retired_tier_gate_pin_actually_fires() -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# fallout AC-022 / NFR-011 — EVERY count comment in this module is DERIVED,
+# not remembered.
+#
+# The scan above catches one retired SENTENCE. It could not catch what the
+# fallout cycle-5 filings were actually made of: `commands/start.md`'s tier
+# briefing (D-162), `skills/prove/SKILL.md` and `skills/trace/SKILL.md`'s
+# Structured Output Format paragraphs (D-163, D-164) each described
+# `DEFECT_TIERS` as TWO members and closed "Both tiers are defects and both
+# get fixed", months after HARDENING joined the frozenset. Three surfaces, one
+# failure: prose that COUNTS a vocabulary, written once and never re-derived.
+#
+# `vocab.py` is the constant those surfaces drifted from, and it states the
+# same kind of count about itself thirty-three times — the `# N items` comment
+# closing each declaration, which the module's own `PROSE_COUNT` observation
+# class exists to name ("The trailing count comment claims 15 members but the
+# frozenset now holds 16"). Declaring that class and then leaving every
+# instance of it in the declaring file unpinned is the gap this closes.
+#
+# THE PIN IS DERIVED, WHICH IS THE POINT (NFR-011, top convention 2). It
+# resolves each comment to the constant it annotates and asks `len()`. There is
+# no roster of expected counts here to fall behind the module a second time —
+# adding a member to any vocabulary and forgetting its comment fails HERE, at
+# the source of truth, rather than at whichever consumer's prose is read next.
+# ---------------------------------------------------------------------------
+
+#: A declaration's closing count comment: `)  # 16 sections`, `= frozenset(
+#: {...})  # 3 items`. The noun is free text because this module already uses
+#: eight of them (items, members, sections, patterns, phases, families, glob,
+#: path) and which noun fits a vocabulary is an authoring choice, not a rule.
+_COUNT_COMMENT = re.compile(r"#\s*(\d+)\s+([a-z][a-z-]*(?:\s+[a-z][a-z-]*)*)\s*$")
+
+#: A top-level constant binding, public or module-private. Matched at column
+#: zero so an annotated assignment inside a function body cannot claim a count
+#: comment that belongs to the declaration around it.
+_TOP_LEVEL_BINDING = re.compile(r"^(_?[A-Z][A-Z0-9_]*)\s*(?::[^=]+)?=")
+
+#: The floor. A pin over "every match" passes vacuously the moment the matches
+#: stop being found — a regex narrowed by a later edit, a reformat that moves
+#: every comment onto its own line — and a green vacuous pin is worse than no
+#: pin, because it reads as coverage. Thirty-three resolve today; the floor is
+#: set below that so adding or removing one declaration is not a failure, while
+#: losing the whole scan is.
+_MIN_COUNT_COMMENTS = 25
+
+
+def _count_comments() -> list[tuple[int, str, int, str]]:
+    """Every `# N <noun>` count comment in vocab.py, with what it annotates.
+
+    Returns ``[(lineno, constant_name, claimed_count, noun)]`` for each trailing
+    count comment that resolves to a top-level binding of this module carrying a
+    length. A comment on a line the walk-back cannot resolve to such a binding is
+    returned with an empty name, so the caller REPORTS it rather than skipping
+    it quietly — an unresolvable comment is the one shape this pin must not
+    treat as a pass.
+
+    Read from the source TEXT, like `_tier_header` above and for the same
+    reason: the thing under test is a `#` comment, which no import can reach.
+    """
+    lines = Path(vocab.__file__).read_text(encoding="utf-8").splitlines()
+    out: list[tuple[int, str, int, str]] = []
+    for index, line in enumerate(lines):
+        # A whole-line comment is prose, not a declaration's closing count —
+        # including this module's own explanatory blocks, which spell numbers
+        # in sentences all the time.
+        if line.lstrip().startswith("#"):
+            continue
+        match = _COUNT_COMMENT.search(line)
+        if match is None:
+            continue
+        name = ""
+        for back in range(index, max(-1, index - 80), -1):
+            binding = _TOP_LEVEL_BINDING.match(lines[back])
+            if binding is not None:
+                name = binding.group(1)
+                break
+        out.append((index + 1, name, int(match.group(1)), match.group(2)))
+    return out
+
+
+def test_every_count_comment_in_vocab_matches_its_constant() -> None:
+    """fallout AC-022 / NFR-011 — the module never miscounts itself.
+
+    `DEFECT_TIERS` is the member this was written for: it reads
+    `frozenset({"LIVE", "LATENT", "HARDENING"})  # 3 items`, and three surfaces
+    outside this module were caught in cycle 5 still describing it as two
+    (D-162, D-163, D-164). Their fix is prose on their own files; this is the
+    half that belongs to the constant — every vocabulary here states its own
+    size, and every one of those statements is checked against `len()` rather
+    than trusted.
+    """
+    comments = _count_comments()
+    assert len(comments) >= _MIN_COUNT_COMMENTS, (
+        f"only {len(comments)} count comments resolved, below the floor of "
+        f"{_MIN_COUNT_COMMENTS}. The scan has gone blind rather than the "
+        f"module having shrunk; a pin that finds nothing passes for the wrong "
+        f"reason."
+    )
+
+    unresolved = [(line, "") for line, name, _, _ in comments if not name]
+    assert not unresolved, (
+        f"count comments at lines {[line for line, _ in unresolved]} annotate "
+        f"no top-level binding this module exports. Either the comment is on "
+        f"the wrong line or the constant moved; both are the drift this pin is "
+        f"for, so neither is skipped."
+    )
+
+    wrong: list[str] = []
+    for line, name, claimed, noun in comments:
+        value = getattr(vocab, name, None)
+        if value is None or not hasattr(value, "__len__"):
+            wrong.append(
+                f"{name} (line {line}) carries a count comment but has no "
+                f"length — a count comment on a scalar is a claim about "
+                f"nothing"
+            )
+            continue
+        if len(value) != claimed:
+            wrong.append(
+                f"{name} (line {line}) says '# {claimed} {noun}' and holds "
+                f"{len(value)}"
+            )
+    assert not wrong, (
+        "a vocabulary and its own count comment disagree, which is the "
+        f"`PROSE_COUNT` class this module declares: {wrong}"
+    )
+
+
+def test_the_count_comment_pin_reads_the_tier_vocabulary_it_was_written_for(
+) -> None:
+    """The pin above actually reaches `DEFECT_TIERS`, and reads three.
+
+    The scan is generic, so this is what stops it from being generically empty:
+    the one declaration the cycle-5 filings were about must be among the
+    comments it resolved, with the count the frozenset actually holds.
+    """
+    by_name = {name: claimed for _, name, claimed, _ in _count_comments()}
+
+    assert by_name.get("DEFECT_TIERS") == len(vocab.DEFECT_TIERS) == 3, (
+        "the tier vocabulary's own count comment is not in the scan's reach, "
+        "which is the one comment it exists to hold"
+    )
+    assert by_name.get("DEFECT_TIER_OR_UNKNOWN") == len(
+        vocab.DEFECT_TIER_OR_UNKNOWN
+    ) == 4
+    assert by_name.get("BLOCKING_TIERS") == len(vocab.BLOCKING_TIERS) == 2, (
+        "BLOCKING_TIERS is the count that must NOT move when a tier is added "
+        "(GI-014), and the pin has to be watching it to say so"
+    )
+
+
+def test_the_count_comment_pin_actually_fires() -> None:
+    """A pin that cannot fail is a comment with an assert in it.
+
+    Driven against a stand-in module text rather than by mutating `vocab.py`:
+    the parse is the part that can rot, so the parse is what is exercised. A
+    correct comment resolves and agrees; a stale one resolves and disagrees;
+    a whole-line comment is not mistaken for a declaration's own count.
+    """
+    sample = "\n".join([
+        "# CLOSED VOCABULARY — 99 items, in a sentence, not a declaration.",
+        'STALE_SET = frozenset({"A", "B", "C"})  # 2 items',
+        'GOOD_SET = frozenset({"A", "B"})  # 2 items',
+    ]).splitlines()
+
+    found = []
+    for index, line in enumerate(sample):
+        if line.lstrip().startswith("#"):
+            continue
+        match = _COUNT_COMMENT.search(line)
+        if match is None:
+            continue
+        name = ""
+        for back in range(index, -1, -1):
+            binding = _TOP_LEVEL_BINDING.match(sample[back])
+            if binding is not None:
+                name = binding.group(1)
+                break
+        found.append((name, int(match.group(1))))
+
+    assert found == [("STALE_SET", 2), ("GOOD_SET", 2)], (
+        "the prose line was counted, or a declaration was missed; both are "
+        "how this pin would go quiet"
+    )
+    assert found[0][1] != 3, (
+        "STALE_SET holds three and claims two — the disagreement the real "
+        "assertion reports"
+    )
+
+
 def test_reproduction_attempted_accepts_a_real_negative_result() -> None:
     """CT-001's example, verbatim from the spec's own FR-004 text."""
     assert vocab.reproduction_attempted_problem(
