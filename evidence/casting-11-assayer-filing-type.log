@@ -1,0 +1,6 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -q tests/test_protocol_prose.py -k "documented_filing_row or documented_latent_example" 2>/dev/null | tail -2
+# evidence-for: AC-058, OT-043, FR-037
+# evidence-volatile: \d+\.\d+s
+
+.........................                                                [100%]
+25 passed, 647 deselected in 0.69s

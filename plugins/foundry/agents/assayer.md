@@ -287,6 +287,7 @@ When reporting HOLLOW verdicts for stubs, include:
       "source": "assay",
       "id": "US-7",
       "verdict": "MISSING",
+      "type": "MISSING",
       "description": "No implementation found for account deletion",
       "class": "no-auth-guard-on-destructive-endpoints",
       "tier": "LIVE",
@@ -296,6 +297,7 @@ When reporting HOLLOW verdicts for stubs, include:
       "source": "assay",
       "id": "US-12",
       "verdict": "THIN",
+      "type": "THIN",
       "description": "services/user.go#PurgeUser deletes the account row but never cascades to sessions",
       "class": "no-auth-guard-on-destructive-endpoints",
       "file": "services/user.go",
@@ -335,7 +337,7 @@ When reporting HOLLOW verdicts for stubs, include:
 
 **Every cite in that shape is `path#Symbol`, exactly as the cite rule below requires** — no `evidence` string carries a line number. The run-artifact carve-out that permits a line hint does not reach a findings record: an evidence log is frozen against the one commit its gate re-executes it at, while this JSON is re-read cycle after cycle as the tree moves underneath it. Symbol cites survive that; line hints rot into false findings, which is the loop this vocabulary exists to close.
 
-`class` is required on every defect, including one that stands alone — a single-instance class is still a class, and the filing doors refuse an empty one. `tier` is required on every defect too: `LIVE` when you drove the door and observed the wrong result, `LATENT` when you derived the finding and found no reachable instance, in which case `reproduction_attempted` rides beside it as the second entry above shows. Spell the class identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
+`class` is required on every defect, including one that stands alone — a single-instance class is still a class, and the filing doors refuse an empty one. `tier` is required on every defect too: `LIVE` when you drove the door and observed the wrong result, `LATENT` when you derived the finding and found no reachable instance, in which case `reproduction_attempted` rides beside it as the second entry above shows. `type` is required as well, and it is NOT the `verdict` beside it: `verdict` is this report's own ASSAY vocabulary, while `type` is the `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES` member the filing door persists and the later re-tier pass matches a record on. Both ride on every row above — a `MISSING` verdict files `"type": "MISSING"` — because the door REFUSES a finding that omits `type` rather than inferring one from the verdict beside it. The inference was removed for a reason: it persisted as a real `DEFECT_TYPES` member on findings that had declared none, and a batch carrying one such row is discarded whole, taking the findings beside it with it. Spell the class identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
 
 Research deviations (`RESEARCH_IGNORED` / `RESEARCH_CONFLICT`) also get mirrored into the main `defects` array with `type: "RESEARCH_DEVIATION"` so they flow through F3 GRIND like any other defect.
 
@@ -348,6 +350,7 @@ Research deviations (`RESEARCH_IGNORED` / `RESEARCH_CONFLICT`) also get mirrored
       "source": "prove",
       "id": "US-7",
       "verdict": "MISSING",
+      "type": "MISSING",
       "description": "No implementation found for account deletion",
       "class": "no-auth-guard-on-destructive-endpoints",
       "tier": "LIVE",
