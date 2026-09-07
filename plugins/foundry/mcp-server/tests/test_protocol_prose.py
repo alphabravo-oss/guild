@@ -63,6 +63,7 @@ import json
 import re
 import subprocess
 import sys
+import warnings
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -201,6 +202,273 @@ def _flat(path: Path) -> str:
     the flattened text; single-token and code-span pins can use ``_read``.
     """
     return " ".join(_read(path).split())
+
+
+# ---------------------------------------------------------------------------
+# fallout D-173 / FR-037 -- the one contract every recorded-gap ledger in this
+# module obeys: a recorded gap is an EXEMPTION, never an OBLIGATION
+# ---------------------------------------------------------------------------
+#
+# Three ledgers below record known gaps in files this module SWEEPS but does
+# not OWN -- `_KNOWN_SUBSTANCE_GAPS` over the filing surfaces,
+# `_KNOWN_TIER_GAPS` and `_KNOWN_TIER_COUNT_GAPS` over the tier-stating ones.
+# All three compared their measurement to their ledger by EXACT equality, which
+# made the `recorded but no longer measured` half an assertion about a file
+# another casting owns: the casting that CLOSED its own gap could only get back
+# to green by editing THIS module, in the same commit as its fix.
+#
+# D-173 is the driven consequence. In one GRIND cycle three castings edited
+# this file: casting 6 (its own work), casting 8 deleting the entry for
+# `commands/start.md`, and casting 11 deleting the entry for
+# `skills/temper/SKILL.md`. Casting 11 had its deletion STAGED when casting 8
+# committed, and a pathspec commit naming a path the committer legitimately
+# edited swept the peer's hunk in with it -- so the branch records casting 11's
+# debt as closed by casting 8, and the intermediate commit is permanently RED
+# (the emptied count ledger against a file that still said "both tiers").
+# Neither teammate was wrong: both followed the contract as written. The
+# contract was wrong.
+#
+# So the direction splits. A gap the ledger does NOT record fails, hard, in the
+# parametrised test, and it is cleared by the file's own owner fixing their own
+# prose -- no edit here. A gap the ledger records that the file no longer has
+# is COLLECTABLE DEBT: reported by the ledger's own floor check under
+# `StaleGapLedgerWarning`, retired by THIS module's owner in THIS module's
+# commit, and never a failure that reaches back into the casting that closed
+# it. `addopts = "-ra"` renders the warning every run, and a lead who wants the
+# old teeth escalates exactly this class with `-W error::...` -- which is why
+# it is a named subclass and not a bare `UserWarning`.
+#
+# WHAT THIS GIVES UP, stated rather than glossed: while an entry stands, a file
+# regressing back into the SAME recorded gap is not RED. That window is bounded
+# by the warning firing on every run with the row named in it. The window the
+# exact comparison had instead was a peer's lost commit, which is not bounded
+# by anything.
+
+
+class StaleGapLedgerWarning(UserWarning):
+    """A gap one of this module's ledgers records that the file no longer has.
+
+    Named rather than bare so `-W error::tests.test_protocol_prose.StaleGapLedgerWarning`
+    restores a hard failure for a lead who wants one, and so the rows are
+    greppable in a run's captured pytest output.
+    """
+
+
+#: The one spelling of "this comparison is subset-shaped and here is why", so
+#: the three ledgers cannot drift into three different accounts of one rule.
+_LEDGER_CONTRACT = (
+    "Compared SUBSET-shaped against the recorded-gap ledger (fallout D-173): "
+    "an unrecorded gap fails here, in the file that has it, while a recorded "
+    "gap the file no longer has is collectable debt this module's own floor "
+    "check reports under StaleGapLedgerWarning and this module's owner "
+    "retires. An exact comparison made the second half an assertion about "
+    "another casting's file, collectable only by editing this one."
+)
+
+
+def _ledger_verdict(
+    measured: frozenset[str], recorded: frozenset[str]
+) -> tuple[frozenset[str], frozenset[str]]:
+    """``(unrecorded, collectable)`` for a ledger recording gaps per MEMBER.
+
+    ``unrecorded`` is the hard half: members the file is short of that nothing
+    excuses. Per-member rather than per-file, so a surface recorded as missing
+    one member still fails the day it stops naming a second.
+
+    ``collectable`` is the soft half: members the ledger excuses that the file
+    now names. Returned rather than asserted, because the caller that can act
+    on it is the floor check, not the file's owner.
+    """
+    return measured - recorded, recorded - measured
+
+
+def _count_ledger_verdict(
+    measured: str | None, recorded: str | None
+) -> tuple[str | None, str | None]:
+    """``(unrecorded, collectable)`` for a ledger recording PRESENCE, not wording.
+
+    Presence-shaped on purpose. The recorded value is the phrase the surface
+    carried when the debt was written down, and it is documentation: a surface
+    that rewords its count is carrying the same debt in different words, so
+    holding the exemption to the exact phrase would force whoever reworded the
+    sentence to edit this module -- D-173 again, one rung quieter. The hard
+    half fires only on a count nothing records; drift in the recorded wording
+    is reported with the closed rows.
+    """
+    unrecorded = measured if (measured and not recorded) else None
+    if recorded and recorded != measured:
+        return unrecorded, recorded
+    return unrecorded, None
+
+
+def _report_collectable_debt(ledger: str, rows: dict[str, object]) -> None:
+    """Report retired-but-recorded ledger rows without failing the suite.
+
+    The single door for all three floor checks: one wording, one warning class,
+    one place to change if the collection channel ever changes again.
+    """
+    if not rows:
+        return
+    warnings.warn(
+        f"{ledger} records gaps the swept files no longer have: {rows}. "
+        f"These are COLLECTABLE DEBT, not failures -- delete each row in this "
+        f"module's own commit. {_LEDGER_CONTRACT}",
+        StaleGapLedgerWarning,
+        stacklevel=2,
+    )
+
+
+def test_a_recorded_gap_is_an_exemption_and_never_an_obligation() -> None:
+    """fallout D-173 / FR-037 -- the ledger contract, DRIVEN.
+
+    All three ledgers are empty today, so the live tree cannot show either
+    direction of the rule. Driving the verdict functions on synthesised pairs
+    is what makes the contract a measured property rather than a claim in the
+    comment above it -- the same disposition
+    ``test_the_count_rule_does_not_forbid_the_sentence_this_module_requires``
+    takes for the count regex.
+
+    Against the pre-fix module this test does not import: the verdicts did not
+    exist and the comparison was inlined as ``missing == known``, which is the
+    whole of D-173.
+    """
+    unrecorded, collectable = _ledger_verdict(
+        frozenset({"HARDENING", "LATENT"}), frozenset({"LATENT"})
+    )
+    assert unrecorded == frozenset({"HARDENING"}), (
+        f"a member the file is short of and no row excuses came back as "
+        f"{sorted(unrecorded)}. The hard half is per-MEMBER: a surface "
+        f"recorded as missing one member must still fail the day it stops "
+        f"naming a second, or one row exempts the whole file forever."
+    )
+    assert not collectable, (
+        f"{sorted(collectable)} reported as collectable while the file still "
+        f"has that gap. Debt is collected when the gap CLOSES, never while it "
+        f"stands -- a row retired early leaves a live gap unexcused and "
+        f"unpinned at once."
+    )
+
+    unrecorded, collectable = _ledger_verdict(frozenset(), frozenset({"HARDENING"}))
+    assert not unrecorded, (
+        f"a file that CLOSED its recorded gap still fails the parametrised "
+        f"rule ({sorted(unrecorded)}), so the casting that closed it can only "
+        f"reach green by deleting a row from THIS module inside THEIR commit. "
+        f"That is D-173: casting 8's commit d4db504 carried casting 11's "
+        f"staged deletion and left a RED intermediate on the branch."
+    )
+    assert collectable == frozenset({"HARDENING"}), (
+        f"the closed gap came back as {sorted(collectable)} rather than "
+        f"collectable debt. Dropping the second half entirely would let a "
+        f"retired row rot here, which is the property the exact comparison "
+        f"had and this must keep."
+    )
+
+    assert _count_ledger_verdict("both tiers", None) == ("both tiers", None), (
+        "a counted vocabulary that no row records must fail at once; the "
+        "count ledger's hard half is the one that catches a NEW count."
+    )
+    assert _count_ledger_verdict(None, "both tiers") == (None, "both tiers"), (
+        "a surface that stopped counting must be collectable debt, not a "
+        "failure -- it is the fix landing, and the fixer does not own this "
+        "module."
+    )
+    assert _count_ledger_verdict("three tiers", "both tiers")[0] is None, (
+        "rewording a counting sentence fails the hard half, so whoever "
+        "reworded it must edit this module to update the recorded phrase. "
+        "Same debt, different words: the exemption is PRESENCE-shaped and the "
+        "recorded phrase is documentation."
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _report_collectable_debt("_KNOWN_TIER_GAPS", {"a/b.md": ["HARDENING"]})
+        _report_collectable_debt("_KNOWN_TIER_GAPS", {})
+    assert [w.category for w in caught] == [StaleGapLedgerWarning], (
+        f"collectable rows reached {[w.category.__name__ for w in caught]} "
+        f"instead of exactly one StaleGapLedgerWarning. The channel is the "
+        f"fix: a raise here is the red tree D-173 records, and silence is a "
+        f"debt nothing will ever collect."
+    )
+    assert "a/b.md" in str(caught[0].message), (
+        "the warning does not name the row it collected, so the owner reading "
+        "a run's output cannot tell which entry to retire."
+    )
+
+
+def _functions_reading_a_gap_ledger() -> dict[str, set[str]]:
+    """Every function in THIS module that reads a ``_KNOWN_*_GAPS`` ledger.
+
+    DERIVED off this module's own AST rather than typed, for the reason
+    ``DEFECT_FILING_AGENTS`` is derived: a hand-listed roster cannot fail on
+    the fourth ledger someone adds next to the three that exist today.
+    """
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    found: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        names = {
+            child.id
+            for child in ast.walk(node)
+            if isinstance(child, ast.Name)
+        }
+        if any(n.startswith("_KNOWN_") and n.endswith("_GAPS") for n in names):
+            found[node.name] = names
+    return found
+
+
+def test_no_gap_ledger_is_read_by_exact_equality_again() -> None:
+    """fallout D-173 / FR-037 -- the shape, held mechanically rather than by convention.
+
+    The contract above is one `==` away from coming back, and coming back is
+    invisible: all three ledgers are empty, so an exact comparison restored
+    tomorrow is green until the next casting closes a gap -- at which point it
+    is red under THAT casting, in this file, exactly as before. So the shape is
+    read off the AST.
+
+    RED against the pre-fix module on both halves at once: the three
+    parametrised tests compared ``missing == known`` / ``found == known`` and
+    called no verdict.
+    """
+    readers = _functions_reading_a_gap_ledger()
+    assert len(readers) >= 6, (
+        f"only {sorted(readers)} read a gap ledger. Three ledgers each have a "
+        f"floor check and a parametrised rule; a derivation that sees fewer "
+        f"than six has come apart from the module and is vacuously green."
+    )
+    routed = {
+        "_ledger_verdict",
+        "_count_ledger_verdict",
+        "_report_collectable_debt",
+    }
+    unrouted = sorted(name for name, names in readers.items() if not (names & routed))
+    assert not unrouted, (
+        f"{unrouted} read a gap ledger without routing through {sorted(routed)}. "
+        f"A ledger read that compares inline is a second account of the "
+        f"contract, and the one that is not updated keeps whichever direction "
+        f"it was written with. {_LEDGER_CONTRACT}"
+    )
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    exact = sorted(
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name in readers
+        for cmp_node in ast.walk(node)
+        if isinstance(cmp_node, ast.Compare)
+        and any(isinstance(op, ast.Eq) for op in cmp_node.ops)
+        and any(
+            isinstance(operand, ast.Name) and operand.id == "known"
+            for operand in (cmp_node.left, *cmp_node.comparators)
+        )
+    )
+    assert not exact, (
+        f"{exact} compare a measurement to `known` by equality again. That is "
+        f"D-173's exact spelling: the `recorded but no longer measured` half "
+        f"becomes an assertion about a file this module does not own, "
+        f"collectable only by the casting that closed the gap editing this "
+        f"module inside their own commit."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3875,22 +4143,28 @@ _FILING_SUBSTANCE = (
 )
 
 #: Filing surfaces KNOWN to be missing part of the floor, with the exact
-#: clauses each lacks. Recorded rather than excused, and asserted as an EXACT
-#: set so the debt cannot rot in either direction: closing a gap fails this
-#: until the entry is deleted, and opening a new one fails immediately.
+#: clauses each lacks. Recorded rather than excused, and read SUBSET-shaped per
+#: `_LEDGER_CONTRACT`: an unrecorded gap fails in the file that has it, while a
+#: gap recorded here that the file has since closed is collectable debt the
+#: floor check below reports and this module's owner retires.
 #:
 #: Empty, and the emptiness is the assertion. skills/temper/SKILL.md was the
 #: one entry: it stated the security rule as "A security-property claim can
 #: NEVER be `LATENT`" without naming the denylist class the refusal reports, so
 #: a temper filing that tripped it met a refusal naming a token its own prose
 #: never taught. That gap closed when the file gained the full filing rules,
-#: and the entry went with it -- the ledger is compared as an exact set below
-#: precisely so a closed gap cannot keep its exemption.
+#: and the entry went with it -- under the exact comparison this ledger used to
+#: carry, casting 11 could only close that gap by deleting a row from casting
+#: 6's module in casting 11's commit, which is the collision D-173 records.
 _KNOWN_SUBSTANCE_GAPS: dict[str, frozenset[str]] = {}
 
 
 def test_the_known_substance_gap_ledger_names_real_surfaces() -> None:
-    """Floor check: a ledger keyed on a path nothing sweeps excuses nothing."""
+    """Floor check: a ledger keyed on a path nothing sweeps excuses nothing.
+
+    fallout D-173 puts the retired-row sweep here too: this is the caller that
+    can act on a closed gap without reaching into the casting that closed it.
+    """
     swept = {_rel(p) for p in DEFECT_FILING_SURFACES}
     stale = sorted(set(_KNOWN_SUBSTANCE_GAPS) - swept)
     assert not stale, (
@@ -3906,6 +4180,19 @@ def test_the_known_substance_gap_ledger_names_real_surfaces() -> None:
             f"floor, so the exemption covers nothing the test would have "
             f"checked."
         )
+    by_rel = {_rel(p): p for p in DEFECT_FILING_SURFACES}
+    collected: dict[str, object] = {}
+    for rel, gaps in _KNOWN_SUBSTANCE_GAPS.items():
+        if rel not in by_rel:
+            continue
+        text = _read(by_rel[rel])
+        measured = frozenset(
+            clause for clause, _ in _FILING_SUBSTANCE if clause not in text
+        )
+        _, collectable = _ledger_verdict(measured, gaps)
+        if collectable:
+            collected[rel] = sorted(collectable)
+    _report_collectable_debt("_KNOWN_SUBSTANCE_GAPS", collected)
 
 
 @pytest.mark.parametrize("path", DEFECT_FILING_SURFACES, ids=_rel)
@@ -3922,20 +4209,18 @@ def test_every_filing_surface_carries_the_tier_substance(path: Path) -> None:
     text = _read(path)
     missing = frozenset(clause for clause, _ in _FILING_SUBSTANCE if clause not in text)
     known = _KNOWN_SUBSTANCE_GAPS.get(_rel(path), frozenset())
+    unrecorded, _ = _ledger_verdict(missing, known)
     why = dict(_FILING_SUBSTANCE)
-    assert missing == known, {
+    assert not unrecorded, {
         "file": _rel(path),
         "why": (
             "a surface that instructs a filing must state the substance the "
-            "doors refuse on, in whatever register it writes in. Compared as "
-            "an EXACT set against the recorded-gap ledger so a closed gap "
-            "fails here too -- a stale exemption is how a fixed file goes "
-            "unpinned again."
+            "doors refuse on, in whatever register it writes in. "
+            + _LEDGER_CONTRACT
         ),
         "clauses_missing_and_not_recorded": {
-            clause: why[clause] for clause in sorted(missing - known)
+            clause: why[clause] for clause in sorted(unrecorded)
         },
-        "clauses_recorded_but_now_present": sorted(known - missing),
     }
 
 
@@ -8202,9 +8487,8 @@ TIER_STATING_SURFACES = tuple(
 )
 
 #: Surfaces KNOWN to enumerate the vocabulary incompletely, with the exact
-#: members each omits. Recorded rather than excused, and compared as an EXACT
-#: set for the reason `_KNOWN_SUBSTANCE_GAPS` is: closing a gap fails this
-#: until the entry is deleted, and opening a new one fails immediately. An
+#: members each omits. Recorded rather than excused, and read SUBSET-shaped for
+#: the reason `_KNOWN_SUBSTANCE_GAPS` is, stated once at `_LEDGER_CONTRACT`. An
 #: entry here is a FINDING carried in the open, never a narrowing of the roster
 #: to make it green -- C-078 asks for the files to be reported, not hidden.
 #:
@@ -8212,9 +8496,12 @@ TIER_STATING_SURFACES = tuple(
 #: `commands/help.md` as short of `HARDENING` while describing the HALTED
 #: report; C-084 carried that to casting 8, which corrected the sentence to
 #: name all three tiers and both backlog sections the report actually emits.
-#: The EXACT-set comparison then required this entry to go in the same commit,
-#: which is the property it was written for: a closed gap cannot rot here any
-#: more than an open one can.
+#: Under the EXACT comparison this ledger used to carry, that correction was
+#: RED until the row went too -- so casting 8 deleted a row from casting 6's
+#: module inside casting 8's commit, and swept a peer's staged deletion of a
+#: second row in with it. That is D-173: the collection was real, the collector
+#: was the wrong casting at the wrong moment. The row is now collected by the
+#: floor check below, which warns instead of failing.
 _KNOWN_TIER_GAPS: dict[str, frozenset[str]] = {}
 
 
@@ -8252,7 +8539,12 @@ def test_the_tier_stating_roster_is_derived_and_spans_its_directories() -> None:
 
 
 def test_the_known_tier_gap_ledger_names_real_surfaces_and_members() -> None:
-    """Floor check: a ledger keyed on an unswept path or a fake member excuses nothing."""
+    """Floor check: a ledger keyed on an unswept path or a fake member excuses nothing.
+
+    fallout D-173 puts the retired-row sweep here as well: a gap this ledger
+    excuses that the file now names is collected HERE, by this module, and not
+    by turning the tree red under the casting that closed it.
+    """
     swept = {_rel(p) for p in TIER_STATING_SURFACES}
     stale = sorted(set(_KNOWN_TIER_GAPS) - swept)
     assert not stale, (
@@ -8267,6 +8559,16 @@ def test_the_known_tier_gap_ledger_names_real_surfaces_and_members() -> None:
             f"declare ({sorted(vocab.DEFECT_TIERS)}), so the exemption covers "
             f"nothing this test would have checked."
         )
+    by_rel = {_rel(p): p for p in TIER_STATING_SURFACES}
+    collected: dict[str, object] = {}
+    for rel, gaps in _KNOWN_TIER_GAPS.items():
+        if rel not in by_rel:
+            continue
+        measured = frozenset(_DECLARED_TIERS) - frozenset(_named_tiers(by_rel[rel]))
+        _, collectable = _ledger_verdict(measured, gaps)
+        if collectable:
+            collected[rel] = sorted(collectable)
+    _report_collectable_debt("_KNOWN_TIER_GAPS", collected)
 
 
 @pytest.mark.parametrize("path", TIER_STATING_SURFACES, ids=_rel)
@@ -8281,19 +8583,18 @@ def test_every_tier_stating_surface_names_every_declared_member(path: Path) -> N
     """
     missing = frozenset(_DECLARED_TIERS) - frozenset(_named_tiers(path))
     known = _KNOWN_TIER_GAPS.get(_rel(path), frozenset())
-    assert missing == known, {
+    unrecorded, _ = _ledger_verdict(missing, known)
+    assert not unrecorded, {
         "file": _rel(path),
         "why": (
             "this surface enumerates the tier vocabulary and must enumerate "
             "all of it: a reader learns the members exist here or not at all, "
             "and a member no surface describes is one no stream ever files. "
-            "Compared as an EXACT set against the recorded-gap ledger so a "
-            "closed gap fails here too."
+            + _LEDGER_CONTRACT
         ),
         "declared": sorted(vocab.DEFECT_TIERS),
         "named": sorted(_named_tiers(path)),
-        "missing_and_not_recorded": sorted(missing - known),
-        "recorded_but_now_present": sorted(known - missing),
+        "missing_and_not_recorded": sorted(unrecorded),
     }
 
 
@@ -8319,21 +8620,31 @@ _TIER_COUNT_RE = re.compile(
     r"\b(?:both|either|one|two|three|four|five|six|\d+)[- ]tiers?\b", re.I
 )
 
-#: Surfaces KNOWN to count the vocabulary, with the exact phrase each carries.
-#: Recorded, not excused, and compared EXACTLY: rewording the sentence fails
-#: this until the entry is updated or deleted, and a new count fails at once.
+#: Surfaces KNOWN to count the vocabulary, with the phrase each carried when
+#: the debt was recorded. Recorded, not excused, and read PRESENCE-shaped per
+#: `_count_ledger_verdict`: a count nothing records fails at once, while the
+#: recorded phrase is documentation whose drift -- including the file dropping
+#: the count entirely -- is reported by the floor check below.
 #:
 #: EMPTY, and the emptiness is the assertion: no swept surface counts the
 #: vocabulary today. It held one entry -- `skills/temper/SKILL.md` saying "both
 #: tiers are defects that get fixed" with no pair named in the sentence, the
 #: fifth instance of the D-162/D-163/D-164 class -- raised as C-085 because the
-#: file is casting 11's, and deleted by casting 11 with the sentence, which is
-#: the collection this ledger's exact comparison exists to force.
+#: file is casting 11's. Casting 11 fixed the sentence, and the EXACT
+#: comparison this ledger then carried made that fix RED until the row went
+#: with it; casting 11 staged the row deletion into casting 6's module and
+#: casting 8's pathspec commit swept it up. That is D-173, and it is why the
+#: row is now collected by a warning here rather than by a red test there.
 _KNOWN_TIER_COUNT_GAPS: dict[str, str] = {}
 
 
 def test_the_tier_count_ledger_names_surfaces_this_module_sweeps() -> None:
-    """Floor check: a recorded count against an unswept file collects nothing."""
+    """Floor check: a recorded count against an unswept file collects nothing.
+
+    fallout D-173: the retired-row sweep lives here too, so a surface that
+    stopped counting -- or reworded the count -- is collected by this module
+    instead of failing under the casting that reworded it.
+    """
     swept = {_rel(p) for p in TIER_STATING_SURFACES}
     stale = sorted(set(_KNOWN_TIER_COUNT_GAPS) - swept)
     assert not stale, (
@@ -8341,6 +8652,21 @@ def test_the_tier_count_ledger_names_surfaces_this_module_sweeps() -> None:
         f"vocabulary. Delete the entries -- a debt recorded against a file "
         f"this module does not read is a debt nothing will ever collect."
     )
+    by_rel = {_rel(p): p for p in TIER_STATING_SURFACES}
+    collected: dict[str, object] = {}
+    for rel, phrase in _KNOWN_TIER_COUNT_GAPS.items():
+        if rel not in by_rel:
+            continue
+        hit = _TIER_COUNT_RE.search(_flat(by_rel[rel]))
+        _, collectable = _count_ledger_verdict(
+            hit.group(0).lower() if hit else None, phrase
+        )
+        if collectable is not None:
+            collected[rel] = {
+                "recorded": collectable,
+                "now_counts": hit.group(0).lower() if hit else None,
+            }
+    _report_collectable_debt("_KNOWN_TIER_COUNT_GAPS", collected)
 
 
 def test_the_count_rule_does_not_forbid_the_sentence_this_module_requires() -> None:
@@ -8391,15 +8717,15 @@ def test_no_tier_stating_surface_counts_the_vocabulary(path: Path) -> None:
     hit = _TIER_COUNT_RE.search(_flat(path))
     found = hit.group(0).lower() if hit else None
     known = _KNOWN_TIER_COUNT_GAPS.get(_rel(path))
-    assert found == known, {
+    unrecorded, _ = _count_ledger_verdict(found, known)
+    assert unrecorded is None, {
         "file": _rel(path),
         "why": (
             "a surface that enumerates the tier vocabulary must not also count "
             "it: a count is a second copy of `len()` that no door reads and "
-            "nothing updates. Compared EXACTLY against the recorded-count "
-            "ledger so a fixed file fails here too."
+            "nothing updates. " + _LEDGER_CONTRACT
         ),
         "declared_member_count": len(vocab.DEFECT_TIERS),
-        "counted_phrase_found": found,
+        "counted_phrase_found": unrecorded,
         "counted_phrase_recorded": known,
     }
