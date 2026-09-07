@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from foundry_mcp.schemas import vocab
+from foundry_mcp.tools import concerns as _concerns
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools.concerns import (
     CARRIED_PROSE_MARKER,
@@ -46,6 +47,7 @@ from foundry_mcp.tools.concerns import (
     CONCERN_TARGET_UNRESOLVED,
     CONCERN_TEXT_EMPTY,
     CONCERN_UNKNOWN_ID,
+    HANDOFF_EVENT_CONCERN_CLOSED,
     TARGET_KIND_CASTING,
     TARGET_KIND_FILE,
     TARGET_KIND_SYMBOL,
@@ -457,6 +459,113 @@ def test_the_rendered_entry_is_restated_as_closed(run_env):
     assert f"## {opened['id']} — {CONCERN_STATUS_CLOSED}" in rendered_closed
     assert f"## {opened['id']} — {CONCERN_STATUS_OPEN}" not in rendered_closed
     assert "done" in rendered_closed
+
+
+def test_a_close_whose_handoff_cannot_be_appended_says_so(run_env):
+    """fallout FR-039 / ST-004, defects D-145 / D-146 — THE FAILING-THEN-PASSING
+    TEST.
+
+    That transition's guard column names TWO conditions for the close: "reason
+    non-empty; a handoff record is appended". The first is a named refusal.
+    The second was best-effort AND silent — `_close_concern` discarded
+    `_append_close_handoff`'s outcome and the appender swallowed the failure —
+    so a close whose required record was never written returned `ok: True` with
+    nothing on it to say so.
+
+    The contrast was already in the same function one line up: a render that
+    cannot be written reports `render_problem` on an otherwise successful
+    result. The asymmetry was the defect, not the decision to let the close
+    proceed, so this drives the same arrangement on both channels and asserts
+    they now answer the same way.
+    """
+    project_root, fdir = run_env
+    opened = _open_one(project_root)["concern"]
+
+    # The channel is made unwritable in the way the drive found it: a
+    # directory where the appender opens a file, which raises IsADirectoryError
+    # — an OSError, from inside the lazy import's frame.
+    (fdir / "handoffs.jsonl").mkdir(parents=True, exist_ok=True)
+
+    result = foundry_concern(
+        close=opened["id"], reason="casting 2 registered it",
+        project_root=project_root,
+    )
+
+    # The close still stands — the entry is closed inside a committed
+    # transaction before the handoff is attempted at all.
+    assert result.get("ok") is True, result
+    assert _ledger(fdir)[0]["status"] == CONCERN_STATUS_CLOSED
+
+    # ...and the guard artefact that did NOT get written says so, by name.
+    problem = result.get("handoff_problem")
+    assert problem is not None, result
+    assert HANDOFF_EVENT_CONCERN_CLOSED in problem, problem
+    assert "handoffs.jsonl" in problem, problem
+
+    # The sibling channel, driven the same way, for the symmetry this restores.
+    other = _open_one(project_root)["concern"]
+    (fdir / CONCERNS_MARKDOWN_FILENAME).unlink()
+    (fdir / CONCERNS_MARKDOWN_FILENAME).mkdir()
+    rendered = foundry_concern(
+        close=other["id"], reason="and this one", project_root=project_root
+    )
+    assert rendered.get("ok") is True, rendered
+    assert rendered.get("render_problem") is not None, rendered
+
+
+def test_a_close_whose_handoff_lands_reports_no_problem(run_env):
+    """The other half of the same channel: silence means written.
+
+    A key that appears only on failure is worth nothing if it also appears on
+    success, and worth nothing if the failure arm is the only one anyone
+    drives.
+    """
+    project_root, fdir = run_env
+    opened = _open_one(project_root)["concern"]
+
+    result = foundry_concern(
+        close=opened["id"], reason="done", project_root=project_root
+    )
+
+    assert result.get("ok") is True, result
+    assert "handoff_problem" not in result, result
+    assert opened["id"] in _file(fdir, "handoffs.md").read_text(encoding="utf-8")
+
+
+def test_the_ledger_stamps_come_from_the_leaf(run_env, monkeypatch):
+    """fallout GI-024, defect D-124 — THE FAILING-THEN-PASSING TEST.
+
+    ``_now`` here spelled ``datetime.now(timezone.utc).isoformat()`` inline —
+    "a second derivation outside `foundry_state`" is that invariant's violation
+    column verbatim — and this module's stamps are compared against the leaf's by the
+    readers that scope a concern to a cycle. It is a call-through now.
+
+    Two assertions, because the duplication had two halves: the module no
+    longer holds the apparatus to derive a timestamp, and every stamp it
+    writes is the leaf's answer.
+    """
+    project_root, fdir = run_env
+    assert not hasattr(_concerns, "datetime"), (
+        "the module imports datetime again — a second derivation is back"
+    )
+
+    monkeypatch.setattr(_concerns, "now_iso", lambda **_kwargs: "STAMP-1")
+    opened = _open_one(project_root)["concern"]
+    assert opened["recorded_at"] == "STAMP-1"
+
+    monkeypatch.setattr(_concerns, "now_iso", lambda **_kwargs: "STAMP-2")
+    closed = foundry_concern(
+        close=opened["id"], reason="done", project_root=project_root
+    )["concern"]
+    assert closed["closed_at"] == "STAMP-2"
+
+    # The handoff record carries the same stamp rather than deriving its own.
+    rows = [
+        json.loads(line)
+        for line in _file(fdir, "handoffs.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [r for r in rows if r.get("timestamp") == "STAMP-2"], rows
 
 
 def test_closing_an_unknown_id_is_refused_naming_the_ids_that_exist(run_env):

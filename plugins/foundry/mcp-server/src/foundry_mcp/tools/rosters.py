@@ -45,12 +45,11 @@ concurrent caller may already have replaced, which is D-125 exactly.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 
 from foundry_mcp.schemas.vocab import STREAM_WIRE_IDS
 from foundry_mcp.tools.foundry import _locked_document, ledger_refusals
-from foundry_mcp.tools.foundry_state import get_run_dir, read_document
+from foundry_mcp.tools.foundry_state import get_run_dir, now_iso, read_document
 
 # --------------------------------------------------------------------------- #
 # Constants — declared FIRST so every message, every reader and every test
@@ -77,6 +76,16 @@ ROSTER_UNKNOWN_STREAM = "ROSTER_UNKNOWN_STREAM"
 #: Named refusal: ``items`` was not a list.
 ROSTER_ITEMS_NOT_A_LIST = "ROSTER_ITEMS_NOT_A_LIST"
 
+#: Named refusal: ``items`` was a list of nothing. See ``_items_refusal``.
+ROSTER_ITEMS_EMPTY = "ROSTER_ITEMS_EMPTY"
+
+#: Named refusal: an item is not a NAME — not a string, or a blank one.
+ROSTER_ITEM_NOT_NAMED = "ROSTER_ITEM_NOT_NAMED"
+
+#: Named refusal: one item appears more than once, so the denominator counts a
+#: member twice.
+ROSTER_ITEMS_DUPLICATED = "ROSTER_ITEMS_DUPLICATED"
+
 #: Derived from ``vocab.STREAM_WIRE_IDS``, never a second hand list — the
 #: closed vocabulary lives in ``schemas/vocab.py`` and every consumer derives
 #: from it, so adding a stream there cannot leave this hint behind.
@@ -84,7 +93,20 @@ ROSTER_STREAM_PHRASE = ", ".join(sorted(STREAM_WIRE_IDS))
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    """The ``derived_at`` and revision stamps — from the leaf, at full precision.
+
+    fallout GI-024 / D-124: this was the THIRD ``_now`` in the package and the
+    second one still spelling ``datetime.now(timezone.utc).isoformat()``
+    inline, beside `foundry_report._now`'s docstring asserting there had only
+    ever been two. GI-024's violation column is "a second derivation outside
+    `foundry_state`", and a ledger writer whose stamps the roll-up compares
+    against the leaf's is exactly where that costs something. `now_iso` holds
+    the one implementation and its default precision is the one these stamps
+    have always published, so this is a call-through binding and nothing else
+    — which is what `_DELIBERATE_REDEFINITIONS["_now"]` says every module
+    binding the name is.
+    """
+    return now_iso()
 
 
 def _named_refusal(error: str, hint: str, phase: str) -> dict:
@@ -95,6 +117,104 @@ def _named_refusal(error: str, hint: str, phase: str) -> dict:
     never raises across the MCP boundary — it returns this.
     """
     return {"error": error, "hint": hint, "phase": phase}
+
+
+def _items_refusal(stream: str, items: list) -> dict | None:
+    """Why ``items`` is not a population a stream can be held to, or None.
+
+    THE ROSTER LENGTH IS A DENOMINATOR, NOT A DESCRIPTION (fallout D-105 /
+    D-106). Casting 2's ``Foundry-Stream`` REQUIRES ``items_total`` to equal
+    the length of what this door persisted — every other value is refused
+    ``ROSTER_MISMATCH`` — so a list this door accepts is a number no later
+    door is able to question. Three shapes were accepted and each one wrote a
+    denominator that says something untrue:
+
+      * EMPTY. `scripts/migrate-archive.py#_migrate_rosters` already states
+        the ruling for the whole run, and states it as the reason it creates
+        `rosters/` and never a file inside it: "A roster FILE holding zero
+        items says a stream derived its item list and the list was empty — a
+        measurement nobody took — and `Foundry-Roster` would then refuse the
+        real derivation with ``ROSTER_EXISTS`` on the strength of it." This
+        door created by hand exactly the state the migration refuses to
+        create, and the state WEDGES the stream: the real derivation is
+        refused ``ROSTER_EXISTS``, ``items_total=3`` is refused
+        ``ROSTER_MISMATCH``, and ``items_checked=0`` is refused by the
+        roll-up's own positive-count guard. No legal recording is left at all,
+        and the only exit is `revise=True` — a repair for a list that CHANGED,
+        asked of an agent whose list never landed.
+      * A MEMBER THAT NAMES NOTHING. ``items=[1, 2]`` persisted integers where
+        every consumer reads a path, a requirement id or an ``RA-n`` line, and
+        ``[""]`` counted a member no agent can check. Both inflate the
+        denominator with something nothing can be reported against.
+      * A DUPLICATE. ``["a", "a", "b"]`` recorded ``items_total=3`` for two
+        distinct items, and 3 of 3 then reads as 100% coverage of a
+        population one of whose members was counted twice. That is the
+        double-count `orchestration/streams.py#_record_stream_rollup` was
+        rewritten to end ("40 of 40 recorded twice reads as 80 of 40 ... the
+        one direction a coverage check must never fail"), reintroduced one
+        door upstream where the population is DECLARED rather than recorded.
+
+    The rungs are ordered by locality: a list of integers is told it holds no
+    names rather than being scanned for repeats among them.
+
+    EQUALITY IS EXACT, DELIBERATELY. An item's text is the agent's own
+    identifier — the string it will report against next cycle — so this door
+    does not normalise case or whitespace to decide two items are one. It
+    refuses what is literally the same item written twice, and leaves the
+    agent's spelling alone.
+    """
+    if not items:
+        return _named_refusal(
+            f"A roster for {stream!r} needs at least one item: a roster of "
+            f"zero items says the stream derived its list and the list was "
+            f"empty — a measurement nobody took — and every later door then "
+            f"reads that as the population.",
+            f"Derive the item list first, then call "
+            f"Foundry-Roster(stream={stream!r}, items=['RA-1: ...', "
+            f"'RA-2: ...']). If the stream genuinely has nothing to check, "
+            f"record that on the stream's own record rather than as a roster.",
+            ROSTER_ITEMS_EMPTY,
+        )
+
+    unnamed = [
+        (position, item)
+        for position, item in enumerate(items)
+        if not isinstance(item, str) or not item.strip()
+    ]
+    if unnamed:
+        position, item = unnamed[0]
+        described = (
+            "the empty string" if isinstance(item, str)
+            else f"{item!r} ({type(item).__name__})"
+        )
+        return _named_refusal(
+            f"Roster item {position} for {stream!r} is {described}: every item "
+            f"is a NAME a stream can be held to — a path, a requirement id, an "
+            f"RA-n line — and this one names nothing.",
+            f"{len(unnamed)} of {len(items)} item(s) name nothing. Pass each "
+            f"item as the non-empty string the stream will report against.",
+            ROSTER_ITEM_NOT_NAMED,
+        )
+
+    seen: set[str] = set()
+    repeated: list[str] = []
+    for item in items:
+        if item in seen and item not in repeated:
+            repeated.append(item)
+        seen.add(item)
+    if repeated:
+        return _named_refusal(
+            f"Roster items for {stream!r} repeat: {', '.join(repr(r) for r in repeated)}. "
+            f"The roster length is the denominator Foundry-Stream enforces, so "
+            f"a repeated item is counted twice and {len(items)} of "
+            f"{len(items)} would read as full coverage of {len(seen)} distinct "
+            f"item(s).",
+            "Pass each item once. If two items are genuinely different checks "
+            "that happen to share a name, give them names that differ.",
+            ROSTER_ITEMS_DUPLICATED,
+        )
+
+    return None
 
 
 def roster_path(fdir: Path, stream: str) -> Path:
@@ -197,6 +317,12 @@ def foundry_roster(
     which case the PRIOR items are appended to ``revisions`` before the new
     list takes their place.
 
+    ``items`` must be a population: at least one item, every item a non-blank
+    string, no item twice. ``_items_refusal`` holds the three refusals and the
+    reason each one is this door's rather than a later door's — the length
+    persisted here is the denominator ``Foundry-Stream`` enforces, and a
+    denominator is only checkable while the caller can still fix it.
+
     CALLERS: ``agents/research-auditor.md`` and ``agents/spec-test-deriver.md``
     at first derivation (FR-050, GI-020) — later cycles read the persisted
     roster through ``read_roster`` and derive only when it is absent.
@@ -219,6 +345,19 @@ def foundry_roster(
             "with one entry per item the stream will check.",
             ROSTER_ITEMS_NOT_A_LIST,
         )
+
+    # THE POPULATION IS JUDGED AT PUBLICATION (fallout D-105 / D-106), beside
+    # the other pure input-shape rungs and BEFORE the first filesystem read:
+    # a call that can never produce a checkable roster does not earn a run
+    # directory lookup, and refusing here is what keeps `rosters/` free of a
+    # document written by a call that wrote no roster. The refusal belongs at
+    # this door for the reason `CONCERN_TEXT_EMPTY` sits on the sibling ledger
+    # door — the writer is the only place the population is still the caller's
+    # to fix; two doors downstream, `Foundry-Stream` can only refuse a record
+    # against a lie already persisted.
+    items_refused = _items_refusal(stream, items)
+    if items_refused is not None:
+        return items_refused
 
     why = str(reason or "").strip()
     if revise and not why:

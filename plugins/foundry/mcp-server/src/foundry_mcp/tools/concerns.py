@@ -62,7 +62,6 @@ there is exactly one body of it (GI-024). See
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 from foundry_mcp.schemas.vocab import (
@@ -80,6 +79,7 @@ from foundry_mcp.tools.foundry import (
 )
 from foundry_mcp.tools.foundry_state import (
     get_run_dir,
+    now_iso,
     open_cross_casting_concerns,
     read_document,
     read_text_file,
@@ -206,7 +206,21 @@ _LEGACY_PROSE_MARKERS = (
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    """The ledger stamps — from the leaf, at full precision.
+
+    fallout GI-024 / D-124: this was one of THREE ``_now`` definitions and one
+    of the two still spelling ``datetime.now(timezone.utc).isoformat()``
+    inline, beside `foundry_report._now`'s docstring asserting there had only
+    ever been two. GI-024's violation column is "a second derivation outside
+    `foundry_state`", and this module stamps `recorded_at`, `closed_at` and
+    the handoff record — values a reader compares against the leaf's stamps —
+    so the derivation being a second one is the whole of the cost. `now_iso`
+    holds the one implementation and its default precision is the one these
+    stamps have always published, so this is a call-through binding and
+    nothing else, which is what `_DELIBERATE_REDEFINITIONS["_now"]` says every
+    module binding the name is.
+    """
+    return now_iso()
 
 
 def _named_refusal(error: str, hint: str, phase: str) -> dict:
@@ -651,7 +665,7 @@ def _close_concern(fdir: Path, concern_id: str, reason: str) -> dict:
             CONCERN_UNKNOWN_ID,
         )
 
-    _append_close_handoff(fdir, closed)
+    handoff_problem = _append_close_handoff(fdir, closed)
 
     result = {
         "ok": True,
@@ -662,11 +676,25 @@ def _close_concern(fdir: Path, concern_id: str, reason: str) -> dict:
     }
     if render_problem is not None:
         result["render_problem"] = render_problem
+    # fallout FR-039 / ST-004 (D-145 / D-146) — THE SECOND GUARD ARTEFACT
+    # SPEAKS ON THE SAME CHANNEL AS THE FIRST. ST-004's guard column names two
+    # conditions for the close, "reason non-empty; a handoff record is
+    # appended", and the render one line up already reports its own failure as
+    # `render_problem`. The handoff outcome was DISCARDED at this call site and
+    # swallowed inside the appender, so a close whose handoff record was never
+    # written returned `ok: True` with nothing on it to say so — the operator
+    # reading the result had no way to learn that the record ST-004 requires
+    # does not exist. Letting the close proceed is not the defect; the entry is
+    # already closed in the ledger by the time we get here, and reporting a
+    # committed status move as a refusal would be the worse lie. The asymmetry
+    # was the defect, and this is the symmetry.
+    if handoff_problem is not None:
+        result["handoff_problem"] = handoff_problem
     return result
 
 
-def _append_close_handoff(fdir: Path, entry: dict) -> None:
-    """Append the ST-004 handoff record through the package's ONE appender.
+def _append_close_handoff(fdir: Path, entry: dict) -> str | None:
+    """Append the ST-004 handoff record. Returns a problem, or None.
 
     IMPORTED LAZILY, DELIBERATELY. ``foundry_handoff`` imports
     ``foundry_orchestrator`` at module top today, so a module-top import of it
@@ -678,7 +706,22 @@ def _append_close_handoff(fdir: Path, entry: dict) -> None:
     reshaping #4 and casting 2's to make; recorded as a concern rather than
     reached for here.)
 
-    Total: a handoff channel that cannot be written must not cost the close.
+    TOTAL, AND AUDIBLE (fallout D-145 / D-146). A handoff channel that cannot
+    be written must not cost the close — the ledger entry is already closed
+    inside a committed transaction by the time this runs. But "must not cost
+    the close" is not "must not be reported": the returned string is the
+    `render_concerns_markdown` contract exactly, `str | None`, and
+    `_close_concern` surfaces it as `handoff_problem` beside that function's
+    `render_problem`. The two failures were shaped differently for no reason —
+    one named, one silent — and it was the silent one that ST-004 names as a
+    guard.
+
+    The two exception kinds mean different things and say so. `ImportError` is
+    this module's lazy edge into `foundry_handoff` failing, which is a broken
+    package rather than a broken run artifact; `OSError` is the channel itself
+    — a `handoffs.jsonl` that is a directory, a read-only archive, a full
+    disk. Sending an operator to look at the wrong one costs the same as
+    telling them nothing.
     """
     try:
         from foundry_mcp.tools.foundry_handoff import _append_handoff_record
@@ -701,8 +744,17 @@ def _append_close_handoff(fdir: Path, entry: dict) -> None:
                 ("Reason", str(entry.get("close_reason"))),
             ],
         )
-    except (ImportError, OSError):
-        return
+    except ImportError as exc:
+        return (
+            f"the {HANDOFF_EVENT_CONCERN_CLOSED} handoff record could not be "
+            f"appended: foundry_handoff could not be imported ({exc})"
+        )
+    except OSError as exc:
+        return (
+            f"the {HANDOFF_EVENT_CONCERN_CLOSED} handoff record could not be "
+            f"appended to handoffs.jsonl/handoffs.md ({exc})"
+        )
+    return None
 
 
 # --------------------------------------------------------------------------- #

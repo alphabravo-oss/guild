@@ -29,10 +29,13 @@ from pathlib import Path
 import pytest
 
 from foundry_mcp.schemas.vocab import STREAM_WIRE_IDS
-from foundry_mcp.tools import foundry_state
+from foundry_mcp.tools import foundry_state, rosters
 from foundry_mcp.tools.rosters import (
     ROSTERS_DIRNAME,
     ROSTER_EXISTS,
+    ROSTER_ITEM_NOT_NAMED,
+    ROSTER_ITEMS_DUPLICATED,
+    ROSTER_ITEMS_EMPTY,
     ROSTER_ITEMS_NOT_A_LIST,
     ROSTER_REVISE_REASON_REQUIRED,
     ROSTER_REVISIONS_KEY,
@@ -248,6 +251,186 @@ def test_items_that_are_not_a_list_are_refused(run_env):
 
 
 # --------------------------------------------------------------------------- #
+# fallout FR-050 / CT-002 / AC-032, defects D-105 / D-106 — the population door.
+# The roster length is the denominator `Foundry-Stream` enforces, so a list
+# this door accepts is a number no later door is able to question.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_roster_of_zero_items_is_refused_at_publication(run_env):
+    """fallout FR-050, defect D-105 — THE FAILING-THEN-PASSING TEST, and THE
+    REFUSAL TEST FOR ``ROSTER_ITEMS_EMPTY``.
+
+    `scripts/migrate-archive.py#_migrate_rosters` states the ruling for the
+    whole run, and states it as its reason for creating `rosters/` and never a
+    file inside it: "A roster FILE holding zero items says a stream derived its
+    item list and the list was empty — a measurement nobody took — and
+    `Foundry-Roster` would then refuse the real derivation with ROSTER_EXISTS
+    on the strength of it." This door created by hand exactly the state the
+    migration refuses to create.
+
+    And the state WEDGES the stream, which is why the refusal has to be here
+    rather than two doors downstream: with the zero-item document written, the
+    real derivation is refused ROSTER_EXISTS, every honest `items_total` is
+    refused ROSTER_MISMATCH, and `items_checked=0` is refused by the roll-up's
+    own positive-count guard — no legal recording is left at all.
+    """
+    project_root, fdir = run_env
+
+    result = foundry_roster("trace", [], project_root=project_root)
+
+    assert result["phase"] == ROSTER_ITEMS_EMPTY, result
+    assert "trace" in result["error"]
+    assert "measurement nobody took" in result["error"], result["error"]
+    # Nothing was created for a call that wrote no roster.
+    assert not (fdir / ROSTERS_DIRNAME).exists()
+    assert roster_length(fdir, "trace") == (None, None)
+
+    # An omitted list is the same absence spelled differently.
+    assert foundry_roster("trace", project_root=project_root)["phase"] == (
+        ROSTER_ITEMS_EMPTY
+    )
+
+    # ...and the real derivation, which the zero-item document would have
+    # locked out, lands.
+    real = foundry_roster("trace", ["a", "b", "c"], project_root=project_root)
+    assert real.get("ok") is True, real
+    assert roster_length(fdir, "trace") == (3, None)
+
+
+def test_the_wedge_the_zero_item_roster_created_is_gone(run_env):
+    """THE ADJACENT PATH for defect D-105: casting 2's `Foundry-Stream`.
+
+    The harm was never at this door — it was at the door that reads what this
+    one wrote. Driven end to end: the stream that would have been wedged now
+    records, on the roster it actually derived.
+    """
+    from foundry_mcp.tools.orchestration.streams import foundry_mark_stream
+
+    project_root, fdir = run_env
+    (fdir / "state.json").write_text(
+        json.dumps({"phase": "F2", "cycle": 1}), encoding="utf-8"
+    )
+
+    assert foundry_roster("trace", [], project_root=project_root)["phase"] == (
+        ROSTER_ITEMS_EMPTY
+    )
+    assert foundry_roster(
+        "trace", ["x", "y", "z"], project_root=project_root
+    ).get("ok") is True
+
+    recorded = foundry_mark_stream("trace", 1, 3, 3, 0, project_root)
+    assert recorded["ok"] is True, recorded
+
+
+def test_a_repeated_item_is_refused_because_the_length_is_a_denominator(run_env):
+    """fallout FR-050, defect D-106 — THE FAILING-THEN-PASSING TEST, and THE
+    REFUSAL TEST FOR ``ROSTER_ITEMS_DUPLICATED``.
+
+    ``items=['a', 'a', 'b']`` persisted ``items_total=3`` for two distinct
+    items, and `Foundry-Stream` then REQUIRED 3 — every other value refused
+    ROSTER_MISMATCH — so 3 of 3 recorded "100%" for a population one of whose
+    members was counted twice. That is the double-count
+    `orchestration/streams.py#_record_stream_rollup` was rewritten to end,
+    reintroduced one door upstream where the population is DECLARED.
+    """
+    project_root, fdir = run_env
+
+    result = foundry_roster("prove", ["a", "a", "b"], project_root=project_root)
+
+    assert result["phase"] == ROSTER_ITEMS_DUPLICATED, result
+    assert "'a'" in result["error"], result["error"]
+    assert "2 distinct" in result["error"], result["error"]
+    assert not (fdir / ROSTERS_DIRNAME).exists()
+
+    # The distinct list this call was trying to be is accepted.
+    assert foundry_roster(
+        "prove", ["a", "b"], project_root=project_root
+    )["items_total"] == 2
+
+
+def test_an_item_that_names_nothing_is_refused(run_env):
+    """fallout FR-050, defect D-106 second half — THE REFUSAL TEST FOR
+    ``ROSTER_ITEM_NOT_NAMED``.
+
+    ``items=[1, 2]`` returned ``ok: True`` and persisted integers where every
+    consumer reads a path, a requirement id or an ``RA-n`` line; ``['']``
+    counted a member no agent can report against. Both inflate the denominator
+    with something nothing can be checked against, which is the same harm as a
+    duplicate spelled a different way.
+    """
+    project_root, fdir = run_env
+
+    integers = foundry_roster("prove", [1, 2], project_root=project_root)
+    assert integers["phase"] == ROSTER_ITEM_NOT_NAMED, integers
+    assert "int" in integers["error"], integers["error"]
+
+    blank = foundry_roster("prove", ["RA-1", "   "], project_root=project_root)
+    assert blank["phase"] == ROSTER_ITEM_NOT_NAMED, blank
+    assert "item 1" in blank["error"], blank["error"]
+
+    assert not (fdir / ROSTERS_DIRNAME).exists()
+
+
+def test_the_population_door_holds_on_the_revise_arm_too(run_env):
+    """A revision publishes a population exactly as a first write does.
+
+    ``revise=True`` is the repair for a list that CHANGED, and a list that
+    changed to nothing — or to the same item twice — is the same untrue
+    denominator arriving through the other arm. It also may not silently
+    destroy the roster it was revising.
+    """
+    project_root, fdir = run_env
+    foundry_roster("prove", ["a", "b"], project_root=project_root)
+
+    for bad, token in (
+        ([], ROSTER_ITEMS_EMPTY),
+        (["c", "c"], ROSTER_ITEMS_DUPLICATED),
+        ([7], ROSTER_ITEM_NOT_NAMED),
+    ):
+        result = foundry_roster(
+            "prove", bad, revise=True, reason="the source material changed",
+            project_root=project_root,
+        )
+        assert result["phase"] == token, result
+
+    assert _document(fdir, "prove")["items"] == ["a", "b"]
+
+
+def test_the_derivation_stamp_comes_from_the_leaf(run_env, monkeypatch):
+    """fallout GI-024, defect D-124 — THE FAILING-THEN-PASSING TEST.
+
+    ``_now`` here spelled ``datetime.now(timezone.utc).isoformat()`` inline —
+    a second derivation outside `foundry_state`, which is that invariant's violation
+    column verbatim, and the third `_now` in a package whose one delegation
+    documents itself as one of two. It is a call-through now, so the leaf's
+    answer IS this document's stamp, in BOTH places this module stamps one.
+
+    Two assertions because the duplication had two halves: the module no
+    longer holds the apparatus to derive a timestamp (``datetime`` is not in
+    its namespace at all), and every stamp it writes is the leaf's answer.
+    """
+    project_root, fdir = run_env
+    assert not hasattr(rosters, "datetime"), (
+        "the module imports datetime again — a second derivation is back"
+    )
+
+    monkeypatch.setattr(rosters, "now_iso", lambda **_kwargs: "STAMP-1")
+    foundry_roster("prove", ["a"], project_root=project_root)
+    assert _document(fdir, "prove")["derived_at"] == "STAMP-1"
+
+    # ...and the revision stamp, which is the module's other one.
+    monkeypatch.setattr(rosters, "now_iso", lambda **_kwargs: "STAMP-2")
+    foundry_roster(
+        "prove", ["b"], revise=True, reason="the list changed",
+        project_root=project_root,
+    )
+    doc = _document(fdir, "prove")
+    assert doc["derived_at"] == "STAMP-2"
+    assert doc[ROSTER_REVISIONS_KEY][0]["at"] == "STAMP-2"
+
+
+# --------------------------------------------------------------------------- #
 # fallout CT-003 / OT-031 / AC-032 — the reader Foundry-Stream calls
 # (fallout AC-032's second half)
 # --------------------------------------------------------------------------- #
@@ -255,13 +438,36 @@ def test_items_that_are_not_a_list_are_refused(run_env):
 
 def test_roster_length_distinguishes_no_roster_from_a_roster_of_zero_items(run_env):
     """Foundry-Stream must only refuse an items_total mismatch when a roster
-    ACTUALLY EXISTS, so 'absent' and 'empty' cannot be the same answer."""
-    project_root, fdir = run_env
+    ACTUALLY EXISTS, so 'absent' and 'empty' cannot be the same answer.
+
+    THE ZERO-ITEM DOCUMENT IS SEEDED BY HAND, and that is the point rather than
+    a convenience: since fallout D-105 the write door REFUSES to publish one
+    (``ROSTER_ITEMS_EMPTY``), so the only way this shape reaches the reader now
+    is from another hand — an older archive, a migration, an operator's editor.
+    The reader's three answers are unchanged by that refusal, because the
+    reader's job is to describe what is on disk and the door's job is to stop
+    writing a lie there. A reader that collapsed "absent" into "zero" would
+    still have Foundry-Stream refuse every record against a population nobody
+    derived.
+    """
+    _project_root, fdir = run_env
 
     assert roster_length(fdir, "research_audit") == (None, None)
     assert read_roster(fdir, "research_audit") == (None, None)
 
-    foundry_roster("research_audit", [], project_root=project_root)
+    path = roster_path(fdir, "research_audit")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "stream": "research_audit",
+                "items": [],
+                "derived_at": "2026-09-01T00:00:00+00:00",
+                ROSTER_REVISIONS_KEY: [],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     assert roster_length(fdir, "research_audit") == (0, None)
     doc, problem = read_roster(fdir, "research_audit")
