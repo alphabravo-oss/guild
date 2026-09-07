@@ -1,0 +1,7 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q "tests/test_stream_rollup.py::test_a_stream_with_no_declared_population_is_refused" "tests/test_stream_rollup.py::test_a_second_tranche_of_the_same_cycle_is_not_a_drop" "tests/test_stream_rollup.py::test_no_drop_warning_when_the_previous_cycle_never_ran_the_stream" "tests/test_stream_rollup.py::test_cycle_totals_are_what_the_drop_compares_not_single_records" "tests/test_stream_rollup.py::test_drop_warning_compares_cycle_n_to_cycle_n_minus_one" "tests/test_stream_rollup.py::test_records_in_different_cycles_land_in_different_buckets" "tests/test_stream_rollup.py::test_threshold_shortfall_blocks_at_the_streams_complete_check" "tests/test_stream_rollup.py::test_a_later_record_clears_the_shortfall_the_earlier_one_caused" "tests/test_stream_rollup.py::test_the_refusal_names_the_offending_value_and_the_action" 2>&1 | tail -3
+# evidence-for: AC-030, OT-028, US-007, FR-037
+# evidence-volatile: [0-9]+\.[0-9]+s
+# evidence-timeout: 300
+
+.........                                                                [100%]
+9 passed in 0.23s
