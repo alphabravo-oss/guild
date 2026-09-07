@@ -43,6 +43,16 @@ cross-reference line that is not a declaration, the mid-prose mention that is
 not a declaration, and the recorded reason for a different id that does not
 exempt.
 
+  SHIPPED SURFACE. The claim the manifest was not making at all, and the
+  fourth thing this module pins. `requirement_ids` and `key_files` both say
+  what a casting OWNS; neither says what the run SHIPS, so a file in no
+  casting's `key_files` and no row of the spec's File Change Map was owned by
+  nobody and refused by nothing. `surface_globs` is that claim, and the
+  dimension measures the difference between it and the `key_files` union. A
+  manifest that makes no claim is not computable and passes — there is no
+  archive marker that could tell a manifest predating the field from one
+  omitting it, because the field arrives inside the current generation.
+
   KEY FILES. The manifest's OTHER ownership claim, and the third thing this
   module pins. A ``key_files`` entry is a file path or a DIRECTORY spelled with
   a trailing slash, and the two dimensions that compare those entries against
@@ -76,6 +86,9 @@ from foundry_mcp.tools.foundry_validate import (
     REQUIREMENT_IDS_SCHEMA_FLOOR,
     REQUIREMENT_SPAN_EXCEEDED,
     REQUIREMENT_SPAN_MAX,
+    SURFACE_UNOWNED,
+    _SURFACE_EXITS_HINT,
+    _SURFACE_ISSUE_CAP,
     _archive_schema_version,
     foundry_validate_castings,
     requirement_span_table,
@@ -2053,3 +2066,369 @@ def test_a_directory_entry_that_reaches_no_mapped_file_is_still_scope_creep(
     creep = [i["file"] for i in dim["issues"]
              if i.get("issue") == "file_change_map_scope_creep"]
     assert creep == ["docs/notes/"], creep
+
+
+# ── Shipped surface: is every file the run ships owned by SOMEBODY? ────────
+#
+# fallout D-172. The dimension above asks whether the File Change Map's rows
+# reach a teammate. This one asks the question NEITHER of them could: a file in
+# neither the map nor any `key_files` list is invisible to both by
+# construction, and 61 of this repository's own 159 shipped surfaces were
+# exactly that when the defect was measured — a parser package, eight agent
+# definitions, five commands, owned by nobody and refused by nothing.
+#
+# THE SURFACE IS DECLARED. A derived one — the directories `key_files` sits in,
+# or the union's common ancestor — reads correctly on a run that owns its whole
+# product and catastrophically on a brownfield run that touches three files of
+# a sixty-file directory. So the manifest says what ships and this dimension
+# measures the difference; a manifest that says nothing is NOT COMPUTABLE and
+# passes, which is what keeps every archive written before the field validating.
+#
+# The controls matter as much as the drives here, because every way this check
+# can silently disable itself looks exactly like a pass: an undeclared surface,
+# an empty declaration, a pattern with a typo in it. Each has a test that says
+# so out loud.
+
+
+def _surface(result: dict) -> dict:
+    return result["dimensions"]["surface_ownership"]
+
+
+def _ship(project_root: Path, *relative_paths: str) -> None:
+    """Write a file at each path under ``project_root`` — the shipped tree."""
+    for rel in relative_paths:
+        target = project_root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("shipped\n", encoding="utf-8")
+
+
+def _owns_everything(cid=1, *key_files: str) -> list[dict]:
+    """One casting, owning exactly ``key_files``, that validates on its own."""
+    return [_owning(cid, *key_files)]
+
+
+def test_a_manifest_that_declares_no_surface_reports_not_computable_and_passes(
+    tmp_path: Path,
+):
+    """The legacy reading, and the reason there is no schema floor here.
+
+    `requirement_ids` can be refused on ABSENCE because it became mandatory in
+    the generation that bumped the archive marker, so the marker separates a
+    manifest that predates the field from one that omits it. `surface_globs`
+    arrives inside that same generation with no bump — no marker separates the
+    two — so refusing on absence would refuse every archive of this generation
+    for a field its decompose never wrote. Absent is not computable, and the
+    run still validates.
+    """
+    _ship(tmp_path, "src/1.py", "src/orphan.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+
+    dim = _surface(result)
+    assert dim["not_computable"] is True
+    assert dim["ok"] is True
+    assert dim["unowned"] == []
+    assert _issue_kinds(dim) == ["surface_globs_not_computable"]
+    # And the whole gate still passes, which is the property that keeps every
+    # archive written before the field usable.
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_declared_surface_every_casting_reaches_passes(tmp_path: Path):
+    """The positive control. Nothing ships that nobody owns, so nothing fires."""
+    _ship(tmp_path, "src/1.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+
+    dim = _surface(result)
+    assert dim["not_computable"] is False
+    assert dim["ok"] is True
+    assert dim["surfaces"] == 1
+    assert dim["unowned"] == []
+    assert dim["issues"] == []
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_shipped_file_no_casting_owns_refuses_with_the_token(tmp_path: Path):
+    """The door. The same manifest that passed above, with one more file in the
+    tree and nobody named for it.
+
+    Driven as a PAIR against the test above rather than alone, because a
+    dimension that refuses everything is indistinguishable from a working one
+    when only its failures are driven.
+    """
+    _ship(tmp_path, "src/1.py", "src/parsers/prove.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+
+    dim = _surface(result)
+    assert dim["ok"] is False
+    assert dim["unowned"] == ["src/parsers/prove.py"]
+    assert dim["unowned_count"] == 1
+    assert dim["surfaces"] == 2
+
+    rows = [i for i in dim["issues"] if i.get("issue") == SURFACE_UNOWNED]
+    assert len(rows) == 1
+    assert rows[0]["file"] == "src/parsers/prove.py"
+    assert rows[0]["severity"] == "error"
+    assert "src/parsers/prove.py" in rows[0]["detail"]
+
+    # The top-level entry a lead reads, and the verdict it moves.
+    top = [i for i in result["issues"] if i.get("dimension") == "surface_ownership"]
+    assert len(top) == 1
+    assert SURFACE_UNOWNED in top[0]["message"]
+    assert result["passed"] is False
+
+
+def test_the_surface_refusal_hint_names_the_two_exits_a_lead_can_take(
+    tmp_path: Path,
+):
+    """A refusal that names no exit is a wall. Both exits are things a lead can
+    DO to the manifest: widen the ownership, or narrow the claim."""
+    _ship(tmp_path, "src/1.py", "src/orphan.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+
+    row = next(i for i in _surface(result)["issues"] if i.get("issue") == SURFACE_UNOWNED)
+    assert row["hint"] == _SURFACE_EXITS_HINT
+    assert "key_files" in row["hint"]
+    assert "surface_globs" in row["hint"]
+    # And the same one sentence reaches the revision hints, rather than a
+    # second spelling of the same two exits.
+    assert any(_SURFACE_EXITS_HINT in h for h in result["revision_hints"])
+
+
+def test_a_directory_entry_owns_every_surface_beneath_it(tmp_path: Path):
+    """The manifest format, asked the way the rest of this module asks it.
+
+    A casting carving a package names it once with a trailing slash — the cap
+    on `key_files` is what forces that spelling — and every file beneath is
+    owned. Compared as bare strings they would all read as unowned, which is
+    D-170's shape and the reason coverage is asked in exactly one place.
+    """
+    _ship(tmp_path, "src/pkg/a.py", "src/pkg/deep/b.py", "src/loose.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/pkg/", "src/loose.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+
+    dim = _surface(result)
+    assert dim["surfaces"] == 3
+    assert dim["unowned"] == []
+    assert dim["ok"] is True
+
+
+def test_tool_cache_and_run_archive_are_never_shipped_surface(tmp_path: Path):
+    """The exclusions, driven rather than asserted about the constant.
+
+    A glob names a tree and an extension; it cannot know that the run's own
+    archive, a virtualenv and a bytecode cache sit inside that tree. Reporting
+    them unowned would be reporting files no `key_files` entry could sanely
+    name.
+    """
+    _ship(
+        tmp_path,
+        "src/1.py",
+        f"src/{ARCHIVE_DIR}/old-run/notes.py",
+        "src/.venv/lib/thing.py",
+        "src/__pycache__/1.cpython-312.py",
+        "src/worktrees/casting-3/copy.py",
+    )
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+
+    dim = _surface(result)
+    assert dim["surfaces"] == 1, dim["unowned"]
+    assert dim["unowned"] == []
+    assert dim["ok"] is True
+
+
+def test_a_pattern_that_matches_nothing_is_named_rather_than_passing_quietly(
+    tmp_path: Path,
+):
+    """The failure mode that looks exactly like success.
+
+    A typo in a declared pattern disables the check for everything it was meant
+    to cover, and a dimension that reports `ok` for it is the same silence
+    D-172 was filed against. So a pattern reaching zero files is said out loud.
+    """
+    _ship(tmp_path, "src/1.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py", "sorc/**/*.md"]},
+    )
+
+    dim = _surface(result)
+    empty = [i for i in dim["issues"] if i.get("issue") == "surface_glob_matched_nothing"]
+    assert [i["glob"] for i in empty] == ["sorc/**/*.md"]
+    assert empty[0]["severity"] == "warning"
+    # A warning, not an error: the typo is worth naming, and refusing the whole
+    # gate for it would make a lead delete the declaration to get past F0.9.
+    assert dim["ok"] is True
+
+
+def test_an_absolute_or_escaping_pattern_is_reported_not_raised(tmp_path: Path):
+    """`Path.glob` refuses an absolute pattern outright on the Python floor, and
+    a surface outside the project is one no `key_files` entry could ever name.
+    Both are named entries, not tracebacks: a tool never raises across the MCP
+    boundary."""
+    _ship(tmp_path, "src/1.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["/etc/**/*.py", "../outside/**/*.py",
+                                          "src/**/*.py"]},
+    )
+
+    dim = _surface(result)
+    unusable = [i for i in dim["issues"] if i.get("issue") == "surface_glob_unusable"]
+    assert sorted(i["glob"] for i in unusable) == ["../outside/**/*.py", "/etc/**/*.py"]
+    # The usable pattern still did its job beside them.
+    assert dim["globs"] == ["src/**/*.py"]
+    assert dim["surfaces"] == 1
+    assert dim["ok"] is True
+
+
+def test_a_surface_globs_of_the_wrong_type_is_reported_not_raised(tmp_path: Path):
+    """The shape guard says nothing about this field, so anything reaches the
+    reader. A string where a list belongs is the shape that raised
+    `AttributeError` out of two other dimensions of this module."""
+    _ship(tmp_path, "src/1.py", "src/orphan.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": "src/**/*.py"},
+    )
+
+    dim = _surface(result)
+    assert dim["not_computable"] is False
+    assert [i.get("issue") for i in dim["issues"]] == [
+        "surface_glob_unusable",
+        "surface_globs_empty",
+    ]
+    assert dim["ok"] is True
+    # Every other dimension still rendered, which is what "reported" means.
+    assert "requirement_span" in result["dimensions"]
+
+
+def test_a_declared_but_empty_surface_says_so(tmp_path: Path):
+    """An empty list is a CLAIM — that the run ships nothing — and a run with
+    castings ships something. Absent stays a different answer from empty, as it
+    is one dimension up."""
+    _ship(tmp_path, "src/1.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": []},
+    )
+
+    dim = _surface(result)
+    assert dim["not_computable"] is False
+    assert _issue_kinds(dim) == ["surface_globs_empty"]
+    assert dim["ok"] is True
+
+
+def test_every_unowned_surface_reaches_the_payload_however_many_get_prose(
+    tmp_path: Path,
+):
+    """The cap is on the NARRATION, never on the list a lead has to act on.
+
+    Twenty-five orphans produce twenty prose rows and twenty-five paths,
+    because one broken manifest must not bury the other dimensions in
+    paragraphs and must not hide a file either.
+    """
+    orphans = [f"src/orphan{n:02d}.py" for n in range(25)]
+    _ship(tmp_path, "src/1.py", *orphans)
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+
+    dim = _surface(result)
+    rows = [i for i in dim["issues"] if i.get("issue") == SURFACE_UNOWNED]
+    assert len(rows) == _SURFACE_ISSUE_CAP
+    assert dim["unowned"] == sorted(orphans)
+    assert dim["unowned_count"] == len(orphans)
+
+
+def test_a_new_unowned_surface_invalidates_a_cached_pass(tmp_path: Path):
+    """The PROJECT tree is a cache input, for the reason the run directory is.
+
+    A file added after a passing verdict moves no byte of the manifest and no
+    byte of the spec. A fingerprint built from documents alone would hand back
+    the pass given before the file existed — and this dimension's whole subject
+    is files that arrive without anyone claiming them.
+    """
+    _ship(tmp_path, "src/1.py")
+    args = dict(
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+    castings = _owns_everything(1, "src/1.py")
+
+    first = _run_validate(tmp_path, castings, **args)
+    assert first["cache"]["hit"] is False
+    assert _surface(first)["ok"] is True
+
+    # Proof the cache is live at all, or the assertion below proves nothing.
+    again = _run_validate(tmp_path, castings, **args)
+    assert again["cache"]["hit"] is True
+
+    _ship(tmp_path, "src/arrived-later.py")
+    after = _run_validate(tmp_path, castings, **args)
+
+    assert after["cache"]["hit"] is False
+    assert _surface(after)["ok"] is False
+    assert _surface(after)["unowned"] == ["src/arrived-later.py"]

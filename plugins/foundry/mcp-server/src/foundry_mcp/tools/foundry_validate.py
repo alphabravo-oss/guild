@@ -1,7 +1,14 @@
-"""Foundry casting validation — 9-dimension quality gate before CAST phase.
+"""Foundry casting validation — the mechanical quality gate before CAST.
 
 Validates that castings will deliver the spec before any building starts.
 A 5-minute validation saves hours of GRIND cycles.
+
+ONE DIMENSION PER QUESTION ASKED, and the dimensions are not counted here.
+`foundry_validate_castings` names every one of them in the payload it returns,
+which is the only place the set can be read without going stale: this sentence
+said "9-dimension" while the function answered in twelve, because a count typed
+into prose beside a set that grows is a count that is wrong from the next
+commit onward.
 """
 
 from __future__ import annotations
@@ -85,6 +92,9 @@ from foundry_mcp.tools.artifacts import (
 # unnoticed.
 from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
 from foundry_mcp.tools.foundry_state import (
+    # fallout D-172: the surface walk excludes the run archive by the name
+    # the state module gives it, never by a second spelling of it here.
+    ARCHIVE_DIR,
     document_refusal,
     get_run_dir,
     read_document,
@@ -504,6 +514,198 @@ def requirement_span_table(project_root=".", fdir: Path | None = None) -> dict:
     return {**payload, "problem": None}
 
 
+#: fallout D-172 — the refusal token for a shipped surface no casting owns.
+#: Spelled once; the per-file issue, the top-level message and the hint all
+#: derive from this name, and the lead protocol quotes it.
+SURFACE_UNOWNED = "SURFACE_UNOWNED"
+
+
+#: The two exits a lead can actually take when the surface token fires. One
+#: sentence, because more than one arm emits it and a second spelling of it is
+#: a second rule. Both exits are things a lead can DO to the manifest: the
+#: first widens ownership, the second narrows the claim about what ships.
+_SURFACE_EXITS_HINT = (
+    "Add the file to the `key_files` of the casting that answers for it — a "
+    "directory entry ending in `/` claims every path beneath it — or narrow "
+    "`surface_globs` so the file is not claimed as shipped surface."
+)
+
+
+#: Path segments that are never shipped surface, whatever a declared glob
+#: reaches through.
+#:
+#: A glob names the surface by TREE and EXTENSION; these are the positions
+#: inside such a tree that are build output, dependency payload, tool cache or
+#: this server's own run scratch — nothing a casting could own, and nothing a
+#: lead should have to exclude by hand in every pattern. The run archive is
+#: taken from `ARCHIVE_DIR` rather than re-typed: which directory a run writes
+#: into is the state module's answer, and this module has no second one.
+_SURFACE_EXCLUDED_SEGMENTS = frozenset({
+    ARCHIVE_DIR,
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    # The detached worktrees the evidence sweep materialises. They live under
+    # `ARCHIVE_DIR` today and are named here anyway, because a sweep root
+    # configured elsewhere is still a copy of the tree and not a second
+    # surface to own.
+    "worktrees",
+})
+
+
+#: How many unowned surfaces get a prose issue row of their own. The
+#: dimension's `unowned` list carries every one of them whatever this says —
+#: the cap is on the NARRATION, so a manifest that owns nothing does not bury
+#: the other twelve dimensions under a thousand paragraphs saying one thing.
+#: Dimension 10 caps its scope-creep rows at the same number for the same
+#: reason.
+_SURFACE_ISSUE_CAP = 20
+
+
+def _declared_surface_globs(manifest: dict) -> tuple[bool, list[str], list[list[str]]]:
+    """The manifest's `surface_globs` claim: is one made, and what can be used?
+
+    Returns ``(declared, usable, rejected)`` where ``rejected`` is a
+    ``[entry, why]`` pair per entry that is not a project-relative pattern.
+
+    ABSENT AND EMPTY ARE DIFFERENT CLAIMS, exactly as they are for
+    `requirement_ids` one dimension up. No field at all is a manifest that
+    predates the question — reported not computable, never refused. A field
+    present but reaching nothing is a manifest that ANSWERED the question with
+    a declaration that cannot do its job, which is worth saying out loud: a
+    check that silently self-disables is the same shape as the gap D-172 was
+    filed against.
+
+    Total, like every other read on this surface: a `surface_globs` that is a
+    string, a number or a list of them is REPORTED, never raised, because a
+    tool never raises across the MCP boundary.
+    """
+    raw = manifest.get("surface_globs")
+    if raw is None:
+        return False, [], []
+    if not isinstance(raw, list):
+        return True, [], [[repr(raw)[:120], "`surface_globs` is not a list of patterns"]]
+    usable: list[str] = []
+    rejected: list[list[str]] = []
+    for entry in raw:
+        if not isinstance(entry, str) or not entry.strip():
+            rejected.append([repr(entry)[:120], "not a non-empty string"])
+            continue
+        pattern = entry.strip()
+        # `Path.glob` raises on an absolute pattern on the 3.12 floor and
+        # resolves one differently above it, and either way a surface outside
+        # the project is a surface no `key_files` entry could ever name.
+        if pattern.startswith(("/", "~")):
+            rejected.append([pattern, "absolute pattern; `surface_globs` is project-relative"])
+            continue
+        if ".." in Path(pattern).parts:
+            rejected.append([pattern, "`..` reaches outside the project root"])
+            continue
+        usable.append(pattern)
+    # Order preserved, duplicates dropped: two spellings of one pattern are one
+    # claim, and counting a surface twice would say nothing true.
+    return True, list(dict.fromkeys(usable)), rejected
+
+
+def _shipped_surfaces(
+    project_root: Path, globs: list[str]
+) -> tuple[list[str], dict[str, int], list[list[str]]]:
+    """Every file under ``project_root`` the declared globs reach.
+
+    Returns ``(surfaces, matched_per_glob, unreadable)`` — the surfaces sorted
+    and de-duplicated, the per-pattern count so a pattern that reaches nothing
+    can be named, and a ``[pattern, why]`` pair for any expansion the
+    filesystem refused.
+
+    NORMALISED THROUGH THE SAME ONE NORMALISER `key_files` GOES THROUGH, which
+    is what makes the diff below a comparison rather than two vocabularies. A
+    path `_normalize_file_path` returns empty for is dropped here on purpose:
+    if this module cannot spell it, no `key_files` entry can name it either, so
+    reporting it unowned would be reporting a file no lead could ever own.
+    """
+    surfaces: set[str] = set()
+    matched: dict[str, int] = {}
+    unreadable: list[list[str]] = []
+    for pattern in globs:
+        hit_count = 0
+        try:
+            hits = list(project_root.glob(pattern))
+        except (OSError, ValueError, IndexError, NotImplementedError) as exc:
+            unreadable.append([pattern, f"{type(exc).__name__}: {exc}"])
+            matched[pattern] = 0
+            continue
+        for hit in hits:
+            try:
+                if not hit.is_file():
+                    continue
+                relative = hit.relative_to(project_root)
+            except (OSError, ValueError):
+                continue
+            if _SURFACE_EXCLUDED_SEGMENTS.intersection(relative.parts):
+                continue
+            normalised = _normalize_file_path(relative.as_posix())
+            if not normalised:
+                continue
+            hit_count += 1
+            surfaces.add(normalised)
+        matched[pattern] = hit_count
+    return sorted(surfaces), matched, unreadable
+
+
+def _surface_facts(project_root: Path, manifest: dict) -> dict:
+    """What the PROJECT TREE says, for the dimension that asks it.
+
+    The same shape of fact `_run_dir_facts` gathers about the run directory,
+    and gathered here for the same two readers: the cache fingerprint and the
+    dimension. A shipped surface appearing after a passing verdict moves no
+    byte of the manifest and no byte of the spec, so a fingerprint built from
+    documents alone would serve the pass given before the file existed.
+
+    Costs nothing when no claim is made: an undeclared surface walks no tree.
+    """
+    declared, globs, rejected = _declared_surface_globs(manifest)
+    if not declared:
+        return {
+            "declared": False,
+            "globs": [],
+            "rejected": [],
+            "matched": {},
+            "surfaces": [],
+        }
+    surfaces, matched, unreadable = _shipped_surfaces(project_root, globs)
+    return {
+        "declared": True,
+        "globs": globs,
+        "rejected": rejected + unreadable,
+        "matched": matched,
+        "surfaces": surfaces,
+    }
+
+
+def _unowned_surfaces(surfaces: list[str], castings: list) -> list[str]:
+    """The shipped surfaces no casting's `key_files` reaches.
+
+    THROUGH `_key_file_covers`, WHICH IS THE ONE READER OF THAT QUESTION. A
+    `key_files` entry is a file path or a directory spelled with a trailing
+    slash, and the difference is decided in exactly one place in this module.
+    Splitting the two cases open here to save a comparison would be a second
+    reading of the manifest format — D-170's shape, which cost thirteen files
+    resolving to no casting at all because two readers of one rule disagreed
+    with nothing comparing them.
+    """
+    entries = sorted({normalised for normalised, _cid in _declared_key_files(castings)})
+    return [
+        path
+        for path in surfaces
+        if not any(_key_file_covers(entry, path) for entry in entries)
+    ]
+
+
 #: The run-directory position F0.9 asks about by PRESENCE, not by content: the
 #: directory the research artifacts land in. Spelled once because two surfaces
 #: ask about it — the dimension that reports on it and the cache key that has to
@@ -684,6 +886,7 @@ def _fingerprint_inputs(
     *,
     spec_path: Path | None,
     run_facts: dict,
+    surface_facts: dict,
 ) -> dict:
     """Hash the inputs that validator dimensions depend on.
 
@@ -742,6 +945,15 @@ def _fingerprint_inputs(
         # fingerprint built from documents alone served the verdict given
         # before either had moved.
         "run_dir": run_facts,
+        # THE PROJECT TREE, hashed for the reason the run directory is. The
+        # surface-ownership dimension asks whether every shipped surface is
+        # owned, and a surface appearing after a passing verdict moves no byte
+        # of the manifest and no byte of the spec — a new unowned module would
+        # be served the pass given before it existed. `surface_facts` carries
+        # the declared patterns AND the paths they reached, so both halves of
+        # that verdict are keyed: re-declaring the globs invalidates, and so
+        # does a file arriving under globs that did not change.
+        "surface": surface_facts,
     }
     manifest_hash = hashlib.sha256(
         json.dumps(shared_fields, sort_keys=True).encode("utf-8")
@@ -883,12 +1095,19 @@ def foundry_validate_castings(
     # Read ONCE, here, because the fingerprint below and the two dimensions
     # further down are the same two readers of the same two facts.
     run_facts = _run_dir_facts(fdir)
+    # The same kind of fact about the PROJECT tree rather than the run dir, and
+    # read here for the same two readers: the fingerprint below and the
+    # surface-ownership dimension at the foot of this function. A manifest that
+    # declares no `surface_globs` walks no tree, so this costs nothing until a
+    # run makes the claim.
+    surface_facts = _surface_facts(Path(project_root), manifest)
     fingerprints = _fingerprint_inputs(
         fdir,
         manifest,
         schema_version,
         spec_path=_spec_path_from(project_root, fdir, state),
         run_facts=run_facts,
+        surface_facts=surface_facts,
     )
     cache = _load_validate_cache(fdir)
     cached_result = cache.get("last_pass")
@@ -2122,6 +2341,146 @@ def foundry_validate_castings(
         "not_computable": ownership_not_computable,
         "threshold": REQUIREMENT_SPAN_MAX,
         "rows": span_rows,
+    }
+
+    # ── Dimension 13: Surface Ownership ──
+    #
+    # fallout D-172. `forge-specs/foundry-run-fallout/spec.md` FR-009, GI-012,
+    # CT-011: the manifest's ownership claims are what every downstream door
+    # reads, so the question "is every shipped surface owned by SOMEBODY" is
+    # F0.9's to ask.
+    #
+    # THE QUESTION NO DIMENSION ASKED. Dimension 10 above cross-checks the
+    # spec's `## File Change Map` against `key_files` in both directions, so a
+    # file the map NAMES that no casting owns is refused as unimplementable. A
+    # file in NEITHER the map nor any `key_files` list is invisible to it by
+    # construction — and when D-172 measured this repository's own plugin, 61
+    # of its 159 shipped surfaces were exactly that: a parser package, the
+    # findings schema, the citation and test-deriver tools, eight agent
+    # definitions and five commands, owned by nobody, refused by nothing.
+    # Four defects across two GRIND cycles then landed on files no casting
+    # owned, and each had to be routed by a lead ruling on adjacency instead of
+    # by the manifest. Casting 5 demonstrated that routing is not merely
+    # inelegant but WRONG — the defect's requirement belonged to a casting the
+    # adjacency did not name — and adjacency does not generalise anyway: one of
+    # the four had a directory neighbour, one had none.
+    #
+    # THE SURFACE IS DECLARED, NEVER GUESSED, and that is the whole design.
+    # Deriving it — every directory a `key_files` entry sits in, or the common
+    # ancestor of the union — reads correctly on a run that owns its whole
+    # product and catastrophically on any other: a brownfield casting touching
+    # three files of a sixty-file directory would be refused for the other
+    # fifty-seven, which are not part of the build and never were. So the
+    # manifest SAYS what ships, F0.5 writes the claim, and this dimension
+    # measures the difference between that claim and the `key_files` union.
+    #
+    # AND NO SCHEMA FLOOR, WHICH IS NOT AN OVERSIGHT. The ownership dimension
+    # above can refuse a MISSING `requirement_ids` because that field became
+    # mandatory in the generation that bumped the archive marker to
+    # `REQUIREMENT_IDS_SCHEMA_FLOOR`, so the marker separates a manifest that
+    # predates the field from one that omits it. `surface_globs` arrives INSIDE
+    # that same generation with no bump, so no marker separates the two cases:
+    # a floor here would refuse every existing archive of this generation —
+    # this run's own included — for a field its decompose never wrote. That is
+    # precisely the mis-reading `REQUIREMENT_IDS_SCHEMA_FLOOR`'s own comment
+    # warns against. The declaration itself is therefore the trigger: absent is
+    # NOT COMPUTABLE and passes, present is measured and refuses.
+    dim13_issues: list[dict] = []
+    surface_unowned: list[str] = []
+    if not surface_facts["declared"]:
+        dim13_issues.append({
+            "severity": "info",
+            "issue": "surface_globs_not_computable",
+            "detail": (
+                "This manifest declares no `surface_globs`, so what the run "
+                "SHIPS is not stated and cannot be diffed against the "
+                "`key_files` union. Surface ownership is not computable for "
+                "this manifest and is not checked. Add `surface_globs` at F0.5 "
+                "— the project-relative patterns naming every file this build "
+                "ships — to make an unowned surface a refusal."
+            ),
+        })
+    else:
+        for pattern, why in surface_facts["rejected"]:
+            dim13_issues.append({
+                "severity": "warning",
+                "issue": "surface_glob_unusable",
+                "glob": pattern,
+                "detail": (
+                    f"`surface_globs` entry {pattern} is not usable: {why}. It "
+                    f"reaches no file, so any surface it was meant to cover is "
+                    f"unmeasured."
+                ),
+            })
+        if not surface_facts["globs"]:
+            dim13_issues.append({
+                "severity": "warning",
+                "issue": "surface_globs_empty",
+                "detail": (
+                    "`surface_globs` is declared but reaches no pattern at all, "
+                    "so this dimension can find nothing and passes vacuously. A "
+                    "run with castings ships something; say what."
+                ),
+            })
+        for pattern in surface_facts["globs"]:
+            if surface_facts["matched"].get(pattern):
+                continue
+            dim13_issues.append({
+                "severity": "warning",
+                "issue": "surface_glob_matched_nothing",
+                "glob": pattern,
+                "detail": (
+                    f"`surface_globs` entry `{pattern}` matched no file under "
+                    f"the project root. A pattern that reaches nothing checks "
+                    f"nothing — correct it, or drop it so the declaration says "
+                    f"what it means."
+                ),
+            })
+        surface_unowned = _unowned_surfaces(surface_facts["surfaces"], castings)
+        for path in surface_unowned[:_SURFACE_ISSUE_CAP]:
+            dim13_issues.append({
+                "severity": "error",
+                "issue": SURFACE_UNOWNED,
+                "file": path,
+                "detail": (
+                    f"{SURFACE_UNOWNED}: `{path}` is declared shipped surface "
+                    f"and no casting's `key_files` reaches it. No teammate "
+                    f"answers for it: a defect landing there can be routed only "
+                    f"by a lead ruling on adjacency, which is a guess the "
+                    f"manifest exists to replace."
+                ),
+                "hint": _SURFACE_EXITS_HINT,
+            })
+        if surface_unowned:
+            issues.append({
+                "dimension": "surface_ownership",
+                "severity": "error",
+                "message": (
+                    f"{SURFACE_UNOWNED}: {len(surface_unowned)} shipped "
+                    f"surface(s) of {len(surface_facts['surfaces'])} are owned "
+                    f"by no casting: "
+                    + ", ".join(surface_unowned[:5])
+                    + ("…" if len(surface_unowned) > 5 else "")
+                ),
+            })
+            revision_hints.append(
+                f"{SURFACE_UNOWNED}: {len(surface_unowned)} shipped surface(s) "
+                f"reach no casting. {_SURFACE_EXITS_HINT}"
+            )
+
+    dim13_errors = [i for i in dim13_issues if i.get("severity") == "error"]
+    dimensions["surface_ownership"] = {
+        "ok": len(dim13_errors) == 0,
+        "issues": dim13_issues,
+        "not_computable": not surface_facts["declared"],
+        "globs": surface_facts["globs"],
+        "surfaces": len(surface_facts["surfaces"]),
+        # EVERY unowned path, whatever `_SURFACE_ISSUE_CAP` did to the prose
+        # rows above. The cap exists so one broken manifest cannot bury the
+        # other twelve dimensions in narration; the list a lead has to act on
+        # is not the thing to truncate.
+        "unowned": surface_unowned,
+        "unowned_count": len(surface_unowned),
     }
 
     # ── Overall result ──
