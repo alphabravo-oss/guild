@@ -447,7 +447,16 @@ def test_the_f5_entry_records_full_on_the_same_terms(run_env):
     from, so FULL is a property of the position, not a policy about TEMPER.
     """
     project_root, fdir = run_env
-    _write_state(fdir, phase="F4", cycle=3)
+    # fallout FR-016 / FR-060 / GI-015 / AC-021 (D-143 / D-144) — THE F4 THIS
+    # CROSSING IS TAKEN FROM IS A --temper RUN'S F4. `_temper_preconditions`
+    # grew the opt-in rung its sibling `_nyquist_preconditions` has always
+    # carried, so a run whose `state.json.temper` is false is refused at
+    # `_GATE_RANK_CONFIG` rather than crossing into F5 and being stranded there
+    # (`PHASE_TOKENS['done']` accepts only from F4 with temper off, so such a
+    # run could never reach F6 while `Foundry-Next` kept sending it to F5). The
+    # subject here is what the F5 ENTRY RECORDS, so the arrangement has to be a
+    # run that is allowed to take it; nothing about the recording changed.
+    _write_state(fdir, phase="F4", cycle=3, temper=True)
     _write_manifest(fdir)
     _arm(fdir)
 
@@ -2833,7 +2842,13 @@ def test_the_f5_entry_sweeps_and_refuses_a_log_that_no_longer_reproduces(run_env
     the LAST inspection of a run, and it was the one boundary not checking that
     the run's committed evidence still reproduces."""
     project_root, fdir = run_env
-    _write_state(fdir, phase="F4", cycle=3)
+    # fallout FR-016 / FR-060 (D-143 / D-144) — flagged on so the refusal read
+    # below is the SWEEP's and not the configuration's. `_GATE_RANK_EVIDENCE`
+    # sorts below `_GATE_RANK_CONFIG`, so an unflagged run failed both rungs and
+    # still rendered the evidence line — green by rank coincidence over a door
+    # that was being refused twice. With the flag set it is refused once, and
+    # `"casting-1-handler.log" in result["error"]` is a claim about the sweep.
+    _write_state(fdir, phase="F4", cycle=3, temper=True)
     _write_manifest(fdir)
     _evidence_log(
         project_root, "casting-1-handler.log",
@@ -3091,7 +3106,12 @@ def test_the_temper_entry_keeps_the_preceding_inspects_rollup_row(run_env):
     FULL for a cycle that ran DELTA.
     """
     project_root, fdir = run_env
-    _write_state(fdir, phase="F3", cycle=1)
+    # fallout FR-016 / FR-060 (D-143 / D-144) — set once, here, and carried
+    # through the `_update_phase(fdir, "F4")` below: that call edits the state
+    # document in place, so the opt-in flag survives the move to F4 the same way
+    # the recorded DELTA decision and the cycle counter do — which is the reason
+    # this test moves the run rather than re-writing its state.
+    _write_state(fdir, phase="F3", cycle=1, temper=True)
     _write_defects(fdir, [{**_open_live(), "status": "fixed", "fixed_in_cycle": 1}])
     _write_manifest(fdir)
     _grind_touching(project_root, fdir, "src/handler.py")
@@ -3420,7 +3440,12 @@ def test_temper_is_refused_from_every_phase_but_f4(run_env):
     asked what phase the run was in.
     """
     project_root, fdir = run_env
-    _write_state(fdir, phase="F2", cycle=2, nyquist=True, inspect_modes=[{
+    # fallout FR-016 / FR-060 (D-143 / D-144) — the opt-in flag is set on BOTH
+    # halves of this test, because the subject is the SOURCE-PHASE guard and the
+    # opt-in rung outranks it: `_GATE_RANK_CONFIG` sorts below
+    # `_GATE_RANK_SOURCE`, so an unflagged run renders "TEMPER is opt-in" where
+    # this reads "F2" and the from-state assertion never sees its own refusal.
+    _write_state(fdir, phase="F2", cycle=2, nyquist=True, temper=True, inspect_modes=[{
         "cycle": 2, "phase": "F2", "mode": "DELTA", "rule": INSPECT_DELTA_RULE,
         "rule_detail": "fixture", "decided_by": "inspect_start",
         "decided_at": foundry_state.now_iso(), "required_streams": ["trace", "prove", "test"],
@@ -3443,7 +3468,9 @@ def test_temper_is_refused_from_every_phase_but_f4(run_env):
     assert state["inspect_modes"][-1]["mode"] == "DELTA"
 
     # ...and from F4, which is where ASSAY ends, it is accepted.
-    _write_state(fdir, phase="F4", cycle=2, nyquist=True)
+    # fallout FR-016 / FR-060 (D-143 / D-144) — on a --temper run, which is the
+    # only run for which "accepted" is the right word.
+    _write_state(fdir, phase="F4", cycle=2, nyquist=True, temper=True)
     _arm(fdir)
     ok = foundry_mark_phase_complete("temper", project_root)
     assert ok["ok"] is True, ok
@@ -5377,7 +5404,9 @@ def test_the_f5_entry_clears_the_previous_inspects_completion_markers(run_env):
     is what let a TEMPER INSPECT report five streams complete before it began.
     """
     project_root, fdir = run_env
-    _write_state(fdir, phase="F4", cycle=5)
+    # fallout FR-016 / FR-060 (D-143 / D-144) — the opt-in rung: this crossing
+    # has to SUCCEED for the markers it clears to be the subject at all.
+    _write_state(fdir, phase="F4", cycle=5, temper=True)
     _write_manifest(fdir)
     _mark_streams_complete(fdir)
     _arm(fdir)
@@ -5412,7 +5441,12 @@ def test_the_f5_entry_leaves_completion_state_alone_when_it_refuses(run_env):
     run would sit in F4 unable to say what it had already run.
     """
     project_root, fdir = run_env
-    _write_state(fdir, phase="F4", cycle=5)
+    # fallout FR-016 / FR-060 (D-143 / D-144) — flagged on, so the refusal
+    # driven here is the sweep's alone. This test says the ordering is asserted
+    # "through the refusal this branch already has"; an unflagged run trips the
+    # configuration rung too, and then "nothing moved" would hold for a door
+    # that never reached the sweep — the wrong reason for the right answer.
+    _write_state(fdir, phase="F4", cycle=5, temper=True)
     _write_manifest(fdir)
     _mark_streams_complete(fdir)
     _evidence_log(
