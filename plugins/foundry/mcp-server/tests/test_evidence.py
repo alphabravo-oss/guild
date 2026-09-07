@@ -7023,8 +7023,17 @@ def test_the_acceptance_door_scrubs_the_environment_too(tmp_path, monkeypatch):
     from foundry_mcp.tools.foundry_state import clear_active_run
 
     _pollute(monkeypatch)
+    # NOT A BACKSLASH IN SIGHT, deliberately. `tests/orchestration/
+    # test_module_boundaries.py#_private_names_defined_anywhere` speculatively
+    # `ast.parse`s every string constant this file ships, and a `sed` BRE like
+    # `s/^\\(A\\|B\\)/…/` reads to that parser as a Python string literal
+    # carrying an invalid escape — so the parse emitted a SyntaxWarning that
+    # landed in the warnings summary of every suite log in the corpus and broke
+    # five of them at the boundary. `grep -E` states the same alternation with
+    # no escape for anything to misread.
     leak_probe = (
-        "env | sed -n 's/^\\(VIRTUAL_ENV\\|PYTHONPATH\\|GITHUB_TOKEN\\)=.*/LEAKED: \\1/p'"
+        "env | grep -E '^(VIRTUAL_ENV|PYTHONPATH|GITHUB_TOKEN)='"
+        " | cut -d= -f1 | sed 's/^/LEAKED: /'"
         "; cat replay.txt"
     )
     env = _build_divergent_spec_repo(
