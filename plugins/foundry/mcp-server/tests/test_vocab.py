@@ -1576,6 +1576,36 @@ def test_defect_tier_reads_anything_unclassified_as_unknown(record, expected) ->
 #: any one of them is the D-148 undercount, whatever else it gets right.
 _TIER_AWARE_DOORS = ("INSPECT-clean", "ASSAY", "TEMPER", "NYQUIST", "DONE")
 
+#: fallout D-171 — the retired MEMBER-COUNT spellings, verbatim as they shipped.
+#:
+#: A different undercount from the one below, on the same axis and with the same
+#: cause. `_RETIRED_TIER_GATE_SPELLINGS` is about naming a subset of the five
+#: DOORS; these are about naming a subset of the three TIERS. Every one of them
+#: is a hand-maintained copy of `len(DEFECT_TIERS)` written as an English word,
+#: which is why none survives the frozenset growing.
+#:
+#: Four surfaces carried the same sentence and it was found on them one at a
+#: time across a single cycle: `commands/start.md`'s tier briefing (D-162),
+#: `skills/prove/SKILL.md` and `skills/trace/SKILL.md`'s Structured Output
+#: Format paragraphs (D-163, D-164), and finally `schemas/findings.py` — one
+#: import away from `DEFECT_TIERS` itself, its own `tier` enum already derived
+#: as `sorted(vocab.DEFECT_TIERS)` while the docstring above it enumerated two
+#: (D-171). Each was fixed alone because nothing swept for the sentence; this
+#: is the sweep, over the surfaces this module already owns.
+#: NARROW ON PURPOSE. "either tier" and "the two tiers" were drafted into this
+#: roster and taken back out: `vocab.py:381` says "A filing on either tier that
+#: owes ..." about LATENT and HARDENING, which is a CORRECT two-member
+#: statement — the pair that owes a reproduction really is two. A pattern that
+#: fires on a true sentence teaches the next author to work around the pin, and
+#: a worked-around pin is how `_RETIRED_TIER_GATE_SPELLINGS` would have died.
+#: So only spellings that count the WHOLE vocabulary are listed.
+_RETIRED_TIER_COUNT_SPELLINGS = (
+    "Both tiers are defects",   # D-162/D-163/D-164/D-171, all four verbatim
+    "both tiers are defects",   # the same sentence mid-paragraph
+    "both get fixed, and neither",  # findings.py's continuation of it
+    "both are defects and both get fixed",  # server.py's D-093 phrasing
+)
+
 #: The retired spellings, verbatim as they shipped. Each asserted ABSENT below;
 #: naming a door subset is what every one of them has in common.
 _RETIRED_TIER_GATE_SPELLINGS = (
@@ -1661,6 +1691,108 @@ def test_no_casting_1_surface_names_the_retired_per_gate_tier_rule(
         f"and DONE all pass when the only open defects are LATENT. Restate it "
         f"in full or do not restate it; a subset reads as a live exception."
     )
+
+
+@pytest.mark.parametrize("relpath", _OWNED_PROSE_SURFACES)
+def test_no_owned_surface_counts_the_tier_vocabulary_as_a_pair(
+    relpath: str,
+) -> None:
+    """fallout D-171 / fallout AC-022 — no owned prose states DEFECT_TIERS as two.
+
+    `schemas/findings.py` is what this was written for. Its `tier` enum has
+    been `sorted(vocab.DEFECT_TIERS)` since HARDENING landed, and both its
+    module docstring and its PUBLISHED `tier` description still called the
+    tiers a pair — one import away from the frozenset they contradicted, which
+    is the shortest distance in this tree between a vocabulary and a wrong
+    statement of its size. The enum was derived and the prose was not, which
+    is the D-093 shape verbatim.
+
+    The same sentence was found on `commands/start.md` (D-162) and the PROVE
+    and TRACE skills (D-163, D-164) in this one cycle, each fixed alone
+    because nothing swept for it. The instance fix is what kept failing here
+    before — that is the whole lesson of the D-148 block above — so the
+    sentence is now a scanned string over the surfaces this module owns,
+    exactly like the retired gate rule beside it.
+    """
+    text = (REPO_ROOT / relpath).read_text(encoding="utf-8")
+    hits = [s for s in _RETIRED_TIER_COUNT_SPELLINGS if s in text]
+    assert not hits, (
+        f"{relpath} counts the tier vocabulary as a pair: {hits}. "
+        f"`DEFECT_TIERS` has {len(vocab.DEFECT_TIERS)} members "
+        f"({', '.join(sorted(vocab.DEFECT_TIERS))}). State the rule without a "
+        f"hand-typed count, or name every member — a sentence that counts is "
+        f"a copy of len(DEFECT_TIERS) that nothing updates."
+    )
+
+
+def test_the_retired_tier_count_pin_actually_fires() -> None:
+    """A pin that cannot fail is a comment with an assert in it.
+
+    Each retired spelling is driven through the same containment check the
+    scan uses, in a sentence shaped like the ones that shipped, and must be
+    caught — so a later edit that narrows a pattern into uselessness fails
+    here rather than going quiet. Unlike the gate-rule roster these are not
+    required to be caught ALONE: "Both tiers are defects" and its
+    lower-cased twin are deliberately overlapping spellings of one sentence.
+    """
+    for spelling in _RETIRED_TIER_COUNT_SPELLINGS:
+        sample = f"the axis is not a grade: {spelling} on this run"
+        assert any(s in sample for s in _RETIRED_TIER_COUNT_SPELLINGS), (
+            f"{spelling!r} was not caught in {sample!r}"
+        )
+
+
+def test_the_tier_owing_a_reproduction_set_is_derived_not_typed() -> None:
+    """fallout D-171 — which tiers owe a reproduction is a vocabulary fact.
+
+    Two published wire strings scope this obligation — `server.py`'s two
+    filing-door schemas and `schemas/findings.py`'s finding item — and both
+    stated it as LATENT-only long after HARDENING started owing it. Each door
+    computing the set for itself is how one of them keeps being last to hear
+    that it changed, so the set lives here and both derive from it (top
+    convention 3).
+
+    Derived, not listed: LIVE is excluded because the door it drove IS the
+    requirement, and every other member owes the field. A fourth tier joins
+    this tuple with no edit.
+    """
+    assert vocab.TIERS_OWING_A_REPRODUCTION == ("HARDENING", "LATENT")
+    assert isinstance(vocab.TIERS_OWING_A_REPRODUCTION, tuple), (
+        "ordered: the wire descriptions read the members out in this order"
+    )
+    assert set(vocab.TIERS_OWING_A_REPRODUCTION) == vocab.DEFECT_TIERS - {"LIVE"}
+    assert "LIVE" not in vocab.TIERS_OWING_A_REPRODUCTION, (
+        "a LIVE filing puts its reproduction in the description; requiring "
+        "the field of it would refuse the one tier that drove a real door"
+    )
+
+
+def test_the_published_finding_schema_documents_every_tier_it_accepts() -> None:
+    """fallout D-171 — the contract must not document less than it enforces.
+
+    A client reads these strings before it ever calls. The `tier` enum accepts
+    every member of `DEFECT_TIERS`, so a member the description never mentions
+    is a tier a stream cannot learn to file — and the reproduction scope must
+    name every tier that owes the field, or a stream is refused for something
+    the contract told it was another tier's problem.
+    """
+    from foundry_mcp.schemas import findings
+
+    item = findings._FINDING_ITEM["properties"]
+    tier_description = item["tier"]["description"]
+    reproduction = item["reproduction_attempted"]["description"]
+
+    assert item["tier"]["enum"] == sorted(vocab.DEFECT_TIERS)
+    for member in sorted(vocab.DEFECT_TIERS):
+        assert member in tier_description, (
+            f"the published tier description accepts {member} and never names "
+            f"it; that is the D-093 shape — enum derived, prose not"
+        )
+    for member in vocab.TIERS_OWING_A_REPRODUCTION:
+        assert member in reproduction, (
+            f"{member} owes reproduction_attempted and the published "
+            f"description does not say so"
+        )
 
 
 def test_the_retired_tier_gate_pin_actually_fires() -> None:

@@ -364,6 +364,33 @@ DEFECT_TIER_OR_UNKNOWN = frozenset(DEFECT_TIERS | {TIER_UNKNOWN})  # 4 items
 #: not, which is the whole of AC-022's second clause.
 BLOCKING_TIERS = ("LIVE", TIER_UNKNOWN)  # 2 members
 
+#: The tiers whose filings owe a `reproduction_attempted` statement (CT-001 /
+#: FR-004). ORDERED, because the wire descriptions that name them read them
+#: out in this order.
+#:
+#: DERIVED as "every tier that is not the one you drove to a spec-required
+#: failure": LIVE puts its reproduction in the description because the door it
+#: drove IS the requirement, and the other two each owe the field for their own
+#: reason — LATENT because the negative result is the only evidence there is,
+#: HARDENING because a probe nobody asked for is trusted on nothing else.
+#:
+#: fallout D-171 — WHY THIS IS HERE AND NOT AT A DOOR. Two published wire
+#: strings scope this obligation, `server.py`'s two filing-door schemas and
+#: `schemas/findings.py`'s finding item, and both stated it as LATENT-only long
+#: after HARDENING started owing it — the same stale sentence D-163 and D-164
+#: found on the PROVE and TRACE skills. Each door computing "which tiers owe
+#: this" for itself is how one of them keeps being the last to hear that the
+#: set changed, and top convention 3 is that a closed vocabulary lives here and
+#: every consumer derives from it, never a second hand list.
+#:
+#: `server.py#_TIERS_OWING_A_REPRODUCTION` is that second list and it still
+#: exists: it is casting 2's file and repointing it is casting 2's edit, raised
+#: as a concern rather than reached across a key_file boundary. Until it lands
+#: the two agree by construction, because this expression is the one it spells.
+TIERS_OWING_A_REPRODUCTION = tuple(
+    tier for tier in sorted(DEFECT_TIERS) if tier != "LIVE"
+)  # 2 members
+
 
 def defect_tier(record: Mapping[str, object]) -> str:
     """The tier a defect record READS as — never raises, never guesses.
