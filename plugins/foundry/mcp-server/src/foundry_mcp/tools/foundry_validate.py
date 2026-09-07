@@ -1028,13 +1028,66 @@ def foundry_validate_castings(
     for c in castings:
         cid = c.get("id", "?")
         for f in c.get("key_files", []):
+            # A `key_files` entry is unconstrained below the list rung by the
+            # shared manifest shape guard, so a non-string reaches here. Keyed
+            # by it, two castings carrying the same wrong-typed cell became an
+            # overlap on a path that does not exist — a finding invented out of
+            # a type error, which is the reading `test_foundry_validate_key_links`
+            # rules out one field over.
+            if not isinstance(f, str):
+                continue
             file_to_casting.setdefault(f, []).append(cid)
 
     overlaps = {f: cids for f, cids in file_to_casting.items() if len(cids) > 1}
+
+    # fallout FR-009 — D-170's class, on this dimension's own surface.
+    #
+    # The pass above compares `key_files` as bare strings. That is the whole of
+    # the rule while every entry names a file, and none of it the moment one
+    # names a DIRECTORY: `tools/orchestration/` and
+    # `tools/orchestration/directives.py` are two different strings and the
+    # same file, so a manifest could hand one file to two teammates and this
+    # dimension — the one whose entire job is "no two castings own the same
+    # file" — would call it clean. Two teammates overwriting each other is
+    # exactly what the error this dimension raises exists to prevent, so being
+    # blind to the directory spelling makes it blind in the direction that
+    # costs the most.
+    #
+    # Asked as coverage rather than equality, through the ONE reading of what a
+    # `key_files` entry means. Only a directory entry can reach a string the
+    # exact pass did not already pair, so a manifest with no directory entry
+    # leaves `overlaps` exactly as the line above built it.
+    overlap_via: dict[str, str] = {}
+    declared = _declared_key_files(castings)
+    for entry, owner in declared:
+        if not entry.endswith(KEY_FILE_DIRECTORY_SUFFIX):
+            continue
+        for covered, other in declared:
+            if other == owner or not _key_file_covers(entry, covered):
+                continue
+            cids = overlaps.setdefault(covered, [other])
+            if owner not in cids:
+                cids.append(owner)
+            overlap_via.setdefault(covered, entry)
+
     if overlaps:
         for f, cids in overlaps.items():
-            dim3_issues.append({"file": f, "castings": cids, "issue": "File claimed by multiple castings"})
-            revision_hints.append(f"File '{f}' is in castings {cids} — move to one casting or split")
+            record = {"file": f, "castings": cids, "issue": "File claimed by multiple castings"}
+            via = overlap_via.get(f)
+            if via:
+                # The directory is the fact the lead cannot see from the file
+                # name: `f` appears in nobody's `key_files` list literally, so
+                # a hint naming only `f` sends them looking for a line that is
+                # not there.
+                record["via_directory"] = via
+                revision_hints.append(
+                    f"File '{f}' is in castings {cids} — casting "
+                    f"{cids[-1]} declares the directory '{via}', which covers "
+                    f"it. Narrow the directory entry, or move '{f}' out of it."
+                )
+            else:
+                revision_hints.append(f"File '{f}' is in castings {cids} — move to one casting or split")
+            dim3_issues.append(record)
         issues.append({"dimension": "dependency_correctness", "severity": "error",
                        "message": f"{len(overlaps)} file overlaps between castings"})
 
@@ -1734,15 +1787,25 @@ def foundry_validate_castings(
         # via _normalize_file_path so map_files and key_files compare
         # apples-to-apples).
         casting_files: dict[str, list] = {}
-        for c in castings:
-            cid = c.get("id", "?")
-            for kf in c.get("key_files", []):
-                normalized = _normalize_file_path(kf)
-                if normalized:
-                    casting_files.setdefault(normalized, []).append(cid)
+        for normalized, cid in _declared_key_files(castings):
+            casting_files.setdefault(normalized, []).append(cid)
 
-        # Check 10a: every File Change Map entry is in some casting
-        unimplementable = sorted(map_files - set(casting_files.keys()))
+        # fallout FR-009 — D-170's class again, and here it points BOTH ways.
+        # The File Change Map names files; a casting may name the directory
+        # they sit in. Compared as bare strings, every file under a directory
+        # entry reads as an orphan no teammate can reach (10a, an ERROR that
+        # would refuse a manifest whose slicing is fine) and the directory
+        # entry itself reads as scope creep (10b). Coverage is the question,
+        # and for an entry naming a file it is the same question equality was,
+        # so a manifest with no directory entry is answered exactly as before.
+        covered_by: dict[str, list] = {}
+        for path in map_files:
+            for entry, cids in casting_files.items():
+                if _key_file_covers(entry, path):
+                    covered_by.setdefault(path, []).extend(cids)
+
+        # Check 10a: every File Change Map entry is reached by some casting
+        unimplementable = sorted(map_files - set(covered_by))
         for path in unimplementable:
             dim10_issues.append({
                 "severity": "error",
@@ -1777,7 +1840,11 @@ def foundry_validate_castings(
         # Check 10b: scope creep — castings have files not in the map
         # (warning, not error — sometimes castings legitimately touch
         # adjacent files like test fixtures or import sites)
-        scope_creep = sorted(set(casting_files.keys()) - map_files)
+        scope_creep = sorted(
+            entry
+            for entry in casting_files
+            if not any(_key_file_covers(entry, path) for path in map_files)
+        )
         for path in scope_creep[:20]:  # cap to avoid noise
             cids = casting_files[path]
             dim10_issues.append({
@@ -1809,7 +1876,7 @@ def foundry_validate_castings(
             "issues": dim10_issues,
             "active": True,
             "map_files": len(map_files),
-            "covered": len(map_files - set(casting_files.keys())),
+            "covered": len(map_files - set(covered_by)),
             "scope_creep": len(scope_creep),
         }
 
@@ -2322,6 +2389,76 @@ def _normalize_file_path(raw: str) -> str:
     if s.startswith(("http://", "https://")):
         return ""
     return s
+
+
+#: fallout FR-009 — the one character that decides what a `key_files` entry IS.
+#: An entry ending in it names a DIRECTORY; every other entry names a file.
+#: Spelled once here so the reading below and the prose that quotes it cannot
+#: drift into two answers.
+KEY_FILE_DIRECTORY_SUFFIX = "/"
+
+
+def _key_file_covers(key_file: str, path: str) -> bool:
+    """Does this ``key_files`` entry reach ``path``? (fallout FR-009 — D-170.)
+
+    THE MANIFEST FORMAT, STATED WHERE THE DOOR THAT ACCEPTS IT CAN BE READ.
+    A ``key_files`` entry is either a FILE path or a DIRECTORY, spelled with a
+    trailing slash, and a directory entry covers every path beneath it. That is
+    not a convenience: ``Foundry-Gate('cast')`` caps a casting at eight entries,
+    so a casting carving a whole new package fits under the cap by naming the
+    package once — this run's own manifest carries
+    ``.../tools/orchestration/`` and ``tests/orchestration/`` for exactly that
+    reason, and F0.9 accepted it.
+
+    D-170 is what accepting it without saying it costs. The GRIND ownership
+    resolver compared ``key_files`` by exact set membership, so a directory
+    entry matched nothing beneath it and thirteen files resolved to no casting
+    at all — silently, with no refusal, which is the wrong direction for a
+    dispatcher to be wrong in. Two dimensions of THIS module compared the same
+    strings the same way: a file two castings both reach through a directory
+    was not an overlap, and a File Change Map row reached only through a
+    directory looked unimplementable.
+
+    So the question every reader here asks is coverage, never equality, and it
+    is asked in ONE place. For an entry naming a file the two are the same
+    question, which is why a manifest with no directory entry is answered
+    exactly as it was before this function existed.
+
+    Both arguments are expected pre-normalised through ``_normalize_file_path``
+    — this module's one path normaliser, which preserves the trailing slash the
+    reading turns on.
+    """
+    if not key_file or not path:
+        return False
+    if key_file.endswith(KEY_FILE_DIRECTORY_SUFFIX):
+        return path.startswith(key_file)
+    return key_file == path
+
+
+def _declared_key_files(castings: list) -> list[tuple[str, object]]:
+    """Every ``(normalised key_files entry, owning casting id)`` in the manifest.
+
+    ``key_files`` entries are unconstrained BELOW the list rung by
+    ``_MANIFEST_DOCUMENT_SHAPE`` — the shape guard demands a list and says
+    nothing about what is in it — so an entry that is not a string reaches
+    every reader here. ``_normalize_file_path`` calls ``.strip()`` on what it
+    is handed, so ``key_files: [123]`` used to raise ``AttributeError`` out of
+    dimension 10 and take the whole F0.9 report down with it: the same failure
+    ``test_foundry_validate_key_links.py`` was written against one dimension
+    over, where a string where a mapping belonged raised ``AttributeError`` and
+    no dimension rendered. The guard is this module's documented answer to that
+    class — skip the entry, render the report.
+    """
+    declared: list[tuple[str, object]] = []
+    for c in castings:
+        cid = c.get("id", "?")
+        for raw in c.get("key_files") or []:
+            if not isinstance(raw, str):
+                continue
+            normalised = _normalize_file_path(raw)
+            if normalised:
+                declared.append((normalised, cid))
+    return declared
 
 
 def _extract_spec_invariants_section(spec_text: str) -> str:

@@ -43,6 +43,13 @@ cross-reference line that is not a declaration, the mid-prose mention that is
 not a declaration, and the recorded reason for a different id that does not
 exempt.
 
+  KEY FILES. The manifest's OTHER ownership claim, and the third thing this
+  module pins. A ``key_files`` entry is a file path or a DIRECTORY spelled with
+  a trailing slash, and the two dimensions that compare those entries against
+  something — is one file claimed twice, does the File Change Map's every row
+  reach a teammate — ask coverage rather than equality. The section at the foot
+  of this module carries the drive and its controls.
+
 Every test drives ``foundry_validate_castings`` itself against a ``tmp_path``
 run directory with a written manifest and spec, and reads the returned
 dimensions, issues and table. The module carries its own harness rather than
@@ -1839,3 +1846,210 @@ def test_the_entry_point_reports_not_computable_on_a_legacy_archive(
     assert result["requirement_span"]["not_computable"] is True
     assert table["text"] == result["requirement_span"]["text"]
     assert "not computable" in table["text"].lower()
+
+
+# ── What a `key_files` entry may be ───────────────────────────────────────
+#
+# fallout FR-009 — D-170. The manifest's ownership field is not only
+# `requirement_ids`; `key_files` is the OTHER ownership claim a casting makes,
+# and F0.9 is the door that accepts both. This module pinned the first and said
+# nothing about the second, which is how the two halves of the system came to
+# disagree about what a `key_files` entry may be: F0.9's own eight-entry cap is
+# what made a DIRECTORY entry the way to fit a new package under it, F0.9
+# accepted the manifest that used one, and the GRIND ownership resolver then
+# compared the same strings for equality and resolved thirteen files to no
+# casting at all.
+#
+# The contract, stated once at `foundry_validate._key_file_covers` and driven
+# here: an entry ending in a slash names a DIRECTORY and covers every path
+# beneath it; every other entry names a file and covers itself. Both dimensions
+# of this module that compare `key_files` against something ask coverage.
+#
+# The negative controls are the point as much as the positives. A prefix that
+# is not a path prefix (`src/pkg/` against `src/pkgx/one.py`) must NOT match,
+# and a directory a casting shares with nobody must not become an overlap with
+# itself — those are the two ways a coverage test goes wrong in the direction
+# that invents findings.
+
+#: A spec whose File Change Map names two files that sit inside one package.
+FILE_CHANGE_MAP_UNDER_A_PACKAGE = (
+    "## File Change Map\n"
+    "\n"
+    "| File | What changes |\n"
+    "|---|---|\n"
+    "| `src/pkg/one.py` | the packet |\n"
+    "| `src/pkg/two.py` | its sibling |\n"
+)
+
+
+def _owning(cid, *key_files: str) -> dict:
+    """A casting whose `key_files` are exactly ``key_files``."""
+    entry = _casting(cid, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])
+    entry["key_files"] = list(key_files)
+    return entry
+
+
+def _overlap_rows(result: dict) -> list[dict]:
+    return result["dimensions"]["dependency_correctness"]["issues"]
+
+
+def _map_coverage(result: dict) -> dict:
+    return result["dimensions"]["file_change_map_coverage"]
+
+
+def test_a_directory_entry_and_a_file_beneath_it_are_one_file_two_castings(
+    tmp_path: Path,
+):
+    """The overlap this dimension exists to catch, spelled the way the cap
+    forces a package-carving casting to spell it.
+
+    Two teammates owning one file is the error the dimension raises, and the
+    directory spelling is the one shape in which it was invisible.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/"), _owning(2, "src/pkg/one.py")],
+    )
+
+    dim = result["dimensions"]["dependency_correctness"]
+    assert dim["ok"] is False, dim
+    rows = {r["file"]: r for r in _overlap_rows(result)}
+    assert "src/pkg/one.py" in rows, sorted(rows)
+    row = rows["src/pkg/one.py"]
+    assert sorted(str(c) for c in row["castings"]) == ["1", "2"]
+    assert row["via_directory"] == "src/pkg/"
+
+
+def test_the_overlap_hint_names_the_directory_and_not_only_the_file(
+    tmp_path: Path,
+):
+    """`src/pkg/one.py` appears in nobody's `key_files` literally, so a hint
+    naming only the file sends the lead looking for a line that is not there.
+    The hint has to name the entry that actually reaches it.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/"), _owning(2, "src/pkg/one.py")],
+    )
+
+    hints = [h for h in result["revision_hints"] if "src/pkg/one.py" in h]
+    assert hints, result["revision_hints"]
+    assert any("src/pkg/" in h and "directory" in h for h in hints), hints
+
+
+def test_a_path_that_merely_starts_with_the_directory_name_is_not_covered(
+    tmp_path: Path,
+):
+    """The control that separates a path prefix from a string prefix.
+
+    `src/pkgx/one.py` starts with `src/pkg` and is in a different package. The
+    trailing slash is what makes the reading segment-safe, which is why it is
+    part of the spelling and not decoration.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/"), _owning(2, "src/pkgx/one.py")],
+    )
+
+    assert result["dimensions"]["dependency_correctness"]["ok"] is True, (
+        _overlap_rows(result)
+    )
+
+
+def test_one_casting_owning_a_directory_and_a_file_inside_it_is_not_an_overlap(
+    tmp_path: Path,
+):
+    """An overlap is two CASTINGS, never one casting's own two entries.
+
+    Naming a package and then naming one file in it again is redundant, not a
+    conflict, and reporting it as an error would refuse a manifest that hands
+    every file to exactly one teammate.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/", "src/pkg/one.py"), _owning(2, "src/other.py")],
+    )
+
+    assert result["dimensions"]["dependency_correctness"]["ok"] is True, (
+        _overlap_rows(result)
+    )
+
+
+def test_a_manifest_of_file_entries_alone_reports_exactly_what_it_did_before(
+    tmp_path: Path,
+):
+    """The unchanged half, pinned so it stays unchanged.
+
+    For an entry naming a file, coverage and equality are the same question, so
+    a manifest with no directory entry must be answered by the same rows —
+    including the duplicate-file overlap, which still carries no
+    `via_directory` because no directory reached it.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/shared.py"), _owning(2, "src/shared.py")],
+    )
+
+    rows = _overlap_rows(result)
+    assert result["dimensions"]["dependency_correctness"]["ok"] is False
+    assert [r["file"] for r in rows] == ["src/shared.py"]
+    assert "via_directory" not in rows[0]
+
+
+def test_a_directory_entry_reaches_the_file_change_map_rows_beneath_it(
+    tmp_path: Path,
+):
+    """The other direction, and the one that is an ERROR.
+
+    Compared as bare strings, every file the map names under a casting's
+    directory entry reads as an orphan no teammate can reach — F0.9 refusing a
+    manifest whose slicing is correct, and refusing it for the spelling the cap
+    pushed the lead into.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/")],
+        spec_text=FILE_CHANGE_MAP_UNDER_A_PACKAGE,
+    )
+
+    dim = _map_coverage(result)
+    assert dim["active"] is True
+    orphans = [i for i in dim["issues"] if i.get("issue") == "file_change_map_orphan"]
+    assert orphans == [], orphans
+    assert dim["ok"] is True
+    assert dim["covered"] == 0
+
+
+def test_a_directory_entry_that_reaches_a_mapped_file_is_not_scope_creep(
+    tmp_path: Path,
+):
+    """The same reading on the creep arm: an entry that covers a mapped file is
+    authorized by the map, whatever it is spelled as."""
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/")],
+        spec_text=FILE_CHANGE_MAP_UNDER_A_PACKAGE,
+    )
+
+    dim = _map_coverage(result)
+    creep = [i["file"] for i in dim["issues"]
+             if i.get("issue") == "file_change_map_scope_creep"]
+    assert creep == [], creep
+    assert dim["scope_creep"] == 0
+
+
+def test_a_directory_entry_that_reaches_no_mapped_file_is_still_scope_creep(
+    tmp_path: Path,
+):
+    """The control. A directory is not a blanket exemption — one covering
+    nothing the map names is exactly the overreach the creep warning is for."""
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/", "docs/notes/")],
+        spec_text=FILE_CHANGE_MAP_UNDER_A_PACKAGE,
+    )
+
+    dim = _map_coverage(result)
+    creep = [i["file"] for i in dim["issues"]
+             if i.get("issue") == "file_change_map_scope_creep"]
+    assert creep == ["docs/notes/"], creep

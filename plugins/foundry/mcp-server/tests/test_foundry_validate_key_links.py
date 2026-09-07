@@ -449,3 +449,65 @@ def test_a_well_formed_casting_is_completely_unchanged_by_the_guards(
     rows = [i["issue"] for i in _dim2(result)["issues"]]
     assert not any("is of type" in r for r in rows), rows
     assert _dim2(result)["ok"] is True, _dim2(result)["issues"]
+
+
+# ── The same class, one field over: key_files (fallout FR-009) ────────────
+#
+# This module's rule is that a wrong-typed cell is a WARNING and never a
+# traceback, because a traceback at F0.9 costs the operator all ten dimensions
+# to report one bad entry. `must_haves` was where the rule was learned;
+# `key_files` is the other list the manifest shape guard admits without
+# constraining what is in it — `_MANIFEST_DOCUMENT_SHAPE` spells its entries
+# `[None]`, "list, contents unconstrained" — and dimension 10 handed each entry
+# straight to `_normalize_file_path`, which calls `.strip()` on it. An integer
+# there raised `AttributeError` out of the same door, past the same guard, for
+# the same reason.
+
+
+def test_a_non_string_key_files_entry_renders_the_whole_report(tmp_path: Path):
+    """`key_files: [123]` is a manifest the shape guard accepts, so every
+    dimension has to survive it.
+
+    The spec carries a File Change Map so dimension 10 — the reader that
+    normalises each entry — is ACTIVE. Without one the dimension short-circuits
+    and the drive proves nothing.
+    """
+    castings = [
+        {
+            **_casting("C1", key_links=[{"from": "src/a.py", "to": "src/b.py"}]),
+            "key_files": [123, None, {"path": "src/a.py"}],
+        }
+    ]
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=(
+            "## File Change Map\n"
+            "\n"
+            "| File | What changes |\n"
+            "|---|---|\n"
+            "| `src/a.py` | add |\n"
+        ),
+    )
+
+    assert "dimensions" in result, result
+    assert result["dimensions"]["file_change_map_coverage"]["active"] is True
+
+
+def test_a_non_string_key_files_entry_claims_no_file(tmp_path: Path):
+    """Skipped, not coerced. `str(123)` would enter the report as a path named
+    `123` — a file overlap or a scope-creep warning against a path that does
+    not exist, which is a finding invented out of a type error.
+    """
+    castings = [
+        {**_casting("C1", key_links=[{"from": "src/a.py", "to": "src/b.py"}]),
+         "key_files": [123]},
+        {**_casting("C2", key_links=[{"from": "src/c.py", "to": "src/d.py"}]),
+         "key_files": [123]},
+    ]
+
+    result = _run_validate(tmp_path, castings)
+
+    dim3 = result["dimensions"]["dependency_correctness"]
+    assert dim3["ok"] is True, dim3["issues"]
