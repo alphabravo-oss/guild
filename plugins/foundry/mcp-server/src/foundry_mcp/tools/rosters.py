@@ -110,11 +110,40 @@ def _now() -> str:
 
 
 def _named_refusal(error: str, hint: str, phase: str) -> dict:
-    """The house named refusal, shaped ONCE for every door in this module.
+    """The house named refusal — THE implementation, for both ledger doors.
 
     ``{error, hint, phase}`` mirrors ``foundry_unregister_team``'s shape, where
     ``phase`` carries the NAME of the refusal rather than a run phase. A tool
     never raises across the MCP boundary — it returns this.
+
+    fallout D-167 (casting 2's concern C-083) — ONE IMPLEMENTATION, NOT TWO.
+    ``tools/concerns.py`` carried a byte-identical copy of this function,
+    docstring included, excused by a ``_DELIBERATE_REDEFINITIONS`` row whose
+    stated reason denied its own subject: "the token vocabularies are disjoint,
+    so there is nothing for one definition to say for both". The token sets
+    (``ROSTER_EXISTS``, ``CONCERN_TARGET_UNRESOLVED`` and the rest) are what the
+    CALLERS pass in as ``phase``; neither definition held one. So one definition
+    says the whole of what both say, and this is it. ``concerns._named_refusal``
+    is a call-through binding to this body — the ``_now`` arrangement, which the
+    guard names as the shape that is already closed: "one implementation and
+    three bindings".
+
+    WHY THIS MODULE HOLDS IT rather than ``concerns.py``. Both are lifecycle
+    modules, so the layering rule permits the edge either way, and the question
+    is which direction adds nothing. This module's imports are a strict SUBSET
+    of that one's — ``vocab``, ``foundry``, ``foundry_state``, where it also
+    reaches ``citation`` and ``orchestration/keyfiles`` — so ``concerns ->
+    rosters`` adds no module to any graph that did not already contain it,
+    while the reverse would drag the citation parser and the key-file reading
+    into ``orchestration/streams.py``'s module-top graph, which imports this
+    module for ``roster_length``. A refusal shaper is not a reason to grow
+    anybody's import graph.
+
+    THE HONEST LONG-TERM HOME IS A LEAF, and casting 1 owns none. ``_now`` is
+    the model and its implementation lives in ``foundry_state``; this one has to
+    live in one of two sibling modules because those are the only files this
+    casting may write. Recorded here rather than left for a reader to wonder at:
+    the day a leaf takes it, both bindings repoint and nothing else moves.
     """
     return {"error": error, "hint": hint, "phase": phase}
 

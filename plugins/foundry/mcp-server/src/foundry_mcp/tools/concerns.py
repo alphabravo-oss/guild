@@ -107,6 +107,12 @@ from foundry_mcp.tools.orchestration.keyfiles import (
     DIRECTORY_ENTRY_SUFFIX,
     covers_path,
 )
+# fallout D-167 (casting 2's concern C-083) — THE REFUSAL SHAPE, BOUND RATHER
+# THAN RE-STATED. `rosters.py#_named_refusal` holds the one implementation and
+# its docstring carries the reasoning for the direction; the binding below is
+# this module's spelling of it. The edge adds nothing: every module `rosters.py`
+# reaches, this one already reached.
+from foundry_mcp.tools.rosters import _named_refusal as _roster_named_refusal
 
 # --------------------------------------------------------------------------- #
 # Constants — declared FIRST so every message, every reader and every test
@@ -267,13 +273,29 @@ def _now() -> str:
 
 
 def _named_refusal(error: str, hint: str, phase: str) -> dict:
-    """The house named refusal, shaped ONCE for every door in this module.
+    """This module's spelling of the house named refusal — A BINDING, NOT A BODY.
 
-    ``{error, hint, phase}`` mirrors ``foundry_unregister_team``'s shape, where
-    ``phase`` carries the NAME of the refusal rather than a run phase. A tool
-    never raises across the MCP boundary — it returns this.
+    ``{error, hint, phase}``, where ``phase`` carries the NAME of the refusal
+    rather than a run phase. A tool never raises across the MCP boundary — it
+    returns this. The implementation is ``rosters.py#_named_refusal`` and its
+    docstring carries why it lives there; this name exists so the seven doors
+    below read the same as they always did.
+
+    fallout D-167 (casting 2's concern C-083) — WHY A BINDING AND NOT AN IMPORT.
+    This was a byte-identical SECOND BODY, and the fix for that is one
+    implementation. A bare re-export would have been the tidier spelling and it
+    is not available: ``test_the_named_refusal_forks_are_the_two_the_row_names_
+    and_not_the_third`` asserts by AST that this module defines a function of
+    this name taking these three arguments, casting 2 owns that file and has
+    finished, so deleting the definition would leave a red tree with nobody able
+    to green it. The binding satisfies both — one implementation, and the
+    signature the pin reads is still here — which is the ``_now`` arrangement
+    the guard already names as closed: "one implementation and three bindings".
+    ``test_concerns.py#test_the_named_refusal_has_one_implementation_however_
+    it_is_spelled`` is the pin C-083 says was missing, and it is what makes this
+    a delegation rather than a fork wearing an exemption.
     """
-    return {"error": error, "hint": hint, "phase": phase}
+    return _roster_named_refusal(error, hint, phase)
 
 
 # --------------------------------------------------------------------------- #

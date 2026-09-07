@@ -434,6 +434,84 @@ def test_the_coverage_reading_is_the_leafs_and_not_a_copy_that_agrees_with_it():
     assert not hasattr(_concerns, "_key_file_reaches")
 
 
+def test_the_named_refusal_has_one_implementation_however_it_is_spelled():
+    """fallout D-167 (casting 2's concern C-083) — THE PIN THE ROW LACKED.
+
+    `tools/concerns.py#_named_refusal` and `tools/rosters.py#_named_refusal`
+    were the same function TO THE CHARACTER, docstring included, excused by a
+    `_DELIBERATE_REDEFINITIONS` row whose stated reason denied its own subject:
+    "the token vocabularies are disjoint, so there is nothing for one definition
+    to say for both". The token sets are what the CALLERS pass in as `phase`;
+    neither definition held one, so one definition says the whole of what both
+    say.
+
+    THE MEASURE IS THE ROW THAT SAT BESIDE IT. `_now` also has three definitions
+    and also has a row, and it passes because all three bodies are call-throughs
+    to `foundry_state.now_iso` — one implementation, three bindings — and
+    because `test_the_timestamp_has_one_implementation_however_it_is_spelled`
+    ASSERTS that rather than asserting the prose. C-083's finding was that
+    `_named_refusal` had no such pin and was not one implementation. This is the
+    pin, and the arrangement it holds is now the same one.
+
+    IT IS STRUCTURAL, NOT BEHAVIOURAL, and that is the whole point. Two copies
+    that agree answer identically for every input — behavioural equality is
+    exactly what a fork looks like on the day it is created, and D-167 is the
+    record of how long that stays true. So the count is of BODIES THAT BUILD THE
+    DICT: one, and the rest delegate.
+
+    `tools/display.py#_named_refusal` shares the noun and nothing else —
+    `(result: object) -> str | None`, reading a refusal a handler already named.
+    It is asserted to be untouched by this consolidation rather than left out of
+    the scan, because "we did not consolidate it" is a claim worth failing on.
+    """
+    import ast
+
+    from foundry_mcp.tools import display, rosters
+
+    package = Path(_concerns.__file__).resolve().parent.parent
+    builders: list[str] = []
+    definitions: dict[str, str] = {}
+    for module in sorted(package.rglob("*.py")):
+        if "__pycache__" in module.parts:
+            continue
+        source = module.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef) or node.name != "_named_refusal":
+                continue
+            segment = ast.get_source_segment(source, node) or ""
+            definitions[module.name] = segment
+            if any(isinstance(sub, ast.Dict) for sub in ast.walk(node)):
+                builders.append(module.name)
+
+    # The three definitions are still the three the guard knows about...
+    assert set(definitions) == {"concerns.py", "rosters.py", "display.py"}, sorted(
+        definitions
+    )
+    # ...and exactly ONE of the two the row names builds the refusal dict.
+    assert builders == ["rosters.py"], builders
+    # This module's is a delegation to that body, by name, with no dict of its
+    # own — the difference between a binding and a copy that agrees today.
+    assert "_roster_named_refusal(error, hint, phase)" in definitions["concerns.py"]
+    assert '{"error"' not in definitions["concerns.py"]
+
+    # THE THIRD IS A DIFFERENT FUNCTION AND STAYS ONE (C-083: "do not
+    # consolidate it and do not touch display.py").
+    assert display._named_refusal.__code__.co_varnames[:1] == ("result",)
+    assert '{"error"' not in definitions["display.py"]
+
+    # ...and the delegation actually delegates: the answer is the implementation's
+    # for every field, so the binding cannot quietly stop being one.
+    for error, hint, phase in (
+        ("e", "h", CONCERN_TARGET_UNRESOLVED),
+        ("", "", ""),
+        ("boom", "do the thing", "ROSTER_EXISTS"),
+    ):
+        assert _concerns._named_refusal(error, hint, phase) == rosters._named_refusal(
+            error, hint, phase
+        )
+
+
 def test_empty_text_is_refused(run_env):
     """fallout CT-001 error column: 'empty text'.
 

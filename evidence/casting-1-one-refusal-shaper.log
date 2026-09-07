@@ -1,0 +1,11 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && COLUMNS=80 uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_concerns.py tests/test_rosters.py && echo && echo "== casting 2 guards over the new arrangement ==" && COLUMNS=80 uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/orchestration/test_module_boundaries.py -k "named_refusal or deliberate_redefinition_row or no_top_level_symbol"
+# evidence-for: CT-001, CT-002, FR-010, FR-024
+# evidence-volatile: \d+\.\d+s
+
+........................................................................ [ 85%]
+............                                                             [100%]
+84 passed in 0.28s
+
+== casting 2 guards over the new arrangement ==
+....                                                                     [100%]
+4 passed, 102 deselected in 0.85s
