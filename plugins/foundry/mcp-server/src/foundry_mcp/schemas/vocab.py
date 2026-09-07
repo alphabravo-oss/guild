@@ -1374,6 +1374,53 @@ CONVERGENCE_TARGET = {
 }
 
 # ---------------------------------------------------------------------------
+# D-186 / NFR-007 / FR-036 — THE ONE TERM OF THE COMPARISON THAT HAS NO NUMBER.
+#
+# The two dicts above record CYCLES. NFR-007 asks for a comparison in
+# FULL-WIDTH cycles, and there is no predecessor width figure to compare
+# against — not because nobody derived one, but because thunder-viper's
+# archive cannot carry one. Recording that, rather than manufacturing a
+# figure, is what FR-036 prescribes for exactly this shape ("Nothing beyond
+# FULL width; record it as a documented residual risk"), and NFR-011 is why it
+# is a CONSTANT and not a comment: a prose rule this effort states is pinned
+# to a code constant, and a comment is not something a test can assert on.
+#
+# Its reader is
+# `tests/test_vocab.py#test_nfr_007s_missing_baseline_width_is_recorded_as_a_residual_risk`,
+# which is the same relationship `test_lead_prose.py` has to the FR-036
+# paragraph in `references/lead-discipline.md`. Nothing renders this into
+# `report.json`: `baseline_comparison` publishes NFR-001's columns, no
+# requirement names a residual-risk key in it, and the note is a bound on how
+# the comparison is READ rather than another cell in it.
+# ---------------------------------------------------------------------------
+
+NFR_007_RESIDUAL_RISK = (
+    "NFR-007 states this effort's acceptance as a COMPARISON — \"a terminal "
+    "state (DONE or HALTED with a named backlog) in materially fewer "
+    "FULL-width cycles\" — and three of its four terms are measured. The "
+    "terminal state is state.json's phase plus its phase_history HALTED row; "
+    "the named backlog is the report's latent, hardening and unknown-tier "
+    "sections; this run's own FULL-width count is foundry_state's "
+    "full_cycle_ratio. The fourth term is the PREDECESSOR's FULL-width count, "
+    "and it has no figure anywhere. THUNDER_VIPER_BASELINE records "
+    "grind_cycles and post_verification_cycles and no width, because the "
+    "thunder-viper archive predates width recording entirely: that run "
+    "executed on the 4.7.3 server cache, which wrote no inspect_modes at all, "
+    "so not one of its 22 GRIND cycles carries a width and none can be "
+    "recovered from what it left behind. THE FIX IS THAT THERE IS NOT ONE, "
+    "AND RECORDING THAT IS THE DELIVERABLE. NFR-007 is therefore evaluated "
+    "through NFR-008's ratio — FULL cycles divided by total INSPECT cycles, "
+    "below 50% — which is wired, measured and reported on this run. NFR-008 "
+    "is a separate Locked row, so reading one through the other is a "
+    "judgement rather than a derivation, and it is an accepted residual risk "
+    "of comparing against an archive written before the widths existed, not a "
+    "gap someone is going to close later. Read it as a bound on what the "
+    "convergence comparison proves: a run that passes NFR-008 has shown its "
+    "own width is under half, and has not shown a number against "
+    "thunder-viper's."
+)
+
+# ---------------------------------------------------------------------------
 # Finding-record vocabularies.
 #
 # Added by D-071. schemas/findings.py was a SEVENTH copy of the vocabularies

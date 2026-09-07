@@ -2664,8 +2664,17 @@ ORCHESTRATION_PACKAGE = (
 #: `references/`) still matching a verifier pattern after the split". Each one
 #: acts on a verdict or describes it; none of them moving can make a verdict
 #: already reached wrong, which is the only thing `verifier_touched` is for.
+#:
+#: EVERY ROW IS A MODULE THAT SHIPS, and the pin below asserts that as well as
+#: the rule (D-184). These were written in wave 1 against the names the split
+#: was planned to produce, and the split did not produce all of them: display
+#: stayed in `tools/`, so the `orchestration/display.py` row this tuple opened
+#: with named no file at all. A regex matches a string, so that row answered
+#: False and passed forever while pinning nothing — the same staleness D-033
+#: filed one roster over, arriving on the side where a dead row costs a
+#: renderer a five-stream FULL INSPECT.
 POST_SPLIT_DELTA_MODULES = (
-    "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/display.py",
+    "plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py",
     "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/report_seal.py",
     "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/spend.py",
     "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/halt.py",
@@ -2729,17 +2738,29 @@ def test_every_post_split_gate_module_is_a_verifier_path(path: str) -> None:
 
 @pytest.mark.parametrize("path", POST_SPLIT_DELTA_MODULES)
 def test_every_post_split_lifecycle_module_earns_delta(path: str) -> None:
-    """GI-009's violation column, asserted before the modules exist.
+    """GI-009's violation column, over the modules the split actually shipped.
 
     "a display, report-seal, spend, halt, directives or teams module ... still
     matching a verifier pattern after the split". Each acts on a verdict or
     renders one; none of them moving can make a verdict already reached wrong.
 
-    Asserted on the PATH rather than on the file, and deliberately so: this is
-    the half of the narrowing that is easiest to undo by accident. A future
-    edit that reaches for a `orchestration/` segment rule — which reads like
-    the tidy generalisation of the four-module alternation — turns every row
-    here red at once, which is the whole reason they are spelled out.
+    THE RULE IS ASSERTED ON THE PATH; THE ROW IS ASSERTED ON THE FILE.
+    ------------------------------------------------------------------
+    The first assertion is the narrowing itself, and it is the half easiest to
+    undo by accident: a future edit reaching for a `orchestration/` segment
+    rule — which reads like the tidy generalisation of the four-module
+    alternation — turns every row here red at once, which is the whole reason
+    they are spelled out rather than derived.
+
+    The second assertion is D-184. This roster was written in wave 1 against
+    the module names the split was PLANNED to produce, and it kept naming
+    `orchestration/display.py` after the split shipped `display.py` in
+    `tools/` instead. A regex matches a string, so the row went on passing
+    while proving nothing about any diff git can print — and unlike its
+    sibling roster `VERIFIER_SET`, which asserts existence on every row, there
+    was nothing here to say so. A dead row on the DELTA side is the worse
+    direction to be dead in: the rule it fails to pin is the one that keeps a
+    renderer from buying a five-stream FULL INSPECT.
     """
     assert not vocab.is_verifier_path(path), (
         f"{path} is a lifecycle or presentation module: it ACTS on verdicts or "
@@ -2747,6 +2768,13 @@ def test_every_post_split_lifecycle_module_earns_delta(path: str) -> None:
         f"sound as it was. A GRIND diff confined to it earns rule `delta` "
         f"(AC-012 / OT-013). Widening to a `orchestration/` segment rule is the "
         f"regression this row exists to catch."
+    )
+    assert (REPO_ROOT / path).exists(), (
+        f"{path} does not exist, so this row proves nothing about a real "
+        f"diff — `is_verifier_path` would answer False for it however the "
+        f"patterns were written. Point it at the module that ships instead "
+        f"(D-184: the split put display.py in `tools/`, not in "
+        f"`tools/orchestration/`)."
     )
 
 
@@ -4012,6 +4040,55 @@ def test_the_baseline_and_target_carry_nfr_001s_four_numbers() -> None:
     # The target must actually be an improvement, or "meets_target" is noise.
     for key in ("grind_cycles", "post_verification_cycles"):
         assert vocab.CONVERGENCE_TARGET[key] < vocab.THUNDER_VIPER_BASELINE[key]
+
+
+def test_nfr_007s_missing_baseline_width_is_recorded_as_a_residual_risk() -> None:
+    """D-186 / NFR-007 / NFR-011 — the substitution is WRITTEN DOWN.
+
+    NFR-007 states this effort's acceptance as a COMPARISON: "a terminal state
+    (DONE or HALTED with a named backlog) in materially fewer FULL-width
+    cycles". Three of its four terms are measured and wired — the terminal
+    state through `state.json`'s phase and phase_history, the named backlog
+    through the report's latent, hardening and unknown-tier sections, and this
+    run's own FULL-width count through `foundry_state.full_cycle_ratio`. The
+    fourth, the PREDECESSOR's FULL-width count, has no figure anywhere:
+    `THUNDER_VIPER_BASELINE` records `grind_cycles` and
+    `post_verification_cycles` and no width, because thunder-viper's archive
+    predates width recording entirely.
+
+    So NFR-007 is evaluated through NFR-008's ratio, which IS wired and does
+    pass — and NFR-008 is a separate Locked row, so substituting one for the
+    other is a judgement, not a derivation. FR-036's shape is the remedy for
+    exactly this: "Nothing beyond FULL width; record it as a documented
+    residual risk." The record IS the deliverable, and NFR-011 says every
+    prose rule this effort states is pinned to a code constant — which is why
+    the note is a constant here and not a comment nobody can assert on.
+
+    This test is that constant's reader, the way `test_lead_prose.py` is the
+    reader of `references/lead-discipline.md`'s own FR-036 paragraph.
+    """
+    note = vocab.NFR_007_RESIDUAL_RISK
+    assert isinstance(note, str)
+
+    # It names the requirement it bounds and the one it is evaluated through.
+    # A note that says "we could not measure it" without naming the substitute
+    # records a hole rather than a decision.
+    assert "NFR-007" in note
+    assert "NFR-008" in note
+
+    # It says WHY no predecessor figure exists, by name — not "unavailable".
+    assert vocab.THUNDER_VIPER_BASELINE["run"] in note
+    assert "inspect_modes" in note
+
+    # FR-036's register: an accepted residual risk, not a deferred task. Both
+    # halves are asserted, because the sentence that makes this honest is the
+    # one that refuses to promise a later fix.
+    assert "residual risk" in note
+    assert "not a gap someone is going to close later" in note
+
+    # And it must not fabricate the number it cannot have. A width figure in
+    # this note would be the very thing D-186 says not to attempt.
+    assert "FULL-width" in note
 
 
 def test_the_prefix_partition_covers_this_runs_own_spec() -> None:
