@@ -2191,7 +2191,7 @@ def test_sight_required_honours_the_no_ui_declaration(run_env) -> None:
 def test_sight_required_does_not_read_a_directory_entry_as_no_frontend(
     run_env,
 ) -> None:
-    """fallout C-081 / D-170 / GI-002 — a whole stream was failing open, silently.
+    """fallout GI-002 / C-081 / D-170 — a whole stream was failing open, silently.
 
     A `key_files` entry is a file path OR a directory spelled with a trailing
     slash (`foundry_validate._key_file_covers` states the format). The scan
@@ -2199,8 +2199,9 @@ def test_sight_required_does_not_read_a_directory_entry_as_no_frontend(
     slash — contributed no ui_files, and a casting that owns a UI package by
     naming it once got `required: False, "No frontend files in castings"`.
     SIGHT skipped on a run with a frontend, under a reason that reads as a
-    measurement. GI-002 is that every verification stream keeps existing; this
-    was a way for one to stop existing with nobody deciding to drop it.
+    measurement. The invariant cited above is that every verification stream
+    keeps existing; this was a way for one to stop existing with nobody
+    deciding to drop it.
 
     The verdict here is still False, and deliberately: the extension of a
     directory is unknowable from the manifest alone, and answering True would
