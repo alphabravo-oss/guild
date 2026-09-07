@@ -4983,9 +4983,27 @@ _DELIBERATE_REDEFINITIONS: dict[str, str] = {
         "these are call-through bindings and `test_the_timestamp_has_one_"
         "implementation_however_it_is_spelled` pins that they resolve to it."
     ),
+    # fallout NFR-011 (casting 1's concern C-066) — THE COUNT IS GONE, AND THE
+    # CLAIM THAT SURVIVES IS THE ONE THE ROW IS ACTUALLY MAKING.
+    #
+    # This read "each shape their own FOUR-TOKEN refusal set", and the number was
+    # wrong in both directions: concerns.py has carried FIVE tokens since before
+    # this cycle (CONCERN_TARGET_UNRESOLVED, CONCERN_TEXT_EMPTY,
+    # CONCERN_CYCLE_REQUIRED, CONCERN_UNKNOWN_ID, CONCERN_CLOSE_REASON_REQUIRED)
+    # and rosters.py went from four to SEVEN at b40256b (adding
+    # ROSTER_ITEMS_EMPTY, ROSTER_ITEMS_DUPLICATED, ROSTER_ITEM_NOT_NAMED). No
+    # assertion failed — this guard checks that the name is duplicated and that
+    # the row is not stale, and both still held — so it was prose beside code of
+    # the escalated class `stale-prose-survives-beside-new-prose`, and it would
+    # have drifted again every time either door grew a refusal.
+    #
+    # The load-bearing half never depended on the number: the SHAPE is the house
+    # one and the vocabularies are DISJOINT, which is the whole reason there is
+    # nothing for one definition to say for both. Said without a count, it
+    # cannot go stale.
     "_named_refusal": (
-        "tools/concerns.py and tools/rosters.py each shape their own four-token "
-        "refusal set; the SHAPE is the house one and the token vocabularies are "
+        "tools/concerns.py and tools/rosters.py each shape their own refusal "
+        "token set; the SHAPE is the house one and the token vocabularies are "
         "disjoint, so there is nothing for one definition to say for both. "
         "tools/display.py's is a third thing again and not a refusal SHAPER at "
         "all — it READS the refusal text a handler already named, so it shares "
@@ -5056,6 +5074,52 @@ def _package_source_modules() -> list[Path]:
     """Every shipped `.py` under the installed package, tests excluded."""
     pkg = Path(foundry_mcp.__file__).resolve().parent
     return sorted(p for p in pkg.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+#: fallout AC-011 / OT-011 / GI-024 (D-131 / D-132) — THE SCRIPTS GI-024 NAMES,
+#: WHICH THE INSTALLED PACKAGE DOES NOT CONTAIN.
+#:
+#: GI-024's applies-to column is `tools/foundry_state.py`, `display.py`,
+#: `foundry_report.py` AND `scripts/measure-run.py`, and the spec's Data Model
+#: row names the script as a consumer of these readers. AC-011 asks that "AN AST
+#: TEST REFUSES A SECOND DEFINITION of any of the named helpers"; the test's
+#: module set was `Path(foundry_mcp.__file__).parent.rglob("*.py")` — the
+#: installed package — so the one file the invariant names by hand was never
+#: parsed. DRIVEN: two top-level defs (`spend_rollup`, `markdown_sections`)
+#: appended to `scripts/measure-run.py`, both shadowing the module-scope imports
+#: it already makes; `test_no_top_level_symbol_is_defined_in_two_shipped_modules`
+#: plus `test_measure_run.py` ran 82 passed 1 skipped, GREEN. The one
+#: implementation existed, so the RULE held — the guard that is supposed to keep
+#: it holding could not see the file.
+#:
+#: SCOPED TO WHAT GI-024 NAMES, not to `scripts/` at large. The other three
+#: scripts are standalone programs that cannot import the package they operate
+#: on — `migrate-archive.py` re-spells `_load_json` and `_save_json` for exactly
+#: that reason — so sweeping them into the package's symbol space would import
+#: twelve collisions that are not this invariant's subject and would need an
+#: allowlist to carry. This adds the ONE file the requirement names.
+_CONSOLIDATION_SCRIPTS = ("measure-run.py",)
+
+
+def _consolidation_scan_modules() -> list[Path]:
+    """The package, plus the plugin scripts GI-024's applies-to column names.
+
+    The window the CONSOLIDATED-HELPER rule is stated over.
+    `_package_source_modules` stays the window for the package's own symbol
+    space, and the two are different questions: "does this package define one
+    rule twice" and "does anything the plugin ships re-define a helper GI-024
+    consolidated". Asking the second over the first's file set is how the guard
+    came to judge a set that excluded the file the requirement names.
+    """
+    plugin_root = Path(artifacts.__file__).resolve().parents[4]
+    assert plugin_root.name == "foundry", plugin_root
+    scripts = [plugin_root / "scripts" / name for name in _CONSOLIDATION_SCRIPTS]
+    for script in scripts:
+        assert script.exists(), (
+            f"{script} is named by GI-024's applies-to column and is not in the "
+            "tree; the scan window has gone blind rather than clean"
+        )
+    return _package_source_modules() + scripts
 
 
 
@@ -5209,7 +5273,9 @@ def test_the_helpers_group_zero_consolidated_have_exactly_one_definition():
     `_now` in a module that used to have its own copy fails here with the
     helper's name in the message, rather than in a dict of forty entries.
     """
-    modules = _package_source_modules()
+    # fallout AC-011 / OT-011 / GI-024 (D-131 / D-132) — over the window the
+    # RULE is stated across, which includes `scripts/measure-run.py`.
+    modules = _consolidation_scan_modules()
     for helper in (
         "now_iso", "current_cycle", "prove_is_clean", "overlay_unreported",
         "spend_bucket", "markdown_sections", "unreported_dispatch_pairs",
@@ -5329,9 +5395,17 @@ def test_the_agent_id_has_one_implementation_however_it_is_spelled():
 #: `gates -> escalation` and `transitions -> escalation` from the last two
 #: layering violations into verifier-to-leaf edges, which the rule has never had
 #: anything to say about.
+#: `worktree_helpers` is the ninth member and it qualified on the property
+#: alone: it imports `fcntl`, `os`, `shutil`, `signal`, `subprocess`,
+#: `threading`, `time` and `pathlib` and NOTHING under `foundry_mcp` at any
+#: depth. It joins because `evidence.py` — a verifier module as of this cycle —
+#: reads its worktree and subprocess primitives at module top, and a leaf is
+#: what both layers may reach. Spawning subprocesses does not disqualify a
+#: module the way reaching the lifecycle layer does: the rule is about the
+#: dependency graph, and this module's is empty.
 _LEAF_MODULES = frozenset({
     "artifacts", "foundry_state", "vocab", "findings", "citation", "validation",
-    "escalation",
+    "escalation", "worktree_helpers",
 })
 
 #: The four GI-033 names in its own parenthetical. They are leaves BY THE
@@ -5346,8 +5420,31 @@ _LEAF_MODULES = frozenset({
 #: nobody should read "leaf" as "pure" without checking which half of this set
 #: a module is in.
 _INVARIANT_NAMED_LEAVES = frozenset({"artifacts", "foundry_state", "vocab", "schemas"})
+
+#: fallout AC-061 / FR-063 / GI-033 (D-126, casting 5's concern C-067) — THE
+#: FIFTH VERIFIER MODULE, AND IT DOES NOT LIVE IN THIS PACKAGE.
+#:
+#: This set was the four `orchestration/` modules, and the spec's dependency-flow
+#: paragraph names FIVE: "verifier (gates.py, transitions.py, width.py,
+#: evidence_boundary.py, evidence.py)". `vocab.VERIFIER_PATH_PATTERNS` matches
+#: `tools/evidence.py` too, so the guard and the width rule disagreed about what
+#: the verifier layer IS.
+#:
+#: TWO LIVE CONSEQUENCES, both closed here. (1) The verifier-side walks iterated
+#: `_shipped_orchestration_modules()`, so `tools/evidence.py`'s OUTGOING edges
+#: were judged by nothing — driven by planting a module-top `import
+#: foundry_mcp.tools.display` at the top of evidence.py in an isolated copy: all
+#: three layering tests PASSED, and a lazy `evidence -> report_seal` plant was
+#: equally invisible, while the same plant naming `orchestration.gates` failed
+#: correctly. The walk worked; its SUBJECT SET was the hole, and both walks are
+#: stated over `_layered_modules()` now. (2) The lifecycle-direction walk
+#: classified `evidence` as lifecycle BY ELIMINATION, so a lifecycle module
+#: importing it was permitted — the direction AC-061 says is refused ENTIRELY.
+#:
+#: `halt.py`'s exclusion is unchanged and is asserted below: GI-033 puts it
+#: outside the verifier set by name, and that is why the seam exists.
 _VERIFIER_MODULES = frozenset({
-    "gates", "transitions", "width", "evidence_boundary",
+    "gates", "transitions", "width", "evidence_boundary", "evidence",
 })
 
 #: The ONE exception GI-033 names, spelled as the edge it permits.
@@ -5357,6 +5454,45 @@ _VERIFIER_MODULES = frozenset({
 #: is what makes it an exception rather than a hole: `halt.py` importing a
 #: verifier module fails the rule exactly as any other lifecycle module does.
 _VERIFIER_TO_LIFECYCLE_SEAM = frozenset({("transitions", "halt")})
+
+#: fallout AC-061 / FR-063 / GI-033 (D-126, concern C-067) — THE ONE CROSSING
+#: THE WIDENED SUBJECT SET REVEALS, AND WHY THIS IS NOT THE TABLE THAT WAS
+#: DELETED.
+#:
+#: Widening `_VERIFIER_MODULES` to the spec's five made `tools/evidence.py`'s
+#: edges judgeable for the first time, and one MUTUAL crossing came with it:
+#: `evidence -> foundry_handoff` (module top, for `_hash_str` and
+#: `declared_requirement_ids`) and `foundry_handoff -> evidence` (lazy, inside
+#: `foundry_accept_casting`, for `verify_evidence`). Neither file belongs to
+#: this casting.
+#:
+#: HOW THIS DIFFERS FROM THE LAYERING-DEBT ALLOWLIST C-054 DELETED — the
+#: distinction is the whole of why a table is admissible here at all. That one
+#: was a `(home, imported) -> reason` dict CONSULTED BEFORE JUDGING, so an
+#: excused edge never entered `violations` and the assertion reported `[] ==
+#: []` over a tree with fourteen crossings in it. Nothing downstream could tell
+#: the tree had the coupling. This is an EXACT-EQUALITY roster: every crossing
+#: still enters the assertion's own subject, a NEW one fails because the sets
+#: differ, and a CLOSED one fails too because the row goes stale. It cannot
+#: report a clean tree and it cannot outlive what it records.
+#:
+#: AND IT CANNOT EXCUSE THIS CASTING'S OWN DEBT. `test_the_unclosed_crossings_
+#: are_all_somebody_elses` asserts that neither endpoint of any row is a file
+#: this casting may edit — the same predicate `_KNOWN_DUPLICATION` carries one
+#: rule along, and the reason a row is a deferral that has to keep earning
+#: itself rather than an allowlist.
+#:
+#: THE REMEDY IS RECORDED AND OWNED. Casting 5 raised C-067 with GI-033's own
+#: arithmetic: "a symbol read from BOTH can live in neither: it belongs in a
+#: leaf". `_hash_str` is already defined in the leaf `artifacts.py`;
+#: `declared_requirement_ids` is pure text over `REQUIREMENT_ID_RE.pattern` and
+#: belongs beside it. Casting 7 owns that move. The second direction is
+#: structural rather than a stray symbol — the acceptance door RUNS the evidence
+#: verification — and closing it is a reshaping no cycle of this run has scoped.
+_UNCLOSED_CROSS_PACKAGE_EDGES: frozenset[tuple[str, str]] = frozenset({
+    ("evidence", "foundry_handoff"),
+    ("foundry_handoff", "evidence"),
+})
 
 #: fallout GI-033 / AC-061 / FR-063 / OT-015 (D-021 / D-035) — THERE IS NO
 #: LAYERING-DEBT ALLOWLIST ANY MORE, AND THAT IS THE FIX.
@@ -5572,7 +5708,11 @@ def test_the_three_layers_hold_with_exactly_one_named_seam():
     a width, and the whole point of narrowing `VERIFIER_PATH_PATTERNS` is that
     the set which forces FULL width is small and stated.
     """
-    modules = _shipped_orchestration_modules()
+    # fallout AC-061 (D-126) — EVERY LAYERED MODULE, not the orchestration
+    # package alone. `tools/evidence.py` is a verifier module and lives outside
+    # this package, so a scan over `orchestration/*.py` judged its edges by
+    # nothing at all while stating a rule about the verifier layer.
+    modules = sorted(_layered_modules().values())
     names = {p.stem for p in modules}
     assert _VERIFIER_MODULES <= names, sorted(_VERIFIER_MODULES - names)
     # The leaf set is a real set of real modules: a layering rule stated over a
@@ -5597,6 +5737,10 @@ def test_the_three_layers_hold_with_exactly_one_named_seam():
         ):
             checked += 1
             if (home, imported) in _VERIFIER_TO_LIFECYCLE_SEAM:
+                continue
+            if (home, imported) in _UNCLOSED_CROSS_PACKAGE_EDGES:
+                # NOT skipped silently: recorded, and the roster is asserted
+                # exactly below so the row cannot outlive the crossing.
                 continue
             if imported in _LEAF_MODULES:
                 # A leaf is the layer BOTH sides may reach; that is the whole of
@@ -5768,18 +5912,24 @@ def test_no_verifier_module_reaches_a_lifecycle_module_lazily_either():
     module-top import would, and it does it where no import scan looks. So the
     rule is asserted over EVERY import in the file, with the same one exception.
     """
+    # fallout AC-061 (D-126) — EVERY layered module both sides, so a verifier
+    # module outside `orchestration/` is walked and a lifecycle module outside
+    # it can be reached INTO. `evidence.py` was neither before this.
+    layered = _layered_modules()
     lifecycle = {
-        p.stem for p in _shipped_orchestration_modules()
-        if p.stem not in _VERIFIER_MODULES and p.stem not in _LEAF_MODULES
+        name for name in layered
+        if name not in _VERIFIER_MODULES and name not in _LEAF_MODULES
     }
     offenders: list[str] = []
-    for path in _shipped_orchestration_modules():
-        if path.stem not in _VERIFIER_MODULES:
+    for name, path in sorted(layered.items()):
+        if name not in _VERIFIER_MODULES:
             continue
         for imported in sorted(_all_imports(path) & lifecycle):
-            if (path.stem, imported) in _VERIFIER_TO_LIFECYCLE_SEAM:
+            if (name, imported) in _VERIFIER_TO_LIFECYCLE_SEAM:
                 continue
-            offenders.append(f"{path.stem} -> {imported}")
+            if (name, imported) in _UNCLOSED_CROSS_PACKAGE_EDGES:
+                continue
+            offenders.append(f"{name} -> {imported}")
     assert offenders == [], (
         f"verifier module(s) reaching the lifecycle layer: {offenders}. Either "
         "the symbol belongs in a leaf, or the edge is a new seam and belongs in "
@@ -5832,6 +5982,11 @@ _LIFECYCLE_FLOOR = frozenset({
     "streams", "teams",
     "concerns", "display", "foundry", "foundry_report", "foundry_spawn",
     "rosters",
+    # fallout AC-061 (D-126): the acceptance door, named because the widened
+    # verifier set makes its reach INTO  judgeable for the first
+    # time. A floor that did not name it would let the walk go blind over the
+    # one lifecycle-to-verifier crossing this tree actually has.
+    "foundry_handoff",
 })
 
 
@@ -5893,6 +6048,8 @@ def test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth():
         if imports & set(layered):
             reaching.add(name)
         for imported in sorted(imports & _VERIFIER_MODULES):
+            if (name, imported) in _UNCLOSED_CROSS_PACKAGE_EDGES:
+                continue
             offenders.append(f"{name} (lifecycle) reaches {imported} (verifier)")
 
     # ...and the walk is SEEING the package, not returning empty sets. Named
@@ -5913,6 +6070,55 @@ def test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth():
         "to a leaf is the fix, and an entry excusing the edge is the shape "
         "C-054 deleted the layering-debt allowlist for."
     )
+
+
+def test_every_unclosed_crossing_still_exists_and_is_somebody_elses():
+    """fallout AC-061 / GI-033 (D-126, concern C-067) — the roster's two sides.
+
+    An exception that permits nothing is an exception nobody removed, and an
+    exception over a file THIS casting can edit is an allowlist for its own
+    debt. Both are asserted, which is what makes `_UNCLOSED_CROSS_PACKAGE_EDGES`
+    a deferral that keeps earning itself rather than the fail-open table C-054
+    deleted.
+
+    (1) EVERY ROW NAMES A CROSSING THAT IS REALLY THERE. When casting 7's leaf
+        move lands and `evidence -> foundry_handoff` goes, that row goes stale
+        and this fails by name — which is how the guard learns the debt closed
+        instead of quietly carrying a row about nothing.
+
+    (2) NEITHER ENDPOINT IS THIS CASTING'S. The row survives only while it is
+        somebody else's to close; the day a listed module moves into
+        `tools/orchestration/`, `tests/orchestration/`, `server.py` or
+        `foundry_spawn.py`, the excuse stops being true.
+    """
+    layered = _layered_modules()
+    ours = ("orchestration/", "server.py", "foundry_spawn.py")
+    tools = Path(artifacts.__file__).resolve().parent
+
+    stale: list[str] = []
+    mine: list[str] = []
+    for home, imported in sorted(_UNCLOSED_CROSS_PACKAGE_EDGES):
+        assert home in layered and imported in layered, (home, imported)
+        if imported not in _all_imports(layered[home]):
+            stale.append(f"{home} -> {imported}")
+        for module in (home, imported):
+            relative = str(layered[module].relative_to(tools))
+            if any(part in relative for part in ours):
+                mine.append(f"{module} ({relative})")
+
+    assert stale == [], (
+        f"unclosed-crossing row(s) naming an edge that no longer exists: "
+        f"{stale}. The coupling is gone — take the row with it, and let the "
+        "layering rule judge that direction absolutely again."
+    )
+    assert mine == [], (
+        f"unclosed-crossing row(s) over a file THIS casting can edit: {mine}. "
+        "The roster records a crossing another casting must close; a row over "
+        "one of our own files is an allowlist for our own debt. Close it here."
+    )
+    # ...and the roster is not standing in for the seam: the one exception
+    # GI-033 NAMES is still spelled separately, and still one-way.
+    assert _UNCLOSED_CROSS_PACKAGE_EDGES.isdisjoint(_VERIFIER_TO_LIFECYCLE_SEAM)
 
 
 def test_a_planted_lazy_gate_reach_is_seen_by_the_lifecycle_walk(tmp_path):
@@ -6328,3 +6534,97 @@ def test_the_citation_pin_recognises_an_id_the_spec_does_not_declare(tmp_path):
     answers = set(re.findall(r"\bA-\d{3}\b", spec.read_text(encoding="utf-8")))
     assert "A-047" in answers, sorted(answers)[-3:]
     assert "A-048" not in answers, "the transcript grew; re-check D-150's example"
+
+
+
+
+def test_the_verifier_walks_now_have_evidence_py_in_their_subject_set():
+    """fallout AC-061 / FR-063 (D-126, concern C-067) — the SUBJECT SET is the fix.
+
+    The three-layer walk and its any-depth companion both iterated
+    `_shipped_orchestration_modules()`, so `tools/evidence.py` — a verifier
+    module by the spec's dependency flow AND by `vocab.VERIFIER_PATH_PATTERNS` —
+    had its outgoing edges judged by nothing. DRIVEN before the fix: a module-top
+    `import foundry_mcp.tools.display` planted at the top of evidence.py in an
+    isolated copy left all three layering tests PASSING, and a lazy
+    `evidence -> report_seal` plant was equally invisible, while the same plant
+    naming `orchestration.gates` failed correctly.
+
+    So the walk was never broken and a recogniser anchor would not have found
+    this. What is asserted here is the thing that WAS wrong: that the set the
+    walks iterate contains the module, and that the guard and the width rule now
+    agree about which files are the verifier layer.
+    """
+    layered = _layered_modules()
+    assert "evidence" in layered, sorted(layered)
+    assert "evidence" in _VERIFIER_MODULES
+    # It is NOT in the orchestration package, which is exactly why the old
+    # subject set could not see it.
+    assert "evidence" not in {p.stem for p in _shipped_orchestration_modules()}
+
+    # The guard and `vocab.VERIFIER_PATH_PATTERNS` agree: every module this set
+    # names is one the width rule also calls a verifier, so a diff touching it
+    # forces FULL and the layering rule judges it. Disagreement between the two
+    # is what C-067 reported.
+    tools_rel = "plugins/foundry/mcp-server/src/foundry_mcp/tools"
+    for name in sorted(_VERIFIER_MODULES):
+        path = layered[name]
+        relative = (
+            f"{tools_rel}/orchestration/{name}.py"
+            if path.parent.name == "orchestration"
+            else f"{tools_rel}/{name}.py"
+        )
+        assert vocab.is_verifier_path(relative, "spec.md"), (name, relative)
+
+    # ...and the converse half of AC-061: `halt.py` is a verifier by neither.
+    assert "halt" not in _VERIFIER_MODULES
+    assert not vocab.is_verifier_path(f"{tools_rel}/orchestration/halt.py", "spec.md")
+
+
+
+
+def test_a_second_definition_in_measure_run_is_refused(tmp_path):
+    """fallout AC-011 / OT-011 / GI-024 (D-131 / D-132) — the anchor, on the file
+    the requirement names.
+
+    A scan over a clean window is green whether it looks at the right files or
+    not, which is exactly how this went unnoticed: the rule held, so the guard
+    passed, and nobody could tell it was passing over a set that excluded
+    `scripts/measure-run.py`. The recogniser is therefore driven over the EXACT
+    plant D-131 was filed on — `spend_rollup` and `markdown_sections` defined at
+    top level in that script, shadowing the module-scope imports it already
+    makes — without touching the real file.
+
+    The window helper is asserted to CONTAIN the script first, so a future
+    refactor that quietly drops it fails here rather than in six months.
+    """
+    window = _consolidation_scan_modules()
+    names = [p.name for p in window]
+    assert "measure-run.py" in names, names[-5:]
+    assert len(window) == len(_package_source_modules()) + len(_CONSOLIDATION_SCRIPTS)
+
+    # The real file defines neither name today — the one implementation exists,
+    # which is why only the guard needed fixing.
+    real = next(p for p in window if p.name == "measure-run.py")
+    assert {"spend_rollup", "markdown_sections"}.isdisjoint(
+        _top_level_definitions(real)
+    ), "measure-run.py has grown a second definition; that is the real finding"
+
+    # The plant, judged by the same walk the test above uses.
+    planted = tmp_path / "measure-run.py"
+    planted.write_text(
+        real.read_text(encoding="utf-8")
+        + "\n\ndef spend_rollup(*a, **k):\n    return {}\n"
+        + "\n\ndef markdown_sections(*a, **k):\n    return {}\n",
+        encoding="utf-8",
+    )
+    defined = _top_level_definitions(planted)
+    assert {"spend_rollup", "markdown_sections"} <= defined, sorted(defined)[:8]
+
+    # ...and each name really is one the leaf already owns, so the plant is a
+    # SECOND definition rather than a first.
+    leaf = Path(artifacts.__file__).resolve().parent / "foundry_state.py"
+    owned = _top_level_definitions(leaf)
+    assert {"spend_rollup", "markdown_sections"} <= owned, sorted(
+        {"spend_rollup", "markdown_sections"} - owned
+    )

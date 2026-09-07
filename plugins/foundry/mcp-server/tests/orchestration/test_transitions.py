@@ -3373,11 +3373,113 @@ def test_every_gate_rank_constant_has_a_way_to_provoke_it():
 
 
 
+#: fallout AC-008 / FR-041 (D-133 / D-134) — THE EMPTINESS GUARD ON THE
+#: CROSS-PRODUCT, WHICH IS THE AXIS THAT HAD NONE.
+#:
+#: AC-008 asks that the invariant "PROVOKES EVERY RUNG FOR EVERY TOKEN", and the
+#: parametrization derives its cases by intersecting two axes: tokens from
+#: `PHASE_TOKENS`, rungs from the `_GATE_RANK_*` constants. BOTH AXES CARRY
+#: EMPTINESS GUARDS —
+#: `test_every_transition_token_has_exactly_one_preconditions_routine` and
+#: `test_every_gate_rank_constant_has_a_way_to_provoke_it`. The INTERSECTION
+#: carried none, and the intersection is what is actually walked.
+#:
+#: So a rung REMOVED from a routine silently deleted the case that would have
+#: walked it. DRIVEN: the `_teams_rung` call was deleted from
+#: `transitions.py#_cast_preconditions`; collection dropped 59 -> 58 and this
+#: invariant stayed GREEN — the deletion was caught only by an unrelated
+#: dedicated test, not by the pin AC-008 and FR-041 name as the mechanism. A
+#: derived pin that shrinks when the code shrinks is the worst failure a derived
+#: pin can have, and it is the same failure
+#: `test_every_defect_reading_gate_names_a_real_predicate` was written to
+#: prevent one axis over.
+#:
+#: A FLOOR, NEVER THE ROSTER. This suite's own rule, learned on C-062 and
+#: written down at the width pin and again at `_LIFECYCLE_FLOOR`: "named modules
+#: rather than a count alone, because a count passes on any roster of the right
+#: size". Each entry names the rungs a token's routine MUST be able to emit; a
+#: rung ADDED to a routine is walked the day it is written and needs no entry
+#: here, and a rung REMOVED fails by name. The cases are still DERIVED — this
+#: judges the derivation rather than replacing it.
+_TOKEN_RUNG_FLOOR: dict[str, frozenset[str]] = {
+    "assay_fail": frozenset({"DEFECTS", "HALTED", "MARKER", "TEAMS"}),
+    "cast": frozenset({"CONFIG", "EVIDENCE", "HALTED", "SOURCE", "TEAMS"}),
+    "done": frozenset({
+        "CONFIG", "DEFECTS", "ESCALATION", "EVIDENCE", "HALTED", "REPORT",
+        "SOURCE", "TEAMS", "VERDICTS",
+    }),
+    "grind_start": frozenset({"DEFECTS", "HALTED", "MARKER", "TEAMS"}),
+    "halt": frozenset({"CONFIG", "HALTED", "TEAMS"}),
+    "inspect_clean": frozenset({"DEFECTS", "HALTED", "STREAMS", "TEAMS", "WIDTH"}),
+    "inspect_start": frozenset({
+        "DEFECTS", "EVIDENCE", "HALTED", "MARKER", "SOURCE", "WIDTH",
+    }),
+    "nyquist": frozenset({
+        "CONFIG", "DEFECTS", "EVIDENCE", "HALTED", "SOURCE", "VERDICTS",
+    }),
+    "nyquist_done": frozenset({
+        "CONFIG", "DEFECTS", "ESCALATION", "EVIDENCE", "HALTED", "REPORT",
+        "SOURCE", "TEAMS", "VERDICTS",
+    }),
+    "start_cast": frozenset({"CONFIG", "CONFLICT", "HALTED"}),
+    # `CONFIG` is the temper opt-in rung fallout FR-016 / FR-060 added
+    # (D-143 / D-144); it is in the floor so the rung cannot be removed and
+    # take its own invariant case with it, which is the shape D-133 is about.
+    "temper": frozenset({
+        "CONFIG", "DEFECTS", "EVIDENCE", "HALTED", "SOURCE", "VERDICTS",
+    }),
+}
+
+
 _TOKEN_RUNGS = sorted(
     (token, rank)
     for token in PHASE_TOKENS
     for rank in sorted(_ranks_a_routine_can_emit(token))
 )
+
+
+def test_the_walked_cross_product_covers_every_token_and_its_known_rungs():
+    """fallout AC-008 / FR-041 (D-133 / D-134) — the pin's stated WIDTH.
+
+    AC-008 and FR-041 both say the invariant "provokes every rung for every
+    token". What was derived was correct and what was MISSING was any assertion
+    that the derivation had not shrunk, so a rung deleted from a routine deleted
+    its own coverage and the suite stayed green.
+
+    Three claims, none of them a bare count:
+      1. every `PHASE_TOKENS` member contributes at least one case — a token
+         whose routine emits nothing would otherwise vanish from the walk;
+      2. every token's floor rungs are all present, by NAME, so a removal is
+         reported as the rung it was;
+      3. the floor names every token, so a token added to `PHASE_TOKENS` without
+         a floor entry fails here rather than being walked by whatever its
+         routine happens to mention.
+    """
+    walked: dict[str, set[str]] = {}
+    for token, rank in _TOKEN_RUNGS:
+        walked.setdefault(token, set()).add(rank.replace("_GATE_RANK_", ""))
+
+    assert set(_TOKEN_RUNG_FLOOR) == set(PHASE_TOKENS), {
+        "token_without_a_floor": sorted(set(PHASE_TOKENS) - set(_TOKEN_RUNG_FLOOR)),
+        "floor_without_a_token": sorted(set(_TOKEN_RUNG_FLOOR) - set(PHASE_TOKENS)),
+    }
+    missing = {
+        token: sorted(floor - walked.get(token, set()))
+        for token, floor in _TOKEN_RUNG_FLOOR.items()
+        if not floor <= walked.get(token, set())
+    }
+    assert missing == {}, (
+        f"rung(s) a token's routine no longer emits: {missing}. Each one took "
+        "its own invariant case with it when it went, so the gate/transition "
+        "parity for that check is no longer walked at all. Either restore the "
+        "rung, or — if the check genuinely moved — take it out of "
+        "_TOKEN_RUNG_FLOOR in the same commit and say where it went."
+    )
+    # ...and the floor has not outlived the derivation: an entry naming a rung
+    # nothing emits would be a floor that judges nothing.
+    assert set(walked) == set(PHASE_TOKENS), sorted(
+        set(PHASE_TOKENS) - set(walked)
+    )
 
 
 
@@ -3423,17 +3525,52 @@ def test_a_gate_and_its_transition_refuse_the_same_check(run_env, monkeypatch, t
     # this an assertion about the evaluation instead of about a prefix.
     gate_reasons = {r["reason"] for r in gate.get("refusals", [])}
     trans_reasons = {r["reason"] for r in transition.get("refusals", [])}
-    if trans_reasons or gate_reasons:
-        assert gate_reasons == trans_reasons, (token, rank, gate, transition)
-    else:
-        # The HALTED guard short-circuits above the branch chain at both doors,
-        # so neither publishes a ladder — but both say the same sentence, with
-        # each naming ITS OWN surface, which is the whole of the difference.
-        # `_halted_refusal` takes that surface as an argument for exactly this
-        # reason: one judgement, two callers, and the caller's name in the
-        # sentence so the operator knows which call was refused.
-        strip = lambda text: re.sub(r"Foundry-(Gate|Phase)\(phase='[^']+'\)", "<door>", text)
-        assert strip(gate["reason"]) == strip(transition["error"]), (token, rank, gate, transition)
+
+    # fallout AC-062 / OT-045 (D-129 / D-130) — THE LADDER IS PUBLISHED, AND
+    # THAT IS AN ASSERTION RATHER THAN A CASE.
+    #
+    # What stood here was `if trans_reasons or gate_reasons: assert equal` with
+    # an `else:` that strip-compared the two rendered sentences after regexing
+    # the door name away. That `else:` existed for the HALTED rung, which used
+    # to short-circuit ABOVE the branch chain at both doors and publish no
+    # `refusals` key at all. D-088's fix moved the rung INTO every routine, so
+    # the branch became unreachable on a clean tree — and was not deleted, which
+    # turned it into the swallower of the exact defect it was written for.
+    #
+    # DRIVEN: the D-088 shape was re-injected verbatim at BOTH doors in a scratch
+    # copy — `foundry_gate` and `foundry_mark_phase_complete` short-circuiting
+    # above the branch chain on `_halted_outcome`, returning a door-prefixed
+    # sentence with NO `refusals` key — and this pin reported 59 passed. Both
+    # doors fell into the `else:`, `strip()` normalised the door prefix away, and
+    # the pin was green on a tree where the halt token's third refusal did not
+    # come from `_halt_preconditions` at all. AC-062 names this test as the
+    # mechanism, and a mechanism that cannot fail on its own regression is not
+    # one.
+    #
+    # So an empty ladder at either door is now a FAILURE. Every routine emits the
+    # HALTED rung, so a refusing door that publishes nothing has composed its
+    # refusal somewhere other than its preconditions function — which is the
+    # thing GI-011, GI-029 and AC-009 exist to forbid.
+    assert gate_reasons, (
+        f"{token}/{rank}: the gate refused and published NO refusals ladder. A "
+        "refusal composed above the branch chain is the D-088 shape, and it is "
+        "what this pin exists to catch: the named check has to come from the "
+        f"token's own preconditions routine. gate={gate}"
+    )
+    assert trans_reasons, (
+        f"{token}/{rank}: the transition refused and published NO refusals "
+        f"ladder. Same rule, other door. transition={transition}"
+    )
+    assert gate_reasons == trans_reasons, (token, rank, gate, transition)
+
+    # ...and the ONE RENDERED LINE each door speaks is the same judgement, with
+    # each door free to frame it. The transition prefixes its own crossing
+    # ("Cannot enter CAST — ..."); the gate reports the rung bare. Containment
+    # is therefore the honest relation and equality is not — which is why the
+    # deleted `else:` could only ever have held for the HALTED short-circuit,
+    # where both doors emitted one `_halted_refusal` sentence and neither
+    # published a ladder at all.
+    assert gate["reason"] in transition["error"], (token, rank, gate, transition)
 
 
 
