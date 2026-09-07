@@ -12,6 +12,7 @@ from foundry_mcp.schemas.vocab import (
     DEFECT_TIERS,
     HALT_REASON_CAP_REACHED,
     RUN_PHASE_HALTED,
+    TIER_HARDENING,
     TIER_UNKNOWN,
     defect_tier,
 )
@@ -22,6 +23,9 @@ from foundry_mcp.tools.foundry_state import (
     blocking_defects,
     current_cycle,
     now_iso,
+    # fallout AC-022 / GI-014 (C-077) — the reader that HAS every tier's
+    # bucket. `blocking_defects` returns only the blocking three by design.
+    open_defects_by_tier,
 )
 from pathlib import Path
 from foundry_mcp.tools.orchestration.report_seal import (
@@ -66,7 +70,10 @@ def _seal_halted(
     requirement (fallout ST-001 / CT-004 / AC-025). A refusal would leave the run sitting where it
     was with the lead free to call the same token again, having produced nothing
     — a cap that only annoys. Instead `state.json` becomes HALTED, the report is
-    generated naming every open LIVE and LATENT defect, and the call returns
+    generated naming every open defect of every tier (fallout AC-022 / C-077:
+    the sentence said "LIVE and LATENT" while `DEFECT_TIERS` has three members,
+    and HARDENING is non-blocking, so a halt summary is one of the very few
+    places its records reach the lead at all), and the call returns
     ``ok: True``. HALTED is a named terminal state and is emphatically NOT DONE:
     it is where a run that ran out of cycles, or that the lead stopped, stops —
     with its open work written down.
@@ -141,11 +148,33 @@ def _seal_halted(
         fdir, tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN, tier_of=defect_tier
     )
 
-    counts = (
-        f"{len(blocking['live'])} open LIVE, "
-        f"{len(blocking['unknown'])} untiered and "
-        f"{len(blocking['latent'])} open LATENT defect(s)"
+    # fallout AC-022 / GI-014 (casting 10's concern C-077) — THE BACKLOG THIS
+    # SEAL NAMES IS EVERY TIER, AND IT WAS TWO.
+    # ----------------------------------------------------------------------
+    # `counts` read "N open LIVE, N untiered and N open LATENT defect(s)", and
+    # `DEFECT_TIERS` has THREE members. A run halted with open HARDENING records
+    # reported them in no field of this result and in no clause of the sentence
+    # `display.py` renders — the same AC-022 under-statement D-162/D-163/D-164
+    # closed on three other surfaces, on the one surface their co-dispatch could
+    # not reach. HARDENING is non-blocking by design, so a halt summary is one
+    # of the very few places its records would ever reach the lead who stopped
+    # the run: HALTED exists to record a NAMED BACKLOG, and a backlog missing a
+    # third of its vocabulary is not named.
+    #
+    # DERIVED FROM THE VOCABULARY, so a fourth tier cannot be dropped the same
+    # way. `blocking_defects` returns exactly {blocking, live, unknown, latent}
+    # and discards the HARDENING bucket `open_defects_by_tier` already builds;
+    # casting 10 declined to widen that return unilaterally for a caller that
+    # did not yet read it, and was right to. So the count comes from the leaf
+    # reader that HAS every bucket — one more read of one ledger, not a second
+    # derivation of the rule (GI-024) — and the sentence is built by walking
+    # `DEFECT_TIERS` rather than by naming members.
+    by_tier = open_defects_by_tier(
+        fdir, tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN, tier_of=defect_tier
     )
+    clauses = [f"{len(by_tier.get(t) or [])} open {t}" for t in sorted(DEFECT_TIERS)]
+    clauses.append(f"{len(blocking['unknown'])} untiered")
+    counts = ", ".join(clauses[:-1]) + f" and {clauses[-1]} defect(s)"
     return {
         "ok": True,
         "halted": True,
@@ -164,6 +193,10 @@ def _seal_halted(
         "open_live_defects": blocking["live"],
         "open_unknown_tier_defects": blocking["unknown"],
         "open_latent_defects": blocking["latent"],
+        # fallout AC-022 / GI-014 (C-077) — the third member, in a FIELD and not
+        # only in the sentence. A lead reading the payload rather than the
+        # rendered line must reach the same backlog.
+        "open_hardening_defects": by_tier.get(TIER_HARDENING) or [],
         # D-233: the prose clauses come from `_lead_prose_clause`, the ONE
         # spelling the two F6 doors say through `_sealed_report_sentence`. The
         # cap path regenerates the report exactly as they do and said nothing

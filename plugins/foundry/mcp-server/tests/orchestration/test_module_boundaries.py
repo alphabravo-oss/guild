@@ -5406,6 +5406,22 @@ def test_the_agent_id_has_one_implementation_however_it_is_spelled():
 _LEAF_MODULES = frozenset({
     "artifacts", "foundry_state", "vocab", "findings", "citation", "validation",
     "escalation", "worktree_helpers",
+    # fallout FR-009 / GI-033 (D-170, casting 7's concern C-079) — THE NINTH,
+    # AND IT WAS ADDED BECAUSE THE ARITHMETIC BELOW LEFT NO OTHER MOVE.
+    #
+    # What a `key_files` entry IS — a file path, or a directory spelled with a
+    # trailing slash covering everything beneath it — is read by
+    # `transitions.py` and `width.py` (VERIFIER) and by `directives.py` and
+    # `foundry_spawn.py` (lifecycle). The two layers are mutually unreachable at
+    # module top, so a verifier site cannot read casting 7's statement of the
+    # same rule in `foundry_validate.py` however convenient that would be, and
+    # this guard's own sentence gives the remedy: "a symbol read from BOTH can
+    # live only in a leaf". `orchestration/escalation.py` is the precedent for a
+    # leaf living inside this package. `keyfiles.py` imports NOTHING, which is
+    # the strongest form of the property this set is checked on, and
+    # `test_keyfiles.py#test_this_module_imports_nothing_which_is_what_makes_it_a_leaf`
+    # asserts it on the source rather than leaving it to this roster.
+    "keyfiles",
 })
 
 #: The four GI-033 names in its own parenthetical. They are leaves BY THE
@@ -6370,8 +6386,27 @@ def test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions():
         if isinstance(node, ast.ImportFrom) and node.module
         and node.module.startswith("foundry_mcp.tools.orchestration")
     }
-    assert module_top == set(), (
-        f"foundry_spawn.py imports {sorted(module_top)} at module top. Every "
+    # fallout FR-009 / GI-033 (D-170, casting 7's concern C-079) — A LEAF IS
+    # NOT AN EDGE OF THIS CYCLE, AND THE NARROWING IS STATED RATHER THAN
+    # ASSUMED.
+    # ----------------------------------------------------------------------
+    # This asserted `module_top == set()`, which is the right assertion for the
+    # thing it was filed on — `teams` and `width` at module top, one of them a
+    # VERIFIER — and one rung too broad for a LEAF. `orchestration/keyfiles.py`
+    # imports nothing at all (`test_keyfiles.py` asserts that on its source) and
+    # `orchestration/__init__.py` re-exports nothing, so
+    # `foundry_spawn -> orchestration.keyfiles` reaches no module that can reach
+    # back: there is no cycle for laziness to defer, and deferring it anyway
+    # would be a seam written for a hazard that is not there.
+    #
+    # THE ASSERTION IS NARROWED, NOT WEAKENED. The subject is the same set of
+    # imports; what changed is that a LEAF member is judged separately from the
+    # rest, and the rest must still be EMPTY. Every module this test was filed
+    # on is a non-leaf and still fails, and a leaf that stops being one fails
+    # here the same day `_LEAF_MODULES`' own property assertion fails.
+    non_leaf = {m for m in module_top if m.rsplit(".", 1)[-1] not in _LEAF_MODULES}
+    assert non_leaf == set(), (
+        f"foundry_spawn.py imports {sorted(non_leaf)} at module top. Every "
         "edge of this cycle is a lazy seam; a module-top one closes the cycle "
         "at import time and, for a verifier module, breaks GI-033 outright."
     )

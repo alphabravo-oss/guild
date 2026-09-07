@@ -320,6 +320,55 @@ def test_an_output_mismatch_still_gets_the_re_execution_remedy():
     assert "does not PARSE" not in hint, hint
 
 
+def test_the_re_execution_remedy_names_the_tracked_files_only_checkout():
+    """fallout GI-006 / AC-035 / US-008 (D-153) — the third cause, which is the
+    common one, and which the sentence did not have.
+
+    The remedy offered exactly two causes — regression, or a stale log — and
+    both were wrong for 5 of the 14 logs that failed the sweep on this run.
+    DRIVEN: `Foundry-Gate(phase='inspect_start')` refused with 14 of 78 logs not
+    reproducing, and three casting-2 logs plus `casting-7-ownership-consistency.log`
+    had failed on lines that state their own reason. `_setup_worktree` shells
+    `git worktree add --detach`, so the sweep's checkout carries TRACKED FILES
+    ONLY; `forge-specs/` is gitignored, so the run spec can never be in one and
+    `tests/orchestration/test_module_boundaries.py` skips permanently in every
+    sweep with a self-declared reason. The operator was sent to hunt a
+    regression that does not exist, or to re-capture in the same tree — which
+    reproduces the identical mismatch and costs a second crossing to learn.
+
+    The two causes it already carried must SURVIVE: naming only the new one
+    would be this defect with the sign flipped.
+    """
+    sweep = {
+        "error": "",
+        "record": {"scope": "full"},
+        "mismatches": [_mismatch(
+            "evidence/casting-2-width-rule.log",
+            "EVIDENCE_OUTPUT_MISMATCH",
+            "byte mismatch after volatile redaction",
+        )],
+    }
+    hint = _sweep_refusal(sweep, cycle=1, token="inspect_start")["hint"]
+
+    # The mechanism, named — not "the environment differed", which is the
+    # sentence an operator cannot act on.
+    assert "TRACKED FILES ONLY" in hint, hint
+    assert "untracked or gitignored" in hint, hint
+    assert "forge-specs/" in hint, hint
+    # ...and the consequence that makes re-capture the WRONG move for it.
+    assert "Re-capturing changes nothing" in hint, hint
+    # The reader is sent to the evidence rather than to a guess: the sweep
+    # already returns the differing output, and the skip line names its own
+    # cause.
+    assert "read the diff before acting" in hint, hint
+
+    # Both original causes survive, in the same words.
+    assert "behaviour the log demonstrates regressed" in hint, hint
+    assert "stale and its owning casting must re-capture it" in hint, hint
+    # ...and the sentence the two sibling tests pin is unchanged.
+    assert "re-executed in a detached worktree" in hint, hint
+
+
 def test_a_mixed_sweep_names_every_remedy_it_needs():
     """fallout AC-035 (D-148) — two logs, two reasons, two remedies.
 

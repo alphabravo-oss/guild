@@ -267,10 +267,19 @@ async def list_tools() -> list[Tool]:
                             "answer as 0: a resume that omits it leaves the "
                             "run's persisted cap unchanged, while a resume "
                             "carrying 0 rewrites the cap to unbounded. "
+                            # fallout AC-022 / GI-014 (casting 10's concern
+                            # C-077) — EVERY TIER. This ASSERTS the sentence in
+                            # the wire description's own voice rather than
+                            # quoting a locked requirement, and `DEFECT_TIERS`
+                            # has three members: a run halted with open
+                            # HARDENING records had them named nowhere here.
+                            # Derived from the vocabulary so a fourth tier
+                            # cannot be dropped the same way.
                             "Reaching the cap is a SUCCESSFUL transition into "
                             "HALTED, not a refusal: state.json becomes HALTED "
                             "and the report is generated naming every open "
-                            "LIVE and LATENT defect. HALTED is not DONE. Must "
+                            + ", ".join(sorted(DEFECT_TIERS))
+                            + " and untiered defect. HALTED is not DONE. Must "
                             "not be negative."
                         ),
                     },

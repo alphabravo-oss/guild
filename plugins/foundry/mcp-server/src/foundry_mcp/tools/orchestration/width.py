@@ -41,6 +41,11 @@ from foundry_mcp.tools.artifacts import (
     # looks like a finding.
     manifest_shape_problem as _manifest_shape_problem,
 )
+from foundry_mcp.tools.orchestration.keyfiles import (
+    DIRECTORY_ENTRY_SUFFIX,
+    covers_path,
+    manifest_spelling,
+)
 from foundry_mcp.tools.foundry_state import (
     boundary_base_sha,
     get_run_dir,
@@ -423,20 +428,42 @@ def _research_scope_touched(
             f"{type(castings).__name__}, not a list of castings",
         )
 
-    touched_set = set(touched)
+    # fallout FR-009 / ST-007 (D-170, casting 7's concern C-079) — THE COVERED
+    # SET IS ASKED BY COVERAGE, AND ASKING IT BY EQUALITY FAILED OPEN.
+    # ----------------------------------------------------------------------
+    # This matched `f.strip() in touched_set`, so a casting whose `key_files`
+    # are DIRECTORY entries — the spelling `Foundry-Gate('cast')`'s eight-entry
+    # cap makes a package-carving casting use, and the spelling F0.9 VALIDATE
+    # accepts — never registered as touched however much of it the GRIND
+    # rewrote. RESEARCH_AUDIT was then recorded `skipped` with the detail "no
+    # file research_audit covers was touched": a NEGATIVE about a set the arm
+    # had read and misread, which is the fail-OPEN direction on a VERIFIER, and
+    # exactly the asymmetry D-207 named on the sibling arm ("the decision
+    # function one rung over fails CLOSED on an uncomputable GRIND diff and this
+    # one failed OPEN on an uncomputable covered set").
+    #
+    # The reading is `keyfiles.covers_path`'s — the leaf both layers may read,
+    # because this module is a VERIFIER and `foundry_validate.py`, which states
+    # the same rule for casting 7's doors, is lifecycle.
     for casting in castings:
         if not isinstance(casting, dict) or not casting.get("research_context"):
             continue
         for f in casting.get("key_files") or []:
-            if isinstance(f, str) and f.strip() in touched_set:
+            if not isinstance(f, str):
+                continue
+            hit = next((t for t in touched if covers_path(f, t)), None)
+            if hit is not None:
+                entry = manifest_spelling(f)
                 return {
                     "touched": True,
                     "computable": True,
                     "source": "manifest",
                     "detail": (
                         f"casting {casting.get('id', '?')} declares "
-                        f"research_context and the diff touched its key_file "
-                        f"{f.strip()}"
+                        f"research_context and the diff touched {hit}"
+                        + (f", covered by its key_file {entry}"
+                           if entry.endswith(DIRECTORY_ENTRY_SUFFIX)
+                           else f", its key_file {entry}")
                     ),
                 }
     # READ, and it declares no covered file the diff touched. A computed miss.
@@ -1087,7 +1114,7 @@ def _prove_delta_sample(
 
 
 
-def _sight_required(fdir: Path) -> dict:
+def _sight_required(fdir: Path, project_root: str | None = None) -> dict:
     """Whether SIGHT is part of this run, read through the LEAF (GI-033).
 
     fallout GI-033 / AC-061 / FR-063 (D-021 / D-035) — WHY THIS SEAM EXISTS.
@@ -1116,9 +1143,34 @@ def _sight_required(fdir: Path) -> dict:
     `manifest_shape_problem` is a manifest-document reader and lives in
     `artifacts.py`. Both are leaves, so the imports are module-top and the edge
     is gone rather than deferred.
+
+    fallout FR-020 / AC-025 (casting 10's concern C-081) — AND THE RUN ROOT,
+    WITHOUT WHICH A DIRECTORY `key_files` ENTRY READS AS "NO FRONTEND FILES".
+    ----------------------------------------------------------------------
+    The leaf decided SIGHT by asking whether any `key_files` entry ENDS in a UI
+    extension. A directory entry never does, so a casting that declares its
+    package once — the spelling `Foundry-Gate('cast')`'s eight-entry cap forces
+    on any casting carving one — reported no frontend files however much UI sat
+    inside it, and SIGHT was skipped on a run that needed it. That is a
+    fail-OPEN on a required stream.
+    ``project_root`` is what lets the leaf WALK the directory instead of
+    guessing; given it, every `undetermined_directories` answer becomes a
+    measured one. Casting 10 rejected the fail-closed alternative on evidence
+    rather than taste: `required: True` on an undetermined answer would block
+    the cast gate of every BACKEND run whose manifest names a directory —
+    including this one, which names `tools/orchestration/` with no frontend in
+    it — so the argument is the fix and a default is not.
+    ``directory_suffix`` is injected for the reason every closed value at this
+    leaf is: `foundry_state.py` holds zero package imports, which is what keeps
+    `scripts/measure-run.py`'s package-free read working, so it cannot reach
+    `keyfiles.DIRECTORY_ENTRY_SUFFIX` itself and the caller binds it.
     """
     return sight_required(
-        fdir, shape_problem=_manifest_shape_problem, no_ui_meaning=NO_UI_MEANING
+        fdir,
+        shape_problem=_manifest_shape_problem,
+        no_ui_meaning=NO_UI_MEANING,
+        project_root=Path(project_root) if project_root else None,
+        directory_suffix=DIRECTORY_ENTRY_SUFFIX,
     )
 
 
@@ -1135,7 +1187,7 @@ def _base_required_streams(project_root: str) -> list[str]:
     """
     fdir = get_run_dir(project_root)
     extra: list[str] = []
-    if fdir and _sight_required(fdir).get("required"):
+    if fdir and _sight_required(fdir, project_root).get("required"):
         extra.append("sight")
     if fdir and _load_json(fdir / "castings" / "manifest.json").get("target_url"):
         extra.append("probe")

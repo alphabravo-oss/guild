@@ -55,6 +55,11 @@ from foundry_mcp.tools.foundry_state import (
     read_document,
 )
 from pathlib import Path
+from foundry_mcp.tools.orchestration.keyfiles import (
+    DIRECTORY_ENTRY_SUFFIX,
+    covers_path,
+    manifest_spelling,
+)
 from foundry_mcp.tools.orchestration.escalation import (
     _advance_escalation_exits,
     _escalated_classes,
@@ -513,16 +518,63 @@ def _start_cast_preconditions(fdir: Path, project_root: str) -> dict:
     else:
         checklist.append({"check": "casting_size", "ok": True})
 
-    file_to_casting: dict[str, list[int]] = {}
+    # fallout FR-009 / GI-011 (D-170, casting 7's concern C-079) — THE SAME
+    # RULE THIS RUN'S OTHER DOOR ASKS, ASKED THE SAME WAY.
+    # ----------------------------------------------------------------------
+    # `Foundry-Gate('validate')` maps to this transition and this rung computes
+    # the no-file-overlap rule that `Foundry-Validate-Castings` dimension 3
+    # computes. Both compared `key_files` by exact string membership, so neither
+    # saw a directory entry — and when casting 7 corrected its half at 5f6e7e9,
+    # the two doors began giving OPPOSITE answers about the same manifest: one
+    # where casting A names `tools/orchestration/` and casting B names a file
+    # inside it now FAILED `Foundry-Validate-Castings` and PASSED
+    # `Foundry-Gate('validate')`. Two doors, one rule, two answers is the exact
+    # shape this release exists to close, and it was introduced this cycle.
+    #
+    # A DIRECTORY ENTRY OVERLAPS WHAT IT COVERS. The reading is
+    # `keyfiles.covers_path`'s, which is the leaf both layers may read — this
+    # module is a VERIFIER and `foundry_validate.py` is lifecycle, so importing
+    # casting 7's statement is the one thing GI-033 forbids outright, and the
+    # boundary guard's own arithmetic ("a symbol read from BOTH can live only in
+    # a leaf") gives the remedy this uses instead.
+    #
+    # THE OVERLAP IS REPORTED AT THE COVERED PATH, not at the directory, and
+    # names the entry it came through: a file two castings both reach appears in
+    # nobody's `key_files` literally, so a refusal naming only the file sends
+    # the lead looking for a line that is not there. Same shape casting 7's
+    # `via_directory` record carries.
+    declared: list[tuple[str, int]] = []
     for c in castings:
         if not isinstance(c, dict):
             continue
         cid = c.get("id", 0)
         for f in c.get("key_files", []) or []:
-            file_to_casting.setdefault(f, []).append(cid)
+            if isinstance(f, str) and manifest_spelling(f):
+                declared.append((manifest_spelling(f), cid))
+
+    file_to_casting: dict[str, list[int]] = {}
+    overlap_via: dict[str, str] = {}
+    for entry, owner in declared:
+        file_to_casting.setdefault(entry, []).append(owner)
+    for entry, owner in declared:
+        if not entry.endswith(DIRECTORY_ENTRY_SUFFIX):
+            continue
+        for covered, other in declared:
+            if other == owner or not covers_path(entry, covered):
+                continue
+            cids = file_to_casting.setdefault(covered, [])
+            if owner not in cids:
+                cids.append(owner)
+            overlap_via.setdefault(covered, entry)
+
     overlaps = {f: cids for f, cids in file_to_casting.items() if len(cids) > 1}
     if overlaps:
-        overlap_details = [f"{f}: castings {cids}" for f, cids in overlaps.items()]
+        overlap_details = [
+            f"{f}: castings {cids}"
+            + (f" (casting {cids[-1]} declares the directory '{overlap_via[f]}', "
+               f"which covers it)" if f in overlap_via else "")
+            for f, cids in overlaps.items()
+        ]
         # Ranked ABOVE the size check: an oversized casting is a slow wave,
         # a shared file is two teammates overwriting each other, and the
         # second has to be resolved before the first is worth resizing.
@@ -567,7 +619,9 @@ def _cast_preconditions(fdir: Path, project_root: str) -> dict:
     source = _source_phase_rung(ladder, checklist, fdir, "cast")
     _teams_rung(ladder, checklist, project_root)
 
-    sight = _sight_required(fdir)
+    # C-081: with the run root, a directory `key_files` entry is WALKED
+    # rather than read as carrying no frontend file.
+    sight = _sight_required(fdir, project_root)
     if sight.get("required") and sight.get("blocked"):
         ladder.fail(
             _GATE_RANK_CONFIG,
@@ -831,7 +885,7 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
         "ok": ledger_problem is None,
     })
 
-    # fallout ST-005 / GI-023 (D-158, concern C-077) — THE SECOND ROUTE TO THE
+    # fallout ST-005 / GI-023 (D-158, concern C-082) — THE SECOND ROUTE TO THE
     # SAME FAIL-OPEN IS STILL OPEN, AND CLOSING IT IS THE LEAF'S TO DO.
     #
     # This rung scopes on EXACT cycle equality and `foundry_state.current_cycle`

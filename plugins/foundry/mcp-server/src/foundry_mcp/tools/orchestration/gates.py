@@ -303,7 +303,10 @@ def _streams_complete(project_root: str) -> dict:
         fdir,
         modes=INSPECT_MODES,
         marker_of=_stream_marker,
-        sight=_sight_required(fdir),
+        # C-081: `project_root` is already in hand — it is passed to
+        # `count_spec_requirements` on the very next line — and without it a
+        # directory `key_files` entry reads as "no frontend files".
+        sight=_sight_required(fdir, project_root),
         spec_requirement_count=count_spec_requirements(project_root),
         inspect_phases=_INSPECT_PHASES,
         # DERIVED, never a second hand list: the pre-width roster is exactly the

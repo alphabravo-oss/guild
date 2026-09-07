@@ -253,6 +253,10 @@ from foundry_mcp.tools.foundry_state import (
 # name would report every reader in this module as UNGUARDED with the guard
 # still standing there — which its own docstring calls worse than an import
 # error, because it looks like a finding.
+# fallout FR-009 (D-170 / C-079) — the ONE statement of what a `key_files`
+# entry is. A leaf, so this lifecycle module and the verifier doors that ask
+# the same question read the same body (GI-033).
+from foundry_mcp.tools.orchestration.keyfiles import covers_path
 from foundry_mcp.tools.artifacts import (
     manifest_shape_problem as _manifest_shape_problem,
 )
@@ -1974,8 +1978,29 @@ def _build_grind_cycle_context(fdir, casting_id, project_root: str) -> str:
     # key_files exist — so the block emitted its header over an empty list and
     # that label was unreachable. Each list is now empty exactly when its
     # section is absent, which is what lets the guards below be the list itself.
-    relevant = [f for f in changed if f in casting_keyfiles] if casting_keyfiles else []
-    other = [f for f in changed if f not in casting_keyfiles] if casting_keyfiles else changed
+    #
+    # fallout FR-009 (D-170, casting 7's concern C-079) — AND THE PARTITION IS
+    # BY COVERAGE, BECAUSE A DIRECTORY ENTRY OWNS WHAT IS INSIDE IT.
+    # ----------------------------------------------------------------------
+    # `f in casting_keyfiles` is a set-membership test, and a `key_files` entry
+    # is either a file path or a DIRECTORY spelled with a trailing slash. For a
+    # casting that names a package once — the spelling `Foundry-Gate('cast')`'s
+    # eight-entry cap forces on any casting carving one, and the spelling F0.9
+    # VALIDATE accepts — `relevant` was ALWAYS EMPTY, so its own changed files
+    # rendered under "Other files changed (may be upstream dependencies)".
+    # That label's whole authority is that the paths beneath it belong to
+    # someone else, so the block told a teammate the opposite of the truth about
+    # its own work, in the one section written to orient it.
+    #
+    # DRIVEN on this run, on this casting's own GRIND cycle-5 prompt: casting 2
+    # owns `.../tools/orchestration/` and `tests/orchestration/`, and every
+    # orchestration module it had changed in prior cycles appeared under "Other
+    # files changed" while "Your casting's key_files that changed" listed only
+    # the two entries spelled as files.
+    covered = [f for f in changed if any(covers_path(k, f) for k in casting_keyfiles)]
+    covered_set = set(covered)
+    relevant = covered if casting_keyfiles else []
+    other = [f for f in changed if f not in covered_set] if casting_keyfiles else changed
 
     sections: list[str] = []
     if relevant:

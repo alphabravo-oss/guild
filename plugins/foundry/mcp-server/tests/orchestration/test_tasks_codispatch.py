@@ -118,6 +118,10 @@ from tests.orchestration._env import (  # noqa: F401
 
 from foundry_mcp.tools.orchestration.directives import (  # noqa: F401
     _annotate_co_dispatch,
+    # fallout FR-009 (D-170) — the ownership resolver, called directly: a drive
+    # through Foundry-Tasks would assert the FIELD and leave the two-pass
+    # exact-beats-prefix ordering unexercised.
+    _owning_casting,
     foundry_defects_to_tasks,
     foundry_inject_directive,
 )
@@ -751,3 +755,89 @@ def test_a_concern_record_with_no_id_does_not_raise_out_of_the_door(run_env):
     # The well-formed concern is still dispatched: the malformed record is
     # skipped, not treated as a bail-out.
     assert result["concerns_dispatched"] == [concern_id], result
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-009 (D-170) — A DIRECTORY key_file OWNS WHAT IS INSIDE IT.
+# --------------------------------------------------------------------------- #
+
+
+def _directory_manifest(fdir: Path) -> None:
+    """This run's own shape: two castings, one of them holding directories."""
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(json.dumps({"castings": [
+        {"id": 2, "requirement_ids": ["FR-009"], "key_files": [
+            "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/",
+            "plugins/foundry/mcp-server/tests/orchestration/",
+            "plugins/foundry/mcp-server/src/foundry_mcp/server.py",
+        ]},
+        {"id": 7, "requirement_ids": ["FR-009"], "key_files": [
+            "plugins/foundry/mcp-server/src/foundry_mcp/tools/artifacts.py",
+        ]},
+    ]}), encoding="utf-8")
+
+
+def test_a_file_inside_a_directory_key_file_resolves_to_its_casting(run_env):
+    """fallout FR-009 (D-170) — the resolver matched by set membership, so a
+    directory entry matched nothing beneath it, ever.
+
+    `_owning_casting` read `if any(f in key_files for f in files)` — a
+    membership test over literal strings — while `key_files` entries are either
+    a file path OR a directory spelled with a trailing slash. DRIVEN:
+    `Foundry-Tasks` on cycle 5 of this run generated 15 tasks and returned
+    `owning_casting: None` for 13 of them; resolving the same files by directory
+    prefix against castings/manifest.json showed SEVEN belonged to casting 2,
+    whose key_files are exactly the two directory entries below.
+
+    The failure is silent in the worst direction: a lead dispatching per casting
+    from this field leaves those defects with no owner, no refusal and no
+    warning, and the next INSPECT re-files them looking like fixes that did not
+    take. Directory entries are deliberate — F0.9 recorded them as the way to
+    fit a new package under the cast gate's 8-key_files cap, and F0.9 VALIDATE
+    accepted the manifest — so the two halves of the system disagreed about what
+    a key_file may be.
+
+    The self-application is the last row: `directives.py` is itself inside
+    `tools/orchestration/`, so the resolver returned None for the record naming
+    its own fault.
+    """
+    project_root, fdir = run_env
+    _directory_manifest(fdir)
+
+    for path, owner in (
+        ("plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/streams.py", 2),
+        ("plugins/foundry/mcp-server/tests/orchestration/test_transitions.py", 2),
+        # The exact entry beside the directories still resolves, unchanged.
+        ("plugins/foundry/mcp-server/src/foundry_mcp/server.py", 2),
+        ("plugins/foundry/mcp-server/src/foundry_mcp/tools/artifacts.py", 7),
+        # A file no casting declares is still unowned — the fix widens the
+        # match, it does not make every path resolve to somebody.
+        ("plugins/foundry/mcp-server/src/foundry_mcp/tools/test_deriver.py", None),
+        # ...and the prefix is a SEGMENT boundary, not a string prefix: a
+        # sibling directory whose name merely starts the same way is not owned.
+        ("plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestrationXX/a.py", None),
+        ("plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/directives.py", 2),
+    ):
+        assert _owning_casting(fdir, [path]) == owner, (path, _owning_casting(fdir, [path]))
+
+
+def test_the_narrower_claim_wins_when_both_a_directory_and_its_file_are_declared(run_env):
+    """fallout FR-009 (D-170) — exact beats prefix, in manifest order or not.
+
+    A directory entry and a file inside it may both be declared, by one casting
+    or by two, and "whichever casting the manifest lists first" is an arbitrary
+    tiebreak for a field a lead DISPATCHES from. The narrower claim wins: a
+    casting naming the file owns it more specifically than one naming its
+    directory.
+
+    Driven in the order that would get it wrong — the directory owner is listed
+    FIRST, so a single-pass resolver returns it.
+    """
+    project_root, fdir = run_env
+    (fdir / "castings" / "manifest.json").write_text(json.dumps({"castings": [
+        {"id": 2, "requirement_ids": ["FR-009"], "key_files": ["src/pkg/"]},
+        {"id": 9, "requirement_ids": ["FR-009"], "key_files": ["src/pkg/one.py"]},
+    ]}), encoding="utf-8")
+
+    assert _owning_casting(fdir, ["src/pkg/one.py"]) == 9
+    assert _owning_casting(fdir, ["src/pkg/two.py"]) == 2

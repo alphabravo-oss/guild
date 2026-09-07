@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 from foundry_mcp.schemas.vocab import NO_UI_MEANING
+from foundry_mcp.tools.orchestration.keyfiles import DIRECTORY_ENTRY_SUFFIX
 from foundry_mcp.tools.artifacts import (
     CAST_BASELINE_SHA_MARKER,
     INSPECT_BOUNDARY_SHA_MARKER,
@@ -665,6 +666,17 @@ def _check_sight_required(project_root: str) -> dict:
         return {"required": False}
 
 
+    # fallout FR-020 / AC-025 (casting 10's concern C-081) — the run root, so a
+    # directory `key_files` entry is WALKED rather than read as carrying no
+    # frontend file. This shim already takes `project_root` and derived `fdir`
+    # from it two lines up, so nothing new is resolved. `directory_suffix` is
+    # injected because `foundry_state.py` holds zero package imports — the
+    # contract that keeps `scripts/measure-run.py`'s package-free read working —
+    # so the caller binds the one spelling of it.
     return sight_required(
-        fdir, shape_problem=_manifest_shape_problem, no_ui_meaning=NO_UI_MEANING
+        fdir,
+        shape_problem=_manifest_shape_problem,
+        no_ui_meaning=NO_UI_MEANING,
+        project_root=Path(project_root),
+        directory_suffix=DIRECTORY_ENTRY_SUFFIX,
     )

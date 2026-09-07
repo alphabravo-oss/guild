@@ -690,11 +690,43 @@ _SWEEP_REMEDIES = {
 
 #: Every other member of the closed set IS a re-execution result, and this is
 #: the sentence they have always carried.
+#:
+#: fallout GI-006 / AC-035 / US-008 (D-153) — AND IT NAMES THE THIRD CAUSE,
+#: WHICH IS THE COMMON ONE.
+#:
+#: The sentence offered two causes and both were wrong for 5 of the 14 logs that
+#: failed the sweep on this run. DRIVEN: `Foundry-Gate(phase='inspect_start')`
+#: refused with 14 of 78 logs not reproducing; three casting-2 logs and
+#: `casting-7-ownership-consistency.log` had failed on lines that SAY WHY they
+#: differ. `_setup_worktree` shells `git worktree add --detach`, so the checkout
+#: the sweep re-executes in carries TRACKED FILES ONLY — every untracked file,
+#: and every gitignored one, is absent from it. `/forge-specs/` is gitignored
+#: (.gitignore:15), so the run spec can NEVER be in any detached checkout, and
+#: `tests/orchestration/test_module_boundaries.py` therefore skips permanently
+#: in every sweep with a self-declared reason ("this checkout carries no
+#: spec.md at ..."). The log's own BODY names its cause and the remedy did not
+#: read it.
+#:
+#: THE COST OF THE OMISSION IS A WRONG DIAGNOSIS, not a missing one: an operator
+#: was sent to look for a regression that does not exist, or to re-capture in
+#: the same tree that produced the mismatch — which reproduces it exactly, and
+#: costs a second crossing to discover. So the third cause is named FIRST among
+#: the checks, because it is the one the output itself can settle, and the
+#: reader is pointed at the diff the sweep already returns rather than at a
+#: guess about which cause applies.
 _SWEEP_REMEDY_REEXECUTED = (
     "Each log's `# evidence-cmd:` was re-executed in a detached worktree at "
-    "HEAD and its output no longer matches what was committed. Either the "
-    "behaviour it demonstrates regressed — fix that — or the log is stale and "
-    "its owning casting must re-capture it."
+    "HEAD and its output no longer matches what was committed. THREE causes, "
+    "and the mismatch itself tells them apart — read the diff before acting. "
+    "(1) The log was captured in a tree carrying files the sweep's checkout "
+    "does not have: `git worktree add --detach` checks out TRACKED FILES ONLY, "
+    "so anything untracked or gitignored (the run spec under `forge-specs/`, "
+    "for one) is absent there and a command that reads it takes a different "
+    "branch — usually a SKIP whose own reason line says so, which is what the "
+    "differing line will read. Re-capturing changes nothing; the log must "
+    "either not depend on that file or declare the difference. (2) The "
+    "behaviour the log demonstrates regressed — fix that. (3) The log is stale "
+    "and its owning casting must re-capture it."
 )
 
 

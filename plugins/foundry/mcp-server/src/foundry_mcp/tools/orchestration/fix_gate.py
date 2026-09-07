@@ -2837,6 +2837,29 @@ def foundry_sync_defects(
                 cycle=server_cycle,
                 fallout_of=provenance["fallout_of"],
                 supersedes=provenance["supersedes"],
+                # fallout GI-004 / D-157 (casting 4's concern C-075) — THE AUDIT
+                # HALF, AT THIS DOOR TOO.
+                #
+                # D-157 gave the re-tier a tier guard, and its ENFORCEMENT half
+                # reached both doors with no call-site change: the guard raises
+                # `LedgerRefusal`, the transaction writes nothing, and
+                # `@ledger_refusals` turns it into the house refusal here
+                # exactly as at `foundry_add_defect`. Its AUDIT half did not.
+                # `record_denylist_tripwire` needs the resolved run dir, which a
+                # pure list mutator does not hold, so the guard takes `fdir` —
+                # DEFAULTED, for the same reason casting 4 defaulted
+                # `fallout_of` and `supersedes` on this same function (C-070):
+                # so this file kept compiling while it was repointed. Defaulted
+                # is not passed. Left unrepointed, a denylisted claim re-tiered
+                # through the BATCH door was refused and NOT audited, and D-061's
+                # ruling is that the tripwire may not be rung-dependent —
+                # door-dependent is the same defect one axis over, and this is
+                # the door a whole INSPECT stream files through.
+                #
+                # `fdir` is already in scope: `get_run_dir(project_root)` at the
+                # top of this function, and `defects_path` is derived from it.
+                # Nothing new is resolved and no path is re-derived.
+                fdir=fdir,
             )
             if retier_id is not None:
                 retiered += 1

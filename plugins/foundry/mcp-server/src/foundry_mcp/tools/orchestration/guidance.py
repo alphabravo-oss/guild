@@ -759,8 +759,16 @@ def foundry_next_action(
             "\n- Do NOT dispatch another wave, do NOT call Foundry-Phase, and "
             "do NOT call Foundry-Next in a loop. There is no next transition "
             "to make."
+            # fallout AC-022 / GI-014 (casting 10's concern C-077) — EVERY
+            # TIER, because this file ASSERTS the sentence in its own voice
+            # rather than quoting a locked requirement. `DEFECT_TIERS` has three
+            # members and HARDENING is non-blocking by design, so this notice
+            # and the halt seal are among the very few surfaces its records
+            # reach the lead at all. Derived from the vocabulary, so a fourth
+            # tier cannot be dropped the same way.
             "\n- The report has been generated as part of the halt and names "
-            "every open LIVE and LATENT defect. Read it."
+            "every open " + ", ".join(sorted(DEFECT_TIERS)) + " and untiered "
+            "defect. Read it."
             # fallout US-006 (D-147): the cap RAISE is a remedy for exactly one
             # of the four endings. Offering it on a `spec_change_required` halt
             # tells the lead to re-run the work the ruling just said is not

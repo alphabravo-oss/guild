@@ -1416,3 +1416,110 @@ def test_the_batch_re_tier_carries_the_re_filings_provenance(run_env):
     # ...and the two doors leave the same provenance behind.
     for key in ("fallout_of", "supersedes"):
         assert from_batch[key] == from_single[key], (key, from_batch, from_single)
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-004 / D-157 (casting 4's concern C-075) — THE DENYLIST AUDIT IS
+# NOT DOOR-DEPENDENT.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_batch_door_audits_the_re_tier_it_refuses(run_env):
+    """fallout GI-004 / NFR-004 (C-075) — the sibling casting 4 could not drive.
+
+    D-157 gave `retier_matching_untiered` a tier guard: before it classifies an
+    open untiered record, it puts the record THAT MUTATION WOULD LEAVE through
+    `validate_defect_filing` under the declared tier, so a record whose own
+    prose the tier forbids is refused instead of minted. The ENFORCEMENT half
+    reached both doors with no call-site change — the guard raises
+    `LedgerRefusal`, the transaction writes nothing, and `@ledger_refusals`
+    shapes the house refusal here exactly as at `foundry_add_defect`.
+
+    The AUDIT half did not. `record_denylist_tripwire` needs the resolved run
+    dir, which a pure list mutator does not hold, so the guard takes `fdir`
+    DEFAULTED — for the same reason C-070 defaulted `fallout_of` and
+    `supersedes`: so this file kept compiling while it was repointed. Defaulted
+    is not passed, and this door did not pass it, so a denylisted claim re-tiered
+    through the BATCH door was refused and NOT audited. D-061's ruling is that
+    the tripwire may not be rung-dependent; door-dependent is the same defect one
+    axis over, and this is the door a whole INSPECT stream files through.
+
+    Casting 4 deliberately left `test_the_batch_door_refuses_the_security_claim_re_tier_as_well`
+    silent about the tripwire — "a pin that asserted it is EMPTY would pin the
+    gap as correct" — and named this test as the one that lands with the
+    repoint. It is the batch-door sibling of
+    `tests/test_defect_tier.py#test_the_retier_refuses_a_record_whose_own_prose_is_a_security_claim`.
+    """
+    project_root, fdir = run_env
+    # The claim is on the RECORD and the re-filing's prose is innocent, so the
+    # door's own denylist rung — which reads the FILING — has nothing to match.
+    # Only the re-tier guard, which reads the record the mutation would leave,
+    # can reach it.
+    record = _untiered_open(fdir)
+    record["description"] = _SECURITY_CLAIM
+    record["spec_ref"] = ""
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [record]}), encoding="utf-8"
+    )
+
+    result = foundry_sync_defects(
+        cycle=3,
+        findings=[_finding(
+            source="trace", type="UNWIRED", tier="HARDENING", spec_ref="",
+            symbol="foundry_next", file="src/api/a.py",
+            **{"class": "UNWIRED_SURFACE"},
+            description="re-filed with the tier the record never carried",
+            reproduction_attempted=(
+                "drove every caller of the display path; none reaches the "
+                "branch, so nothing reproduced"
+            ),
+        )],
+        project_root=project_root,
+    )
+
+    # The enforcement half, unchanged: refused, and nothing minted.
+    assert vocab.SECURITY_PROPERTY_CLAIM in result["error"], result
+    records = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert len(records) == 1 and "tier" not in records[0], records
+
+    # The audit half, which is what this repoint adds. The ATTEMPT is what the
+    # record exists to capture, and it is written even though nothing reached
+    # the defect ledger (D-061).
+    assert _tripwire_classes(fdir) == [vocab.SECURITY_PROPERTY_CLAIM], (
+        _tripwire_classes(fdir)
+    )
+
+
+def test_the_batch_door_writes_no_tripwire_for_a_re_tier_it_allows(run_env):
+    """fallout GI-004 (C-075) — the control, so the audit is not simply always-on.
+
+    A re-tier into LIVE demotes nothing — LIVE is the one tier that holds a gate
+    shut, which is why `NON_BLOCKING_TIERS` is the guard's scope — so the same
+    record and the same claim produce a classified record and NO tripwire.
+    A repoint that wrote an audit row on every re-tier would make the ledger
+    useless in the other direction.
+    """
+    project_root, fdir = run_env
+    record = _untiered_open(fdir)
+    record["description"] = _SECURITY_CLAIM
+    record["spec_ref"] = ""
+    (fdir / "defects.json").write_text(
+        json.dumps({"defects": [record]}), encoding="utf-8"
+    )
+
+    result = foundry_sync_defects(
+        cycle=3,
+        findings=[_finding(
+            source="trace", type="UNWIRED", tier="LIVE", spec_ref="",
+            symbol="foundry_next", file="src/api/a.py",
+            **{"class": "UNWIRED_SURFACE"},
+            description="re-filed with the tier the record never carried",
+            reproduction_attempted="",
+        )],
+        project_root=project_root,
+    )
+
+    assert result.get("error") is None, result
+    records = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert records[0]["tier"] == "LIVE", records[0]
+    assert _tripwire_classes(fdir) == [], _tripwire_classes(fdir)

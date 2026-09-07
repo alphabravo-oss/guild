@@ -4477,7 +4477,7 @@ def test_a_wrong_shaped_concern_ledger_refuses_instead_of_answering_none(run_env
 
 
 def test_the_concern_scope_still_narrows_to_the_counter_the_leaf_reports(run_env):
-    """fallout ST-005 / GI-023 (D-158, concern C-077) — the route this fix does
+    """fallout ST-005 / GI-023 (D-158, concern C-082) — the route this fix does
     NOT close, pinned so it cannot be mistaken for closed.
 
     The rung scopes on exact cycle equality and `foundry_state.current_cycle`
@@ -4491,7 +4491,7 @@ def test_the_concern_scope_still_narrows_to_the_counter_the_leaf_reports(run_env
     forbids that read outside the leaf's total readers — it caught the first
     attempt at this arm by name. The distinguisher belongs beside `current_cycle`
     in the (value, problem) shape `rosters.roster_length` uses; that file is
-    casting 10's, so C-077 carries it. This test asserts the CURRENT behaviour
+    casting 10's, so C-082 carries it. This test asserts the CURRENT behaviour
     so the gap is recorded rather than silent, and it INVERTS the day the leaf
     reader lands — which is what makes it the anchor for that change rather than
     an excuse for the gap.

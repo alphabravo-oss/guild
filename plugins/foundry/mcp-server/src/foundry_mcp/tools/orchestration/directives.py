@@ -26,6 +26,10 @@ from foundry_mcp.tools.foundry_state import (
     read_jsonl,
 )
 from pathlib import Path
+from foundry_mcp.tools.orchestration.keyfiles import (
+    covers_path,
+    manifest_spelling,
+)
 from foundry_mcp.tools.orchestration.escalation import (
     DIRECTIVE_HEADER_NORMAL,
     DIRECTIVE_HEADER_URGENT,
@@ -127,9 +131,44 @@ def _casting_files(fdir: Path) -> dict[int, list[str]]:
 
 
 def _owning_casting(fdir: Path, files: list[str]) -> int | None:
-    """The casting whose key_files contain one of `files`, or None."""
-    for cid, key_files in _casting_files(fdir).items():
-        if any(f in key_files for f in files):
+    """The casting whose key_files own one of `files`, or None.
+
+    fallout FR-009 (D-170, casting 7's concern C-079) — COVERAGE, NOT SET
+    MEMBERSHIP, THROUGH THE ONE STATEMENT OF THE MANIFEST FORMAT.
+
+    This read `if any(f in key_files for f in files)` — a membership test over
+    literal strings — while a `key_files` entry is either a file path OR a
+    directory spelled with a trailing slash. DRIVEN: `Foundry-Tasks` on cycle 5
+    of this run generated 15 tasks and returned `owning_casting: None` for 13 of
+    them; resolving the same files by directory prefix showed SEVEN belonged to
+    casting 2, whose key_files ARE the two directory entries. The failure is
+    silent in the worst direction — a lead dispatching per casting from this
+    field leaves those defects with no owner, no refusal and no warning, and the
+    next INSPECT re-files them looking like fixes that did not take rather than
+    work never handed to anyone. The self-application is the sharpest part: this
+    file sits inside `tools/orchestration/`, so the resolver returned None for
+    the record naming its own fault.
+
+    EXACT BEATS PREFIX, in two passes rather than one. A directory entry and a
+    file inside it may both be declared — by one casting or by two — and
+    "whichever casting the manifest happens to list first" is an arbitrary
+    tiebreak for a field a lead DISPATCHES from. The narrower claim wins, which
+    is the one ordering that cannot be wrong: a casting naming the file itself
+    owns it more specifically than one naming its directory. Note this is a
+    STRICTER reading than `foundry_validate` dimension 3 needs — that door wants
+    every overlap, this one wants the single owner — so the shared statement is
+    the coverage predicate and the tiebreak stays here, where the question is
+    asked.
+    """
+    owned = _casting_files(fdir)
+    for cid, key_files in owned.items():
+        if any(
+            manifest_spelling(f) == manifest_spelling(k)
+            for f in files for k in key_files
+        ):
+            return cid
+    for cid, key_files in owned.items():
+        if any(covers_path(k, f) for f in files for k in key_files):
             return cid
     return None
 
