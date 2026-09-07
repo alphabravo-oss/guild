@@ -10,11 +10,11 @@ effort: max
 
 # Temper — Micro-Domain Deep Audit
 
-Temper activates after F4 ASSAY terminates. What terminates ASSAY is the tier-aware
-gates, not a count of every finding ever filed: ASSAY passes when no `LIVE` defect and no
+Temper activates after F4 ASSAY terminates. What terminates ASSAY is the tier-aware gates,
+not a count of every finding ever filed: ASSAY passes when no `LIVE` defect and no
 unknown-tier defect is open, and an open backlog of the non-blocking tiers, `LATENT` and
-`HARDENING` alike, does not hold it shut — the same
-rule that ends temper itself, stated once more under **When the sweep ends** below. Broad
+`HARDENING` alike, does not hold it shut — the same rule that ends temper itself, stated
+once more under **When the sweep ends** below. Broad
 audits miss things because they look at too much at once. Temper zooms into the smallest units of
 functionality and proves they work — or proves they don't.
 
@@ -300,13 +300,12 @@ quiet pass is evidence about the pass, not about the code.
 
 **But temper does have an end, and it is mechanical.** Temper is over when NO `LIVE`
 defect is open and EVERY escalated class is `CLEARED`. Both halves are read from the
-run's own ledgers, so neither is a judgement call: `LIVE` defects are counted by the
-same tier-aware gates that count them everywhere else, and a class clears by drawing
-zero `LIVE` instances for two consecutive INSPECT cycles or by exhausting its
-structural-pass budget. An open backlog of the non-blocking tiers does NOT hold temper
-open — `LATENT` and `HARDENING` defects alike stay tracked and land in the F6 report's
-named backlogs. Until both conditions
-hold, keep sweeping; once they do, temper is finished and says so.
+run's own ledgers, so neither is a judgement call: `LIVE` defects are counted by the same
+tier-aware gates that count them everywhere else, and a class clears by drawing zero
+`LIVE` instances for two consecutive INSPECT cycles or by exhausting its structural-pass
+budget. An open backlog of the non-blocking tiers does NOT hold temper open — `LATENT` and
+`HARDENING` defects alike stay tracked and land in the F6 report's named backlogs. Until
+both conditions hold, keep sweeping; once they do, temper is finished and says so.
 
 ---
 
@@ -320,15 +319,15 @@ hold, keep sweeping; once they do, temper is finished and says so.
   explicit directive. Durable cites are symbol-only, optionally with a quoted snippet; a
   line hint belongs only in a commit-pinned run artifact, where it is frozen against the one
   commit it was written at.
-- **Every temper finding carries a `tier`, like any other stream's.** Probing IS driving the
-  domain, so most temper findings are `LIVE`. Temper gets no separate tier vocabulary and no
-  discretion the other streams lack: escalation exits by the same rule everywhere, and every
-  tier `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS` declares is
-  a defect that gets fixed. The five rules below are the ones every defect-filing
-  stream carries, word-identically, and they are reproduced here rather than summarised:
-  temper files into the same ledger through the same doors, so a micro-domain probe is a
-  different lens on the code, not a different contract with the defect ledger. A rule restated
-  in temper's own words would be one more spelling of a refusal the doors report in one.
+- **Every temper finding carries a `tier`, like any other stream's.** Probing IS driving
+  the domain, so most temper findings are `LIVE`. Temper gets no separate tier vocabulary
+  and no discretion the other streams lack: escalation exits by the same rule everywhere,
+  and every tier `schemas/vocab.py#DEFECT_TIERS` declares is a defect that gets fixed. The
+  five rules below are the ones every defect-filing stream carries, word-identically, and
+  they are reproduced here rather than summarised: temper files into the same ledger
+  through the same doors, so a micro-domain probe is a different lens on the code, not a
+  different contract with the defect ledger. A rule restated in temper's own words would
+  be one more spelling of a refusal the doors report in one.
 - **Name the class when instances share a root cause.** Three HOLLOW verdicts behind one missing middleware are one class, not three unrelated defects — put the shared root cause in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). A class that draws new defects for three consecutive cycles escalates to a single structural-fix packet, and that only fires if you named it — `systemic_patterns` is your prose summary and nothing downstream consumes it. Name a class on EVERY defect, including one that genuinely stands alone — a single-instance class is still a class, and `Foundry-Defect` and `Foundry-Sync` refuse a filing whose `class` is empty. Never invent a class to bundle findings that do not share a cause.
 - **No severity classification.** **No severity tiers.** The work-effort grade is banned by name — no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`, and no fresh spelling invented next cycle — because every defect gets fixed and a grade for how much a fix is worth has nothing left to decide. Grade a finding by whether you actually drove it or only derived it from a scan, and never by how much work it would take to fix: the first is the `tier` axis the next rule makes required, the second stays abolished. `tier` is evidence, not effort, and it displaces nothing below it — `classification` still decides the channel a finding goes down and `target_kind` still rides on every filing. No exceptions, no deferrals, no "this one is only cosmetic."
 - **Set `tier` on every filing; the stream that files the defect is the one that sets it.** `tier` is a closed vocabulary declared once at `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS` — read the members there and never re-type them, or a count of them, anywhere else. `LIVE` means you drove the door and observed the wrong result, and the description names both the door and the result. `LATENT` means you derived the finding and found no reachable instance, and that filing MUST carry a `reproduction_attempted` statement naming what you drove and what it found ("AST sweep of both roots finds 0 sites"); `Foundry-Defect` and `Foundry-Sync` refuse a `LATENT` filing without one. `HARDENING` means you drove a probe of your own devising and observed a wrong result no requirement asks about — LIVE's evidence standard on an off-spec subject, so the filing carries no `spec_ref` (one that sets a `spec_ref` is refused at both doors) and no gate holds shut on it, while the F6 backlog still names it. A security-property claim can NEVER be `LATENT`, and never `HARDENING` either — that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record, so a claim that a security property is broken is one you drive and file `LIVE`, or one you do not file at all. Every tier is a defect, every tier gets fixed, and `tier` buys you no discretion over anything else. No exceptions, no deferrals, no "I could not reproduce it, so it is probably fine."
