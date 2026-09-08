@@ -3052,6 +3052,159 @@ def test_a_halted_run_report_names_every_open_defect_at_every_tier(report_env):
         assert did in md, did
 
 
+# --------------------------------------------------------------------------- #
+# fallout NFR-011 (D-195) — the RENDERED prose cites the row that states the
+# rule.
+# --------------------------------------------------------------------------- #
+
+#: This run's spec, repo-relative, spelled ONCE.
+#:
+#: The skip below names it, and an absolute path in a skip reason is not a
+#: stable thing to name: the gate re-executes every evidence command inside a
+#: detached worktree whose directory name gains a suffix when a peer already
+#: holds the claim, so an interpolated path writes a checkout location into the
+#: body of a committed log and that log then fails to reproduce on the suffix
+#: alone. A repo-relative name is identical in every checkout and still says
+#: which file is missing.
+_RUN_SPEC_RELATIVE = "forge-specs/foundry-run-fallout/spec.md"
+
+#: The claim this pin is about, as the prose spells it. Held as a constant
+#: because the harvest below and its own blind-harvest guard have to be looking
+#: for the same words — a guard that searched for a phrase the harvest did not
+#: would pass over a REPORT.md carrying no claim at all.
+_TERMINAL_STATE_CLAIM = "terminal state"
+
+
+def _run_spec_path() -> Path:
+    """This run's spec.
+
+    Derived from the module under test, up to the directory ASSERTED to be
+    `foundry` and out of `plugins/`, rather than by counting `parents[N]` from
+    this file — that is the count that goes wrong silently when a directory is
+    added, and it turns this pin into a skip rather than a failure.
+    """
+    plugin_root = Path(fr.__file__).resolve().parents[4]
+    assert plugin_root.name == "foundry", plugin_root
+    return plugin_root.parents[1] / _RUN_SPEC_RELATIVE
+
+
+def _spec_declaration(spec_text: str, name: str) -> str | None:
+    """The line on which this run's spec DECLARES `name`, or None.
+
+    Three spellings, because the spec declares rows three ways — `| ST-001 |`
+    as a table row whose id is the first cell, `### US-001:` as a heading, and
+    `**FR-007**` in a bullet — and a lookup that knew only one would report two
+    thirds of a correct spec as undeclared. The table row is tried first, so a
+    row-declared id resolves to its row and never to a later mention of it.
+    """
+    for pattern in (
+        rf"^\|\s*{re.escape(name)}\s*\|.*$",
+        rf"^#+\s*{re.escape(name)}\b.*$",
+        rf"^.*\*\*{re.escape(name)}\*\*.*$",
+    ):
+        match = re.search(pattern, spec_text, re.M)
+        if match is not None:
+            return match.group(0)
+    return None
+
+
+def test_the_rendered_report_cites_the_rows_that_state_the_halt_rule(report_env):
+    """fallout NFR-011 (D-195) — a cite that resolves to the WRONG row.
+
+    The halt section's `note` is GENERATED USER-FACING PROSE: `generate_report`
+    copies it verbatim into `report.json` and `_render_section` renders it under
+    `## Halt and co-dispatch`, so the reader who resolves the id it carries is
+    outside the source tree. It read "HALTED is a named terminal state and is
+    NOT DONE (ST-008)" — the sentence and its cite carried over verbatim from
+    the PREDECESSOR spec, whose `ST-008` is the cap-halt transition and whose
+    guard column is that sentence. In THIS spec `ST-008` is the stream-record
+    transition, so the reader landed on a row about `items_checked` and
+    `items_total`. `ST-001` (the halt transition) and `CT-004` (the halt door)
+    are the rows that state the rule — and `_render_section`'s own headline for
+    a run that did NOT halt, the sentence this section prints directly above
+    the note, had been citing `ST-001` correctly all along.
+
+    NEITHER EXISTING GUARD REACHES THIS SURFACE, which is why the pin is here
+    and not beside one of them.
+    `tests/orchestration/test_module_boundaries.py#test_every_requirement_id_the_orchestration_prose_cites_exists`
+    catches the resolves-to-NOTHING half — its own docstring says so — and
+    scans `tools/orchestration/`, which does not contain this generator. The
+    `fallout ` qualifier convention (`tests/test_spec_id_convention.py`) carries
+    the wrong-row half and scopes itself to `tests/`, so it never reaches
+    shipped source at all. Between them a rendered sentence could cite any
+    declared row in any spec and nothing would say so.
+
+    THE JUDGEMENT IS DERIVED FROM THE SPEC, never a list of ids typed here: a
+    sentence claiming a terminal state has to cite rows whose declaration is
+    ABOUT halting. That holds for a sentence nobody has written yet, and it
+    covers both halves at once — an undeclared id resolves to no line at all.
+    """
+    spec = _run_spec_path()
+    if not spec.exists():
+        pytest.skip(f"this checkout carries no {_RUN_SPEC_RELATIVE}")
+    spec_text = spec.read_text(encoding="utf-8")
+
+    # THE ANCHOR: the recogniser has teeth, driven over the exact id D-195 was
+    # filed on. `ST-008` IS declared — so this is not the resolves-to-nothing
+    # case the sibling pin catches — and its declaration says nothing about
+    # halting, so the sentence that cited it fails the rule below. A pin whose
+    # negative case cannot fail is green whether it works or not.
+    st_008 = _spec_declaration(spec_text, "ST-008")
+    assert st_008 is not None, (
+        "this run's spec declares no ST-008; the row D-195 was filed on is "
+        "gone and this anchor no longer proves anything"
+    )
+    assert "HALT" not in st_008.upper(), (
+        f"ST-008 now names a halt row: {st_008}. The spec was renumbered and "
+        "D-195's example has to be re-picked before this anchor means anything"
+    )
+
+    _generate(report_env)
+    md = _markdown(report_env)
+
+    claims = [
+        sentence
+        for line in md.splitlines()
+        for sentence in re.split(r"(?<=[.!?])\s+", line)
+        if _TERMINAL_STATE_CLAIM in sentence
+    ]
+    assert claims, (
+        f"no sentence in the rendered REPORT.md contains "
+        f"{_TERMINAL_STATE_CLAIM!r}; the harvest reads nothing and every "
+        "assertion below would pass over any document"
+    )
+
+    cited: dict[str, str] = {}
+    for sentence in claims:
+        for name in re.findall(r"\b(?:US|FR|NFR|AC|GI|CT|ST|OT)-\d+\b", sentence):
+            cited.setdefault(name, sentence)
+    assert cited, (
+        f"the {len(claims)} terminal-state sentence(s) in REPORT.md cite no "
+        "requirement id at all, so an operator has no row to resolve: "
+        f"{claims}"
+    )
+
+    wrong: dict[str, str] = {}
+    for name in sorted(cited):
+        declaration = _spec_declaration(spec_text, name)
+        if declaration is None:
+            wrong[name] = "(this run's spec declares no such row)"
+        elif "HALT" not in declaration.upper():
+            wrong[name] = declaration
+    assert wrong == {}, (
+        "rendered REPORT.md prose claims a terminal state and cites a row that "
+        "does not state one:\n"
+        + "\n".join(
+            f"  {name} -> {row[:140]}\n    in: {cited[name][:140]}"
+            for name, row in wrong.items()
+        )
+        + "\nRe-attribute the sentence to the row that actually states the "
+        "rule. An operator resolving this cite lands on an unrelated "
+        "requirement, and the report is the one artefact they read outside "
+        "the source tree."
+    )
+
+
 def _halted_at_the_real_door(
     tmp_path, *, max_cycles: int, cycle: int, name: str = "halt-run"
 ) -> tuple:

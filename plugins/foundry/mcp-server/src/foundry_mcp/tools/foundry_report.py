@@ -1563,8 +1563,9 @@ def _halt_and_co_dispatch_section(
         ),
         "co_dispatch_owned_alone_count": len(owned_alone),
         "note": (
-            "HALTED is a named terminal state and is NOT DONE (ST-008): the "
-            "report is generated and every open defect is named in it. `Reason` "
+            "HALTED is a named terminal state and is NOT DONE (ST-001 / "
+            "CT-004): the report is generated and every open defect is named "
+            "in it. `Reason` "
             "is a member of the halt vocabulary and `Reason text` is the lead's "
             "own words; a run whose `halted_reason` predates FR-019 carries a "
             "free sentence and no member, and that sentence is printed as text "
@@ -2822,12 +2823,13 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
             "project_root": str(project_root),
             "phase": phase,
             "cycle": state.get("cycle"),
-            # ST-008: HALTED is a named terminal state, not DONE. The section
-            # bodies name every open defect at EVERY tier on every run — the
-            # cross-tab buckets over `DEFECT_TIER_OR_UNKNOWN`, and the LATENT
-            # and HARDENING backlogs list their own — so a halted run's report
-            # is auditable without a section of its own, and this flag only
-            # tells the reader which kind of ending they are looking at.
+            # ST-001 / CT-004: HALTED is a named terminal state, not DONE. The
+            # section bodies name every open defect at EVERY tier on every
+            # run — the cross-tab buckets over `DEFECT_TIER_OR_UNKNOWN`, and
+            # the LATENT and HARDENING backlogs list their own — so a halted
+            # run's report is auditable without a section of its own, and this
+            # flag only tells the reader which kind of ending they are looking
+            # at.
             #
             # This comment read "every open LIVE and every open LATENT defect
             # ... without a twelfth section", and both counts had gone stale:
