@@ -2263,6 +2263,122 @@ def test_a_declared_member_is_never_an_unknown_status() -> None:
     ) != vocab.escalation_status_is_unknown({"status": "BOGUS"})
 
 
+def _names_escalation_filename(tree: "ast.Module") -> bool:
+    """True when a parsed module NAMES `escalation.json`, by any spelling.
+
+    Split out of the walk below so the property can be driven against a SOURCE
+    STRING instead of against the source tree. That is not tidiness: while this
+    predicate was welded to a filesystem walk rooted at `REPO_ROOT`, the only
+    way to exercise an arm was to plant a real module under `src/`, so nobody
+    did, and the arm that was missing stayed missing (C-117).
+
+    THE THREE ARMS.
+      * the LITERAL — `run_dir / "escalation.json"` — an `ast.Constant`;
+      * the IMPORTED NAME — `from ...escalation import ESCALATION_FILENAME`,
+        with or without an `as` rename, because `alias.name` is the name at the
+        source end — an `ast.ImportFrom` alias;
+      * the ATTRIBUTE — `from ...orchestration import escalation`, or
+        `import ...escalation as esc`, and then `escalation.ESCALATION_FILENAME`
+        — an `ast.Attribute`. Neither of the first two sees this one. The import
+        binds the MODULE rather than the constant, so no alias carries the name;
+        and no `"escalation.json"` string appears anywhere in the file.
+
+    THE THIRD ARM IS C-117, AND IT WAS A REAL FAIL-OPEN. A shipped module
+    spelling the read that way and keeping a bare `"ESCALATED"` beside it — the
+    exact D-214 / D-215 shape the pin below exists to catch — was written into
+    `tools/orchestration/` and driven through the two-arm predicate, which
+    discovered nothing and let the pin pass. What kept it LATENT rather than
+    live is that no shipped module used the spelling; what makes it worth an
+    arm rather than a note is that `tests/test_escalation.py` uses it at nine
+    sites, so it is this repo's own idiom and not an invented one.
+
+    WHAT THIS STILL CANNOT SEE, stated rather than defended against:
+    `getattr(escalation, "ESCALATION_FILENAME")`, whose only string constant is
+    the attribute's own name. Nothing here looks a filename constant up
+    dynamically, and an arm for a spelling nobody writes is surface rather than
+    coverage — but whoever writes the first one adds the arm with it.
+    """
+    import ast
+
+    nodes = list(ast.walk(tree))
+    return (
+        any(
+            isinstance(node, ast.Constant) and node.value == "escalation.json"
+            for node in nodes
+        )
+        or any(
+            alias.name == "ESCALATION_FILENAME"
+            for node in nodes
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        )
+        or any(
+            isinstance(node, ast.Attribute)
+            and node.attr == "ESCALATION_FILENAME"
+            for node in nodes
+        )
+    )
+
+
+def test_discovery_sees_every_spelling_a_module_can_name_the_file_by() -> None:
+    """C-117 — the predicate's arms, driven one spelling at a time.
+
+    RED before the third arm landed, on both attribute rows: a shipped module
+    reaching the constant through the imported MODULE was invisible to
+    discovery, so the structural pin below vouched for a reader it never
+    looked at, and that reader could carry its own `"ESCALATED"` straight past
+    the literal ban.
+
+    Each source is the SPELLING and nothing else — no status literal, no
+    resolver import — because what is under test here is DISCOVERY, not the two
+    assertions discovery feeds. The negative at the end is what stops the whole
+    register going quietly green on a predicate that started answering True to
+    everything.
+    """
+    import ast
+
+    spellings = {
+        "literal": 'p = run_dir / "escalation.json"\n',
+        "imported name": (
+            "from foundry_mcp.tools.orchestration.escalation import "
+            "ESCALATION_FILENAME\np = run_dir / ESCALATION_FILENAME\n"
+        ),
+        "imported name, renamed": (
+            "from foundry_mcp.tools.orchestration.escalation import "
+            "ESCALATION_FILENAME as EF\np = run_dir / EF\n"
+        ),
+        "attribute on the imported module": (
+            "from foundry_mcp.tools.orchestration import escalation\n"
+            "p = run_dir / escalation.ESCALATION_FILENAME\n"
+        ),
+        "attribute on a renamed module": (
+            "import foundry_mcp.tools.orchestration.escalation as esc\n"
+            "p = run_dir / esc.ESCALATION_FILENAME\n"
+        ),
+    }
+    missed = sorted(
+        name
+        for name, source in spellings.items()
+        if not _names_escalation_filename(ast.parse(source))
+    )
+    assert missed == [], (
+        f"discovery cannot see {missed} — a shipped module naming "
+        f"escalation.json that way reads as no reader at all, so the "
+        f"structural pin below vouches for a module it never looked at"
+    )
+
+    assert not _names_escalation_filename(
+        ast.parse(
+            "from foundry_mcp.schemas import vocab\n"
+            "tiers = vocab.DEFECT_TIERS\n"
+        )
+    ), (
+        "a module naming neither the file nor the constant was discovered as a "
+        "reader — discovery has stopped discriminating and every assertion "
+        "downstream of it is now decoration"
+    )
+
+
 def _shipped_readers_of_escalation_json() -> dict[str, "object"]:
     """Every shipped module that NAMES `escalation.json` — literal or import.
 
@@ -2270,8 +2386,8 @@ def _shipped_readers_of_escalation_json() -> dict[str, "object"]:
     of this class each amounted to: the fix landed on the readers somebody
     remembered. The AST walk finds a FOURTH reader the day it is written.
 
-    TWO SPELLINGS, AND THE SECOND IS WHY (Holmes `vocab-3`, concern C-014).
-    ----------------------------------------------------------------------
+    THREE SPELLINGS, AND WHY EACH (Holmes `vocab-3`, concerns C-014, C-117).
+    ------------------------------------------------------------------------
     Discovery keyed on the string CONSTANT alone, and Holmes named the trap
     that made: "the ONLY `escalation.json` Constant node in the orchestrator is
     the declaration ... if both imported the name from a shared home,
@@ -2288,6 +2404,10 @@ def _shipped_readers_of_escalation_json() -> dict[str, "object"]:
     the day it appears — and the ratchet is gone: centralising the filename now
     makes discovery follow it instead of losing it.
 
+    A THIRD spelling joined them under C-117 — the attribute access an import
+    of the MODULE leaves behind. All three arms live in
+    `_names_escalation_filename` above, which is where their evidence is too.
+
     Tests are excluded — a test builds fixture documents and asserts on the
     literals by design. `vocab.py` is not excluded by name and does not need to
     be: it holds the vocabulary, not the filename.
@@ -2301,16 +2421,7 @@ def _shipped_readers_of_escalation_json() -> dict[str, "object"]:
         if "/tests/" in rel or "/.venv/" in rel or "/site-packages/" in rel:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        names_the_file = any(
-            isinstance(node, ast.Constant) and node.value == "escalation.json"
-            for node in ast.walk(tree)
-        ) or any(
-            alias.name == "ESCALATION_FILENAME"
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-            for alias in node.names
-        )
-        if names_the_file:
+        if _names_escalation_filename(tree):
             found[rel] = tree
     return found
 
