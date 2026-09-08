@@ -1,7 +1,6 @@
 # evidence-cmd: cd plugins/foundry/mcp-server && B='`' && F="src/foundry_mcp/schemas/vocab.py src/foundry_mcp/tools/foundry_state.py src/foundry_mcp/tools/foundry_report.py src/foundry_mcp/tools/display.py tests/test_vocab.py tests/test_report.py tests/test_foundry_state_readers.py" && echo "== every private name D-063/D-064/D-065 and the sweep repointed ==" && for n in _LAYERING_DEBT _empty_spend_bucket _new_spend_bucket _md_sections _server_cycle _overlay_unreported _BMAGENTA _BLUE _BG_BLUE _PHASE_NAMES _TEST_BASENAME_RES; do printf "%-22s " "$n"; if grep -q -- "$B$n$B" $F; then echo "STILL CITED"; grep -Hn -- "$B$n$B" $F | sed "s|^|    |"; else echo "no backticked cite"; fi; done && echo && echo "== the successors the prose names now ==" && grep -Hn -e "foundry_state\.spend_bucket" -e "foundry_state\.markdown_sections" -e "foundry_state\.overlay_unreported" $F
 # evidence-for: FR-008
 # evidence-timeout: 120
-
 == every private name D-063/D-064/D-065 and the sweep repointed ==
 _LAYERING_DEBT         no backticked cite
 _empty_spend_bucket    no backticked cite
@@ -19,16 +18,16 @@ _TEST_BASENAME_RES     no backticked cite
 src/foundry_mcp/tools/foundry_report.py:937:    overlay -- `foundry_state.overlay_unreported`, called from `_spend_summary`
 src/foundry_mcp/tools/foundry_report.py:941:    is the seed `foundry_record_spend` lays down, `foundry_state.spend_bucket`,
 src/foundry_mcp/tools/foundry_report.py:993:    # `foundry_state.overlay_unreported` -- BACK OUT of the orchestrator
-src/foundry_mcp/tools/foundry_report.py:2131:        # `foundry_state.markdown_sections` matches on.
-src/foundry_mcp/tools/foundry_report.py:2532:        # ROLL-UP's number or it is nothing — `foundry_state.spend_bucket`
+src/foundry_mcp/tools/foundry_report.py:2132:        # `foundry_state.markdown_sections` matches on.
+src/foundry_mcp/tools/foundry_report.py:2533:        # ROLL-UP's number or it is nothing — `foundry_state.spend_bucket`
 tests/test_report.py:38:``foundry_state.markdown_sections``) and the unreported-dispatch walk.
 tests/test_report.py:2034:    nothing: `foundry_state.spend_bucket` seeds it None and `_read_spend`
 tests/test_report.py:2211:    # `foundry_state.overlay_unreported` writes the derived number onto
-tests/test_report.py:3662:    # overlay, now `foundry_state.overlay_unreported`) were both reaches BACK
-tests/test_report.py:3705:        "the overlay is `foundry_state.overlay_unreported` now; a back-import "
-tests/test_report.py:3856:    `foundry_state.overlay_unreported`, then the orchestrator's — runs
-tests/test_report.py:3859:    is `foundry_state.spend_bucket`, which seeds 0 and never increments.
-tests/test_report.py:4808:    D-229 closed the zero rows in `foundry_state.overlay_unreported`,
-tests/test_report.py:4916:    `foundry_state.overlay_unreported`, and `foundry_state.spend_rollup` seeds
-tests/test_report.py:5038:    `foundry_state.markdown_sections` matches a whole trimmed line, and this
+tests/test_report.py:3815:    # overlay, now `foundry_state.overlay_unreported`) were both reaches BACK
+tests/test_report.py:3858:        "the overlay is `foundry_state.overlay_unreported` now; a back-import "
+tests/test_report.py:4009:    `foundry_state.overlay_unreported`, then the orchestrator's — runs
+tests/test_report.py:4012:    is `foundry_state.spend_bucket`, which seeds 0 and never increments.
+tests/test_report.py:4961:    D-229 closed the zero rows in `foundry_state.overlay_unreported`,
+tests/test_report.py:5069:    `foundry_state.overlay_unreported`, and `foundry_state.spend_rollup` seeds
+tests/test_report.py:5191:    `foundry_state.markdown_sections` matches a whole trimmed line, and this
 tests/test_foundry_state_readers.py:1723:    `foundry_state.markdown_sections` --

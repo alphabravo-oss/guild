@@ -3,7 +3,6 @@
 # evidence-volatile: \d+\.\d+s
 # evidence-volatile: \d+\.\d+ seconds
 # evidence-timeout: 900
-
 ........................................................................ [ 10%]
 .............................................................ss......... [ 20%]
 ........................................................................ [ 30%]
@@ -12,8 +11,8 @@
 ........................................................................ [ 60%]
 ........................................................................ [ 70%]
 ........................................................................ [ 80%]
-........................................................................ [ 90%]
-..............
+...........................................s............................ [ 90%]
+...............
 === report.json top-level keys ===
   generated_at
   run
@@ -207,8 +206,9 @@
   cycles_without_decision None
   This run's cycle axis cannot be derived — neither its state counter, its stream roll-up nor its defect ledger can supply a cycle number — so this section cannot say which cycles carry no recorded decision. The 2 decision(s) below are every one the ledger holds, and no cycle is assumed either way.
   an axis of 0-4 taken from those two rows would have been complete by construction — every recorded cycle on it, no cycle off it — which is the D-193 fabrication wearing a different hat.
-...................................................     [100%]
+...................................................    [100%]
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_foundry_state_readers.py:2459: width._current_inspect_mode is gone — casting 2 repointed to the leaf (C-059 row 4). Nothing is left to agree with, and the leaf reader is driven directly above.
 SKIPPED [1] tests/test_foundry_state_readers.py:2504: width's copies of the width refusal are gone — casting 2 repointed to the leaf (C-059 row 5). Nothing is left to agree with, and the leaf predicate is driven directly above.
-714 passed, 2 skipped in 4.13s
+SKIPPED [1] tests/test_report.py:3144: this checkout carries no forge-specs/foundry-run-fallout/spec.md
+714 passed, 3 skipped in 4.80s
