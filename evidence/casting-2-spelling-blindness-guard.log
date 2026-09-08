@@ -1,13 +1,8 @@
-# evidence-cmd: cd plugins/foundry/mcp-server || exit 1; uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -v tests/orchestration/test_module_boundaries.py::test_no_import_reading_pins_the_module_to_its_own_name tests/orchestration/test_module_boundaries.py::test_the_blindness_recogniser_is_driven_on_every_shape tests/orchestration/test_module_boundaries.py::test_the_consolidation_scan_reads_all_three_spellings_of_the_leaf 2>&1
+# evidence-cmd: cd plugins/foundry || exit 1; grep -rlE '_SHARED_IMPORT_READINGS|_DOTTED_MODULE_PATH|_plugin_root_for_the_import_scan|_names_denoting|_denotes_the_node_type|_scope_tests_for_the_node_type|_import_reading_scopes|_receivers_read_through_the_shared_reading|_module_field_receiver|_string_arguments|_names_a_package|_module_pins_in|_blind_import_readings' --include='*.py' --include='*.md' . | sed 's/^/STILL PRESENT: /'; echo 'retired-recogniser helper scan complete'; cd mcp-server || exit 1; uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -q tests/orchestration/test_module_boundaries.py::test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith tests/orchestration/test_module_boundaries.py::test_the_consolidation_scan_reads_all_three_spellings_of_the_leaf 2>&1 | tail -3
 # evidence-for: fallout FR-006, AC-015, GI-025, OT-015, AC-011, OT-011
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
-============================= test session starts ==============================
-collecting ... collected 3 items
-
-tests/orchestration/test_module_boundaries.py::test_no_import_reading_pins_the_module_to_its_own_name PASSED [ 33%]
-tests/orchestration/test_module_boundaries.py::test_the_blindness_recogniser_is_driven_on_every_shape PASSED [ 66%]
-tests/orchestration/test_module_boundaries.py::test_the_consolidation_scan_reads_all_three_spellings_of_the_leaf PASSED [100%]
-
-============================== 3 passed in 2.16s ===============================
+retired-recogniser helper scan complete
+..                                                                       [100%]
+2 passed in 0.09s
