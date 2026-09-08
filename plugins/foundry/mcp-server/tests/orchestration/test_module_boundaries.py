@@ -6325,7 +6325,7 @@ _LIFECYCLE_FLOOR = frozenset({
 })
 
 #: fallout AC-015 / AC-061 / FR-063 / GI-033 / OT-015 (D-192 / D-193, concern
-#: C-107) — THE OPEN-VIOLATIONS ROSTER IS GONE, AND THE WAY IT WENT IS THE
+#: C-107) — `_OPEN_LAYERING_VIOLATIONS` STOOD HERE, AND THE WAY IT WENT IS THE
 #: POINT.
 #:
 #: It was `{offender line: who closes it}` carrying ONE row — `foundry_handoff
