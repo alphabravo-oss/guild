@@ -4426,10 +4426,25 @@ def sweep_evidence_at_head(
 # `verify_evidence` below through a call-time import. That was the tree's one
 # lifecycle-to-verifier crossing outside GI-033's named transitions-to-halt
 # seam, and AC-061 refuses this direction ENTIRELY — not a seam, not a table,
-# not a lazy import, at no depth. Two exception tables were written over three
-# cycles to hold this direction open, and the boundary guard has deleted both
-# (concern C-054, then D-193); a third would have failed the same way, which is
-# why nothing here excuses the edge and the door moved instead.
+# not a lazy import, at no depth.
+#
+# THREE NAMED CONTAINERS STOOD IN THIS DIRECTION'S WAY BEFORE THE DOOR MOVED,
+# and the difference between the first two and the third is why the edge is
+# closed rather than re-excused. A layering-debt allowlist the two module-top
+# assertions consulted BEFORE judging an edge was deleted at concern C-054, with
+# fourteen real violations in it wearing explanations. Its successor
+# `_UNCLOSED_CROSS_PACKAGE_EDGES` was a two-row frozenset all three assertions
+# skipped on with `continue`, so the guard reported a clean tree over a tree
+# holding both of its live crossings; D-193 deleted that one. Neither edge ever
+# entered `offenders`, which is what made both tables hollow rather than
+# lenient. `_OPEN_LAYERING_VIOLATIONS` replaced them and was a different shape
+# on purpose: the lifecycle assertion COMPARED its result against the roster
+# instead of skipping on it, so this crossing stayed inside `offenders` and the
+# guard said "this tree has exactly this violation" rather than "this tree is
+# clean". It was written to be unable to outlive its debt, and it did not — this
+# move emptied `offenders`, the exact-equality assertion failed naming the stale
+# row, and the roster went with the row. The rule reads `offenders == []`
+# outright now, with no second operand a reader has to go and check.
 #
 # WHY THE DOOR MOVED RATHER THAN A SYMBOL. GI-033's remedy is "a symbol read
 # from BOTH layers belongs in a leaf", and C-107 measured this edge and found it
