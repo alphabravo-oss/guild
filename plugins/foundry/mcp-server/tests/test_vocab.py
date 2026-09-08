@@ -2445,6 +2445,360 @@ _KNOWN_ESCALATION_READERS = frozenset({
 })
 
 
+#: The two modules this pin resolves against, and the resolver it looks for,
+#: spelled ONCE each. Every arm below derives from these three strings, so no
+#: two arms can come to disagree about which module they are asking about —
+#: which is half of what went wrong here (C-120, and D-081's class before it).
+_VOCAB_DOTTED = "foundry_mcp.schemas.vocab"
+_ESCALATION_DOTTED = "foundry_mcp.tools.orchestration.escalation"
+_STATUS_RESOLVER = "escalation_status"
+
+
+def _imports_named_by(node: "ast.AST") -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """What ONE import statement loads: (modules bound, symbols bound).
+
+    fallout AC-015 / FR-006 / GI-025 / OT-015 (concern C-120, after D-192) —
+    THE THREE FILTERS BELOW READ ONE SPELLING OF THREE, AND FAILED LOUDLY AND
+    WRONGLY ON THE OTHER TWO.
+
+    A Python import has three spellings of the same load::
+
+        from foundry_mcp.tools.orchestration.escalation import ESCALATION_FILENAME
+        import foundry_mcp.tools.orchestration.escalation
+        from foundry_mcp.tools.orchestration import escalation
+
+    Each of the pin's three `ast.ImportFrom` filters keyed on
+    `node.module.endswith(<the target module's OWN full tail>)`, so only the
+    first was ever seen: the second is an `ast.Import` and had no arm at all,
+    and the third puts the PARENT package in `node.module` and the module in
+    `node.names`.
+
+    DRIVEN, NOT REASONED, and in BOTH directions of the site. `gates.py`'s
+    escalation import was rewritten to
+    `from foundry_mcp.tools.orchestration import escalation as _esc` with the
+    four symbols rebound: RED, `assert ([] or [])`, naming `gates.py` as a
+    module that "neither imports `escalation_status` from schemas.vocab nor
+    takes its escalation derivations from orchestration/escalation.py" — which
+    is false, it plainly does the second. Then `escalation.py`'s own resolver
+    import was rewritten to `from foundry_mcp.schemas import vocab as _vocab`
+    with `_escalation_status` rebound off it: RED again, the same message, the
+    same innocent module named. That second pair of arms — `imported` and
+    `resolvers` — carries the identical blindness and was not on the concern.
+    Over the fixtures below, 8 of the 11 spellings were unseen.
+
+    LOUD BUT WRONG, AND THAT IS THE WHOLE EXPOSURE. Every arm here is used
+    POSITIVELY, so a spelling not seen makes a required list emptier: blindness
+    can only make this pin FIRE, never pass. D-214 and D-215 do not reopen — the
+    literal ban below the loop is unconditional and untouched by any of this,
+    and the old arms invented no phantom either, so the widening is purely
+    additive. What a false RED costs is the next reader, sent hunting a defect
+    in a module that does not have one, and a legitimate refactor into the
+    idiomatic spelling that cannot land while the guard calls it a violation.
+
+    RESOLVED ON DISK, through `_submodules_named_by` — the reading both layering
+    walks (D-192, concern C-107), the no-facade walk (D-198), the arming
+    condition (C-115), the ledger-door roster (C-116), the evidence-engine scan
+    (C-118) and the stdout site walk (C-119) already share — rather than a
+    seventh private enumeration, which is how every instance of this class got
+    in. Collecting aliases BY NAME would catch the spelling and invent phantom
+    edges with it: `from foundry_mcp.schemas.vocab import escalation_status`
+    would read a FUNCTION as a module. `<package>/<name>.py` existing is a fact.
+    No `also_by_name` roster is needed, and that is established rather than
+    assumed: the prefix guard opening that helper returns early for anything not
+    under `foundry_mcp`, and both targets here are under it — driven,
+    `_submodules_named_by("foundry_mcp.tools.orchestration", ["escalation"])`
+    is `{"escalation"}` and `("foundry_mcp.schemas", ["vocab"])` is `{"vocab"}`,
+    both asserted in the pin below so an arm cannot quietly degrade into
+    resolving nothing.
+
+    ALL THREE SPELLINGS ARE READ HERE, IN ONE SCOPE, and the two predicates
+    below ask this rather than reading `ImportFrom.module` themselves. That is
+    not tidiness: a caller keeping the spelling-one arm inline and delegating
+    the other two is still a scope that pins the module to a name, which is the
+    shape `test_no_import_reading_pins_the_module_to_its_own_name` refuses —
+    driven, it named both predicates until the reading moved in here whole.
+
+    RETURNS TWO MAPPINGS, both keyed on the FULL dotted module path:
+
+      * `modules` — {dotted: the local names the MODULE ITSELF is bound to}.
+        `from a.b import c`, where `a/b/c.py` is a file, contributes
+        `a.b.c -> {"c"}`; aliased, the alias. `import a.b.c` contributes
+        `a.b.c -> {"a.b.c"}`, because the unaliased form binds `a` and the
+        ACCESS site therefore spells the whole path — which is what
+        `ast.unparse` yields there and what the attribute arm compares against.
+        `from a.b.c import d` contributes `a.b.c -> set()`: the module is
+        loaded, but no local name refers to it, so an attribute arm has nothing
+        to key on and correctly gets nothing.
+      * `symbols` — {dotted: the DEFINING names bound out of it}. Keyed on
+        `alias.name`, never `alias.asname`, so `import ... as X` is the same
+        load under another local name. Casting 4 named that fourth way to lose a
+        name while closing C-116 and casting 2 then found it inside its own new
+        guard; the defining name decides WHAT was loaded and the local name
+        decides how it is SPELLED afterwards, and conflating the two is the bug.
+
+    Relative imports are left to the same reading the shared walks leave them
+    to: `node.level` is non-zero, `node.module` is then a suffix rather than a
+    package path, and this package writes none.
+    """
+    import ast
+
+    from tests.orchestration.test_module_boundaries import _submodules_named_by
+
+    modules: dict[str, set[str]] = {}
+    symbols: dict[str, set[str]] = {}
+    if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+        modules.setdefault(node.module, set())
+        symbols.setdefault(node.module, set()).update(
+            alias.name for alias in node.names
+        )
+        for name in _submodules_named_by(
+            node.module, [alias.name for alias in node.names]
+        ):
+            modules.setdefault(f"{node.module}.{name}", set()).update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == name
+            )
+    elif isinstance(node, ast.Import):
+        for alias in node.names:
+            modules.setdefault(alias.name, set()).add(alias.asname or alias.name)
+    return modules, symbols
+
+
+def _reaches_the_module(tree: "ast.Module", dotted: str) -> bool:
+    """Does `tree` load the MODULE `dotted` — by any of the three spellings?
+
+    The DELEGATION question: "does this reader take its escalation derivations
+    from `orchestration/escalation.py`", which does not care which symbols come
+    across. Full dotted-path equality, never a suffix: the parent package
+    `foundry_mcp.tools.orchestration` and the sibling modules `gates` and
+    `width` are all real things on disk and none of them is the escalation
+    module. The pin below drives each as a phantom.
+    """
+    import ast
+
+    return any(dotted in _imports_named_by(node)[0] for node in ast.walk(tree))
+
+
+def _reaches_the_symbol(tree: "ast.Module", dotted: str, symbol: str) -> bool:
+    """Does `tree` reach `symbol`, defined in the module `dotted`?
+
+    A SYMBOL question rather than a module one, so the spellings resolve into
+    two shapes and both must answer:
+
+      * SYMBOL-BOUND — `from <dotted> import <symbol> [as X]`. Keyed on the
+        DEFINING name, so the rename `orchestration/escalation.py` really writes
+        (`escalation_status as _escalation_status`) is seen.
+      * MODULE-BOUND — the module arrives by any spelling and the symbol is
+        reached off it: `from foundry_mcp.schemas import vocab` then
+        `vocab.escalation_status(...)`. This is the shape C-117 taught, in the
+        arms C-117 did not reach.
+
+    The attribute arm is BOUND to the binding rather than left free, and that is
+    what keeps the widening additive: a bare `helper.escalation_status(x)` in a
+    module that never imported the vocabulary resolves nothing here, and so does
+    `escalation.escalation_status(x)` off a different module of the same
+    package. Both are driven as phantoms below. A guard that reports edges the
+    tree does not have is a guard somebody writes an exception table for.
+    """
+    import ast
+
+    bindings: set[str] = set()
+    nodes = list(ast.walk(tree))
+    for node in nodes:
+        modules, symbols = _imports_named_by(node)
+        if symbol in symbols.get(dotted, set()):
+            return True
+        bindings |= modules.get(dotted, set())
+    if not bindings:
+        return False
+    return any(
+        isinstance(node, ast.Attribute)
+        and node.attr == symbol
+        and ast.unparse(node.value) in bindings
+        for node in nodes
+    )
+
+
+#: Every way to write the load the delegation arm asks about, with the aliased
+#: forms that lose a name when a reading keys on the local binding. Against the
+#: reading this replaced — an `ast.ImportFrom` filter on the module's own full
+#: tail — only the FIRST row was ever seen.
+_ESCALATION_MODULE_SPELLINGS = {
+    "from <module> import <symbol>": (
+        "from foundry_mcp.tools.orchestration.escalation import "
+        "ESCALATION_FILENAME"
+    ),
+    "from <parent> import <module>": (
+        "from foundry_mcp.tools.orchestration import escalation"
+    ),
+    "from <parent> import <module> as X": (
+        "from foundry_mcp.tools.orchestration import escalation as _esc"
+    ),
+    "import <dotted module>": (
+        "import foundry_mcp.tools.orchestration.escalation"
+    ),
+    "import <dotted module> as X": (
+        "import foundry_mcp.tools.orchestration.escalation as _esc"
+    ),
+}
+
+#: The same spellings for the RESOLVER, each carrying the ACCESS as well as the
+#: import: a module-bound spelling reaches the symbol by attribute, so the
+#: import alone is not the reach and this reading deliberately does not call it
+#: one. Against the reading this replaced, the first two rows were seen — they
+#: bind the symbol itself — and the four module-bound rows were not.
+_RESOLVER_SPELLINGS = {
+    "from <module> import <symbol>": """
+from foundry_mcp.schemas.vocab import escalation_status
+s = escalation_status(entry)
+""",
+    "from <module> import <symbol> as X": """
+from foundry_mcp.schemas.vocab import escalation_status as _st
+s = _st(entry)
+""",
+    "from <parent> import <module>, attribute": """
+from foundry_mcp.schemas import vocab
+s = vocab.escalation_status(entry)
+""",
+    "from <parent> import <module> as X, attribute": """
+from foundry_mcp.schemas import vocab as _v
+s = _v.escalation_status(entry)
+""",
+    "import <dotted module>, attribute": """
+import foundry_mcp.schemas.vocab
+s = foundry_mcp.schemas.vocab.escalation_status(entry)
+""",
+    "import <dotted module> as X, attribute": """
+import foundry_mcp.schemas.vocab as _v
+s = _v.escalation_status(entry)
+""",
+}
+
+#: ROW ZERO IS A POSITIVE, and the rest are phantoms. The positive really does
+#: import the escalation module — aliased, beside a vocab import that is not the
+#: resolver — so the phantom list below cannot pass by virtue of every row being
+#: unreachable. The phantoms name real things under this package that are NOT
+#: the reach being asked about: a reading resolving aliases BY NAME would call
+#: `orchestration` a match, and one matching a prefix or a suffix rather than
+#: the whole dotted path would call `gates` and `width` one.
+_NOT_THE_ESCALATION_MODULE = (
+    """
+from foundry_mcp.tools.orchestration.escalation import ESCALATION_FILENAME as _f
+from foundry_mcp.schemas.vocab import DEFECT_TIERS
+""",
+    "from foundry_mcp.tools import orchestration",
+    "from foundry_mcp.tools.orchestration import gates",
+    "import foundry_mcp.tools.orchestration.width",
+)
+
+#: Phantoms for the resolver arm. The last two are what the attribute arm's
+#: BINDING check exists for: an attribute named `escalation_status` reached off
+#: something the module never imported from the vocabulary is not a resolution,
+#: and reading it as one is how a widening starts inventing edges.
+_NOT_THE_RESOLVER = (
+    "from foundry_mcp.schemas.vocab import DEFECT_TIERS",
+    """
+from foundry_mcp.schemas import vocab
+t = vocab.DEFECT_TIERS
+""",
+    "s = helper.escalation_status(entry)",
+    """
+from foundry_mcp.tools.orchestration import escalation
+s = escalation.escalation_status(entry)
+""",
+)
+
+
+def test_the_resolver_and_delegation_arms_read_all_three_import_spellings(
+) -> None:
+    """C-120 — the three filters below, driven one spelling at a time.
+
+    RED before this fix on eight of the eleven rows. Every arm of this pin is
+    used POSITIVELY, so an unseen spelling cannot make it pass — it makes it
+    FAIL, naming an innocent module for a reason that is not true, and sends
+    whoever reads the failure hunting a defect that is not there.
+
+    The phantom halves are what stop the widening from over-matching: the parent
+    package, a sibling module, a symbol that shares no basename with a module,
+    and an attribute access whose binding was never imported must all resolve to
+    nothing. A guard that invents edges is the one somebody adds an exception
+    table to.
+    """
+    import ast
+
+    from tests.orchestration.test_module_boundaries import _submodules_named_by
+
+    # The disk resolution both widened arms rest on, asserted so neither can
+    # quietly degrade into resolving nothing — which would look from the
+    # outside exactly like the blindness this pin closes.
+    assert _submodules_named_by(
+        "foundry_mcp.tools.orchestration", ["escalation"]
+    ) == {"escalation"}
+    assert _submodules_named_by("foundry_mcp.schemas", ["vocab"]) == {"vocab"}
+    assert _submodules_named_by(_VOCAB_DOTTED, [_STATUS_RESOLVER]) == set(), (
+        "the resolver resolved as a MODULE — the on-disk reading has stopped "
+        "discriminating and every phantom below is now reachable"
+    )
+
+    unseen = {
+        "delegation": sorted(
+            label
+            for label, source in _ESCALATION_MODULE_SPELLINGS.items()
+            if not _reaches_the_module(ast.parse(source), _ESCALATION_DOTTED)
+        ),
+        "resolver": sorted(
+            label
+            for label, source in _RESOLVER_SPELLINGS.items()
+            if not _reaches_the_symbol(
+                ast.parse(source), _VOCAB_DOTTED, _STATUS_RESOLVER
+            )
+        ),
+    }
+    assert unseen == {"delegation": [], "resolver": []}, (
+        f"these spellings are invisible to the pin's arms: {unseen}. Each is "
+        f"the same load Python performs, written another way, and each makes a "
+        f"required list EMPTIER — so a reader spelling it that way is named as "
+        f"a violator for a reason that is false. Resolve the import through "
+        f"`_submodules_named_by` rather than against the target module's own "
+        f"full dotted tail."
+    )
+
+    invented = {
+        "delegation": [
+            source
+            for source in _NOT_THE_ESCALATION_MODULE[1:]
+            if _reaches_the_module(ast.parse(source), _ESCALATION_DOTTED)
+        ],
+        "resolver": [
+            source
+            for source in _NOT_THE_RESOLVER
+            if _reaches_the_symbol(
+                ast.parse(source), _VOCAB_DOTTED, _STATUS_RESOLVER
+            )
+        ],
+    }
+    assert invented == {"delegation": [], "resolver": []}, (
+        f"the arms invented a reach the tree does not have: {invented}. The "
+        f"parent package, a sibling module and an attribute whose binding was "
+        f"never imported are each a real thing under this package and none of "
+        f"them is the reach being asked about."
+    )
+
+    # The delegation row held out of the phantom set above is a POSITIVE: it
+    # really does import the escalation module, aliased, beside a vocab import
+    # that is not the resolver. Asserting it here is what keeps the phantom
+    # list from passing by virtue of every row being unreachable.
+    assert _reaches_the_module(
+        ast.parse(_NOT_THE_ESCALATION_MODULE[0]), _ESCALATION_DOTTED
+    )
+    assert not _reaches_the_symbol(
+        ast.parse(_NOT_THE_ESCALATION_MODULE[0]),
+        _VOCAB_DOTTED,
+        _STATUS_RESOLVER,
+    )
+
+
 def test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab() -> None:
     """THE STRUCTURAL PIN. Not "these three readers" — every reader there is.
 
@@ -2475,15 +2829,7 @@ def test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab() -> N
     )
 
     for rel, tree in sorted(readers.items()):
-        imported = [
-            alias.asname or alias.name
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-            and node.module
-            and node.module.endswith("schemas.vocab")
-            for alias in node.names
-            if alias.name == "escalation_status"
-        ]
+        imported = _reaches_the_symbol(tree, _VOCAB_DOTTED, _STATUS_RESOLVER)
         # THE SECOND ARM: a module that resolves NOTHING is not required to
         # import the resolver. `orchestration/gates.py` names the file and
         # takes `_escalated_classes` / `_persisted_escalations` from
@@ -2498,13 +2844,16 @@ def test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab() -> N
         # arm cannot swallow the pin either — the assertion after the loop
         # requires that at least one discovered module really does import the
         # resolver.
-        delegates = [
-            node.module
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-            and node.module
-            and node.module.endswith("orchestration.escalation")
-        ]
+        #
+        # BOTH ARMS RESOLVE ON DISK, NOT BY SUFFIX (C-120). Each was an
+        # `ast.ImportFrom` filter keyed on the target module's own full tail, so
+        # `from foundry_mcp.tools.orchestration import escalation` and
+        # `import foundry_mcp.tools.orchestration.escalation` — the same load,
+        # two of Python's three spellings of it — walked past both. Because
+        # every arm here is used POSITIVELY, that did not fail open: it failed
+        # LOUDLY AND WRONGLY, naming a module that delegates perfectly well as
+        # one that resolves nothing. See `_imports_named_by` above for the drive.
+        delegates = _reaches_the_module(tree, _ESCALATION_DOTTED)
         assert imported or delegates, (
             f"{rel} reads escalation.json but neither imports "
             f"`escalation_status` from schemas.vocab nor takes its escalation "
@@ -2534,14 +2883,7 @@ def test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab() -> N
     # here while nothing resolved the status through the vocabulary at all.
     resolvers = [
         rel for rel, tree in readers.items()
-        if any(
-            alias.name == "escalation_status"
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-            and node.module
-            and node.module.endswith("schemas.vocab")
-            for alias in node.names
-        )
+        if _reaches_the_symbol(tree, _VOCAB_DOTTED, _STATUS_RESOLVER)
     ]
     assert resolvers, (
         "no discovered reader of escalation.json imports `escalation_status` "
