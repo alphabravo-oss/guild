@@ -1,8 +1,8 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_defect_tier.py
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -rN -p no:cacheprovider tests/test_defect_tier.py
 # evidence-for: US-005, US-011, AC-023, AC-045, AC-055, FR-015, FR-025, FR-037, FR-045, FR-057, NFR-004, CT-012, CT-019, GI-004, GI-014, GI-022, GI-028, ST-006, OT-018, OT-019, OT-020, OT-039
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
 ........................................................................ [ 51%]
-.....................................................................    [100%]
-141 passed in 5.66s
+.............ss......................................................    [100%]
+139 passed, 2 skipped in 1.69s
