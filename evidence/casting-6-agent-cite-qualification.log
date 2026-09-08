@@ -1,0 +1,25 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c "import sys; sys.path[:0]=['src','tests']; import test_protocol_prose as m; conv=m._convention(); flat=lambda s: ' '.join(s.split()); pre={'agents/teammate.md': 'both commits. FR-041 puts that account in this report and nowhere else: Foundry-Fix declares no field for it', 'agents/coverage-diff.md': 'nothing about it can drift as code moves - which is why the FR-004 placement rule has no quarrel with it'}; print('== the two pre-fix sentences, through the pin own scanner =='); [print('  %-28s %s' % (k, conv.unqualified_ids(flat(v)) or 'clean')) for k,v in sorted(pre.items())]; print(); print('== the six swept agent surfaces, as committed =='); [print('  %-46s recorded=%-10s bare=%s' % (m._rel(p), sorted(m._KNOWN_BARE_AGENT_CITES.get(m._rel(p), ())) or '-', sorted(m._bare_agent_cites(p)) or '-')) for p in m.QUALIFIED_AGENT_SURFACES]; print(); print('== roster derivation and the grammar owner =='); print('  swept surfaces      :', len(m.QUALIFIED_AGENT_SURFACES)); print('  assayer swept       :', m.ASSAYER in m.QUALIFIED_AGENT_SURFACES); print('  accepted spellings  :', list(conv.QUALIFIERS)); print('  exemption ledger    :', {k: sorted(v) for k,v in m._KNOWN_BARE_AGENT_CITES.items()}); print('  mirror holding it   :', m._MIRRORED_GI003_LABEL in m._flat(m._MIRRORED_GI003_PEER))" 2>&1 && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_protocol_prose.py -k "agent_prose or qualified_agent_surface or agent_scan_advertises or recorded_bare_agent_cite" 2>&1 | tail -2
+# evidence-for: fallout NFR-011, fallout FR-037
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 600
+
+== the two pre-fix sentences, through the pin own scanner ==
+  agents/coverage-diff.md      ['FR-004 in ...nothing about it can drift as code moves - which is why the FR-004 placement rule has ...']
+  agents/teammate.md           ['FR-041 in ...both commits. FR-041 puts that account i...']
+
+== the six swept agent surfaces, as committed ==
+  plugins/foundry/agents/coverage-diff.md        recorded=-          bare=-
+  plugins/foundry/agents/flow-tracer.md          recorded=-          bare=-
+  plugins/foundry/agents/research-auditor.md     recorded=-          bare=-
+  plugins/foundry/agents/spec-test-deriver.md    recorded=['GI-003'] bare=['GI-003']
+  plugins/foundry/agents/tracer.md               recorded=-          bare=-
+  plugins/foundry/agents/teammate.md             recorded=-          bare=-
+
+== roster derivation and the grammar owner ==
+  swept surfaces      : 6
+  assayer swept       : False
+  accepted spellings  : ['process-fixes ', 'convergence ', 'fallout ']
+  exemption ledger    : {'plugins/foundry/agents/spec-test-deriver.md': ['GI-003']}
+  mirror holding it   : True
+.........                                                                [100%]
+9 passed, 713 deselected in 0.12s

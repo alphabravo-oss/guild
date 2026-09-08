@@ -8729,3 +8729,188 @@ def test_no_tier_stating_surface_counts_the_vocabulary(path: Path) -> None:
         "counted_phrase_found": unrecorded,
         "counted_phrase_recorded": known,
     }
+
+
+# ---------------------------------------------------------------------------
+# fallout NFR-011 / FR-037 -- a requirement id in AGENT prose names ONE spec
+# ---------------------------------------------------------------------------
+#
+# D-150 re-attributed the docstrings it named and D-195 is the sibling surface
+# it left, under the class `predecessor-run-identifiers-inherited-into-shipped-
+# prose`. Three specs are installed side by side and number their rows
+# identically, so a BARE id in an agent file names no spec at all and resolves
+# to whichever one the reader happened to open. Two were live here:
+# `agents/teammate.md` cited `FR-041` for the failing-then-passing account,
+# which is convergence FR-041's ruling and fallout FR-041's invariant-test row,
+# and `agents/coverage-diff.md` cited `FR-004` for the symbol-placement rule,
+# which is process-fixes FR-004's.
+#
+# `tests/test_spec_id_convention.py` already owns that grammar and holds it
+# over `tests/`. Its roster is a glob of PYTHON modules, so no scan ever
+# reached `agents/*.md` -- the files a spawned agent actually reads, and the
+# half D-195 called out as reaching a reader outside the source tree. This is
+# that pin, applied to this casting's six agent surfaces, with the grammar
+# IMPORTED rather than re-typed: one qualifier tuple, one chain rule and one
+# refusal legend serve both directories, so a fourth spelling cannot be
+# accepted in one and refused in the other.
+#
+# Fenced code blocks need no special handling: `id_pattern` matches `XX-NNN`
+# with exactly three digits, and every id inside a fence in these six files is
+# a one- or two-digit fixture literal in a documented output shape
+# (`"spec_ref": "US-3"`, `# evidence-for: US-1`). Those are input handed to a
+# door, not a claim about which requirement a rule comes from, and the
+# convention module draws that same line for `spec_ref=` literals in Python.
+QUALIFIED_AGENT_SURFACES = NON_PROVE_STREAM_AGENTS + (TEAMMATE,)
+
+#: Surfaces KNOWN to cite an id bare, with the exact ids each leaves
+#: unqualified. Recorded rather than excused, and read SUBSET-shaped for the
+#: reason `_KNOWN_TIER_GAPS` is, stated once at `_LEDGER_CONTRACT`.
+#:
+#: The one entry is `spec-test-deriver.md`'s four `Shared GI-003
+#: <sentence|statement>` LABELS. Two facts hold it here rather than in a fix.
+#: First, it is not the D-195 shape: fallout GI-003 IS the code-blind row, so
+#: the cite resolves to the row the sentence is about, and only a reader who
+#: opens a predecessor spec lands elsewhere. Second, the label is byte-mirrored
+#: into `plugins/foundry/scripts/validate-test-observations.py` and
+#: `agents/test-observations-adjudicator.md`, neither of which any casting owns
+#: this run -- so qualifying this side alone would leave a label ASSERTING a
+#: mirror that no longer holds, which is worse than the bare id. The pair is
+#: carried in `concerns.md` to be qualified together.
+_KNOWN_BARE_AGENT_CITES: dict[str, frozenset[str]] = {
+    "plugins/foundry/agents/spec-test-deriver.md": frozenset({"GI-003"}),
+}
+
+#: The label that holds the exemption above open. When this text stops being
+#: shared, the exemption is collectable debt rather than a standing waiver.
+_MIRRORED_GI003_LABEL = "Shared GI-003 "
+_MIRRORED_GI003_PEER = (
+    FOUNDRY_ROOT / "scripts" / "validate-test-observations.py"
+)
+
+
+def _convention():
+    """The one owner of the requirement-id grammar, imported not re-typed.
+
+    Lazily, mirroring `tests/test_escalation.py`'s shim onto
+    `tests/test_observations.py`: the module is already collected under its own
+    name, so this binds the same object rather than a second copy of it.
+    """
+    from tests import test_spec_id_convention as convention
+
+    return convention
+
+
+def _bare_agent_cites(path: Path) -> frozenset[str]:
+    """Every requirement id `path` cites without naming a spec, as bare ids."""
+    convention = _convention()
+    return frozenset(
+        offence.split(" in ", 1)[0]
+        for offence in convention.unqualified_ids(_flat(path))
+    )
+
+
+@pytest.mark.parametrize("path", QUALIFIED_AGENT_SURFACES, ids=_rel)
+def test_every_requirement_id_in_agent_prose_names_its_spec(path: Path) -> None:
+    """fallout NFR-011: D-195's class, refused on the surfaces this casting owns.
+
+    The agent files are the shipped system prompt of every spawned agent, so a
+    cite here is read outside the source tree exactly as generated report prose
+    is -- which is why D-195 treats one as a defect and a code comment as an
+    observation. A bare id is the mechanism: it resolves to two different rows
+    and which one the reader lands on is decided by which spec they opened.
+    """
+    convention = _convention()
+    recorded = _KNOWN_BARE_AGENT_CITES.get(_rel(path), frozenset())
+    unrecorded, _ = _ledger_verdict(_bare_agent_cites(path), recorded)
+    assert not unrecorded, {
+        "file": _rel(path),
+        "why": (
+            "a requirement id in agent prose must name the spec it cites: "
+            "three specs are installed side by side and number these rows "
+            "differently, so a bare id resolves to whichever one the reader "
+            "opened. " + _LEDGER_CONTRACT
+        ),
+        "unqualified": sorted(unrecorded),
+        "accepted_spellings": convention.QUALIFIER_PHRASE,
+        "chain_rule": convention.CHAIN_PHRASE,
+    }
+
+
+def test_the_qualified_agent_surface_roster_is_derived_and_not_vacuous() -> None:
+    """Floor check: the scan above is vacuous over an empty roster.
+
+    Derived from `NON_PROVE_STREAM_AGENTS`, which is itself derived, so a file
+    that drops out of the stream roster silently drops out of this one too. The
+    six members are asserted IN and the PROVE agent OUT, because six green
+    parametrisations over five files look exactly like six over six.
+    """
+    expected = {
+        TRACER,
+        FLOW_TRACER,
+        RESEARCH_AUDITOR,
+        COVERAGE_DIFF,
+        SPEC_TEST_DERIVER,
+        TEAMMATE,
+    }
+    missing = sorted(_rel(p) for p in expected - set(QUALIFIED_AGENT_SURFACES))
+    assert not missing, (
+        f"{missing} no longer derive into QUALIFIED_AGENT_SURFACES, so their "
+        f"requirement ids are unscanned. Restore the file's stream declaration "
+        f"rather than hard-coding this roster."
+    )
+    assert ASSAYER not in QUALIFIED_AGENT_SURFACES, (
+        "agents/assayer.md derived into QUALIFIED_AGENT_SURFACES. It is casting "
+        "11's file; scanning it here would fail this module for prose another "
+        "casting owns."
+    )
+
+
+def test_the_agent_scan_advertises_every_qualification_the_grammar_accepts() -> None:
+    """fallout NFR-011: the refusal legend is derived from the owner's table.
+
+    The `_PYTEST_DISCOVERY_PHRASE` shape, one axis over. A fourth spelling
+    added to `QUALIFIERS` is advertised here the moment it exists, and a
+    legend that quietly printed a narrower set than the scan accepts -- the
+    failure that leaves a teammate correcting a cite into a spelling the pin
+    still refuses -- cannot be written.
+    """
+    convention = _convention()
+    legend = convention.QUALIFIER_PHRASE
+    for qualifier in convention.QUALIFIERS:
+        assert qualifier.strip() in legend, (
+            f"{qualifier.strip()!r} is accepted by the scan and absent from the "
+            f"legend this module prints. Derive the legend rather than typing "
+            f"it: tests/test_spec_id_convention.py#QUALIFIER_PHRASE."
+        )
+        assert convention.QUALIFIER_SPECS[qualifier] in legend, (
+            f"{qualifier.strip()!r} is advertised without the spec it names, so "
+            f"the refusal tells a reader which spelling to use and not which "
+            f"spec they are citing."
+        )
+
+
+def test_no_recorded_bare_agent_cite_outlives_the_mirror_that_holds_it() -> None:
+    """The exemption ledger, checked from the other side.
+
+    The cheapest way to make the scan green is to record the id, so the ledger
+    is read back: a recorded id the file no longer cites bare is collectable
+    debt, and so is an exemption whose stated reason has gone. Both are
+    reported rather than asserted, per `_LEDGER_CONTRACT` -- the entry names
+    files no casting owns this run, and failing here would make retiring it an
+    edit to somebody else's tree.
+    """
+    collectable: dict[str, object] = {}
+    for rel, recorded in _KNOWN_BARE_AGENT_CITES.items():
+        path = REPO_ROOT / rel
+        _, retired = _ledger_verdict(_bare_agent_cites(path), recorded)
+        if retired:
+            collectable[rel] = sorted(retired)
+
+    peer = _MIRRORED_GI003_PEER
+    if peer.is_file() and _MIRRORED_GI003_LABEL not in _flat(peer):
+        collectable[_rel(peer)] = (
+            f"no longer carries {_MIRRORED_GI003_LABEL!r}, so the mirror the "
+            f"spec-test-deriver exemption rests on is gone"
+        )
+
+    _report_collectable_debt("_KNOWN_BARE_AGENT_CITES", collectable)
