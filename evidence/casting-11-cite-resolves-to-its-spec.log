@@ -1,0 +1,8 @@
+# evidence-cmd: grep -oE '^\| CT-(001|012) \| [^|]*' forge-specs/foundry-run-fallout/spec.md; grep -oE '^\| CT-001 \| [^|]*' forge-specs/foundry-run-convergence/spec.md; cd plugins/foundry/mcp-server && uv run --with pytest pytest -q tests/test_skill_prose.py 2>&1 | tail -1
+# evidence-for: NFR-011
+# evidence-volatile: \d+\.\d+s
+
+| CT-001 | Foundry-Concern (new MCP tool) 
+| CT-012 | Foundry-Defect / Foundry-Sync with tier HARDENING 
+| CT-001 | Foundry-Defect and Foundry-Sync (tier) 
+122 passed in 3.85s

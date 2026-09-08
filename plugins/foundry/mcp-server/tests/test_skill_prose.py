@@ -71,6 +71,7 @@ edit -- so its wording is a cross-casting change, not a local one.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import re
@@ -88,6 +89,20 @@ from foundry_mcp.tools.orchestration import gates, guidance, streams
 # re-typed. See the fallout AC-048 section below for why this import is here
 # and not a tuple of its own.
 from tests.test_protocol_prose import _FALLOUT_CLAUSES
+
+# The citation convention, imported for the same reason: `tests/test_spec_id_convention.py`
+# owns the grammar of a requirement-id cite -- which spellings qualify one, and
+# how a `/`-joined run inherits its head's spec. The section at the bottom of
+# this module consumes that grammar on the surfaces its roster pin cannot
+# reach; it does not restate it. Copying either the qualifier list or the chain
+# rule here would be the second spelling D-095 is the record of.
+from tests.test_spec_id_convention import (
+    ID_FAMILIES,
+    QUALIFIER_SPECS,
+    QUALIFIERS,
+    id_pattern,
+    unqualified_ids,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FOUNDRY_ROOT = REPO_ROOT / "plugins" / "foundry"
@@ -630,7 +645,8 @@ def test_no_tier_region_counts_the_members(
         f"({hit.group(0)!r}) instead of citing DEFECT_TIERS, which declares "
         f"{len(vocab.DEFECT_TIERS)}. A count is a second copy of len() that no "
         f"door reads and nothing updates: it was right when it was written, "
-        f"wrong the moment GI-014 landed, and green in every test until now. "
+        f"wrong the moment fallout GI-014 landed, and green in every test "
+        f"until now. "
         f"State the claim over every tier and let the vocabulary carry the "
         f"number."
     )
@@ -679,9 +695,11 @@ def test_the_reproduction_obligation_is_driven_and_not_universal() -> None:
     """
     assert _REPRODUCTION_TIERS, (
         "validate_defect_filing refuses no tier for a missing "
-        "`reproduction_attempted`. That rung is CT-001's, shared by both "
-        "filing doors; if it really went away the prose below is stale in the "
-        "other direction and these pins should be rewritten, not deleted."
+        "`reproduction_attempted`. Both filing doors share that rung and the "
+        "two specs state one tier of it each -- fallout CT-012 for HARDENING, "
+        "convergence CT-001 for LATENT; if it really went away the prose below "
+        "is stale in the other direction and these pins should be rewritten, "
+        "not deleted."
     )
     assert set(_REPRODUCTION_TIERS) < set(vocab.DEFECT_TIERS), (
         f"every member of vocab.DEFECT_TIERS now owes a reproduction "
@@ -1289,7 +1307,8 @@ def test_no_other_prose_home_carries_a_second_branch_clause_tuple(path: Path) ->
     match any module that merely mentions a tier.
     """
     assert "_BRANCH_CLAUSES" not in path.read_text(encoding="utf-8"), (
-        f"{path.name} carries a second `_BRANCH_CLAUSES`. The AC-018 / AC-058 "
+        f"{path.name} carries a second `_BRANCH_CLAUSES`. The fallout AC-018 / "
+        f"AC-058 "
         f"branch is pinned in this module and in no other; a second tuple is "
         f"two spellings of one ruling free to drift apart, which is D-095 "
         f"repeated rather than D-149 closed. Import this module's tuple if a "
@@ -1488,4 +1507,319 @@ def test_a_skill_grant_stays_read_only_and_stays_a_list(path: Path) -> None:
         f"verification stream that says so in its own body; a grant carrying "
         f"a mutation tool lets it fix what it was sent to report, and one "
         f"carrying a lifecycle door lets it move the phase it is verifying."
+    )
+
+
+# ---------------------------------------------------------------------------
+# fallout NFR-011 (D-195, fallout_of D-150) -- A CITE NAMES A SPEC, AND THE
+# SPEC IT NAMES HAS THAT ROW.
+#
+# WHAT WENT WRONG, in this module, and it was green the whole time. The
+# assertion message in
+# `test_the_reproduction_obligation_is_driven_and_not_universal` attributed the
+# tier-reproduction rung to a contract id typed with no spec in front of it.
+# The number was the RIGHT one for `convergence CT-001`, the tier contract,
+# which states LATENT's `reproduction_attempted` obligation in as many words.
+# Under the spec THIS run builds against, the same number is a different row
+# entirely -- `fallout CT-001` is `Foundry-Concern`, a tool with no tiers, no
+# filing doors and no reproduction. A reader resolving the cite landed on a
+# concern ledger.
+#
+# WHY NO EXISTING PIN COULD SEE IT, which is the part worth keeping.
+# `tests/test_spec_id_convention.py` holds this module to the full convention
+# -- it is not in `UNQUALIFIED_MODULES` -- and it passed, because its scan is
+# `prose_blocks`, which walks DOCSTRINGS AND COMMENTS. An assertion message is
+# neither. It is the string a failing engineer actually reads, and on this
+# module it was the one prose surface with no guard on it at all. That is a
+# gap in reach, not in the convention.
+#
+# WHAT THIS SECTION ADDS, and deliberately not more. Two checks the roster pin
+# cannot make, on the two surfaces it does not cover:
+#
+#   1. THE MESSAGE STRINGS of this module -- every requirement id in a
+#      non-docstring string constant names its spec, using the imported
+#      grammar rather than a second copy of it.
+#   2. RESOLUTION, on this module and on the five prose files it pins: a cite
+#      that names a spec is checked against that spec's own text, so a
+#      predecessor id inherited into shipped prose fails where a
+#      well-formedness check waves it through.
+#
+# Resolution is scoped to QUALIFIED cites on the markdown, and that is a
+# judgement worth stating. `agents/assayer.md` and `skills/prove/SKILL.md`
+# carry worked EXAMPLES of verifying somebody else's spec -- an invariant row
+# reading "operator stays generic", a `VC-007` acceptance criterion -- whose
+# ids belong to the example, not to this run. Demanding a qualification there
+# would be false of them, and
+# `tests/test_spec_id_convention.py` says in its own docstring why a
+# confidently wrong citation is worse than a bare one. A cite that NAMES a
+# spec has made a checkable claim; an example has not.
+#
+# WHAT THIS STILL CANNOT SEE, stated so nobody discovers it the hard way.
+# Resolution proves the row EXISTS in the spec the cite names. It cannot prove
+# the row says what the sentence claims -- `fallout AC-031` on a paragraph
+# about something else resolves. That check is a stream's, against the spec
+# text. The one claim this module got wrong is pinned harder, below: its id is
+# DERIVED from the spec table rather than typed, in the
+# `_PYTEST_DISCOVERY_PHRASE` shape, so the substitution that produced D-195
+# fails on the number itself.
+# ---------------------------------------------------------------------------
+
+#: The installed specs, from the qualifier table rather than a second list of
+#: paths. A fourth spelling added there is in scope here the moment it exists.
+SPEC_ROOT = REPO_ROOT / "forge-specs"
+
+#: A requirement id where a spec DEFINES it: a table row (`| AC-NNN | ...`), a
+#: bullet (`- **AC-NNN** ...`) or a heading. Anything else in a spec is a
+#: cross-reference, and indexing those would make every id resolve everywhere.
+_SPEC_ROW_RE = re.compile(
+    r"^\s*(?:"
+    r"\|\s*(?P<row>{ids})\s*\|"
+    r"|[-*]\s*\*\*(?P<bullet>{ids})\*\*"
+    r"|#+\s*(?P<heading>{ids})"
+    r")".format(ids="|".join(sorted(f"{f}-\\d+" for f in ID_FAMILIES)))
+)
+
+
+def _spec_rows(qualifier: str) -> dict[str, str]:
+    """``{requirement id: the line that defines it}`` for one installed spec."""
+    path = REPO_ROOT / QUALIFIER_SPECS[qualifier]
+    assert path.is_file(), (
+        f"{QUALIFIER_SPECS[qualifier]} is not readable from {REPO_ROOT}. "
+        f"This module resolves every cite that names a spec against that "
+        f"spec's own text; with the file gone the check below cannot run and "
+        f"must not be quietly skipped."
+    )
+    rows: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        found = _SPEC_ROW_RE.match(line)
+        if found:
+            rows.setdefault(
+                next(value for value in found.groupdict().values() if value),
+                line.strip(),
+            )
+    return rows
+
+
+#: Every installed spec's rows, keyed by the qualification that names it.
+SPEC_ROWS = {qualifier: _spec_rows(qualifier) for qualifier in QUALIFIERS}
+
+#: An id no spec numbers, as the negative control for the parse above. A row
+#: matcher that has become permissive resolves everything, and every
+#: resolution assertion below would pass while checking nothing.
+_ABSENT_ID = "NFR-999"
+
+_ID_IN_PROSE = id_pattern(ID_FAMILIES)
+
+
+def test_the_spec_tables_this_module_resolves_cites_against_are_real() -> None:
+    """The floor: a parse that has stopped working fails HERE, naming itself.
+
+    Both directions, because each fails silently in its own way. An EMPTY
+    table turns every resolution below into a red on prose that is fine; a
+    table that matches every line turns them all green on prose that is not.
+    """
+    empty = sorted(q.strip() for q in QUALIFIERS if not SPEC_ROWS[q])
+    assert not empty, (
+        f"{empty} parsed to no requirement rows at all. Either the spec moved "
+        f"or `_SPEC_ROW_RE` no longer matches the shape the specs are written "
+        f"in; both make the resolution pins below fail against correct cites."
+    )
+    resolves_anyway = sorted(q.strip() for q in QUALIFIERS if _ABSENT_ID in SPEC_ROWS[q])
+    assert not resolves_anyway, (
+        f"{_ABSENT_ID} resolves in {resolves_anyway}, and no spec numbers it. "
+        f"`_SPEC_ROW_RE` is matching cross-references rather than definitions, "
+        f"so every cite resolves and the pins below assert nothing."
+    )
+
+
+def _assertion_messages(path: Path) -> list[tuple[int, str]]:
+    """``(lineno, text)`` for every failure MESSAGE a module raises.
+
+    Scoped to `assert`'s message operand, and that scoping is the convention's
+    own. `tests/test_spec_id_convention.py` exempts ids in CODE -- a fixture
+    literal, a `parametrize` entry, a module constant, an assertion's expected
+    string -- because those are input handed to a door, not a claim about
+    which requirement something proves. A failure message is the other thing:
+    prose, addressed to a reader, making exactly such a claim. It is also the
+    one prose surface `prose_blocks` does not walk, which is how D-195 stayed
+    green. f-strings and implicit concatenation are flattened, so a cite split
+    across source lines is still seen.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    messages: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assert) or node.msg is None:
+            continue
+        parts = [
+            piece.value
+            for piece in ast.walk(node.msg)
+            if isinstance(piece, ast.Constant) and isinstance(piece.value, str)
+        ]
+        if parts:
+            messages.append((node.lineno, " ".join(" ".join(parts).split())))
+    return messages
+
+
+def test_every_requirement_id_in_this_modules_messages_names_its_spec() -> None:
+    """fallout NFR-011 (D-195): the convention, on the surface its pin cannot see.
+
+    `tests/test_spec_id_convention.py` holds this module to the full
+    convention and this module passed while carrying a predecessor's id,
+    because the offending cite sat in an assertion message. The grammar is
+    imported from that module, so there is one convention and this is a second
+    place it is APPLIED, not a second definition of it.
+    """
+    offenders = [
+        f"line {lineno}: {offence}"
+        for lineno, text in _assertion_messages(Path(__file__))
+        for offence in unqualified_ids(" ".join(text.split()))
+    ]
+    assert not offenders, (
+        "unqualified requirement id(s) in this module's assertion messages. A "
+        "bare id resolves in more than one installed spec and the reader lands "
+        "on whichever they opened -- which is D-195 exactly, where "
+        "`convergence CT-001` was typed with no spec in front of it and read, "
+        "under this run's spec, as `Foundry-Concern`.\nTHE EDIT: put a spec in "
+        "front of "
+        "each id below.\n"
+        + "\n".join(f"    {q.strip()!r} -> {QUALIFIER_SPECS[q]}" for q in QUALIFIERS)
+        + "\n"
+        + "\n".join(offenders)
+    )
+
+
+def _cites_with_their_spec(text: str) -> list[tuple[str, str]]:
+    """``(qualifier, id)`` for every cite that names a spec, chains included.
+
+    A cite inherits its head's qualification across a bare ``/`` join and
+    nothing else, which is the rule `tests/test_spec_id_convention.py`
+    documents and enforces. This walk CONSUMES that rule rather than
+    re-stating it: where it cannot tell, it declines to resolve and leaves the
+    refusal to the pin above, so a broken chain is reported once, by the check
+    that owns it, instead of twice in two vocabularies.
+    """
+    flat = " ".join(text.split())
+    cites: list[tuple[str, str]] = []
+    current: str | None = None
+    previous_end: int | None = None
+    for found in _ID_IN_PROSE.finditer(flat):
+        prefix = flat[: found.start()]
+        explicit = next((q for q in QUALIFIERS if prefix.endswith(q)), None)
+        if explicit is not None:
+            current = explicit
+        elif previous_end is None or flat[previous_end : found.start()].strip() != "/":
+            current = None
+        if current is not None:
+            cites.append((current, found.group(0)))
+        previous_end = found.end()
+    return cites
+
+
+#: The surfaces this module is answerable for: the five files it pins, plus
+#: itself. Derived from `PINNED_FILES` so a file added to the population is
+#: resolved from the moment it joins.
+CITING_SURFACES = PINNED_FILES + (Path(__file__),)
+
+
+@pytest.mark.parametrize("path", CITING_SURFACES, ids=lambda p: p.name)
+def test_every_cite_that_names_a_spec_resolves_in_the_spec_it_names(path: Path) -> None:
+    """fallout NFR-011 (D-195, fallout_of D-150): the predecessor-id half.
+
+    D-150 established that a rule attributed to a PREDECESSOR-spec identifier
+    is a shortfall against fallout NFR-011, and re-attributed the surfaces it
+    named. This is that finding made mechanical for the surfaces this module
+    owns: a cite naming a spec is looked up in that spec, and an id the spec
+    does not number fails. Three runs' specs are installed side by side and
+    they number their rows identically, so the id a predecessor used is almost
+    always SOMETHING here -- which is why resolution is a floor and not the
+    whole guard, and why the one claim this module got wrong is derived rather
+    than typed, below.
+    """
+    unresolved = sorted(
+        {
+            f"{qualifier}{cited}"
+            for qualifier, cited in _cites_with_their_spec(path.read_text(encoding="utf-8"))
+            if cited not in SPEC_ROWS[qualifier]
+        }
+    )
+    assert not unresolved, (
+        f"{_rel(path)} cites {unresolved}, and the spec each one names does "
+        f"not number it. Either the qualification is wrong -- a predecessor "
+        f"run's id wearing this run's spec name, which is what D-195 was -- or "
+        f"the row was renumbered and the cite was not. Open the spec the cite "
+        f"names and read the row before changing either."
+    )
+
+
+def _contract_rows_naming(qualifier: str, field: str) -> tuple[str, ...]:
+    """The contract ids one spec states ``field`` in, read off its own table."""
+    return tuple(
+        sorted(
+            cited
+            for cited, row in SPEC_ROWS[qualifier].items()
+            if cited.startswith("CT-") and field in row
+        )
+    )
+
+
+#: The reproduction rung's contract id in each spec, DERIVED. This is the
+#: `_PYTEST_DISCOVERY_PHRASE` shape applied to a citation: the number is read
+#: out of the spec table, so prose that types the other spec's number for the
+#: same rung fails on the number itself rather than on a reader noticing.
+_REPRODUCTION_CONTRACT = _contract_rows_naming("fallout ", "reproduction_attempted")
+_PREDECESSOR_REPRODUCTION_CONTRACT = _contract_rows_naming(
+    "convergence ", "reproduction_attempted"
+)
+
+
+def test_the_reproduction_rung_cites_the_row_this_spec_states_it_in() -> None:
+    """fallout NFR-011 (D-195): the exact substitution, pinned to the table.
+
+    `_REPRODUCTION_TIERS` above is derived from the shipped door and comes
+    back two-membered, so the message naming that rung has to name where the
+    rung is written down -- and both specs write it down under a contract id
+    of their own. Typing one number for the other is invisible to every check
+    that only asks whether an id is well-formed.
+    """
+    assert len(_REPRODUCTION_CONTRACT) == 1, (
+        f"the fallout contracts table states `reproduction_attempted` in "
+        f"{list(_REPRODUCTION_CONTRACT)}. This pin expects exactly one row to "
+        f"attribute the rung to; with none or several, the prose below needs "
+        f"rewriting against the table rather than this assertion relaxing."
+    )
+    expected = f"fallout {_REPRODUCTION_CONTRACT[0]}"
+    assert any(expected in text for _, text in _assertion_messages(Path(__file__))), (
+        f"no message here attributes the reproduction rung to {expected}, the "
+        f"one row the fallout contracts table states `reproduction_attempted` "
+        f"in. An engineer reading the failure is sent to the wrong contract."
+    )
+
+
+def test_the_predecessors_number_for_that_rung_never_wears_this_specs_name() -> None:
+    """fallout NFR-011 (D-195), the absence half: the substitution itself.
+
+    D-195 was not a malformed cite. It was the RIGHT number under the
+    convergence spec, carried into prose that this run's spec governs, where
+    the same number is a different tool entirely -- `Foundry-Concern`, which
+    has no tiers and no filing doors. Positive assertions cannot see that: the
+    id resolves, the sentence reads well, and only the row is wrong. So the
+    predecessor's number for this one rung is derived too, and named here as
+    the spelling that must not come back under this spec's qualification.
+    """
+    borrowed = sorted(
+        cited
+        for cited in _PREDECESSOR_REPRODUCTION_CONTRACT
+        if cited not in _REPRODUCTION_CONTRACT
+        and any(
+            f"fallout {cited}" in text
+            for _, text in _assertion_messages(Path(__file__))
+        )
+    )
+    assert not borrowed, (
+        f"{borrowed} is the CONVERGENCE spec's contract id for the "
+        f"reproduction rung, cited here as this run's. Under the fallout spec "
+        f"that row is {SPEC_ROWS['fallout '][borrowed[0]].split('|')[2].strip()!r}. "
+        f"This run's number for that rung is {list(_REPRODUCTION_CONTRACT)}; "
+        f"cite the predecessor with its own name -- "
+        f"`convergence {borrowed[0]}` -- when the predecessor is what you mean."
     )
