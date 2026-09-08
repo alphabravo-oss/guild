@@ -22,18 +22,26 @@ from foundry_mcp import __version__
 #   phase                           the ONE remaining literal, spelled out
 #                                   below with its own note on why, and pinned
 #                                   to the handler's branch set by a test
+#   halt reason                     vocab's `halt_reason_phrase()`, in the
+#                                   PROSE of the description rather than in an
+#                                   `enum` keyword — see the note at the
+#                                   Foundry-Phase entry (fallout AC-062 /
+#                                   CT-013 / OT-007, D-188..D-190)
 #
 # That drift is not cosmetic on this surface. The MCP SDK validates arguments
 # against the advertised enum BEFORE dispatch, so a token missing from an enum
-# here is unreachable no matter what the handler accepts.
+# here is unreachable no matter what the handler accepts — and, in the one
+# direction the halt reason had to answer for, an enum the SIBLING door does not
+# advertise makes the two doors name different checks for the same value while
+# the shared preconditions routine is never asked.
 from foundry_mcp.schemas.vocab import (
     DEFECT_SOURCE_IDS,
     DEFECT_TIERS,
     DEFECT_TYPES,
     FIX_AUTHORS,
-    HALT_REASONS,
     OBSERVATION_CLASSES,
     STREAM_WIRE_IDS,
+    halt_reason_phrase,
 )
 from foundry_mcp.tools.citation import verify_citations
 from foundry_mcp.tools.concerns import foundry_concern
@@ -386,11 +394,26 @@ async def list_tools() -> list[Tool]:
                     "phase": {"type": "string", "enum": sorted(GATE_TO_TRANSITION)},
                     # CT-021: `Foundry-Gate('halt', reason, text)` reports the
                     # three checks the halt transition refuses on, as data.
+                    #
+                    # fallout AC-062 / CT-013 / OT-007 (D-188..D-190) — NO `enum`
+                    # HERE, AND THAT IS NOW A PROPERTY SOMEBODY ASSERTS RATHER
+                    # THAN AN ACCIDENT OF WHO TYPED WHICH ENTRY.
+                    #
+                    # This property has always been bare and its `Foundry-Phase`
+                    # twin was not, so the two doors gave a non-member reason two
+                    # different named checks. The membership judgement belongs to
+                    # `_halt_preconditions` at BOTH doors: CT-021 says this one
+                    # REPORTS it, so an enum here would make the gate refuse the
+                    # very check it exists to hand back as data. The vocabulary
+                    # is still on the wire, in the sentence below, derived from
+                    # the constant rather than re-typed.
                     "reason": {
                         "type": "string",
                         "description": (
                             "phase='halt' only: the reason the halt door would "
-                            "be given. Reported, never acted on."
+                            f"be given, one of {halt_reason_phrase()}. Reported, "
+                            "never acted on — membership is a checklist row, not "
+                            "a refusal, at this door."
                         ),
                     },
                     "text": {
@@ -439,12 +462,45 @@ async def list_tools() -> list[Tool]:
                     # arguments. Not defaulted here: the transport layer never
                     # defaults an argument, and `_halt_preconditions` refuses an
                     # absent reason by name rather than picking one.
+                    #
+                    # fallout AC-062 / CT-013 / OT-007 (D-188 / D-189 / D-190) —
+                    # AND IT CARRIES NO `enum`, WHICH IS THE ONE PLACE ON THIS
+                    # SURFACE WHERE ADVERTISING A CLOSED SET WOULD BE WRONG.
+                    #
+                    # `"enum": sorted(HALT_REASONS)` stood here while
+                    # `Foundry-Gate`'s own `reason` carried none, and `call_tool`
+                    # validates arguments against the ADVERTISED schema before
+                    # dispatch — so the same non-member reason reached two
+                    # different answerers. Driven over
+                    # `request_handlers[CallToolRequest]` on a run at F3 with
+                    # `{phase: 'halt', reason: 'because', text: 'x'}`: the gate
+                    # published `_halt_preconditions`' named check ("halt reason
+                    # 'because' is not a member of the halt vocabulary") with its
+                    # checklist and its refusals ladder, and the transition
+                    # published "Foundry-Phase refused — unusable argument(s):
+                    # reason" with neither key. Both refused and `state.json`
+                    # was unchanged by both, so the whole of the harm was WHICH
+                    # CHECK SPOKE — which is the whole of what CT-013 and OT-007
+                    # are about, and it is invisible to an in-process pin that
+                    # calls the handlers directly.
+                    #
+                    # AC-062 says this token "refuses on `_halt_preconditions`
+                    # ALONE" and CT-021 says the gate REPORTS the same three
+                    # checks as data. A keyword that answers first falsifies the
+                    # first; giving the gate a matching enum would falsify the
+                    # second. So the vocabulary comes off the keyword and stays
+                    # on the wire in the sentence below, derived from the
+                    # constant exactly as the door's own refusal hint is —
+                    # `halt_reason_phrase()`, never a hand copy.
                     "reason": {
                         "type": "string",
-                        "enum": sorted(HALT_REASONS),
                         "description": (
-                            "phase='halt' only: why the run ended. Required for "
-                            "halt, ignored by every other token."
+                            "phase='halt' only: why the run ended. One of "
+                            f"{halt_reason_phrase()}. Required for halt, ignored "
+                            "by every other token. Membership is judged by the "
+                            "halt door's own preconditions, not by this schema, "
+                            "so a non-member is refused naming the check — the "
+                            "same check Foundry-Gate(phase='halt') reports."
                         ),
                     },
                     "text": {

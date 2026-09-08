@@ -3518,6 +3518,228 @@ def test_a_gate_and_its_transition_refuse_the_same_check(run_env, monkeypatch, t
 
 
 
+#: fallout AC-062 / CT-013 / OT-007 (D-188 / D-189 / D-190) — WHAT THE HALT
+#: TOKEN'S TWO ARGUMENTS MAY CARRY ON THE WIRE, AT EITHER DOOR.
+#:
+#: The invariant above drives both doors IN PROCESS, and that is exactly the
+#: window this defect lived in. `server.py#call_tool` validates arguments
+#: against the ADVERTISED schema before dispatch, so a keyword on one door's
+#: property answers a value the shared routine never sees — and a pin that calls
+#: the handlers directly walks straight past the layer that answered.
+#: `Foundry-Phase`'s `reason` carried `"enum": sorted(HALT_REASONS)` and
+#: `Foundry-Gate`'s carried none, so the same non-member reason got the
+#: routine's named check at one door and "unusable argument(s): reason" at the
+#: other, with no checklist and no refusals ladder on the second.
+#:
+#: `type` says what shape the transport will carry and `description` constrains
+#: nothing, so those two are the whole of what an advertised halt-argument
+#: property may be. EVERY OTHER KEYWORD IS A JUDGEMENT — `enum`, `const`,
+#: `pattern`, `minLength` — and a judgement here is a refusal composed somewhere
+#: other than `_halt_preconditions`, which AC-062 forbids outright ("refuses on
+#: that function ALONE") and CT-021 forbids a second way at the gate: a door
+#: required to REPORT the membership check as data cannot also refuse on it.
+#:
+#: EXACT EQUALITY, NOT A DENYLIST of the keywords anyone thought to name. The
+#: enum that produced D-188 is caught by either shape; only this one catches the
+#: `pattern` nobody has written yet, and only this one fails when a keyword is
+#: added to BOTH doors at once — which would keep the pair agreeing while making
+#: them agree on a check neither is allowed to make.
+_HALT_ARGUMENT_SCHEMA_KEYS = frozenset({"type", "description"})
+
+#: The two arguments the halt token carries at both doors. Named rather than
+#: derived from the schema, because the failure being pinned is a property
+#: DIFFERING between the doors and a set read off one of them could not see an
+#: argument the other lacks.
+_HALT_ARGUMENTS = ("reason", "text")
+
+
+def _machine_readable(rendered: str) -> dict:
+    """The JSON half of a rendered tool result.
+
+    Split on `display.RESULT_JSON_MARKER` rather than on a re-typed copy of the
+    sentence: the marker is the display layer's own constant and a hand copy
+    here would fail the day it is reworded, over a change that broke nothing.
+    """
+    from foundry_mcp.tools.display import RESULT_JSON_MARKER
+
+    return json.loads(rendered.split(RESULT_JSON_MARKER, 1)[1])
+
+
+def _judgement_half(prop: dict) -> dict:
+    """``prop`` minus its prose — the half a validator actually enforces."""
+    return {key: value for key, value in prop.items() if key != "description"}
+
+
+def _halt_argument_divergence(gate_props: dict, phase_props: dict) -> list[str]:
+    """Every way the two doors' halt arguments judge, or judge differently.
+
+    Two findings, and the pin needs both. A keyword outside
+    `_HALT_ARGUMENT_SCHEMA_KEYS` is a judgement the transport makes instead of
+    the routine (AC-062); a judgement half that DIFFERS between the doors is the
+    pair naming two checks for one value (CT-013 / OT-007). The first catches a
+    keyword added to both doors, which the second would call agreement.
+    """
+    found: list[str] = []
+    for argument in _HALT_ARGUMENTS:
+        for door, properties in (
+            ("Foundry-Gate", gate_props), ("Foundry-Phase", phase_props)
+        ):
+            prop = properties.get(argument)
+            if not isinstance(prop, dict):
+                found.append(f"{door}.{argument} is not advertised at all")
+                continue
+            judging = sorted(set(prop) - _HALT_ARGUMENT_SCHEMA_KEYS)
+            if judging:
+                found.append(f"{door}.{argument} carries {judging}")
+        gate_half = _judgement_half(gate_props.get(argument) or {})
+        phase_half = _judgement_half(phase_props.get(argument) or {})
+        if gate_half != phase_half:
+            found.append(
+                f"{argument}: Foundry-Gate advertises {gate_half} and "
+                f"Foundry-Phase advertises {phase_half}"
+            )
+    return found
+
+
+def test_neither_halt_door_advertises_a_judgement_on_its_halt_arguments():
+    """fallout AC-062 / CT-013 / OT-007 (D-188 / D-189) — the schema half.
+
+    No test in this suite compared the two tools' `reason` properties, which is
+    how one door came to carry a closed set the other did not. Compared here, on
+    the schemas `list_tools` really publishes rather than on the source, so a
+    second spelling of either entry is judged the same way.
+    """
+    _, gate_schema = _tool_schema("Foundry-Gate")
+    _, phase_schema = _tool_schema("Foundry-Phase")
+    gate_props = gate_schema["properties"]
+    phase_props = phase_schema["properties"]
+
+    # The emptiness guard: a schema that stopped advertising the arguments would
+    # make the comparison below vacuous rather than clean.
+    for argument in _HALT_ARGUMENTS:
+        assert argument in gate_props, (argument, sorted(gate_props))
+        assert argument in phase_props, (argument, sorted(phase_props))
+
+    assert _halt_argument_divergence(gate_props, phase_props) == [], (
+        f"{_halt_argument_divergence(gate_props, phase_props)}. The halt token's "
+        "arguments are judged by `_halt_preconditions` and by nothing else: "
+        "AC-062 says the transition refuses on that function ALONE and CT-021 "
+        "says the gate REPORTS its three checks as data, so a schema keyword "
+        "that answers first falsifies the first and a matching keyword on the "
+        "gate falsifies the second. Advertise the vocabulary in the "
+        "`description` — derived from `halt_reason_phrase()`, never re-typed — "
+        "and let the door name the check."
+    )
+
+    # ...and the vocabulary is still ON THE WIRE, which is the constraint the
+    # fix had to respect: `list_tools` is where a client learns the legal
+    # values, and trading a nameless refusal for an undocumented argument would
+    # be the same defect pointing the other way.
+    for door, properties in (
+        ("Foundry-Gate", gate_props), ("Foundry-Phase", phase_props)
+    ):
+        described = properties["reason"]["description"]
+        for member in sorted(vocab.HALT_REASONS):
+            assert member in described, (door, member, described)
+
+
+def test_the_halt_argument_recogniser_sees_the_enum_that_produced_the_defect():
+    """The anchor: the comparison above finds a divergence when there IS one.
+
+    A comparison over two matching schemas is green whether it works or not, so
+    the recogniser is driven over the shape the tree actually shipped — one door
+    carrying `enum` and the other bare — and over the shape that would replace
+    it if someone answered the parity complaint by giving BOTH doors the
+    keyword.
+    """
+    bare = {
+        "reason": {"type": "string", "description": "why the run ended"},
+        "text": {"type": "string", "description": "the lead's own words"},
+    }
+    judged = {
+        "reason": {
+            "type": "string",
+            "enum": sorted(vocab.HALT_REASONS),
+            "description": "why the run ended",
+        },
+        "text": {"type": "string", "description": "the lead's own words"},
+    }
+
+    # The shipped shape: the enum on Foundry-Phase alone. Both findings fire —
+    # the keyword, and the disagreement it creates.
+    one_sided = _halt_argument_divergence(bare, judged)
+    assert any("Foundry-Phase.reason carries ['enum']" in row for row in one_sided), one_sided
+    assert any(row.startswith("reason: Foundry-Gate advertises") for row in one_sided), one_sided
+
+    # The shape that would "fix" the parity by making the gate refuse too: the
+    # doors now agree, and the keyword finding is what still catches it.
+    both_sided = _halt_argument_divergence(judged, judged)
+    assert both_sided, "a keyword on BOTH doors is agreement on a check neither may make"
+    assert not any(row.startswith("reason: Foundry-Gate advertises") for row in both_sided), both_sided
+
+    # ...and a missing property is a finding rather than a silent pass.
+    assert _halt_argument_divergence(bare, {"reason": bare["reason"]}) == [
+        "Foundry-Phase.text is not advertised at all",
+        "text: Foundry-Gate advertises {'type': 'string'} and Foundry-Phase advertises {}",
+    ]
+
+
+def test_both_halt_doors_name_the_same_check_over_mcp(run_env, monkeypatch):
+    """fallout AC-062 / CT-013 / OT-007 (D-188 / D-189 / D-190) — the wire half.
+
+    The invariant above is the same statement driven in process, and it reported
+    green on the tree that shipped this defect: it calls `foundry_gate` and
+    `foundry_mark_phase_complete` directly, so the pre-dispatch validation in
+    `server.py#call_tool` never ran. Driven here through
+    `request_handlers[CallToolRequest]`, which is the transport a client uses
+    and the only place the divergence existed.
+
+    D-189 is precise about what has to match: CT-013 is a statement about the
+    NAMED CHECK, and the machine-readable `refusals` ladder is where both doors
+    publish it. One door answering with no `refusals` key at all is the failure,
+    whatever its sentence says.
+    """
+    import foundry_mcp.server as srv
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    monkeypatch.setattr(srv, "_project_root", project_root)
+
+    arguments = {"phase": "halt", "reason": "because", "text": "x"}
+    _arm_ordering_token(fdir)
+    gate = _machine_readable(_drive_mcp("Foundry-Gate", arguments))
+    _arm_ordering_token(fdir)
+    transition = _machine_readable(_drive_mcp("Foundry-Phase", arguments))
+
+    named = "halt reason 'because' is not a member of the halt vocabulary"
+    assert gate["passed"] is False, gate
+    assert transition.get("ok") is not True, transition
+    assert gate["reason"] == named, gate
+    assert named in transition["error"], transition
+
+    # The transport's own refusal shape, which is what answered before the fix.
+    # Named rather than merely absent-by-implication: "unusable argument(s)" is
+    # `_argument_refusal`'s sentence and nothing else in this server emits it.
+    assert "unusable argument(s)" not in json.dumps(transition), transition
+    assert "unusable argument(s)" not in json.dumps(gate), gate
+
+    # The same ladder and the same checklist row, from the same routine.
+    assert {r["reason"] for r in gate["refusals"]} == {
+        r["reason"] for r in transition["refusals"]
+    }, (gate, transition)
+    membership = "halt_reason_is_a_member (reason=because)"
+    for door in (gate, transition):
+        row = next(r for r in door["checklist"] if r["check"] == membership)
+        assert row["ok"] is False, door
+        assert row["accepted"] == sorted(vocab.HALT_REASONS), door
+
+    # ...and the refused transition mutated nothing.
+    after = json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"]
+    assert after == "F3", after
+
+
+
+
 def _transition_branches() -> dict[str, str]:
     """`{token: branch source}` for every `phase == "<literal>"` arm.
 
