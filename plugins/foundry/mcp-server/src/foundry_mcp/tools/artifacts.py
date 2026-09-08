@@ -91,6 +91,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -1330,6 +1331,121 @@ def count_spec_requirements(project_root: str) -> int:
     FAMILIES count is `schemas.vocab`'s declaration and never a literal here.
     """
     return len(_spec_requirement_ids(project_root)[1])
+
+# fallout FR-063 / GI-033 (D-191, concern C-067) — THE THIRD HOISTED SYMBOL,
+# AND THE ONE THE FIRST PASS COULD NOT TAKE.
+#
+# ``_hash_str`` and ``_hash_file`` came here out of ``tools/foundry_handoff.py``
+# under C-067 because both layers read them. ``declared_requirement_ids`` was
+# the third in that set and it stayed behind: the move needs the source module,
+# this one, and the TWO AST pins that assert the function is defined exactly
+# once — ``tests/test_handoff_records.py#test_neither_reader_derives_the_
+# declared_set_inline`` and ``tests/test_evidence.py#test_no_reader_of_the_
+# owned_set_derives_it_inline`` — and those scan sets name modules three
+# castings own between them. A definition in a third module makes both pins
+# read ZERO where they demand one, so the move was recorded as a deferral
+# rather than half-taken.
+#
+# D-191 IS THAT DEFERRAL COMING DUE. ``tools/evidence.py`` is a verifier module
+# by GI-033's dependency flow, by ``vocab.VERIFIER_PATH_PATTERNS`` and by the
+# boundary guard's own ``_VERIFIER_MODULES``, and its module-top
+# ``from foundry_mcp.tools.foundry_handoff import ...`` was the tree's one
+# verifier-to-lifecycle crossing outside the named transitions-to-halt seam.
+# GI-033's arithmetic leaves exactly one remedy — "the two layers are mutually
+# unreachable, so a symbol read from BOTH can live in neither: it belongs in a
+# leaf" — and a lazy import is explicitly not it: ``tests/orchestration/
+# test_module_boundaries.py#test_no_verifier_module_reaches_a_lifecycle_module_
+# lazily_either`` says a lazy import is still a reach, at no depth excepted.
+#
+# WHY THIS FUNCTION AND NOT ITS SIBLING. ``cited_requirement_ids`` answers the
+# neighbouring question and STAYS in ``foundry_handoff.py``. The arithmetic
+# above only reaches a symbol read from BOTH layers, and that sibling's two
+# readers — the acceptance door and ``foundry_validate`` — are both lifecycle,
+# so nothing forces it out of the module that uses it. The pair is split on the
+# layering fact that separates them rather than on convenience, and both ends
+# say so: ``_CROSS_REFERENCE_LINE_RE`` beside the sibling cites
+# ``artifacts.py#_DECLARED_REQUIREMENT_ID_RE`` for the structural-markdown run
+# the two rules read the same way.
+#
+# The body below is the body that was there, unchanged. This is a placement
+# fix, and a placement fix that also edits behaviour is two changes wearing one
+# defect id.
+
+
+#: The DECLARATION grammar: a requirement ID in SUBJECT position on its line.
+#:
+#: Built from ``REQUIREMENT_ID_RE.pattern`` rather than re-typed beside it, so
+#: the families stay the single axis this module already reads (D-150). What is
+#: added here is only the POSITION: everything before the ID on the line must
+#: be structural markdown — list bullets, blockquote markers, heading hashes,
+#: table pipes, emphasis stars, whitespace — and nothing else. Prose before the
+#: ID means the ID is being talked ABOUT, not declared.
+_DECLARED_REQUIREMENT_ID_RE: re.Pattern[str] = re.compile(
+    r"^[\s>|*+#-]*(" + REQUIREMENT_ID_RE.pattern + r")"
+)
+
+
+def declared_requirement_ids(block_text: str) -> list[str]:
+    """The requirement IDs a casting is ANSWERABLE for, sorted and deduped.
+
+    THE ONE DERIVATION (D-180)
+    --------------------------
+    This is the only answer in the tree to "which requirement IDs does this
+    casting own", and it has two callers: the acceptance gate below, which
+    demands a citation and an evidence binding for each of them, and
+    ``foundry_validate``'s F0.9 coverage dimension, which asks whether every
+    spec requirement landed in SOME casting. Those two used to compute it
+    separately with a bare ``REQUIREMENT_ID_RE.findall`` over the whole block,
+    which is not a second implementation of one rule so much as one rule with
+    no owner: the gate and the validator could disagree about what a casting
+    owns and nothing would ever compare them.
+
+    WHY POSITION, AND NOT JUST THE FAMILY (D-180)
+    ---------------------------------------------
+    ``findall`` over the whole block cannot tell a requirement ASSIGNED to the
+    casting from one merely QUOTED as an example inside another requirement's
+    prose. Driven: casting 2's block mentions ``NFR-002`` exactly once, inside
+    OT-005's own statement text ("...a LATENT filing citing NFR-002 with a
+    scan-gap description is accepted"), and has no ``NFR-002`` requirement line
+    of its own — yet the gate collected it as one of that casting's 45 demanded
+    IDs and refused acceptance with ``EVIDENCE_REQUIREMENT_UNBOUND: NFR-002``
+    for a requirement another casting owns. The teammate's only way through was
+    to bind a knowingly false ``# evidence-for: NFR-002`` header to an
+    unrelated log, which is a green gate recording a lie.
+
+    A DECLARATION is the ID in subject position on its own line. All four
+    shapes F0.5 DECOMPOSE emits qualify, because in each the ID is the first
+    thing on the line that is not structural markdown::
+
+        - **AC-006** [derived from A-008]: ...      bold bullet
+        - FR-1: synthesized requirement            plain bullet
+        | CT-001 | Foundry-Defect and ... |        typed-table row
+        ### US-002: Every defect carries a tier    story heading
+
+    ...and the two shapes that are NOT declarations stay out::
+
+          - Maps to: US-003                        a cross-reference
+        ...a LATENT filing citing NFR-002 with...  an example in prose
+
+    WHY NOT NARROWER (the shape this rejects)
+    -----------------------------------------
+    Reading only ``- **ID**`` bullets — the obvious reading of "the
+    requirement's own tag line" — drops every typed-table row and story
+    heading. On casting 2 that is 10 of its 38 Locked requirement IDs,
+    including every CT- contract and ST-009, silently no longer demanding
+    evidence. Over-demanding costs a teammate an argument; under-demanding
+    costs the run its gate, so the rule is anchored at the LINE, not at one
+    markdown shape.
+
+    Deduped and sorted because both callers compare it as a set and the gate
+    reports it to the lead; order was never meaningful.
+    """
+    ids: set[str] = set()
+    for line in block_text.splitlines():
+        match = _DECLARED_REQUIREMENT_ID_RE.match(line)
+        if match:
+            ids.add(match.group(1))
+    return sorted(ids)
 
 
 #: Sentinel for a mapping key that must be PRESENT and non-null, whose value is

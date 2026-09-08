@@ -5974,7 +5974,7 @@ def test_all_three_readers_derive_one_owned_set_from_one_block(tmp_path):
     drives that door — and the test below pins that no reader may re-derive it.
     """
     from foundry_mcp.tools.foundry import foundry_init
-    from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
+    from foundry_mcp.tools.artifacts import declared_requirement_ids
     from foundry_mcp.tools.foundry_state import clear_active_run, set_active_run
     from foundry_mcp.tools.foundry_validate import foundry_validate_castings
 
@@ -6059,12 +6059,25 @@ def test_no_reader_of_the_owned_set_derives_it_inline():
     D-180 pinned two modules against re-deriving the declared set inline, and
     the pin held — for those two. This module was the third reader and was
     outside it, which is precisely how the scan survived a defect filed against
-    it. Extended to all three so a fourth reader cannot appear the same way."""
+    it. Extended to all three so a fourth reader cannot appear the same way.
+
+    THE LEAF IS THE FOURTH SUBJECT (D-191). `declared_requirement_ids` moved out
+    of `foundry_handoff.py` and into the leaf `tools/artifacts.py`, because
+    `tools/evidence.py` is a verifier module and reading it out of a lifecycle
+    module was GI-033's violation column. The pin has to follow the DEFINITION
+    or it stops pinning anything: a scan set that names only the three READERS
+    finds zero definitions among them and an `== ["declared_requirement_ids"]`
+    assertion fails on the honest move while still being blind to a second
+    implementation appearing in the leaf. Adding the definer keeps the count at
+    one and keeps every reader in the subject."""
+    from foundry_mcp.tools import artifacts as artifacts_module
     from foundry_mcp.tools import evidence as evidence_module
     from foundry_mcp.tools import foundry_handoff as handoff_module
     from foundry_mcp.tools import foundry_validate as validate_module
 
-    modules = (evidence_module, handoff_module, validate_module)
+    modules = (
+        artifacts_module, evidence_module, handoff_module, validate_module,
+    )
     for module in modules:
         source = Path(module.__file__).read_text(encoding="utf-8")
         assert "declared_requirement_ids" in source, Path(module.__file__).name
@@ -6106,6 +6119,107 @@ def test_no_reader_of_the_owned_set_derives_it_inline():
         f"{findall_args} — the only text this module may scan whole is the "
         f"`# evidence-for:` header value"
     )
+
+
+# --------------------------------------------------------------------------- #
+# GRIND cycle 7 — D-191: the verifier reads the leaf.
+#
+# `tools/evidence.py` is a verifier module by GI-033's dependency-flow
+# paragraph, by `vocab.VERIFIER_PATH_PATTERNS` and by the boundary guard's own
+# `_VERIFIER_MODULES`, and it carried
+# `from foundry_mcp.tools.foundry_handoff import _hash_str,
+# declared_requirement_ids` at module top — the tree's one verifier-to-lifecycle
+# crossing outside the named transitions-to-halt seam. D-127 widened the guard
+# so the edge could be SEEN and recorded it in a roster; D-191 is the record
+# that seeing it was never closing it. Both symbols now live in the leaf
+# `tools/artifacts.py` and this module reads them there.
+#
+# The guard that judges the LAYERS lives in
+# `tests/orchestration/test_module_boundaries.py` and another casting owns it.
+# What is asserted here is the property AT THIS MODULE, where a regression would
+# be written: no reach into the lifecycle module at any depth, and the symbols
+# this module binds are the leaf's own objects rather than copies of them.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_verifier_reads_the_leaf_and_never_the_lifecycle_module():
+    """fallout FR-063 / GI-033 (D-191), the failing-then-passing property.
+
+    AT ANY DEPTH, not just at module top. GI-033's lifecycle direction "takes
+    no exception ... at no depth", and the companion rule the boundary guard
+    states for this direction says a lazy import is still a reach — so an
+    `ast.walk` over every `Import` and `ImportFrom` in the file is the honest
+    subject. A module-top-only scan would pass the moment someone closed this
+    edge by deferring it into a function, which is the fix this defect names
+    and refuses.
+
+    IDENTITY, NOT MERELY ABSENCE. A repoint that re-implemented either symbol in
+    this module would satisfy the import scan and break the thing the imports
+    were for: `_hash_str` is the ONE published spelling of a string digest that
+    the acceptance gate and this engine must agree on, and
+    `declared_requirement_ids` is the ONE answer in the tree to "which
+    requirements does this casting own". `is` says the object is the leaf's.
+    """
+    from foundry_mcp.tools import artifacts as artifacts_module
+    from foundry_mcp.tools import evidence as evidence_module
+    from foundry_mcp.tools import foundry_handoff as handoff_module
+
+    tree = ast.parse(
+        Path(evidence_module.__file__).read_text(encoding="utf-8")
+    )
+    reached: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            reached.append(node.module)
+        elif isinstance(node, ast.Import):
+            reached.extend(alias.name for alias in node.names)
+    lifecycle_reaches = [
+        name for name in reached
+        if name == "foundry_mcp.tools.foundry_handoff"
+        or name.startswith("foundry_mcp.tools.foundry_handoff.")
+    ]
+    assert lifecycle_reaches == [], (
+        f"tools/evidence.py is a verifier module and reaches the lifecycle "
+        f"module foundry_handoff at {lifecycle_reaches} — GI-033 permits the "
+        f"leaves (artifacts, foundry_state, vocab, schemas) and the "
+        f"transitions-to-halt seam, and nothing else"
+    )
+
+    assert evidence_module._hash_str is artifacts_module._hash_str
+    assert (
+        evidence_module.declared_requirement_ids
+        is artifacts_module.declared_requirement_ids
+    )
+    # And the lifecycle module reads the same object, so "one derivation" is a
+    # property of the tree rather than of two modules that happen to agree.
+    assert (
+        handoff_module.declared_requirement_ids
+        is artifacts_module.declared_requirement_ids
+    )
+
+
+def test_the_repointed_symbols_still_answer_what_the_sweep_asks():
+    """The behaviour half of D-191: a placement fix changes no answer.
+
+    Driven on `_QUOTING_SWEEP_MANIFEST` — the shape D-184 was filed on, where
+    casting 2 declares CT-014 and quotes casting 3's AC-036 inside CT-014's own
+    prose — because the keying that manifest exercises is the whole reason this
+    module reads the symbol at all. If the move had picked up a different
+    derivation on the way, this is where it would show.
+    """
+    from foundry_mcp.tools.evidence import (
+        _hash_str,
+        _sweep_requirement_to_castings,
+    )
+
+    mapping = _sweep_requirement_to_castings(_QUOTING_SWEEP_MANIFEST)
+    assert mapping == {"AC-036": {"3"}, "CT-014": {"2"}, "CT-007": {"1"}}, mapping
+
+    # The digest is the published 16-character spelling the provenance record
+    # and the byte comparator both write; a re-implementation would be visible
+    # here as a different width or a different prefix.
+    digest = _hash_str("")
+    assert digest.startswith("sha256:") and len(digest) == len("sha256:") + 16
 
 
 def test_the_narrowed_delta_scope_still_re_executes_in_the_shared_pool(tmp_path):
@@ -7886,7 +8000,7 @@ def test_demo_grind_cycle_13_declared_ownership_keys_the_sweep(tmp_path, capsys)
     from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
     from foundry_mcp.tools.evidence import _sweep_requirement_to_castings
     from foundry_mcp.tools.foundry import foundry_init
-    from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
+    from foundry_mcp.tools.artifacts import declared_requirement_ids
     from foundry_mcp.tools.foundry_state import clear_active_run, set_active_run
     from foundry_mcp.tools.foundry_validate import foundry_validate_castings
 

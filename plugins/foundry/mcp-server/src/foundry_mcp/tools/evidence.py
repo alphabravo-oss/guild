@@ -35,39 +35,6 @@ from pathlib import Path
 from typing import Any
 
 from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
-# D-184 / D-187: the THIRD reader of "which requirement IDs does this casting
-# own" reads the one derivation too, rather than keeping the full-text scan
-# D-180 replaced in the other two. The edge is not new — `_hash_str` has come
-# from this module all along — and it stays acyclic: `foundry_handoff` reaches
-# BACK into this module only through a lazy in-function import inside
-# `foundry_accept_casting`, never at module top.
-#
-# fallout FR-063 / GI-033 / D-127 — THIS EDGE IS THE HALF OF D-127 THIS CASTING
-# CANNOT CLOSE, AND SAYING SO IS THE POINT.
-#
-# `foundry_handoff` is lifecycle by GI-033's elimination rule, so a verifier
-# module reading two symbols out of it is the invariant's violation column
-# however pure the symbols are. GI-033's arithmetic gives exactly one remedy —
-# "the two layers are mutually unreachable, so a symbol read from BOTH can live
-# in neither: it belongs in a leaf" — and a lazy import is not that remedy:
-# `tests/orchestration/test_module_boundaries.py#test_no_verifier_module_
-# reaches_a_lifecycle_module_lazily_either` says in its own words that a lazy
-# import is still a reach, "asserted over EVERY import in the file". Inverting
-# is not it either: that is the lifecycle-to-verifier direction, which the
-# companion rule states without any seam at all, and `escalation.py`'s
-# inversion worked only because escalation BECAME a leaf — which this module,
-# spawning subprocesses into git worktrees, cannot.
-#
-# Both symbols ARE leaf material. `_hash_str` is the published spelling of a
-# digest and `declared_requirement_ids` already builds its position rule from
-# `REQUIREMENT_ID_RE.pattern`, imported above from `schemas/vocab.py` — the leaf
-# that owns the requirement grammar and the natural home for both. Moving them
-# edits `foundry_handoff.py` and `vocab.py`, which belong to castings 7 and 10,
-# so it is raised as cross-casting concern C-067 rather than reached for here.
-# When that move lands, this import repoints to the leaf and the comment goes
-# with it — the concern is the record that the edge is known and owned, not a
-# licence for it to stay.
-from foundry_mcp.tools.foundry_handoff import _hash_str, declared_requirement_ids
 # fallout FR-063 / GI-033 / D-127 — READ FROM THE LEAF, NOT THROUGH A LIFECYCLE
 # MODULE THAT RE-EXPORTS IT.
 #
@@ -89,7 +56,38 @@ from foundry_mcp.tools.foundry_handoff import _hash_str, declared_requirement_id
 # ones_the_scan_looks_for`. Importing the leaf's public spelling under its own
 # name would leave the guard standing and report this module's manifest reader
 # as UNGUARDED — a failure that looks like a finding.
+#
+# fallout FR-063 / GI-033 (D-191) — AND THE SAME SENTENCE NOW CARRIES TWO MORE
+# SYMBOLS, WHICH IS THE HALF OF D-127 THIS MODULE COULD NOT CLOSE THEN.
+#
+# The line above this block used to be `from foundry_mcp.tools.foundry_handoff
+# import _hash_str, declared_requirement_ids`, and it was the tree's ONE
+# verifier-to-lifecycle crossing outside GI-033's named transitions-to-halt
+# seam: `foundry_handoff` is lifecycle by the boundary guard's own
+# `_LIFECYCLE_FLOOR` and this module is a verifier by the same guard's
+# `_VERIFIER_MODULES`, by `vocab.VERIFIER_PATH_PATTERNS` and by the spec's
+# dependency-flow paragraph. D-127 widened the guard so the crossing could be
+# SEEN; D-191 is the record that seeing it was never the same as closing it.
+#
+# NEITHER SYMBOL WAS EVER LIFECYCLE MATERIAL, which is why the remedy is a
+# repoint and not a redesign. `_hash_str` is the published spelling of a string
+# digest and has been defined in this leaf since C-067 moved it; `foundry_handoff`
+# has been re-importing it from here all along, so reading it there was reaching
+# through a lifecycle module for a leaf symbol — the identical shape the
+# `_manifest_shape_problem` paragraph above records. `declared_requirement_ids`
+# is pure text over `REQUIREMENT_ID_RE.pattern` and joined it in the leaf under
+# D-191, in the same hoisted section and for the same stated arithmetic: the two
+# layers are mutually unreachable, so a symbol read from BOTH can live in
+# neither.
+#
+# A LAZY IMPORT WOULD NOT HAVE DONE. `tests/orchestration/test_module_boundaries.py
+# #test_no_verifier_module_reaches_a_lifecycle_module_lazily_either` says a lazy
+# import is still a reach, "asserted over EVERY import in the file", and the
+# lifecycle direction takes no exception at any depth. Deferring the import is
+# the same crossing with the evidence hidden, and it is not what this is.
 from foundry_mcp.tools.artifacts import (
+    _hash_str,
+    declared_requirement_ids,
     manifest_shape_problem as _manifest_shape_problem,
 )
 from foundry_mcp.tools.foundry_state import get_run_dir, read_document

@@ -1219,13 +1219,23 @@ def test_neither_reader_derives_the_declared_set_inline():
     Two modules that each harvest the block themselves agree until one is
     edited — which is how the gate and the validator came to disagree in the
     first place. Pinned structurally: neither may reach for the raw scanner on
-    a casting's own block again."""
+    a casting's own block again.
+
+    THE DEFINER JOINED THE SCAN SET (D-191). `declared_requirement_ids` now
+    lives in the leaf `tools/artifacts.py`, because the third reader —
+    `tools/evidence.py` — is a verifier module and GI-033 forbids it reading a
+    lifecycle module for a symbol both layers use. A scan set naming only the
+    two readers would find zero definitions among them, so the pin has to name
+    the module that DEFINES it or the `== ["declared_requirement_ids"]`
+    assertion below stops meaning "exactly one implementation" and starts
+    meaning "still defined where it used to be"."""
     import ast
 
+    from foundry_mcp.tools import artifacts as artifacts_module
     from foundry_mcp.tools import foundry_handoff as handoff_module
     from foundry_mcp.tools import foundry_validate as validate_module
 
-    for module in (handoff_module, validate_module):
+    for module in (artifacts_module, handoff_module, validate_module):
         source = Path(module.__file__).read_text(encoding="utf-8")
         assert "declared_requirement_ids" in source, Path(module.__file__).name
 
@@ -1233,7 +1243,7 @@ def test_neither_reader_derives_the_declared_set_inline():
     # the prose explaining the rejected reading cannot trip the pin.
     definitions = [
         node.name
-        for module in (handoff_module, validate_module)
+        for module in (artifacts_module, handoff_module, validate_module)
         for node in ast.walk(
             ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
         )

@@ -50,104 +50,37 @@ from foundry_mcp.tools.citation import CITATION_PATTERN, unresolved_symbol_cites
 # import narrows to the one symbol below. The bodies moved unchanged, and they
 # are still this module's to USE: the import is the fix, not a facade.
 #
-# ``declared_requirement_ids`` IS THE THIRD, AND IT DID NOT FIT. The move was
-# driven in this cycle and backed out:
+# fallout FR-063 / GI-033 (D-191) — ``declared_requirement_ids`` IS THE THIRD,
+# AND IT HAS NOW GONE THE SAME WAY. It was recorded here as a deferral for a
+# cycle: the move needs the source module, the leaf, and the TWO AST pins that
+# assert the function is defined exactly once —
 # ``tests/test_handoff_records.py#test_neither_reader_derives_the_declared_set_inline``
 # and ``tests/test_evidence.py#test_no_reader_of_the_owned_set_derives_it_inline``
-# each assert the function is defined exactly once across a scan set of THIS
-# module and ``foundry_validate``, so a definition in a third module makes both
-# read zero rather than one. fallout GI-026 requires an AST pin to be repointed
-# in the same casting as the source move, and neither test module belongs to
-# this casting — so the move is one dispatch (source, two pins, one import),
-# not one file, and it is recorded rather than half-taken.
+# — because a definition in a third module makes both read ZERO where they
+# demand one, and fallout GI-026 requires an AST pin to be repointed in the same
+# casting as the source move. D-191 dispatched the whole of it, so source, leaf
+# and both pins land together; the ``re`` import and
+# ``_DECLARED_REQUIREMENT_ID_RE`` went with the body, and the name below is the
+# import that replaces them.
+#
+# ITS SIBLING ``cited_requirement_ids`` STAYS, and the split is the layering
+# fact rather than a half-move. GI-033's arithmetic reaches only a symbol read
+# from BOTH layers; the sibling's two readers — the acceptance door in this file
+# and ``foundry_validate`` — are both lifecycle, so nothing forces it out of the
+# module that uses it. The prose at each end cites the other by module.
 from foundry_mcp.tools.artifacts import (
     _artifact_guard,
     _artifact_lock,
     _hash_file,
     _hash_str,
     _load_json,
+    declared_requirement_ids,
 )
 from foundry_mcp.tools.foundry_state import (
     document_refusal,
     get_run_dir,
     read_text_file,
 )
-
-
-#: The DECLARATION grammar: a requirement ID in SUBJECT position on its line.
-#:
-#: Built from ``REQUIREMENT_ID_RE.pattern`` rather than re-typed beside it, so
-#: the families stay the single axis this module already reads (D-150). What is
-#: added here is only the POSITION: everything before the ID on the line must
-#: be structural markdown — list bullets, blockquote markers, heading hashes,
-#: table pipes, emphasis stars, whitespace — and nothing else. Prose before the
-#: ID means the ID is being talked ABOUT, not declared.
-_DECLARED_REQUIREMENT_ID_RE: re.Pattern[str] = re.compile(
-    r"^[\s>|*+#-]*(" + REQUIREMENT_ID_RE.pattern + r")"
-)
-
-
-def declared_requirement_ids(block_text: str) -> list[str]:
-    """The requirement IDs a casting is ANSWERABLE for, sorted and deduped.
-
-    THE ONE DERIVATION (D-180)
-    --------------------------
-    This is the only answer in the tree to "which requirement IDs does this
-    casting own", and it has two callers: the acceptance gate below, which
-    demands a citation and an evidence binding for each of them, and
-    ``foundry_validate``'s F0.9 coverage dimension, which asks whether every
-    spec requirement landed in SOME casting. Those two used to compute it
-    separately with a bare ``REQUIREMENT_ID_RE.findall`` over the whole block,
-    which is not a second implementation of one rule so much as one rule with
-    no owner: the gate and the validator could disagree about what a casting
-    owns and nothing would ever compare them.
-
-    WHY POSITION, AND NOT JUST THE FAMILY (D-180)
-    ---------------------------------------------
-    ``findall`` over the whole block cannot tell a requirement ASSIGNED to the
-    casting from one merely QUOTED as an example inside another requirement's
-    prose. Driven: casting 2's block mentions ``NFR-002`` exactly once, inside
-    OT-005's own statement text ("...a LATENT filing citing NFR-002 with a
-    scan-gap description is accepted"), and has no ``NFR-002`` requirement line
-    of its own — yet the gate collected it as one of that casting's 45 demanded
-    IDs and refused acceptance with ``EVIDENCE_REQUIREMENT_UNBOUND: NFR-002``
-    for a requirement another casting owns. The teammate's only way through was
-    to bind a knowingly false ``# evidence-for: NFR-002`` header to an
-    unrelated log, which is a green gate recording a lie.
-
-    A DECLARATION is the ID in subject position on its own line. All four
-    shapes F0.5 DECOMPOSE emits qualify, because in each the ID is the first
-    thing on the line that is not structural markdown::
-
-        - **AC-006** [derived from A-008]: ...      bold bullet
-        - FR-1: synthesized requirement            plain bullet
-        | CT-001 | Foundry-Defect and ... |        typed-table row
-        ### US-002: Every defect carries a tier    story heading
-
-    ...and the two shapes that are NOT declarations stay out::
-
-          - Maps to: US-003                        a cross-reference
-        ...a LATENT filing citing NFR-002 with...  an example in prose
-
-    WHY NOT NARROWER (the shape this rejects)
-    -----------------------------------------
-    Reading only ``- **ID**`` bullets — the obvious reading of "the
-    requirement's own tag line" — drops every typed-table row and story
-    heading. On casting 2 that is 10 of its 38 Locked requirement IDs,
-    including every CT- contract and ST-009, silently no longer demanding
-    evidence. Over-demanding costs a teammate an argument; under-demanding
-    costs the run its gate, so the rule is anchored at the LINE, not at one
-    markdown shape.
-
-    Deduped and sorted because both callers compare it as a set and the gate
-    reports it to the lead; order was never meaningful.
-    """
-    ids: set[str] = set()
-    for line in block_text.splitlines():
-        match = _DECLARED_REQUIREMENT_ID_RE.match(line)
-        if match:
-            ids.add(match.group(1))
-    return sorted(ids)
 
 
 #: The one line shape in a `<spec_requirements>` excerpt that NAMES a
@@ -159,8 +92,10 @@ def declared_requirement_ids(block_text: str) -> list[str]:
 #: sentence the casting wrote about a requirement — and it is the only field of
 #: its kind in the grammar: a scan of every sub-bullet field name in the spec
 #: finds `Maps to` and nothing else. The prefix before it is the same
-#: structural-markdown run `_DECLARED_REQUIREMENT_ID_RE` allows, so the two
-#: rules read a line's opening the same way.
+#: structural-markdown run `artifacts.py#_DECLARED_REQUIREMENT_ID_RE` allows
+#: — the sibling rule moved to the leaf under D-191 and this one did not, for
+#: the reason the import banner records — so the two rules read a line's
+#: opening the same way.
 _CROSS_REFERENCE_LINE_RE: re.Pattern[str] = re.compile(
     r"^[\s>|*+#-]*Maps to:", re.IGNORECASE
 )
@@ -171,8 +106,8 @@ def cited_requirement_ids(block_text: str) -> list[str]:
 
     THE SECOND POPULATION, AND WHY THERE ARE TWO (D-181)
     ----------------------------------------------------
-    ``declared_requirement_ids`` above answers "which requirements is this
-    casting ANSWERABLE for" and has three consumers that need exactly that
+    ``artifacts.py#declared_requirement_ids`` answers "which requirements is
+    this casting ANSWERABLE for" and has three consumers that need exactly that
     reading — the acceptance gate's citation window, EVID-02's per-requirement
     evidence binding, and the legacy ownership fill in
     ``scripts/migrate-archive.py``. Every one of them turns an ID in that list
@@ -222,7 +157,7 @@ def cited_requirement_ids(block_text: str) -> list[str]:
     -----------------------------------------------------
     Every declaration is also a cite: a subject-position ID is on a line this
     scan reads, and a ``Maps to:`` line can never carry one, because
-    ``_DECLARED_REQUIREMENT_ID_RE`` needs the ID immediately after the
+    ``artifacts.py#_DECLARED_REQUIREMENT_ID_RE`` needs the ID immediately after the
     structural markdown and those lines open with the field name instead. So
     skipping cross-references cannot drop a declaration, and F0.9 comparing
     this list against ``requirement_ids`` in BOTH directions is strictly
@@ -1149,11 +1084,16 @@ def foundry_accept_casting(
     # a verifier module") sat here unremarked while every layering assertion
     # read past it.
     #
-    # THE CYCLE IT AVOIDS. `tools/evidence.py` imports `_hash_str` and
-    # `declared_requirement_ids` from THIS module at module top. Promote this
-    # import and the package stops loading: `foundry_handoff` -> `evidence` ->
-    # `foundry_handoff`. So the laziness is structural, not stylistic, and it
-    # cannot be removed from this side alone.
+    # THE CYCLE IT AVOIDED, AND WHICH NO LONGER EXISTS (fallout FR-063 / GI-033,
+    # D-191). `tools/evidence.py` used to import `_hash_str` and
+    # `declared_requirement_ids` from THIS module at module top, so promoting the
+    # import below stopped the package loading: `foundry_handoff` -> `evidence`
+    # -> `foundry_handoff`. Both symbols now live in the leaf
+    # `tools/artifacts.py` and `evidence.py` reads them there, so that return
+    # edge is gone and the laziness here is no longer holding a cycle open. What
+    # it still holds is the RULE — the lifecycle-to-verifier direction takes no
+    # exception at any depth, so a lazy reach is a reach — and closing that is
+    # the reverse-direction record filed beside D-191, not this sentence.
     #
     # THE ENGINE IS REACHED THIS WAY FROM BOTH LAYERS, which is the fact that
     # decides how to read it: `orchestration/evidence_boundary.py` — a member of
@@ -1164,12 +1104,15 @@ def foundry_accept_casting(
     # `tests/test_artifacts.py#test_the_evidence_engine_is_reached_by_the_named_seams_only`
     # pins that roster so a third one cannot appear unnoticed.
     #
-    # THE REMEDY IS NOT THIS CASTING'S TO TAKE. GI-033's arithmetic — a symbol
-    # read from both layers belongs in a leaf — closes the reverse edge, and the
-    # digest pair moved to `tools/artifacts.py` above for exactly that reason.
-    # `declared_requirement_ids` is the one that remains, and repointing its
-    # reader edits `tools/evidence.py`, which another casting owns; it is filed
-    # as a cross-casting concern rather than reached for here.
+    # THE OUTBOUND HALF IS TAKEN. GI-033's arithmetic — a symbol read from both
+    # layers belongs in a leaf — closed the reverse edge in two passes: the
+    # digest pair moved to `tools/artifacts.py` under C-067, and
+    # `declared_requirement_ids` followed it there under D-191, which is why the
+    # import banner at the top of this module now names it. What remains is this
+    # direction, where the arithmetic gives no leaf to move to because what is
+    # reached is not a symbol but the evidence ENGINE — the acceptance door RUNS
+    # the verification — and that is a reshaping recorded as its own defect
+    # rather than a repoint.
     from foundry_mcp.tools.evidence import (
         _declared_spec_format_version,
         _read_spec_format_version,
