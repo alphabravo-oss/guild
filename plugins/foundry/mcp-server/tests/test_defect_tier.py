@@ -82,6 +82,14 @@ synthetic run and then drift from it.
       at both doors — the transition is stated over two records, and on an
       empty ledger the mint is deterministic enough that the one-record case
       is reachable by a filer who simply guessed the next id.
+  fallout NFR-011 (D-195's class)
+      the row this module cites for the LATENT reproduction rung is the
+      convergence tier contract, named with its spec and DERIVED from that
+      spec's own table — and the same number under THIS run's name, where it
+      is `Foundry-Concern`, is pinned as the spelling that must not come back.
+      The cite lived in an assertion message, the one prose surface
+      `prose_blocks` does not walk, which is why the convention pin above
+      passed over it.
 
 ``validate_defect_filing`` is tested DIRECTLY as well as through
 ``foundry_add_defect``, because the batch door ``foundry_sync_defects`` is
@@ -114,6 +122,21 @@ from foundry_mcp.tools.foundry import (
     validate_defect_filing,
 )
 from foundry_mcp.tools.foundry_state import clear_active_run
+
+# fallout NFR-011 (D-195's class, fallout_of D-150) — the citation-resolution
+# grammar, IMPORTED. `tests/test_skill_prose.py` owns it: which spellings
+# qualify a cite, how a spec's own table is parsed into rows, and how a
+# module's assertion MESSAGES are read out of its AST. The section at the tail
+# of this module consumes that grammar on this module's one message that names
+# the reproduction rung; it does not restate it. A second copy of the spec-row
+# parser here would be exactly the duplicate-spelling class this run keeps
+# filing, and `tests/test_evidence.py` already establishes that reaching a
+# sibling test module's scanner helpers by name is how this suite shares them.
+from tests.test_skill_prose import (
+    SPEC_ROWS,
+    _assertion_messages,
+    _contract_rows_naming,
+)
 
 
 @pytest.fixture
@@ -1790,8 +1813,8 @@ def test_a_negative_space_statement_never_decides_a_filing(matched, control):
 
     assert validate_defect_filing(_renderer_gap(matched)) is None, (
         "a LATENT filing was refused for what its filer searched for and did "
-        "not find. CT-001 asks for that statement; the denylist may not then "
-        "refuse the filing on it."
+        "not find. convergence CT-001 asks for that statement; the denylist "
+        "may not then refuse the filing on it."
     )
     assert validate_defect_filing(_renderer_gap(control)) is None
 
@@ -1839,6 +1862,125 @@ def test_both_real_doors_accept_the_negative_space_statement(run_env, matched, c
     assert _tripwire(fdir) == [], (
         "an accepted filing fired the audit tripwire, so the refusal was "
         "retired at one rung and not the other"
+    )
+
+
+# ---------------------------------------------------------------------------
+# fallout NFR-011 (D-195's class, fallout_of D-150) — THE ROW THIS MODULE CITES
+# FOR THE LATENT REPRODUCTION RUNG, DERIVED FROM THE TABLE THAT STATES IT.
+#
+# WHAT WENT WRONG, one message above this block, and green the whole time. The
+# accept-side assertion in
+# `test_a_negative_space_statement_never_decides_a_filing` attributed the
+# rung's obligation to a contract id typed with no spec in front of it. Three
+# specs are installed side by side and more than one of them numbers that row.
+# Under the convergence spec it is the tier contract — "tier in {LIVE, LATENT};
+# for LATENT a reproduction_attempted statement" — which is exactly the rung
+# the test drives. Under the spec THIS run builds against, the same number is
+# `Foundry-Concern`, a tool with no tiers, no filing doors and no
+# reproduction, so a reader resolving the cite against the current spec landed
+# on a concern ledger.
+#
+# (This block cannot spell that number bare either, and the pin above this one
+# is why: a module held to the full convention may not carry an unqualified id
+# even to talk ABOUT one. Both spellings are derived below instead, which is
+# the better answer anyway — prose that names the number goes stale, and prose
+# that reads it off the table cannot.)
+#
+# WHY NO PIN COULD SEE IT. `tests/test_spec_id_convention.py` holds this module
+# to the full convention and passed, because its scan is `prose_blocks` —
+# docstrings and comments. An assertion message is neither, and it is the
+# sentence a failing engineer actually reads.
+#
+# THE EDIT WAS `convergence CT-001`, AND THE TEMPTING WRONG EDIT WAS
+# `fallout CT-001`. That is the part worth pinning rather than trusting. Faced
+# with a bare id in a run whose spec is `fallout`, the reflex is to qualify it
+# with THIS run's name — and that spelling RESOLVES, so a check that only asks
+# "does the spec the cite names number this row" waves it straight through
+# while sending the reader somewhere that says nothing about tiers. Both pins
+# below therefore read the number off a spec table rather than trusting a typed
+# one: the `_PYTEST_DISCOVERY_PHRASE` shape applied to a citation.
+#
+# WHAT THIS DELIBERATELY DOES NOT ADD. `tests/test_skill_prose.py` carries a
+# module-wide "every id in this module's assertion messages names its spec"
+# scan, and casting 2 is landing that same scan for every module held to the
+# convention. A third copy here would be the duplicate-spelling class these
+# pins exist to catch. This block pins the ONE claim this module got wrong,
+# and imports every scanner it needs.
+# ---------------------------------------------------------------------------
+
+#: The contract id each spec states the reproduction obligation in, DERIVED
+#: from that spec's own table. `convergence` states it for LATENT — the tier
+#: this module's negative-space pair drives — and `fallout` states it for
+#: HARDENING. Same rung, two rows, two numbers, and typing one for the other is
+#: invisible to every check that only asks whether an id is well-formed.
+_LATENT_REPRODUCTION_CONTRACT = _contract_rows_naming(
+    "convergence ", "reproduction_attempted"
+)
+_THIS_SPECS_REPRODUCTION_CONTRACT = _contract_rows_naming(
+    "fallout ", "reproduction_attempted"
+)
+
+
+def test_the_latent_reproduction_rung_cites_the_spec_that_states_it() -> None:
+    """fallout NFR-011 (D-195's class): the cite, derived rather than trusted.
+
+    The accept-side message above names the row that imposes the
+    `reproduction_attempted` obligation on a LATENT filing. That row is the
+    convergence spec's tier contract, and this asserts the message says so
+    with the spec named — read out of the convergence contracts table, so a
+    renumbering there turns this red instead of leaving a stale number in a
+    sentence nobody re-reads.
+    """
+    assert len(_LATENT_REPRODUCTION_CONTRACT) == 1, (
+        f"the convergence contracts table states `reproduction_attempted` in "
+        f"{list(_LATENT_REPRODUCTION_CONTRACT)}. This pin expects exactly one "
+        f"row to attribute the LATENT rung to; with none or several, the "
+        f"message above needs rewriting against the table rather than this "
+        f"assertion relaxing."
+    )
+    expected = f"convergence {_LATENT_REPRODUCTION_CONTRACT[0]}"
+    assert any(expected in text for _, text in _assertion_messages(Path(__file__))), (
+        f"no assertion message in this module attributes the LATENT "
+        f"reproduction rung to {expected}, the one row the convergence "
+        f"contracts table states `reproduction_attempted` in. An engineer "
+        f"reading the failure is sent to the wrong contract — which with a "
+        f"BARE number is whichever spec they happened to open."
+    )
+
+
+def test_the_latent_rungs_number_never_wears_this_runs_spec_name() -> None:
+    """fallout NFR-011 (D-195's class), the absence half: the tempting wrong edit.
+
+    A bare id is fixed by putting a spec in front of it, and the reflex spec to
+    reach for is the one the run is building against. Here that reflex is
+    wrong and it FAILS SILENTLY: the fallout spec numbers that row too, so the
+    cite resolves, reads well, and points at `Foundry-Concern` — a tool with
+    no tiers and no filing doors. Only the row is wrong, which no
+    well-formedness check and no resolution check can see.
+
+    Both numbers are derived, so this pin cannot drift from the tables it
+    guards; it fires only when the two specs genuinely disagree about the rung,
+    which is precisely when the substitution is possible.
+    """
+    borrowed = sorted(
+        cited
+        for cited in _LATENT_REPRODUCTION_CONTRACT
+        if cited not in _THIS_SPECS_REPRODUCTION_CONTRACT
+        and any(
+            f"fallout {cited}" in text
+            for _, text in _assertion_messages(Path(__file__))
+        )
+    )
+    assert not borrowed, (
+        f"{borrowed} is the CONVERGENCE spec's contract id for the LATENT "
+        f"reproduction rung, cited here as this run's. Under the fallout spec "
+        f"that row is "
+        f"{SPEC_ROWS['fallout '][borrowed[0]].split('|')[2].strip()!r}, which "
+        f"has no tiers and no filing doors. This run's number for the same "
+        f"rung is {list(_THIS_SPECS_REPRODUCTION_CONTRACT)} and states it for "
+        f"HARDENING; cite the predecessor with its own name — "
+        f"`convergence {borrowed[0]}` — when the predecessor is what you mean."
     )
 
 
