@@ -68,6 +68,8 @@ sharing one through ``conftest.py``, which is this suite's convention.
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
 from pathlib import Path
 
@@ -2642,3 +2644,155 @@ def test_a_new_unowned_surface_invalidates_a_cached_pass(tmp_path: Path):
     assert after["cache"]["hit"] is False
     assert _surface(after)["ok"] is False
     assert _surface(after)["unowned"] == ["src/arrived-later.py"]
+
+
+# ── The one per-casting map off the excerpt (fallout GI-024, concern C-099) ──
+#
+# WHAT C-099 REMOVED, AND WHY THE SENTENCE IT LEFT COULD NOT HOLD IT.
+# ``foundry_validate_castings`` once built TWO per-casting maps off the same
+# ``spec_text`` blob in the same manifest loop: the CITED one the ownership
+# dimension reads, and a DECLARED one that D-181 orphaned when it gave that
+# dimension its own derivation. The second was read by nothing. C-099 deleted it
+# and wrote the ruling into the annotation above ``covered_reqs`` — "There is
+# deliberately NO per-casting map of the declared side beside it ... a second
+# dict keyed by casting would be a derivation with no reader."
+#
+# That ruling is prose, and prose is what this release holds unpinnable. The
+# whole fix reverted against a byte-identical green suite, so nothing in the
+# tree refused the state it removed. The sibling one-definition claims ARE
+# pinned — ``tests/orchestration/test_module_boundaries.py`` walks TOP-LEVEL
+# definitions — and a FUNCTION-LOCAL dict is invisible to every one of them,
+# which is precisely why this shape needed an assertion of its own rather than a
+# sentence a reader has to agree with.
+#
+# The pin is stated in the two shapes a per-casting map has, because either one
+# alone leaves a door: a map DECLARED with a different annotation still has to
+# be FILLED off the casting record, and a map filled through some other key
+# still has to be declared. Both are asserted against a NAMED list rather than a
+# count, so a scan that has gone blind reports ``[]`` and fails exactly as
+# loudly as a second map does.
+
+#: The annotation a per-casting requirement-id map carries where it is
+#: declared: casting id -> the ids that casting's excerpt answers for.
+_PER_CASTING_ID_MAP_ANNOTATION = "dict[str, set[str]]"
+
+#: The manifest loop's own spelling of the key, and what makes a dict
+#: PER-CASTING rather than merely a dict: the id read off the casting record
+#: being iterated. ``invariant_hashes[cid]`` and its siblings key off a bound
+#: name and are a different question; this is the inline derivation.
+_CASTING_ID_KEY = 'str(c.get("id", ...))'
+
+#: The one map, by name. The ownership dimension asks its question of this and
+#: of the manifest's persisted ``requirement_ids``; nothing else off the excerpt
+#: is keyed by casting, and a second name here is the state C-099 removed.
+_THE_PER_CASTING_ID_MAP = "cited_by_casting"
+
+
+def _is_casting_id_key(node: ast.expr) -> bool:
+    """Is this subscript key ``str(c.get("id", ...))``?
+
+    Matched structurally rather than by unparsing, so the answer does not turn
+    on which quote character ``ast.unparse`` happens to emit.
+    """
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "str"
+        and len(node.args) == 1
+    ):
+        return False
+    inner = node.args[0]
+    return (
+        isinstance(inner, ast.Call)
+        and isinstance(inner.func, ast.Attribute)
+        and inner.func.attr == "get"
+        and isinstance(inner.func.value, ast.Name)
+        and inner.func.value.id == "c"
+        and bool(inner.args)
+        and isinstance(inner.args[0], ast.Constant)
+        and inner.args[0].value == "id"
+    )
+
+
+def _per_casting_id_maps(source: str) -> tuple[list[str], list[str]]:
+    """``(declared, filled)`` — the per-casting requirement-id maps in *source*.
+
+    DECLARED: a local annotated ``dict[str, set[str]]``.
+    FILLED:   a subscript store whose key is the casting record's own id, read
+              inline off the record being iterated.
+
+    Both sorted, because ``ast.walk`` does not promise source order and an
+    assertion that depends on traversal order is an assertion about the wrong
+    thing.
+    """
+    tree = ast.parse(source)
+    declared = sorted(
+        node.target.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and ast.unparse(node.annotation) == _PER_CASTING_ID_MAP_ANNOTATION
+    )
+    filled = sorted(
+        target.value.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Subscript)
+        and isinstance(target.value, ast.Name)
+        and _is_casting_id_key(target.slice)
+    )
+    return declared, filled
+
+
+def test_exactly_one_per_casting_map_is_built_off_the_excerpt():
+    """fallout GI-024 (concern C-099) — the ruling, as an assertion.
+
+    ``inspect.getsource`` rather than ``ast.parse(module.__file__)``: the pin
+    follows the function object, so the casting that eventually moves this
+    validator does not have to remember to repoint a path.
+    """
+    declared, filled = _per_casting_id_maps(
+        inspect.getsource(foundry_validate_castings)
+    )
+
+    assert declared == [_THE_PER_CASTING_ID_MAP], (
+        f"per-casting requirement-id map(s) DECLARED as "
+        f"{_PER_CASTING_ID_MAP_ANNOTATION} in foundry_validate_castings: "
+        f"{declared}. Exactly one is expected — {_THE_PER_CASTING_ID_MAP}, the "
+        "one the ownership dimension reads. A second is the derivation with no "
+        "reader C-099 removed; if it has acquired a reader, name the reader "
+        "here and widen this pin on purpose."
+    )
+    assert filled == [_THE_PER_CASTING_ID_MAP], (
+        f"per-casting requirement-id map(s) FILLED at "
+        f"{_CASTING_ID_KEY} in foundry_validate_castings: {filled}. The blob is "
+        "scanned ONCE, for the one question the ownership dimension asks of it."
+    )
+
+
+def test_a_reintroduced_second_map_is_seen_by_that_pin():
+    """The anchor: the pin above recognises the shape it is named for.
+
+    The tree is clean, and a scan over a clean function is green whether it
+    works or not. So the recogniser is driven over the exact source C-099
+    deleted — both statements, in their original spelling — and it must report
+    BOTH maps in BOTH shapes, or the assertions above prove nothing.
+    """
+    reintroduced = (
+        "def foundry_validate_castings(project_root='.'):\n"
+        "    covered_reqs: set[str] = set()\n"
+        "    declared_by_casting: dict[str, set[str]] = {}\n"
+        "    cited_by_casting: dict[str, set[str]] = {}\n"
+        "    for c in castings:\n"
+        "        casting_reqs = set(declared_requirement_ids(spec_text_field))\n"
+        '        declared_by_casting[str(c.get("id", "?"))] = casting_reqs\n'
+        '        cited_by_casting[str(c.get("id", "?"))] = set(\n'
+        "            cited_requirement_ids(spec_text_field)\n"
+        "        )\n"
+    )
+
+    declared, filled = _per_casting_id_maps(reintroduced)
+
+    assert declared == ["cited_by_casting", "declared_by_casting"], declared
+    assert filled == ["cited_by_casting", "declared_by_casting"], filled
