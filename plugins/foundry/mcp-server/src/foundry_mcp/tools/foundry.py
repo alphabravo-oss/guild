@@ -124,6 +124,10 @@ from foundry_mcp.tools.foundry_state import (
     current_cycle,
     document_refusal,
     get_run_dir,
+    # fallout D-194 — the one cap normaliser, asked by the door that WRITES the
+    # cap as well as by the transitions that read it, so the number stored and
+    # the number acted on cannot be two numbers.
+    persisted_max_cycles,
     read_document,
     read_text_file,
     set_active_run,
@@ -2964,6 +2968,39 @@ def _max_cycles_problem(value: object) -> dict | None:
     and would persist a cap of 1, halting the run at the first GRIND door for a
     caller who passed a flag where a ceiling was asked for.
 
+    fallout D-194 — A ZERO-FRACTION FLOAT IS AN INTEGER, AND THIS RUNG WAS THE
+    THIRD ANSWER.
+    ------------------------------------------------------------------------
+    D-225's rule is stated above and this rung then broke it in the other
+    direction. THREE surfaces judge "is 2.0 an integer" and all three must give
+    one answer:
+
+      * the WIRE — `server.py#_argument_refusal` against the Foundry-Init
+        schema's `{"type": "integer", "minimum": 0}`. Draft 2020-12 DEFINES
+        `integer` to admit a zero-fraction float, so `2.0` and `0.0` are
+        ACCEPTED there while `2.5`, `'2'`, `True` and `-1` are refused.
+      * the READ — `foundry_state.persisted_max_cycles`, which honours
+        `{"max_cycles": 2.0}` as the cap 2 and says in its own docstring that
+        it does so "because JSON has no integer type and 2.0 is the integer 2
+        by the rule the door validated against".
+      * THIS RUNG, which read `not isinstance(value, int)` — False for a float
+        — and refused. Driven against a run persisting max_cycles 9:
+        `foundry_init(resume=…, max_cycles=2.0)` returned "Invalid max_cycles:
+        2.0 is not an integer" and state.json.max_cycles stayed 9, so CT-006's
+        output column went undelivered for an input its own schema accepts.
+
+    The fix is this rung agreeing with the other two, not the other two
+    tightening: refusing a zero-fraction float at the wire would mean departing
+    from JSON Schema's own definition of `integer`, and the read cannot refuse
+    at all — it is consulted from inside a transition whose only other answer
+    is "proceed". `2.5`, `'2'`, `True` and every negative stay refused here,
+    which is what keeps the accepted set EQUAL to the honoured set rather than
+    merely larger than it.
+
+    The caller then writes the number the READ honours (see the normalising
+    line at this rung's one call site), so no store ever holds `2.0` for a
+    decision made on `2`.
+
     D-061's sibling, D-067 — THE OMITTED FLAG NEVER REACHES THIS RUNG. "No cap
     was passed" is spelled `None` at the parameter and the caller skips this
     check for it; every value that DOES arrive here is one an operator typed,
@@ -2971,7 +3008,15 @@ def _max_cycles_problem(value: object) -> dict | None:
     the resume branch actually takes: while 0 doubled as "absent", "Pass 0 for
     unbounded" was advice the door then declined to honour.
     """
-    if isinstance(value, bool) or not isinstance(value, int):
+    whole = not isinstance(value, bool) and (
+        isinstance(value, int)
+        # fallout D-194 — the zero-fraction float the wire and the read both
+        # call an integer. `is_integer()` is the same test `persisted_max_cycles`
+        # applies one layer down, which is why 2.0 reaches the same cap through
+        # either door.
+        or (isinstance(value, float) and value.is_integer())
+    )
+    if not whole:
         return {
             "error": (
                 f"Invalid max_cycles: {value!r} is not an integer. The GRIND "
@@ -3130,6 +3175,29 @@ def foundry_init(
     if max_cycles is not None:
         if (cap_problem := _max_cycles_problem(max_cycles)) is not None:
             return cap_problem
+        # fallout D-194 — THE NUMBER WRITTEN IS THE NUMBER HONOURED, and it is
+        # taken from the honouring read rather than re-derived here.
+        #
+        # The rung above now accepts the zero-fraction float the wire schema
+        # calls an integer, so `2.0` reaches this line. Every store below takes
+        # the value RAW — state.json and castings/manifest.json on the new-run
+        # branch, state.json on the resume branch, both result echoes — and
+        # `foundry_report.py` renders the raw field into REPORT.json twice. A
+        # float landing in any of those is the failure `orchestration/halt.py`'s
+        # readers were already fixed for: "max_cycles 2.0" printed beside a
+        # decision made on 2 is a message about a number no code acted on.
+        #
+        # `persisted_max_cycles` is asked for the answer instead of `int()`
+        # being spelled here, because a value each door normalises for itself
+        # is a value each door can normalise DIFFERENTLY — which is D-194's own
+        # class, one dimension over. The rung has already refused everything
+        # that read discards, so on the surviving set the read is exact: 0 and
+        # 0.0 stay 0 (unbounded), 2.0 becomes 2, an int passes through itself.
+        #
+        # Inside the `is not None` guard on purpose: the read answers 0 for
+        # anything it cannot use, so normalising an omitted flag would turn
+        # D-067's "leave the resumed run's cap alone" into "lift it".
+        max_cycles = persisted_max_cycles({"max_cycles": max_cycles})
 
     # --- Resume mode ---
     if resume:

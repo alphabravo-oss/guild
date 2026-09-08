@@ -404,6 +404,17 @@ def test_the_version_fields_do_not_disturb_the_existing_state_keys(tmp_path):
 #   AC11  test_a_cap_this_door_will_not_honour_is_refused
 #           fallout CT-006 — 'N not an integer'; and a negative value, which
 #           the persisted-cap reader would silently treat as no cap.
+#   AC11b test_the_three_surfaces_give_one_answer_to_what_a_cap_is
+#           fallout D-194 — the CLASS pin. The wire schema, the handler rung
+#           and the honouring read judge "is 2.0 an integer" and must agree;
+#           the rung was the third answer, so a cap the door advertises as
+#           valid was refused and not rewritten.
+#   AC11c test_a_zero_fraction_float_cap_is_written_as_the_integer_it_is
+#           fallout D-194 / CT-006 — the defect's own path at the real door,
+#           and the stored value's TYPE, because every store takes it raw.
+#   AC11d test_a_new_run_takes_the_same_answer_as_the_resume_branch
+#           the ADJACENT path: the same rung runs ahead of both branches, and
+#           the new-run one writes to two stores rather than one.
 #   AC12  test_a_cap_below_the_current_cycle_halts_at_the_next_grind_door
 #           fallout ST-002 / OT-025 — the downstream fact, driven at the real
 #           GRIND door rather than re-read off the state file.
@@ -503,7 +514,9 @@ def test_a_resume_carrying_an_explicit_zero_lifts_the_cap_to_unbounded(tmp_path)
 
 
 @pytest.mark.parametrize(
-    "bad", ["3", 2.5, True, -1], ids=["string", "float", "bool", "negative"]
+    "bad",
+    ["3", 2.5, True, -1, -1.0],
+    ids=["string", "fractional_float", "bool", "negative", "negative_float"],
 )
 def test_a_cap_this_door_will_not_honour_is_refused(tmp_path, bad):
     """fallout CT-006's errors column: 'N not an integer'.
@@ -518,6 +531,13 @@ def test_a_cap_this_door_will_not_honour_is_refused(tmp_path, bad):
     Python, and accepting it would persist a cap of 1 and halt the run at its
     first GRIND door for a caller who passed a flag where a ceiling was asked
     for.
+
+    fallout D-194 — ``2.5`` IS STILL REFUSED AND SO IS ``-1.0``, which is the
+    half of that fix that is easy to lose. The rung now accepts the ZERO-
+    FRACTION float the wire schema and the honouring read both call an integer;
+    a fractional one is not an integer under any of the three readings, and a
+    whole negative one is refused by the rung below this one exactly as ``-1``
+    is. The relaxation is one value-shape wide, not "floats are fine now".
 
     ``None`` LEFT this list at D-067 and is not a hole. It is no longer a bad
     value but the absence of one — the parameter's own default, meaning 'this
@@ -566,6 +586,126 @@ def test_the_cap_hint_names_an_exit_this_door_actually_takes(tmp_path):
         f"the door refused with hint {hint!r} and then did not do it. A hint "
         "naming an exit the door declines to take is the D-067 class."
     )
+
+
+def test_the_three_surfaces_give_one_answer_to_what_a_cap_is(tmp_path):
+    """fallout D-194 — THE CLASS PIN: wire, handler rung and honouring read.
+
+    fallout CT-006's input column is 'integer N at least 0' and its errors
+    column is 'N not an integer'. THREE surfaces answer that question and the
+    contract is only kept while all three give the SAME answer:
+
+      * the WIRE — ``server.py#_argument_refusal`` against the Foundry-Init
+        schema. Draft 2020-12 DEFINES ``integer`` to admit a zero-fraction
+        float, so it accepts ``2.0``.
+      * the HANDLER RUNG — ``foundry.py#_max_cycles_problem``, which the
+        in-process caller and the resume path both reach.
+      * the honouring READ — ``foundry_state.persisted_max_cycles``, whose own
+        docstring says ``2.0`` is the integer 2 'by the rule the door validated
+        against'.
+
+    D-194 is what a gap between them costs: the rung read
+    ``not isinstance(value, int)``, so ``foundry_init(resume=…,
+    max_cycles=2.0)`` was REFUSED for a value the schema advertises as valid
+    and the read already honours, and the cap was not rewritten.
+
+    ``tests/orchestration/test_halt.py`` pins the wire against the read and
+    never asks the rung, which is exactly why the third answer went unseen —
+    so this pin drives all three over ONE table rather than any two of them.
+    ``None`` is not on the table: it is the absence of a value, the caller
+    skips the rung for it (D-067), and the wire refuses it a layer up.
+    """
+    from foundry_mcp import server as srv
+    from foundry_mcp.tools.foundry import _max_cycles_problem
+    from foundry_mcp.tools.foundry_state import persisted_max_cycles
+    from tests.orchestration._env import _init_schema
+
+    schema = _init_schema()
+    for value in (0, 2, 99, 0.0, 2.0, 2.5, "2", True, -1, -1.0):
+        wire_accepts = (
+            srv._argument_refusal("Foundry-Init", schema, {"max_cycles": value})
+            is None
+        )
+        rung_accepts = _max_cycles_problem(value) is None
+        assert wire_accepts == rung_accepts, (
+            f"{value!r}: the wire says {'accept' if wire_accepts else 'refuse'} "
+            f"and the handler rung says {'accept' if rung_accepts else 'refuse'}. "
+            "The accepted set must EQUAL the honoured set, and a value one "
+            "surface takes and another turns away is D-194's class whichever "
+            "way round it points."
+        )
+        if rung_accepts:
+            # ...and what the door accepts, the read must honour as the SAME
+            # number. `2.0 == 2` in Python, so the type is the assertion: a
+            # cap no reader can act on is not a cap.
+            honoured = persisted_max_cycles({"max_cycles": value})
+            assert isinstance(honoured, int) and not isinstance(honoured, bool)
+            assert honoured == int(value), (value, honoured)
+
+    # The two values D-194 was filed on, named rather than left to the loop.
+    assert _max_cycles_problem(2.0) is None, "a zero-fraction float IS an integer"
+    assert _max_cycles_problem(0.0) is None, "and so is a zero-fraction zero"
+    assert _max_cycles_problem(2.5) is not None, "a FRACTIONAL float is not"
+    assert _max_cycles_problem(True) is not None, "and a bool is not a ceiling"
+
+
+def test_a_zero_fraction_float_cap_is_written_as_the_integer_it_is(tmp_path):
+    """fallout D-194 / CT-006 verbatim: 'state.json.max_cycles rewritten to N'.
+
+    THE DEFECT'S OWN PATH, driven: a resume carrying ``2.0`` — a value the
+    Foundry-Init schema accepts — used to come back 'Invalid max_cycles: 2.0 is
+    not an integer' with the persisted cap untouched at 9.
+
+    AND THE NUMBER THAT LANDS IS AN ``int``. Every store takes this value raw:
+    state.json and castings/manifest.json on the new-run branch, state.json on
+    the resume branch, both result echoes, and ``foundry_report.py`` renders
+    the raw field into REPORT.json twice. ``2.0 == 2`` is True in Python, so
+    equality alone cannot tell the stored float from the honoured integer — the
+    TYPE is what a reader sees, and 'max_cycles 2.0' printed beside a decision
+    made on 2 is a message about a number no code acted on. The door takes the
+    number from ``persisted_max_cycles``, the same read the GRIND door acts on,
+    so the two cannot be two numbers.
+    """
+    created = foundry_init(project_root=str(tmp_path), max_cycles=9)
+    assert _state(created)["max_cycles"] == 9
+
+    resumed = foundry_init(
+        project_root=str(tmp_path), resume=created["run_name"], max_cycles=2.0
+    )
+
+    assert "error" not in resumed, resumed
+    persisted = _state(resumed)["max_cycles"]
+    assert persisted == 2, resumed
+    assert isinstance(persisted, int), repr(persisted)
+    assert resumed["max_cycles"] == 2 and isinstance(resumed["max_cycles"], int)
+
+
+def test_a_new_run_takes_the_same_answer_as_the_resume_branch(tmp_path):
+    """THE ADJACENT PATH: the OTHER branch through the same rung.
+
+    ``_max_cycles_problem`` runs ahead of BOTH branches — 'there is no reading
+    under which a new run may store a cap the resume door would refuse' — so
+    relaxing it for a zero-fraction float relaxes it for a run being CREATED
+    too, and that branch writes the value to two stores rather than one.
+
+    Asserting the persisted integer rather than re-driving the GRIND door is
+    the whole point of normalising at the door: a cap typed ``3.0`` and a cap
+    typed ``3`` are now the SAME persisted value, so every downstream reader —
+    ``orchestration/transitions.py``'s ``would_halt``, ``halt.py``'s
+    ``cap_reached`` seal, the report's two raw reads — is reading a run
+    indistinguishable from the one
+    ``test_a_cap_below_the_current_cycle_halts_at_the_next_grind_door``
+    already drives end to end.
+    """
+    created = foundry_init(project_root=str(tmp_path), max_cycles=3.0)
+
+    for store, value in (
+        ("state.json", _state(created)["max_cycles"]),
+        ("castings/manifest.json", _read_manifest(created)["max_cycles"]),
+        ("result echo", created["max_cycles"]),
+    ):
+        assert value == 3, (store, value)
+        assert isinstance(value, int), (store, repr(value))
 
 
 def test_an_unknown_run_is_still_refused_on_resume(tmp_path):
