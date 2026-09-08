@@ -22,4 +22,4 @@
   exemption ledger    : {'plugins/foundry/agents/spec-test-deriver.md': ['GI-003']}
   mirror holding it   : True
 .........                                                                [100%]
-9 passed, 713 deselected in 0.12s
+9 passed, 714 deselected in 0.11s
