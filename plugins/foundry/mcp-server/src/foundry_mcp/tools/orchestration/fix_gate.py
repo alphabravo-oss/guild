@@ -1472,7 +1472,11 @@ def _lead_lane_problem(fix_commit: str, project_root: str) -> str | None:
 
 def _check_reported_prompt_hash(fdir: Path, casting_id, reported_hash) -> dict | None:
     """C-8's ``check_reported_prompt_hash`` — None, or the refusal dict."""
-    from foundry_mcp.tools.foundry_handoff import check_reported_prompt_hash
+    # fallout CT-011 / AC-030 / GI-033 (D-192) — the leaf. The rung is
+    # deliberately shared with the acceptance door, and that door is a verifier
+    # module now, so the one implementation both gates consume sits in
+    # `tools/artifacts.py` where either layer may read it.
+    from foundry_mcp.tools.artifacts import check_reported_prompt_hash
 
     return check_reported_prompt_hash(fdir, casting_id, reported_hash)
 

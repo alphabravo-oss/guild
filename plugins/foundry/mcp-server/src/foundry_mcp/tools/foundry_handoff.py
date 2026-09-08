@@ -21,7 +21,6 @@ readable) and mirrored to `handoffs.md` (human readable).
 
 from __future__ import annotations
 
-import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,13 +67,41 @@ from foundry_mcp.tools.citation import CITATION_PATTERN, unresolved_symbol_cites
 # from BOTH layers; the sibling's two readers — the acceptance door in this file
 # and ``foundry_validate`` — are both lifecycle, so nothing forces it out of the
 # module that uses it. The prose at each end cites the other by module.
+#
+# fallout AC-061 / FR-063 / GI-033 (D-192, concern C-107) — AND THE LEDGER
+# WRITER, THE PROMPT-HASH RUNG AND THE SPEC-HASH READER HAVE NOW GONE THE SAME
+# WAY, FOR THE SAME ARITHMETIC READ IN THE OTHER DIRECTION.
+#
+# ``foundry_accept_casting`` is leaving this module for ``tools/evidence.py``:
+# it RUNS ``verify_evidence``, and GI-033's violation column is "any lifecycle
+# module importing a verifier module", so a door that runs a verifier belongs
+# beside the engine rather than reaching it. The move makes four symbols
+# both-layers symbols for the first time, and the arithmetic then puts every one
+# of them in the leaf:
+#
+#   ``_append_handoff_record``    — ``concerns.py`` and
+#     ``orchestration/directives.py`` write through it from the lifecycle side,
+#     the acceptance door from the verifier side.
+#   ``record_handoff_event``      — the body of the ``Foundry-Handoff`` door
+#     below, which the acceptance door also calls. The DOOR did not go with it:
+#     its first rung refuses the reserved ``lead_fix`` token, and that is a
+#     policy of the door, not of the writer — ``record_lead_fix_handoff`` below
+#     reaches the same writer and writes exactly the record the door refuses.
+#   ``check_reported_prompt_hash`` — ``orchestration/fix_gate.py`` (lifecycle)
+#     and the acceptance door (verifier) are the two gates CT-011 / AC-030
+#     exists to keep identical.
+#   ``foundry_spec_hash``         — the ``Foundry-Spec-Hash`` tool and the
+#     acceptance door's own spec resolution.
+#
+# The bodies moved unchanged, and they are still this module's to USE: the
+# import is the fix, not a facade.
 from foundry_mcp.tools.artifacts import (
-    _artifact_guard,
-    _artifact_lock,
-    _hash_file,
+    _append_handoff_record,
     _hash_str,
-    _load_json,
+    check_reported_prompt_hash,
     declared_requirement_ids,
+    foundry_spec_hash,
+    record_handoff_event,
 )
 from foundry_mcp.tools.foundry_state import (
     document_refusal,
@@ -206,80 +233,6 @@ def _reserved_event_key(event: object) -> str:
 _SERVER_WRITTEN_EVENT_KEYS: frozenset[str] = frozenset(
     {_reserved_event_key(HANDOFF_EVENT_LEAD_FIX)}
 )  # 1 event
-
-
-def _append_handoff_record(
-    fdir: Path,
-    entry: dict,
-    md_fields: list[tuple[str, str]],
-) -> None:
-    """Append one record to BOTH handoff channels — JSONL and the md mirror.
-
-    WHY THIS IS A FUNCTION (GI-003)
-    -------------------------------
-    The audit log has two channels and they are only useful while they agree.
-    While ``foundry_handoff`` was the sole writer, "append to both" was one
-    block of straight-line code and could not disagree with itself. GI-003
-    adds a SECOND writer — the server's own ``lead_fix`` record — and the
-    moment there are two, "both channels, same format, header bootstrapped
-    once" becomes a convention each is trusted to remember. That is the shape
-    D-127 and D-119 both took (two doors, one remembered a step, the other did
-    not), so it is factored here before it can happen a third time rather than
-    after.
-
-    ``entry`` is written to handoffs.jsonl verbatim, so each caller owns its
-    own record shape — the lead_fix record carries defect_id/tier/file/
-    line_count/files/test/regression_test/fix_commit as FIRST-CLASS keys, not
-    prose squeezed into a summary field, because the F6 report reads them back
-    by name. The
-    two channels do NOT carry identical text: the JSONL keeps the raw values
-    (None for an unavailable measurement) and ``md_fields`` carries the
-    reader's rendering of them (D-074). ``md_fields``
-    is the ordered human mirror; empty values are skipped, mirroring
-    ``foundry._ledger_mirror``'s rule so an absent field prints nothing rather
-    than an empty bullet.
-
-    WHY THE LOCK (fallout D-123)
-    ----------------------------
-    Every other run-artifact write in this package goes through the leaf's
-    flock'd primitives. This one went through a bare ``open("a")``, in a
-    package whose teammates share one working tree and whose GI-003 record
-    added a SECOND writer to this very function. The JSONL channel survived
-    that on its own — one ``write`` per record, and an O_APPEND write of a
-    short line does not interleave — but the md mirror is four to six separate
-    ``f.write`` calls, so two concurrent ``grind_dispatched`` records could
-    interleave mid-record in the human channel; and ``header_needed`` is a
-    TOCTOU between the ``exists`` check and the first write, so both writers
-    could emit the header.
-
-    ONE LOCK FOR THE WHOLE RECORD, taken on the JSONL path and held across BOTH
-    channels. It is a record that spans two files, so locking each file
-    separately would order each write and still let two records interleave
-    between the channels. The JSONL path is the lock's name because that is the
-    channel a reader joins on — ``Foundry-Team-Down`` reads
-    ``grind_dispatched`` out of it (FR-048) — and one name is what makes two
-    writers exclude each other rather than agree by coincidence.
-    """
-    fdir.mkdir(parents=True, exist_ok=True)
-
-    jsonl_path = fdir / "handoffs.jsonl"
-    md_path = fdir / "handoffs.md"
-    with _artifact_lock(jsonl_path):
-        with jsonl_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
-
-        header_needed = not md_path.exists()
-        with md_path.open("a", encoding="utf-8") as f:
-            if header_needed:
-                f.write("# Foundry Handoff Audit Log\n\n")
-                f.write(
-                    "Every transition between phases or artifacts is recorded here.\n\n"
-                )
-            f.write(f"## {entry['event']} — {entry['timestamp']}\n")
-            for label, value in md_fields:
-                if value:
-                    f.write(f"- {label}: {value}\n")
-            f.write("\n")
 
 
 MEASUREMENT_UNAVAILABLE = "measurement unavailable — git could not read the commit"
@@ -473,85 +426,6 @@ def record_lead_fix_handoff(
     return entry
 
 
-def check_reported_prompt_hash(
-    run_dir: Path,
-    casting_id: int | str,
-    reported_hash: str | None,
-) -> dict | None:
-    """None when the teammate's reported prompt hash is the file's, else a refusal.
-
-    CT-011 / AC-030 — pointer dispatch hands the teammate a PATH and a HASH
-    instead of the prompt text, and this is what turns that from advice into
-    something checkable: only an agent that actually read the file can state
-    the value back. Both consuming gates use this one function —
-    ``foundry_accept_casting`` below and ``Foundry-Fix`` — because a hash rung
-    that exists at one door and not the other lets an unread prompt through
-    whichever door the lead happens to walk.
-
-    THE COMPARISON VALUE IS THE PUBLISHED SPELLING, OVER THE FILE'S BYTES
-    (D-108). ``"sha256:" + hexdigest()[:16]`` is byte-for-byte what
-    ``foundry_spawn`` publishes as ``prompt_hash`` and what its dispatch block
-    tells the teammate to state back "character for character". A bare
-    hexdigest or the full 64 characters here would make every honest report a
-    mismatch, so there is exactly one spelling in the package and this reads
-    it rather than re-deriving one.
-
-    WHAT IS HASHED IS THE BYTES, NOT THE DECODED TEXT (D-108). ``_hash_file``
-    hashes ``path.read_bytes()``; ``_hash_str`` hashes ``text.encode("utf-8")``
-    AFTER ``read_text_file`` has already translated newlines, which is what
-    this rung used. On a prompt file written with CRLF line endings the two
-    disagree — the text digest is taken over a document with every ``\\r``
-    silently removed — and the teammate's own documented command
-    (``sha256sum`` / ``shasum -a 256`` on the file) can only ever produce the
-    BYTES digest. So the honest report of a CRLF prompt was refused as stale
-    while nothing was stale. The bytes are what both sides can independently
-    compute, so the bytes are what is compared.
-
-    An unreadable or missing prompt file returns the house ``document_refusal``
-    rather than None: nothing was compared, and "I could not read the file" is
-    not the same answer as "the hashes agree". The DECODE guard below stays
-    even though the digest no longer needs the text — a prompt this server
-    cannot decode is one no teammate can be handed, and that answer is owed
-    whether or not a hash would have matched.
-    """
-    prompt_path = run_dir / "castings" / f"casting-{casting_id}-prompt.md"
-    if not prompt_path.exists():
-        return document_refusal(prompt_path, f"{prompt_path.name} not found")
-
-    _prompt_text, problem = read_text_file(prompt_path)
-    if problem is not None:
-        return document_refusal(prompt_path, problem)
-
-    expected = _hash_file(prompt_path)
-    if expected is None:
-        # Lost between the exists check and the read: still "I could not read
-        # the file", still not a match.
-        return document_refusal(prompt_path, f"{prompt_path.name} not found")
-
-    if reported_hash == expected:
-        return None
-
-    return {
-        "ok": False,
-        # The error TOKEN is unchanged from the inline rung this replaced.
-        # Callers and tests key on it, and a rung that starts naming itself
-        # differently the day it is shared is a behaviour change smuggled in
-        # under a refactor.
-        "error": "stale_prompt_hash",
-        "hint": (
-            f"Casting prompt hash mismatch. The file at {prompt_path.name} "
-            f"hashes to {expected!r}; the value reported was "
-            f"{reported_hash!r}. Call Foundry-Spawn-Teammate for a fresh "
-            f"prompt hash — or, if the teammate reported it, have them re-read "
-            f"the prompt file in full and state its hash character for "
-            f"character. Only reading the file produces the right answer, "
-            f"which is the point."
-        ),
-        "expected_hash": expected,
-        "reported_hash": reported_hash,
-    }
-
-
 def foundry_handoff(
     event: str,
     source: str = "",
@@ -674,125 +548,15 @@ def foundry_handoff(
             "reserved_event": HANDOFF_EVENT_LEAD_FIX,
         }
 
-    fdir = get_run_dir(project_root)
-    if not fdir:
-        return {"ok": False, "error": "No active foundry run"}
-    if not fdir.exists():
-        fdir.mkdir(parents=True, exist_ok=True)
-
-    root = Path(project_root).resolve()
-    source_path = (root / source) if source and not Path(source).is_absolute() else Path(source) if source else None
-    dest_path = (root / destination) if destination and not Path(destination).is_absolute() else Path(destination) if destination else None
-
-    source_hash = _hash_file(source_path) if source_path else None
-    dest_hash = _hash_file(dest_path) if dest_path else None
-
-    timestamp = datetime.now(timezone.utc).isoformat()
-    handoff_id = _hash_str(f"{timestamp}|{event}|{source}|{destination}")
-
-    entry = {
-        "handoff_id": handoff_id,
-        "timestamp": timestamp,
-        "event": event,
-        "source": source,
-        "source_hash": source_hash,
-        "destination": destination,
-        "destination_hash": dest_hash,
-        "source_reread": bool(source_reread),
-        "summary": summary,
-        "information_loss": information_loss,
-    }
-
-    warning = None
-    if information_loss:
-        warning = f"Information loss reported: {information_loss}. Lead must justify or re-decompose."
-    if not source_reread and event in {"spec_to_casting", "spec_reread", "spec_to_decompose", "acceptance"}:
-        warning = (warning + "; " if warning else "") + (
-            f"source_reread=False for event '{event}'. Lead acted from memory, "
-            f"not a fresh read of the source. Context rot risk."
-        )
-
-    # Both channels, through the writer the lead_fix record also uses, so the
-    # two records cannot land in different files or in different formats.
-    _append_handoff_record(
-        fdir,
-        entry,
-        [
-            ("handoff_id", f"`{handoff_id}`"),
-            ("source", f"`{source}` ({source_hash or 'no file'})" if source else ""),
-            (
-                "destination",
-                f"`{destination}` ({dest_hash or 'no file'})" if destination else "",
-            ),
-            ("source_reread", f"`{source_reread}`"),
-            ("summary", summary),
-            ("**information_loss**", information_loss),
-            ("**WARNING**", warning or ""),
-        ],
+    return record_handoff_event(
+        event=event,
+        source=source,
+        destination=destination,
+        source_reread=source_reread,
+        summary=summary,
+        information_loss=information_loss,
+        project_root=project_root,
     )
-
-    return {
-        "ok": True,
-        "handoff_id": handoff_id,
-        "event": event,
-        "source_hash": source_hash,
-        "destination_hash": dest_hash,
-        "source_reread": source_reread,
-        "warning": warning,
-        "log_entry": entry,
-    }
-
-
-def foundry_spec_hash(project_root: str = ".") -> dict:
-    """Return the current sha256 of spec.md. Lead calls this to obtain a
-    hash that must be passed to `Foundry-Spawn-Teammate` and
-    `Foundry-Accept-Casting`. The tools verify the hash matches the
-    current file content, forcing the lead to actually Read the spec
-    rather than relying on prior context.
-    """
-    fdir = get_run_dir(project_root)
-    if not fdir:
-        return {"ok": False, "error": "No active foundry run"}
-    if (corrupt := _artifact_guard(fdir)):
-        return {"ok": False, **corrupt}
-
-    spec_path = fdir / "spec.md"
-    if not spec_path.exists():
-        state_path = fdir / "state.json"
-        if state_path.exists():
-            # D-130's class, found by the package-wide scan rather than by a
-            # defect report: this was `json.loads(state_path.read_text(...))`,
-            # so a corrupt state.json raised out of Foundry-Spec-Hash -- the
-            # tool every Foundry-Spawn-Teammate and Foundry-Accept-Casting call
-            # depends on -- as a traceback naming no file. Routed through the
-            # orchestrator's tolerant loader; the guard above it names the file.
-            state = _load_json(state_path)
-            sp = state.get("spec_path", "")
-            if sp:
-                candidate = Path(project_root) / sp
-                if candidate.exists():
-                    spec_path = candidate
-
-    if not spec_path.exists():
-        return {"ok": False, "error": "spec.md not found in run directory or state"}
-
-    h = _hash_file(spec_path)
-    size = spec_path.stat().st_size
-    mtime = datetime.fromtimestamp(spec_path.stat().st_mtime, tz=timezone.utc).isoformat()
-
-    return {
-        "ok": True,
-        "spec_path": str(spec_path),
-        "spec_hash": h,
-        "size_bytes": size,
-        "mtime": mtime,
-        "instruction": (
-            "Read the spec.md file now. Then pass the spec_hash to every "
-            "Foundry-Spawn-Teammate and Foundry-Accept-Casting call. If you "
-            "do not re-Read the spec first, you are acting from memory — "
-            "this violates the context-rot prevention rule."
-        ),
-    }
 
 
 def foundry_accept_casting(

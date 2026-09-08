@@ -96,10 +96,14 @@ from foundry_mcp.tools.forge_spec import (
     forge_spec_start,
     forge_spec_status,
 )
+# fallout GI-033 (D-192) — `Foundry-Spec-Hash` reads from the leaf. The
+# acceptance door moved into the verifier layer and calls the same reader, so
+# a symbol both layers read lives in `tools/artifacts.py` by GI-033's
+# arithmetic rather than in the lifecycle module that used to define it.
+from foundry_mcp.tools.artifacts import foundry_spec_hash
 from foundry_mcp.tools.foundry_handoff import (
     foundry_accept_casting,
     foundry_handoff,
-    foundry_spec_hash,
 )
 from foundry_mcp.tools.foundry_spawn import foundry_cast_wave, foundry_spawn_teammate
 from foundry_mcp.tools.foundry_validate import foundry_validate_castings

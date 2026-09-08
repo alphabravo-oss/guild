@@ -70,6 +70,7 @@ from pathlib import Path
 import pytest
 
 from foundry_mcp.schemas import vocab
+from foundry_mcp.tools import artifacts
 from foundry_mcp.tools import foundry as foundry_doors
 from foundry_mcp.tools import evidence as evidence_doors
 from foundry_mcp.tools import foundry_handoff
@@ -6523,7 +6524,14 @@ def test_the_documented_hash_command_is_the_one_the_gate_accepts(
             f"a command it will work around."
         )
         reported = proc.stdout.strip()
-        refusal = foundry_handoff.check_reported_prompt_hash(run_dir, 9, reported)
+        # fallout GI-033 (D-192) — BOTH NAMES ARE READ FROM THE LEAF, and the
+        # reason is the sentence this test exists to keep true. The rung is
+        # shared by Foundry-Accept-Casting and Foundry-Fix; the acceptance door
+        # moved into the verifier layer beside the engine it runs, so the one
+        # implementation both gates consume lives in `tools/artifacts.py`, which
+        # either layer may reach. Reading it through `foundry_handoff`, which no
+        # longer defines it, would be the facade GI-010 forbids.
+        refusal = artifacts.check_reported_prompt_hash(run_dir, 9, reported)
         assert refusal is None, {
             "why": (
                 "the command agents/teammate.md publishes produces a hash the "
@@ -6537,7 +6545,7 @@ def test_the_documented_hash_command_is_the_one_the_gate_accepts(
             "documented_command_produced": reported,
             "refusal": refusal,
         }
-        assert reported == foundry_handoff._hash_file(prompt), (
+        assert reported == artifacts._hash_file(prompt), (
             "the documented command and the package's own byte-hash helper "
             "disagree. check_reported_prompt_hash's docstring claims 'there is "
             "exactly one spelling in the package'; a disagreement here is that "

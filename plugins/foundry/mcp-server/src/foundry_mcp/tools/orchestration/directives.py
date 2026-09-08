@@ -619,7 +619,11 @@ def _append_grind_dispatch(
     the honest failure direction for an advisory record, and the same one every
     other ledger reader in this package takes.
     """
-    from foundry_mcp.tools.foundry_handoff import _append_handoff_record
+    # fallout GI-033 (D-192) — the leaf, not the lifecycle sibling that used to
+    # define it. `tools/artifacts.py` holds the writer now: the acceptance door
+    # reaches it from the verifier layer and this module from the lifecycle
+    # layer, and a symbol read from both can live only in a leaf.
+    from foundry_mcp.tools.artifacts import _append_handoff_record
 
     entry = {
         "handoff_id": "",

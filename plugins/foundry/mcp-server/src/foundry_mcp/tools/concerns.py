@@ -842,7 +842,11 @@ def _append_close_handoff(fdir: Path, entry: dict) -> str | None:
     telling them nothing.
     """
     try:
-        from foundry_mcp.tools.foundry_handoff import _append_handoff_record
+        # fallout GI-033 (D-192) — the leaf, not the lifecycle sibling that used
+        # to define it. The writer moved to `tools/artifacts.py` when the
+        # acceptance door became a verifier and started reaching it from the
+        # other layer; this call site is unchanged apart from the module name.
+        from foundry_mcp.tools.artifacts import _append_handoff_record
 
         _append_handoff_record(
             fdir,

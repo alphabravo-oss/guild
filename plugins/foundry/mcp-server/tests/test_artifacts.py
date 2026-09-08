@@ -1495,8 +1495,14 @@ def test_the_handoff_ledger_writes_both_channels_under_one_lock(run_env):
     critical section, and a behavioural test for an interleaving is a race
     either way it comes out.
     """
-    handoff = pytest.importorskip("foundry_mcp.tools.foundry_handoff")
-    tree = ast.parse(Path(handoff.__file__).read_text(encoding="utf-8"))
+    # fallout GI-033 (D-192) — READ OFF THE LEAF, WHICH IS WHERE THE WRITER IS
+    # NOW. It was `foundry_handoff.py`'s until the acceptance door moved into
+    # the verifier layer and started reaching this writer from the other side of
+    # the layering rule; a symbol read from both layers can live only in a leaf,
+    # so the primitive came here to the module that already owns the lock domain
+    # it takes. The property asserted is unchanged, and this is the file it is
+    # now a property OF.
+    tree = ast.parse(Path(artifacts.__file__).read_text(encoding="utf-8"))
     fn = next(
         node
         for node in ast.walk(tree)
@@ -1535,15 +1541,28 @@ def test_the_ledger_writer_holds_no_lock_domain_of_its_own(run_env):
     """The fix is a shared domain, not a second one.
 
     `_declares_lock_domain` above is the guard for a module opening its own
-    `threading.RLock()` / `threading.local()` pair; this is the same rule asked
-    of the module the fix landed in, from the other end — it binds the leaf's
-    lock and spells the sidecar through the leaf's suffix, or it excludes
-    nothing that matters.
+    `threading.RLock()` / `threading.local()` pair, and the rule is that the
+    package has ONE domain and every run-artifact writer takes it.
+
+    fallout GI-033 (D-192) — THE WRITER CHANGED MODULES AND THE RULE DID NOT.
+    `_append_handoff_record` was in `foundry_handoff.py`, which took the leaf's
+    lock across a package edge; it is in the leaf itself now, because the
+    acceptance door moved into the verifier layer and a writer both layers reach
+    can live in neither of them. So the assertion is asked of BOTH ends: the
+    module that gave the writer up still opens no domain of its own — it writes
+    through `record_lead_fix_handoff` and the `Foundry-Handoff` door, both of
+    which now reach this module — and the writer here binds this module's own
+    `_artifact_lock` rather than a second lock named after it.
     """
     handoff = pytest.importorskip("foundry_mcp.tools.foundry_handoff")
-    path = Path(handoff.__file__)
-    assert not _declares_lock_domain(path)
-    assert handoff._artifact_lock is _artifact_lock
+    assert not _declares_lock_domain(Path(handoff.__file__))
+
+    # ...and the leaf is the ONE module that may declare it, which is what makes
+    # "every writer takes the same lock" a fact about the package rather than a
+    # coincidence between two modules that happen to agree.
+    assert _declares_lock_domain(Path(artifacts.__file__))
+    assert artifacts._append_handoff_record.__module__ == artifacts.__name__
+    assert artifacts._artifact_lock is _artifact_lock
 
 
 # --------------------------------------------------------------------------- #
