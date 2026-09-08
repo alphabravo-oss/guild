@@ -1,0 +1,16 @@
+# evidence-cmd: cd plugins/foundry/mcp-server || exit 1; echo "== concern C-119 -- the site walk, one plant per import spelling =="; uv run --quiet --with pytest python -c 'import sys, tempfile; from pathlib import Path; sys.path.insert(0, "."); sys.path.insert(0, "src"); import tests.test_evidence as te; plant = lambda prm: (lambda pkg: (te._plant_a_printing_handler(pkg, prm.values[0]), setattr(te, "_SERVER_PKG", pkg), te._protocol_stdout_scan())[2])(Path(tempfile.mkdtemp()) / "foundry_mcp"); rows = [(prm.id, plant(prm)) for prm in te._IMPORT_SPELLINGS]; verdicts = [(name, bool(seen) and any("planted" in o for o in offenders)) for name, (seen, offenders) in rows]; [print("  %-30s -> %s" % (name, "REPORTED" if ok else "SILENT")) for name, ok in verdicts]; print("  spellings driven: %d" % len(verdicts)); print("VERDICT: PASS -- every import spelling reaches the site walk" if all(ok for _, ok in verdicts) else "VERDICT: FAIL -- the handler is silent under " + repr([n for n, ok in verdicts if not ok]))' 2>&1 || exit 1; echo; echo "== the anchors: six plants and four redirect-guarded controls =="; uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -q tests/test_evidence.py -k "new_handler_that_prints or redirected_cli_entry_point" 2>&1 | tail -1 | awk '{ if ($1 == "10" && $2 ~ /^passed/) print "VERDICT: PASS -- 10 parametrised anchors green: every spelling reported, every guarded spelling cleared"; else print "VERDICT: FAIL -- " $0 }'
+# evidence-for: fallout FR-006, AC-015, GI-025, OT-015
+# evidence-timeout: 600
+
+== concern C-119 -- the site walk, one plant per import spelling ==
+  from-module-import-symbol      -> REPORTED
+  from-package-import-module     -> REPORTED
+  import-dotted-module           -> REPORTED
+  from-package-import-module-as  -> REPORTED
+  import-dotted-module-as        -> REPORTED
+  from-module-import-symbol-as   -> REPORTED
+  spellings driven: 6
+VERDICT: PASS -- every import spelling reaches the site walk
+
+== the anchors: six plants and four redirect-guarded controls ==
+VERDICT: PASS -- 10 parametrised anchors green: every spelling reported, every guarded spelling cleared

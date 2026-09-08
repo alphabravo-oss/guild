@@ -4651,6 +4651,14 @@ def _protocol_stdout_scan() -> tuple:
     NAME. The CLI validator clears this because its one entry point, ``main``,
     is imported solely inside ``intent_coverage._run_validator_in_process``,
     which redirects; delete that redirect and it becomes an offender.
+
+    The two walks answer two different questions and are kept apart on
+    purpose. ``imports_of`` answers which modules RUN when one is imported —
+    `from pkg import mod` executes `pkg/__init__.py` as well as `pkg/mod.py`,
+    so both are on the channel. ``_bound_by`` answers which NAMES a statement
+    puts in the importer's reach, and that same statement binds nothing out of
+    `pkg/__init__.py`. Both resolve all three import spellings; only the second
+    one ever did not, which is concern C-119 and is recorded there.
     """
     modules = {_module_name(p): p for p in _package_modules(_SERVER_PKG)}
     trees = {n: ast.parse(p.read_text(encoding="utf-8")) for n, p in modules.items()}
@@ -4676,22 +4684,111 @@ def _protocol_stdout_scan() -> tuple:
     loud = {n: _loud_functions(modules[n]) for n in modules}
     seen = sorted(f"{n}#{f}" for n, fns in loud.items() for f in fns)
 
+    def _bound_by(node: ast.AST) -> set:
+        """``{"<module>#<name>"}`` — every loud-name SITE this ONE import
+        statement creates, under every spelling an import has.
+
+        fallout AC-015 / FR-006 / GI-025 / OT-015 (concern C-119) — THE SITE
+        WALK RESOLVED TWO SPELLINGS OF THREE, AND THE THIRD DROPPED A HANDLER
+        THAT WRITES TO THE JSON-RPC CHANNEL.
+
+        The walk read an `ast.ImportFrom` by `node.module`, so
+        `from foundry_mcp.handlers.planted import handle_thing` and
+        `import foundry_mcp.handlers.planted` both found the site, while
+        `from foundry_mcp.handlers import planted` — the same module, the same
+        load, written the way Python's own tutorial writes it — puts the module
+        in `node.names` and leaves `node.module` naming the PARENT package. No
+        site was found, `sites` came back empty, and the `continue` below
+        reported the offender as unreachable. That is D-149's cost exactly, in
+        the spelling its fix did not enumerate.
+
+        DRIVEN, one `server.py` spelling at a time, against this module's own
+        plant: `offenders` was a one-element list for spellings one and three
+        and `[]` for spelling two, while `seen` stayed non-empty in all three —
+        so the vacuity anchor above could not fire, the sound nested
+        `imports_of` kept the module reachable, and the suite stayed green over
+        a blindness it could no longer see. The anchor below now plants all six
+        spellings for that reason.
+
+        RESOLVED ON DISK, against `modules` — the map of what THIS scan
+        actually walked, keyed by the same `_module_name` that keys `trees`.
+        `tests/orchestration/test_module_boundaries.py#_submodules_named_by` is
+        the shared reading for this question everywhere else and is the wrong
+        tool HERE, for a reason that is not the `foundry_mcp` prefix guard it
+        opens with: it resolves against `_package_root()`, the REAL installed
+        package, and every anchor below monkeypatches `_SERVER_PKG` to a
+        `tmp_path` tree. Driven:
+        `_submodules_named_by("foundry_mcp.handlers", ["planted"])` is empty
+        for a plant that exists on disk, so routing through it would resolve
+        nothing in precisely the tests that prove this rule can still see. A
+        lookup in `modules` asks the same on-disk question of the right disk.
+
+        `#*` stands for the whole module: `import pkg.mod` and
+        `from pkg import mod` bind the module object, so every loud function in
+        it is reachable through that one site. A symbol import binds one name
+        and is written out as that name. Which of the two an `ImportFrom` is,
+        is decided by whether the JOINED path is a module on disk — never by
+        testing `node.module` against anything — so a symbol that happens to
+        share a basename with a module invents no site, and a submodule that
+        shares a name with something in its parent's `__init__` is read as the
+        module Python itself binds.
+
+        THE ALIAS IS NEVER THE QUESTION. Every reading takes `alias.name`, the
+        DEFINING name, and never `alias.asname`, so
+        `import foundry_mcp.handlers.planted as p`,
+        `from foundry_mcp.handlers import planted as p` and
+        `from foundry_mcp.handlers.planted import handle_thing as ht` are those
+        same sites written differently. Keying on the LOCAL binding rather than
+        the defining one is the fourth way to lose a name, named by casting 4
+        while closing concern C-116 and then found by casting 2 inside its own
+        new guard.
+
+        Relative imports keep the reading the reachability walk already gives
+        them: `node.level` is non-zero, `node.module` is then a suffix rather
+        than a package path, no lookup in `modules` matches, and this package
+        writes none.
+        """
+        if isinstance(node, ast.Import):
+            return {f"{alias.name}#*" for alias in node.names}
+        if not (isinstance(node, ast.ImportFrom) and node.module):
+            return set()
+        out = set()
+        for alias in node.names:
+            joined = f"{node.module}.{alias.name}"
+            if joined in modules:
+                out.add(f"{joined}#*")  # `from pkg import mod`
+            else:
+                out.add(f"{node.module}#{alias.name}")  # `from pkg.mod import fn`
+        return out
+
+    # Every import statement in a reachable module, paired with the sites it
+    # binds. Built ONCE, before the loud names are asked about: `_bound_by`
+    # reads only the statement, so the answer does not depend on which name is
+    # being looked for, and the walk below is a set intersection.
+    binding_sites = {
+        importer: [
+            (node, bound)
+            for node in ast.walk(trees[importer])
+            if (bound := _bound_by(node))
+        ]
+        for importer in sorted(reach)
+    }
+
     offenders = []
     for name in sorted(reach):
         for fn_name in sorted(loud[name]):
             if fn_name == "<module>":
                 offenders.append(f"{name}#<module> prints at import time")
                 continue
-            sites = []
-            for importer in sorted(reach):
-                for node in ast.walk(trees[importer]):
-                    if isinstance(node, ast.ImportFrom) and node.module == name:
-                        if any(a.name == fn_name for a in node.names):
-                            sites.append((importer, node))
-                    elif isinstance(node, ast.Import) and any(
-                        a.name == name for a in node.names
-                    ):
-                        sites.append((importer, node))
+            # Either bind puts this loud name in the importer's reach: the
+            # whole module, or the symbol itself.
+            wanted = {f"{name}#*", f"{name}#{fn_name}"}
+            sites = [
+                (importer, node)
+                for importer in sorted(reach)
+                for node, bound in binding_sites[importer]
+                if bound & wanted
+            ]
             if not sites:
                 continue  # no protocol path reaches this name
             for importer, node in sites:
@@ -4736,15 +4833,59 @@ def test_no_handler_reachable_over_the_protocol_writes_to_stdout():
     )
 
 
-def test_a_new_handler_that_prints_is_reported_by_name(tmp_path, monkeypatch):
-    """The plant: a NEW unbound member must turn this rule red.
+#: fallout AC-015 / FR-006 / GI-025 / OT-015 (concern C-119) — EVERY WAY A
+#: `server.py` CAN BIND THE PLANTED HANDLER, and the plant below is driven
+#: through all of them.
+#:
+#: The anchor planted the first one only, which is why the suite was green over
+#: a site walk that could not see the second: `from pkg import mod` puts the
+#: module in `node.names` and leaves `node.module` naming the PARENT, so the
+#: walk found no site and the `continue` reported a stdout writer on the
+#: JSON-RPC channel as unreachable. One spelling planted is one spelling
+#: pinned, and the next regression here would have been silent again.
+#:
+#: The last three are the ALIAS axis, and they are not decoration: keying on
+#: `alias.asname` rather than `alias.name` loses the name a fourth way, which
+#: is what casting 4 found closing concern C-116 and casting 2 then found
+#: inside its own new guard. Every entry must be reported; there is no
+#: spelling of an import that hides a handler from this rule.
+_IMPORT_SPELLINGS = [
+    pytest.param(
+        "from foundry_mcp.handlers.planted import handle_thing\n"
+        "_DISPATCH = {'Thing': lambda args: handle_thing()}\n",
+        id="from-module-import-symbol",
+    ),
+    pytest.param(
+        "from foundry_mcp.handlers import planted\n"
+        "_DISPATCH = {'Thing': lambda args: planted.handle_thing()}\n",
+        id="from-package-import-module",
+    ),
+    pytest.param(
+        "import foundry_mcp.handlers.planted\n"
+        "_DISPATCH = {'T': lambda a: foundry_mcp.handlers.planted.handle_thing()}\n",
+        id="import-dotted-module",
+    ),
+    pytest.param(
+        "from foundry_mcp.handlers import planted as p\n"
+        "_DISPATCH = {'Thing': lambda args: p.handle_thing()}\n",
+        id="from-package-import-module-as",
+    ),
+    pytest.param(
+        "import foundry_mcp.handlers.planted as p\n"
+        "_DISPATCH = {'Thing': lambda args: p.handle_thing()}\n",
+        id="import-dotted-module-as",
+    ),
+    pytest.param(
+        "from foundry_mcp.handlers.planted import handle_thing as ht\n"
+        "_DISPATCH = {'Thing': lambda args: ht()}\n",
+        id="from-module-import-symbol-as",
+    ),
+]
 
-    A brand-new module, in a brand-new subpackage, imported by the server
-    without a redirect. Nothing about it is on any list this test maintains —
-    if the scan only knew the modules that exist today, this stays green and
-    the rule is decoration.
-    """
-    pkg = tmp_path / "foundry_mcp"
+
+def _plant_a_printing_handler(pkg: Path, server_source: str) -> None:
+    """A brand-new printing handler in a brand-new subpackage, bound by
+    ``server_source``. Nothing about it is on any list these tests maintain."""
     (pkg / "handlers").mkdir(parents=True)
     (pkg / "__init__.py").write_text("", encoding="utf-8")
     (pkg / "handlers" / "__init__.py").write_text("", encoding="utf-8")
@@ -4754,28 +4895,68 @@ def test_a_new_handler_that_prints_is_reported_by_name(tmp_path, monkeypatch):
         "    return {'ok': True}\n",
         encoding="utf-8",
     )
-    (pkg / "server.py").write_text(
-        "from foundry_mcp.handlers.planted import handle_thing\n"
-        "_DISPATCH = {'Thing': lambda args: handle_thing()}\n",
-        encoding="utf-8",
-    )
+    (pkg / "server.py").write_text(server_source, encoding="utf-8")
+
+
+@pytest.mark.parametrize("server_source", _IMPORT_SPELLINGS)
+def test_a_new_handler_that_prints_is_reported_by_name(
+    tmp_path, monkeypatch, server_source
+):
+    """The plant: a NEW unbound member must turn this rule red.
+
+    A brand-new module, in a brand-new subpackage, imported by the server
+    without a redirect. Nothing about it is on any list this test maintains —
+    if the scan only knew the modules that exist today, this stays green and
+    the rule is decoration.
+
+    Driven through every spelling `server.py` can bind it with, because the
+    scan resolved two of them and the third went unreported while `seen` stayed
+    non-empty — so the vacuity anchor could not fire either, and nothing in the
+    suite was red. See `_bound_by` for the reading that closed it.
+    """
+    pkg = tmp_path / "foundry_mcp"
+    _plant_a_printing_handler(pkg, server_source)
     monkeypatch.setattr(
         sys.modules[__name__], "_SERVER_PKG", pkg, raising=False
     )
     seen, offenders = _protocol_stdout_scan()
     assert "foundry_mcp.handlers.planted#handle_thing" in seen, seen
     assert any("planted" in o for o in offenders), (
-        f"a printing handler in a new subpackage went unreported: {offenders}"
+        f"a printing handler in a new subpackage went unreported under this "
+        f"import spelling: {offenders}\n"
+        f"the server.py that bound it:\n{server_source}"
     )
 
 
-def test_a_redirected_cli_entry_point_is_not_an_offender(tmp_path, monkeypatch):
+#: The same three axes as `_IMPORT_SPELLINGS`, written as a redirect-GUARDED
+#: import. The clearing direction needs pinning under every spelling the site
+#: walk can now see, or "reports everything" would pass the plant above and
+#: this control would only ever exercise the one spelling that always worked.
+_REDIRECTED_SPELLINGS = [
+    pytest.param("    from foundry_mcp.scripts.cli import main\n"
+                 "        return main([])\n", id="from-module-import-symbol"),
+    pytest.param("    from foundry_mcp.scripts import cli\n"
+                 "        return cli.main([])\n", id="from-package-import-module"),
+    pytest.param("    import foundry_mcp.scripts.cli\n"
+                 "        return foundry_mcp.scripts.cli.main([])\n",
+                 id="import-dotted-module"),
+    pytest.param("    from foundry_mcp.scripts import cli as c\n"
+                 "        return c.main([])\n", id="from-package-import-module-as"),
+]
+
+
+@pytest.mark.parametrize("binding", _REDIRECTED_SPELLINGS)
+def test_a_redirected_cli_entry_point_is_not_an_offender(
+    tmp_path, monkeypatch, binding
+):
     """The narrowness control for the plant above.
 
     The rule must not simply refuse every print in the package — the CLI
     validator's four are legitimate and are cleared by the redirect at its one
     protocol entry. Driven on a synthetic pair so the clearing is shown to come
-    from the redirect and not from the module's path.
+    from the redirect and not from the module's path, and through every import
+    spelling, so the widening that closed concern C-119 is shown to have made
+    the rule SEE more rather than merely SAY more.
     """
     pkg = tmp_path / "foundry_mcp"
     (pkg / "scripts").mkdir(parents=True)
@@ -4786,13 +4967,14 @@ def test_a_redirected_cli_entry_point_is_not_an_offender(tmp_path, monkeypatch):
         "def main(argv):\n    report()\n    return 0\n",
         encoding="utf-8",
     )
+    bind, call = binding.split("\n", 1)
     (pkg / "server.py").write_text(
         "import contextlib, io\n"
         "def run():\n"
-        "    from foundry_mcp.scripts.cli import main\n"
+        f"{bind}\n"
         "    buf = io.StringIO()\n"
         "    with contextlib.redirect_stdout(buf):\n"
-        "        return main([])\n",
+        f"{call}",
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -4804,7 +4986,10 @@ def test_a_redirected_cli_entry_point_is_not_an_offender(tmp_path, monkeypatch):
         "loudness did not propagate to the entry point that calls report()"
     )
     assert offenders == [], (
-        f"a redirect-guarded CLI entry point was wrongly flagged: {offenders}"
+        f"a redirect-guarded CLI entry point was wrongly flagged under this "
+        f"import spelling: {offenders}\n"
+        f"the server.py that bound it:\n"
+        + (pkg / "server.py").read_text(encoding="utf-8")
     )
 
 
