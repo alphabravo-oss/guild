@@ -5,7 +5,7 @@
 # evidence-timeout: 600
 
 ============================= test session starts ==============================
-collecting ... collected 377 items / 367 deselected / 10 selected
+collecting ... collected 378 items / 368 deselected / 10 selected
 
 tests/test_vocab.py::test_every_post_split_lifecycle_module_earns_delta[plugins/foundry/mcp-server/src/foundry_mcp/tools/display.py] PASSED [ 10%]
 tests/test_vocab.py::test_every_post_split_lifecycle_module_earns_delta[plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/report_seal.py] PASSED [ 20%]
@@ -18,4 +18,4 @@ tests/test_vocab.py::test_the_verifier_rule_answers_in_both_directions PASSED [ 
 tests/test_vocab.py::test_the_baseline_and_target_carry_nfr_001s_four_numbers PASSED [ 90%]
 tests/test_vocab.py::test_nfr_007s_missing_baseline_width_is_recorded_as_a_residual_risk PASSED [100%]
 
-====================== 10 passed, 367 deselected in 0.15s ======================
+====================== 10 passed, 368 deselected in 0.03s ======================
