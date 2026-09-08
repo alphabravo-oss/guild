@@ -2062,10 +2062,32 @@ def test_no_shipped_module_holds_an_unused_import():
     for tree in trees.values():
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module:
-                bucket = reexported.setdefault(node.module.rsplit(".", 1)[-1], set())
-                bucket.update(a.name for a in node.names)
-                whole = reexported.setdefault(node.module, set())
-                whole.update(a.name for a in node.names)
+                # fallout AC-015 / OT-015 (D-081's class, seventh sweep) —
+                # SPELLING TWO BINDS A MODULE, AND A MODULE RE-EXPORTS NOTHING.
+                #
+                # `from foundry_mcp.tools import evidence` puts `evidence` in
+                # `node.names` and `foundry_mcp.tools` in `node.module`, so read
+                # as a symbol it files `evidence` in the re-export bucket of
+                # `tools` — and then vouches for an unused `evidence` binding in
+                # `tools/__init__.py`, which nothing imported from anywhere.
+                # Resolved on disk through `_submodules_named_by`, the reading
+                # both layering walks share, so this walk knows the three
+                # spellings apart instead of seeing one and guessing.
+                #
+                # `ast.Import` needs no arm for the same reason: it binds only a
+                # module, so it can vouch for no name in one.
+                modules = (
+                    set()
+                    if node.level
+                    else _submodules_named_by(
+                        node.module, [a.name for a in node.names]
+                    )
+                )
+                symbols = {a.name for a in node.names} - modules
+                reexported.setdefault(node.module.rsplit(".", 1)[-1], set()).update(
+                    symbols
+                )
+                reexported.setdefault(node.module, set()).update(symbols)
 
     orphans: list[str] = []
     allowed_hits: set[tuple[str, str]] = set()
@@ -5152,8 +5174,13 @@ _CONSOLIDATED_HELPERS = (
 )
 
 
-def _leaf_symbols_the_consolidation_scripts_import() -> set[str]:
-    """Every `foundry_state` name the consolidation scripts import at module top.
+#: The leaf whose consolidated readers the scan below is about, spelled ONCE so
+#: the three import spellings are all derived from one string.
+_CONSOLIDATION_LEAF = "foundry_mcp.tools.foundry_state"
+
+
+def _leaf_symbols_the_consolidation_scripts_import() -> tuple[set[str], set[str]]:
+    """(bare names bound FROM the leaf, local names bound to the leaf MODULE).
 
     fallout AC-011 / GI-024 (D-178) — THE DERIVATION THAT KEEPS THE TYPED
     INVENTORY HONEST.
@@ -5166,19 +5193,62 @@ def _leaf_symbols_the_consolidation_scripts_import() -> set[str]:
 
     Module-scope only. A function-local import is not the shadowing hazard: the
     name is bound inside the call, where a module-level `def` cannot reach it.
+
+    fallout AC-015 / OT-015 (D-081's class, seventh sweep) — ONE SPELLING BINDS
+    A BARE NAME, AND THE OTHER TWO ARE READ IN ORDER TO SAY SO.
+
+    Only `from foundry_mcp.tools.foundry_state import now_iso` puts a bare
+    `now_iso` in the script's module namespace, so only that spelling can be
+    shadowed by a top-level `def` and only that spelling belongs in the first
+    return value. `from foundry_mcp.tools import foundry_state` and
+    `import foundry_mcp.tools.foundry_state` bind the MODULE, and
+    `foundry_state.now_iso` is an attribute access no `def` in the script
+    reaches.
+
+    That was already true when this read one spelling and stopped, and it is
+    why nothing here was ever WRONG — but a reader could not tell the deliberate
+    narrowness from the omission that produced D-192, C-115 and C-116, and
+    neither could `test_no_import_reading_pins_the_module_to_its_own_name`
+    below, which flagged this scope by name. So the other two spellings are
+    resolved through `_submodules_named_by` — the on-disk reading both layering
+    walks share — and RETURNED, where the anchor test drives them: a
+    spelling-two plant must land in the second value and contribute nothing to
+    the first. A narrowness that is asserted is a different object from one that
+    is merely typed.
     """
+    package, _, stem = _CONSOLIDATION_LEAF.rpartition(".")
     names: set[str] = set()
+    module_bound: set[str] = set()
     for script in _consolidation_scan_modules():
         if script.name not in _CONSOLIDATION_SCRIPTS:
             continue
         tree = ast.parse(script.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if not isinstance(node, ast.ImportFrom):
-                continue
-            if node.module != "foundry_mcp.tools.foundry_state":
-                continue
-            names |= {alias.name for alias in node.names}
-    return names
+            if isinstance(node, ast.ImportFrom):
+                # A relative import reports `node.module` as a suffix rather
+                # than a package path; these scripts write none, and it is left
+                # to the same reading the shared walks leave it to.
+                if node.level or not node.module:
+                    continue
+                if node.module == _CONSOLIDATION_LEAF:
+                    names |= {alias.name for alias in node.names}
+                    continue
+                if node.module == package:
+                    module_bound |= {
+                        alias.asname or alias.name
+                        for alias in node.names
+                        if alias.name == stem
+                        and _submodules_named_by(node.module, [alias.name])
+                    }
+            elif isinstance(node, ast.Import):
+                module_bound |= {
+                    # Unaliased, `import a.b.c` binds `a`; aliased, it binds the
+                    # alias. Either way the leaf is reached by attribute access.
+                    alias.asname or alias.name.split(".")[0]
+                    for alias in node.names
+                    if alias.name == _CONSOLIDATION_LEAF
+                }
+    return names, module_bound
 
 
 def _consolidation_scan_modules() -> list[Path]:
@@ -5480,7 +5550,7 @@ def test_the_helpers_group_zero_consolidated_have_exactly_one_definition():
     # and each is held to one definition whether or not anyone remembered to
     # type it. The next reader `measure-run.py` reaches for is checked the day
     # it lands.
-    imported = _leaf_symbols_the_consolidation_scripts_import()
+    imported, _module_bound = _leaf_symbols_the_consolidation_scripts_import()
     assert len(imported) >= 15, sorted(imported)
     for helper in sorted(imported):
         where = [m.name for m in modules if helper in _top_level_definitions(m)]
@@ -7410,7 +7480,575 @@ def test_a_second_definition_in_measure_run_is_refused(tmp_path):
     # name it at all, so it is a second definition the TYPED inventory catches
     # and the derivation cannot — which is why AC-011's five stay typed rather
     # than being replaced by the import walk.
-    imported = _leaf_symbols_the_consolidation_scripts_import()
+    imported, _module_bound = _leaf_symbols_the_consolidation_scripts_import()
     assert {"spend_rollup", "inspect_mode_rows"} <= imported, sorted(imported)
     assert "markdown_sections" not in imported
     assert "markdown_sections" in _CONSOLIDATED_HELPERS
+
+
+# --------------------------------------------------------------------------- #
+# fallout AC-015 / FR-006 / GI-025 / OT-015 — THE SPELLING CLASS, RECOGNISED BY
+# ITS SHAPE INSTEAD OF ONE INSTANCE AT A TIME.
+#
+# A Python import has three spellings of the same load:
+#
+#     from foundry_mcp.tools.evidence import verify   # node.module is the MODULE
+#     from foundry_mcp.tools import evidence          # node.module is the PARENT
+#     import foundry_mcp.tools.evidence               # not an ImportFrom at all
+#
+# This run has now found and fixed the SAME blindness six times, every time by
+# inspection and never by a test going red: the two layering walks (D-192,
+# concern C-107), the no-facade whole-tree walk and `test_halt.py`'s one-way
+# seam scan and the four `foundry_spawn` cycle scans (D-198), the arming
+# condition in `tests/test_protocol_prose.py` (C-115), and the ledger-door
+# roster in `tests/test_observations.py` (C-116) — where a planted real defect
+# went from RED to GREEN and reopened D-127. Each fix routed its site through
+# `_submodules_named_by`, and nothing held the NEXT author to that: a fifth
+# hand-rolled scan was a green tree on the day it was written, which is how all
+# six got in.
+#
+# WHAT THIS RECOGNISER ASSERTS, AND WHY IT IS NOT AN ARM COUNT. The obvious
+# guard — "an `ast.ImportFrom` test must be paired with an `ast.Import` arm" —
+# was measured against the six and catches five. It misses D-192, the FIRST
+# instance, because both layering walks already had their `ast.Import` arm when
+# the second spelling walked past them; and its remedy is "add an `ast.Import`
+# arm", which lands the author in exactly the two-of-three state D-192 IS. A
+# guard that teaches its own defect is worse than none.
+#
+# The blindness is not a missing arm, it is a TEST THAT REQUIRES THE MODULE'S
+# OWN FULL NAME. `from <parent> import <module>` puts the PARENT in
+# `node.module`, so a test the parent also satisfies — `startswith` of a real
+# package prefix, or the raw value collected and matched coarsely later — cannot
+# hide it, while equality against a dotted path, `endswith` of a dotted tail, or
+# a last-component `split` cannot see it at all. That is the predicate, stated
+# directly, and it flags all six.
+#
+# DRIVEN, not argued: run against the parent tree of each of the five fix
+# commits, it names `_all_imports` (D-192), `test_the_package_marker_re_exports
+# _nothing` (D-198), `test_the_halted_seal_and_the_cap_path_live_in_the_halt
+# _module` (D-198 sweep), `test_the_orchestrator_to_spawn_cycle_is_lazy_in_both
+# _directions` (D-198 sweep), `_imports_from_this_module` (C-115) and
+# `test_every_ledger_writing_door_answers_in_band` (C-116) — six for six — and
+# over today's tree it names the three sites the ledger below carries and
+# nothing else.
+# --------------------------------------------------------------------------- #
+
+#: The readings that resolve all three spellings, named ONCE. A scope that
+#: mentions any of them — called, attribute-accessed, or imported — is asking
+#: the shared question through the shared answer and is not judged again here.
+#:
+#: Detected by NAME rather than by reading this file's imports, deliberately: a
+#: recogniser for import blindness that resolved its own exemption by reading an
+#: import statement would be the joke it exists to stop.
+_SHARED_IMPORT_READINGS = (
+    "_all_imports",
+    "_module_top_dotted_imports",
+    "_module_top_imports",
+    "_module_top_package_imports",
+    "_submodules_named_by",
+)
+
+#: `a.b`, `a.b.c` — a dotted path that could name a module. Used only for the
+#: one-hop arm below, where the receiver has been lost to a comprehension.
+_DOTTED_MODULE_PATH = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$")
+
+
+#: The blind readings that exist RIGHT NOW, each with the concern that closes
+#: it. A DEBT REGISTER, not an exception table, and the difference is the
+#: assertion below: it compares this mapping to what the scan finds by EQUALITY,
+#: so a row cannot outlive its site (fix the site without removing the row and
+#: the guard goes red) and a new blind reading cannot join it silently. Each row
+#: is a defect somebody has been told about, in a file this casting may not
+#: edit; when the three concerns close, this mapping is empty and stays empty.
+#:
+#: This is the shape `_SIBLING_SUITES_AWAITING_REPOINT` used above and then
+#: emptied, and it is NOT the shape D-193 refused — that was a list of sites
+#: declared permanently fine.
+_SPELLING_BLIND_READINGS_AWAITING_REPAIR = {
+    # SILENT: a lifecycle module reaching the evidence engine in spelling two
+    # leaves both equality rosters unchanged and the test passes. Driven.
+    "mcp-server/tests/test_artifacts.py"
+    "::test_the_evidence_engine_is_reached_by_the_named_seams_only": "C-118",
+    # SILENT: the import-site walk finds no site, `sites` is empty, and the
+    # `continue` drops a handler that writes to the JSON-RPC channel. Driven.
+    "mcp-server/tests/test_evidence.py::_protocol_stdout_scan": "C-119",
+    # LOUD but WRONG: the delegation arm cannot see spelling two, so the pin
+    # fails naming an innocent reader for a reason that is not true. Driven.
+    "mcp-server/tests/test_vocab.py"
+    "::test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab": "C-120",
+}
+
+
+def _plugin_root_for_the_import_scan() -> Path:
+    root = Path(artifacts.__file__).resolve().parents[4]
+    assert root.name == "foundry", root
+    return root
+
+
+def _import_reading_scopes(tree: ast.Module) -> list[tuple[str, ast.Module]]:
+    """(name, scope) for every lexical scope in `tree` that TESTS for an import.
+
+    Each construct is judged in exactly ONE scope: a nested `def`'s body is cut
+    out of its parent, so a helper that routes through the shared reading cannot
+    silently exempt the test it sits inside — `tests/test_evidence.py` has that
+    exact pair, a sound `imports_of` nested in a blind site walk, and reading
+    them as one scope would have called the blindness clean.
+    """
+    def _without_nested(body: list[ast.stmt]) -> ast.Module:
+        return ast.Module(
+            body=[
+                node for node in body
+                if not isinstance(
+                    node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                )
+            ],
+            type_ignores=[],
+        )
+
+    scopes = [("<module>", _without_nested(tree.body))]
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scopes.append((node.name, _without_nested(node.body)))
+    return [(name, scope) for name, scope in scopes
+            if _scope_tests_for_an_import_from(scope)]
+
+
+def _scope_tests_for_an_import_from(scope: ast.Module) -> bool:
+    """Does this scope ask `isinstance(<x>, ast.ImportFrom)`, tuple form included?
+
+    KEYED ON THE NODE TYPE'S NAME, NEVER ON THE MODULE ALIAS. `import ast as
+    _ast` and `from ast import ImportFrom` are the same test written twice more,
+    and a recogniser for import blindness that could only read
+    `ast.ImportFrom` would be exactly the joke it exists to stop — driven, the
+    first plant this guard was pointed at wrote `_ast.ImportFrom` and the
+    recogniser did not see the scope at all. Casting 4 named this fourth way to
+    lose a name while closing C-116: keying on the LOCAL binding rather than the
+    defining one.
+    """
+    for node in ast.walk(scope):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "isinstance"):
+            continue
+        for argument in node.args[1:]:
+            for inner in ast.walk(argument):
+                if isinstance(inner, ast.Attribute) and inner.attr == "ImportFrom":
+                    return True
+                if isinstance(inner, ast.Name) and inner.id == "ImportFrom":
+                    return True
+    return False
+
+
+def _scope_borrows_the_shared_reading(scope: ast.Module) -> bool:
+    for node in ast.walk(scope):
+        if isinstance(node, ast.Name) and node.id in _SHARED_IMPORT_READINGS:
+            return True
+        if isinstance(node, ast.Attribute) and node.attr in _SHARED_IMPORT_READINGS:
+            return True
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if any(alias.name in _SHARED_IMPORT_READINGS for alias in node.names):
+                return True
+    return False
+
+
+def _reads_the_module_field(node: ast.AST) -> bool:
+    """Is this expression rooted in some node's `.module` attribute?"""
+    while True:
+        if isinstance(node, ast.Attribute):
+            if node.attr == "module":
+                return True
+            node = node.value
+        elif isinstance(node, ast.Subscript):
+            node = node.value
+        elif isinstance(node, ast.Call):
+            node = node.func
+        elif isinstance(node, ast.BoolOp):  # `node.module or ""`
+            return any(_reads_the_module_field(value) for value in node.values)
+        else:
+            return False
+
+
+def _string_arguments(call: ast.Call) -> list[str]:
+    """Every string literal `call` is passed, tuple arguments flattened."""
+    out: list[str] = []
+    for argument in call.args:
+        if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+            out.append(argument.value)
+        elif isinstance(argument, ast.Tuple):
+            out += [
+                element.value for element in argument.elts
+                if isinstance(element, ast.Constant)
+                and isinstance(element.value, str)
+            ]
+    return out
+
+
+def _names_a_package(dotted: str) -> bool:
+    """Does `dotted` name a PACKAGE on disk — the thing spelling two leaves behind?
+
+    `from foundry_mcp.tools import evidence` reports `foundry_mcp.tools`, so a
+    `startswith` of a real package prefix still matches and the reading is safe.
+    `startswith("foundry_mcp.tools.evidence")` reaches into the final segment
+    and does not match the parent, so it is not.
+    """
+    if not dotted or dotted.endswith("."):
+        return False
+    parts = dotted.split(".")
+    if parts[0] != _package_root().name:
+        return False
+    return (_package_root().joinpath(*parts[1:]) / "__init__.py").is_file()
+
+
+def _module_pins_in(scope: ast.Module) -> list[str]:
+    """Every construct in `scope` that pins `ImportFrom.module` to its OWN name."""
+    pins: list[str] = []
+    reads_module = False
+    for node in ast.walk(scope):
+        if _reads_the_module_field(node):
+            reads_module = True
+        if isinstance(node, ast.Compare) and _reads_the_module_field(node.left):
+            for operator, comparator in zip(node.ops, node.comparators):
+                if not isinstance(operator, (ast.Eq, ast.NotEq, ast.In, ast.NotIn)):
+                    continue
+                if (isinstance(comparator, ast.Constant)
+                        and isinstance(comparator.value, str)
+                        and "." not in comparator.value):
+                    # A TOP-LEVEL module has no parent package to hide in:
+                    # `from __future__ import annotations` has two spellings,
+                    # not three, and the `ast.Import` one is a different arm.
+                    continue
+                pins.append(ast.unparse(node))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if not _reads_the_module_field(node.func.value):
+                continue
+            if node.func.attr == "endswith":
+                pins.append(ast.unparse(node))
+            elif node.func.attr == "startswith":
+                literals = _string_arguments(node)
+                if not literals or not all(_names_a_package(t) for t in literals):
+                    pins.append(ast.unparse(node))
+        if isinstance(node, ast.Subscript):
+            inner = node.value
+            if (isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Attribute)
+                    and inner.func.attr in {"split", "rsplit"}
+                    and _reads_the_module_field(inner.func.value)):
+                pins.append(ast.unparse(node))
+    if pins or not reads_module:
+        return sorted(set(pins))
+
+    # ONE HOP, for the receiver a comprehension throws away. `test_halt.py`'s
+    # seam scan built `{node.module for ...}` and then tested the SET with
+    # `m.endswith("orchestration.gates")`, so nothing was rooted in `.module`
+    # by the time the pin was written — and that is D-198's third site. Within a
+    # scope whose only import reading is `node.module`, a dotted-module-path
+    # test on any value is a test on that value.
+    for node in ast.walk(scope):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"endswith", "startswith"}):
+            continue
+        paths = [t for t in _string_arguments(node) if _DOTTED_MODULE_PATH.match(t)]
+        if paths and not all(_names_a_package(t) for t in paths):
+            pins.append(ast.unparse(node))
+    return sorted(set(pins))
+
+
+def _blind_import_readings(root: Path) -> dict[str, list[str]]:
+    """{"<path>::<scope>": [pin, ...]} for every blind reading under `root`."""
+    found: dict[str, list[str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        if not _INSTALLED_DEPENDENCY_DIRS.isdisjoint(path.parts):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            continue
+        for name, scope in _import_reading_scopes(tree):
+            if _scope_borrows_the_shared_reading(scope):
+                continue
+            pins = _module_pins_in(scope)
+            if pins:
+                found[f"{path.relative_to(root).as_posix()}::{name}"] = pins
+    return found
+
+
+def test_no_import_reading_pins_the_module_to_its_own_name():
+    """fallout AC-015 / FR-006 / GI-025 / OT-015 — the seventh instance, refused
+    at the shape.
+
+    Six fixes for one blindness, every one found by a person reading code. This
+    is the assertion that finds the seventh.
+    """
+    root = _plugin_root_for_the_import_scan()
+
+    # The scan's own inputs exist, so it cannot go quietly empty. A recogniser
+    # that stopped matching would report zero blind readings and zero is what
+    # PASSING looks like — the worst failure a derived pin can have, and the one
+    # `test_every_defect_reading_gate_names_a_real_predicate` is written against
+    # in the same suite.
+    populations = [
+        len(_import_reading_scopes(ast.parse(path.read_text(encoding="utf-8"))))
+        for path in sorted(root.rglob("*.py"))
+        if _INSTALLED_DEPENDENCY_DIRS.isdisjoint(path.parts)
+    ]
+    assert sum(populations) >= 15, (
+        f"the scan found {sum(populations)} import-reading scopes in the whole "
+        f"plugin; this suite alone has more than that, so the recogniser has "
+        f"gone blind and a zero below would mean nothing"
+    )
+
+    found = _blind_import_readings(root)
+    assert set(found) == set(_SPELLING_BLIND_READINGS_AWAITING_REPAIR), {
+        "blind and not on the register": {
+            where: pins for where, pins in found.items()
+            if where not in _SPELLING_BLIND_READINGS_AWAITING_REPAIR
+        },
+        "on the register and no longer blind": sorted(
+            set(_SPELLING_BLIND_READINGS_AWAITING_REPAIR) - set(found)
+        ),
+        "what a new row means": (
+            "this scope tests `ImportFrom.module` against the module's OWN full "
+            "name, so `from <parent> import <module>` — the same load, written "
+            "the way Python's own tutorial writes it — walks past it. Read the "
+            "import through `_all_imports` or `_submodules_named_by` in this "
+            "module, which resolve the alias ON DISK and answer for all three "
+            "spellings. If the question really is about SYMBOLS rather than "
+            "modules, resolve the other two spellings anyway and return what "
+            "they bind, the way "
+            "`_leaf_symbols_the_consolidation_scripts_import` does — a "
+            "narrowness that is asserted is a different object from one that is "
+            "merely typed. Adding a row here is for a site in another casting's "
+            "file, and costs a Foundry-Concern naming it."
+        ),
+        "what a removed row means": (
+            "the site was fixed and its row was not taken with it; this "
+            "register is a debt, and a row that no longer accounts for anything "
+            "is the exception table it must never become"
+        ),
+    }
+
+
+def test_the_blindness_recogniser_is_driven_on_every_shape(tmp_path):
+    """The anchor: the recogniser is green over today's tree whether it works or
+    not, so it is driven on source built to contain each verdict.
+
+    Every BLIND shape below is quoted from a real site this run has fixed, and
+    every SOUND shape from a real site it has left alone.
+    """
+    def verdict(source: str) -> list[str]:
+        path = tmp_path / "probe.py"
+        path.write_text(textwrap.dedent(source), encoding="utf-8")
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        scopes = _import_reading_scopes(tree)
+        assert scopes, f"the probe carries no import reading at all:\n{source}"
+        pins: list[str] = []
+        for _name, scope in scopes:
+            if _scope_borrows_the_shared_reading(scope):
+                continue
+            pins += _module_pins_in(scope)
+        return sorted(set(pins))
+
+    # ---- BLIND, one shape per historical instance ----------------------- #
+    # C-116, the ledger-door roster: equality against a dotted path.
+    assert verdict('''
+        import ast
+        def scan(tree):
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    if node.module == "foundry_mcp.tools.foundry":
+                        yield node
+    ''')
+    # D-198, the four foundry_spawn cycle scans: endswith of a bare stem.
+    assert verdict('''
+        import ast
+        def scan(tree):
+            return {n.module for n in ast.walk(tree)
+                    if isinstance(n, ast.ImportFrom) and n.module
+                    and n.module.endswith("foundry_spawn")}
+    ''')
+    # D-192 / D-198, `_all_imports` and the no-facade walk: last component.
+    assert verdict('''
+        import ast
+        def scan(tree):
+            return {(n.module or "").rsplit(".", 1)[-1] for n in ast.walk(tree)
+                    if isinstance(n, ast.ImportFrom)}
+    ''')
+    # C-115, the arming condition: last component, compared to a stem.
+    assert verdict('''
+        import ast
+        def scan(tree, stem):
+            return any(isinstance(n, ast.ImportFrom)
+                       and (n.module or "").split(".")[-1] == stem
+                       for n in ast.walk(tree))
+    ''')
+    # D-198's third site: the receiver lost to a comprehension, the pin one hop
+    # away. This is the shape an arm-counting guard and a receiver-rooted guard
+    # both walk past.
+    assert verdict('''
+        import ast
+        def scan(tree):
+            top = {n.module for n in ast.walk(tree)
+                   if isinstance(n, ast.ImportFrom) and n.module}
+            return {m for m in top
+                    if m.endswith(("orchestration.gates", "orchestration.transitions"))}
+    ''')
+    # A prefix that reaches INTO the final segment: `foundry_mcp.tools.evidence`
+    # is a module, so the parent `foundry_mcp.tools` does not match it.
+    assert verdict('''
+        import ast
+        def scan(tree):
+            return [n.module for n in ast.walk(tree)
+                    if isinstance(n, ast.ImportFrom) and n.module
+                    and n.module.startswith("foundry_mcp.tools.evidence")]
+    ''')
+    # ...and the same prefix with a trailing dot, which is how `_module_top
+    # _imports` narrowed itself past the second spelling before D-192.
+    assert verdict('''
+        import ast
+        def scan(tree):
+            return [n.module for n in ast.walk(tree)
+                    if isinstance(n, ast.ImportFrom) and n.module
+                    and n.module.startswith("foundry_mcp.tools.orchestration.")]
+    ''')
+
+    # ...and the same reading with the node type reached by an ALIAS, and by a
+    # bare name. This is not a hypothetical spelling: the first plant this guard
+    # was driven against wrote `_ast.ImportFrom`, and the recogniser did not see
+    # the scope at all — the fourth way to lose a name, keyed on the local
+    # binding instead of the defining one, which is what casting 4 found while
+    # closing C-116.
+    assert verdict('''
+        import ast as _ast
+        def scan(tree):
+            return [n for n in _ast.walk(tree)
+                    if isinstance(n, _ast.ImportFrom)
+                    and (n.module or "").rsplit(".", 1)[-1] == "halt"]
+    ''')
+    assert verdict('''
+        import ast
+        from ast import ImportFrom
+        def scan(tree):
+            return [n for n in ast.walk(tree)
+                    if isinstance(n, ImportFrom)
+                    and n.module == "foundry_mcp.tools.halt"]
+    ''')
+
+    # ---- SOUND, one shape per site this guard must leave alone ---------- #
+    # `tests/test_artifacts.py`'s leaf-purity walk: the parent package satisfies
+    # the prefix too, so spelling two cannot hide from it.
+    assert verdict('''
+        import ast
+        def scan(tree):
+            return [n.module for n in ast.walk(tree)
+                    if isinstance(n, ast.ImportFrom) and n.module
+                    and n.module.startswith("foundry_mcp")]
+    ''') == []
+    # `tests/test_report.py`'s leaf pin: the raw value collected, matched by a
+    # coarse equality on the WHOLE set, which spelling two breaks loudly.
+    assert verdict('''
+        import ast
+        def scan(tree):
+            got = set()
+            for n in ast.walk(tree):
+                if isinstance(n, ast.ImportFrom):
+                    got.add(n.module or "")
+                elif isinstance(n, ast.Import):
+                    got |= {a.name for a in n.names}
+            assert got == {"__future__", "json", "pathlib"}
+    ''') == []
+    # `from __future__ import annotations`: a top-level module has no parent
+    # package, so there is no second spelling for the reading to miss.
+    assert verdict('''
+        import ast
+        def scan(tree):
+            return [n for n in ast.walk(tree)
+                    if isinstance(n, ast.ImportFrom) and n.module == "__future__"]
+    ''') == []
+    # A scope that names the shared reading is not judged twice — and the borrow
+    # is recognised in every spelling it can itself be written in, which is the
+    # joke this recogniser would otherwise be: a guard against import blindness
+    # that could only see one spelling of its own exemption.
+    _blind_body = (
+        "    for node in ast.walk(tree):\n"
+        '        if isinstance(node, ast.ImportFrom) and node.module == "a.b.c":\n'
+        "            yield node\n"
+    )
+    for borrow in (
+        "    from tests.orchestration.test_module_boundaries import _all_imports\n"
+        "    _all_imports(path)\n",
+        "    from tests.orchestration import test_module_boundaries as tmb\n"
+        "    tmb._submodules_named_by(node.module, [])\n",
+        "    import tests.orchestration.test_module_boundaries as tmb\n"
+        "    tmb._all_imports(path)\n",
+    ):
+        source = "import ast\ndef scan(tree, path):\n" + borrow + _blind_body
+        assert verdict(source) == [], borrow
+    # ...and the identical body WITHOUT the borrow is blind, so the exemption is
+    # what cleared the three above and not the shape of the probe.
+    assert verdict("import ast\ndef scan(tree, path):\n" + _blind_body)
+
+    # ---- the nested-scope rule, which is what makes the register honest - # 
+    # A sound helper nested inside a blind test does not launder it: read as one
+    # scope, `tests/test_evidence.py`'s blind site walk would have been called
+    # clean by the `imports_of` sitting inside the same function.
+    assert verdict('''
+        import ast
+        def outer(trees, name):
+            def imports_of(tree):
+                out = set()
+                for n in ast.walk(tree):
+                    if isinstance(n, ast.Import):
+                        out |= {a.name for a in n.names}
+                    elif isinstance(n, ast.ImportFrom) and n.module:
+                        out.add(n.module)
+                        out |= {f"{n.module}.{a.name}" for a in n.names}
+                return out
+            for tree in trees:
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ImportFrom) and node.module == name:
+                        yield node
+    ''')
+
+
+def test_the_consolidation_scan_reads_all_three_spellings_of_the_leaf(tmp_path):
+    """fallout AC-011 / GI-024 / OT-015 — the narrowness above, driven.
+
+    `_leaf_symbols_the_consolidation_scripts_import` reads ONE spelling into its
+    bare-name set on purpose, because one spelling is all that binds a bare
+    name. The other two are resolved and returned, and this is where that stops
+    being a claim: a plant in each spelling, judged against the real script.
+    """
+    real = next(
+        p for p in _consolidation_scan_modules()
+        if p.name in _CONSOLIDATION_SCRIPTS
+    )
+    body = real.read_text(encoding="utf-8")
+    package, _, stem = _CONSOLIDATION_LEAF.rpartition(".")
+
+    def drive(header: str) -> tuple[set[str], set[str]]:
+        planted = tmp_path / real.name
+        planted.write_text(header + "\n" + body, encoding="utf-8")
+        original = _consolidation_scan_modules
+        try:
+            globals()["_consolidation_scan_modules"] = lambda: [planted]
+            return _leaf_symbols_the_consolidation_scripts_import()
+        finally:
+            globals()["_consolidation_scan_modules"] = original
+
+    # SPELLING ONE binds bare names — the shadowing hazard the pin is for.
+    names, modules = drive(f"from {_CONSOLIDATION_LEAF} import now_iso as _probe")
+    assert "now_iso" in names, sorted(names)[:8]
+    assert modules == set(), modules
+
+    # SPELLING TWO binds the MODULE. Nothing joins the bare-name set, and the
+    # binding is REPORTED rather than silently dropped, which is the whole
+    # difference between reading one spelling and seeing one.
+    names, modules = drive(f"from {package} import {stem} as _probe_module")
+    assert "_probe_module" in modules, modules
+    assert "_probe_module" not in names
+
+    # SPELLING THREE binds the ROOT package; same reasoning, same answer.
+    names, modules = drive(f"import {_CONSOLIDATION_LEAF}")
+    assert _CONSOLIDATION_LEAF.split(".")[0] in modules, modules
+
+    # ...and the real script, unplanted, still carries the floor the pin needs.
+    assert len(_leaf_symbols_the_consolidation_scripts_import()[0]) >= 15

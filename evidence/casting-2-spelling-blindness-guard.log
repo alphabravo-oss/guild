@@ -1,0 +1,13 @@
+# evidence-cmd: cd plugins/foundry/mcp-server || exit 1; uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -v tests/orchestration/test_module_boundaries.py::test_no_import_reading_pins_the_module_to_its_own_name tests/orchestration/test_module_boundaries.py::test_the_blindness_recogniser_is_driven_on_every_shape tests/orchestration/test_module_boundaries.py::test_the_consolidation_scan_reads_all_three_spellings_of_the_leaf 2>&1
+# evidence-for: fallout FR-006, AC-015, GI-025, OT-015, AC-011, OT-011
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+============================= test session starts ==============================
+collecting ... collected 3 items
+
+tests/orchestration/test_module_boundaries.py::test_no_import_reading_pins_the_module_to_its_own_name PASSED [ 33%]
+tests/orchestration/test_module_boundaries.py::test_the_blindness_recogniser_is_driven_on_every_shape PASSED [ 66%]
+tests/orchestration/test_module_boundaries.py::test_the_consolidation_scan_reads_all_three_spellings_of_the_leaf PASSED [100%]
+
+============================== 3 passed in 2.16s ===============================
