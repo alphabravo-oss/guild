@@ -210,5 +210,5 @@
 =========================== short test summary info ============================
 SKIPPED [1] tests/test_foundry_state_readers.py:2459: width._current_inspect_mode is gone — casting 2 repointed to the leaf (C-059 row 4). Nothing is left to agree with, and the leaf reader is driven directly above.
 SKIPPED [1] tests/test_foundry_state_readers.py:2504: width's copies of the width refusal are gone — casting 2 repointed to the leaf (C-059 row 5). Nothing is left to agree with, and the leaf predicate is driven directly above.
-SKIPPED [1] tests/test_report.py:3144: this checkout carries no forge-specs/foundry-run-fallout/spec.md
-714 passed, 3 skipped in 4.80s
+SKIPPED [1] tests/test_report.py:3164: this checkout carries no forge-specs/foundry-run-fallout/spec.md
+714 passed, 3 skipped in 4.63s
