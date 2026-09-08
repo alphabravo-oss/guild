@@ -3963,7 +3963,7 @@ def _grammar_witness_sweep() -> tuple:
                     f"{name}: declares the corpus witness {grammar.witness!r}, "
                     f"which evidence/ no longer holds — repoint it at a log the "
                     f"tree carries today whose own patterns erase a token of "
-                    f"this shape{under_key}"
+                    f"this shape{under_key}, a token like {grammar.sample!r}"
                 )
             elif not any(
                 grammar.token.fullmatch(tok)
@@ -3973,7 +3973,12 @@ def _grammar_witness_sweep() -> tuple:
                 offenders.append(
                     f"{name}: declares the corpus witness {grammar.witness!r}, "
                     f"which is committed but whose own patterns no longer erase "
-                    f"a token of this shape{under_key}"
+                    f"a token of this shape{under_key}. C-103: if you just "
+                    f"recaptured {grammar.witness}, that log owes this registry "
+                    f"BOTH halves — a body line carrying a token like "
+                    f"{grammar.sample!r} and a '# evidence-volatile:' header "
+                    f"declaration that erases it. Restore both, or repoint "
+                    f"{name} at a log that keeps them"
                 )
         elif grammar.witness_kind == "protocol":
             if grammar.witness not in protocol_text:
@@ -4132,6 +4137,14 @@ def test_a_corpus_witness_pointer_must_name_a_log_that_still_witnesses_it(
          — a live pointer aimed at the wrong log, which reads as provenance and
          proves nothing.
 
+    C-103 added the REMEDY to direction 2's message. Direction 2 is the shape a
+    recapture takes: the pointer is still live, the log is still committed, and
+    what went missing is the line the declaration erased. Reporting that a
+    grammar lost its witness is no use to the person who caused it, who is
+    editing an evidence log and has no reason to be reading this registry — so
+    the refusal names the token the log must carry and the declaration it must
+    keep, and this test holds it to that.
+
     Everything but the pointer is the real entry (``dataclasses.replace`` over
     a registry member), so a green here cannot come from a plant that was
     unwitnessable for some other reason. The anchor grammar and the
@@ -4185,9 +4198,22 @@ def test_a_corpus_witness_pointer_must_name_a_log_that_still_witnesses_it(
     planted[anchor] = dataclasses.replace(real, witness=wrong)
     monkeypatch.setattr(evidence, "_ENVIRONMENTAL_GRAMMARS", planted)
     _, offenders = _grammar_witness_sweep()
-    assert any(anchor in o and wrong in o for o in offenders), (
+    named = [o for o in offenders if anchor in o and wrong in o]
+    assert named, (
         f"a witness naming a committed log that does not declare this shape "
         f"went unreported: {offenders}"
+    )
+    # C-103: the refusal must say what the named log OWES, not only that it
+    # stopped witnessing. The person who breaks this rung is recapturing an
+    # evidence log and has no reason to be reading the grammar registry, so
+    # this message is the one place the obligation reaches them — and it has
+    # to name BOTH halves, because a body line with no declaration erases
+    # nothing and a declaration with no body line erases nothing.
+    assert all(
+        real.sample in o and "# evidence-volatile:" in o for o in named
+    ), (
+        f"the refusal does not tell the owner of {wrong} what to restore to "
+        f"go on witnessing {anchor}: {named}"
     )
 
 

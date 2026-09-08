@@ -843,6 +843,22 @@ class _EnvironmentalGrammar:
 #: than passing on a sibling's evidence. Repointing an entry means naming a
 #: log the tree holds today which declares this shape today; the trailing
 #: comments below record where each pointer moved from.
+#:
+#: C-103: a witness must not be collateral damage. ``planning_root`` and
+#: ``archive_root`` used to cite ``casting-10-blast-radius.log``, a
+#: deliberately WIDE log driving four peer-owned modules — and the standing
+#: ruling on a log like that is to stop printing its population and print a
+#: derived verdict, which applied to that body deletes the skip roster and
+#: with it both witness tokens. The next casting to apply the ruling would
+#: have turned a test in this module's own suite red from a commit in another
+#: casting's file, and nothing in the log, the ruling or the recapture
+#: instructions said so. A witness wants to be narrow and stable; a
+#: blast-radius log wants to be wide and derived; one log cannot be both. The
+#: two entries moved to ``casting-5-corpus-witness.log``, whose only job is to
+#: be that witness and which states the obligation in its own body — the one
+#: place a recapture actually happens. Every corpus witness below now names a
+#: log owned by the same casting as this registry, which is what keeps a
+#: peer's commit from being able to kill a grammar's witness at all.
 _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
     "duration_seconds": _EnvironmentalGrammar(
         token=re.compile(r"\d+\.\d+s"),
@@ -951,7 +967,9 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         varies_in="text",
         key=None,  # the `/.planning/` anchor is in the token
         witness_kind="corpus",
-        witness="casting-10-blast-radius.log",  # D-051: was casting-1-pytest.log
+        # C-103: was casting-10-blast-radius.log (D-051: was
+        # casting-1-pytest.log). See the C-103 paragraph above the registry.
+        witness="casting-5-corpus-witness.log",
         witness_pair=(
             "",
             "/private/var/folders/kq/T/tmp.X6ktF5/wt/.planning/phases/09",
@@ -975,7 +993,9 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         varies_in="text",
         key=None,  # the `/foundry-archive/` anchor is in the token
         witness_kind="corpus",
-        witness="casting-10-blast-radius.log",  # D-051: was casting-8-suite.log
+        # C-103: was casting-10-blast-radius.log (D-051: was
+        # casting-8-suite.log). See the C-103 paragraph above the registry.
+        witness="casting-5-corpus-witness.log",
         witness_pair=(
             "",
             "/private/tmp/c3wt/foundry-archive/thunder-viper",
