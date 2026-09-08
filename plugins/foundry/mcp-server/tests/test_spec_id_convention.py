@@ -39,8 +39,18 @@ citations and are never scanned: a ``spec_ref=`` fixture literal, a
 are input handed to a door under test, not a claim about which requirement a
 test proves.
 
-This module owns the machinery that enforces that, and the roster pin that
-applies it to every module in this directory.
+AN ASSERTION'S MESSAGE IS PROSE, AND THE COMMA IS WHERE THE TWO PART. In
+``assert lhs == rhs, "..."`` the ``rhs`` is data and stays unscanned; the
+message after the comma is the sentence a failing engineer reads, makes exactly
+the claim this convention governs, and is scanned like a docstring. It was not,
+until this cycle, and that gap IS D-195: a module held to the full convention
+passed every run while carrying a bare ``CT-001`` in a message, and the id
+resolves to the convergence spec's tier contract under one spec and to
+``Foundry-Concern`` under this one. Casting 11 measured 209 such ids across
+``tests/`` and closed its own; ``assertion_messages`` below is the detector.
+
+This module owns the machinery that enforces that, and the two roster pins that
+apply it -- one per prose surface -- to every module in this directory.
 """
 
 from __future__ import annotations
@@ -278,6 +288,50 @@ def prose_blocks(source: str, *, require_sentinel: bool = False) -> list[tuple[i
     )
 
 
+def assertion_messages(source: str) -> list[tuple[int, str]]:
+    """``(lineno, normalised text)`` for every failure MESSAGE ``source`` raises.
+
+    fallout NFR-011 (D-195, concern C-105) — THE PROSE SURFACE `prose_blocks`
+    CANNOT SEE, AND IT IS THE ONE A FAILING ENGINEER ACTUALLY READS.
+
+    `prose_blocks` walks docstrings and comments. An `assert`'s message operand
+    is neither, so every requirement id written into one was invisible to the
+    roster pin above — and modules NOT on any waiver were reported clean while
+    carrying the exact defect this module exists to refuse. D-195 is that
+    defect: `tests/test_skill_prose.py` is held to the full convention, passed
+    every run, and carried a tier-contract id with no spec in front of it, in a
+    message. Casting 11 measured the
+    blind spot at 209 bare ids in assertion messages across `tests/` and closed
+    it on its own module; this is the DETECTOR, so the next one is caught
+    wherever it is written.
+
+    SCOPED TO THE MESSAGE OPERAND, and the scoping is the convention's own. This
+    module's legend exempts ids in CODE — a `spec_ref=` fixture literal, a
+    `parametrize` entry, a module constant, an assertion's EXPECTED string —
+    because those are input handed to a door, not a claim about which
+    requirement a test proves. `assert lhs == rhs, "msg"` puts those two things
+    on either side of one comma: `rhs` is data and stays unscanned, `msg` is
+    prose addressed to a reader and is scanned like any other.
+
+    f-strings and implicit concatenation are flattened to one line, so a cite
+    split across source lines is still seen — the same normalisation
+    `prose_blocks` applies, for the same reason.
+    """
+    tree = ast.parse(source)
+    messages: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assert) or node.msg is None:
+            continue
+        parts = [
+            piece.value
+            for piece in ast.walk(node.msg)
+            if isinstance(piece, ast.Constant) and isinstance(piece.value, str)
+        ]
+        if parts:
+            messages.append((node.lineno, " ".join(" ".join(parts).split())))
+    return messages
+
+
 def module_roster() -> list[Path]:
     """Every Python module in this directory TREE, test or not.
 
@@ -441,6 +495,38 @@ UNQUALIFIED_MODULES = _CARVED_FROM_THE_ORCHESTRATOR_TEST | frozenset(
 )  # 26 items
 
 
+#: fallout NFR-011 (D-195, concern C-105) — THE MESSAGE-SURFACE DEBT, PER ID
+#: AND MEASURED.
+#:
+#: `{module: the ids it may still cite bare IN AN ASSERTION MESSAGE}`. The new
+#: surface is being scanned for the first time, and the eleven ids below sat in
+#: five modules that were already passing this pin — nobody wrote them in
+#: defiance of a rule, the rule could not see them. Every one belongs to another
+#: casting, so requalifying them here would be an edit to somebody else's tree.
+#:
+#: PER ID, NOT PER MODULE, and that is the difference between this and a second
+#: `UNQUALIFIED_MODULES`. A module-level waiver would go on excusing every id
+#: written into that module afterwards; these rows name the exact eleven, so the
+#: TWELFTH fails the moment it is written. `unqualified_ids` already takes the
+#: `bare_ok` parameter this feeds — one grammar, and each pin declares the data
+#: it applies to, exactly as `LEGACY_ID_FAMILIES` does one axis over.
+#:
+#: SELF-EXPIRING. `test_no_message_waiver_outlives_the_debt_it_records` fails on
+#: a row whose module no longer cites it bare, so an id cannot be qualified and
+#: leave its waiver behind. That failure is the handshake by which a module
+#: leaves this table, and it names the edit.
+#:
+#: NOT A PLACE TO PUT NEW DEBT. A module that is not here must be clean on this
+#: surface, and adding a row is a convention change: qualify the id instead.
+MESSAGE_BARE_OK: dict[str, frozenset[str]] = {
+    "test_artifacts.py": frozenset({"GI-033"}),
+    "test_evidence_for.py": frozenset({"US-008", "FR-051"}),
+    "test_foundry_state_readers.py": frozenset({"FR-019", "NFR-005", "GI-033"}),
+    "test_handoff_records.py": frozenset({"US-003", "NFR-002", "AC-015"}),
+    "test_validate_ownership.py": frozenset({"FR-009"}),
+}  # 5 modules, 11 ids
+
+
 def _offences(path: Path) -> list[str]:
     """Every unqualified id in one module's prose, as reportable lines."""
     source = path.read_text(encoding="utf-8")
@@ -448,6 +534,22 @@ def _offences(path: Path) -> list[str]:
         f"line {lineno}: {offence}"
         for lineno, text in prose_blocks(source)
         for offence in unqualified_ids(text)
+    ]
+
+
+def _message_offences(path: Path) -> list[str]:
+    """Every unqualified id in one module's assertion MESSAGES.
+
+    Honours that module's `MESSAGE_BARE_OK` row, so the eleven ids the surface
+    was carrying when it started being scanned are declared rather than
+    defaulted — and any twelfth is reported.
+    """
+    source = path.read_text(encoding="utf-8")
+    bare_ok = MESSAGE_BARE_OK.get(module_key(path), frozenset())
+    return [
+        f"line {lineno}: {offence}"
+        for lineno, text in assertion_messages(source)
+        for offence in unqualified_ids(text, bare_ok=bare_ok)
     ]
 
 
@@ -477,6 +579,114 @@ def test_every_requirement_id_in_this_module_names_its_spec(module: str) -> None
     )
 
 
+@pytest.mark.parametrize("module", [module_key(p) for p in module_roster()])
+def test_every_requirement_id_in_this_modules_messages_names_its_spec(
+    module: str,
+) -> None:
+    """fallout NFR-011 (D-195, concern C-105) — the same convention, on the
+    surface the roster pin above cannot see.
+
+    D-195 was a tier-contract id with no spec in front of it, in an assertion
+    message of a module this file held to the FULL convention and reported clean
+    every run, because `prose_blocks`
+    walks docstrings and comments and a message is neither. The id resolved to
+    the convergence spec's tier contract under one spec and to `Foundry-Concern`
+    — a tool with no tiers and no filing doors — under the one this run builds
+    against, which is the whole harm the convention exists to prevent.
+
+    Casting 11 closed it on its own module and measured the blind spot; this is
+    the detector, so the twelfth instance fails where it is written rather than
+    where somebody happens to read it.
+
+    THE WAIVER IS THE SAME ONE, because a module excused from the convention is
+    excused on both surfaces. `UNQUALIFIED_MODULES` names the thirteen carved
+    from the orchestrator test plus thirteen more whose inherited prose no
+    casting of this run was scoped to requalify; those modules hold 195 of the
+    206 bare ids on this surface, and scanning them here would demand the same
+    out-of-scope sweep under a second test name.
+    """
+    if module in UNQUALIFIED_MODULES:
+        pytest.skip(f"{module} is declared unqualified; see UNQUALIFIED_MODULES")
+
+    offenders = _message_offences(TESTS_DIR / module)
+    assert not offenders, (
+        f"tests/{module}: unqualified requirement id(s) in an ASSERTION "
+        f"MESSAGE -- D-195 again, in a module this pin holds to the full "
+        f"convention.\n"
+        f"A message is prose: it is the sentence a failing engineer reads, and "
+        f"a bare id in it resolves to a different row under each installed "
+        f"spec. It is exempt from the roster pin only because that pin walks "
+        f"docstrings and comments, which is the blind spot this test closes.\n"
+        f"THE EDIT: in tests/{module}, at each line below, put a spec in front "
+        f"of the id. Exactly {len(QUALIFIERS)} spellings are accepted:\n"
+        f"{QUALIFIER_PHRASE}\n"
+        f"An assertion's EXPECTED string is still code and is still unscanned; "
+        f"only the message operand after the comma is prose.\n"
+        f"{CHAIN_PHRASE}\n"
+        f"{len(offenders)} unqualified id(s) in tests/{module}:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_no_message_waiver_outlives_the_debt_it_records() -> None:
+    """fallout NFR-011 (C-105) — `MESSAGE_BARE_OK`, checked from the other side.
+
+    The cheapest way to make the pin above go green is to record the id, so the
+    table is read back: a row whose module no longer cites it bare is a waiver
+    for nothing, and a row naming a module that is gone is worse. Both fail
+    here, which is what makes the table a debt ledger that expires rather than a
+    second allow-list — the distinction C-054 and D-193 each deleted a table
+    over, one guard along.
+
+    This is also the handshake by which a module leaves the table: qualify the
+    id, and this test names the row to delete.
+    """
+    present = {module_key(p) for p in module_roster()}
+
+    missing = sorted(set(MESSAGE_BARE_OK) - present)
+    assert not missing, (
+        f"MESSAGE_BARE_OK names {missing}, which do not exist in {TESTS_DIR}.\n"
+        "THE EDIT: delete "
+        + ", ".join(repr(name) for name in missing)
+        + " from MESSAGE_BARE_OK in tests/test_spec_id_convention.py. The "
+        "module is gone and the row is a waiver for nothing."
+    )
+
+    # An id is still owed only while the module still cites it bare. Asked by
+    # re-scanning with an EMPTY `bare_ok` and keeping the ids that come back:
+    # deriving the answer from the same grammar the pin enforces, rather than
+    # from a second reading of the source.
+    retired: dict[str, list[str]] = {}
+    for name, recorded in sorted(MESSAGE_BARE_OK.items()):
+        source = (TESTS_DIR / name).read_text(encoding="utf-8")
+        still_bare = {
+            offence.split(" in ", 1)[0]
+            for _, text in assertion_messages(source)
+            for offence in unqualified_ids(text)
+        }
+        gone = sorted(recorded - still_bare)
+        if gone:
+            retired[name] = gone
+
+    assert not retired, (
+        f"MESSAGE_BARE_OK records id(s) the module no longer cites bare: "
+        f"{retired}. Somebody qualified them, which is the point.\n"
+        "THE EDIT: delete each id listed above from its row in "
+        "MESSAGE_BARE_OK in tests/test_spec_id_convention.py, and the row "
+        "itself once it is empty. This is not a failure in the module you just "
+        "fixed: it is the handshake by which an id leaves the table, and once "
+        "the row is gone the pin above holds that message directly."
+    )
+
+    # ...and the table has not become a place to put NEW debt. Every recorded id
+    # is one this surface was already carrying when it started being scanned;
+    # the count is named so a row added later is a visible edit rather than an
+    # arithmetic nobody notices.
+    assert sum(len(ids) for ids in MESSAGE_BARE_OK.values()) <= 11, {
+        name: sorted(ids) for name, ids in sorted(MESSAGE_BARE_OK.items())
+    }
+
+
 def test_no_allow_list_entry_outlives_the_debt_it_records() -> None:
     """An entry for a clean module is a waiver nothing needs.
 
@@ -497,12 +707,21 @@ def test_no_allow_list_entry_outlives_the_debt_it_records() -> None:
         "module is gone and the entry is a waiver for nothing."
     )
 
+    # fallout NFR-011 (C-105) — BOTH SURFACES, because the waiver covers both.
+    # Asking this over prose alone would tell a module that is clean in its
+    # docstrings and still carrying bare ids in its assertion messages to leave
+    # the list, and the message pin above would then hold it to a convention
+    # nobody had a chance to apply. A module leaves the waiver when it is clean
+    # everywhere the waiver excused it.
     already_clean = sorted(
-        name for name in UNQUALIFIED_MODULES if not _offences(TESTS_DIR / name)
+        name
+        for name in UNQUALIFIED_MODULES
+        if not _offences(TESTS_DIR / name) and not _message_offences(TESTS_DIR / name)
     )
     assert not already_clean, (
         f"UNQUALIFIED_MODULES declares {already_clean}, which cite no bare id "
-        "any more -- somebody qualified them, which is the point.\n"
+        "any more, in prose OR in an assertion message -- somebody qualified "
+        "them, which is the point.\n"
         "THE EDIT: delete "
         + ", ".join(repr(name) for name in already_clean)
         + " from UNQUALIFIED_MODULES in tests/test_spec_id_convention.py, and "
@@ -685,6 +904,59 @@ def test_ids_in_code_are_never_citations() -> None:
     assert "the module legend" in joined
     assert "what this proves" in joined
     assert not [o for _, t in prose_blocks(source) for o in unqualified_ids(t)]
+
+    # ...and the message scan draws the line in the same place: the EXPECTED
+    # string on the left of the comma stays code, so the module above carries no
+    # message offence at all despite the two unqualified `spec_ref=` literals in
+    # it -- the assertion there has no message operand for either to sit in.
+    assert not [o for _, t in assertion_messages(source) for o in unqualified_ids(t)]
+
+
+def test_an_assertion_message_is_prose_and_its_expected_string_is_not() -> None:
+    """fallout NFR-011 (D-195, C-105) — the anchor for the new surface.
+
+    The recogniser is driven over a module built to carry the D-195 shape: a
+    bare id in a message, another inside an f-string, a THIRD in the expected
+    string beside it, and a docstring that names none of them. A scan over the
+    clean tree would be green whether it worked or not, and the whole failure
+    being closed is a surface nobody was looking at.
+    """
+    source = "\n".join(
+        [
+            '"""convergence AC-006 -- the module legend."""',
+            "def t():",
+            '    assert door(spec_ref="FR-004")["tier"] == "FR-004", (',
+            '        "the reproduction rung CT-001 states"',
+            "    )",
+            "def u(n):",
+            '    assert n, f"the {n} span AC-015 reports"',
+            "def v():",
+            '    assert ok, "fallout GI-033 is qualified and is not reported"',
+        ]
+    )
+
+    # `prose_blocks` sees the docstring and NOTHING else, which is why the two
+    # bare ids below survived every run of the roster pin.
+    assert not [o for _, t in prose_blocks(source) for o in unqualified_ids(t)]
+
+    found = [o.split(" in ", 1)[0] for _, t in assertion_messages(source) for o in unqualified_ids(t)]
+    assert found == ["CT-001", "AC-015"], found
+
+    # The expected string is code: the `spec_ref=` literal and the value it is
+    # compared against sit on the other side of the comma and are never
+    # reported, however many times they appear.
+    assert "FR-004" not in found
+    # ...and a qualified id in a message is not reported either, so the pin
+    # refuses the bare form rather than the surface.
+    assert "GI-033" not in found
+
+    # The waiver parameter reaches this surface through the same grammar.
+    waived = [
+        o.split(" in ", 1)[0]
+        for _, t in assertion_messages(source)
+        for o in unqualified_ids(t, bare_ok=frozenset({"CT-001"}))
+    ]
+    assert waived == ["AC-015"], waived
 
 
 def test_a_module_docstring_is_scanned_unless_it_carries_the_sentinel() -> None:
