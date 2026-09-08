@@ -3,6 +3,6 @@
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
-SKIPPED [1] tests/orchestration/test_module_boundaries.py:6768: this checkout carries no forge-specs/foundry-run-fallout/spec.md
-SKIPPED [1] tests/orchestration/test_module_boundaries.py:6816: this checkout carries no run spec
-29 passed, 2 skipped, 502 deselected in 0.69s
+SKIPPED [1] tests/orchestration/test_module_boundaries.py:7131: this checkout carries no forge-specs/foundry-run-fallout/spec.md
+SKIPPED [1] tests/orchestration/test_module_boundaries.py:7179: this checkout carries no run spec
+28 passed, 2 skipped, 507 deselected in 1.41s

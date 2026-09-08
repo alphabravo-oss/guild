@@ -1,23 +1,22 @@
-# evidence-cmd: cd plugins/foundry/mcp-server || exit 1; uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -v tests/orchestration/test_transitions.py::test_neither_halt_door_advertises_a_judgement_on_its_halt_arguments tests/orchestration/test_transitions.py::test_the_halt_argument_recogniser_sees_the_enum_that_produced_the_defect tests/orchestration/test_transitions.py::test_both_halt_doors_name_the_same_check_over_mcp tests/orchestration/test_module_boundaries.py::test_the_layering_rule_consults_exactly_one_exception_table tests/orchestration/test_module_boundaries.py::test_the_exception_table_recogniser_sees_a_second_table tests/orchestration/test_module_boundaries.py::test_every_open_layering_violation_names_who_closes_it tests/orchestration/test_module_boundaries.py::test_the_three_layers_hold_with_exactly_one_named_seam tests/orchestration/test_module_boundaries.py::test_no_verifier_module_reaches_a_lifecycle_module_lazily_either tests/orchestration/test_module_boundaries.py::test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth tests/orchestration/test_module_boundaries.py::test_the_seam_table_names_an_edge_that_exists tests/test_spec_id_convention.py::test_an_assertion_message_is_prose_and_its_expected_string_is_not tests/test_spec_id_convention.py::test_no_message_waiver_outlives_the_debt_it_records tests/test_spec_id_convention.py::test_ids_in_code_are_never_citations 2>&1
+# evidence-cmd: cd plugins/foundry/mcp-server || exit 1; uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -v tests/orchestration/test_transitions.py::test_neither_halt_door_advertises_a_judgement_on_its_halt_arguments tests/orchestration/test_transitions.py::test_the_halt_argument_recogniser_sees_the_enum_that_produced_the_defect tests/orchestration/test_transitions.py::test_both_halt_doors_name_the_same_check_over_mcp tests/orchestration/test_module_boundaries.py::test_the_layering_rule_consults_exactly_one_exception_table tests/orchestration/test_module_boundaries.py::test_the_exception_table_recogniser_sees_a_second_table tests/orchestration/test_module_boundaries.py::test_the_three_layers_hold_with_exactly_one_named_seam tests/orchestration/test_module_boundaries.py::test_no_verifier_module_reaches_a_lifecycle_module_lazily_either tests/orchestration/test_module_boundaries.py::test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth tests/orchestration/test_module_boundaries.py::test_the_seam_table_names_an_edge_that_exists tests/test_spec_id_convention.py::test_an_assertion_message_is_prose_and_its_expected_string_is_not tests/test_spec_id_convention.py::test_no_message_waiver_outlives_the_debt_it_records tests/test_spec_id_convention.py::test_ids_in_code_are_never_citations 2>&1
 # evidence-for: fallout AC-062, CT-013, OT-007, AC-015, AC-061, OT-015, FR-006, GI-025, FR-063
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
 ============================= test session starts ==============================
-collecting ... collected 13 items
+collecting ... collected 12 items
 
-tests/orchestration/test_transitions.py::test_neither_halt_door_advertises_a_judgement_on_its_halt_arguments PASSED [  7%]
-tests/orchestration/test_transitions.py::test_the_halt_argument_recogniser_sees_the_enum_that_produced_the_defect PASSED [ 15%]
-tests/orchestration/test_transitions.py::test_both_halt_doors_name_the_same_check_over_mcp PASSED [ 23%]
-tests/orchestration/test_module_boundaries.py::test_the_layering_rule_consults_exactly_one_exception_table PASSED [ 30%]
-tests/orchestration/test_module_boundaries.py::test_the_exception_table_recogniser_sees_a_second_table PASSED [ 38%]
-tests/orchestration/test_module_boundaries.py::test_every_open_layering_violation_names_who_closes_it PASSED [ 46%]
-tests/orchestration/test_module_boundaries.py::test_the_three_layers_hold_with_exactly_one_named_seam PASSED [ 53%]
-tests/orchestration/test_module_boundaries.py::test_no_verifier_module_reaches_a_lifecycle_module_lazily_either PASSED [ 61%]
-tests/orchestration/test_module_boundaries.py::test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth PASSED [ 69%]
-tests/orchestration/test_module_boundaries.py::test_the_seam_table_names_an_edge_that_exists PASSED [ 76%]
-tests/test_spec_id_convention.py::test_an_assertion_message_is_prose_and_its_expected_string_is_not PASSED [ 84%]
-tests/test_spec_id_convention.py::test_no_message_waiver_outlives_the_debt_it_records PASSED [ 92%]
+tests/orchestration/test_transitions.py::test_neither_halt_door_advertises_a_judgement_on_its_halt_arguments PASSED [  8%]
+tests/orchestration/test_transitions.py::test_the_halt_argument_recogniser_sees_the_enum_that_produced_the_defect PASSED [ 16%]
+tests/orchestration/test_transitions.py::test_both_halt_doors_name_the_same_check_over_mcp PASSED [ 25%]
+tests/orchestration/test_module_boundaries.py::test_the_layering_rule_consults_exactly_one_exception_table PASSED [ 33%]
+tests/orchestration/test_module_boundaries.py::test_the_exception_table_recogniser_sees_a_second_table PASSED [ 41%]
+tests/orchestration/test_module_boundaries.py::test_the_three_layers_hold_with_exactly_one_named_seam PASSED [ 50%]
+tests/orchestration/test_module_boundaries.py::test_no_verifier_module_reaches_a_lifecycle_module_lazily_either PASSED [ 58%]
+tests/orchestration/test_module_boundaries.py::test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth PASSED [ 66%]
+tests/orchestration/test_module_boundaries.py::test_the_seam_table_names_an_edge_that_exists PASSED [ 75%]
+tests/test_spec_id_convention.py::test_an_assertion_message_is_prose_and_its_expected_string_is_not PASSED [ 83%]
+tests/test_spec_id_convention.py::test_no_message_waiver_outlives_the_debt_it_records PASSED [ 91%]
 tests/test_spec_id_convention.py::test_ids_in_code_are_never_citations PASSED [100%]
 
-============================== 13 passed in 0.78s ==============================
+============================== 12 passed in 0.84s ==============================
