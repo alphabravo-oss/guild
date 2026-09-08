@@ -7941,23 +7941,51 @@ def _module_level_string_tuples(path: Path) -> list[tuple[str, tuple[str, ...]]]
 
 
 def _imports_from_this_module(path: Path) -> bool:
-    """Does `path` carry a real ``from ... test_protocol_prose import ...``?
+    """Does `path` IMPORT this module -- in any of Python's three spellings?
 
     The arming condition for the sweep below, read off the IMPORT STATEMENT and
     never off the raw text: `tests/test_skill_prose.py`'s own docstring names
     this module in prose, so a substring check arms on a sentence and fires
     against a duplicate its author has had no chance to remove.
+
+    fallout AC-048 / NFR-011 (concern C-115, D-081's class in its fourth site)
+    -- THIS READ ONE SPELLING OF THREE AND THEN DISARMED ITSELF SILENTLY.
+
+    The reading was `ImportFrom` matched on the last component of
+    `node.module`, so `from tests.test_protocol_prose import _FALLOUT_CLAUSES`
+    was seen while `from tests import test_protocol_prose` resolved to `tests`
+    and `import tests.test_protocol_prose` was not an `ImportFrom` at all.
+    Driven, one plant per spelling: CAUGHT 1 OF 3.
+
+    WHAT THAT COSTS, stated as it drove rather than as the concern framed it.
+    A False return is `pytest.skip`, so the two blind spellings produce a
+    MISSED finding, never a wrong one: driven with a real duplicate
+    `_FALLOUT_CLAUSES` in a sibling, the sweep SKIPPED when the sibling reached
+    here by spelling two and FAILED naming the duplicate when it reached here
+    by spelling one. The concern that filed this read the paragraph above as a
+    description of this helper and reported a wrong finding against an innocent
+    module; that paragraph describes the substring alternative this helper was
+    written INSTEAD OF, which would have armed too early. The defect is real
+    and is that a guard policing a file another casting owns and may rewrite
+    goes quiet on the rewrite, in the silence a skip makes.
+
+    `also_by_name` IS REQUIRED HERE, and the reason is not the one that made it
+    required for the deleted monolith. `_submodules_named_by` opens with
+    `if not dotted.startswith("foundry_mcp")`, so it answers nothing about the
+    `tests` package whatever is on disk -- driven,
+    `_submodules_named_by("tests", ["test_protocol_prose"])` is empty and
+    `_all_imports` over the second plant returns `{"tests"}`. The phantom
+    crossing that helper warns of stays shut: the named roster is this module's
+    own stem, and a SYMBOL named after a test module is not a thing this suite
+    can grow without the collision sweep saying so.
     """
+    from tests.orchestration.test_module_boundaries import _all_imports
+
     stem = Path(__file__).stem
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return stem in _all_imports(path, also_by_name=(stem,))
     except (OSError, SyntaxError):  # pragma: no cover - unreadable sibling
         return False
-    return any(
-        isinstance(node, ast.ImportFrom)
-        and (node.module or "").split(".")[-1] == stem
-        for node in ast.walk(tree)
-    )
 
 
 def test_no_second_module_re_types_the_fallout_clauses() -> None:
@@ -8003,6 +8031,84 @@ def test_no_second_module_re_types_the_fallout_clauses() -> None:
         f"keeps passing -- which is the drift D-095 filed, not a tidiness "
         f"preference."
     )
+
+
+def test_the_arming_condition_sees_all_three_spellings_of_this_module(tmp_path):
+    """fallout AC-048 / NFR-011 (concern C-115) -- THE ANCHOR FOR THE ARMING
+    CONDITION, WHICH IS GREEN OVER TODAY'S TREE WHETHER IT WORKS OR NOT.
+
+    `tests/test_skill_prose.py` reaches this module in the FIRST spelling
+    today, so the sweep above is armed and the one spelling that worked is the
+    one in use -- which is exactly why the recogniser is worth driving apart
+    from it. Rewritten to either other spelling, the sweep stops looking and
+    says nothing; there is no failing assertion anywhere in that outcome. This
+    is the test that goes red on the day the reading goes blind rather than on
+    the day a duplicate slips past it.
+
+    ONE PLANT PER SPELLING, all three naming the same load, and the stem is
+    derived from `__file__` so a renamed module renames its own plants.
+    """
+    stem = Path(__file__).stem
+
+    dotted_module = tmp_path / "spelling_one.py"
+    dotted_module.write_text(
+        f"from tests.{stem} import _FALLOUT_CLAUSES\n", encoding="utf-8"
+    )
+    assert _imports_from_this_module(dotted_module)
+
+    from_package = tmp_path / "spelling_two.py"
+    from_package.write_text(
+        f"from tests import {stem}\n"
+        f"_ = {stem}._FALLOUT_CLAUSES\n",
+        encoding="utf-8",
+    )
+    assert _imports_from_this_module(from_package)
+
+    plain_import = tmp_path / "spelling_three.py"
+    plain_import.write_text(
+        f"import tests.{stem}\n"
+        f"_ = tests.{stem}._FALLOUT_CLAUSES\n",
+        encoding="utf-8",
+    )
+    assert _imports_from_this_module(plain_import)
+
+    # ...and the second spelling is stated as the DELTA rather than asserted
+    # about in prose: on-disk resolution answers nothing here, because
+    # `_submodules_named_by` takes only `foundry_mcp` packages, so without the
+    # caller-named roster the same plant resolves to `tests` and matches
+    # nothing. That is why this call site names its own stem and the two
+    # layering walks name nothing.
+    from tests.orchestration.test_module_boundaries import (
+        _all_imports,
+        _submodules_named_by,
+    )
+
+    assert stem not in _all_imports(from_package)
+    assert not _submodules_named_by("tests", [stem])
+
+    # THE BOUNDARY the naming does not cross, both directions. Prose that names
+    # this module arms nothing -- the whole reason the reading is an import
+    # statement and not a substring -- and an import of a DIFFERENT sibling is
+    # not an import of this one.
+    prose_only = tmp_path / "prose_only.py"
+    prose_only.write_text(
+        f'"""A docstring that names {stem} and imports it not at all."""\n',
+        encoding="utf-8",
+    )
+    assert not _imports_from_this_module(prose_only)
+
+    other_sibling = tmp_path / "other_sibling.py"
+    other_sibling.write_text(
+        "from tests.test_lead_prose import _LEAD\n", encoding="utf-8"
+    )
+    assert not _imports_from_this_module(other_sibling)
+
+    # An unreadable or unparseable sibling stays a skip rather than an error:
+    # the sweep's job is duplicate tuples, not syntax.
+    unparseable = tmp_path / "unparseable.py"
+    unparseable.write_text(f"from tests import {stem} import\n", encoding="utf-8")
+    assert not _imports_from_this_module(unparseable)
+    assert not _imports_from_this_module(tmp_path / "absent.py")
 
 
 # ---------------------------------------------------------------------------

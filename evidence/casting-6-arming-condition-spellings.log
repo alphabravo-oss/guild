@@ -1,0 +1,21 @@
+# evidence-cmd: cd plugins/foundry/mcp-server || exit 1; uv run --quiet --with pytest python -c "import sys, tempfile; from pathlib import Path; sys.path.insert(0, 'src'); from tests.test_protocol_prose import _imports_from_this_module as arms; from tests.orchestration.test_module_boundaries import _all_imports, _submodules_named_by; stem = 'test_protocol_prose'; d = tempfile.mkdtemp(); p = Path(d) / 'plant.py'; w = lambda s: (p.write_text(s + chr(10), encoding='utf-8'), p)[1]; plants = [('one   from tests.<mod> import X', 'from tests.%s import _FALLOUT_CLAUSES' % stem), ('two   from tests import <mod>  ', 'from tests import %s' % stem), ('three import tests.<mod>       ', 'import tests.%s' % stem)]; print('== the arming condition, one plant per spelling =='); res = [(l, arms(w(s))) for l, s in plants]; [print('  %s -> %s' % (l, r)) for l, r in res]; print('  CAUGHT %d of %d' % (sum(r for _, r in res), len(plants))); print(); print('== why the roster is NAMED here and not resolved on disk =='); q = w(plants[1][1]); print('  _submodules_named_by(tests, [stem]) :', sorted(_submodules_named_by('tests', [stem]))); print('  _all_imports(plant two)             :', sorted(_all_imports(q))); print('  _all_imports(plant two, named)      :', sorted(_all_imports(q, also_by_name=(stem,)))); print(); print('== the boundary: naming the module in prose arms nothing =='); print('  comment mention                    :', arms(w('# a comment naming %s and importing it not at all' % stem))); print('  a DIFFERENT sibling imported       :', arms(w('from tests.test_lead_prose import _LEAD')))" 2>&1 && uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -q tests/test_protocol_prose.py -k "all_three_spellings_of_this_module or no_second_module_re_types" 2>&1 | tail -2
+# evidence-for: fallout AC-048, fallout NFR-011
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 600
+
+== the arming condition, one plant per spelling ==
+  one   from tests.<mod> import X -> True
+  two   from tests import <mod>   -> True
+  three import tests.<mod>        -> True
+  CAUGHT 3 of 3
+
+== why the roster is NAMED here and not resolved on disk ==
+  _submodules_named_by(tests, [stem]) : []
+  _all_imports(plant two)             : ['tests']
+  _all_imports(plant two, named)      : ['test_protocol_prose', 'tests']
+
+== the boundary: naming the module in prose arms nothing ==
+  comment mention                    : False
+  a DIFFERENT sibling imported       : False
+..                                                                       [100%]
+2 passed, 721 deselected in 0.34s
