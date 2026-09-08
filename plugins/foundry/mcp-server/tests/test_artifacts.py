@@ -1622,40 +1622,195 @@ _EVIDENCE_ENGINE_SEAMS = {
     ("evidence_boundary", "_sweep_evidence_at_boundary"),
 }
 
+#: The engine's dotted path, spelled ONCE. Both arms of the scan below derive
+#: from this single string, so they cannot come to disagree about which module
+#: they are resolving — which is half of what went wrong here.
+_EVIDENCE_ENGINE_DOTTED = "foundry_mcp.tools.evidence"
 
-def test_the_evidence_engine_is_reached_by_the_named_seams_only():
-    """fallout AC-061 / GI-033 (D-128 / D-192) — the edge exists; what it may
-    not be is unseen, and what it may not be at all is lifecycle-to-verifier."""
+
+def _dotted_modules_named_by(node: ast.AST) -> set[str]:
+    """The dotted module paths ONE import statement loads — all three spellings.
+
+    fallout AC-061 / GI-033 / GI-025 / OT-015 (concern C-118, after D-192) —
+    THE SCAN BELOW READ TWO SPELLINGS OF THREE, AND MISSED THE THIRD IN SILENCE.
+
+    A Python import has three spellings of the same load, and the reading this
+    replaces resolved two of them::
+
+        from foundry_mcp.tools.evidence import verify_evidence  # node.module
+        import foundry_mcp.tools.evidence                       # ast.Import
+        from foundry_mcp.tools import evidence                  # NEITHER
+
+    The third puts the PARENT package in ``node.module`` and the module itself
+    in ``node.names``, so a test against the engine's own full dotted name
+    walks straight past it. Driven at ``379b0fa``, one plant per spelling at the
+    top of ``orchestration/report_seal.py`` — a lifecycle module, the direction
+    fallout AC-061 refuses at any depth: spelling one RED, spelling three RED,
+    spelling two GREEN with nothing reported. Then the same three planted INSIDE
+    a function of that module, against the lazy arm: the same 2-of-3, the same
+    silence. Both rosters are compared by EQUALITY, so an unseen reacher leaves
+    each set exactly as it was and the miss reads as a pass — the worst shape a
+    guard can fail in, and the one this file's own docstring cites D-192 for.
+
+    RESOLVED ON DISK, through ``_submodules_named_by`` — the reading both
+    layering walks (D-192, concern C-107), the no-facade walk (D-198), the
+    arming condition (C-115) and the ledger-door roster (C-116) already share —
+    rather than a sixth private enumeration, which is how all six instances of
+    this class got in. ``from foundry_mcp.tools import evidence`` is a module
+    edge because ``foundry_mcp/tools/evidence.py`` is a file on disk, while
+    ``from foundry_mcp.schemas.vocab import DEFECT_TIERS`` stays a symbol
+    because no such file exists. No ``also_by_name`` roster is needed here, and
+    that is a fact about this target rather than a preference: the prefix guard
+    opening that helper takes only ``foundry_mcp`` packages, and ours is one.
+    Driven, ``_submodules_named_by("foundry_mcp.tools", ["evidence"]) ==
+    {"evidence"}``, which the pin below asserts so the arm cannot quietly start
+    resolving nothing.
+
+    KEYED ON THE DEFINING NAME, NEVER THE LOCAL BINDING — ``alias.name``, not
+    ``alias.asname``. Casting 4 named that fourth way to lose a name while
+    closing C-116 and casting 2 then found it inside its own new guard. Driven
+    here too: ``import foundry_mcp.tools.evidence as _ev`` was already caught by
+    the old ``ast.Import`` arm for exactly this reason, and
+    ``from foundry_mcp.tools import evidence as _ev`` is caught now for the same
+    one.
+
+    A statement that imports nothing under this package returns an empty set,
+    so callers ask about a dotted path and never about a basename: the engine is
+    ``foundry_mcp.tools.evidence`` and ``evidence_boundary`` is not it, and full
+    equality is what keeps a prefix from being mistaken for a module.
+    """
+    from tests.orchestration.test_module_boundaries import _submodules_named_by
+
+    if isinstance(node, ast.ImportFrom) and node.module:
+        named = {node.module}
+        if not node.level:
+            named |= {
+                f"{node.module}.{name}"
+                for name in _submodules_named_by(
+                    node.module, [alias.name for alias in node.names]
+                )
+            }
+        return named
+    if isinstance(node, ast.Import):
+        return {alias.name for alias in node.names}
+    return set()
+
+
+def _evidence_engine_reachers(
+    paths: list[Path],
+) -> tuple[set[str], set[tuple[str, str]]]:
+    """(module-top reachers, lazy ``(module, function)`` seams) across ``paths``.
+
+    ONE scan with two arms, and both arms ask ``_dotted_modules_named_by`` — so
+    the module-top half and the call-time half cannot come to see different
+    halves of one statement. That drift is D-081's class and it is why the
+    per-statement reading above is a function rather than two inline arms.
+
+    Takes the paths rather than calling ``_shipped_modules`` itself, which is
+    what makes the pin below able to drive a one-line plant per spelling without
+    writing into the shipped tree. The real-tree call is the caller's.
+    """
     module_top: set[str] = set()
     lazy: set[tuple[str, str]] = set()
 
-    for path in _shipped_modules():
+    for path in paths:
         if path.stem == "evidence":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in tree.body:
-            if isinstance(node, ast.ImportFrom) and node.module:
-                if node.module == "foundry_mcp.tools.evidence":
-                    module_top.add(path.stem)
-            elif isinstance(node, ast.Import):
-                module_top |= {
-                    path.stem
-                    for a in node.names
-                    if a.name == "foundry_mcp.tools.evidence"
-                }
+            if _EVIDENCE_ENGINE_DOTTED in _dotted_modules_named_by(node):
+                module_top.add(path.stem)
         for parent in ast.walk(tree):
             if not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for node in ast.walk(parent):
-                if isinstance(node, ast.ImportFrom) and node.module:
-                    if node.module == "foundry_mcp.tools.evidence":
-                        lazy.add((path.stem, parent.name))
-                elif isinstance(node, ast.Import):
-                    lazy |= {
-                        (path.stem, parent.name)
-                        for a in node.names
-                        if a.name == "foundry_mcp.tools.evidence"
-                    }
+                if _EVIDENCE_ENGINE_DOTTED in _dotted_modules_named_by(node):
+                    lazy.add((path.stem, parent.name))
+
+    return module_top, lazy
+
+
+#: Every way to write the same load, with the aliased forms that lose a name
+#: when a reading keys on the local binding. The pin below drives each one into
+#: BOTH arms; against the reading this run replaced, the two `from <parent>`
+#: rows came back clean.
+_EVIDENCE_ENGINE_IMPORT_SPELLINGS = {
+    "from <module> import <symbol>": (
+        "from foundry_mcp.tools.evidence import verify_evidence"
+    ),
+    "from <parent> import <module>": "from foundry_mcp.tools import evidence",
+    "from <parent> import <module> as X": (
+        "from foundry_mcp.tools import evidence as _ev"
+    ),
+    "import <dotted module>": "import foundry_mcp.tools.evidence",
+    "import <dotted module> as X": "import foundry_mcp.tools.evidence as _ev",
+}
+
+#: Statements that name something under the package and are NOT an edge to the
+#: engine. A reading that resolved aliases BY NAME instead of on disk would
+#: report the first as a module; one that matched a prefix rather than the whole
+#: dotted path would report the second and third.
+_NOT_THE_EVIDENCE_ENGINE = (
+    "from foundry_mcp.schemas.vocab import DEFECT_TIERS",
+    "from foundry_mcp.tools.orchestration import evidence_boundary",
+    "import foundry_mcp.tools.evidence_boundary",
+    "from foundry_mcp.tools.artifacts import evidence",
+)
+
+
+def test_the_evidence_engine_scan_reads_all_three_import_spellings(tmp_path):
+    """fallout AC-061 / GI-033 / GI-025 / OT-015 (concern C-118) — the roster
+    above is compared by equality, so a spelling it cannot see is a PASS.
+
+    The scan is driven here rather than argued: one plant per spelling into each
+    arm, and the phantom boundary asserted in the other direction so widening
+    the reading cannot start inventing edges the tree does not have.
+    """
+    from tests.orchestration.test_module_boundaries import _submodules_named_by
+
+    # The disk resolution the third spelling rests on, asserted so the arm
+    # cannot quietly degrade into resolving nothing — which would look exactly
+    # like the blindness this pin closes.
+    assert _submodules_named_by("foundry_mcp.tools", ["evidence"]) == {"evidence"}
+
+    unseen: dict[str, list[str]] = {"module top": [], "lazy": []}
+    for label, line in sorted(_EVIDENCE_ENGINE_IMPORT_SPELLINGS.items()):
+        top = tmp_path / "top_plant.py"
+        top.write_text(line + "\n", encoding="utf-8")
+        if _evidence_engine_reachers([top])[0] != {"top_plant"}:
+            unseen["module top"].append(label)
+
+        deep = tmp_path / "lazy_plant.py"
+        deep.write_text(f"def reaches():\n    {line}\n", encoding="utf-8")
+        if _evidence_engine_reachers([deep])[1] != {("lazy_plant", "reaches")}:
+            unseen["lazy"].append(label)
+
+    assert unseen == {"module top": [], "lazy": []}, (
+        f"the evidence-engine scan cannot see these spellings: {unseen}. Each "
+        "is the same load Python performs, written another way, and each leaves "
+        "an equality roster unchanged — so a lifecycle module reaching the "
+        "engine in one of them reads as a clean run. Resolve the import through "
+        "`_submodules_named_by` rather than against the engine's own full "
+        "dotted name."
+    )
+
+    phantom = tmp_path / "phantom.py"
+    phantom.write_text("\n".join(_NOT_THE_EVIDENCE_ENGINE) + "\n", encoding="utf-8")
+    module_top, lazy = _evidence_engine_reachers([phantom])
+    assert (module_top, lazy) == (set(), set()), (
+        f"the scan invented an edge: {sorted(module_top)} / {sorted(lazy)}. A "
+        "guard that reports crossings the tree does not have is a guard "
+        "somebody writes an exception table for, and the widening is only worth "
+        "having while it stays additive."
+    )
+
+
+def test_the_evidence_engine_is_reached_by_the_named_seams_only():
+    """fallout AC-061 / GI-033 (D-128 / D-192, concern C-118) — the edge exists;
+    what it may not be is unseen, and what it may not be at all is
+    lifecycle-to-verifier. All three import spellings are read, through the
+    reading the pin above drives."""
+    module_top, lazy = _evidence_engine_reachers(_shipped_modules())
 
     assert module_top == _EVIDENCE_ENGINE_MODULE_TOP, (
         f"the module-top reachers of the evidence engine are {sorted(module_top)}, "
