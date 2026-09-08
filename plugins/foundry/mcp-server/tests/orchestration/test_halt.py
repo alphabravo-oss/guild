@@ -7,7 +7,6 @@ that no longer exists.
 """
 from __future__ import annotations
 
-import ast
 import json
 import tempfile
 from pathlib import Path
@@ -106,13 +105,24 @@ def test_the_halted_seal_and_the_cap_path_live_in_the_halt_module():
     assert owning_module("_halt_if_capped") is _halt, owning_module("_halt_if_capped")
     # ...and the seam really is one-way: the writer reaches no gate or
     # transition at module top, so nothing flows back into it.
-    top = {
-        node.module
-        for node in ast.walk(ast.parse(Path(_halt.__file__).read_text(encoding="utf-8")))
-        if isinstance(node, ast.ImportFrom) and node.module
-    }
-    assert not {m for m in top if m.endswith(("orchestration.gates",
-                                              "orchestration.transitions"))}, top
+    #
+    # fallout GI-033 / AC-061 / FR-063 / OT-012 (D-198's class, swept) — THIS
+    # READ ONE SPELLING OF THREE, LIKE THE NO-FACADE WALK IT WAS SWEPT WITH.
+    #
+    # `node.module.endswith("orchestration.gates")` sees
+    # `from foundry_mcp.tools.orchestration.gates import x` and nothing else:
+    # driven, `from foundry_mcp.tools.orchestration import gates` and
+    # `import foundry_mcp.tools.orchestration.gates` were both INVISIBLE, and
+    # either one is a module-top edge from the seal back into the verifier
+    # layer — the exact direction this rule's "nothing flows back" forbids. The
+    # resolution is `_all_imports`, the scanner
+    # `tests/orchestration/test_module_boundaries.py` already states once for
+    # both layering walks, borrowed by name the way `test_evidence.py` borrows
+    # `_resolve_dotted` rather than growing a second copy that can drift.
+    from tests.orchestration.test_module_boundaries import _all_imports
+
+    reached = _all_imports(Path(_halt.__file__))
+    assert not (reached & {"gates", "transitions"}), sorted(reached)
 
 
 

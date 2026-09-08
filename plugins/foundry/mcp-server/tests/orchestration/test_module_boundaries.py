@@ -5944,7 +5944,7 @@ def _module_top_package_imports(path: Path) -> set[str]:
     return out
 
 
-def _all_imports(path: Path) -> set[str]:
+def _all_imports(path: Path, also_by_name: tuple[str, ...] = ()) -> set[str]:
     """Every module `path` names in an import, at ANY depth, by basename.
 
     ALL THREE SPELLINGS, through `_submodules_named_by` — the same helper the
@@ -5955,8 +5955,30 @@ def _all_imports(path: Path) -> set[str]:
     evidence` is a lifecycle module reaching the verifier layer as plainly as
     the two forms above it, and this walk is what AC-061's "at no depth" is
     asserted by.
+
+    fallout FR-004 / GI-010 / AC-013 / OT-012 (D-198) — `also_by_name` IS THE
+    READING FOR A MODULE THAT MUST NOT EXIST.
+
+    Disk resolution answers "is this alias a module" by asking whether
+    `<package>/<name>.py` is there, and that is the right question for a
+    layering edge: the module exists, the only doubt is whether the alias names
+    it or a symbol. It is the WRONG question for `foundry_orchestrator`, whose
+    whole requirement is that the file is gone — the resolution would then
+    return nothing and the guard would see an importer only while the forbidden
+    artifact was present, which is to say only when it was already too late to
+    be the strong half of OT-012. A guard conditional on the thing it guards
+    against is D-198's shape exactly.
+
+    So the caller may NAME the modules to read by alias instead. Not a widening
+    of the default: `also_by_name` is empty for both layering walks and they are
+    bit-identical to before. What makes it safe here and unsafe as a blanket
+    rule is that the caller asserts these strings ARE module names, so the
+    phantom crossing the docstring above warns about — a `DEFECT_TIERS` read as
+    a module — cannot be constructed unless somebody names a symbol after the
+    monolith this package deleted, which is itself the facade GI-010 refuses.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    named = frozenset(also_by_name)
     out: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
@@ -5965,6 +5987,7 @@ def _all_imports(path: Path) -> set[str]:
                 out |= _submodules_named_by(
                     node.module, [a.name for a in node.names]
                 )
+                out |= {a.name for a in node.names} & named
         elif isinstance(node, ast.Import):
             out.update(a.name.rsplit(".", 1)[-1] for a in node.names)
     return out
@@ -6898,16 +6921,35 @@ def test_the_package_marker_re_exports_nothing():
     )
 
     # ...and nothing anywhere still names the module that was split.
+    #
+    # fallout OT-012 / GI-010 / AC-013 (D-198) — THE WALK READ ONE SPELLING OF
+    # THREE, AND THE REMEDY WAS ALREADY IN THIS FILE.
+    #
+    # This built its offender set from `ImportFrom.module` alone. So
+    # `from foundry_mcp.tools.foundry_orchestrator import x` was caught, while
+    # `from foundry_mcp.tools import foundry_orchestrator` resolved to `tools`
+    # and `import foundry_mcp.tools.foundry_orchestrator` was not an
+    # `ImportFrom` at all — two of the three ways Python spells the same load,
+    # both invisible. DRIVEN: a planted `tools/foundry_orchestrator.py` with a
+    # SHIPPED module reaching it in the second spelling left this test green,
+    # so the assertion whose message reads "shipped module(s) still importing
+    # foundry_orchestrator" did not fire on a shipped module importing
+    # foundry_orchestrator.
+    #
+    # That is D-081's class in its third spelling and D-192's in its second,
+    # and `_all_imports` was written for exactly this and adopted by the two
+    # layering walks a thousand lines above while this one kept its own
+    # comprehension. It is not a new predicate here; it is the one that already
+    # existed, finally called. `also_by_name` is what lets it answer about a
+    # module whose absence is the requirement — see its docstring.
     plugin_root = Path(artifacts.__file__).resolve().parents[4]
     offenders = [
         str(p.relative_to(plugin_root))
         for p in sorted(plugin_root.rglob("*.py"))
         if _INSTALLED_DEPENDENCY_DIRS.isdisjoint(p.parts)
-        and "foundry_orchestrator" in {
-            (n.module or "").rsplit(".", 1)[-1]
-            for n in ast.walk(ast.parse(p.read_text(encoding="utf-8")))
-            if isinstance(n, ast.ImportFrom)
-        }
+        and "foundry_orchestrator" in _all_imports(
+            p, also_by_name=("foundry_orchestrator",)
+        )
     ]
     # THE WHOLE TREE IS HELD ABSOLUTELY NOW, shipped source and tests alike.
     #
@@ -6931,6 +6973,75 @@ def test_the_package_marker_re_exports_nothing():
             set(_SIBLING_SUITES_AWAITING_REPOINT) - set(outstanding)
         ),
     }
+
+
+def test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith(tmp_path):
+    """fallout OT-012 / GI-010 / AC-013 / FR-004 (D-198) — THE ANCHOR FOR THE
+    WALK ABOVE, WHICH IS GREEN OVER A CLEAN TREE WHETHER IT WORKS OR NOT.
+
+    The tree has no `foundry_orchestrator` importer and must not gain one, so
+    the assertion above passes on an empty offender list — and passed on an
+    empty offender list while two of the three spellings were invisible to it.
+    That is what makes the recogniser worth driving separately: this is the
+    test that fails if the scan goes blind again, on the day it goes blind
+    rather than on the day somebody reintroduces the facade.
+
+    ONE PLANT PER SPELLING, all three naming the same load. The second is the
+    one `_submodules_named_by` cannot resolve here and `also_by_name` can:
+    `tools/foundry_orchestrator.py` is DELETED, so there is no file on disk for
+    an alias to resolve against, which is precisely the state OT-012 requires
+    and precisely the state that made disk resolution the wrong reading.
+    """
+    named = ("foundry_orchestrator",)
+
+    dotted_module = tmp_path / "spelling_one.py"
+    dotted_module.write_text(
+        "from foundry_mcp.tools.foundry_orchestrator import _phase_transition\n",
+        encoding="utf-8",
+    )
+    assert "foundry_orchestrator" in _all_imports(dotted_module, also_by_name=named)
+
+    from_package = tmp_path / "spelling_two.py"
+    from_package.write_text(
+        "from foundry_mcp.tools import foundry_orchestrator\n"
+        "def door(fdir):\n"
+        "    return foundry_orchestrator._phase_transition(fdir)\n",
+        encoding="utf-8",
+    )
+    assert "foundry_orchestrator" in _all_imports(from_package, also_by_name=named), (
+        sorted(_all_imports(from_package, also_by_name=named))
+    )
+    # ...and this is the spelling the walk was blind to, stated as the delta
+    # rather than asserted about in prose: WITHOUT the caller-named reading the
+    # same plant resolves to `tools` and matches nothing.
+    assert "foundry_orchestrator" not in _all_imports(from_package)
+
+    plain_import = tmp_path / "spelling_three.py"
+    plain_import.write_text(
+        "def door():\n"
+        "    import foundry_mcp.tools.foundry_orchestrator\n"
+        "    return foundry_mcp.tools.foundry_orchestrator\n",
+        encoding="utf-8",
+    )
+    assert "foundry_orchestrator" in _all_imports(plain_import, also_by_name=named)
+
+    # THE BOUNDARY the reading above does not cross. `also_by_name` names ONE
+    # module; every other alias is still resolved on disk, so a symbol import
+    # is a symbol import and the phantom-crossing hazard `_submodules_named_by`
+    # was written against is not reopened by this caller.
+    symbols = tmp_path / "spelling_boundary.py"
+    symbols.write_text(
+        "from foundry_mcp.schemas.vocab import DEFECT_TIERS\n"
+        "from foundry_mcp.tools.artifacts import _load_json\n",
+        encoding="utf-8",
+    )
+    assert _all_imports(symbols, also_by_name=named) == {"vocab", "artifacts"}, (
+        sorted(_all_imports(symbols, also_by_name=named))
+    )
+
+    # ...and the default is untouched, which is what makes this additive for
+    # the two layering walks that call the same helper.
+    assert _all_imports(dotted_module) == {"foundry_orchestrator"}
 
 
 
@@ -6975,14 +7086,29 @@ def test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions():
     was filed on.
     """
     spawn = Path(foundry_mcp.__file__).resolve().parent / "tools" / "foundry_spawn.py"
-    tree = ast.parse(spawn.read_text(encoding="utf-8"))
 
-    module_top = {
-        node.module
-        for node in tree.body
-        if isinstance(node, ast.ImportFrom) and node.module
-        and node.module.startswith("foundry_mcp.tools.orchestration")
-    }
+    # fallout GI-033 / FR-043 (D-198's class, swept) — ALL FOUR SCANS IN THIS
+    # TEST READ ONE SPELLING OF THREE, AND TWO OF THEM READ A DIFFERENT ONE.
+    #
+    # Driven, on a plant per spelling: this set saw
+    # `from foundry_mcp.tools.orchestration.teams import agent_model` and
+    # `from foundry_mcp.tools.orchestration import teams` — the latter only by
+    # accident, because the prefix test carries no trailing dot — and was
+    # INVISIBLE to `import foundry_mcp.tools.orchestration.teams`, a module-top
+    # edge that closes this cycle at import time exactly as the other two do.
+    # The accident cut the other way too: the second spelling resolved to
+    # `foundry_mcp.tools.orchestration`, whose last segment is `orchestration`
+    # and is in no layer, so `from foundry_mcp.tools.orchestration import
+    # keyfiles` — a LEAF, allowed by the narrowing below — would have been
+    # judged non-leaf and failed. One walk read two spellings as three
+    # different things.
+    #
+    # `_module_top_imports` is the resolution and it already existed: it walks
+    # `tree.body` for all three spellings through `_submodules_named_by` and
+    # returns BASENAMES, filtered on the trailing dot so the package itself is
+    # not mistaken for a submodule of itself. The leaf narrowing then compares
+    # like with like.
+    module_top = _module_top_imports(spawn)
     # fallout FR-009 / GI-033 (D-170, casting 7's concern C-079) — A LEAF IS
     # NOT AN EDGE OF THIS CYCLE, AND THE NARROWING IS STATED RATHER THAN
     # ASSUMED.
@@ -7001,7 +7127,7 @@ def test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions():
     # rest, and the rest must still be EMPTY. Every module this test was filed
     # on is a non-leaf and still fails, and a leaf that stops being one fails
     # here the same day `_LEAF_MODULES`' own property assertion fails.
-    non_leaf = {m for m in module_top if m.rsplit(".", 1)[-1] not in _LEAF_MODULES}
+    non_leaf = {m for m in module_top if m not in _LEAF_MODULES}
     assert non_leaf == set(), (
         f"foundry_spawn.py imports {sorted(non_leaf)} at module top. Every "
         "edge of this cycle is a lazy seam; a module-top one closes the cycle "
@@ -7009,34 +7135,28 @@ def test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions():
     )
 
     # ...and it DOES reach them, lazily, or the assertion above is vacuous.
-    lazy = {
-        node.module
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module
-        and node.module.startswith("foundry_mcp.tools.orchestration")
-    }
+    # `_all_imports` is the any-depth half of the same scanner, so the two
+    # halves of this test cannot come to disagree about what an import is.
+    lazy = _all_imports(spawn) & {p.stem for p in _shipped_orchestration_modules()}
     assert lazy, "foundry_spawn.py reaches no orchestration module at all"
 
     # The back edges are lazy too, and every one of them is inside a function.
+    # The back edges are read through the same two halves of the one scanner,
+    # for the reason the forward edges are: driven, `endswith("foundry_spawn")`
+    # over `ImportFrom.module` saw only the dotted form, so
+    # `from foundry_mcp.tools import foundry_spawn` and
+    # `import foundry_mcp.tools.foundry_spawn` were both module-top edges this
+    # assertion could not see.
     for name in _SPAWN_SEAM_MODULES:
         path = _orchestration_dir() / f"{name}.py"
-        peer = ast.parse(path.read_text(encoding="utf-8"))
         top = {
-            node.module
-            for node in peer.body
-            if isinstance(node, ast.ImportFrom) and node.module
-            and node.module.endswith("foundry_spawn")
-        }
+            m.rsplit(".", 1)[-1] for m in _module_top_dotted_imports(path)
+        } & {"foundry_spawn"}
         assert top == set(), (
             f"{name}.py imports foundry_spawn at module top, which closes the "
             "cycle this seam set exists to keep open"
         )
-        anywhere = {
-            node.module
-            for node in ast.walk(peer)
-            if isinstance(node, ast.ImportFrom) and node.module
-            and node.module.endswith("foundry_spawn")
-        }
+        anywhere = _all_imports(path) & {"foundry_spawn"}
         assert anywhere, (
             f"{name}.py is named as a spawn seam and reaches foundry_spawn "
             "nowhere; the seam roster has outlived the coupling it records"

@@ -1,0 +1,15 @@
+# evidence-cmd: cd plugins/foundry/mcp-server || exit 1; uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -v tests/orchestration/test_module_boundaries.py::test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith tests/orchestration/test_module_boundaries.py::test_the_package_marker_re_exports_nothing tests/orchestration/test_module_boundaries.py::test_a_planted_lazy_gate_reach_is_seen_by_the_lifecycle_walk tests/orchestration/test_module_boundaries.py::test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions tests/orchestration/test_halt.py::test_the_halted_seal_and_the_cap_path_live_in_the_halt_module 2>&1
+# evidence-for: fallout FR-004, AC-013, OT-012, GI-010, FR-006, AC-015, OT-015, GI-025, FR-063, AC-061, GI-033, FR-043
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+============================= test session starts ==============================
+collecting ... collected 5 items
+
+tests/orchestration/test_module_boundaries.py::test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith PASSED [ 20%]
+tests/orchestration/test_module_boundaries.py::test_the_package_marker_re_exports_nothing PASSED [ 40%]
+tests/orchestration/test_module_boundaries.py::test_a_planted_lazy_gate_reach_is_seen_by_the_lifecycle_walk PASSED [ 60%]
+tests/orchestration/test_module_boundaries.py::test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions PASSED [ 80%]
+tests/orchestration/test_halt.py::test_the_halted_seal_and_the_cap_path_live_in_the_halt_module PASSED [100%]
+
+============================== 5 passed in 0.86s ===============================
