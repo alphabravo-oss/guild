@@ -5791,8 +5791,73 @@ def _module_top_imports(path: Path) -> set[str]:
     }
 
 
+def _package_root() -> Path:
+    """`foundry_mcp/` itself — the parent of `tools/`, derived from a leaf."""
+    return Path(artifacts.__file__).resolve().parent.parent
+
+
+def _submodules_named_by(dotted: str, names: list[str]) -> set[str]:
+    """Which of `names` are SUBMODULES of the package `dotted`, on disk.
+
+    fallout AC-061 / FR-063 / GI-033 / AC-015 / GI-025 / OT-015 (D-192, concern
+    C-107) — THE THIRD SPELLING, AND BOTH WALKS WERE BLIND TO IT.
+
+    An import has three spellings and this guard resolved two. Both walks below
+    read an `ast.ImportFrom` by the basename of `node.module`, so
+    `from foundry_mcp.tools.evidence import verify_evidence` resolved to
+    `evidence` and `import foundry_mcp.tools.evidence` resolved to `evidence`,
+    while `from foundry_mcp.tools import evidence` — the same module, the same
+    load, written the way Python's own tutorial writes it — resolved to `tools`
+    and matched nothing. Driven: `_all_imports` over a one-line module in each
+    spelling returned `hits_verifier=['evidence']` twice and `[]` for the third,
+    and the same source written `from foundry_mcp.tools.orchestration import
+    gates` was invisible to the ACYCLICITY check too, because
+    `_module_top_imports` filters on the prefix `foundry_mcp.tools.
+    orchestration.` and what it was handed had no trailing segment.
+
+    So AC-061's "refuses lifecycle-to-verifier imports ENTIRELY" held in two
+    spellings out of three, and the direction that takes no exception at any
+    depth took one at a punctuation mark. That is D-081's class exactly — its
+    heading is "`ast.Import` IS A MODULE-TOP IMPORT, AND THE SCAN COULD NOT SEE
+    ONE" — recurring in the spelling that fix did not enumerate, which is why
+    the resolution lives HERE, in one helper both walks call, rather than as a
+    third arm copied into each.
+
+    RESOLVED ON DISK, NEVER BY NAME. Collecting every alias of every
+    `ImportFrom` would catch the spelling and invent crossings with it:
+    `from foundry_mcp.schemas.vocab import DEFECT_TIERS` would read a frozenset
+    as a module, and any symbol sharing a basename with a module would be a
+    phantom edge. A guard that reports edges the tree does not have is a guard
+    somebody adds an exception table to, which is the shape this file has now
+    deleted two of. `<package>/<name>.py` existing is a fact, so an alias is a
+    module edge when it IS one and a symbol otherwise.
+
+    Relative imports are left to the caller's existing reading: `node.level` is
+    non-zero for those, `node.module` is then a suffix rather than a package
+    path, and this package writes none. Widening the walk is additive here or
+    it is not worth doing.
+    """
+    if not dotted.startswith("foundry_mcp"):
+        return set()
+    package = _package_root().joinpath(*dotted.split(".")[1:])
+    return {
+        name
+        for name in names
+        if (package / f"{name}.py").is_file()
+        or (package / name / "__init__.py").is_file()
+    }
+
+
 def _module_top_dotted_imports(path: Path) -> set[str]:
-    """Every dotted module name `path` imports AT MODULE TOP, both spellings.
+    """Every dotted module name `path` imports AT MODULE TOP, all three
+    spellings.
+
+    THE THIRD IS RESOLVED BY `_submodules_named_by` ABOVE, and it was missing
+    from the two this docstring used to promise: `from foundry_mcp.tools.
+    orchestration import gates` is a module-top import of `gates` that this
+    walk reported as `foundry_mcp.tools.orchestration`, so the acyclicity check
+    and the three-layer scan both looked straight past it (D-192). The header
+    below is the same class in its first spelling.
 
     fallout AC-015 / FR-006 / GI-025 / OT-015 (D-081) — `ast.Import` IS A
     MODULE-TOP IMPORT, AND THE SCAN COULD NOT SEE ONE.
@@ -5817,6 +5882,13 @@ def _module_top_dotted_imports(path: Path) -> set[str]:
     for node in tree.body:
         if isinstance(node, ast.ImportFrom) and node.module:
             out.add(node.module)
+            if not node.level:
+                out.update(
+                    f"{node.module}.{name}"
+                    for name in _submodules_named_by(
+                        node.module, [alias.name for alias in node.names]
+                    )
+                )
         elif isinstance(node, ast.Import):
             out.update(alias.name for alias in node.names)
     return out
@@ -5854,12 +5926,26 @@ def _module_top_package_imports(path: Path) -> set[str]:
 
 
 def _all_imports(path: Path) -> set[str]:
-    """Every module `path` names in an import, at ANY depth, by basename."""
+    """Every module `path` names in an import, at ANY depth, by basename.
+
+    ALL THREE SPELLINGS, through `_submodules_named_by` — the same helper the
+    module-top walk calls, stated once so the two directions of the layering
+    rule cannot come to see different halves of one statement, which is the
+    drift D-081 was filed for over one rule and D-192 found again over the
+    spelling that fix did not enumerate. `from foundry_mcp.tools import
+    evidence` is a lifecycle module reaching the verifier layer as plainly as
+    the two forms above it, and this walk is what AC-061's "at no depth" is
+    asserted by.
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"))
     out: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
             out.add(node.module.rsplit(".", 1)[-1])
+            if not node.level:
+                out |= _submodules_named_by(
+                    node.module, [a.name for a in node.names]
+                )
         elif isinstance(node, ast.Import):
             out.update(a.name.rsplit(".", 1)[-1] for a in node.names)
     return out
@@ -6593,6 +6679,50 @@ def test_a_planted_lazy_gate_reach_is_seen_by_the_lifecycle_walk(tmp_path):
         encoding="utf-8",
     )
     assert "width" in _all_imports(dotted), sorted(_all_imports(dotted))
+
+    # fallout AC-061 / FR-063 / GI-033 / OT-015 (D-192, concern C-107) — AND THE
+    # THIRD SPELLING, WHICH BOTH WALKS RESOLVED TO THE PACKAGE AND NOT THE
+    # MODULE.
+    #
+    # `from foundry_mcp.tools import evidence` loads `tools/evidence.py` exactly
+    # as the two plants above load theirs, and it read as `tools` — a name in no
+    # layer — so a lifecycle door written this way was a crossing no assertion
+    # in this file had anything to say about. Driven before the fix: this plant
+    # gave `hits_verifier=[]` where the other two gave `['evidence']`.
+    packaged = tmp_path / "pretend_door_packaged.py"
+    packaged.write_text(
+        "def door():\n"
+        "    from foundry_mcp.tools import evidence\n"
+        "    from foundry_mcp.tools.orchestration import gates\n"
+        "    return evidence, gates\n",
+        encoding="utf-8",
+    )
+    assert _all_imports(packaged) & _VERIFIER_MODULES == {"evidence", "gates"}, (
+        sorted(_all_imports(packaged))
+    )
+    # ...and at MODULE TOP the same spelling is a real cycle edge, so the walk
+    # the acyclicity check runs on must resolve it to the submodule rather than
+    # to the package it was reached through.
+    top = tmp_path / "pretend_module_top.py"
+    top.write_text(
+        "from foundry_mcp.tools.orchestration import gates\n", encoding="utf-8"
+    )
+    assert "gates" in _module_top_imports(top), sorted(_module_top_imports(top))
+
+    # THE BOUNDARY, because a resolver that invents edges is a resolver somebody
+    # adds an exception table to. An alias is a module when there is a module of
+    # that name on disk and a SYMBOL otherwise: `DEFECT_TIERS` is a frozenset in
+    # `schemas/vocab.py`, and reading it as a module would make every vocabulary
+    # import in the package a phantom crossing.
+    symbols = tmp_path / "pretend_symbol_import.py"
+    symbols.write_text(
+        "from foundry_mcp.schemas.vocab import DEFECT_TIERS\n"
+        "from foundry_mcp.tools.artifacts import _load_json\n",
+        encoding="utf-8",
+    )
+    assert _all_imports(symbols) == {"vocab", "artifacts"}, sorted(
+        _all_imports(symbols)
+    )
 
 
 #: fallout AC-014 — SHIPPED MODULES NO TEST MODULE IMPORTS, with the reason.
