@@ -5835,23 +5835,26 @@ _VERIFIER_TO_LIFECYCLE_SEAM = frozenset({("transitions", "halt")})
 #: were made to agree was closing the rows, not re-wording the promise.
 
 
-#: fallout FR-004 / AC-013 / OT-012 — THE REPOINT ROSTER IS EMPTY, AND THAT IS
-#: THE HANDSHAKE BY WHICH IT ENDED.
-#:
-#: It carried ten test modules another casting owned, each still importing the
-#: module casting 2 deleted, each named with its owner. The table's own rule was
-#: that it could only SHRINK: an entry whose module had repointed failed, so
-#: nobody could leave a row behind. Castings 3, 4, 5, 6 and 12 have now
-#: repointed all ten, every row went stale at once, and the tuple is gone with
-#: them — which is what the rule was for.
-#:
-#: What replaces it is the absolute assertion it was standing in for, and that
-#: assertion is now TRUE of the whole tree rather than of `src/` alone. OT-012
-#: says "no module named foundry_orchestrator exists and NOTHING imports it";
-#: an inventory was the honest way to say "not yet" while the repoints were in
-#: flight, and keeping one after they land would be an allowlist for a debt that
-#: no longer exists.
-_SIBLING_SUITES_AWAITING_REPOINT: tuple[str, ...] = ()
+# fallout FR-004 / AC-013 / OT-012 — THE REPOINT ROSTER IS GONE, AND THAT IS
+# THE HANDSHAKE BY WHICH IT ENDED.
+#
+# It carried ten test modules another casting owned, each still importing the
+# module casting 2 deleted, each named with its owner. The table's own rule was
+# that it could only SHRINK: an entry whose module had repointed failed, so
+# nobody could leave a row behind. Castings 3, 4, 5, 6 and 12 have now
+# repointed all ten, every row went stale at once, and the tuple is gone with
+# them — which is what the rule was for.
+#
+# What replaces it is the absolute assertion it was standing in for, and that
+# assertion is now TRUE of the whole tree rather than of `src/` alone. OT-012
+# says "no module named foundry_orchestrator exists and NOTHING imports it";
+# an inventory was the honest way to say "not yet" while the repoints were in
+# flight, and keeping one after they land would be an allowlist for a debt that
+# no longer exists — which is why the empty tuple went with the rows rather
+# than staying behind to say the same thing in a shape nothing distinguishes
+# from an exception table. The debt register further down this module was
+# retired on the identical ruling; both are re-creatable from this file's
+# history the day another episode needs one.
 
 
 def _orchestration_dir() -> Path:
@@ -7035,12 +7038,12 @@ def test_the_package_marker_re_exports_nothing():
         "does not exist; each needs the module that defines the symbol."
     )
     outstanding = sorted(o for o in offenders if "/src/" not in o)
-    assert outstanding == list(_SIBLING_SUITES_AWAITING_REPOINT), {
-        "still importing but not recorded": sorted(
-            set(outstanding) - set(_SIBLING_SUITES_AWAITING_REPOINT)
-        ),
-        "recorded but already repointed": sorted(
-            set(_SIBLING_SUITES_AWAITING_REPOINT) - set(outstanding)
+    assert outstanding == [], {
+        "test module(s) still importing foundry_orchestrator": outstanding,
+        "what to do": (
+            "the module does not exist; each offender needs the module that "
+            "now defines the symbol, from casting 2's symbol map. There is no "
+            "roster to record it in — see the comment above this test."
         ),
     }
 
@@ -7553,30 +7556,43 @@ _SHARED_IMPORT_READINGS = (
 _DOTTED_MODULE_PATH = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$")
 
 
-#: The blind readings that exist RIGHT NOW, each with the concern that closes
-#: it. A DEBT REGISTER, not an exception table, and the difference is the
-#: assertion below: it compares this mapping to what the scan finds by EQUALITY,
-#: so a row cannot outlive its site (fix the site without removing the row and
-#: the guard goes red) and a new blind reading cannot join it silently. Each row
-#: is a defect somebody has been told about, in a file this casting may not
-#: edit; when the three concerns close, this mapping is empty and stays empty.
-#:
-#: This is the shape `_SIBLING_SUITES_AWAITING_REPOINT` used above and then
-#: emptied, and it is NOT the shape D-193 refused — that was a list of sites
-#: declared permanently fine.
-_SPELLING_BLIND_READINGS_AWAITING_REPAIR = {
-    # SILENT: a lifecycle module reaching the evidence engine in spelling two
-    # leaves both equality rosters unchanged and the test passes. Driven.
-    "mcp-server/tests/test_artifacts.py"
-    "::test_the_evidence_engine_is_reached_by_the_named_seams_only": "C-118",
-    # SILENT: the import-site walk finds no site, `sites` is empty, and the
-    # `continue` drops a handler that writes to the JSON-RPC channel. Driven.
-    "mcp-server/tests/test_evidence.py::_protocol_stdout_scan": "C-119",
-    # LOUD but WRONG: the delegation arm cannot see spelling two, so the pin
-    # fails naming an innocent reader for a reason that is not true. Driven.
-    "mcp-server/tests/test_vocab.py"
-    "::test_every_shipped_reader_of_escalation_json_resolves_status_in_vocab": "C-120",
-}
+# THE DEBT REGISTER IS GONE, BECAUSE ITS DEBT IS PAID, AND OUTLIVING THE
+# EPISODE IS THE ONE THING IT WAS NEVER ALLOWED TO DO.
+#
+# It carried three blind readings in three files this casting may not edit,
+# each with the concern that closes it: `test_artifacts.py`'s evidence-engine
+# seam scan (C-118, SILENT — a spelling-two lifecycle reach left both equality
+# rosters unchanged), `test_evidence.py`'s stdout site walk (C-119, SILENT — an
+# empty `sites` dropped a handler that writes to the JSON-RPC channel) and
+# `test_vocab.py`'s escalation pin (C-120, LOUD but WRONG — it named an
+# innocent reader). It was compared to the scan by EQUALITY, so a row could not
+# outlive its site. Castings 7, 5 and 10 fixed all three in one cycle, and
+# every row went stale at once with them.
+#
+# IT IS NOT REPLACED BY AN EMPTY MAPPING, AND THAT IS A RULING RATHER THAN
+# TIDYING. An empty debt register and an exception table are the same object.
+# The one behaviour that distinguishes a register — "a row stopped accounting
+# for anything" — cannot occur while it has no rows, so what would be left
+# standing is the affordance alone: the easy way to write a blind reading DOWN
+# instead of fixing it, guarded by nothing but the sentence asking you not to.
+# Nothing ever read a row's VALUE, so "each row costs a Foundry-Concern" was
+# prose and not mechanism, which is the shape D-193 is. This file has deleted
+# two tables for less: `_UNCLOSED_CROSS_PACKAGE_EDGES` went because the rows
+# were closed rather than the promise re-worded, and the repoint roster above
+# went for the reason it states in its own comment — keeping an inventory after
+# its rows land is an allowlist for a debt that no longer exists.
+#
+# The assertion below gives up nothing by it. `found == {}` is the same
+# equality with one indirection fewer, and the diagnosis a new blind reading
+# receives was always carried by the failure message rather than by the
+# container.
+#
+# IF A DEBT EPISODE EVER NEEDS ONE AGAIN — a blind reading in a file the
+# finding casting may not edit, and a wave that cannot carry a red module while
+# the concern is in flight — the shape is in this file's history: a mapping of
+# `"<path>::<scope>"` to the concern id, compared to the scan by EQUALITY so it
+# can only shrink, created with the episode and deleted with it. Write one
+# then. Do not leave one standing now.
 
 
 def _plugin_root_for_the_import_scan() -> Path:
@@ -7797,15 +7813,9 @@ def test_no_import_reading_pins_the_module_to_its_own_name():
     )
 
     found = _blind_import_readings(root)
-    assert set(found) == set(_SPELLING_BLIND_READINGS_AWAITING_REPAIR), {
-        "blind and not on the register": {
-            where: pins for where, pins in found.items()
-            if where not in _SPELLING_BLIND_READINGS_AWAITING_REPAIR
-        },
-        "on the register and no longer blind": sorted(
-            set(_SPELLING_BLIND_READINGS_AWAITING_REPAIR) - set(found)
-        ),
-        "what a new row means": (
+    assert found == {}, {
+        "blind readings": found,
+        "what each one means": (
             "this scope tests `ImportFrom.module` against the module's OWN full "
             "name, so `from <parent> import <module>` — the same load, written "
             "the way Python's own tutorial writes it — walks past it. Read the "
@@ -7816,13 +7826,18 @@ def test_no_import_reading_pins_the_module_to_its_own_name():
             "they bind, the way "
             "`_leaf_symbols_the_consolidation_scripts_import` does — a "
             "narrowness that is asserted is a different object from one that is "
-            "merely typed. Adding a row here is for a site in another casting's "
-            "file, and costs a Foundry-Concern naming it."
+            "merely typed. If the scan walks a SYNTHETIC tree rather than the "
+            "installed package, `tests/test_evidence.py#_bound_by` is the "
+            "worked answer: `_submodules_named_by` resolves against the real "
+            "package root and would answer for nothing, so resolve on the disk "
+            "that scan itself walked."
         ),
-        "what a removed row means": (
-            "the site was fixed and its row was not taken with it; this "
-            "register is a debt, and a row that no longer accounts for anything "
-            "is the exception table it must never become"
+        "if the site is in a file you may not edit": (
+            "file a Foundry-Concern naming the casting that owns it, and let it "
+            "be fixed there. There is no register to record it in and that is "
+            "deliberate — see the comment above this test, which also names the "
+            "shape to re-create if a wave genuinely cannot carry a red module "
+            "while the concern is in flight."
         ),
     }
 
