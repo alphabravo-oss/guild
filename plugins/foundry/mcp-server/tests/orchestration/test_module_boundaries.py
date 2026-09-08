@@ -193,8 +193,18 @@ def test_the_accept_casting_description_accounts_for_every_hard_reject_branch():
 
     from foundry_mcp import server as foundry_server
 
-    handoff_path = Path(artifacts.__file__).parent / "foundry_handoff.py"
-    source = handoff_path.read_text(encoding="utf-8")
+    # fallout AC-061 / FR-063 / GI-033 (D-192, concern C-107) — THE DOOR IS IN
+    # `tools/evidence.py` NOW, AND THIS PIN FOLLOWS IT.
+    #
+    # `foundry_accept_casting` RUNS `verify_evidence`, so while it was defined
+    # in `foundry_handoff.py` it was the one lifecycle-to-verifier crossing this
+    # tree had. GI-033's arithmetic gave nothing to hoist — what was reached was
+    # the engine, not a symbol — so C-107 reversed the edge instead and the
+    # handler moved beside the engine. An `ast.parse` pin names a FILE, so it
+    # does not follow a function object the way `inspect.getsource` does: this
+    # is one of the four this casting repointed in the same dispatch (GI-026).
+    door_path = Path(artifacts.__file__).parent / "evidence.py"
+    source = door_path.read_text(encoding="utf-8")
     function = next(
         node
         for node in ast.walk(ast.parse(source))
@@ -345,9 +355,11 @@ def test_the_accept_casting_description_says_what_omitting_the_sha_costs():
     # produce the house {error, hint} shape.
     import inspect
 
-    from foundry_mcp.tools import foundry_handoff as handoff_module
+    # fallout AC-061 / GI-033 (D-192, concern C-107): the handler's home is
+    # `tools/evidence.py`, beside the verification it runs.
+    from foundry_mcp.tools import evidence as door_module
 
-    params = inspect.signature(handoff_module.foundry_accept_casting).parameters
+    params = inspect.signature(door_module.foundry_accept_casting).parameters
     assert params["casting_commit"].default is None
     assert "casting_commit" in accept.inputSchema["required"]
 
@@ -360,10 +372,11 @@ def test_the_accept_casting_description_agrees_with_the_handlers_own_payload():
     cannot drift apart again without a test failing."""
     from foundry_mcp import server as foundry_server
 
-    handoff_src = (
-        Path(artifacts.__file__).parent / "foundry_handoff.py"
+    # fallout AC-061 / GI-033 (D-192, concern C-107): repointed with the door.
+    door_src = (
+        Path(artifacts.__file__).parent / "evidence.py"
     ).read_text(encoding="utf-8")
-    assert "path#Symbol or file:line citation" in handoff_src
+    assert "path#Symbol or file:line citation" in door_src
 
     tools = asyncio.run(foundry_server.list_tools())
     accept = next(t for t in tools if t.name == "Foundry-Accept-Casting")
@@ -413,7 +426,9 @@ def test_accept_casting_dispatch_delivers_casting_commit_to_the_handler(monkeypa
     evidence block keys on.
     """
     from foundry_mcp import server as foundry_server
-    from foundry_mcp.tools import foundry_handoff as handoff_module
+
+    # fallout AC-061 / GI-033 (D-192, concern C-107): repointed with the door.
+    from foundry_mcp.tools import evidence as door_module
 
     seen: list[dict] = []
 
@@ -439,7 +454,7 @@ def test_accept_casting_dispatch_delivers_casting_commit_to_the_handler(monkeypa
     # value lands somewhere rather than being swallowed by **kwargs.
     import inspect
 
-    params = inspect.signature(handoff_module.foundry_accept_casting).parameters
+    params = inspect.signature(door_module.foundry_accept_casting).parameters
     assert "casting_commit" in params
     assert params["casting_commit"].default is None
 
@@ -5551,21 +5566,22 @@ def test_the_agent_id_has_one_implementation_however_it_is_spelled():
 #   2. no top-level symbol is defined in two of them (the group (4) test above);
 #   3. the THREE LAYERS hold — a verifier module reaches leaves and nothing in
 #      the lifecycle/presentation layer, with ONE named exception, and a
-#      lifecycle module reaches no verifier module except the crossings recorded
-#      in `_OPEN_LAYERING_VIOLATIONS`, each held open by a named defect;
+#      lifecycle module reaches NO verifier module at all;
 #   4. every shipped orchestration module has a test module that imports it.
 #
-# ON THE DIFFERENCE BETWEEN THOSE TWO CLAUSES, because D-193 was half a prose
+# ON THE ASYMMETRY BETWEEN THOSE TWO CLAUSES, because D-193 was half a prose
 # defect (lead ruling, GRIND cycle 7). The EXCEPTION in the verifier direction
-# is `_VERIFIER_TO_LIFECYCLE_SEAM`: the walk SKIPS it, the edge is legal, and it
-# never enters any assertion's subject. The RECORD in the lifecycle direction is
-# `_OPEN_LAYERING_VIOLATIONS`: the walk finds the crossing, it enters
-# `offenders`, and the assertion compares rather than skips — so the guard says
-# "this tree has exactly this one violation and D-192 is closing it", never
-# "this tree is clean". One row exists today. There is no third arrangement:
-# an unnamed set of pairs consulted with `continue` is what C-054 and D-193 each
-# deleted a table for, and `test_the_layering_rule_consults_exactly_one_
-# exception_table` is what keeps a third from being written.
+# is `_VERIFIER_TO_LIFECYCLE_SEAM`: the walk SKIPS it, the edge is legal, GI-033
+# names it, and it never enters any assertion's subject. The lifecycle direction
+# has no counterpart and never had a legal one — it asserts `offenders == []`
+# outright. It reached that state the long way: an allowlist stood there
+# (C-054), then a second frozenset consulted with `continue` (D-193), then a
+# roster the assertion COMPARED against rather than skipped on while D-192's one
+# real crossing was open. All three are deleted, the last of them by the
+# reshaping that emptied it. There is no fourth: a crossing nobody can close
+# this cycle is a failing test and a filed concern, and
+# `test_the_layering_rule_consults_exactly_one_exception_table` is what keeps
+# one from being written back in.
 # --------------------------------------------------------------------------- #
 
 #: GI-033's three layers, by module basename.
@@ -5704,20 +5720,23 @@ _VERIFIER_TO_LIFECYCLE_SEAM = frozenset({("transitions", "halt")})
 #: other direction does not answer to that arithmetic: casting 7 drove it for
 #: D-192 and reported in C-107 that what `foundry_accept_casting` reaches is not
 #: a symbol but the evidence ENGINE (`verify_evidence`, one caller, ~800 lines
-#: of closure shared with the sweep), so there is nothing to move to a leaf and
-#: the edge can only be REVERSED or ELIMINATED — a four-casting reshaping no
-#: cycle of this run has scoped.
+#: of closure shared with the sweep), so there was nothing to move to a leaf and
+#: the edge could only be REVERSED or ELIMINATED — a four-casting reshaping no
+#: cycle of this run had scoped when this paragraph was written.
 #:
-#: SO THE CROSSING IS RECORDED WHERE IT CANNOT BE MISTAKEN FOR ABSENCE:
-#: `_OPEN_LAYERING_VIOLATIONS`, below the lifecycle walk, which the assertion
-#: COMPARES ITS RESULT AGAINST rather than skips on. The difference from the
-#: table it replaces is the whole point and it is checkable: an excused edge
-#: never entered `offenders`, so the assertion's own subject was `[]` and
-#: nothing downstream could tell the tree had the coupling; a recorded one IS in
-#: `offenders`, named by the walk that found it, and the roster is the sentence
-#: "this is the violation we know about and here is who closes it". What is left
-#: as an EXCEPTION is the one GI-033 itself names, spelled once, one-way, and
-#: asserted to exist.
+#: IT WAS SCOPED AND THEN IT WAS DONE, IN GRIND CYCLE 7. The crossing was first
+#: RECORDED where it could not be mistaken for absence — an open-violations
+#: roster below the lifecycle walk, which the assertion COMPARED ITS RESULT
+#: AGAINST rather than skipped on, so the edge stayed inside `offenders` and a
+#: reader of either could see the tree was not clean. Then casting 7 reversed
+#: it: `foundry_accept_casting` moved into `tools/evidence.py` beside the engine
+#: it runs, with its lifecycle dependencies hoisted into `artifacts.py`, and
+#: casting 2 repointed the registrar and this file's four accept-casting pins in
+#: the same dispatch per GI-026. `offenders` emptied, the roster went stale, and
+#: the assertion failed by name until the roster was deleted — which is the
+#: behaviour it was built for. What is left as an EXCEPTION anywhere in this
+#: file is the one GI-033 itself names, spelled once, one-way, and asserted to
+#: exist.
 #:
 #: fallout GI-033 / AC-061 / FR-063 / OT-015 (D-021 / D-035) — THERE IS NO
 #: LAYERING-DEBT ALLOWLIST ANY MORE, AND THAT IS THE FIX.
@@ -6294,77 +6313,50 @@ _LIFECYCLE_FLOOR = frozenset({
     "streams", "teams",
     "concerns", "display", "foundry", "foundry_report", "foundry_spawn",
     "rosters",
-    # fallout AC-061 (D-126): the acceptance door, named because the widened
-    # verifier set makes its reach INTO  judgeable for the first
-    # time. A floor that did not name it would let the walk go blind over the
-    # one lifecycle-to-verifier crossing this tree actually has.
+    # fallout AC-061 (D-126, then D-192): the module that HELD the acceptance
+    # door, named because the widened verifier set made its reach into
+    # `tools/evidence.py` judgeable for the first time. That reach is gone —
+    # D-192 moved `foundry_accept_casting` to the verifier layer beside the
+    # engine it runs — and the name STAYS, because this is a vacuity floor and
+    # not a debt list: `foundry_handoff` is still a lifecycle module, and a
+    # walk that stopped seeing it would be a walk gone blind over the module
+    # this rule's only real crossing came out of.
     "foundry_handoff",
 })
 
 #: fallout AC-015 / AC-061 / FR-063 / GI-033 / OT-015 (D-192 / D-193, concern
-#: C-107) — THE VIOLATIONS THIS TREE STILL HAS, RECORDED RATHER THAN EXCUSED.
+#: C-107) — THE OPEN-VIOLATIONS ROSTER IS GONE, AND THE WAY IT WENT IS THE
+#: POINT.
 #:
-#: `{offender line: who closes it}`. The assertion below COMPARES its result
-#: against this roster; it never skips on it, and that is the whole distinction
-#: from the two tables this guard has now deleted. An excused edge never entered
-#: `offenders`, so the assertion's subject was `[]` and the guard reported a
-#: clean tree over a tree with the coupling in it (C-054's fourteen crossings,
-#: then D-193's two). A recorded edge IS in `offenders`: the walk found it, the
-#: assertion names it, and a reader of either sees the tree is not clean.
+#: It was `{offender line: who closes it}` carrying ONE row — `foundry_handoff
+#: (lifecycle) reaches evidence (verifier)` — and the assertion below COMPARED
+#: its result against it rather than skipping on it, which is the whole
+#: distinction from the two tables this guard deleted before it. An excused edge
+#: never entered `offenders`, so the assertion's subject was `[]` and the guard
+#: reported a clean tree over a tree with the coupling in it (C-054's fourteen
+#: crossings, then D-193's two). A recorded edge WAS in `offenders`: the walk
+#: found it, the assertion named it, and a reader of either could see the tree
+#: was not clean.
 #:
-#: EXACT EQUALITY, so it cannot outlive the debt. A NEW crossing fails because
-#: the sets differ; the day D-192's reshaping lands, `offenders` empties, this
-#: roster goes stale and the assertion fails telling whoever closed it to delete
-#: the row. There is no arrangement in which a row survives its own crossing.
+#: IT WAS EXACT EQUALITY SO IT COULD NOT OUTLIVE THE DEBT, and it did not. Its
+#: own paragraph said "the day D-192's reshaping lands, `offenders` empties,
+#: this roster goes stale and the assertion fails telling whoever closed it to
+#: delete the row", and that is exactly how this deletion was prompted: casting
+#: 7 moved `foundry_accept_casting` out of `foundry_handoff.py` into
+#: `tools/evidence.py` beside the `verify_evidence` engine it runs, `offenders`
+#: went to `[]`, and this file went red naming the stale row. `test_every_open_
+#: layering_violation_names_who_closes_it` went with it, on the instruction its
+#: own emptiness message carried: "delete it along with the roster and let the
+#: layering rule assert `offenders == []` outright, which is where this guard is
+#: going."
 #:
-#: AND EVERY ROW NAMES ITS OWNER. `test_every_open_layering_violation_names_who_
-#: closes_it` refuses a row whose value does not cite a defect id and a concern
-#: id, so a row cannot be added as a shrug — adding one means writing down the
-#: reshaping and the record that scopes it, which is what C-107 did.
-_OPEN_LAYERING_VIOLATIONS: dict[str, str] = {
-    "foundry_handoff (lifecycle) reaches evidence (verifier)": (
-        "D-192, scoped by concern C-107. `foundry_accept_casting` reaches "
-        "`verify_evidence` — the evidence ENGINE, one caller in the package, "
-        "its closure sharing `_make_provenance_record` and the worktree "
-        "helpers with the sweep — so GI-033's 'move the symbol both layers "
-        "read into a leaf' has nothing to move and the edge can only be "
-        "reversed or eliminated. C-107 measured the four-casting dispatch that "
-        "does it: castings 7 and 5 hoist the frontmatter parsers, the handoff "
-        "ledger write and the prompt-hash check into `artifacts.py` and take "
-        "the acceptance door into the verifier layer beside the engine, and "
-        "casting 2 repoints `server.py` plus three AST pins in the same "
-        "dispatch per GI-026. Casting 7 took no laundering exit — no lazy "
-        "import, no unjudged module, no leaf-hosted relay — which is why the "
-        "edge is still here and still visible."
-    ),
-}
-
-
-def test_every_open_layering_violation_names_who_closes_it():
-    """fallout AC-015 / OT-015 (D-193) — a recorded violation is owned or it is
-    a shrug.
-
-    The roster above is the one thing between this guard and an absolute rule,
-    so the bar for a row is that somebody has written down the reshaping that
-    removes it and the record that scopes it. A row whose reason cites no defect
-    and no concern is an excuse with better formatting, which is the shape C-054
-    and D-193 each deleted a table for.
-    """
-    assert _OPEN_LAYERING_VIOLATIONS, (
-        "the open-violations roster is empty, so this pin judges nothing — "
-        "delete it along with the roster and let the layering rule assert "
-        "`offenders == []` outright, which is where this guard is going."
-    )
-    unowned = sorted(
-        row for row, why in _OPEN_LAYERING_VIOLATIONS.items()
-        if not (re.search(r"\bD-\d+\b", why) and re.search(r"\bC-\d+\b", why))
-    )
-    assert unowned == [], (
-        f"open-layering-violation row(s) naming no owner: {unowned}. Every row "
-        "must cite the defect that tracks the crossing and the concern that "
-        "scopes the reshaping closing it. Without both, the row is an excuse "
-        "with a different punctuation mark."
-    )
+#: SO THE RULE BELOW IS ABSOLUTE IN ITS OWN TEXT NOW, not merely in its prose.
+#: There is no roster, no allowlist and no skip in the lifecycle direction —
+#: only `offenders == []` — and the one exception that survives anywhere in this
+#: file is `_VERIFIER_TO_LIFECYCLE_SEAM`, which points the other way, is
+#: one-way, is enumerated and is asserted to exist. A future crossing has no
+#: table to be written into: it is a failing test and a filed concern, which is
+#: what C-107 was and what closing it looked like.
 
 
 def test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth():
@@ -6402,22 +6394,24 @@ def test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth():
     real edges. A guard whose prose a reader cannot check against its own code
     is the failure NFR-009 keeps this rule in forty lines of `ast` to avoid.
 
-    THE TABLE IS GONE AND ONE CROSSING IS NOT. D-191 closed
-    `evidence -> foundry_handoff` by moving the declaration grammar to the leaf.
-    `foundry_handoff -> evidence` does not answer to that arithmetic — C-107
-    drove it and found the door reaching the evidence ENGINE rather than a
-    symbol — so it is RECORDED in `_OPEN_LAYERING_VIOLATIONS` and this
-    assertion compares its result against that roster. It never skips: the
-    crossing is in `offenders`, computed by the same walk, which is the
-    difference between a debt written down and a violation hidden. The rule is
-    still absolute in the only sense that matters — no edge is legal — and it
-    returns to `offenders == []` the day the reshaping lands, because a stale
-    row fails here by name.
+    BOTH TABLES ARE GONE AND SO IS THE LAST CROSSING, WHICH IS D-192. D-191
+    closed `evidence -> foundry_handoff` by moving the declaration grammar to
+    the leaf. `foundry_handoff -> evidence` did not answer to that arithmetic —
+    C-107 drove it and found the door reaching the evidence ENGINE rather than a
+    symbol, so there was nothing to hoist — and it was RECORDED in an
+    open-violations roster this assertion compared against rather than skipped
+    on, until casting 7 reversed the edge and moved `foundry_accept_casting`
+    into `tools/evidence.py` beside the engine it runs. The roster went stale
+    the moment `offenders` emptied, failed here by name exactly as it was built
+    to, and was deleted. What this assertion says is now `offenders == []`, with
+    no second operand a reader has to go and check.
 
-    AT ANY DEPTH AND IN BOTH SPELLINGS, through the same `_all_imports` walk the
-    verifier-side companion uses, so the two directions cannot come to see
-    different halves of the same statement — which is the drift D-081 was filed
-    for one rule over.
+    AT ANY DEPTH AND IN ALL THREE SPELLINGS, through the same `_all_imports`
+    walk the verifier-side companion uses, so the two directions cannot come to
+    see different halves of the same statement — which is the drift D-081 was
+    filed for one rule over, and which D-192 found again in the spelling that
+    fix did not enumerate (`from foundry_mcp.tools import evidence`, resolved to
+    `tools` and matching nothing until `_submodules_named_by` was written).
 
     THE REMEDY IS ALWAYS A LEAF. GI-033's arithmetic is that the two layers are
     mutually unreachable, so a symbol read from BOTH can live in neither: it
@@ -6458,18 +6452,19 @@ def test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth():
         "cannot judge it, and the assertion below would pass over any tree."
     )
 
-    assert offenders == sorted(_OPEN_LAYERING_VIOLATIONS), (
-        f"lifecycle-to-verifier crossings are {offenders}, and the recorded "
-        f"open set is {sorted(_OPEN_LAYERING_VIOLATIONS)}. This direction has "
-        "NO exception — not a seam, not a skip, not a lazy import, at no depth "
-        "— so a crossing that is not in the roster is a NEW violation and a "
-        "roster row that is not in the crossings is a debt somebody closed "
-        "without deleting its row. The symbol both layers read belongs in a "
-        "leaf (`artifacts`, `foundry_state`, `vocab` or `schemas`); where what "
-        "is reached is not a symbol but a whole engine, the edge is reversed or "
-        "eliminated and the reshaping is recorded in the roster's own reason. "
-        "An entry that merely EXCUSES an edge — one the walk never sees — is "
-        "the shape C-054 and D-193 each deleted a table for."
+    assert offenders == [], (
+        f"lifecycle module(s) reaching the verifier layer: {offenders}. This "
+        "direction has NO exception — not a seam, not a table, not a roster, "
+        "not a lazy import, at no depth and in no spelling. The remedy is one "
+        "of two, and neither of them is a row somebody writes here: the symbol "
+        "both layers read belongs in a leaf (`artifacts`, `foundry_state`, "
+        "`vocab` or `schemas`), and where what is reached is not a symbol but a "
+        "whole engine, the edge is REVERSED — which is how D-192 was closed, "
+        "by moving the acceptance door to `tools/evidence.py` beside the "
+        "verification it runs. Three tables have now stood where this sentence "
+        "is (C-054's allowlist, D-193's second frozenset, D-192's own recorded "
+        "roster) and all three are gone; a crossing that cannot be closed this "
+        "cycle is a failing test and a filed concern, never a fourth."
     )
 
 
@@ -6543,14 +6538,18 @@ def test_the_layering_rule_consults_exactly_one_exception_table():
     bare name. An excuse is asked of a PAIR, which is what `_edge_exception_
     tables` keys on.
 
-    NEITHER IS `_OPEN_LAYERING_VIOLATIONS`, AND THE REASON IS THE ONE D-193
-    TURNS ON. That roster is never asked whether an edge is allowed — it is
-    COMPARED against the offenders the walk already found, so the crossing it
-    records is in the assertion's own subject and a reader of either sees the
-    tree is not clean. A skip removes an edge from the evidence; a comparison
-    puts it in. This pin measures skips, which is why it does not and must not
-    count a comparison target: forbidding those would forbid the guard from
-    stating what it found.
+    NOR WAS THE OPEN-VIOLATIONS ROSTER, AND THE REASON IS THE ONE D-193 TURNS
+    ON. While D-192's crossing was open the lifecycle rule carried a roster of
+    the violations the tree still had, and this pin did not count it: a roster
+    is never asked whether an edge is ALLOWED — it is COMPARED against the
+    offenders the walk already found, so the crossing it records is in the
+    assertion's own subject and a reader of either sees the tree is not clean. A
+    skip removes an edge from the evidence; a comparison puts it in. This pin
+    measures skips, which is why it must not count a comparison target:
+    forbidding those would forbid the guard from stating what it found. The
+    roster is gone now — D-192's edge was reversed and the lifecycle rule
+    asserts `offenders == []` — so the distinction survives only as the reason
+    this pin is written the way it is.
     """
     consulted: dict[str, set[str]] = {}
     for func in _LAYERING_ASSERTIONS:
@@ -6587,9 +6586,11 @@ def test_the_layering_rule_consults_exactly_one_exception_table():
         "'is this edge allowed' takes the crossing out of the assertion's "
         "subject, which is how a guard comes to report a clean tree over a tree "
         "with the coupling in it. C-054 deleted the first such table and D-193 "
-        "the second. A crossing that cannot be closed is RECORDED in "
-        "`_OPEN_LAYERING_VIOLATIONS`, where the walk still finds it and the "
-        "assertion still names it, never skipped."
+        "the second. A crossing that cannot be closed this cycle is RECORDED "
+        "where the walk still finds it and the assertion still names it — a "
+        "roster the rule COMPARES against, never a container it skips on — and "
+        "it is deleted the moment the edge is closed, which is what D-192 did "
+        "to the last one."
     )
 
     layering = {

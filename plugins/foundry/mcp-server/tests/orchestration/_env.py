@@ -915,6 +915,25 @@ _PROSE_CITES_WITH_NO_DEFINITION: dict[str, str] = {
         "and `test_the_layering_rule_consults_exactly_one_exception_table` is "
         "what keeps a third from being added."
     ),
+    # fallout AC-015 / AC-061 / FR-063 / GI-033 / OT-015 (D-192, concern C-107)
+    # — THE THIRD AND LAST CONTAINER TO STAND WHERE `offenders == []` NOW IS.
+    "_OPEN_LAYERING_VIOLATIONS": (
+        "the boundary guard's open-violations roster — `{offender line: who "
+        "closes it}`, one row, `foundry_handoff (lifecycle) reaches evidence "
+        "(verifier)`. It was NOT an exception table and that was its whole "
+        "argument: the lifecycle assertion COMPARED its result against the "
+        "roster instead of skipping on it, so the crossing stayed inside "
+        "`offenders` and the guard said 'this tree has exactly this violation' "
+        "rather than 'this tree is clean'. Written to be unable to outlive its "
+        "debt, and it did not: casting 7 reversed the edge for D-192 by moving "
+        "`foundry_accept_casting` into `tools/evidence.py` beside the engine it "
+        "runs, `offenders` emptied, the exact-equality assertion failed naming "
+        "the stale row, and roster and row were DELETED together with "
+        "`test_every_open_layering_violation_names_who_closes_it`, on the "
+        "instruction that test's own emptiness message carried. The lifecycle "
+        "direction asserts `offenders == []` outright now, with no second "
+        "operand a reader has to go and check."
+    ),
     "_DOOR_WRITTEN_DEFECT_FIELDS": (
         "superseded binding deleted; named here only as a prior instance of "
         "that same class (D-202/D-203)."
