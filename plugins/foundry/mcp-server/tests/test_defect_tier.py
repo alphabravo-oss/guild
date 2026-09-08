@@ -123,21 +123,6 @@ from foundry_mcp.tools.foundry import (
 )
 from foundry_mcp.tools.foundry_state import clear_active_run
 
-# fallout NFR-011 (D-195's class, fallout_of D-150) — the citation-resolution
-# grammar, IMPORTED. `tests/test_skill_prose.py` owns it: which spellings
-# qualify a cite, how a spec's own table is parsed into rows, and how a
-# module's assertion MESSAGES are read out of its AST. The section at the tail
-# of this module consumes that grammar on this module's one message that names
-# the reproduction rung; it does not restate it. A second copy of the spec-row
-# parser here would be exactly the duplicate-spelling class this run keeps
-# filing, and `tests/test_evidence.py` already establishes that reaching a
-# sibling test module's scanner helpers by name is how this suite shares them.
-from tests.test_skill_prose import (
-    SPEC_ROWS,
-    _assertion_messages,
-    _contract_rows_naming,
-)
-
 
 @pytest.fixture
 def run_env(tmp_path):
@@ -1909,17 +1894,52 @@ def test_both_real_doors_accept_the_negative_space_statement(run_env, matched, c
 # and imports every scanner it needs.
 # ---------------------------------------------------------------------------
 
-#: The contract id each spec states the reproduction obligation in, DERIVED
-#: from that spec's own table. `convergence` states it for LATENT — the tier
-#: this module's negative-space pair drives — and `fallout` states it for
-#: HARDENING. Same rung, two rows, two numbers, and typing one for the other is
-#: invisible to every check that only asks whether an id is well-formed.
-_LATENT_REPRODUCTION_CONTRACT = _contract_rows_naming(
-    "convergence ", "reproduction_attempted"
-)
-_THIS_SPECS_REPRODUCTION_CONTRACT = _contract_rows_naming(
-    "fallout ", "reproduction_attempted"
-)
+#: tests/test_defect_tier.py -> parents: [0]=tests, [1]=mcp-server, [2]=foundry,
+#: [3]=plugins, [4]=repo root, which is where `forge-specs/` hangs.
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def _spec_backed_scanners():
+    """The resolution grammar, or a SKIP when no spec is on this checkout.
+
+    IMPORTED, NOT RESTATED. `tests/test_skill_prose.py` owns the grammar of a
+    cite: how a spec's own table is parsed into rows, and how a module's
+    assertion MESSAGES are read out of its AST. A second copy of the spec-row
+    parser here would be the duplicate-spelling class these pins exist to
+    catch, and `tests/test_evidence.py` already establishes that reaching a
+    sibling test module's scanner helpers by name is how this suite shares
+    them.
+
+    LATE, AND BEHIND THE SKIP, AND BOTH HALVES ARE LOAD-BEARING. `forge-specs/`
+    is GITIGNORED, so no spec is on a fresh checkout — and the evidence gate
+    re-executes this module's log in exactly that environment, from a
+    `git worktree add --detach` of the casting's commit. The sibling module
+    builds its spec tables at IMPORT time and asserts when a spec is
+    unreadable, so importing it from this module's top made the whole of
+    `test_defect_tier.py` fail COLLECTION under the gate — 141 tests turned
+    into one collection error by a two-test pin. Driven at df8afff before this
+    guard existed.
+
+    So the presence check runs FIRST, off `QUALIFIER_SPECS` (a table, not a
+    file read), and the import happens only once it has passed. The skip
+    reason is the spelling `tests/orchestration/test_module_boundaries.py`
+    already uses for the same condition, because it is the same condition.
+    """
+    from tests.test_spec_id_convention import QUALIFIER_SPECS
+
+    absent = sorted(
+        spec for spec in QUALIFIER_SPECS.values() if not (_REPO_ROOT / spec).is_file()
+    )
+    if absent:
+        pytest.skip(f"this checkout carries no run spec ({absent[0]})")
+
+    from tests.test_skill_prose import (
+        SPEC_ROWS,
+        _assertion_messages,
+        _contract_rows_naming,
+    )
+
+    return SPEC_ROWS, _assertion_messages, _contract_rows_naming
 
 
 def test_the_latent_reproduction_rung_cites_the_spec_that_states_it() -> None:
@@ -1932,14 +1952,17 @@ def test_the_latent_reproduction_rung_cites_the_spec_that_states_it() -> None:
     renumbering there turns this red instead of leaving a stale number in a
     sentence nobody re-reads.
     """
-    assert len(_LATENT_REPRODUCTION_CONTRACT) == 1, (
+    _, _assertion_messages, _contract_rows_naming = _spec_backed_scanners()
+    latent_rung = _contract_rows_naming("convergence ", "reproduction_attempted")
+
+    assert len(latent_rung) == 1, (
         f"the convergence contracts table states `reproduction_attempted` in "
-        f"{list(_LATENT_REPRODUCTION_CONTRACT)}. This pin expects exactly one "
+        f"{list(latent_rung)}. This pin expects exactly one "
         f"row to attribute the LATENT rung to; with none or several, the "
         f"message above needs rewriting against the table rather than this "
         f"assertion relaxing."
     )
-    expected = f"convergence {_LATENT_REPRODUCTION_CONTRACT[0]}"
+    expected = f"convergence {latent_rung[0]}"
     assert any(expected in text for _, text in _assertion_messages(Path(__file__))), (
         f"no assertion message in this module attributes the LATENT "
         f"reproduction rung to {expected}, the one row the convergence "
@@ -1963,10 +1986,14 @@ def test_the_latent_rungs_number_never_wears_this_runs_spec_name() -> None:
     guards; it fires only when the two specs genuinely disagree about the rung,
     which is precisely when the substitution is possible.
     """
+    spec_rows, _assertion_messages, _contract_rows_naming = _spec_backed_scanners()
+    latent_rung = _contract_rows_naming("convergence ", "reproduction_attempted")
+    this_runs_rung = _contract_rows_naming("fallout ", "reproduction_attempted")
+
     borrowed = sorted(
         cited
-        for cited in _LATENT_REPRODUCTION_CONTRACT
-        if cited not in _THIS_SPECS_REPRODUCTION_CONTRACT
+        for cited in latent_rung
+        if cited not in this_runs_rung
         and any(
             f"fallout {cited}" in text
             for _, text in _assertion_messages(Path(__file__))
@@ -1976,9 +2003,9 @@ def test_the_latent_rungs_number_never_wears_this_runs_spec_name() -> None:
         f"{borrowed} is the CONVERGENCE spec's contract id for the LATENT "
         f"reproduction rung, cited here as this run's. Under the fallout spec "
         f"that row is "
-        f"{SPEC_ROWS['fallout '][borrowed[0]].split('|')[2].strip()!r}, which "
+        f"{spec_rows['fallout '][borrowed[0]].split('|')[2].strip()!r}, which "
         f"has no tiers and no filing doors. This run's number for the same "
-        f"rung is {list(_THIS_SPECS_REPRODUCTION_CONTRACT)} and states it for "
+        f"rung is {list(this_runs_rung)} and states it for "
         f"HARDENING; cite the predecessor with its own name — "
         f"`convergence {borrowed[0]}` — when the predecessor is what you mean."
     )
