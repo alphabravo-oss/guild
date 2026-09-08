@@ -2971,16 +2971,16 @@ def test_the_report_copies_the_baseline_dicts_rather_than_embedding_them(report_
 
 
 # --------------------------------------------------------------------------- #
-# ST-008 — the HALTED run's report.
+# fallout ST-001 / CT-004 — the HALTED run's report.
 # --------------------------------------------------------------------------- #
 
 
 def test_a_halted_run_report_names_every_open_defect_at_every_tier(report_env):
-    """C-14 / ST-008 — the report is what makes the HALTED transition auditable.
+    """fallout ST-001 / CT-004 / C-14 — the report makes the halt auditable.
 
-    The prior spec's FR-045 words it as "the report is written naming every
-    open LIVE and LATENT defect", and that quote stays a quote: it was locked
-    when `DEFECT_TIERS` had two members. The PROPERTY it is reaching for is
+    The prior spec's convergence FR-045 words it as "the report is written
+    naming every open LIVE and LATENT defect", and that quote stays a quote: it
+    was locked when `DEFECT_TIERS` had two members. The PROPERTY it reaches for is
     that a halted run writes its open work down, and the vocabulary has three
     members now — `_read_defect_sections` buckets the cross-tab over
     `DEFECT_TIER_OR_UNKNOWN`, so HARDENING and the unknown sentinel are named
@@ -3074,6 +3074,25 @@ _RUN_SPEC_RELATIVE = "forge-specs/foundry-run-fallout/spec.md"
 #: would pass over a REPORT.md carrying no claim at all.
 _TERMINAL_STATE_CLAIM = "terminal state"
 
+#: The number D-195's rendered sentence carried, held as DATA and never typed
+#: into the prose below.
+#:
+#: An id in code is not a citation — this is the module constant the
+#: convention names — and holding it here is what lets the two failure
+#: messages interpolate one spelling instead of re-typing a number that could
+#: come to disagree with the lookup beside it. `_PYTEST_DISCOVERY_PHRASE`'s
+#: shape, applied to a citation, so a substitution fails on the number itself
+#: rather than on a hand-maintained sentence about it (casting 11's c340083,
+#: the same fix one module over).
+#:
+#: THE NUMBER NAMES TWO DIFFERENT ROWS, which is the whole mechanism of this
+#: class. `convergence ST-008` is the cap-halt transition and its guard column
+#: IS the sentence the note carried forward; `fallout ST-008` is the
+#: stream-record transition, so the same number that documented the rule under
+#: the previous release resolves to `items_checked at most items_total` under
+#: this one.
+_PREDECESSOR_HALT_CITE = "ST-008"
+
 
 def _run_spec_path() -> Path:
     """This run's spec.
@@ -3091,9 +3110,9 @@ def _run_spec_path() -> Path:
 def _spec_declaration(spec_text: str, name: str) -> str | None:
     """The line on which this run's spec DECLARES `name`, or None.
 
-    Three spellings, because the spec declares rows three ways — `| ST-001 |`
-    as a table row whose id is the first cell, `### US-001:` as a heading, and
-    `**FR-007**` in a bullet — and a lookup that knew only one would report two
+    Three spellings, because the spec declares rows three ways — `| ST-NNN |`
+    as a table row whose id is the first cell, `### US-NNN:` as a heading, and
+    `**FR-NNN**` in a bullet — and a lookup that knew only one would report two
     thirds of a correct spec as undeclared. The table row is tried first, so a
     row-declared id resolves to its row and never to a later mention of it.
     """
@@ -3115,14 +3134,15 @@ def test_the_rendered_report_cites_the_rows_that_state_the_halt_rule(report_env)
     copies it verbatim into `report.json` and `_render_section` renders it under
     `## Halt and co-dispatch`, so the reader who resolves the id it carries is
     outside the source tree. It read "HALTED is a named terminal state and is
-    NOT DONE (ST-008)" — the sentence and its cite carried over verbatim from
-    the PREDECESSOR spec, whose `ST-008` is the cap-halt transition and whose
-    guard column is that sentence. In THIS spec `ST-008` is the stream-record
-    transition, so the reader landed on a row about `items_checked` and
-    `items_total`. `ST-001` (the halt transition) and `CT-004` (the halt door)
-    are the rows that state the rule — and `_render_section`'s own headline for
-    a run that did NOT halt, the sentence this section prints directly above
-    the note, had been citing `ST-001` correctly all along.
+    NOT DONE", citing the number `_PREDECESSOR_HALT_CITE` holds — sentence and
+    cite together, carried over verbatim from the PREDECESSOR spec, where that
+    number is the cap-halt transition and its guard column IS that sentence.
+    Under this spec the same number is the stream-record transition, so the
+    reader landed on a row about `items_checked` and `items_total`. The rows
+    that state the rule are fallout ST-001, the halt transition, and fallout
+    CT-004, the halt door — and `_render_section`'s own headline for a run
+    that did NOT halt, the sentence this section prints directly above the
+    note, had been citing fallout ST-001 correctly all along.
 
     NEITHER EXISTING GUARD REACHES THIS SURFACE, which is why the pin is here
     and not beside one of them.
@@ -3144,19 +3164,22 @@ def test_the_rendered_report_cites_the_rows_that_state_the_halt_rule(report_env)
         pytest.skip(f"this checkout carries no {_RUN_SPEC_RELATIVE}")
     spec_text = spec.read_text(encoding="utf-8")
 
-    # THE ANCHOR: the recogniser has teeth, driven over the exact id D-195 was
-    # filed on. `ST-008` IS declared — so this is not the resolves-to-nothing
-    # case the sibling pin catches — and its declaration says nothing about
-    # halting, so the sentence that cited it fails the rule below. A pin whose
-    # negative case cannot fail is green whether it works or not.
-    st_008 = _spec_declaration(spec_text, "ST-008")
-    assert st_008 is not None, (
-        "this run's spec declares no ST-008; the row D-195 was filed on is "
-        "gone and this anchor no longer proves anything"
+    # THE ANCHOR: the recogniser has teeth, driven over the exact number D-195
+    # was filed on. `_PREDECESSOR_HALT_CITE` IS declared here — so this is not
+    # the resolves-to-nothing case the sibling pin catches — and its
+    # declaration says nothing about halting, so the sentence that cited it
+    # fails the rule below. A pin whose negative case cannot fail is green
+    # whether it works or not.
+    anchor = _spec_declaration(spec_text, _PREDECESSOR_HALT_CITE)
+    assert anchor is not None, (
+        f"this run's spec declares no fallout {_PREDECESSOR_HALT_CITE}; the "
+        f"row D-195 was filed on is gone and this anchor no longer proves "
+        f"anything"
     )
-    assert "HALT" not in st_008.upper(), (
-        f"ST-008 now names a halt row: {st_008}. The spec was renumbered and "
-        "D-195's example has to be re-picked before this anchor means anything"
+    assert "HALT" not in anchor.upper(), (
+        f"fallout {_PREDECESSOR_HALT_CITE} now names a halt row: {anchor}. "
+        f"The spec was renumbered, and D-195's example has to be re-picked "
+        f"before this anchor means anything"
     )
 
     _generate(report_env)
