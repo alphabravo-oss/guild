@@ -1842,6 +1842,157 @@ def _enclosing_function(tree: ast.Module, target: ast.AST) -> str | None:
     return None
 
 
+#: The module both filing doors live in, spelled ONCE. Every reading below
+#: derives the three import spellings from this one string, so they cannot come
+#: to disagree about which module they are resolving.
+_FOUNDRY_DOTTED = "foundry_mcp.tools.foundry"
+
+
+def _dotted_name(node: ast.AST) -> str | None:
+    """``a.b.c`` as a dotted string; ``None`` for any other expression.
+
+    A call written through a module alias is an ``ast.Attribute`` chain, and
+    the only way to tell ``foundry.foundry_add_defect`` from
+    ``self.registry.foundry_add_defect`` is to flatten the chain and look at
+    what it is rooted in. Anything rooted in a subscript, a call or a literal
+    is not a module path, and returns ``None`` rather than a partial string a
+    caller would then have to distrust.
+    """
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def _foundry_bindings(tree: ast.Module) -> tuple[dict[str, str], set[str]]:
+    """Every local name bound to a ``tools/foundry.py`` SYMBOL, and every one
+    bound to the MODULE, in ALL THREE import spellings.
+
+    fallout OT-015 / GI-025 (concern C-116) — THE ROSTER READ ONE SPELLING OF
+    THREE, AND THE FLOOR THAT WAS SUPPOSED TO CATCH THAT DID NOT FIRE.
+
+    The reading this replaces was ``node.module == _FOUNDRY_DOTTED`` over
+    ``ast.ImportFrom``, which is one spelling of the three Python has. Driven,
+    one plant per spelling: CAUGHT 1 OF 3. ``from foundry_mcp.tools import
+    foundry`` puts the module in ``node.names`` and reports ``node.module`` as
+    ``foundry_mcp.tools``; ``import foundry_mcp.tools.foundry`` is an
+    ``ast.Import`` and never reaches an ``ImportFrom`` test at all. This is
+    D-081's class in its fourth instance on this run, after both layering walks
+    (D-192, concern C-107), the no-facade walk (D-198) and the arming condition
+    (concern C-115) — which is why the spelling is resolved HERE by the helper
+    all of those now share, and not by a fifth private reading.
+
+    THE FAIL-CLOSED GRADING THIS WAS FILED UNDER IS WRONG, and the correction
+    is the reason the fix is not optional. The grading said the very next line,
+    ``assert imported``, goes red on a wholesale spelling switch. Driven
+    against the real ``server.py``: IT DOES NOT. That file imports
+    ``validate_defect_filing``, ``record_denylist_tripwire``,
+    ``tripwire_finding`` and ``filing_finding_mapping`` from this module
+    function-locally in spelling one, so rewriting the module-top block to
+    spelling two leaves ``imported`` holding four names and the floor silent.
+    What went red was ``assert writing_doors`` two assertions further down,
+    whose message reads "the derivation is broken, not the code" — right about
+    the tree, and not the line anybody was relying on.
+
+    WHAT THE MISS COSTS, driven with a real defect planted rather than argued.
+    Strip ``@ledger_refusals`` from ``foundry_add_defect`` and leave the
+    spelling uniform: RED, naming ``Foundry-Defect -> foundry_add_defect``.
+    Plant the SAME defect and move that ONE door to spelling two: GREEN, seven
+    doors on the roster and the eighth silently absent. So the exposure is not
+    a mixed tree somebody has to contrive — one door changing spelling is
+    enough, and this tree is already mixed. A door that drops off the roster
+    takes its ``@ledger_refusals`` check with it, which is D-127 exactly: the
+    tool ships ``call_tool``'s unhandled-error banner instead of the house
+    refusal.
+
+    A FOURTH BLIND SPOT IN THE SAME SITE, found while driving the three: the
+    old reading keyed the roster on ``sub.func.id``, the LOCAL name, so
+    importing the door under any alias put THE ALIAS in the roster, and the
+    foundry-side call graph — which knows only the defining name — then
+    dropped it. Aliasing spelling one lost the door as completely as not
+    reading spellings two and three. The map below is
+    ``{local name: DEFINING name}`` and the roster keys on the value.
+
+    RESOLVED ON DISK, through ``_submodules_named_by`` — the helper both
+    layering walks call — so ``from foundry_mcp.tools import foundry`` is read
+    as a module edge because ``foundry_mcp/tools/foundry.py`` is a file, while
+    ``from foundry_mcp.schemas.vocab import DEFECT_TIERS`` stays a symbol. No
+    ``also_by_name`` roster is needed here and that is a fact about this
+    target, not a preference: the prefix guard that opens that helper takes
+    only ``foundry_mcp`` packages, and ours is one. Driven,
+    ``_submodules_named_by("foundry_mcp.tools", ["foundry"]) == {"foundry"}``,
+    which the pin test asserts so the arm cannot quietly start resolving
+    nothing. ``tests/test_protocol_prose.py`` needs the roster for the exact
+    opposite reason — its package is ``tests``, which that guard refuses.
+    """
+    from tests.orchestration.test_module_boundaries import _submodules_named_by
+
+    package, _, stem = _FOUNDRY_DOTTED.rpartition(".")
+    symbols: dict[str, str] = {}
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            # A relative import reports `node.module` as a suffix rather than a
+            # package path, and this package writes none; left to the same
+            # reading the shared walks leave it to.
+            if node.level or not node.module:
+                continue
+            if node.module == _FOUNDRY_DOTTED:
+                symbols.update({a.asname or a.name: a.name for a in node.names})
+            elif node.module == package:
+                for alias in (a for a in node.names if a.name == stem):
+                    if _submodules_named_by(node.module, [alias.name]):
+                        modules.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in (a for a in node.names if a.name == _FOUNDRY_DOTTED):
+                # Unaliased, `import a.b.c` binds `a` and the call site spells
+                # the whole path, so the full dotted name IS the prefix to
+                # match on.
+                modules.add(alias.asname or alias.name)
+    return symbols, modules
+
+
+def _dispatched_foundry_doors(tree: ast.Module) -> dict[str, str]:
+    """``{defining name in tools/foundry.py: tool name}`` for every
+    ``_DISPATCH`` entry that calls into this module, in ANY spelling.
+
+    Built from import BINDINGS rather than from callee names alone, which is
+    what keeps a phantom out: ``_DISPATCH`` also calls ``get_run_dir`` and
+    ``current_cycle`` from ``foundry_state`` and ``foundry_gate`` from
+    ``orchestration/gates.py``, and matching callee names against this module's
+    function set would count any collision as a door and then judge its
+    decorator. A guard that reports edges the tree does not have is a guard
+    somebody adds an exception table to.
+    """
+    symbols, modules = _foundry_bindings(tree)
+
+    dispatch = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "_DISPATCH" for t in node.targets
+        ):
+            dispatch = node.value
+    assert isinstance(dispatch, ast.Dict), "server.py has no _DISPATCH dict"
+
+    doors: dict[str, str] = {}
+    for key, value in zip(dispatch.keys, dispatch.values):
+        for sub in ast.walk(value):
+            if not isinstance(sub, ast.Call):
+                continue
+            if isinstance(sub.func, ast.Name):
+                name = symbols.get(sub.func.id)
+            else:
+                prefix, _, attr = (_dotted_name(sub.func) or "").rpartition(".")
+                name = attr if prefix and prefix in modules else None
+            if name is not None:
+                doors[name] = key.value
+    return doors
+
+
 def test_no_unlocked_run_artifact_write_path() -> None:
     """D-125's structural half, DERIVED FROM THE AST rather than from a list.
 
@@ -1939,30 +2090,28 @@ def test_every_ledger_writing_door_answers_in_band() -> None:
     to find which of them reach a locked transaction. Add a ledger-writing tool
     to ``_DISPATCH`` without ``@ledger_refusals`` and this fails, naming it.
     """
+    from tests.orchestration.test_module_boundaries import _all_imports
+
     server_tree = ast.parse(_SERVER_SRC.read_text(encoding="utf-8"))
-    imported = set()
-    for node in ast.walk(server_tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "foundry_mcp.tools.foundry":
-            imported |= {a.asname or a.name for a in node.names}
-    assert imported, "server.py imports nothing from tools.foundry"
 
-    dispatch = None
-    for node in ast.walk(server_tree):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "_DISPATCH" for t in node.targets
-        ):
-            dispatch = node.value
-    assert isinstance(dispatch, ast.Dict), "server.py has no _DISPATCH dict"
-
-    doors: dict[str, str] = {}
-    for key, value in zip(dispatch.keys, dispatch.values):
-        for sub in ast.walk(value):
-            if (
-                isinstance(sub, ast.Call)
-                and isinstance(sub.func, ast.Name)
-                and sub.func.id in imported
-            ):
-                doors[sub.func.id] = key.value
+    # THE FLOOR IS READ BY A DIFFERENT HELPER THAN THE ROSTER, deliberately.
+    # `_all_imports` answers a MODULE question in all three spellings and knows
+    # nothing about symbols; `_foundry_bindings` answers the symbol question.
+    # When the first resolves tools/foundry.py out of server.py and the second
+    # resolves no door at all, the roster has gone blind in a spelling and says
+    # so here -- rather than reporting a short door list as a clean one, which
+    # is the whole of concern C-116 (see `_foundry_bindings`).
+    reached = _all_imports(_SERVER_SRC)
+    assert "foundry" in reached, (
+        f"server.py imports nothing from tools.foundry in any of the three "
+        f"spellings; _all_imports resolved {sorted(reached)}"
+    )
+    doors = _dispatched_foundry_doors(server_tree)
+    assert doors, (
+        f"_all_imports resolves tools/foundry.py out of server.py and the "
+        f"dispatch roster is empty -- the binding walk has gone blind in a "
+        f"spelling, which is C-116's shape recurring. Reached: {sorted(reached)}"
+    )
 
     foundry_tree = ast.parse(_FOUNDRY_SRC.read_text(encoding="utf-8"))
     functions = _module_functions(foundry_tree)
@@ -1994,6 +2143,126 @@ def test_every_ledger_writing_door_answers_in_band() -> None:
         f"{unbound} write a ledger but can raise LedgerShapeError across the "
         f"MCP boundary, where call_tool turns it into an unhandled-error "
         f"banner instead of the house refusal. Decorate with @ledger_refusals."
+    )
+
+
+def test_the_dispatch_roster_reads_all_three_import_spellings() -> None:
+    """fallout OT-015 / GI-025 (concern C-116) -- CAUGHT 1 OF 3, AND THE MISS
+    LANDED GREEN OVER A REAL DEFECT.
+
+    The roster above decides which tools ``server.py`` dispatches into
+    ``tools/foundry.py``, and everything after it -- the call-graph walk, the
+    ``@ledger_refusals`` check -- judges only what the roster holds. A door the
+    roster cannot see is a door D-127's guard does not cover, so the roster's
+    reading of an import statement is load-bearing and is pinned here rather
+    than trusted.
+
+    WHY THIS IS PINNED AND NOT ASSUMED. The reading it replaces was blind to
+    two of Python's three import spellings and to aliasing in the third, and
+    the assertion that was supposed to catch that did not fire on the real
+    tree; ``_foundry_bindings`` carries the driven account. What matters for
+    this test is the consequence: uniform spelling plus a real defect (
+    ``@ledger_refusals`` stripped from ``foundry_add_defect``) went RED naming
+    the door, and the SAME defect with that ONE door moved to spelling two went
+    GREEN with seven doors on the roster and the eighth silently absent.
+
+    So each spelling gets a plant, and a spelling the roster cannot see is a
+    named failure on the day somebody writes it -- which is the only form of
+    this rule that survives the next mechanical import repoint.
+    """
+    door = "foundry_add_defect"
+    tool = "Foundry-Defect"
+    plants = {
+        f"one   from {_FOUNDRY_DOTTED} import X": (
+            f"from {_FOUNDRY_DOTTED} import {door}\n"
+            f'_DISPATCH = {{"{tool}": lambda a: {door}(**a)}}\n'
+        ),
+        "two   from foundry_mcp.tools import foundry": (
+            "from foundry_mcp.tools import foundry\n"
+            f'_DISPATCH = {{"{tool}": lambda a: foundry.{door}(**a)}}\n'
+        ),
+        f"three import {_FOUNDRY_DOTTED}": (
+            f"import {_FOUNDRY_DOTTED}\n"
+            f'_DISPATCH = {{"{tool}": lambda a: {_FOUNDRY_DOTTED}.{door}(**a)}}\n'
+        ),
+        "one, aliased symbol": (
+            f"from {_FOUNDRY_DOTTED} import {door} as _d\n"
+            f'_DISPATCH = {{"{tool}": lambda a: _d(**a)}}\n'
+        ),
+        "two, aliased module": (
+            "from foundry_mcp.tools import foundry as _f\n"
+            f'_DISPATCH = {{"{tool}": lambda a: _f.{door}(**a)}}\n'
+        ),
+        "three, aliased module": (
+            f"import {_FOUNDRY_DOTTED} as _f\n"
+            f'_DISPATCH = {{"{tool}": lambda a: _f.{door}(**a)}}\n'
+        ),
+    }
+    blind = sorted(
+        label
+        for label, source in plants.items()
+        if _dispatched_foundry_doors(ast.parse(source)) != {door: tool}
+    )
+    assert blind == [], (
+        f"{blind} are import spellings the dispatch roster cannot see. A door "
+        f"written in one of them drops off the roster silently, and the "
+        f"@ledger_refusals check then passes over a door that can raise "
+        f"LedgerShapeError across the MCP boundary -- D-127's shape, reopened "
+        f"by a punctuation mark."
+    )
+
+    # The MIXED tree is the one that goes green rather than red, so it is
+    # asserted about directly: a second door in an unseen spelling must join
+    # the roster beside the first, not replace the question of whether it is
+    # there.
+    mixed = (
+        f"from {_FOUNDRY_DOTTED} import foundry_add_observation\n"
+        "from foundry_mcp.tools import foundry\n"
+        f'_DISPATCH = {{"Foundry-Observation": lambda a: foundry_add_observation(**a),\n'
+        f'             "{tool}": lambda a: foundry.{door}(**a)}}\n'
+    )
+    assert _dispatched_foundry_doors(ast.parse(mixed)) == {
+        "foundry_add_observation": "Foundry-Observation",
+        door: tool,
+    }
+
+    # THE BOUNDARY, both directions. On-disk resolution is what separates a
+    # module alias from a symbol that merely shares a package with one, so a
+    # frozenset read as a module cannot invent a door...
+    phantom = (
+        "from foundry_mcp.schemas.vocab import DEFECT_TIERS\n"
+        f'_DISPATCH = {{"{tool}": lambda a: DEFECT_TIERS.{door}(**a)}}\n'
+    )
+    assert _dispatched_foundry_doors(ast.parse(phantom)) == {}
+
+    # ...a real sibling module is not this one...
+    sibling = (
+        "from foundry_mcp.tools import foundry_state\n"
+        f'_DISPATCH = {{"{tool}": lambda a: foundry_state.{door}(**a)}}\n'
+    )
+    assert _dispatched_foundry_doors(ast.parse(sibling)) == {}
+
+    # ...and a same-named function reached through a DIFFERENT module is not
+    # this module's door. This is why the roster is built from import bindings
+    # and not from callee names, which would be spelling-agnostic for free and
+    # wrong.
+    elsewhere = (
+        f"from foundry_mcp.tools.orchestration.fix_gate import {door}\n"
+        f'_DISPATCH = {{"{tool}": lambda a: {door}(**a)}}\n'
+    )
+    assert _dispatched_foundry_doors(ast.parse(elsewhere)) == {}
+
+    # The spelling-two arm resolves ON DISK and needs no caller-named roster,
+    # which is a fact about this target rather than a preference: the prefix
+    # guard opening `_submodules_named_by` takes only `foundry_mcp` packages
+    # and ours is one. Pinned so the arm cannot quietly start resolving
+    # nothing -- the failure mode would be a green test and a short roster.
+    from tests.orchestration.test_module_boundaries import _submodules_named_by
+
+    assert _submodules_named_by("foundry_mcp.tools", ["foundry"]) == {"foundry"}, (
+        "on-disk resolution no longer answers for tools/foundry.py, so the "
+        "spelling-two arm above is matching nothing and this module needs the "
+        "`also_by_name` roster tests/test_protocol_prose.py needs for `tests`"
     )
 
 

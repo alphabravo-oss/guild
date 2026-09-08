@@ -1,0 +1,9 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider --no-header tests/test_observations.py -k 'three_import_spellings or ledger_writing_door' 2>&1 | tail -1 | awk '{ if ($1 == "2" && $2 ~ /^passed/) print "VERDICT: PASS -- the roster pin and the ledger-door check are green"; else print "VERDICT: FAIL -- " $0 }' && echo && echo "== concern C-116 -- one roster, three import spellings ==" && uv run --quiet --with pytest python -c 'import ast,sys; sys.path.insert(0,"."); from tests.test_observations import _dispatched_foundry_doors as R, _FOUNDRY_DOTTED as F; d="foundry_add_defect"; t="Foundry-Defect"; P={"one   from %s import X"%F: "from %s import %s\n_DISPATCH = {\"%s\": lambda a: %s(**a)}\n"%(F,d,t,d), "two   from foundry_mcp.tools import foundry": "from foundry_mcp.tools import foundry\n_DISPATCH = {\"%s\": lambda a: foundry.%s(**a)}\n"%(t,d), "three import %s"%F: "import %s\n_DISPATCH = {\"%s\": lambda a: %s.%s(**a)}\n"%(F,t,F,d)}; blind=sorted(k for k,s in P.items() if R(ast.parse(s))!={d:t}); print("VERDICT: PASS -- all three import spellings resolve the door" if not blind else "VERDICT: FAIL -- blind to "+repr(blind)); ph="from foundry_mcp.schemas.vocab import DEFECT_TIERS\n_DISPATCH = {\"%s\": lambda a: DEFECT_TIERS.%s(**a)}\n"%(t,d); el="from foundry_mcp.tools.orchestration.fix_gate import %s\n_DISPATCH = {\"%s\": lambda a: %s(**a)}\n"%(d,t,d); print("VERDICT: PASS -- no phantom door from a symbol or a sibling module" if not R(ast.parse(ph)) and not R(ast.parse(el)) else "VERDICT: FAIL -- phantom door resolved")'
+# evidence-for: CT-012, CT-017, CT-019, FR-037, NFR-004, OT-018, OT-019, OT-020, OT-039
+# evidence-timeout: 300
+
+VERDICT: PASS -- the roster pin and the ledger-door check are green
+
+== concern C-116 -- one roster, three import spellings ==
+VERDICT: PASS -- all three import spellings resolve the door
+VERDICT: PASS -- no phantom door from a symbol or a sibling module
