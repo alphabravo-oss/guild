@@ -900,6 +900,21 @@ _PROSE_CITES_WITH_NO_DEFINITION: dict[str, str] = {
         "superseded helper deleted; named here only as a prior instance of the "
         "escalated class this file's pins closed (D-203)."
     ),
+    # fallout AC-015 / AC-061 / OT-015 (D-193, class
+    # `guard-allowlist-excuses-the-live-violation`) — THE SECOND EXCEPTION
+    # TABLE, NARRATED BY THE GUARD THAT NO LONGER HAS ONE.
+    "_UNCLOSED_CROSS_PACKAGE_EDGES": (
+        "the boundary guard's second exception table — two rows holding the "
+        "tree's only live layering crossings, consulted with `continue` by all "
+        "three layering assertions, so the guard reported a clean tree over a "
+        "tree that had both. DELETED once castings 5 and 7 closed the rows "
+        "themselves (D-191, D-192), and cited now only by the comments and "
+        "docstrings that narrate the deletion — which is the past-tense "
+        "history the house style requires and the reason this entry exists. "
+        "`_VERIFIER_TO_LIFECYCLE_SEAM` is the one exception that survives it, "
+        "and `test_the_layering_rule_consults_exactly_one_exception_table` is "
+        "what keeps a third from being added."
+    ),
     "_DOOR_WRITTEN_DEFECT_FIELDS": (
         "superseded binding deleted; named here only as a prior instance of "
         "that same class (D-202/D-203)."
