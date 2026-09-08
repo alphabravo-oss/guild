@@ -134,7 +134,11 @@ try:  # Installed (uvx/pip) case — package is already importable.
         canonical_stream_id,
         defect_tier,
     )
-    from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
+    # fallout GI-033 (D-191 / D-192): the declaration rule lives in the leaf
+    # `tools/artifacts.py`. It left `foundry_handoff.py` when `tools/evidence.py`
+    # became a reader on the other side of the layering rule, and that module
+    # no longer imports it at all.
+    from foundry_mcp.tools.artifacts import declared_requirement_ids
     from foundry_mcp.tools.foundry_state import (
         ARCHIVE_SCHEMA_VERSION,
         derive_cycle_count,
@@ -153,7 +157,11 @@ except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path
         canonical_stream_id,
         defect_tier,
     )
-    from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
+    # fallout GI-033 (D-191 / D-192): the declaration rule lives in the leaf
+    # `tools/artifacts.py`. It left `foundry_handoff.py` when `tools/evidence.py`
+    # became a reader on the other side of the layering rule, and that module
+    # no longer imports it at all.
+    from foundry_mcp.tools.artifacts import declared_requirement_ids
     from foundry_mcp.tools.foundry_state import (
         ARCHIVE_SCHEMA_VERSION,
         derive_cycle_count,

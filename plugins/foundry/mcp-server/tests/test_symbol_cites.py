@@ -44,7 +44,10 @@ from foundry_mcp.tools.citation import (
     unresolved_symbol_cites,
 )
 from foundry_mcp.tools.foundry import foundry_init
-from foundry_mcp.tools.foundry_handoff import _hash_str, foundry_accept_casting
+# fallout GI-033 (D-192): the door moved beside the engine it runs, the digest
+# helper into the leaf both layers read.
+from foundry_mcp.tools.artifacts import _hash_str
+from foundry_mcp.tools.evidence import foundry_accept_casting
 from foundry_mcp.tools.foundry_state import clear_active_run
 
 SOURCE = '''"""A module with a couple of real symbols."""
@@ -395,7 +398,7 @@ def _casting_run(root: Path, spec_requirements: str) -> tuple[str, str, str, str
     (fdir / "castings" / "casting-1-prompt.md").write_text(
         prompt_text, encoding="utf-8"
     )
-    from foundry_mcp.tools.foundry_handoff import foundry_spec_hash
+    from foundry_mcp.tools.artifacts import foundry_spec_hash
 
     spec_hash = foundry_spec_hash(project_root=str(root))["spec_hash"]
     return spec_hash, _hash_str(prompt_text), str(fdir), _CASTING_COMMIT

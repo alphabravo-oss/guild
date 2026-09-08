@@ -780,10 +780,12 @@ def run_accept_casting_with_evidence(tmp_path, fixtures_dir):
         # only path.
         # ============================================================
         if casting_req_ids_override is not None:
-            from foundry_mcp.tools.foundry_handoff import (
+            # fallout GI-033 (D-192): the acceptance door lives beside the
+            # engine it runs, and the digest helper in the leaf both layers read.
+            from foundry_mcp.tools.evidence import (
                 foundry_accept_casting as _accept,
-                _hash_str as _h,
             )
+            from foundry_mcp.tools.artifacts import _hash_str as _h
             from foundry_mcp.tools.foundry_state import (
                 set_active_run as _set_run,
                 clear_active_run as _clear_run,

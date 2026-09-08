@@ -101,10 +101,14 @@ from foundry_mcp.tools.forge_spec import (
 # a symbol both layers read lives in `tools/artifacts.py` by GI-033's
 # arithmetic rather than in the lifecycle module that used to define it.
 from foundry_mcp.tools.artifacts import foundry_spec_hash
-from foundry_mcp.tools.foundry_handoff import (
-    foundry_accept_casting,
-    foundry_handoff,
-)
+# ...and `Foundry-Accept-Casting` is bound out of `tools/evidence.py`, the
+# module that defines the verification it runs. The door was in
+# `foundry_handoff.py` and reached `verify_evidence` across the layering rule
+# AC-061 refuses entirely; it is beside the engine now. This module is
+# deliberately outside the boundary guard's layered set — binding every door is
+# the registrar's whole job — so the repoint is a name, not an exception.
+from foundry_mcp.tools.evidence import foundry_accept_casting
+from foundry_mcp.tools.foundry_handoff import foundry_handoff
 from foundry_mcp.tools.foundry_spawn import foundry_cast_wave, foundry_spawn_teammate
 from foundry_mcp.tools.foundry_validate import foundry_validate_castings
 from foundry_mcp.tools.intent_coverage import foundry_intent_coverage

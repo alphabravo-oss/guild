@@ -73,7 +73,6 @@ from foundry_mcp.schemas import vocab
 from foundry_mcp.tools import artifacts
 from foundry_mcp.tools import foundry as foundry_doors
 from foundry_mcp.tools import evidence as evidence_doors
-from foundry_mcp.tools import foundry_handoff
 from foundry_mcp.tools import foundry_spawn as fs
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools import rosters

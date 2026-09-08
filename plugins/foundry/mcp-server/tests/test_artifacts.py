@@ -1566,40 +1566,67 @@ def test_the_ledger_writer_holds_no_lock_domain_of_its_own(run_env):
 
 
 # --------------------------------------------------------------------------- #
-# fallout D-128 — THE EVIDENCE ENGINE IS REACHED THROUGH NAMED SEAMS ONLY
+# fallout AC-061 / GI-033 (D-128 / D-192, concern C-107) — THE EVIDENCE ENGINE
+# IS REACHED THROUGH NAMED SEAMS ONLY, AND THE LIFECYCLE SEAM IS GONE.
 #
 # fallout GI-033's violation column names "any lifecycle module importing a verifier
 # module", and `tools/evidence.py` is a decider by `VERIFIER_PATH_PATTERNS` —
 # "the module that re-executes it decides whether a log passes". Two modules
-# reach it, one from each layer, and BOTH do so through a call-time import: the
-# boundary guard in `tests/orchestration/` measures module-top edges by design
-# ("a function-local import is NOT an edge here, and that is the whole point of
-# the lazy seam"), so neither reacher was visible to any layering assertion.
+# used to reach it, one from each layer, and both through a call-time import,
+# so neither was visible to a layering assertion that measures module-top edges.
 #
-# The roster is pinned here rather than left implicit. A THIRD reacher, or the
-# promotion of either of these to module top, is a layering decision someone has
-# to make on purpose.
+# D-128 made those two reachers visible HERE. D-192 is the record that visible
+# was never the same as legal: fallout AC-061 refuses the lifecycle direction
+# ENTIRELY —
+# "not a seam, not a table, not a lazy import, at no depth" — so
+# `foundry_handoff#foundry_accept_casting` reaching the engine was a violation
+# for as long as it stood, and this roster carried it as a row rather than
+# closing it. C-107 measured every one-casting exit and found each closed: the
+# door reaches the ENGINE rather than a symbol, so fallout GI-033's "move it to
+# a leaf"
+# has nothing to move, and the edge could only be REVERSED or ELIMINATED. It is
+# eliminated: `foundry_accept_casting` lives in `tools/evidence.py` now, beside
+# the verification it runs, and the lifecycle row is gone from this roster
+# because the crossing is gone from the tree.
+#
+# WHAT IS LEFT IS TWO REACHERS OF DIFFERENT KINDS, and the roster is split so a
+# reader can tell them apart:
+#
+#   MODULE TOP — `foundry_mcp/server.py`, the registrar, which binds
+#     `Foundry-Accept-Casting` out of the module that now defines it. The
+#     boundary guard deliberately excludes `server.py` from its layered set
+#     ("the registrar binds every door in `_DISPATCH` and reaching a gate is its
+#     whole job"), so this edge is not a layering decision at all — but it IS
+#     the one module-top reach in the package, and an unnamed second one would
+#     be a lifecycle module importing a decider at load time.
+#   LAZY — `orchestration/evidence_boundary.py`, a member of the boundary
+#     guard's own `_VERIFIER_MODULES`, reaching `select_sweep_scope` /
+#     `sweep_evidence_at_head` inside `_sweep_evidence_at_boundary`. Verifier to
+#     verifier: legal at module top too, and lazy for its own reasons rather
+#     than for the layering rule.
+#
+# Both rosters are asserted by EQUALITY, not membership, so a row that stops
+# accounting for anything fails exactly as a new reacher does.
 # --------------------------------------------------------------------------- #
 
-#: (module basename, function) for every call-time reach into the evidence
+#: The modules that name `tools/evidence` in a MODULE-TOP import. One, and it is
+#: the registrar, which the layering rule does not judge.
+_EVIDENCE_ENGINE_MODULE_TOP = {"server"}
+
+#: (module basename, function) for every CALL-TIME reach into the evidence
 #: engine, with what each one is. Not an allowlist: the assertion is equality,
 #: so a row that stops accounting for anything fails exactly as a new reacher
 #: does.
 _EVIDENCE_ENGINE_SEAMS = {
-    # LIFECYCLE. The acceptance gate re-executes a casting's evidence corpus
-    # before it will accept the casting (fallout CT-015 / FR-010). Lazy because
-    # `evidence.py` imports `declared_requirement_ids` from `foundry_handoff` at
-    # module top, so promoting this closes a cycle and the package stops
-    # loading.
-    ("foundry_handoff", "foundry_accept_casting"),
     # VERIFIER. The boundary sweep, a rung of three preconditions functions.
     ("evidence_boundary", "_sweep_evidence_at_boundary"),
 }
 
 
 def test_the_evidence_engine_is_reached_by_the_named_seams_only():
-    """fallout D-128 / fallout GI-033 — the edge exists; what it may not be is unseen."""
-    module_top: list[str] = []
+    """fallout AC-061 / GI-033 (D-128 / D-192) — the edge exists; what it may
+    not be is unseen, and what it may not be at all is lifecycle-to-verifier."""
+    module_top: set[str] = set()
     lazy: set[tuple[str, str]] = set()
 
     for path in _shipped_modules():
@@ -1609,13 +1636,13 @@ def test_the_evidence_engine_is_reached_by_the_named_seams_only():
         for node in tree.body:
             if isinstance(node, ast.ImportFrom) and node.module:
                 if node.module == "foundry_mcp.tools.evidence":
-                    module_top.append(path.stem)
+                    module_top.add(path.stem)
             elif isinstance(node, ast.Import):
-                module_top.extend(
+                module_top |= {
                     path.stem
                     for a in node.names
                     if a.name == "foundry_mcp.tools.evidence"
-                )
+                }
         for parent in ast.walk(tree):
             if not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -1630,17 +1657,22 @@ def test_the_evidence_engine_is_reached_by_the_named_seams_only():
                         if a.name == "foundry_mcp.tools.evidence"
                     }
 
-    assert module_top == [], (
-        f"module(s) importing the evidence engine AT MODULE TOP: {module_top}. "
-        "`evidence.py` imports `foundry_handoff` at module top, so a load-time "
-        "edge back into it stops the package loading — and a lifecycle module "
-        "reaching a decider at load time is GI-033's violation column besides."
+    assert module_top == _EVIDENCE_ENGINE_MODULE_TOP, (
+        f"the module-top reachers of the evidence engine are {sorted(module_top)}, "
+        f"and the roster is {sorted(_EVIDENCE_ENGINE_MODULE_TOP)}. The registrar "
+        "is the one module that may bind a door at load time; anything else here "
+        "is a module reaching a DECIDER when the package loads, which is GI-033's "
+        "violation column if the module is lifecycle and a row nobody wrote down "
+        "if it is not."
     )
     assert lazy == _EVIDENCE_ENGINE_SEAMS, (
         f"the evidence-engine seam roster moved: {sorted(lazy)}. Each seam is a "
-        "lifecycle-or-verifier module reaching the module that decides whether "
-        "an evidence log passes; add the row with what it is and why it must be "
-        "lazy, or take the row with the edge."
+        "verifier module reaching the module that decides whether an evidence "
+        "log passes; add the row with what it is and why it must be lazy, or "
+        "take the row with the edge. A LIFECYCLE module appearing here is not a "
+        "row to add — fallout AC-061 refuses that direction entirely, at no "
+        "depth, and "
+        "D-192 is what closing the last one cost."
     )
 
 

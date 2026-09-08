@@ -34,12 +34,20 @@ import pytest
 
 from foundry_mcp.schemas.vocab import HANDOFF_EVENT_LEAD_FIX
 from foundry_mcp.tools.foundry import foundry_init
-from foundry_mcp.tools.foundry_handoff import (
+# fallout AC-061 / GI-033 (D-192) — THREE MODULES NOW, AND THE SPLIT IS THE
+# LAYERING RULE RATHER THAN A REORGANISATION. `foundry_accept_casting` RUNS
+# `verify_evidence`, so it sits in `tools/evidence.py` beside the engine; the
+# digest helper, the prompt-hash rung and the spec-hash reader are read from
+# both layers and sit in the leaf; the `Foundry-Handoff` door and the server's
+# own lead-fix writer stay in the lifecycle module this file is named for.
+from foundry_mcp.tools.artifacts import (
     _hash_str,
     check_reported_prompt_hash,
-    foundry_accept_casting,
-    foundry_handoff,
     foundry_spec_hash,
+)
+from foundry_mcp.tools.evidence import foundry_accept_casting
+from foundry_mcp.tools.foundry_handoff import (
+    foundry_handoff,
     record_lead_fix_handoff,
 )
 from foundry_mcp.tools.foundry_state import clear_active_run
@@ -1019,9 +1027,13 @@ def test_the_handler_keeps_a_none_default_so_the_refusal_is_its_own(run_env):
     rule forbids."""
     import inspect
 
-    from foundry_mcp.tools import foundry_handoff as handoff_module
+    # fallout GI-026 / GI-033 (D-192): the pin follows the handler. It moved to
+    # `tools/evidence.py` because it RUNS `verify_evidence`, and a pin left
+    # naming the module it came from reads zero attributes rather than the one
+    # it is asserting about.
+    from foundry_mcp.tools import evidence as accept_module
 
-    params = inspect.signature(handoff_module.foundry_accept_casting).parameters
+    params = inspect.signature(accept_module.foundry_accept_casting).parameters
     assert params["casting_commit"].default is None
 
 
@@ -1223,7 +1235,8 @@ def test_neither_reader_derives_the_declared_set_inline():
 
     THE DEFINER JOINED THE SCAN SET (D-191). `declared_requirement_ids` now
     lives in the leaf `tools/artifacts.py`, because the third reader —
-    `tools/evidence.py` — is a verifier module and GI-033 forbids it reading a
+    `tools/evidence.py` — is a verifier module and fallout GI-033 forbids it
+    reading a
     lifecycle module for a symbol both layers use. A scan set naming only the
     two readers would find zero definitions among them, so the pin has to name
     the module that DEFINES it or the `== ["declared_requirement_ids"]`
@@ -1232,10 +1245,16 @@ def test_neither_reader_derives_the_declared_set_inline():
     import ast
 
     from foundry_mcp.tools import artifacts as artifacts_module
-    from foundry_mcp.tools import foundry_handoff as handoff_module
+    from foundry_mcp.tools import evidence as evidence_module
     from foundry_mcp.tools import foundry_validate as validate_module
 
-    for module in (artifacts_module, handoff_module, validate_module):
+    # fallout GI-026 (D-192) — AND THE READER SET MOVED AGAIN, THE SAME WAY.
+    # `foundry_accept_casting` is the reader that made this a both-layers
+    # symbol, and it is in `tools/evidence.py` now; `foundry_handoff.py` reads
+    # the declaration rule nowhere at all any more. Naming it here would assert
+    # a string is present in a module that has no reason to carry it, which is
+    # the failure this docstring describes one module along.
+    for module in (artifacts_module, evidence_module, validate_module):
         source = Path(module.__file__).read_text(encoding="utf-8")
         assert "declared_requirement_ids" in source, Path(module.__file__).name
 
@@ -1243,7 +1262,7 @@ def test_neither_reader_derives_the_declared_set_inline():
     # the prose explaining the rejected reading cannot trip the pin.
     definitions = [
         node.name
-        for module in (artifacts_module, handoff_module, validate_module)
+        for module in (artifacts_module, evidence_module, validate_module)
         for node in ast.walk(
             ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
         )

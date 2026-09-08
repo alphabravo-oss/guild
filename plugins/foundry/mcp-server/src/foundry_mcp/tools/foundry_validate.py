@@ -98,10 +98,24 @@ from foundry_mcp.tools.artifacts import (
 # prose or inside backticks was invisible to the ownership dimension and a
 # casting citing an id it did not own validated clean. Widening the first
 # reader is what re-files D-180; importing the second is what closes D-181.
-from foundry_mcp.tools.foundry_handoff import (
-    cited_requirement_ids,
-    declared_requirement_ids,
-)
+#
+# fallout GI-010 / GI-033 (D-191 / D-192) — AND THE PAIR IS READ FROM TWO
+# MODULES NOW, BECAUSE THE LAYERING RULE SPLIT IT.
+#
+# `declared_requirement_ids` left `foundry_handoff.py` for the leaf under D-191:
+# `tools/evidence.py` reads it from the verifier side and this module from the
+# lifecycle side, and a symbol read from both can live in neither. This import
+# went on naming `foundry_handoff` for a cycle after the definition left it,
+# which resolved — Python is happy to hand back a name a module imported — and
+# was exactly the facade read GI-010 forbids: the reader could not tell from the
+# line which module owns the rule, and a later deletion of that module's own
+# import would have broken this one for no reason a reader could see.
+#
+# `cited_requirement_ids` STAYS in `foundry_handoff.py`, and the split is the
+# arithmetic rather than a half-move: its readers are that module and this one,
+# both lifecycle, so nothing forces it into a leaf.
+from foundry_mcp.tools.artifacts import declared_requirement_ids
+from foundry_mcp.tools.foundry_handoff import cited_requirement_ids
 from foundry_mcp.tools.foundry_state import (
     # fallout D-172: the surface walk excludes the run archive by the name
     # the state module gives it, never by a second spelling of it here.

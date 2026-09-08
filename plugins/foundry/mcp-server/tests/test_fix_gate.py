@@ -3704,7 +3704,9 @@ def test_both_hash_doors_render_the_same_facts(run_env):
     actually carries rather than what each handler returns.
     """
     from foundry_mcp.tools.display import format_result
-    from foundry_mcp.tools.foundry_handoff import check_reported_prompt_hash
+    # fallout GI-033 (D-192): the shared rung is in the leaf, because the door
+    # that shares it with Foundry-Fix is a verifier module now.
+    from foundry_mcp.tools.artifacts import check_reported_prompt_hash
 
     project_root, fdir = run_env
     _set_cycle(fdir, 1)

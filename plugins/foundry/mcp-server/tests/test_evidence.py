@@ -748,7 +748,7 @@ def _build_divergent_spec_repo(
     command that only reads a file back.
     """
     from foundry_mcp.tools.foundry import foundry_init
-    from foundry_mcp.tools.foundry_handoff import _hash_str, foundry_spec_hash
+    from foundry_mcp.tools.artifacts import _hash_str, foundry_spec_hash
     from foundry_mcp.tools.foundry_state import set_active_run
 
     project_root = tmp_path / "repo"
@@ -851,7 +851,7 @@ def test_accept_casting_resolves_the_runs_actual_spec_path(tmp_path):
     The repo's `specs/spec.md` is v2.0 and the run's spec is v2.1. Engagement
     (verdict "accepted", not "skipped") is only possible if the gate read the
     run's spec — so this test fails on the hardcoded path it replaces."""
-    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.evidence import foundry_accept_casting
     from foundry_mcp.tools.foundry_state import clear_active_run
 
     env = _build_divergent_spec_repo(tmp_path)
@@ -893,7 +893,7 @@ def test_evidence_provenance_is_written_to_the_RUN_manifest(tmp_path):
     existential: provenance must appear in the run's manifest and must NOT
     appear in the project-root decoy. Against the old path the two assertions
     swap, so this cannot pass by accident either way."""
-    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.evidence import foundry_accept_casting
     from foundry_mcp.tools.foundry_state import clear_active_run
 
     env = _build_divergent_spec_repo(tmp_path)
@@ -945,14 +945,14 @@ def test_malformed_spec_format_version_is_refused_not_downgraded(tmp_path):
     typo bought a green gate. Absence still defaults to v2.0 — only an
     unintelligible declaration is refused."""
     from foundry_mcp.tools.evidence import verify_evidence
-    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.evidence import foundry_accept_casting
     from foundry_mcp.tools.foundry_state import clear_active_run, set_active_run
 
     env = _build_divergent_spec_repo(tmp_path)
     env["run_spec"].write_text(
         "---\nspec_format_version: 2.1\n---\n# Run spec\n", encoding="utf-8"
     )
-    from foundry_mcp.tools.foundry_handoff import foundry_spec_hash
+    from foundry_mcp.tools.artifacts import foundry_spec_hash
 
     fresh_hash = foundry_spec_hash(project_root=str(env["project_root"]))["spec_hash"]
     try:
@@ -1031,7 +1031,8 @@ def test_accept_casting_surfaces_a_v20_stream_skip_to_the_lead(tmp_path):
     casting. It is persisted in the manifest, but acceptance still returns
     ``ok: true`` — so the skip record is surfaced in the return as well, rather
     than being discoverable only by whoever later opens the manifest."""
-    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting, foundry_spec_hash
+    from foundry_mcp.tools.artifacts import foundry_spec_hash
+    from foundry_mcp.tools.evidence import foundry_accept_casting
     from foundry_mcp.tools.foundry_state import clear_active_run
 
     env = _build_divergent_spec_repo(tmp_path)
@@ -1072,7 +1073,7 @@ def test_accept_casting_without_a_commit_is_refused_naming_casting_commit(tmp_pa
     Kept rather than deleted, and re-pointed rather than relaxed, because the
     call it drives is the one a lead makes by accident and the answer to it is
     the whole point of making the parameter required."""
-    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.evidence import foundry_accept_casting
     from foundry_mcp.tools.foundry_state import clear_active_run
 
     env = _build_divergent_spec_repo(tmp_path)
@@ -1749,7 +1750,7 @@ _D205_CLAIM = "FABRICATED: all 47 assertions passed on a clean tree"
 
 def _d205_accept(tmp_path, subdir: str, header_prose: str) -> dict:
     """One `foundry_accept_casting` drive over a body-only replay."""
-    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.evidence import foundry_accept_casting
     from foundry_mcp.tools.foundry_state import clear_active_run
 
     root = tmp_path / subdir
@@ -1803,7 +1804,7 @@ def test_the_acceptance_door_refuses_the_same_claim_without_the_hash(tmp_path):
     B was a defect rather than a policy. Pinned so a later widening of the
     grammar cannot quietly make B agree with A instead of with C.
     """
-    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.evidence import foundry_accept_casting
     from foundry_mcp.tools.foundry_state import clear_active_run
 
     env = _build_divergent_spec_repo(
@@ -5216,7 +5217,7 @@ def test_an_observable_truth_binds_evidence_end_to_end(tmp_path):
     EVIDENCE_REQUIREMENT_UNBOUND -- an observable truth could never be
     evidenced at all.
     """
-    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.evidence import foundry_accept_casting
     from foundry_mcp.tools.foundry_state import clear_active_run
 
     env = _build_divergent_spec_repo(tmp_path, req_ids=("OT-011",))
@@ -5247,7 +5248,7 @@ def test_an_uncited_observable_truth_is_now_caught(tmp_path):
     and the report below -- which cites nothing -- would pass. The widening has
     to bite in BOTH directions or it has not happened.
     """
-    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.evidence import foundry_accept_casting
     from foundry_mcp.tools.foundry_state import clear_active_run
 
     env = _build_divergent_spec_repo(tmp_path, req_ids=("OT-011",))
@@ -5284,7 +5285,7 @@ _UNDECODABLE = b"\xff\xfe stray continuation \x80\x81\n"
 
 def test_an_undecodable_casting_prompt_is_refused_not_raised(tmp_path):
     """D-146 at the site the scan named."""
-    from foundry_mcp.tools.foundry_handoff import foundry_accept_casting
+    from foundry_mcp.tools.evidence import foundry_accept_casting
     from foundry_mcp.tools.foundry_state import clear_active_run
 
     env = _build_divergent_spec_repo(tmp_path)
@@ -6162,7 +6163,7 @@ def test_the_verifier_reads_the_leaf_and_never_the_lifecycle_module():
     """
     from foundry_mcp.tools import artifacts as artifacts_module
     from foundry_mcp.tools import evidence as evidence_module
-    from foundry_mcp.tools import foundry_handoff as handoff_module
+    from foundry_mcp.tools import foundry_validate as validate_module
 
     tree = ast.parse(
         Path(evidence_module.__file__).read_text(encoding="utf-8")
@@ -6190,10 +6191,18 @@ def test_the_verifier_reads_the_leaf_and_never_the_lifecycle_module():
         evidence_module.declared_requirement_ids
         is artifacts_module.declared_requirement_ids
     )
-    # And the lifecycle module reads the same object, so "one derivation" is a
+    # And the lifecycle side reads the same object, so "one derivation" is a
     # property of the tree rather than of two modules that happen to agree.
+    #
+    # fallout GI-033 (D-192) — THAT SIDE IS `foundry_validate` NOW. It was
+    # `foundry_handoff`, whose only reader of this rule was the acceptance door;
+    # the door moved into THIS module when it stopped being allowed to reach the
+    # engine across the layering rule, and `foundry_handoff.py` reads the
+    # declaration rule nowhere any more. Asking it for the attribute would
+    # assert nothing about one derivation and everything about where a function
+    # used to live.
     assert (
-        handoff_module.declared_requirement_ids
+        validate_module.declared_requirement_ids
         is artifacts_module.declared_requirement_ids
     )
 

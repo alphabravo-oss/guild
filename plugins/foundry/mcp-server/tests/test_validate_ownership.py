@@ -544,10 +544,12 @@ def test_the_gate_the_citation_rule_must_not_widen_still_reads_declarations(
     Asserted against the derivations themselves, because that is where the two
     populations are decided; the dimension above only reads them.
     """
-    from foundry_mcp.tools.foundry_handoff import (
-        cited_requirement_ids,
-        declared_requirement_ids,
-    )
+    # fallout GI-033 (D-191 / D-192) — the pair is split across the layering
+    # line and each half is read where it is defined: the DECLARATION rule lives
+    # in the leaf (both layers read it), the CITE rule in the lifecycle module
+    # whose two readers are both lifecycle.
+    from foundry_mcp.tools.artifacts import declared_requirement_ids
+    from foundry_mcp.tools.foundry_handoff import cited_requirement_ids
 
     for excerpt in (CITES_MID_LINE, CITES_MID_PROSE, CITES_IN_CODE):
         assert declared_requirement_ids(excerpt) == ["FR-009"], (

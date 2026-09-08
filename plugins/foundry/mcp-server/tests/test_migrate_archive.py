@@ -1500,10 +1500,12 @@ def test_the_migrated_manifest_does_not_trip_the_f0_9_ownership_or_span_door(
     three castings, which is above `REQUIREMENT_SPAN_MAX` and would be refused
     with no reason recorded against it.
     """
-    from foundry_mcp.tools.foundry_handoff import (
-        cited_requirement_ids,
-        declared_requirement_ids,
-    )
+    # fallout GI-033 (D-191 / D-192) — the pair is split across the layering
+    # line and each half is read where it is defined: the DECLARATION rule lives
+    # in the leaf (both layers read it), the CITE rule in the lifecycle module
+    # whose two readers are both lifecycle.
+    from foundry_mcp.tools.artifacts import declared_requirement_ids
+    from foundry_mcp.tools.foundry_handoff import cited_requirement_ids
     from foundry_mcp.tools.foundry_validate import (
         REQUIREMENT_IDS_SCHEMA_FLOOR,
         REQUIREMENT_SPAN_MAX,
@@ -1592,10 +1594,12 @@ def test_step_10_transcribes_declarations_and_not_the_ids_a_block_merely_quotes(
     see. If a later change moves the fill to mentions, this test fails and the
     ruling is re-taken deliberately instead of drifting.
     """
-    from foundry_mcp.tools.foundry_handoff import (
-        cited_requirement_ids,
-        declared_requirement_ids,
-    )
+    # fallout GI-033 (D-191 / D-192) — the pair is split across the layering
+    # line and each half is read where it is defined: the DECLARATION rule lives
+    # in the leaf (both layers read it), the CITE rule in the lifecycle module
+    # whose two readers are both lifecycle.
+    from foundry_mcp.tools.artifacts import declared_requirement_ids
+    from foundry_mcp.tools.foundry_handoff import cited_requirement_ids
     from foundry_mcp.tools.foundry_validate import _owned_requirement_ids
 
     # The legacy shape the three real archives carry: an id named inside
@@ -1958,7 +1962,7 @@ def test_demo_the_f0_9_door_reads_a_migrated_manifest(archive: Path) -> None:
     would go from one informational line to one error per casting and nothing
     in the migration summary would say so.
     """
-    from foundry_mcp.tools.foundry_handoff import declared_requirement_ids
+    from foundry_mcp.tools.artifacts import declared_requirement_ids
     from foundry_mcp.tools.foundry_validate import (
         REQUIREMENT_IDS_SCHEMA_FLOOR,
         REQUIREMENT_SPAN_MAX,
