@@ -7501,8 +7501,8 @@ def test_a_second_definition_in_measure_run_is_refused(tmp_path):
 #
 # A reading written against one of them walks past the other two. This run
 # found and fixed that blindness six times: the two layering walks (D-192,
-# concern C-107), the no-facade whole-tree walk, this file's one-way seam scan
-# and the four `foundry_spawn` cycle scans (D-198), the arming condition in
+# concern C-107), the no-facade whole-tree walk, `test_halt.py`'s one-way seam
+# scan and the four `foundry_spawn` cycle scans (D-198), the arming condition in
 # `tests/test_protocol_prose.py` (C-115), and the ledger-door roster in
 # `tests/test_observations.py` (C-116) — where a planted real defect went from
 # RED to GREEN and reopened D-127.
@@ -7549,8 +7549,9 @@ def test_a_second_definition_in_measure_run_is_refused(tmp_path):
 # their own docstrings where an author writing an import walk is standing, and
 # `test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith`
 # drives that claim with one plant per spelling. Route a new import reading
-# through them. That is what all six fixes reduced to, and it is the thing the
-# scan was never needed in order to say.
+# through them, and name the call site in `_SHARED_READING_CALL_SITES` below so
+# that the routing is asserted rather than believed. That is what all six fixes
+# reduced to, and it is the thing the scan was never needed in order to say.
 #
 # DO NOT RE-CREATE THE SCAN WITHOUT FIRST ANSWERING THE PARAGRAPH ABOVE.
 # Narrower is where D-203 and D-204 came from and wider is where D-205 and
@@ -7559,6 +7560,183 @@ def test_a_second_definition_in_measure_run_is_refused(tmp_path):
 # share a shape. Until that has an answer, a scan here spends attention and
 # returns none.
 # --------------------------------------------------------------------------- #
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-004 / GI-010 / AC-013 / OT-012 / GI-033 / AC-061 / FR-063 (D-207)
+# — THE SITES ARE PINNED, WHICH IS THE HALF ALL SIX FIXES NEVER HAD.
+#
+# The paragraph above says the remedy is asserted, and it is — but what
+# `test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith`
+# asserts is a fact about the HELPER. It plants one module per spelling in
+# `tmp_path` and checks that `_all_imports` resolves all three. It says nothing
+# about whether any real scan calls it, and four real scans said nothing at all
+# once the recogniser went: reverted one at a time to a blind comprehension of
+# its own, each gave `5296 passed, 113 skipped, EXIT=0` with nothing red
+# anywhere. Driven against a positive control, so the silence is a hole and not
+# an inert plant: with `tools/foundry_orchestrator.py` planted and a shipped
+# module reaching it in spelling two, the no-facade walk is `1 failed` at HEAD
+# and `1 passed` on its own revert.
+#
+# That is this class's shape, and it is the same shape in every instance filed
+# under it: THE ANCHOR DRIVES THE REMEDY WHILE THE SITE STAYS UNPINNED. So the
+# sites are named, and each is asserted to route through the shared reading it
+# needs and to do no import reading of its own.
+#
+# NAMED AND NOT DERIVED, WHICH IS THE WHOLE DIFFERENCE FROM THE SCAN THAT WENT.
+# A derivation would have to decide which scopes are import readings, and that
+# is the undecidable question the measurement above closed. A roster decides
+# nothing: it can accuse only the sites it names, so it cannot accuse a sound
+# one, and it goes red on exactly the four reverts. The price is that a NEW
+# import reading has to be added to it, which is the sentence the paragraph
+# above now ends with, standing where an author writing one is standing.
+#
+# BOTH HALVES, because either alone is satisfiable by the wrong tree. A site
+# that calls the shared reading and then computes a blind set beside it passes
+# the first half; a site that reads no imports at all passes the second.
+# --------------------------------------------------------------------------- #
+
+#: The `ast` node types that ARE an import, in both spellings a name can take
+#: (`ast.ImportFrom`, or `ImportFrom` after `from ast import ImportFrom`). A
+#: rostered site names none of them: reading an import is what the shared
+#: scanners above are for, and a site that reads one itself has forked one.
+_IMPORT_NODE_TYPES = frozenset({"Import", "ImportFrom"})
+
+#: Dotted path of a test that reads imports -> the readings its own source must
+#: call, each as (name, keyword arguments it must be called with).
+#:
+#: `also_by_name` is part of the no-facade entry because dropping it is a silent
+#: revert of its own: the default resolves an alias against a file on disk, and
+#: `tools/foundry_orchestrator.py` is the file whose ABSENCE is the requirement.
+#: See `_all_imports`' own docstring for why that reading needs naming instead.
+#:
+#: The spawn entry is one test holding two scans that ask different questions —
+#: the forward edges are a module-top question, the back edges a dotted one — so
+#: it names three readings rather than one.
+_SHARED_READING_CALL_SITES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "tests.orchestration.test_module_boundaries"
+    ".test_the_package_marker_re_exports_nothing": (
+        ("_all_imports", ("also_by_name",)),
+    ),
+    "tests.orchestration.test_module_boundaries"
+    ".test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions": (
+        ("_module_top_imports", ()),
+        ("_module_top_dotted_imports", ()),
+        ("_all_imports", ()),
+    ),
+    "tests.orchestration.test_halt"
+    ".test_the_halted_seal_and_the_cap_path_live_in_the_halt_module": (
+        ("_all_imports", ()),
+    ),
+}
+
+
+def _rostered_site(dotted: str):
+    """The function a `_SHARED_READING_CALL_SITES` key names, or None.
+
+    Resolved by import and `getattr`, never by reading the file as text: a
+    rename then fails by name in the roster's own liveness pin instead of
+    quietly matching nothing, which is the failure mode a derived set has and
+    the reason this one is guarded.
+    """
+    module_name, _, name = dotted.rpartition(".")
+    return getattr(importlib.import_module(module_name), name, None)
+
+
+def _calls_named_in(fn) -> set[tuple[str, frozenset[str]]]:
+    """Every call `fn`'s OWN source makes, as (callee basename, keyword names).
+
+    Basename, so `mod._all_imports(...)` and `_all_imports(...)` are one answer
+    — the roster is about which READING a site routes through, not about how the
+    site spells the import that reached it.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    out: set[tuple[str, frozenset[str]]] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            name = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            name = node.func.attr
+        else:
+            continue
+        out.add((name, frozenset(k.arg for k in node.keywords if k.arg)))
+    return out
+
+
+def _import_node_types_named_in(fn) -> set[str]:
+    """Which of `_IMPORT_NODE_TYPES` `fn`'s own source names, either spelling.
+
+    A NAME or an ATTRIBUTE, so neither `ast.ImportFrom` nor a rebinding of it
+    slips past. Nothing else counts: a string that happens to contain the word
+    is not a node type, and this walk sees nodes.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    return {
+        node.attr if isinstance(node, ast.Attribute) else node.id
+        for node in ast.walk(tree)
+        if (isinstance(node, ast.Attribute) and node.attr in _IMPORT_NODE_TYPES)
+        or (isinstance(node, ast.Name) and node.id in _IMPORT_NODE_TYPES)
+    }
+
+
+@pytest.mark.parametrize("site", sorted(_SHARED_READING_CALL_SITES))
+def test_a_rostered_import_reading_routes_through_the_shared_scanner(site):
+    """fallout FR-004 / GI-010 / AC-013 / OT-012 / GI-033 / AC-061 (D-207) — the
+    site, not the helper.
+
+    Each of these four scans went completely silent on its own revert while the
+    helper's anchor stayed green, because the anchor drives `_all_imports` and
+    nothing drove the call. This is the call.
+    """
+    fn = _rostered_site(site)
+    # Named rather than left to `inspect.getsource(None)`, which raises a
+    # TypeError two frames down and names neither the roster nor the site.
+    assert fn is not None, (
+        f"{site} names no function; the roster has outlived the site it "
+        "records. Repoint the key, or drop it with the reading it pinned."
+    )
+    calls = _calls_named_in(fn)
+    for reading, keywords in _SHARED_READING_CALL_SITES[site]:
+        assert any(
+            name == reading and set(keywords) <= kw for name, kw in calls
+        ), (
+            f"{site} does not call {reading}"
+            + (f" with {list(keywords)}" if keywords else "")
+            + ". Every import reading in this suite goes through the shared "
+            "scanners — see the comment above `_SHARED_READING_CALL_SITES`. A "
+            "reading of its own walks past two of Python's three spellings of "
+            "the same load, which is the blindness this run fixed six times."
+        )
+
+    # ...and it reads no import node of its own, because a site that calls the
+    # shared scanner and computes a blind set beside it satisfies the loop above
+    # while answering from the blind one.
+    assert _import_node_types_named_in(fn) == set(), (
+        f"{site} names an import node type of its own. The shared scanners are "
+        "where an import is read; a second reading here is the fork, whichever "
+        "of the two answers the assertion ends up using."
+    )
+
+
+def test_the_shared_reading_roster_names_a_real_test_and_a_real_reading():
+    """The derivation's own inputs exist, so the roster cannot quietly go empty.
+
+    Same discipline as `test_every_defect_reading_gate_names_a_real_predicate`:
+    a roster matched by NAME reports nothing when every name has moved, and a
+    parametrization over nothing is a suite full of nothing reporting green —
+    the worst failure a name-keyed pin can have.
+    """
+    assert _SHARED_READING_CALL_SITES, "the call-site roster is empty"
+    for site, required in sorted(_SHARED_READING_CALL_SITES.items()):
+        assert callable(_rostered_site(site)), (
+            f"{site} names no function; the roster has outlived the site it "
+            "records, and the pin over that site is reporting on nothing."
+        )
+        assert required, f"{site} requires no reading at all"
+        for reading, _keywords in required:
+            assert callable(globals().get(reading)), (site, reading)
 
 
 def test_the_consolidation_scan_reads_all_three_spellings_of_the_leaf(tmp_path):

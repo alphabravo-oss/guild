@@ -1,0 +1,13 @@
+# evidence-cmd: cd plugins/foundry/mcp-server || exit 1; echo "== D-208: the retirement comment names the file that holds the scan =="; grep -h "one-way seam" tests/orchestration/test_module_boundaries.py; grep -c "this file.s one-way seam" tests/orchestration/test_module_boundaries.py | sed "s/^/self-referential spellings of that cite remaining: /"; grep -c "def test_the_halted_seal_and_the_cap_path_live_in_the_halt_module" tests/orchestration/test_halt.py | sed "s/^/definitions of the seam scan in test_halt.py: /"; echo; echo "== D-207: every rostered import reading routes through the shared scanner =="; uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -q tests/orchestration/test_module_boundaries.py::test_a_rostered_import_reading_routes_through_the_shared_scanner tests/orchestration/test_module_boundaries.py::test_the_shared_reading_roster_names_a_real_test_and_a_real_reading 2>&1 | tail -3
+# evidence-for: fallout FR-004, AC-013, GI-010, OT-012, FR-063, AC-061, GI-033
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+== D-208: the retirement comment names the file that holds the scan ==
+# concern C-107), the no-facade whole-tree walk, `test_halt.py`'s one-way seam
+self-referential spellings of that cite remaining: 0
+definitions of the seam scan in test_halt.py: 1
+
+== D-207: every rostered import reading routes through the shared scanner ==
+....                                                                     [100%]
+4 passed in 0.08s
