@@ -1,0 +1,15 @@
+# evidence-cmd: cd plugins/foundry/mcp-server || exit 1; echo "== D-216 -- the layering site, one plant per import spelling =="; uv run --quiet --with pytest python -c 'import sys, tempfile; from pathlib import Path; sys.path.insert(0, "."); sys.path.insert(0, "src"); from tests.orchestration.test_module_boundaries import _all_imports; from foundry_mcp.tools import evidence as ev; tmp = Path(tempfile.mkdtemp()); dotted = "foundry_mcp.tools.foundry_handoff"; write = lambda name, src: [(tmp / (name + ".py")).write_text(src, encoding="utf-8"), tmp / (name + ".py")][1]; plants = [("from-module-import-symbol", "from foundry_mcp.tools.foundry_handoff import record_lead_fix_handoff\n"), ("from-package-import-module", "def door(fdir):\n    from foundry_mcp.tools import foundry_handoff\n    return foundry_handoff.record_lead_fix_handoff(fdir)\n"), ("import-dotted-module", "def door():\n    import foundry_mcp.tools.foundry_handoff\n    return foundry_mcp.tools.foundry_handoff\n")]; rows = [(name, "foundry_handoff" in _all_imports(write(name, src)), dotted in src) for name, src in plants]; [print("  %-28s -> %-8s  dotted name in the source: %s" % (n, "REPORTED" if s else "SILENT", "yes" if h else "NO")) for n, s, h in rows]; print("  spellings driven: %d" % len(rows)); print("VERDICT: PASS -- every spelling reaches the layering site, the one carrying no dotted name included" if all(s for _, s, _ in rows) else "VERDICT: FAIL -- the site is silent under " + repr([n for n, s, _ in rows if not s])); print(); print("== the real subject: tools/evidence.py, read through the same helper =="); reached = _all_imports(Path(ev.__file__)); print("  reaches the lifecycle module foundry_handoff: %s" % ("foundry_handoff" in reached)); print("  reaches the leaf artifacts: %s" % ("artifacts" in reached)); print("VERDICT: PASS -- the leaf is read and the lifecycle module is not" if ("artifacts" in reached and "foundry_handoff" not in reached) else "VERDICT: FAIL -- GI-033 violated at this module")' 2>&1 || exit 1
+# evidence-for: FR-063
+# evidence-timeout: 300
+
+== D-216 -- the layering site, one plant per import spelling ==
+  from-module-import-symbol    -> REPORTED  dotted name in the source: yes
+  from-package-import-module   -> REPORTED  dotted name in the source: NO
+  import-dotted-module         -> REPORTED  dotted name in the source: yes
+  spellings driven: 3
+VERDICT: PASS -- every spelling reaches the layering site, the one carrying no dotted name included
+
+== the real subject: tools/evidence.py, read through the same helper ==
+  reaches the lifecycle module foundry_handoff: False
+  reaches the leaf artifacts: True
+VERDICT: PASS -- the leaf is read and the lifecycle module is not

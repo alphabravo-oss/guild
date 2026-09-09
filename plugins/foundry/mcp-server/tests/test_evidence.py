@@ -6325,19 +6325,57 @@ def test_no_reader_of_the_owned_set_derives_it_inline():
 # What is asserted here is the property AT THIS MODULE, where a regression would
 # be written: no reach into the lifecycle module at any depth, and the symbols
 # this module binds are the leaf's own objects rather than copies of them.
+#
+# fallout GI-033 / FR-063 (D-216) — AND THE READING IS BORROWED FROM THAT SAME
+# MODULE. Asserting the property here never licensed a second walk to assert it
+# with: `_all_imports` is where an import is read in this suite, and a private
+# copy of it here answered two of Python's three spellings for one cycle. The
+# borrow is what makes "at any depth" true in all three; the scope of the claim
+# — one edge, at this module — is unchanged.
 # --------------------------------------------------------------------------- #
 
 
-def test_the_verifier_reads_the_leaf_and_never_the_lifecycle_module():
+def test_the_verifier_reads_the_leaf_and_never_the_lifecycle_module(tmp_path):
     """fallout FR-063 / GI-033 (D-191), the failing-then-passing property.
 
     AT ANY DEPTH, not just at module top. GI-033's lifecycle direction "takes
     no exception ... at no depth", and the companion rule the boundary guard
-    states for this direction says a lazy import is still a reach — so an
-    `ast.walk` over every `Import` and `ImportFrom` in the file is the honest
-    subject. A module-top-only scan would pass the moment someone closed this
-    edge by deferring it into a function, which is the fix this defect names
-    and refuses.
+    states for this direction says a lazy import is still a reach — so every
+    `Import` and `ImportFrom` in the file is the honest subject. A module-top-
+    only scan would pass the moment someone closed this edge by deferring it
+    into a function, which is the fix that defect names and refuses.
+
+    fallout GI-033 / FR-063 (D-216) — AND IN ALL THREE SPELLINGS, WHICH IS WHY
+    THE READING IS BORROWED AND NOT WRITTEN HERE.
+
+    The walk used to be private: an `ast.walk` collecting `node.module` for an
+    `ImportFrom` and testing it against the dotted module name. That answers two
+    spellings of three. `from foundry_mcp.tools import foundry_handoff` — the
+    same module, the same load, the way Python's own tutorial writes it —
+    reports `node.module` as `foundry_mcp.tools` and matched nothing. Driven at
+    4ab807e with exactly that reach planted lazily in `tools/evidence.py`: this
+    test was GREEN, and the only thing red was
+    `tests/orchestration/test_module_boundaries.py#test_no_verifier_module_reaches_a_lifecycle_module_lazily_either`,
+    the ROSTERED `_all_imports` walk. The same reach rewritten in spelling one
+    turned this test red, which is the control that makes the miss a spelling
+    miss and not a dead plant. A second, weaker copy of a rule the shared
+    scanner already answers completely is the fifth private reading that
+    `tests/orchestration/test_module_boundaries.py#_submodules_named_by` says,
+    in its own docstring, the resolution lives in one helper to prevent.
+
+    THE BORROWED READING IS THE RIGHT ONE HERE, and what decides that is not the
+    `foundry_mcp` prefix guard it opens with. `_submodules_named_by` resolves an
+    alias against `_package_root()` — the REAL installed package — which is why
+    concern C-119's protocol scan could NOT route through it: every anchor there
+    monkeypatches `_SERVER_PKG` to a `tmp_path` tree, and the resolution would
+    answer nothing for a plant that exists. This subject is `tools/evidence.py`
+    in the real package and `tools/foundry_handoff.py` is a file on that same
+    real disk, so the resolution answers. Driven below rather than assumed.
+
+    ONE EDGE, NOT THE LAYER RULE. "No verifier module reaches the lifecycle
+    layer" is the rostered walk's statement, made over every layered module on
+    both sides. This test states the ONE edge D-191 and D-192 were filed on, and
+    pairs it with the identity half below, which no import scan can express.
 
     IDENTITY, NOT MERELY ABSENCE. A repoint that re-implemented either symbol in
     this module would satisfy the import scan and break the thing the imports
@@ -6346,29 +6384,63 @@ def test_the_verifier_reads_the_leaf_and_never_the_lifecycle_module():
     `declared_requirement_ids` is the ONE answer in the tree to "which
     requirements does this casting own". `is` says the object is the leaf's.
     """
+    from tests.orchestration.test_module_boundaries import _all_imports
+
     from foundry_mcp.tools import artifacts as artifacts_module
     from foundry_mcp.tools import evidence as evidence_module
     from foundry_mcp.tools import foundry_validate as validate_module
 
-    tree = ast.parse(
-        Path(evidence_module.__file__).read_text(encoding="utf-8")
-    )
-    reached: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            reached.append(node.module)
-        elif isinstance(node, ast.Import):
-            reached.extend(alias.name for alias in node.names)
-    lifecycle_reaches = [
-        name for name in reached
-        if name == "foundry_mcp.tools.foundry_handoff"
-        or name.startswith("foundry_mcp.tools.foundry_handoff.")
-    ]
-    assert lifecycle_reaches == [], (
+    reached = _all_imports(Path(evidence_module.__file__))
+    assert "foundry_handoff" not in reached, (
         f"tools/evidence.py is a verifier module and reaches the lifecycle "
-        f"module foundry_handoff at {lifecycle_reaches} — GI-033 permits the "
-        f"leaves (artifacts, foundry_state, vocab, schemas) and the "
-        f"transitions-to-halt seam, and nothing else"
+        f"module foundry_handoff — GI-033 permits the leaves (artifacts, "
+        f"foundry_state, vocab, schemas) and the transitions-to-halt seam, and "
+        f"nothing else; the reading answered {sorted(reached)}"
+    )
+    # The vacuity guard, and the half this test is NAMED for: the leaf is in
+    # that same answer, so a reading that has gone blind is not
+    # indistinguishable from a module that reaches nothing at all.
+    assert "artifacts" in reached, sorted(reached)
+
+    # THE THREE SPELLINGS, DRIVEN AT THE BORROW SITE. `_all_imports` carries its
+    # own anchor in the module that defines it; what that anchor cannot say is
+    # that the reading still answers for THIS subject, whose alias resolution
+    # runs against the real package rather than a planted tree. So the plants
+    # name the real `foundry_mcp.tools.foundry_handoff`, and they are parsed —
+    # never imported — which is the whole of what `_all_imports` does.
+    dotted = tmp_path / "spelling_one.py"
+    dotted.write_text(
+        "from foundry_mcp.tools.foundry_handoff import record_lead_fix_handoff\n",
+        encoding="utf-8",
+    )
+    assert "foundry_handoff" in _all_imports(dotted), sorted(_all_imports(dotted))
+
+    from_package_source = (
+        "def door(fdir):\n"
+        "    from foundry_mcp.tools import foundry_handoff\n"
+        "    return foundry_handoff.record_lead_fix_handoff(fdir)\n"
+    )
+    from_package = tmp_path / "spelling_two.py"
+    from_package.write_text(from_package_source, encoding="utf-8")
+    assert "foundry_handoff" in _all_imports(from_package), (
+        sorted(_all_imports(from_package))
+    )
+    # ...and the second spelling is stated as the DELTA rather than asserted
+    # about in prose: the dotted name the retired private match tested for does
+    # not occur in that source at all, so the match had nothing to match on and
+    # the reach was invisible. This is the line that is false for a reading
+    # keyed on `node.module`.
+    assert "foundry_mcp.tools.foundry_handoff" not in from_package_source
+
+    plain_import = tmp_path / "spelling_three.py"
+    plain_import.write_text(
+        "def door():\n"
+        "    import foundry_mcp.tools.foundry_handoff\n"
+        "    return foundry_mcp.tools.foundry_handoff\n",
+        encoding="utf-8",
+    )
+    assert "foundry_handoff" in _all_imports(plain_import), (
+        sorted(_all_imports(plain_import))
     )
 
     assert evidence_module._hash_str is artifacts_module._hash_str
