@@ -5,6 +5,7 @@ a defect or a directive names, and the block a lead pastes into each of them.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from foundry_mcp.schemas.vocab import (
@@ -24,9 +25,11 @@ from foundry_mcp.tools.foundry_state import (
     get_run_dir,
     now_iso,
     read_jsonl,
+    read_text_file,
 )
 from pathlib import Path
 from foundry_mcp.tools.orchestration.keyfiles import (
+    DIRECTORY_ENTRY_SUFFIX,
     covers_path,
     manifest_spelling,
 )
@@ -128,6 +131,100 @@ def _casting_files(fdir: Path) -> dict[int, list[str]]:
     return out
 
 
+
+
+#: fallout FR-038 / CT-008 (D-217) — WHERE THE FILES A `key_files` ENTRY COVERS
+#: ACTUALLY LIVE.
+#:
+#: `fdir` is `<project_root>/foundry-archive/<run>` by `get_run_dir`'s own
+#: construction — `Path(project_root) / ARCHIVE_DIR / name`, one segment for the
+#: archive and one for the run — so the root is two parents up. Derived rather
+#: than threaded because every caller of `_alignment_block` already has `fdir`
+#: and none of them has `project_root`; `tools/test_deriver.py` reads the same
+#: relation the same way.
+def _project_root_of(fdir: Path) -> Path:
+    """The repo root a manifest's `key_files` paths are relative to."""
+    return fdir.parent.parent
+
+
+def _files_under(root: Path, entry: str) -> list[str]:
+    """Every real file a `key_files` entry names, in the manifest's spelling.
+
+    A DIRECTORY entry (trailing slash — see `keyfiles.py`) names every path
+    beneath it, so it expands; a file entry is itself. A path that is not on
+    disk yields nothing rather than being reported as a file that exists, which
+    is the honest answer for a manifest naming something a casting has not
+    written yet.
+    """
+    spelling = manifest_spelling(entry)
+    if not spelling:
+        return []
+    target = root / spelling
+    if spelling.endswith(DIRECTORY_ENTRY_SUFFIX):
+        if not target.is_dir():
+            return []
+        return sorted(
+            manifest_spelling(str(child.relative_to(root)))
+            for child in target.rglob("*")
+            if child.is_file() and "__pycache__" not in child.parts
+        )
+    return [spelling] if target.is_file() else []
+
+
+def _files_citing(fdir: Path, cid: int, requirement_ids: set[str]) -> list[str]:
+    """The files casting `cid` owns that CITE one of `requirement_ids`.
+
+    fallout FR-038 / CT-008 (D-217) — THE NARROWING THREE SURFACES PROMISED AND
+    NONE PERFORMED.
+    ----------------------------------------------------------------------
+    FR-038 ends "the sibling files this casting owns THAT CITE THOSE IDS", CT-008
+    says "each co-dispatched casting's sibling files citing those ids", and
+    `guidance.py`'s `run_streams` imperative repeats the sentence to the lead
+    verbatim. The renderer named `files.get(cid)` — the casting's WHOLE
+    `key_files` list, which the manifest records with no per-file requirement
+    mapping at all. DRIVEN at ac89f59: a casting owning FR-007 with key_files
+    ['src/cites_fr007.py', 'src/also_cites_fr007.py',
+    'src/unrelated_no_citation.py', 'docs/unrelated.md'] rendered all four.
+    Over-naming, so the harm is a dispatch prompt pointing a teammate at files
+    the rule does not live in — and the block is pasted VERBATIM, so the
+    teammate has nothing else to go on.
+
+    THE CITATION IS THE SOURCE OF TRUTH BECAUSE IT IS THE ONE THE RUN HAS.
+    Nothing persists a per-file requirement map; what this package does have is
+    the convention `tests/test_spec_id_convention.py` pins — every rule carries
+    its ids in the file that implements it, as `fallout FR-038 / CT-008`. So the
+    question "which of this casting's files carry this rule" is asked of the
+    files, by whole-token match, rather than of a table nobody writes.
+
+    A DIRECTORY ENTRY EXPANDS. This run's own manifest names
+    `tools/orchestration/` and `tests/orchestration/` as single entries under
+    the cast gate's eight-entry cap, so answering with the entry would name a
+    thirteen-module package for a rule that lives in one of them — the same
+    over-naming one level up.
+    """
+    root = _project_root_of(fdir)
+    ids = {str(r) for r in requirement_ids if r}
+    if not ids:
+        return []
+    pattern = re.compile(
+        r"\b(?:" + "|".join(re.escape(i) for i in sorted(ids)) + r")\b"
+    )
+    out: list[str] = []
+    for entry in _casting_files(fdir).get(cid) or []:
+        for relative in _files_under(root, entry):
+            if relative in out:
+                continue
+            text, problem = read_text_file(root / relative)
+            if problem is not None:
+                # Unreadable is not "does not cite": a file this scan cannot
+                # decode is one the narrowing cannot speak for, so it stays in
+                # the list rather than being silently dropped from a block the
+                # lead pastes verbatim.
+                out.append(relative)
+                continue
+            if pattern.search(text):
+                out.append(relative)
+    return out
 
 
 def _owning_casting(fdir: Path, files: list[str]) -> int | None:
@@ -278,8 +375,32 @@ def _alignment_block(
             # Listed below under its own heading instead, with the concern that
             # names it. A casting appears once, under the reason it is here.
             continue
-        siblings = files.get(cid) or []
-        lines.append(f"- casting {cid}: {', '.join(siblings) if siblings else 'no key_files recorded'}")
+        # fallout FR-038 / CT-008 (D-217) — THE FILES THAT CITE THE IDS, WHICH
+        # IS WHAT THE REQUIREMENT SAYS AND WHAT THE DOCSTRING ABOVE PROMISED.
+        #
+        # The fallback is NAMED rather than silent, and it is the whole
+        # `key_files` list. Under-naming would be the worse failure of the two:
+        # the manifest says this casting owns the requirement, so a block that
+        # named nothing would tell a lead the co-dispatch was empty when what
+        # is actually true is that the rule is carried without a written cite.
+        # Saying which of the two answers this line is lets the teammate read
+        # it correctly either way.
+        siblings = _files_citing(fdir, cid, requirement_ids)
+        unnarrowed = ""
+        if not siblings:
+            siblings = files.get(cid) or []
+            if requirement_ids and siblings:
+                unnarrowed = (
+                    "  (no file in this casting cites "
+                    f"{', '.join(sorted(requirement_ids))} by id, so its whole "
+                    "key_files list follows — the manifest records it as an "
+                    "owner, so find the surface that carries the rule)"
+                )
+        lines.append(
+            f"- casting {cid}: "
+            + (", ".join(siblings) if siblings else "no key_files recorded")
+            + unnarrowed
+        )
 
     if carried_concerns:
         lines.extend([

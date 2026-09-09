@@ -870,6 +870,168 @@ def test_the_narrowed_cycle_still_bounds_items_total_by_the_roster(run_env):
     assert foundry_mark_stream("trace", 0, 84, 84, 0, project_root).get("ok") is True
 
 
+def _delta_scope_touching(fdir, stream: str, touched: list[str], cycle: int = 0) -> None:
+    """`_delta_scope`, with the drawn width NAMED rather than left disjoint.
+
+    The fixture above writes `touched_files` that intersect no roster item, so
+    the population the decision enumerates is empty and the bound below is
+    vacuous — which is why every D-156 / D-179 test kept passing while the
+    lower half of the contract was missing.
+    """
+    _write_state(fdir, phase="F2", cycle=cycle, inspect_modes=[{
+        "cycle": cycle,
+        "mode": "DELTA",
+        "rule": "",
+        "decided_by": "inspect_start",
+        "required_streams": [stream],
+        "stream_scope": {
+            stream: {
+                "scope": "delta",
+                "detail": f"symbols in the {len(touched)} file(s) the GRIND touched",
+            }
+        },
+        "touched_files": list(touched),
+        "prove_sample": [],
+    }])
+
+
+def test_a_narrowed_cycle_bounds_items_total_from_below_by_the_width_it_drew(run_env):
+    """fallout FR-050 / CT-003 / ST-008 / OT-031 (D-220) — THE HALF D-179 LEFT
+    OPEN.
+
+    OT-031, CT-003's errors column and ST-008's guard state the equality
+    UNQUALIFIED. D-156 stood the rung down on a server-narrowed cycle and D-179
+    restored the UPPER bound only, so what survived was `items_total <=
+    roster_len` — and any total at or below the roster length was then accepted
+    at 100%.
+
+    DRIVEN at ac89f59 against an 84-item `rosters/trace.json` with the width
+    stamped DELTA for the same cycle: `items_checked=1, items_total=1` returned
+    ok True, coverage "100%", measured_against "delta_width". TRACE could report
+    one of one as full coverage of an 84-item population — a shorter list
+    reported as full coverage of a population it quietly shrank, which is the
+    exact failure `agents/research-auditor.md` names.
+
+    THE POPULATION MEASURED AGAINST IS THE ONE THE DECISION ENUMERATES, which
+    is PROVE's own shape (D-080) and what `agents/tracer.md` calls the TRACE
+    roster on a DELTA cycle: "`inspect_mode.touched_files` ... This is the TRACE
+    roster on a `DELTA` cycle."
+
+    A BOUND AND NOT AN EQUALITY, because the two are in different units: the
+    record counts SYMBOLS and the enumeration counts FILES. Measured over this
+    run's own five DELTA cycles, `touched_files` was 0/38/2/10/8 where
+    `items_total` was -/69/9/25/9, so an equality would have refused every real
+    record. What holds by construction is the direction — a roster file declares
+    at least one symbol — and that is what refuses 1 of 1 on a width that drew
+    seven.
+    """
+    from foundry_mcp.tools.rosters import foundry_roster
+
+    project_root, fdir = run_env
+    roster = [f"src/f{n}.py" for n in range(84)]
+    drawn = roster[:7]
+    _delta_scope_touching(fdir, "trace", drawn + ["docs/not_on_the_roster.md"])
+    assert foundry_roster(
+        stream="trace", items=roster, project_root=project_root,
+    ).get("error") is None
+
+    # THE DRIVE. One of one, on a width that drew seven.
+    refused = foundry_mark_stream("trace", 0, 1, 1, 0, project_root)
+    assert refused.get("ok") is not True, refused
+    assert refused["error"] == ROSTER_MISMATCH, refused
+    assert refused["narrowed_length"] == 7, refused
+    assert refused["roster_length"] == 84, refused
+    assert refused["measured_against"] == "delta_width", refused
+    # The hint names the width rather than the roster, because reporting 84 is
+    # the OTHER wrong answer D-156 closed.
+    assert "at least 7" in refused["hint"], refused["hint"]
+    assert "src/f0.py" in refused["hint"], refused["hint"]
+
+    # THE WIDTH ITSELF IS ACCEPTED, which is the boundary of the bound.
+    assert foundry_mark_stream("trace", 0, 7, 7, 0, project_root).get("ok") is True
+
+    # ...and so is a LARGER total, because the units differ: 25 declared symbols
+    # across 7 touched files is the shape every real DELTA record in this run
+    # has. A bound that refused this would be D-156 reopened.
+    assert foundry_mark_stream("trace", 0, 25, 25, 0, project_root).get("ok") is True
+
+    # ...while the upper bound D-179 restored is untouched.
+    over = foundry_mark_stream("trace", 0, 1, 85, 0, project_root)
+    assert over["error"] == ROSTER_MISMATCH, over
+    assert "at most 84" in over["hint"], over["hint"]
+
+
+def test_a_narrowed_prove_is_bounded_by_the_sample_the_server_drew(run_env):
+    """fallout FR-050 / CT-003 / OT-031 (D-220) — the same bound, on the stream
+    whose enumeration is in the record's OWN unit.
+
+    `prove_sample` is a NAMED, FINITE list of requirement rows — the rows tied
+    to the defects the preceding GRIND fixed plus the sampled remainder — so
+    for PROVE the enumeration and the record count the same things.
+    `_coverage_shortfall` has measured against it since D-080; the DOOR did not,
+    so a PROVE record could declare a population smaller than the sample the
+    server itself drew and be accepted at 100% before the threshold ever saw it.
+    """
+    from foundry_mcp.tools.rosters import foundry_roster
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=0, inspect_modes=[{
+        "cycle": 0,
+        "mode": "DELTA",
+        "rule": "",
+        "decided_by": "inspect_start",
+        "required_streams": ["prove"],
+        "stream_scope": {
+            "prove": {"scope": "delta", "detail": "12 row(s)"}
+        },
+        "touched_files": [],
+        "prove_sample": [f"FR-{n:03d}" for n in range(12)],
+    }])
+    assert foundry_roster(
+        stream="prove", items=[f"FR-{n:03d}" for n in range(40)],
+        project_root=project_root,
+    ).get("error") is None
+
+    refused = foundry_mark_stream("prove", 0, 3, 3, 0, project_root)
+    assert refused.get("ok") is not True, refused
+    assert refused["error"] == ROSTER_MISMATCH, refused
+    assert refused["narrowed_length"] == 12, refused
+    assert "FR-000" in refused["hint"], refused["hint"]
+
+    # The sample itself is what the door accepts, and it is what every real
+    # DELTA PROVE record in this run reported.
+    assert foundry_mark_stream("prove", 0, 12, 12, 0, project_root).get("ok") is True
+
+
+def test_a_width_that_drew_no_roster_item_bounds_nothing(run_env):
+    """fallout FR-050 / OT-031 (D-220) — the empty enumeration, stated.
+
+    A DELTA cycle whose GRIND touched no file on the stream's roster drew a
+    width of nothing, and demanding a total against it would be inventing a
+    population the server never drew. This run's own cycle 9 is that state:
+    mode DELTA, `stream_scope.trace` delta, `touched_files` empty. The upper
+    bound still applies, so the record is not unconstrained — it is bounded by
+    the one fact that is still knowable.
+
+    Written down rather than left implicit because "the derivation came back
+    empty, so nothing is checked" is the fail-open shape this run has filed
+    twice (D-207, D-221). It is not one here: an empty intersection is a
+    MEASURED width of zero, not a width the server failed to compute.
+    """
+    from foundry_mcp.tools.rosters import foundry_roster
+
+    project_root, fdir = run_env
+    _delta_scope_touching(fdir, "trace", ["docs/only.md", "README.md"])
+    assert foundry_roster(
+        stream="trace", items=[f"src/f{n}.py" for n in range(84)],
+        project_root=project_root,
+    ).get("error") is None
+
+    assert foundry_mark_stream("trace", 0, 1, 1, 0, project_root).get("ok") is True
+    # ...and the upper bound is still there.
+    assert foundry_mark_stream("trace", 0, 1, 85, 0, project_root).get("ok") is not True
+
+
 def test_the_roster_rung_still_refuses_on_a_width_the_server_did_not_narrow(run_env):
     """fallout FR-050 / OT-031 (D-156) — the control, on the same run.
 

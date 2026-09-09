@@ -5060,10 +5060,44 @@ _KNOWN_DUPLICATION: dict[str, str] = {
     # now asserts the single definition instead of accounting for two, and its
     # own stale-row assertion is what forced this line to be deleted rather than
     # left to rot: an inventory that never shrinks is a catalogue.
+    # fallout AC-015 / OT-011 (D-219) — THE ROW'S OWN STATED REASON WAS FALSE
+    # FOR ONE OF THE TWO FILES IT NAMED, WHICH IS D-167's SHAPE ONE TABLE OVER.
+    #
+    # It read "tools/evidence.py and tools/test_deriver.py each bind their own
+    # ALIAS to it rather than importing the declaration". MEASURED at ac89f59:
+    # `evidence._REQUIREMENT_ID_RE is vocab.REQUIREMENT_ID_RE` is True and
+    # `test_deriver._REQUIREMENT_ID_RE is vocab.REQUIREMENT_ID_RE` is False —
+    # the second is `re.compile(r"\b(?:US|FR)-\d+\b")`, a SECOND grammar wearing
+    # the shared name, and of AC-012 / CT-004 / OT-015 / NFR-009 / GI-033 /
+    # ST-013 the declaration matches all six while it matches none.
+    #
+    # THE HARM IS THE EXIT THE ROW HANDS A READER. "Each binds its own alias"
+    # says the close is one import, and for `test_deriver.py` that import
+    # replaces a narrow grammar with a twelve-prefix one under the name its
+    # `_parse_header` reads. Half of the file's own claim is the measure: its
+    # `_TESTS_SPEC_HEADER_RE` IS byte-equal to
+    # `plugins/foundry/scripts/validate-test-observations.py`'s, and on THIS
+    # name the two diverge — the script binds the declaration and the module
+    # compiles its own. So a reader has two different acts to choose between
+    # and the row named neither.
+    #
+    # NO CASTING OWNS `tools/test_deriver.py` THIS RUN — it is in nobody's
+    # `key_files`, so its half is successor work and cannot be closed here. The
+    # premise is pinned instead, by
+    # `test_the_requirement_id_forks_are_two_aliases_and_one_divergent_grammar`,
+    # so the row can never again describe the divergence as an alias and neither
+    # side can be widened or narrowed without a red test.
     "_REQUIREMENT_ID_RE": (
-        "castings 5 and 6 — schemas/vocab.py declares the grammar; "
-        "tools/evidence.py and tools/test_deriver.py each bind their own alias "
-        "to it rather than importing the declaration"
+        "TWO HALVES WITH DIFFERENT EXITS. schemas/vocab.py declares the "
+        "grammar and keeps a private alias beside it for its own predicates. "
+        "casting 5 — tools/evidence.py binds a second alias to that same "
+        "object, and its exit is one import. NO OWNER THIS RUN — "
+        "tools/test_deriver.py is NOT an alias: it compiles the narrower "
+        "US-/FR- grammar its `# tests-spec:` header parser reads, so its exit "
+        "is a RENAME (the D-061 shape) or an import that must be argued for "
+        "against the header, never an import taken because this row said "
+        "'alias'. Pinned by "
+        "test_the_requirement_id_forks_are_two_aliases_and_one_divergent_grammar."
     ),
     "_normalise_path": (
         "casting 1 — tools/concerns.py and schemas/vocab.py spell one rule twice"
@@ -5465,6 +5499,87 @@ def test_the_named_refusal_forks_are_the_two_the_row_names_and_not_the_third():
     assert signatures["concerns.py"] == signatures["rosters.py"], signatures
     # ...and the third takes one argument of a different kind entirely.
     assert signatures["display.py"][0] == ["result"], signatures["display.py"]
+
+
+def test_the_requirement_id_forks_are_two_aliases_and_one_divergent_grammar():
+    """fallout AC-015 / OT-011 (D-219) — the row's PREMISE, driven.
+
+    `_KNOWN_DUPLICATION` means "these SHOULD be one and somebody else owns the
+    file", and the reason a row carries is the only statement of WHAT closing
+    it would be. The `_REQUIREMENT_ID_RE` row said both non-declaring modules
+    "bind their own alias to it", which made the close one import for each —
+    and it was false for one of the two. That is D-167's recorded shape ("the
+    row's own stated reason denied the duplication it excused") one table over,
+    and its remedy is the same one: a STRUCTURAL predicate, so the row cannot
+    be corrected in prose today and drift back tomorrow.
+
+    THE THREE, MEASURED AT ac89f59 RATHER THAN DESCRIBED. Two are the SAME
+    OBJECT as the declaration; the third is a second `re.compile` with a
+    narrower alternation and no fractional suffix. The six ids below are the
+    separation: every one is a requirement id this run's own spec uses, the
+    declaration matches all six and the fork matches none, so "widen it to the
+    declaration" is a change of behaviour rather than a tidy-up — whatever the
+    row says.
+    """
+    from foundry_mcp.schemas import vocab
+    from foundry_mcp.tools import evidence, test_deriver
+
+    declaration = vocab.REQUIREMENT_ID_RE
+
+    # (1) THE TWO THE ROW MAY CALL ALIASES. Identity, not equality: an alias is
+    # the declaration under a second name, and two `re.compile` calls over one
+    # pattern string would compare equal-ish while being two objects to keep in
+    # step.
+    assert vocab._REQUIREMENT_ID_RE is declaration
+    assert evidence._REQUIREMENT_ID_RE is declaration
+
+    # (2) THE ONE THAT IS NOT, which is the whole of D-219.
+    fork = test_deriver._REQUIREMENT_ID_RE
+    assert fork is not declaration, (
+        "tools/test_deriver.py binds the declaration now. If that was a "
+        "deliberate widening of the `# tests-spec:` header grammar, say so "
+        "here; if it was taken because _KNOWN_DUPLICATION called it an alias, "
+        "it is the silent widening this pin exists to refuse."
+    )
+    assert fork.pattern != declaration.pattern, (fork.pattern, declaration.pattern)
+
+    # (3) AND THE DIVERGENCE IS A DIFFERENCE IN WHAT THEY MATCH, not a spelling.
+    for token in ("AC-012", "CT-004", "OT-015", "NFR-009", "GI-033", "ST-013"):
+        assert declaration.findall(token) == [token], token
+        assert fork.findall(token) == [], (token, fork.pattern)
+    # ...the two prefixes TEST-01's header admits are matched by BOTH, which is
+    # why the fork is usable at all and why the divergence is silent today.
+    for token in ("US-001", "FR-038"):
+        assert declaration.findall(token) == [token] == fork.findall(token), token
+
+    # (4) THE MIRROR THE FORK'S OWN COMMENT CLAIMS, which is where a reader who
+    # wanted to close this would look. The header regex IS byte-equal to the
+    # validator script's; on THIS name the two diverge, and that asymmetry is
+    # the fact the row must carry rather than the word "alias".
+    script = (
+        Path(foundry_mcp.__file__).resolve().parents[3]
+        / "scripts"
+        / "validate-test-observations.py"
+    )
+    assert script.is_file(), script
+    script_source = script.read_text(encoding="utf-8")
+    assert test_deriver._TESTS_SPEC_HEADER_RE.pattern in script_source, (
+        "the header regex is no longer byte-equal to the validator script's; "
+        "the fork's stated mirror is what makes its narrowness legible, so a "
+        "drift there is the row's premise moving under it"
+    )
+    assert fork.pattern not in script_source, (
+        "the validator script now compiles the narrow grammar too. That is one "
+        "of the two exits and it is a real one — record it in the row and "
+        "repoint this assertion; it must not arrive unstated."
+    )
+
+    # ...and the row still says so, so the prose and the measurement cannot
+    # drift into two answers. The word the old row got wrong is the word
+    # checked for.
+    reason = _KNOWN_DUPLICATION["_REQUIREMENT_ID_RE"]
+    assert "is NOT an alias" in reason, reason
+    assert "test_deriver.py" in reason, reason
 
 
 def test_both_streams_complete_compositions_answer_the_same_thing(run_env):
@@ -7092,9 +7207,9 @@ def test_the_package_marker_re_exports_nothing():
     }
 
 
-def test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith(tmp_path):
-    """fallout OT-012 / GI-010 / AC-013 / FR-004 (D-198) — THE ANCHOR FOR THE
-    WALK ABOVE, WHICH IS GREEN OVER A CLEAN TREE WHETHER IT WORKS OR NOT.
+def test_the_no_facade_scan_sees_all_four_spellings_of_the_deleted_monolith(tmp_path):
+    """fallout OT-012 / GI-010 / AC-013 / FR-004 (D-198, D-222) — THE ANCHOR FOR
+    THE WALK ABOVE, WHICH IS GREEN OVER A CLEAN TREE WHETHER IT WORKS OR NOT.
 
     The tree has no `foundry_orchestrator` importer and must not gain one, so
     the assertion above passes on an empty offender list — and passed on an
@@ -7103,11 +7218,33 @@ def test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith(tmp
     test that fails if the scan goes blind again, on the day it goes blind
     rather than on the day somebody reintroduces the facade.
 
-    ONE PLANT PER SPELLING, all three naming the same load. The second is the
+    ONE PLANT PER SPELLING, all four naming the same load. The second is the
     one `_submodules_named_by` cannot resolve here and `also_by_name` can:
     `tools/foundry_orchestrator.py` is DELETED, so there is no file on disk for
     an alias to resolve against, which is precisely the state OT-012 requires
     and precisely the state that made disk resolution the wrong reading.
+
+    fallout GI-010 / OT-012 / AC-013 (D-222) — AND THE FOURTH, WHICH LANDED IN
+    THE HELPER WITH NOTHING DRIVING IT.
+    ----------------------------------------------------------------------
+    O-082's relative spelling was closed in `_all_imports` at bb046ba as two
+    edits — the `elif node.level and not node.module` branch that resolves
+    `from . import x` on the file's own directory, and the un-guarding of
+    `out |= set(aliases) & named` so the caller-named arm answers at `level=1`
+    too — and BOTH REVERT WITH THE WHOLE SUITE GREEN. Measured in a detached
+    worktree at ac89f59: each revert on its own gave 5351 passed, 113 skipped,
+    exit 0, byte-identical to the unmodified baseline, while the docstring
+    above the helper called the spelling "closed". `grep -rn "from \\. import"
+    tests/` found seven hits and every one of them was inside a docstring or a
+    block comment.
+
+    So the two plants below are one per HALF, not one per spelling, because
+    the two halves answer for different callers: the branch is what both
+    layering walks reach (`test_every_leaf_module_imports_only_leaves` and its
+    two siblings all pass `also_by_name=()`), and the `named` arm is what the
+    no-facade walk reaches. A plant that exercised only the second would have
+    left the first reverting green, which is how this reading came to be
+    asserted about rather than driven.
     """
     named = ("foundry_orchestrator",)
 
@@ -7159,6 +7296,52 @@ def test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith(tmp
     # ...and the default is untouched, which is what makes this additive for
     # the two layering walks that call the same helper.
     assert _all_imports(dotted_module) == {"foundry_orchestrator"}
+
+    # ── SPELLING FOUR: `from . import x`, which is ordinary Python (D-222) ──
+    #
+    # HALF ONE — the disk-resolved branch, asserted through the DEFAULT keyword,
+    # because `also_by_name=()` is how all three layering walks call this helper
+    # and the `named` arm below cannot answer for them.
+    package = tmp_path / "relative_pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "gates.py").write_text("GATE = 1\n", encoding="utf-8")
+    relative = package / "spelling_four.py"
+    relative.write_text(
+        "from . import gates\n"
+        "def door(fdir):\n"
+        "    return gates.GATE\n",
+        encoding="utf-8",
+    )
+    assert _all_imports(relative) == {"gates"}, sorted(_all_imports(relative))
+
+    # ...and the resolution is on DISK, on the file's own directory, so a
+    # re-exported SYMBOL is not reported as a module edge. This is the boundary
+    # that keeps the branch from inventing crossings — the reason the arm is
+    # disk-conditional at all.
+    symbol_relative = package / "spelling_four_symbol.py"
+    symbol_relative.write_text("from . import GATE\n", encoding="utf-8")
+    assert _all_imports(symbol_relative) == set(), sorted(
+        _all_imports(symbol_relative)
+    )
+
+    # HALF TWO — the caller-named arm at `level=1`, which must NOT be
+    # disk-conditional for D-198's reason: the module whose ABSENCE is the
+    # requirement can never be resolved by asking whether its file exists.
+    # Nothing named `foundry_orchestrator` is on disk in this package, which is
+    # exactly the state OT-012 requires.
+    relative_absent = package / "spelling_four_absent.py"
+    relative_absent.write_text(
+        "from . import foundry_orchestrator\n", encoding="utf-8"
+    )
+    assert "foundry_orchestrator" in _all_imports(
+        relative_absent, also_by_name=named
+    ), sorted(_all_imports(relative_absent, also_by_name=named))
+    # ...stated as the delta, exactly as spelling two is: without the
+    # caller-named reading the same plant resolves nothing at all.
+    assert _all_imports(relative_absent) == set(), sorted(
+        _all_imports(relative_absent)
+    )
 
 
 
@@ -7591,7 +7774,7 @@ def test_a_second_definition_in_measure_run_is_refused(tmp_path):
 # `_submodules_named_by` resolves an alias on disk and answers for all three
 # spellings, `_all_imports` is the walk built on it, both carry the class in
 # their own docstrings where an author writing an import walk is standing, and
-# `test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith`
+# `test_the_no_facade_scan_sees_all_four_spellings_of_the_deleted_monolith`
 # drives that claim with one plant per spelling. Route a new import reading
 # through them, and name the call site in `_IMPORT_READING_SITES` below so
 # that the routing is asserted rather than believed. That is what all six fixes
@@ -7611,7 +7794,7 @@ def test_a_second_definition_in_measure_run_is_refused(tmp_path):
 # — THE SITES ARE PINNED, WHICH IS THE HALF ALL SIX FIXES NEVER HAD.
 #
 # The paragraph above says the remedy is asserted, and it is — but what
-# `test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith`
+# `test_the_no_facade_scan_sees_all_four_spellings_of_the_deleted_monolith`
 # asserts is a fact about the HELPER. It plants one module per spelling in
 # `tmp_path` and checks that `_all_imports` resolves all three. It says nothing
 # about whether any real scan calls it, and four real scans said nothing at all
@@ -7811,7 +7994,7 @@ _IMPORT_READING_SITES: dict[
     # just the keyword (D-213).
     "tests.orchestration.test_module_boundaries.test_the_package_marker_re_exports_nothing": (
         (("_all_imports", (("also_by_name", ("foundry_orchestrator",)),)),), False),
-    "tests.orchestration.test_module_boundaries.test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith": (
+    "tests.orchestration.test_module_boundaries.test_the_no_facade_scan_sees_all_four_spellings_of_the_deleted_monolith": (
         (("_all_imports", (("also_by_name", _ANY_VALUE),)),), False),
     "tests.orchestration.test_module_boundaries.test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions": (
         (("_all_imports", ()), ("_module_top_dotted_imports", ()), ("_module_top_imports", ())), False),

@@ -106,6 +106,144 @@ def test_foundry_tasks_names_every_casting_that_owns_the_defects_requirement(run
     assert "src/seven.py" not in block, block
 
 
+def test_the_block_names_the_sibling_files_that_cite_the_ids(run_env):
+    """fallout FR-038 / CT-008 — "THAT CITE THOSE IDS" IS THE HALF THAT WAS
+    PROSE (D-217).
+
+    fallout FR-038 ends "the sibling files this casting owns THAT CITE THOSE
+    IDS", fallout CT-008 says the same, and `guidance.py`'s imperative repeats
+    it to the lead verbatim — three surfaces promising a narrowing the renderer
+    never performed: it named `_casting_files(fdir)[cid]`, the whole `key_files`
+    list, which the manifest records with no per-file requirement mapping at
+    all.
+
+    DRIVEN at ac89f59 with exactly this manifest: the block rendered
+    `- casting 1: src/cites.py, src/also_cites.py, src/unrelated.py,
+    docs/unrelated.md` — both unrelated files named. The block is pasted
+    VERBATIM into a dispatch prompt, so over-naming is a teammate sent to files
+    the rule does not live in with nothing else to go on.
+
+    THE CITATION IS THE SOURCE OF TRUTH because it is the one that exists: this
+    package's own convention, pinned by `tests/test_spec_id_convention.py`, is
+    that a rule carries its ids in the file that implements it.
+    """
+    project_root, fdir = run_env
+    root = Path(project_root)
+    (root / "src").mkdir(parents=True, exist_ok=True)
+    (root / "docs").mkdir(parents=True, exist_ok=True)
+    (root / "src" / "cites.py").write_text(
+        "# fallout FR-007 — the rule lives here\n", encoding="utf-8"
+    )
+    (root / "src" / "also_cites.py").write_text(
+        '"""FR-007 is carried here too."""\n', encoding="utf-8"
+    )
+    (root / "src" / "unrelated.py").write_text(
+        "# " + "N" + "FR-007 and FR-0071 are different ids and must not match\n",
+        encoding="utf-8",
+    )
+    (root / "docs" / "unrelated.md").write_text("nothing at all\n", encoding="utf-8")
+    (root / "src" / "three.py").write_text("# fallout FR-007\n", encoding="utf-8")
+
+    _manifest_with_requirement_ids(fdir, {
+        3: (["FR-007"], ["src/three.py"]),
+        1: (["FR-007"], [
+            "src/cites.py", "src/also_cites.py", "src/unrelated.py",
+            "docs/unrelated.md",
+        ]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(_tiered("D-001", "LIVE"), file="src/three.py", spec_ref="FR-007"),
+    ])
+
+    result = foundry_defects_to_tasks(project_root)
+    task = next(t for t in result["tasks"] if "D-001" in t["defect_ids"])
+    block = task["alignment_block"]
+    assert task["co_dispatch"] == [1], task
+
+    # The two that carry the rule are named...
+    assert "src/cites.py" in block, block
+    assert "src/also_cites.py" in block, block
+    # ...and the two that do not are not. The unrelated file's own text carries
+    # the two near-misses the whole-token match must refuse — a longer prefix
+    # ending in the same two letters, and a longer number — so a substring
+    # reading would drag it back in and a boundary-free one would too.
+    assert "src/unrelated.py" not in block, block
+    assert "docs/unrelated.md" not in block, block
+
+
+def test_a_directory_key_file_is_expanded_to_the_files_that_cite(run_env):
+    """fallout FR-038 / CT-008 / FR-009 (D-217) — the SELF-APPLICATION.
+
+    This run's own manifest names `tools/orchestration/` and
+    `tests/orchestration/` as single `key_files` entries, because the cast gate
+    caps a casting at eight and a casting carving a whole package fits under it
+    by naming the package once. Answering with the ENTRY would name a
+    thirteen-module package for a rule that lives in one module — the same
+    over-naming one level up, and the shape that made D-170 answer
+    `owning_casting: None` for thirteen of fifteen tasks.
+    """
+    project_root, fdir = run_env
+    root = Path(project_root)
+    pkg = root / "pkg" / "orchestration"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "carries.py").write_text("# fallout FR-050 — here\n", encoding="utf-8")
+    (pkg / "silent.py").write_text("# nothing to declare\n", encoding="utf-8")
+    (root / "src").mkdir(parents=True, exist_ok=True)
+    (root / "src" / "owner.py").write_text("# fallout FR-050\n", encoding="utf-8")
+
+    _manifest_with_requirement_ids(fdir, {
+        2: (["FR-050"], ["src/owner.py"]),
+        6: (["FR-050"], ["pkg/orchestration/"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(_tiered("D-002", "LIVE"), file="src/owner.py", spec_ref="FR-050"),
+    ])
+
+    result = foundry_defects_to_tasks(project_root)
+    task = next(t for t in result["tasks"] if "D-002" in t["defect_ids"])
+    block = task["alignment_block"]
+    assert task["co_dispatch"] == [6], task
+    assert "pkg/orchestration/carries.py" in block, block
+    assert "silent.py" not in block, block
+
+
+def test_a_casting_that_cites_no_id_is_named_as_such_and_not_dropped(run_env):
+    """fallout FR-038 / CT-008 (D-217) — the fallback, and why it is NAMED.
+
+    Under-naming is the worse of the two failures. The manifest records this
+    casting as an OWNER of the requirement, so a block that listed nothing for
+    it would tell the lead the co-dispatch was empty when what is actually true
+    is that the rule is carried without a written cite. The whole `key_files`
+    list follows, with the line saying which of the two answers it is — so a
+    teammate reading the block verbatim can tell "these files carry the rule"
+    from "nobody wrote the id down; find the surface".
+    """
+    project_root, fdir = run_env
+    root = Path(project_root)
+    (root / "src").mkdir(parents=True, exist_ok=True)
+    (root / "src" / "owner.py").write_text("# fallout FR-061\n", encoding="utf-8")
+    (root / "src" / "quiet_a.py").write_text("# no id here\n", encoding="utf-8")
+    (root / "src" / "quiet_b.py").write_text("# nor here\n", encoding="utf-8")
+
+    _manifest_with_requirement_ids(fdir, {
+        4: (["FR-061"], ["src/owner.py"]),
+        9: (["FR-061"], ["src/quiet_a.py", "src/quiet_b.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(_tiered("D-003", "LIVE"), file="src/owner.py", spec_ref="FR-061"),
+    ])
+
+    result = foundry_defects_to_tasks(project_root)
+    task = next(t for t in result["tasks"] if "D-003" in t["defect_ids"])
+    block = task["alignment_block"]
+    assert task["co_dispatch"] == [9], task
+    assert "src/quiet_a.py" in block and "src/quiet_b.py" in block, block
+    assert "no file in this casting cites FR-061 by id" in block, block
+
+
 
 
 

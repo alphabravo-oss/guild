@@ -40,7 +40,8 @@ from foundry_mcp.tools.foundry_state import (
 from foundry_mcp.tools.foundry_state import (
     unrecorded_width_problem as _unrecorded_width_problem,
 )
-from foundry_mcp.tools.rosters import roster_length
+from foundry_mcp.tools.orchestration.keyfiles import manifest_spelling
+from foundry_mcp.tools.rosters import read_roster, roster_length
 from pathlib import Path
 
 
@@ -393,6 +394,77 @@ def _recorded_prove_roster(fdir: Path, cycle: int) -> list[str] | None:
     return [row for row in sample if isinstance(row, str)]
 
 
+
+
+def _recorded_delta_population(fdir: Path, cycle: int, stream: str) -> list[str] | None:
+    """The narrowed population THIS cycle's decision ENUMERATES, or None.
+
+    fallout FR-050 / CT-003 / ST-008 / OT-031 (D-220) — THE HALF D-179 LEFT
+    OPEN, AND THE ONLY POPULATION IT CAN HONESTLY BE MEASURED AGAINST.
+    ------------------------------------------------------------------------
+    OT-031, CT-003's errors column and ST-008's guard all state the
+    roster-length equality UNQUALIFIED. D-156 stood the rung down entirely on a
+    server-narrowed cycle and D-179 restored the UPPER bound, so what survives
+    is `items_total <= roster_len` — and any total at or below the roster
+    length is then accepted at 100%. DRIVEN at ac89f59 against an 84-item
+    `rosters/trace.json` with the width stamped DELTA for the same cycle:
+    `items_checked=1, items_total=1` was accepted, coverage "100%". A stream can
+    report one of one as full coverage of a population it quietly shrank, which
+    is the exact failure `agents/research-auditor.md` names.
+
+    THE SAFE FORM OF THE CARVE-OUT IS THE ONE PROVE ALREADY HAS. `width.py`
+    writes scope "delta" for two streams and no others, and for each of them the
+    decision it writes ENUMERATES the narrowed population:
+
+      * `prove` — `prove_sample`, the rows tied to the fixed defects plus the
+        sampled remainder, by id. `_recorded_prove_roster` already reads it and
+        `_coverage_shortfall` already measures against it (D-080).
+      * `trace` — `touched_files`, which `agents/tracer.md` names in as many
+        words: "This is the TRACE roster on a DELTA cycle". Intersected with the
+        persisted roster, because the roster is the population the stream agreed
+        to check and a touched file outside it was never part of that agreement.
+
+    A BOUND, NOT AN EQUALITY, AND THE DIRECTION IS THE ONE THAT CANNOT BE WRONG.
+    TRACE's record is in SYMBOLS (`agents/tracer.md`: "items_total as the number
+    of declared symbols in those files") while the enumeration here is in FILES,
+    so equality would be false — measured against this run's own five DELTA
+    cycles, `touched_files` was 0/38/2/10/8 where `items_total` was -/69/9/25/9.
+    What holds in every one of them, and holds by construction, is that a roster
+    file declares at least one symbol: the declared population cannot be SMALLER
+    than the number of roster files the width drew. That is the bound, and it is
+    what refuses 1 of 1 on a width that drew seven.
+
+    None means the decision enumerates nothing for this stream — not at DELTA,
+    a stream the server never narrows, an archive predating the width, or a
+    decision stamped for another cycle. The caller then keeps the upper bound
+    alone, which is where D-179 left it; there is no third answer to invent.
+    """
+    # fallout FR-004 / GI-033 -- LAZY SEAM, written once per symbol.
+    # `width` import(s) this module, so a module-top import here would
+    # close a cycle that takes every tool in this server down at once.
+    # Unguarded, so a wiring break fails loudly at the one call site that
+    # needs the symbol rather than hiding behind a silent fallback.
+    if stream == "prove":
+        return _recorded_prove_roster(fdir, cycle)
+    if stream != "trace":
+        return None
+    recorded = current_inspect_mode(fdir, cycle, modes=INSPECT_MODES)
+    if not recorded or recorded.get("mode") != "DELTA":
+        return None
+    touched = recorded.get("touched_files")
+    if not isinstance(touched, list):
+        return None
+    drawn = {manifest_spelling(t) for t in touched if isinstance(t, str)}
+    data, problem = read_roster(fdir, "trace")
+    if problem is not None or data is None:
+        return None
+    items = data.get("items")
+    if not isinstance(items, list):
+        return None
+    return [
+        item for item in items
+        if isinstance(item, str) and manifest_spelling(item) in drawn
+    ]
 
 
 def _coverage_shortfall(fdir: Path, project_root: str, stream: str, cycle: int) -> dict | None:
@@ -869,6 +941,53 @@ def foundry_mark_stream(
             "roster_length": roster_len,
             "items_total": items_total,
             "measured_against": "delta_width" if narrowed_by_the_server else "roster",
+        }
+
+    # fallout FR-050 / CT-003 / ST-008 / OT-031 (D-220) — AND THE BOUND FROM
+    # BELOW, ON THE POPULATION THE DECISION ITSELF ENUMERATES.
+    # ------------------------------------------------------------------------
+    # D-179 restored the upper bound and left the lower one gone, so on a
+    # server-narrowed cycle any `items_total` at or below the roster length was
+    # accepted at 100%: TRACE reporting 1 of 1 against an 84-item roster was
+    # `ok: True`, coverage "100%". `_recorded_delta_population` is the other
+    # half — the narrowed population the recorded decision NAMES, which is what
+    # PROVE has been measured against since D-080 and what `agents/tracer.md`
+    # tells TRACE its DELTA roster is.
+    #
+    # AN EMPTY ENUMERATION BOUNDS NOTHING, and that is the honest answer rather
+    # than a fail-open: a DELTA cycle whose GRIND touched no roster file drew a
+    # width of nothing, and demanding a total against it would be inventing a
+    # population the server never drew. This run's own cycle 9 is that state.
+    narrowed_population = (
+        _recorded_delta_population(fdir, server_cycle, stream)
+        if narrowed_by_the_server
+        else None
+    )
+    if narrowed_population and items_total < len(narrowed_population):
+        return {
+            "error": ROSTER_MISMATCH,
+            "reason": (
+                f"Cannot record {stream} with items_total={items_total}: this "
+                f"cycle's recorded DELTA width names "
+                f"{len(narrowed_population)} item(s) of the "
+                f"{roster_len}-item roster, and a narrowed width cannot be "
+                f"SMALLER than the population the decision drew."
+            ),
+            "hint": (
+                f"Report the width the server drew, which is at least "
+                f"{len(narrowed_population)}: "
+                f"{', '.join(narrowed_population[:8])}"
+                + (", ..." if len(narrowed_population) > 8 else "")
+                + ". Reporting fewer clears the coverage threshold on a "
+                "population smaller than the one this INSPECT decided, and "
+                "nothing on the record would say so. The width is in "
+                "`Foundry-Next`'s `inspect_mode`; if it is wrong, the fix is "
+                "the width decision, not the total."
+            ),
+            "roster_length": roster_len,
+            "narrowed_length": len(narrowed_population),
+            "items_total": items_total,
+            "measured_against": "delta_width",
         }
 
     prev_totals = _rollup_totals(fdir, server_cycle - 1, stream) if server_cycle > 0 else None

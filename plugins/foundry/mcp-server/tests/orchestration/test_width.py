@@ -561,3 +561,92 @@ def test_a_resolvable_hit_still_wins_over_an_unresolvable_sibling_row(
     assert decision["touched"] is True, decision
     assert decision["computable"] is True, decision
     assert "CT-014" in decision["detail"], decision
+
+
+#: fallout FR-030 (D-221) — a Contracts table whose one row names NO dispatched
+#: tool, so the registry rung is reached with `rows` non-empty and the positive
+#: walk below it can never fire. That is the only input on which
+#: `not any(registry.values())` and `not registry` give different answers.
+_D221_CONTRACTS_TABLE = """
+## Contracts
+
+| ID     | surface | input | output | errors | citation |
+|--------|---------|-------|--------|--------|----------|
+| CT-099 | the archive writer | run artifacts | an archive | none | [from A-021] |
+"""
+
+
+def test_an_all_unresolvable_registry_cannot_answer_a_computed_miss(
+    run_env, monkeypatch
+):
+    """fallout FR-030 (D-221) — the guard D-209 moved, with a check that can
+    go red.
+
+    D-209's remedy moved this arm's fail-open guard from `if not registry:` to
+    `if not any(registry.values()):`, because `_registry_tool_modules` records
+    an entry for every dispatched tool and leaves its file list EMPTY when
+    ownership is not derivable — so the container is non-empty whenever
+    `_DISPATCH` is, and the old spelling had stopped firing on exactly the tree
+    it exists for. THAT MOVE REVERTED WITH THE WHOLE SUITE GREEN: the one-token
+    revert `-    if not any(registry.values()):` / `+    if not registry:` gave
+    5351 passed, 113 skipped, exit 0 at ac89f59, byte-for-byte the baseline.
+
+    THE TWO EXISTING PINS CANNOT REACH IT, and that is not an oversight in
+    them. `test_an_unresolvable_registry_entry_makes_the_covered_set_unknown`
+    and `test_a_resolvable_hit_still_wins_over_an_unresolvable_sibling_row`
+    both patch the registry to `dict(real, **{"<tool>": []})` — ONE empty entry
+    among many non-empty ones — so `registry` and `any(registry.values())` are
+    both truthy and the two spellings agree. The all-values-empty state is the
+    only input that separates them, and nothing constructed it.
+
+    DRIVEN, so this is the behavioural difference and not a re-reading of the
+    source: at HEAD the answer is `{touched: True, computable: False, source:
+    'unknown'}`; with the revert it is `{touched: False, computable: True,
+    source: 'registry', detail: ''}` — a computed-miss claim over a registry
+    that resolved nothing, which is D-207's fail-open shape reopened at the
+    container level one cycle after C-125 closed it at the entry level. TEST-01
+    drops off the roster and nobody is told.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1, self_target=True)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    (fdir / "spec.md").write_text(
+        "- **FR-001**: the thing works\n" + _D221_CONTRACTS_TABLE,
+        encoding="utf-8",
+    )
+    # Not a `schemas/` path and not a declared scope, so the ladder reaches the
+    # registry rung rather than being answered above it.
+    touched = [str(Path(artifacts.__file__).resolve().parent / "foundry_report.py")]
+
+    real = _width._registry_tool_modules()
+    # THE STATE D-209's REMEDY EXISTS TO REPRESENT: every entry present, every
+    # one unresolvable. Captured from the real registry before patching, so the
+    # key set is the shipped one rather than a hand list that could go empty.
+    assert real, "the registry is empty; this pin would be measuring nothing"
+    monkeypatch.setattr(
+        _width,
+        "_registry_tool_modules",
+        lambda: {tool: [] for tool in real},
+        raising=True,
+    )
+
+    decision = _width._test01_scope_touched(fdir, project_root, touched)
+    assert decision["computable"] is False, decision
+    assert decision["touched"] is True, (
+        "an unknown covered set REQUIRES the stream; anything else is the "
+        "fail-open arm D-207 closed, reopened at the container level"
+    )
+    assert decision["source"] == "unknown", decision
+    assert decision["detail"], decision
+
+    # ...and the SAME run with the real registry answers a computed miss, which
+    # is what makes the assertion above about the emptiness of the values and
+    # not about the table. Without this the pin would pass on any input that
+    # happened to reach `unknown` by another arm.
+    monkeypatch.setattr(
+        _width, "_registry_tool_modules", lambda: real, raising=True
+    )
+    computed = _width._test01_scope_touched(fdir, project_root, touched)
+    assert computed["computable"] is True, computed
+    assert computed["touched"] is False, computed
+    assert computed["source"] == "registry", computed

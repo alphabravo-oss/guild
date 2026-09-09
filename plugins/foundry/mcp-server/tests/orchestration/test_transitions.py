@@ -3780,6 +3780,18 @@ def _transition_branches() -> dict[str, str]:
     return out
 
 
+#: fallout AC-009 / FR-041 / GI-011 (D-218) — THE CALL THAT ENDS A BRANCH'S
+#: PRECONDITION WINDOW, SPELLED ONCE.
+#:
+#: `_split_at_the_refusal` finds the window by this text and the pin below
+#: excuses this NAME, because a branch naming its own refusal renderer is the
+#: window's boundary rather than a read inside it. Two hand-typed copies of one
+#: call name is how a marker and its exemption drift into disagreeing about
+#: where the window ends, so the marker is DERIVED from the name.
+_BRANCH_REFUSAL_CALL = "_transition_refusal"
+_BRANCH_REFUSAL_MARKER = f"return {_BRANCH_REFUSAL_CALL}("
+
+
 def _split_at_the_refusal(branch: str) -> tuple[str, str]:
     """A branch's PRECONDITION segment and its EFFECT segment.
 
@@ -3805,8 +3817,7 @@ def _split_at_the_refusal(branch: str) -> tuple[str, str]:
     A read moved ABOVE that return is judged the day it moves, whatever it is
     called, and no name needs excusing.
     """
-    marker = "return _transition_refusal("
-    index = branch.find(marker)
+    index = branch.find(_BRANCH_REFUSAL_MARKER)
     if index == -1:
         return branch, ""
     tail = branch.index("\n", index) if "\n" in branch[index:] else len(branch)
@@ -4105,9 +4116,36 @@ def test_neither_door_reads_a_ledger_outside_its_preconditions_routine():
             "its refusal; a branch that shares another's call is a branch whose "
             "checks nobody stated (GI-011)."
         )
-        reads = _reads_in(preconditions, refusal_readers) - {
-            f"_{token}_preconditions"
-        }
+        # fallout AC-009 / GI-011 / FR-041 (D-218) — JUDGED BY `_door_reads`'
+        # RULE, WHICH IS THE SIBLING WINDOW'S AND ALREADY SHIPS.
+        # ------------------------------------------------------------------
+        # This read `_reads_in(preconditions, refusal_readers)`, and
+        # `refusal_readers` is DERIVED from the names the preconditions
+        # routines already reach — so a read the routines do NOT make is
+        # outside the set by construction, which is precisely the read GI-011's
+        # violation column names ("a transition branch that reads a ledger or
+        # marker its preconditions function does not"). DRIVEN in a detached
+        # worktree at ac89f59: a module-level
+        # `def _peek_defect_ledger(fdir): return _load_json(fdir / 'defects.json')`
+        # called as `_probe_unused = _peek_defect_ledger(fdir)` at the top of
+        # the `temper` branch left this suite at 484 passed, 2 skipped —
+        # byte-identical to the clean baseline — while the same branch's inline
+        # `_load_json` (the D-086 plant) still went red.
+        #
+        # `_door_reads` is the same measurement one window over: "does this
+        # window touch an artifact AT ALL", every private call counted rather
+        # than only the names some routine happens to share. D-177 gave it to
+        # the GATE window for exactly this reason and the sibling walk simply
+        # had not adopted it; adopting it here is that one site, not a new
+        # recogniser.
+        #
+        # THE RESIDUE IS ONE NAME, AND IT IS THE WINDOW'S OWN BOUNDARY.
+        # `_split_at_the_refusal` keeps the `return _transition_refusal(...)`
+        # line inside the precondition segment, so every branch names its
+        # refusal renderer there by construction. Measured over all eleven
+        # shipped branches, that is the WHOLE residue: `{_transition_refusal}`
+        # each, and nothing else.
+        reads = _door_reads(preconditions) - {_BRANCH_REFUSAL_CALL}
         assert reads == set(), (token, sorted(reads))
 
 
@@ -4272,6 +4310,69 @@ def test_the_branch_window_catches_the_stdlib_spellings_of_a_ledger_read():
     )
     pre_innocent, _ = _split_at_the_refusal(innocent)
     assert _reads_in(pre_innocent, readers) - {"_done_preconditions"} == set()
+
+
+def test_the_branch_window_catches_a_read_no_routine_makes(monkeypatch):
+    """fallout AC-009 / FR-041 / GI-011 (D-218) — THE ANCHOR FOR THE WIDER RULE.
+
+    The branch window was judged against `_refusal_readers()`, a set DERIVED
+    from the names the preconditions routines already reach. A read the
+    routines do NOT make is therefore outside it BY CONSTRUCTION — and that is
+    the exact read GI-011's violation column forbids, so the guard was green
+    while the rule it encodes was narrower than AC-009 states. Same shape as
+    the gate half D-177 closed with `_door_reads`, one window over.
+
+    DRIVEN at ac89f59 with a positive control. An inline `_load_json` in the
+    `temper` branch (the D-086 plant) went red as it should; a module-level
+    private helper wrapping the identical read and called from the same place
+    left the whole suite byte-identical to the clean baseline.
+
+    Planted here rather than asserted about, because a scan over clean source
+    is green whether it works or not — and this one was.
+    """
+    readers = _refusal_readers()
+
+    # The plant, in the shape the drive used: a private helper the routines
+    # never call, wrapping the read the branch is not allowed to make.
+    planted = (
+        "outcome = _temper_preconditions(fdir, project_root)\n"
+        "_probe_unused = _peek_defect_ledger(fdir)\n"
+        "if not outcome['passed']:\n"
+        "    return _transition_refusal(outcome, 'Cannot enter TEMPER')\n"
+        "_update_phase(fdir, 'F5')\n"
+    )
+    preconditions, effect = _split_at_the_refusal(planted)
+    assert "_peek_defect_ledger" in preconditions and "_update_phase" in effect
+
+    # (1) THE OLD RULE SEES NOTHING. Stated as the delta rather than described,
+    # so the anchor measures the widening instead of asserting it happened.
+    assert (
+        _reads_in(preconditions, readers) - {"_temper_preconditions"} == set()
+    ), sorted(_reads_in(preconditions, readers))
+
+    # (2) THE RULE THE PIN NOW USES NAMES IT.
+    assert _door_reads(preconditions) - {_BRANCH_REFUSAL_CALL} == {
+        "_peek_defect_ledger"
+    }, sorted(_door_reads(preconditions))
+
+    # ...and a clean branch still leaks nothing, so the widening did not simply
+    # make every window fail. The residue is the refusal renderer alone, which
+    # is the window's own boundary and the reason it is excused by NAME.
+    clean = (
+        "outcome = _cast_preconditions(fdir, project_root)\n"
+        "if not outcome['passed']:\n"
+        "    return _transition_refusal(outcome, 'Cannot mark CAST complete')\n"
+        "_update_phase(fdir, 'F2')\n"
+    )
+    pre_clean, _ = _split_at_the_refusal(clean)
+    assert _door_reads(pre_clean) == {_BRANCH_REFUSAL_CALL}, sorted(
+        _door_reads(pre_clean)
+    )
+
+    # The marker and the excused name are ONE spelling, so the window's end and
+    # its exemption cannot drift into two answers.
+    assert _BRANCH_REFUSAL_MARKER == f"return {_BRANCH_REFUSAL_CALL}("
+    assert _BRANCH_REFUSAL_MARKER in clean
 
 
 def test_the_transition_adds_no_refusal_of_its_own():
