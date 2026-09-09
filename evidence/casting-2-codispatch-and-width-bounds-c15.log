@@ -1,0 +1,33 @@
+# evidence-cmd: cd plugins/foundry/mcp-server || exit 1; echo "== D-217: the alignment block, on the manifest PROVE drove the defect with =="; uv run --quiet --with pytest python -c 'import sys, json, tempfile, pathlib; sys.path.insert(0, "."); from foundry_mcp.tools.orchestration.directives import _alignment_block; root = pathlib.Path(tempfile.mkdtemp()); fdir = root / "foundry-archive" / "probe"; (fdir / "castings").mkdir(parents=True); (root / "src").mkdir(); (root / "docs").mkdir(); root.joinpath("src", "cites_fr007.py").write_text("# fallout FR-007 - the rule lives here"); root.joinpath("src", "also_cites_fr007.py").write_text("# FR-007 is carried here too"); root.joinpath("src", "unrelated_no_citation.py").write_text("# " + "N" + "FR-007 and FR-0071 are different ids"); root.joinpath("docs", "unrelated.md").write_text("nothing at all"); root.joinpath("src", "f3.py").write_text("# fallout FR-007"); fdir.joinpath("castings", "manifest.json").write_text(json.dumps({"castings": [{"id": 1, "requirement_ids": ["FR-007"], "key_files": ["src/cites_fr007.py", "src/also_cites_fr007.py", "src/unrelated_no_citation.py", "docs/unrelated.md"]}, {"id": 3, "requirement_ids": ["FR-007"], "key_files": ["src/f3.py"]}]})); print(_alignment_block(fdir, defect_ids=["D-001"], requirement_ids={"FR-007"}, owning_casting=3, owning_files=["src/f3.py"], co_dispatch=[1]))'; echo; echo "== D-220 and D-221: the two doors, driven =="; uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -v tests/orchestration/test_tasks_codispatch.py::test_the_block_names_the_sibling_files_that_cite_the_ids tests/orchestration/test_tasks_codispatch.py::test_a_directory_key_file_is_expanded_to_the_files_that_cite tests/orchestration/test_tasks_codispatch.py::test_a_casting_that_cites_no_id_is_named_as_such_and_not_dropped tests/orchestration/test_streams.py::test_a_narrowed_cycle_bounds_items_total_from_below_by_the_width_it_drew tests/orchestration/test_streams.py::test_a_narrowed_prove_is_bounded_by_the_sample_the_server_drew tests/orchestration/test_streams.py::test_a_width_that_drew_no_roster_item_bounds_nothing tests/orchestration/test_streams.py::test_a_server_narrowed_stream_records_the_width_it_was_given tests/orchestration/test_streams.py::test_the_narrowed_cycle_still_bounds_items_total_by_the_roster tests/orchestration/test_width.py::test_an_all_unresolvable_registry_cannot_answer_a_computed_miss tests/orchestration/test_width.py::test_an_unresolvable_registry_entry_makes_the_covered_set_unknown tests/orchestration/test_width.py::test_a_resolvable_hit_still_wins_over_an_unresolvable_sibling_row 2>&1
+# evidence-for: fallout FR-038, CT-008, OT-031, CT-003, ST-008, FR-050, FR-030
+# evidence-volatile: \d+\.\d+s
+# evidence-timeout: 300
+
+== D-217: the alignment block, on the manifest PROVE drove the defect with ==
+## Co-dispatch alignment (server-generated — paste verbatim)
+
+Originating defect(s): D-001
+Requirement id(s): FR-007
+Fixed in casting 3, file(s) src/f3.py
+
+The SAME requirement is owned by the castings below. Each one carries the rule on its own files; make the same change there, in that casting's own idiom, in THIS cycle.
+
+- casting 1: src/cites_fr007.py, src/also_cites_fr007.py
+
+== D-220 and D-221: the two doors, driven ==
+============================= test session starts ==============================
+collecting ... collected 11 items
+
+tests/orchestration/test_tasks_codispatch.py::test_the_block_names_the_sibling_files_that_cite_the_ids PASSED [  9%]
+tests/orchestration/test_tasks_codispatch.py::test_a_directory_key_file_is_expanded_to_the_files_that_cite PASSED [ 18%]
+tests/orchestration/test_tasks_codispatch.py::test_a_casting_that_cites_no_id_is_named_as_such_and_not_dropped PASSED [ 27%]
+tests/orchestration/test_streams.py::test_a_narrowed_cycle_bounds_items_total_from_below_by_the_width_it_drew PASSED [ 36%]
+tests/orchestration/test_streams.py::test_a_narrowed_prove_is_bounded_by_the_sample_the_server_drew PASSED [ 45%]
+tests/orchestration/test_streams.py::test_a_width_that_drew_no_roster_item_bounds_nothing PASSED [ 54%]
+tests/orchestration/test_streams.py::test_a_server_narrowed_stream_records_the_width_it_was_given PASSED [ 63%]
+tests/orchestration/test_streams.py::test_the_narrowed_cycle_still_bounds_items_total_by_the_roster PASSED [ 72%]
+tests/orchestration/test_width.py::test_an_all_unresolvable_registry_cannot_answer_a_computed_miss PASSED [ 81%]
+tests/orchestration/test_width.py::test_an_unresolvable_registry_entry_makes_the_covered_set_unknown PASSED [ 90%]
+tests/orchestration/test_width.py::test_a_resolvable_hit_still_wins_over_an_unresolvable_sibling_row PASSED [100%]
+
+============================== 11 passed in 0.37s ==============================

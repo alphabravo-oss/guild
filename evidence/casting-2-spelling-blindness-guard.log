@@ -1,8 +1,8 @@
-# evidence-cmd: cd plugins/foundry || exit 1; grep -rlE '_SHARED_IMPORT_READINGS|_DOTTED_MODULE_PATH|_plugin_root_for_the_import_scan|_names_denoting|_denotes_the_node_type|_scope_tests_for_the_node_type|_import_reading_scopes|_receivers_read_through_the_shared_reading|_module_field_receiver|_string_arguments|_names_a_package|_module_pins_in|_blind_import_readings' --include='*.py' --include='*.md' . | sed 's/^/STILL PRESENT: /'; echo 'retired-recogniser helper scan complete'; cd mcp-server || exit 1; uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -q tests/orchestration/test_module_boundaries.py::test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith tests/orchestration/test_module_boundaries.py::test_the_consolidation_scan_reads_all_three_spellings_of_the_leaf 2>&1 | tail -3
+# evidence-cmd: cd plugins/foundry || exit 1; grep -rlE '_SHARED_IMPORT_READINGS|_DOTTED_MODULE_PATH|_plugin_root_for_the_import_scan|_names_denoting|_denotes_the_node_type|_scope_tests_for_the_node_type|_import_reading_scopes|_receivers_read_through_the_shared_reading|_module_field_receiver|_string_arguments|_names_a_package|_module_pins_in|_blind_import_readings' --include='*.py' --include='*.md' . | sed 's/^/STILL PRESENT: /'; echo 'retired-recogniser helper scan complete'; cd mcp-server || exit 1; uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -q tests/orchestration/test_module_boundaries.py::test_the_no_facade_scan_sees_all_four_spellings_of_the_deleted_monolith tests/orchestration/test_module_boundaries.py::test_the_consolidation_scan_reads_all_three_spellings_of_the_leaf 2>&1 | tail -3
 # evidence-for: fallout FR-006, AC-015, GI-025, OT-015, AC-011, OT-011
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
 retired-recogniser helper scan complete
 ..                                                                       [100%]
-2 passed in 0.09s
+2 passed in 0.10s
