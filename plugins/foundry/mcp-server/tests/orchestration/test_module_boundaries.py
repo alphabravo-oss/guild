@@ -7602,30 +7602,72 @@ def test_a_second_definition_in_measure_run_is_refused(tmp_path):
 #: scanners above are for, and a site that reads one itself has forked one.
 _IMPORT_NODE_TYPES = frozenset({"Import", "ImportFrom"})
 
+#: The two modules that read imports. Named once, because a roster whose keys
+#: repeat a package path twelve times is a roster with twelve chances to
+#: mistype one.
+_BOUNDARY_MODULE = "tests.orchestration.test_module_boundaries"
+_HALT_MODULE = "tests.orchestration.test_halt"
+
 #: Dotted path of a test that reads imports -> the readings its own source must
 #: call, each as (name, keyword arguments it must be called with).
 #:
-#: `also_by_name` is part of the no-facade entry because dropping it is a silent
-#: revert of its own: the default resolves an alias against a file on disk, and
-#: `tools/foundry_orchestrator.py` is the file whose ABSENCE is the requirement.
-#: See `_all_imports`' own docstring for why that reading needs naming instead.
+#: EVERY SUCH TEST IN BOTH MODULES, not only the four measured silent. The four
+#: are where the hole was found; the other eight have the same shape and nobody
+#: had driven them, and "pin the ones somebody happened to revert" is the
+#: per-instance fix this class has already outlived three times. Twelve rows
+#: cost nothing that four do not, and the rule they state is the whole rule:
+#: an import reading in this suite goes through the shared scanners.
 #:
-#: The spawn entry is one test holding two scans that ask different questions —
-#: the forward edges are a module-top question, the back edges a dotted one — so
-#: it names three readings rather than one.
+#: `also_by_name` is required of the two no-facade entries because dropping it
+#: is a silent revert of its own: the default resolves an alias against a file
+#: on disk, and `tools/foundry_orchestrator.py` is the file whose ABSENCE is the
+#: requirement. See `_all_imports`' own docstring for why that reading has to be
+#: named instead. Elsewhere the keyword tuple is empty, which asks nothing about
+#: keywords rather than forbidding them.
+#:
+#: The spawn entry names three readings because it is one test holding two scans
+#: that ask different questions — the forward edges are a module-top question,
+#: the back edges a dotted one.
 _SHARED_READING_CALL_SITES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
-    "tests.orchestration.test_module_boundaries"
-    ".test_the_package_marker_re_exports_nothing": (
+    f"{_BOUNDARY_MODULE}.test_the_orchestration_import_graph_is_acyclic_at_module_top": (
+        ("_module_top_imports", ()),
+    ),
+    f"{_BOUNDARY_MODULE}.test_the_three_layers_hold_with_exactly_one_named_seam": (
+        ("_module_top_imports", ()),
+        ("_module_top_package_imports", ()),
+    ),
+    f"{_BOUNDARY_MODULE}.test_every_leaf_module_imports_only_leaves": (
+        ("_all_imports", ()),
+    ),
+    f"{_BOUNDARY_MODULE}.test_a_planted_lifecycle_reach_disqualifies_a_leaf": (
+        ("_all_imports", ()),
+        ("_module_top_imports", ()),
+    ),
+    f"{_BOUNDARY_MODULE}.test_the_seam_table_names_an_edge_that_exists": (
+        ("_module_top_imports", ()),
+    ),
+    f"{_BOUNDARY_MODULE}.test_no_verifier_module_reaches_a_lifecycle_module_lazily_either": (
+        ("_all_imports", ()),
+    ),
+    f"{_BOUNDARY_MODULE}.test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth": (
+        ("_all_imports", ()),
+    ),
+    f"{_BOUNDARY_MODULE}.test_a_planted_lazy_gate_reach_is_seen_by_the_lifecycle_walk": (
+        ("_all_imports", ()),
+        ("_module_top_imports", ()),
+    ),
+    f"{_BOUNDARY_MODULE}.test_the_package_marker_re_exports_nothing": (
         ("_all_imports", ("also_by_name",)),
     ),
-    "tests.orchestration.test_module_boundaries"
-    ".test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions": (
+    f"{_BOUNDARY_MODULE}.test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith": (
+        ("_all_imports", ("also_by_name",)),
+    ),
+    f"{_BOUNDARY_MODULE}.test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions": (
         ("_module_top_imports", ()),
         ("_module_top_dotted_imports", ()),
         ("_all_imports", ()),
     ),
-    "tests.orchestration.test_halt"
-    ".test_the_halted_seal_and_the_cap_path_live_in_the_halt_module": (
+    f"{_HALT_MODULE}.test_the_halted_seal_and_the_cap_path_live_in_the_halt_module": (
         ("_all_imports", ()),
     ),
 }

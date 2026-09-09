@@ -9,5 +9,5 @@ self-referential spellings of that cite remaining: 0
 definitions of the seam scan in test_halt.py: 1
 
 == D-207: every rostered import reading routes through the shared scanner ==
-....                                                                     [100%]
-4 passed in 0.08s
+.............                                                            [100%]
+13 passed in 0.07s
