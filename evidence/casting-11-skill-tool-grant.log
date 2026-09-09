@@ -5,7 +5,7 @@ skills/trace/SKILL.md | Foundry-Context      | body=1 | grant=2
 skills/trace/SKILL.md | Foundry-Defect       | body=3 | grant=2
 skills/trace/SKILL.md | Foundry-Next         | body=5 | grant=2
 skills/trace/SKILL.md | Foundry-Observation  | body=0 | grant=0
-skills/trace/SKILL.md | Foundry-Stream       | body=1 | grant=2
+skills/trace/SKILL.md | Foundry-Stream       | body=2 | grant=2
 skills/trace/SKILL.md | Foundry-Sync         | body=1 | grant=2
 skills/trace/SKILL.md | Foundry-Verdict      | body=0 | grant=0
 skills/trace/SKILL.md | Validate-Report      | body=1 | grant=2
