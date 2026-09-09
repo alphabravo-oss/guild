@@ -2124,6 +2124,28 @@ def _refused_filing_findings(name: str, arguments: dict) -> list[tuple[dict, str
     casting 2's public single spelling, and its own guard fails if a
     claim-bearing parameter is added to the door and not to the mapping, so the
     pre-dispatch rung and the handler can no longer read different fields.
+
+    fallout FR-037 (D-211, research/holmes-orchestrator.md#reg-1) — THE BATCH
+    DOOR HAS NO TOP-LEVEL `source`, SO IT MUST NOT READ ONE.
+
+    This fell back to `(arguments or {}).get("source")` per finding. Three
+    readings of the same surface say that argument does not exist:
+    `Foundry-Sync`'s schema declares `source` only INSIDE each `findings` item,
+    its `_DISPATCH` lambda passes `cycle` and `findings` and nothing else, and
+    `foundry_sync_defects` reads `finding.get("source", "")` with no fallback of
+    its own. So a stray top-level `source` — a key the schema does not declare
+    and the handler would never look at — was the value this audit record
+    attributed the attempt to. That is CT-002's mis-attribution and D-158's
+    class exactly: one surface read by two spellings, and the spelling that is
+    never executed deciding what gets written down.
+
+    THE NARROW HALF OF reg-1, AND ONLY THAT HALF. reg-1's headline calls
+    `_FILING_TOOLS` a fourth hand-spelled copy of the audit; reg-1's own
+    skeptic's case retracts the headline — "The audit itself is not re-spelled
+    anywhere: all three refusal sites call the same validator, the same exported
+    writer, and the same record shape ... The proposed per-tool `on_refused`
+    hook ... would be over-engineering." What survives that retraction is this
+    one fallback, and removing it is the whole of the change.
     """
     from foundry_mcp.tools.foundry import filing_finding_mapping
 
@@ -2132,7 +2154,7 @@ def _refused_filing_findings(name: str, arguments: dict) -> list[tuple[dict, str
         if not isinstance(findings, list):
             return []
         return [
-            (dict(item), str(item.get("source") or (arguments or {}).get("source") or ""))
+            (dict(item), str(item.get("source") or ""))
             for item in findings
             if isinstance(item, dict)
         ]

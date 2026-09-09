@@ -383,3 +383,181 @@ def test_the_research_skip_read_honours_exactly_its_declared_spellings(run_env):
     assert _width._research_skipped(fdir) is False, (
         "the read counted a document the declaration does not name"
     )
+
+
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-030 (D-209, concern C-125, research/holmes-orchestrator.md#reg-3)
+# — AN ENTRY IS NEVER DROPPED, AND THE EMPTY ENTRY IS READ.
+#
+# reg-3 is one sentence with two halves: "never drop a dispatch entry. When
+# `handler.__code__` is None, OR THE WALK FINDS NO `foundry_mcp` MODULE FILE,
+# record `registry[tool] = []` instead of `continue`/skip." Both were open and
+# only the first looked like a skip. The three tests below are the two halves
+# and the reason the sentence exists — an empty entry is a fact
+# `_test01_scope_touched` acts on, and before C-125 nothing read it.
+# --------------------------------------------------------------------------- #
+
+
+_C125_CONTRACTS_TABLE = """
+## Contracts
+
+| ID     | surface | input | output | errors | citation |
+|--------|---------|-------|--------|--------|----------|
+| CT-014 | Foundry-Report (new tool) | run artifacts | REPORT.md | refusal | [from A-024] |
+"""
+
+
+class _NoCodeObject:
+    """A handler with no `__code__` — what a callable object or a
+    `functools.partial` bound into `_DISPATCH` actually looks like to the walk.
+    """
+
+    def __call__(self, args):  # pragma: no cover - never dispatched here
+        return {}
+
+
+def _registry_over(monkeypatch, **extra_handlers) -> dict:
+    """`_registry_tool_modules()` with extra entries bound into `_DISPATCH`."""
+    from foundry_mcp import server as _server
+
+    monkeypatch.setattr(
+        _server, "_DISPATCH", dict(_server._DISPATCH, **extra_handlers), raising=True
+    )
+    return _width._registry_tool_modules()
+
+
+def test_the_registry_keeps_an_entry_whose_handler_has_no_code_object(monkeypatch):
+    """reg-3's first half: `handler.__code__` is None.
+
+    Driven before the fix: the entry was absent from the returned mapping
+    entirely, so a Contracts row naming that tool matched nothing and the
+    covered set narrowed with no one saying so.
+    """
+    registry = _registry_over(monkeypatch, **{"Zz-No-Code": _NoCodeObject()})
+
+    assert "Zz-No-Code" in registry, sorted(registry)
+    assert registry["Zz-No-Code"] == [], registry["Zz-No-Code"]
+
+
+def test_the_registry_keeps_an_entry_whose_walk_resolves_no_module_file(monkeypatch):
+    """reg-3's second half — the `if files:` that read as tidiness.
+
+    A handler that names no `foundry_mcp` module resolves to no file. That is
+    the SAME fact as the arm above (ownership is not derivable) and it was
+    dropped by a different statement, which is why the filing naming only the
+    first would have left the class open.
+    """
+    registry = _registry_over(monkeypatch, **{"Zz-Empty-Walk": lambda args: {"ok": True}})
+
+    assert "Zz-Empty-Walk" in registry, sorted(registry)
+    assert registry["Zz-Empty-Walk"] == [], registry["Zz-Empty-Walk"]
+
+
+def test_every_dispatched_tool_has_a_registry_entry():
+    """The property both halves add up to, stated over the real table.
+
+    `set(registry) == set(server._DISPATCH)`. Casting 12 lands the same pin in
+    `tests/test_inspect_mode.py`; this is the one that fails in the module that
+    would have to change.
+    """
+    from foundry_mcp import server as _server
+
+    registry = _width._registry_tool_modules()
+    assert set(registry) == set(_server._DISPATCH), {
+        "dropped": sorted(set(_server._DISPATCH) - set(registry)),
+        "invented": sorted(set(registry) - set(_server._DISPATCH)),
+    }
+
+
+def test_an_unresolvable_registry_entry_makes_the_covered_set_unknown(
+    run_env, monkeypatch
+):
+    """concern C-125 — the per-entry rung, which the empty list exists FOR.
+
+    `_test01_scope_touched` failed closed on an empty WHOLE registry and had no
+    rung for one unresolvable ENTRY. Casting 12 drove it with `Foundry-Report`
+    re-spelled as a partial and the diff touching the very file CT-014 is
+    implemented by:
+
+        BASELINE:  {'touched': True,  'computable': True, ...names CT-014}
+        PARTIAL:   {'touched': False, 'computable': True, 'detail': ''}
+
+    The second is a claim about a covered set that was never computed. It is
+    D-207's own sentence — "no evidence is not evidence of absence" — at
+    per-entry granularity.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1, self_target=True)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    (fdir / "spec.md").write_text(
+        "- **FR-001**: the thing works\n" + _C125_CONTRACTS_TABLE, encoding="utf-8"
+    )
+    report_module = str(
+        Path(artifacts.__file__).resolve().parent / "foundry_report.py"
+    )
+    touched = [report_module]
+
+    # (1) THE BASELINE. `Foundry-Report` resolves, the diff touched what
+    # implements it, and the answer names the row.
+    resolvable = _width._test01_scope_touched(fdir, project_root, touched)
+    assert resolvable["touched"] is True, resolvable
+    assert resolvable["computable"] is True, resolvable
+    assert "CT-014" in resolvable["detail"], resolvable
+
+    # (2) THE SAME RUN with that ONE entry unresolvable. Before C-125 this was
+    # `touched: False, computable: True` — narrower AND reported as computed.
+    # The real answer captured BEFORE the patch: patching a name and then
+    # calling it through the patched module is a call to the patch.
+    real = _width._registry_tool_modules()
+    monkeypatch.setattr(
+        _width,
+        "_registry_tool_modules",
+        lambda: dict(real, **{"Foundry-Report": []}),
+        raising=True,
+    )
+    unresolvable = _width._test01_scope_touched(fdir, project_root, touched)
+    assert unresolvable["computable"] is False, unresolvable
+    assert unresolvable["touched"] is True, (
+        "an unknown covered set requires the stream; anything else is the "
+        "fail-open arm D-207 closed, reopened one entry at a time"
+    )
+    assert "CT-014" in unresolvable["detail"], unresolvable
+    assert "Foundry-Report" in unresolvable["detail"], unresolvable
+
+
+def test_a_resolvable_hit_still_wins_over_an_unresolvable_sibling_row(
+    run_env, monkeypatch
+):
+    """C-125's ordering, which is not incidental.
+
+    A row whose tool DID resolve to a touched file is answered: the covered set
+    is known to intersect the diff, and an unresolvable sibling cannot unmake
+    that. Only the NEGATIVE answer is the one an unresolved row makes unsayable.
+    Without this the rung would widen every DELTA that happens to bind one
+    partial, which is the over-correction the fail-open arm invites.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1, self_target=True)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    (fdir / "spec.md").write_text(
+        "- **FR-001**: the thing works\n"
+        + _C125_CONTRACTS_TABLE.rstrip("\n")
+        + "\n| CT-013 | Foundry-Spend (new tool) | agent | record | none | [from A-022] |\n",
+        encoding="utf-8",
+    )
+    tools_dir = Path(artifacts.__file__).resolve().parent
+    touched = [str(tools_dir / "foundry_report.py")]
+
+    real = _width._registry_tool_modules()
+    monkeypatch.setattr(
+        _width,
+        "_registry_tool_modules",
+        lambda: dict(real, **{"Foundry-Spend": []}),
+        raising=True,
+    )
+    decision = _width._test01_scope_touched(fdir, project_root, touched)
+    assert decision["touched"] is True, decision
+    assert decision["computable"] is True, decision
+    assert "CT-014" in decision["detail"], decision

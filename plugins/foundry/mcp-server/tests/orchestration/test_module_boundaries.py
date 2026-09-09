@@ -6049,18 +6049,62 @@ def _all_imports(path: Path, also_by_name: tuple[str, ...] = ()) -> set[str]:
     phantom crossing the docstring above warns about — a `DEFECT_TIERS` read as
     a module — cannot be constructed unless somebody names a symbol after the
     monolith this package deleted, which is itself the facade GI-010 refuses.
+
+    fallout FR-004 / GI-010 / AC-013 / OT-012 (O-082, D-212) — THE FOURTH
+    SPELLING, WHICH IS RELATIVE AND WHICH THIS WALK COULD NOT SEE.
+
+    The three the paragraphs above enumerate are all ABSOLUTE, and Python has a
+    fourth: `from . import foundry_orchestrator`. Its node is an `ast.ImportFrom`
+    whose `module` is None and whose `level` is 1, so the `and node.module` arm
+    at the head of the loop dropped the whole statement — and every alias in it
+    — before any of the three resolutions ran. PROVE drove it against the same
+    positive control the absolute spellings are driven against: a shipped module
+    reaching the deleted monolith, the file itself ABSENT. In spelling two the
+    no-facade walk is `1 failed`; written `from . import foundry_orchestrator`
+    it is `1 passed`. So the anchor that says "all three spellings" was true of
+    the three it enumerated and the walk was blind to the one it did not.
+
+    A relative import is ORDINARY PYTHON, which is what separates this from the
+    two obfuscations named in the limit note beside `_IMPORT_READING_SITES`: it
+    is latent here only because this tree happens to contain none (census at the
+    fix: 0 relative against 1367 absolute, over `src/` and `tests/` both), and
+    "the codebase writes none today" is a fact about today, not a property of
+    the guard.
+
+    RESOLVED ON DISK, on the file's OWN directory, for the reason
+    `_submodules_named_by` resolves on disk: `from . import x` binds a module
+    when `<dir>/x.py` is there and a re-exported symbol otherwise, and a guard
+    that reported the second as a module edge would be inventing crossings —
+    which is how an exception table gets added to a guard, and this file has
+    deleted two of those. `also_by_name` is the one arm that must NOT be
+    disk-conditional, here exactly as in the absolute case and for D-198's
+    reason: the module whose absence is the requirement can never be resolved by
+    asking whether its file exists.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
     named = frozenset(also_by_name)
     out: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            out.add(node.module.rsplit(".", 1)[-1])
-            if not node.level:
-                out |= _submodules_named_by(
-                    node.module, [a.name for a in node.names]
-                )
-                out |= {a.name for a in node.names} & named
+        if isinstance(node, ast.ImportFrom):
+            aliases = [a.name for a in node.names]
+            if node.module:
+                out.add(node.module.rsplit(".", 1)[-1])
+            if not node.level and node.module:
+                out |= _submodules_named_by(node.module, aliases)
+            elif node.level and not node.module:
+                # `from . import x` — the aliases ARE the modules, one directory
+                # up per level, and the directory is the file's own.
+                package = path.resolve().parent
+                for _ in range(node.level - 1):
+                    package = package.parent
+                out |= {
+                    name
+                    for name in aliases
+                    if (package / f"{name}.py").is_file()
+                    or (package / name / "__init__.py").is_file()
+                }
+            # NOT guarded on `level`: see the docstring's last paragraph.
+            out |= set(aliases) & named
         elif isinstance(node, ast.Import):
             out.update(a.name.rsplit(".", 1)[-1] for a in node.names)
     return out
@@ -7549,7 +7593,7 @@ def test_a_second_definition_in_measure_run_is_refused(tmp_path):
 # their own docstrings where an author writing an import walk is standing, and
 # `test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith`
 # drives that claim with one plant per spelling. Route a new import reading
-# through them, and name the call site in `_SHARED_READING_CALL_SITES` below so
+# through them, and name the call site in `_IMPORT_READING_SITES` below so
 # that the routing is asserted rather than believed. That is what all six fixes
 # reduced to, and it is the thing the scan was never needed in order to say.
 #
@@ -7594,87 +7638,281 @@ def test_a_second_definition_in_measure_run_is_refused(tmp_path):
 # BOTH HALVES, because either alone is satisfiable by the wrong tree. A site
 # that calls the shared reading and then computes a blind set beside it passes
 # the first half; a site that reads no imports at all passes the second.
+#
+# --------------------------------------------------------------------------- #
+# fallout FR-004 / GI-010 / AC-013 / OT-012 / GI-025 / OT-015 (D-214, D-215) —
+# AND A DERIVATION UNDER IT, BECAUSE A ROSTER THAT NOTHING MEASURES CAN BE
+# EMPTIED ONE ROW AT A TIME.
+#
+# The paragraph above is right that the roster must not BE derived and wrong
+# that nothing may be. Both halves guard against the SITE moving and neither
+# guards against the ROSTER moving, and TEST drove the difference: renaming a
+# rostered site is `2 failed` (the row and the liveness pin) and emptying the
+# roster is `2 failed`, but DELETING ONE ROW is `120 passed` — one fewer
+# parametrization, nothing red anywhere — and deleting a row and blinding that
+# site, two edits twelve lines apart, is `120 passed` with the GI-010 / OT-012
+# walk unpinned and blind.
+#
+# The population was wrong the same way the count was. This roster named the
+# twelve readings in the two modules it lives beside, and `_all_imports` has
+# borrowers in four others. Driven:
+# `tests/test_observations.py#test_every_ledger_writing_door_answers_in_band`
+# reverted to a blind comprehension with its now-unused import deleted — the way
+# a real revert deletes it — is `259 passed, 2 skipped`, silent, with every row
+# of this roster green in the same run. Four other borrowers do go red, and TEST
+# established they hold BY LOCAL ACCIDENT: each happens to carry an adjacent
+# three-spelling anchor over its own site, and nothing in a roster's design says
+# the next borrower gets one.
+#
+# SO THE DERIVATION IS A FLOOR UNDER THE ROSTER, NEVER THE ROSTER.
+# `_swept_import_reading_sites` walks every top-level function in `tests/` and
+# reports the ones that call a shared reading or name an `ast` import node type
+# of their own. It decides NOTHING about what such a function owes — that is the
+# undecidable question, and it stays where it was, in the rows below. It decides
+# only that such a function EXISTS, which is decidable, and asserts it is
+# rostered. So it accuses no sound site (a sound site gets a row saying what it
+# is) and it cannot be satisfied by deleting anything: the row goes, the site
+# stays swept, and the floor names it.
+#
+# THE SECOND COLUMN IS WHAT LETS A SOUND SITE BE DECLARED RATHER THAN ACCUSED.
+# Three kinds of function are swept and only one of them owes the no-blind-set
+# obligation:
+#
+#   * `False` — A ROUTING SITE. It asks "which modules does this file reach",
+#     the question the shared scanners answer, so it must call the readings its
+#     row names AND name no import node type of its own. This is the obligation
+#     the paragraph above states, unchanged, and it is what goes red on the
+#     blinding revert.
+#   * `True`, in this module — A SHARED SCANNER, or a reading of NAMES rather
+#     than of module edges (`_module_namespace`, `_import_aliases`,
+#     `_private_names_defined_anywhere` and their kin resolve what an import
+#     BINDS, which no module-edge scanner answers). Reading an import node is
+#     what these are for.
+#   * `True`, in another casting's module — AN UNROUTED EDGE READING. Eight
+#     sites outside this package read module edges with a comprehension of their
+#     own. Each is a ONE-MODULE read with its own adjacent anchor today, which
+#     is exactly the "hold by local accident" TEST named, and routing them is
+#     the owning casting's call, not this file's. They are rostered so that they
+#     are COUNTED rather than invisible, and this sentence is where the residue
+#     is written down instead of being assumed absent.
+#
+# THE LIMITS, NAMED, because a guard that states its own edge is worth more than
+# one pretending to have none. `_import_node_types_named_in` parses
+# `inspect.getsource(fn)`, so it answers only about names the SITE writes, in
+# the spelling it writes them. Three readings are outside that window:
+#
+#   1. a module-level rebinding — `from ast import ImportFrom as IF` at the top
+#      of the file, then `IF` at the site;
+#   2. a computed attribute — `getattr(ast, "Import" + "From")`;
+#   3. a reading inside a CLASS-level method, which the sweep does not walk
+#      (it takes top-level functions only, and `tests/` has three class methods
+#      in total, none of them reading imports).
+#
+# The third is the sweep's window; the first two are deliberate obfuscations of
+# an AST access inside a test whose whole purpose is to read imports honestly,
+# which is the class this run has already ruled HARDENING on exactly that
+# reasoning. `grep` confirms no site in `tests/` writes any of the three. They
+# are recorded, not closed.
+#
+# A FOURTH was ordinary Python rather than an obfuscation, and it is closed:
+# `from . import foundry_orchestrator` left the no-facade walk green because
+# `_all_imports` guarded on `node.module`, which a relative import has none of.
+# See that helper's docstring. The residue there is the MODULE-TOP walk —
+# `_module_top_dotted_imports` reports DOTTED names and a relative import
+# carries no dotted path to report without deriving the file's package — so
+# `from . import gates` inside the package would still be invisible to the
+# acyclicity and three-layer scans. This tree writes no relative import at all
+# (census at the fix: 0 against 1367 absolute), and widening that walk is a
+# different change from this one; it is named here rather than assumed away.
 # --------------------------------------------------------------------------- #
 
 #: The `ast` node types that ARE an import, in both spellings a name can take
 #: (`ast.ImportFrom`, or `ImportFrom` after `from ast import ImportFrom`). A
-#: rostered site names none of them: reading an import is what the shared
+#: ROUTING site names none of them: reading an import is what the shared
 #: scanners above are for, and a site that reads one itself has forked one.
 _IMPORT_NODE_TYPES = frozenset({"Import", "ImportFrom"})
 
-#: The two modules that read imports. Named once, because a roster whose keys
-#: repeat a package path twelve times is a roster with twelve chances to
-#: mistype one.
-_BOUNDARY_MODULE = "tests.orchestration.test_module_boundaries"
-_HALT_MODULE = "tests.orchestration.test_halt"
+#: The shared readings themselves — what a routing site routes THROUGH, and half
+#: of what the floor sweeps for. Every member is asserted callable in this
+#: module by the liveness pin, so a rename cannot empty this set into a sweep
+#: that finds nothing and a floor that proves nothing.
+_SHARED_READINGS = frozenset({
+    "_all_imports",
+    "_module_top_imports",
+    "_module_top_dotted_imports",
+    "_module_top_package_imports",
+    "_submodules_named_by",
+})
 
-#: Dotted path of a test that reads imports -> the readings its own source must
-#: call, each as (name, keyword arguments it must be called with).
+#: A keyword whose value the roster records as PASSED without stating what it
+#: is. Used where the site builds the argument out of a local or a parameter, so
+#: there is no literal for a row to name and pinning the spelling would pin the
+#: caller's local variables.
+_ANY_VALUE = "<any-value>"
+
+#: Dotted path of a function that reads imports -> (the readings its own source
+#: must call, whether it reads import nodes ITSELF).
 #:
-#: EVERY SUCH TEST IN BOTH MODULES, not only the four measured silent. The four
-#: are where the hole was found; the other eight have the same shape and nobody
-#: had driven them, and "pin the ones somebody happened to revert" is the
-#: per-instance fix this class has already outlived three times. Twelve rows
-#: cost nothing that four do not, and the rule they state is the whole rule:
-#: an import reading in this suite goes through the shared scanners.
+#: Each reading is `(name, ((keyword, value), ...))` and the values are compared
+#: as VALUES (D-213): `also_by_name=()` is not `also_by_name=("foundry_
+#: orchestrator",)`, and the roster says which one the no-facade guard owes.
+#: `_ANY_VALUE` says "passed, value unstated"; an empty keyword tuple asks
+#: nothing about keywords rather than forbidding them.
 #:
-#: `also_by_name` is required of the two no-facade entries because dropping it
-#: is a silent revert of its own: the default resolves an alias against a file
-#: on disk, and `tools/foundry_orchestrator.py` is the file whose ABSENCE is the
-#: requirement. See `_all_imports`' own docstring for why that reading has to be
-#: named instead. Elsewhere the keyword tuple is empty, which asks nothing about
-#: keywords rather than forbidding them.
-#:
-#: The spawn entry names three readings because it is one test holding two scans
-#: that ask different questions — the forward edges are a module-top question,
-#: the back edges a dotted one.
-_SHARED_READING_CALL_SITES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
-    f"{_BOUNDARY_MODULE}.test_the_orchestration_import_graph_is_acyclic_at_module_top": (
-        ("_module_top_imports", ()),
-    ),
-    f"{_BOUNDARY_MODULE}.test_the_three_layers_hold_with_exactly_one_named_seam": (
-        ("_module_top_imports", ()),
-        ("_module_top_package_imports", ()),
-    ),
-    f"{_BOUNDARY_MODULE}.test_every_leaf_module_imports_only_leaves": (
-        ("_all_imports", ()),
-    ),
-    f"{_BOUNDARY_MODULE}.test_a_planted_lifecycle_reach_disqualifies_a_leaf": (
-        ("_all_imports", ()),
-        ("_module_top_imports", ()),
-    ),
-    f"{_BOUNDARY_MODULE}.test_the_seam_table_names_an_edge_that_exists": (
-        ("_module_top_imports", ()),
-    ),
-    f"{_BOUNDARY_MODULE}.test_no_verifier_module_reaches_a_lifecycle_module_lazily_either": (
-        ("_all_imports", ()),
-    ),
-    f"{_BOUNDARY_MODULE}.test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth": (
-        ("_all_imports", ()),
-    ),
-    f"{_BOUNDARY_MODULE}.test_a_planted_lazy_gate_reach_is_seen_by_the_lifecycle_walk": (
-        ("_all_imports", ()),
-        ("_module_top_imports", ()),
-    ),
-    f"{_BOUNDARY_MODULE}.test_the_package_marker_re_exports_nothing": (
-        ("_all_imports", ("also_by_name",)),
-    ),
-    f"{_BOUNDARY_MODULE}.test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith": (
-        ("_all_imports", ("also_by_name",)),
-    ),
-    f"{_BOUNDARY_MODULE}.test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions": (
-        ("_module_top_imports", ()),
-        ("_module_top_dotted_imports", ()),
-        ("_all_imports", ()),
-    ),
-    f"{_HALT_MODULE}.test_the_halted_seal_and_the_cap_path_live_in_the_halt_module": (
-        ("_all_imports", ()),
-    ),
+#: EVERY SWEPT FUNCTION IN `tests/`, which is what the floor above asserts. The
+#: dotted paths are written out rather than composed from per-module constants:
+#: a mistyped key is now caught twice over — the liveness pin finds no function
+#: for it, and the floor finds the real site unrostered — so the constants were
+#: buying a protection that the derivation gives for nothing.
+_IMPORT_READING_SITES: dict[
+    str, tuple[tuple[tuple[str, tuple[tuple[str, object], ...]], ...], bool]
+] = {
+    # ── this package's own two modules ────────────────────────────────
+    "tests.orchestration.test_halt.test_the_halted_seal_and_the_cap_path_live_in_the_halt_module": (
+        (("_all_imports", ()),), False),
+    "tests.orchestration.test_keyfiles.test_this_module_imports_nothing_which_is_what_makes_it_a_leaf": (
+        (), True),
+    "tests.orchestration.test_module_boundaries._all_imports": (
+        (("_submodules_named_by", ()),), True),
+    "tests.orchestration.test_module_boundaries._module_top_dotted_imports": (
+        (("_submodules_named_by", ()),), True),
+    "tests.orchestration.test_module_boundaries._module_top_imports": (
+        (("_module_top_dotted_imports", ()),), False),
+    "tests.orchestration.test_module_boundaries._module_top_package_imports": (
+        (("_module_top_dotted_imports", ()),), False),
+    "tests.orchestration.test_module_boundaries._import_aliases": ((), True),
+    "tests.orchestration.test_module_boundaries._private_names_defined_anywhere": ((), True),
+    "tests.orchestration.test_module_boundaries._module_namespace": ((), True),
+    "tests.orchestration.test_module_boundaries._leaf_symbols_the_consolidation_scripts_import": (
+        (("_submodules_named_by", ()),), True),
+    "tests.orchestration.test_module_boundaries.test_no_shipped_module_holds_an_unused_import": (
+        (("_submodules_named_by", ()),), True),
+    "tests.orchestration.test_module_boundaries.test_every_shipped_module_is_imported_by_some_test_module": (
+        (), True),
+    "tests.orchestration.test_module_boundaries.test_the_orchestration_import_graph_is_acyclic_at_module_top": (
+        (("_module_top_imports", ()),), False),
+    "tests.orchestration.test_module_boundaries.test_the_three_layers_hold_with_exactly_one_named_seam": (
+        (("_module_top_imports", ()), ("_module_top_package_imports", ())), False),
+    "tests.orchestration.test_module_boundaries.test_every_leaf_module_imports_only_leaves": (
+        (("_all_imports", ()),), False),
+    "tests.orchestration.test_module_boundaries.test_a_planted_lifecycle_reach_disqualifies_a_leaf": (
+        (("_all_imports", ()), ("_module_top_imports", ())), False),
+    "tests.orchestration.test_module_boundaries.test_the_seam_table_names_an_edge_that_exists": (
+        (("_module_top_imports", ()),), False),
+    "tests.orchestration.test_module_boundaries.test_no_verifier_module_reaches_a_lifecycle_module_lazily_either": (
+        (("_all_imports", ()),), False),
+    "tests.orchestration.test_module_boundaries.test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth": (
+        (("_all_imports", ()),), False),
+    "tests.orchestration.test_module_boundaries.test_a_planted_lazy_gate_reach_is_seen_by_the_lifecycle_walk": (
+        (("_all_imports", ()), ("_module_top_imports", ())), False),
+    # THE ONE ROW WHOSE KEYWORD CARRIES A REQUIREMENT RATHER THAN A HABIT. This
+    # is the GI-010 / OT-012 guard itself, and `also_by_name` is the reading for
+    # a module whose ABSENCE is the requirement — so the row names the value, not
+    # just the keyword (D-213).
+    "tests.orchestration.test_module_boundaries.test_the_package_marker_re_exports_nothing": (
+        (("_all_imports", (("also_by_name", ("foundry_orchestrator",)),)),), False),
+    "tests.orchestration.test_module_boundaries.test_the_no_facade_scan_sees_all_three_spellings_of_the_deleted_monolith": (
+        (("_all_imports", (("also_by_name", _ANY_VALUE),)),), False),
+    "tests.orchestration.test_module_boundaries.test_the_orchestrator_to_spawn_cycle_is_lazy_in_both_directions": (
+        (("_all_imports", ()), ("_module_top_dotted_imports", ()), ("_module_top_imports", ())), False),
+    # ── borrowers and own readings in other castings' modules ─────────
+    "tests.test_artifacts._dotted_modules_named_by": (
+        (("_submodules_named_by", ()),), True),
+    "tests.test_artifacts.test_the_evidence_engine_scan_reads_all_three_import_spellings": (
+        (("_submodules_named_by", ()),), False),
+    "tests.test_artifacts.test_the_leaf_reaches_for_nothing_above_it_at_module_top": ((), True),
+    "tests.test_artifacts.test_no_edge_above_the_leaf_survives_at_any_depth": ((), True),
+    # concern C-119 — `_protocol_stdout_scan` MUST keep reading import nodes of
+    # its own, and this row is where that is recorded rather than discovered as
+    # a red test. Its anchors monkeypatch `_SERVER_PKG` to a `tmp_path` tree, so
+    # `_submodules_named_by` — which resolves on DISK, against the real
+    # installed package — resolves nothing there, and borrowing the shared
+    # reading would make it green and blind. Six spellings are driven at its own
+    # site in `evidence/casting-5-stdout-scan-spellings.log`.
+    "tests.test_evidence._protocol_stdout_scan": ((), True),
+    # concern C-126 — ROUTING, not own, and casting 5 handed this row over
+    # because it could not add it. It closed D-216 at 8788455 by routing this
+    # site through `_all_imports`, having driven that C-119's constraint does
+    # NOT bite here (the subject is the real installed package on both sides).
+    # It then named the limitation it declined to close itself: a COMPLETE
+    # revert of the site to a private walk is green on a clean tree, and "a
+    # second private pin here would be the same mistake in a new register". It
+    # is right — that half is this roster by construction, and a routing row is
+    # what makes the complete revert red.
+    "tests.test_evidence.test_the_verifier_reads_the_leaf_and_never_the_lifecycle_module": (
+        (("_all_imports", ()),), False),
+    "tests.test_foundry_state_readers.test_the_leaf_module_still_imports_nothing_from_the_package": ((), True),
+    "tests.test_foundry_state_readers.test_the_leaf_still_imports_nothing_from_the_package": ((), True),
+    "tests.test_observations._foundry_bindings": (
+        (("_submodules_named_by", ()),), True),
+    "tests.test_observations.test_every_ledger_writing_door_answers_in_band": (
+        (("_all_imports", ()),), False),
+    "tests.test_observations.test_the_dispatch_roster_reads_all_three_import_spellings": (
+        (("_submodules_named_by", ()),), False),
+    "tests.test_protocol_prose._imports_from_this_module": (
+        (("_all_imports", (("also_by_name", _ANY_VALUE),)),), False),
+    "tests.test_protocol_prose.test_the_arming_condition_sees_all_three_spellings_of_this_module": (
+        (("_all_imports", ()), ("_submodules_named_by", ())), False),
+    "tests.test_report.test_foundry_report_imports_only_the_two_leaf_modules": ((), True),
+    "tests.test_report.test_foundry_state_still_imports_nothing_from_its_own_package": ((), True),
+    "tests.test_spawn_progress._reader_namespace": ((), True),
+    "tests.test_spend._module_identifiers": ((), True),
+    "tests.test_vocab._names_escalation_filename": ((), True),
+    "tests.test_vocab._imports_named_by": (
+        (("_submodules_named_by", ()),), True),
+    "tests.test_vocab.test_the_resolver_and_delegation_arms_read_all_three_import_spellings": (
+        (("_submodules_named_by", ()),), False),
 }
 
 
+def _swept_import_reading_sites() -> dict[str, tuple[frozenset[str], frozenset[str]]]:
+    """Every top-level function in `tests/` that reads imports, from SOURCE.
+
+    Returns `{dotted path: (shared readings it calls, import node types it
+    names)}` — the floor under `_IMPORT_READING_SITES`, and nothing more. It
+    answers only "does this function read imports", which is decidable from the
+    two facts the class has already shown are the reading: a call to one of
+    `_SHARED_READINGS`, or a name of one of `_IMPORT_NODE_TYPES`. What such a
+    function OWES is the roster's question, not this one's — see the block
+    comment above for why that half must stay named.
+
+    THE ROOT IS DERIVED FROM THIS FILE, not typed, so a moved test tree cannot
+    leave the sweep pointed at an empty directory quietly; the liveness pin
+    asserts the sweep is non-empty for the same reason.
+
+    TOP-LEVEL FUNCTIONS, and a nested one is covered by the enclosing function's
+    own source window — which is precisely why a MODULE-LEVEL helper was the
+    evasion worth closing and a nested helper was never one. Class-level methods
+    are outside the window and that is written down in the limit note above.
+    """
+    root = Path(__file__).resolve().parent.parent
+    out: dict[str, tuple[frozenset[str], frozenset[str]]] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            readings: set[str] = set()
+            types: set[str] = set()
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call):
+                    func = sub.func
+                    if isinstance(func, ast.Name) and func.id in _SHARED_READINGS:
+                        readings.add(func.id)
+                    elif isinstance(func, ast.Attribute) and func.attr in _SHARED_READINGS:
+                        readings.add(func.attr)
+                if isinstance(sub, ast.Attribute) and sub.attr in _IMPORT_NODE_TYPES:
+                    types.add(sub.attr)
+                elif isinstance(sub, ast.Name) and sub.id in _IMPORT_NODE_TYPES:
+                    types.add(sub.id)
+            if readings or types:
+                dotted = ".".join(path.relative_to(root.parent).with_suffix("").parts)
+                out[f"{dotted}.{node.name}"] = (frozenset(readings), frozenset(types))
+    return out
+
+
 def _rostered_site(dotted: str):
-    """The function a `_SHARED_READING_CALL_SITES` key names, or None.
+    """The function an `_IMPORT_READING_SITES` key names, or None.
 
     Resolved by import and `getattr`, never by reading the file as text: a
     rename then fails by name in the roster's own liveness pin instead of
@@ -7685,15 +7923,45 @@ def _rostered_site(dotted: str):
     return getattr(importlib.import_module(module_name), name, None)
 
 
-def _calls_named_in(fn) -> set[tuple[str, frozenset[str]]]:
-    """Every call `fn`'s OWN source makes, as (callee basename, keyword names).
+#: What a keyword's value reads as when it is not a hashable literal — a name, a
+#: call, a comprehension, a dict. The roster can then still say "this keyword is
+#: passed" without claiming to know what it is passed, and two different
+#: non-literals are never mistaken for each other by being equal to this.
+_NOT_A_LITERAL = "<not-a-literal>"
+
+
+def _calls_named_in(fn) -> set[tuple[str, frozenset[tuple[str, object]]]]:
+    """Every call `fn`'s OWN source makes, as (callee basename, keyword pairs).
 
     Basename, so `mod._all_imports(...)` and `_all_imports(...)` are one answer
     — the roster is about which READING a site routes through, not about how the
     site spells the import that reached it.
+
+    fallout FR-004 / GI-010 / AC-013 / OT-012 (D-213) — THE KEYWORD'S VALUE, NOT
+    ITS NAME.
+
+    This collected `frozenset(k.arg for k in node.keywords if k.arg)` — the
+    keyword NAME alone — and the pin compared `set(keywords) <= kw`. So
+    `also_by_name=()` and `also_by_name=("foundry_orchestrator",)` were the same
+    answer, and the one keyword in this roster that carries a REQUIREMENT rather
+    than a habit could be emptied with all thirteen rows staying green. Driven:
+    with a shipped module importing the deleted monolith in spelling two and the
+    file itself ABSENT — which is the control that separates the two, because
+    with the file present disk resolution answers either way and the pin looks
+    fine — the no-facade walk goes from `1 failed` to `1 passed` on that one
+    edit. `also_by_name` is the reading for a module whose absence is the
+    requirement (see `_all_imports`); emptying it is the silent revert the
+    roster's own comment says it is.
+
+    VALUES, NOT SOURCE TEXT. `ast.literal_eval` is asked rather than
+    `ast.unparse` because the roster states what must be PASSED, not how it must
+    be typed: a trailing comma, a line break or a differently spelled tuple are
+    the same argument, and a pin that disagreed would be pinning the formatter.
+    A value that is not a hashable literal reads as `_NOT_A_LITERAL`, so a
+    keyword whose value the roster cannot state is still recorded as present.
     """
     tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
-    out: set[tuple[str, frozenset[str]]] = set()
+    out: set[tuple[str, frozenset[tuple[str, object]]]] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -7703,7 +7971,17 @@ def _calls_named_in(fn) -> set[tuple[str, frozenset[str]]]:
             name = node.func.attr
         else:
             continue
-        out.add((name, frozenset(k.arg for k in node.keywords if k.arg)))
+        pairs: set[tuple[str, object]] = set()
+        for keyword in node.keywords:
+            if not keyword.arg:
+                continue
+            try:
+                value = ast.literal_eval(keyword.value)
+                hash(value)
+            except Exception:
+                value = _NOT_A_LITERAL
+            pairs.add((keyword.arg, value))
+        out.add((name, frozenset(pairs)))
     return out
 
 
@@ -7723,15 +8001,35 @@ def _import_node_types_named_in(fn) -> set[str]:
     }
 
 
-@pytest.mark.parametrize("site", sorted(_SHARED_READING_CALL_SITES))
-def test_a_rostered_import_reading_routes_through_the_shared_scanner(site):
-    """fallout FR-004 / GI-010 / AC-013 / OT-012 / GI-033 / AC-061 (D-207) — the
-    site, not the helper.
+def _keyword_is_satisfied(
+    required: tuple[str, object], observed: frozenset[tuple[str, object]]
+) -> bool:
+    """Is one required `(keyword, value)` present in what the site passed?
 
-    Each of these four scans went completely silent on its own revert while the
-    helper's anchor stayed green, because the anchor drives `_all_imports` and
-    nothing drove the call. This is the call.
+    `_ANY_VALUE` asks only that the keyword be passed. Anything else is compared
+    as a VALUE, which is the whole of D-213: the roster's one requirement-bearing
+    keyword was satisfiable by passing the keyword empty.
     """
+    name, value = required
+    for seen_name, seen_value in observed:
+        if seen_name != name:
+            continue
+        return value is _ANY_VALUE or value == _ANY_VALUE or seen_value == value
+    return False
+
+
+@pytest.mark.parametrize("site", sorted(_IMPORT_READING_SITES))
+def test_a_rostered_import_reading_routes_through_the_shared_scanner(site):
+    """fallout FR-004 / GI-010 / AC-013 / OT-012 / GI-033 / AC-061 (D-207,
+    D-213, D-214) — the site, not the helper.
+
+    Each of the first four scans went completely silent on its own revert while
+    the helper's anchor stayed green, because the anchor drives `_all_imports`
+    and nothing drove the call. This is the call — now over every reading in
+    `tests/` rather than the twelve in this package, because a borrower one
+    module over was silent on the same revert.
+    """
+    readings, reads_imports_itself = _IMPORT_READING_SITES[site]
     fn = _rostered_site(site)
     # Named rather than left to `inspect.getsource(None)`, which raises a
     # TypeError two frames down and names neither the roster nor the site.
@@ -7740,21 +8038,41 @@ def test_a_rostered_import_reading_routes_through_the_shared_scanner(site):
         "records. Repoint the key, or drop it with the reading it pinned."
     )
     calls = _calls_named_in(fn)
-    for reading, keywords in _SHARED_READING_CALL_SITES[site]:
+    for reading, keywords in readings:
         assert any(
-            name == reading and set(keywords) <= kw for name, kw in calls
+            name == reading
+            and all(_keyword_is_satisfied(k, kw) for k in keywords)
+            for name, kw in calls
         ), (
             f"{site} does not call {reading}"
-            + (f" with {list(keywords)}" if keywords else "")
+            + (f" with {[k for k, _ in keywords]} as the roster states them"
+               if keywords else "")
             + ". Every import reading in this suite goes through the shared "
-            "scanners — see the comment above `_SHARED_READING_CALL_SITES`. A "
-            "reading of its own walks past two of Python's three spellings of "
+            "scanners — see the comment above `_IMPORT_READING_SITES`. A "
+            "reading of its own walks past three of Python's four spellings of "
             "the same load, which is the blindness this run fixed six times."
         )
 
-    # ...and it reads no import node of its own, because a site that calls the
-    # shared scanner and computes a blind set beside it satisfies the loop above
-    # while answering from the blind one.
+    if reads_imports_itself:
+        # A DECLARED OWN READING, and the declaration has to stay TRUE. Without
+        # this the second column would be a free pass: a row could be marked
+        # `True` for a site that had stopped reading imports entirely, and the
+        # roster would carry a name that pins nothing.
+        # Measured, never taken from the row: what the row DECLARES is the thing
+        # being checked, so reading the declaration back would be the check
+        # asserting itself.
+        assert {name for name, _kw in calls} & _SHARED_READINGS or (
+            _import_node_types_named_in(fn)
+        ), (
+            f"{site} is rostered as reading imports itself and now reads none — "
+            "it calls no shared reading and names no import node type. Drop the "
+            "row if the reading is gone, or repoint it if the reading moved."
+        )
+        return
+
+    # ...and a ROUTING site reads no import node of its own, because a site that
+    # calls the shared scanner and computes a blind set beside it satisfies the
+    # loop above while answering from the blind one.
     assert _import_node_types_named_in(fn) == set(), (
         f"{site} names an import node type of its own. The shared scanners are "
         "where an import is read; a second reading here is the fork, whichever "
@@ -7768,17 +8086,60 @@ def test_the_shared_reading_roster_names_a_real_test_and_a_real_reading():
     Same discipline as `test_every_defect_reading_gate_names_a_real_predicate`:
     a roster matched by NAME reports nothing when every name has moved, and a
     parametrization over nothing is a suite full of nothing reporting green —
-    the worst failure a name-keyed pin can have.
+    the worst failure a name-keyed pin can have. The floor below has the same
+    hazard from the other side, so its inputs are asserted here too.
     """
-    assert _SHARED_READING_CALL_SITES, "the call-site roster is empty"
-    for site, required in sorted(_SHARED_READING_CALL_SITES.items()):
+    assert _IMPORT_READING_SITES, "the import-reading roster is empty"
+    assert _SHARED_READINGS, "the shared-reading name set is empty"
+    for reading in sorted(_SHARED_READINGS):
+        assert callable(globals().get(reading)), (
+            f"{reading} is named as a shared reading and this module defines no "
+            "such function; the sweep below would find nothing routing through "
+            "it and the floor would prove nothing."
+        )
+    for site, (required, _own) in sorted(_IMPORT_READING_SITES.items()):
         assert callable(_rostered_site(site)), (
             f"{site} names no function; the roster has outlived the site it "
             "records, and the pin over that site is reporting on nothing."
         )
-        assert required, f"{site} requires no reading at all"
         for reading, _keywords in required:
-            assert callable(globals().get(reading)), (site, reading)
+            assert reading in _SHARED_READINGS, (site, reading)
+
+
+def test_every_import_reading_in_the_suite_is_rostered():
+    """fallout FR-004 / GI-010 / AC-013 / OT-012 (D-214, D-215) — THE FLOOR.
+
+    The roster above can accuse only the sites it names, which is what makes it
+    safe and what made it removable: TEST deleted one row and the suite was
+    `120 passed` — one fewer parametrization and nothing red. It also named only
+    the readings in this package, and a borrower in `tests/test_observations.py`
+    reverted to a blind comprehension was `259 passed, 2 skipped`, silent.
+
+    This is the half that cannot be satisfied by deleting anything. It DERIVES
+    the population — every top-level function in `tests/` that calls a shared
+    reading or names an `ast` import node type — and asserts each one is
+    rostered. Deleting a row leaves the site swept and unrostered. Adding an
+    import reading anywhere in the suite, including the module-level helper that
+    was the one evasion of `inspect.getsource(fn)`'s window worth closing,
+    leaves it swept and unrostered. The derivation judges nothing about what a
+    site owes; the roster still says that, and the block comment says why.
+    """
+    swept = _swept_import_reading_sites()
+    assert len(swept) >= 40, (
+        f"the sweep found {len(swept)} import readings in tests/, which is fewer "
+        "than this suite is known to hold — the walk has gone blind and this "
+        "floor is under nothing"
+    )
+    unrostered = sorted(set(swept) - set(_IMPORT_READING_SITES))
+    assert unrostered == [], (
+        "these functions read imports and no row of `_IMPORT_READING_SITES` "
+        f"names them: {unrostered}. Add a row for each. Second column False if "
+        "it asks which modules a file reaches — then it must route through a "
+        "shared reading and name no import node type of its own; True if it is "
+        "a shared scanner, a reading of NAMES rather than module edges, or an "
+        "unrouted edge reading in another casting's module. The block comment "
+        "above `_IMPORT_READING_SITES` sets out all three."
+    )
 
 
 def test_the_consolidation_scan_reads_all_three_spellings_of_the_leaf(tmp_path):

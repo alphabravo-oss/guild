@@ -634,14 +634,33 @@ def _registry_tool_modules() -> dict[str, list[str]]:
     if not isinstance(dispatch, dict):
         return {}
     for tool, handler in dispatch.items():
+        # fallout FR-030 (D-209, research/holmes-orchestrator.md#reg-3) — AN
+        # ENTRY IS NEVER DROPPED, AND THERE WERE TWO WAYS TO DROP ONE.
+        #
+        # reg-3: "never drop a dispatch entry. When `handler.__code__` is None,
+        # OR THE WALK FINDS NO `foundry_mcp` MODULE FILE, record
+        # `registry[tool] = []` instead of `continue`/skip." Both halves of that
+        # sentence were open here and only the first looked like a skip: a
+        # handler with no code object hit an explicit `continue`, and a handler
+        # whose walk resolved nothing fell out of an `if files:` that read as a
+        # tidiness guard. Driven: a callable object bound as a handler and a
+        # lambda naming no `foundry_mcp` module BOTH vanished from the returned
+        # mapping.
+        #
+        # A DROPPED ENTRY AND AN EMPTY ONE ARE DIFFERENT FACTS, which is the
+        # whole of why this matters. Dropped, the tool is indistinguishable from
+        # one the server does not dispatch at all, so `_test01_scope_touched`
+        # walked a Contracts row naming it, matched nothing, and answered "the
+        # diff did not touch it" — a claim about a covered set it had not
+        # computed. Empty, the tool is present and its ownership is UNKNOWN, and
+        # the caller can say so. `set(registry) == set(server._DISPATCH)` is the
+        # property, and it is pinned in tests/test_inspect_mode.py.
         code = getattr(handler, "__code__", None)
-        if code is None:
-            continue
         modules: set[str] = set()
-        walk(code, modules, 0, set())
+        if code is not None:
+            walk(code, modules, 0, set())
         files = {f for m in modules if (f := module_file(m)) is not None}
-        if files:
-            registry[str(tool)] = sorted(files)
+        registry[str(tool)] = sorted(files)
     return registry
 
 
@@ -891,18 +910,47 @@ def _test01_scope_touched(fdir: Path, project_root: str, touched: list[str]) -> 
         return {"touched": False, "computable": True, "source": "registry", "detail": ""}
 
     registry = _registry_tool_modules()
-    if not registry:
+    # fallout FR-030 (D-209) — "COULD NOT BE READ" IS NOW A PROPERTY OF THE
+    # ENTRIES, NOT OF THE CONTAINER. `_registry_tool_modules` records an entry
+    # for every dispatched tool and leaves its file list EMPTY when ownership is
+    # not derivable, so the container is non-empty whenever `_DISPATCH` is —
+    # and `if not registry` would have stopped firing on exactly the tree it
+    # exists for, flipping this arm from fail-open to fail-CLOSED. The fact the
+    # sentence below is about is "no module file is known for any tool", which
+    # is what it now asks.
+    if not any(registry.values()):
         return _covered_set_unknown(
             "test01",
             "the executing server's tool registry could not be read, so which "
             "module implements a named surface is unknown"
         )
 
+    # fallout FR-030 (concern C-125, filed by casting 12) — THE SAME SENTENCE AT
+    # PER-ENTRY GRANULARITY.
+    #
+    # The whole-registry rung above is D-207's fail-open arm, and it answers
+    # only about the container. One unresolvable ENTRY slipped under it: with
+    # `Foundry-Report` re-spelled as a `functools.partial` and the diff touching
+    # the very file CT-014 is implemented by, the baseline answer
+    # `{touched: True, computable: True, ...naming CT-014}` became
+    # `{touched: False, computable: True, detail: ""}` — the covered set
+    # silently narrowed to exclude the row nobody could resolve, and reported as
+    # computed. reg-3's whole reason for recording the empty list is so this
+    # rung can exist; without it the `[]` is a fact nothing reads.
+    #
+    # AFTER the positive walk, never before it. A row whose tool DID resolve to
+    # a touched file is answered — the covered set is known to intersect the
+    # diff, and an unresolvable sibling row cannot unmake that. It is only the
+    # NEGATIVE answer that an unresolved row makes unsayable.
+    unresolvable: set[str] = set()
     for row_id, surface in rows:
         for tool in sorted(registry):
             if not re.search(
                 rf"(?<![A-Za-z0-9_-]){re.escape(tool)}(?![A-Za-z0-9_-])", surface
             ):
+                continue
+            if not registry[tool]:
+                unresolvable.add(f"{row_id} ({tool})")
                 continue
             for module_file in registry[tool]:
                 for candidate in candidates:
@@ -917,6 +965,14 @@ def _test01_scope_touched(fdir: Path, project_root: str, touched: list[str]) -> 
                                 f"implements, and the diff touched {candidate}"
                             ),
                         }
+    if unresolvable:
+        return _covered_set_unknown(
+            "test01",
+            "the executing server dispatches the surface(s) named by "
+            + ", ".join(sorted(unresolvable))
+            + " but no module file could be resolved for them, so whether the "
+            "diff touched what implements them is unknown"
+        )
     return {"touched": False, "computable": True, "source": "registry", "detail": ""}
 
 

@@ -1519,3 +1519,161 @@ def test_the_batch_door_writes_no_tripwire_for_a_re_tier_it_allows(run_env):
     records = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
     assert records[0]["tier"] == "LIVE", records[0]
     assert _tripwire_classes(fdir) == [], _tripwire_classes(fdir)
+
+
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-037 (D-211, research/holmes-orchestrator.md#reg-1) — THE BATCH
+# DOOR'S REFUSAL AUDIT ATTRIBUTES TO THE FINDING, NEVER TO A TOP-LEVEL ARGUMENT.
+#
+# `server._refused_filing_findings` fell back to `(arguments or {}).get(
+# "source")` per finding. `Foundry-Sync` has no such argument: its schema
+# declares `source` only inside each `findings` item, its `_DISPATCH` lambda
+# passes `cycle` and `findings` and nothing else, and `foundry_sync_defects`
+# reads `finding.get("source", "")` with no fallback. So a key the handler would
+# never look at decided who the audit ledger said had made the attempt — CT-002's
+# mis-attribution, and D-158's class one frame up.
+#
+# reg-1's headline (`_FILING_TOOLS` as "a fourth hand-spelled copy") is
+# retracted by reg-1's own skeptic's case, and this fallback is the whole of
+# what survives it. No `on_refused` hook, no per-tool table, `_FILING_TOOLS`
+# untouched.
+# --------------------------------------------------------------------------- #
+
+
+def _tripwire_sources(fdir: Path) -> list[str]:
+    """The `source` each denylist audit row attributes its attempt to."""
+    path = fdir / "observations.json"
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return [
+        row.get("source", "")
+        for row in (data.get("tripwire") or [])
+        if isinstance(row, dict)
+    ]
+
+
+def test_the_batch_refusal_audit_reads_the_findings_own_source(run_env, monkeypatch):
+    """THE CONTROL, and it is named as one because it does not discriminate.
+
+    A schema-invalid `Foundry-Sync` refused BEFORE dispatch still writes the
+    tripwire (D-146), and the row names who tried. This establishes that much:
+    the call carries a per-item `source` of `trace` and a stray top-level
+    `source` of `prove`, and the row says `trace`.
+
+    IT PASSES ON THE REVERT TOO, which is why it is not the pin. The fallback
+    was spelled `item.get("source") or (arguments or {}).get("source")`, and
+    `or` short-circuits — with a truthy per-item value the top-level key is
+    never reached. Driven both ways to be sure of it rather than reasoning about
+    it. The test below is the one that goes red.
+    """
+    import foundry_mcp.server as srv
+    from tests.orchestration.test_module_boundaries import _drive_mcp
+
+    project_root, fdir = run_env
+    _sync_env(fdir)
+    monkeypatch.setattr(srv, "_project_root", project_root)
+
+    response = _drive_mcp("Foundry-Sync", {
+        "cycle": 3,
+        # `type` is off the advertised vocabulary, so the call is refused at the
+        # schema rung and the handler never runs — which is exactly the rung
+        # D-146 put the audit write on.
+        "findings": [{
+            "description": _SECURITY_CLAIM,
+            "source": "trace",
+            "type": "NOTATYPE",
+            "tier": "LATENT",
+            "class": "AUTH_BYPASS",
+            "file": "src/api/a.py",
+            "symbol": "login",
+            "reproduction_attempted": "drove the endpoint; nothing reproduced",
+        }],
+        "source": "prove",
+    })
+
+    assert "NOTATYPE" in response, response[:400]
+    assert _tripwire_classes(fdir) == [vocab.SECURITY_PROPERTY_CLAIM], (
+        _tripwire_classes(fdir)
+    )
+    assert _tripwire_sources(fdir) == ["trace"], (
+        "the audit row names a stream the handler would never have read: the "
+        f"finding says trace and the row says {_tripwire_sources(fdir)}"
+    )
+
+
+def test_the_batch_refusal_audit_ignores_a_top_level_source(run_env, monkeypatch):
+    """fallout FR-037 (D-211) — THE PIN, and the one arm the fallback reached.
+
+    An `or` chain is only observable where its left side is falsy, so this is
+    the whole of D-211's reachable surface: the per-item `source` absent, a
+    top-level `source` of `prove` present. The honest answer is the EMPTY
+    string — the finding named no stream — because `Foundry-Sync` has no
+    top-level `source` to read: the schema declares it only inside each
+    `findings` item, the `_DISPATCH` lambda passes `cycle` and `findings` alone,
+    and `foundry_sync_defects` reads `finding.get("source", "")`.
+
+    Driven: with the fallback restored this row says `prove` — a stream that
+    could not have made the attempt, named in the one ledger an auditor reads to
+    find out who did. An empty attribution is a gap an auditor can SEE; a
+    confident wrong one is CT-002's mis-attribution.
+    """
+    import foundry_mcp.server as srv
+    from tests.orchestration.test_module_boundaries import _drive_mcp
+
+    project_root, fdir = run_env
+    _sync_env(fdir)
+    monkeypatch.setattr(srv, "_project_root", project_root)
+
+    _drive_mcp("Foundry-Sync", {
+        "cycle": 3,
+        "findings": [{
+            "description": _SECURITY_CLAIM,
+            "type": "NOTATYPE",
+            "tier": "LATENT",
+            "class": "AUTH_BYPASS",
+            "file": "src/api/a.py",
+            "symbol": "login",
+            "reproduction_attempted": "drove the endpoint; nothing reproduced",
+        }],
+        "source": "prove",
+    })
+
+    assert _tripwire_classes(fdir) == [vocab.SECURITY_PROPERTY_CLAIM], (
+        _tripwire_classes(fdir)
+    )
+    assert _tripwire_sources(fdir) == [""], _tripwire_sources(fdir)
+
+
+def test_the_single_door_still_reads_its_own_top_level_source(run_env, monkeypatch):
+    """...and the narrowing stops at the batch door, which is the point.
+
+    `Foundry-Defect` DOES declare `source` as a top-level argument and its
+    handler DOES read it, so the same fallback is correct there and is left
+    alone. Removing it from both doors would have been the over-correction —
+    reg-1 argues against restructuring this rung, not for widening the change.
+    """
+    import foundry_mcp.server as srv
+    from tests.orchestration.test_module_boundaries import _drive_mcp
+
+    project_root, fdir = run_env
+    _sync_env(fdir)
+    monkeypatch.setattr(srv, "_project_root", project_root)
+
+    _drive_mcp("Foundry-Defect", {
+        "description": _SECURITY_CLAIM,
+        "source": "prove",
+        "type": "NOTATYPE",
+        "tier": "LATENT",
+        "class": "AUTH_BYPASS",
+        "file": "src/api/a.py",
+        "symbol": "login",
+        "reproduction_attempted": "drove the endpoint; nothing reproduced",
+    })
+
+    assert _tripwire_classes(fdir) == [vocab.SECURITY_PROPERTY_CLAIM], (
+        _tripwire_classes(fdir)
+    )
+    assert _tripwire_sources(fdir) == ["prove"], _tripwire_sources(fdir)
