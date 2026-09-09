@@ -1,14 +1,15 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q tests/test_inspect_mode.py -k "registry" 2>&1 | tail -2 && uv run --quiet --with pytest python -c "$(printf 'import sys, functools\nsys.path[:0]=["src","."]\nfrom foundry_mcp import server\nfrom foundry_mcp.tools.orchestration import width as W\nimport tests.test_inspect_mode as T\nC=T.test_the_registry_binds_an_entry_for_every_dispatched_door\nR=T.test_every_registry_entry_names_its_owning_modules_or_says_why_not\ndef verdict(f):\n    try:\n        f()\n    except AssertionError:\n        return "RED"\n    return "GREEN"\nreg=W._registry_tool_modules()\nd=set(server._DISPATCH)\nprint(f"dispatched={len(d)} registered={len(reg)}")\nprint(f"dispatched_but_unregistered={sorted(d-set(reg))}")\nprint(f"registered_but_undispatched={sorted(set(reg)-d)}")\nprint(f"entries_with_no_owning_module={sorted(t for t in reg if not reg[t])}")\nprint(f"at HEAD              completeness={verdict(C)} resolvability={verdict(R)}")\no=server._DISPATCH["Foundry-Report"]\nserver._DISPATCH["Foundry-Report"]=functools.partial(o)\nprint(f"key VANISHES (today) completeness={verdict(C)} resolvability={verdict(R)}")\nserver._DISPATCH["Foundry-Report"]=o\nreal=W._registry_tool_modules\nW._registry_tool_modules=lambda: dict(list(real().items())+[("Foundry-Report",[])])\nprint(f"key kept, list EMPTY completeness={verdict(C)} resolvability={verdict(R)}")\nW._registry_tool_modules=real\n')"
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q tests/test_inspect_mode.py -k "registry" 2>&1 | tail -2 && uv run --quiet --with pytest python -c "$(printf 'import sys, functools\nsys.path[:0]=["src","."]\nfrom foundry_mcp import server\nfrom foundry_mcp.tools.orchestration import width as W\nimport tests.test_inspect_mode as T\nC=T.test_the_registry_binds_an_entry_for_every_dispatched_door\nR=T.test_every_registry_entry_names_its_owning_modules_or_says_why_not\ndef verdict(f):\n    try:\n        f()\n    except AssertionError:\n        return "RED"\n    return "GREEN"\nreal=W._registry_tool_modules\nreg=real()\nd=set(server._DISPATCH)\nprint(f"dispatched={len(d)} registered={len(reg)}")\nprint(f"dispatched_but_unregistered={sorted(d-set(reg))}")\nprint(f"registered_but_undispatched={sorted(set(reg)-d)}")\nprint(f"entries_with_no_owning_module={sorted(t for t in reg if not reg[t])}")\nprint(f"at HEAD, unnarrowed:   completeness={verdict(C)} resolvability={verdict(R)}")\no=server._DISPATCH["Foundry-Report"]\nserver._DISPATCH["Foundry-Report"]=functools.partial(o)\ncaught=(verdict(C)=="RED") or (verdict(R)=="RED")\nserver._DISPATCH["Foundry-Report"]=o\nprint(f"a REAL dispatch entry re-spelled as functools.partial is caught: {caught}")\nW._registry_tool_modules=lambda: {k:v for k,v in real().items() if k!="Foundry-Report"}\nprint(f"registry shape, key ABSENT:      completeness={verdict(C)} resolvability={verdict(R)}")\nW._registry_tool_modules=lambda: dict(list(real().items())+[("Foundry-Report",[])])\nprint(f"registry shape, key EMPTY-LIST:  completeness={verdict(C)} resolvability={verdict(R)}")\nW._registry_tool_modules=real\n')"
 # evidence-for: FR-005, FR-037, AC-014, OT-016, US-003
 # evidence-volatile: [0-9]+\.[0-9]+s
 # evidence-timeout: 300
 
 ......                                                                   [100%]
-6 passed, 170 deselected in 0.55s
+6 passed, 170 deselected in 0.56s
 dispatched=37 registered=37
 dispatched_but_unregistered=[]
 registered_but_undispatched=[]
 entries_with_no_owning_module=[]
-at HEAD              completeness=GREEN resolvability=GREEN
-key VANISHES (today) completeness=RED resolvability=GREEN
-key kept, list EMPTY completeness=GREEN resolvability=RED
+at HEAD, unnarrowed:   completeness=GREEN resolvability=GREEN
+a REAL dispatch entry re-spelled as functools.partial is caught: True
+registry shape, key ABSENT:      completeness=RED resolvability=GREEN
+registry shape, key EMPTY-LIST:  completeness=GREEN resolvability=RED
