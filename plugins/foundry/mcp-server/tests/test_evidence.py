@@ -6286,6 +6286,19 @@ def test_no_reader_of_the_owned_set_derives_it_inline():
     # comma-separated LIST and has no subject position to judge. Asked of the
     # AST for the same reason as above: the docstring that explains the
     # rejected reading names the call, and a text scan would count the prose.
+    #
+    # fallout AC-015 / OT-011 (D-219, concern C-127) — BOTH SPELLINGS ARE THE
+    # SUBJECT, BECAUSE ONE OF THEM IS THE ONE THAT WENT.
+    # ----------------------------------------------------------------------
+    # This scan keyed on the NAME `_REQUIREMENT_ID_RE`, the private rebinding
+    # this module carried at module scope for its single use. C-127 closed
+    # that rebinding: the call names `REQUIREMENT_ID_RE`, the declaration's
+    # own spelling, and the alias is gone. A scan REPOINTED to the new name
+    # alone would be strictly weaker than the one it replaced — the rebinding
+    # could return tomorrow with a whole-text `findall` through it and this
+    # pin would see nothing. Both spellings are named, so the pin survives
+    # its own subject moving.
+    scanned_grammar_names = {"REQUIREMENT_ID_RE", "_REQUIREMENT_ID_RE"}
     findall_args = [
         node.args[0].id if isinstance(node.args[0], ast.Name) else "<expr>"
         for node in ast.walk(
@@ -6297,13 +6310,37 @@ def test_no_reader_of_the_owned_set_derives_it_inline():
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "findall"
         and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "_REQUIREMENT_ID_RE"
+        and node.func.value.id in scanned_grammar_names
         and node.args
     ]
     assert findall_args == ["raw_val"], (
         f"a full-text requirement scan reappeared in evidence.py, over "
         f"{findall_args} — the only text this module may scan whole is the "
         f"`# evidence-for:` header value"
+    )
+
+    # ...and the grammar is REACHED, not rebound, which is the half of the
+    # `_KNOWN_DUPLICATION` row for this name that belonged to this casting.
+    # `test_module_boundaries.py#_top_level_definitions` counts a top-level
+    # assignment as a DEFINITION and an import as a reach — "which is the
+    # outcome this guard exists to produce rather than to forbid" — so the
+    # property C-127 closed is exactly "this name is not defined here", and
+    # this is where a regression would be written.
+    #
+    # BORROWED from the module that owns the reading rather than walked again
+    # (D-216): a second implementation of "what does this module define at
+    # top level" is the very duplication that guard refuses.
+    from tests.orchestration.test_module_boundaries import (
+        _top_level_definitions,
+    )
+
+    defined_here = _top_level_definitions(Path(evidence_module.__file__))
+    assert "_REQUIREMENT_ID_RE" not in defined_here, (
+        "tools/evidence.py binds the requirement-ID grammar under a second "
+        "top-level name again. `tools/test_deriver.py#_REQUIREMENT_ID_RE` is "
+        "a NARROWER grammar (US- and FR- only) wearing that same spelling "
+        "(D-219), so a binding here is one name over two meanings. Import "
+        "`schemas/vocab.py#REQUIREMENT_ID_RE` and call it by its own name."
     )
 
 

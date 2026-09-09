@@ -238,19 +238,6 @@ _EVIDENCE_HEADER_LINE_RE = re.compile(
 )
 _EVIDENCE_HEADER_BLOCK_RE = re.compile(r"\A(?:#[^\n]*\n|[ \t]*\n)+")
 
-# Phase 5 / EVID-02 — the requirement-ID grammar, READ from the vocabulary
-# module rather than re-typed here.
-#
-# D-150: this was a hand-copied literal whose comment claimed to be a
-# "single-source-of-truth ... re-used from foundry_handoff.py" while being the
-# second of seven copies. All seven knew the same seven families and none knew
-# OT- or GI-, so `# evidence-for: OT-011` parsed to the EMPTY LIST and was
-# dropped without a word — an evidence file could never bind to an observable
-# truth, and EVID-02's requirement-binding check could never see one. The
-# canonical pattern is a strict superset of what this copy matched, so no
-# `# evidence-for:` header that bound before binds less now (NFR-002).
-_REQUIREMENT_ID_RE: re.Pattern[str] = REQUIREMENT_ID_RE
-
 
 def _parse_evidence_header(text: str) -> dict[str, Any]:
     """Parse evidence file header (leading comment block).
@@ -335,7 +322,42 @@ def _parse_evidence_header(text: str) -> dict[str, Any]:
             # Multiple ``# evidence-for:`` lines accumulate (mirrors
             # ``# evidence-volatile:`` multi-line discipline). De-dup is
             # caller responsibility; declared order preserved.
-            ids = _REQUIREMENT_ID_RE.findall(raw_val)
+            #
+            # THE GRAMMAR IS `schemas/vocab.py#REQUIREMENT_ID_RE`, READ UNDER
+            # ITS OWN NAME — NEITHER RE-TYPED NOR REBOUND.
+            #
+            # D-150: this scan ran over a hand-copied literal whose comment
+            # called itself a "single-source-of-truth ... re-used from
+            # foundry_handoff.py" while being the second of seven copies. All
+            # seven knew the same seven families and none knew OT- or GI-, so
+            # `# evidence-for: OT-011` parsed to the EMPTY LIST and was
+            # dropped without a word — an evidence file could never bind to an
+            # observable truth, and EVID-02's requirement-binding check could
+            # never see one. The declaration is a strict superset of what that
+            # copy matched, so no `# evidence-for:` header that bound before
+            # binds less now (NFR-002).
+            #
+            # fallout AC-015 / OT-011 (D-219, concern C-127) — AND NO PRIVATE
+            # REBINDING STANDS BETWEEN THE DECLARATION AND THIS CALL.
+            #
+            # This module carried `_REQUIREMENT_ID_RE: re.Pattern[str] =
+            # REQUIREMENT_ID_RE` at module scope for this single use — a THIRD
+            # top-level definition of a name whose homes do not agree about
+            # what it means. `schemas/vocab.py`'s private alias is the same
+            # object; `tools/test_deriver.py#_REQUIREMENT_ID_RE` is a SECOND,
+            # NARROWER grammar (US- and FR- only) that its `# tests-spec:`
+            # header parser needs. One spelling over two grammars is what
+            # D-219 was filed about, and a third binding of it here — for one
+            # call, to an object this module does not own — read as though
+            # this module had a grammar of its own.
+            #
+            # `test_deriver`'s fork does NOT close the same way and must not:
+            # importing the declaration there would silently widen TEST-01's
+            # `# tests-spec:` header grammar to all twelve families, and
+            # GI-003 keeps that stream narrow and code-blind. Its exit is a
+            # rename, or an import argued for against the header — never an
+            # import taken because this one was.
+            ids = REQUIREMENT_ID_RE.findall(raw_val)
             if raw_val and not ids:
                 raise ValueError(
                     f"EVIDENCE_FOR_MALFORMED: no requirement IDs found in {raw_val!r}"
@@ -2941,7 +2963,7 @@ def _sweep_requirement_to_castings(manifest: dict) -> dict[str, set[str]]:
     ---------------------------------------
     The sentence above used to end "and the IDs IN it are exactly the IDs that
     casting is answerable for", and this loop was a bare
-    `_REQUIREMENT_ID_RE.findall(spec_text)` over the whole block. That claim is
+    `REQUIREMENT_ID_RE.findall(spec_text)` over the whole block. That claim is
     false and D-180 disproved it at two other doors — the acceptance gate and
     the F0.9 validator — by replacing the same `findall` with
     `declared_requirement_ids`, which judges POSITION: an ID is declared when it
@@ -2966,9 +2988,10 @@ def _sweep_requirement_to_castings(manifest: dict) -> dict[str, set[str]]:
     same mapping used in a boundary refusal, which would name a log the diff
     never touched (FR-042 / OT-008).
 
-    The requirement GRAMMAR still comes from `_REQUIREMENT_ID_RE` — via
-    `declared_requirement_ids`, which builds its position rule from
-    `REQUIREMENT_ID_RE.pattern` rather than re-typing it (D-150). The header
+    The requirement GRAMMAR still comes from
+    `schemas/vocab.py#REQUIREMENT_ID_RE` — via `declared_requirement_ids`,
+    which builds its position rule from its `.pattern` rather than re-typing
+    it (D-150). The header
     scan at the top of this module keeps the bare `findall`, and correctly: a
     `# evidence-for:` line is a comma-separated LIST of ids, not prose, so
     there is no subject position for the rule to judge.
