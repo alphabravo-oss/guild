@@ -97,9 +97,9 @@ The declarations above are what the spec says exists. **What you must WALK this 
 - `inspect_mode.touched_files` — the repo-relative files the GRIND commits touched, measured at the boundary from `inspect_mode.diff_base`. This is the TRACE roster on a `DELTA` cycle.
 - `inspect_mode.cycle` — the cycle the scope belongs to. A scope stamped with a different cycle is not yours; walk everything.
 
-**On `DELTA` with `stream_scope.trace.scope == "delta"`, walk exactly the symbols declared in `inspect_mode.touched_files`.** Every declared symbol whose file appears in that list, and no fewer — that named list is this stream's whole width, and a symbol in a touched file you skipped is a symbol nothing else reaches this cycle. Report `items_checked` as the number of symbols you verified and `items_total` as the number of declared symbols in those files, so both numbers are measured against the width the server drew rather than against the manifest. Walking every symbol in the spec instead is not a safe over-delivery: it spends the cycle the `DELTA` width exists to save, and it reports a coverage pair describing a different denominator than the one the gate reads.
+**On `DELTA` with `stream_scope.trace.scope == "delta"`, walk exactly the symbols declared in `inspect_mode.touched_files`.** Every declared symbol whose file appears in that list, and no fewer — that named list is this stream's whole width, and a symbol in a touched file you skipped is a symbol nothing else reaches this cycle. Report both counts in the unit `rosters/trace.json` lists: `items_total` is the number of roster items that width drew — the touched files the roster itself names — and `items_checked` the number of those you walked to the end. The walk is in symbols and the RECORD is in roster items, because `Foundry-Stream` measures the total against the persisted roster alone and refuses `ROSTER_MISMATCH` both below the count the width drew and above the roster's own length. (fallout FR-050 / CT-003 / ST-008) Walking every symbol in the spec instead is not a safe over-delivery: it spends the cycle the `DELTA` width exists to save, and it reports a coverage pair describing a different denominator than the one the gate reads.
 
-**On `FULL`, walk every declared symbol exactly as Step 1 extracted them** — `items_total` is every symbol in scope.
+**On `FULL`, walk every declared symbol exactly as Step 1 extracted them** — and report `items_total` as the persisted roster's length, which `Foundry-Stream` requires exactly: any other total is refused `ROSTER_MISMATCH` naming the length it wanted. With no roster persisted for this stream nothing constrains the total, and the population is the one you walked. (fallout FR-050 / ST-008)
 
 **Read the ARRAY, never the terminal line.** The `Foundry-Next` display prints `TRACE:    N file(s) — ...` and TRUNCATES that list at five files. It is a summary for a human reading a terminal; the roster is `inspect_mode.touched_files`, below that display and after the marker line. A stream that copies the five files it can see walks five files and reports a width it never ran.
 
@@ -283,8 +283,9 @@ If previous trace results are provided, compare:
   closed vocabulary at
   `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#STREAM_WIRE_IDS`; read it there
   and never re-type the set here. Take `cycle` from `Foundry-Next` and the two counts from the
-  Step 1.5 width read: `items_checked` is the symbols you actually verified, `items_total` the
-  declared symbols in the width the server drew.
+  Step 1.5 width read, in the unit `rosters/trace.json` lists rather than in symbols:
+  `items_checked` is the roster items you walked to the end, `items_total` the whole roster at
+  `FULL` and the roster items the width drew at `DELTA`.
   **That read carries the caller argument, and so does every other one.** If you are a SUB-AGENT
   rather than the lead, pass caller='subagent' on every Foundry-Next call. The lead's call is a
   protocol step — it arms the ordering token the next Foundry-Gate requires and resets the stall

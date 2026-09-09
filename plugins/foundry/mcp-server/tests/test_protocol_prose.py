@@ -7676,6 +7676,143 @@ def test_each_deriving_agent_names_its_own_roster_document(path: Path) -> None:
     )
 
 
+#: The stream AGENT files whose stream carries a PERSISTED roster, DERIVED
+#: from the constant that decides it rather than listed. `vocab`'s
+#: full-roster streams are the ones `rosters/<wire>.json` exists for, and
+#: `items_total` on such a stream's record is measured against that document's
+#: length. flow-tracer and coverage-diff fall out by WIRE ID rather than by
+#: name -- their populations are the flow delta and the castings' coverage
+#: lists, which no roster document holds and no door checks a total against.
+ROSTER_BEARING_STREAM_AGENTS = tuple(
+    path
+    for path in NON_PROVE_STREAM_AGENTS
+    if _declared_stream_wire_ids(path) & frozenset(vocab.FULL_ROSTER_STREAMS)
+)
+
+
+def test_the_roster_bearing_stream_agent_roster_is_derived() -> None:
+    """Floor check, in the D-017 shape: assert the members IN and the rest OUT.
+
+    A derived roster that silently narrows is invisible at every
+    parametrisation that reads it, so the three known members are named here
+    and the two roster-less stream agents are named as excluded. A stream that
+    GAINS a roster fails here on the agent file that never learned it.
+    """
+    expected = {TRACER, RESEARCH_AUDITOR, SPEC_TEST_DERIVER}
+    missing = sorted(_rel(p) for p in expected - set(ROSTER_BEARING_STREAM_AGENTS))
+    stray = sorted(_rel(p) for p in set(ROSTER_BEARING_STREAM_AGENTS) - expected)
+    assert not missing and not stray, (
+        f"ROSTER_BEARING_STREAM_AGENTS derived {sorted(_rel(p) for p in ROSTER_BEARING_STREAM_AGENTS)}. "
+        f"Missing {missing}; unexpected {stray}. Membership is the join of the "
+        f"file's own declared wire id and {sorted(vocab.FULL_ROSTER_STREAMS)}; a "
+        f"file drops out by losing its wire-id declaration, and a stream joins "
+        f"by gaining a roster -- in which case its agent owes the clause below."
+    )
+
+
+@pytest.mark.parametrize(
+    "path", ROSTER_BEARING_STREAM_AGENTS, ids=lambda p: p.name
+)
+def test_each_roster_bearing_agent_measures_items_total_in_roster_items(
+    path: Path,
+) -> None:
+    """fallout FR-050 / CT-003 / ST-008 (concern C-128): one spelling, three files.
+
+    `items_total` is the size of the population `Foundry-Stream` measures the
+    record against, and that population is the roster document -- so the unit
+    of the field is the unit of the roster's items, never the unit of whatever
+    the agent happened to walk. The three files state it in their own voices
+    around this clause; the clause itself is word-identical because a field
+    that means roster items in one file and symbols in another is a number a
+    later reader cannot interpret, which is what concern C-128 measured on
+    this run's own roll-up.
+    """
+    assert "the persisted roster's length" in _flat(path), (
+        f"{_rel(path)} no longer measures `items_total` against the persisted "
+        f"roster's length. Its stream has a roster document, so "
+        f"`{streams.ROSTER_MISMATCH}` is what any other total earns at the "
+        f"door -- prose naming a different population describes a call the "
+        f"server refuses."
+    )
+
+
+#: fallout FR-050 / CT-003 / ST-008 (concern C-128) -- the two width clauses
+#: in the tracer's own voice. TRACE is the one roster-bearing stream the
+#: server NARROWS, so it is the one file where the population changes with the
+#: width while the UNIT does not: the whole roster at FULL, the roster items
+#: the width drew at DELTA, and roster items in both.
+_TRACER_ITEMS_TOTAL_CLAUSES = (
+    (
+        "report `items_total` as the persisted roster's length",
+        "the FULL-width total, which the door requires exactly -- the shape "
+        "this replaced (`items_total` is every symbol in scope) is refused "
+        f"`{streams.ROSTER_MISMATCH}` on every run that has a roster, and "
+        "this run recorded the roster's length on all ten of its FULL cycles",
+    ),
+    (
+        "`items_total` is the number of roster items that width drew",
+        "the DELTA-width total, measured against the population the recorded "
+        "decision itself enumerates -- `_recorded_delta_population` intersects "
+        "`touched_files` with the roster and the door refuses anything below it",
+    ),
+    (
+        "The walk is in symbols and the RECORD is in roster items",
+        "the whole of concern C-128 in one clause: narrowing the WALK is what "
+        "the DELTA width buys, and the RECORD's unit is not the walk's",
+    ),
+)
+
+
+@pytest.mark.parametrize("clause,why", _TRACER_ITEMS_TOTAL_CLAUSES, ids=lambda v: v[:44])
+def test_the_tracer_states_its_items_total_unit_at_both_widths(
+    clause: str, why: str
+) -> None:
+    """fallout FR-050 / CT-003 / ST-008 (concern C-128)."""
+    assert clause in _flat(TRACER), (
+        f"{_rel(TRACER)} no longer states: {clause!r}. That clause is {why}. A "
+        f"tracer that reports a symbol count has no total the door accepts at "
+        f"FULL, and none it is guaranteed to accept at DELTA."
+    )
+
+
+#: The spellings that made one field carry two units. Pinned ABSENT because a
+#: positive assertion cannot fail on prose that states the rule correctly in
+#: one paragraph and the retired unit in the next -- which is the state
+#: concern C-128 was filed on.
+_RETIRED_TRACER_ITEMS_TOTAL_SPELLINGS = (
+    "`items_total` is every symbol in scope",
+    "`items_total` as the number of declared symbols",
+    "`items_total` the declared symbols",
+)
+
+
+@pytest.mark.parametrize("spelling", _RETIRED_TRACER_ITEMS_TOTAL_SPELLINGS)
+def test_the_tracer_never_calls_items_total_a_symbol_count(spelling: str) -> None:
+    """fallout FR-050 / ST-008 (concern C-128): the retired unit stays retired."""
+    assert spelling not in _flat(TRACER), (
+        f"{_rel(TRACER)} states {spelling!r} again. `items_total` is measured "
+        f"against `{rosters.ROSTERS_DIRNAME}/` items at both widths; a symbol "
+        f"count above the roster's own length has no legal value at all, so "
+        f"this spelling is an instruction the door can refuse outright."
+    )
+
+
+def test_the_tracer_names_the_document_its_unit_is_defined_by() -> None:
+    """fallout NFR-011: the path is composed from the constant, not copied."""
+    wires = _declared_stream_wire_ids(TRACER)
+    assert len(wires) == 1, (
+        f"{_rel(TRACER)} declares {sorted(wires)} as its stream wire id(s); a "
+        f"roster document is per stream and a file claiming two has no single "
+        f"answer to which roster defines its unit."
+    )
+    expected = f"{rosters.ROSTERS_DIRNAME}/{next(iter(wires))}.json"
+    assert expected in _read(TRACER), (
+        f"{_rel(TRACER)} does not name `{expected}`. The unit of `items_total` "
+        f"is that document's items, and an agent that cannot name the document "
+        f"cannot tell what it is counting."
+    )
+
+
 def _forbidden_source_roots() -> frozenset[str]:
     """`FORBIDDEN_SOURCE_ROOTS`, read out of the validator without running it.
 
