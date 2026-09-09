@@ -1,0 +1,21 @@
+# evidence-cmd: cd plugins/foundry/mcp-server || exit 1; echo "== D-209: no dispatch entry is dropped, on either path =="; uv run --quiet --with pytest python -c 'import sys, functools; sys.path.insert(0, "src"); from foundry_mcp.tools.orchestration.width import _registry_tool_modules as reg; from foundry_mcp import server as s; base=dict(s._DISPATCH); print("registry names every dispatched tool:", set(reg()) == set(base)); print("registry invents none:", not (set(reg()) - set(base))); s._DISPATCH = dict(base, **{"Zz-No-Code": functools.partial(lambda a, b: {}, 1), "Zz-Empty-Walk": (lambda a: {"ok": True})}); r=reg(); print("a partial handler has no __code__:", not hasattr(s._DISPATCH["Zz-No-Code"], "__code__")); print("...and is kept with an empty file list:", r.get("Zz-No-Code") == []); print("a handler whose walk resolves nothing is kept with an empty file list:", r.get("Zz-Empty-Walk") == []); s._DISPATCH = base'; echo; echo "== C-125: an unresolvable ENTRY makes the covered set unknown =="; out=$(uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -q tests/orchestration/test_width.py -k "unresolvable or resolvable_hit or registry_keeps or dispatched_tool_has_a_registry" 2>&1); case "$out" in *failed*|*error*) printf '%s\n' "$out" | tail -20 ;; *passed*) echo "every registry node passed" ;; *) echo "NO TESTS RAN"; printf '%s\n' "$out" | tail -5 ;; esac; echo; echo "== D-211: the batch refusal audit reads no top-level source =="; uv run --quiet --with pytest python -c 'import sys; sys.path.insert(0, "src"); from foundry_mcp.server import _refused_filing_findings as f; print("per-item source is read:", f("Foundry-Sync", {"findings": [{"source": "trace"}], "source": "prove"})[0][1]); print("a top-level source attributes nothing:", repr(f("Foundry-Sync", {"findings": [{}], "source": "prove"})[0][1])); print("the SINGLE door still reads its own declared argument:", f("Foundry-Defect", {"description": "x", "source": "prove"})[0][1])'; echo; echo "== the pins =="; out=$(uv run --quiet --with pytest pytest -p no:cacheprovider --no-header -q tests/orchestration/test_width.py tests/orchestration/test_fix_gate.py 2>&1); case "$out" in *failed*|*error*) printf '%s\n' "$out" | tail -20 ;; *passed*) echo "every node in test_width.py and test_fix_gate.py passed" ;; *) echo "NO TESTS RAN"; printf '%s\n' "$out" | tail -5 ;; esac
+# evidence-for: fallout FR-030, FR-037, GI-009, OT-013, OT-014
+# evidence-timeout: 300
+
+== D-209: no dispatch entry is dropped, on either path ==
+registry names every dispatched tool: True
+registry invents none: True
+a partial handler has no __code__: True
+...and is kept with an empty file list: True
+a handler whose walk resolves nothing is kept with an empty file list: True
+
+== C-125: an unresolvable ENTRY makes the covered set unknown ==
+every registry node passed
+
+== D-211: the batch refusal audit reads no top-level source ==
+per-item source is read: trace
+a top-level source attributes nothing: ''
+the SINGLE door still reads its own declared argument: prove
+
+== the pins ==
+every node in test_width.py and test_fix_gate.py passed
