@@ -5064,8 +5064,10 @@ _KNOWN_DUPLICATION: dict[str, str] = {
     # FOR ONE OF THE TWO FILES IT NAMED, WHICH IS D-167's SHAPE ONE TABLE OVER.
     #
     # It read "tools/evidence.py and tools/test_deriver.py each bind their own
-    # ALIAS to it rather than importing the declaration". MEASURED at ac89f59:
-    # `evidence._REQUIREMENT_ID_RE is vocab.REQUIREMENT_ID_RE` is True and
+    # ALIAS to it rather than importing the declaration". MEASURED at ac89f59,
+    # WHEN BOTH BINDINGS STILL EXISTED (the first no longer does — see the
+    # C-130 paragraph below): `evidence._REQUIREMENT_ID_RE is
+    # vocab.REQUIREMENT_ID_RE` was True and
     # `test_deriver._REQUIREMENT_ID_RE is vocab.REQUIREMENT_ID_RE` is False —
     # the second is `re.compile(r"\b(?:US|FR)-\d+\b")`, a SECOND grammar wearing
     # the shared name, and of AC-012 / CT-004 / OT-015 / NFR-009 / GI-033 /
@@ -5084,20 +5086,44 @@ _KNOWN_DUPLICATION: dict[str, str] = {
     # NO CASTING OWNS `tools/test_deriver.py` THIS RUN — it is in nobody's
     # `key_files`, so its half is successor work and cannot be closed here. The
     # premise is pinned instead, by
-    # `test_the_requirement_id_forks_are_two_aliases_and_one_divergent_grammar`,
+    # `test_the_requirement_id_fork_is_a_divergent_grammar_not_an_alias`,
     # so the row can never again describe the divergence as an alias and neither
     # side can be widened or narrowed without a red test.
+    #
+    # AND THE HALF THAT DID CLOSE, WHICH IS WHAT THE ROW IS FOR (C-127, residue
+    # C-130). At 7dda687 casting 5 deleted `tools/evidence.py`'s rebinding and
+    # named `REQUIREMENT_ID_RE` at its one call site, so the population this row
+    # accounts for went from three modules to two. THE CHEAPER CLOSE WAS
+    # AVAILABLE AND IS THE WRONG ONE: `from …vocab import REQUIREMENT_ID_RE as
+    # _REQUIREMENT_ID_RE` would have kept the module attribute resolving and,
+    # because `_top_level_definitions` counts `def`/`class`/assignment and an
+    # import is a REACH rather than a definition, would also have dropped this
+    # row's count to two. Both measurements would have agreed while the hazard
+    # D-219 is about — one private spelling naming the WIDE grammar here and the
+    # NARROW one in `test_deriver.py` — survived, now invisible to the guard
+    # that counts spellings. An alias whose only merit is that it satisfies a
+    # pin is the pin measuring itself.
+    #
+    # The pin below therefore no longer names module attributes. It ASKS which
+    # modules define the name, so a home leaving is reported as a home leaving
+    # and the row is corrected in the commit that changes the population.
     "_REQUIREMENT_ID_RE": (
-        "TWO HALVES WITH DIFFERENT EXITS. schemas/vocab.py declares the "
-        "grammar and keeps a private alias beside it for its own predicates. "
-        "casting 5 — tools/evidence.py binds a second alias to that same "
-        "object, and its exit is one import. NO OWNER THIS RUN — "
+        "TWO HOMES WITH DIFFERENT EXITS. casting 10 — schemas/vocab.py "
+        "declares the grammar and keeps a private alias beside it for the one "
+        "predicate that reads it, so its exit is to spell the declaration at "
+        "that call site and drop the alias. NO OWNER THIS RUN — "
         "tools/test_deriver.py is NOT an alias: it compiles the narrower "
         "US-/FR- grammar its `# tests-spec:` header parser reads, so its exit "
         "is a RENAME (the D-061 shape) or an import that must be argued for "
         "against the header, never an import taken because this row said "
-        "'alias'. Pinned by "
-        "test_the_requirement_id_forks_are_two_aliases_and_one_divergent_grammar."
+        "'alias'. tools/evidence.py WAS a third home and is not one now: "
+        "casting 5 closed it at 7dda687 by naming the declaration at the call "
+        "site (C-127, residue C-130), which is the exit this row hands the "
+        "remaining alias. Its non-return is pinned at "
+        "tests/test_evidence.py#test_no_reader_of_the_owned_set_derives_it_inline "
+        "and NOT here, because an ImportFrom alias is not a definition and so "
+        "is invisible to this table's own walk. Pinned by "
+        "test_the_requirement_id_fork_is_a_divergent_grammar_not_an_alias."
     ),
     "_normalise_path": (
         "casting 1 — tools/concerns.py and schemas/vocab.py spell one rule twice"
@@ -5501,8 +5527,9 @@ def test_the_named_refusal_forks_are_the_two_the_row_names_and_not_the_third():
     assert signatures["display.py"][0] == ["result"], signatures["display.py"]
 
 
-def test_the_requirement_id_forks_are_two_aliases_and_one_divergent_grammar():
-    """fallout AC-015 / OT-011 (D-219) — the row's PREMISE, driven.
+def test_the_requirement_id_fork_is_a_divergent_grammar_not_an_alias():
+    """fallout AC-015 / OT-011 (D-219, concerns C-127 / C-130) — the row's
+    PREMISE, driven.
 
     `_KNOWN_DUPLICATION` means "these SHOULD be one and somebody else owns the
     file", and the reason a row carries is the only statement of WHAT closing
@@ -5513,25 +5540,57 @@ def test_the_requirement_id_forks_are_two_aliases_and_one_divergent_grammar():
     and its remedy is the same one: a STRUCTURAL predicate, so the row cannot
     be corrected in prose today and drift back tomorrow.
 
-    THE THREE, MEASURED AT ac89f59 RATHER THAN DESCRIBED. Two are the SAME
-    OBJECT as the declaration; the third is a second `re.compile` with a
-    narrower alternation and no fractional suffix. The six ids below are the
-    separation: every one is a requirement id this run's own spec uses, the
-    declaration matches all six and the fork matches none, so "widen it to the
-    declaration" is a change of behaviour rather than a tidy-up — whatever the
-    row says.
+    MEASURED AT HEAD RATHER THAN DESCRIBED. One home binds the declaration
+    under a second name; the other is a second `re.compile` with a narrower
+    alternation and no fractional suffix. The six ids below are the separation:
+    every one is a requirement id this run's own spec uses, the declaration
+    matches all six and the fork matches none, so "widen it to the declaration"
+    is a change of behaviour rather than a tidy-up — whatever the row says.
+
+    THE NAME CARRIES NO CENSUS, AND THAT IS C-130's LESSON RATHER THAN A
+    PREFERENCE. This test was `…_are_two_aliases_and_one_divergent_grammar` and
+    it asserted the two aliases by module attribute. In cycle 14 casting 5
+    closed one of them — the outcome the row exists to make possible — and the
+    pin failed with `AttributeError: module 'foundry_mcp.tools.evidence' has no
+    attribute '_REQUIREMENT_ID_RE'`, a message about a missing attribute that
+    said nothing about the population that had moved. A count in a name goes
+    stale the moment the thing it counts is closed, which on this table is the
+    goal; so the count is measured below and the name states the property that
+    does not change while the fork exists.
     """
     from foundry_mcp.schemas import vocab
-    from foundry_mcp.tools import evidence, test_deriver
+    from foundry_mcp.tools import test_deriver
 
     declaration = vocab.REQUIREMENT_ID_RE
 
-    # (1) THE TWO THE ROW MAY CALL ALIASES. Identity, not equality: an alias is
-    # the declaration under a second name, and two `re.compile` calls over one
-    # pattern string would compare equal-ish while being two objects to keep in
-    # step.
+    # (1) THE POPULATION, ASKED RATHER THAN NAMED. Asked of the same walk
+    # `_KNOWN_DUPLICATION` is accounted by — BORROWED, not forked (D-216) — so
+    # the pin's subject and the row's subject cannot become two answers, and a
+    # module joining or leaving is reported as what it is instead of as an
+    # attribute that is not there.
+    homes = sorted(
+        module.name
+        for module in _package_source_modules()
+        if "_REQUIREMENT_ID_RE" in _top_level_definitions(module)
+    )
+    assert homes == ["test_deriver.py", "vocab.py"], (
+        f"the modules binding `_REQUIREMENT_ID_RE` at top level are no longer "
+        f"the two `_KNOWN_DUPLICATION` accounts for: {homes}. A module that "
+        "JOINED is a third spelling of one name over two meanings and needs "
+        "the row to say so. A module that LEFT closed its half — correct the "
+        "row's stated reason and this list in the SAME commit, which is what "
+        "C-130 was. Note that an `ImportFrom` alias is not a definition and "
+        "will not appear here: a module reaching the declaration under the "
+        "confusable private spelling is invisible to this walk, which is why "
+        "the close is naming `REQUIREMENT_ID_RE` at the call site rather than "
+        "aliasing it on import."
+    )
+
+    # ...and the declaring module's own private alias is the declaration under a
+    # second name. Identity, not equality: an alias is the declaration under a
+    # second name, and two `re.compile` calls over one pattern string would
+    # compare equal-ish while being two objects to keep in step.
     assert vocab._REQUIREMENT_ID_RE is declaration
-    assert evidence._REQUIREMENT_ID_RE is declaration
 
     # (2) THE ONE THAT IS NOT, which is the whole of D-219.
     fork = test_deriver._REQUIREMENT_ID_RE
