@@ -2513,10 +2513,20 @@ def _imports_named_by(node: "ast.AST") -> tuple[dict[str, set[str]], dict[str, s
 
     ALL THREE SPELLINGS ARE READ HERE, IN ONE SCOPE, and the two predicates
     below ask this rather than reading `ImportFrom.module` themselves. That is
-    not tidiness: a caller keeping the spelling-one arm inline and delegating
-    the other two is still a scope that pins the module to a name, which is the
-    shape `test_no_import_reading_pins_the_module_to_its_own_name` refuses —
-    driven, it named both predicates until the reading moved in here whole.
+    not tidiness, and it needs no guard to make it true: a caller that kept the
+    spelling-one arm inline and delegated only the other two would still be a
+    scope reading `ImportFrom.module` and keying on the name it found there —
+    the same blindness, two thirds smaller and none the less blind, because the
+    arm it kept is the one that answers for a single spelling. So
+    `_reaches_the_module` and `_reaches_the_symbol` each ask a whole question
+    about a whole statement, and a partial delegation is the shape that
+    reintroduces this defect while looking like its fix. Driven, that shape
+    named both predicates until the reading moved in here whole — and the
+    recogniser that named it has since been retired as undecidable by syntax,
+    so what holds the reading whole now is this scope and not a scan.
+    `tests/orchestration/test_module_boundaries.py` records that retirement,
+    the measurement behind it, and what would have to be answered before a scan
+    is written here again.
 
     RETURNS TWO MAPPINGS, both keyed on the FULL dotted module path:
 
