@@ -56,7 +56,7 @@ sentence is
 `plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
 quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
 
-**On `DELTA` with `stream_scope.trace.scope == "delta"`, walk exactly the symbols declared in `inspect_mode.touched_files`** — every declared symbol whose file appears in that list and no fewer — and report `items_checked` and `items_total` against those files rather than against the spec. **On `FULL`, walk every declared symbol** and report `items_total` as every symbol in scope. **With no recorded `inspect_mode` at all, walk everything**: a missing width means no narrowing was decided, never that you may narrow it yourself.
+**On `DELTA` with `stream_scope.trace.scope == "delta"`, walk exactly the symbols declared in `inspect_mode.touched_files`** — every declared symbol whose file appears in that list and no fewer — and report `items_checked` and `items_total` against those files rather than against the spec: `items_total` is the number of roster items that width drew, and `items_checked` the number of those you walked to the end. The walk is in symbols and the RECORD is in roster items, because `Foundry-Stream` measures the total against `rosters/trace.json` alone and refuses `ROSTER_MISMATCH` both below the count the width drew and above the roster's own length. **On `FULL`, walk every declared symbol** and report `items_total` as the persisted roster's length, which that same door requires exactly: any other total is refused `ROSTER_MISMATCH` naming the length it wanted. With no roster persisted for this stream nothing constrains the total, and the population is the one you walked. **With no recorded `inspect_mode` at all, walk everything**: a missing width means no narrowing was decided, never that you may narrow it yourself. (fallout FR-050 / CT-003 / ST-008)
 
 **Read the array, never the terminal line.** The `Foundry-Next` display prints `TRACE:    N file(s) — ...` and TRUNCATES that list at five files; the roster itself is `inspect_mode.touched_files`, below that display and after the marker line. Copying the five visible files walks five files and reports a width that was never run.
 
@@ -363,8 +363,8 @@ JSON block at the end for tooling consumption.
           }
         },
         "verdict": {"type": "string", "enum": ["PASS", "WARN", "FAIL"]},
-        "items_checked": {"type": "integer", "description": "Number of spec items verified"},
-        "items_total": {"type": "integer", "description": "Total spec items in scope"},
+        "items_checked": {"type": "integer", "description": "Roster items walked to the end"},
+        "items_total": {"type": "integer", "description": "Roster items in the width: the persisted roster's length at FULL, the roster items that width drew at DELTA"},
         "findings_count": {"type": "integer", "description": "Number of non-passing findings"}
       },
       "required": ["total", "verdict", "items_checked", "items_total", "findings_count"]

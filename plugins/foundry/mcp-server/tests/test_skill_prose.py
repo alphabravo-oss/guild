@@ -81,7 +81,7 @@ import pytest
 
 from foundry_mcp import server as foundry_server
 from foundry_mcp.schemas import vocab
-from foundry_mcp.tools import foundry_report
+from foundry_mcp.tools import foundry_report, rosters
 from foundry_mcp.tools.foundry import validate_defect_filing
 from foundry_mcp.tools.orchestration import gates, guidance, streams
 
@@ -89,6 +89,18 @@ from foundry_mcp.tools.orchestration import gates, guidance, streams
 # re-typed. See the fallout AC-048 section below for why this import is here
 # and not a tuple of its own.
 from tests.test_protocol_prose import _FALLOUT_CLAUSES
+
+# The ONE spelling of the `items_total` unit clauses, imported for the same
+# reason and stated separately because it arrived for a different one. Casting 6
+# landed them in the agent register at `agents/tracer.md` and filed concern
+# C-129 for the skill half; the clause carrying the UNIT is word-identical in
+# both files, so re-typing it here would be the second spelling D-095 is the
+# record of -- on a ruling whose entire subject is two files disagreeing about
+# what one field counts. See the fallout FR-050 section below.
+from tests.test_protocol_prose import (
+    _RETIRED_TRACER_ITEMS_TOTAL_SPELLINGS,
+    _TRACER_ITEMS_TOTAL_CLAUSES,
+)
 
 # The citation convention, imported for the same reason: `tests/test_spec_id_convention.py`
 # owns the grammar of a requirement-id cite -- which spellings qualify one, and
@@ -1160,6 +1172,157 @@ def test_no_prove_side_surface_says_the_lead_records_for_it(path: Path) -> None:
         f"the lead. fallout GI-016 puts it on the AGENT and the lead's own "
         f"imperative is confirm-the-record-exists; a file saying otherwise "
         f"produces the double-record the replace semantics were built to end."
+    )
+
+
+# ---------------------------------------------------------------------------
+# fallout FR-050 / CT-003 / ST-008 (concern C-129) -- what `items_total` COUNTS
+# ---------------------------------------------------------------------------
+#
+# `foundry_mark_stream` measures `items_total` against the PERSISTED ROSTER and
+# against nothing else, so the unit of the field is the unit of that roster's
+# items -- never the unit of whatever the surface happened to walk. On the
+# other roster-bearing skill the two coincide and the distinction never shows:
+# `rosters/prove.json` holds requirement ids and the prove surfaces verify
+# requirements. TRACE is the one surface where they come apart, because
+# `rosters/trace.json` holds FILE paths while the skill walks SYMBOLS. A total
+# in the unit of the WALK is therefore not a loose description of a legal
+# number, it is a number the door refuses outright: `items_total !=
+# roster_length` on a cycle the server did not narrow is `ROSTER_MISMATCH`, so
+# the retired clause was an instruction with no legal value on any run that has
+# a trace roster. That is what concern C-129 was filed on, one cycle after
+# casting 6 landed the same ruling in the agent register.
+
+
+def _declared_roster_stream(path: Path) -> str | None:
+    """The roster-bearing stream a skill declares as ITS OWN, or None.
+
+    Read off the `stream:` argument the file tells its own agent to pass and
+    joined against `vocab.FULL_ROSTER_STREAMS`, because owing the clauses below
+    is exactly the property "a roster document exists for the stream I record
+    as". Returns None rather than raising for a file naming none or several: a
+    skill with two candidate ids has no single roster its unit is defined by,
+    and is a floor failure below rather than a silently narrowed sweep.
+    """
+    flat = _flat(path)
+    declared = {w for w in vocab.FULL_ROSTER_STREAMS if f'`stream: "{w}"`' in flat}
+    return next(iter(declared)) if len(declared) == 1 else None
+
+
+#: The skills whose `items_total` the door measures against a roster document.
+#: DERIVED, so a skill that gains a roster joins this sweep on the day the
+#: vocabulary says it has one rather than on the day somebody remembers.
+ROSTER_BEARING_SKILLS = tuple(
+    p for p in VERIFICATION_SKILLS if _declared_roster_stream(p) is not None
+)
+
+
+def test_the_roster_bearing_skill_roster_is_derived() -> None:
+    """Floor check: the unit pins below sweep a set nobody typed."""
+    rel = {_rel(p) for p in ROSTER_BEARING_SKILLS}
+    assert rel == {_rel(PROVE_SKILL), _rel(TRACE_SKILL)}, (
+        f"ROSTER_BEARING_SKILLS derived {sorted(rel)}. Membership is the join "
+        f"of the `stream:` argument a skill tells its agent to pass and "
+        f"{sorted(vocab.FULL_ROSTER_STREAMS)}; a skill leaves by losing that "
+        f"literal and joins by its stream gaining a roster -- in which case it "
+        f"owes the clause below, because its total acquires a denominator the "
+        f"server checks."
+    )
+
+
+@pytest.mark.parametrize("path", ROSTER_BEARING_SKILLS, ids=_rel)
+def test_each_roster_bearing_skill_names_the_roster_as_its_denominator(
+    path: Path,
+) -> None:
+    """fallout FR-050 / CT-003 / ST-008 (concern C-129): the shared half."""
+    assert "roster's length" in _flat(path), (
+        f"{_rel(path)} no longer measures `items_total` against the roster's "
+        f"length. Its stream has a roster document, so `{streams.ROSTER_MISMATCH}` "
+        f"is what any other total earns at the door -- prose naming a different "
+        f"population describes a call the server refuses, and a stream that "
+        f"cannot record contributes no coverage rather than a wrong number."
+    )
+
+
+@pytest.mark.parametrize(
+    "clause,why", _TRACER_ITEMS_TOTAL_CLAUSES, ids=lambda v: v[:44]
+)
+def test_the_trace_skill_states_its_items_total_unit_at_both_widths(
+    clause: str, why: str
+) -> None:
+    """fallout FR-050 / CT-003 / ST-008 (concern C-129): the skill register.
+
+    The same three clauses `agents/tracer.md` carries, asserted here on the
+    skill, because concern C-129 is the record of the two halves disagreeing:
+    casting 6 corrected the agent and the skill kept the retired unit for a
+    cycle. Word-identical by import rather than by discipline, so the pair
+    cannot come apart again in the direction where only one of them is fixed.
+    """
+    assert clause in _flat(TRACE_SKILL), (
+        f"{_rel(TRACE_SKILL)} no longer states: {clause!r}. That clause is "
+        f"{why}. `agents/tracer.md` states it too and this module and casting "
+        f"6's read the same tuple, so a skill edited back to the walk's unit "
+        f"fails here while the agent keeps passing -- which is the asymmetry "
+        f"concern C-129 was filed to end."
+    )
+
+
+#: The spellings that put the walk's unit back on the record. Casting 6's three
+#: are splatted rather than restated so an addition there arms here on the same
+#: commit; the fourth is the one THIS file actually carried, which none of
+#: casting 6's three match -- the skill wrote "as every symbol in scope" where
+#: the agent wrote "is", so a sweep of their tuple alone would have passed on
+#: the retired prose it exists to refuse. The last is the findings schema's
+#: description, which named a population (`spec items`) that is neither the
+#: walk's unit nor the roster's, and which no positive clause pin reaches.
+_RETIRED_SKILL_ITEMS_TOTAL_SPELLINGS = (
+    *_RETIRED_TRACER_ITEMS_TOTAL_SPELLINGS,
+    "`items_total` as every symbol in scope",
+    "spec items",
+)
+
+
+@pytest.mark.parametrize("path", ROSTER_BEARING_SKILLS, ids=_rel)
+def test_no_roster_bearing_skill_counts_items_total_in_the_walks_unit(
+    path: Path,
+) -> None:
+    """fallout FR-050 / ST-008 (concern C-129): the retired unit stays retired.
+
+    An absence assertion because the positive pins above cannot see prose ADDED
+    beside them: a file can state the roster rule in its width step and the
+    symbol count in its output schema four screens later, and both are true to
+    a substring check. This file was in that state when C-129 was filed.
+    """
+    flat = _flat(path)
+    found = sorted(s for s in _RETIRED_SKILL_ITEMS_TOTAL_SPELLINGS if s in flat)
+    assert not found, (
+        f"{_rel(path)} states {found} again. `items_total` is measured against "
+        f"the `{rosters.ROSTERS_DIRNAME}/` document at both widths; a count in "
+        f"the unit of the walk has no legal value above the roster's own "
+        f"length, so this spelling is an instruction "
+        f"`{streams.ROSTER_MISMATCH}` can refuse outright."
+    )
+
+
+def test_the_trace_skills_output_schema_describes_the_roster_unit() -> None:
+    """fallout FR-050 / CT-003 (concern C-129): the third site, in the schema.
+
+    The width step and the `Foundry-Stream` step are prose a reader reasons
+    about; the findings schema is the shape a stream FILLS, and its
+    `description` is the only unit statement at the point the number is
+    written. C-128's own closure records that its first pass missed the third
+    site in `agents/tracer.md`; this is the equivalent site here.
+    """
+    schema = json.loads(re.findall(r"```json\n(.*?)\n```", _read(TRACE_SKILL), re.S)[0])
+    described = schema["properties"]["summary"]["properties"]["items_total"][
+        "description"
+    ]
+    assert "Roster items" in described, (
+        f"skills/trace/SKILL.md's findings schema describes `items_total` as "
+        f"{described!r}. The schema is where the number is written down, so a "
+        f"description naming any population but the roster's items hands the "
+        f"stream a total the door refuses at the moment it has stopped reading "
+        f"the width step."
     )
 
 
