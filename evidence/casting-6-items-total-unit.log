@@ -1,0 +1,12 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c "import sys; sys.path[:0]=['src','tests']; import test_protocol_prose as m; print('roster-bearing agents, derived :', [p.name for p in m.ROSTER_BEARING_STREAM_AGENTS]); print('  derived from the constant    :', sorted(m.vocab.FULL_ROSTER_STREAMS)); print('  roster-less stream agents    :', sorted(p.name for p in set(m.NON_PROVE_STREAM_AGENTS) - set(m.ROSTER_BEARING_STREAM_AGENTS))); print('refusal the three clauses name :', m.streams.ROSTER_MISMATCH); print('document the tracer must name  :', m.rosters.ROSTERS_DIRNAME + '/' + next(iter(m._declared_stream_wire_ids(m.TRACER))) + '.json'); print('retired unit spellings, all out:', all(s not in m._flat(m.TRACER) for s in m._RETIRED_TRACER_ITEMS_TOTAL_SPELLINGS))" && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_protocol_prose.py -k 'roster_bearing or items_total_unit or symbol_count or unit_is_defined_by or items_total_in_roster_items' 2>&1 | tail -2
+# evidence-for: FR-050, NFR-011
+# evidence-volatile: \d+\.\d+s
+
+roster-bearing agents, derived : ['research-auditor.md', 'spec-test-deriver.md', 'tracer.md']
+  derived from the constant    : ['prove', 'research_audit', 'test', 'test01', 'trace']
+  roster-less stream agents    : ['coverage-diff.md', 'flow-tracer.md']
+refusal the three clauses name : ROSTER_MISMATCH
+document the tracer must name  : rosters/trace.json
+retired unit spellings, all out: True
+...........                                                              [100%]
+11 passed, 723 deselected in 0.12s
