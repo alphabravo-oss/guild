@@ -1385,6 +1385,108 @@ def test_every_contracts_surface_resolves_to_a_module_through_the_registry():
 
 
 # --------------------------------------------------------------------------- #
+# fallout D-210 / research/holmes-orchestrator.md#reg-3 — THE REGISTRY BINDS
+# EVERY DOOR, AND AN ENTRY IT CANNOT RESOLVE IS DECLARED RATHER THAN DROPPED.
+#
+# The three tests above ask whether the registry maps the RIGHT surfaces to the
+# right modules. None asks whether it maps EVERY surface, so a change in how
+# `server.py` SPELLS a dispatch entry narrows the covered set without failing
+# anything. `_registry_tool_modules` derives its keys by walking each handler's
+# `__code__`: an entry carrying none — `functools.partial`, a callable object, a
+# builtin — is skipped, and an entry whose walk names no module is skipped too.
+#
+# The narrowing is not cosmetic. `_test01_scope_touched` reads this mapping to
+# answer whether the GRIND diff touched a file TEST-01 covers, and a surface
+# missing from the mapping is a surface whose module can never match: the roster
+# drops `test01` and nobody is told.
+#
+# BOTH DIRECTIONS ARE PINNED, because reg-3's two halves survive different
+# futures. COMPLETENESS — every dispatched door has an entry — is what bites
+# while an unwalkable entry VANISHES. RESOLVABILITY — every entry names the
+# modules that own it — is what bites once such an entry is instead KEPT with an
+# empty list, because completeness can no longer see it. Keeping only the first
+# would leave a pin that stopped being able to detect the change it was written
+# for on the day the registry got better at reporting it.
+#
+# The resolvability half DECLARES rather than FORBIDS. `assert all(...)`, which
+# reg-3 spells, forbids the very state an always-written key exists to
+# represent: an empty list is how the registry says "bound, and I cannot derive
+# what owns it". That state is survivable — D-207's rule makes an uncomputable
+# covered set force FULL, which costs a stream and nothing else — so when one
+# first appears the suite should demand a REASON, not a deletion. A bare
+# `all(...)` offers deletion as its cheapest green, and a deleted tripwire is
+# how the covered set narrows silently, which is the harm reg-3 was written to
+# prevent.
+# --------------------------------------------------------------------------- #
+
+#: Tool name -> why `_registry_tool_modules` cannot derive the module that owns
+#: it. EMPTY: every entry `server.py` dispatches resolves to at least one file
+#: today. A row here is a deliberate exception carrying its reason, never a
+#: place to park a break — the test below fails on an undeclared one AND on a
+#: row that has become resolvable again.
+_DISPATCH_ENTRIES_WITHOUT_RESOLVABLE_OWNERSHIP: dict[str, str] = {}
+
+
+def test_the_registry_binds_an_entry_for_every_dispatched_door():
+    """reg-3's completeness half: `set(registry) == set(server._DISPATCH)`.
+
+    The registry's KEYS are derived by walking handler code objects, so the set
+    it returns is a claim about how `server.py` spells its dispatch entries and
+    not merely about which doors exist. Naming both directions is what makes a
+    re-spelling fail HERE, loudly, instead of downstream as a roster that
+    quietly lost a stream.
+    """
+    from foundry_mcp import server as foundry_server
+
+    registry = _width._registry_tool_modules()
+    dispatched = set(foundry_server._DISPATCH)
+
+    # The empty-set guard. Two empty sets are equal, so without this the
+    # comparison below passes hardest exactly when the registry has stopped
+    # working — the failure mode every derived scan in this suite guards.
+    assert dispatched, "an empty `_DISPATCH` makes both directions below vacuous"
+    assert registry, "the registry is the mapping ITSELF; an empty one is the bug"
+
+    assert set(registry) == dispatched, {
+        "dispatched_but_unregistered": sorted(dispatched - set(registry)),
+        "registered_but_undispatched": sorted(set(registry) - dispatched),
+    }
+
+
+def test_every_registry_entry_names_its_owning_modules_or_says_why_not():
+    """reg-3's resolvability half, as a declaration rather than a prohibition.
+
+    An entry present with an EMPTY module list is the registry saying "this door
+    is bound and I cannot derive what owns it". Completeness above cannot see
+    that state — the key is there — so this is the assertion that still bites
+    once an unwalkable entry is kept rather than dropped.
+
+    Both directions, so the table cannot rot into a permanent exemption: an
+    undeclared unresolvable entry fails, and so does a row that resolves again.
+    """
+    registry = _width._registry_tool_modules()
+    assert registry, "the registry is the mapping ITSELF; an empty one is the bug"
+
+    unresolvable = {tool for tool, modules in registry.items() if not modules}
+
+    undeclared = unresolvable - set(_DISPATCH_ENTRIES_WITHOUT_RESOLVABLE_OWNERSHIP)
+    assert not undeclared, (
+        f"{sorted(undeclared)} is bound in `_DISPATCH` and the registry cannot "
+        f"say which module owns it, so every Contracts surface naming it drops "
+        f"out of TEST-01's covered set. Spell the handler so its code object "
+        f"names the implementing module, or add a row to "
+        f"_DISPATCH_ENTRIES_WITHOUT_RESOLVABLE_OWNERSHIP saying why you could not."
+    )
+    stale = set(_DISPATCH_ENTRIES_WITHOUT_RESOLVABLE_OWNERSHIP) - unresolvable
+    assert not stale, (
+        f"{sorted(stale)} is named in "
+        f"_DISPATCH_ENTRIES_WITHOUT_RESOLVABLE_OWNERSHIP and resolves again. "
+        f"The table only shrinks: delete the row."
+    )
+
+
+
+# --------------------------------------------------------------------------- #
 # D-207 — A COVERED SET THE SERVER CANNOT COMPUTE IS NOT AN EMPTY COVERED SET.
 #
 # D-204's fix moved TEST-01's coverage question onto the EXECUTING server's own
