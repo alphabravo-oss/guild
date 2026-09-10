@@ -1244,17 +1244,6 @@ _DIRECTIVES_PREAMBLE = (
 
 
 
-def _directive_header_count(text: str) -> int:
-    """How many priority headers the parser can see in ``text``."""
-    return sum(
-        1
-        for line in text.split("\n")
-        if any(line.startswith(h) for h in DIRECTIVE_HEADERS)
-    )
-
-
-
-
 def _unaccounted_directive_text(path: Path, parsed: dict) -> str | None:
     """Content Foundry-Clear would destroy without archiving it, or None.
 

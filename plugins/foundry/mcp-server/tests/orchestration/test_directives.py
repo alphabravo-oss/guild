@@ -7,6 +7,7 @@ that no longer exists.
 """
 from __future__ import annotations
 
+import ast
 import importlib
 import inspect
 import json
@@ -68,7 +69,6 @@ from foundry_mcp.tools.orchestration.directives import (  # noqa: F401
     DIRECTIVES_CLEARED_FILENAME,
     DISPATCHED_DEFECT_UNRECORDED,
     _DIRECTIVES_PREAMBLE,
-    _directive_header_count,
     _read_directives,
     _unaccounted_directive_text,
     foundry_clear_directives,
@@ -589,6 +589,22 @@ def test_a_directive_that_is_a_substring_of_another_still_clears(run_env):
 
 
 
+def _directive_header_count(text: str) -> int:
+    """How many priority headers the parser can see in ``text``.
+
+    research helper-7 (D-234): the superseded D-136 counting rule's count,
+    moved here from `directives.py` because this module is its only caller.
+    Bound to the same `DIRECTIVE_HEADERS` grammar the shipped parser reads.
+    """
+    return sum(
+        1
+        for line in text.split("\n")
+        if any(line.startswith(h) for h in DIRECTIVE_HEADERS)
+    )
+
+
+
+
 def _count_headers_rule(text: str, parsed: dict) -> bool:
     """``_unaccounted_directive_text``'s rule verbatim as it stood at d3820c5.
 
@@ -601,6 +617,45 @@ def _count_headers_rule(text: str, parsed: dict) -> bool:
         body = text.strip()
         return not (body and body != _DIRECTIVES_PREAMBLE.strip())
     return headers == len(parsed.get("urgent", [])) + len(parsed.get("normal", []))
+
+
+
+
+def test_the_superseded_header_count_lives_only_in_this_test_module():
+    """research helper-7 (D-234) — the superseded counting rule is the TEST's.
+
+    `_directive_header_count` lost its only shipped caller when D-136 moved
+    `_unaccounted_directive_text` from counting headers to conserving
+    characters, and the definition stayed in `directives.py` with two tests in
+    this module as its only callers: dead code pinned alive by a test. It now
+    lives above `_count_headers_rule`, the reconstruction it serves.
+
+    The package-wide reachability pin counts a helper reached only from a test
+    as reachable, deliberately, so it cannot see this. This one assertion can:
+    no identifier in shipped source spells the name, whether as a definition,
+    a binding, a reference, an attribute or an import.
+    """
+    import foundry_mcp
+
+    root = Path(foundry_mcp.__file__).resolve().parent
+    sources = sorted(root.rglob("*.py"))
+    assert len(sources) >= 20, sources
+    hits = []
+    for path in sources:
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                name = node.name
+            elif isinstance(node, ast.Name):
+                name = node.id
+            elif isinstance(node, ast.Attribute):
+                name = node.attr
+            elif isinstance(node, ast.alias):
+                name = node.asname or node.name
+            else:
+                continue
+            if name == "_directive_header_count":
+                hits.append(f"{path.relative_to(root)}:{node.lineno}")
+    assert hits == [], hits
 
 
 
