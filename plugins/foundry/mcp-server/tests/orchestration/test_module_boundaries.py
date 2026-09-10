@@ -1109,6 +1109,56 @@ def test_liveness_bad_stall_seconds_reaches_the_handlers_named_refusal(run_env):
 
 
 
+def test_no_advertised_tool_description_tells_the_lead_to_record_a_stream():
+    """fallout OT-029 / FR-049 / GI-016 (concern C-132) — THE TOOL LIST IS A
+    LEAD-FACING SURFACE AND D-226's SWEEP COULD NOT SEE IT.
+
+    D-226 widened `test_lead_prose.py`'s sweep from seven FILES to the prose the
+    server itself holds, because `_ACTION_IMPERATIVES` is what a lead reads most.
+    The tool list is the other constant a lead reads on every turn, and it stayed
+    outside that window for the same reason `_ACTION_IMPERATIVES` had: `server.py`
+    is not casting 8's file, so widening onto it there would have planted a red
+    node its owner could not clear. Casting 8 raised C-132 instead and the sweep
+    lands here, in the module whose subject is what the registrar advertises.
+
+    THE RECOGNISER IS IMPORTED, NEVER RE-TYPED. `_LEAD_RECORDS_A_STREAM` is
+    casting 8's declaration and there is one of it; a second copy here is the
+    hand-list this package refuses everywhere else, and it would drift the first
+    time a fifth spelling was denied. This is a widened WINDOW over an existing
+    rule — no new recogniser, no membership table, nothing this tree does not
+    already ship.
+
+    DERIVED FROM `list_tools()`, so a tool added tomorrow is swept the day it is
+    advertised rather than the day someone remembers this test.
+    """
+    from tests.test_lead_prose import _LEAD_RECORDS_A_STREAM
+
+    from foundry_mcp import server as foundry_server
+
+    tools = asyncio.run(foundry_server.list_tools())
+    # The roster must SEE something: a sweep over an empty list is green and
+    # proves nothing, which is the failure `_OWNED_LEAD_SURFACES`' own floor
+    # test guards against on the other side of this rule.
+    assert len(tools) >= 20, len(tools)
+    assert _LEAD_RECORDS_A_STREAM, "the recogniser is empty; this sweeps nothing"
+
+    offenders = []
+    for tool in tools:
+        flat = " ".join((tool.description or "").split())
+        for spelling in _LEAD_RECORDS_A_STREAM:
+            if spelling in flat:
+                offenders.append((tool.name, spelling))
+
+    assert offenders == [], (
+        f"advertised tool description(s) telling the lead to record a stream: "
+        f"{offenders}. A description is the surface a lead reads at the moment "
+        f"of the call, and every OTHER tool in this list IS the lead's to call "
+        f"— so the shared imperative register makes the one agent-only tool "
+        f"read like the thirty-six that are not. The verifying AGENT records "
+        f"its own counts; the lead CONFIRMS the record exists."
+    )
+
+
 def test_no_enum_literal_is_re_declared_in_the_server_schemas():
     """FR-013 / key_link: server.py must READ the vocabularies, never re-type
     them. The AC-013 class of defect was exactly this file's hand-typed enums

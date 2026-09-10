@@ -1261,7 +1261,45 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Stream",
-            description="Mark a verification stream complete with coverage data. Requires items_checked > 0.",
+            # fallout GI-016 / FR-023 / OT-029 (concern C-132) — THE ONE TOOL IN
+            # THIS LIST THAT IS NOT THE LEAD'S TO CALL, AND THE DESCRIPTION HAS
+            # TO SAY SO.
+            #
+            # It read "Mark a verification stream complete with coverage data",
+            # which is the LITERAL second member of
+            # `test_lead_prose.py#_LEAD_RECORDS_A_STREAM` — the same start.md row
+            # OT-029 removed, surviving here as the last carrier in the shipped
+            # tree. Casting 8 could not fix it (this file is not theirs) and
+            # handed over the judgement instead of a red node.
+            #
+            # RULED A DEFECT RATHER THAN A REGISTER. The argument for leaving it
+            # is real: an API description names what the TOOL does, and this tool
+            # genuinely does mark a stream complete, in the same imperative gloss
+            # every sibling entry uses. It loses on this file's OWN declared
+            # standard for a description, stated at the Foundry-Accept-Casting
+            # entry below — "this string is the surface a lead reads at the
+            # moment of the call". Judged as lead-facing prose, a uniform
+            # imperative register is exactly the harm: every OTHER tool in the
+            # list IS the lead's to call, so the shared register made the one
+            # agent-only tool indistinguishable from the thirty-six that are not.
+            # GI-016's violation column is "a lead imperative that records".
+            #
+            # So it names the caller, which is the fact a lead most needs and the
+            # old string omitted. What the tool DOES and the refusal it names are
+            # unchanged: `items_checked <= 0` is still refused by the handler
+            # (`streams.py#foundry_mark_stream`), and replace-per-(stream, cycle)
+            # with `replaced` returned is CT-003's shipped behaviour, not new
+            # prose. The spelling cannot come back:
+            # `test_module_boundaries.py#test_no_advertised_tool_description_tells_the_lead_to_record_a_stream`
+            # sweeps every description this function advertises against casting
+            # 8's own recogniser.
+            description=(
+                "The verifying AGENT records its own stream as it finishes; the "
+                "lead never records on its behalf and only confirms the record "
+                "exists. Replaces this (stream, cycle)'s totals, keeps the "
+                "earlier record in history and returns the one it replaced. "
+                "Requires items_checked > 0."
+            ),
             inputSchema={
                 "type": "object",
                 "required": ["stream", "cycle", "items_checked"],
