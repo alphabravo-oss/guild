@@ -265,6 +265,17 @@ def _owning_casting(fdir: Path, files: list[str]) -> int | None:
     the coverage predicate and the tiebreak stays here, where the question is
     asked.
     """
+    # fallout AC-002 / FR-038 (D-270) — THE RECORDED `file` IS FOLDED FIRST.
+    #
+    # `files` is the defect's raw `file` field, and a `#Symbol` head, a `:N`
+    # hint or an absolute root on it matched no key_file: the owner resolved to
+    # None, stayed inside its own `co_dispatch`, and the dispatch record
+    # Team-Down reads carried no casting. The fold is `_dispatch_file_path`,
+    # the one Team-Down's join reads, so the two joins on this field cannot
+    # fold it two ways. A spelling that folds to nothing (a bare `#Symbol`) is
+    # dropped rather than compared, so it cannot equal an empty manifest cell.
+    root = _project_root_of(fdir)
+    files = [p for p in (_dispatch_file_path(f, root) for f in files) if p]
     owned = _casting_files(fdir)
     for cid, key_files in owned.items():
         if any(

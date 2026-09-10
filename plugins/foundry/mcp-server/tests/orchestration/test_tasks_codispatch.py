@@ -1016,3 +1016,48 @@ def test_a_dispatch_the_set_cannot_key_is_still_recorded_for_team_down(run_env):
     assert problem is None, problem
     assert section["co_dispatch_count"] == 0, section
     assert section["co_dispatch_owned_alone_count"] == 0, section
+
+
+def test_a_decorated_file_still_resolves_the_casting_that_owns_the_fix(run_env):
+    """fallout AC-002 / OT-002 / CT-008 / FR-038 (D-270).
+
+    Fallout of D-265, whose record named this exact adjacent failure. Both
+    filing doors store `file` verbatim and four stream contracts invite a
+    `#Symbol` beside the path, but the owner lookup matched the RAW field, so
+    `src/three.py#handler` and `src/three.py:12` were owned by nobody. The
+    owning casting then appeared INSIDE `co_dispatch`, told to make the same
+    change as a sibling, the block read "Owning casting: not resolvable from
+    the manifest", and the dispatch record Team-Down reads carried no casting.
+    The absolute spelling rides the same fold (D-269).
+
+    Driven through Foundry-Tasks over PROVE's own manifest, with the bare
+    spelling first as the control every decorated one must match.
+    """
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        3: (["FR-007"], ["src/three.py"]),
+        4: (["FR-007"], ["src/four.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+
+    for spelling in (
+        "src/three.py",
+        "src/three.py#handler",
+        "src/three.py:12",
+        f"{project_root}/src/three.py",
+    ):
+        (fdir / "handoffs.jsonl").unlink(missing_ok=True)
+        _defect_ledger(fdir, [
+            dict(_tiered("D-900", "LIVE"), file=spelling, spec_ref="FR-007"),
+        ])
+        task = next(
+            t for t in foundry_defects_to_tasks(project_root)["tasks"]
+            if "D-900" in t["defect_ids"]
+        )
+        assert task["owning_casting"] == 3, (spelling, task)
+        assert task["co_dispatch"] == [4], (spelling, task)
+        block = task["alignment_block"]
+        assert "Fixed in casting 3" in block, (spelling, block)
+        assert "not resolvable from the manifest" not in block, (spelling, block)
+        assert "- casting 3:" not in block, (spelling, block)
+        assert [r["casting"] for r in _grind_dispatch_records(fdir)] == [3], spelling
