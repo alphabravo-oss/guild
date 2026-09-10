@@ -7778,7 +7778,9 @@ def test_the_tracer_states_its_items_total_unit_at_both_widths(
 #: The spellings that made one field carry two units. Pinned ABSENT because a
 #: positive assertion cannot fail on prose that states the rule correctly in
 #: one paragraph and the retired unit in the next -- which is the state
-#: concern C-128 was filed on.
+#: concern C-128 was filed on. The name records where they were MEASURED, not
+#: where they are refused: `tests/test_skill_prose.py` imports this tuple under
+#: it to hold the skill half of concern C-129 to the same spellings.
 _RETIRED_TRACER_ITEMS_TOTAL_SPELLINGS = (
     "`items_total` is every symbol in scope",
     "`items_total` as the number of declared symbols",
@@ -7786,11 +7788,26 @@ _RETIRED_TRACER_ITEMS_TOTAL_SPELLINGS = (
 )
 
 
+# fallout D-226 -- THE ABSENCE WINDOW IS THE POSITIVE RULE'S POPULATION.
+#
+# The sweep read `_flat(TRACER)` while
+# `test_each_roster_bearing_agent_measures_items_total_in_roster_items` above
+# DEMANDS the roster unit in all of ROSTER_BEARING_STREAM_AGENTS, so the module
+# required the correct unit in three files and forbade the retired one in one.
+# Driven: `\`items_total\` is every symbol in scope` planted beside the correct
+# clause in `agents/research-auditor.md` left all 1275 prose tests in this
+# module, `test_skill_prose.py` and `test_lead_prose.py` green -- the exact
+# correct-paragraph-then-retired-unit state the comment above says the absence
+# half exists to catch. Same derived roster as the positive pin, so a stream
+# that gains a roster arms both halves on one commit.
+@pytest.mark.parametrize("path", ROSTER_BEARING_STREAM_AGENTS, ids=lambda p: p.name)
 @pytest.mark.parametrize("spelling", _RETIRED_TRACER_ITEMS_TOTAL_SPELLINGS)
-def test_the_tracer_never_calls_items_total_a_symbol_count(spelling: str) -> None:
-    """fallout FR-050 / ST-008 (concern C-128): the retired unit stays retired."""
-    assert spelling not in _flat(TRACER), (
-        f"{_rel(TRACER)} states {spelling!r} again. `items_total` is measured "
+def test_no_roster_bearing_agent_calls_items_total_a_symbol_count(
+    spelling: str, path: Path
+) -> None:
+    """fallout FR-050 / ST-008 / D-226 (concern C-128): the retired unit stays retired."""
+    assert spelling not in _flat(path), (
+        f"{_rel(path)} states {spelling!r} again. `items_total` is measured "
         f"against `{rosters.ROSTERS_DIRNAME}/` items at both widths; a symbol "
         f"count above the roster's own length has no legal value at all, so "
         f"this spelling is an instruction the door can refuse outright."
