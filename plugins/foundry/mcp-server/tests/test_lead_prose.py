@@ -2858,8 +2858,9 @@ def test_start_md_tier_table_blocks_exactly_the_blocking_tiers() -> None:
     )
 
 
-#: The clause both lead-facing files use to introduce what the halt-transition
-#: report names. One line each, so the sentence can be isolated from the file.
+#: The clause every surface parametrized below uses to introduce what the
+#: halt-transition report names. One paragraph each, so the sentence can be
+#: isolated from the file.
 _HALT_REPORT_ANCHOR = "the report is generated as part of that"
 
 
@@ -2870,7 +2871,8 @@ def _halt_report_sentence(path: Path) -> str:
     ~95 columns, so its halt description splits the anchor from the section
     names it has to carry across two source lines, and a line-based isolation
     reports a sentence that omits everything the wrap pushed downward. Blank
-    lines bound a markdown paragraph in both files; whitespace inside one is
+    lines bound a paragraph in every surface -- the markdown files and the
+    setup script's quoted help heredoc alike; whitespace inside one is
     collapsed so a wrap cannot hide a phrase from the membership test either.
     """
     paragraphs = [
@@ -2888,7 +2890,9 @@ def _halt_report_sentence(path: Path) -> str:
     return hits[0]
 
 
-@pytest.mark.parametrize("path", (START_MD, HELP_MD), ids=_rel)
+@pytest.mark.parametrize(
+    "path", (START_MD, HELP_MD, PLUGIN_README, ROOT_README, SETUP_SH), ids=_rel
+)
 def test_the_halt_report_sentence_names_every_backlog_section(path: Path) -> None:
     """fallout C-084 / AC-022: a whole-FILE tier sweep cannot see a SENTENCE.
 
@@ -2902,6 +2906,12 @@ def test_the_halt_report_sentence_names_every_backlog_section(path: Path) -> Non
     they read the sentence that answers their question, and the sentence was
     wrong. ``commands/help.md`` carried the identical sentence and was caught
     only because it names no tier anywhere else (C-084).
+
+    The same short sentence then survived in both READMEs and in the setup
+    script's ``--help`` (fallout D-267), because the parametrization named only
+    the command files, and a surface outside it is a surface this pin never
+    reads. Every surface that briefs the halted report is a case here, and each
+    one is read by the recogniser below, unchanged.
 
     So this pins the SENTENCE, and derives what it must name from
     ``REPORT_REQUIRED_SECTIONS`` rather than from the tier vocabulary: the halt

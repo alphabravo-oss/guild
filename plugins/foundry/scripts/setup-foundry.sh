@@ -59,8 +59,11 @@ OPTIONS:
   --nyquist                Enable regression test generation (F5.5)
   --max-cycles <n>         Cap verify-fix cycles (default: 0 = unlimited). Reaching
                            the cap ends the run in HALTED — a named terminal state
-                           that is NOT DONE; the report is generated naming every
-                           open LIVE and LATENT defect
+                           that is NOT DONE; the report is generated as part of
+                           that transition, naming every open defect at every
+                           tier: every open LIVE one, and every open LATENT and
+                           HARDENING one in its own `latent_backlog` and
+                           `hardening_backlog` section
   --no-ui                  Declares that this run has no browsable UI, so the
                            SIGHT browser audit is not part of it. It does NOT
                            suppress banners and it is not a refusal — one
