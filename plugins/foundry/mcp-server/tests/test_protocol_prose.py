@@ -7868,7 +7868,9 @@ def _section(path: Path, heading: str) -> str:
 
     Absence assertions are scoped to the section that carries the ruling. A
     whole-file absence check cannot work on this file: § Code-Blind Discipline
-    NAMES every forbidden root, which is the point of it.
+    NAMES every forbidden root, which is the point of it. A file's final
+    section has no following heading and runs to the end of the file, the
+    reading `test_lead_prose.py`'s section reader already gives.
     """
     text = _read(path)
     assert text.count(heading + "\n") == 1, (
@@ -7876,23 +7878,42 @@ def _section(path: Path, heading: str) -> str:
         f"section pin needs exactly one."
     )
     start = text.index(heading + "\n")
-    rest = text.index("\n## ", start + len(heading))
-    return " ".join(text[start:rest].split())
+    end = text.find("\n## ", start + len(heading))
+    return " ".join(text[start : end if end != -1 else len(text)].split())
 
 
-#: The sections of the code-blind agent that carry a RULING, and must therefore
-#: name no forbidden source root. The sweep is per-section rather than
-#: whole-file because § Code-Blind Discipline NAMES every root -- that is the
-#: point of it -- and § Tool-Call Sequence Discipline names the auditor that
-#: reads the log.
+#: The sections of the code-blind agent this sweep reads: the seven that carry
+#: a ruling and name no forbidden source root, so a root appearing in any of
+#: them is a new instruction rather than a restatement of the denylist. Named
+#: statically, in file order -- never derived as "the sections naming no root
+#: today", which would admit every regression by construction.
 #:
-#: D-141 / D-142 put § Stream Recording in this tuple. The stream-recording
-#: paragraph every stream agent carries cites the stream vocabulary and the
-#: caller instruction at their `src/` homes; legitimate on the other four files
-#: and, on this one, an order whose obedience costs the cycle every observation
-#: it produced. One ruling swept over both sections, so the next paste onto the
-#: code-blind agent lands on a red test instead of on a lost stream.
-_CODE_BLIND_RULING_SECTIONS = ("## Roster", "## Stream Recording")
+#: The other five are NOT swept, because each names roots in order to forbid
+#: them: § Role and § Wrong-Test Avoidance name `src/` and `lib/` as roots
+#: never to read, § Code-Blind Discipline IS the denylist, § Tool-Call
+#: Sequence Discipline names the auditor that reads the log, and § Output
+#: Format names the agent's own `agent_path`. A root-substring check cannot
+#: tell those sentences from a sanction; that is a judgement of polarity this
+#: suite does not make. For the same reason the check sees roots, not
+#: sanctions: "read the implementing module to confirm the surface exists"
+#: names no root and passes even inside a swept section. The backstop for both
+#: gaps is the run-time Layer 2 audit,
+#: `plugins/foundry/scripts/validate-test-observations.py#validate_test_observations`,
+#: which rejects a cycle whose Read, Grep or Glob calls target a forbidden
+#: root -- it catches the obeyed read, not the sentence.
+#:
+#: D-141 / D-142 put § Stream Recording here after a paragraph pasted onto
+#: this agent pointed at a `src/` home; D-227 widened the window from those
+#: two sections to all seven root-free ones.
+_CODE_BLIND_RULING_SECTIONS = (
+    "## Contract-Surface Execution (sanctioned)",
+    "## Test Derivation Procedure",
+    "## Per-Test Header Mandate",
+    "## uvx Invocation Pattern",
+    "## Stream Recording",
+    "## Roster",
+    "## Closed-Vocabulary Status",
+)
 
 
 @pytest.mark.parametrize("heading", _CODE_BLIND_RULING_SECTIONS, ids=lambda s: s)
@@ -7903,11 +7924,12 @@ def test_a_deriver_ruling_section_sanctions_no_implementation_source_read(
 
     The ABSENCE half, and it is the half that matters. A positive pin on "the
     items come from the Contracts table" stays green under a rewrite that adds
-    "and read the implementing module to confirm the surface exists" beside it
-    -- the sentence the positive pin quotes is still there, and TEST-01 has
-    quietly stopped being code-blind. So every section that carries a ruling is
+    a read under `src/` beside it -- the sentence the positive pin quotes is
+    still there, and TEST-01 has quietly stopped being code-blind. So each of
+    the seven root-free ruling sections in `_CODE_BLIND_RULING_SECTIONS` is
     asserted to name NO forbidden source root at all, against the denylist the
-    validator itself enforces.
+    validator itself enforces; the comment on that tuple names the five
+    sections this cannot reach, and why.
     """
     section = _section(SPEC_TEST_DERIVER, heading)
     named = sorted(root for root in _forbidden_source_roots() if root in section)
@@ -7922,6 +7944,18 @@ def test_a_deriver_ruling_section_sanctions_no_implementation_source_read(
         f"audit answers that read by rejecting the whole cycle's observations, "
         f"so the agent that obeyed loses the stream. fallout NFR-003 makes it a "
         f"Locked constraint rather than a preference."
+    )
+
+
+def test_the_section_reader_reaches_a_files_final_section() -> None:
+    """fallout GI-003 / NFR-003: a file's final section runs to its end."""
+    text = _read(SPEC_TEST_DERIVER)
+    last = re.findall(r"^## .+$", text, re.MULTILINE)[-1]
+    tail = " ".join(text.rstrip().splitlines()[-1].split())
+    assert _section(SPEC_TEST_DERIVER, last).endswith(tail), (
+        f"`_section` does not read {_rel(SPEC_TEST_DERIVER)}'s final section "
+        f"`{last}` through to the file's last line. A section the reader "
+        f"cannot reach is a section no absence assertion here can ever sweep."
     )
 
 
