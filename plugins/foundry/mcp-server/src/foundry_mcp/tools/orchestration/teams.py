@@ -9,7 +9,7 @@ import os
 import re
 from pathlib import Path
 
-from foundry_mcp.schemas.vocab import NO_UI_MEANING
+from foundry_mcp.schemas.vocab import NO_UI_MEANING, _normalise_path
 from foundry_mcp.tools.orchestration.keyfiles import DIRECTORY_ENTRY_SUFFIX
 from foundry_mcp.tools.artifacts import (
     CAST_BASELINE_SHA_MARKER,
@@ -418,7 +418,27 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
         return None
     touched = set(diff["files"])
 
-    unrecorded = [r for r in still_open if str(r["file"]) in touched]
+    # fallout AC-039 / CT-010 / ST-011 / OT-036 (D-265) — THE RECORDED `file`
+    # IS FOLDED TO A BARE REPO-RELATIVE PATH BEFORE THE JOIN.
+    #
+    # Both filing doors store `file` verbatim, and four stream contracts tell
+    # their agents "a `#Symbol` beside it is fine". Compared raw against git's
+    # repo-relative names, `a.txt#Sym`, `a.txt:12` and `./a.txt` each matched
+    # nothing, and the door passed a committed fix whose row was still open.
+    # The fold is the one the fix gate already applies to a reference — its
+    # `#Symbol` / `::test` head and its line hint — then vocab's prefix-aware
+    # path normaliser, so no third spelling of either rule is written here.
+    # LAZY, in this function's seam style: `fix_gate` is a lifecycle sibling.
+    from foundry_mcp.tools.orchestration.fix_gate import (
+        _ref_file_component,
+        _strip_line_hint,
+    )
+
+    for row in still_open:
+        row["_path"] = _normalise_path(
+            _strip_line_hint(_ref_file_component(str(row["file"])))
+        )
+    unrecorded = [r for r in still_open if r["_path"] in touched]
 
     if not unrecorded:
         return None
@@ -446,7 +466,7 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
     # every way it cannot; an unresolved commit is an absent field here, never a
     # refusal withheld, because the id and the file are still the finding.
     for row in unrecorded:
-        row["_commit"] = git_touching_commit(project_root, base, str(row["file"]))
+        row["_commit"] = git_touching_commit(project_root, base, row["_path"])
     named = ", ".join(
         f"{r['defect_id']} ({r['file']}"
         + (f" @ {r['_commit']}" if r.get("_commit") else "")

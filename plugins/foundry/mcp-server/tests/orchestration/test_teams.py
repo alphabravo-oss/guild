@@ -354,3 +354,47 @@ def test_the_teardown_door_states_the_call_order_it_enforces(run_env):
     # what to do, and never with an empty hint.
     if result.get("error"):
         assert result.get("hint"), result
+
+
+def test_a_decorated_file_field_still_joins_the_commit_that_touched_it(run_env):
+    """fallout AC-039 / CT-010 / ST-011 / OT-036 (D-265).
+
+    AC-039: "for any dispatched id still open whose `file` appears in commits
+    since the cycle's baseline SHA, refuses naming the id and the commit". Both
+    filing doors store `file` verbatim, and four stream contracts invite a
+    `#Symbol` beside the path, so the dispatch record can carry any of the
+    spellings below. The join compared that raw string against git's
+    repo-relative names, and only the bare spelling was ever named.
+
+    ONE commit touches the file all four spell. Every id must be refused, each
+    beside the commit that touched it, and each keeps the spelling it was filed
+    with so the operator can find the row.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=0)
+
+    base = _repo_with_commit(project_root, "src/one.py", "print('a')\n")
+    (fdir / artifacts.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+        base + "\n", encoding="utf-8"
+    )
+    _manifest_with_requirement_ids(fdir, {1: (["FR-007"], ["src/one.py"])})
+    spellings = {
+        "D-010": "src/one.py#_handler",
+        "D-011": "src/one.py:12",
+        "D-012": "./src/one.py",
+        "D-013": "src/one.py",
+    }
+    _defect_ledger(fdir, [
+        dict(_tiered(did, "LIVE"), file=spelling, spec_ref="FR-007")
+        for did, spelling in spellings.items()
+    ])
+    assert foundry_defects_to_tasks(project_root)["ok"] is True
+    fix = _repo_with_commit(project_root, "src/one.py", "print('b')\n")
+
+    problem = _unrecorded_fix_problem(fdir, project_root)
+    assert problem is not None, "a committed fix with open rows passed Team-Down"
+    named = {d["id"]: d for d in problem["defects"]}
+    assert set(named) == set(spellings), problem["defects"]
+    for did, row in named.items():
+        assert row["file"] == spellings[did], row
+        assert row["commit"] and fix.startswith(row["commit"]), row
