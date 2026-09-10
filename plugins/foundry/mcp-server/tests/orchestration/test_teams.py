@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from foundry_mcp.tools.orchestration.teams import (
     _check_sight_required,
     _unrecorded_fix_problem,
@@ -456,3 +458,80 @@ def test_an_absolute_file_under_the_project_root_still_joins_its_commit(
     resolved = f"{Path(project_root).resolve()}/src/one.py"
     assert _dispatch_file_path(resolved, ".") == "src/one.py"
     assert _dispatch_file_path(outside["D-023"], ".") == outside["D-023"]
+
+
+@pytest.mark.parametrize("root_spelling", ["absolute", "cwd-relative"])
+@pytest.mark.parametrize("spelling", ["symlink-loop", "nul-byte"])
+def test_an_unresolvable_file_matches_nothing_and_masks_no_real_refusal(
+    run_env, monkeypatch, spelling, root_spelling
+):
+    """fallout AC-039 / CT-010 / AC-002 / CT-008 (D-274).
+
+    Fallout of D-269. Its fold made an absolute `file` repo-relative by trying
+    the root as spelled and then resolved, and built the resolved pair before
+    the `try` that caught only `relative_to`'s ValueError. So `Path.resolve()`
+    raised out of the fold on the server's Python 3.12 -- RuntimeError through
+    a symlink loop, ValueError on an embedded NUL -- and both filing doors
+    accept either spelling verbatim. Foundry-Tasks then dispatched nothing, the
+    healthy sibling included, and Team-Down never named the real refusal
+    beside it.
+
+    An unresolvable path names no file of this repository, so it folds to an
+    answer that matches nothing. Driven through both doors, with the project
+    root spelled absolute and as the "." Team-Down's own default passes -- the
+    second is the spelling that reaches the resolved comparison at all.
+    """
+    from foundry_mcp.tools.foundry_state import current_cycle
+    from foundry_mcp.tools.orchestration.directives import (
+        DISPATCHED_DEFECT_UNRECORDED,
+        _grind_dispatches,
+    )
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=0)
+
+    base = _repo_with_commit(project_root, "src/four.py", "print('a')\n")
+    (fdir / artifacts.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+        base + "\n", encoding="utf-8"
+    )
+    _manifest_with_requirement_ids(fdir, {
+        3: (["FR-007"], ["src/three.py"]),
+        4: (["FR-007"], ["src/four.py"]),
+    })
+    if spelling == "symlink-loop":
+        (Path(project_root) / "lp").symlink_to("lp")
+        unresolvable = f"{project_root}/lp/three.py"
+    else:
+        unresolvable = f"{project_root}/src/th\x00ree.py"
+    _defect_ledger(fdir, [
+        dict(_tiered("D-030", "LIVE"), file=unresolvable, spec_ref="FR-007"),
+        dict(_tiered("D-031", "LIVE"), file="src/four.py", spec_ref="FR-007"),
+    ])
+    root = str(project_root)
+    if root_spelling == "cwd-relative":
+        monkeypatch.chdir(project_root)
+        root = "."
+
+    # Foundry-Tasks: the wave is dispatched whole. The unresolvable row is
+    # owned by nobody; the healthy sibling keeps its owner.
+    tasks = foundry_defects_to_tasks(root)
+    assert tasks["ok"] is True, tasks
+    owners = {
+        did: t["owning_casting"] for t in tasks["tasks"] for did in t["defect_ids"]
+    }
+    assert owners == {"D-030": None, "D-031": 4}, owners
+    dispatched = {
+        r["defect_id"] for r in _grind_dispatches(fdir, current_cycle(fdir))
+    }
+    assert dispatched == {"D-030", "D-031"}, dispatched
+
+    # Team-Down: the sibling's fix is committed and its row is still open, so
+    # the door refuses naming it and its commit. The unresolvable row, whose
+    # file no commit can touch, is not named -- and does not mask the refusal.
+    fix = _repo_with_commit(project_root, "src/four.py", "print('b')\n")
+    refused = foundry_unregister_team("c3-team", root)
+    assert refused.get("error") == DISPATCHED_DEFECT_UNRECORDED, refused
+    named = {d["id"]: d for d in refused["defects"]}
+    assert set(named) == {"D-031"}, refused["defects"]
+    assert named["D-031"]["commit"], named
+    assert fix.startswith(named["D-031"]["commit"]), named

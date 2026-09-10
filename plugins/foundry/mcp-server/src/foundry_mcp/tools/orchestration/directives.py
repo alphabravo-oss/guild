@@ -868,18 +868,27 @@ def _dispatch_file_path(file: object, project_root: str | Path) -> str:
     then resolved, because a root passed as "." or reached through a symlinked
     temp directory names the same directory in a different spelling. An
     absolute path outside the root stays absolute and matches nothing, which is
-    the honest answer for a file that is not in this repository.
+    the honest answer for a file that is not in this repository. So does one
+    that cannot be resolved at all (a symlink loop, an embedded NUL): it names
+    no file of this repository either, and the fold never raises.
     """
     text = _strip_line_hint(_ref_file_component(str(file or "")))
     candidate = Path(text)
     if text and candidate.is_absolute():
         root = Path(project_root)
-        for path, base in ((candidate, root), (candidate.resolve(), root.resolve())):
+        try:
+            text = candidate.relative_to(root).as_posix()
+        except ValueError:
+            # fallout AC-039 / CT-010 / AC-002 / CT-008 (D-274) — THE RESOLVED
+            # COMPARISON RUNS ONLY WHEN THE SPELLED ONE MISSED, INSIDE ITS OWN
+            # GUARD. Both resolves used to be built before the `try`, so on
+            # Python 3.12 a symlink loop (RuntimeError) or an embedded NUL
+            # (ValueError) raised out of Foundry-Tasks and Team-Down, and one
+            # such row blocked the whole wave and masked every real refusal.
             try:
-                text = path.relative_to(base).as_posix()
-                break
-            except ValueError:
-                continue
+                text = candidate.resolve().relative_to(root.resolve()).as_posix()
+            except (OSError, RuntimeError, ValueError):
+                pass
     return _normalise_path(text)
 
 
