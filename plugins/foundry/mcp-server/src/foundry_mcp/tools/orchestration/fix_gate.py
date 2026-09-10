@@ -2170,7 +2170,7 @@ def new_defect_record(
     and this casting may not write it, so the definition lives here, the batch
     door calls it, and ``foundry_add_defect`` keeps its literal until casting 2
     imports this name. Until then the agreement is held by
-    ``tests/test_orchestrator_gates.py`` — see
+    ``tests/orchestration/test_transitions.py`` — see
     ``test_both_filing_doors_persist_one_record_shape_over_the_wire``, which
     files ONE finding through both doors over MCP and refuses any difference
     outside ``id`` and ``created_at``.
@@ -2718,7 +2718,9 @@ def foundry_sync_defects(
         # which yields mapping records only and re-inserts the non-dicts by
         # index before the write. So this call is idempotent today rather than
         # load-bearing, and it is kept deliberately on both counts: it is what
-        # the scan in test_orchestrator_gates.py asserts (an orchestrator that
+        # the scan
+        # tests/orchestration/test_module_boundaries.py#test_no_ledger_scan_bypasses_the_malformed_record_filter
+        # asserts (an orchestrator that
         # iterates the binding directly has bypassed the guarantee however
         # careful its body is), and it keeps this door's correctness legible
         # here instead of resting silently on a sibling module's internals.

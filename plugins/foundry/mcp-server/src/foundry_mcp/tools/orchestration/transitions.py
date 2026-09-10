@@ -1601,9 +1601,10 @@ def _update_phase(fdir: Path, new_phase: str) -> None:
 # handler behaved.
 #
 # Adding a token here without a branch below (or vice versa, or without the
-# schema entry) fails the drift guard in tests/test_orchestrator_gates.py, which
-# derives the accepted set from this function's own AST and asserts all three
-# copies are equal.
+# schema entry) fails the drift guard
+# tests/orchestration/test_module_boundaries.py#test_phase_schema_enum_equals_the_handler_branch_set,
+# which derives the accepted set from this function's own AST and asserts all
+# three copies are equal.
 PHASE_TOKENS = (
     "start_cast",
     "cast",

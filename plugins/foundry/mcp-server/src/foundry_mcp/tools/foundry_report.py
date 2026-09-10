@@ -2113,8 +2113,8 @@ def _render_markdown(run_name: str, generated_at: str, sections: dict) -> str:
         # reads at the moment they choose where to type.
         #
         # ONE LINE, AND IT MUST CONTAIN " by Foundry-Report.".
-        # `foundry_orchestrator._lead_header_lines` drops a header line that
-        # carries that marker and keeps every other non-blank one as the
+        # `orchestration/report_seal.py#_lead_header_lines` drops a header line
+        # that carries that marker and keeps every other non-blank one as the
         # lead's. Split this sentence across two rendered lines and the half
         # without the marker is carried into the seal's Lead notes section on
         # every terminal transition — the document growing a paragraph of its
@@ -2122,10 +2122,14 @@ def _render_markdown(run_name: str, generated_at: str, sections: dict) -> str:
         #
         # THE LEAD-NOTES SECTION IS NAMED WITHOUT ITS `## ` PREFIX, which is
         # the spelling both READMEs already use for it. Spelled in full, this
-        # sentence would contain `foundry_orchestrator._LEAD_NOTES_HEADING`
+        # sentence would contain
+        # `orchestration/report_seal.py#_LEAD_NOTES_HEADING`
         # verbatim, and the seal's regression tests read "the seal appended
         # nothing" as that constant being ABSENT from the whole document
-        # (`test_orchestrator_gates.py`, two sites). A banner that names the
+        # (`tests/orchestration/test_report_seal.py`, two sites:
+        # `#test_a_ledger_that_moved_under_the_report_is_not_prose_the_lead_appended`
+        # and the shared helper
+        # `#_assert_no_generated_row_was_duplicated`). A banner that names the
         # section would then make a purely generated report indistinguishable
         # from a sealed one to those tests. The heading itself is still a whole
         # trimmed `## ` line and nothing else, which is what

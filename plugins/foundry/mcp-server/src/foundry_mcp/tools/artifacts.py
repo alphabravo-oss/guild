@@ -153,9 +153,10 @@ from foundry_mcp.tools.foundry_state import (
 #   ``_artifact_guard`` — the named refusal, at the MCP entry points. Tolerance
 #                         alone would silently read a corrupt state.json as
 #                         cycle 0; the guard is what makes the file's name reach
-#                         the operator. ``test_orchestrator_gates`` derives the
-#                         entry-point set from server.py's _DISPATCH and fails on
-#                         the next one added without it.
+#                         the operator.
+#                         ``test_module_boundaries#test_every_orchestrator_entry_point_runs_the_artifact_guard``
+#                         derives the entry-point set from server.py's _DISPATCH
+#                         and fails on the next one added without it.
 #
 # WRITES. ``_save_json`` is atomic per write, but every caller read, mutated and
 # wrote as three separate steps, and the tmp sidecar name was shared: a real

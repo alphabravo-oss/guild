@@ -440,8 +440,10 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     # D-006 / D-007 — this enum is pinned to
                     # foundry_mark_phase_complete's OWN branch set by the drift
-                    # guard in tests/test_orchestrator_gates.py, which reads the
-                    # handler's AST. It drifted in both directions at once: it
+                    # guard
+                    # tests/orchestration/test_module_boundaries.py#test_phase_schema_enum_equals_the_handler_branch_set,
+                    # which reads the handler's AST.
+                    # It drifted in both directions at once: it
                     # advertised research_done / decompose_done / validate_done,
                     # which the handler has no branch for and refuses, while
                     # OMITTING inspect_start — the only token whose branch
@@ -1408,9 +1410,11 @@ async def list_tools() -> list[Tool]:
             # surface a lead reads at the moment of the call; it must name what
             # engaging the gate costs and what omitting it costs.
             #
-            # PINNED, not merely written: test_orchestrator_gates.py derives
-            # every hard-reject guard in `foundry_accept_casting` from its AST
-            # and fails on any branch this description does not account for.
+            # PINNED, not merely written:
+            # tests/orchestration/test_module_boundaries.py#test_the_accept_casting_description_accounts_for_every_hard_reject_branch
+            # derives every hard-reject guard in `foundry_accept_casting` from
+            # its AST and fails on any branch this description does not account
+            # for.
             description=(
                 "Gate acceptance of a completed casting. Requires fresh spec_hash and prompt_hash "
                 "(verifies re-reads happened), extracts the casting's acceptance criteria from the "
@@ -1978,7 +1982,7 @@ def _instance_label(path) -> str:
 
     ONE SPELLING, and it is the one already in the tree. `schemas/findings.py`
     and `foundry_sync_defects` both name an offending batch member
-    `findings[N]` — `test_orchestrator_gates.py::
+    `findings[N]` — `tests/orchestration/test_fix_gate.py#
     test_a_non_dict_finding_refuses_the_batch_naming_the_index` pins that
     exact substring against the handler's refusal. This rung is the one BEFORE
     the handler, refusing the same batch about the same member, so it says the

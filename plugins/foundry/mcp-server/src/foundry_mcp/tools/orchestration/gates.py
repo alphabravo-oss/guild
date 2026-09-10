@@ -1262,8 +1262,9 @@ class _GateLadder:
 # running. What closes the CLASS is that there is now exactly one function per
 # TRANSITION token which builds the ladder, and both doors read it and nothing
 # else. A check added to a token is a check both doors make on the day it is
-# written, and the invariant test in tests/test_orchestrator_gates.py walks
-# every token against every rung to say so.
+# written, and the invariant test
+# tests/orchestration/test_transitions.py#test_a_gate_and_its_transition_refuse_the_same_check
+# walks every token against every rung to say so.
 #
 # WHAT LIVES IN A ROUTINE, AND WHAT DOES NOT. The routine owns the pure,
 # read-only checks: teams, streams, blocking defects, verdict coverage,
