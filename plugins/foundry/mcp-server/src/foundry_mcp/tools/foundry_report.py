@@ -21,17 +21,27 @@ anything this module remembers about what it just wrote.
 
 WHAT THIS MODULE MAY IMPORT
 ---------------------------
-`schemas.vocab` and `tools.foundry_state`, and nothing else from the package.
+`schemas.vocab`, `tools.artifacts`, `tools.foundry_state` and
+`tools.orchestration.escalation` — at MODULE level — and nothing else from the
+package. That roster is not stylistic and it is not a preference: it is asserted,
+by equality, in `tests/test_report.py#test_foundry_report_imports_only_the_two_
+leaf_modules`.
 
-— at MODULE level. That is not stylistic. `foundry_orchestrator` imports this
-module (the `Foundry-Report` tool and the `done` transition both call into it),
-and `foundry_spawn` imports `foundry_orchestrator`, so a module-level import of
-`foundry_spawn` from here would close a cycle in the import graph — the exact
-cycle `foundry_state`'s own leaf-module contract exists to keep open.
+WHY THE ROSTER IS SAFE, WHICH IS A DIFFERENT FACT NOW (fallout D-223).
+The original reason was a cycle: `foundry_orchestrator` imported this module and
+`foundry_spawn` imported `foundry_orchestrator`, so a third module-level edge
+here could close one. That premise died with the orchestrator, and for a while
+the replacement premise was "nothing imports this module at module level at all".
+That is no longer true either — `server.py` binds the `Foundry-Report` door by
+name at module top, because the adapter that used to hold a function-local import
+for it belonged in this module and now lives here as `foundry_report`. So the
+pin PROVES the property instead of standing in for it: `server.py` is a graph
+SOURCE — nothing in the package imports it at module level — so no edge out of
+it can sit in a cycle, and the registrar is the only importer permitted.
 
-A FUNCTION-LOCAL import closes nothing: it runs at call time, when every module
-in that chain is already built. `_agent_id_for_casting` uses one, and D-013 is
-why it is no longer a hand-typed copy — see that function.
+A FUNCTION-LOCAL import closes nothing regardless: it runs at call time, when
+every module in that chain is already built. `_agent_id_for_casting` uses one,
+and D-013 is why it is no longer a hand-typed copy — see that function.
 
 NFR-002: cost is TOKENS and MINUTES. There is no dollar figure, no currency
 symbol and no price table anywhere in either output. A second hand-kept price
