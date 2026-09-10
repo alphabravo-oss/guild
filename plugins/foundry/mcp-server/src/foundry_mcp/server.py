@@ -109,7 +109,25 @@ from foundry_mcp.tools.artifacts import foundry_spec_hash
 # the registrar's whole job — so the repoint is a name, not an exception.
 from foundry_mcp.tools.evidence import foundry_accept_casting
 from foundry_mcp.tools.foundry_handoff import foundry_handoff
-from foundry_mcp.tools.foundry_spawn import foundry_cast_wave, foundry_spawn_teammate
+# fallout D-223 / research/holmes-orchestrator.md#reg-2 — THE LAZY SEAM WAS A
+# BUILD-SEQUENCING ACCOMMODATION AND BOTH SYMBOLS HAVE LANDED.
+#
+# `foundry_liveness` and the report door were reached through server-defined
+# adapters holding function-local imports. That seam was coherent at the SYMBOL
+# level when written — `from ... import foundry_liveness` raises ImportError on
+# the missing NAME even though this module already loaded `foundry_spawn` — so it
+# really did fail one tool loudly instead of the whole server, for the window in
+# which the casting owning the handler had not landed it. Both have landed, and
+# with nothing in the package importing `server` at module level, neither edge
+# can close an import cycle. So they are plain module-top names now, which is
+# also the only spelling `width#_registry_tool_modules` can resolve without an
+# extra hop into this file.
+from foundry_mcp.tools.foundry_report import foundry_report
+from foundry_mcp.tools.foundry_spawn import (
+    foundry_cast_wave,
+    foundry_liveness,
+    foundry_spawn_teammate,
+)
 from foundry_mcp.tools.foundry_validate import foundry_validate_castings
 from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
 from foundry_mcp.tools.validation import validate_report
@@ -1701,59 +1719,24 @@ async def list_tools() -> list[Tool]:
 # ── Tool name -> function dispatch ───────────────────────────────────────────
 
 
-def _dispatch_liveness(args: dict) -> dict:
-    """Dispatch Foundry-Liveness to its handler in tools/foundry_spawn.py.
-
-    Imported lazily and unguarded: a module-top import would take the ENTIRE
-    server down while the casting that owns foundry_spawn.py is still landing
-    this handler, and swallowing the ImportError would hide a real wiring break
-    behind a silent no-op. Failing here fails one tool, loudly, naming the
-    symbol. The agent identifier and the threshold override are passed
-    positionally so this registration does not depend on the handler's
-    parameter NAMES.
-
-    ``stall_seconds`` is forwarded unvalidated and un-defaulted (D-002): the
-    handler owns both the default and the named refusal for a bad value, and
-    re-deciding either here would give MCP callers different answers from
-    in-process ones. ``None`` — the shape an omitted key takes — is exactly
-    what the handler reads as "use the derived default".
-    """
-    from foundry_mcp.tools.foundry_spawn import foundry_liveness
-
-    return foundry_liveness(
-        args.get("agent"),
-        args.get("stall_seconds"),
-        project_root=_project_root,
-    )
-
-
-def _dispatch_report() -> dict:
-    """Dispatch Foundry-Report to `tools/foundry_report.generate_report`.
-
-    Lazy and unguarded for the same reason `_dispatch_liveness` is: a
-    module-top import would take the ENTIRE server down while the casting that
-    owns `foundry_report.py` is still landing, and swallowing the ImportError
-    would hide a real wiring break behind a silent no-op. Failing here fails one
-    tool, loudly, naming the symbol.
-
-    The run directory is resolved here rather than passed, because the generator
-    takes the run dir and the tool takes no arguments — the run a report is
-    generated for is always the ACTIVE one, and letting a caller name a
-    different one would let a lead generate a report over another run's ledgers.
-    """
-    from pathlib import Path
-
-    from foundry_mcp.tools.foundry_report import generate_report
-    from foundry_mcp.tools.foundry_state import get_run_dir
-
-    fdir = get_run_dir(_project_root)
-    if not fdir or not fdir.exists():
-        return {
-            "ok": False,
-            "error": "No active foundry run — there is nothing to report on.",
-            "hint": "Call Foundry-Init first, or foundry_init(resume='run-name').",
-        }
-    return generate_report(Path(_project_root), fdir)
+# fallout D-223 / research/holmes-orchestrator.md#reg-2 — TWO ADAPTERS STOOD HERE
+# AND EVERY FACT THEY CARRIED IS NOW WHERE IT BELONGS.
+#
+# `_dispatch_liveness` and `_dispatch_report` were handler-side adapters holding
+# run-dir resolution, a hand-spelled no-run refusal and a default policy, in the
+# REGISTRAR. Both are gone: `foundry_report#foundry_report` is the tool-shaped
+# door that resolves the active run, and both symbols are module-top names above,
+# so every entry below is the plain `lambda args: handler(...)` this file's own
+# header claims for all of them. The refusal string moved byte for byte.
+#
+# THE ENTRY IS ALSO THE ONLY SPELLING THE REGISTRY CAN READ.
+# `width#_registry_tool_modules` answers "which module implements this tool" by
+# walking the entry's code object for a name resolving to a `foundry_mcp`
+# function. A plain lambda naming the handler global resolves in one step; a
+# wrapped handler, a `functools.partial` or a table lookup resolves to nothing,
+# and the tool's ownership then reads as UNKNOWN to `_test01_scope_touched`
+# (Holmes introspect-1, D-209). That property is pinned by
+# tests/orchestration/test_width.py#test_no_dispatch_entry_hides_its_handler_behind_a_server_helper.
 
 
 _DISPATCH = {
@@ -1896,7 +1879,15 @@ _DISPATCH = {
         # absent — a KeyError across the MCP boundary is not the house shape.
         casting_commit=args.get("casting_commit"),
         project_root=_project_root),
-    "Foundry-Liveness": lambda args: _dispatch_liveness(args),
+    # D-002 — `stall_seconds` IS FORWARDED UN-DEFAULTED, and that is the whole
+    # of the policy this entry carries. The handler owns both the default and
+    # the named refusal for a bad value; re-deciding either here would give MCP
+    # callers different answers from in-process ones. `None` — the shape
+    # `args.get` gives an omitted key — is exactly what the handler reads as
+    # "use the derived default". Both values are passed POSITIONALLY so the
+    # registration does not depend on the handler's parameter NAMES.
+    "Foundry-Liveness": lambda args: foundry_liveness(
+        args.get("agent"), args.get("stall_seconds"), project_root=_project_root),
     "Foundry-Team-Up": lambda args: foundry_register_team(team_name=args["team_name"], project_root=_project_root),
     "Foundry-Team-Down": lambda args: foundry_unregister_team(team_name=args["team_name"], project_root=_project_root),
     "Foundry-Directive": lambda args: foundry_inject_directive(
@@ -1906,7 +1897,11 @@ _DISPATCH = {
         agent=args["agent"], phase=args["phase"], tokens=args["tokens"],
         duration_ms=args["duration_ms"], cycle=args.get("cycle"),
         project_root=_project_root),
-    "Foundry-Report": lambda args: _dispatch_report(),
+    # THE TOOL TAKES NO ARGUMENTS, DELIBERATELY: the run a report is generated
+    # for is always the ACTIVE one, and letting a caller name a different one
+    # would let a lead generate a report over another run's ledgers. The door
+    # resolves it; `project_root` is the repo, never a run selector.
+    "Foundry-Report": lambda args: foundry_report(project_root=_project_root),
     "Forge-Spec-Start": lambda args: forge_spec_start(
         project_name=args["project_name"], project_root=_project_root),
     "Forge-Spec-Check": lambda args: forge_spec_check(

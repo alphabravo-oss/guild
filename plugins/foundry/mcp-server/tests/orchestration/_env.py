@@ -955,6 +955,28 @@ _PROSE_CITES_WITH_NO_DEFINITION: dict[str, str] = {
         "the other half of that convention, and the half the scan refuses to "
         "trust on its own."
     ),
+    # fallout D-223 / research/holmes-orchestrator.md#reg-2 — TWO DISPATCH
+    # ADAPTERS THAT LEFT THE REGISTRAR, narrated in past tense by the comments
+    # that cite them. Each held handler responsibilities — a lazy import, a
+    # default policy, run-dir resolution, a hand-spelled refusal — one frame
+    # ABOVE the module that owns them, which made this file's own "thin
+    # dispatch" claim false for two of its tools.
+    "_dispatch_liveness": (
+        "the Foundry-Liveness adapter, deleted with its lazy import: "
+        "`foundry_spawn.foundry_liveness` is a module-top name in `server.py` "
+        "and `_DISPATCH` binds it directly. The one fact the adapter carried — "
+        "D-002's un-defaulted `stall_seconds`, so `None` reaches the handler "
+        "that owns both the default and the refusal — is a comment on that "
+        "entry now."
+    ),
+    "_dispatch_report": (
+        "the Foundry-Report adapter, deleted with the run-dir resolution and "
+        "the no-run refusal it hand-spelled in the registrar. Both live in "
+        "`foundry_report.foundry_report`, the tool-shaped door, whose refusal "
+        "is the adapter's string byte for byte; `generate_report(Path, Path)` "
+        "is unchanged and `report_seal._generate_report` still calls it "
+        "directly with an explicit run dir."
+    ),
 }
 
 

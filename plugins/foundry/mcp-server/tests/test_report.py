@@ -3808,18 +3808,49 @@ def test_foundry_report_imports_only_the_two_leaf_modules():
     import foundry_mcp
 
     pkg = Path(foundry_mcp.__file__).resolve().parent
-    importers = []
-    for module in sorted(pkg.rglob("*.py")):
-        if "__pycache__" in module.parts or module.name == "foundry_report.py":
-            continue
-        for node in ast.parse(module.read_text(encoding="utf-8")).body:
-            if "foundry_mcp.tools.foundry_report" in _imported(node):
-                importers.append(module.name)
-    assert importers == [], (
-        f"{importers} import(s) foundry_report at MODULE level. The roster "
-        f"above is safe only while nothing does: with an importer, a "
-        f"module-level import here can close a cycle and the extra edges must "
-        f"go back to the body-level seam."
+
+    def _module_level_importers_of(dotted: str) -> list[str]:
+        found = []
+        for module in sorted(pkg.rglob("*.py")):
+            if "__pycache__" in module.parts:
+                continue
+            if module.name == dotted.rsplit(".", 1)[-1] + ".py":
+                continue
+            for node in ast.parse(module.read_text(encoding="utf-8")).body:
+                if dotted in _imported(node):
+                    found.append(module.name)
+        return found
+
+    # fallout D-223 / holmes#reg-2 — THE REGISTRAR IS THE ONE IMPORTER, AND WHY
+    # THAT CANNOT CLOSE A CYCLE IS COMPUTED HERE RATHER THAN ASSERTED.
+    #
+    # `Foundry-Report`'s handler used to be a `_dispatch_report()` adapter in
+    # `server.py` holding a function-local import, so nothing imported this
+    # module at module level and `importers == []` was the whole check. The
+    # adapter is gone — its run-dir resolution and its refusal live in
+    # `foundry_report#foundry_report`, the tool-shaped door — so the registrar
+    # binds the door by name at module top like it binds every other door.
+    #
+    # An exclusion would weaken this pin, so the PREMISE is proved instead:
+    # `server.py` is a graph SOURCE. Nothing in the package imports it at module
+    # level, so no edge OUT of it can be part of a cycle, and the roster above
+    # stays safe for exactly the reason it always was. The day something imports
+    # `server`, the second assertion fails and the first one's licence is gone —
+    # which is the failure this test is for, arriving at the edge that caused it.
+    assert _module_level_importers_of("foundry_mcp.server") == [], (
+        "something imports `server` at module level. `server.py` importing "
+        "`foundry_report` was safe only while `server` had no importers of its "
+        "own; with one, that edge can now sit inside a cycle and the roster "
+        "above has to shrink back to the leaves."
+    )
+    assert _module_level_importers_of("foundry_mcp.tools.foundry_report") == [
+        "server.py"
+    ], (
+        "the module-level importers of `foundry_report` have changed. Only the "
+        "REGISTRAR may be one — it is the graph source proved above, and "
+        "binding every door in `_DISPATCH` is its whole job. Any other importer "
+        "can close a cycle, and the extra module-level edges in this module "
+        "must go back to the body-level seam."
     )
     # The walk must SEE something, or the emptiness above proves nothing.
     assert len(list(pkg.rglob("*.py"))) >= 15

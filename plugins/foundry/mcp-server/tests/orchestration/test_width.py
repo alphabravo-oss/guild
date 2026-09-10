@@ -471,6 +471,64 @@ def test_every_dispatched_tool_has_a_registry_entry():
     }
 
 
+def test_no_dispatch_entry_hides_its_handler_behind_a_server_helper():
+    """fallout D-223 / holmes#reg-2 — THE PROPERTY THAT LICENSES THE ONE-STEP WALK.
+
+    `_registry_tool_modules` used to take one more hop into any function
+    `server.py` itself defines, because two entries — `"Foundry-Liveness":
+    lambda args: _dispatch_liveness(args)` and `"Foundry-Report": lambda args:
+    _dispatch_report()` — named the real handler only INSIDE that helper, in a
+    function-local import. Stopping at the lambda mapped CT-014 to `server.py`
+    and left `tools/foundry_report.py` uncovered, which is half of D-204.
+
+    Both adapters are gone and the hop went with them. What replaces the hop is
+    this: the registrar's contract — "plain lambdas naming the handler GLOBAL" —
+    is now ASSERTED rather than described, so a re-introduced server-side adapter
+    fails here, naming the tool and the helper, instead of quietly degrading the
+    registry's answer to `[]` and TEST-01's covered set with it.
+
+    RED BEFORE THE FIX. At HEAD 55e3a0c this named exactly the two adapters:
+    `{'Foundry-Liveness': ['_dispatch_liveness'], 'Foundry-Report':
+    ['_dispatch_report']}`. It is the check the fix had to turn green, and it is
+    what makes deleting the `module == "foundry_mcp.server"` branch a provable
+    deletion rather than a claimed one.
+
+    It is deliberately NOT an assertion that every entry resolves to something —
+    `test_the_registry_keeps_an_entry_whose_walk_resolves_no_module_file` above
+    is the record that an unresolvable entry is a legal, DECLARED state (D-209).
+    This asserts the narrower thing the walk's shape depends on: whatever an
+    entry names, it does not name a function of this file.
+    """
+    from types import FunctionType
+
+    from foundry_mcp import server as _server
+
+    offenders: dict[str, list[str]] = {}
+    for tool, handler in _server._DISPATCH.items():
+        code = getattr(handler, "__code__", None)
+        if code is None:
+            continue
+        for name in code.co_names:
+            if name.startswith("foundry_mcp"):
+                continue
+            obj = _server.__dict__.get(name)
+            if not isinstance(obj, FunctionType):
+                continue
+            if (getattr(obj, "__module__", "") or "") == "foundry_mcp.server":
+                offenders.setdefault(str(tool), []).append(name)
+
+    assert offenders == {}, (
+        f"dispatch entries reaching a function server.py defines: {offenders}. "
+        f"Bind the handler global directly — `lambda args: handler(..., "
+        f"project_root=_project_root)` — and put run-dir resolution, defaults "
+        f"and refusals in the handler's own module. `_registry_tool_modules` "
+        f"resolves an entry in ONE step, so a helper here makes the tool's "
+        f"ownership unknown to `_test01_scope_touched`."
+    )
+    # The scan must SEE the table, or an empty `offenders` proves nothing.
+    assert len(_server._DISPATCH) >= 20, len(_server._DISPATCH)
+
+
 def test_an_unresolvable_registry_entry_makes_the_covered_set_unknown(
     run_env, monkeypatch
 ):

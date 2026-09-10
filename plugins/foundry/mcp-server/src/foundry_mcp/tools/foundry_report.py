@@ -74,6 +74,7 @@ from foundry_mcp.tools.foundry_state import (
     escalated_class_rows,
     fallout_rows,
     full_cycle_ratio,
+    get_run_dir,
     handoffs_wall_clock_seconds,
     inspect_decisions,
     inspect_mode_rows,
@@ -2666,8 +2667,48 @@ def _render_section(key: str, value: dict) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# The two public entry points (C-10).
+# The public entry points (C-10): the MCP door, then the generator it wraps.
 # ---------------------------------------------------------------------------
+
+
+def foundry_report(project_root: str = ".") -> dict:
+    """The `Foundry-Report` tool door — resolve the ACTIVE run, then generate.
+
+    fallout D-223 / research/holmes-orchestrator.md#reg-2 — THE ADAPTER WAS IN
+    THE REGISTRAR, AND THIS IS WHERE IT BELONGS.
+    ---------------------------------------------------------------------------
+    `server.py` used to carry a `_dispatch_report()` helper that resolved the
+    run directory, hand-spelled the no-run refusal and wrapped `Path(...)`
+    before reaching `generate_report`. Every other tool in the package binds as
+    `lambda args: handler(..., project_root=_project_root)` and resolves its own
+    run directory INSIDE its own module; this module was the only one with no
+    `project_root`-taking entry point, so the registrar did that work for it and
+    the file's own "thin dispatch" claim was false for two of its tools. The
+    refusal below is the same string, byte for byte, that the adapter returned.
+
+    ITS TWO LOAD-BEARING FACTS, CARRIED HERE RATHER THAN DELETED WITH IT:
+
+    THE TOOL TAKES NO ARGUMENTS, DELIBERATELY. The run a report is generated for
+    is always the ACTIVE one. `project_root` is the repo, not a run selector —
+    letting a caller name a run would let a lead generate a report over another
+    run's ledgers, which is why resolution happens here and not at the caller.
+
+    `generate_report(Path, Path)` IS UNCHANGED AND IS NOT ROUTED THROUGH THIS.
+    It stays a run_dir-in / documents-out generator that knows nothing about the
+    active-run pointer, because that is what makes it reusable for sealing a run
+    a caller ALREADY holds:
+    `orchestration/report_seal.py#_generate_report` passes an explicit `fdir`
+    and calls the generator directly. A door that only accepts a project root
+    could not serve it.
+    """
+    fdir = get_run_dir(project_root)
+    if not fdir or not fdir.exists():
+        return {
+            "ok": False,
+            "error": "No active foundry run — there is nothing to report on.",
+            "hint": "Call Foundry-Init first, or foundry_init(resume='run-name').",
+        }
+    return generate_report(Path(project_root), fdir)
 
 
 def generate_report(project_root: Path, run_dir: Path) -> dict:
