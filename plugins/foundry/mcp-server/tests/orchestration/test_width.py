@@ -708,3 +708,38 @@ def test_an_all_unresolvable_registry_cannot_answer_a_computed_miss(
     assert computed["computable"] is True, computed
     assert computed["touched"] is False, computed
     assert computed["source"] == "registry", computed
+
+
+def test_the_scope_match_drops_a_dot_prefix_and_keeps_a_dotted_name(run_env):
+    """fallout research/holmes-orchestrator.md#share-11 (D-233).
+
+    `_path_matches` folded both sides with `.lstrip("./")`, which strips any
+    run of `.` and `/` CHARACTERS rather than a `./` prefix: a dot-directory
+    scope entry stopped matching the file it names, and a dotted name matched
+    the undotted one. Driven through the declared-scope arm of
+    `_test01_scope_touched`, the production caller, on the research's own
+    probes plus `.hidden` and `../a.py`.
+    """
+    project_root, fdir = run_env
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+
+    def touched(scope: str, candidate: str) -> bool:
+        (fdir / "castings" / "manifest.json").write_text(
+            json.dumps({"castings": [], "test01_scope": [scope]}), encoding="utf-8"
+        )
+        answer = _width._test01_scope_touched(fdir, project_root, [candidate])
+        assert answer["source"] == "declared", answer
+        return answer["touched"]
+
+    # A dot-directory entry matches the file it names, under any root.
+    assert touched(".claude/agents/x.md", "plugins/foundry/.claude/agents/x.md") is True
+    # The `./` PREFIX is still dropped.
+    assert touched("./src/a.py", "src/a.py") is True
+    # A leading dot is part of the name, and `..` is not a prefix to discard.
+    for scope, candidate in (
+        ("github/w.yml", ".github/w.yml"),
+        ("claude/x", ".claude/x"),
+        ("hidden", ".hidden"),
+        ("src/a.py", "../a.py"),
+    ):
+        assert touched(scope, candidate) is False, (scope, candidate)

@@ -18,6 +18,7 @@ from foundry_mcp.schemas.vocab import (
     PROVE_DELTA_SAMPLE_SIZE,
     STREAM_WIRE_IDS,
     WIRE_TO_CANONICAL,
+    _normalise_path,
     is_verifier_path,
 )
 from foundry_mcp.tools.artifacts import (
@@ -683,9 +684,15 @@ def _path_matches(covered: str, candidate: str) -> bool:
     repo-relative on a self-targeting run. The anchor on `/` is what keeps this
     from being the substring search D-204 was filed on — `src/a.py` matches no
     covered path, where an unanchored `in` made `a` match anything.
+
+    fallout research/holmes-orchestrator.md#share-11 (D-233) — each side is
+    folded by vocab's `_normalise_path`, the fold `is_verifier_path` uses,
+    which drops a leading `./` PREFIX. The two inline `.lstrip("./")` folds
+    this replaces stripped a CHARACTER SET, so `.claude/x` read as
+    `claude/x`, `.hidden` as `hidden` and `../a.py` as `a.py`.
     """
-    left = covered.replace("\\", "/").lstrip("./")
-    right = candidate.replace("\\", "/").lstrip("./")
+    left = _normalise_path(covered)
+    right = _normalise_path(candidate)
     if not left or not right:
         return False
     return left == right or left.endswith(f"/{right}") or right.endswith(f"/{left}")
