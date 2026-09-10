@@ -4674,6 +4674,20 @@ def foundry_drive_temper_candidate(
     wrote. Two spellings agreed by inspection is what the tolerance was for;
     agreement driven end to end is what replaces it.
 
+    fallout D-254 — THE ROW'S GUARD IS ASKED BEFORE ANY LOCK IS TAKEN. ST-007's
+    guard column reads "TEMPER ran on this run; a candidate never driven is
+    listed in the F6 report", and AC-020 is that listing. A door that closed a
+    candidate on a run where TEMPER never ran moved it out of the one listing
+    that exists to carry it as debt, so the refusal is what keeps AC-020
+    true, not an obstacle to it. "Ran" is
+    ``foundry_report.py#_temper_phase_ran`` — the predicate the report's own
+    TEMPER-never-ran branch asks, reached by a call-time import so the door and
+    the listing answer ONE question — OR the run standing in the TEMPER phase
+    now, which is TEMPER running whatever the history holds. Never the
+    ``temper`` opt-in flag: that records what the lead asked for, and D-055 is
+    the record of what reading it printed. The refusal carries no ``field``,
+    because no argument is at fault; the run's phase is.
+
     Args:
         observation_id: the ``O-NNN`` of the candidate that was driven.
         filed: optional; the ``D-NNN`` this drive produced. Omitted means the
@@ -4682,7 +4696,8 @@ def foundry_drive_temper_candidate(
 
     Returns:
         ``{observation_id, status, driven_in_cycle, driven_finding,
-        already_driven}``, or a named refusal ``{error, hint, field}``.
+        already_driven}``, or a named refusal ``{error, hint, field}`` —
+        ``{error, hint}`` alone for the row-guard refusal.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -4701,6 +4716,36 @@ def foundry_drive_temper_candidate(
             "error": "observation_id is required: name the candidate to close.",
             "hint": _CANDIDATE_ROSTER_HINT,
             "field": "observation_id",
+        }
+
+    # fallout D-254 / ST-007 / AC-020 — the row's guard, before the ledger lock
+    # (see the docstring). A call-time import, the lazy call-through the report
+    # already makes in the other direction for `temper_candidate_is_driven`: a
+    # module-top edge would be the cycle that direction exists to avoid. The
+    # state problem is not re-checked because the guard above already refused
+    # a corrupt state.json; an absent one reads {} and is refused here, which
+    # is right, since a run with no state entered no phase. Unlocked is safe:
+    # `phase_history` only ever grows, so this answer can only turn true.
+    from foundry_mcp.tools.foundry_report import TEMPER_PHASE_ID, _temper_phase_ran
+
+    state, _ = read_document(fdir / "state.json")
+    if not (
+        state.get("phase") == TEMPER_PHASE_ID or _temper_phase_ran(state) is True
+    ):
+        return {
+            "error": (
+                f"{candidate_id} cannot be closed as DRIVEN: TEMPER has not run "
+                f"on this run. fallout ST-007's guard is 'TEMPER ran on this "
+                f"run', and this run's phase_history carries no "
+                f"{TEMPER_PHASE_ID} row (phase is {state.get('phase')!r})."
+            ),
+            "hint": (
+                "Nothing is lost by this refusal: the candidate stays OPEN, and "
+                "on a run where TEMPER never ran the F6 report lists every "
+                "undriven candidate as carried debt (fallout AC-020) — that "
+                "listing is the outcome ST-007 names for it. Only a TEMPER pass "
+                "drives a candidate."
+            ),
         }
 
     cycle = current_cycle(fdir)

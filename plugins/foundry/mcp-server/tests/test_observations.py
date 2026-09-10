@@ -2969,6 +2969,21 @@ def _open_candidate(tmp_path: Path, description: str = CANDIDATE_PROBE) -> str:
     return result["observation_id"]
 
 
+def _enter_temper(fdir: Path) -> None:
+    """Carry the run into TEMPER through the ONE writer of ``phase_history``.
+
+    fallout D-254: the drive door refuses unless TEMPER ran on this run
+    (fallout ST-007's guard column), so every test below that closes a
+    candidate enters the phase first — through
+    ``orchestration/transitions.py#_update_phase``, never a hand-written row,
+    so the door is proven against the history a real crossing writes.
+    """
+    from foundry_mcp.tools.foundry_report import TEMPER_PHASE_ID
+    from foundry_mcp.tools.orchestration.transitions import _update_phase
+
+    _update_phase(fdir, TEMPER_PHASE_ID)
+
+
 def _report_reader(fdir: Path) -> dict:
     """The F6 section reader, driven over the ledger these doors wrote.
 
@@ -3006,6 +3021,7 @@ def test_a_driven_candidate_leaves_the_report_readers_undriven_list(
     before this door existed, and a closure test that never saw the open state
     proves the transition rather than assuming it.
     """
+    _enter_temper(run)
     candidate = _open_candidate(tmp_path)
 
     before = _report_reader(run)
@@ -3042,6 +3058,7 @@ def test_a_candidate_driven_and_filed_records_the_defect_it_produced(
     same route the clean closure takes — the closure kind is a FACT on the
     record, not a second code path.
     """
+    _enter_temper(run)
     candidate = _open_candidate(tmp_path)
 
     closed = foundry_drive_temper_candidate(
@@ -3080,6 +3097,7 @@ def test_the_query_door_reads_a_driven_candidate_back_with_its_closure(
     as the records, because ``by_classification`` counts EVERY observation
     regardless of status and a driven candidate is still a candidate.
     """
+    _enter_temper(run)
     candidate = _open_candidate(tmp_path)
     foundry_drive_temper_candidate(
         observation_id=candidate, filed="D-404", project_root=str(tmp_path)
@@ -3109,6 +3127,7 @@ def test_driving_an_unknown_observation_is_refused_naming_the_id(
     does not exist would be a door reporting a transition it did not make,
     which is the class of defect the whole section exists to close.
     """
+    _enter_temper(run)
     refusal = foundry_drive_temper_candidate(
         observation_id="O-404", project_root=str(tmp_path)
     )
@@ -3130,6 +3149,7 @@ def test_driving_an_observation_that_is_not_a_candidate_is_refused(
     that reached here has an id it believed was a candidate and the useful
     thing to tell it is what that id really is.
     """
+    _enter_temper(run)
     filed = foundry_add_observation(
         cycle=1,
         source="trace",
@@ -3164,6 +3184,7 @@ def test_re_driving_a_closed_candidate_keeps_the_first_closure(
     that drove it, and a later call that rewrote the finding and the cycle
     would let a second reader silently replace the first reader's result.
     """
+    _enter_temper(run)
     candidate = _open_candidate(tmp_path)
     first = foundry_drive_temper_candidate(
         observation_id=candidate, filed="D-404", project_root=str(tmp_path)
@@ -3201,6 +3222,7 @@ def test_a_malformed_historical_record_does_not_derail_the_closure(
     to a bad container while losing them to a bad record is the quieter half of
     the same defect.
     """
+    _enter_temper(run)
     candidate = _open_candidate(tmp_path)
 
     path = run / "observations.json"
@@ -3220,6 +3242,97 @@ def test_a_malformed_historical_record_does_not_derail_the_closure(
     record = next(o for o in stored if isinstance(o, dict))
     assert record["status"] == "DRIVEN", record
     assert record["driven_finding"] == "D-404", record
+
+
+# --- fallout D-254: the row's guard -- TEMPER ran on this run ---------------
+#     (fallout ST-007's guard column, fallout AC-020) -------------------------
+
+
+def test_a_candidate_on_a_run_where_temper_never_ran_is_refused(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout ST-007's guard column: 'TEMPER ran on this run; a candidate
+    never driven is listed in the F6 report'; fallout AC-020: 'When TEMPER
+    never ran, the F6 report lists every TEMPER candidate that was not driven.'
+
+    fallout D-254, driven as the stream drove it: a fresh run standing at F0
+    with no TEMPER row in its history, one candidate recorded, the real drive
+    door called. Before the fix the door answered DRIVEN and the candidate
+    dropped out of the roster AND the report listing -- the one listing that
+    exists to carry it as debt on exactly this run. So the refusal is asserted,
+    and then all three reads of the candidate: the record untouched, the roster
+    still offering it, and the F6 reader still listing it undriven.
+    """
+    from foundry_mcp.tools.foundry import OPEN_CANDIDATES_KEY
+    from foundry_mcp.tools.foundry_report import TEMPER_PHASE_ID
+
+    candidate = _open_candidate(tmp_path)
+
+    refusal = foundry_drive_temper_candidate(
+        observation_id=candidate, project_root=str(tmp_path)
+    )
+
+    assert "error" in refusal, refusal
+    assert "TEMPER ran on this run" in refusal["error"], refusal
+    assert TEMPER_PHASE_ID in refusal["error"], refusal
+    assert "AC-020" in refusal["hint"], refusal
+    stored = _observations(run)["observations"][0]
+    assert "status" not in stored, stored
+    assert "driven_finding" not in stored, stored
+    roster = foundry_query_observations(
+        classification="TEMPER_CANDIDATE", project_root=str(tmp_path)
+    )
+    assert [o["id"] for o in roster[OPEN_CANDIDATES_KEY]] == [candidate], roster
+    listed = _report_reader(run)
+    assert [c["id"] for c in listed["candidates"]] == [candidate], listed
+    assert listed["driven_count"] == 0, listed
+
+
+def test_opting_in_to_temper_is_not_the_guard(run: Path, tmp_path: Path) -> None:
+    """fallout ST-007: 'TEMPER ran', not 'TEMPER was asked for'.
+
+    The ``temper`` key in state.json is the ``--temper`` opt-in flag, written
+    once by Foundry-Init; fallout D-055 is the record of what reading it as
+    "ran" printed. A run that opted in and has not reached TEMPER is still a
+    run TEMPER has not run on, and the door refuses it the same way.
+    """
+    state_path = run / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["temper"] = True
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    candidate = _open_candidate(tmp_path)
+
+    refusal = foundry_drive_temper_candidate(
+        observation_id=candidate, project_root=str(tmp_path)
+    )
+
+    assert "TEMPER ran on this run" in refusal.get("error", ""), refusal
+    assert "status" not in _observations(run)["observations"][0]
+
+
+def test_a_run_that_entered_temper_and_moved_on_may_still_drive(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout ST-007: the guard is that TEMPER RAN, not that it is running.
+
+    The adjacent transition: a run crosses into TEMPER and out again (to
+    NYQUIST here), and the history still carries the TEMPER row, so a closure
+    that arrives after the crossing -- a retried answer, a late stream -- lands.
+    A guard keyed on the CURRENT phase alone would refuse it and strand a
+    candidate TEMPER actually drove.
+    """
+    from foundry_mcp.tools.orchestration.transitions import _update_phase
+
+    candidate = _open_candidate(tmp_path)
+    _enter_temper(run)
+    _update_phase(run, "F5.5")
+
+    closed = foundry_drive_temper_candidate(
+        observation_id=candidate, project_root=str(tmp_path)
+    )
+
+    assert "error" not in closed, closed
+    assert closed["status"] == "DRIVEN", closed
 
 
 # --- fallout D-114: the door provides the roster its own hint names ---------
@@ -3244,6 +3357,7 @@ def test_a_driven_candidate_leaves_the_roster_the_hint_names(run, tmp_path):
     becomes 'DRIVEN'), then query with classification=TEMPER_CANDIDATE. Before
     the fix the record was still returned, statuses ['DRIVEN'].
     """
+    _enter_temper(run)
     from foundry_mcp.tools.foundry import OPEN_CANDIDATES_KEY
 
     open_id = _open_candidate(tmp_path)
@@ -3293,6 +3407,7 @@ def test_the_roster_counts_both_halves_of_the_partition(run, tmp_path):
     COMPLEMENT rather than a second scan, so the pair can never sum to
     something other than the candidate count.
     """
+    _enter_temper(run)
     first = _open_candidate(tmp_path)
     _open_candidate(tmp_path, description=CANDIDATE_PROBE + " (second)")
     foundry_drive_temper_candidate(observation_id=first, project_root=str(tmp_path))
