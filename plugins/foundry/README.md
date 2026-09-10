@@ -126,7 +126,7 @@ In V3 packet mode, `<spec_requirements>` is replaced by structural blocks: `<ups
 | `--url URL` | Run against a URL surface (alternative to filesystem-only) |
 | `--temper` | Enable F5 TEMPER stress testing |
 | `--nyquist` | Enable F5.5 NYQUIST regression test generation |
-| `--max-cycles N` | Cap the verify-fix cycles. Default `0` = unbounded. The phase transition that would open a GRIND cycle past the cap **succeeds** — it is not a refusal: the run's phase becomes `HALTED`, the report is generated as part of that transition naming every open `LIVE` and `LATENT` defect, and the next guidance call reports the halt and dispatches nothing. **`HALTED` is a named terminal state distinct from `DONE`** — a halted run stopped with open work |
+| `--max-cycles N` | Cap the verify-fix cycles. Default `0` = unbounded. The phase transition that would open a GRIND cycle past the cap **succeeds** — it is not a refusal: the run's phase becomes `HALTED`, the report is generated as part of that transition, naming every open defect at every tier (every open `LIVE` one, and every open `LATENT` and `HARDENING` one in its own `latent_backlog` and `hardening_backlog` section), and the next guidance call reports the halt and dispatches nothing. **`HALTED` is a named terminal state distinct from `DONE`** — a halted run stopped with open work |
 | `--no-ui` | `--no-ui` declares that this run has no browsable UI, so the SIGHT browser audit is not part of it. It says nothing about banners — the display is not a UI the run audits |
 
 ### Building foundry itself — launch with `--plugin-dir`
@@ -328,7 +328,7 @@ This release is about how a run *ends*. `thunder-viper` shipped 4.9.0 in 22 GRIN
 
 | Adds | Where |
 |---|---|
-| **`LIVE` / `LATENT` tier on every finding** — `LIVE` means the stream drove the door and saw the wrong result; `LATENT` means it derived the finding with no reachable instance and must say what it drove. A security-property claim can never be `LATENT` | `Foundry-Defect` · `Foundry-Sync` · all four stream agents · temper |
+| **A tier on every finding** — `LIVE` means the stream drove the door and saw the wrong result; `LATENT` means it derived the finding with no reachable instance and must say what it drove. A security-property claim can never be `LATENT`. 4.11.0 widened the set with `HARDENING` (see its row in the 4.11.0 table); `vocab.DEFECT_TIERS` holds the members | `Foundry-Defect` · `Foundry-Sync` · all four stream agents · temper |
 | **Tier-aware gates** — `LIVE` and unknown-tier defects block; a `LATENT`-only backlog passes every gate and stays open, tracked, and named in the report | `inspect_clean` · ASSAY · TEMPER · NYQUIST · DONE |
 | **Escalation exits mechanically** — two consecutive cycles drawing zero `LIVE` instances, or an exhausted two-pass structural budget; `CLEARED` persists its exit reason. Clearing ends escalation, never a defect | `Foundry-Tasks` · `escalation.json` |
 | **`LATENT` fix lane** — a `LATENT` defect closes on a named regression test, without the adjacent-path declaration a `LIVE` fix still requires | `Foundry-Fix` |

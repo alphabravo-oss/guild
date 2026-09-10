@@ -266,7 +266,7 @@ Decompose authors every teammate prompt **once**, freezes it, and validates it a
 
 **Findings have two channels.** Behaviour and security findings are defects. Comment prose — a stale line hint, a count, a direction word — goes to a typed observations ledger instead, and the server refuses to file it the other way. A security-property claim can never be demoted; trying trips a persisted audit signal.
 
-**`--max-cycles N` caps the loop, and the cap is not a refusal.** The default `0` is unbounded. The transition that would open a GRIND cycle past the cap succeeds into a named `HALTED` state, generating the report as part of that same transition so every open `LIVE` and `LATENT` defect is written down. `HALTED` is not `DONE` — it is a run that stopped with open work, and it says so.
+**`--max-cycles N` caps the loop, and the cap is not a refusal.** The default `0` is unbounded. The transition that would open a GRIND cycle past the cap succeeds into a named `HALTED` state, and the report is generated as part of that same transition, naming every open defect at every tier: every open `LIVE` one, and every open `LATENT` and `HARDENING` one in its own `latent_backlog` and `hardening_backlog` section. `HALTED` is not `DONE` — it is a run that stopped with open work, and it says so.
 
 **Building foundry with foundry — launch with `--plugin-dir`.** A run whose target is the foundry plugin is started as `claude --plugin-dir <project_root>/plugins/foundry`, so the executing MCP server is the working tree and the fixes the run ships reach that same run. F0 refuses a self-targeting run whose server does not match the tree, naming the launch command; a run targeting anything else compares nothing. No run ever switches servers mid-flight.
 
@@ -393,7 +393,7 @@ The successor to 4.9.0's own retrospective. `thunder-viper` shipped 4.9.0 in 22 
 
 | Adds | Where |
 |---|---|
-| **`LIVE` / `LATENT` tier on every finding** — `LIVE` means the stream drove the door and saw the wrong result; `LATENT` means it derived the finding with no reachable instance and must say what it drove. A security-property claim can never be `LATENT` | `Foundry-Defect` · `Foundry-Sync` · all four stream agents · temper |
+| **A tier on every finding** — `LIVE` means the stream drove the door and saw the wrong result; `LATENT` means it derived the finding with no reachable instance and must say what it drove. A security-property claim can never be `LATENT`. 4.11.0 widened the set with `HARDENING` (see its row in the 4.11.0 table); `vocab.DEFECT_TIERS` holds the members | `Foundry-Defect` · `Foundry-Sync` · all four stream agents · temper |
 | **Tier-aware gates** — `LIVE` and unknown-tier defects block; a `LATENT`-only backlog passes every gate and stays open, tracked, and named in the report | `inspect_clean` · ASSAY · TEMPER · NYQUIST · DONE |
 | **Escalation exits mechanically** — two consecutive cycles drawing zero `LIVE` instances, or an exhausted two-pass structural budget; `CLEARED` persists its exit reason. Clearing ends escalation, never a defect | `Foundry-Tasks` · `escalation.json` |
 | **`LATENT` fix lane** — a `LATENT` defect closes on a named regression test, without the adjacent-path declaration a `LIVE` fix still requires | `Foundry-Fix` |
