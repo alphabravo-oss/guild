@@ -921,11 +921,12 @@ def test_a_compound_spec_ref_co_dispatches_every_casting_owning_any_of_its_ids(r
     """fallout OT-002 / AC-002 / CT-008 / FR-038 (D-231).
 
     Both filing doors accept a compound `spec_ref`, and real ledgers are full
-    of them. The join read each ref as ONE id, so `"FR-007 / CT-004"`
-    intersected no casting and the set came back `[]`. Driven here through
-    Foundry-Tasks, over PROVE's own manifest: casting 3 owns FR-007 and the
-    fix's file, casting 4 owns FR-007, casting 5 owns CT-004. Expected `[4, 5]`,
-    with the parsed ids on the dispatch record the F6 report reads.
+    of them. The join read each ref as ONE id, so a ref joining
+    fallout FR-007 and fallout CT-004 with a slash intersected no casting
+    and the set came back `[]`. Driven here through Foundry-Tasks, over
+    PROVE's own manifest: casting 3 owns fallout FR-007 and the fix's file,
+    casting 4 owns fallout FR-007, casting 5 owns fallout CT-004. Expected
+    `[4, 5]`, with the parsed ids on the dispatch record the F6 report reads.
     """
     project_root, fdir = run_env
     _manifest_with_requirement_ids(fdir, {
@@ -973,7 +974,7 @@ def test_a_dispatch_the_set_cannot_key_is_still_recorded_for_team_down(run_env):
     """fallout GI-017 / FR-022 / FR-048 / AC-039 (D-264).
 
     On a manifest without `requirement_ids` the co-dispatch set is "not
-    computable" (AC-006), and Foundry-Tasks skipped the `grind_dispatched`
+    computable" (fallout AC-006), and Foundry-Tasks skipped the `grind_dispatched`
     record for exactly that task — so the defect was dispatched with no record,
     and Team-Down, which reads nothing else, passed a fix committed with its
     ledger row still open. Driven end to end: a legacy manifest, Foundry-Tasks,
