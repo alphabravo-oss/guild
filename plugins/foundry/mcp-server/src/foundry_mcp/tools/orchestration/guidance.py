@@ -466,10 +466,21 @@ def _terminal_outlook(fdir: Path | None) -> dict:
     halted = state.get("phase") == RUN_PHASE_HALTED
     if halted:
         heading_for = RUN_PHASE_HALTED
-    elif cycles_to_cap == 0:
+    elif PHASE_NAMES.get(str(state.get("phase"))) == "DONE":
+        # fallout D-232 — a run already in F6 has reached DONE, whatever the
+        # cap arithmetic says about a GRIND it will never open.
+        heading_for = "DONE"
+    elif cycles_to_cap == 0 and _open_by_blocking_tier(fdir)["blocking"] > 0:
         # The next GRIND door would seal HALTED, and that is what the run is
         # heading for even though nothing has stopped yet. Saying so BEFORE the
         # door is the whole point of the field.
+        #
+        # fallout D-232 — AND ONLY WHILE THERE IS BLOCKING WORK TO OPEN ONE.
+        # The cap seals at a GRIND door and nowhere else, and a GRIND opens for
+        # blocking defects (a failing ASSAY files its own). Keyed on the cap
+        # alone, a run converging on its last allowed cycle was told HALTED
+        # through its final INSPECT and ASSAY, in the same payload that told it
+        # to transition to DONE.
         heading_for = RUN_PHASE_HALTED
     else:
         heading_for = "DONE"

@@ -2309,3 +2309,46 @@ def test_the_run_streams_dispatch_names_the_peer_that_rewrites_the_tree(run_env)
     instructions = _run_streams_instructions(run_env)
     assert "TEST rewrites the shared tree" in instructions, instructions
     assert "pin its findings to the HEAD sha" in instructions, instructions
+
+
+def test_a_run_at_its_cap_that_can_still_finish_is_heading_for_done(run_env):
+    """fallout CT-007 / FR-021 / AC-028 / OT-026 (D-232).
+
+    CT-007: "every response carries heading_for (DONE or HALTED)". The field
+    was set to HALTED whenever `cycles_to_cap` was 0, reading neither the phase
+    nor the ledger — so a run already in F6 named HALTED as its terminal state,
+    and a capped run converging on its last allowed cycle was told HALTED in
+    the same payload that told it to transition to DONE.
+
+    The cap seals HALTED at a GRIND door and nowhere else, and a GRIND opens
+    for blocking work. So at the cap: DONE when the run is DONE or has nothing
+    blocking, HALTED while a LIVE or untiered defect is open.
+    """
+    project_root, fdir = run_env
+    _defect_ledger(fdir, [])
+
+    _write_state(fdir, phase="F6", cycle=2, max_cycles=2)
+    done = foundry_next_action(project_root, caller="subagent")
+    assert done["cycles_to_cap"] == 0, done
+    assert done["heading_for"] == "DONE", done
+
+    for phase in ("F2", "F4"):
+        _write_state(fdir, phase=phase, cycle=2, max_cycles=2)
+        clean = foundry_next_action(project_root, caller="subagent")
+        assert clean["cycles_to_cap"] == 0, (phase, clean)
+        assert clean["heading_for"] == "DONE", (phase, clean)
+
+    # A non-blocking backlog opens no GRIND, so it is a named backlog on the way
+    # to DONE, not a reason to halt.
+    _defect_ledger(fdir, [
+        _tiered("D-1", "LATENT", reproduction_attempted="drove it; no instance"),
+        _tiered("D-2", "HARDENING", reproduction_attempted="drove the probe; it failed"),
+    ])
+    _write_state(fdir, phase="F2", cycle=2, max_cycles=2)
+    assert foundry_next_action(project_root, caller="subagent")["heading_for"] == "DONE"
+
+    # Blocking work at the cap does reach a GRIND door, and that door halts.
+    for tier in ("LIVE", None):
+        _defect_ledger(fdir, [_tiered("D-3", tier)])
+        blocked = foundry_next_action(project_root, caller="subagent")
+        assert blocked["heading_for"] == vocab.RUN_PHASE_HALTED, (tier, blocked)
