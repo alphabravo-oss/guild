@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider --no-header tests/test_observations.py tests/orchestration/test_module_boundaries.py -k 'temper_never_ran or opting_in_to_temper or entered_temper_and_moved_on or candidate_drive_door_is_registered' 2>&1 | tail -1 | awk '{ if ($1 == "4" && $2 ~ /^passed/) print "VERDICT: PASS -- 4/4 fallout D-254 drive-guard tests green: refused where TEMPER never ran and where it was only opted into, accepted after TEMPER ran and moved on, and over MCP in the TEMPER phase"; else print "VERDICT: FAIL -- " $0 }'
+# evidence-for: ST-007, AC-020
+# evidence-timeout: 300
+
+VERDICT: PASS -- 4/4 fallout D-254 drive-guard tests green: refused where TEMPER never ran and where it was only opted into, accepted after TEMPER ran and moved on, and over MCP in the TEMPER phase
