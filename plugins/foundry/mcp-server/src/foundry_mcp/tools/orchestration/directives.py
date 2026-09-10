@@ -787,8 +787,10 @@ def _append_grind_dispatch(
         # fallout CT-008 (D-069) — the report's four read keys, written.
         # `co_dispatch` is a LIST and may be empty; the reader treats an empty
         # one as "no row", which is its call to make and not this writer's to
-        # pre-empt by omitting the key.
-        "co_dispatch": list(co_dispatch or []),
+        # pre-empt by omitting the key. It is NULL when the set was not
+        # computable (D-264): the dispatch happened, and "which castings" has
+        # no answer, which an empty list would misstate as "none".
+        "co_dispatch": None if co_dispatch is None else list(co_dispatch),
         "defect_ids": list(defect_ids or [defect_id]),
         "requirement_ids": sorted(requirement_ids or []),
         "phase": phase,
@@ -1079,8 +1081,15 @@ def foundry_defects_to_tasks(
         # and must not record a dispatch by asking for them: two writers of one
         # handoff record is a Team-Down refusal naming a defect nobody
         # dispatched twice.
-        if task.get("co_dispatch") is None:
-            continue
+        #
+        # fallout GI-017 / FR-022 / FR-048 / AC-039 (D-264) — WRITTEN WHETHER
+        # OR NOT THE SET IS COMPUTABLE. A manifest with no `requirement_ids`
+        # makes `co_dispatch` None — AC-006's "not computable" — and this loop
+        # used to `continue` on it, so the defect was dispatched with no record
+        # and Team-Down, which reads nothing else, could never refuse on it. The
+        # set's computability and the dispatch are two facts; the record carries
+        # the first as a null `co_dispatch`, which the F6 report reader already
+        # skips as "not a dispatch row".
         for did in task.get("defect_ids") or []:
             defect = open_by_id.get(did) or {}
             _append_grind_dispatch(
@@ -1091,7 +1100,7 @@ def foundry_defects_to_tasks(
                 casting=task.get("owning_casting"),
                 # fallout CT-008 / AC-025 / FR-053 (D-069) — the computed set,
                 # onto the record the F6 report reads it off.
-                co_dispatch=list(task.get("co_dispatch") or []),
+                co_dispatch=task.get("co_dispatch"),
                 defect_ids=list(task.get("defect_ids") or []),
                 # fallout D-231 — the PARSED ids, the same set the join used.
                 requirement_ids=sorted(_spec_ref_requirement_ids(task.get("spec_refs"))),

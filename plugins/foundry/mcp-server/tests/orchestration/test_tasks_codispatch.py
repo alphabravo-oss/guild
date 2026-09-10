@@ -967,3 +967,51 @@ def test_a_compound_spec_ref_co_dispatches_every_casting_owning_any_of_its_ids(r
     assert task["co_dispatch"] == [], task
     assert anchor in task["alignment_block"], task["alignment_block"]
     assert [r["requirement_ids"] for r in _grind_dispatch_records(fdir)] == [[anchor]]
+
+
+def test_a_dispatch_the_set_cannot_key_is_still_recorded_for_team_down(run_env):
+    """fallout GI-017 / FR-022 / FR-048 / AC-039 (D-264).
+
+    On a manifest without `requirement_ids` the co-dispatch set is "not
+    computable" (AC-006), and Foundry-Tasks skipped the `grind_dispatched`
+    record for exactly that task — so the defect was dispatched with no record,
+    and Team-Down, which reads nothing else, passed a fix committed with its
+    ledger row still open. Driven end to end: a legacy manifest, Foundry-Tasks,
+    a commit touching the dispatched file, then the Team-Down predicate. The
+    record must exist with a NULL set, the door must refuse, and the F6 report
+    must still read that record as no co-dispatch row.
+    """
+    from foundry_mcp.tools import artifacts
+    from foundry_mcp.tools.foundry_report import _halt_and_co_dispatch_section
+    from foundry_mcp.tools.orchestration.teams import _unrecorded_fix_problem
+    from tests.orchestration._env import _repo_with_commit
+
+    project_root, fdir = run_env
+    base = _repo_with_commit(project_root, "a.txt", "before\n")
+    (fdir / artifacts.INSPECT_BOUNDARY_SHA_MARKER).write_text(f"{base}\n", encoding="utf-8")
+    _write_manifest_with_castings(fdir, ["a.txt"], no_ui=True)
+    _write_state(fdir, phase="F3", cycle=4)
+    _defect_ledger(fdir, [dict(_tiered("D-001", "LIVE"), file="a.txt")])
+
+    result = foundry_defects_to_tasks(project_root)
+    assert result["co_dispatch_computable"] is False, result
+    task = next(t for t in result["tasks"] if "D-001" in t["defect_ids"])
+    assert task["co_dispatch"] is None, task
+
+    records = _grind_dispatch_records(fdir)
+    assert [(r["defect_id"], r["file"]) for r in records] == [("D-001", "a.txt")], records
+    assert records[0]["co_dispatch"] is None, records[0]
+
+    fix = _repo_with_commit(project_root, "a.txt", "after\n")
+    refusal = _unrecorded_fix_problem(fdir, project_root)
+    assert refusal is not None, "a committed fix with an open row passed Team-Down"
+    assert [d["id"] for d in refusal["defects"]] == ["D-001"], refusal
+    assert fix.startswith(refusal["defects"][0]["commit"]), refusal
+
+    # The other reader of this record. A NULL set is neither a dispatch row nor
+    # "the casting owned its requirements alone" — the reader's case 2, which
+    # an empty list written here would have claimed.
+    section, problem = _halt_and_co_dispatch_section(fdir, {"phase": "F3"})
+    assert problem is None, problem
+    assert section["co_dispatch_count"] == 0, section
+    assert section["co_dispatch_owned_alone_count"] == 0, section
