@@ -1353,11 +1353,18 @@ def test_every_contracts_surface_resolves_to_a_module_through_the_registry():
     """The HOW-THEY-MAP axis on its own: `server.py`'s `_DISPATCH` is what says
     which module implements a surface, and it is READ, not guessed.
 
-    `"Foundry-Report": lambda args: _dispatch_report()` is the case that makes
-    the hop mandatory — the real handler is named only inside `_dispatch_report`,
-    in a function-local import, so a resolver that stopped at the lambda would
-    map CT-014 to `server.py` and leave `tools/foundry_report.py` uncovered,
-    which is the second half of what D-204 reported.
+    `Foundry-Report` is the case D-204 reported the second half of: a resolver
+    that guesses from names, or that stops before it reaches a real module,
+    maps CT-014 to `server.py` and leaves `tools/foundry_report.py` uncovered.
+
+    fallout D-223 / holmes#reg-2 — WHAT THE ENTRY LOOKS LIKE HAS CHANGED, AND
+    THE ASSERTION HAS NOT. It used to read `lambda args: _dispatch_report()`,
+    an adapter defined in `server.py` holding a function-local import, so the
+    resolver took one more hop into that helper to find the handler. The adapter
+    is gone — `foundry_report.foundry_report` is the tool-shaped door and the
+    entry binds it by name — and the hop went with it. The claim below is
+    unchanged either way: the registry, not a name, is what says CT-014 is
+    implemented by `tools/foundry_report.py`.
     """
     registry = _width._registry_tool_modules()
 

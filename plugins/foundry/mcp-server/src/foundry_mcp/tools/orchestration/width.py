@@ -559,12 +559,21 @@ def _registry_tool_modules() -> dict[str, list[str]]:
     a name it loads from the server's globals that resolves to a function of a
     `foundry_mcp` module contributes that module, and a dotted `foundry_mcp.*`
     name it names contributes that module directly — which is how a lazy
-    in-function import is followed. Entries that dispatch through a helper
-    defined in `server.py` itself are walked one more hop, because that helper
-    is where the real handler is named: `"Foundry-Report": lambda args:
-    _dispatch_report()` reaches `generate_report` only inside
-    `_dispatch_report`, and stopping at the lambda would map CT-014 to
-    `server.py` and leave `tools/foundry_report.py` uncovered.
+    in-function import is followed.
+
+    fallout D-223 / research/holmes-orchestrator.md#reg-2 — ONE STEP, AND THE
+    HOP IT REPLACES IS A PIN NOW.
+    ---------------------------------------------------------------------------
+    This used to walk one more hop into any function `server.py` itself defines,
+    because two entries hid the real handler inside such a helper's
+    function-local import. Both were adapters holding work their own tool module
+    owns; both are gone, and with them the only entries the hop ever resolved.
+    What keeps this one-step reading honest is not the absence but the
+    assertion: `test_width.py#test_no_dispatch_entry_hides_its_handler_behind_a_
+    server_helper` refuses any `_DISPATCH` entry naming a function of
+    `server.py`, so the registrar cannot grow a third adapter without saying so.
+    Deleting a live branch would have narrowed the answer in silence; deleting a
+    pinned-dead one narrows nothing.
 
     Returns `{}` when the server module cannot be imported. Nothing is claimed
     as covered in that case, which is the honest answer: without the registry
@@ -609,9 +618,7 @@ def _registry_tool_modules() -> dict[str, list[str]]:
                 return str(candidate)
         return None
 
-    def walk(code, found: set[str], depth: int, seen: set[str]) -> None:
-        if depth > 3:
-            return
+    def walk(code, found: set[str]) -> None:
         for name in code.co_names:
             if name.startswith("foundry_mcp"):
                 found.add(name)
@@ -622,11 +629,11 @@ def _registry_tool_modules() -> dict[str, list[str]]:
             module = getattr(obj, "__module__", "") or ""
             if not module.startswith("foundry_mcp"):
                 continue
-            if module == "foundry_mcp.server":
-                if name not in seen:
-                    seen.add(name)
-                    walk(obj.__code__, found, depth + 1, seen)
-            else:
+            # A function of `server.py` itself contributes NOTHING: the
+            # registrar is not an implementing module, and the pin named in the
+            # docstring is what keeps an entry from naming one. The `depth` /
+            # `seen` parameters went with the recursion that needed them.
+            if module != "foundry_mcp.server":
                 found.add(module)
 
     registry: dict[str, list[str]] = {}
@@ -658,7 +665,7 @@ def _registry_tool_modules() -> dict[str, list[str]]:
         code = getattr(handler, "__code__", None)
         modules: set[str] = set()
         if code is not None:
-            walk(code, modules, 0, set())
+            walk(code, modules)
         files = {f for m in modules if (f := module_file(m)) is not None}
         registry[str(tool)] = sorted(files)
     return registry
