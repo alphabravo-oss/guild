@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 from foundry_mcp.schemas.vocab import (
+    BLOCKING_TIERS,
     DEFECT_SOURCE_IDS,
     DEFECT_TYPES,
     FIX_AUTHORS,
@@ -2791,9 +2792,29 @@ def foundry_sync_defects(
 
             match_id = None
             for fd in fixed:
-                if _is_regression_of(finding, norm, fd):
-                    match_id = fd["id"]
-                    break
+                if not _is_regression_of(finding, norm, fd):
+                    continue
+                # fallout NFR-004 / GI-004 (D-259) — THE NEVER-DEMOTE RUNG, AT
+                # THE REOPEN EXIT.
+                #
+                # A reopen gives the finding the RECORD's tier and discards its
+                # own, and nothing asked whether that tier could hold it: an
+                # on-spec LIVE finding, a security claim included, came back as
+                # a reopened HARDENING record that blocks nothing. So a blocking
+                # finding may not reopen a record that does not block, and no
+                # finding may reopen one at a tier its own filing would be
+                # refused at — `validate_defect_filing`, the doors' one judge,
+                # decides that. Either way the finding falls through and is
+                # filed at its OWN tier as a new record, never re-tiered into
+                # the old one (GI-022).
+                record_tier = defect_tier(fd)
+                if record_tier not in BLOCKING_TIERS and (
+                    defect_tier(norm) in BLOCKING_TIERS
+                    or validate_defect_filing({**finding, "tier": record_tier}) is not None
+                ):
+                    continue
+                match_id = fd["id"]
+                break
 
             if match_id:
                 for d in _dict_records(records):

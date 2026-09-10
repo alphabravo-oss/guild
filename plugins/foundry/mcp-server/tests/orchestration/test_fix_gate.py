@@ -1677,3 +1677,100 @@ def test_the_single_door_still_reads_its_own_top_level_source(run_env, monkeypat
         _tripwire_classes(fdir)
     )
     assert _tripwire_sources(fdir) == ["prove"], _tripwire_sources(fdir)
+
+
+def _fixed_hardening_d001(fdir: Path) -> None:
+    """D-259's arrangement: a HARDENING finding, filed and then fixed."""
+    _seed_fixed(fdir, _fixed_record(
+        source="prove", type="PARTIAL", tier="HARDENING", spec_ref="",
+        symbol="retry_job", file="src/queue/retry.py",
+        description="retry_job drops the job after its third attempt",
+        reproduction_attempted="drove retry_job with a poisoned job; it was dropped",
+        **{"class": "retry-drops-job"},
+    ))
+
+
+@pytest.mark.parametrize(
+    "incoming",
+    [
+        {"tier": "LIVE", "spec_ref": "FR-014"},
+        {"tier": "LIVE", "spec_ref": "FR-014", "failure": _SECURITY_CLAIM},
+        {"tier": "LATENT", "spec_ref": "FR-014",
+         "reproduction_attempted": "drove the queue; no reachable instance"},
+    ],
+    ids=["on_spec_live", "security_claim", "on_spec_latent"],
+)
+def test_sync_never_folds_a_finding_into_a_fixed_record_that_would_demote_it(
+    run_env, incoming,
+):
+    """fallout NFR-004 / GI-004 (D-259).
+
+    NFR-004: "Every reclassification proposed here is for findings OFF the
+    spec's stated paths", and GI-004 keeps a security claim or a driven failure
+    of a spec-required behaviour "a blocking defect at full weight". Sync's
+    reopen exit gave a matching finding the fixed RECORD's tier and discarded
+    its own, so an on-spec LIVE finding — a security claim included — came back
+    as a reopened HARDENING record that blocks nothing, and passed the DONE gate.
+
+    The finding agrees with the fixed HARDENING record on symbol, file, type
+    and description (the record's `spec_ref` is empty by door rule, so it
+    conflicts on nothing). It must be filed as a NEW record at its own tier,
+    and the HARDENING record must be left exactly as it was.
+    """
+    from foundry_mcp.tools.orchestration.gates import _blocking_defects
+
+    project_root, fdir = run_env
+    _fixed_hardening_d001(fdir)
+
+    result = _sync(2, [{
+        "source": "prove", "type": "PARTIAL", "class": "retry-drops-job",
+        "symbol": "retry_job", "file": "src/queue/retry.py",
+        "description": "retry_job drops the job after its third attempt",
+        **incoming,
+    }], project_root)
+
+    assert result.get("ok") is True, result
+    assert result["reopened"] == 0, result
+    assert result["added"] == 1, result
+    assert result["regressions"] == [], result
+
+    records = {
+        r["id"]: r
+        for r in json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    }
+    assert records["D-001"]["status"] == "fixed", records["D-001"]
+    assert records["D-001"]["tier"] == "HARDENING", records["D-001"]
+    filed = next(r for rid, r in records.items() if rid != "D-001")
+    assert filed["status"] == "open", filed
+    assert filed["tier"] == incoming["tier"], filed
+    assert filed["spec_ref"] == "FR-014", filed
+    expected_blocking = 1 if incoming["tier"] in vocab.BLOCKING_TIERS else 0
+    assert _blocking_defects(fdir)["blocking"] == expected_blocking, records
+
+
+def test_a_hardening_finding_recurring_still_reopens_its_hardening_record(run_env):
+    """fallout NFR-004 / GI-004 (D-259) — the adjacent path the rung leaves open.
+
+    The never-demote rung refuses a reopen only when it would lower the
+    finding. The same off-spec HARDENING probe failing again is the regression
+    the reopen exit exists for, at the tier it already holds, so it still
+    reopens rather than being filed twice.
+    """
+    project_root, fdir = run_env
+    _fixed_hardening_d001(fdir)
+
+    result = _sync(2, [{
+        "source": "prove", "type": "PARTIAL", "class": "retry-drops-job",
+        "tier": "HARDENING",
+        "symbol": "retry_job", "file": "src/queue/retry.py",
+        "description": "retry_job drops the job after its third attempt",
+        "reproduction_attempted": "drove retry_job with a poisoned job; dropped again",
+    }], project_root)
+
+    assert result["reopened"] == 1, result
+    assert result["added"] == 0, result
+    assert result["regressions"] == ["D-001"], result
+    records = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+    assert [(r["id"], r["status"], r["tier"]) for r in records] == [
+        ("D-001", "open", "HARDENING")
+    ], records
