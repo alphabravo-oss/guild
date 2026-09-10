@@ -473,6 +473,36 @@ def _concern_carriers(tasks: list[dict], concern: dict) -> list[dict]:
 
 
 
+def _spec_ref_requirement_ids(spec_refs: list | None) -> set[str]:
+    """The requirement ids a task's `spec_refs` name, in the directive's grammar.
+
+    fallout OT-002 / AC-002 / CT-008 / FR-038 (D-231). A `spec_ref` is
+    free text at both filing doors, and compound refs are ordinary on a real
+    ledger — `"AC-009 / GI-011 / FR-041"` is one. Taken whole, such
+    a ref intersected no casting's `requirement_ids`, so the co-dispatch set
+    came back EMPTY for every defect that cited more than one id — while
+    `foundry_inject_directive` parsed the same ids correctly out of prose.
+
+    So each ref is read with the directive's own scan: `REQUIREMENT_ID_RE`
+    finds the ids and `is_requirement_id` confirms each, the one grammar and no
+    second one. A ref holding NO requirement id (a research anchor such as
+    `research/holmes-orchestrator.md#share-11`) is kept verbatim, so the
+    alignment block and the dispatch record still name what the defect cited.
+    """
+    ids: set[str] = set()
+    for ref in spec_refs or []:
+        if not isinstance(ref, str) or not ref:
+            continue
+        found = {
+            token for token in REQUIREMENT_ID_RE.findall(ref)
+            if is_requirement_id(token)
+        }
+        ids |= found or {ref}
+    return ids
+
+
+
+
 def _annotate_co_dispatch(
     fdir: Path, tasks: list[dict], concerns: list[dict] | None = None
 ) -> bool:
@@ -516,7 +546,7 @@ def _annotate_co_dispatch(
         # one would overwrite it with the empty intersection of no spec_refs.
         if task.get("concern_only"):
             continue
-        requirement_ids = {r for r in task.get("spec_refs", []) if r}
+        requirement_ids = _spec_ref_requirement_ids(task.get("spec_refs"))
         if not ids_declared:
             # AC-006 / OT-006: NOT COMPUTABLE, never an empty set. A lead
             # reading "no other casting owns this" when the truth is "nobody
@@ -1063,7 +1093,8 @@ def foundry_defects_to_tasks(
                 # onto the record the F6 report reads it off.
                 co_dispatch=list(task.get("co_dispatch") or []),
                 defect_ids=list(task.get("defect_ids") or []),
-                requirement_ids=[r for r in task.get("spec_refs") or [] if r],
+                # fallout D-231 — the PARSED ids, the same set the join used.
+                requirement_ids=sorted(_spec_ref_requirement_ids(task.get("spec_refs"))),
                 phase=run_phase,
             )
 

@@ -915,3 +915,55 @@ def test_the_narrower_claim_wins_when_both_a_directory_and_its_file_are_declared
 
     assert _owning_casting(fdir, ["src/pkg/one.py"]) == 9
     assert _owning_casting(fdir, ["src/pkg/two.py"]) == 2
+
+
+def test_a_compound_spec_ref_co_dispatches_every_casting_owning_any_of_its_ids(run_env):
+    """fallout OT-002 / AC-002 / CT-008 / FR-038 (D-231).
+
+    Both filing doors accept a compound `spec_ref`, and real ledgers are full
+    of them. The join read each ref as ONE id, so `"FR-007 / CT-004"`
+    intersected no casting and the set came back `[]`. Driven here through
+    Foundry-Tasks, over PROVE's own manifest: casting 3 owns FR-007 and the
+    fix's file, casting 4 owns FR-007, casting 5 owns CT-004. Expected `[4, 5]`,
+    with the parsed ids on the dispatch record the F6 report reads.
+    """
+    project_root, fdir = run_env
+    _manifest_with_requirement_ids(fdir, {
+        3: (["FR-007"], ["src/three.py"]),
+        4: (["FR-007"], ["src/four.py"]),
+        5: (["CT-004"], ["src/five.py"]),
+    })
+    _write_state(fdir, phase="F3", cycle=1)
+
+    for spelling in ("FR-007 / CT-004", "FR-007, CT-004"):
+        (fdir / "handoffs.jsonl").unlink(missing_ok=True)
+        _defect_ledger(fdir, [
+            dict(_tiered("D-900", "LIVE"), file="src/three.py", spec_ref=spelling),
+        ])
+        result = foundry_defects_to_tasks(project_root)
+        task = next(t for t in result["tasks"] if "D-900" in t["defect_ids"])
+        assert task["co_dispatch"] == [4, 5], (spelling, task)
+        assert task["owning_casting"] == 3, (spelling, task)
+        block = task["alignment_block"]
+        for fragment in ("CT-004", "FR-007", "casting 4", "casting 5"):
+            assert fragment in block, (spelling, fragment, block)
+
+        records = _grind_dispatch_records(fdir)
+        assert [r["requirement_ids"] for r in records] == [["CT-004", "FR-007"]], (
+            spelling, records,
+        )
+
+    # A ref holding no requirement id at all is carried verbatim, as it was: it
+    # still names what the defect cited, and still co-dispatches nobody.
+    (fdir / "handoffs.jsonl").unlink(missing_ok=True)
+    anchor = "research/holmes-orchestrator.md#share-11"
+    _defect_ledger(fdir, [
+        dict(_tiered("D-901", "LIVE"), file="src/three.py", spec_ref=anchor),
+    ])
+    task = next(
+        t for t in foundry_defects_to_tasks(project_root)["tasks"]
+        if "D-901" in t["defect_ids"]
+    )
+    assert task["co_dispatch"] == [], task
+    assert anchor in task["alignment_block"], task["alignment_block"]
+    assert [r["requirement_ids"] for r in _grind_dispatch_records(fdir)] == [[anchor]]
