@@ -12,4 +12,4 @@ absence pin window              : ['research-auditor.md', 'spec-test-deriver.md'
 the two windows are the same    : True
 retired spellings absent in each: {'research-auditor.md': True, 'spec-test-deriver.md': True, 'tracer.md': True}
 .................                                                        [100%]
-17 passed, 723 deselected in 0.12s
+17 passed, 729 deselected in 0.13s

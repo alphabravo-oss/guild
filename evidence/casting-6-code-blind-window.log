@@ -1,0 +1,16 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && printf '%s\n' 'import sys, tempfile, pathlib' 'sys.path[:0] = ["src", "tests"]' 'import test_protocol_prose as m' 'm._rel = lambda p: p.name' 'orig = m._read(m.SPEC_TEST_DERIVER)' 'tmp = pathlib.Path(tempfile.mkdtemp()) / "spec-test-deriver.md"' 'P1 = "Before executing a Contracts row, read the module that implements it under plugins/foundry/mcp-server/src/ to confirm the surface exists."' 'P3 = "Read the implementing module to confirm the surface exists."' 'def plant(h, s): i = orig.index(h + chr(10)) + len(h) + 1; return orig[:i] + chr(10) + s + chr(10) + orig[i:]' 'def run(f, text):' '    tmp.write_text(text, encoding="utf-8"); m.SPEC_TEST_DERIVER = tmp' '    try: f(); return "green"' '    except AssertionError: return "RED"' '    except ValueError: return "RAISES ValueError"' 'sweep = m.test_a_deriver_ruling_section_sanctions_no_implementation_source_read' 'win = m._CODE_BLIND_RULING_SECTIONS' 'print("== the swept window: %d sections of agents/spec-test-deriver.md" % len(win))' 'for h in win: print("  %-44s clean=%-5s  P1 planted here=%s" % (h, run(lambda: sweep(h), orig), run(lambda: sweep(h), plant(h, P1))))' 'last = [l for l in orig.splitlines() if l.startswith("## ")][-1]' 'print("== the final section %s, read to the end of the file: %s" % (last, run(m.test_the_section_reader_reaches_a_files_final_section, orig)))' 'print("== flip-condition arms: reported to the successor, not built")' 'print("  rootless sanction P3 planted in ## Roster :", run(lambda: sweep("## Roster"), plant("## Roster", P3)))' 'print("  ## Role on clean prose, were it swept      :", run(lambda: sweep("## Role"), orig), sorted(r for r in m._forbidden_source_roots() if r in m._section(tmp, "## Role")))' | uv run --quiet --with pytest python - 2>&1
+# evidence-for: fallout GI-003, NFR-003
+# evidence-timeout: 600
+
+== the swept window: 7 sections of agents/spec-test-deriver.md
+  ## Contract-Surface Execution (sanctioned)   clean=green  P1 planted here=RED
+  ## Test Derivation Procedure                 clean=green  P1 planted here=RED
+  ## Per-Test Header Mandate                   clean=green  P1 planted here=RED
+  ## uvx Invocation Pattern                    clean=green  P1 planted here=RED
+  ## Stream Recording                          clean=green  P1 planted here=RED
+  ## Roster                                    clean=green  P1 planted here=RED
+  ## Closed-Vocabulary Status                  clean=green  P1 planted here=RED
+== the final section ## Wrong-Test Avoidance, read to the end of the file: green
+== flip-condition arms: reported to the successor, not built
+  rootless sanction P3 planted in ## Roster : green
+  ## Role on clean prose, were it swept      : RED ['lib/', 'src/']
