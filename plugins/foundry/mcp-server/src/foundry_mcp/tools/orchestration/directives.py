@@ -10,6 +10,7 @@ from pathlib import Path
 
 from foundry_mcp.schemas.vocab import (
     REQUIREMENT_ID_RE,
+    _normalise_path,
     is_requirement_id,
 )
 from foundry_mcp.tools.artifacts import (
@@ -43,6 +44,13 @@ from foundry_mcp.tools.orchestration.escalation import (
     _spend_structural_budget,
     _structural_proposal,
     parse_directive_blocks,
+)
+# fallout AC-039 / AC-002 (D-269, D-270) — the fix gate's reference fold, for
+# `_dispatch_file_path`. At module top because it closes no cycle: `fix_gate`
+# reaches neither this module nor `teams` at import time.
+from foundry_mcp.tools.orchestration.fix_gate import (
+    _ref_file_component,
+    _strip_line_hint,
 )
 
 
@@ -827,6 +835,41 @@ def _grind_dispatches(fdir: Path, cycle: int) -> list[dict]:
         and r.get("event") == HANDOFF_EVENT_GRIND_DISPATCHED
         and r.get("cycle") == cycle
     ]
+
+
+def _dispatch_file_path(file: object, project_root: str | Path) -> str:
+    """The repo-relative path a defect's recorded `file` names, as git spells it.
+
+    fallout AC-039 / AC-002 / FR-038 (D-265, D-269, D-270) — ONE FOLD FOR THE
+    JOINS ON THIS FIELD.
+
+    Both filing doors store `file` verbatim, and four stream contracts tell
+    their agents "a `#Symbol` beside it is fine", so the field arrives as
+    `src/a.py`, `src/a.py#handler`, `src/a.py:12`, `./src/a.py` or the absolute
+    path of the same file. Two joins read it: Team-Down's, against git's
+    repo-relative names (`teams.py#_unrecorded_fix_problem`), and the owner
+    lookup, against the manifest's `key_files` (`_owning_casting`). Compared
+    raw, every spelling but the bare one matched nothing.
+
+    The fold, in order: the fix gate's `#Symbol` / `::test` head and line-hint
+    strips; then an ABSOLUTE path under `project_root` made relative to it;
+    then vocab's prefix-aware normaliser. The root is tried as spelled first and
+    then resolved, because a root passed as "." or reached through a symlinked
+    temp directory names the same directory in a different spelling. An
+    absolute path outside the root stays absolute and matches nothing, which is
+    the honest answer for a file that is not in this repository.
+    """
+    text = _strip_line_hint(_ref_file_component(str(file or "")))
+    candidate = Path(text)
+    if text and candidate.is_absolute():
+        root = Path(project_root)
+        for path, base in ((candidate, root), (candidate.resolve(), root.resolve())):
+            try:
+                text = path.relative_to(base).as_posix()
+                break
+            except ValueError:
+                continue
+    return _normalise_path(text)
 
 
 

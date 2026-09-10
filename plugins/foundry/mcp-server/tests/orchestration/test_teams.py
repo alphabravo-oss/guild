@@ -5,6 +5,7 @@ own test module, carved in the same casting as the source move.
 """
 from __future__ import annotations
 
+from pathlib import Path
 
 from foundry_mcp.tools.orchestration.teams import (
     _check_sight_required,
@@ -398,3 +399,60 @@ def test_a_decorated_file_field_still_joins_the_commit_that_touched_it(run_env):
     for did, row in named.items():
         assert row["file"] == spellings[did], row
         assert row["commit"] and fix.startswith(row["commit"]), row
+
+
+def test_an_absolute_file_under_the_project_root_still_joins_its_commit(
+    run_env, monkeypatch
+):
+    """fallout AC-039 / CT-010 / ST-011 / OT-036 / GI-017 (D-269).
+
+    Fallout of D-265. Its fold dropped a `#Symbol` head, a line hint and a
+    leading `./`, and never the project root, so `<root>/src/one.py` was
+    compared raw against git's `src/one.py` and the door passed a committed fix
+    whose row was still open. Both filing doors accept the absolute spelling
+    and store it verbatim.
+
+    ONE commit touches the file. The three absolute spellings of it must each be
+    refused beside that commit, keeping the spelling they were filed with; an
+    absolute path OUTSIDE the root names a different file and must not be, which
+    is what makes this a root strip and not a suffix match.
+    """
+    from foundry_mcp.tools.orchestration.directives import _dispatch_file_path
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=0)
+
+    base = _repo_with_commit(project_root, "src/one.py", "print('a')\n")
+    (fdir / artifacts.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+        base + "\n", encoding="utf-8"
+    )
+    _manifest_with_requirement_ids(fdir, {1: (["FR-007"], ["src/one.py"])})
+    absolute = f"{project_root}/src/one.py"
+    spellings = {
+        "D-020": absolute,
+        "D-021": f"{absolute}:12",
+        "D-022": f"{absolute}#_handler",
+    }
+    outside = {"D-023": "/elsewhere-not-this-repository/src/one.py"}
+    _defect_ledger(fdir, [
+        dict(_tiered(did, "LIVE"), file=spelling, spec_ref="FR-007")
+        for did, spelling in {**spellings, **outside}.items()
+    ])
+    assert foundry_defects_to_tasks(project_root)["ok"] is True
+    fix = _repo_with_commit(project_root, "src/one.py", "print('b')\n")
+
+    problem = _unrecorded_fix_problem(fdir, project_root)
+    assert problem is not None, "a committed fix with open rows passed Team-Down"
+    named = {d["id"]: d for d in problem["defects"]}
+    assert set(named) == set(spellings), problem["defects"]
+    for did, row in named.items():
+        assert row["file"] == spellings[did], row
+        assert row["commit"] and fix.startswith(row["commit"]), row
+
+    # The root as Team-Down's own default spells it, ".", reaches the same file
+    # only through the RESOLVED comparison — the literal one cannot relate an
+    # absolute path to a relative root at all.
+    monkeypatch.chdir(project_root)
+    resolved = f"{Path(project_root).resolve()}/src/one.py"
+    assert _dispatch_file_path(resolved, ".") == "src/one.py"
+    assert _dispatch_file_path(outside["D-023"], ".") == outside["D-023"]

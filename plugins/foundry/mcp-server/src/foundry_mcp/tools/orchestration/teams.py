@@ -9,7 +9,7 @@ import os
 import re
 from pathlib import Path
 
-from foundry_mcp.schemas.vocab import NO_UI_MEANING, _normalise_path
+from foundry_mcp.schemas.vocab import NO_UI_MEANING
 from foundry_mcp.tools.orchestration.keyfiles import DIRECTORY_ENTRY_SUFFIX
 from foundry_mcp.tools.artifacts import (
     CAST_BASELINE_SHA_MARKER,
@@ -390,7 +390,11 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
     # close a cycle that takes every tool in this server down at once.
     # Unguarded, so a wiring break fails loudly at the one call site that
     # needs the symbol rather than hiding behind a silent fallback.
-    from foundry_mcp.tools.orchestration.directives import DISPATCHED_DEFECT_UNRECORDED, _grind_dispatches
+    from foundry_mcp.tools.orchestration.directives import (
+        DISPATCHED_DEFECT_UNRECORDED,
+        _dispatch_file_path,
+        _grind_dispatches,
+    )
     cycle = current_cycle(fdir)
     dispatched = _grind_dispatches(fdir, cycle)
     if not dispatched:
@@ -425,19 +429,12 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
     # their agents "a `#Symbol` beside it is fine". Compared raw against git's
     # repo-relative names, `a.txt#Sym`, `a.txt:12` and `./a.txt` each matched
     # nothing, and the door passed a committed fix whose row was still open.
-    # The fold is the one the fix gate already applies to a reference — its
-    # `#Symbol` / `::test` head and its line hint — then vocab's prefix-aware
-    # path normaliser, so no third spelling of either rule is written here.
-    # LAZY, in this function's seam style: `fix_gate` is a lifecycle sibling.
-    from foundry_mcp.tools.orchestration.fix_gate import (
-        _ref_file_component,
-        _strip_line_hint,
-    )
-
+    # D-269: so did `<project_root>/a.txt`, which the first fold never made
+    # repo-relative. The fold is `directives.py#_dispatch_file_path`, the one
+    # the owner lookup reads too, so this join and that one cannot fold the
+    # same field two ways.
     for row in still_open:
-        row["_path"] = _normalise_path(
-            _strip_line_hint(_ref_file_component(str(row["file"])))
-        )
+        row["_path"] = _dispatch_file_path(row["file"], project_root)
     unrecorded = [r for r in still_open if r["_path"] in touched]
 
     if not unrecorded:
