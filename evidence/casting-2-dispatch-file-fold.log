@@ -1,13 +1,17 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -v --no-header tests/orchestration/test_teams.py::test_an_absolute_file_under_the_project_root_still_joins_its_commit tests/orchestration/test_teams.py::test_a_decorated_file_field_still_joins_the_commit_that_touched_it tests/orchestration/test_teams.py::test_the_only_sanctioned_exit_is_still_the_one_ac_041_names tests/orchestration/test_tasks_codispatch.py::test_a_decorated_file_still_resolves_the_casting_that_owns_the_fix tests/orchestration/test_tasks_codispatch.py::test_a_concern_targeting_the_casting_that_owns_the_fix_is_already_dispatched 2>&1 | tail -8
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -v --no-header tests/orchestration/test_teams.py::test_an_absolute_file_under_the_project_root_still_joins_its_commit tests/orchestration/test_teams.py::test_a_decorated_file_field_still_joins_the_commit_that_touched_it tests/orchestration/test_teams.py::test_the_only_sanctioned_exit_is_still_the_one_ac_041_names tests/orchestration/test_tasks_codispatch.py::test_a_decorated_file_still_resolves_the_casting_that_owns_the_fix tests/orchestration/test_tasks_codispatch.py::test_a_concern_targeting_the_casting_that_owns_the_fix_is_already_dispatched tests/orchestration/test_teams.py::test_an_unresolvable_file_matches_nothing_and_masks_no_real_refusal 2>&1 | tail -12
 # evidence-for: fallout AC-039, CT-010, ST-011, OT-036, FR-022, FR-048, GI-017, AC-002, OT-002, CT-008, FR-038
 # evidence-volatile: \d+\.\d+s
 # evidence-timeout: 300
 
 
-tests/orchestration/test_teams.py::test_an_absolute_file_under_the_project_root_still_joins_its_commit PASSED [ 20%]
-tests/orchestration/test_teams.py::test_a_decorated_file_field_still_joins_the_commit_that_touched_it PASSED [ 40%]
-tests/orchestration/test_teams.py::test_the_only_sanctioned_exit_is_still_the_one_ac_041_names PASSED [ 60%]
-tests/orchestration/test_tasks_codispatch.py::test_a_decorated_file_still_resolves_the_casting_that_owns_the_fix PASSED [ 80%]
-tests/orchestration/test_tasks_codispatch.py::test_a_concern_targeting_the_casting_that_owns_the_fix_is_already_dispatched PASSED [100%]
+tests/orchestration/test_teams.py::test_an_absolute_file_under_the_project_root_still_joins_its_commit PASSED [ 11%]
+tests/orchestration/test_teams.py::test_a_decorated_file_field_still_joins_the_commit_that_touched_it PASSED [ 22%]
+tests/orchestration/test_teams.py::test_the_only_sanctioned_exit_is_still_the_one_ac_041_names PASSED [ 33%]
+tests/orchestration/test_tasks_codispatch.py::test_a_decorated_file_still_resolves_the_casting_that_owns_the_fix PASSED [ 44%]
+tests/orchestration/test_tasks_codispatch.py::test_a_concern_targeting_the_casting_that_owns_the_fix_is_already_dispatched PASSED [ 55%]
+tests/orchestration/test_teams.py::test_an_unresolvable_file_matches_nothing_and_masks_no_real_refusal[symlink-loop-absolute] PASSED [ 66%]
+tests/orchestration/test_teams.py::test_an_unresolvable_file_matches_nothing_and_masks_no_real_refusal[symlink-loop-cwd-relative] PASSED [ 77%]
+tests/orchestration/test_teams.py::test_an_unresolvable_file_matches_nothing_and_masks_no_real_refusal[nul-byte-absolute] PASSED [ 88%]
+tests/orchestration/test_teams.py::test_an_unresolvable_file_matches_nothing_and_masks_no_real_refusal[nul-byte-cwd-relative] PASSED [100%]
 
-============================== 5 passed in 0.56s ===============================
+============================== 9 passed in 1.52s ===============================
