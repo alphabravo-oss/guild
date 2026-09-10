@@ -4,5 +4,5 @@
 # evidence-volatile: \b\d+ms\b
 # evidence-timeout: 300
 
-................                                                         [100%]
-16 passed, 225 deselected in 1.20s
+.................                                                        [100%]
+17 passed, 225 deselected in 1.77s
