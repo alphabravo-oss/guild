@@ -6,4 +6,4 @@
 
 SKIPPED [1] tests/orchestration/test_module_boundaries.py:7660: this checkout carries no forge-specs/foundry-run-fallout/spec.md
 SKIPPED [1] tests/orchestration/test_module_boundaries.py:7708: this checkout carries no run spec
-878 passed, 2 skipped in 38.91s
+879 passed, 2 skipped in 41.25s
