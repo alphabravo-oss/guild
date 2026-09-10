@@ -3230,8 +3230,9 @@ def test_the_no_ui_meaning_is_the_servers_sentence_on_both_owned_surfaces() -> N
 # above -- `plugins/foundry/README.md` carried the old `Foundry-Stream` row
 # ("Mark verification stream complete") and a README can only move in the same
 # commit as the manifests its badges are pinned against. That commit has
-# landed, so the roster is now every surface a LEAD reads: the three command
-# files, the rationale reference, the setup script and both READMEs.
+# landed, so the FILE half of the roster is every file a LEAD reads: the three
+# command files, the rationale reference, the setup script and both READMEs.
+# The other half is not a file at all -- see `_lead_facing_prose` below.
 #
 # `TEMPER_SKILL` is deliberately absent. A skill file is what the AGENT is
 # told, and the agent is exactly who SHOULD be instructed to record -- sweeping
@@ -3257,13 +3258,75 @@ _LEAD_RECORDS_A_STREAM = (
 )
 
 
-@pytest.mark.parametrize("path", _OWNED_LEAD_SURFACES, ids=_rel)
-def test_no_owned_lead_prose_tells_the_lead_to_record_a_stream(path: Path) -> None:
+# THE SURFACE OT-029 IS ABOUT IS NOT A FILE, AND FOR SEVERAL WAVES THE SWEEP
+# COULD NOT SEE IT (D-226).
+#
+# `_ACTION_IMPERATIVES` in `tools/orchestration/guidance.py` is the lead-facing
+# prose a lead reads MOST: the seven files above are what it reads once, and an
+# imperative is what it is told on every `Foundry-Next` turn. Sweeping only the
+# files left the requirement's own subject outside the window, and the hole was
+# measured rather than suspected -- PROVE injected THIS MODULE'S OWN denied
+# spelling `record the stream yourself` into
+# `_ACTION_IMPERATIVES["run_streams"]` and the suite stayed byte-identical to
+# baseline, zero tests fired, while the same spelling appended to
+# `references/lead-discipline.md` turned the sweep below red on that path. The
+# spelling list was never the problem; its window was. D-036 and D-217 are the
+# same shape one guard over -- a scan window narrower than the rule it states --
+# and the answer is the same each time: measure the population the sentence
+# claims.
+#
+# So the roster is SUBJECTS rather than paths. A `Path` subject is read and
+# flattened when its case runs; a `str` subject is prose the SERVER holds and is
+# flattened as it stands. The file labels are unchanged `_rel` paths, so every
+# node id the evidence corpus already cites still resolves.
+#
+# `server.py`'s `Foundry-Stream` tool description carries the denied spelling
+# `Mark a verification stream complete` and is deliberately NOT swept here:
+# `server.py` belongs to another casting, so widening onto it would be a red
+# node no owner of this module can fix. It is raised as a cross-casting concern
+# instead, which is the door that reaches the owner.
+def _lead_facing_prose() -> tuple[tuple[str, Path | str], ...]:
+    """(label, source) for every surface a LEAD reads -- files AND prose constants.
+
+    The imperative half is DERIVED from the shipped dict rather than listed, so
+    an action a later casting adds is swept the day it lands instead of the day
+    somebody remembers this roster. Its label is derived from the module's own
+    ``__file__`` for the same reason: a `guidance.py` that moves relabels itself
+    rather than leaving a path literal naming a module that no longer exists.
+    """
+    from foundry_mcp.tools.orchestration import guidance
+
+    home = _rel(Path(guidance.__file__).resolve())
+    return tuple(
+        [(_rel(path), path) for path in _OWNED_LEAD_SURFACES]
+        + [
+            (f"{home}#_ACTION_IMPERATIVES:{action}", text)
+            for action, text in sorted(guidance._ACTION_IMPERATIVES.items())
+        ]
+    )
+
+
+_LEAD_FACING_PROSE: tuple[tuple[str, Path | str], ...] = _lead_facing_prose()
+
+
+def _flat_prose(source: Path | str) -> str:
+    """``_flat`` for a file; whitespace-collapsed as it stands for a constant."""
+    return _flat(source) if isinstance(source, Path) else " ".join(source.split())
+
+
+@pytest.mark.parametrize(
+    ("subject", "source"),
+    _LEAD_FACING_PROSE,
+    ids=[subject for subject, _ in _LEAD_FACING_PROSE],
+)
+def test_no_owned_lead_prose_tells_the_lead_to_record_a_stream(
+    subject: str, source: Path | str
+) -> None:
     """fallout OT-029 / FR-049 / GI-016: the agent records; the lead confirms."""
-    flat = _flat(path)
+    flat = _flat_prose(source)
     for spelling in _LEAD_RECORDS_A_STREAM:
         assert spelling not in flat, (
-            f"{_rel(path)} tells the lead to {spelling!r} (OT-029). The "
+            f"{subject} tells the lead to {spelling!r} (OT-029). The "
             f"verifying AGENT calls `Foundry-Stream` with the counts it "
             f"measured; a lead that records on its behalf asserts numbers it "
             f"did not measure, and the cycle then carries two accounts of one "
@@ -3289,6 +3352,36 @@ def test_the_owned_lead_surface_roster_is_every_lead_facing_surface() -> None:
         f"is that the AGENT records it -- a protocol that stops mentioning the "
         f"tool satisfies the absence sweep while telling the lead nothing."
     )
+
+    # D-226 -- THE IMPERATIVE HALF, AND THAT IT IS NOT VACUOUS.
+    #
+    # The file half above is pinned by count because its members are named. The
+    # imperative half is DERIVED, so what has to be pinned instead is that the
+    # derivation still reaches the shipped dict: the labels are exactly its
+    # keys, and each subject IS the value rather than a copy of it. A roster
+    # built from an empty or renamed constant would otherwise parametrize
+    # nothing and report success -- the same silent-shrinkage failure the file
+    # count above exists to catch, one derivation over.
+    from foundry_mcp.tools.orchestration.guidance import _ACTION_IMPERATIVES
+
+    imperatives = {
+        subject.rsplit(":", 1)[1]: source
+        for subject, source in _LEAD_FACING_PROSE
+        if not isinstance(source, Path)
+    }
+    assert imperatives.keys() == _ACTION_IMPERATIVES.keys(), sorted(imperatives)
+    for action, text in imperatives.items():
+        assert text == _ACTION_IMPERATIVES[action], action
+        assert text, f"_ACTION_IMPERATIVES[{action!r}] is empty"
+    labels = [subject for subject, _ in _LEAD_FACING_PROSE]
+    assert len(labels) == len(set(labels)) == len(_OWNED_LEAD_SURFACES) + len(
+        _ACTION_IMPERATIVES
+    ), labels
+
+    # And that the `str` branch of `_flat_prose` PRESERVES what it flattens. A
+    # branch returning "" would sweep every imperative subject vacuously and
+    # report success, which is precisely the green-over-nothing state D-226 was.
+    assert _flat_prose("YOUR NEXT   CALL") == "YOUR NEXT CALL"
 
 
 # ---------------------------------------------------------------------------
