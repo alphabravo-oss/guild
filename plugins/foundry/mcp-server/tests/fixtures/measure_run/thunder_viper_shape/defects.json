@@ -1,0 +1,82 @@
+{
+  "defects": [
+    {
+      "id": "D-001",
+      "cycle": 0,
+      "source": "trace",
+      "type": "UNWIRED",
+      "description": "record 1, filed before the evidence tier existed",
+      "spec_ref": "AC-001",
+      "symbol": "handler",
+      "file": "src/api/handler.py",
+      "status": "fixed",
+      "fixed_in_cycle": 1,
+      "created_at": "2026-09-01T05:43:15.839165+00:00"
+    },
+    {
+      "id": "D-002",
+      "cycle": 1,
+      "source": "prove",
+      "type": "UNWIRED",
+      "description": "record 2, filed before the evidence tier existed",
+      "spec_ref": "AC-002",
+      "symbol": "handler",
+      "file": "src/api/handler.py",
+      "status": "fixed",
+      "fixed_in_cycle": 2,
+      "created_at": "2026-09-01T05:43:15.839165+00:00"
+    },
+    {
+      "id": "D-003",
+      "cycle": 2,
+      "source": "prove",
+      "type": "UNWIRED",
+      "description": "record 3, filed before the evidence tier existed",
+      "spec_ref": "AC-003",
+      "symbol": "handler",
+      "file": "src/api/handler.py",
+      "status": "fixed",
+      "fixed_in_cycle": 3,
+      "created_at": "2026-09-01T05:43:15.839165+00:00"
+    },
+    {
+      "id": "D-004",
+      "cycle": 3,
+      "source": "test",
+      "type": "UNWIRED",
+      "description": "record 4, filed before the evidence tier existed",
+      "spec_ref": "AC-004",
+      "symbol": "handler",
+      "file": "src/api/handler.py",
+      "status": "fixed",
+      "fixed_in_cycle": 4,
+      "created_at": "2026-09-01T05:43:15.839165+00:00"
+    },
+    {
+      "id": "D-005",
+      "cycle": 4,
+      "source": "assay",
+      "type": "UNWIRED",
+      "description": "record 5, filed before the evidence tier existed",
+      "spec_ref": "AC-005",
+      "symbol": "handler",
+      "file": "src/api/handler.py",
+      "status": "fixed",
+      "fixed_in_cycle": 5,
+      "created_at": "2026-09-01T05:43:15.839165+00:00"
+    },
+    {
+      "id": "D-006",
+      "cycle": 5,
+      "source": "temper",
+      "type": "UNWIRED",
+      "description": "record 6, filed before the evidence tier existed",
+      "spec_ref": "AC-006",
+      "symbol": "handler",
+      "file": "src/api/handler.py",
+      "status": "fixed",
+      "fixed_in_cycle": 6,
+      "created_at": "2026-09-01T05:43:15.839165+00:00"
+    }
+  ]
+}

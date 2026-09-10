@@ -99,14 +99,20 @@ def test_evidence_for_malformed_raises_token(load_fixture):
 
 def test_failure_tokens_includes_unbound_and_malformed():
     """``KNOWN_EVIDENCE_FAILURE_TOKENS`` extends from 8 tokens (Phase 4) to
-    10 (Phase 5). Two new tokens: EVIDENCE_REQUIREMENT_UNBOUND,
-    EVIDENCE_FOR_MALFORMED.
+    10 (Phase 5) to 11 (fallout US-008). The Phase 5 pair is
+    EVIDENCE_REQUIREMENT_UNBOUND + EVIDENCE_FOR_MALFORMED; the eleventh is
+    EVIDENCE_COMMAND_SYNTAX, the parse-before-execute refusal that
+    fallout CT-015 / FR-051 add to the sweep.
 
     Closed-vocabulary discipline mirrors Phase 4's
-    ``test_failure_tokens_are_in_allowlist``: any 11th token = code-edit
+    ``test_failure_tokens_are_in_allowlist``: any TWELFTH token = code-edit
     forced through this test.
 
-    RED until Plan 05-02 ships.
+    D-002/D-018/D-044: the pin, not the code, was the obsolete side when
+    EVIDENCE_COMMAND_SYNTAX landed. The count is raised rather than deleted —
+    deleting it is what an accreting vocabulary wants, and the whole value of
+    this assertion is that a new member cannot arrive quietly. Each token is
+    named here so the next raise has to say which member it is admitting.
     """
     actual = frozenset(evidence.KNOWN_EVIDENCE_FAILURE_TOKENS)
     assert "EVIDENCE_REQUIREMENT_UNBOUND" in actual, (
@@ -117,10 +123,78 @@ def test_failure_tokens_includes_unbound_and_malformed():
         "Plan 05-02 must add EVIDENCE_FOR_MALFORMED to "
         "KNOWN_EVIDENCE_FAILURE_TOKENS"
     )
-    assert len(evidence.KNOWN_EVIDENCE_FAILURE_TOKENS) == 10, (
-        f"Plan 05-02 must extend tuple to exactly 10 tokens; "
-        f"got {len(evidence.KNOWN_EVIDENCE_FAILURE_TOKENS)}"
+    assert "EVIDENCE_COMMAND_SYNTAX" in actual, (
+        "US-008 / FR-051 must add EVIDENCE_COMMAND_SYNTAX to "
+        "KNOWN_EVIDENCE_FAILURE_TOKENS — the sweep's parse-before-execute "
+        "refusal names it, and a token outside this closed allowlist reaches "
+        "the operator as an unexplained failure"
     )
+    assert len(evidence.KNOWN_EVIDENCE_FAILURE_TOKENS) == 11, (
+        f"the closed allowlist stands at exactly 11 tokens (Phase 4's 8, "
+        f"Phase 5's EVIDENCE_REQUIREMENT_UNBOUND + EVIDENCE_FOR_MALFORMED, "
+        f"and US-008's EVIDENCE_COMMAND_SYNTAX); got "
+        f"{len(evidence.KNOWN_EVIDENCE_FAILURE_TOKENS)}. A new member is a "
+        f"code edit HERE as well as in evidence.py — name it above and raise "
+        f"this count, never delete the count"
+    )
+
+
+def test_a_declared_volatile_admits_a_keyed_interpreter_path_and_refuses_a_bare_one():
+    """The HEADER-side door onto the environmental-field allowlist.
+
+    ``tests/test_evidence.py`` walks the REGISTRY: which grammars are declared,
+    which the corpus witnesses, which admit their own witness pair. This drives
+    the other direction, the one an evidence author actually takes — a
+    ``# evidence-volatile:`` line parsed out of a real header, handed to
+    ``_compare_byte_match``, deciding whether the byte-match that redaction
+    bought erased a FIELD or a CLAIM. Same registry, a different caller: the
+    parse-then-compare path rather than the registry sweep.
+
+    D-003/D-019: the shape pinned here is the one ``pytest_platform_interpreter``
+    exists for and the one ``evidence/casting-5-platform-witness.log`` carries.
+    A sweep re-executes in a detached worktree with no project ``.venv``, where
+    uv builds a fresh ``builds-v0/.tmpXXXXXX`` env every run, so a ``pytest -v``
+    log's interpreter disagrees on every honest verification.
+
+    The KEY is what makes that admissible, and the second half is why the entry
+    is not simply "paths are volatile": the same two paths with the
+    ``platform … --`` text no longer beside them are a bare relocation, which
+    says nothing about whether it is where the run happened or what the run
+    reported, and the guard refuses it.
+    """
+    interpreter = "/Users/x/.cache/uv/builds-v0/{build}/bin/python"
+    keyed = (
+        "============================= test session starts ==============\n"
+        "platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- "
+        + interpreter
+        + "\nconfigfile: pyproject.toml\n"
+        "tests/test_x.py::test_y PASSED\n"
+        "============================== 1 passed =======================\n"
+    )
+    matched, _, _, _ = evidence._compare_byte_match(
+        keyed.format(build=".tmphgnUSu"),
+        keyed.format(build=".tmpvRAwWQ"),
+        [r"(?:^|\s)platform \S+ -- Python \S+.*"],
+    )
+    assert matched, (
+        "the interpreter pytest -v reports, under the platform key that "
+        "identifies it, is the field pytest_platform_interpreter admits — a "
+        "log that declares the whole `platform … --` line must survive its "
+        "own re-execution in a worktree"
+    )
+
+    unkeyed = (
+        "the suite ran and reported this build directory as its result: "
+        + interpreter
+        + "\nconfigfile: pyproject.toml\n"
+        "tests/test_x.py::test_y PASSED\n"
+    )
+    with pytest.raises(ValueError, match="EVIDENCE_VOLATILE_MALFORMED"):
+        evidence._compare_byte_match(
+            unkeyed.format(build=".tmphgnUSu"),
+            unkeyed.format(build=".tmpvRAwWQ"),
+            [r"/\S*"],
+        )
 
 
 # ---------------------------------------------------------------------------

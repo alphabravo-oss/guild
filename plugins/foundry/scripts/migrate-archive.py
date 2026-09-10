@@ -5,20 +5,108 @@ Upgrades ONE old ``foundry-archive/{run}/`` directory, in place, to the run
 schemas this release introduces. Stdlib only; no runtime deps beyond the
 canonical vocabulary module, which is itself stdlib-only.
 
-Six steps, each independently guarded on absence so the whole tool is
+Twelve steps, each independently guarded on absence so the whole tool is
 idempotent (NFR-003) even against a hand-edited or half-migrated archive:
 
   1. defects.json     — every record gains ``class: null`` and
                         ``classification: "DEFECT"`` when absent
-  2. observations.json — created as {"observations": []} when absent
-  3. stream-rollup.json — the per-cycle roll-up, re-derived from the
+  2. defects.json     — every record gains the evidence-tier fields this
+                        release adds: ``tier: "unknown"`` (FR-051 — NEVER
+                        LATENT) plus the four companions the filing and fix
+                        doors later populate — ``reproduction_attempted`` on
+                        every NON-LIVE tier, HARDENING as much as LATENT, and
+                        the three fix fields at close. Shares step 1's single
+                        read/modify/write of the file
+  3. observations.json — created as {"observations": []} when absent
+  4. stream-rollup.json — the per-cycle roll-up, re-derived from the
                         archive's own data in the shape its consumer reads
-  4. progress/        — per-agent progress-ledger directory, created empty
-  5. state.json       — ``cycle`` repaired from the run's own data when the
+  5. progress/        — per-agent progress-ledger directory, created empty
+  6. state.json       — ``cycle`` repaired from the run's own data when the
                         recorded value is missing/invalid/too low. Reads the
-                        SAME evidence step 3 keys the roll-up on, so a
+                        SAME evidence step 4 keys the roll-up on, so a
                         migrated archive can never sit behind its own roll-up
-  6. state.json       — ``archive_schema_version`` marker recorded
+  7. state.json       — ``archive_schema_version`` marker recorded
+
+SCHEMA 4 ADDS FIVE MORE (FR-028 / FR-054 / CT-018). One per independent schema
+change, which is the register's own rule and not a preference: steps 1 and 2
+already share one file and report two outcomes, because an operator repairing a
+half-migrated archive needs to read which change landed and not merely that
+something did. All five are guarded on absence exactly as the seven above:
+
+  8. stream-rollup.json — every (cycle, stream) bucket's top-level totals
+                        rewritten to its LAST ``records[]`` entry, with every
+                        earlier record KEPT (AC-034 / OT-032). The additive
+                        writer accumulated those totals, so nine daring-orca
+                        rows read above 100% — cycle 29's trace at 1084/542
+                        over two records of 542/542 is the row the acceptance
+                        criterion names. Cycle-level facts are not buckets and
+                        are not touched
+  9. defects.json     — every record gains ``fallout_of: null`` and
+                        ``supersedes: null``. Shares steps 1-2's single
+                        read/modify/write of the file
+ 10. castings/manifest.json — every casting gains ``requirement_ids``, and
+                        ``split_reason`` where its ownership is shared
+ 11. concerns.json    — created as {"concerns": []} when absent
+ 12. rosters/         — per-stream roster directory, created empty
+
+WHY STEP 10 TRANSCRIBES AND DOES NOT INVENT. `foundry_validate`'s F0.9 door
+reads a MISSING ``requirement_ids`` as "this archive predates the field" only
+while the schema marker is below 4 — and step 7 raises it to 4. So leaving the
+field absent, or filling it ``[]``, turns one informational line into an error
+per casting: absent reads as un-migrated at a schema that says otherwise, and
+``[]`` is a casting positively CLAIMING it owns nothing, which the door checks
+against the casting's own prose and refuses. Neither is honest and neither is
+what "fills defaults" can mean here.
+
+What the archive already states IS its ownership: each casting entry carries the
+verbatim ``<spec_requirements>`` block its prompt was built from, and
+``foundry_handoff.declared_requirement_ids`` is the ONE derivation in the tree of
+which ids a block DECLARES — the id in subject position on its own line, so one
+quoted inside another requirement's prose is not collected (D-180). Step 10
+transcribes that answer into the field. It reads ownership out of the archive;
+it does not compute one.
+
+DECLARATIONS, AND NOT THE IDS A BLOCK MERELY QUOTES. F0.9's ownership dimension
+no longer reads the same derivation this step does — it compares the field
+against ``cited_requirement_ids`` (fallout D-181) — so the fill and that door
+agree only where a block's declarations and its mentions coincide. Keeping the
+fill on declarations is a ruling with its argument stated in
+``_migrate_casting_ownership``'s docstring, beside the code that acts on it.
+
+``split_reason`` rides with it for the same reason and in the same breath, which
+is why CT-018 names the pair. A pre-field manifest was decomposed with no span
+rule in force, so ids DO span more than two castings — thirteen of daring-orca's
+do — and the door refuses a span above two that no reason names. The reason
+recorded is the true one and is the same for every such id: the split predates
+the field and was not a decision anyone took at decompose time. Recording it is
+what makes the span REVIEWABLE rather than either silently exempt or wrongly
+refused.
+
+WHAT THIS TOOL DOES **NOT** CREATE. escalation.json, spend.jsonl and
+state.json's ``inspect_modes`` are artifacts of a run that executed under this
+release. A pre-change archive did not produce them, and writing an empty one
+would turn "never measured" into "measured zero" — the lie measure-run.py's
+structurally-missing columns exist to avoid. Their absence is reported as
+missing, never as a zero.
+
+An empty ``concerns.json`` (step 11) and an empty ``rosters/`` (step 12) are
+NOT that lie, and the difference is what each document asserts. A spend ledger
+of zero rows would assert the run cost nothing; an empty concern ledger asserts
+that no concern was RECORDED, which is exactly true of an archive written before
+`Foundry-Concern` existed, and an empty roster directory asserts that no roster
+was persisted, likewise. Both are the shapes their readers already expect for
+"nothing here" — ``read_concerns`` over a missing file and one holding ``[]``
+answer the same question the same way — so creating them adds a container and
+claims no measurement. Step 12 creates the DIRECTORY and never a
+``rosters/<stream>.json``: a roster file holding zero items WOULD be the lie,
+because it asserts a stream derived a roster and found nothing in it.
+
+``fallout_of: null`` (step 9) is the same distinction one field down. The KEY's
+presence is what `foundry_state.fallout_rows` counts as measured, and null is
+the value a filing carries when the stream declares no parent — the honest
+reading of a record filed as a standalone defect. It is stamped for the reason
+the four tier companions in step 2 are stamped: a migrated record and a fresh
+one then carry the same key set, and every reader can use one shape.
 
 ARCHIVED HISTORY IS NOT NORMALISED. Defect ``type`` and ``source`` values are
 preserved verbatim even when they fall outside the reconciled vocabulary
@@ -41,38 +129,101 @@ from typing import Any
 try:  # Installed (uvx/pip) case — package is already importable.
     from foundry_mcp.schemas.vocab import (
         STREAM_WIRE_IDS,
+        TIER_UNKNOWN,
         WIRE_TO_CANONICAL,
         canonical_stream_id,
+        defect_tier,
     )
-    from foundry_mcp.tools.foundry_state import read_json, read_text_file
+    # fallout GI-033 (D-191 / D-192): the declaration rule lives in the leaf
+    # `tools/artifacts.py`. It left `foundry_handoff.py` when `tools/evidence.py`
+    # became a reader on the other side of the layering rule, and that module
+    # no longer imports it at all.
+    from foundry_mcp.tools.artifacts import declared_requirement_ids
+    from foundry_mcp.tools.foundry_state import (
+        ARCHIVE_SCHEMA_VERSION,
+        derive_cycle_count,
+        is_stream_record,
+        read_json,
+        read_text_file,
+    )
 except ModuleNotFoundError:  # Dev / non-installed checkout — add src/ to path.
     _SRC = Path(__file__).resolve().parents[1] / "mcp-server" / "src"
     if _SRC.is_dir() and str(_SRC) not in sys.path:
         sys.path.insert(0, str(_SRC))
     from foundry_mcp.schemas.vocab import (
         STREAM_WIRE_IDS,
+        TIER_UNKNOWN,
         WIRE_TO_CANONICAL,
         canonical_stream_id,
+        defect_tier,
     )
-    from foundry_mcp.tools.foundry_state import read_json, read_text_file
+    # fallout GI-033 (D-191 / D-192): the declaration rule lives in the leaf
+    # `tools/artifacts.py`. It left `foundry_handoff.py` when `tools/evidence.py`
+    # became a reader on the other side of the layering rule, and that module
+    # no longer imports it at all.
+    from foundry_mcp.tools.artifacts import declared_requirement_ids
+    from foundry_mcp.tools.foundry_state import (
+        ARCHIVE_SCHEMA_VERSION,
+        derive_cycle_count,
+        is_stream_record,
+        read_json,
+        read_text_file,
+    )
 
 
-# The schema generation this tool brings an archive to. Bump when a migration
-# step is added (add it to MIGRATION_STEPS below) or when a step's OUTPUT shape
-# changes — v1 wrote a stream-rollup.json its own consumer could not read.
-ARCHIVE_SCHEMA_VERSION = 2
+# `ARCHIVE_SCHEMA_VERSION` — the generation this tool brings an archive TO — is
+# imported above and no longer declared here. `foundry_state.py` is its one home
+# (fallout C-023): it was spelled independently in four files, which is the shape
+# where a writer bumps and a reader does not and the archive a run just wrote
+# reads as one generation to the tool that made it and another to the tool that
+# migrates it. The leaf is reachable from every consumer and imports nothing from
+# the package, so reading it here closes no cycle.
+#
+# WHAT THIS MODULE STILL OWNS IS THE MAP FROM A GENERATION TO ITS STEP, because
+# that is migration knowledge and not a number:
+#
+#   v1: wrote a stream-rollup.json its own consumer could not read — the reason
+#       a changed step OUTPUT shape is a bump and not just a new step.
+#   v3: the evidence-tier step. A pre-change defect record has no `tier` key,
+#       and every gate in this release branches on one.
+#   v4: replace semantics for the roll-up, and the fields this release adds to
+#       a defect record and a casting entry. The OUTPUT shape of step 4 is
+#       unchanged; what changed is what step 8 makes the top-level totals MEAN.
+#
+# SO A BUMP IS TWO EDITS, NEITHER OF THEM SUFFICIENT ALONE. Raise the generation
+# in `foundry_state.py`, and add the step here that carries a schema-N archive to
+# N+1 (registering it in `MIGRATION_STEPS` below). Raising it without the step
+# leaves this tool claiming a generation it cannot produce; adding the step
+# without raising it leaves the tool unable to say it ran.
+#
+# AND THIS TOOL IS NOT THE ONLY WRITER OF THE MARKER. Since D-052 `foundry_init`
+# stamps a new run with the current generation at creation, because the
+# fail-closed half of FR-054 fires only on runs that can say what they are. Both
+# writers now read the one leaf, so they cannot disagree by a stale copy — the
+# join that proves they do not, and that the F0.9 floor is still at or below what
+# they write, lives in `plugins/foundry/mcp-server/tests/test_migrate_archive.py`
+# under `test_the_two_writers_of_the_schema_marker_agree_and_the_reader_accepts_it`.
+# It drives both writers and asks the reader rather than comparing constants, so
+# run it with the bump.
 
-# CLOSED VOCABULARY — the six migration steps, in execution order. The
+# CLOSED VOCABULARY — the twelve migration steps, in execution order. The
 # summary reports one outcome per step under exactly these names.
 # Extend only via phase-level RFC.
 MIGRATION_STEPS = (
     "defects",
+    "defect_tier",
     "observations",
     "stream_rollup",
     "progress",
     "state_cycle",
     "archive_schema_version",
-)  # 6 steps
+    # Schema 4 (FR-028 / FR-054 / CT-018).
+    "rollup_totals",
+    "defect_fallout",
+    "casting_ownership",
+    "concerns",
+    "rosters",
+)  # 12 steps
 
 # CLOSED VOCABULARY — per-step outcomes.
 # Extend only via phase-level RFC.
@@ -131,44 +282,225 @@ def _as_cycle(value: Any) -> int | None:
 
 
 # ---------------------------------------------------------------------------
-# Step 1 — defects.json gains the class + classification fields.
+# Steps 1 + 2 — defects.json gains class/classification, then the tier fields.
+#
+# Two steps, one read/modify/write. Mirrors _migrate_state, which reports the
+# cycle repair and the version marker separately while touching state.json
+# once: two independent schema changes to the same file is a shape this tool
+# already has, and splitting the WRITE would double the window in which an
+# interrupted run leaves a half-migrated ledger.
 # ---------------------------------------------------------------------------
 
 
-def _migrate_defects(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, Any]]:
+# The evidence-tier fields this release adds to a defect record, and the value
+# a PRE-CHANGE record takes for each.
+#
+# `tier` is the load-bearing one and the value is NOT negotiable: FR-051 says a
+# record with no tier reads as unknown and NEVER as LATENT. The distinction is
+# not cosmetic — LATENT blocks no gate at all (FR-006 passes INSPECT-clean,
+# ASSAY, TEMPER, NYQUIST and DONE alike on a LATENT-only backlog), so migrating
+# 162 unclassified thunder-viper records to LATENT would silently clear every
+# one of them on defects no stream ever looked at. TIER_UNKNOWN is imported
+# rather than spelled here so the sentinel has exactly one definition (the same
+# discipline that made the vocabulary module exist).
+#
+# The other four are `null` because that is what the filing and fix doors write
+# before they are populated — a migrated record and a fresh one then carry the
+# same key set, which is what lets every reader use one shape.
+#
+# WHICH DOOR WRITES WHICH, AND WHY THIS STAMPING IS KEYED ON NO TIER AT ALL.
+# `reproduction_attempted` belongs to the FILING doors and is written on
+# `tier != "LIVE"`: HARDENING owes the same reproduction LATENT does, and both
+# doors demand it before they accept. So "the LATENT door's field" is a
+# narrowing rather than a shorthand — it is exactly the reading that let a
+# HARDENING filing's reproduction be demanded at the door and then dropped from
+# the human mirror (D-079), and `foundry.py`'s record literal carries the same
+# correction in its own comment. The other three are `Foundry-Fix`'s, set at
+# close on a record of any tier. `_add_missing` therefore keys on the FIELD's
+# absence and never on the record's tier: a stamping that asked which tier a
+# record carries would be that same narrowing arriving one artefact later, on
+# the archive, where GI-006 is what it would cost.
+# Extend only via phase-level RFC.
+DEFECT_TIER_FIELDS: tuple[tuple[str, Any], ...] = (
+    ("tier", TIER_UNKNOWN),
+    ("reproduction_attempted", None),
+    ("regression_test", None),
+    ("authored_by", None),
+    ("fix_commit", None),
+)  # 5 fields
+
+# Step 9 — the two schema-4 fields a defect record gains (FR-025 / A-023), and
+# the value a PRE-CHANGE record takes for each.
+#
+# Both are `null` for the reason the four companions above are: it is what the
+# filing doors write when the stream declares neither, so a migrated record and
+# a fresh one carry the same key set and every reader uses one shape.
+#
+# `fallout_of` names the earlier defect a filing is fallout OF. Its presence as
+# a KEY is what `foundry_state.fallout_rows` counts as measured, which is why it
+# is stamped rather than left absent — the acceptance figure NFR-006 states is
+# defined over cycles, and a cycle holding one un-keyed record cannot be
+# measured at all. Null is the honest value: the record WAS filed as a
+# standalone defect, and null is exactly what a stream filing a standalone
+# defect writes today.
+#
+# `supersedes` names the HARDENING record a new filing retires (ST-006). It is
+# never re-tiered in place, so an archived record that superseded nothing says
+# so.
+# Extend only via phase-level RFC.
+DEFECT_FALLOUT_FIELDS: tuple[tuple[str, Any], ...] = (
+    ("fallout_of", None),
+    ("supersedes", None),
+)  # 2 fields
+
+
+def _add_missing(record: dict[str, Any], fields: tuple[tuple[str, Any], ...]) -> bool:
+    """Set each absent field to its migration default. True when any was added.
+
+    Absence-guarded per field rather than per record, so a half-migrated
+    ledger (NFR-003) converges instead of being skipped or overwritten. An
+    EXISTING key is never touched, including an existing ``tier: null`` — see
+    the note in ``_migrate_defect_tier``.
+    """
+    touched = False
+    for name, default in fields:
+        if name not in record:
+            record[name] = default
+            touched = True
+    return touched
+
+
+def _migrate_defects_document(run_dir: Path) -> tuple[Path, dict[str, Any] | None]:
+    """(path, document) for defects.json, or (path, None) when it is absent."""
     path = run_dir / "defects.json"
     if not path.exists():
-        return "no-op", {"reason": "defects.json absent"}
+        return path, None
     data = _load_json(path)
     if not isinstance(data, dict) or not isinstance(data.get("defects"), list):
         raise _Malformed("MIGRATE_DEFECTS_FILE_MALFORMED")
-
-    changed = 0
     for record in data["defects"]:
         if not isinstance(record, dict):
             raise _Malformed("MIGRATE_DEFECTS_FILE_MALFORMED")
-        touched = False
-        # Optional stream-declared class field (escalation keys on it).
-        if "class" not in record:
-            record["class"] = None
-            touched = True
-        # The DEFECT / OBSERVATION classification axis. Everything already in
-        # a defect ledger was filed as a defect; migration never reclassifies.
-        if "classification" not in record:
-            record["classification"] = "DEFECT"
-            touched = True
-        if touched:
-            changed += 1
+    return path, data
 
-    if changed == 0:
-        return "no-op", {"records": len(data["defects"]), "upgraded": 0}
-    if not dry_run:
-        _save_json(path, data)
-    return "upgraded", {"records": len(data["defects"]), "upgraded": changed}
+
+def _migrate_defects(
+    run_dir: Path, dry_run: bool
+) -> tuple[tuple[str, dict[str, Any]], ...]:
+    """Steps 1, 2 and 9 over one read/modify/write of defects.json.
+
+    Returns one ``(outcome, detail)`` pair per step, in step order. Three
+    independent schema changes to one file share one write for the reason steps
+    1 and 2 already did: splitting it would triple the window in which an
+    interrupted run leaves a half-migrated ledger, and the ledger is the one
+    artifact AC-026 forbids losing data from.
+    """
+    path, data = _migrate_defects_document(run_dir)
+    if data is None:
+        absent = {"reason": "defects.json absent"}
+        return (("no-op", absent), ("no-op", dict(absent)), ("no-op", dict(absent)))
+
+    records: list[dict[str, Any]] = data["defects"]
+    class_changed = 0
+    for record in records:
+        if _add_missing(
+            record,
+            # Optional stream-declared class field (escalation keys on it), and
+            # the DEFECT / OBSERVATION classification axis. Everything already
+            # in a defect ledger was filed as a defect; migration never
+            # reclassifies.
+            (("class", None), ("classification", "DEFECT")),
+        ):
+            class_changed += 1
+
+    tier_changed, tier_unknown = _migrate_defect_tier(records)
+    fallout_changed, fallout_named = _migrate_defect_fallout(records)
+
+    if class_changed or tier_changed or fallout_changed:
+        if not dry_run:
+            _save_json(path, data)
+
+    return (
+        (
+            "upgraded" if class_changed else "no-op",
+            {"records": len(records), "upgraded": class_changed},
+        ),
+        (
+            "upgraded" if tier_changed else "no-op",
+            {
+                "records": len(records),
+                "upgraded": tier_changed,
+                "tier_unknown": tier_unknown,
+                "fields": [name for name, _ in DEFECT_TIER_FIELDS],
+            },
+        ),
+        (
+            "upgraded" if fallout_changed else "no-op",
+            {
+                "records": len(records),
+                "upgraded": fallout_changed,
+                "fallout_named": fallout_named,
+                "fields": [name for name, _ in DEFECT_FALLOUT_FIELDS],
+            },
+        ),
+    )
+
+
+def _migrate_defect_fallout(records: list[dict[str, Any]]) -> tuple[int, int]:
+    """Step 9 — stamp `fallout_of` and `supersedes`. Returns (changed, named).
+
+    ``named`` counts every record that NAMES a parent afterwards, not the ones
+    this run stamped, for the reason step 2 counts unknown tiers the same way:
+    an archive migrated once and measured later must report the same number, and
+    a record that already carried a real ``fallout_of`` is left exactly as found
+    while still counting. On a pre-change ledger it is always 0, and that is the
+    honest reading — nothing in the archive claims a parent — as against the
+    per-cycle census `measure-run.py` publishes, where a cycle whose records all
+    read null is a MEASURED zero precisely because this step ran.
+
+    An existing value is never touched, including an existing ``fallout_of:
+    null``. `_add_missing` is per FIELD, so a ledger half-stamped by an
+    interrupted run converges on the next pass rather than being skipped whole
+    or overwritten whole.
+    """
+    changed = 0
+    named = 0
+    for record in records:
+        if _add_missing(record, DEFECT_FALLOUT_FIELDS):
+            changed += 1
+        parent = record.get("fallout_of")
+        if isinstance(parent, str) and parent.strip():
+            named += 1
+    return changed, named
+
+
+def _migrate_defect_tier(records: list[dict[str, Any]]) -> tuple[int, int]:
+    """Step 2 — stamp the evidence-tier fields. Returns (changed, unknown).
+
+    ``unknown`` counts every record that READS as unknown-tier afterwards, not
+    just the ones this run stamped: an archive migrated once and measured later
+    must report the same number, and a record that already carried
+    ``tier: null`` (an interrupted write, or a hand edit) is left exactly as
+    found while still counting as unknown. That is the FR-051 rule stated once
+    — absence and null both read as unknown, and neither is ever LATENT.
+
+    The count goes through ``vocab.defect_tier`` rather than an inline test,
+    so this tool and every gate agree on what "unknown" means. A hand-edited
+    ``tier: "MINOR"`` is unknown to the gates; an inline ``isinstance(str)``
+    check here would have called it classified.
+    """
+    changed = 0
+    unknown = 0
+    for record in records:
+        if _add_missing(record, DEFECT_TIER_FIELDS):
+            changed += 1
+        if defect_tier(record) == TIER_UNKNOWN:
+            unknown += 1
+    return changed, unknown
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — observations.json ledger.
+# Step 3 — observations.json ledger.
 # ---------------------------------------------------------------------------
 
 
@@ -184,11 +516,11 @@ def _migrate_observations(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, 
 
 
 # ---------------------------------------------------------------------------
-# Step 3 — stream-rollup.json, re-derived from the archive's own data.
+# Step 4 — stream-rollup.json, re-derived from the archive's own data.
 # ---------------------------------------------------------------------------
 
 
-# The roll-up is READ BACK by foundry_orchestrator._rollup_totals, which looks
+# The roll-up is READ BACK by orchestration.streams._rollup_totals, which looks
 # an entry up as ``cycles[str(cycle)][<wire stream id>]`` and requires a dict
 # carrying these four keys. A migrated archive must therefore speak the
 # server's own document shape rather than a derived summary of it: v1 wrote
@@ -241,7 +573,7 @@ def _read_stream_marker(run_dir: Path, wire_stream: str) -> dict[str, int] | Non
     The marker is the ONLY place a pre-roll-up archive records coverage, and it
     holds one cycle's terminal totals. ``cycle=`` sits on the timestamp line
     rather than at the start of its own line, so tokens are scanned
-    whitespace-separated — foundry_orchestrator._marker_counts reads only
+    whitespace-separated — orchestration.streams._marker_counts reads only
     line-leading keys and therefore never sees ``cycle`` at all.
 
     Returns None when the marker is absent, unreadable, or carries no usable
@@ -351,28 +683,92 @@ def _derive_stream_rollup(run_dir: Path) -> tuple[dict[str, Any], dict[str, int]
 
 
 def _rollup_needs_rebuild(existing: Any) -> bool:
-    """True when the stored roll-up is in a shape _rollup_totals cannot read.
+    """True when the stored roll-up holds NOTHING a current reader can read.
 
     v1 of this tool wrote ``cycles[c][<CANONICAL>] = <int>``. Those documents
-    are inert and must be re-derived, or an archive "migrated" by v1 keeps a
-    roll-up its consumer silently ignores.
+    are inert — ``_rollup_totals`` requires a dict and reads an int back as "no
+    record for this cycle" — and must be re-derived, or an archive "migrated"
+    by v1 keeps a roll-up its consumer silently ignores.
 
-    A document whose entries are ALREADY dicts is either server-written — with
-    a real ``records`` audit trail and real coverage numbers — or already v2.
-    Never re-derive it: the archive's own data cannot reconstruct what the
-    server observed, so a rebuild would be data loss.
+    Anything else is left exactly as found. The archive's own data cannot
+    reconstruct what the server observed, so a rebuild over server-written data
+    is data loss, and this predicate is the only thing standing between the two.
+
+    D-188 / NFR-003 — A CYCLE BUCKET IS NOT ALL STREAMS, AND HAS NOT BEEN
+    SINCE C-6. THIS IS THE FOURTH WALKER TO LEARN THAT.
+    ---------------------------------------------------------------------
+    The old rule was ``any(not isinstance(entry, dict) for entry in
+    bucket.values())`` — every key in a cycle bucket assumed to be a stream, and
+    the VALUE SHAPE hand-tested. That was true of the document when it was
+    written and stopped being true when the spec's Data Model widened it:
+    ``_record_cycle_rollup`` writes ``inspect_mode`` and ``inspect_rule`` as
+    STRINGS into the same mapping as the stream tranches, so the two NEWEST
+    fields in the document read as the OLDEST shape the tool knows.
+
+    Driven end to end on a byte copy of this run's own archive: ``migrate-
+    archive.py <copy>`` exited 0 reporting step ``stream_rollup`` outcome
+    ``upgraded`` and re-derived the roll-up from markers. 45 keys were lost,
+    including every ``inspect_mode`` / ``inspect_rule`` / ``stream_scope`` /
+    ``evidence_sweep`` entry for cycles 10-12 — the exact per-cycle record
+    GI-008 requires the transition to write and FR-023/AC-036 require the
+    report's full-vs-delta section to be derivable from — plus whole stream
+    entries in eleven of thirteen cycles. Cycle 11's PROVE went from
+    ``{items_checked 172, items_total 172, findings 2, records [one audit
+    row]}`` to ``{items_checked 0, items_total 0, findings 2, records []}``.
+    ``/foundry:resume`` runs this tool on EVERY resume, so the destruction was
+    one resume away from any run under this release.
+
+    THE VALUE TEST IS SCOPED BY THE KEY, AND PRESERVING DOMINATES
+    ------------------------------------------------------------
+    Two rules, in this order:
+
+      * A key the stream roster does not resolve is NOT a stream, so its value
+        shape says nothing about the document's generation. That is exactly
+        ``measure-run.py._read_stream_rollup``'s structure (D-182) — resolve the
+        key, then test the value with the ONE definition in
+        ``foundry_state.is_stream_record``. A denylist of the C-6 key NAMES was
+        rejected for the reason stated there: ``temper_entry`` is already a
+        fifth and the next C-6 field would be a sixth.
+      * ANY evidence the server wrote this document VETOES the rebuild, wherever
+        in the document it sits: a tranche carrying ``records``, or a key the
+        roster does not know. Scoping the value test alone (the smaller fix)
+        would still rebuild a MIXED document — a v1-migrated archive RESUMED
+        under this release, whose old cycles are inert ints while its new ones
+        carry the server's audit trail and cycle facts. That shape is reachable
+        precisely because this tool exists to make old archives resumable, and
+        rebuilding it destroys the half that cannot be re-derived to repair the
+        half that can. The docstring above has always called that data loss;
+        this is the veto that makes the claim true rather than aspirational.
+
+    So an unknown key is read as "a later writer put something here I do not
+    understand", never as "this is an old document" — which is what A-044's
+    additive-compatibility regime demands of any second reader of a widened
+    document, and what the absence of that reading cost here.
+
+    Pure and total: takes the decoded JSON and returns False rather than raising
+    on any type.
     """
     if not isinstance(existing, dict):
         return True
     cycles = existing.get("cycles")
     if not isinstance(cycles, dict):
         return True
+
+    # Order-independent by construction: a veto returns immediately and is the
+    # answer wherever it was found, so the verdict cannot depend on dict order.
+    inert = False
     for bucket in cycles.values():
         if not isinstance(bucket, dict):
-            return True
-        if any(not isinstance(entry, dict) for entry in bucket.values()):
-            return True
-    return False
+            # Not the documented shape at all, and nothing in it to preserve.
+            inert = True
+            continue
+        for key, entry in bucket.items():
+            if is_stream_record(entry):
+                return False  # server-written or already re-derived
+            if not isinstance(key, str) or canonical_stream_id(key) is None:
+                return False  # a cycle-level fact, not a stream — preserve it
+            inert = True
+    return inert
 
 
 def _rollup_detail(document: dict[str, Any], non_stream: dict[str, int]) -> dict[str, Any]:
@@ -397,7 +793,12 @@ def _rollup_detail(document: dict[str, Any], non_stream: dict[str, int]) -> dict
 def _migrate_stream_rollup(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, Any]]:
     path = run_dir / "stream-rollup.json"
     if path.exists() and not _rollup_needs_rebuild(_load_json(path)):
-        return "no-op", {"reason": "stream-rollup.json already readable by _rollup_totals"}
+        return "no-op", {
+            # D-188: "readable" was the old, narrower claim. A no-op here now
+            # also covers a document carrying server-written cycle facts a
+            # rebuild could not reconstruct — see _rollup_needs_rebuild.
+            "reason": "stream-rollup.json carries data no rebuild could reconstruct"
+        }
     outcome = "upgraded" if path.exists() else "created"
     document, non_stream = _derive_stream_rollup(run_dir)
     if not dry_run:
@@ -406,7 +807,339 @@ def _migrate_stream_rollup(run_dir: Path, dry_run: bool) -> tuple[str, dict[str,
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — per-agent progress ledger directory.
+# Step 8 — replace semantics: the top-level totals ARE the last record.
+# ---------------------------------------------------------------------------
+
+
+#: The three totals a (cycle, stream) bucket carries beside its ``records[]``.
+#: Derived nowhere else and listed here rather than beside ROLLUP_ENTRY_KEYS
+#: because that constant includes ``records`` itself, which is the one key this
+#: step must never rewrite.
+#: Extend only via phase-level RFC.
+ROLLUP_TOTAL_KEYS = ("items_checked", "items_total", "findings")  # 3 keys
+
+
+def _last_record_totals(entry: dict[str, Any]) -> dict[str, int] | None:
+    """The LAST ``records[]`` entry's totals, or None when there are none.
+
+    ONLY the keys that record actually states are returned. A record carrying
+    ``items_checked`` and no ``findings`` rewrites the first and leaves the
+    second exactly as found — a rewrite is a transcription of what the last
+    record says, and inventing a 0 for a key it does not mention would be this
+    tool asserting a measurement in the one step whose whole purpose is to stop
+    the totals asserting one.
+
+    Total over any shape: a ``records`` that is not a list, is empty, or whose
+    last element is not a mapping all read as "no last record".
+    """
+    records = entry.get("records")
+    if not isinstance(records, list) or not records:
+        return None
+    last = records[-1]
+    if not isinstance(last, dict):
+        return None
+    return {
+        key: last[key]
+        for key in ROLLUP_TOTAL_KEYS
+        if isinstance(last.get(key), int) and not isinstance(last.get(key), bool)
+    }
+
+
+def _migrate_rollup_totals(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, Any]]:
+    """Step 8 — AC-034 / OT-032 / GI-006. Totals become the LAST record's.
+
+    THE OLD WRITER ADDED AND THE NEW ONE REPLACES, AND NINE ROWS ARE THE PROOF.
+    ---------------------------------------------------------------------------
+    `Foundry-Stream` used to append a record AND accumulate the top-level
+    totals, so a stream that recorded twice in one cycle read as having checked
+    twice as many items as exist. Nine daring-orca (cycle, stream) rows read
+    above 100% because of it, and the one AC-034 and OT-032 name is cycle 29's
+    ``trace``: ``1084/542`` over two records that each say ``542/542``. The run
+    checked 542 items; the document said it checked 1084.
+
+    GI-006 IS THE CONSTRAINT ON THE REPAIR, not a caveat to it. Its named
+    violation is "a replace-semantics write that drops history", so every
+    earlier record STAYS under ``records[]`` and only the totals move. The
+    superseded records are the evidence that the row was recorded twice — the
+    thing that makes the over-100% figure explicable rather than merely wrong —
+    and `foundry_state.stream_rollup_rows` publishes ``replaced_count`` off
+    exactly that list. A repair that discarded them would fix the number by
+    destroying the reason for it.
+
+    ABSENCE-GUARDED THREE WAYS, WHICH IS WHAT MAKES A SECOND RUN A NO-OP:
+
+      * no ``stream-rollup.json`` at all — nothing to rewrite;
+      * a bucket key whose value is not a stream tranche — ``inspect_mode``,
+        ``inspect_rule``, ``stream_scope``, ``evidence_sweep``, ``temper_entry``
+        and whatever C-6 adds next are cycle-level FACTS, resolved by value
+        through the one definition in ``foundry_state.is_stream_record`` and
+        never by a denylist of names (D-182 / D-188 — this is the fifth walker
+        of this document and the rule has one owner);
+      * a tranche with no ``records[]`` history, or one whose totals already
+        equal its last record's. The first is a bucket written before the
+        history existed and there is nothing to take a total FROM; the second is
+        an archive this step has already run on, or one the replace-semantics
+        writer wrote correctly from the start.
+
+    The third guard is what makes the step converge rather than merely repeat:
+    after one run every rewritable bucket satisfies it, so the second run
+    reports ``no-op`` and writes no byte — which is the assertion NFR-010 and
+    CT-018 ("none new; idempotent") both name.
+    """
+    path = run_dir / "stream-rollup.json"
+    if not path.exists():
+        return "no-op", {"reason": "stream-rollup.json absent"}
+    document = _load_json(path)
+    cycles = document.get("cycles") if isinstance(document, dict) else None
+    if not isinstance(cycles, dict):
+        # Not the documented shape. Step 4 owns the rebuild decision for that
+        # case and has already run; this step does not get a second opinion.
+        return "no-op", {"reason": "stream-rollup.json holds no cycles mapping"}
+
+    rewritten: list[dict[str, Any]] = []
+    for cycle_key in sorted(cycles, key=str):
+        bucket = cycles[cycle_key]
+        if not isinstance(bucket, dict):
+            continue
+        for stream in sorted(bucket, key=str):
+            entry = bucket[stream]
+            if not is_stream_record(entry):
+                continue
+            totals = _last_record_totals(entry)
+            if totals is None:
+                continue
+            before = {key: entry.get(key) for key in totals}
+            if before == totals:
+                continue
+            entry.update(totals)
+            rewritten.append({
+                "cycle": str(cycle_key),
+                "stream": str(stream),
+                "from": before,
+                "to": dict(totals),
+                "records_kept": len(entry["records"]),
+            })
+
+    if not rewritten:
+        return "no-op", {
+            "reason": "every tranche's totals already read its last record",
+        }
+    if not dry_run:
+        _save_json(path, document)
+    return "upgraded", {"rewritten": len(rewritten), "rows": rewritten}
+
+
+# ---------------------------------------------------------------------------
+# Step 10 — per-casting requirement ownership, transcribed from the archive.
+# ---------------------------------------------------------------------------
+
+
+#: The reason recorded against a shared requirement id by step 10. It is one
+#: sentence and it is the same for every id, because the fact it records is the
+#: same for every id: the manifest was decomposed before the span rule existed,
+#: so no reason was taken at the time and none can be invented now. F0.9 prints
+#: it beside the span rather than merely honouring it — "a waiver nobody reads
+#: is a waiver nobody reviews" — which is why it says where the ownership came
+#: from and not just that it is exempt.
+SPLIT_REASON_MIGRATED = (
+    "Ownership transcribed by scripts/migrate-archive.py from this casting's "
+    "own <spec_requirements> block. The manifest was decomposed before "
+    "requirement_ids and the span rule existed, so the split predates the "
+    "field and no reason was recorded at decompose time."
+)
+
+
+def _migrate_casting_ownership(
+    run_dir: Path, dry_run: bool
+) -> tuple[str, dict[str, Any]]:
+    """Step 10 — FR-054 / AC-049. `requirement_ids` and `split_reason` filled.
+
+    WHY THIS STEP EXISTS AT ALL, stated where the code is: step 7 raises the
+    schema marker to 4, and `foundry_validate` reads a missing `requirement_ids`
+    as "predates the field" only BELOW 4. Bumping the marker without filling the
+    field converts one informational line into one error per casting, and CT-018
+    lists the two together for that reason.
+
+    IT TRANSCRIBES. ``declared_requirement_ids`` is the one derivation in the
+    tree of which ids a `<spec_requirements>` block DECLARES — the id in subject
+    position on its own line, so one quoted inside another requirement's prose
+    is not collected (D-180). Reading the archive's own answer into the
+    archive's own field is not manufacturing ownership; computing one would be,
+    and the two shapes that would have to compute one are refused here: ``[]``
+    is a casting positively claiming it owns nothing (a claim the door checks
+    against the prose and refuses), and a ``null`` reads as un-migrated at a
+    schema that says otherwise.
+
+    DECLARATIONS, NOT MENTIONS — the ruling on concern C-096, raised against
+    this step by the casting that owns the door (fallout D-181). F0.9's
+    ownership dimension used to compare `requirement_ids` against what a block
+    DECLARES and now compares it against what the block CITES — every mention
+    but a `Maps to:` back-pointer — because AC-001, OT-001 and FR-040 all say
+    CITES. So the sentence that used to describe this seam, that the fill and
+    that door read one derivation, is now conditional: they agree exactly where
+    a block's declarations and its mentions coincide.
+
+    Transcribing mentions here would restore the agreement by construction, and
+    is refused for a reason that outranks agreeing with one reader.
+    `commands/start.md` F0.5 defines this field as the ids a casting OWNS and
+    gives the reason in the same breath — "prose that merely quotes an id is not
+    a claim to own it". The field's other readers ACT on what it says: a defect
+    is co-dispatched to every casting whose `requirement_ids` name the id, and
+    the span table counts each of them an owner. Filling from mentions would
+    route a fix to a casting that only quoted the requirement, and push shared
+    ids past the span maximum — so the door that stopped reporting would be
+    replaced by one refusing a split nobody made, with a `split_reason` that
+    would have to be invented to clear it. A quiet true line traded for a loud
+    false one.
+
+    WHAT THE RULING LEAVES VISIBLE, AND WHY THAT IS THE RIGHT REPORT. A cite is
+    a superset of a declaration by construction, so this fill can never produce
+    `owned_but_not_cited`; the single finding it can leave is
+    `cited_but_not_owned`, on a casting whose legacy block quotes an id another
+    casting owns. Measured at 65ce47f across the three archives NFR-010 names,
+    that is daring-orca castings 2 and 7, thunder-viper 1/2/3/5 and
+    grand-vulture 3/4/5 — and `foundry-run-fallout` itself, decomposed under the
+    rule, is clean in both directions. The finding is TRUE of the legacy
+    decomposition; this tool neither invented it nor can clear it, because the
+    excerpt is a frozen historical record and the only other exit is recorded
+    false ownership. Reporting it to a lead who validates a resumed legacy
+    manifest is where a fact about an old decomposition belongs.
+
+    THE SPAN REASON IS RECORDED PER CASTING AND ONLY WHERE OWNERSHIP IS SHARED.
+    An id owned by one casting needs no reason and gets none — a waiver on
+    something nobody would refuse is noise in a table a lead reads. Sharing is
+    counted across the WHOLE manifest and the reason is written into each
+    sharing casting's own map, which is where `_recorded_split_reasons` reads a
+    per-casting reason from and where a lead re-deciding the split would look.
+
+    GUARDED ON ABSENCE PER FIELD PER CASTING, so a manifest half-filled by hand
+    converges. An EXISTING ``split_reason`` is left whole rather than added to:
+    it is somebody's recorded decision, and editing a decision is not migrating
+    a schema.
+    """
+    path = run_dir / "castings" / "manifest.json"
+    if not path.exists():
+        return "no-op", {"reason": "castings/manifest.json absent"}
+    manifest = _load_json(path)
+    castings = manifest.get("castings") if isinstance(manifest, dict) else None
+    if not isinstance(castings, list):
+        return "no-op", {"reason": "castings/manifest.json holds no castings list"}
+
+    #: casting index -> the ids its own block declares. Computed for every
+    #: casting before anything is written, because the span of an id is a fact
+    #: about the WHOLE manifest and a per-casting loop cannot see it.
+    declared: dict[int, list[str]] = {}
+    span: dict[str, int] = {}
+    for index, casting in enumerate(castings):
+        if not isinstance(casting, dict):
+            continue
+        block = casting.get("spec_text")
+        ids = declared_requirement_ids(block) if isinstance(block, str) else []
+        declared[index] = ids
+        for rid in ids:
+            span[rid] = span.get(rid, 0) + 1
+
+    ownership_filled = 0
+    reasons_filled = 0
+    for index, casting in enumerate(castings):
+        if index not in declared:
+            continue
+        ids = declared[index]
+        if "requirement_ids" not in casting:
+            casting["requirement_ids"] = list(ids)
+            ownership_filled += 1
+        if "split_reason" not in casting:
+            shared = {rid: SPLIT_REASON_MIGRATED for rid in ids if span[rid] > 1}
+            casting["split_reason"] = shared
+            reasons_filled += 1
+
+    if not (ownership_filled or reasons_filled):
+        return "no-op", {
+            "reason": "every casting already carries requirement_ids and split_reason",
+            "castings": len(castings),
+        }
+    if not dry_run:
+        _save_json(path, manifest)
+    return "upgraded", {
+        "castings": len(castings),
+        "requirement_ids_filled": ownership_filled,
+        "split_reason_filled": reasons_filled,
+        "shared_requirement_ids": sorted(rid for rid, n in span.items() if n > 1),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Steps 11 + 12 — the concern ledger and the roster directory.
+# ---------------------------------------------------------------------------
+
+
+def _migrate_concerns(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, Any]]:
+    """Step 11 — CT-001's ledger, created empty when absent.
+
+    Empty is not a fabricated measurement here, and step 3 is the precedent:
+    ``{"concerns": []}`` asserts that no concern was RECORDED, which is exactly
+    true of an archive written before `Foundry-Concern` existed. Its reader
+    answers a missing file and an empty list the same way, so the container adds
+    a shape and claims nothing — unlike `spend.jsonl`, whose empty form would
+    assert a run cost nothing.
+
+    The filename and the collection key are `concerns.py`'s, not literals: it
+    spells them once and a second spelling here is a ledger two readers can
+    disagree about the shape of.
+
+    WHY THE IMPORT IS INSIDE THE FUNCTION. `concerns.py` reaches
+    `tools/foundry.py` — the package's MCP-facing surface, and by a long way its
+    largest module — so a module-level import here would put every one of this
+    tool's twelve steps behind it. That is a real cost on a script whose header
+    states a narrow one and whose whole job is repairing archives, sometimes
+    from a checkout mid-change: the ten steps that need none of it should not
+    stop running because a module they do not use will not load. A call-time
+    import runs when the step runs, so the constants stay this module's ONE
+    source for those two names and the coupling stays the width of the step
+    that has it. (`foundry_state`'s package-free leaf contract is the same
+    argument one layer down — it exists so this script and `measure-run.py` can
+    read a derivation without buying a package.)
+    """
+    from foundry_mcp.tools.concerns import (
+        CONCERNS_COLLECTION_KEY,
+        CONCERNS_FILENAME,
+    )
+
+    path = run_dir / CONCERNS_FILENAME
+    if path.exists():
+        return "no-op", {"reason": f"{CONCERNS_FILENAME} already present"}
+    if not dry_run:
+        _save_json(path, {CONCERNS_COLLECTION_KEY: []})
+    return "created", {"concerns": 0}
+
+
+def _migrate_rosters(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, Any]]:
+    """Step 12 — CT-002's directory, created empty when absent.
+
+    THE DIRECTORY, AND NEVER A ``rosters/<stream>.json`` INSIDE IT. An empty
+    directory says no roster was persisted, which is true. A roster FILE holding
+    zero items says a stream derived its item list and the list was empty — a
+    measurement nobody took — and `Foundry-Roster` would then refuse the real
+    derivation with ``ROSTER_EXISTS`` on the strength of it. Step 5 makes the
+    same call for ``progress/`` and for the same reason.
+
+    The directory name is `rosters.py`'s, imported at call time for the reason
+    stated on the step above it.
+    """
+    from foundry_mcp.tools.rosters import ROSTERS_DIRNAME
+
+    path = run_dir / ROSTERS_DIRNAME
+    if path.is_dir():
+        return "no-op", {"reason": f"{ROSTERS_DIRNAME}/ already present"}
+    if path.exists():
+        raise _Malformed("MIGRATE_WRITE_FAILED")
+    if not dry_run:
+        path.mkdir(parents=True)
+    return "created", {"path": f"{ROSTERS_DIRNAME}/"}
+
+
+# ---------------------------------------------------------------------------
+# Step 5 — per-agent progress ledger directory.
 # ---------------------------------------------------------------------------
 
 
@@ -422,7 +1155,7 @@ def _migrate_progress(run_dir: Path, dry_run: bool) -> tuple[str, dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# Steps 5 + 6 — state.json cycle repair and schema-version marker.
+# Steps 6 + 7 — state.json cycle repair and schema-version marker.
 # ---------------------------------------------------------------------------
 
 
@@ -441,31 +1174,17 @@ def _marker_max_cycle(run_dir: Path) -> int:
     return highest
 
 
-def _rollup_max_cycle(run_dir: Path) -> int:
-    """Highest cycle key in the roll-up ALREADY ON DISK.
-
-    Step 3 leaves a server-written document exactly as found, and that
-    document's keys are the server's own counter values. Reading them here
-    keeps the post-condition unconditional even for a roll-up this tool did
-    not derive.
-    """
-    data = _load_json(run_dir / "stream-rollup.json")
-    cycles = data.get("cycles") if isinstance(data, dict) else None
-    if not isinstance(cycles, dict):
-        return 0
-    highest = 0
-    for raw_cycle in cycles:
-        try:
-            cycle = int(raw_cycle)
-        except (TypeError, ValueError):
-            continue
-        if cycle > highest:
-            highest = cycle
-    return highest
+# A private "highest cycle key in the roll-up ALREADY ON DISK" helper used to
+# live here — that axis is what keeps step 6's post-condition unconditional
+# even for a roll-up this tool did not derive (D-060). It is gone because
+# `derive_cycle_count` reads exactly that axis, and D-084 is what a SECOND
+# reader of one artifact costs: keeping a private copy of the rollup rule
+# beside a private copy of the defect rule is how this tool came to write an
+# index `derive_cycle_count` then read as a different number.
 
 
 def _observed_max_cycle(run_dir: Path) -> int:
-    """Highest cycle the run's own data proves it reached.
+    """The 0-based cycle INDEX the run's own data proves it reached.
 
     MUST consult every source step 3 keys the roll-up on. Reading only
     defects.json + verdicts.json left state.json BEHIND stream-rollup.json's
@@ -477,34 +1196,47 @@ def _observed_max_cycle(run_dir: Path) -> int:
     (D-060). grand-vulture masked it by coincidence: all three of its markers
     carry cycle=17, equal to its max defect cycle.
 
-    Four sources, none invented:
+    THE VALUE WRITTEN TO ``state.json["cycle"]`` IS AN INDEX (D-084)
+    ----------------------------------------------------------------
+    ``foundry_state.derive_cycle_count`` reads that field as the server's
+    0-based counter and publishes ``index + 1`` as the cycle COUNT, so this
+    tool and that reader have to agree about which of the two numbers the
+    field holds. They did not. This folded ``fixed_in_cycle`` and
+    ``reopened_in_cycle`` into the index while ``derive_cycle_count``'s defect
+    source reads ``cycle`` alone, and thunder-viper is the archive where those
+    diverge: max ``cycle`` 21, max ``fixed_in_cycle`` 22. Driven twice on
+    copies — measure-run on the pristine archive printed ``cycles 22``;
+    migrate then measure printed ``cycles 23``, with ``state.json["cycle"]``
+    moved from 0 to 22. OT-030 requires 22, re-running the migration is a
+    no-op so the corruption never healed, and no test migrated the one archive
+    that has the shape.
 
-      * defects.json — ``cycle`` / ``fixed_in_cycle`` / ``reopened_in_cycle``
+    So the defect-ledger axis is `derive_cycle_count`'s, called rather than
+    re-derived: one rule about which fields prove an index, hosted where both
+    readers already reach. A fix ``cycle`` stamp is not discarded information —
+    it is a stamp made by whichever door filed the fix, and the counter it
+    would inflate is the one every later count is built on.
+
+    Sources, none invented:
+
+      * `derive_cycle_count` — defects.json ``cycle``, the roll-up's highest
+        key, and the recorded counter, reconciled by the one function that
+        owns that reconciliation
       * verdicts.json — ``cycle``
       * each ``.{stream}-complete`` marker — the cycle it terminates
-      * the roll-up already on disk — a server-written document's own keys
 
     The marker source is what makes the derivation self-contained under
     ``--dry-run``, where step 3 writes nothing: the reported ``observed`` is
     identical to the value a real run would record.
     """
-    observed = 0
-    data = _load_json(run_dir / "defects.json")
-    records = data.get("defects") if isinstance(data, dict) else None
-    if isinstance(records, list):
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            for key in ("cycle", "fixed_in_cycle", "reopened_in_cycle"):
-                cycle = _as_cycle(record.get(key))
-                if cycle is not None and cycle > observed:
-                    observed = cycle
+    derived = derive_cycle_count(run_dir)["index"]
+    observed = derived if isinstance(derived, int) else 0
     verdicts = _load_json(run_dir / "verdicts.json")
     if isinstance(verdicts, dict):
         cycle = _as_cycle(verdicts.get("cycle"))
         if cycle is not None and cycle > observed:
             observed = cycle
-    return max(observed, _marker_max_cycle(run_dir), _rollup_max_cycle(run_dir))
+    return max(observed, _marker_max_cycle(run_dir))
 
 
 def _migrate_state(
@@ -571,14 +1303,33 @@ def migrate_archive(run_dir: Path, dry_run: bool = False) -> tuple[int, dict[str
 
     steps: dict[str, Any] = {}
     try:
-        outcome, detail = _migrate_defects(run_dir, dry_run)
-        steps["defects"] = {"outcome": outcome, **detail}
+        # Steps 1, 2 and 9 — three schema changes over one read/modify/write of
+        # defects.json, reported under their own three names.
+        defect_steps = _migrate_defects(run_dir, dry_run)
+        for name, (outcome, detail) in zip(
+            ("defects", "defect_tier", "defect_fallout"), defect_steps
+        ):
+            steps[name] = {"outcome": outcome, **detail}
         outcome, detail = _migrate_observations(run_dir, dry_run)
         steps["observations"] = {"outcome": outcome, **detail}
         outcome, detail = _migrate_stream_rollup(run_dir, dry_run)
         steps["stream_rollup"] = {"outcome": outcome, **detail}
+        # Step 8 runs AFTER step 4 and reads what step 4 may have just written.
+        # A roll-up this tool re-derived carries one record per tranche at most,
+        # so the rewrite finds nothing to do on it; a roll-up step 4 preserved is
+        # the server-written one whose totals are exactly what AC-034 is about.
+        # Ordering them the other way would leave a freshly derived document
+        # unexamined for one run.
+        outcome, detail = _migrate_rollup_totals(run_dir, dry_run)
+        steps["rollup_totals"] = {"outcome": outcome, **detail}
         outcome, detail = _migrate_progress(run_dir, dry_run)
         steps["progress"] = {"outcome": outcome, **detail}
+        outcome, detail = _migrate_casting_ownership(run_dir, dry_run)
+        steps["casting_ownership"] = {"outcome": outcome, **detail}
+        outcome, detail = _migrate_concerns(run_dir, dry_run)
+        steps["concerns"] = {"outcome": outcome, **detail}
+        outcome, detail = _migrate_rosters(run_dir, dry_run)
+        steps["rosters"] = {"outcome": outcome, **detail}
         c_out, c_detail, m_out, m_detail = _migrate_state(run_dir, dry_run)
         steps["state_cycle"] = {"outcome": c_out, **c_detail}
         steps["archive_schema_version"] = {"outcome": m_out, **m_detail}

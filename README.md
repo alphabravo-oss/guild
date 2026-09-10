@@ -35,77 +35,79 @@
 
 <table>
 <tr>
-<td width="25%" align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>📐</h2>
 <b><a href="plugins/forge">forge</a></b><br/>
 <sub>Interviews you.<br/>Emits a locked spec.</sub><br/><br/>
 <code>/forge:plan</code>
 </td>
-<td width="25%" align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>🏭</h2>
 <b><a href="plugins/foundry">foundry</a></b><br/>
 <sub>Builds the spec.<br/>Fully autonomous.</sub><br/><br/>
 <code>/foundry:start</code>
 </td>
-<td width="25%" align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>⚗️</h2>
 <b><a href="plugins/crucible">crucible</a></b><br/>
 <sub>Foundry, mini.<br/>No MCP, no interview.</sub><br/><br/>
 <code>/crucible:build</code>
 </td>
-<td width="25%" align="center" valign="top">
+</tr>
+<tr>
+<td width="33%" align="center" valign="top">
 <h2>🤖</h2>
 <b><a href="plugins/crew">crew</a></b><br/>
 <sub>Owns the outcome.<br/>Five agents, one job.</sub><br/><br/>
 <code>/crew:do</code>
 </td>
-</tr>
-<tr>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>🧭</h2>
 <b><a href="plugins/adhoc">adhoc</a></b><br/>
 <sub>Blocks citations<br/>it never verified.</sub><br/><br/>
 <code>always on</code>
 </td>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>⚡</h2>
 <b><a href="plugins/tldr">tldr</a></b><br/>
 <sub>Action first.<br/>No preamble.</sub><br/><br/>
 <code>always on</code>
 </td>
-<td align="center" valign="top">
+</tr>
+<tr>
+<td width="33%" align="center" valign="top">
 <h2>🔍</h2>
 <b><a href="plugins/holmes">holmes</a></b><br/>
 <sub>Shaped right,<br/>or accreted?</sub><br/><br/>
 <code>/holmes:review</code>
 </td>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>👁️</h2>
 <b><a href="plugins/ux-review">ux-review</a></b><br/>
 <sub>Drives the app.<br/>Doesn't read code.</sub><br/><br/>
 <code>/ux-review:run</code>
 </td>
-</tr>
-<tr>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>🎨</h2>
 <b><a href="plugins/damu">damu</a></b><br/>
 <sub>De-AI my UI.<br/>19 slop signatures.</sub><br/><br/>
 <code>/damu:remediate</code>
 </td>
-<td align="center" valign="top">
+</tr>
+<tr>
+<td width="33%" align="center" valign="top">
 <h2>🧹</h2>
 <b><a href="plugins/tidy">tidy</a></b><br/>
 <sub>7-track cleanup.<br/>HIGH-confidence only.</sub><br/><br/>
 <code>/tidy:run</code>
 </td>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>🎭</h2>
 <b><a href="plugins/e2e">e2e</a></b><br/>
 <sub>Describe the flow.<br/>Get a passing spec.</sub><br/><br/>
 <code>/e2e:write</code>
 </td>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>🕸️</h2>
 <b><a href="plugins/weave">weave</a></b><br/>
 <sub>Authors Workflow<br/>scripts on demand.</sub><br/><br/>
@@ -113,18 +115,18 @@
 </td>
 </tr>
 <tr>
-<td align="center" valign="top">
+<td width="33%" align="center" valign="top">
 <h2>📖</h2>
 <b><a href="plugins/webster">webster</a></b><br/>
 <sub>Harvester-shaped docs<br/>that cite their sources.</sub><br/><br/>
 <code>/webster:plan</code>
 </td>
-<td colspan="3"></td>
+<td colspan="2"></td>
 </tr>
 </table>
 
 
-<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.9.0-F57C00?style=flat-square" alt="foundry 4.9.0"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/> <img src="https://img.shields.io/badge/webster-0.11.0-6D4C41?style=flat-square" alt="webster 0.11.0"/></sub>
+<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.11.0-F57C00?style=flat-square" alt="foundry 4.11.0"/> <img src="https://img.shields.io/badge/foundry--mcp-1.10.0-F57C00?style=flat-square" alt="foundry-mcp 1.10.0"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/> <img src="https://img.shields.io/badge/webster-0.11.0-6D4C41?style=flat-square" alt="webster 0.11.0"/></sub>
 
 
 </div>
@@ -264,6 +266,10 @@ Decompose authors every teammate prompt **once**, freezes it, and validates it a
 
 **Findings have two channels.** Behaviour and security findings are defects. Comment prose — a stale line hint, a count, a direction word — goes to a typed observations ledger instead, and the server refuses to file it the other way. A security-property claim can never be demoted; trying trips a persisted audit signal.
 
+**`--max-cycles N` caps the loop, and the cap is not a refusal.** The default `0` is unbounded. The transition that would open a GRIND cycle past the cap succeeds into a named `HALTED` state, and the report is generated as part of that same transition, naming every open defect at every tier: every open `LIVE` one, and every open `LATENT` and `HARDENING` one in its own `latent_backlog` and `hardening_backlog` section. `HALTED` is not `DONE` — it is a run that stopped with open work, and it says so.
+
+**Building foundry with foundry — launch with `--plugin-dir`.** A run whose target is the foundry plugin is started as `claude --plugin-dir <project_root>/plugins/foundry`, so the executing MCP server is the working tree and the fixes the run ships reach that same run. F0 refuses a self-targeting run whose server does not match the tree, naming the launch command; a run targeting anything else compares nothing. No run ever switches servers mid-flight.
+
 → [Full docs](plugins/foundry)
 
 </details>
@@ -359,6 +365,47 @@ flowchart LR
 <summary><b>🆕 What's new</b></summary>
 
 <br/>
+
+### foundry 4.11.0 — the loop stops making work for itself
+
+The successor to 4.10.0's own build. `daring-orca` shipped 4.10.0 in 29 GRIND cycles and sealed `HALTED` with four defects still open — and much of what those cycles found was fallout the loop had produced itself: a fix in one casting quietly breaking a sibling nobody had dispatched, one finding re-filed as three because a probe that was never a spec requirement had no channel of its own, and an orchestrator that had been shaped cycle by cycle by the defect loop instead of by a design. Every item below narrows one of those. The run now measures its own fallout rather than absorbing it.
+
+| Adds | Where |
+|---|---|
+| **`Foundry-Concern` — the cross-casting concern ledger** — a teammate whose fix reaches another casting's files records it against a target the manifest can resolve, and the lead closes it with a reason. `concerns.md` stays prose; the ledger is what the server reads. An open concern from the closing GRIND refuses the next INSPECT by id | `Foundry-Concern` · `concerns.json` · `_inspect_start_preconditions` |
+| **Co-dispatch instead of a lone fix** — `Foundry-Tasks` emits, per task, the set of castings whose `requirement_ids` intersect the fix, under a **server-generated** alignment block naming the originating defects and each sibling's files. `Foundry-Directive` gets the same set from the ids the requirement-ID regex finds in its text | `Foundry-Tasks` · `Foundry-Directive` · `castings/manifest.json` |
+| **One preconditions routine per transition token** — every `PHASE_TOKENS` member has exactly one `_<token>_preconditions`, and the transition makes no other read and adds no refusal of its own. `Foundry-Gate` reports that same checklist through `GATE_TO_TRANSITION`, so a gate and the transition it guards can no longer disagree. The cap arrives as a non-refusing `would_halt` fact the transition acts on | `transitions.py` · `gates.py` |
+| **The orchestrator split — no facade** — the 1.9.0 monolith is deleted rather than shimmed, and every importer rewritten: `tools/orchestration/` is fourteen modules with their own test package, and the verifier set narrows to the gates, transitions, width and sweep modules. A stdlib-only pytest guard holds the import graph acyclic, keeps each symbol defined once, and keeps verifier modules out of the presentation layer | `tools/orchestration/` · `tests/orchestration/test_module_boundaries.py` |
+| **`HARDENING` tier** — a third channel for a probe the stream drove *itself* and saw fail, with no spec row behind it. It does not block a gate, it gets its own report backlog, and it is never re-tiered in place: a promotion is a new filing that cites it through `supersedes`. A `HARDENING` filing carrying any `spec_ref` is refused at both doors | `vocab.DEFECT_TIERS` · both filing doors · `Foundry-Report` |
+| **The lead halt door** — `Foundry-Phase(phase='halt')` ends a run deliberately on one of four reasons (`cap_reached`, `lead_ruling`, `spec_change_required`, `user_stop`) plus the lead's own text. `halt` is a full token with its own preconditions function and its own gate | `Foundry-Phase` · `Foundry-Gate` · `vocab.HALT_REASONS` |
+| **Stream records replace; rosters persist** — a second `Foundry-Stream` for one `(stream, cycle)` REPLACES the first and names what it replaced, history kept, so totals can never exceed 100%. The verifying **agent** records; the lead confirms the record exists. `Foundry-Roster` fixes a stream's item list at first derivation and later cycles read it | `Foundry-Stream` · `Foundry-Roster` · `rosters/` |
+| **Evidence commands linted at both doors** — an `# evidence-cmd:` that will not parse under `/bin/sh -n` is `BLOCKED` at the commit guard naming the log and the shell's own message, and refused *before execution* at every sweep crossing with `EVIDENCE_COMMAND_SYNTAX`. Linting at one door only is what let a broken command reach the corpus | `hooks/pre-commit-guard.sh` · `evidence.py` |
+| **The run measures its own fallout** — `measure-run.py` reports `fallout_per_cycle` (findings that are fallout of an earlier fix) and `full_cycle_ratio` (FULL over total INSPECT cycles), each with a pass/fail verdict; defect records gained `fallout_of` and `supersedes` to feed it | `scripts/measure-run.py` · `Foundry-Report` |
+| **Ownership is declared, not inferred** — each casting persists its `requirement_ids` at F0.5 instead of having ownership re-read out of prose at dispatch time, and F0.9 refuses a requirement spanning more than two castings without a recorded `split_reason` | `castings/manifest.json` · `Foundry-Validate-Castings` |
+| **`Foundry-Team-Down` refuses a live hand-off** — tearing a GRIND team down while a defect dispatched this cycle is still open, with its file among the commits since the cycle baseline, is refused by id | `Foundry-Team-Down` · `handoffs.jsonl` |
+| **`TEMPER_CANDIDATE` observations** — PROVE records a probe idea instead of filing it as a defect; TEMPER's roster is the open candidates plus its own micro-domains, and each is closed as driven — filed or clean | `Foundry-Observation` · `skills/prove` · `skills/temper` |
+| **`/foundry:resume --max-cycles N`** — the resume path rewrites the persisted cap in the same locked write as the refreshed provenance, lowering a ceiling onto a run already moving. A negative cap is refused at the door rather than silently read as unbounded | `Foundry-Init` · `commands/resume.md` |
+| **Archives keep reading** — `migrate-archive.py` takes a schema-3 archive to schema 4 idempotently: rollup totals rewritten to the LAST record with history kept, and defaults filled for `requirement_ids`, `split_reason`, `fallout_of`, `supersedes`, `concerns.json` and `rosters/` | `scripts/migrate-archive.py` |
+
+### foundry 4.10.0 — the run knows when to stop
+
+The successor to 4.9.0's own retrospective. `thunder-viper` shipped 4.9.0 in 22 GRIND cycles, eight of them after verification was already clean, and TEMPER never converged on its own — it had no stated end, so it ended when a human said so. Every item below exists to make a run terminate on evidence rather than on patience: findings now carry whether they were *observed* or merely *derived*, gates count only the observed ones, escalated defect families exit by a rule instead of a judgement call, and the run's own report is generated from its ledgers rather than written by the lead who is tired of it.
+
+| Adds | Where |
+|---|---|
+| **A tier on every finding** — `LIVE` means the stream drove the door and saw the wrong result; `LATENT` means it derived the finding with no reachable instance and must say what it drove. A security-property claim can never be `LATENT`. 4.11.0 widened the set with `HARDENING` (see its row in the 4.11.0 table); `vocab.DEFECT_TIERS` holds the members | `Foundry-Defect` · `Foundry-Sync` · all four stream agents · temper |
+| **Tier-aware gates** — `LIVE` and unknown-tier defects block; a `LATENT`-only backlog passes every gate and stays open, tracked, and named in the report | `inspect_clean` · ASSAY · TEMPER · NYQUIST · DONE |
+| **Escalation exits mechanically** — two consecutive cycles drawing zero `LIVE` instances, or an exhausted two-pass structural budget; `CLEARED` persists its exit reason. Clearing ends escalation, never a defect | `Foundry-Tasks` · `escalation.json` |
+| **`LATENT` fix lane** — a `LATENT` defect closes on a named regression test, without the adjacent-path declaration a `LIVE` fix still requires | `Foundry-Fix` |
+| **Bounded lead-fix lane** — the lead may fix `LATENT` at any size and `LIVE` within one non-test file and 20 lines; the **server** measures it with `git show --numstat` and writes the `lead_fix` handoff | `Foundry-Fix` · `foundry_handoff.py` |
+| **Server-side evidence sweep at the GRIND boundary** — every evidence log re-executes byte-identical at HEAD in a detached worktree, delta by default and whole-corpus before ASSAY / NYQUIST / DONE; a mismatch refuses the transition naming the log | `Foundry-Phase(inspect_start)` · `evidence.py` |
+| **FULL vs DELTA INSPECT** — the transition that OPENS an INSPECT decides its width and records the rule that fired; `Foundry-Next` only reports it | `Foundry-Phase` · `state.json` `inspect_modes` |
+| **Self-target preflight** — a run building foundry is launched with `claude --plugin-dir`, and F0 refuses when the executing server is not the working tree, naming the launch command | `Foundry-Init` |
+| **Pointer dispatch** — spawn tools return a path and a sha256 instead of prompt text; the agent reads the file and states the hash, and acceptance refuses on mismatch | `Foundry-Spawn-Teammate` · `Foundry-Cast-Wave` |
+| **Liveness-aware stall detector** — a waiting-on-N-agents notice while agents are running; a stall warning only when none are | `Foundry-Next` · `Foundry-Liveness` |
+| **`Foundry-Spend`** — per-agent tokens and duration, rolled up per phase and per cycle. The lead pastes the numbers; **the server never parses a transcript**. A forgotten record is reported, never blocking | `Foundry-Spend` |
+| **`Foundry-Report`** — `REPORT.md` and `report.json` generated from the run's ledgers across eleven required sections. The lead may append prose under a heading of their own, which the F6 seal carries verbatim into a trailing `Lead notes (carried by the seal)` section, but can never omit a generated section; `Foundry-Phase('done')` refuses a missing section | `Foundry-Report` |
+| **`--max-cycles N`** — caps the verify-fix cycles. Reaching the cap **succeeds** into a named `HALTED` state, generating the report; `HALTED` is not `DONE` | `setup-foundry.sh` · `Foundry-Init` · `Foundry-Phase` |
 
 ### foundry 4.9.0 — the run stops manufacturing its own work
 

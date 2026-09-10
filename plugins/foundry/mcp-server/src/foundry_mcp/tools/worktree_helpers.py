@@ -174,6 +174,123 @@ def _release_claim(worktree_path: Path) -> None:
 # stderr is merged into stdout (CONTEXT.md "stdout+stderr-merged byte-match")
 # so a single captured string compares against the committed log.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# The child environment, and why it is a CLOSED ALLOWLIST (fallout D-175).
+#
+# The launch below used to hand the child ``os.environ.copy()`` — the whole
+# environment of whatever process happened to start the MCP server. That made a
+# committed evidence log's reproducibility a property of THE OPERATOR'S SHELL
+# rather than of the tree, which is the one thing the corpus exists to rule out.
+#
+# The instance that proved it: a lead who had activated
+# ``plugins/foundry/mcp-server/.venv`` before launching the server exported
+# ``VIRTUAL_ENV`` naming the MAIN checkout's venv. The sweep re-executes inside
+# a ``git worktree add --detach`` checkout whose own project environment is a
+# DIFFERENT absolute path, so ``uv`` printed
+#
+#     warning: `VIRTUAL_ENV=…` does not match the project environment path
+#     `.venv` and will be ignored; use `--active` to target the active
+#     environment instead
+#
+# on stderr, which this launch merges into the capture. One extra leading line
+# against a byte-compared body is a mismatch, so ``Foundry-Gate('inspect_start')``
+# refused a crossing over a log nothing in the tree had touched — and the
+# refusal's own remedy (``orchestration/evidence_boundary.py`` ->
+# ``_SWEEP_REMEDY_REEXECUTED``) names three causes that are all properties of
+# the TREE or the LOG, so the documented next step was to send the owning
+# casting to RE-CAPTURE. Re-capturing would have baked the warning into the
+# committed bytes and INVERTED the bug: the log would then reproduce only for
+# an operator whose shell exports that exact path, and refuse for everyone
+# else, CI included.
+#
+# AN ALLOWLIST, NOT A ``pop("VIRTUAL_ENV")``. That variable is the instance
+# that was observed, not the class. ``PYTHONPATH``, ``PYTHONHOME``,
+# ``PYTHONWARNINGS``, ``PIP_*``, ``UV_PROJECT_ENVIRONMENT``, ``PYTEST_ADDOPTS``,
+# ``PYTEST_CURRENT_TEST``, ``COLUMNS``, ``GIT_DIR`` and every pyenv/conda shim
+# variable redirect a tool at state outside the checkout in exactly the same
+# shape, and ``uv`` alone grows new ones between releases. A denylist shuts the
+# doors somebody has already walked through; this list fails CLOSED, so the
+# variable nobody has thought of yet is dropped before it is invented.
+#
+# WHAT IT CANNOT DO, said plainly so the next reader does not over-trust it:
+# ``PATH`` and ``HOME`` are themselves operator state and are on the list
+# because nothing runs without them. A pyenv shim ahead of the real interpreter
+# on ``PATH``, or a ``~/.gitconfig``, still reaches the child. The class is
+# NARROWED to the variables that can be dropped, not eliminated.
+#
+# Each membership earns its place:
+#   - ``PATH`` / ``HOME`` / ``TMPDIR`` — nothing is found, cached or written
+#     without them.
+#   - ``XDG_*`` — where a host that sets them keeps its caches. Dropping them
+#     would point ``uv`` at a COLD cache, and a cold cache prints resolution and
+#     download progress into the very bytes being compared.
+#   - ``USER`` / ``LOGNAME`` — identity; git and friends warn or refuse without
+#     it.
+#   - ``LANG`` / ``LC_*`` / ``TZ`` — collation order and rendered dates are
+#     byte-visible in the comparison this environment feeds, so they are passed
+#     through rather than silently re-defaulted to the C locale.
+#   - ``__CF_USER_TEXT_ENCODING`` / ``COMMAND_MODE`` — macOS CoreFoundation and
+#     BSD-utility plumbing; absent, some tools are noisier than when captured.
+#
+# Secrets are NOT on the list, and closing that is the second thing this buys:
+# the lead's ``GITHUB_TOKEN``, ``GITLAB_TOKEN``, ``JFROG_TOKEN`` and
+# ``SSH_AUTH_SOCK`` used to be handed to every committed shell command in the
+# corpus, none of which has any business holding them.
+# ---------------------------------------------------------------------------
+_CHILD_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "LANGUAGE",
+        "LC_ALL",
+        "LC_COLLATE",
+        "LC_CTYPE",
+        "LC_MESSAGES",
+        "LC_MONETARY",
+        "LC_NUMERIC",
+        "LC_TIME",
+        "TZ",
+        "__CF_USER_TEXT_ENCODING",
+        "COMMAND_MODE",
+    }
+)
+
+
+def _child_environment() -> dict[str, str]:
+    """The environment every command this module launches actually gets.
+
+    ``_CHILD_ENV_ALLOWLIST`` intersected with the server's own environment —
+    a name the parent does not have is simply absent rather than passed as an
+    empty string, because "unset" and "set to nothing" are different questions
+    to every shell and to ``uv``.
+
+    SORTED, so two invocations that inherit the same names hand the child the
+    same mapping in the same order. A command that prints its own environment
+    is then stable across sweeps for the same reason every other capture is.
+
+    ONE READER IS NOT THE ONLY READER. ``evidence.py#_make_provenance_record``
+    derives its ``env_keys_present`` abuse trail from THIS function rather than
+    from ``os.environ``, because that field is documented as the names present
+    AT RE-EXEC TIME and a second reading of the server's own environment would
+    describe a process the command never ran in — naming variables it could not
+    see and omitting the fact that this door drops them.
+    """
+    return {
+        name: os.environ[name]
+        for name in sorted(_CHILD_ENV_ALLOWLIST)
+        if name in os.environ
+    }
+
+
 def _run_command_with_timeout(
     cmd: str,
     cwd: Path,
@@ -194,12 +311,62 @@ def _run_command_with_timeout(
     Discipline (per CONTEXT.md + RESEARCH.md Pitfalls 3 & 4):
       - ``shell=True`` so users can write pipelines / multi-token cmds in
         the ``# evidence-cmd:`` header.
+      - THE SHELL IS ``/bin/sh``, and that is a fact, not a preference. On
+        POSIX, ``Popen(shell=True)`` with no ``executable=`` argument runs
+        ``['/bin/sh', '-c', cmd]``; there is no ``executable=`` anywhere in this
+        plugin and none is wanted here. Stated at the launch because the places
+        that have to agree with it cannot see this call: the commit guard
+        (``hooks/pre-commit-guard.sh`` Check 4) and the shared pre-execution
+        lint (``evidence.py#_shell_parse_problem``, whose ``_EVIDENCE_SHELL``
+        constant is this same path) both parse an evidence command with
+        ``/bin/sh -n``. A lint that parsed with one shell while the command ran
+        under another would pass constructs that fail and block constructs that
+        work — so if this call ever DOES pin ``executable=``, both of those must
+        be repointed in the same change.
+      - EVERY EVIDENCE-COMMAND CALLER LINTS BEFORE IT CALLS, AND WHICH
+        CALLERS THOSE ARE IS DERIVED, NEVER COUNTED (fallout FR-002 / D-107,
+        and AC-035 for the counting). This function is the server's only
+        executor of an evidence command, and every function in ``evidence.py``
+        that reaches it calls ``evidence.py#_shell_parse_problem`` first:
+        ``_sweep_one_log`` at the boundary and terminal sweeps and
+        ``_verify_one_evidence_file`` at casting acceptance, each turning a
+        parse failure into a named per-log ``EVIDENCE_COMMAND_SYNTAX`` refusal
+        without reaching here, and ``_sweep_warm_worktree``, which owns no
+        verdict and so skips a candidate it cannot parse rather than refusing
+        it. (``test_deriver.py`` reaches this launch too, with a derived test
+        command rather than a committed evidence command; it is outside the
+        claim above, which is why the claim names the module it binds.)
+        THE ENUMERATION IS NOT THE RULE, AND WRITING IT AS ONE IS WHAT KEEPS
+        GOING WRONG HERE. It first named the sweep alone and called the lint
+        "the sweep's own", which is how the acceptance door came to execute
+        what it could not parse for a whole run (D-107). It then said the count
+        was TWO and treated a third caller as hypothetical — and the third
+        landed in ``evidence.py`` one cycle later (D-176), lint and all, with
+        this paragraph unchanged and nothing red, because the only test reading
+        it asked for two names it already had. So the rule is now a property of
+        the tree, derived twice from one walk: ``tests/test_evidence.py``
+        proves each executor LINTS in
+        ``test_every_caller_of_the_runner_parses_the_command_first`` and proves
+        each executor is WRITTEN DOWN HERE in
+        ``test_the_runner_documents_the_callers_that_must_lint``. A fourth
+        caller fails both the day it lands — the lint lives in the callers, so
+        one that skips it runs unparsed commands with no door left to notice,
+        and one that is merely unwritten leaves the next reader an enumeration
+        that has now been short twice.
       - ``stderr=subprocess.STDOUT`` merges streams (single-string compare).
       - ``text=True, encoding='utf-8', errors='replace'`` makes binary or
         non-UTF-8 output survive comparator entry.
       - ``start_new_session=True`` puts the child in a fresh process group
         so ``os.killpg`` reaches descendants.
-      - ``env=os.environ.copy()`` inherits the lead's env (CONTEXT.md).
+      - ``env=_child_environment()`` is a CLOSED ALLOWLIST, NOT the server's
+        whole environment. CONTEXT.md's "inherit the lead's env" is superseded
+        by fallout D-175: the inherited copy made whether a committed log
+        reproduces a function of how the MCP server happened to be launched,
+        and an operator-shaped mismatch is the one cause the boundary's remedy
+        does not name — so the documented next step for a reader who hit it was
+        a re-capture, which is the single action that makes it permanent. See
+        ``_child_environment`` for the membership rules and for what an
+        allowlist still cannot reach.
 
     Timeout escalation: SIGTERM → 2s grace → SIGKILL. Wrapped in
     ``ProcessLookupError``/``OSError`` guards because the child may have
@@ -216,7 +383,7 @@ def _run_command_with_timeout(
         encoding="utf-8",
         errors="replace",
         start_new_session=True,
-        env=os.environ.copy(),  # inherit lead's env per CONTEXT.md
+        env=_child_environment(),  # closed allowlist, not the lead's env (D-175)
     )
     try:
         stdout, _ = proc.communicate(timeout=timeout)

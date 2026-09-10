@@ -1,0 +1,43 @@
+{
+  "phase": "F6",
+  "cycle": 6,
+  "spec_path": "forge-specs/foundry-run-convergence/spec.md",
+  "inspect_modes": [
+    {
+      "cycle": 1,
+      "phase": "F2",
+      "mode": "FULL",
+      "rule": "first_of_phase"
+    },
+    {
+      "cycle": 2,
+      "phase": "F2",
+      "mode": "DELTA",
+      "rule": "delta"
+    },
+    {
+      "cycle": 3,
+      "phase": "F2",
+      "mode": "FULL",
+      "rule": "verifier_touched"
+    },
+    {
+      "cycle": 4,
+      "phase": "F2",
+      "mode": "DELTA",
+      "rule": "delta"
+    },
+    {
+      "cycle": 5,
+      "phase": "F5",
+      "mode": "FULL",
+      "rule": "first_of_phase"
+    },
+    {
+      "cycle": 6,
+      "phase": "F5",
+      "mode": "DELTA",
+      "rule": "delta"
+    }
+  ]
+}

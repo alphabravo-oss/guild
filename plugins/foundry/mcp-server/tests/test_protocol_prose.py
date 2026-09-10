@@ -42,22 +42,59 @@ voice, tracer's wiring voice, flow-tracer's terse chain voice,
 research-auditor's deviation voice), which is required — pasting one identical
 paragraph into four files was explicitly rejected. So the pins are on the
 clauses that carry the *ruling*, never on a whole sentence.
+
+That is a ruling about the SPLIT, and GI-001's tier rule is the deliberate
+exception to it rather than a drift from it: FR-030 requires the replacement
+wording to be pinned, and patterns/PATTERNS.md rules a rule shared across the
+stream agents word-identical in all of them. There is one sentence to pin for
+that rule, not one voice per file to respect, and
+``test_stream_agents_share_one_tier_rule_verbatim`` is what holds the
+word-identity the clause pins beside it then read. The roster it sweeps is
+``DEFECT_FILING_AGENTS``, DERIVED rather than typed -- see the D-017 comment
+above it for why a hand-maintained list cannot fail on the file it forgot. Both dispositions live in
+this module on purpose; the section comment above that test says which ruling
+gets which treatment and why.
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import re
+import subprocess
+import sys
+import warnings
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from foundry_mcp.schemas import vocab
-from foundry_mcp.tools import foundry_orchestrator as orch
+from foundry_mcp.tools import artifacts
+from foundry_mcp.tools import foundry as foundry_doors
+from foundry_mcp.tools import evidence as evidence_doors
 from foundry_mcp.tools import foundry_spawn as fs
 from foundry_mcp.tools import foundry_state
+from foundry_mcp.tools import rosters
+from foundry_mcp.tools import test_deriver
+from foundry_mcp.tools import worktree_helpers
 from foundry_mcp.tools.foundry_validate import foundry_validate_castings
+
+# fallout GI-010 — the monolith this module used to import is DELETED, and
+# the private symbols pinned below are reached at the module-contract homes
+# casting 2's symbol map records: `_statement_problem` with the fix-gate
+# block, `_recorded_prove_roster` with the streams block,
+# `_trace_skip_from_width` with the width blocks and `_stamp_trace_skip` with
+# guidance — the two halves the trace-skip fence split into under ruling
+# `lead_ruling_gi_033_leaf_moves` item 5. The call sites stay QUALIFIED
+# by module rather than importing the three names bare, because a bare
+# `_statement_problem(...)` no longer says which of the thirteen
+# orchestration modules owns it, and this module reaches private symbols
+# across module boundaries on purpose. Re-binding one short alias to one of
+# the three, or shipping a re-export shim under the monolith's old name,
+# would have kept this import green and is exactly the facade GI-010
+# refuses.
+from foundry_mcp.tools.orchestration import directives, fix_gate, guidance, streams, width
 
 # D-048: the vocabulary assertions below READ the real enum rather than
 # re-typing it. A hard-coded tuple in a test is a seventh copy of a closed
@@ -77,6 +114,7 @@ from foundry_mcp.tools.foundry_validate import foundry_validate_castings
 # path, so the suite runs from any checkout.
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FOUNDRY_ROOT = REPO_ROOT / "plugins" / "foundry"
+MCP_SERVER = FOUNDRY_ROOT / "mcp-server"
 
 AGENTS = FOUNDRY_ROOT / "agents"
 COMMANDS = FOUNDRY_ROOT / "commands"
@@ -116,9 +154,16 @@ RUN_ENTRY_COMMANDS = tuple(
     )
 )
 
-# The four F2 INSPECT streams that file findings into the defect ledger. The
-# split is a property of all four together: a stream still filing comment prose
-# as a defect re-opens the loop this effort exists to close.
+# The four F2 INSPECT streams that carry the observation/defect split in their
+# own prose. The split is a property of all four together: a stream still filing
+# comment prose as a defect re-opens the loop this effort exists to close.
+#
+# This is NOT the roster of everything that files into the defect ledger --
+# `agents/coverage-diff.md` does too, and start.md's F2 roster states that it is
+# bound by the split without restating it. The tier and class pins therefore
+# sweep the DERIVED `DEFECT_FILING_AGENTS` further down, not this tuple (D-017).
+# Keep the two apart: widening this one would demand a split paragraph in a file
+# the command prose says does not carry one.
 STREAM_AGENTS = (ASSAYER, TRACER, FLOW_TRACER, RESEARCH_AUDITOR)
 
 # Locked cross-casting contract: another casting ships the ledger and the
@@ -157,6 +202,273 @@ def _flat(path: Path) -> str:
     the flattened text; single-token and code-span pins can use ``_read``.
     """
     return " ".join(_read(path).split())
+
+
+# ---------------------------------------------------------------------------
+# fallout D-173 / FR-037 -- the one contract every recorded-gap ledger in this
+# module obeys: a recorded gap is an EXEMPTION, never an OBLIGATION
+# ---------------------------------------------------------------------------
+#
+# Three ledgers below record known gaps in files this module SWEEPS but does
+# not OWN -- `_KNOWN_SUBSTANCE_GAPS` over the filing surfaces,
+# `_KNOWN_TIER_GAPS` and `_KNOWN_TIER_COUNT_GAPS` over the tier-stating ones.
+# All three compared their measurement to their ledger by EXACT equality, which
+# made the `recorded but no longer measured` half an assertion about a file
+# another casting owns: the casting that CLOSED its own gap could only get back
+# to green by editing THIS module, in the same commit as its fix.
+#
+# D-173 is the driven consequence. In one GRIND cycle three castings edited
+# this file: casting 6 (its own work), casting 8 deleting the entry for
+# `commands/start.md`, and casting 11 deleting the entry for
+# `skills/temper/SKILL.md`. Casting 11 had its deletion STAGED when casting 8
+# committed, and a pathspec commit naming a path the committer legitimately
+# edited swept the peer's hunk in with it -- so the branch records casting 11's
+# debt as closed by casting 8, and the intermediate commit is permanently RED
+# (the emptied count ledger against a file that still said "both tiers").
+# Neither teammate was wrong: both followed the contract as written. The
+# contract was wrong.
+#
+# So the direction splits. A gap the ledger does NOT record fails, hard, in the
+# parametrised test, and it is cleared by the file's own owner fixing their own
+# prose -- no edit here. A gap the ledger records that the file no longer has
+# is COLLECTABLE DEBT: reported by the ledger's own floor check under
+# `StaleGapLedgerWarning`, retired by THIS module's owner in THIS module's
+# commit, and never a failure that reaches back into the casting that closed
+# it. `addopts = "-ra"` renders the warning every run, and a lead who wants the
+# old teeth escalates exactly this class with `-W error::...` -- which is why
+# it is a named subclass and not a bare `UserWarning`.
+#
+# WHAT THIS GIVES UP, stated rather than glossed: while an entry stands, a file
+# regressing back into the SAME recorded gap is not RED. That window is bounded
+# by the warning firing on every run with the row named in it. The window the
+# exact comparison had instead was a peer's lost commit, which is not bounded
+# by anything.
+
+
+class StaleGapLedgerWarning(UserWarning):
+    """A gap one of this module's ledgers records that the file no longer has.
+
+    Named rather than bare so `-W error::tests.test_protocol_prose.StaleGapLedgerWarning`
+    restores a hard failure for a lead who wants one, and so the rows are
+    greppable in a run's captured pytest output.
+    """
+
+
+#: The one spelling of "this comparison is subset-shaped and here is why", so
+#: the three ledgers cannot drift into three different accounts of one rule.
+_LEDGER_CONTRACT = (
+    "Compared SUBSET-shaped against the recorded-gap ledger (fallout D-173): "
+    "an unrecorded gap fails here, in the file that has it, while a recorded "
+    "gap the file no longer has is collectable debt this module's own floor "
+    "check reports under StaleGapLedgerWarning and this module's owner "
+    "retires. An exact comparison made the second half an assertion about "
+    "another casting's file, collectable only by editing this one."
+)
+
+
+def _ledger_verdict(
+    measured: frozenset[str], recorded: frozenset[str]
+) -> tuple[frozenset[str], frozenset[str]]:
+    """``(unrecorded, collectable)`` for a ledger recording gaps per MEMBER.
+
+    ``unrecorded`` is the hard half: members the file is short of that nothing
+    excuses. Per-member rather than per-file, so a surface recorded as missing
+    one member still fails the day it stops naming a second.
+
+    ``collectable`` is the soft half: members the ledger excuses that the file
+    now names. Returned rather than asserted, because the caller that can act
+    on it is the floor check, not the file's owner.
+    """
+    return measured - recorded, recorded - measured
+
+
+def _count_ledger_verdict(
+    measured: str | None, recorded: str | None
+) -> tuple[str | None, str | None]:
+    """``(unrecorded, collectable)`` for a ledger recording PRESENCE, not wording.
+
+    Presence-shaped on purpose. The recorded value is the phrase the surface
+    carried when the debt was written down, and it is documentation: a surface
+    that rewords its count is carrying the same debt in different words, so
+    holding the exemption to the exact phrase would force whoever reworded the
+    sentence to edit this module -- D-173 again, one rung quieter. The hard
+    half fires only on a count nothing records; drift in the recorded wording
+    is reported with the closed rows.
+    """
+    unrecorded = measured if (measured and not recorded) else None
+    if recorded and recorded != measured:
+        return unrecorded, recorded
+    return unrecorded, None
+
+
+def _report_collectable_debt(ledger: str, rows: dict[str, object]) -> None:
+    """Report retired-but-recorded ledger rows without failing the suite.
+
+    The single door for all three floor checks: one wording, one warning class,
+    one place to change if the collection channel ever changes again.
+    """
+    if not rows:
+        return
+    warnings.warn(
+        f"{ledger} records gaps the swept files no longer have: {rows}. "
+        f"These are COLLECTABLE DEBT, not failures -- delete each row in this "
+        f"module's own commit. {_LEDGER_CONTRACT}",
+        StaleGapLedgerWarning,
+        stacklevel=2,
+    )
+
+
+def test_a_recorded_gap_is_an_exemption_and_never_an_obligation() -> None:
+    """fallout D-173 / FR-037 -- the ledger contract, DRIVEN.
+
+    All three ledgers are empty today, so the live tree cannot show either
+    direction of the rule. Driving the verdict functions on synthesised pairs
+    is what makes the contract a measured property rather than a claim in the
+    comment above it -- the same disposition
+    ``test_the_count_rule_does_not_forbid_the_sentence_this_module_requires``
+    takes for the count regex.
+
+    Against the pre-fix module this test does not import: the verdicts did not
+    exist and the comparison was inlined as ``missing == known``, which is the
+    whole of D-173.
+    """
+    unrecorded, collectable = _ledger_verdict(
+        frozenset({"HARDENING", "LATENT"}), frozenset({"LATENT"})
+    )
+    assert unrecorded == frozenset({"HARDENING"}), (
+        f"a member the file is short of and no row excuses came back as "
+        f"{sorted(unrecorded)}. The hard half is per-MEMBER: a surface "
+        f"recorded as missing one member must still fail the day it stops "
+        f"naming a second, or one row exempts the whole file forever."
+    )
+    assert not collectable, (
+        f"{sorted(collectable)} reported as collectable while the file still "
+        f"has that gap. Debt is collected when the gap CLOSES, never while it "
+        f"stands -- a row retired early leaves a live gap unexcused and "
+        f"unpinned at once."
+    )
+
+    unrecorded, collectable = _ledger_verdict(frozenset(), frozenset({"HARDENING"}))
+    assert not unrecorded, (
+        f"a file that CLOSED its recorded gap still fails the parametrised "
+        f"rule ({sorted(unrecorded)}), so the casting that closed it can only "
+        f"reach green by deleting a row from THIS module inside THEIR commit. "
+        f"That is D-173: casting 8's commit d4db504 carried casting 11's "
+        f"staged deletion and left a RED intermediate on the branch."
+    )
+    assert collectable == frozenset({"HARDENING"}), (
+        f"the closed gap came back as {sorted(collectable)} rather than "
+        f"collectable debt. Dropping the second half entirely would let a "
+        f"retired row rot here, which is the property the exact comparison "
+        f"had and this must keep."
+    )
+
+    assert _count_ledger_verdict("both tiers", None) == ("both tiers", None), (
+        "a counted vocabulary that no row records must fail at once; the "
+        "count ledger's hard half is the one that catches a NEW count."
+    )
+    assert _count_ledger_verdict(None, "both tiers") == (None, "both tiers"), (
+        "a surface that stopped counting must be collectable debt, not a "
+        "failure -- it is the fix landing, and the fixer does not own this "
+        "module."
+    )
+    assert _count_ledger_verdict("three tiers", "both tiers")[0] is None, (
+        "rewording a counting sentence fails the hard half, so whoever "
+        "reworded it must edit this module to update the recorded phrase. "
+        "Same debt, different words: the exemption is PRESENCE-shaped and the "
+        "recorded phrase is documentation."
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _report_collectable_debt("_KNOWN_TIER_GAPS", {"a/b.md": ["HARDENING"]})
+        _report_collectable_debt("_KNOWN_TIER_GAPS", {})
+    assert [w.category for w in caught] == [StaleGapLedgerWarning], (
+        f"collectable rows reached {[w.category.__name__ for w in caught]} "
+        f"instead of exactly one StaleGapLedgerWarning. The channel is the "
+        f"fix: a raise here is the red tree D-173 records, and silence is a "
+        f"debt nothing will ever collect."
+    )
+    assert "a/b.md" in str(caught[0].message), (
+        "the warning does not name the row it collected, so the owner reading "
+        "a run's output cannot tell which entry to retire."
+    )
+
+
+def _functions_reading_a_gap_ledger() -> dict[str, set[str]]:
+    """Every function in THIS module that reads a ``_KNOWN_*_GAPS`` ledger.
+
+    DERIVED off this module's own AST rather than typed, for the reason
+    ``DEFECT_FILING_AGENTS`` is derived: a hand-listed roster cannot fail on
+    the fourth ledger someone adds next to the three that exist today.
+    """
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    found: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        names = {
+            child.id
+            for child in ast.walk(node)
+            if isinstance(child, ast.Name)
+        }
+        if any(n.startswith("_KNOWN_") and n.endswith("_GAPS") for n in names):
+            found[node.name] = names
+    return found
+
+
+def test_no_gap_ledger_is_read_by_exact_equality_again() -> None:
+    """fallout D-173 / FR-037 -- the shape, held mechanically rather than by convention.
+
+    The contract above is one `==` away from coming back, and coming back is
+    invisible: all three ledgers are empty, so an exact comparison restored
+    tomorrow is green until the next casting closes a gap -- at which point it
+    is red under THAT casting, in this file, exactly as before. So the shape is
+    read off the AST.
+
+    RED against the pre-fix module on both halves at once: the three
+    parametrised tests compared ``missing == known`` / ``found == known`` and
+    called no verdict.
+    """
+    readers = _functions_reading_a_gap_ledger()
+    assert len(readers) >= 6, (
+        f"only {sorted(readers)} read a gap ledger. Three ledgers each have a "
+        f"floor check and a parametrised rule; a derivation that sees fewer "
+        f"than six has come apart from the module and is vacuously green."
+    )
+    routed = {
+        "_ledger_verdict",
+        "_count_ledger_verdict",
+        "_report_collectable_debt",
+    }
+    unrouted = sorted(name for name, names in readers.items() if not (names & routed))
+    assert not unrouted, (
+        f"{unrouted} read a gap ledger without routing through {sorted(routed)}. "
+        f"A ledger read that compares inline is a second account of the "
+        f"contract, and the one that is not updated keeps whichever direction "
+        f"it was written with. {_LEDGER_CONTRACT}"
+    )
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    exact = sorted(
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name in readers
+        for cmp_node in ast.walk(node)
+        if isinstance(cmp_node, ast.Compare)
+        and any(isinstance(op, ast.Eq) for op in cmp_node.ops)
+        and any(
+            isinstance(operand, ast.Name) and operand.id == "known"
+            for operand in (cmp_node.left, *cmp_node.comparators)
+        )
+    )
+    assert not exact, (
+        f"{exact} compare a measurement to `known` by equality again. That is "
+        f"D-173's exact spelling: the `recorded but no longer measured` half "
+        f"becomes an assertion about a file this module does not own, "
+        f"collectable only by the casting that closed the gap editing this "
+        f"module inside their own commit."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1105,6 +1417,20 @@ def test_coverage_diff_abolishes_its_severity_tier() -> None:
         "peer stream agents. The channel decides where a finding goes; a tier "
         "decides nothing and only licenses skipping."
     )
+    # D-017's absence half. The file's own no-severity bullet used to close on
+    # "the `orphans` array is a separate channel from `defects`, not a weaker
+    # tier of it" -- correct prose in the release that wrote it, and a
+    # collision in the release that gave `tier` a closed vocabulary and made it
+    # required on every filing. One word carrying the abolished meaning in the
+    # same file that now mandates the new one teaches the reader the wrong one,
+    # because the graded reading is the one the English invites.
+    for abolished in ("weaker tier", "lesser tier", "tier of it", "severity tier of"):
+        assert abolished not in text, (
+            f"coverage-diff.md uses {abolished!r} -- `tier` in the ABOLISHED "
+            f"graded sense, in the file that now requires `tier` as the "
+            f"evidence axis (GI-001 / FR-004). Say CHANNEL when you mean "
+            f"channel; the word `tier` has exactly one meaning left."
+        )
 
 
 def test_pattern_mapper_rules_its_carve_out_explicitly() -> None:
@@ -1188,7 +1514,34 @@ def test_skill_schemas_carry_no_severity_axis(path: Path) -> None:
 #: written for `"severity"` while reinstating exactly the tier D-041 removed.
 #: `verdict` is a roll-up of the findings, not a grade on any one of them, so
 #: it is enumerated here rather than derived from vocab.
-_ALLOWED_ENUM_KEYS = frozenset({"classification", "type", "verdict"})
+#:
+#: WHY `tier` IS ADMITTED (GI-001 / AC-009)
+#: ----------------------------------------
+#: `tier` was added by widening this set on purpose, through exactly the ritual
+#: the failure message below describes: the vocabulary landed in
+#: `schemas/vocab.py` as `DEFECT_TIERS` first, and this set was widened after.
+#: It is admitted because it grades EVIDENCE, not effort. `LIVE` records that
+#: the filing stream drove the door and observed the wrong result; `LATENT`
+#: records that it derived the finding and found no reachable instance, and
+#: said what it drove in `reproduction_attempted`. Neither value decides how
+#: much a fix is worth, neither licenses deferring one, and both are defects
+#: that get fixed -- the tier decides only which GATE a still-open instance
+#: blocks. The failure it answers is the one thunder-viper measured: a run
+#: cannot tell a defect somebody watched fail from one derived off a scan, so
+#: every finding costs a full GRIND cycle to disprove and the cycle count never
+#: converges. The alternative -- leaving the axis out of the schemas and
+#: carrying it in prose -- was rejected because a normative ```json block
+#: outranks the prose beside it, which is D-041's whole finding.
+#: `test_skill_schema_tier_enum_equals_the_vocab_tiers` below is what keeps the
+#: admission honest: `tier` is allowed to be an enum, but only the enum
+#: `vocab.DEFECT_TIERS` declares.
+_ALLOWED_ENUM_KEYS = frozenset({"classification", "type", "verdict", "tier"})
+
+#: What a skill's `tier` enum must equal. Derived from the module in the same
+#: discipline as `_EXPECTED_TYPE_ENUM` above: re-typing `{"LIVE", "LATENT"}`
+#: here would be a second copy of a closed vocabulary, free to drift from the
+#: one the filing doors actually validate against.
+_EXPECTED_TIER_ENUM = frozenset(vocab.DEFECT_TIERS)
 
 #: The alias members of DEFECT_TYPES -- spellings that fold onto another
 #: member. Derived from the module rather than re-typed, so adding a second
@@ -1315,23 +1668,186 @@ def test_skill_schemas_carry_no_enum_outside_the_allowed_axes(path: Path) -> Non
     assert not unexpected, (
         f"{_rel(path)}'s findings schema declares enum-bearing propert(ies) "
         f"{unexpected} outside the allowed axes {sorted(_ALLOWED_ENUM_KEYS)}. "
-        f"Every defect gets fixed, so a graded axis has nothing left to "
-        f"decide -- and a tier reintroduced under a new key ('priority', "
-        f"'impact', 'tier') is the same abolished axis wearing a different "
-        f"name. If a genuinely new closed vocabulary is needed, add it to "
-        f"schemas/vocab.py first and widen _ALLOWED_ENUM_KEYS deliberately."
+        f"Every defect gets fixed, so a WORK-EFFORT axis has nothing left to "
+        f"decide -- and one reintroduced under a new key ('priority', "
+        f"'impact', 'weight') is the same abolished axis wearing a different "
+        f"name. `tier` is not that axis and is not an example of it: it is the "
+        f"EVIDENCE axis GI-001 added, admitted here on purpose and held to "
+        f"vocab.DEFECT_TIERS by "
+        f"test_skill_schema_tier_enum_equals_the_vocab_tiers. If a genuinely "
+        f"new closed vocabulary is needed, add it to schemas/vocab.py first "
+        f"and widen _ALLOWED_ENUM_KEYS deliberately, the way `tier` was."
+    )
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_skill_schema_tier_enum_equals_the_vocab_tiers(path: Path) -> None:
+    """GI-001 / AC-009: `tier` is admitted as an enum, but only the right enum.
+
+    Widening ``_ALLOWED_ENUM_KEYS`` for `tier` buys the key a licence to carry
+    a closed enum and nothing more. Without this, a skill could advertise
+    ``["LIVE", "LATENT", "COSMETIC"]`` and pass every guard in this module --
+    a third member is exactly how the abolished axis comes back, one value at
+    a time, under a name that has already been blessed. Compared as a SET
+    against the module, in the discipline of ``_EXPECTED_TYPE_ENUM``: a
+    substring check cannot tell a missing member from a present one and cannot
+    see an extra one at all.
+    """
+    schema = _findings_schema(path)
+    actual = dict(_iter_enums(schema)).get("tier")
+    assert actual is not None, (
+        f"{_rel(path)}'s findings schema has no `tier` enum. FR-004 makes the "
+        f"filing stream responsible for the evidence axis; a block with no "
+        f"slot for it tells the stream the field is optional, and the filing "
+        f"doors then refuse every finding it emits."
+    )
+    assert actual == _EXPECTED_TIER_ENUM, {
+        "file": _rel(path),
+        "advertised_but_not_a_tier": sorted(actual - _EXPECTED_TIER_ENUM),
+        "tier_the_skill_never_learned": sorted(_EXPECTED_TIER_ENUM - actual),
+        "why": (
+            "The skill's tier enum must equal vocab.DEFECT_TIERS exactly. A "
+            "value the skill advertises but vocab rejects is dropped at the "
+            "MCP boundary before it reaches the ledger; a vocab member the "
+            "skill omits is an evidence grade the stream has no legal way to "
+            "file. A THIRD member is the work-effort axis returning under a "
+            "key that has already been blessed."
+        ),
+    }
+
+
+#: The clauses the rewritten no-severity paragraph must carry in BOTH schema-
+#: bearing skills. One assertion per claim: a single pin on the whole paragraph
+#: would fail on a reflow that changed no words, and would say nothing about
+#: WHICH claim went missing.
+_SKILL_TIER_CLAUSES = (
+    (
+        "The work-effort grade is banned by name",
+        "the paragraph no longer bans the abolished axis BY NAME. FR-030 makes "
+        "the replacement wording the implementer's choice ONLY on condition "
+        "that the work-effort grade stays banned by name -- a paragraph that "
+        "introduces `tier` without naming what stays forbidden reads as the "
+        "grade coming back under a new label.",
+    ),
+    (
+        "no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`",
+        "the paragraph no longer enumerates the banned spellings. Naming one "
+        "of them bans one of them; the enumeration is what makes the ban a "
+        "ban rather than a grep for the word severity.",
+    ),
+    (
+        "grade a finding by whether you actually drove it or only derived it from a "
+        "scan, and never by how much work it would take to fix",
+        "the paragraph no longer states BOTH halves of the distinction in one "
+        "sentence. Split across two sentences a reader takes the first and "
+        "leaves the second, which is how the abolished axis returns beside the "
+        "new one instead of in place of it.",
+    ),
+    (
+        "`LIVE` means you drove the door and observed the wrong result",
+        "the paragraph no longer says what LIVE means. A closed vocabulary "
+        "whose members are unexplained is a vocabulary streams guess at.",
+    ),
+    (
+        "`LATENT` means you derived the finding and found no reachable instance",
+        "the paragraph no longer says what LATENT means.",
+    ),
+    (
+        "MUST carry a `reproduction_attempted` statement naming what you drove and "
+        "what it found",
+        "the paragraph no longer requires the reproduction_attempted statement "
+        "on a LATENT finding (FR-004 / CT-001). The server refuses that filing, "
+        "so a skill that does not say so sends its stream into a refusal it "
+        "cannot read its way out of.",
+    ),
+    (
+        "a security-property claim can NEVER be `LATENT`",
+        "the paragraph no longer rules out a LATENT security-property claim "
+        "(CT-003). That is a denylist entry, not a judgement call: the filing "
+        "is refused and fires a tripwire.",
+    ),
+    (
+        "`SECURITY_PROPERTY_CLAIM`",
+        "the paragraph no longer names the denylist class the refusal reports, "
+        "so a stream that hits it cannot tell which rule it broke.",
+    ),
+    (
+        "`#DEFECT_TIERS`",
+        "the paragraph no longer cites schemas/vocab.py as the source of truth "
+        "for the tier vocabulary, so the enum in the block beside it becomes a "
+        "second copy free to drift.",
+    ),
+    (
+        "`tier` buys the stream no discretion over anything else",
+        "the paragraph lost its no-exceptions clause. Every rule in this "
+        "register closes on one; without it `tier` reads as a licence.",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+@pytest.mark.parametrize("clause,why", _SKILL_TIER_CLAUSES, ids=lambda v: v[:40])
+def test_skill_no_severity_paragraph_states_the_evidence_axis(
+    path: Path, clause: str, why: str
+) -> None:
+    """GI-001 / AC-009 / FR-030: the rewritten paragraph, clause by clause."""
+    assert clause in _flat(path), f"{_rel(path)}: {why}"
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_skill_key_constraints_carry_the_evidence_axis(path: Path) -> None:
+    """FR-004: the constraint list is where a stream looks for its obligations.
+
+    The paragraph above lives beside the JSON block, at the bottom of a
+    350-line file. The constraints list is the summary a stream re-reads while
+    working, and a rule absent from it is a rule that applies only to readers
+    who got that far.
+    """
+    flat = _flat(path)
+    assert "- **Grade the evidence, never the effort**" in flat, (
+        f"{_rel(path)}'s constraints list no longer carries the evidence-axis "
+        f"rule. FR-004 makes the filing stream responsible for `tier`; a "
+        f"constraint list that omits it leaves that obligation stated once, in "
+        f"a paragraph about a JSON block."
+    )
+    assert "every finding carries `tier`" in flat, (
+        f"{_rel(path)}'s constraint does not make `tier` required on every "
+        f"finding. An optional evidence axis is an axis streams omit, and the "
+        f"filing doors then refuse the finding."
     )
 
 
 @pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
 def test_skill_schemas_require_the_new_axes(path: Path) -> None:
-    """D-041: an optional classification is a classification streams omit."""
+    """D-041: an optional classification is a classification streams omit.
+
+    D-003 added `class` to the same list. FR-007 requires a non-empty class on
+    every filing and states that "agent prose and report formats require it";
+    AC-010 makes one classless finding refuse a whole Foundry-Sync batch. Both
+    blocks described the axis as "Optional root-cause" and left it out of this
+    list, so a stream emitting exactly the shape its own skill documents was
+    refused at the filing door one surface later.
+    """
     text = _read(path)
-    assert '"required": ["id", "classification", "type", "file", "symbol", "description"]' in text, (
-        f"{_rel(path)}'s required list does not demand classification, type "
-        f"and symbol. `severity` was REQUIRED before this fix -- replacing a "
-        f"required field with optional ones weakens the contract instead of "
-        f"correcting it."
+    assert '"required": ["id", "classification", "type", "class", "tier", "file", "symbol", "description"]' in text, (
+        f"{_rel(path)}'s required list does not demand classification, type, "
+        f"class, tier and symbol. `severity` was REQUIRED before this fix -- "
+        f"replacing a required field with optional ones weakens the contract "
+        f"instead of correcting it. If `class` is what went missing: the "
+        f"filing door refuses a classless finding (FR-007/AC-010), so a block "
+        f"that leaves it optional documents a shape the door rejects. If "
+        f"`tier` is: D-063 drove that gap end to end -- a finding carrying "
+        f"exactly the old list validated clean through Validate-Report and was "
+        f"then refused by Foundry-Sync ('findings[0].tier: Invalid tier: "
+        f"None'), which refuses the WHOLE batch. This block is the derivation "
+        f"source for schemas/findings.py's own required list, so the two move "
+        f"together or the validator goes laxer than the door it feeds."
+    )
+    assert "Optional root-cause" not in text, (
+        f"{_rel(path)}'s `class` description calls the axis optional again. "
+        f"The door refuses a filing without it, and schemas/findings.py "
+        f"mirrors this block's required list by its own stated derivation "
+        f"rule -- so the adjective and the list have to move together."
     )
 
 
@@ -1370,7 +1886,16 @@ def test_skill_verdict_rules_key_on_classification(path: Path) -> None:
 
 
 def test_prove_skill_closed_the_critical_path_exemption() -> None:
-    """D-041: 'not on the critical path' was severity under another name."""
+    """D-041: 'not on the critical path' was severity under another name.
+
+    D-008 added the second half. GI-001 requires the rewritten no-severity
+    prose to be RE-PINNED, and the FAIL bullet was rewritten to close the new
+    exemption `tier` makes available -- a stream reading "LATENT" as "found by
+    reasoning, so not really broken" reinvents the off-the-critical-path
+    exemption on the axis that replaced severity. The rewrite shipped
+    unpinned, which is how the first exemption survived long enough to need
+    removing.
+    """
     text = _flat(PROVE_SKILL)
     assert "there is no off-the-critical-path exemption" in text, (
         "prove/SKILL.md's verdict rules downgraded a non-VERIFIED item to WARN "
@@ -1378,10 +1903,27 @@ def test_prove_skill_closed_the_critical_path_exemption() -> None:
         "verdict is a defect, no exceptions' admits no such exemption, and an "
         "importance test by any other name is the axis D-041 removes."
     )
+    assert (
+        "and no `LATENT` exemption either, because `tier` records the evidence "
+        "behind a defect and never whether it is worth fixing" in text
+    ), (
+        "prove/SKILL.md's FAIL rule no longer closes the LATENT exemption. "
+        "FAIL keys on `classification`, not on `tier`: both tiers are defects "
+        "and both get fixed. A verdict rule silent about the evidence axis "
+        "invites a stream to WARN on the findings it only derived, which is "
+        "the off-the-critical-path exemption again on a newer axis."
+    )
 
 
 def test_trace_skill_states_plumber_findings_are_defects_not_a_tier() -> None:
-    """D-041: the prose twin of the schema's severity enum."""
+    """D-041: the prose twin of the schema's severity enum.
+
+    D-009 added the evidence-axis half. This paragraph is one of the surfaces
+    GI-001 names for the no-severity rewrite, and the rewritten sentence
+    shipped with no exact-substring pin at all -- so the words that distinguish
+    the CHANNEL claim from the EVIDENCE claim could be dropped in a later edit
+    without a single test noticing.
+    """
     text = _flat(TRACE_SKILL)
     assert "high severity" not in text, (
         "trace/SKILL.md still calls PL-N findings 'high severity'. Fixing the "
@@ -1392,6 +1934,97 @@ def test_trace_skill_states_plumber_findings_are_defects_not_a_tier() -> None:
         "trace/SKILL.md no longer states the CHANNEL a broken-workflow finding "
         "goes down. Deleting the severity claim without replacing it loses the "
         "point the sentence was making."
+    )
+    assert "This is a channel statement, not a severity one" in text, (
+        "trace/SKILL.md no longer says which AXIS the PL-N rule is about. "
+        "Without it the paragraph reads as a claim that broken workflows "
+        "matter more than other defects -- the severity tier restated in "
+        "prose, which is what D-041 removed from this file."
+    )
+    assert (
+        "The evidence axis is separate again — a PL-N flow you actually drove "
+        "and watched fail is `LIVE`, one you derived from the wiring with no "
+        "reachable path is `LATENT` and carries a `reproduction_attempted` "
+        "statement — and neither tier is a grade on how much the fix is worth."
+        in text
+    ), (
+        "trace/SKILL.md's PL-N paragraph no longer distinguishes the evidence "
+        "axis from the channel. GI-001 requires the no-severity prose to state "
+        "the LIVE/LATENT distinction wherever it is rewritten, and a PL-N "
+        "flow is exactly where a stream is tempted to file what it read off "
+        "the wiring as though it had driven it."
+    )
+
+
+#: Phrasings that USE the work-effort axis rather than banning it. The four
+#: stream agents and the two schema-bearing skills all carry a rule spelling
+#: the axis out to forbid it -- "no `minor`, no `major`, no `critical`, no
+#: `severity`, no `priority`, no `impact`" -- so a bare search for the word
+#: matches the prohibition itself and can never be an assertion. These are the
+#: comparative shapes the word only takes when a document is RANKING two
+#: defects against each other, which is the move the rule forbids.
+_APPROVING_SEVERITY_USES = (
+    "same severity as",
+    "high severity",
+    "higher severity",
+    "low severity",
+    "lower severity",
+    "more severe",
+    "less severe",
+)
+
+
+@pytest.mark.parametrize(
+    "path",
+    STREAM_AGENTS + SCHEMA_BEARING_SKILLS,
+    ids=lambda p: p.parent.name if p.name == "SKILL.md" else p.stem,
+)
+def test_no_stream_document_uses_the_severity_axis_approvingly(path: Path) -> None:
+    """D-006 / GI-001 / FR-030: banning the word and then using it is worse
+    than never banning it.
+
+    agents/tracer.md shipped "MISPLACED is a defect, same severity as MISSING
+    or UNWIRED" one screen above its own rule banning the grade BY NAME. The
+    four stream agents are pinned to carry that rule word-identically, and
+    this sentence sat outside the shared span, so every exact-substring pin
+    on the rewrite passed while the file contradicted it.
+
+    A reader resolves a document that contradicts itself in its own favour --
+    the same reasoning `test_trace_skill_states_plumber_findings_are_defects_
+    not_a_tier` records for the "high severity" claim -- so the guard is over
+    the whole file, not over the rewritten span.
+    """
+    text = _flat(path)
+    found = [phrase for phrase in _APPROVING_SEVERITY_USES if phrase in text]
+    assert not found, (
+        f"{_rel(path)} ranks defects against each other using {found}. "
+        f"GI-001 requires this file's no-severity prose to state the "
+        f"LIVE/LATENT distinction and FR-030 requires the work-effort grade "
+        f"to stay banned BY NAME. Say the two defects are equal without "
+        f"reaching for the abolished axis to say it -- tracer.md's Level 4 "
+        f"rule is the worked example: 'exactly as much as MISSING or "
+        f"UNWIRED -- every defect gets fixed, and no grade ranks one of them "
+        f"under another.'"
+    )
+
+
+def test_tracer_places_misplaced_beside_the_other_defects_without_grading() -> None:
+    """D-006's replacement, pinned so the point survives the rewrite.
+
+    Deleting the offending clause is not enough: the sentence existed to say
+    that a placement defect is not a lesser one, and a rewrite that drops the
+    claim along with the word loses what Level 4 was asserting.
+    """
+    text = _flat(TRACER)
+    assert (
+        "**MISPLACED is a defect,** exactly as much as MISSING or UNWIRED — "
+        "every defect gets fixed, and no grade ranks one of them under another."
+        in text
+    ), (
+        "tracer.md's Level 4 no longer states that a placement defect ranks "
+        "with the others. The clause it replaced said so using the abolished "
+        "axis; saying nothing at all invites a reader to treat "
+        "ARCHITECTURAL_PLACEMENT as the tidy-up class."
     )
 
 
@@ -2545,7 +3178,7 @@ def test_teammate_statement_examples_survive_the_shipped_gate() -> None:
     against an accepted one.
     """
     for label, statement in _statement_examples():
-        problem = orch._statement_problem(statement, "", "")
+        problem = fix_gate._statement_problem(statement, "", "")
         if label == "REFUSED":
             assert problem is not None, (
                 f"teammate.md labels this statement REFUSED, but the shipped "
@@ -3215,3 +3848,5370 @@ def test_shapes_carrying_a_spec_ref_qualify_it_at_the_example(path: Path) -> Non
         f"the point the shape is shown, so the shape still reads as a field to "
         f"populate on every finding."
     )
+
+
+# ---------------------------------------------------------------------------
+# GI-001 / AC-009 / FR-004 / FR-007 -- the evidence tier, baked into the four
+# stream agents and their report shapes
+# ---------------------------------------------------------------------------
+#
+# thunder-viper measured the failure this answers: 162 defects over 22 GRIND
+# cycles with no way to tell a defect somebody watched fail from one derived
+# off a scan. Both cost a full cycle to disprove, so the cycle count never
+# converged. GI-001 adds `tier` as the EVIDENCE axis -- LIVE for a finding the
+# stream drove to a wrong result, LATENT for one it derived and could find no
+# reachable instance of -- and abolishes nothing: the work-effort grade stays
+# banned by name in the same rule, because a new axis introduced without
+# naming what it is NOT is how the old one returns.
+#
+# WHY THESE PINS ARE WHOLE-SENTENCE, WHERE THE SPLIT'S ARE CLAUSE-LEVEL
+# --------------------------------------------------------------------
+# This module's docstring records that the observation/defect split is
+# deliberately NOT pinned at the sentence level: each of the four files states
+# it in its own voice, and pasting one paragraph into four was explicitly
+# rejected for that ruling. The tier rule is the opposite case by
+# construction. FR-030 requires the replacement wording to be PINNED, and
+# patterns/PATTERNS.md rules that a rule shared across the four stream agents
+# is word-identical in all four -- so there is one sentence to pin, not four
+# voices to respect. `test_stream_agents_share_one_tier_rule_verbatim` below is
+# what holds that property, and every clause pin after it is parametrised over
+# STREAM_AGENTS so a partial edit that fixes three files fails.
+
+# D-017 / D-054: the corpus of prose surfaces that must carry the tier and
+# class rules is DERIVED, not typed out. GRIND-1 updated five prose files by
+# hand and missed `agents/coverage-diff.md` -- a live F2 stream whose report
+# shape feeds `Foundry-Sync`, which then refuses every finding in it for a
+# missing `tier` and refuses the whole BATCH for one bad finding. A
+# hand-maintained tuple cannot fail that way loudly: the file that was
+# forgotten is exactly the file nobody adds to the list.
+#
+# THE DERIVATION THAT ANSWERED THAT THEN MISSED ONE ITSELF (D-054). It globbed
+# `agents/*.md` and required the literal `Foundry-Sync`. Both are facts about
+# where a file LIVES and which of two doors it happens to name, and neither is
+# what makes a file load-bearing at the defect ledger.
+# `skills/sight/SKILL.md` is a member of `vocab.DEFECT_SOURCE_IDS`, files
+# through `Foundry-Defect`, and lives under `skills/` -- so it failed BOTH
+# predicates and could not derive in however far its prose drifted. Driven: its
+# Step 4 still instructed a call carrying no `tier`, no `class` and no
+# `reproduction_attempted`, which the shipped Foundry-Defect schema refuses
+# outright, and still routed findings by a work-effort grade GI-001 bans by
+# name -- while every pin below stayed green over the gap. A derived roster
+# that derives over the wrong corpus fails exactly as silently as a typed one.
+#
+# So the question the corpus asks is now the question the DOORS ask -- which
+# prose surfaces INSTRUCT A FILING -- and it is asked over both directories a
+# filing surface can live in. That yields two corpora, because two different
+# things are true of the members:
+#
+#   DEFECT_FILING_SURFACES -- every surface that instructs a filing at all.
+#       This is the COMPLETENESS corpus.
+#       ``test_every_defect_source_id_has_a_prose_surface`` binds it to
+#       ``vocab.DEFECT_SOURCE_IDS`` so a filing stream with no prose fails by
+#       name, and ``test_every_filing_surface_carries_the_tier_substance``
+#       holds the floor every filer owes whatever register it writes in.
+#
+#   DEFECT_FILING_AGENTS -- the subset whose normative example documents a
+#       `defects` array, i.e. the stream-report register. patterns/PATTERNS.md
+#       rules a shared rule word-identical across these, and they are what the
+#       clause pins below sweep. A surface emitting a `findings` array (prove,
+#       trace) or a `domains` report (temper) states the same obligations in
+#       its own `## Key Constraints` voice; pasting the stream register into it
+#       would be a paraphrase of a different document.
+#
+# `agents/teammate.md` names both tools and is correctly in the first corpus
+# and not the second: it documents no `defects` array, and states the
+# obligations in its own fix-and-file voice rather than the stream register.
+
+
+def _documents_a_defects_array(path: Path) -> bool:
+    """True when a file's normative JSON examples document a `defects` array.
+
+    A malformed block reads as "no array" rather than raising, so one file with
+    an unparseable example cannot take this module down at import time. The
+    silence is safe only because the floor check below asserts the known
+    members are present -- a member that vanished this way fails there, naming
+    the file.
+    """
+    try:
+        records = _example_records(path)
+    except (json.JSONDecodeError, AssertionError):
+        return False
+    return any(isinstance(r.get("defects"), list) for r in records)
+
+
+#: The two doors a prose surface can be told to file through. Naming EITHER is
+#: what makes a surface load-bearing; demanding a PARTICULAR one is what let
+#: sight drift for three cycles (D-054), because sight names only the first.
+_FILING_TOOLS = ("Foundry-Defect", "Foundry-Sync")
+
+SIGHT_SKILL = SKILLS / "sight" / "SKILL.md"
+TEMPER_SKILL = SKILLS / "temper" / "SKILL.md"
+
+
+def _surface_name(path: Path) -> str:
+    """The name a surface files under: its stem, or its skill directory."""
+    return path.parent.name if path.name == "SKILL.md" else path.stem
+
+
+def _instructs_a_filing(path: Path) -> bool:
+    """True when a surface tells its reader to call a defect-filing door."""
+    text = path.read_text(encoding="utf-8")
+    return any(tool in text for tool in _FILING_TOOLS)
+
+
+DEFECT_FILING_SURFACES = tuple(
+    sorted(
+        (
+            path
+            for path in (*AGENTS.glob("*.md"), *SKILLS.glob("*/SKILL.md"))
+            if _instructs_a_filing(path)
+        ),
+        key=_rel,
+    )
+)
+
+DEFECT_FILING_AGENTS = tuple(
+    path for path in DEFECT_FILING_SURFACES if _documents_a_defects_array(path)
+)
+
+
+def test_the_defect_filing_roster_is_derived() -> None:
+    """Floor check: every tier and class pin below sweeps this roster."""
+    missing = sorted(
+        _rel(p)
+        for p in (set(STREAM_AGENTS) | {COVERAGE_DIFF, SIGHT_SKILL})
+        - set(DEFECT_FILING_AGENTS)
+    )
+    assert not missing, (
+        f"{missing} no longer derive into DEFECT_FILING_AGENTS. A file drops "
+        f"out by losing its filing-door mention or its example `defects` "
+        f"array -- either of which is itself the D-017 defect, because the "
+        f"shape a stream copies is what the door then refuses. Fix the file "
+        f"rather than hard-coding the roster."
+    )
+    assert TEAMMATE not in DEFECT_FILING_AGENTS, (
+        "agents/teammate.md derived into DEFECT_FILING_AGENTS. It states the "
+        "tier and class obligations in its own fix-and-file voice, not the "
+        "word-identical stream register, so sweeping it here would demand a "
+        "paste that does not belong in a builder's protocol."
+    )
+
+
+def test_the_filing_surface_corpus_spans_both_directories() -> None:
+    """D-054's floor: the corpus that missed sight was an `agents/` glob.
+
+    The two corpora are nested -- every DEFECT_FILING_AGENTS member is a
+    DEFECT_FILING_SURFACES member -- so a regression that narrowed the wider
+    one back to a directory would leave every pin below green and only this
+    assertion red. That is deliberate: the narrowing is invisible everywhere
+    else, which is exactly how it survived three GRIND cycles the first time.
+    """
+    assert set(DEFECT_FILING_AGENTS) <= set(DEFECT_FILING_SURFACES), (
+        "DEFECT_FILING_AGENTS is no longer a subset of DEFECT_FILING_SURFACES; "
+        "the two derivations have come apart."
+    )
+    for expected in (TEAMMATE, PROVE_SKILL, TRACE_SKILL, TEMPER_SKILL, SIGHT_SKILL):
+        assert expected in DEFECT_FILING_SURFACES, (
+            f"{_rel(expected)} instructs a filing and is not in "
+            f"DEFECT_FILING_SURFACES. Either the file stopped naming "
+            f"{_FILING_TOOLS} -- in which case its stream now files through "
+            f"nothing -- or the corpus narrowed back to one directory or one "
+            f"tool name, which is D-054 exactly."
+        )
+    skills = {p for p in DEFECT_FILING_SURFACES if p.name == "SKILL.md"}
+    agents = {p for p in DEFECT_FILING_SURFACES if p.parent == AGENTS}
+    assert skills and agents, (
+        f"DEFECT_FILING_SURFACES spans only one directory "
+        f"({sorted(_rel(p) for p in DEFECT_FILING_SURFACES)}). A filing "
+        f"surface lives under agents/ OR under skills/, and a corpus that "
+        f"sees one of those is the D-054 hole re-opened."
+    )
+
+
+#: `vocab.DEFECT_SOURCE_IDS` members the plugin ships no prose surface for,
+#: each with the reason it has none. An entry here is a CLAIM that nothing
+#: reads a file to file under that id, so the test below asserts it both ways:
+#: a listed id that grows a surface fails until its entry is deleted, and an
+#: unlisted id with no surface fails naming the id. A bare absence -- which is
+#: what sight had for three cycles -- can be neither.
+_SOURCELESS_FILING_IDS = {
+    "test": (
+        "TEST is the project's own test command. The lead runs it and records "
+        "coverage through Foundry-Stream; no agent or skill file drives it, so "
+        "there is no prose surface to carry a filing rule."
+    ),
+    "probe": (
+        "PROBE-01 is an F0.9 decompose sub-check inside commands/start.md, not "
+        "a spawned stream. It files through the lead, whose own tier rules live "
+        "in start.md and are pinned by tests/test_lead_prose.py."
+    ),
+    "test01": (
+        "agents/spec-test-deriver.md writes to the `test_observations` channel "
+        "and names no filing door. ASSAY is what promotes an observation into "
+        "the defect ledger, and ASSAY files it with a tier like anything else."
+    ),
+}
+
+
+def _normalise_surface_id(value: str) -> str:
+    """Fold a wire id and a filename onto one spelling.
+
+    `research_audit` is `research-auditor.md`, `flow_trace` is
+    `flow-tracer.md`, `assay` is `assayer.md`. The separators and the agentive
+    suffix are the only differences, so stripping non-alphanumerics and
+    matching on prefix binds the two vocabularies without a hand-written map --
+    which is the artefact this whole derivation exists to avoid.
+    """
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def _surfaces_covering(source_id: str) -> list[Path]:
+    """Every filing surface whose own name claims this defect source id."""
+    wanted = _normalise_surface_id(source_id)
+    return [
+        path
+        for path in DEFECT_FILING_SURFACES
+        if _normalise_surface_id(_surface_name(path)).startswith(wanted)
+    ]
+
+
+def test_every_defect_source_id_has_a_prose_surface() -> None:
+    """D-054: a stream that files has a file telling it how, or a reason.
+
+    `vocab.DEFECT_SOURCE_IDS` is the closed set of values a defect record's
+    `source` may carry -- the server's own answer to "who filed this". Every
+    one of them is something that files, so every one of them either has a
+    prose surface in the corpus above (and therefore carries the substance
+    floor below) or is named here with the reason it has none.
+
+    sight was neither. It was a DEFECT_SOURCE_IDS member with a real prose
+    surface that no derivation reached, and nothing anywhere said so.
+    """
+    assert set(_SOURCELESS_FILING_IDS) <= set(vocab.DEFECT_SOURCE_IDS), (
+        f"{sorted(set(_SOURCELESS_FILING_IDS) - set(vocab.DEFECT_SOURCE_IDS))} "
+        f"are excused from having a prose surface but are not defect sources "
+        f"any more. Delete the stale entries; an exemption for an id nothing "
+        f"can file under excuses nothing."
+    )
+    unbound = []
+    for source_id in sorted(vocab.DEFECT_SOURCE_IDS):
+        covering = _surfaces_covering(source_id)
+        if source_id in _SOURCELESS_FILING_IDS:
+            assert not covering, (
+                f"{source_id!r} is listed as having no prose surface -- "
+                f"{_SOURCELESS_FILING_IDS[source_id]} -- but "
+                f"{sorted(_rel(p) for p in covering)} now instructs a filing "
+                f"under that name. Delete the exemption so the surface joins "
+                f"the corpus and carries the rules."
+            )
+            continue
+        if not covering:
+            unbound.append(source_id)
+    assert not unbound, (
+        f"defect source(s) {unbound} resolve to no prose surface that "
+        f"instructs a filing. A stream files under that `source` with nothing "
+        f"telling it to set `tier`, `class` or `reproduction_attempted`, so "
+        f"the doors refuse it mid-INSPECT. Either the surface exists and this "
+        f"derivation cannot see it -- which is D-054 -- or it does not, and "
+        f"the id belongs in _SOURCELESS_FILING_IDS with its reason."
+    )
+
+
+#: What EVERY filing surface owes, whatever register it writes in, located by
+#: the tokens the DOORS themselves refuse on. Deliberately not the
+#: word-identical stream rule: prove, trace and temper state the same
+#: obligations in their own `## Key Constraints` voice, and demanding a paste
+#: would be pinning a paraphrase of a document they do not carry.
+#:
+#: `class` is NOT on this floor and its absence is not an oversight. It is
+#: pinned at the SHAPE for every surface that has one -- the `required` list of
+#: the skills' ```json blocks (mirrored by schemas/findings.py) and the example
+#: `defects` entries of the stream agents -- which is stronger than a token
+#: sweep, because a shape is what a reader copies.
+_FILING_SUBSTANCE = (
+    ("`tier`", "names the evidence axis the filing doors require first"),
+    ("LIVE", "names the tier for a finding the stream drove"),
+    ("LATENT", "names the tier for a finding the stream only derived"),
+    (
+        "reproduction_attempted",
+        "names the statement a LATENT filing is refused without (CT-001)",
+    ),
+    (
+        "SECURITY_PROPERTY_CLAIM",
+        "names the denylist class that refuses a LATENT security claim (CT-003)",
+    ),
+)
+
+#: Filing surfaces KNOWN to be missing part of the floor, with the exact
+#: clauses each lacks. Recorded rather than excused, and read SUBSET-shaped per
+#: `_LEDGER_CONTRACT`: an unrecorded gap fails in the file that has it, while a
+#: gap recorded here that the file has since closed is collectable debt the
+#: floor check below reports and this module's owner retires.
+#:
+#: Empty, and the emptiness is the assertion. skills/temper/SKILL.md was the
+#: one entry: it stated the security rule as "A security-property claim can
+#: NEVER be `LATENT`" without naming the denylist class the refusal reports, so
+#: a temper filing that tripped it met a refusal naming a token its own prose
+#: never taught. That gap closed when the file gained the full filing rules,
+#: and the entry went with it -- under the exact comparison this ledger used to
+#: carry, casting 11 could only close that gap by deleting a row from casting
+#: 6's module in casting 11's commit, which is the collision D-173 records.
+_KNOWN_SUBSTANCE_GAPS: dict[str, frozenset[str]] = {}
+
+
+def test_the_known_substance_gap_ledger_names_real_surfaces() -> None:
+    """Floor check: a ledger keyed on a path nothing sweeps excuses nothing.
+
+    fallout D-173 puts the retired-row sweep here too: this is the caller that
+    can act on a closed gap without reaching into the casting that closed it.
+    """
+    swept = {_rel(p) for p in DEFECT_FILING_SURFACES}
+    stale = sorted(set(_KNOWN_SUBSTANCE_GAPS) - swept)
+    assert not stale, (
+        f"{stale} carry recorded substance gaps but are no longer filing "
+        f"surfaces. Delete the entries -- a gap recorded against a file this "
+        f"module does not read is a debt nothing will ever collect."
+    )
+    known_clauses = {clause for clause, _ in _FILING_SUBSTANCE}
+    for rel, gaps in _KNOWN_SUBSTANCE_GAPS.items():
+        unknown = sorted(gaps - known_clauses)
+        assert not unknown, (
+            f"{rel} is excused clauses {unknown} that are not on the substance "
+            f"floor, so the exemption covers nothing the test would have "
+            f"checked."
+        )
+    by_rel = {_rel(p): p for p in DEFECT_FILING_SURFACES}
+    collected: dict[str, object] = {}
+    for rel, gaps in _KNOWN_SUBSTANCE_GAPS.items():
+        if rel not in by_rel:
+            continue
+        text = _read(by_rel[rel])
+        measured = frozenset(
+            clause for clause, _ in _FILING_SUBSTANCE if clause not in text
+        )
+        _, collectable = _ledger_verdict(measured, gaps)
+        if collectable:
+            collected[rel] = sorted(collectable)
+    _report_collectable_debt("_KNOWN_SUBSTANCE_GAPS", collected)
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_SURFACES, ids=_rel)
+def test_every_filing_surface_carries_the_tier_substance(path: Path) -> None:
+    """D-052 / D-053 / FR-004 / CT-001 / CT-003, over the corpus that files.
+
+    The word-identical pins below reach the stream-report register only. This
+    is the floor underneath them, and it is the assertion sight failed on every
+    clause at once: its Step 4 instructed a `Foundry-Defect` call naming no
+    tier, no class and no reproduction statement, and its own suggestion
+    routing sent findings to a backlog on a work-effort grade. Nothing was red,
+    because nothing swept the file.
+    """
+    text = _read(path)
+    missing = frozenset(clause for clause, _ in _FILING_SUBSTANCE if clause not in text)
+    known = _KNOWN_SUBSTANCE_GAPS.get(_rel(path), frozenset())
+    unrecorded, _ = _ledger_verdict(missing, known)
+    why = dict(_FILING_SUBSTANCE)
+    assert not unrecorded, {
+        "file": _rel(path),
+        "why": (
+            "a surface that instructs a filing must state the substance the "
+            "doors refuse on, in whatever register it writes in. "
+            + _LEDGER_CONTRACT
+        ),
+        "clauses_missing_and_not_recorded": {
+            clause: why[clause] for clause in sorted(unrecorded)
+        },
+    }
+
+
+def test_sight_never_writes_the_defect_ledger_by_hand() -> None:
+    """D-052: the one instruction that routes AROUND every door above.
+
+    sight's Step 4 offered a second path -- "or write them directly to
+    `foundry-archive/{run}/defects.json` if running outside an MCP session".
+    A hand-written entry reaches the ledger without passing the tier check, the
+    class check or the SECURITY_PROPERTY_CLAIM denylist, and is then
+    indistinguishable there from a record that was refused nothing. Every rule
+    this module pins is optional for as long as one surface documents a way
+    past the door that enforces them.
+    """
+    flat = _flat(SIGHT_SKILL)
+    assert "write them directly to" not in flat, (
+        f"{_rel(SIGHT_SKILL)} again offers a direct write to the defect "
+        f"ledger. There is no 'outside an MCP session' filing lane: without a "
+        f"door there is no filing, only a report."
+    )
+    assert "Never write `foundry-archive/{run}/defects.json` yourself" in flat, (
+        f"{_rel(SIGHT_SKILL)} no longer forbids hand-writing the defect "
+        f"ledger. The prohibition is the pin, not the absence of the old "
+        f"sentence -- prose that merely stops offering the bypass reads as "
+        f"silence to the next author who needs one."
+    )
+
+
+def test_sight_routes_its_findings_by_tier_not_by_a_work_effort_grade() -> None:
+    """D-053 / GI-001: two backlog mechanisms, one of them the abolished axis.
+
+    sight shipped its own routing rule -- "Include minor UX suggestions as
+    additional defects for GRIND. Append major UX suggestions to the backlog
+    file." -- beside the tier rule every other stream carries. The axis that
+    decides whether an instance is carried rather than fixed is `tier`: a
+    LATENT finding stays open and reaches the F6 backlog. A second grade
+    deciding the same question, in the words GI-001 bans by name, is the
+    contradiction this asserts away.
+    """
+    flat = _flat(SIGHT_SKILL)
+    for banned in ("minor UX suggestions", "major UX suggestions",
+                   "Minor (auto-implement)", "Major (backlog)",
+                   "Minor issues", "Major issues", "Critical issues"):
+        assert banned not in flat, (
+            f"{_rel(SIGHT_SKILL)} grades findings by work effort again "
+            f"({banned!r}). GI-001 bans `minor`, `major` and `critical` BY "
+            f"NAME on every filing surface, and sight is one -- it is a member "
+            f"of vocab.DEFECT_SOURCE_IDS whose findings enter the same ledger."
+        )
+    assert "Nothing here routes on how large a fix looks" in flat, (
+        f"{_rel(SIGHT_SKILL)} no longer states that nothing routes on the size "
+        f"of a fix. Deleting the graded sentences is half the fix; the other "
+        f"half is saying what replaced them, or the grade comes back the next "
+        f"time someone needs to split a list in two."
+    )
+
+
+#: The two rules GI-001 puts in every stream agent, located by their bolded
+#: openings. The first opens with BOTH historical spellings of the abolished
+#: axis -- "No severity classification." (assayer, tracer, research-auditor,
+#: coverage-diff) and "No severity tiers." (flow-tracer) -- because
+#: UNWEAKENED_ABSOLUTES and ``test_coverage_diff_abolishes_its_severity_tier``
+#: pin
+#: each file's own spelling and one shared sentence has to satisfy all four
+#: without any file losing an absolute it holds today. Carrying both also keeps
+#: the ban findable by grep under either name.
+_TIER_RULE_OPEN = "- **No severity classification.** **No severity tiers.**"
+_TIER_RULE_CLOSE = 'no "I could not reproduce it, so it is probably fine."'
+
+
+def _tier_rule(path: Path) -> str:
+    """The two shared tier rules as one flattened span, or "" if absent."""
+    flat = _flat(path)
+    start = flat.find(_TIER_RULE_OPEN)
+    if start == -1:
+        return ""
+    stop = flat.find(_TIER_RULE_CLOSE, start)
+    return "" if stop == -1 else flat[start : stop + len(_TIER_RULE_CLOSE)]
+
+
+def test_stream_agents_share_one_tier_rule_verbatim() -> None:
+    """FR-030 + PATTERNS.md: one sentence, four files, byte-identical.
+
+    A near-copy is the failure mode here, not an absent copy. Four
+    hand-maintained paraphrases of one ruling drift a clause at a time, and
+    the clause that goes first is whichever one the local voice found
+    awkward -- which for this rule is the half that says the work-effort grade
+    is still banned. Comparing the spans against each other (rather than each
+    against a constant re-typed here) is what makes a divergence fail no
+    matter which of the four was edited.
+    """
+    spans = {_rel(p): _tier_rule(p) for p in DEFECT_FILING_AGENTS}
+    missing = sorted(rel for rel, span in spans.items() if not span)
+    assert not missing, (
+        f"{missing} carry no GI-001 tier rule at all. The rule opens "
+        f"{_TIER_RULE_OPEN!r} and closes {_TIER_RULE_CLOSE!r} in every file "
+        f"that files into the defect ledger; a file without it files findings "
+        f"the doors refuse -- and one bad finding refuses the whole batch."
+    )
+    distinct = set(spans.values())
+    assert len(distinct) == 1, {
+        "why": (
+            "the defect-filing agents no longer share ONE tier rule. "
+            "patterns/PATTERNS.md rules a shared rule word-identical across "
+            "all of them, and FR-030 pins the replacement wording. Fix the "
+            "outlier rather than relaxing this assertion -- a per-file "
+            "paraphrase is how one file quietly loses the clause banning the "
+            "work-effort grade."
+        ),
+        "lengths_by_file": {rel: len(span) for rel, span in spans.items()},
+    }
+
+
+#: One claim per entry, each with the failure that claim's absence causes.
+#: Parametrised over STREAM_AGENTS so a three-of-four edit fails.
+_TIER_RULE_CLAUSES = (
+    (
+        _TIER_RULE_OPEN,
+        "the rule lost one of the two bolded openings. Both spellings of the "
+        "abolished axis are pinned by UNWEAKENED_ABSOLUTES across these four "
+        "files, and both are what keep the ban findable however a future "
+        "reader greps for it.",
+    ),
+    (
+        "no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`",
+        "the rule no longer bans the work-effort grade BY NAME. FR-030 makes "
+        "the wording free ONLY on that condition: a rule that introduces "
+        "`tier` without naming what stays forbidden reads as the grade "
+        "returning under a new label, which is exactly what D-041 removed.",
+    ),
+    (
+        "Grade a finding by whether you actually drove it or only derived it from a "
+        "scan, and never by how much work it would take to fix",
+        "the rule no longer states BOTH halves of the distinction in ONE "
+        "sentence. Split across two, a stream takes the new axis and leaves "
+        "the prohibition, and the two axes end up coexisting instead of one "
+        "replacing the other.",
+    ),
+    (
+        "`tier` is evidence, not effort",
+        "the rule no longer says what `tier` grades. Unstated, the closest "
+        "available reading of a two-value ordered-looking field is severity.",
+    ),
+    (
+        "`classification` still decides the channel a finding goes down and "
+        "`target_kind` still rides on every filing",
+        "the tier rule no longer reconciles itself with the channel rules "
+        "below it. Read as a replacement rather than an addition, it retires "
+        "`target_kind` -- and the comment-prose refusal reads that field and "
+        "nothing else, so the split dies silently for every finding.",
+    ),
+    (
+        "- **Set `tier` on every filing; the stream that files the defect is the one "
+        "that sets it.**",
+        "the rule making `tier` required on every filing is gone. FR-004 puts "
+        "that duty on the FILING stream; unassigned, it lands on nobody and "
+        "the doors refuse the finding.",
+    ),
+    (
+        "schemas/vocab.py#DEFECT_TIERS",
+        "the rule no longer cites the vocabulary module as the source of "
+        "truth for the tier members, so the prose becomes a second copy free "
+        "to drift from the set the doors validate against.",
+    ),
+    (
+        "`LIVE` means you drove the door and observed the wrong result",
+        "the rule no longer says what LIVE means, so a stream guesses -- and "
+        "the guess a two-value field invites is 'the important one'.",
+    ),
+    (
+        "`LATENT` means you derived the finding and found no reachable instance",
+        "the rule no longer says what LATENT means.",
+    ),
+    (
+        "MUST carry a `reproduction_attempted` statement naming what you drove and "
+        "what it found",
+        "the rule no longer demands the reproduction_attempted statement "
+        "(FR-004 / CT-001). The server refuses a LATENT filing without one, so "
+        "an agent file that omits it sends its stream into a refusal it has no "
+        "instruction for.",
+    ),
+    (
+        "`Foundry-Defect` and `Foundry-Sync` refuse a `LATENT` filing without one.",
+        "the rule no longer states that the refusal is SERVER-SIDE. A "
+        "requirement phrased as advice is one a stream talks itself out of at "
+        "the moment it is inconvenient, which is the moment it matters.",
+    ),
+    (
+        "A security-property claim can NEVER be `LATENT`",
+        "the rule no longer rules out a LATENT security-property claim "
+        "(CT-003). That is a denylist entry, not a judgement: 'I could not "
+        "reproduce the auth bypass' is the single most dangerous sentence this "
+        "vocabulary could let a stream write.",
+    ),
+    (
+        "`SECURITY_PROPERTY_CLAIM`",
+        "the rule no longer names the denylist class the refusal reports, so a "
+        "stream that trips it cannot tell which rule it broke.",
+    ),
+    (
+        "Every tier is a defect, every tier gets fixed",
+        "the rule no longer says every tier is a defect. A tier that excuses "
+        "one of its values from being fixed IS the abolished axis. The clause "
+        "is quantified over the vocabulary rather than counted (D-023: the "
+        "counted spelling said `two` for as long as DEFECT_TIERS had three "
+        "members).",
+    ),
+    (
+        "`HARDENING` means you drove a probe of your own devising and observed "
+        "a wrong result no requirement asks about",
+        "the rule no longer says what HARDENING means (GI-014 / AC-022). A "
+        "stream that cannot read the member's meaning here files its off-spec "
+        "probe as LIVE, which holds every gate shut over behaviour no "
+        "requirement asks for, or drops it.",
+    ),
+    (
+        "carries no `spec_ref` (one that sets a `spec_ref` is refused at both "
+        "doors)",
+        "the rule no longer names the mechanical discriminator (GI-028). "
+        "Unstated, HARDENING reads as a place to put a requirement failure "
+        "that is inconvenient to fix, which is the demotion the tier exists "
+        "to prevent.",
+    ),
+    (
+        "and never `HARDENING` either",
+        "the rule no longer rules out a HARDENING security-property claim "
+        "(GI-004). The denylist rung reads NON_BLOCKING_TIERS, so the door "
+        "refuses it -- and a stream told only that LATENT is closed to the "
+        "claim routes it to the other non-blocking tier.",
+    ),
+    (
+        "buys you no discretion over anything else",
+        "the rule lost its no-exceptions clause. Every rule in this register "
+        "closes on one; without it `tier` reads as a licence rather than a "
+        "field.",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("clause,why", _TIER_RULE_CLAUSES, ids=lambda v: v[:44])
+def test_each_stream_agent_states_the_tier_rule(path: Path, clause: str, why: str) -> None:
+    """GI-001 / AC-009 / FR-004 / CT-003, one claim at a time."""
+    assert clause in _flat(path), f"{_rel(path)}: {why}"
+
+
+#: DERIVED from the vocabulary, never re-typed: a member added to DEFECT_TIERS
+#: fails here until every filing surface describes it. GI-014 added HARDENING
+#: and the seven copies of this rule went on describing two members (D-023),
+#: which is the failure a hand-typed roster here could not have caught.
+_DECLARED_TIERS = tuple(sorted(vocab.DEFECT_TIERS))
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("member", _DECLARED_TIERS)
+def test_the_tier_rule_names_every_declared_member(path: Path, member: str) -> None:
+    """GI-014 / AC-022: prose describing fewer tiers than the doors accept."""
+    span = _tier_rule(path)
+    assert span, (
+        f"{_rel(path)} carries no tier rule to sweep -- see "
+        f"test_stream_agents_share_one_tier_rule_verbatim."
+    )
+    assert f"`{member}`" in span, (
+        f"{_rel(path)}'s tier rule never names `{member}`, a member "
+        f"`Foundry-Defect` and `Foundry-Sync` accept "
+        f"({sorted(vocab.DEFECT_TIERS)}). The rule is the only place a filing "
+        f"stream learns the member exists and when to set it, so an undescribed "
+        f"member is one no stream ever files."
+    )
+
+
+#: The count is the half that rots silently: the members carry their own names
+#: into the prose, but a number beside them is a second copy of len() that no
+#: door reads. GI-014 made it wrong in seven files at once (D-023..D-029).
+_MEMBER_COUNT_RE = re.compile(r"\b(?:one|two|three|four|five|six|\d+)[- ]member\b", re.I)
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
+def test_the_tier_rule_states_no_member_count(path: Path) -> None:
+    """GI-014's absence half: a counted vocabulary is a re-typed vocabulary."""
+    span = _tier_rule(path)
+    assert span, (
+        f"{_rel(path)} carries no tier rule to sweep -- see "
+        f"test_stream_agents_share_one_tier_rule_verbatim."
+    )
+    hit = _MEMBER_COUNT_RE.search(span)
+    assert hit is None, (
+        f"{_rel(path)}'s tier rule counts its members ({hit.group(0)!r}) "
+        f"instead of citing DEFECT_TIERS, which declares "
+        f"{len(vocab.DEFECT_TIERS)}. Cite the vocabulary and describe the "
+        f"members; a count is a copy that no door reads and nothing updates."
+    )
+
+
+#: FR-007 replaced an OPTIONAL class with a required one. The clauses that
+#: permitted omission are gone from every file that carried one; these are the
+#: sentences that replaced them. coverage-diff.md is the D-017 case and had no
+#: class rule at all to soften -- it gained one, in its own voice, carrying
+#: these same clauses.
+_CLASS_REQUIRED_CLAUSES = (
+    (
+        "a single-instance class is still a class",
+        "the file no longer tells a stream to name a class for a defect that "
+        "stands alone. FR-007 makes `class` required on every filing; without "
+        "this sentence a stream reads 'required' and 'only when shared' "
+        "together and resolves the contradiction by omitting the field.",
+    ),
+    (
+        "refuse a filing whose `class` is empty",
+        "the file no longer states that an empty class is refused server-side. "
+        "The path fallback survives only for READING pre-change archives, so a "
+        "stream that omits the field is refused rather than defaulted.",
+    ),
+    (
+        "spelled identically",
+        "the file no longer requires the class string spelled identically "
+        "across instances. Escalation counts a class by exact string, so an "
+        "unpinned spelling reads as two unrelated classes and never escalates.",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("clause,why", _CLASS_REQUIRED_CLAUSES, ids=lambda v: v[:44])
+def test_each_stream_agent_makes_the_class_required(path: Path, clause: str, why: str) -> None:
+    """FR-007: agent prose and report formats REQUIRE the class."""
+    assert clause in _flat(path), f"{_rel(path)}: {why}"
+
+
+#: The class rule's bolded opening differs by stream voice -- "instances",
+#: "packets", "deviations" -- so the bullet is located by the tail all four
+#: share. ``test_each_stream_agent_instructs_the_class_declaration`` above pins
+#: that tail, which is what makes it safe to key on here.
+_CLASS_RULE_MARKER = "share a root cause.**"
+
+
+def _class_rule(path: Path) -> str:
+    """The one Rules bullet declaring the class, flattened and bounded.
+
+    Bounded at the NEXT bullet, exactly as ``_rules_bullet`` is and for the
+    same reason: "Omit the field" also appears in the neighbouring
+    ``target_kind`` rule, where it is CORRECT prose about a different field. A
+    file-wide absence assertion would fail on that sentence and invite the
+    wrong fix.
+    """
+    flat = _flat(path)
+    start = flat.find(_CLASS_RULE_MARKER)
+    if start == -1:
+        return ""
+    head = flat.rfind("- **", 0, start)
+    tail = flat[start:]
+    stop = tail.find("- **")
+    return flat[head if head != -1 else start : start + (len(tail) if stop == -1 else stop)]
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
+def test_no_stream_agent_still_permits_omitting_the_class(path: Path) -> None:
+    """FR-007's absence half: a removal is invisible to every positive pin.
+
+    Four of the five carried a clause permitting omission -- assayer's "Omit
+    the field when a defect genuinely stands alone", tracer's "Omit the field
+    when a symbol's defect stands alone", flow-tracer's "Omit it when a packet
+    fails alone", research-auditor's "Omit the field when a deviation stands
+    alone"; coverage-diff.md named no class at all until D-017. A rule that
+    says both "required" and "omit it when" is a rule read
+    in the reader's favour, so the permission has to be gone, not merely
+    outvoted. Scoped to the class BULLET: the identical words live in the
+    target_kind rule two bullets down, where they are correct.
+    """
+    bullet = _class_rule(path)
+    assert bullet, (
+        f"{_rel(path)} has no class-declaration bullet to scope to -- the "
+        f"marker {_CLASS_RULE_MARKER!r} is gone. Restore the rule rather than "
+        f"deleting this assertion; FR-007 requires a producer in every stream."
+    )
+    for permission in ("Omit the field", "Omit it when", "is optional"):
+        assert permission not in bullet, (
+            f"{_rel(path)}'s class rule still permits omitting the field "
+            f"({permission!r}). FR-007 makes `class` required on every filing; "
+            f"a rule carrying both the requirement and the permission hands "
+            f"the stream the choice back."
+        )
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
+def test_no_stream_agent_shape_still_calls_the_class_optional(path: Path) -> None:
+    """FR-007 at the SHAPE, where the rule's reader actually copies from.
+
+    Every one of the four qualified its example JSON with "`class` is optional
+    and appears only ..."; coverage-diff.md's shape carried neither field.
+    D-016's finding is that a shape and a mandate which
+    disagree are resolved in the shape's favour, because the shape is the
+    thing that gets pasted -- so the prose beside the example has to change
+    with the rule, not after it.
+    """
+    flat = _flat(path)
+    assert "`class` is optional" not in flat, (
+        f"{_rel(path)} still describes `class` as optional beside its example "
+        f"JSON. FR-007 made it required on every filing; a shape annotated "
+        f"'optional' outranks a Rules bullet that says otherwise (D-016)."
+    )
+    assert "`class` is required on every" in flat, (
+        f"{_rel(path)} does not state at the SHAPE that `class` is required on "
+        f"every record. The Rules block alone is not enough -- the reader who "
+        f"copies the shape may never reach it."
+    )
+    assert "`tier` is required on every" in flat, (
+        f"{_rel(path)} does not state at the SHAPE that `tier` is required on "
+        f"every record either (FR-004), so the new axis is documented only in "
+        f"a rule the shape-copier may never read."
+    )
+
+
+def _example_defect_records(path: Path) -> list[dict]:
+    """Every entry of every `defects` array in a file's normative examples.
+
+    Scoped to `defects` rather than to every nested object (which is what
+    ``_example_records`` returns) because the tier and class obligations are
+    obligations on a DEFECT record. A `results` or `recommendations` entry
+    carrying no tier is correct, and sweeping those in would force the pin to
+    be weakened to "at least one record has a tier" -- which passes on a shape
+    that carries it once and omits it everywhere else.
+    """
+    found: list[dict] = []
+    for record in _example_records(path):
+        entries = record.get("defects")
+        if isinstance(entries, list):
+            found.extend(e for e in entries if isinstance(e, dict))
+    return found
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
+def test_each_stream_agent_report_shape_carries_tier_on_every_defect(path: Path) -> None:
+    """FR-004 / FR-007: the instruction is inert if the shape has no slot.
+
+    D-011's shape exactly, at the new axis. The Rules block can require `tier`
+    on every filing and a stream will still copy the example beside it -- the
+    example is the thing that gets pasted. Read out of the files' own JSON so
+    a shape that gains a defect entry later is covered without anyone
+    remembering to come back here.
+    """
+    records = _example_defect_records(path)
+    assert records, (
+        f"{_rel(path)}'s normative example has no `defects` array entries, so "
+        f"every assertion below it is vacuous. The array is what the lead "
+        f"converts into GRIND tasks; a shape without one documents nothing."
+    )
+    for entry in records:
+        assert entry.get("tier") in vocab.DEFECT_TIERS, (
+            f"{_rel(path)} documents a defect entry whose `tier` is "
+            f"{entry.get('tier')!r}, not a member of "
+            f"{sorted(vocab.DEFECT_TIERS)}. A stream copying this shape files "
+            f"a finding the door refuses, and CT-001's refusal names the tier "
+            f"field the example never taught it to set."
+        )
+        assert str(entry.get("class", "")).strip(), (
+            f"{_rel(path)} documents a defect entry with no non-empty `class` "
+            f"(FR-007). `class` is required on every filing now, so an example "
+            f"entry without one teaches the omission the doors refuse."
+        )
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_AGENTS, ids=lambda p: p.name)
+def test_each_stream_agent_shape_works_a_latent_entry(path: Path) -> None:
+    """CT-001: the LATENT half needs a worked example, not just a rule.
+
+    LIVE is the shape every existing example already had. LATENT is the new
+    one, and it is the one that carries an extra required field -- so it is
+    the one a stream gets wrong. An example set that shows only LIVE entries
+    documents the easy half of the vocabulary and leaves the refusal to be
+    discovered at the door.
+    """
+    latent = [e for e in _example_defect_records(path) if e.get("tier") == "LATENT"]
+    assert latent, (
+        f"{_rel(path)}'s example `defects` array works no LATENT entry. The "
+        f"shape then teaches only the tier that needs no extra field, and a "
+        f"stream filing its first LATENT finding meets CT-001's refusal with "
+        f"no worked example to copy."
+    )
+    for entry in latent:
+        statement = entry.get("reproduction_attempted")
+        assert vocab.reproduction_attempted_problem(statement) is None, (
+            f"{_rel(path)} documents a LATENT defect entry whose "
+            f"`reproduction_attempted` is {statement!r}, which the SHIPPED "
+            f"check rejects: {vocab.reproduction_attempted_problem(statement)}. "
+            f"The example is driven through vocab rather than eyeballed, so a "
+            f"placeholder ('n/a', 'TBD') in the shape fails here instead of at "
+            f"the door."
+        )
+
+
+# ---------------------------------------------------------------------------
+# D-174 (filing-type half) / FR-004 / CT-002 -- the `type` a surface publishes
+# is a type the door accepts
+# ---------------------------------------------------------------------------
+#
+# The tier and class rungs above sweep every published `defects` entry, and
+# `validate_defect_filing` -- the shared validator both doors call, and the
+# function `test_every_documented_latent_example_survives_the_filing_door`
+# drives the examples through -- reads `tier` and `class` and NOT `type`. The
+# `type` rung lives one layer out, in `tools/foundry.py`:
+#
+#     if defect_type not in DEFECT_TYPES:
+#         ... "Use the closest member of the canonical set"
+#
+# So a published example could carry a `type` no door would ever accept and
+# every check in this module stayed green. Four did, across three surfaces:
+#
+#     agents/coverage-diff.md   "type": "MISSING_COVERAGE_LIST"
+#     agents/flow-tracer.md     "type": "DISCONNECTED", "type": "CHAIN_BROKEN"
+#     agents/tracer.md          `type: "SERENA_UNAVAILABLE"`  (a Rules bullet)
+#     agents/flow-tracer.md     `type: "SERENA_UNAVAILABLE"`  (a Rules bullet)
+#
+# Driven: a stream that copies its own instructions' shape meets
+# `Foundry-Sync` refusing the WHOLE batch, naming a `type` those instructions
+# taught it. The last two are worse than an example, because they sit under
+# `**`NOT_VERIFIED` is a defect, not a deferral.**` -- an absolute promising
+# the filing is never waived and never omitted, whose one prescribed `type`
+# the door always refused, at the moment Serena was already down and that
+# filing was the only record of it.
+#
+# Each surface keeps its OWN verdict vocabulary (flow-tracer's `SOURCED`/
+# `CHAIN_BROKEN` summary counts, coverage-diff's `ORPHAN_DESTINATION`): those
+# are a different axis and nothing files them. `vocab.py`'s own DEFECT_TYPES
+# comment sets the precedent -- tracer.md keeps `MISPLACED` as its verdict
+# word while persisting `type: "ARCHITECTURAL_PLACEMENT"`. What is pinned here
+# is only the value that rides the wire.
+
+#: A `type` field set to an UPPER_SNAKE literal, anywhere in a surface --
+#: inside a normative JSON example or inline in a Rules bullet, quoted as
+#: `"type"` or bare as `type`. The case class is what separates a defect type
+#: from a JSON-Schema one: `"type": "string"` / `"array"` / `"object"` in the
+#: skills' findings schemas are lower case and never match, so the schema
+#: blocks need no exclusion list that could rot. The lookbehind is what keeps
+#: `"spec_type": "MIGRATION"` out -- without it the pattern matches the tail
+#: of any `*_type` key and reports a spec type as a bad defect type.
+_TYPE_LITERAL_RE = re.compile(r'(?<![A-Za-z0-9_])"?type"?\s*:\s*"([A-Z][A-Z0-9_]*)"')
+
+
+def test_the_published_type_sweep_is_not_vacuous() -> None:
+    """Floor check: a regex that matches nothing pins nothing.
+
+    The sweep below passes trivially on a corpus where no surface publishes a
+    `type` literal at all -- which is also what a broken regex looks like.
+    This is the floor that fails first, and it names the members the corpus is
+    known to carry so a pattern that silently stopped matching UPPER_SNAKE
+    values cannot be mistaken for a clean corpus.
+    """
+    found: set[str] = set()
+    for path in DEFECT_FILING_SURFACES:
+        found.update(_TYPE_LITERAL_RE.findall(_read(path)))
+    assert found, (
+        "no surface in DEFECT_FILING_SURFACES publishes a `type` literal any "
+        "more. Either every example lost its `type` -- which is itself the "
+        "defect, since `type` is required on the wire -- or _TYPE_LITERAL_RE "
+        "stopped matching. Fix whichever it is; never delete this floor."
+    )
+    assert "MISSING" in found, (
+        f"the corpus publishes {sorted(found)} and not the single most common "
+        f"defect type. That is a regex regression, not a corpus change."
+    )
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_SURFACES, ids=_rel)
+def test_every_published_type_is_a_vocabulary_member(path: Path) -> None:
+    """D-174: the spelling a surface teaches is one the door accepts.
+
+    Swept over DEFECT_FILING_SURFACES rather than DEFECT_FILING_AGENTS, and
+    over the RAW text rather than over `_example_defect_records`, because two
+    of the four originals were not in a `defects` array at all -- they were
+    inline in a Rules bullet that names the `type` to file. A sweep scoped to
+    parsed JSON would have found half the class and called it fixed.
+
+    Compared against ``vocab.DEFECT_TYPES`` read from the module, never a list
+    re-typed here: a member added by RFC is accepted the moment the vocabulary
+    accepts it, and the bug and its check cannot end up on the same side of
+    one edit.
+    """
+    published = sorted(set(_TYPE_LITERAL_RE.findall(_read(path))))
+    refused = [t for t in published if t not in vocab.DEFECT_TYPES]
+    assert not refused, (
+        f"{_rel(path)} teaches its stream to file {refused} as a `type`, and "
+        f"none is a member of vocab.DEFECT_TYPES "
+        f"({sorted(vocab.DEFECT_TYPES)}). `tools/foundry.py`'s rung refuses "
+        f"that filing -- and at the batch door it refuses the WHOLE batch, so "
+        f"one copied example discards every other finding of the cycle. The "
+        f"stream's own verdict words are a different axis and belong in "
+        f"`verdict`, in `summary` and in prose; only the value on the wire is "
+        f"swept here. Fix the SURFACE (or extend the vocabulary by RFC), "
+        f"never this assertion."
+    )
+
+
+# ---------------------------------------------------------------------------
+# FR-019 / FR-040 -- pointer dispatch, teammate side
+# ---------------------------------------------------------------------------
+
+
+def test_teammate_has_the_pointer_dispatch_step() -> None:
+    """FR-019: the teammate reads the FILE and states the hash it read.
+
+    The spawn doors stopped returning the prompt text and started returning a
+    pointer. That is only half a contract: a teammate handed a path and a hash
+    can still work from the dispatch message's own summary and never open the
+    file. The hash in the completion report is what closes it -- only an agent
+    that read the file can produce the value -- and this pins the instruction
+    that produces it.
+    """
+    flat = _flat(TEAMMATE)
+    assert "### Step 0: Read your prompt FILE in full, and report the hash you read" in flat, (
+        "teammate.md has no pointer-dispatch step. Dispatch hands the teammate "
+        "a path and a hash instead of the prompt text (FR-019); with no step "
+        "telling it to open the file, the pointer is a message it can skim."
+    )
+    assert "Read that file end to end before any other action" in flat, (
+        "teammate.md no longer requires the prompt file be read IN FULL before "
+        "anything else. FR-019 names all three: the path, the hash, and the "
+        "instruction to read the whole file."
+    )
+    assert "hashlib.sha256" in _read(TEAMMATE), (
+        "teammate.md gives no command for computing the hash itself. A "
+        "teammate told to state a hash and given no way to derive one copies "
+        "it out of the dispatch message, which is precisely the case the "
+        "check exists to detect."
+    )
+
+
+def test_teammate_completion_report_requires_the_prompt_hash() -> None:
+    """FR-019: the report is where the lead picks the value up.
+
+    ``check_reported_prompt_hash`` is called at Foundry-Accept-Casting and at
+    Foundry-Fix with the hash the LEAD passes through, and the lead has
+    nothing to pass unless the completion report carries it. An instruction to
+    compute a hash with nowhere to put it is an instruction with no consumer.
+    """
+    flat = _flat(TEAMMATE)
+    assert "**The prompt hash you read (required).**" in flat, (
+        "teammate.md's completion-message list no longer requires the prompt "
+        "hash (FR-019). Without that bullet the lead reaches "
+        "Foundry-Accept-Casting with no value to pass and the rung never fires."
+    )
+    for tool in ("`Foundry-Accept-Casting`", "`Foundry-Fix`"):
+        assert tool in flat, (
+            f"teammate.md does not bind the reported hash to {tool}, so the "
+            f"teammate is not told what refuses when the value is wrong."
+        )
+    assert "Never work from a summary of your prompt" in flat, (
+        "teammate.md lost the prohibition on working from a summary or from a "
+        "prompt quoted back in a message. The pointer only binds if the file "
+        "is the sole authority; a quote is a copy free to differ from what the "
+        "gate hashes."
+    )
+    # The pre-existing citation bullet must survive beside the new one:
+    # test_symbol_cites.py binds the acceptance window to this exact clause.
+    assert "within 300 characters of the ID mention" in flat, (
+        "teammate.md's requirement-citation bullet lost the 300-character "
+        "clause while the prompt-hash bullet was added beside it. "
+        "test_symbol_cites.py binds the acceptance gate's window to that "
+        "sentence -- D-118 exists because the prose and the window disagreed."
+    )
+
+
+# ---------------------------------------------------------------------------
+# FR-008 / FR-041 -- the LATENT fix lane, beside the LIVE one
+# ---------------------------------------------------------------------------
+
+
+def test_teammate_grind_protocol_has_the_latent_lane() -> None:
+    """FR-008: a LATENT fix closes on a regression_test locator.
+
+    A LATENT defect has no adjacent path the fix could have broken, because no
+    path reached the code at all. Demanding the LIVE lane's adjacent-path
+    statement of it produces a teammate inventing neighbours to satisfy a
+    gate, in the phase where every defect must close -- which is worse than no
+    declaration.
+    """
+    flat = _flat(TEAMMATE)
+    assert (
+        "### Step 7, second lane: DECLARE — the regression test that closes a "
+        "LATENT defect" in flat
+    ), (
+        "teammate.md's GRIND protocol has no LATENT lane (FR-008). Without it "
+        "a teammate fixing a derived defect is held to an adjacent-path "
+        "statement about code nothing reaches."
+    )
+    assert "`path::test`" in flat, (
+        "teammate.md does not give the regression_test locator's FORM. "
+        "`Foundry-Fix` validates `path::test` -- that the path exists and the "
+        "test names a real test in it -- so a locator in any other shape is "
+        "refused."
+    )
+    assert "`authored_by`" in flat, (
+        "teammate.md does not name `authored_by`, which Foundry-Fix requires "
+        "on every fix in either lane (CT-005)."
+    )
+
+
+def test_teammate_keeps_the_failing_then_passing_account_out_of_the_call() -> None:
+    """FR-041: the statement is REPORT prose, never a tool argument.
+
+    CT-004 is explicit that the failing-then-passing statement is completion-
+    report prose and not an input, and the account is worth writing down
+    because only it proves the test was ever red.
+
+    WHY THE REASON IS PINNED TOO (D-005 / D-010)
+    --------------------------------------------
+    The instruction shipped with a justification that was not true: it told
+    the teammate the call would be "rejected at the MCP boundary before it
+    reaches a handler" because "the schema declares no field for it". Driven:
+    `additionalProperties` occurs ZERO times in server.py, so Foundry-Fix's
+    published inputSchema does not close its property set; JSON Schema permits
+    extra properties by default; and the MCP SDK's boundary check is exactly
+    jsonschema.validate against that schema, which ACCEPTS the undeclared key.
+    The dispatch lambda then reads only its named arguments, so the account is
+    silently discarded and the call reports success.
+
+    That is the same defect shape FR-025 removes from the temper skill -- a
+    document citing a guard that does not exist. The instruction was right and
+    the reason was wrong, which is the worse combination: an agent that tests
+    the stated reason and finds it false has been given cause to doubt the
+    rule. So both halves are pinned here.
+    """
+    flat = _flat(TEAMMATE)
+    assert "**The failing-then-passing account is not a tool argument.**" in flat, (
+        "teammate.md no longer rules the failing-then-passing account out of "
+        "the Foundry-Fix call (FR-041 / CT-004)."
+    )
+    assert "the test failed at" in flat and "and passes at" in flat, (
+        "teammate.md gives no shape for the failing-then-passing account, so "
+        "the requirement is satisfiable by any sentence mentioning a test. "
+        "FR-041 requires the STATEMENT in the report."
+    )
+    assert "rejected at the MCP boundary" not in flat, (
+        "teammate.md claims an undeclared Foundry-Fix argument is rejected at "
+        "the MCP boundary. It is not: the tool's inputSchema sets no "
+        "`additionalProperties: false` (grep server.py -- zero occurrences), "
+        "so the boundary's jsonschema.validate accepts the key. Justify the "
+        "rule by what actually happens, or the first teammate to check the "
+        "reason stops trusting the rule."
+    )
+    assert "it is DROPPED" in flat, (
+        "teammate.md no longer says what actually happens to an undeclared "
+        "Foundry-Fix argument. It is dropped, not refused -- the dispatch "
+        "reads only the arguments the schema names -- and silent loss is "
+        "exactly why the account has to go in the report instead."
+    )
+
+
+def test_teammate_latent_lane_does_not_relax_the_live_lane() -> None:
+    """FR-008: the second lane is beside the first, never in place of it.
+
+    The LIVE lane's adjacent-path statement and test stay mandatory. A LATENT
+    lane written as a relaxation is a lane every fixer takes, and the
+    adjacent-path discipline the D-070 work installed evaporates one defect at
+    a time.
+    """
+    flat = _flat(TEAMMATE)
+    assert "**This lane does not relax the one above it.**" in flat, (
+        "teammate.md does not state that the LATENT lane leaves the LIVE lane "
+        "untouched. Two lanes with no boundary between them is one lane, and "
+        "it is the cheaper one."
+    )
+    assert "Read the defect's `tier` first and pick the lane it names" in flat, (
+        "teammate.md does not tell the fixer WHICH lane a defect takes. The "
+        "tier decides it; unstated, the fixer picks, and picks the shorter one."
+    )
+    # The LIVE lane's own pins must survive the addition.
+    assert "**The adjacent-path statement.**" in flat, (
+        "teammate.md lost the LIVE lane's adjacent-path statement while the "
+        "LATENT lane was added beside it (FR-009)."
+    )
+
+
+def test_teammate_filing_a_defect_sets_tier_and_class() -> None:
+    """FR-004 / FR-007: a teammate files defects too, under the same rules."""
+    flat = _flat(TEAMMATE)
+    assert "**When you FILE a defect rather than fix one,**" in flat, (
+        "teammate.md never tells a teammate what to put on a defect it FILES. "
+        "The filing doors require `tier` and `class` from every caller, not "
+        "only from the four INSPECT streams."
+    )
+    for token in ("`tier`", "`class`", "`reproduction_attempted`", "`SECURITY_PROPERTY_CLAIM`"):
+        assert token in flat, (
+            f"teammate.md's filing rule does not name {token}, so a teammate "
+            f"meets that refusal with no instruction covering it."
+        )
+
+
+# ---------------------------------------------------------------------------
+# GI-005 / FR-043 -- what a teammate does NOT report, and what it commits
+# ---------------------------------------------------------------------------
+
+
+_SPEND_HEADING = "### NEVER report token counts, durations, or cost"
+
+
+def _teammate_section(heading: str) -> str:
+    """One `###` section of teammate.md, flattened and bounded at the next one.
+
+    Bounded for the reason ``_rules_bullet`` is: a file-wide pin on a tool
+    name is satisfiable from anywhere in an 890-line document, and the point
+    of naming `Foundry-Spend` in this rule is that THIS RULE states the
+    mechanism -- not that the string exists somewhere in the file.
+    """
+    flat = _flat(TEAMMATE)
+    start = flat.find(heading)
+    if start == -1:
+        return ""
+    tail = flat[start + len(heading) :]
+    stop = tail.find("### ")
+    return heading + (tail if stop == -1 else tail[:stop])
+
+
+def test_teammate_never_reports_spend() -> None:
+    """GI-005: the parser stays out of the run; the lead reads the block.
+
+    The usage block is fragile, human-facing text nothing in this system
+    owns. A parser for it inside the run breaks silently on the next harness
+    release and then reports a WRONG number rather than no number, which is
+    the worse of the two failures. One reader, on the lead's side, is the
+    whole ruling.
+
+    The rule has to NAME the tool that reader uses. A prohibition that says
+    only "the lead records spend" is the D-020 / D-061 / D-072 shape this
+    module keeps paying for: a working mechanism with no documented caller.
+    `Foundry-Spend` exists, the lead is the one who calls it, and a teammate
+    that knows neither fact has no way to tell "somebody else records this"
+    from "nobody records this" -- and the second reading is the one that ends
+    with a teammate helpfully estimating a number.
+    ``test_every_tool_named_in_shipped_prose_is_registered`` covers the other
+    half, that the name is one the server actually serves.
+    """
+    section = _teammate_section(_SPEND_HEADING)
+    assert section, (
+        f"teammate.md has no {_SPEND_HEADING!r} section, so nothing forbids a "
+        f"teammate reporting its own spend (GI-005). Unstated, a diligent "
+        f"teammate estimates one -- and an estimate in the ledger is "
+        f"indistinguishable from a measurement."
+    )
+    assert "`Foundry-Spend`" in section, (
+        "teammate.md's spend rule no longer names `Foundry-Spend` as the tool "
+        "the lead records through. Naming the actor without the mechanism "
+        "leaves the teammate unable to distinguish 'someone else records this' "
+        "from 'nobody records this', and only one of those readings ends with "
+        "the teammate leaving the number alone."
+    )
+    assert "never yours to call" in section, (
+        "teammate.md's spend rule names `Foundry-Spend` without ruling it out "
+        "of the teammate's own hands. A tool named in a teammate's protocol "
+        "reads as a tool the teammate may call; this one is the lead's."
+    )
+    assert "Spend is not yours to report." in section, (
+        "teammate.md's spend rule lost its closing absolute."
+    )
+
+
+def test_teammate_commits_its_own_evidence_logs() -> None:
+    """FR-043: teammates commit per-casting logs; nobody sweeps by hand.
+
+    A hand sweep at the end of the run is the shape GI-002 removes on the
+    server side; this is its teammate-side twin. A log a teammate meant to
+    commit and did not is not a log the lead finds later -- it is a
+    requirement with no evidence bound to it, and the acceptance gate names it
+    as one.
+    """
+    flat = _flat(TEAMMATE)
+    assert (
+        "**You commit your own casting's evidence logs, in your own "
+        "pathspec-scoped commit. Nobody sweeps `evidence/` by hand.**" in flat
+    ), (
+        "teammate.md does not state that the teammate commits its own evidence "
+        "logs and that nothing sweeps them by hand (FR-043). The server "
+        "re-executes what was COMMITTED; an uncommitted log is invisible to it."
+    )
+
+
+# ---------------------------------------------------------------------------
+# GRIND cycle 5 -- D-092 / D-093 / D-096: the survivors a phrase list misses
+# ---------------------------------------------------------------------------
+#
+# All three defects were graded prose sitting in a file that ALSO bans the
+# grade, and all three passed 839 tests. The pins that should have caught them
+# could not: ``_APPROVING_SEVERITY_USES`` is a hand-typed tuple of comparative
+# shapes, and "HOLLOW verdicts are highest priority", "Critical path gaps" and
+# "Do NOT flag cosmetic/style issues" are none of them. A fourth survivor would
+# not be on that tuple either.
+#
+# So the sweep below is derived on every axis it can be. The token set is read
+# out of the ban clause itself, so a seventh banned spelling added to the rule
+# is swept the moment it lands. The corpus is DEFECT_FILING_SURFACES, so a new
+# filing surface is swept the moment it names a door. Only the innocent uses
+# are hand-listed -- as an EXACT set, so a new one fails until somebody writes
+# down why it is the English word rather than the grade, in a diff a reviewer
+# reads. That written act is the thing that never happened for "highest
+# priority", and it is the whole point of recording rather than excusing.
+
+#: The banned work-effort spellings, READ from the shared ban clause rather
+#: than re-typed here -- the ``_EXPECTED_TYPE_ENUM`` discipline applied to
+#: prose. The clause names each one as a code span behind the word "no", which
+#: is a shape a USE never takes: a document reaching for the axis writes "high
+#: severity" or "highest priority", never "no `severity`".
+_BANNED_GRADE_RE = re.compile(r"no `([a-z]+)`")
+
+#: The other shape a banned spelling only ever takes when it is being RULED
+#: OUT: "a channel, not a severity tier", "a channel statement, not a severity
+#: one". A document reaching FOR the axis never phrases it as a denial, so this
+#: is derived rather than recorded per file -- which matters because the same
+#: denial sentence is shared prose that lands in a surface the moment it joins
+#: the corpus, and a ledger entry for it would be a debt owed to whichever
+#: casting happened to commit first.
+_AXIS_DENIAL_RE_TEMPLATE = r"(?:not|never) an? (?:%s)"
+
+
+def _banned_grade_tokens() -> frozenset[str]:
+    """The spellings the shared rule bans, parsed out of the rule."""
+    return frozenset(_BANNED_GRADE_RE.findall(_tier_rule(ASSAYER)))
+
+
+def test_the_banned_grade_tokens_derive_from_the_ban_clause() -> None:
+    """Floor check: a derivation that silently returns {} sweeps nothing.
+
+    Every assertion below is parametrised on this set. If the regex stops
+    matching -- the rule reflows, the backticks go, the enumeration moves to a
+    table -- the sweeps do not fail, they go vacuous, and a vacuous guard is
+    how D-092 lived through four GRIND cycles. This is the assertion that
+    fails instead.
+    """
+    tokens = _banned_grade_tokens()
+    assert "severity" in tokens, (
+        f"the ban-clause derivation found {sorted(tokens)} and not the "
+        f"historical name of the axis. agents/assayer.md's shared rule is the "
+        f"source; either it stopped enumerating the banned spellings as "
+        f"`no \\`x\\`` code spans -- which is itself the FR-030 violation, "
+        f"because the enumeration is what makes the ban a ban -- or "
+        f"_BANNED_GRADE_RE no longer matches the shape it takes. Fix whichever "
+        f"moved; do not re-type the members here."
+    )
+    assert len(tokens) >= 6, (
+        f"the ban clause now names only {sorted(tokens)}. FR-030 requires the "
+        f"work-effort grade to stay banned BY NAME, and a shortened "
+        f"enumeration narrows every sweep below it in one edit."
+    )
+
+
+#: Occurrences of a banned spelling that are the ORDINARY ENGLISH WORD, or a
+#: file's own prohibition of the axis, recorded one by one with the reason.
+#: Asserted as an EXACT set in both directions: a new occurrence fails until it
+#: is deleted or recorded, and a recorded phrase that no longer occurs fails
+#: too, so a stale entry cannot quietly re-open the hole it once described.
+#:
+#: The shared no-severity rule is NOT listed. It is excised mechanically by
+#: ``_tier_rule`` before this ledger is consulted, because it is the same 1924
+#: characters in every file that carries it and pasting it here six times
+#: would be a second copy free to drift from the one the rule pins.
+_RECORDED_GRADE_WORD_USES: dict[str, dict[str, str]] = {
+    "plugins/foundry/agents/assayer.md": {
+        "This ordering is critical": (
+            "spec-before-code ordering, an adjective on a METHOD step. Nothing "
+            "here grades a finding."
+        ),
+        'Never say "minor issue" or "small gap."': (
+            "the No-softening rule banning the word by quoting it. Deleting "
+            "the quotation would delete the prohibition."
+        ),
+        "The word \"minor\" doesn't exist in your vocabulary.": (
+            "the same rule's close, naming the word it abolishes."
+        ),
+    },
+    "plugins/foundry/agents/teammate.md": {
+        "Auto-add missing critical functionality": (
+            "RULE 2's heading. `critical` qualifies functionality every "
+            "production build needs -- validation, auth, error handling -- "
+            "not the importance of a defect."
+        ),
+        "making a major schema migration": (
+            "the SIZE of an architectural change, in RULE 4's examples of what "
+            "a teammate escalates rather than does."
+        ),
+        "- **Impact:** [what breaks or is suboptimal without the architectural change]": (
+            "a concerns.md template field asking WHAT BREAKS. It records a "
+            "consequence, and the lead reads it to decide whether to "
+            "re-decompose -- it ranks nothing against anything."
+        ),
+        "Do not upgrade major versions of build dependencies": (
+            "semver. `major` here is a version component."
+        ),
+        "add critical functionality, fix blockers": (
+            "the SUMMARY section restating RULE 2, same sense as its heading."
+        ),
+    },
+    "plugins/foundry/skills/prove/SKILL.md": {
+        "For each major feature, enumerate reasonable scenarios": (
+            "`major` = principal, scoping which features get scenario "
+            "expansion. It grades no finding; every finding the expansion "
+            "produces is a defect on the same terms."
+        ),
+        "what code does, user impact, files, fix direction": (
+            "a Findings report field naming what a user hits. Describing a "
+            "consequence is what a defect record is FOR; the abolished axis "
+            "was a judgement about whether the consequence was worth fixing."
+        ),
+        "there is no off-the-critical-path exemption": (
+            "the FAIL rule closing that exemption BY NAME (D-041, pinned by "
+            "test_prove_skill_closed_the_critical_path_exemption)."
+        ),
+        "that was the severity axis wearing a different name": (
+            "the same sentence naming the axis it abolishes."
+        ),
+    },
+    "plugins/foundry/skills/sight/SKILL.md": {
+        "**CRITICAL: This skill requires the Playwright MCP browser tools": (
+            "a setup PRECONDITION. Without the browser tools the skill cannot "
+            "run at all; this is not a finding and has no tier."
+        ),
+        "- **User impact:** {what breaks": (
+            "a console-error report template field. Same reading as prove's."
+        ),
+        "- **Impact**: {what user-facing behavior this causes}": (
+            "a network-failure report template field."
+        ),
+        "- **Impact**: {what breaks}": (
+            "a request-failure report template field."
+        ),
+    },
+    "plugins/foundry/skills/trace/SKILL.md": {
+        "For each major feature, walk through the complete workflow": (
+            "`major` = principal, scoping the plumber check."
+        ),
+        "What spec says vs code does, impact.": (
+            "the DEV-N report field naming what the deviation causes."
+        ),
+    },
+}
+
+
+def _grade_word_scan_text(path: Path) -> str:
+    """A surface's prose with every EXCEPTED occurrence blanked out.
+
+    Three exceptions are mechanical -- the shared no-severity rule, the
+    ``no `x``` enumeration form each file bans the axis in, and the "not a
+    `x`" denial form -- and the fourth is the recorded ledger above. What
+    survives all four is a banned spelling this module has never been told
+    about.
+
+    The placeholders substituted in carry no banned spelling of their own. The
+    first draft blanked the shared rule out as ``<shared no-severity rule>``
+    and the sweep then matched its own marker in all six files that carry the
+    rule -- a guard failing on the evidence it just erased.
+    """
+    flat = _flat(path)
+    shared = _tier_rule(path)
+    if shared:
+        flat = flat.replace(shared, " <the shared rule> ")
+    flat = _BANNED_GRADE_RE.sub(" <ban> ", flat)
+    flat = re.sub(
+        _AXIS_DENIAL_RE_TEMPLATE % "|".join(sorted(_banned_grade_tokens())),
+        " <denied> ",
+        flat,
+        flags=re.I,
+    )
+    for phrase in _RECORDED_GRADE_WORD_USES.get(_rel(path), {}):
+        flat = flat.replace(phrase, " <recorded> ")
+    return flat
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_SURFACES, ids=_rel)
+def test_no_filing_surface_grades_a_finding_by_work_effort(path: Path) -> None:
+    """D-092 / D-096 / GI-001 / FR-030, over the corpus that files.
+
+    prove/SKILL.md ranked its own verdicts -- "HOLLOW verdicts are highest
+    priority" -- one screen from the paragraph banning `priority` by name, and
+    asked its assayer for two more gradings besides ("Critical path gaps",
+    "quality confidence (HIGH/MEDIUM/LOW)") in a file whose FAIL rule says
+    there is "no off-the-critical-path exemption, because that was the
+    severity axis wearing a different name". A reader resolves a document that
+    contradicts itself in its own favour, so the file abolished the axis and
+    reinstated it in the same read.
+    """
+    rx = re.compile(
+        r"(?<![A-Za-z])(%s)(?![A-Za-z])" % "|".join(sorted(_banned_grade_tokens())),
+        re.I,
+    )
+    text = _grade_word_scan_text(path)
+    found = [
+        text[max(0, m.start() - 70) : m.end() + 70] for m in rx.finditer(text)
+    ]
+    assert not found, {
+        "file": _rel(path),
+        "why": (
+            "a banned work-effort spelling appears outside this file's own ban "
+            "clause and outside the recorded-use ledger. Two readings, and the "
+            "fix differs: if the word GRADES a finding -- ranks one above "
+            "another, exempts one from being filed, or asks how much a fix is "
+            "worth -- delete it, because GI-001 abolished that axis and `tier` "
+            "records evidence instead. If it is the ordinary English word on "
+            "something that is not a finding, add it to "
+            "_RECORDED_GRADE_WORD_USES with the reason. Recording is not a way "
+            "past this assertion; it is the reviewable act D-092 never had."
+        ),
+        "banned_spellings": sorted(_banned_grade_tokens()),
+        "unrecorded_uses": found,
+    }
+
+
+def test_the_recorded_grade_word_ledger_is_exact() -> None:
+    """A stale exemption re-opens the hole it was written to describe.
+
+    An entry that no longer matches excuses nothing and hides that the sweep
+    above has gone one occurrence narrower than its author believed. Both
+    directions fail here so the ledger tracks the prose rather than outliving
+    it.
+    """
+    swept = {_rel(p) for p in DEFECT_FILING_SURFACES}
+    stale_files = sorted(set(_RECORDED_GRADE_WORD_USES) - swept)
+    assert not stale_files, (
+        f"{stale_files} carry recorded grade-word uses but are no longer "
+        f"filing surfaces. Delete the entries -- an exemption against a file "
+        f"this module does not read excuses nothing."
+    )
+    for rel, uses in _RECORDED_GRADE_WORD_USES.items():
+        path = FOUNDRY_ROOT.parent.parent / rel
+        flat = _flat(path)
+        shared = _tier_rule(path)
+        if shared:
+            flat = flat.replace(shared, " <the shared rule> ")
+        gone = sorted(phrase for phrase in uses if phrase not in flat)
+        assert not gone, (
+            f"{rel} no longer contains recorded use(s) {gone}. Either the "
+            f"prose was rewritten -- in which case delete the entry, the "
+            f"sweep covers the replacement now -- or the phrase drifted and "
+            f"the entry is excusing an occurrence nobody has read."
+        )
+
+
+#: Phrasings that hand a reader DISCRETION over a finding: rank it, hold it
+#: back, or defer it. None of them appears in any ban clause in the corpus --
+#: a rule forbidding the axis says "no exceptions, no deferrals", never "safe
+#: to skip" -- so these need no exception layer at all.
+#:
+#: trace/SKILL.md closed its `## Key Constraints` list with "Do NOT flag
+#: cosmetic/style issues -- only structural completeness gaps" while eight
+#: sibling surfaces closed the same rule with a no-discretion sentence. A
+#: stream told to withhold findings by how much they matter is running the
+#: severity axis under another name, in the release that abolished it.
+_DISCRETION_EXEMPTIONS = (
+    ("highest priority", "ranks one finding above the rest"),
+    ("top priority", "ranks one finding above the rest"),
+    ("higher priority", "ranks one finding against another"),
+    ("lower priority", "ranks one finding against another"),
+    ("priority order", "states a fix order the abolished axis decided"),
+    ("cosmetic/style", "withholds a finding for being slight"),
+    ("purely cosmetic", "withholds a finding for being slight"),
+    ("merely cosmetic", "withholds a finding for being slight"),
+    ("only cosmetic issues", "withholds a finding for being slight"),
+    ("safe to skip", "exempts a finding from being filed"),
+    ("can be skipped", "exempts a finding from being filed"),
+    ("can be deferred", "defers a finding the run refuses to defer"),
+    ("nice to have", "grades a finding as optional"),
+    ("nice-to-have", "grades a finding as optional"),
+)
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_SURFACES, ids=_rel)
+def test_no_filing_surface_offers_a_discretion_exemption(path: Path) -> None:
+    """D-093 / D-092 / GI-001: the axis survives as discretion, not as a word.
+
+    A file can lose every banned spelling and still tell its stream which
+    findings to hold back, which is the same instruction with the vocabulary
+    filed off. This sweep is over the whole filing corpus rather than the
+    stream register, because the surfaces that write in their own voice --
+    prove, trace, temper, sight -- are exactly the ones no word-identical pin
+    reaches.
+    """
+    flat = _flat(path).lower()
+    found = sorted(
+        f"{phrase!r} ({why})" for phrase, why in _DISCRETION_EXEMPTIONS
+        if phrase in flat
+    )
+    assert not found, (
+        f"{_rel(path)} hands its stream discretion over a finding: {found}. "
+        f"Every defect gets fixed, so there is nothing for a rank or a "
+        f"deferral to decide. Scope a stream by its SUBJECT if you must -- "
+        f"trace audits wiring, sight audits the rendered surface -- and close "
+        f"the rule the way the sibling surfaces close theirs, with a sentence "
+        f"that gives no discretion at all."
+    )
+
+
+def test_prove_assay_step_states_no_fix_order() -> None:
+    """D-092: deleting the ranking is half; saying what replaced it is the rest.
+
+    "HOLLOW verdicts are highest priority" was a fix-order instruction, and a
+    step that simply stops giving one reads as silence to the next author who
+    wants to split a queue in two -- the same reasoning
+    ``test_sight_routes_its_findings_by_tier_not_by_a_work_effort_grade``
+    records for sight's backlog.
+    """
+    flat = _flat(PROVE_SKILL)
+    assert (
+        "Nothing here ranks one verdict above another: every non-VERIFIED "
+        "verdict is a defect and every defect gets fixed, so there is no fix "
+        "order left for this step to state." in flat
+    ), (
+        "prove/SKILL.md's ASSAY step no longer states that it orders nothing. "
+        "The sentence it replaced ranked HOLLOW above the other verdicts, one "
+        "screen from the paragraph banning `priority` by name."
+    )
+    assert 'No exceptions, no deferrals, no "this one is only cosmetic."' in flat, (
+        "prove/SKILL.md's ASSAY step lost the no-discretion close every other "
+        "filing surface carries. A rule in this register closes on one."
+    )
+
+
+def test_prove_assess_step_describes_the_journey_without_triaging_it() -> None:
+    """D-096: the file's own FAIL rule already ruled on this question.
+
+    Step 2 asked which non-VERIFIED items sit on the core user journey, in a
+    file whose verdict rules say there is "no off-the-critical-path exemption,
+    because that was the severity axis wearing a different name". Asking the
+    question is how the exemption gets computed; the answer is then one step
+    from being acted on.
+    """
+    flat = _flat(PROVE_SKILL)
+    assert (
+        "an item nothing on the happy path reaches is a defect on exactly the "
+        "same terms as one the first click hits" in flat
+    ), (
+        "prove/SKILL.md's Assess step no longer rules that placement on a "
+        "journey changes nothing about a finding. Dropping the triage "
+        "question without the ruling leaves the next author free to re-add it."
+    )
+    assert "Description, never triage" in flat, (
+        "prove/SKILL.md's Assess step does not say which of the two the tally "
+        "is. A journey tally that does not rule itself out of triage is a "
+        "triage tally with a different heading."
+    )
+
+
+def test_prove_report_has_no_confidence_ladder() -> None:
+    """D-096: a HIGH/MEDIUM/LOW rung over a whole report is the axis again.
+
+    `tier` grades the evidence behind ONE finding. A single rung averaged over
+    every finding in the report grades nothing anything downstream can act on,
+    and reintroduces an ordered scale beside the closed two-member one.
+    """
+    flat = _flat(PROVE_SKILL)
+    assert "quality confidence" not in flat, (
+        "prove/SKILL.md's Overall Assessment demands a confidence grade again. "
+        "GI-001 abolished the graded axis; `tier` replaced it per finding, not "
+        "per report."
+    )
+    assert (
+        "No confidence ladder over the report as a whole: `tier` already "
+        "records the evidence behind each finding one finding at a time" in flat
+    ), (
+        "prove/SKILL.md's Overall Assessment no longer says why it asks for no "
+        "confidence rung. Silence invites the ladder back the next time "
+        "somebody wants a one-line summary."
+    )
+
+
+def test_trace_scopes_its_findings_by_subject_not_by_size() -> None:
+    """D-093: 'only structural completeness gaps' was a withholding rule.
+
+    A stream may be scoped by SUBJECT -- trace audits wiring and data flow,
+    sight audits the rendered surface -- and that is a division of labour. It
+    may not be scoped by how much a finding matters, which is what "Do NOT
+    flag cosmetic/style issues" instructed in the release that abolished the
+    axis deciding it.
+    """
+    flat = _flat(TRACE_SKILL)
+    assert "**Scope is the subject, never the size**" in flat, (
+        "trace/SKILL.md's constraints no longer distinguish scoping a stream "
+        "by subject from grading its findings by size. Deleting the cosmetic "
+        "exemption without that distinction loses the legitimate half: TRACE "
+        "genuinely does not own the rendered surface."
+    )
+    assert (
+        "Everything inside TRACE's own subject is a defect however small the "
+        "fix looks, and this rule gives you no discretion to call one "
+        '"cosmetic."' in flat
+    ), (
+        "trace/SKILL.md's scope rule lost its no-discretion close. "
+        "agents/research-auditor.md closes the same ruling the same way, and "
+        "without it a subject boundary reads as permission to judge size."
+    )
+
+
+@pytest.mark.parametrize("path", SCHEMA_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_skill_evidence_axis_constraint_closes_on_no_discretion(path: Path) -> None:
+    """D-093: eight surfaces closed the rule; these two trailed off.
+
+    Every stream agent's tier rule ends "No exceptions, no deferrals, no 'this
+    one is only cosmetic.'" The two skills stated the same obligations and
+    then stopped, which is the register's way of leaving a rule negotiable.
+    """
+    assert (
+        "`tier` records evidence, never how much work a fix is worth. No "
+        'exceptions, no deferrals, no "this one is only cosmetic."'
+        in _flat(path)
+    ), (
+        f"{_rel(path)}'s evidence-axis constraint no longer closes on the "
+        f"no-exceptions sentence its sibling filing surfaces use. A constraint "
+        f"that states an obligation without closing it is one a stream reads "
+        f"as advice."
+    )
+
+
+# ---------------------------------------------------------------------------
+# GRIND cycle 5 -- the shared filing block, and the surface that took four of five
+# ---------------------------------------------------------------------------
+
+#: The five rules of agents/assayer.md's filing register, in the order their
+#: back-references need. Two of them refer upward: the no-severity bullet names
+#: "the `tier` axis the next rule makes required", and the `target_kind`
+#: bullet's "That refusal is not automatic" and "the split above did nothing"
+#: are both the comment-prose bullet. The block is ordered, not a set.
+#:
+#: A surface takes this register one of two ways, and the two are pinned
+#: separately below because conflating them fails honest prose. sight and
+#: temper take the block WHOLESALE -- they have no stream-specific voice for
+#: it, so their copies are byte-identical to the source. The four stream agents
+#: adapt three of the five to their own subject (tracer's class bullet counts
+#: UNWIRED symbols behind an unregistered router; its comment-prose bullet ends
+#: on wiring verdicts rather than the severity tier) and share only the two
+#: tier rules verbatim, which is what
+#: ``test_stream_agents_share_one_tier_rule_verbatim`` already pins.
+_SHARED_FILING_BULLET_HEADS = (
+    "- **Name the class when instances share a root cause.**",
+    "- **No severity classification.**",
+    "- **Set `tier` on every filing;",
+    "- **Comment-prose findings are observations, not defects.**",
+    "- **Declare `target_kind` on every filing.**",
+)
+
+_COMMENT_PROSE_HEAD = _SHARED_FILING_BULLET_HEADS[3]
+_TARGET_KIND_HEAD = _SHARED_FILING_BULLET_HEADS[4]
+
+#: The phrases in the `target_kind` bullet that point UP at the comment-prose
+#: bullet. Located in the referring text rather than in a roster: what makes
+#: the antecedent required is that this file's own sentence reaches for it, so
+#: a surface writing a self-contained `target_kind` rule owes nothing --
+#: agents/coverage-diff.md is exactly that case and is correct without the
+#: comment-prose bullet.
+_TARGET_KIND_BACK_REFERENCES = ("That refusal", "the split above")
+
+
+def _shared_bullet(path: Path, head: str) -> str | None:
+    """The one line in `path` opening with `head`, or None if it carries none."""
+    hits = [line for line in _read(path).splitlines() if line.startswith(head)]
+    assert len(hits) < 2, (
+        f"{_rel(path)} carries {len(hits)} bullets opening {head!r}. Two copies "
+        f"of one shared rule drift apart a clause at a time, and the doors "
+        f"report ONE refusal per violation -- so the stream is taught two "
+        f"vocabularies and the refusal matches at most one of them."
+    )
+    return hits[0] if hits else None
+
+
+#: Surfaces that take the register WHOLESALE, derived by the bullet that marks
+#: the wholesale copy: a file whose class bullet is byte-identical to the
+#: source did not adapt the register to its own voice, so every other bullet in
+#: the block is a copy too and is checked as one. Deriving is the point --
+#: sight was reachable by every corpus in this module and still lost a bullet,
+#: because nothing asked whether a surface that copies the block copies ALL of
+#: it.
+VERBATIM_FILING_BLOCK_SURFACES = tuple(
+    p
+    for p in DEFECT_FILING_SURFACES
+    if _shared_bullet(p, _SHARED_FILING_BULLET_HEADS[0])
+    == _shared_bullet(ASSAYER, _SHARED_FILING_BULLET_HEADS[0])
+)
+
+
+def test_the_verbatim_filing_block_roster_is_derived() -> None:
+    """Floor check: a roster that lost sight would pass every pin below."""
+    rel = {_rel(p) for p in VERBATIM_FILING_BLOCK_SURFACES}
+    for expected in (ASSAYER, SIGHT_SKILL, TEMPER_SKILL):
+        assert _rel(expected) in rel, (
+            f"{_rel(expected)} no longer copies the class bullet verbatim, so "
+            f"nothing below checks it carries the register whole. A surface "
+            f"drops out of this derivation by rewording that bullet -- which "
+            f"is legitimate for a stream with its own subject, and is why the "
+            f"four stream agents are not swept here. If this file grew a voice "
+            f"of its own, say so; if the bullet merely drifted, re-copy it."
+        )
+    assert TRACER not in VERBATIM_FILING_BLOCK_SURFACES, (
+        "agents/tracer.md derived into the verbatim roster. It adapts three of "
+        "the five bullets to wiring -- its class bullet counts UNWIRED symbols "
+        "behind an unregistered router -- so demanding a byte-identical paste "
+        "would pin away prose written for its own stream on purpose."
+    )
+
+
+@pytest.mark.parametrize("path", VERBATIM_FILING_BLOCK_SURFACES, ids=_rel)
+@pytest.mark.parametrize("head", _SHARED_FILING_BULLET_HEADS, ids=lambda h: h[5:28])
+def test_a_surface_copying_the_filing_block_copies_all_of_it(
+    path: Path, head: str
+) -> None:
+    """D-092's neighbour: the block is five rules, and four is not most of it.
+
+    skills/sight/SKILL.md carried four -- it dropped the comment-prose bullet
+    and kept the `target_kind` bullet that points at it. Each missing bullet is
+    a rule the stream does not have while filing into the same ledger through
+    the same doors, and the doors do not soften for a surface that failed to
+    mention one.
+    """
+    source = _shared_bullet(ASSAYER, head)
+    assert source is not None, (
+        f"agents/assayer.md no longer carries {head!r}, so there is no source "
+        f"to copy. It is the register the other surfaces mirror; fix it there "
+        f"rather than dropping this check."
+    )
+    assert _shared_bullet(path, head) == source, {
+        "file": _rel(path),
+        "bullet": head,
+        "carries_it_at_all": _shared_bullet(path, head) is not None,
+        "why": (
+            "this surface copies the filing register wholesale and either "
+            "omits this bullet or words it differently. Copy the line from "
+            "agents/assayer.md byte for byte; if the rule itself is wrong, "
+            "change it at the source and re-copy everywhere it landed."
+        ),
+    }
+
+
+@pytest.mark.parametrize("path", VERBATIM_FILING_BLOCK_SURFACES, ids=_rel)
+def test_the_verbatim_filing_block_keeps_its_order(path: Path) -> None:
+    """Presence is not enough when two bullets refer upward."""
+    text = _read(path)
+    bullets = [_shared_bullet(path, head) for head in _SHARED_FILING_BULLET_HEADS]
+    assert all(b is not None for b in bullets), (
+        f"{_rel(path)} is missing a shared filing bullet; the per-bullet "
+        f"assertion above names which one."
+    )
+    positions = [text.index(b) for b in bullets]
+    assert positions == sorted(positions), (
+        f"{_rel(path)}'s filing bullets are out of order. Expected "
+        f"{list(_SHARED_FILING_BULLET_HEADS)}: the no-severity bullet names "
+        f"'the `tier` axis the next rule makes required', so the tier bullet "
+        f"follows it, and the `target_kind` bullet's 'That refusal' and 'the "
+        f"split above' are the comment-prose bullet, so it precedes."
+    )
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_SURFACES, ids=_rel)
+def test_a_back_referencing_target_kind_rule_has_its_antecedent(path: Path) -> None:
+    """The defect sight actually shipped: a pointer with nothing under it.
+
+    sight's `target_kind` bullet opened "That refusal is not automatic" and
+    closed "the split above did nothing" while the split it names -- the
+    comment-prose bullet -- was absent from the file. A reader who cannot find
+    an antecedent supplies one, and the nearest candidate two bullets up is the
+    no-severity rule, which turns "that refusal" into the severity ban and
+    reads `target_kind` as something the server already handles.
+
+    Derived from the REFERRING TEXT, not from a roster: a surface that writes a
+    self-contained `target_kind` rule owes no antecedent, which is why
+    agents/coverage-diff.md passes without a comment-prose bullet.
+    """
+    rule = _shared_bullet(path, _TARGET_KIND_HEAD)
+    if rule is None:
+        pytest.skip(f"{_rel(path)} states no `target_kind` bullet")
+    refs = [phrase for phrase in _TARGET_KIND_BACK_REFERENCES if phrase in rule]
+    if not refs:
+        pytest.skip(f"{_rel(path)}'s `target_kind` rule refers to nothing above it")
+    antecedent = _shared_bullet(path, _COMMENT_PROSE_HEAD)
+    assert antecedent is not None, (
+        f"{_rel(path)}'s `target_kind` rule says {refs} and the file carries no "
+        f"comment-prose bullet for those to mean. Either paste "
+        f"agents/assayer.md's {_COMMENT_PROSE_HEAD!r} bullet above it, or "
+        f"rewrite the `target_kind` rule to stand on its own the way "
+        f"agents/coverage-diff.md's does. A dangling back-reference is worse "
+        f"than a missing rule: the reader resolves it against whatever is "
+        f"nearest."
+    )
+    text = _read(path)
+    assert text.index(antecedent) < text.index(rule), (
+        f"{_rel(path)}'s comment-prose bullet sits BELOW the `target_kind` rule "
+        f"that says {refs}. 'The split above' is a direction, and a reader who "
+        f"looks up and finds the wrong rule does not keep looking."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-099 -- the shape a surface DOCUMENTS must survive the door it names
+# ---------------------------------------------------------------------------
+#
+# Every pin above this one asks whether a filing surface SAYS the right thing.
+# None of them asks whether the JSON it hands a stream to copy is a filing the
+# doors would accept. That is a different question and it has a different
+# failure mode: the reader who copies the shape never reads the prose beside
+# it, so a shape and a rung can disagree indefinitely while every substring
+# assertion in this module stays green.
+#
+# Driven, at the moment D-099 was filed: five of the six documented
+# `"tier": "LATENT"` examples -- agents/assayer.md, agents/tracer.md,
+# agents/flow-tracer.md, agents/coverage-diff.md and skills/sight/SKILL.md --
+# were REFUSED by ``validate_defect_filing`` naming field `file_path`, because
+# none carried a `file` key. Only agents/research-auditor.md's was accepted. A
+# stream copying the shape its own instructions ship met a refusal naming a
+# field those instructions never mentioned, and had nothing to read to recover.
+# That is D-017's shape exactly: the shape a stream copies is what the door
+# then refuses.
+#
+# The assertion is a DERIVATION over the real validator rather than a list of
+# required keys re-typed here. A key list would have to be re-decided every
+# time a rung moves -- and a rung moving is precisely the event that breaks the
+# examples, so re-typing it would put the bug and its check on the same side of
+# the change.
+
+
+#: The derived tier this sweep selects on. ``vocab.py`` exports the closed SET
+#: and no per-member name, so the member is spelled here once and immediately
+#: checked back against the set -- a rename in vocab fails on the next line
+#: rather than silently emptying every sweep below it.
+_LATENT = "LATENT"
+assert _LATENT in vocab.DEFECT_TIERS, (
+    f"{_LATENT!r} is no longer a member of vocab.DEFECT_TIERS "
+    f"({sorted(vocab.DEFECT_TIERS)}). Every LATENT sweep in this module "
+    f"selects on it and would go silently empty; re-spell it here and in the "
+    f"prose the pins below read."
+)
+
+
+def _documented_latent_examples(path: Path) -> list[dict]:
+    """Every `tier: LATENT` record a surface's normative JSON examples ship."""
+    try:
+        records = _example_records(path)
+    except (json.JSONDecodeError, AssertionError):
+        return []
+    return [r for r in records if r.get("tier") == _LATENT]
+
+
+def test_the_latent_example_sweep_is_not_vacuous() -> None:
+    """Floor check: a sweep that finds no examples asserts nothing.
+
+    The parametrised check below passes trivially on a surface that documents
+    no LATENT example at all, which is correct -- prove, trace, temper and
+    teammate state the tier obligations without shipping a `defects` array. It
+    also means the whole sweep could go silently empty if every stream agent
+    lost its LATENT example in one edit. This is the floor that fails first.
+    """
+    carriers = {
+        _rel(p) for p in DEFECT_FILING_SURFACES if _documented_latent_examples(p)
+    }
+    missing = sorted({_rel(p) for p in STREAM_AGENTS} - carriers)
+    assert not missing, (
+        f"{missing} document no `tier`: {_LATENT!r} example any "
+        f"more. D3 requires at least one entry in each stream agent's report "
+        f"shape showing the LATENT tier beside its `reproduction_attempted` "
+        f"string -- without it a stream has read the rule and never seen the "
+        f"shape, and the sweep below has nothing to drive."
+    )
+
+
+@pytest.mark.parametrize("path", DEFECT_FILING_SURFACES, ids=_rel)
+def test_every_documented_latent_example_survives_the_filing_door(path: Path) -> None:
+    """D-099 / CT-001 / CT-002: the documented shape is an ACCEPTED filing.
+
+    ``validate_defect_filing`` is the one place both doors decide, so driving
+    the examples through it drives them through ``Foundry-Defect`` and
+    ``Foundry-Sync`` at once -- which is the point, because a shape accepted at
+    one door and refused at the other is worse than a shape refused at both.
+    """
+    for record in _documented_latent_examples(path):
+        refusal = foundry_doors.validate_defect_filing(record)
+        assert refusal is None, {
+            "file": _rel(path),
+            "why": (
+                "this surface documents a LATENT filing shape that the shared "
+                "filing validator REFUSES. A stream that copies its own "
+                "instructions' example meets a refusal naming a field those "
+                "instructions never taught it, and the refusal text is the "
+                "first it hears of the rung. Fix the EXAMPLE (or the rung), "
+                "never this assertion."
+            ),
+            "refused_field": refusal.get("field") if refusal else None,
+            "refusal": refusal,
+            "example_keys": sorted(record),
+        }
+
+
+#: FR-004's location clause, word-identical across the four stream agents. Not
+#: folded into ``_TIER_RULE_CLAUSES`` and not placed inside the shared tier
+#: span, because that span is shared with agents/coverage-diff.md and
+#: skills/sight/SKILL.md, whose own report shapes this rule does not describe.
+_LATENT_LOCATION_RULE = (
+    "- **Name a location on every `LATENT` filing.** A `LATENT` record is carried "
+    "into the report's LATENT backlog as a promise that a later cycle can go and "
+    "drive it, and a row carrying a description and no path is a promise nothing "
+    "can collect."
+)
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_each_stream_agent_asks_for_a_location_on_a_latent_filing(path: Path) -> None:
+    """D-099: expected, and said to be expected rather than refused.
+
+    The rung that DEMANDED a location was removed deliberately -- a LATENT
+    filing that genuinely cannot be located is better recorded unlocated than
+    re-worded until it claims a path the stream never had. That makes the
+    location a matter of prose, and prose is exactly what the report's backlog
+    quality now rests on. Asserted as one exact sentence across all four files
+    so a three-of-four edit fails, in the discipline
+    ``test_stream_agents_share_one_tier_rule_verbatim`` holds for the rule above
+    it.
+    """
+    assert _LATENT_LOCATION_RULE in _flat(path), (
+        f"{_rel(path)} no longer tells its stream to name a location on a "
+        f"LATENT filing. The doors do not refuse one without it, so nothing "
+        f"else will catch the omission -- it surfaces as a backlog row a later "
+        f"cycle cannot open, one cycle after the stream that could have "
+        f"located it has finished."
+    )
+
+
+@pytest.mark.parametrize("path", STREAM_AGENTS, ids=lambda p: p.name)
+def test_the_location_rule_says_expected_rather_than_required(path: Path) -> None:
+    """D-099's reversal, pinned so it cannot be re-tightened by accident.
+
+    An earlier ruling made `file_path` a rung on the LATENT lane and this rule
+    is what replaced it. Written as a hard requirement the prose would promise
+    a refusal that does not happen, which is the FALSE_DOCUMENTED_CONTRACT
+    class in the other direction -- a stream that reads "required" and cannot
+    locate its finding either files a fabricated path or files nothing.
+    """
+    flat = _flat(path)
+    assert "This one is EXPECTED rather than refused" in flat, (
+        f"{_rel(path)}'s LATENT-location rule no longer says the doors ACCEPT "
+        f"a filing without one. A rule that reads as a rung promises a refusal "
+        f"the server does not issue."
+    )
+    assert "renders that row as unlocated" in flat, (
+        f"{_rel(path)} no longer says what the report does with an unlocated "
+        f"LATENT row. Unstated, 'expected but not refused' reads as 'ignored', "
+        f"and the reason to supply the path disappears with it."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-104 / AC-018 / GI-008 -- the recorded PROVE width reaches the stream
+# ---------------------------------------------------------------------------
+#
+# The DELTA roster was computed, recorded, returned and DISPLAYED, and never
+# reached the one agent it scopes. ``_prove_delta_sample`` drew the rows,
+# ``inspect_start`` persisted them as ``prove_sample``, ``foundry_next_action``
+# returned them and display.py rendered "PROVE: N row(s)". The consumer side
+# was silent: agents/assayer.md -- which commands/start.md names as the PROVE
+# agent -- mentioned neither the roster, nor the DELTA width, nor Foundry-Next
+# as somewhere a width is read from, so a DELTA INSPECT still cost a
+# full-width PROVE and AC-018's saving was unrealised on the guided path.
+#
+# start.md states the principle this pin enforces, about the observation split,
+# the tier rule and the progress ledger alike: each reaches the streams
+# "through their own files rather than through anything you paste, so it is in
+# force on a fresh checkout". The roster was the one stream-facing rule written
+# into no agent file, reachable only if the lead remembered to paste it.
+#
+# Both surfaces are pinned because both are load-bearing and neither implies
+# the other: the agent file is what the F2 spawn loads, and the skill is what
+# `/foundry:prove` runs.
+
+_PROVE_WIDTH_SURFACES = (ASSAYER, PROVE_SKILL)
+
+#: One claim per entry, with the failure its absence causes. Word-identical
+#: across both surfaces on purpose -- the two documents have different voices,
+#: but a width is a mechanism, and two paraphrases of a field path are two
+#: chances to name a key the server does not return.
+_PROVE_WIDTH_CLAUSES = (
+    (
+        "Call `Foundry-Next` and read `inspect_mode` out of the RESPONSE",
+        "the surface no longer says WHERE the width is read from. GI-008 puts "
+        "the decision at the transition that opens the INSPECT and leaves "
+        "Foundry-Next only reporting it; a stream told neither reads no width "
+        "at all and runs the matrix.",
+    ),
+    (
+        "On `DELTA`, verify exactly the rows in `inspect_mode.prove_sample`",
+        "the surface no longer names the roster field or says the roster is "
+        "the whole job on a DELTA cycle. `_coverage_shortfall`'s DELTA arm "
+        "measures `checked >= len(roster)` against exactly this list.",
+    ),
+    (
+        "On `FULL`, verify the whole matrix",
+        "the surface no longer says what FULL means, so the narrowing reads as "
+        "unconditional and a final-gate INSPECT silently runs at DELTA width.",
+    ),
+    (
+        "`Foundry-Stream` with `stream: \"prove\"`, `cycle`, `items_checked`, "
+        "`items_total` and `findings_count`",
+        "the surface no longer tells PROVE how to report its coverage. A "
+        "stream that cannot mark itself complete contributes no coverage to "
+        "the cycle's roll-up, where its absence reads as no coverage rather "
+        "than as a broken call -- and `Foundry-Phase('inspect_clean')` then "
+        "refuses the cycle naming a stream that did all of its work.",
+    ),
+    (
+        "never the terminal line",
+        "the surface no longer distinguishes the roster from the display of "
+        "it. display.py truncates the printed sample, so a stream reading the "
+        "terminal line reads a prefix and reports a width it never ran.",
+    ),
+    (
+        "eight rows",
+        "the surface no longer states WHERE the display truncates. 'It is "
+        "truncated' with no number leaves a reader unable to tell a short "
+        "roster from a clipped one.",
+    ),
+    (
+        "no narrowing was decided",
+        "the surface no longer says what an ABSENT width means. Unstated, a "
+        "stream that finds no `inspect_mode` picks a width itself, which is "
+        "the lazily-computed mode GI-008 and GI-009 both name as the "
+        "violation.",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", _PROVE_WIDTH_SURFACES, ids=_rel)
+@pytest.mark.parametrize("clause,why", _PROVE_WIDTH_CLAUSES, ids=lambda v: v[:44])
+def test_prove_reads_the_width_the_server_recorded(
+    path: Path, clause: str, why: str
+) -> None:
+    """AC-018 / D-104, one claim at a time, on both PROVE surfaces."""
+    assert clause in _flat(path), f"{_rel(path)}: {why}"
+
+
+def test_the_prove_roster_key_the_prose_names_is_the_one_the_gate_reads(
+    tmp_path: Path,
+) -> None:
+    """D-104's floor: a field path is only prose until something reads it.
+
+    Both surfaces tell PROVE to read `inspect_mode.prove_sample`. If the
+    recorded decision ever spelled that key differently, the instruction would
+    send every DELTA stream to a key that is never there -- and the stream's
+    honest response to a missing roster is "run the whole matrix", which is
+    indistinguishable from the pre-D-104 behaviour the pins above would still
+    call green.
+
+    So the key is driven through ``_recorded_prove_roster`` -- the function
+    ``_coverage_shortfall`` consults to decide whether a DELTA PROVE covered
+    its width -- rather than being asserted against a constant re-typed here.
+    """
+    key = "prove_sample"
+    for surface in _PROVE_WIDTH_SURFACES:
+        assert f"`inspect_mode.{key}`" in _flat(surface), (
+            f"{_rel(surface)} names a roster field other than {key!r}; this "
+            f"derivation and the prose have come apart."
+        )
+
+    fdir = tmp_path / foundry_state.ARCHIVE_DIR / "d104-roster"
+    fdir.mkdir(parents=True, exist_ok=True)
+    roster = ["FR-007", "US-002"]
+    # The top-level `cycle` matches the entry's stamp because a run whose
+    # counter says 0 while its INSPECT was opened for cycle 6 is an archive no
+    # transition writes (D-216: every crossing stamps the counter it holds).
+    # This read passes its cycle explicitly, so the fixture would resolve
+    # either way — but a fixture is a claim about a real archive, and the one
+    # below is the shape `inspect_start` leaves behind.
+    (fdir / "state.json").write_text(
+        json.dumps(
+            {
+                "cycle": 6,
+                "inspect_modes": [
+                    {"mode": "DELTA", "cycle": 6, "rule": "delta", key: roster}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert streams._recorded_prove_roster(fdir, 6) == roster, (
+        f"the recorded decision's {key!r} list is not what the streams-complete "
+        f"check reads back. Both PROVE surfaces tell the stream to check "
+        f"exactly that list, so a rename here makes the instruction point at "
+        f"nothing -- silently, because a stream that finds no roster correctly "
+        f"falls back to the whole matrix."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-160 / AC-019 / FR-012 / US-004 -- the recorded TRACE width reaches BOTH
+# of its surfaces, not just the agent one
+# ---------------------------------------------------------------------------
+#
+# D-140 closed the TRACE half of the hole D-104 closed for PROVE -- on one
+# surface. It emitted ``touched_files`` and ``diff_base`` from the recorded
+# decision and taught agents/tracer.md to read them, and left
+# skills/trace/SKILL.md -- the surface ``/foundry:trace`` runs -- scoping the
+# walk from the spec alone, which is the exact pre-D-140 state its own test
+# docstring names. Driven at the filing commit over the shipped artifacts:
+# ``grep -ciE 'inspect_mode|touched_file|diff_base'`` returned 0 for the skill
+# against 8 for the agent, 7 for skills/prove/SKILL.md and 8 for
+# agents/assayer.md, and the skill's Step 1d still said "Cross-reference
+# inventory against the spec" with nothing narrowing it. So on a DELTA cycle
+# whose recorded decision named ``stream_scope.trace.scope == "delta"`` and
+# ``touched_files == ["src/handler.py"]``, ``/foundry:trace`` walked the whole
+# spec and reported a coverage pair against a denominator the gate never drew.
+#
+# The principle was ALREADY written down, thirty lines above this comment:
+# "Both surfaces are pinned because both are load-bearing and neither implies
+# the other: the agent file is what the F2 spawn loads, and the skill is what
+# `/foundry:prove` runs." It was applied to PROVE and not to TRACE. That is
+# what makes this a class rather than a one-file omission, and it is why this
+# pin is parametrised over the SURFACE PAIR from the start: a third TRACE
+# surface joins ``_TRACE_WIDTH_SURFACES`` rather than getting a test of its
+# own, which is the shape that would have caught D-160 at D-140 time.
+
+_TRACE_WIDTH_SURFACES = (TRACER, TRACE_SKILL)
+
+#: One claim per entry, with the failure its absence causes. Word-identical
+#: across both surfaces for the same reason the PROVE clauses are: the two
+#: documents have different voices and different step numbering, but a field
+#: path is a mechanism, and two paraphrases of one are two chances to name a
+#: key the server does not return.
+_TRACE_WIDTH_CLAUSES = (
+    (
+        "Call `Foundry-Next` and read `inspect_mode` out of the RESPONSE",
+        "the surface no longer says WHERE the width is read from. GI-008 puts "
+        "the decision at the transition that opens the INSPECT and leaves "
+        "Foundry-Next only reporting it; a stream told neither reads no width "
+        "at all and walks the whole spec.",
+    ),
+    (
+        "`inspect_mode.stream_scope.trace.scope`",
+        "the surface no longer names the PER-STREAM scope key. `mode` alone is "
+        "not this stream's width: `_decide_inspect_mode` records a DELTA cycle "
+        "on which TRACE's own scope is `full`, and a surface reading only the "
+        "mode narrows a walk the server widened.",
+    ),
+    (
+        "walk exactly the symbols declared in `inspect_mode.touched_files`",
+        "the surface no longer names the TRACE roster field or says the roster "
+        "is the whole walk on a DELTA cycle. `_trace_skip_from_width` reads "
+        "exactly this list to decide whether TRACE has symbols to walk at "
+        "all.",
+    ),
+    (
+        "`inspect_mode.diff_base`",
+        "the surface no longer says what the touched-file list was measured "
+        "FROM. Unstated, a stream cannot tell the roster the boundary drew "
+        "from a diff it could compute itself, and computing it itself is the "
+        "lazily-derived width GI-008 names as the violation.",
+    ),
+    (
+        "On `FULL`, walk every declared symbol",
+        "the surface no longer says what FULL means, so the narrowing reads as "
+        "unconditional and a final-gate INSPECT silently walks at DELTA width.",
+    ),
+    (
+        "never the terminal line",
+        "the surface no longer distinguishes the roster from the display of "
+        "it. display.py truncates the printed file list, so a stream reading "
+        "the terminal line reads a prefix and reports a width it never ran.",
+    ),
+    (
+        "five files",
+        "the surface no longer states WHERE the display truncates. 'It is "
+        "truncated' with no number leaves a reader unable to tell a short "
+        "roster from a clipped one.",
+    ),
+    (
+        "no narrowing was decided",
+        "the surface no longer says what an ABSENT width means. Unstated, a "
+        "stream that finds no `inspect_mode` picks a width itself, which is "
+        "the lazily-computed mode GI-008 and GI-009 both name as the "
+        "violation.",
+    ),
+    (
+        "walk everything",
+        "the surface no longer names the fallback ACTION for an absent or "
+        "wrong-cycle width. Saying the width is missing without saying what to "
+        "do about it leaves the narrowing as the only instruction on the page.",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", _TRACE_WIDTH_SURFACES, ids=_rel)
+@pytest.mark.parametrize("clause,why", _TRACE_WIDTH_CLAUSES, ids=lambda v: v[:44])
+def test_trace_reads_the_width_the_server_recorded(
+    path: Path, clause: str, why: str
+) -> None:
+    """AC-019 / D-160, one claim at a time, on both TRACE surfaces."""
+    assert clause in _flat(path), f"{_rel(path)}: {why}"
+
+
+def test_the_trace_skill_scopes_its_coverage_pair_to_the_recorded_width() -> None:
+    """D-160's second surface: the skill also REPORTS against the width.
+
+    Naming the roster in a width step and then telling the stream to count
+    `items_checked` against the spec two screens later is the same defect with
+    an extra step: `_coverage_shortfall` compares the reported pair against the
+    width the server drew, so a pair measured against the manifest reads as a
+    coverage drop on a cycle that walked exactly what it was asked to.
+
+    agents/tracer.md states this inside its width step; skills/trace/SKILL.md
+    states it where the skill actually calls `Foundry-Stream`, which is a
+    different place in the document and therefore its own assertion.
+    """
+    flat = _flat(TRACE_SKILL)
+    assert (
+        "Take `items_checked` and `items_total` from the width Step 0.5 read"
+        in flat
+    ), (
+        "skills/trace/SKILL.md's Foundry-Stream step no longer ties the "
+        "coverage pair to the recorded width. skills/prove/SKILL.md ties its "
+        "own pair the same way, in the same words."
+    )
+    assert (
+        "they are counted against `inspect_mode.touched_files`, not against "
+        "the spec" in flat
+    ), (
+        "skills/trace/SKILL.md no longer names the roster the DELTA pair is "
+        "counted against. 'Use the width' without the field name sends the "
+        "stream back to the spec, which is the denominator D-160 filed."
+    )
+    assert "the width Step 0.5 read" in flat, (
+        "skills/trace/SKILL.md's coverage instruction no longer points back at "
+        "a width step by name; a reader who joined at Step 5 has no way to "
+        "learn one exists."
+    )
+
+
+def test_the_trace_roster_key_the_prose_names_is_the_one_the_server_reads(
+    tmp_path: Path,
+) -> None:
+    """D-160's floor, in the shape D-104's floor takes for PROVE.
+
+    Both TRACE surfaces now tell the stream to walk `inspect_mode.touched_files`.
+    If the recorded decision ever spelled that key differently, the instruction
+    would send every DELTA stream to a key that is never there -- and a stream
+    that finds no roster correctly falls back to walking everything, which is
+    indistinguishable from the pre-D-160 behaviour the substring pins above
+    would still call green.
+
+    So the key is driven through the width's own trace-skip fence rather than
+    asserted against a constant re-typed here. fallout GI-008 / GI-009 (ruling
+    `lead_ruling_gi_033_leaf_moves` item 5, concern C-038): that fence is two
+    functions now and the middle of it is a RECORDED FIELD, so both halves are
+    driven. `width._trace_skip_from_width` decides, from the width's own values,
+    whether a DELTA cycle leaves TRACE any symbols to walk, and names the roster
+    back under exactly the key the prose sends the stream to;
+    `guidance._stamp_trace_skip` reads that answer out of the recorded entry at
+    Foundry-Next time and decides nothing. The entry below carries the decision
+    the decider returned and never one computed here, because a test that
+    derived its own would be asserting against a third copy of the rule.
+    """
+    key = "touched_files"
+    for surface in _TRACE_WIDTH_SURFACES:
+        assert f"`inspect_mode.{key}`" in _flat(surface), (
+            f"{_rel(surface)} names a roster field other than {key!r}; this "
+            f"derivation and the prose have come apart."
+        )
+
+    roster = ["src/handler.py"]
+    decision = width._trace_skip_from_width(False, "delta", roster, "DELTA")
+
+    assert decision["skip"] is False, (
+        f"the width no longer reads a non-empty {key!r} list as symbols for "
+        f"TRACE to walk, so the DELTA cycle it opens skips the stream the two "
+        f"surfaces above were just told to scope."
+    )
+    assert decision["details"][key] == roster, (
+        f"the recorded decision's {key!r} list is not what the server names "
+        f"back when it decides whether TRACE has symbols to walk. Both TRACE "
+        f"surfaces tell the stream to walk exactly that list, so a rename here "
+        f"makes the instruction point at nothing -- silently, because a stream "
+        f"that finds no roster correctly falls back to walking everything. "
+        f"{decision}"
+    )
+
+    fdir = tmp_path / foundry_state.ARCHIVE_DIR / "d160-roster"
+    fdir.mkdir(parents=True, exist_ok=True)
+    # The top-level `cycle` is load-bearing: since D-216 the leaf read answers
+    # None for an entry stamped for any other crossing, so a decision for cycle
+    # 9 only ever sits beside a counter at 9 -- which is what every transition
+    # that opens an INSPECT writes, inside the one transaction.
+    (fdir / "state.json").write_text(
+        json.dumps(
+            {
+                "phase": "F2",
+                "cycle": 9,
+                "inspect_modes": [
+                    {
+                        "mode": "DELTA",
+                        "cycle": 9,
+                        "rule": "delta",
+                        "stream_scope": {"trace": {"scope": "delta"}},
+                        key: roster,
+                        "trace_skip": decision,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert guidance._stamp_trace_skip(fdir) == decision, (
+        "Foundry-Next no longer reads the trace-skip answer back out of the "
+        "entry the width recorded. GI-009 leaves it only reporting, so an "
+        "answer it cannot read is one it has to recompute -- the display-time "
+        "width GI-008 names as the violation, and the direction D-117 was "
+        "filed to close after a resumed archive auto-stamped `.trace-complete` "
+        "with TRACE never run."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-174 / FR-012 / FR-047 / AC-019 / US-004 -- the roster the four surfaces
+# send a stream to read is a roster the MCP boundary actually carries
+# ---------------------------------------------------------------------------
+#
+# D-104, D-140, D-160 and D-161 each wired one more field into `inspect_mode`
+# and taught one more surface to read it "out of the RESPONSE". None of them
+# checked that a response HAD a body. It did not: `server.py#call_tool`
+# returned exactly `format_result(name, result)`, and `format_result` returns
+# ONLY the formatter's rendering whenever a formatter exists -- which it does
+# for `Foundry-Next`. So the dict was built, populated and discarded one rung
+# below the boundary, and the four surfaces' instruction named a field that
+# crossed nothing while FORBIDDING the truncated line that was the only thing
+# a stream could see. A TRACE stream hit it first-hand on its opening call.
+#
+# D-173 fixed the boundary (`format_result_blocks`: the display, then
+# `RESULT_JSON_MARKER`, then the whole result as JSON, with no fence because
+# defect descriptions carry backtick runs). This section is the consumer half:
+# the prose now says WHERE, and says it word-identically on all four surfaces,
+# because the previous four fixes each taught one surface and the class was
+# always that the other surfaces did not learn.
+#
+# The pins below are driven, not described. The marker the prose names is READ
+# from `display.RESULT_JSON_MARKER` rather than re-typed here, so a respelling
+# on either side fails naming the four files; and the roster is recovered from
+# a real `format_result_blocks` rendering, so "the arrays cross" is a fact this
+# module establishes rather than a claim it repeats.
+
+from foundry_mcp.tools import display as _display  # noqa: E402
+
+#: Every surface that tells a stream to read its width out of the response.
+#: The union of the two width rosters rather than a third hand-written tuple:
+#: a fifth width surface joins one of those and is swept here automatically,
+#: which is the shape whose absence made D-104 -> D-140 -> D-160 -> D-174 four
+#: separate defects instead of one.
+_WIDTH_SURFACES = tuple(
+    sorted(set(_TRACE_WIDTH_SURFACES) | set(_PROVE_WIDTH_SURFACES), key=_rel)
+)
+
+#: One claim per entry, word-identical across all four surfaces. The register
+#: is _TRACE_WIDTH_CLAUSES': a field path is a mechanism, and two paraphrases
+#: of one are two chances to send a stream at something that is not there.
+_MARKER_CLAUSES = (
+    (
+        "A formatted tool's response is the rendered display, then a line "
+        "reading",
+        "the surface no longer says what a response is SHAPED like. 'Read it "
+        "out of the RESPONSE' with no account of where in the response is the "
+        "instruction D-174 filed -- true-sounding, and satisfiable only by "
+        "the truncated line the same paragraph forbids.",
+    ),
+    (
+        "then the complete result as JSON",
+        "the surface no longer says the part after the marker is the WHOLE "
+        "result. A stream that expects a projection looks for a key the "
+        "boundary never invents and falls back to the display.",
+    ),
+    (
+        "every array in full, nothing truncated",
+        "the surface no longer says the arrays cross WHOLE. That is the one "
+        "property that distinguishes the machine-readable half from the box "
+        "above it, and without it a stream has no reason to prefer either.",
+    ),
+    (
+        "no fence to strip and no terminator to find",
+        "the surface no longer says how the JSON ENDS. D-173 chose a marker "
+        "and no fence because result dicts carry backtick runs; a stream that "
+        "hunts for a closing fence finds one inside a defect description and "
+        "parses half a roster.",
+    ),
+    (
+        "`json.loads` it and read `inspect_mode` off the object it returns",
+        "the surface no longer names the operation. Naming the location "
+        "without naming the parse leaves the stream reading the JSON as text, "
+        "which is grepping a roster -- the failure mode one rung over.",
+    ),
+    (
+        "a tool with no display formatter appends no marker",
+        "the surface no longer states the exception. `format_result_blocks` "
+        "adds the marker only for a tool in `_FORMATTERS`; a stream told the "
+        "marker is universal treats its absence as a broken response instead "
+        "of as a response that is already JSON.",
+    ),
+)
+
+
+def test_the_width_surface_roster_is_derived() -> None:
+    """Floor check: the sweep below is vacuous on an empty roster.
+
+    ``_WIDTH_SURFACES`` is built from the two existing width rosters, so it
+    empties if either is emptied -- and a parametrised test over an empty
+    roster reports zero cases and passes the run. This fails first, and names
+    the four files by the constants they must come from.
+    """
+    assert len(_WIDTH_SURFACES) == 4, (
+        f"_WIDTH_SURFACES derived {[_rel(p) for p in _WIDTH_SURFACES]}, not "
+        f"the four width surfaces. It is the union of _TRACE_WIDTH_SURFACES "
+        f"and _PROVE_WIDTH_SURFACES; if a fifth surface was added, raise this "
+        f"count deliberately rather than dropping the floor."
+    )
+    for expected in (TRACER, TRACE_SKILL, ASSAYER, PROVE_SKILL):
+        assert expected in _WIDTH_SURFACES, (
+            f"{_rel(expected)} is no longer a width surface. It is what the "
+            f"F2 spawn loads or what the slash command runs, and a width rule "
+            f"it does not carry is a rule that reaches its stream through "
+            f"nothing."
+        )
+
+
+@pytest.mark.parametrize("path", _WIDTH_SURFACES, ids=_rel)
+@pytest.mark.parametrize("clause,why", _MARKER_CLAUSES, ids=lambda v: v[:44])
+def test_every_width_surface_says_where_in_the_response(
+    path: Path, clause: str, why: str
+) -> None:
+    """D-174, one claim at a time, on all four surfaces at once."""
+    assert clause in _flat(path), f"{_rel(path)}: {why}"
+
+
+@pytest.mark.parametrize("path", _WIDTH_SURFACES, ids=_rel)
+def test_the_marker_each_surface_names_is_the_one_the_boundary_emits(
+    path: Path,
+) -> None:
+    """D-174's floor: a locator is only prose until something emits it.
+
+    The marker is READ from ``display.RESULT_JSON_MARKER`` rather than typed
+    here, in the discipline ``_EXPECTED_TYPE_ENUM`` holds for the type enum. A
+    respelling on the display side then fails HERE, naming the prose files
+    that have to follow it -- rather than shipping four surfaces that send
+    every stream looking for a line the boundary stopped writing.
+    """
+    assert _display.RESULT_JSON_MARKER in _flat(path), (
+        f"{_rel(path)} names a marker other than "
+        f"{_display.RESULT_JSON_MARKER!r}. The prose and the boundary have "
+        f"come apart: a stream splitting the response on the line this file "
+        f"names finds nothing, and its honest fallback is the truncated "
+        f"display -- which is the pre-D-173 behaviour every pin above would "
+        f"still call green."
+    )
+
+
+def test_the_untruncated_roster_is_recoverable_the_way_the_prose_says() -> None:
+    """D-174 end to end: the instruction, executed.
+
+    The four surfaces now tell a stream to split the response on the marker,
+    ``json.loads`` the remainder and read ``inspect_mode`` off it. That
+    instruction is worth nothing unless following it LITERALLY yields the
+    untruncated roster, so this test follows it literally -- no knowledge of
+    ``format_result_blocks``'s internals beyond the public marker constant.
+
+    Both halves are asserted, because D-173's rule is that neither replaces
+    the other: the display stays truncated for the operator (NFR-005) and the
+    JSON stays whole for the parser. A fix that widened the display instead
+    would pass a naive check and cost the readability the truncation buys.
+    """
+    touched = [f"src/mod_{i}.py" for i in range(9)]
+    sample = [f"FR-{i:03d}" for i in range(10)]
+    result = {
+        "action": "dispatch",
+        "inspect_mode": {
+            "mode": "DELTA",
+            "rule": "delta",
+            "cycle": 7,
+            "diff_base": "abc1234",
+            "touched_files": touched,
+            "prove_sample": sample,
+            "stream_scope": {"trace": {"scope": "delta", "detail": "9 files"}},
+        },
+    }
+
+    rendered = _display.format_result_blocks("Foundry-Next", result)
+
+    assert _display.RESULT_JSON_MARKER in rendered, (
+        "Foundry-Next's response carries no marker line, so the instruction "
+        "all four width surfaces give is unfollowable and every DELTA stream "
+        "is back to reading the truncated display."
+    )
+    display_half, _, json_half = rendered.partition(_display.RESULT_JSON_MARKER)
+    recovered = json.loads(json_half)["inspect_mode"]
+
+    assert recovered["touched_files"] == touched, (
+        f"following the prose recovers {len(recovered['touched_files'])} of "
+        f"{len(touched)} touched files. The TRACE surfaces tell the stream "
+        f"this list is its whole walk, so a truncation here is a walk the "
+        f"stream reports having run and did not."
+    )
+    assert recovered["prove_sample"] == sample, (
+        f"following the prose recovers {len(recovered['prove_sample'])} of "
+        f"{len(sample)} roster rows. `_coverage_shortfall`'s DELTA arm "
+        f"measures `checked >= len(roster)` against the full list, so a "
+        f"truncation here refuses a PROVE stream that did all of its work."
+    )
+    assert recovered["stream_scope"]["trace"]["scope"] == "delta", (
+        "the per-stream scope did not survive the boundary. `mode` alone is "
+        "not a stream's width, which is the whole reason the TRACE surfaces "
+        "name this key."
+    )
+
+    assert touched[5] not in display_half, (
+        "the DISPLAY half stopped truncating. The four surfaces say the "
+        "printed list is truncated at five files and that copying it is the "
+        "error; if the box now shows everything, the prose is wrong in the "
+        "other direction -- and NFR-005's readable terminal was the reason "
+        "the summary existed."
+    )
+    assert sample[8] not in display_half, (
+        "the DISPLAY half stopped truncating the PROVE roster at eight rows, "
+        "which both PROVE surfaces state as the number a stream must not "
+        "copy."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-108 / FR-019 -- one hash spelling, driven rather than described
+# ---------------------------------------------------------------------------
+#
+# agents/teammate.md tells every teammate to compute its own prompt hash and
+# state it back, and both consuming gates refuse when the value differs from
+# the file's. That contract holds only while the documented command and the
+# gate compute the SAME digest -- and the two spellings that shipped agreed on
+# every file containing no carriage return and diverged on the first one that
+# did. Driven on a CRLF prompt: the dispatch block advertised one value, the
+# documented command produced another, and Foundry-Accept-Casting refused with
+# `stale_prompt_hash` whose remedy -- "re-read the prompt file in full and
+# state its hash character for character" -- reproduces the same rejected value
+# forever, because the reading was never the broken part. Casting prompts quote
+# spec text verbatim, so one CR in a spec makes that casting's acceptance gate
+# unpassable.
+#
+# A substring pin cannot see this: both spellings contain "sha256" and both are
+# correct-looking. Only running the command the file publishes, on a file with
+# CRLF endings, and handing the result to the gate, can tell them apart.
+
+_HASH_FENCE_RE = re.compile(r"```bash\n(.*?)\n```", re.S)
+_CRLF_PROMPT = b"# Casting 9 prompt\r\n\r\nRead this file in full.\r\n"
+
+
+def _documented_hash_commands() -> list[str]:
+    """Every fenced bash block in teammate.md's Step 0 hash paragraph."""
+    text = _read(TEAMMATE)
+    start = text.index("### Step 0: Read your prompt FILE in full")
+    stop = text.index("### Step 1: Read the task description fully", start)
+    return [block for block in _HASH_FENCE_RE.findall(text[start:stop])]
+
+
+def _crlf_prompt_run_dir(tmp_path: Path) -> tuple[Path, Path]:
+    """A run dir holding one casting prompt written with CRLF line endings."""
+    run_dir = tmp_path / foundry_state.ARCHIVE_DIR / "d108-crlf"
+    castings = run_dir / "castings"
+    castings.mkdir(parents=True, exist_ok=True)
+    prompt = castings / "casting-9-prompt.md"
+    prompt.write_bytes(_CRLF_PROMPT)
+    assert b"\r\n" in prompt.read_bytes(), (
+        "the fixture lost its CRLF endings, so this test can no longer tell "
+        "the byte spelling from the text spelling -- they agree on every other "
+        "file."
+    )
+    return run_dir, prompt
+
+
+def test_the_documented_hash_command_is_the_one_the_gate_accepts(
+    tmp_path: Path,
+) -> None:
+    """D-108 / FR-019: run the published command, hand it to the door.
+
+    ``check_reported_prompt_hash`` is the shared rung both
+    Foundry-Accept-Casting and Foundry-Fix call, so accepting the documented
+    command's output here is acceptance at both doors at once.
+    """
+    blocks = _documented_hash_commands()
+    programs = [
+        m.group(1)
+        for m in (re.search(r'python3 -c "(.+?)"', b, re.S) for b in blocks)
+        if m
+    ]
+    assert programs, (
+        "teammate.md's Step 0 no longer publishes a runnable hash command "
+        "(FR-019). A teammate told to state a hash and given no way to derive "
+        "one copies it out of the dispatch message, which is precisely the "
+        "case the check exists to detect."
+    )
+
+    run_dir, prompt = _crlf_prompt_run_dir(tmp_path)
+    for program in programs:
+        proc = subprocess.run(
+            [sys.executable, "-c", program, str(prompt)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, (
+            f"teammate.md's documented hash command failed to run: "
+            f"{proc.stderr.strip()!r}. A command a teammate cannot execute is "
+            f"a command it will work around."
+        )
+        reported = proc.stdout.strip()
+        # fallout GI-033 (D-192) — BOTH NAMES ARE READ FROM THE LEAF, and the
+        # reason is the sentence this test exists to keep true. The rung is
+        # shared by Foundry-Accept-Casting and Foundry-Fix; the acceptance door
+        # moved into the verifier layer beside the engine it runs, so the one
+        # implementation both gates consume lives in `tools/artifacts.py`, which
+        # either layer may reach. Reading it through `foundry_handoff`, which no
+        # longer defines it, would be the facade GI-010 forbids.
+        refusal = artifacts.check_reported_prompt_hash(run_dir, 9, reported)
+        assert refusal is None, {
+            "why": (
+                "the command agents/teammate.md publishes produces a hash the "
+                "gate REFUSES on a file with CRLF line endings. A teammate "
+                "that follows its own protocol exactly is refused and cannot "
+                "read its way out: the refusal tells it to re-read the file "
+                "and state the hash again, which reproduces the same rejected "
+                "value every time. Fix whichever side moved -- the digest is "
+                "over the file's BYTES -- never this assertion."
+            ),
+            "documented_command_produced": reported,
+            "refusal": refusal,
+        }
+        assert reported == artifacts._hash_file(prompt), (
+            "the documented command and the package's own byte-hash helper "
+            "disagree. check_reported_prompt_hash's docstring claims 'there is "
+            "exactly one spelling in the package'; a disagreement here is that "
+            "claim becoming false again."
+        )
+
+
+def test_teammate_says_the_digest_is_over_the_bytes(tmp_path: Path) -> None:
+    """D-108: the reason, not just the recipe.
+
+    The command alone is a ritual a reader can substitute an equivalent for --
+    and the obvious equivalent, reading the file as text first, is the wrong
+    one. So the file states the property the command has, names the
+    text-reading spellings that break it, and names the refusal that results,
+    which is what lets a teammate recognise the failure when it happens rather
+    than looping on the refusal's own advice.
+    """
+    flat = _flat(TEAMMATE)
+    assert "The digest is over the file's BYTES" in flat, (
+        "teammate.md no longer states that the prompt digest is over the "
+        "file's bytes. The text and byte spellings agree on every file "
+        "containing no CR, so a reader who substitutes a text read sees no "
+        "difference until a spec quotes a CRLF line."
+    )
+    assert "sha256sum" in flat, (
+        "teammate.md no longer offers the sha256sum equivalent. A teammate on "
+        "a box where the python spelling is awkward needs a second way to the "
+        "same digest, and inventing one is how the text spelling comes back."
+    )
+    assert "Never hash the prompt as text" in flat, (
+        "teammate.md no longer rules out hashing the prompt as text -- the "
+        "single substitution that reproduces D-108."
+    )
+    assert "`stale_prompt_hash`" in flat, (
+        "teammate.md no longer names the refusal a wrong spelling produces, so "
+        "a teammate meeting it has no way to connect it to how it hashed."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-110 / FR-041 -- the account is in the checklist a teammate actually copies
+# ---------------------------------------------------------------------------
+
+
+def _completion_message_checklist() -> str:
+    """agents/teammate.md's Step 11 'Include in the completion message' list."""
+    text = _read(TEAMMATE)
+    start = text.index("### Step 11: Mark task complete with citations")
+    stop = text.index("### Step 12:", start)
+    return " ".join(text[start:stop].split())
+
+
+def test_teammate_completion_checklist_names_the_failing_then_passing_account() -> None:
+    """FR-041 / D-110: stated once, in the wrong place, is not stated.
+
+    Foundry-Fix correctly refuses to take the failing-then-passing account as
+    an argument, so the completion report is the only place it can live. The
+    file said so -- inside the Step 7.5 LATENT-lane paragraph -- and the Step
+    11 'Include in the completion message' enumeration, which is the checklist
+    a teammate actually copies and which does carry bolded (required) bullets
+    for the prompt hash, the citations and the evidence files, never named it.
+    The requirement existed and was absent from the surface that is
+    operationally consumed.
+
+    So the assertion is SCOPED TO THE CHECKLIST. A whole-file substring check
+    would have been green throughout the gap -- the sentence was always in the
+    file -- which is exactly how the gap survived.
+    """
+    checklist = _completion_message_checklist()
+    assert "**The failing-then-passing account, for every fix (required in GRIND).**" in checklist, (
+        "teammate.md's Step 11 completion-message list does not require the "
+        "failing-then-passing account (FR-041). Stating it only in the Step 7 "
+        "LATENT-lane paragraph puts it outside the list a teammate copies when "
+        "it writes the report, and Foundry-Fix cannot take it as an argument, "
+        "so it lands nowhere."
+    )
+    assert "the test failed at" in checklist and "and passes at" in checklist, (
+        "the Step 11 bullet gives no SHAPE for the account, so the requirement "
+        "is satisfiable by any sentence mentioning a test. FR-041 wants the "
+        "statement: red before the change, green after it, both commits named."
+    )
+    assert "silently DROPPED rather than refused" in checklist, (
+        "the Step 11 bullet no longer says why the account cannot go in the "
+        "Foundry-Fix call. Without the reason a teammate reads the bullet as "
+        "duplication of a field it already passed and drops one of the two."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-209 / FR-007 / CT-002 -- a documented filing row is a call the door ACCEPTS
+# ---------------------------------------------------------------------------
+#
+# Two pins above already drove the documented rows, and both drove a PARTIAL
+# door. `test_every_documented_latent_example_survives_the_filing_door` calls
+# `validate_defect_filing`, which reads `tier`, `class` and
+# `reproduction_attempted` and nothing else;
+# `test_every_published_type_is_a_vocabulary_member` compares one field against
+# one vocabulary. Neither ever asked whether the row would be ACCEPTED, and the
+# advertised schema requires four fields, not three.
+#
+# So `agents/coverage-diff.md` published a report block in which every row was
+# refused. That file was edited TWICE in this run (14210f3 "the fifth filing
+# stream learns tier and class", 5c69e05 "a stream's own example files a type
+# its door accepts"), gained `class`, `tier`, `target_kind`, a third row
+# carrying LATENT plus `reproduction_attempted`, and two paragraphs asserting
+# that class and tier are required on every defect -- and every row still
+# carried no `description`, which `findings[].required` has listed all along.
+# Driven at 916c1ca through `server.call_tool("Foundry-Sync", ...)`, each of
+# the three rows verbatim:
+#
+#     Foundry-Sync refused - unusable argument(s): findings[0].description -
+#     required, and absent; findings[0].source - required, and absent.
+#
+# and `defects.json` stayed empty. CT-002's errors cell is what turns that into
+# a lost cycle rather than a lost row: one refused finding discards the whole
+# batch, so the shape a stream copies from its own instructions takes the
+# stream's other findings down with it.
+#
+# `source` was missing from the documented rows of ALL SIX filing surfaces, not
+# just coverage-diff's -- the class is `filing-surface-prose-omits-a-field-its-
+# own-door-requires` and it was corpus-wide. The five agent surfaces now name
+# their own wire id on every row, which is also the only place a pin can READ
+# it from: four of them declare a stream id nowhere else in the file, so a pin
+# that supplied `source` itself would be supplying it from a hand-typed
+# per-file table -- a second copy of a closed vocabulary, which is the failure
+# `_EXPECTED_TYPE_ENUM` and `DEFECT_FILING_AGENTS` both exist to avoid.
+#
+# WHY THIS IS DRIVEN AND NOT A FIELD-PRESENCE CHECK
+# -------------------------------------------------
+# A presence check derived from the schema catches an absent field and stops
+# there. The door is a ladder: house schema validation, then `source` against
+# DEFECT_SOURCE_IDS, then `type` against DEFECT_TYPES, then the shared filing
+# validator's tier/class/LATENT/denylist rungs. Driving the row through
+# `server.call_tool` -- the same entry the SDK uses, with the server's own
+# validation in place of the SDK's (D-042) -- puts every rung of that ladder
+# behind this pin at once, and does it against the schema a client is actually
+# served rather than against a re-reading of the module source.
+
+
+def _documented_filing_rows(path: Path) -> list[dict]:
+    """Every entry of every `defects` array in a file's normative examples.
+
+    Malformed blocks read as "no rows" rather than raising, exactly as
+    ``_documents_a_defects_array`` treats them -- several surfaces fence
+    illustrative fragments and placeholder sketches as ```json, and one of
+    those must not take this module down at collection time. The silence is
+    safe only because ``test_the_driven_filing_roster_is_not_vacuous`` below
+    asserts the known carriers still yield rows.
+    """
+    rows: list[dict] = []
+    try:
+        records = _example_records(path)
+    except (json.JSONDecodeError, AssertionError):
+        return rows
+    for record in records:
+        entries = record.get("defects")
+        if isinstance(entries, list):
+            rows.extend(row for row in entries if isinstance(row, dict))
+    return rows
+
+
+def _sync_required_fields() -> frozenset[str]:
+    """What `Foundry-Sync` requires on a finding, per the ADVERTISED schema.
+
+    Read from ``list_tools()`` rather than re-typed here, so the day the door
+    requires a fifth field every documented row that lacks it fails HERE --
+    which is the whole of D-209's second axis. The array is located by the
+    same shape ``test_spec_ref_is_a_real_parameter_on_every_filing_surface``
+    locates it by: the findings array is spelled `findings` on the wire while
+    the prose and the ledger both call the records defects.
+    """
+    items = _tool_schema("Foundry-Sync")["properties"]["findings"]["items"]
+    required = frozenset(items.get("required", ()))
+    assert required, (
+        "Foundry-Sync's findings item advertises no `required` array. Either "
+        "the obligation moved (in which case this derivation must follow it) "
+        "or it was dropped, which is CT-002's contract going away silently."
+    )
+    return required
+
+
+#: Filing surfaces whose documented rows are NOT driven, mapped to the one
+#: required field their rows omit.
+#:
+#: This is a DEBT LEDGER, not a licence: every entry is a live instance of the
+#: D-209 class sitting in a file the casting that found it may not write.
+#: ``test_the_undriven_surfaces_still_earn_their_exemption`` asserts each entry
+#: is still refused AND still refused for exactly the recorded field, so an
+#: exempt surface cannot quietly break some other way, and the day someone adds
+#: the missing field the exemption test goes RED telling them to delete the
+#: entry. An empty mapping is the finished state.
+_UNDRIVEN_FILING_SURFACES = {
+    SIGHT_SKILL: "source",
+}
+
+#: The surfaces whose rows are driven: the derived filing roster minus the
+#: debt ledger. Derived on both sides -- a new filing surface joins by
+#: documenting a `defects` array, and it is driven from that moment unless
+#: someone puts it in the ledger above and says which field it is missing.
+DRIVEN_FILING_SURFACES = tuple(
+    path for path in DEFECT_FILING_AGENTS if path not in _UNDRIVEN_FILING_SURFACES
+)
+
+
+def _sync_one(row: dict, project_root: str) -> dict:
+    """Drive one documented row through `Foundry-Sync` and return the result.
+
+    Through ``server.call_tool``, because that is the door D-209 was driven at
+    and the only one that runs the house schema validation the SDK's copy was
+    turned off for (D-042). The result is recovered the way the four width
+    surfaces tell a stream to recover one -- partition on
+    ``display.RESULT_JSON_MARKER``, ``json.loads`` the remainder -- rather than
+    by reading the formatter's internals.
+    """
+    from foundry_mcp import server as foundry_server
+
+    blocks = asyncio.run(
+        foundry_server.call_tool("Foundry-Sync", {"cycle": 1, "findings": [row]})
+    )
+    text = "\n".join(getattr(block, "text", str(block)) for block in blocks)
+    _, marker, tail = text.partition(_display.RESULT_JSON_MARKER)
+    return json.loads(tail if marker else text)
+
+
+def _persisted_defects(project_root: str) -> list[dict]:
+    """The records the scratch run's defect ledger actually holds.
+
+    Read off disk rather than out of the door's return value, because the
+    return counts what the door BELIEVES it wrote (`added`) and says nothing
+    about the shape of it. D-213 is about a field that survives the write
+    verbatim and is wrong -- `source` -- so the only place the claim can be
+    checked is the record the next reader of this run will read.
+    """
+    run_dir = foundry_state.get_run_dir(project_root)
+    assert run_dir is not None, (
+        "the scratch run has no run directory, so nothing below can read a "
+        "persisted record. The `sync_door` fixture initialises one; if that "
+        "stopped working every driven pin here is testing an empty ledger."
+    )
+    ledger = run_dir / "defects.json"
+    if not ledger.exists():
+        return []
+    payload = json.loads(ledger.read_text(encoding="utf-8"))
+    records = payload.get("defects") if isinstance(payload, dict) else payload
+    return [r for r in (records or ()) if isinstance(r, dict)]
+
+
+@pytest.fixture
+def sync_door(tmp_path: Path, monkeypatch):
+    """A scratch run with `_project_root` pointed at it, torn down after.
+
+    The run is thrown away with ``tmp_path``, so a driven row never touches
+    the archive of the run these tests are executing inside.
+    """
+    from foundry_mcp import server as foundry_server
+    from foundry_mcp.tools.foundry import foundry_init
+
+    foundry_init(project_root=str(tmp_path))
+    monkeypatch.setattr(foundry_server, "_project_root", str(tmp_path))
+    try:
+        yield str(tmp_path)
+    finally:
+        foundry_state.clear_active_run()
+
+
+def test_the_driven_filing_roster_is_not_vacuous() -> None:
+    """Floor check: a sweep over an empty roster asserts nothing.
+
+    ``_documented_filing_rows`` swallows an unparseable block by design, so a
+    fence that stopped parsing looks identical to a file with no rows -- and
+    the pins below would go green on a corpus where every example had been
+    deleted. This is the floor that fails first, and it names the five agent
+    surfaces whose report shape is the thing being pinned.
+    """
+    carriers = {_rel(p) for p in DRIVEN_FILING_SURFACES if _documented_filing_rows(p)}
+    expected = {_rel(p) for p in (*STREAM_AGENTS, COVERAGE_DIFF)}
+    missing = sorted(expected - carriers)
+    assert not missing, (
+        f"{missing} yield no documented filing rows any more. Either the "
+        f"report shape lost its `defects` array -- which is itself the defect, "
+        f"since the shape a stream copies is the only thing that teaches it "
+        f"what to file -- or the example stopped parsing as JSON. Fix the "
+        f"file; never narrow this roster to match it."
+    )
+
+
+@pytest.mark.parametrize("path", DRIVEN_FILING_SURFACES, ids=_rel)
+def test_every_documented_filing_row_carries_every_required_field(path: Path) -> None:
+    """D-209 axis 1, said in the failure message the door cannot say.
+
+    The driven pin below is the stronger check and would catch this too, but
+    it reports whichever rung answered first. This one names the field and the
+    file directly, and it is derived from the advertised schema, so a fifth
+    required field lands here the moment the door declares it.
+    """
+    required = _sync_required_fields()
+    gaps = {
+        i: sorted(required - set(row))
+        for i, row in enumerate(_documented_filing_rows(path))
+        if required - set(row)
+    }
+    assert not gaps, (
+        f"{_rel(path)} documents filing row(s) missing required field(s): "
+        f"{gaps}. `Foundry-Sync` advertises {sorted(required)} as required on "
+        f"every finding and refuses the WHOLE batch when one finding fails, so "
+        f"a stream that copies this shape loses the findings beside it too. "
+        f"Add the field to the EXAMPLE; never relax this assertion."
+    )
+
+
+@pytest.mark.parametrize("path", DRIVEN_FILING_SURFACES, ids=_rel)
+def test_every_documented_filing_row_lands_at_the_door(path: Path, sync_door) -> None:
+    """D-209 / FR-007 / CT-002: the shape a stream copies is ACCEPTED.
+
+    Every row is driven VERBATIM -- nothing added, nothing renamed. That is
+    the property being pinned: a stream that files its own instructions'
+    example must not meet a refusal naming a field those instructions never
+    taught it.
+
+    TRUE POSITIVES THIS KEEPS (each is a rung of the door's ladder, and each
+    fails here naming the file):
+      - a row missing `description`, `source`, `tier` or `class` -- the whole
+        advertised `required` array, not just the field D-209 was filed for;
+      - a row whose `source` is not a `DEFECT_SOURCE_IDS` member;
+      - a row whose `type` is not a `DEFECT_TYPES` member (D-174's class,
+        driven rather than pattern-matched);
+      - a LATENT row with no `reproduction_attempted`, or one the placeholder
+        predicate refuses ("n/a", "none", "tbd");
+      - a row a surface teaches as LATENT whose prose asserts a security
+        property, which the denylist refuses as SECURITY_PROPERTY_CLAIM;
+      - any field the door starts requiring after today.
+
+    AND, since D-213, what the row PERSISTED AS. Landing is not the whole
+    claim: a `source` that is a legal member of `DEFECT_SOURCE_IDS` but the
+    wrong one for the dispatch reading the row lands cleanly and is stored
+    verbatim, because the door refuses an unattributed finding and has no way
+    to know which of eleven legal identities the caller actually is. Every
+    single-dispatch surface still drives its one row and still has it recorded
+    under the one id it names; what the read-back adds is that the id in the
+    ledger is the id the example declared, for each row separately -- which is
+    the only assertion a dual-dispatch surface's two rows can both satisfy.
+    """
+    rows = _documented_filing_rows(path)
+    for i, row in enumerate(rows):
+        result = _sync_one(row, sync_door)
+        refused = bool(result.get("error")) or bool(result.get("refusals"))
+        assert not refused, {
+            "file": _rel(path),
+            "row_index": i,
+            "row_keys": sorted(row),
+            "why": (
+                "this surface documents a filing row that `Foundry-Sync` "
+                "REFUSES. A stream copying its own instructions' shape has its "
+                "whole batch discarded and hears about it as a refusal naming "
+                "a field the instructions never mentioned. Fix the EXAMPLE (or "
+                "the door), never this assertion."
+            ),
+            "error": result.get("error"),
+            "missing_fields": result.get("missing_fields"),
+            "invalid_fields": result.get("invalid_fields"),
+            "refusals": result.get("refusals"),
+        }
+        persisted = _persisted_defects(sync_door)
+        assert len(persisted) == i + 1, {
+            "file": _rel(path),
+            "row_index": i,
+            "records_in_ledger": len(persisted),
+            "why": (
+                "the door reported no refusal and the ledger did not grow by "
+                "exactly one record. A row that is neither refused nor "
+                "recorded is the silent half of the same failure: the stream "
+                "reads `ok` and its finding is not in defects.json for the "
+                "lead to convert into a GRIND task."
+            ),
+            "result": result,
+        }
+        assert persisted[-1].get("source") == row.get("source"), {
+            "file": _rel(path),
+            "row_index": i,
+            "declared_source": row.get("source"),
+            "persisted_source": persisted[-1].get("source"),
+            "why": (
+                "the row landed and was recorded under a different `source` "
+                "than it declares. The door does not coerce any more, so this "
+                "is a divergence between the example and the ledger rather "
+                "than the old rewrite-to-trace bug -- fix whichever side is "
+                "wrong, never this assertion."
+            ),
+        }
+
+
+def test_the_undriven_surfaces_still_earn_their_exemption(sync_door) -> None:
+    """The debt ledger is checked, not trusted.
+
+    An exemption list nobody re-tests is how a known gap becomes a permanent
+    one. Each entry must still be refused -- otherwise the surface was fixed
+    and the entry is stale -- and must still be refused for EXACTLY the
+    recorded field, so an exempt surface that breaks some other way is not
+    covered by an exemption written for a different reason.
+    """
+    for path, field in _UNDRIVEN_FILING_SURFACES.items():
+        rows = _documented_filing_rows(path)
+        assert rows, (
+            f"{_rel(path)} is on the undriven ledger but documents no filing "
+            f"rows at all. Delete the entry: there is nothing left to exempt."
+        )
+        for i, row in enumerate(rows):
+            result = _sync_one(row, sync_door)
+            assert result.get("missing_fields") == [f"findings[{0}].{field}"], (
+                f"{_rel(path)} row {i} no longer refuses for exactly "
+                f"{field!r} (missing_fields={result.get('missing_fields')!r}, "
+                f"error={result.get('error')!r}). If the row now LANDS, delete "
+                f"the `_UNDRIVEN_FILING_SURFACES` entry so the row joins "
+                f"DRIVEN_FILING_SURFACES. If it refuses for something else, "
+                f"that is a second defect the exemption was never written to "
+                f"cover -- file it rather than widening the entry."
+            )
+
+
+# ---------------------------------------------------------------------------
+# D-213 / FR-007 -- a DUAL-DISPATCH surface documents a row for EACH identity
+# ---------------------------------------------------------------------------
+#
+# D-209 gave every documented filing row a `source`, and for four of the five
+# agent surfaces one literal was the whole answer: each is dispatched under
+# exactly one wire id, so the id its example carries is right every time the
+# example is copied. `agents/assayer.md` is not one of those four. It is
+# dispatched TWICE -- as the F2 PROVE stream (its Step 4 marks the stream
+# complete with `stream: "prove"`, its width comes from
+# `inspect_mode.prove_sample`, and its ledger is `progress/prove.jsonl`) and
+# as the F4 ASSAY agent -- and both of its documented rows read
+# `"source": "assay"`, with no sentence anywhere in the file telling a PROVE
+# dispatch to substitute its own id.
+#
+# Driven at cdb9322: the two rows parsed out of the file and passed VERBATIM to
+# `server.call_tool("Foundry-Sync", ...)` each returned `ok` with `added: 1` and
+# persisted `source: "assay"`, while `Foundry-Stream(stream="prove")` succeeded
+# in the same cycle -- one stream's work recorded under two identities, in two
+# artifacts of the same run. That is the mis-attribution `foundry_sync_defects`
+# stopped COERCING and now refuses; it arrives here through the one channel the
+# refusal cannot see, because the wrong value is a legal `DEFECT_SOURCE_IDS`
+# member. The door can refuse an unattributed finding. It cannot know which of
+# eleven legal identities the caller actually is, so the example is the last
+# place the question is answerable, and a literal that is right for one of two
+# dispatches answers it wrongly half the time.
+#
+# WHY THE IDENTITIES ARE DERIVED AND NOT LISTED
+# ---------------------------------------------
+# A `{ASSAYER: ("prove", "assay"), ...}` table beside this test would be a
+# second copy of a closed vocabulary -- the failure `_EXPECTED_TYPE_ENUM`,
+# `DEFECT_FILING_AGENTS` and `DRIVEN_FILING_SURFACES` each exist to avoid --
+# and it is worse here than usual: the table is maintained by whoever ALREADY
+# knows a surface is dual-dispatch, and the surface that forgot is the surface
+# nobody adds to it. So the identities are read out of each file's own text,
+# from the three places a surface states a wire id as ITS OWN: the progress
+# ledger it is told to write, the `stream:` argument it is told to mark itself
+# complete under, and the "wire id `x`" phrase its ledger rule uses. A surface
+# naming ANOTHER stream's id in one of those places is a defect in the other
+# direction, so every id these yield is an identity the file is dispatched as.
+# The roster swept is `DRIVEN_FILING_SURFACES`, the same one declaration the
+# driving pin above sweeps -- there is no second list of surfaces here either.
+
+#: The three places a filing surface states a wire id as ITS OWN identity.
+#: Each is a self-identifying instruction rather than a mention: a file does
+#: not tell its reader to write ANOTHER stream's ledger, mark ANOTHER stream
+#: complete, or call ANOTHER stream's id "your wire id".
+_LEDGER_ID_RE = re.compile(r"progress/([a-z0-9_]+)\.jsonl")
+_STREAM_ARG_RE = re.compile(r"stream`?\s*[:=]\s*[\"']([a-z0-9_]+)[\"']")
+_WIRE_ID_RE = re.compile(r"wire id[^`\n]{0,12}`([a-z0-9_]+)`")
+
+
+def _declared_dispatch_ids(path: Path) -> frozenset[str]:
+    """Every `DEFECT_SOURCE_IDS` member a surface claims as its own identity.
+
+    Filtered through the vocabulary READ from the module rather than a set
+    typed here, so a phrase that matches one of the regexes but names nothing
+    the ledger accepts contributes nothing, and a member the vocabulary gains
+    is covered the moment a surface starts claiming it.
+    """
+    text = _read(path)
+    found = (
+        set(_LEDGER_ID_RE.findall(text))
+        | set(_STREAM_ARG_RE.findall(text))
+        | set(_WIRE_ID_RE.findall(text))
+    )
+    return frozenset(found & vocab.DEFECT_SOURCE_IDS)
+
+
+def _documented_sources(path: Path) -> frozenset[str]:
+    """The `source` values a surface's own documented filing rows declare."""
+    return frozenset(
+        row["source"].strip()
+        for row in _documented_filing_rows(path)
+        if isinstance(row.get("source"), str) and row["source"].strip()
+    )
+
+
+def test_every_driven_surface_declares_its_own_dispatch_identity() -> None:
+    """Floor check: a surface deriving no identity asserts nothing below.
+
+    The parametrised check that follows is vacuously green on a file whose
+    three signals all stopped matching -- which is indistinguishable, from
+    inside that check, from a file that legitimately claims no identity. Every
+    member of the driven roster states its wire id somewhere in its own
+    instructions today, so "all of them yield at least one" is the floor, and
+    it is derived on both sides: no roster is typed here, and no id is either.
+    """
+    silent = sorted(
+        _rel(path) for path in DRIVEN_FILING_SURFACES if not _declared_dispatch_ids(path)
+    )
+    assert not silent, (
+        f"{silent} no longer state a wire id of their own anywhere this "
+        f"module can read one -- not as a `progress/<id>.jsonl` ledger, not as "
+        f"a `stream: \"<id>\"` argument, not as a \"wire id `<id>`\" phrase. "
+        f"Either the file stopped telling its dispatch who it is (which is "
+        f"itself the defect: `Foundry-Liveness` looks a stream up under that "
+        f"id) or the derivation drifted off the wording. Fix whichever it is; "
+        f"never shrink this roster, and never replace the derivation with a "
+        f"per-file table."
+    )
+
+
+@pytest.mark.parametrize("path", DRIVEN_FILING_SURFACES, ids=_rel)
+def test_every_dispatch_identity_has_a_documented_filing_row(path: Path) -> None:
+    """D-213: a file dispatched under N identities documents a row for each.
+
+    The driving pin above proves every documented row LANDS and is recorded
+    under the source it declares. That is the whole answer for a surface with
+    one dispatch and no answer at all for a surface with two: `assay` lands
+    perfectly well when a PROVE dispatch files it, and the ledger then carries
+    a row the PROVE stream filed under the ASSAY agent's name. This is the
+    other direction -- every identity the file claims must have a row that a
+    dispatch reading as that identity can copy without editing the field.
+
+    A single-dispatch surface passes exactly as before: its one declared id is
+    the one its rows already carry. Only a file that grew a second dispatch,
+    or lost one identity's row, fails here -- and it fails naming the id.
+    """
+    declared = _declared_dispatch_ids(path)
+    documented = _documented_sources(path)
+    unserved = sorted(declared - documented)
+    assert not unserved, (
+        f"{_rel(path)} is dispatched as {unserved} and documents no filing "
+        f"row carrying that `source` -- its rows declare {sorted(documented)}. "
+        f"A dispatch reading this file as {unserved[0]!r} copies the example "
+        f"it is given, and the row LANDS: every value here is a legal member "
+        f"of vocab.DEFECT_SOURCE_IDS, so nothing refuses it and the finding is "
+        f"persisted under an identity that did not do the work, beside a "
+        f"`Foundry-Stream` record filed under the identity that did. Add the "
+        f"missing dispatch's row to the file (the rows differ in `source` and "
+        f"nothing else); never narrow this assertion to the identity that "
+        f"already has one."
+    )
+
+
+# ===========================================================================
+# fallout AC-031 / AC-033 / AC-037 / AC-040 / AC-048 / FR-010 / FR-023 /
+# FR-024 / FR-025 / FR-048 / FR-049 / FR-050 / FR-051 / GI-003 / GI-016 /
+# NFR-002 / NFR-003 / NFR-011 / OT-029 / OT-037
+#
+# THE AGENT RECORDS; THE LEAD ONLY CONFIRMS. Casting 6 writes the NON-PROVE
+# half of four rulings the run splits across two castings, and pins it here.
+# The PROVE agent and the three producing skills state the same rulings in
+# their own registers and are pinned in `tests/test_skill_prose.py`; nothing
+# in this section reaches a skill file or `agents/assayer.md`.
+# ===========================================================================
+
+SPEC_TEST_DERIVER = AGENTS / "spec-test-deriver.md"
+
+#: Every spelling of a stream id that can appear in an agent file, mapped to
+#: the WIRE id `Foundry-Stream` actually takes. Built from the two vocabulary
+#: constants in the `_PYTEST_DISCOVERY_PHRASE` shape rather than typed out, so
+#: a stream added to `vocab` cannot leave this roster behind. That is the whole
+#: difference between a pin that fails on the file someone forgot and a pin
+#: that only ever checks the files it was born knowing.
+_STREAM_SPELLING_TO_WIRE = {
+    **{wire: wire for wire in vocab.STREAM_WIRE_IDS},
+    **{canonical: wire for wire, canonical in vocab.WIRE_TO_CANONICAL.items()},
+}
+
+#: The symbol name the prose must cite for the stream vocabulary, recovered
+#: from the module rather than re-typed: rename the constant in `vocab.py` and
+#: this expected cite moves with it, so the prose that still names the old
+#: spelling fails HERE instead of rotting into a cite that resolves to nothing.
+_STREAM_VOCAB_SYMBOL = next(
+    name
+    for name, value in sorted(vars(vocab).items())
+    if value is vocab.STREAM_WIRE_IDS
+)
+
+_STREAM_VOCAB_CITE = (
+    "plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#"
+    + _STREAM_VOCAB_SYMBOL
+)
+
+
+def _declared_stream_wire_ids(path: Path) -> frozenset[str]:
+    """The stream wire id(s) an agent file declares as ITS OWN.
+
+    Two declarations count and NEITHER is the clause this section pins. A
+    roster derived from the clause would drop the file that lost it and pass --
+    a pin that cannot fail on the one regression it exists to catch, which is
+    the D-017 shape in its purest form:
+
+      * ``progress/<wire>.jsonl`` -- the liveness ledger, named for the wire id
+        by an absolute the three ledger-bearing agents already state.
+      * ``"stream": "<spelling>"`` -- the output shape's own field, which
+        `coverage-diff` and `spec-test-deriver` carry instead of a ledger, the
+        deriver under the CANONICAL spelling rather than the wire one.
+    """
+    text = _read(path)
+    return frozenset(
+        wire
+        for spelling, wire in _STREAM_SPELLING_TO_WIRE.items()
+        if f"progress/{wire}.jsonl" in text or f'"stream": "{spelling}"' in text
+    )
+
+
+#: The stream-producing AGENT files, DERIVED, minus the PROVE agent.
+#:
+#: Revision 3 splits the nine producers fallout AC-031 names across two
+#: castings: the PROVE agent and the trace, prove and sight skills state the
+#: ruling in their own registers and are pinned elsewhere. The exclusion here
+#: is by WIRE ID -- `prove` -- and never by filename, so renaming the assayer
+#: cannot quietly pull it into this roster and demand a paste that belongs to
+#: another module.
+NON_PROVE_STREAM_AGENTS = tuple(
+    sorted(
+        (
+            path
+            for path in AGENTS.glob("*.md")
+            if (_declared := _declared_stream_wire_ids(path))
+            and "prove" not in _declared
+        ),
+        key=_rel,
+    )
+)
+
+
+def test_the_non_prove_stream_agent_roster_is_derived() -> None:
+    """Floor check: every stream-recording pin below sweeps this roster.
+
+    A derived roster buys nothing if the derivation silently narrows, and the
+    narrowing is invisible at every assertion that reads it -- five green
+    parametrisations over four files look exactly like five green
+    parametrisations over five. So the five known members are asserted IN, and
+    the PROVE agent is asserted OUT under the id that excludes it.
+    """
+    expected = {TRACER, FLOW_TRACER, RESEARCH_AUDITOR, COVERAGE_DIFF, SPEC_TEST_DERIVER}
+    missing = sorted(_rel(p) for p in expected - set(NON_PROVE_STREAM_AGENTS))
+    assert not missing, (
+        f"{missing} no longer derive into NON_PROVE_STREAM_AGENTS. A file drops "
+        f"out by losing the `progress/<wire>.jsonl` ledger path AND the "
+        f"`\"stream\": \"<id>\"` field in its output shape -- either of which is "
+        f"itself the defect, because a stream that names its wire id nowhere is "
+        f"a stream `Foundry-Liveness` and the roll-up cannot find. Fix the file "
+        f"rather than hard-coding this roster."
+    )
+    assert ASSAYER not in NON_PROVE_STREAM_AGENTS, (
+        "agents/assayer.md derived into NON_PROVE_STREAM_AGENTS. It is the PROVE "
+        "agent: its stream statement is casting 11's and is pinned in "
+        "tests/test_skill_prose.py, so sweeping it here would pin one ruling in "
+        "two modules that are free to drift apart."
+    )
+    assert "prove" in _declared_stream_wire_ids(ASSAYER), (
+        "agents/assayer.md no longer declares the `prove` wire id, which is the "
+        "only thing keeping it out of the roster above. Restore it in the "
+        "assayer rather than excluding the file by name here."
+    )
+
+
+#: Every stream-producing AGENT file, PROVE included. The roster above answers
+#: "which files must STATE that they record"; this one answers "which files
+#: must be ABLE to", which is a property of all of them and of the harness
+#: rather than of the prose.
+STREAM_RECORDING_AGENTS = tuple(
+    sorted((p for p in AGENTS.glob("*.md") if _declared_stream_wire_ids(p)), key=_rel)
+)
+
+#: A `tools:` line is an ALLOWLIST: an agent declaring one can call nothing it
+#: omits. Foundry declares its own MCP server (`.claude-plugin/plugin.json` ->
+#: `mcpServers.foundry`), and the tool prefix that server's doors arrive under
+#: differs by how it was registered -- `plugin_foundry_foundry` for the
+#: plugin-declared server since 4.7.0, `foundry` for the project-scope
+#: `.mcp.json` entry earlier versions installed (README "Upgrading from <
+#: 4.7.0"). So the match is on the SERVER SUBSTRING rather than on either
+#: spelling: a roster naming one prefix is correct on one deployment and grants
+#: nothing on the other, and both failures look identical from here.
+_FOUNDRY_MCP_TOOL_RE = re.compile(r"mcp__\w*foundry\w*__\S+")
+
+
+def _declared_tools(path: Path) -> str | None:
+    """The frontmatter `tools:` value, or None when the file declares none.
+
+    None and "" are different answers: no line at all means the agent inherits
+    every tool the harness has, while an empty allowlist would grant nothing.
+    """
+    front = re.match(r"\A---\s*\n(.*?)\n---\s*\n", _read(path), re.DOTALL)
+    if not front:
+        return None
+    declared = re.search(r"^tools:\s*(.+?)\s*$", front.group(1), re.MULTILINE)
+    return declared.group(1) if declared else None
+
+
+def test_the_stream_recording_agent_roster_is_derived() -> None:
+    """Floor check: the tool-roster pin below is vacuous on an empty sweep."""
+    expected = {ASSAYER, TRACER, FLOW_TRACER, RESEARCH_AUDITOR, COVERAGE_DIFF, SPEC_TEST_DERIVER}
+    missing = sorted(_rel(p) for p in expected - set(STREAM_RECORDING_AGENTS))
+    assert not missing, (
+        f"{missing} no longer derive into STREAM_RECORDING_AGENTS. Membership "
+        f"is the declared wire id, exactly as NON_PROVE_STREAM_AGENTS above; "
+        f"fix the file rather than hard-coding this roster."
+    )
+
+
+@pytest.mark.parametrize("path", STREAM_RECORDING_AGENTS, ids=lambda p: p.name)
+def test_a_stream_agent_can_call_the_door_its_prose_requires(path: Path) -> None:
+    """fallout GI-016 / AC-031: an allowlist that denies the door it demands.
+
+    D-006 drove it: the RESEARCH_AUDIT stream completed a full 42-item audit,
+    reached the recording step its own file makes mandatory, and reported that
+    it could not invoke `Foundry-Stream` or `Foundry-Defect` -- the frontmatter
+    granted four native tools and no MCP door. The prose pins in this module
+    all check that a file SAYS it records; none of them could see that the
+    agent reading it has no way to. Two rosters satisfy this: no `tools:` line
+    at all (the assayer, tracer and flow-tracer shape -- inherit everything),
+    or an allowlist that names the doors.
+    """
+    declared = _declared_tools(path)
+    if declared is None:
+        return  # No allowlist: every tool is inherited, the doors among them.
+    assert _FOUNDRY_MCP_TOOL_RE.search(declared), (
+        f"{_rel(path)} declares a `tools:` allowlist granting no foundry MCP "
+        f"door ({declared!r}), while its own Stream Recording section requires "
+        f"it to call `Foundry-Stream` itself. An allowlist omitting the door "
+        f"does not degrade the stream -- it deletes it, and the agent finds out "
+        f"only after doing the whole audit. Name the doors (either prefix, or "
+        f"a `mcp__..foundry..__*` wildcard) or drop the line."
+    )
+
+
+#: fallout FR-034 / FR-055 / AC-053 -- the sentence a SUB-AGENT has to read,
+#: taken from the constant and whitespace-flattened to match `_flat`. Casting
+#: 2's tests/orchestration/test_guidance.py pins the two SERVER surfaces that
+#: carry it (the Foundry-Next tool description and the spawn-time protocol
+#: block); this is the third, and it is the one that makes the argument a rule
+#: the agent states rather than a default it never learns about. C-016 drove
+#: it: a grep across agents/, skills/ and commands/ found ZERO files naming
+#: `caller` while nine stream surfaces were pinned to take the cycle from
+#: `Foundry-Next` with nothing beside it, so every one of them took the lead
+#: default and armed the lead's ordering token and stall clock on an
+#: orienting read.
+_SUBAGENT_CALLER_SENTENCE = " ".join(guidance.SUBAGENT_CALLER_INSTRUCTION.split())
+
+#: The files the rule binds, DERIVED from whose prose actually prescribes the
+#: read. agents/teammate.md names `Foundry-Next` nowhere, so a typed roster
+#: would demand a rule about a call that file never makes; the assayer and the
+#: skills are casting 11's and are pinned in their own module.
+FOUNDRY_NEXT_READING_AGENTS = tuple(
+    path for path in NON_PROVE_STREAM_AGENTS if "Foundry-Next" in _read(path)
+)
+
+
+def test_the_foundry_next_reading_roster_is_derived() -> None:
+    """Floor check: the caller-rule pin is vacuous on an empty sweep."""
+    missing = sorted(
+        _rel(p)
+        for p in {TRACER, FLOW_TRACER, RESEARCH_AUDITOR, COVERAGE_DIFF, SPEC_TEST_DERIVER}
+        - set(FOUNDRY_NEXT_READING_AGENTS)
+    )
+    assert not missing, (
+        f"{missing} no longer name `Foundry-Next`, which is how they learn the "
+        f"cycle the roll-up is keyed by. Fix the file rather than hard-coding "
+        f"this roster."
+    )
+    assert TEAMMATE not in FOUNDRY_NEXT_READING_AGENTS, (
+        "agents/teammate.md derived in by naming `Foundry-Next`. If a builder "
+        "is now told to read it, the caller rule binds that file too -- add the "
+        "sentence there rather than excluding the file here."
+    )
+
+
+@pytest.mark.parametrize("path", FOUNDRY_NEXT_READING_AGENTS, ids=lambda p: p.name)
+def test_a_stream_agent_states_the_subagent_caller_rule(path: Path) -> None:
+    """fallout FR-034 / FR-055 / AC-053: the argument stated, not defaulted.
+
+    Quoted from `guidance.SUBAGENT_CALLER_INSTRUCTION` rather than re-typed, so
+    the server's two surfaces and the agent's own file cannot drift into three
+    spellings of one rule -- the reason `_TEAMS_DOWN_HINT` is a constant.
+    """
+    assert _SUBAGENT_CALLER_SENTENCE in _flat(path), (
+        f"{_rel(path)} tells a sub-agent to read `Foundry-Next` without stating "
+        f"the caller argument. The wire default is the LEAD value, so the read "
+        f"arms the ordering token the next `Foundry-Gate` requires and resets "
+        f"the stall clock -- a stream orienting itself moves the lead's "
+        f"protocol on. Quote the constant: {_SUBAGENT_CALLER_SENTENCE!r}"
+    )
+
+
+#: The clauses every non-PROVE stream agent states BYTE-IDENTICALLY. Each is
+#: the load-bearing fragment of the ruling and never a whole sentence: the body
+#: around it is each file's own voice, which is required -- pasting one
+#: paragraph into five files was explicitly rejected, and the module docstring
+#: says why. Parametrised across the roster so an edit that fixes three of the
+#: five fails naming the two it forgot.
+_STREAM_RECORDING_CLAUSES = (
+    (
+        "**You record your own stream; the lead only confirms the record exists.**",
+        "the imperative that carries fallout GI-016 / OT-029: the AGENT records, "
+        "and no lead prose records for it",
+    ),
+    (
+        "Call `Foundry-Stream` yourself with `stream`, `cycle`, `items_checked`, "
+        "`items_total` and `findings_count`",
+        "the door and its five arguments; a clause naming the tool without its "
+        "arguments leaves the agent to guess a call the boundary rejects",
+    ),
+    (
+        "Take `cycle` from `Foundry-Next`",
+        "the roll-up is keyed by the server's counter; an agent inventing a cycle "
+        "records against one nothing reads",
+    ),
+    (
+        "A second call for the same stream and cycle REPLACES the first, names in "
+        "`replaced` what it replaced, and keeps every record under `records[]`",
+        "fallout FR-023 / FR-049 replace semantics, stated on the agent side of "
+        "the door casting 2 built; without it a re-run reads as double coverage",
+    ),
+    (
+        "a stream that never records contributes nothing to the cycle's coverage "
+        "roll-up, where its absence reads as no coverage rather than as a broken "
+        "call",
+        "the closing absolute the trace register uses: what the absence COSTS, "
+        "which is what stops the clause reading as advice",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", NON_PROVE_STREAM_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("clause,why", _STREAM_RECORDING_CLAUSES, ids=lambda v: v[:44])
+def test_each_non_prove_stream_agent_records_its_own_stream(
+    path: Path, clause: str, why: str
+) -> None:
+    """fallout AC-031 / FR-023 / FR-049 / GI-016: the agent records, in its own file."""
+    assert clause in _flat(path), (
+        f"{_rel(path)} no longer states: {clause!r}. That clause is {why}. All "
+        f"{len(NON_PROVE_STREAM_AGENTS)} non-PROVE stream agents must state it, "
+        f"in their own voice around it -- an agent reading its own file and "
+        f"finding no instruction to record waits for a lead that fallout OT-029 "
+        f"forbids from recording, and the cycle's roll-up reads the silence as "
+        f"no coverage."
+    )
+
+
+#: The halt token the code-blind stream raises when a Read reaches a forbidden
+#: root, and the property that identifies which agent is the code-blind one.
+_CODE_BLIND_HALT_TOKEN = "TEST_DERIVER_READ_SOURCE"
+
+#: The stream agents for which a `path#Symbol` cite INTO implementation source
+#: is a legal way to bind prose to a constant.
+#:
+#: D-141 / D-142: the shared stream-recording paragraph was pasted onto the one
+#: agent that may not obey it. TEST-01's Layer 2 audit rejects the WHOLE cycle's
+#: observations for a Read under `FORBIDDEN_SOURCE_ROOTS`, and every home of the
+#: stream vocabulary sits under one -- so a file telling THAT agent to read the
+#: constant there turns obedience into the loss of the stream it was recording.
+#: The exclusion is DERIVED from the discipline rather than by filename: the
+#: file that raises the halt token is the file the cite is forbidden in, so
+#: renaming the deriver cannot pull it back in and giving a second stream the
+#: same discipline takes that one out, which is the right answer both times.
+SOURCE_CITING_STREAM_AGENTS = tuple(
+    path
+    for path in NON_PROVE_STREAM_AGENTS
+    if _CODE_BLIND_HALT_TOKEN not in _read(path)
+)
+
+
+def test_only_the_code_blind_agent_is_excused_the_vocabulary_cite() -> None:
+    """Floor check: the narrowing above is exactly one file wide.
+
+    A relaxation is invisible at the assertion it relaxes -- four green
+    parametrisations look exactly like five. So the four files that must still
+    carry the cite are asserted IN, and the deriver is asserted OUT under the
+    property that excuses it rather than under its name.
+    """
+    expected = {TRACER, FLOW_TRACER, RESEARCH_AUDITOR, COVERAGE_DIFF}
+    missing = sorted(_rel(p) for p in expected - set(SOURCE_CITING_STREAM_AGENTS))
+    assert not missing, (
+        f"{missing} dropped out of SOURCE_CITING_STREAM_AGENTS by naming "
+        f"{_CODE_BLIND_HALT_TOKEN!r}. That token is the code-blind stream's own "
+        f"halt; a file raising it is claiming the excuse from the cite rule "
+        f"below. Drop the token or accept that the file is now code-blind."
+    )
+    assert SPEC_TEST_DERIVER not in SOURCE_CITING_STREAM_AGENTS, (
+        f"agents/spec-test-deriver.md no longer names {_CODE_BLIND_HALT_TOKEN!r}, "
+        f"the only thing excusing it from citing a path under "
+        f"`FORBIDDEN_SOURCE_ROOTS`. Restore the code-blind discipline in the "
+        f"agent rather than excusing the file by name here."
+    )
+
+
+@pytest.mark.parametrize("path", SOURCE_CITING_STREAM_AGENTS, ids=lambda p: p.name)
+def test_each_source_citing_stream_agent_cites_the_stream_vocabulary(
+    path: Path,
+) -> None:
+    """fallout NFR-011: the prose points at the constant instead of copying it.
+
+    The cite is BUILT from the module above, so renaming the constant fails
+    here on every file that still names the old symbol rather than leaving four
+    agent files citing a symbol that resolves to nothing. The code-blind agent
+    is excused and pinned the other way round, below: it must name no source
+    root at all, and its binding to the same constant is held by this suite.
+    """
+    assert _STREAM_VOCAB_CITE in _flat(path), (
+        f"{_rel(path)} does not cite {_STREAM_VOCAB_CITE}. The stream ids are a "
+        f"closed vocabulary with one home; an agent file that re-types the set "
+        f"is a copy free to drift, and the drift surfaces as a door refusing a "
+        f"`stream` value these instructions taught."
+    )
+
+
+#: Spellings that would put the recording duty back on the lead. Absence
+#: assertions, because a positive pin cannot see prose ADDED beside it: a file
+#: can state the imperative above and, four bullets later, tell the agent the
+#: lead marks the stream complete -- both true to a substring check, and the
+#: agent believes the second one.
+_LEAD_RECORDS_SPELLINGS = (
+    "the lead records it",
+    "the lead will record",
+    "the lead marks the stream",
+    "the lead marks this stream",
+    "the lead calls `foundry-stream`",
+    "the lead records your stream",
+)
+
+
+@pytest.mark.parametrize("path", NON_PROVE_STREAM_AGENTS, ids=lambda p: p.name)
+def test_no_stream_agent_says_the_lead_records_for_it(path: Path) -> None:
+    """fallout GI-016 / OT-029, the absence half: no file re-delegates upward."""
+    flat = _flat(path).lower()
+    found = sorted(s for s in _LEAD_RECORDS_SPELLINGS if s in flat)
+    assert not found, (
+        f"{_rel(path)} states {found}, which hands the recording duty back to "
+        f"the lead. fallout GI-016 puts it on the AGENT and the lead's own "
+        f"imperative is confirm-the-record-exists; a file saying otherwise "
+        f"produces the double-record the replace semantics were built to end."
+    )
+
+
+# ---------------------------------------------------------------------------
+# fallout AC-033 / FR-024 / FR-050 -- read the roster, derive only if absent
+# ---------------------------------------------------------------------------
+
+#: The two stream agents that DERIVE their own item list rather than reading a
+#: width or a manifest the server already recorded. Declared rather than
+#: derived, in the disposition `STREAM_AGENTS` above already uses: the property
+#: that separates them is WHERE the population comes from -- `research/` plus
+#: the spec's Informational section for one, the spec's Contracts rows for the
+#: other -- and that is a fact about the source material, not a string in the
+#: file. The floor check below holds them inside the derived roster, so a file
+#: that stops being a stream agent at all cannot sit here unnoticed.
+#: The TEST-01 harness pin, held in two places on purpose: the wrapper module
+#: runs it and `agents/spec-test-deriver.md` tells the AGENT to run it by hand,
+#: and the agent file says the two are verbatim-identical. D-016 / D-009 is
+#: what that claim is worth unchecked -- neither copy requested an interpreter,
+#: uvx resolved 3.11.14, and the generated tests died at a PEP 701 SyntaxError
+#: in code that has none.
+_UVX_PIN = test_deriver._UVX_BASE_CMD
+
+
+def _uvx_prose_block() -> str:
+    """The `## uvx Invocation Pattern` bash block, backslash-joins undone."""
+    text = _read(SPEC_TEST_DERIVER)
+    start = text.index("## uvx Invocation Pattern")
+    body = text[start : text.index("\n## ", start + 1)]
+    return " ".join(body.replace("\\\n", " ").split())
+
+
+@pytest.mark.parametrize("token", _UVX_PIN, ids=lambda s: s)
+def test_the_agent_uvx_block_names_every_pinned_token(token: str) -> None:
+    """fallout A-AUTO-003: the prose and the constant the prose cites."""
+    assert token in _uvx_prose_block(), (
+        f"agents/spec-test-deriver.md's uvx block omits {token!r}, which "
+        f"`test_deriver._UVX_BASE_CMD` pins. The file states the two are named "
+        f"verbatim in each other; a token in one and not the other means the "
+        f"agent's hand-run invocation and the wrapper's resolve differently, "
+        f"which is the whole failure D-016 drove."
+    )
+
+
+def test_the_uvx_pin_requests_the_declared_interpreter_floor() -> None:
+    """fallout A-AUTO-003 / NFR-011: the floor is READ, never re-typed.
+
+    `requires-python` is the server's own declaration of the floor PEP 701
+    needs; raising it there and leaving `--python` behind would put the harness
+    back under an interpreter the code cannot parse, which is exactly how
+    D-009 arrived. So the floor is derived from pyproject.toml and the pin is
+    checked against it rather than against a literal repeated here.
+    """
+    declared = re.search(
+        r'^requires-python\s*=\s*">=\s*(\d+)\.(\d+)"',
+        (MCP_SERVER / "pyproject.toml").read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert declared, "mcp-server/pyproject.toml declares no `requires-python` floor."
+    floor = (int(declared.group(1)), int(declared.group(2)))
+
+    assert "--python" in _UVX_PIN, (
+        f"`test_deriver._UVX_BASE_CMD` requests no interpreter, so uvx resolves "
+        f"whatever `python3` the host offers -- 3.11.14 on the host that drove "
+        f"D-009, under the {floor[0]}.{floor[1]} floor pyproject declares."
+    )
+    requested = _UVX_PIN[_UVX_PIN.index("--python") + 1]
+    parts = tuple(int(n) for n in requested.split(".")[:2])
+    assert parts >= floor, (
+        f"`_UVX_BASE_CMD` requests Python {requested}, below the "
+        f"{floor[0]}.{floor[1]} floor `requires-python` declares. The generated "
+        f"tests import plugin scripts, so an interpreter under the floor fails "
+        f"them at a SyntaxError the code does not have."
+    )
+    assert not any(c in requested for c in "<>=!*"), (
+        f"`_UVX_BASE_CMD` requests {requested!r}, a specifier rather than a "
+        f"version. This tuple is space-joined into a shell command "
+        f"(`_run_command_with_timeout` runs `shell=True`), where `>` and `<` "
+        f"are redirections: the request would be eaten and the floor lost "
+        f"silently, which is D-009 again with an extra step."
+    )
+
+
+ROSTER_DERIVING_AGENTS = (RESEARCH_AUDITOR, SPEC_TEST_DERIVER)
+
+
+def test_the_roster_deriving_agents_are_stream_agents() -> None:
+    """Floor check: the roster ruling only binds files that record a stream."""
+    stray = sorted(
+        _rel(p) for p in set(ROSTER_DERIVING_AGENTS) - set(NON_PROVE_STREAM_AGENTS)
+    )
+    assert not stray, (
+        f"{stray} carry the roster ruling but no longer derive into "
+        f"NON_PROVE_STREAM_AGENTS. The roster exists to make `items_total` "
+        f"checkable on a stream RECORD; a file with no record has no use for one."
+    )
+
+
+_ROSTER_CLAUSES = (
+    (
+        "**Read the roster before you derive one.**",
+        "fallout AC-033's imperative: the persisted list wins over a fresh "
+        "derivation, which is what gives the numbering identity across cycles",
+    ),
+    (
+        "call `Foundry-Roster(stream, items=[...])` at that first derivation",
+        "the door and its two required arguments, named as the tool schema "
+        "declares them",
+    ),
+    (
+        f"a second write is refused `{rosters.ROSTER_EXISTS}` unless you pass "
+        f"`revise=true` with a reason",
+        "the write-once door; without it a silent rewrite drops the prior list "
+        "and fallout GI-006 forbids exactly that",
+    ),
+    (
+        f"`Foundry-Stream` refuses `{streams.ROSTER_MISMATCH}` when `items_total` "
+        f"differs from the persisted roster's length",
+        "the cross-door join: the agent must know why its own record depends on "
+        "the roster it wrote, or it reports a shrunken population as full "
+        "coverage",
+    ),
+    (
+        f"the population is judged at publication: `{rosters.ROSTER_ITEMS_EMPTY}`, "
+        f"`{rosters.ROSTER_ITEM_NOT_NAMED}` and `{rosters.ROSTER_ITEMS_DUPLICATED}` "
+        f"refuse the list before either arm writes",
+        "concern C-065: the three rungs `rosters._items_refusal` judges the "
+        "population on, named where the agent can still fix the list. They fire "
+        "on BOTH arms and before any filesystem read, so an agent learning them "
+        "from the refusal has already lost the call",
+    ),
+    (
+        "record that on the stream's own record rather than publishing an empty "
+        "roster",
+        "concern C-065, the exit the empty rung leaves: an empty roster WEDGES "
+        "the stream -- the real derivation is then refused ROSTER_EXISTS, its "
+        "items_total refused ROSTER_MISMATCH and items_checked=0 refused by the "
+        "roll-up's positive-count guard, so no legal recording is left at all",
+    ),
+)
+
+
+@pytest.mark.parametrize("path", ROSTER_DERIVING_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("clause,why", _ROSTER_CLAUSES, ids=lambda v: v[:44])
+def test_each_deriving_agent_states_the_roster_rule(
+    path: Path, clause: str, why: str
+) -> None:
+    """fallout AC-033 / FR-024 / FR-050: one ruling, two voices, pinned once.
+
+    The two refusal names are INTERPOLATED from the modules that declare them,
+    so renaming either constant fails here on the prose that still spells the
+    old one -- a prose statement and the door it describes cannot drift apart
+    while this holds.
+    """
+    assert clause in _flat(path), (
+        f"{_rel(path)} no longer states: {clause!r}. That clause is {why}. Both "
+        f"deriving agents state it, each in its own voice around it; an auditor "
+        f"that re-derives a list a roster already holds renumbers it silently, "
+        f"and the regression check it owes has no stable prior state to read."
+    )
+
+
+@pytest.mark.parametrize("path", ROSTER_DERIVING_AGENTS, ids=lambda p: p.name)
+def test_each_deriving_agent_names_its_own_roster_document(path: Path) -> None:
+    """fallout NFR-011: the path is composed, not copied.
+
+    Built from the ledger directory constant and the file's OWN declared wire
+    id, so an agent naming another stream's roster -- or the directory under a
+    name casting 1 does not use -- fails here rather than at a read that
+    silently finds nothing.
+    """
+    wires = _declared_stream_wire_ids(path)
+    assert len(wires) == 1, (
+        f"{_rel(path)} declares {sorted(wires)} as its stream wire id(s). A "
+        f"roster document is per stream; a file claiming two has no single "
+        f"answer to which roster is its own."
+    )
+    expected = f"{rosters.ROSTERS_DIRNAME}/{next(iter(wires))}.json"
+    assert expected in _read(path), (
+        f"{_rel(path)} does not name `{expected}`, the document its roster "
+        f"actually lives at. An agent told to read a roster it cannot name "
+        f"re-derives every cycle, which is the state fallout FR-050 ends."
+    )
+
+
+#: The stream AGENT files whose stream carries a PERSISTED roster, DERIVED
+#: from the constant that decides it rather than listed. `vocab`'s
+#: full-roster streams are the ones `rosters/<wire>.json` exists for, and
+#: `items_total` on such a stream's record is measured against that document's
+#: length. flow-tracer and coverage-diff fall out by WIRE ID rather than by
+#: name -- their populations are the flow delta and the castings' coverage
+#: lists, which no roster document holds and no door checks a total against.
+ROSTER_BEARING_STREAM_AGENTS = tuple(
+    path
+    for path in NON_PROVE_STREAM_AGENTS
+    if _declared_stream_wire_ids(path) & frozenset(vocab.FULL_ROSTER_STREAMS)
+)
+
+
+def test_the_roster_bearing_stream_agent_roster_is_derived() -> None:
+    """Floor check, in the D-017 shape: assert the members IN and the rest OUT.
+
+    A derived roster that silently narrows is invisible at every
+    parametrisation that reads it, so the three known members are named here
+    and the two roster-less stream agents are named as excluded. A stream that
+    GAINS a roster fails here on the agent file that never learned it.
+    """
+    expected = {TRACER, RESEARCH_AUDITOR, SPEC_TEST_DERIVER}
+    missing = sorted(_rel(p) for p in expected - set(ROSTER_BEARING_STREAM_AGENTS))
+    stray = sorted(_rel(p) for p in set(ROSTER_BEARING_STREAM_AGENTS) - expected)
+    assert not missing and not stray, (
+        f"ROSTER_BEARING_STREAM_AGENTS derived {sorted(_rel(p) for p in ROSTER_BEARING_STREAM_AGENTS)}. "
+        f"Missing {missing}; unexpected {stray}. Membership is the join of the "
+        f"file's own declared wire id and {sorted(vocab.FULL_ROSTER_STREAMS)}; a "
+        f"file drops out by losing its wire-id declaration, and a stream joins "
+        f"by gaining a roster -- in which case its agent owes the clause below."
+    )
+
+
+@pytest.mark.parametrize(
+    "path", ROSTER_BEARING_STREAM_AGENTS, ids=lambda p: p.name
+)
+def test_each_roster_bearing_agent_measures_items_total_in_roster_items(
+    path: Path,
+) -> None:
+    """fallout FR-050 / CT-003 / ST-008 (concern C-128): one spelling, three files.
+
+    `items_total` is the size of the population `Foundry-Stream` measures the
+    record against, and that population is the roster document -- so the unit
+    of the field is the unit of the roster's items, never the unit of whatever
+    the agent happened to walk. The three files state it in their own voices
+    around this clause; the clause itself is word-identical because a field
+    that means roster items in one file and symbols in another is a number a
+    later reader cannot interpret, which is what concern C-128 measured on
+    this run's own roll-up.
+    """
+    assert "the persisted roster's length" in _flat(path), (
+        f"{_rel(path)} no longer measures `items_total` against the persisted "
+        f"roster's length. Its stream has a roster document, so "
+        f"`{streams.ROSTER_MISMATCH}` is what any other total earns at the "
+        f"door -- prose naming a different population describes a call the "
+        f"server refuses."
+    )
+
+
+#: fallout FR-050 / CT-003 / ST-008 (concern C-128) -- the two width clauses
+#: in the tracer's own voice. TRACE is the one roster-bearing stream the
+#: server NARROWS, so it is the one file where the population changes with the
+#: width while the UNIT does not: the whole roster at FULL, the roster items
+#: the width drew at DELTA, and roster items in both.
+_TRACER_ITEMS_TOTAL_CLAUSES = (
+    (
+        "report `items_total` as the persisted roster's length",
+        "the FULL-width total, which the door requires exactly -- the shape "
+        "this replaced (`items_total` is every symbol in scope) is refused "
+        f"`{streams.ROSTER_MISMATCH}` on every run that has a roster, and "
+        "this run recorded the roster's length on all ten of its FULL cycles",
+    ),
+    (
+        "`items_total` is the number of roster items that width drew",
+        "the DELTA-width total, measured against the population the recorded "
+        "decision itself enumerates -- `_recorded_delta_population` intersects "
+        "`touched_files` with the roster and the door refuses anything below it",
+    ),
+    (
+        "The walk is in symbols and the RECORD is in roster items",
+        "the whole of concern C-128 in one clause: narrowing the WALK is what "
+        "the DELTA width buys, and the RECORD's unit is not the walk's",
+    ),
+)
+
+
+@pytest.mark.parametrize("clause,why", _TRACER_ITEMS_TOTAL_CLAUSES, ids=lambda v: v[:44])
+def test_the_tracer_states_its_items_total_unit_at_both_widths(
+    clause: str, why: str
+) -> None:
+    """fallout FR-050 / CT-003 / ST-008 (concern C-128)."""
+    assert clause in _flat(TRACER), (
+        f"{_rel(TRACER)} no longer states: {clause!r}. That clause is {why}. A "
+        f"tracer that reports a symbol count has no total the door accepts at "
+        f"FULL, and none it is guaranteed to accept at DELTA."
+    )
+
+
+#: The spellings that made one field carry two units. Pinned ABSENT because a
+#: positive assertion cannot fail on prose that states the rule correctly in
+#: one paragraph and the retired unit in the next -- which is the state
+#: concern C-128 was filed on. The name records where they were MEASURED, not
+#: where they are refused: `tests/test_skill_prose.py` imports this tuple under
+#: it to hold the skill half of concern C-129 to the same spellings.
+_RETIRED_TRACER_ITEMS_TOTAL_SPELLINGS = (
+    "`items_total` is every symbol in scope",
+    "`items_total` as the number of declared symbols",
+    "`items_total` the declared symbols",
+)
+
+
+# fallout D-226 -- THE ABSENCE WINDOW IS THE POSITIVE RULE'S POPULATION.
+#
+# The sweep read `_flat(TRACER)` while
+# `test_each_roster_bearing_agent_measures_items_total_in_roster_items` above
+# DEMANDS the roster unit in all of ROSTER_BEARING_STREAM_AGENTS, so the module
+# required the correct unit in three files and forbade the retired one in one.
+# Driven: `\`items_total\` is every symbol in scope` planted beside the correct
+# clause in `agents/research-auditor.md` left all 1275 prose tests in this
+# module, `test_skill_prose.py` and `test_lead_prose.py` green -- the exact
+# correct-paragraph-then-retired-unit state the comment above says the absence
+# half exists to catch. Same derived roster as the positive pin, so a stream
+# that gains a roster arms both halves on one commit.
+@pytest.mark.parametrize("path", ROSTER_BEARING_STREAM_AGENTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("spelling", _RETIRED_TRACER_ITEMS_TOTAL_SPELLINGS)
+def test_no_roster_bearing_agent_calls_items_total_a_symbol_count(
+    spelling: str, path: Path
+) -> None:
+    """fallout FR-050 / ST-008 / D-226 (concern C-128): the retired unit stays retired."""
+    assert spelling not in _flat(path), (
+        f"{_rel(path)} states {spelling!r} again. `items_total` is measured "
+        f"against `{rosters.ROSTERS_DIRNAME}/` items at both widths; a symbol "
+        f"count above the roster's own length has no legal value at all, so "
+        f"this spelling is an instruction the door can refuse outright."
+    )
+
+
+def test_the_tracer_names_the_document_its_unit_is_defined_by() -> None:
+    """fallout NFR-011: the path is composed from the constant, not copied."""
+    wires = _declared_stream_wire_ids(TRACER)
+    assert len(wires) == 1, (
+        f"{_rel(TRACER)} declares {sorted(wires)} as its stream wire id(s); a "
+        f"roster document is per stream and a file claiming two has no single "
+        f"answer to which roster defines its unit."
+    )
+    expected = f"{rosters.ROSTERS_DIRNAME}/{next(iter(wires))}.json"
+    assert expected in _read(TRACER), (
+        f"{_rel(TRACER)} does not name `{expected}`. The unit of `items_total` "
+        f"is that document's items, and an agent that cannot name the document "
+        f"cannot tell what it is counting."
+    )
+
+
+def _forbidden_source_roots() -> frozenset[str]:
+    """`FORBIDDEN_SOURCE_ROOTS`, read out of the validator without running it.
+
+    Parsed with `ast` rather than imported: the module's filename carries a
+    hyphen, and executing a script to read one constant out of it is a side
+    effect this suite has no reason to take. Derived rather than re-typed for
+    the usual reason -- a hand-copied denylist here would pass while the
+    validator grew a root the absence assertion below never learned.
+    """
+    source = (
+        REPO_ROOT / "plugins" / "foundry" / "scripts" / "validate-test-observations.py"
+    ).read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(t, ast.Name) and t.id == "FORBIDDEN_SOURCE_ROOTS"
+            for t in node.targets
+        ):
+            continue
+        call = node.value
+        assert isinstance(call, ast.Call) and call.args, (
+            "FORBIDDEN_SOURCE_ROOTS is no longer a frozenset({...}) literal; "
+            "update this reader rather than re-typing the roots here."
+        )
+        return frozenset(ast.literal_eval(call.args[0]))
+    raise AssertionError(
+        "validate-test-observations.py declares no FORBIDDEN_SOURCE_ROOTS. The "
+        "code-blind denylist is the constant the absence assertion below is "
+        "derived from; it cannot be replaced with a typed copy."
+    )
+
+
+def _section(path: Path, heading: str) -> str:
+    """One `## Heading` section of a markdown file, flattened.
+
+    Absence assertions are scoped to the section that carries the ruling. A
+    whole-file absence check cannot work on this file: § Code-Blind Discipline
+    NAMES every forbidden root, which is the point of it. A file's final
+    section has no following heading and runs to the end of the file, the
+    reading `test_lead_prose.py`'s section reader already gives.
+    """
+    text = _read(path)
+    assert text.count(heading + "\n") == 1, (
+        f"{_rel(path)} carries {text.count(heading)} `{heading}` headings; the "
+        f"section pin needs exactly one."
+    )
+    start = text.index(heading + "\n")
+    end = text.find("\n## ", start + len(heading))
+    return " ".join(text[start : end if end != -1 else len(text)].split())
+
+
+#: The sections of the code-blind agent this sweep reads: the seven that carry
+#: a ruling and name no forbidden source root, so a root appearing in any of
+#: them is a new instruction rather than a restatement of the denylist. Named
+#: statically, in file order -- never derived as "the sections naming no root
+#: today", which would admit every regression by construction.
+#:
+#: The other five are NOT swept, because each names roots in order to forbid
+#: them: § Role and § Wrong-Test Avoidance name `src/` and `lib/` as roots
+#: never to read, § Code-Blind Discipline IS the denylist, § Tool-Call
+#: Sequence Discipline names the auditor that reads the log, and § Output
+#: Format names the agent's own `agent_path`. A root-substring check cannot
+#: tell those sentences from a sanction; that is a judgement of polarity this
+#: suite does not make. For the same reason the check sees roots, not
+#: sanctions: "read the implementing module to confirm the surface exists"
+#: names no root and passes even inside a swept section. The backstop for both
+#: gaps is the run-time Layer 2 audit,
+#: `plugins/foundry/scripts/validate-test-observations.py#validate_test_observations`,
+#: which rejects a cycle whose Read, Grep or Glob calls target a forbidden
+#: root -- it catches the obeyed read, not the sentence.
+#:
+#: D-141 / D-142 put § Stream Recording here after a paragraph pasted onto
+#: this agent pointed at a `src/` home; D-227 widened the window from those
+#: two sections to all seven root-free ones.
+_CODE_BLIND_RULING_SECTIONS = (
+    "## Contract-Surface Execution (sanctioned)",
+    "## Test Derivation Procedure",
+    "## Per-Test Header Mandate",
+    "## uvx Invocation Pattern",
+    "## Stream Recording",
+    "## Roster",
+    "## Closed-Vocabulary Status",
+)
+
+
+@pytest.mark.parametrize("heading", _CODE_BLIND_RULING_SECTIONS, ids=lambda s: s)
+def test_a_deriver_ruling_section_sanctions_no_implementation_source_read(
+    heading: str,
+) -> None:
+    """fallout GI-003 / NFR-003: the code-blind stream stays code-blind.
+
+    The ABSENCE half, and it is the half that matters. A positive pin on "the
+    items come from the Contracts table" stays green under a rewrite that adds
+    a read under `src/` beside it -- the sentence the positive pin quotes is
+    still there, and TEST-01 has quietly stopped being code-blind. So each of
+    the seven root-free ruling sections in `_CODE_BLIND_RULING_SECTIONS` is
+    asserted to name NO forbidden source root at all, against the denylist the
+    validator itself enforces; the comment on that tuple names the five
+    sections this cannot reach, and why.
+    """
+    section = _section(SPEC_TEST_DERIVER, heading)
+    named = sorted(root for root in _forbidden_source_roots() if root in section)
+    assert not named, (
+        f"agents/spec-test-deriver.md's `{heading}` section names {named}, "
+        f"root(s) on the code-blind denylist. Every ruling this file states is "
+        f"spec work: roster items come from the spec's `## Contracts` rows, and "
+        f"the wire id it records under is held to the vocabulary by the pins in "
+        f"this module rather than by a path the agent is told to open. A ruling "
+        f"section that reaches a source root gives TEST-01 the one reason it "
+        f"has ever needed to read implementation source -- and the Layer 2 "
+        f"audit answers that read by rejecting the whole cycle's observations, "
+        f"so the agent that obeyed loses the stream. fallout NFR-003 makes it a "
+        f"Locked constraint rather than a preference."
+    )
+
+
+def test_the_section_reader_reaches_a_files_final_section() -> None:
+    """fallout GI-003 / NFR-003: a file's final section runs to its end."""
+    text = _read(SPEC_TEST_DERIVER)
+    last = re.findall(r"^## .+$", text, re.MULTILINE)[-1]
+    tail = " ".join(text.rstrip().splitlines()[-1].split())
+    assert _section(SPEC_TEST_DERIVER, last).endswith(tail), (
+        f"`_section` does not read {_rel(SPEC_TEST_DERIVER)}'s final section "
+        f"`{last}` through to the file's last line. A section the reader "
+        f"cannot reach is a section no absence assertion here can ever sweep."
+    )
+
+
+def test_the_derivers_roster_clause_says_where_its_items_come_from() -> None:
+    """fallout AC-033 / FR-050: the positive half of the section pin above."""
+    section = _section(SPEC_TEST_DERIVER, "## Roster")
+    assert "`## Contracts`" in section, (
+        "agents/spec-test-deriver.md's `## Roster` section no longer says the "
+        "items come from the spec's `## Contracts` rows. Without the positive "
+        "half the absence above is satisfied by a section that says nothing "
+        "about where the items come from at all."
+    )
+    assert "TEST_DERIVER_READ_SOURCE" in section, (
+        "agents/spec-test-deriver.md's `## Roster` section no longer names the "
+        "halt token. The rule needs the exit it forces when a derivation seems "
+        "to want a source read, or the reader is left to decide."
+    )
+
+
+# ---------------------------------------------------------------------------
+# fallout AC-048 / FR-025 -- the tracer marks fallout of an earlier fix
+# ---------------------------------------------------------------------------
+
+#: The provenance field fallout AC-048's rule is ABOUT, recovered from the
+#: filing door's own refusal rather than typed here: `fallout_parent_problem`
+#: reports the field it refused on under `field`, and `defect_provenance` writes
+#: exactly the keys `DEFECT_PROVENANCE_KEYS` declares. Rename the key in
+#: `tools/foundry.py` and this expected clause moves with it, so the prose still
+#: naming the old spelling fails HERE instead of rotting into a rule about a
+#: field no door reads. That is `_PYTEST_DISCOVERY_PHRASE`'s shape applied to a
+#: prose rule, which fallout NFR-011 asks of every rule this effort states.
+_FALLOUT_FIELD = foundry_doors.fallout_parent_problem("D-000", [])["field"]
+
+#: THE ONE SPELLING of fallout AC-048's three clauses, for the whole suite.
+#:
+#: `tests/test_skill_prose.py` pins the same three on the PROVE-side surfaces
+#: and IMPORTS this tuple rather than holding a second one. D-095 is the record
+#: of what the second copy cost: two independent tuples of this name, so
+#: rewording one surface left the other module green against a sentence no file
+#: says any more -- and fallout NFR-011 names this module and
+#: `test_lead_prose.py` as the two homes a prose rule may be pinned in, which a
+#: third module's private copy is not. The sweep below is what holds the count
+#: at one; the f-string is what holds the field name joined to the door.
+_FALLOUT_CLAUSES = (
+    f"**Set `{_FALLOUT_FIELD}` when the finding is fallout of an earlier fix.**",
+    "sibling surface left on a contract a previous cycle's fix changed is not a "
+    "fresh defect",
+    "An id the ledger does not carry is REFUSED at the door rather than stored",
+)
+
+
+@pytest.mark.parametrize("clause", _FALLOUT_CLAUSES, ids=lambda v: v[:44])
+def test_the_tracer_states_the_fallout_marking_rule(clause: str) -> None:
+    """fallout AC-048 / FR-025, the TRACE half.
+
+    The PROVE half -- `agents/assayer.md` and the prove and trace skills -- is
+    casting 11's and is pinned in its own module. Pinned on the tracer alone
+    here, deliberately: sweeping the wider roster would demand the clause in
+    four files whose castings have not written it, turning a green module red
+    for prose nobody had a chance to add.
+    """
+    assert clause in _flat(TRACER), (
+        f"agents/tracer.md no longer states: {clause!r}. Fallout marking is one "
+        f"optional field with no default the server can supply -- `measure-run` "
+        f"counts records carrying `{_FALLOUT_FIELD}` per cycle, so an unmarked "
+        f"cycle reads as a cycle that produced none, and the measurement this "
+        f"run exists to make honest goes quiet instead of going red."
+    )
+
+
+def test_the_fallout_clause_names_the_field_by_derivation_not_by_literal() -> None:
+    """fallout NFR-011 / D-095 -- the MECHANISM, not today's answer.
+
+    Reads this module's own source and asserts the first clause is BUILT from
+    `_FALLOUT_FIELD` rather than carrying the field's spelling as a literal.
+    Against the pre-fix tuple -- three plain strings -- this is RED, which is
+    the whole of NFR-011's ask: not that the pin names the right field today,
+    but that it cannot go on naming the old one after `tools/foundry.py`
+    renames the key. A literal passes both before and after such a rename, and
+    a pin that survives the change it exists to catch is the one shape that
+    reads as coverage while providing none.
+
+    Pinned on the AST rather than on the rendered value because the rendered
+    value is `fallout_of` either way: the difference between a derivation and a
+    literal that happens to agree with it is invisible downstream and total
+    upstream.
+    """
+    assign = next(
+        node
+        for node in ast.parse(Path(__file__).read_text(encoding="utf-8")).body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "_FALLOUT_CLAUSES"
+            for target in node.targets
+        )
+    )
+    first = assign.value.elts[0] if isinstance(assign.value, ast.Tuple) else None
+    assert isinstance(first, ast.JoinedStr), (
+        "`_FALLOUT_CLAUSES`'s first clause is a plain string literal again. "
+        "fallout NFR-011 wants every prose rule derived from or pinned to a "
+        "code constant in the `_PYTEST_DISCOVERY_PHRASE` shape; typing "
+        "`fallout_of` here restores the state D-095 records, where the door "
+        "could rename the field and every pin on the prose would stay green."
+    )
+    interpolated = {
+        node.value.id
+        for node in ast.walk(first)
+        if isinstance(node, ast.FormattedValue) and isinstance(node.value, ast.Name)
+    }
+    assert "_FALLOUT_FIELD" in interpolated, (
+        f"`_FALLOUT_CLAUSES`'s first clause interpolates {sorted(interpolated)} "
+        f"and not `_FALLOUT_FIELD`, the name read off the filing door's own "
+        f"refusal. An f-string over some other value is a literal wearing a "
+        f"derivation's clothes."
+    )
+
+
+def test_the_pinned_fallout_field_is_the_key_the_defect_record_carries() -> None:
+    """fallout NFR-011 / CT-019 -- the derivation joined to the record shape.
+
+    `_FALLOUT_FIELD` is read off a REFUSAL, and a refusal is free to name a
+    field the record never writes. Joining it to `DEFECT_PROVENANCE_KEYS` --
+    the keys `defect_provenance` puts on every filing -- is what makes the
+    derived clause a pin on the shipped contract rather than on one door's
+    error message, and it fails the day those two source spellings part.
+    """
+    assert _FALLOUT_FIELD in foundry_doors.DEFECT_PROVENANCE_KEYS, (
+        f"the filing door refuses under {_FALLOUT_FIELD!r} while the record "
+        f"shape carries {list(foundry_doors.DEFECT_PROVENANCE_KEYS)!r}. The "
+        f"tracer is told to set a field on its filing; a refusal naming one "
+        f"key while the record writes another leaves the prose describing "
+        f"neither."
+    )
+
+
+#: This module's own directory -- the suite the sweep below reads. Derived from
+#: `__file__` rather than from `MCP_SERVER` so a test module moved with the
+#: package keeps being swept.
+_SUITE_TESTS = Path(__file__).resolve().parent
+_SKILL_PROSE = _SUITE_TESTS / "test_skill_prose.py"
+
+
+def _module_level_string_tuples(path: Path) -> list[tuple[str, tuple[str, ...]]]:
+    """Every module-level ``NAME = ("...", "...")`` in a test module.
+
+    AST rather than a substring sweep because `ast` FOLDS implicit string
+    concatenation: a clause split across source lines compares equal to the
+    flat one, and both copies of the fallout tuple were written split. A raw
+    text search for the flat clause finds neither.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):  # pragma: no cover - unreadable sibling
+        return []
+    found: list[tuple[str, tuple[str, ...]]] = []
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Tuple):
+            continue
+        values = tuple(
+            element.value
+            for element in node.value.elts
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        )
+        if not values or len(values) != len(node.value.elts):
+            continue
+        name = next(
+            (t.id for t in node.targets if isinstance(t, ast.Name)), "<unnamed>"
+        )
+        found.append((name, values))
+    return found
+
+
+def _imports_from_this_module(path: Path) -> bool:
+    """Does `path` IMPORT this module -- in any of Python's three spellings?
+
+    The arming condition for the sweep below, read off the IMPORT STATEMENT and
+    never off the raw text: `tests/test_skill_prose.py`'s own docstring names
+    this module in prose, so a substring check arms on a sentence and fires
+    against a duplicate its author has had no chance to remove.
+
+    fallout AC-048 / NFR-011 (concern C-115, D-081's class in its fourth site)
+    -- THIS READ ONE SPELLING OF THREE AND THEN DISARMED ITSELF SILENTLY.
+
+    The reading was `ImportFrom` matched on the last component of
+    `node.module`, so `from tests.test_protocol_prose import _FALLOUT_CLAUSES`
+    was seen while `from tests import test_protocol_prose` resolved to `tests`
+    and `import tests.test_protocol_prose` was not an `ImportFrom` at all.
+    Driven, one plant per spelling: CAUGHT 1 OF 3.
+
+    WHAT THAT COSTS, stated as it drove rather than as the concern framed it.
+    A False return is `pytest.skip`, so the two blind spellings produce a
+    MISSED finding, never a wrong one: driven with a real duplicate
+    `_FALLOUT_CLAUSES` in a sibling, the sweep SKIPPED when the sibling reached
+    here by spelling two and FAILED naming the duplicate when it reached here
+    by spelling one. The concern that filed this read the paragraph above as a
+    description of this helper and reported a wrong finding against an innocent
+    module; that paragraph describes the substring alternative this helper was
+    written INSTEAD OF, which would have armed too early. The defect is real
+    and is that a guard policing a file another casting owns and may rewrite
+    goes quiet on the rewrite, in the silence a skip makes.
+
+    `also_by_name` IS REQUIRED HERE, and the reason is not the one that made it
+    required for the deleted monolith. `_submodules_named_by` opens with
+    `if not dotted.startswith("foundry_mcp")`, so it answers nothing about the
+    `tests` package whatever is on disk -- driven,
+    `_submodules_named_by("tests", ["test_protocol_prose"])` is empty and
+    `_all_imports` over the second plant returns `{"tests"}`. The phantom
+    crossing that helper warns of stays shut: the named roster is this module's
+    own stem, and a SYMBOL named after a test module is not a thing this suite
+    can grow without the collision sweep saying so.
+    """
+    from tests.orchestration.test_module_boundaries import _all_imports
+
+    stem = Path(__file__).stem
+    try:
+        return stem in _all_imports(path, also_by_name=(stem,))
+    except (OSError, SyntaxError):  # pragma: no cover - unreadable sibling
+        return False
+
+
+def test_no_second_module_re_types_the_fallout_clauses() -> None:
+    """fallout NFR-011 / D-095 -- one spelling for N doors, held mechanically.
+
+    D-095 is the record of the second copy: `tests/test_skill_prose.py` carried
+    its own `_FALLOUT_CLAUSES` with the same three strings typed again, so
+    rewording `agents/tracer.md` and this module left the PROVE-side module
+    green against a sentence no file said any more. Convention did not hold the
+    two together and a comment would not either; this sweep does, and it sweeps
+    the whole suite so the THIRD copy fails the same way as the second.
+
+    THIS ARMS ITSELF, and the skip is not a courtesy -- it is
+    `test_the_unknown_fallout_id_the_tracer_promises_is_the_refusal_the_door_gives`'s
+    rule applied to a co-dispatch instead of a wave. `tests/test_skill_prose.py`
+    is casting 11's half of D-095, landing in the same cycle. Written
+    unconditionally this pin would be RED at every commit of mine that precedes
+    theirs -- and the acceptance gate re-executes in a detached worktree at MY
+    commit, where only what is committed exists. That is not a flaky test; it
+    is a pin reaching into work no commit contains. So it waits for the import
+    that replaces the duplicate, names what it is waiting for, and arms
+    permanently once that import lands.
+    """
+    if not _imports_from_this_module(_SKILL_PROSE):
+        pytest.skip(
+            "tests/test_skill_prose.py does not yet import from this module -- "
+            "casting 11 owns it and replaces its duplicate `_FALLOUT_CLAUSES` "
+            "with `from tests.test_protocol_prose import _FALLOUT_CLAUSES` in "
+            "this cycle. The tuple here is already the one spelling; this "
+            "sweep arms the moment that import appears."
+        )
+    duplicates = sorted(
+        f"{path.name}#{name}"
+        for path in sorted(_SUITE_TESTS.glob("test_*.py"))
+        if path.name != Path(__file__).name
+        for name, values in _module_level_string_tuples(path)
+        if values == _FALLOUT_CLAUSES
+    )
+    assert not duplicates, (
+        f"{duplicates} re-type fallout AC-048's three clauses instead of "
+        f"importing `_FALLOUT_CLAUSES` from this module. Two tuples are two "
+        f"rulings the moment one is reworded, and the one that is not reworded "
+        f"keeps passing -- which is the drift D-095 filed, not a tidiness "
+        f"preference."
+    )
+
+
+def test_the_arming_condition_sees_all_three_spellings_of_this_module(tmp_path):
+    """fallout AC-048 / NFR-011 (concern C-115) -- THE ANCHOR FOR THE ARMING
+    CONDITION, WHICH IS GREEN OVER TODAY'S TREE WHETHER IT WORKS OR NOT.
+
+    `tests/test_skill_prose.py` reaches this module in the FIRST spelling
+    today, so the sweep above is armed and the one spelling that worked is the
+    one in use -- which is exactly why the recogniser is worth driving apart
+    from it. Rewritten to either other spelling, the sweep stops looking and
+    says nothing; there is no failing assertion anywhere in that outcome. This
+    is the test that goes red on the day the reading goes blind rather than on
+    the day a duplicate slips past it.
+
+    ONE PLANT PER SPELLING, all three naming the same load, and the stem is
+    derived from `__file__` so a renamed module renames its own plants.
+    """
+    stem = Path(__file__).stem
+
+    dotted_module = tmp_path / "spelling_one.py"
+    dotted_module.write_text(
+        f"from tests.{stem} import _FALLOUT_CLAUSES\n", encoding="utf-8"
+    )
+    assert _imports_from_this_module(dotted_module)
+
+    from_package = tmp_path / "spelling_two.py"
+    from_package.write_text(
+        f"from tests import {stem}\n"
+        f"_ = {stem}._FALLOUT_CLAUSES\n",
+        encoding="utf-8",
+    )
+    assert _imports_from_this_module(from_package)
+
+    plain_import = tmp_path / "spelling_three.py"
+    plain_import.write_text(
+        f"import tests.{stem}\n"
+        f"_ = tests.{stem}._FALLOUT_CLAUSES\n",
+        encoding="utf-8",
+    )
+    assert _imports_from_this_module(plain_import)
+
+    # ...and the second spelling is stated as the DELTA rather than asserted
+    # about in prose: on-disk resolution answers nothing here, because
+    # `_submodules_named_by` takes only `foundry_mcp` packages, so without the
+    # caller-named roster the same plant resolves to `tests` and matches
+    # nothing. That is why this call site names its own stem and the two
+    # layering walks name nothing.
+    from tests.orchestration.test_module_boundaries import (
+        _all_imports,
+        _submodules_named_by,
+    )
+
+    assert stem not in _all_imports(from_package)
+    assert not _submodules_named_by("tests", [stem])
+
+    # THE BOUNDARY the naming does not cross, both directions. Prose that names
+    # this module arms nothing -- the whole reason the reading is an import
+    # statement and not a substring -- and an import of a DIFFERENT sibling is
+    # not an import of this one.
+    prose_only = tmp_path / "prose_only.py"
+    prose_only.write_text(
+        f'"""A docstring that names {stem} and imports it not at all."""\n',
+        encoding="utf-8",
+    )
+    assert not _imports_from_this_module(prose_only)
+
+    other_sibling = tmp_path / "other_sibling.py"
+    other_sibling.write_text(
+        "from tests.test_lead_prose import _LEAD\n", encoding="utf-8"
+    )
+    assert not _imports_from_this_module(other_sibling)
+
+    # An unreadable or unparseable sibling stays a skip rather than an error:
+    # the sweep's job is duplicate tuples, not syntax.
+    unparseable = tmp_path / "unparseable.py"
+    unparseable.write_text(f"from tests import {stem} import\n", encoding="utf-8")
+    assert not _imports_from_this_module(unparseable)
+    assert not _imports_from_this_module(tmp_path / "absent.py")
+
+
+# ---------------------------------------------------------------------------
+# fallout AC-037 / AC-040 / FR-010 / FR-048 / FR-051 / OT-037 -- the builder's
+# three: the sweep shell, the cross-casting concern door, the fix ledger
+# ---------------------------------------------------------------------------
+
+#: The refusal the sweep raises on a command it cannot parse. Spelled once here
+#: because two assertions name it: the prose pin that the teammate was TOLD the
+#: token, and the cross-door join below that the token is one the vocabulary
+#: actually carries. Split across two modules they would be free to drift, and
+#: the drift is invisible -- a teammate reading a token the sweep never emits
+#: greps a refusal that cannot happen and concludes the rule is dead.
+_SWEEP_SYNTAX_TOKEN = "EVIDENCE_COMMAND_SYNTAX"
+
+_TEAMMATE_CLAUSES = (
+    (
+        "The server re-runs every `# evidence-cmd:` under `/bin/sh -c`",
+        "fallout AC-037: the sweep shell, named. `Popen(cmd, shell=True)` with "
+        "no `executable=` is `/bin/sh`, and a teammate authoring in another "
+        "shell has no way to know that from prose that never says it",
+    ),
+    (
+        "Parse it yourself with `/bin/sh -n` before you commit it.",
+        "the teammate's own half of the same rule -- the parse that turns a "
+        "sweep refusal into a local failure before the commit exists",
+    ),
+    (
+        "the pre-commit guard lints the evidence logs you STAGED",
+        "fallout FR-051's first door, scoped to STAGED logs so a peer's "
+        "unstaged work in the shared tree cannot make it fire",
+    ),
+    (
+        f"refuse the crossing with `{_SWEEP_SYNTAX_TOKEN}`",
+        "fallout FR-051's second door: one rule with two enforcement points, "
+        "stated as one rule so a teammate does not read it as two",
+    ),
+    (
+        "**A concern that lands on ANOTHER casting goes through `Foundry-Concern`, "
+        "not only into the file.**",
+        "fallout FR-010: the structured ledger is the tool; concerns.md stays "
+        "the prose rendering, which is what a teammate READS and never what the "
+        "server parses",
+    ),
+    (
+        "with `casting_id`, `cycle`, `target` (the casting id, key file or symbol "
+        "it lands on) and `text`",
+        "the four write-arm arguments, as the tool schema declares them -- a "
+        "teammate inventing an argument name is refused at the boundary",
+    ),
+    (
+        "an open cross-casting concern from the closing GRIND refuses "
+        "`Foundry-Phase('inspect_start')`",
+        "what leaving one open COSTS, which is the only thing that makes "
+        "raising one early worth doing",
+    ),
+    (
+        "**One `Foundry-Fix` acceptance line per dispatched defect id (required "
+        "in GRIND).**",
+        "fallout AC-040 / OT-037: the completion-report line, one per dispatched "
+        "id, carrying what the door answered",
+    ),
+    (
+        "it refuses `DISPATCHED_DEFECT_UNRECORDED`, naming every dispatched id "
+        "still open whose file a commit since the cycle baseline SHA touched",
+        "fallout FR-048: the door the report line keeps open, named by its "
+        "refusal so the two halves of one rule cannot drift",
+    ),
+)
+
+
+@pytest.mark.parametrize("clause,why", _TEAMMATE_CLAUSES, ids=lambda v: v[:44])
+def test_teammate_states_the_builders_three_rulings(clause: str, why: str) -> None:
+    """fallout AC-037 / AC-040 / FR-010 / FR-048 / FR-051 / OT-037.
+
+    `agents/teammate.md` is the one file every builder reads, and all three
+    rulings are things a builder learns there or does not learn at all: the
+    shell the server will re-run its evidence command under, the door a
+    cross-casting concern goes through, and the line that records a dispatched
+    fix was accepted.
+    """
+    assert clause in _flat(TEAMMATE), (
+        f"agents/teammate.md no longer states: {clause!r}. That clause is {why}."
+    )
+
+
+def test_the_teammate_fix_ledger_line_is_required_of_every_dispatched_id() -> None:
+    """fallout AC-040 / OT-037: per ID, not per report.
+
+    A report carrying one acceptance line for the cycle satisfies "the report
+    mentions Foundry-Fix" and leaves four dispatched ids unaccounted for, which
+    is the exact state `Foundry-Team-Down` then refuses on. The pin is on the
+    per-id absolute rather than on the tool name.
+    """
+    flat = _flat(TEAMMATE)
+    assert (
+        "Write the line for every dispatched id, the ones you could not fix "
+        "included, saying so." in flat
+    ), (
+        "agents/teammate.md's fix-ledger bullet lost the per-id absolute. "
+        "Without it a single summary line reads as compliance, and the ids it "
+        "omits are the ones whose ledger rows stay open while their fixes sit "
+        "on the branch."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The cross-door joins: every refusal the prose above PROMISES, driven or read
+# at the door that gives it. A prose statement and its door drift apart
+# silently -- the file still reads correctly and the refusal it describes has
+# been renamed, so the reader greps a token nothing emits and concludes the
+# rule is dead. These are the assertions that make that drift loud.
+# ---------------------------------------------------------------------------
+
+
+def test_the_sweep_syntax_refusal_the_teammate_names_is_a_real_failure_token() -> None:
+    """fallout AC-037 / FR-051: the token in the prose is the token in the vocabulary."""
+    assert _SWEEP_SYNTAX_TOKEN in evidence_doors.KNOWN_EVIDENCE_FAILURE_TOKENS, (
+        f"agents/teammate.md tells every builder the sweep refuses "
+        f"`{_SWEEP_SYNTAX_TOKEN}`, and that is not a member of "
+        f"evidence.KNOWN_EVIDENCE_FAILURE_TOKENS "
+        f"({sorted(evidence_doors.KNOWN_EVIDENCE_FAILURE_TOKENS)}). The "
+        f"allowlist is closed, so a token outside it is a refusal the sweep "
+        f"cannot raise: the prose would be teaching a name nothing ever emits."
+    )
+
+
+def test_the_team_down_refusal_the_completion_report_names_is_the_doors_own() -> None:
+    """fallout AC-040 / FR-048 / OT-037: the report line and the door that needs it."""
+    assert (
+        directives.DISPATCHED_DEFECT_UNRECORDED in _flat(TEAMMATE)
+    ), (
+        f"agents/teammate.md no longer names "
+        f"`{directives.DISPATCHED_DEFECT_UNRECORDED}`, the refusal "
+        f"`Foundry-Team-Down` gives when a dispatched id is open and a commit "
+        f"since the cycle baseline touched its file. The completion-report line "
+        f"is what keeps that door open; a teammate who cannot name the refusal "
+        f"has no reason to believe the line is load-bearing."
+    )
+
+
+def test_the_unknown_fallout_id_the_tracer_promises_is_the_refusal_the_door_gives() -> None:
+    """fallout AC-048 / FR-025 / CT-019: driven, not asserted from the prose.
+
+    The tracer clause closes on "an id the ledger does not carry is REFUSED at
+    the door rather than stored", which is a claim about the SERVER. Read off
+    the prose it is unfalsifiable; driven here it is a joined pair, and the two
+    negative cases keep the join honest -- a door that refused every value
+    would satisfy a one-sided check while making the field unusable.
+
+    THIS ARMS ITSELF, and the skip is not a courtesy. `fallout_parent_problem`
+    is casting 4's half of this one rule, landing in the same wave. Written
+    unconditionally it passed in the shared working tree -- where casting 4's
+    edit was sitting UNCOMMITTED -- and raised AttributeError in the acceptance
+    gate's detached worktree, which re-executes at the casting's own commit and
+    therefore sees only what is committed. That is not a flaky test; it is a
+    pin reaching into work no commit contains, and it refused this casting's
+    evidence once already. So the join waits for the symbol and names what it
+    is waiting for. The PROSE half above never skips: the tracer states the
+    rule at every commit, and only the server-side claim depends on the door.
+    """
+    door = getattr(foundry_doors, "fallout_parent_problem", None)
+    if door is None:
+        pytest.skip(
+            "foundry.fallout_parent_problem is not committed on this branch "
+            "yet -- casting 4 owns the `fallout_of` filing door and commits it "
+            "in this wave. agents/tracer.md's rule is asserted unconditionally "
+            "by test_the_tracer_states_the_fallout_marking_rule; this join "
+            "arms itself the moment the symbol lands."
+        )
+    ledger = [{"id": "D-001"}]
+    refusal = door("D-999", ledger)
+    assert refusal is not None, (
+        "the filing door accepts `fallout_of: 'D-999'` against a ledger that "
+        "holds no such id, while agents/tracer.md tells the TRACE stream the "
+        "door refuses it. One of the two is wrong, and the prose is the half a "
+        "stream reads before it files."
+    )
+    assert door("D-001", ledger) is None, (
+        "the door refuses a `fallout_of` naming an id the ledger DOES hold. "
+        "The tracer is told to set the field on real parents; a door refusing "
+        "those makes the rule unusable rather than strict."
+    )
+    assert door("", ledger) is None, (
+        "the door refuses an UNSET `fallout_of`. The field is optional by "
+        "construction -- the tracer is told to leave it unset when a finding "
+        "stands on its own -- so refusing the empty value would make every "
+        "standalone finding unfilable."
+    )
+
+
+# ---------------------------------------------------------------------------
+# fallout GI-006 -- the environment an evidence log is captured in
+#
+# The capture instruction named the file to write and the header to carry, and
+# never the tree to stand in while writing it. Everything a builder needs in
+# order to capture a log that reproduces is a property of the SERVER's
+# re-execution -- a detached worktree, two door-specific directory names, a
+# suffix under contention -- and none of it is visible from the builder's side.
+# So these pins are the prose half, and the joins below drive or read each
+# claim at the door that makes it: a rule about an environment nobody can
+# observe is a rule that rots without anybody noticing.
+# ---------------------------------------------------------------------------
+
+_CAPTURE_ENVIRONMENT_CLAUSES = (
+    (
+        "Capture from the repository root with every file your command reads "
+        "TRACKED and going into your own commit",
+        "the environment to capture IN, which the instruction never named -- "
+        "so a builder captured in whatever tree it happened to be standing in",
+    ),
+    (
+        "the server materialises the commit with `git worktree add --detach`",
+        "the one property that makes capture and verification disagree: a "
+        "detached worktree carries tracked files only",
+    ),
+    (
+        "so the re-execution sees that commit's tracked files and nothing else",
+        "what `--detach` COSTS, spelled out -- the fact a builder cannot infer "
+        "from being told the re-execution happens in an isolated worktree",
+    ),
+    (
+        "The two doors also run in DIFFERENT directories under the run dir",
+        "why an absolute path in a log body passes one door and fails the "
+        "other, which is not a thing either door's refusal explains",
+    ),
+    (
+        "so the directory name is not stable even within one door",
+        "the contention suffix: a peer invocation moves the path, so even one "
+        "door's directory name is not a constant to write into a log",
+    ),
+    (
+        "let no absolute path and no worktree directory name reach the log BODY",
+        "the instruction the three facts exist to support -- the only thing a "
+        "builder has to DO differently",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "clause,why", _CAPTURE_ENVIRONMENT_CLAUSES, ids=lambda v: v[:44]
+)
+def test_teammate_names_the_environment_the_evidence_is_captured_in(
+    clause: str, why: str
+) -> None:
+    """fallout GI-006: the corpus stays re-executable only if capture matches.
+
+    A log captured against files the verifying worktree will not contain is
+    stale the moment it is committed, and the staleness surfaces a gate later
+    as a byte mismatch that names the log and not the reason.
+    """
+    assert clause in _flat(TEAMMATE), (
+        f"agents/teammate.md's evidence-capture rule no longer states: "
+        f"{clause!r}. That clause is {why}."
+    )
+
+
+def _sweep_worktree_dir() -> str | None:
+    """The sweep's worktree directory name, DERIVED from the call that makes it.
+
+    The name has two sources and neither is a single constant: the prefix is
+    ``evidence.SWEEP_WORKTREE_PREFIX``, and the id concatenated onto it is a
+    literal at the ``_setup_worktree`` call site inside
+    ``sweep_evidence_at_head``. Re-typing the joined name here would pin the
+    prose against a third copy that agrees with neither, so it is read off the
+    call. ``None`` when the call cannot be found in that shape, which the
+    caller reports as the drift it is.
+    """
+    tree = ast.parse(Path(evidence_doors.__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if node.name != "sweep_evidence_at_head":
+            continue
+        for call in ast.walk(node):
+            if not isinstance(call, ast.Call):
+                continue
+            if getattr(call.func, "id", None) != "_setup_worktree":
+                continue
+            named = any(
+                kw.arg == "dir_prefix"
+                and isinstance(kw.value, ast.Name)
+                and kw.value.id == "SWEEP_WORKTREE_PREFIX"
+                for kw in call.keywords
+            )
+            ident = call.args[1] if len(call.args) > 1 else None
+            if named and isinstance(ident, ast.Constant):
+                return (
+                    f"worktrees/"
+                    f"{evidence_doors.SWEEP_WORKTREE_PREFIX}{ident.value}"
+                )
+    return None
+
+
+def test_the_two_worktree_directories_the_teammate_names_are_the_doors_own() -> None:
+    """fallout GI-006: the prose's two directory names, read off the two doors.
+
+    Both are derived rather than typed. The acceptance name is the default
+    ``_setup_worktree`` gives ``dir_prefix``; the sweep name is that same
+    parameter passed ``SWEEP_WORKTREE_PREFIX`` with the id its call site
+    supplies. A builder told the wrong pair writes a path that reproduces at
+    one crossing and fails at the next, which is the failure this rule exists
+    to prevent -- so the two spellings have to be the doors' own or the warning
+    points at directories nothing uses.
+    """
+    flat = _flat(TEAMMATE)
+    accept_prefix = (worktree_helpers._setup_worktree.__kwdefaults__ or {}).get(
+        "dir_prefix"
+    )
+    assert accept_prefix, (
+        "worktree_helpers._setup_worktree no longer carries a keyword default "
+        "for `dir_prefix`. agents/teammate.md names the acceptance door's "
+        "worktree directory from that default; with no default there is no "
+        "acceptance directory name to name."
+    )
+    assert f"worktrees/{accept_prefix}" in flat, (
+        f"agents/teammate.md no longer names the acceptance door's worktree "
+        f"directory `worktrees/{accept_prefix}`, which is where "
+        f"`_setup_worktree`'s `dir_prefix` default puts it."
+    )
+    sweep_dir = _sweep_worktree_dir()
+    assert sweep_dir is not None, (
+        "`sweep_evidence_at_head` no longer calls `_setup_worktree` with a "
+        "literal id and `dir_prefix=SWEEP_WORKTREE_PREFIX`, so the sweep's "
+        "worktree directory name cannot be derived. agents/teammate.md warns "
+        "builders about that exact name; a name nothing derives is a name that "
+        "drifts."
+    )
+    assert sweep_dir in flat, (
+        f"agents/teammate.md no longer names the sweep's worktree directory "
+        f"`{sweep_dir}`. That name and the acceptance door's differ on purpose, "
+        f"and the difference is the whole reason an absolute path in a log body "
+        f"passes one crossing and fails the other."
+    )
+
+
+def test_the_worktree_the_teammate_is_told_about_is_really_detached() -> None:
+    """fallout GI-006: `--detach` is the claim, and it is the door's own argv.
+
+    Read off the prose the tracked-files-only consequence is unfalsifiable. It
+    follows from ONE flag in one `git worktree add`, so the flag is what gets
+    joined -- a setup that grew a `--force`-style checkout of the working tree
+    would make the warning wrong while leaving it perfectly readable.
+    """
+    source = Path(worktree_helpers.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    argv_strings: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_setup_worktree":
+            argv_strings = {
+                child.value
+                for child in ast.walk(node)
+                if isinstance(child, ast.Constant) and isinstance(child.value, str)
+            }
+            break
+    assert "--detach" in argv_strings, (
+        "`_setup_worktree` no longer passes `--detach` to `git worktree add`. "
+        "agents/teammate.md tells every builder the re-execution sees the "
+        "commit's tracked files and nothing else, and that consequence is this "
+        "flag's."
+    )
+    assert "`git worktree add --detach`" in _flat(TEAMMATE), (
+        "agents/teammate.md no longer names `git worktree add --detach` as the "
+        "way the server materialises the commit. Without the flag the builder "
+        "has no reason to believe an untracked file will be missing."
+    )
+
+
+def test_the_contention_suffix_the_teammate_is_warned_about_is_the_claims_own(
+    tmp_path: Path,
+) -> None:
+    """fallout GI-006: driven, because a suffix nobody produces is a false warning.
+
+    The prose tells builders the directory name is not stable even within one
+    door. That is a claim about `_claim_worktree_path`, so it is driven here
+    against a real claim rather than read out of its docstring: the second
+    claim on one base takes `{base}-1`, which is the spelling the warning uses.
+    """
+    base = tmp_path / "worktrees" / "sweep-evidence"
+    first = worktree_helpers._claim_worktree_path(base, tmp_path)
+    try:
+        second = worktree_helpers._claim_worktree_path(base, tmp_path)
+        try:
+            assert first == base, (
+                f"the first claim on an uncontended path returned {first}, not "
+                f"the base {base}. agents/teammate.md names the unsuffixed "
+                f"directory as the ordinary case; a claim that suffixes "
+                f"unconditionally would make the ordinary name wrong too."
+            )
+            assert second.name == f"{base.name}-1", (
+                f"a second claim on a held path returned {second.name}, not "
+                f"`{base.name}-1`. agents/teammate.md warns builders with that "
+                f"exact spelling, and a warning naming a suffix the claim never "
+                f"produces teaches a directory that cannot appear."
+            )
+            assert f"worktrees/{base.name}-1" in _flat(TEAMMATE), (
+                f"agents/teammate.md no longer names "
+                f"`worktrees/{base.name}-1`, the path a contended claim steps "
+                f"to. Three logs failed on that segment alone in the cycle this "
+                f"rule was filed against."
+            )
+        finally:
+            worktree_helpers._release_claim(second)
+    finally:
+        worktree_helpers._release_claim(first)
+
+
+# ---------------------------------------------------------------------------
+# C-078 / fallout GI-014 / AC-022 -- the FILE axis of the tier vocabulary
+#
+# Every tier pin above is derived on the VALUE axis (parametrised over
+# `_DECLARED_TIERS = sorted(vocab.DEFECT_TIERS)`, so a new member fails until
+# the prose describes it) and hand-scoped on the FILE axis: it sweeps
+# `DEFECT_FILING_AGENTS`, which derives to the six surfaces documenting a
+# `defects` array. D-162, D-163 and D-164 were one fault -- a surface stating
+# the vocabulary as two members -- and all three escaped through that scoping,
+# not through the value axis. `commands/start.md` is not a filing agent because
+# the lead files nothing; `skills/prove/SKILL.md` and `skills/trace/SKILL.md`
+# document a `findings` array, not a `defects` one. Every pin was perfectly
+# correct about the values it swept and swept none of the three files.
+#
+# So the population here is asked by PROPERTY rather than by role: a surface
+# that names TWO OR MORE declared members is enumerating the vocabulary, and a
+# surface enumerating it owes every member. That predicate is derivable, needs
+# no roster to maintain, and holds whatever register or directory the surface
+# writes in -- which is the whole of what the three escapes had in common. A
+# file naming ONE member is making a point about that tier rather than
+# enumerating the set, and is deliberately not swept: demanding the full
+# vocabulary of every passing mention would make the rule unfollowable and the
+# roster would be narrowed back the first time it fired wrongly.
+#
+# ON THE SPAN (the second half of C-078's question). `_tier_rule` stays, for
+# the one thing only it can do: `test_stream_agents_share_one_tier_rule_verbatim`
+# compares the six spans against EACH OTHER for byte-identity, which is a
+# property of a shared paragraph and cannot be asked of a whole file. What the
+# span stops being is the only scope the VOCABULARY is checked in. D-163 and
+# D-164 lived in a findings-schema description, a no-severity paragraph and a
+# `## Key Constraints` bullet -- three regions outside it -- so the completeness
+# and count pins below read the whole file and let the span keep the job it
+# does honestly.
+#
+# ON THE DIRECTORY. The roster spans agents/, skills/, commands/, references/
+# and the plugin README on purpose. Excluding commands/ because another module
+# owns the lead's prose would re-introduce the exact hand-scoping this closes,
+# and these are floor assertions about a closed vocabulary rather than pins on
+# any audience's protocol: `test_lead_prose.py` pins what start.md's tier table
+# SAYS row by row, and this asks only that a file enumerating the vocabulary
+# enumerate all of it.
+# ---------------------------------------------------------------------------
+
+#: Every prose surface the plugin ships, in the four directories a ruling can
+#: be written into plus the README. Globbed, never listed: a new agent, skill
+#: or command joins the sweep by existing.
+PROSE_SURFACES = tuple(
+    sorted(
+        (
+            *AGENTS.glob("*.md"),
+            *SKILLS.glob("*/SKILL.md"),
+            *COMMANDS.glob("*.md"),
+            *REFERENCES.glob("*.md"),
+            *FOUNDRY_ROOT.glob("*.md"),
+        ),
+        key=_rel,
+    )
+)
+
+
+def _named_tiers(path: Path) -> tuple[str, ...]:
+    """The declared tier members a surface names, as whole words.
+
+    Whole-word because the members are ALL-CAPS tokens that occur inside longer
+    identifiers (`NEVER_DEMOTE_CLASSES` carries no tier, but a laxer match
+    would find one), and a false member here would put a file in the roster on
+    a mention it never made.
+    """
+    text = _read(path)
+    return tuple(
+        member
+        for member in _DECLARED_TIERS
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(member)}(?![A-Za-z0-9_])", text)
+    )
+
+
+#: DERIVED: the surfaces that ENUMERATE the tier vocabulary, being those naming
+#: two or more of its declared members. Two is the threshold because it is the
+#: smallest count that is an enumeration rather than a mention.
+TIER_STATING_SURFACES = tuple(
+    path for path in PROSE_SURFACES if len(_named_tiers(path)) >= 2
+)
+
+#: Surfaces KNOWN to enumerate the vocabulary incompletely, with the exact
+#: members each omits. Recorded rather than excused, and read SUBSET-shaped for
+#: the reason `_KNOWN_SUBSTANCE_GAPS` is, stated once at `_LEDGER_CONTRACT`. An
+#: entry here is a FINDING carried in the open, never a narrowing of the roster
+#: to make it green -- C-078 asks for the files to be reported, not hidden.
+#:
+#: EMPTY, and that is the ledger working. Its one entry recorded
+#: `commands/help.md` as short of `HARDENING` while describing the HALTED
+#: report; C-084 carried that to casting 8, which corrected the sentence to
+#: name all three tiers and both backlog sections the report actually emits.
+#: Under the EXACT comparison this ledger used to carry, that correction was
+#: RED until the row went too -- so casting 8 deleted a row from casting 6's
+#: module inside casting 8's commit, and swept a peer's staged deletion of a
+#: second row in with it. That is D-173: the collection was real, the collector
+#: was the wrong casting at the wrong moment. The row is now collected by the
+#: floor check below, which warns instead of failing.
+_KNOWN_TIER_GAPS: dict[str, frozenset[str]] = {}
+
+
+def test_the_tier_stating_roster_is_derived_and_spans_its_directories() -> None:
+    """C-078's floor: the roster that missed three files must not narrow again.
+
+    Every assertion below is vacuous over an empty or one-directory roster, and
+    a narrowing is invisible everywhere else -- which is how `commands/start.md`
+    and the two skills stayed unswept while every tier pin was green. The three
+    escapees are named individually because they are the measured population
+    this exists for; the directory check is what fails a regression back to an
+    `agents/` glob.
+    """
+    assert TIER_STATING_SURFACES, (
+        "no prose surface names two declared tier members, which cannot be "
+        "true while `DEFECT_TIERS` has members and the stream agents state the "
+        "rule. The derivation has come apart from the vocabulary."
+    )
+    for escapee in (START_MD, PROVE_SKILL, TRACE_SKILL):
+        assert escapee in TIER_STATING_SURFACES, (
+            f"{_rel(escapee)} is not in TIER_STATING_SURFACES. It is one of "
+            f"the three surfaces D-162/D-163/D-164 were filed against, and a "
+            f"roster that cannot see it is the roster that let them rot."
+        )
+    directories = {
+        p.parent.name if p.name == "SKILL.md" else p.parent.name
+        for p in TIER_STATING_SURFACES
+    }
+    assert len(directories) > 1, (
+        f"TIER_STATING_SURFACES spans one directory ({sorted(directories)}). "
+        f"The tier rule is stated by agents, by skills AND by the lead's "
+        f"command prose; a roster that sees one of those is the hand-scoping "
+        f"C-078 closed, re-opened."
+    )
+
+
+def test_the_known_tier_gap_ledger_names_real_surfaces_and_members() -> None:
+    """Floor check: a ledger keyed on an unswept path or a fake member excuses nothing.
+
+    fallout D-173 puts the retired-row sweep here as well: a gap this ledger
+    excuses that the file now names is collected HERE, by this module, and not
+    by turning the tree red under the casting that closed it.
+    """
+    swept = {_rel(p) for p in TIER_STATING_SURFACES}
+    stale = sorted(set(_KNOWN_TIER_GAPS) - swept)
+    assert not stale, (
+        f"{stale} carry recorded tier gaps and no longer enumerate the "
+        f"vocabulary. Delete the entries -- a gap recorded against a file this "
+        f"module does not sweep is a debt nothing will ever collect."
+    )
+    for rel, gaps in _KNOWN_TIER_GAPS.items():
+        unknown = sorted(gaps - set(_DECLARED_TIERS))
+        assert not unknown, (
+            f"{rel} is excused members {unknown} that `DEFECT_TIERS` does not "
+            f"declare ({sorted(vocab.DEFECT_TIERS)}), so the exemption covers "
+            f"nothing this test would have checked."
+        )
+    by_rel = {_rel(p): p for p in TIER_STATING_SURFACES}
+    collected: dict[str, object] = {}
+    for rel, gaps in _KNOWN_TIER_GAPS.items():
+        if rel not in by_rel:
+            continue
+        measured = frozenset(_DECLARED_TIERS) - frozenset(_named_tiers(by_rel[rel]))
+        _, collectable = _ledger_verdict(measured, gaps)
+        if collectable:
+            collected[rel] = sorted(collectable)
+    _report_collectable_debt("_KNOWN_TIER_GAPS", collected)
+
+
+@pytest.mark.parametrize("path", TIER_STATING_SURFACES, ids=_rel)
+def test_every_tier_stating_surface_names_every_declared_member(path: Path) -> None:
+    """C-078 / fallout GI-014 / AC-022: the file axis, whole-file.
+
+    Whole-file rather than span-scoped: D-163 and D-164 stated the vocabulary
+    in a findings-schema description, a no-severity paragraph and a
+    `## Key Constraints` bullet, none of which `_tier_rule` bounds. A span that
+    misses the region it guards is worse than no span, because it reads as
+    coverage.
+    """
+    missing = frozenset(_DECLARED_TIERS) - frozenset(_named_tiers(path))
+    known = _KNOWN_TIER_GAPS.get(_rel(path), frozenset())
+    unrecorded, _ = _ledger_verdict(missing, known)
+    assert not unrecorded, {
+        "file": _rel(path),
+        "why": (
+            "this surface enumerates the tier vocabulary and must enumerate "
+            "all of it: a reader learns the members exist here or not at all, "
+            "and a member no surface describes is one no stream ever files. "
+            + _LEDGER_CONTRACT
+        ),
+        "declared": sorted(vocab.DEFECT_TIERS),
+        "named": sorted(_named_tiers(path)),
+        "missing_and_not_recorded": sorted(unrecorded),
+    }
+
+
+#: The count spelling that carried all three drifts: "Both tiers are defects
+#: and both get fixed", closing a vocabulary that had declared three since
+#: fallout GI-014. Scoped to the word `tier` rather than to `member`, which the
+#: span-bounded `_MEMBER_COUNT_RE` above can afford and a whole-file sweep
+#: cannot -- `agents/test-observations-adjudicator.md` legitimately says "three
+#: members" of a different closed vocabulary, and a pin that fired on it would
+#: be narrowed away the first time it did.
+#:
+#: `neither` is deliberately NOT a member of the quantifier set, and the reason
+#: is structural rather than a convenience. What rots is a count standing in
+#: for the SET -- a phrase that has to be edited when a member is added.
+#: `neither tier` in this corpus is anaphoric to two tiers named in the same
+#: sentence and stays true at any vocabulary size; `both tiers are defects` is
+#: a claim about the class and was false the moment there were three. The
+#: distinction is not academic here: the one occurrence sits inside a sentence
+#: THIS MODULE already pins as required wording, so a regex that matched it
+#: would make the module demand and forbid the same sentence at once. The
+#: self-consistency assertion below drives that rather than asserting it.
+_TIER_COUNT_RE = re.compile(
+    r"\b(?:both|either|one|two|three|four|five|six|\d+)[- ]tiers?\b", re.I
+)
+
+#: Surfaces KNOWN to count the vocabulary, with the phrase each carried when
+#: the debt was recorded. Recorded, not excused, and read PRESENCE-shaped per
+#: `_count_ledger_verdict`: a count nothing records fails at once, while the
+#: recorded phrase is documentation whose drift -- including the file dropping
+#: the count entirely -- is reported by the floor check below.
+#:
+#: EMPTY, and the emptiness is the assertion: no swept surface counts the
+#: vocabulary today. It held one entry -- `skills/temper/SKILL.md` saying "both
+#: tiers are defects that get fixed" with no pair named in the sentence, the
+#: fifth instance of the D-162/D-163/D-164 class -- raised as C-085 because the
+#: file is casting 11's. Casting 11 fixed the sentence, and the EXACT
+#: comparison this ledger then carried made that fix RED until the row went
+#: with it; casting 11 staged the row deletion into casting 6's module and
+#: casting 8's pathspec commit swept it up. That is D-173, and it is why the
+#: row is now collected by a warning here rather than by a red test there.
+_KNOWN_TIER_COUNT_GAPS: dict[str, str] = {}
+
+
+def test_the_tier_count_ledger_names_surfaces_this_module_sweeps() -> None:
+    """Floor check: a recorded count against an unswept file collects nothing.
+
+    fallout D-173: the retired-row sweep lives here too, so a surface that
+    stopped counting -- or reworded the count -- is collected by this module
+    instead of failing under the casting that reworded it.
+    """
+    swept = {_rel(p) for p in TIER_STATING_SURFACES}
+    stale = sorted(set(_KNOWN_TIER_COUNT_GAPS) - swept)
+    assert not stale, (
+        f"{stale} carry recorded tier counts and no longer enumerate the "
+        f"vocabulary. Delete the entries -- a debt recorded against a file "
+        f"this module does not read is a debt nothing will ever collect."
+    )
+    by_rel = {_rel(p): p for p in TIER_STATING_SURFACES}
+    collected: dict[str, object] = {}
+    for rel, phrase in _KNOWN_TIER_COUNT_GAPS.items():
+        if rel not in by_rel:
+            continue
+        hit = _TIER_COUNT_RE.search(_flat(by_rel[rel]))
+        _, collectable = _count_ledger_verdict(
+            hit.group(0).lower() if hit else None, phrase
+        )
+        if collectable is not None:
+            collected[rel] = {
+                "recorded": collectable,
+                "now_counts": hit.group(0).lower() if hit else None,
+            }
+    _report_collectable_debt("_KNOWN_TIER_COUNT_GAPS", collected)
+
+
+def test_the_count_rule_does_not_forbid_the_sentence_this_module_requires() -> None:
+    """C-078: the two rules in this module must not contradict each other.
+
+    ``test_trace_skill_states_plumber_findings_are_defects_not_a_tier``
+    REQUIRES trace/SKILL.md's PL-N sentence verbatim, and that sentence closes
+    on "neither tier is a grade on how much the fix is worth". A count rule
+    that matched it would make this module unsatisfiable -- and the only way to
+    satisfy it would be editing another casting's file to drop a clause this
+    module demands. Driven here so the boundary is a measured property of the
+    regex rather than a claim in a comment.
+    """
+    anaphoric = (
+        "one you derived from the wiring with no reachable path is `LATENT` "
+        "and carries a `reproduction_attempted` statement — and neither tier "
+        "is a grade on how much the fix is worth."
+    )
+    assert anaphoric in _flat(TRACE_SKILL), (
+        "trace/SKILL.md no longer carries the PL-N evidence-axis sentence this "
+        "module pins, so the contradiction this test guards cannot be measured "
+        "against the real file any more."
+    )
+    assert _TIER_COUNT_RE.search(anaphoric) is None, (
+        f"_TIER_COUNT_RE matches the PL-N sentence "
+        f"({_TIER_COUNT_RE.search(anaphoric).group(0)!r}), which "
+        f"test_trace_skill_states_plumber_findings_are_defects_not_a_tier "
+        f"requires verbatim. This module now demands and forbids one sentence. "
+        f"A count that stands for the SET is the target; an anaphoric "
+        f"quantifier over tiers named in the same sentence is not."
+    )
+    counted = "escalation exits by the same rule everywhere, and both tiers are defects"
+    assert _TIER_COUNT_RE.search(counted) is not None, (
+        "_TIER_COUNT_RE no longer matches 'both tiers are defects', the exact "
+        "spelling D-162, D-163 and D-164 all carried. Narrowing it past that "
+        "phrase leaves the rule with nothing to catch."
+    )
+
+
+@pytest.mark.parametrize("path", TIER_STATING_SURFACES, ids=_rel)
+def test_no_tier_stating_surface_counts_the_vocabulary(path: Path) -> None:
+    """C-078's absence half: a counted vocabulary is a re-typed vocabulary.
+
+    The count is the half that rots silently -- the members carry their own
+    names into the prose, but a number beside them is a second copy of `len()`
+    that no door reads and nothing updates.
+    """
+    hit = _TIER_COUNT_RE.search(_flat(path))
+    found = hit.group(0).lower() if hit else None
+    known = _KNOWN_TIER_COUNT_GAPS.get(_rel(path))
+    unrecorded, _ = _count_ledger_verdict(found, known)
+    assert unrecorded is None, {
+        "file": _rel(path),
+        "why": (
+            "a surface that enumerates the tier vocabulary must not also count "
+            "it: a count is a second copy of `len()` that no door reads and "
+            "nothing updates. " + _LEDGER_CONTRACT
+        ),
+        "declared_member_count": len(vocab.DEFECT_TIERS),
+        "counted_phrase_found": unrecorded,
+        "counted_phrase_recorded": known,
+    }
+
+
+# ---------------------------------------------------------------------------
+# fallout NFR-011 / FR-037 -- a requirement id in AGENT prose names ONE spec
+# ---------------------------------------------------------------------------
+#
+# D-150 re-attributed the docstrings it named and D-195 is the sibling surface
+# it left, under the class `predecessor-run-identifiers-inherited-into-shipped-
+# prose`. Three specs are installed side by side and number their rows
+# identically, so a BARE id in an agent file names no spec at all and resolves
+# to whichever one the reader happened to open. Two were live here:
+# `agents/teammate.md` cited `FR-041` for the failing-then-passing account,
+# which is convergence FR-041's ruling and fallout FR-041's invariant-test row,
+# and `agents/coverage-diff.md` cited `FR-004` for the symbol-placement rule,
+# which is process-fixes FR-004's.
+#
+# `tests/test_spec_id_convention.py` already owns that grammar and holds it
+# over `tests/`. Its roster is a glob of PYTHON modules, so no scan ever
+# reached `agents/*.md` -- the files a spawned agent actually reads, and the
+# half D-195 called out as reaching a reader outside the source tree. This is
+# that pin, applied to this casting's six agent surfaces, with the grammar
+# IMPORTED rather than re-typed: one qualifier tuple, one chain rule and one
+# refusal legend serve both directories, so a fourth spelling cannot be
+# accepted in one and refused in the other.
+#
+# Fenced code blocks need no special handling: `id_pattern` matches `XX-NNN`
+# with exactly three digits, and every id inside a fence in these six files is
+# a one- or two-digit fixture literal in a documented output shape
+# (`"spec_ref": "US-3"`, `# evidence-for: US-1`). Those are input handed to a
+# door, not a claim about which requirement a rule comes from, and the
+# convention module draws that same line for `spec_ref=` literals in Python.
+QUALIFIED_AGENT_SURFACES = NON_PROVE_STREAM_AGENTS + (TEAMMATE,)
+
+#: Surfaces KNOWN to cite an id bare, with the exact ids each leaves
+#: unqualified. Recorded rather than excused, and read SUBSET-shaped for the
+#: reason `_KNOWN_TIER_GAPS` is, stated once at `_LEDGER_CONTRACT`.
+#:
+#: The one entry is `spec-test-deriver.md`'s four `Shared GI-003
+#: <sentence|statement>` LABELS. Two facts hold it here rather than in a fix.
+#: First, it is not the D-195 shape: fallout GI-003 IS the code-blind row, so
+#: the cite resolves to the row the sentence is about, and only a reader who
+#: opens a predecessor spec lands elsewhere. Second, the label is byte-mirrored
+#: into `plugins/foundry/scripts/validate-test-observations.py` and
+#: `agents/test-observations-adjudicator.md`, neither of which any casting owns
+#: this run -- so qualifying this side alone would leave a label ASSERTING a
+#: mirror that no longer holds, which is worse than the bare id. The pair is
+#: carried in `concerns.md` to be qualified together.
+_KNOWN_BARE_AGENT_CITES: dict[str, frozenset[str]] = {
+    "plugins/foundry/agents/spec-test-deriver.md": frozenset({"GI-003"}),
+}
+
+#: The label that holds the exemption above open. When this text stops being
+#: shared, the exemption is collectable debt rather than a standing waiver.
+_MIRRORED_GI003_LABEL = "Shared GI-003 "
+_MIRRORED_GI003_PEER = (
+    FOUNDRY_ROOT / "scripts" / "validate-test-observations.py"
+)
+
+
+def _convention():
+    """The one owner of the requirement-id grammar, imported not re-typed.
+
+    Lazily, mirroring `tests/test_escalation.py`'s shim onto
+    `tests/test_observations.py`: the module is already collected under its own
+    name, so this binds the same object rather than a second copy of it.
+    """
+    from tests import test_spec_id_convention as convention
+
+    return convention
+
+
+def _bare_agent_cites(path: Path) -> frozenset[str]:
+    """Every requirement id `path` cites without naming a spec, as bare ids."""
+    convention = _convention()
+    return frozenset(
+        offence.split(" in ", 1)[0]
+        for offence in convention.unqualified_ids(_flat(path))
+    )
+
+
+@pytest.mark.parametrize("path", QUALIFIED_AGENT_SURFACES, ids=_rel)
+def test_every_requirement_id_in_agent_prose_names_its_spec(path: Path) -> None:
+    """fallout NFR-011: D-195's class, refused on the surfaces this casting owns.
+
+    The agent files are the shipped system prompt of every spawned agent, so a
+    cite here is read outside the source tree exactly as generated report prose
+    is -- which is why D-195 treats one as a defect and a code comment as an
+    observation. A bare id is the mechanism: it resolves to two different rows
+    and which one the reader lands on is decided by which spec they opened.
+    """
+    convention = _convention()
+    recorded = _KNOWN_BARE_AGENT_CITES.get(_rel(path), frozenset())
+    unrecorded, _ = _ledger_verdict(_bare_agent_cites(path), recorded)
+    assert not unrecorded, {
+        "file": _rel(path),
+        "why": (
+            "a requirement id in agent prose must name the spec it cites: "
+            "three specs are installed side by side and number these rows "
+            "differently, so a bare id resolves to whichever one the reader "
+            "opened. " + _LEDGER_CONTRACT
+        ),
+        "unqualified": sorted(unrecorded),
+        "accepted_spellings": convention.QUALIFIER_PHRASE,
+        "chain_rule": convention.CHAIN_PHRASE,
+    }
+
+
+def test_the_qualified_agent_surface_roster_is_derived_and_not_vacuous() -> None:
+    """Floor check: the scan above is vacuous over an empty roster.
+
+    Derived from `NON_PROVE_STREAM_AGENTS`, which is itself derived, so a file
+    that drops out of the stream roster silently drops out of this one too. The
+    six members are asserted IN and the PROVE agent OUT, because six green
+    parametrisations over five files look exactly like six over six.
+    """
+    expected = {
+        TRACER,
+        FLOW_TRACER,
+        RESEARCH_AUDITOR,
+        COVERAGE_DIFF,
+        SPEC_TEST_DERIVER,
+        TEAMMATE,
+    }
+    missing = sorted(_rel(p) for p in expected - set(QUALIFIED_AGENT_SURFACES))
+    assert not missing, (
+        f"{missing} no longer derive into QUALIFIED_AGENT_SURFACES, so their "
+        f"requirement ids are unscanned. Restore the file's stream declaration "
+        f"rather than hard-coding this roster."
+    )
+    assert ASSAYER not in QUALIFIED_AGENT_SURFACES, (
+        "agents/assayer.md derived into QUALIFIED_AGENT_SURFACES. It is casting "
+        "11's file; scanning it here would fail this module for prose another "
+        "casting owns."
+    )
+
+
+def test_the_agent_scan_advertises_every_qualification_the_grammar_accepts() -> None:
+    """fallout NFR-011: the refusal legend is derived from the owner's table.
+
+    The `_PYTEST_DISCOVERY_PHRASE` shape, one axis over. A fourth spelling
+    added to `QUALIFIERS` is advertised here the moment it exists, and a
+    legend that quietly printed a narrower set than the scan accepts -- the
+    failure that leaves a teammate correcting a cite into a spelling the pin
+    still refuses -- cannot be written.
+    """
+    convention = _convention()
+    legend = convention.QUALIFIER_PHRASE
+    for qualifier in convention.QUALIFIERS:
+        assert qualifier.strip() in legend, (
+            f"{qualifier.strip()!r} is accepted by the scan and absent from the "
+            f"legend this module prints. Derive the legend rather than typing "
+            f"it: tests/test_spec_id_convention.py#QUALIFIER_PHRASE."
+        )
+        assert convention.QUALIFIER_SPECS[qualifier] in legend, (
+            f"{qualifier.strip()!r} is advertised without the spec it names, so "
+            f"the refusal tells a reader which spelling to use and not which "
+            f"spec they are citing."
+        )
+
+
+def test_no_recorded_bare_agent_cite_outlives_the_mirror_that_holds_it() -> None:
+    """The exemption ledger, checked from the other side.
+
+    The cheapest way to make the scan green is to record the id, so the ledger
+    is read back: a recorded id the file no longer cites bare is collectable
+    debt, and so is an exemption whose stated reason has gone. Both are
+    reported rather than asserted, per `_LEDGER_CONTRACT` -- the entry names
+    files no casting owns this run, and failing here would make retiring it an
+    edit to somebody else's tree.
+    """
+    collectable: dict[str, object] = {}
+    for rel, recorded in _KNOWN_BARE_AGENT_CITES.items():
+        path = REPO_ROOT / rel
+        _, retired = _ledger_verdict(_bare_agent_cites(path), recorded)
+        if retired:
+            collectable[rel] = sorted(retired)
+
+    peer = _MIRRORED_GI003_PEER
+    if peer.is_file() and _MIRRORED_GI003_LABEL not in _flat(peer):
+        collectable[_rel(peer)] = (
+            f"no longer carries {_MIRRORED_GI003_LABEL!r}, so the mirror the "
+            f"spec-test-deriver exemption rests on is gone"
+        )
+
+    _report_collectable_debt("_KNOWN_BARE_AGENT_CITES", collectable)

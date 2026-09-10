@@ -1,0 +1,31 @@
+{
+  "classes": {
+    "FALSE_DOCUMENTED_CONTRACT": {
+      "proposal": "one structural pass over the contract docstrings",
+      "escalated_at_cycle": 2,
+      "status": "CLEARED",
+      "exit_reason": "clean_cycles",
+      "cleared_at_cycle": 5,
+      "structural_packets_dispatched": 1,
+      "live_clean_cycles": 2
+    },
+    "UNWIRED_TOOL": {
+      "proposal": "register the two unreachable tools",
+      "escalated_at_cycle": 3,
+      "status": "CLEARED",
+      "exit_reason": "budget",
+      "cleared_at_cycle": 6,
+      "structural_packets_dispatched": 2,
+      "live_clean_cycles": 0
+    },
+    "THIN_HANDLER": {
+      "proposal": "fill out the stubbed branches",
+      "escalated_at_cycle": 6,
+      "status": "ESCALATED",
+      "exit_reason": null,
+      "cleared_at_cycle": null,
+      "structural_packets_dispatched": 1,
+      "live_clean_cycles": 0
+    }
+  }
+}

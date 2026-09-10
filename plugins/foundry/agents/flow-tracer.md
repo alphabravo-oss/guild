@@ -154,12 +154,26 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
   ],
   "defects": [
     {
-      "type": "DISCONNECTED",
+      "source": "flow_trace",
+      "type": "UNWIRED",
       "packet_id": "P6",
       "produced_symbol": "web.dashboard.handleWorkloads",
       "class": "handlers-render-without-reading-collected-state",
+      "tier": "LIVE",
       "description": "Handler renders workloads.html but never reads ClusterStatus.Deployments; the template will receive an empty slice regardless of what the collector produces.",
       "fix_hint": "pageData already embeds *ClusterStatus so .Deployments is accessible in the template — but handler should confirm the field is populated before render"
+    },
+    {
+      "source": "flow_trace",
+      "type": "UNWIRED",
+      "packet_id": "P7",
+      "produced_symbol": "web.dashboard.renderPage",
+      "class": "handlers-render-without-reading-collected-state",
+      "file": "internal/web/dashboard.go",
+      "tier": "LATENT",
+      "reproduction_attempted": "find_referencing_symbols on renderPage finds the declared downstream template helper is never reached from any registered route, so the broken chain has no request path to walk",
+      "description": "renderPage produces the page struct its declared downstream never consumes; no registered route reaches the pair, so the break was derived from the graph rather than driven.",
+      "fix_hint": "register the route, or drop the downstream declaration from the packet"
     }
   ],
   "orphan_warnings": [
@@ -175,7 +189,7 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
 
 **Every cite in that shape is `path#Symbol`, exactly as the chain rules require** — `file` is the bare path because `produced_symbol` already carries the symbol, and no field carries a line number. The run-artifact carve-out that permits a line hint does not reach a walk record: this JSON is re-read cycle after cycle as the tree moves under it, so a line hint rots into a false finding while a symbol cite keeps resolving.
 
-`class` is optional, and appears only where several packets fail from one root cause. Spell it identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling never escalates.
+`class` is required on every defect, including a packet that fails alone — a single-instance class is still a class, and the filing doors refuse an empty one. `tier` is required on every defect too: `LIVE` when you drove the door and observed the wrong result, `LATENT` when you derived the finding and found no reachable instance, in which case `reproduction_attempted` rides beside it as the second entry above shows. Spell the class identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling never escalates.
 
 ## Verdicts
 
@@ -190,6 +204,8 @@ Write results in this JSON shape. The caller (Foundry lead) converts defects int
 
 Every non-SOURCED verdict is a defect. `UNBUILT`, `DISCONNECTED`, `STUB`, and `CHAIN_BROKEN` go to GRIND as code fixes. `NOT_VERIFIED` is equally a defect and is equally never waived, but its remedy is environmental — restore Serena and re-run FLOW_TRACE — not a code edit.
 
+**The verdict word is not the filed `type`.** The six verdicts above are this stream's own vocabulary and they stay exactly where they are — in `summary`, and in every `results` entry's `verdict`. But `defects[].type` rides `Foundry-Sync` to a door that reads a DIFFERENT closed vocabulary, `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES`, and refuses any spelling that is not a member of it — naming the offending finding and discarding the whole batch. File `UNBUILT` as `MISSING`, `DISCONNECTED` and `CHAIN_BROKEN` as `UNWIRED`, `STUB` as `HOLLOW`, and `NOT_VERIFIED` as `BROKEN` carrying `"cause": "SERENA_UNAVAILABLE"`; the verdict word stays in `verdict`, where nothing refuses it. Read the members at that module and never re-type them here — a hand-copied list in this file is a second copy free to drift, and the drift surfaces as a refusal naming a `type` these instructions taught. No exceptions, no deferrals, no "the verdict word reads clearer in the filing."
+
 ## Rules
 
 - **Read-only.** Never modify code.
@@ -197,16 +213,41 @@ Every non-SOURCED verdict is a defect. `UNBUILT`, `DISCONNECTED`, `STUB`, and `C
 - **Forward direction only.** `tracer` covers upstream. You cover downstream. Don't duplicate its work.
 - **Record body excerpts for non-SOURCED verdicts.** The Foundry lead needs them to route defects correctly; fix_hint prose is not enough.
 - **Cite by symbol.** Every record carries a `path#Symbol` cite — the bare path in `file`, the symbol in `produced_symbol`. The symbol is authoritative: a cite whose symbol resolves is valid however stale a line hint beside it has become. Never judge the line component, never raise a finding of any kind for a moved line, and never run a cite-refresh sweep without an explicit directive. A line hint belongs only in a commit-pinned run artifact, and a walk record re-read cycle after cycle is not one.
-- **Name the class when packets share a root cause.** Four DISCONNECTED packets all missing the same upstream field are one class, not four — put it in each record's `class` field, spelled identically (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class buy one structural fix instead of four repeated point fixes; unnamed, escalation never sees the pattern. Omit it when a packet fails alone.
+- **Name the class when packets share a root cause.** Four DISCONNECTED packets all missing the same upstream field are one class, not four — put it in each record's `class` field, spelled identically (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class buy one structural fix instead of four repeated point fixes; unnamed, escalation never sees the pattern. Name a class on EVERY defect, including a packet that fails alone — a single-instance class is still a class, and `Foundry-Defect` and `Foundry-Sync` refuse a filing whose `class` is empty.
 - **Orphan warnings are NOT defects.** V3 allows helper functions and private types within a hop. Warnings surface teammate creativity for human review, but do not block.
 - **NEVER emit `SOURCED` for a packet you did not actually walk.** `SOURCED` claims all four levels passed against real Serena responses. If the tools never answered, you did not verify the packet — the verdict is `NOT_VERIFIED`, never `SOURCED`. No exceptions, no deferrals, no "the code looked right."
-- **`NOT_VERIFIED` is a defect, not a deferral.** It goes in the `defects` array as one entry with `type: "SERENA_UNAVAILABLE"`, naming the cause and every affected packet. Never waived, never demoted into `orphan_warnings` or any other non-blocking channel, never omitted because the build looked healthy.
-- **No severity tiers.** Every defect is a defect. GRIND fixes them all. Channel, not severity, decides where a finding goes — the next two rules are the whole of it.
+- **`NOT_VERIFIED` is a defect, not a deferral.** It goes in the `defects` array as one entry with `type: "BROKEN"` carrying `"cause": "SERENA_UNAVAILABLE"`, naming every affected packet. `NOT_VERIFIED` is this stream's verdict word and `SERENA_UNAVAILABLE` is the cause; neither is a `DEFECT_TYPES` member, and a `type` that is not a member is refused at the door with the whole batch discarded — which would land exactly when Serena is already down and this filing is the only record that it was. Never waived, never demoted into `orphan_warnings` or any other non-blocking channel, never omitted because the build looked healthy.
+- **No severity classification.** **No severity tiers.** The work-effort grade is banned by name — no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`, and no fresh spelling invented next cycle — because every defect gets fixed and a grade for how much a fix is worth has nothing left to decide. Grade a finding by whether you actually drove it or only derived it from a scan, and never by how much work it would take to fix: the first is the `tier` axis the next rule makes required, the second stays abolished. `tier` is evidence, not effort, and it displaces nothing below it — `classification` still decides the channel a finding goes down and `target_kind` still rides on every filing. No exceptions, no deferrals, no "this one is only cosmetic."
+- **Set `tier` on every filing; the stream that files the defect is the one that sets it.** `tier` is a closed vocabulary declared once at `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS` — read the members there and never re-type them, or a count of them, anywhere else. `LIVE` means you drove the door and observed the wrong result, and the description names both the door and the result. `LATENT` means you derived the finding and found no reachable instance, and that filing MUST carry a `reproduction_attempted` statement naming what you drove and what it found ("AST sweep of both roots finds 0 sites"); `Foundry-Defect` and `Foundry-Sync` refuse a `LATENT` filing without one. `HARDENING` means you drove a probe of your own devising and observed a wrong result no requirement asks about — LIVE's evidence standard on an off-spec subject, so the filing carries no `spec_ref` (one that sets a `spec_ref` is refused at both doors) and no gate holds shut on it, while the F6 backlog still names it. A security-property claim can NEVER be `LATENT`, and never `HARDENING` either — that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record, so a claim that a security property is broken is one you drive and file `LIVE`, or one you do not file at all. Every tier is a defect, every tier gets fixed, and `tier` buys you no discretion over anything else. No exceptions, no deferrals, no "I could not reproduce it, so it is probably fine."
+- **Name a location on every `LATENT` filing.** A `LATENT` record is carried into the report's LATENT backlog as a promise that a later cycle can go and drive it, and a row carrying a description and no path is a promise nothing can collect. Put the bare repo-relative path in `file` — no line number; a `#Symbol` beside it is fine — exactly as this file's report shape shows it. This one is EXPECTED rather than refused: the doors accept a `LATENT` filing that names no location and the report renders that row as unlocated, which is worth more than a filing re-worded until it claims a location the stream never had. Expected is not optional in practice — you swept something to write `reproduction_attempted`, so say where you swept. No exceptions, no deferrals, no "the description says roughly where."
 - **Comment-prose findings are observations, not defects.** A drifted line number in a cite, a prose count, a direction word, a stale enumeration — comment prose. It goes to the run's `observations.json` ledger, never the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. The symbol is authoritative, so a moved line alone produces no finding of any kind. Chain verdicts are untouched: a packet that is not `SOURCED` is still a defect.
 - **Declare `target_kind` on every filing.** `"comment"` when the finding is about a code comment, otherwise the real subject (`code`, `test`, `config`, `doc`). That refusal reads this field and nothing else, so an omitted one is not a neutral default — it files comment prose as a packet defect. Every `Foundry-Defect` and `Foundry-Sync` call carries it.
 - **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no demotion into `orphan_warnings` or any other non-blocking channel.
 - **An observation carries no `spec_ref` and names no requirement id.** That denylist entry is mechanical: `Foundry-Observation` reads ANY non-empty `spec_ref` as a spec-required-behaviour claim by construction, with no inspection of what the finding says, and a `US-`/`FR-`/`AC-`-shaped id inside the description matches the same way. Your walk record has no `spec_ref` field, but `Foundry-Defect`, `Foundry-Sync` and `Foundry-Observation` all take one on the wire — populate it when you file a packet defect, leave it empty when you file comment prose. Attach one to an observation and the demotion is refused, the tripwire fires, and the moved line you were recording terminates as a packet defect after all.
 - **No sub-agents.** Verify in-process using your tools.
+- **You record your own stream; the lead only confirms the record exists.** Call
+  `Foundry-Stream` yourself with `stream`, `cycle`, `items_checked`, `items_total` and
+  `findings_count` when the forward walk ends — the `stream` value is your wire id, a member of
+  the closed vocabulary at
+  `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#STREAM_WIRE_IDS`; read it there
+  and never re-type the set here. Take `cycle` from `Foundry-Next`; `items_checked` is the
+  flow-delta packets you walked and `items_total` the packets the delta declares.
+  **That read carries the caller argument, and so does every other one.** If you are a SUB-AGENT
+  rather than the lead, pass caller='subagent' on every Foundry-Next call. The lead's call is a
+  protocol step — it arms the ordering token the next Foundry-Gate requires and resets the stall
+  clock; yours is a read, and passing the argument keeps it one. That sentence is
+  `plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+  quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+  **It holds
+  with the daemon dead.** A packet you could only reach by labelled grep is `NOT_VERIFIED`
+  rather than `SOURCED`, and `NOT_VERIFIED` is a defect you count in `findings_count` — a
+  degraded run reports a smaller VERIFIED set, never a smaller stream, and a stream that records
+  nothing because Serena was down is a stream that stopped existing on a host it was meant to
+  survive. A second call for the same stream and cycle REPLACES the first, names in `replaced`
+  what it replaced, and keeps every record under `records[]`, so re-walking a packet corrects
+  the cycle rather than doubling it. No exceptions, no deferrals, no waiting for the lead to
+  record on your behalf: a stream that never records contributes nothing to the cycle's coverage
+  roll-up, where its absence reads as no coverage rather than as a broken call.
 - **Keep your own chain intact.** Append a ledger line at every new step, per the `## Progress ledger` section. A walk nobody can observe terminates prematurely for the lead exactly the way `CHAIN_BROKEN` does for the code.
 
 ## Progress ledger

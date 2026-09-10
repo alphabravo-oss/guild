@@ -4,7 +4,7 @@ description: Deep browser-based UI audit. Clicks every button, fills every form,
 user_invocable: true
 ---
 
-> **Foundry integration:** This skill is invoked by Foundry's F2 INSPECT phase as the `sight` stream. SIGHT runs in the main thread (Playwright MCP requirement). When run from F2, findings become defects in `foundry-archive/{run}/defects.json`. When run standalone, findings are written as a report. Skip with `--no-ui`.
+> **Foundry integration:** This skill is invoked by Foundry's F2 INSPECT phase as the `sight` stream. SIGHT runs in the main thread (Playwright MCP requirement). When run from F2, findings are filed through the `Foundry-Defect` door and land in `foundry-archive/{run}/defects.json`; sight never writes that file itself. When run standalone, findings are written as a report. Skip with `--no-ui`.
 
 # /foundry:sight — Deep Browser UI Audit
 
@@ -320,8 +320,9 @@ After any CREATE, UPDATE, or DELETE action that shows success in the UI:
    ```javascript
    await fetch('/api/items/' + id).then(r => r.json())
    ```
-5. If the data doesn't persist across navigation, that's a CRITICAL finding — the UI
-   showed success but the backend didn't actually save
+5. If the data doesn't persist across navigation, that is a `LIVE` finding — you
+   drove the flow and observed the wrong result: the UI showed success but the
+   backend didn't actually save
 
 This catches the most insidious bug class: forms that show a success toast but don't
 actually call the API, or APIs that return 200 but don't write to the database.
@@ -402,9 +403,8 @@ Elements exercised: {N}
 Total interactions: {N}
 
 ## Summary
-- Critical issues: {N}
-- Major issues: {N}
-- Minor issues: {N}
+- Findings driven (`LIVE`): {N}
+- Findings derived (`LATENT`): {N}
 - Console errors: {N} (unique), {N} (total)
 - Network failures: {N}
 - Accessibility: {N}
@@ -535,38 +535,48 @@ If the app is running, test the relevant endpoint.
 
 #### Classification
 
-**Minor (auto-implement):** Small UX improvements that:
-- Don't require new API endpoints
-- Don't require new data models
-- Don't require new pages or routes
-- Can be done with existing data + frontend-only changes
+The three layers above are what split a suggestion, and the split is by
+EVIDENCE — what the running application let you reach — never by an estimate of
+how much work a fix would be. A grade for how much a fix is worth has nothing
+left to decide here, because every defect this stream files gets fixed.
+
+**A finding** — the improvement is reachable in the application as it stands, so
+a GRIND cycle can repair it without new surface. Files as a defect in Step 4,
+carrying a `tier` like every other finding.
+- `spec_supported: yes | ambiguous`, `code_supported: yes | partial`, and the
+  runtime layer returned the data the change needs
 - Examples: loading spinners, error toasts, empty state messages,
   confirmation dialogs, inline form validation
 
-**Major (backlog):** Significant feature additions that:
-- Require new API endpoints or backend changes
-- Require new data models or database schema changes
-- Require new pages or major navigation changes
-- Would take more than a single foundry casting to implement
-- Examples: new dashboard page, export functionality, notification system
+**A proposal** — a layer came back unsupported, so there is no instance in the
+running application to drive and nothing a GRIND cycle could repair without
+building new surface first. Goes to the suggestion backlog file for a human to
+decide on, and NEVER into the defect ledger.
+- `code_supported: no` — no route, no handler, no field to read
+- Examples: a new dashboard page, export functionality, a notification system
+
+A proposal's `Effort estimate` below is an attribute of a user-facing proposal
+that a human reads while deciding whether to ask for it. It is not a `tier`, it
+is not recorded on any filing, and it routes nothing.
 
 #### Output
 
-**Minor suggestions** → added to the audit report as `s-N` items (lowercase).
-When invoked as foundry SIGHT, these are automatically converted into defects
-for the next GRIND cycle.
+**Findings** → added to the audit report as `s-N` items (lowercase). When
+invoked as foundry SIGHT, each is filed as a defect in Step 4 through
+`Foundry-Defect`, carrying a `tier` like every other finding this stream
+reports, for the next GRIND cycle.
 
-**Major suggestions** → written to the suggestion backlog file at
+**Proposals** → written to the suggestion backlog file at
 `foundry-archive/{run}/sight/suggestion-backlog.md` (or `sight-reports/suggestion-backlog.md` standalone). Format:
 
 ```markdown
 # Suggestion Backlog: {url}
 Date: {date}
 Total suggestions: {N}
-Auto-implemented: {N} (minor)
-Pending review: {N} (major)
+Filed as defects: {N}
+Awaiting user approval: {N}
 
-## Pending Suggestions (Major — requires user approval)
+## Pending Proposals (requires user approval)
 
 ### S-1: {title}
 - **Page**: {url}
@@ -577,12 +587,13 @@ Pending review: {N} (major)
   - Runtime: {yes/no/error/untested}
 - **Effort estimate**: {small/medium/large}
 
-## Auto-Implemented Suggestions (Minor)
+## Filed as Defects
 
 ### s-1: {title}
 - **Page**: {url}
-- **What was added**: {description}
-- **Cycle**: {which foundry cycle it was implemented in}
+- **What was filed**: {description}
+- **Tier**: {LIVE | LATENT}
+- **Cycle**: {which foundry cycle it was filed in}
 ```
 
 The backlog accumulates across INSPECT cycles and is presented in the final
@@ -595,11 +606,75 @@ foundry report (F6: DONE).
 
 **Foundry SIGHT stream mode (READ-ONLY):**
 - **DO NOT fix findings. DO NOT spawn agents. This phase is READ-ONLY.** Fixes happen in F3 GRIND.
-- Convert findings into defect entries via the foundry MCP `Foundry-Defect` tool (one call per finding) — or write them directly to `foundry-archive/{run}/defects.json` if running outside an MCP session.
+- Convert findings into defect entries via the foundry MCP `Foundry-Defect` tool (one call per finding), each carrying `tier`, `defect_class`, `target_kind` and — on a `LATENT` filing — `reproduction_attempted`, per the filing rules below.
+- **Never write `foundry-archive/{run}/defects.json` yourself.** That file is the server's. A hand-written entry reaches the ledger without passing the tier check, the class check or the `SECURITY_PROPERTY_CLAIM` denylist, so a finding no door ever saw is indistinguishable there from one that was refused nothing — which is the whole guarantee those doors exist to give. Outside an MCP session you have no filing door at all: write the audit report and stop, and never hand-edit the ledger to stand in for one.
 - Mark the stream complete via the foundry MCP `Foundry-Stream` tool with `stream='sight'`, `cycle=<the run's current cycle, from Foundry-Next>` and `items_checked=<count>`. All three are REQUIRED — a call omitting any one is rejected at the MCP boundary and this stream records no coverage for the cycle at all. The roll-up is keyed by the server's own cycle counter; the value you pass is retained on the record for audit only.
-- Include minor UX suggestions as additional defects for GRIND.
-- Append major UX suggestions to the backlog file.
+- **That read carries the caller argument, and so does every other one.** If you are a
+  SUB-AGENT rather than the lead, pass caller='subagent' on every Foundry-Next call. The
+  lead's call is a protocol step — it arms the ordering token the next Foundry-Gate requires
+  and resets the stall clock; yours is a read, and passing the argument keeps it one. That
+  sentence is
+  `plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+  quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+
+- **You record your own stream; the lead only confirms the record exists.** Pass
+  `items_total` and `findings_count` beside the three required arguments — the pair is
+  what turns "this stream ran" into "this stream covered N of M routes", and a record
+  carrying only `items_checked` reports a numerator with no denominator. A second call
+  for the same stream and cycle REPLACES the first, names in `replaced` what it
+  replaced, and keeps every record under `records[]`, so a second crawl after a login
+  fix corrects the cycle's coverage rather than doubling it. Nobody records on your
+  behalf: a crawl that ends without the call leaves the cycle reading as no UI coverage
+  at all.
+- File every UX FINDING as a defect for GRIND, with a `tier`, exactly as you file anything else this stream reports. Proposals stay in the backlog file and never enter the defect ledger. Nothing here routes on how large a fix looks.
 - Flow: SIGHT audit (you are here) → INSPECT aggregation → GRIND fixes → next cycle.
+
+#### Filing rules
+
+These are the rules every defect-filing stream carries, word-identically. SIGHT
+files into the same ledger through the same doors, so it holds the same rules —
+a browser audit is a different lens on the code, not a different contract with
+the defect ledger.
+
+- **Name the class when instances share a root cause.** Three HOLLOW verdicts behind one missing middleware are one class, not three unrelated defects — put the shared root cause in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). A class that draws new defects for three consecutive cycles escalates to a single structural-fix packet, and that only fires if you named it — `systemic_patterns` is your prose summary and nothing downstream consumes it. Name a class on EVERY defect, including one that genuinely stands alone — a single-instance class is still a class, and `Foundry-Defect` and `Foundry-Sync` refuse a filing whose `class` is empty. Never invent a class to bundle findings that do not share a cause.
+- **No severity classification.** **No severity tiers.** The work-effort grade is banned by name — no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`, and no fresh spelling invented next cycle — because every defect gets fixed and a grade for how much a fix is worth has nothing left to decide. Grade a finding by whether you actually drove it or only derived it from a scan, and never by how much work it would take to fix: the first is the `tier` axis the next rule makes required, the second stays abolished. `tier` is evidence, not effort, and it displaces nothing below it — `classification` still decides the channel a finding goes down and `target_kind` still rides on every filing. No exceptions, no deferrals, no "this one is only cosmetic."
+- **Set `tier` on every filing; the stream that files the defect is the one that sets it.** `tier` is a closed vocabulary declared once at `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS` — read the members there and never re-type them, or a count of them, anywhere else. `LIVE` means you drove the door and observed the wrong result, and the description names both the door and the result. `LATENT` means you derived the finding and found no reachable instance, and that filing MUST carry a `reproduction_attempted` statement naming what you drove and what it found ("AST sweep of both roots finds 0 sites"); `Foundry-Defect` and `Foundry-Sync` refuse a `LATENT` filing without one. `HARDENING` means you drove a probe of your own devising and observed a wrong result no requirement asks about — LIVE's evidence standard on an off-spec subject, so the filing carries no `spec_ref` (one that sets a `spec_ref` is refused at both doors) and no gate holds shut on it, while the F6 backlog still names it. A security-property claim can NEVER be `LATENT`, and never `HARDENING` either — that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record, so a claim that a security property is broken is one you drive and file `LIVE`, or one you do not file at all. Every tier is a defect, every tier gets fixed, and `tier` buys you no discretion over anything else. No exceptions, no deferrals, no "I could not reproduce it, so it is probably fine."
+- **Comment-prose findings are observations, not defects.** A drifted line number in a cite, a count stated in prose, a direction word ("above", "below", "the following"), an enumeration that no longer matches the thing it enumerates — that class is comment prose. Record it in the run's `observations.json` ledger, never in the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. This is a channel, not a severity tier, and it buys you no discretion over anything else.
+- **Declare `target_kind` on every filing.** That refusal is not automatic — it fires only when your call DECLARES what the finding is about: `target_kind: "comment"` when the verdict concerns a code comment, otherwise what the subject really is (`code`, `test`, `config`, `doc`). Omit the field and the server has nothing to judge, so a line-drift finding is accepted into `defects.json` and the split above did nothing. Every `Foundry-Defect` and `Foundry-Sync` call carries it, on every verdict, including the ones you are certain about.
+
+#### The shape you file
+
+```json
+{
+  "defects": [
+    {
+      "id": "F-1",
+      "type": "BROKEN",
+      "page": "/projects/42/settings",
+      "element": "Save button (button[type=submit])",
+      "description": "Clicking Save posts the form and the page returns to its pre-edit values with no error shown. Console records `PATCH /api/projects/42 422` and the response body names `slug` as invalid; nothing surfaces in the UI.",
+      "class": "form-submit-swallows-the-server-error",
+      "tier": "LIVE",
+      "target_kind": "code",
+      "evidence": "console-logs-cycle-3.md#CE-1; screenshot projects-42-settings-after-save.png"
+    },
+    {
+      "id": "F-2",
+      "type": "MISSING",
+      "page": "/projects/42/exports",
+      "element": "Export list (empty state)",
+      "description": "The export list renders nothing at all when a project has no exports — no row, no message, no illustration — so an empty list is indistinguishable from a list that failed to load.",
+      "class": "list-views-ship-without-an-empty-state",
+      "tier": "LATENT",
+      "target_kind": "code",
+      "reproduction_attempted": "Seeded a project with zero exports and loaded the route in the browser; the list rendered empty with no network error and no console output, so there was no failing request to drive and no reachable instance of the load failure this would otherwise be confused with",
+      "evidence": "screenshot projects-42-exports-empty.png"
+    }
+  ]
+}
+```
+
+`class` is required on every defect, including one that stands alone — a single-instance class is still a class, and the filing doors refuse an empty one. `tier` is required on every defect too: `LIVE` when you drove the element in the browser and observed the wrong result, `LATENT` when you derived the finding and found no reachable instance, in which case `reproduction_attempted` rides beside it as the second entry above shows. Spell the class identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
 
 ## Display Mode
 

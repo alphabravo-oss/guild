@@ -47,6 +47,56 @@ root containers stay required because both pre-D-071 schemas required them.
 it is what makes "there is no severity field, and adding one is a vocabulary
 violation" (stated in both skills) enforceable at the validator rather than
 only in prose. tests/test_findings_schemas.py drives that both ways.
+
+WHY `tier` IS NOT THE ABOLISHED AXIS RETURNING (GI-001 / AC-009)
+----------------------------------------------------------------
+GI-001 widens this item with an optional `tier`, and the obvious objection is
+that a closed enum on a finding is exactly the shape D-041 removed. It is not,
+and the distinction is the whole point of the axis:
+
+    the removed axis graded HOW MUCH A DEFECT MATTERED, and its failure mode
+    was a real defect written down as "minor" and never fixed;
+    `tier` records WHAT THE FILING STREAM DID — drove the door and saw the
+    wrong result (LIVE), looked and found nothing (LATENT), or drove a probe
+    of its own devising and saw the wrong result (HARDENING).
+
+Every tier is a defect, every one gets fixed, and none of them is an excuse to
+leave one open. The tier decides only which GATE a still-open instance blocks.
+A stream cannot use it to downgrade its own finding, because the value is a
+claim about evidence it is answerable for — a LATENT or HARDENING filing
+without a `reproduction_attempted` statement is REFUSED at the door (CT-001),
+which no grade ever was.
+
+fallout D-171 — THIS PARAGRAPH IS WHY THE ENUM BEING DERIVED IS NOT ENOUGH.
+It enumerated the LIVE and LATENT cases only and closed by calling them a
+pair, while `tier`'s enum below has been `sorted(vocab.DEFECT_TIERS)` — three
+members — since HARDENING landed. That is the D-093 shape exactly, in the
+module whose entire job is to keep this validator from drifting from the
+documents it derives from: the enum was already derived and the PROSE was not.
+The `reproduction_attempted` description was stale in the same way, scoped to
+LATENT alone when both doors refuse a HARDENING filing without one, which is
+the half D-163 and D-164 found still standing on the PROVE and TRACE skills.
+
+The count is not spelled here any more, and that is deliberate rather than
+stylistic. A sentence calling the tiers a pair is a hand-maintained copy of
+`len(DEFECT_TIERS)`, and this file is one import away from the frozenset it
+was contradicting — the shortest distance in the tree between a vocabulary
+and a statement of its size. `tests/test_vocab.py` now sweeps this module for
+the retired member-count spellings for that reason, so the retired sentences
+are not quoted anywhere in this file: a surface swept for a phrase cannot be
+the surface that reproduces it.
+
+`additionalProperties: False` is unchanged, so this widening is additive and
+narrows nothing: the abolished axis is still rejected here by name. The
+matching widening of `_ALLOWED_ENUM_KEYS` in tests/test_protocol_prose.py
+covers the SKILL.md blocks, which this module does not read.
+
+`tier` IS on the finding item's `required` list, beside `class`. It was not
+until D-063, and the gap was exactly the one this module exists to close: both
+skills' blocks declared the axis optional, this module derives its `required`
+list from those blocks, and the result was a validator laxer than the door it
+feeds. The blocks moved first and this list followed — the only direction the
+derivation rule permits. The full account is recorded beside the list itself.
 """
 
 from __future__ import annotations
@@ -63,10 +113,123 @@ from foundry_mcp.schemas import vocab
 # three copies would be the drift this module was just fixed for.
 # ---------------------------------------------------------------------------
 
+
+def _finding_tier_description() -> str:
+    """The `tier` property's published description, tiers NAMED from vocab.
+
+    fallout D-171 — this is a WIRE STRING, which is why the stale version
+    mattered more than the docstring above it. It spelled out the LIVE and
+    LATENT cases, called them a pair and denied being a work-effort grade,
+    while the `enum` on the very next line was already `sorted(DEFECT_TIERS)`,
+    three members. A client reads this before it ever calls, so the contract
+    documented one fewer tier than it accepted — the same D-093 shape
+    `server.py` was fixed for, in the module whose entire job is keeping this
+    validator from drifting from what it derives from. The retired sentence is
+    described rather than quoted here, because this file is swept for it.
+
+    NO PER-MEMBER CLAUSE TABLE HERE, deliberately. `server.py`'s two filing
+    doors have one (`_TIER_WIRE_CLAUSES`, pinned member-for-member against
+    `DEFECT_TIERS` in `tests/orchestration/test_gates.py`), and a second table
+    in this module would agree today and be the next D-093 — it is the exact
+    duplication this module exists to prevent. The doors INSTRUCT a stream on
+    what evidence to bring; this schema VALIDATES what a skill emitted. So the
+    members are named from the frozenset and their per-tier evidence standard
+    is left to the door that states it, which means nothing here is counted or
+    enumerated by hand and a fourth tier reaches this string unedited.
+    """
+    return (
+        "Evidence tier: what the filing stream is answerable for having done. "
+        f"One of {', '.join(sorted(vocab.DEFECT_TIERS))}. Not a work-effort "
+        "grade — every tier is a defect and every one gets fixed; the tier "
+        "decides only which gate a still-open instance blocks. Foundry-Defect "
+        "and Foundry-Sync publish the per-tier evidence standard."
+    )
+
+
+def _finding_reproduction_description() -> str:
+    """The `reproduction_attempted` property's description, scope DERIVED.
+
+    fallout D-171 / D-163 / D-164 — this read "Required on a LATENT filing ...
+    The server refuses a LATENT filing without one", which is the stale
+    LATENT-only scoping found on the PROVE and TRACE skills in the same cycle.
+    Both doors refuse a HARDENING filing without one too: a probe nobody asked
+    for is trusted on its reproduction and nothing else.
+
+    The scope comes from `vocab.TIERS_OWING_A_REPRODUCTION` rather than from a
+    tier name typed here, so the sentence cannot fall behind the obligation
+    again — which is precisely how it fell behind the first time.
+    """
+    tiers = " or ".join(vocab.TIERS_OWING_A_REPRODUCTION)
+    return (
+        f"Required when tier is {tiers} (CT-001/FR-004): what was driven and "
+        "what it found. For a LATENT filing the negative result IS the "
+        "evidence (e.g. 'AST sweep of both roots finds 0 sites'); for a "
+        "HARDENING filing it is the probe you drove and the wrong result it "
+        "produced. The server refuses such a filing without one; "
+        "vocab.reproduction_attempted_problem is that check."
+    )
+
+
 _FINDING_ITEM: dict = {
     "type": "object",
     # Verbatim from the `required` list both skills' blocks carry.
-    "required": ["id", "classification", "type", "file", "symbol", "description"],
+    #
+    # `class` JOINED that list in D-003 (FR-007/AC-010). Driven: a finding
+    # carrying every other required field and no `class` validated cleanly
+    # here, and then `validate_defect_filing` REFUSED it -- "Missing class:
+    # None is not a non-empty root-cause class name". A validator laxer than
+    # the door it feeds tells a stream its report is conforming and lets the
+    # filing fail one surface later, which is the drift this module exists to
+    # close. Requiring it here covers temper too, whose T-N findings sync
+    # through the same door and whose SKILL.md ships no block of its own -- an
+    # exemption shaped to fit temper would be the same defect one stream over.
+    #
+    # WHY `tier` IS ON THIS LIST BESIDE `class` (D-063 / D-039 / FR-004 / AC-009)
+    # -----------------------------------------------------------------------
+    # It was NOT, until D-063. The recorded reason was the derivation rule
+    # above: this list is what the skills' own blocks require, and both blocks
+    # declared `tier` an optional property. That reason was sound in the
+    # direction it was written -- requiring a field here that the document a
+    # stream is handed calls optional makes this module stricter than that
+    # document, which is D-071 in the other direction. It was ALSO the reason
+    # this list could not be fixed from inside this module.
+    #
+    # D-063 drove the gap end to end. A finding carrying exactly the keys both
+    # blocks list as `required` -- id, classification, type, class, file,
+    # symbol, description -- returned {"valid": true, "errors": []} from
+    # Validate-Report(schema="prove"), and the SAME finding through
+    # Foundry-Sync returned "Refused 1 finding(s) -- no findings were recorded.
+    # findings[0].tier: Invalid tier: None". A batch door refuses the WHOLE
+    # batch on one bad finding, so a stream that validated its report before
+    # sending it lost every finding in it and was told the shape was
+    # conforming on the way out. That is the D-003 failure at the second axis,
+    # and `class` joined this list for precisely it.
+    #
+    # So the blocks moved first: skills/prove/SKILL.md and skills/trace/SKILL.md
+    # now list `tier` in their `required`, and this list follows them, which is
+    # what `test_the_finding_required_list_is_exactly_what_the_documents_require`
+    # demands and the reason that pin was written self-correcting.
+    #
+    # THE ARCHIVE FACT, which is why this is safe rather than merely required.
+    # D-039 recorded a second reason for the old split: a tier-less record has
+    # no legal value to supply, because `vocab.defect_tier` resolves it to
+    # TIER_UNKNOWN and TIER_UNKNOWN is deliberately NOT a DEFECT_TIERS member
+    # (FR-051: reading an unclassified record as LATENT silently clears gates).
+    # That is a fact about READING a pre-change archive, and nothing here reads
+    # one: these schemas validate a report a stream is emitting NOW, against a
+    # door that already refuses it untiered. The read side keeps its sentinel
+    # -- `test_the_read_side_sentinel_is_not_a_filable_tier` still holds
+    # TIER_UNKNOWN outside the enum -- so requiring the axis on a new filing
+    # takes nothing away from an old record.
+    #
+    # `reproduction_attempted` stays OPTIONAL and that is not an oversight: it
+    # is required CONDITIONALLY, on a LATENT filing only, which jsonschema
+    # cannot express here without a dependency clause that would then be a
+    # second copy of a rule `validate_defect_filing` already owns. The door
+    # enforces it (CT-001) and refuses naming the field.
+    "required": [
+        "id", "classification", "type", "class", "tier", "file", "symbol", "description",
+    ],
     "properties": {
         "id": {
             "type": "string",
@@ -97,10 +260,26 @@ _FINDING_ITEM: dict = {
         "class": {
             "type": "string",
             "description": (
-                "Optional root-cause group, spelled identically on every "
-                "instance that shares it. Not a tier — it is what lets three "
-                "cycles of one root cause escalate to a single structural fix."
+                "Required root-cause group, non-empty on every filing and "
+                "spelled identically on every instance that shares it. Not a "
+                "tier — it is what lets three cycles of one root cause "
+                "escalate to a single structural fix. Foundry-Defect and "
+                "Foundry-Sync refuse a filing without it, and one classless "
+                "finding refuses the whole Foundry-Sync batch."
             ),
+        },
+        "tier": {
+            "type": "string",
+            # GI-001 / AC-009 — derived from vocab, never re-typed. The
+            # enforcement point below still rejects the abolished work-effort
+            # grade by name; this axis is not that axis. See the module
+            # docstring's "WHY `tier` IS NOT THE ABOLISHED AXIS" note.
+            "enum": sorted(vocab.DEFECT_TIERS),
+            "description": _finding_tier_description(),
+        },
+        "reproduction_attempted": {
+            "type": "string",
+            "description": _finding_reproduction_description(),
         },
         "file": {
             "type": "string",

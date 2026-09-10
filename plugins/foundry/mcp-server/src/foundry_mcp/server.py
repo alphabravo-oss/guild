@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -19,58 +17,117 @@ from foundry_mcp import __version__
 # emit. Where each one comes from:
 #
 #   stream / source / defect_type   schemas/vocab.py — the wire vocabulary
-#   verdict                         foundry_orchestrator.VERDICT_VALUES, which
+#   verdict                         orchestration.gates.VERDICT_VALUES, which
 #                                   derives from vocab's DEFECT_TYPES
 #   phase                           the ONE remaining literal, spelled out
 #                                   below with its own note on why, and pinned
 #                                   to the handler's branch set by a test
+#   halt reason                     vocab's `halt_reason_phrase()`, in the
+#                                   PROSE of the description rather than in an
+#                                   `enum` keyword — see the note at the
+#                                   Foundry-Phase entry (fallout AC-062 /
+#                                   CT-013 / OT-007, D-188..D-190)
 #
 # That drift is not cosmetic on this surface. The MCP SDK validates arguments
 # against the advertised enum BEFORE dispatch, so a token missing from an enum
-# here is unreachable no matter what the handler accepts.
+# here is unreachable no matter what the handler accepts — and, in the one
+# direction the halt reason had to answer for, an enum the SIBLING door does not
+# advertise makes the two doors name different checks for the same value while
+# the shared preconditions routine is never asked.
 from foundry_mcp.schemas.vocab import (
     DEFECT_SOURCE_IDS,
+    DEFECT_TIERS,
     DEFECT_TYPES,
+    FIX_AUTHORS,
     OBSERVATION_CLASSES,
     STREAM_WIRE_IDS,
+    halt_reason_phrase,
 )
 from foundry_mcp.tools.citation import verify_citations
+from foundry_mcp.tools.concerns import foundry_concern
+from foundry_mcp.tools.rosters import foundry_roster
 from foundry_mcp.tools.foundry import (
     foundry_add_defect,
     foundry_add_observation,
     foundry_add_verdict,
+    foundry_drive_temper_candidate,
     foundry_init,
     foundry_query_defects,
     foundry_query_observations,
     foundry_verify_coverage,
 )
-from foundry_mcp.tools.foundry_orchestrator import (
-    VERDICT_VALUES,
+# fallout FR-004 / GI-010 / AC-013 — EVERY IMPORT NAMES THE MODULE THAT
+# DEFINES THE SYMBOL. There is no `foundry_orchestrator` any more and no
+# re-export shim standing where it was: a facade would leave this file
+# spelling its imports exactly as it did, which is the coupling the split
+# exists to move rather than to rename.
+from foundry_mcp.tools.orchestration.directives import (
     foundry_clear_directives,
     foundry_defects_to_tasks,
-    foundry_gate,
-    foundry_get_context,
     foundry_inject_directive,
+)
+from foundry_mcp.tools.orchestration.fix_gate import (
     foundry_mark_defect_fixed,
-    foundry_mark_phase_complete,
-    foundry_mark_stream,
-    foundry_next_action,
-    foundry_register_team,
     foundry_sync_defects,
+)
+from foundry_mcp.tools.orchestration.gates import (
+    GATE_TO_TRANSITION,
+    VERDICT_VALUES,
+    foundry_gate,
+)
+from foundry_mcp.tools.orchestration.guidance import (
+    LEAD_CALLER,
+    SUBAGENT_CALLER,
+    SUBAGENT_CALLER_DOOR_CLAUSE,
+    SUBAGENT_CALLER_INSTRUCTION,
+    foundry_get_context,
+    foundry_next_action,
+)
+from foundry_mcp.tools.orchestration.spend import foundry_record_spend
+from foundry_mcp.tools.orchestration.streams import foundry_mark_stream
+from foundry_mcp.tools.orchestration.teams import (
+    foundry_register_team,
     foundry_unregister_team,
 )
-from foundry_mcp.tools.display import format_result
+from foundry_mcp.tools.orchestration.transitions import foundry_mark_phase_complete
+from foundry_mcp.tools.display import format_result_blocks
 from foundry_mcp.tools.forge_spec import (
     forge_spec_check,
     forge_spec_start,
     forge_spec_status,
 )
-from foundry_mcp.tools.foundry_handoff import (
-    foundry_accept_casting,
-    foundry_handoff,
-    foundry_spec_hash,
+# fallout GI-033 (D-192) — `Foundry-Spec-Hash` reads from the leaf. The
+# acceptance door moved into the verifier layer and calls the same reader, so
+# a symbol both layers read lives in `tools/artifacts.py` by GI-033's
+# arithmetic rather than in the lifecycle module that used to define it.
+from foundry_mcp.tools.artifacts import foundry_spec_hash
+# ...and `Foundry-Accept-Casting` is bound out of `tools/evidence.py`, the
+# module that defines the verification it runs. The door was in
+# `foundry_handoff.py` and reached `verify_evidence` across the layering rule
+# AC-061 refuses entirely; it is beside the engine now. This module is
+# deliberately outside the boundary guard's layered set — binding every door is
+# the registrar's whole job — so the repoint is a name, not an exception.
+from foundry_mcp.tools.evidence import foundry_accept_casting
+from foundry_mcp.tools.foundry_handoff import foundry_handoff
+# fallout D-223 / research/holmes-orchestrator.md#reg-2 — THE LAZY SEAM WAS A
+# BUILD-SEQUENCING ACCOMMODATION AND BOTH SYMBOLS HAVE LANDED.
+#
+# `foundry_liveness` and the report door were reached through server-defined
+# adapters holding function-local imports. That seam was coherent at the SYMBOL
+# level when written — `from ... import foundry_liveness` raises ImportError on
+# the missing NAME even though this module already loaded `foundry_spawn` — so it
+# really did fail one tool loudly instead of the whole server, for the window in
+# which the casting owning the handler had not landed it. Both have landed, and
+# with nothing in the package importing `server` at module level, neither edge
+# can close an import cycle. So they are plain module-top names now, which is
+# also the only spelling `width#_registry_tool_modules` can resolve without an
+# extra hop into this file.
+from foundry_mcp.tools.foundry_report import foundry_report
+from foundry_mcp.tools.foundry_spawn import (
+    foundry_cast_wave,
+    foundry_liveness,
+    foundry_spawn_teammate,
 )
-from foundry_mcp.tools.foundry_spawn import foundry_cast_wave, foundry_spawn_teammate
 from foundry_mcp.tools.foundry_validate import foundry_validate_castings
 from foundry_mcp.tools.intent_coverage import foundry_intent_coverage
 from foundry_mcp.tools.validation import validate_report
@@ -78,7 +135,84 @@ from foundry_mcp.tools.validation import validate_report
 # Global project root, set via CLI arg
 _project_root: str = "."
 
-server = Server("Foundry")
+# AC-028 / OT-019 / FR-017 - the MCP initialize handshake reports foundry's
+# `__version__` as serverInfo.version.
+#
+# It reported nothing at all, so a client could not tell which build it was
+# talking to, and neither could a run: a plugin-targeting run whose executing
+# server is a stale cached copy is the exact failure the F0 self-target
+# preflight exists to catch, and the preflight compares a version the handshake
+# never published. `__version__` was already imported into this module for no
+# other purpose.
+server = Server("Foundry", version=__version__)
+
+
+# fallout CT-012 / GI-014 / GI-028 (D-093) — THE ADVERTISED FILING CONTRACT IS
+# DERIVED FROM THE VOCABULARY, NOT TYPED BESIDE IT.
+#
+# Both filing doors carried `enum: sorted(DEFECT_TIERS)` — three members since
+# HARDENING landed — beside a description that enumerated two and closed "NOT a
+# severity: both are defects and both get fixed", and a `reproduction_attempted`
+# description scoped to LATENT alone. So a stream reading the published contract
+# learned neither what HARDENING means nor that it owes a reproduction, and was
+# then refused by `validate_defect_filing` for a field the schema had told it was
+# LATENT-only. These are runtime wire strings a client reads before it ever calls,
+# which is why the comment-prose observation channel does not reach them.
+#
+# The enum was already derived and the PROSE was not, which is the whole shape of
+# the defect: a fourth tier would join the enum and be described by nothing. So
+# the sentence is assembled from the same set the enum is, one clause per member,
+# and `tests/orchestration/test_gates.py` pins the clause table equal to
+# `DEFECT_TIERS` — a member with no clause fails the suite rather than shipping a
+# contract that omits it.
+_TIER_WIRE_CLAUSES = {
+    "LIVE": (
+        "LIVE: you drove the door and observed the wrong result - put the "
+        "reproduction in the description."
+    ),
+    "LATENT": (
+        "LATENT: you looked for the failure and did not find one - name what "
+        "you drove in reproduction_attempted."
+    ),
+    "HARDENING": (
+        "HARDENING: you DROVE a probe of your own devising and it failed on a "
+        "path NO REQUIREMENT STATES - same evidence standard as LIVE, so name "
+        "the probe and the wrong result in reproduction_attempted. A HARDENING "
+        "filing carrying any spec_ref is REFUSED (a spec reference says a "
+        "requirement IS at stake); file that as LIVE instead."
+    ),
+}
+
+#: The tiers whose filings owe `reproduction_attempted`. DERIVED as "every tier
+#: that is not the one you drove to a spec-required failure", so it cannot drift
+#: from the door: LIVE puts its reproduction in the description, and the other
+#: two each owe the field for their own reason.
+_TIERS_OWING_A_REPRODUCTION = tuple(
+    t for t in sorted(DEFECT_TIERS) if t != "LIVE"
+)
+
+
+def _tier_description() -> str:
+    """The `tier` property's description, one clause per vocabulary member."""
+    return (
+        "REQUIRED. The evidence you are answerable for. "
+        + " ".join(_TIER_WIRE_CLAUSES[t] for t in sorted(DEFECT_TIERS))
+        + " NOT a severity: all three are defects and all three get fixed."
+    )
+
+
+def _reproduction_description(*, batch: bool = False) -> str:
+    """The `reproduction_attempted` property's description, tiers derived."""
+    tiers = " or ".join(_TIERS_OWING_A_REPRODUCTION)
+    return (
+        f"REQUIRED when tier is {tiers}. What you actually drove and what it "
+        "found - for LATENT the negative result IS the evidence (e.g. 'AST "
+        "sweep of every call site finds 0 reachable paths'); for HARDENING it "
+        "is the probe you ran and the wrong result you saw. 'n/a', 'none' and "
+        "'tbd' are refused."
+        + (" The whole batch is refused if a finding owes it and omits it."
+           if batch else "")
+    )
 
 
 @server.list_tools()
@@ -129,6 +263,60 @@ async def list_tools() -> list[Tool]:
                     "ticket": {"type": "string", "default": ""},
                     "description": {"type": "string", "default": ""},
                     "url": {"type": "string", "default": "", "description": "Target URL for SIGHT audit; persisted to castings/manifest.json target_url."},
+                    # CT-016 / FR-024 / ST-008 - the cycle cap. 0 is unbounded.
+                    # When set, the Foundry-Phase call that would open GRIND
+                    # cycle max_cycles+1 SUCCEEDS into a named HALTED state and
+                    # generates the report; it is not a refusal.
+                    # D-225 - `minimum` is the half that makes the accepted
+                    # set equal the HONOURED set. Draft202012Validator applies
+                    # `type: integer` and nothing else, so a NEGATIVE cap was
+                    # accepted here and read as "no cap" by
+                    # `_persisted_max_cycles`: an operator who typed -1 ran
+                    # unbounded and was told nothing. A cap below zero is not a
+                    # cap, and refusing it at the door is where the operator can
+                    # still act on the refusal. 0 stays legal because 0 IS the
+                    # documented spelling of unbounded.
+                    #
+                    # fallout D-067 (casting 4's concern C-043) - AND THERE IS
+                    # NO `default: 0` HERE ANY MORE, BECAUSE ABSENCE AND 0 ARE
+                    # DIFFERENT ANSWERS ON THE RESUME PATH.
+                    #
+                    # `foundry_init` now takes `max_cycles: int | None = None`:
+                    # None is "this call passed no cap" and leaves a resumed
+                    # run's persisted ceiling exactly as it is, while an
+                    # explicit 0 REWRITES it to unbounded. A schema default that
+                    # a validator or a client fills in manufactures the explicit
+                    # 0 out of an absent key and lifts the ceiling of every bare
+                    # `/foundry:resume` - which is the whole of the defect, one
+                    # layer up from the dispatch entry that also carried it.
+                    # `type` and `minimum` both still matter: the type is what
+                    # keeps a JSON null from ever reaching the handler as a
+                    # value, and D-225's minimum is unchanged.
+                    "max_cycles": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": (
+                            "Halt the run after this many GRIND cycles. 0 is "
+                            "unbounded. OMITTING the property is not the same "
+                            "answer as 0: a resume that omits it leaves the "
+                            "run's persisted cap unchanged, while a resume "
+                            "carrying 0 rewrites the cap to unbounded. "
+                            # fallout AC-022 / GI-014 (casting 10's concern
+                            # C-077) — EVERY TIER. This ASSERTS the sentence in
+                            # the wire description's own voice rather than
+                            # quoting a locked requirement, and `DEFECT_TIERS`
+                            # has three members: a run halted with open
+                            # HARDENING records had them named nowhere here.
+                            # Derived from the vocabulary so a fourth tier
+                            # cannot be dropped the same way.
+                            "Reaching the cap is a SUCCESSFUL transition into "
+                            "HALTED, not a refusal: state.json becomes HALTED "
+                            "and the report is generated naming every open "
+                            + ", ".join(sorted(DEFECT_TIERS))
+                            + " and untiered defect. HALTED is not DONE. Must "
+                            "not be negative."
+                        ),
+                    },
                 },
             },
         ),
@@ -136,14 +324,74 @@ async def list_tools() -> list[Tool]:
             name="Foundry-Next",
             description=(
                 "Guidance engine — returns exactly what to do next with rich status display. "
-                "Call this instead of reading SKILL.md. Authoritative."
+                "Call this instead of reading SKILL.md. Authoritative. "
+                "Every response carries `heading_for` (DONE or HALTED), the open "
+                "defect counts per tier that would form the backlog, and "
+                "`cycles_to_cap` (null on an unbounded run) — a named backlog is "
+                "a successful end, not a failure to reach DONE. "
+                + SUBAGENT_CALLER_INSTRUCTION
+                + " "
+                + SUBAGENT_CALLER_DOOR_CLAUSE
             ),
-            inputSchema={"type": "object", "properties": {}},
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    # fallout FR-034 / FR-055 / AC-053 — a SUB-AGENT read arms
+                    # neither the lead's ordering token nor the stall clock.
+                    # Published on the surface rather than inferred, because the
+                    # server cannot tell who called it and a guess in either
+                    # direction is worse than an argument: guess "lead" and a
+                    # tracer satisfies the handshake the lead owes, guess
+                    # "subagent" and the lead's own call arms nothing.
+                    "caller": {
+                        "type": "string",
+                        "enum": [LEAD_CALLER, SUBAGENT_CALLER],
+                        "description": (
+                            "Who is calling. Defaults to lead. "
+                            + SUBAGENT_CALLER_INSTRUCTION
+                            + " "
+                            + SUBAGENT_CALLER_DOOR_CLAUSE
+                        ),
+                    },
+                },
+            },
         ),
         Tool(
             name="Foundry-Context",
-            description="Reload all foundry state in one call. Use after compaction or session start.",
-            inputSchema={"type": "object", "properties": {}},
+            description=(
+                "Reload all foundry state in one call. Use after compaction or "
+                "session start. "
+                + SUBAGENT_CALLER_INSTRUCTION
+                + " "
+                + SUBAGENT_CALLER_DOOR_CLAUSE
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    # fallout FR-034 / FR-055 / AC-053 (D-089) — THE SAME
+                    # ARGUMENT Foundry-Next TAKES, BECAUSE THIS DOOR ARMS THE
+                    # SAME TOKEN.
+                    #
+                    # This published an EMPTY properties object, so there was no
+                    # caller for a sub-agent to pass and every Foundry-Context
+                    # call reached `foundry_next_action` as the lead's — arming
+                    # `.next-action-called`, which is the sole precondition of
+                    # Foundry-Gate and Foundry-Phase. `agents/assayer.md` and
+                    # `skills/prove/SKILL.md` both tell a sub-agent to call this
+                    # door at F2, so the lead's ordering handshake was routinely
+                    # satisfied by an agent that is not the lead.
+                    "caller": {
+                        "type": "string",
+                        "enum": [LEAD_CALLER, SUBAGENT_CALLER],
+                        "description": (
+                            "Who is calling. Defaults to lead. "
+                            + SUBAGENT_CALLER_INSTRUCTION
+                            + " "
+                            + SUBAGENT_CALLER_DOOR_CLAUSE
+                        ),
+                    },
+                },
+            },
         ),
         Tool(
             name="Foundry-Gate",
@@ -160,7 +408,44 @@ async def list_tools() -> list[Tool]:
                     # about to call, and no server-side gate existed for the one
                     # it did call. Both terminal tokens resolve to the same
                     # _done_preconditions evaluation.
-                    "phase": {"type": "string", "enum": ["validate", "cast", "inspect", "grind", "assay", "temper", "nyquist", "nyquist_done", "done"]},
+                    #
+                    # fallout AC-059 / AC-062 / CT-020 — the set is DERIVED from
+                    # `GATE_TO_TRANSITION`, which is the only mapping from a gate
+                    # token to the transition it guards. `inspect_start` and
+                    # `halt` join it here because those two transitions had no
+                    # gate at all, and "every transition has a gate" is what the
+                    # invariant test asserts. Derived rather than re-typed: a
+                    # hand copy of the table beside the table is the drift this
+                    # release exists to end.
+                    "phase": {"type": "string", "enum": sorted(GATE_TO_TRANSITION)},
+                    # CT-021: `Foundry-Gate('halt', reason, text)` reports the
+                    # three checks the halt transition refuses on, as data.
+                    #
+                    # fallout AC-062 / CT-013 / OT-007 (D-188..D-190) — NO `enum`
+                    # HERE, AND THAT IS NOW A PROPERTY SOMEBODY ASSERTS RATHER
+                    # THAN AN ACCIDENT OF WHO TYPED WHICH ENTRY.
+                    #
+                    # This property has always been bare and its `Foundry-Phase`
+                    # twin was not, so the two doors gave a non-member reason two
+                    # different named checks. The membership judgement belongs to
+                    # `_halt_preconditions` at BOTH doors: CT-021 says this one
+                    # REPORTS it, so an enum here would make the gate refuse the
+                    # very check it exists to hand back as data. The vocabulary
+                    # is still on the wire, in the sentence below, derived from
+                    # the constant rather than re-typed.
+                    "reason": {
+                        "type": "string",
+                        "description": (
+                            "phase='halt' only: the reason the halt door would "
+                            f"be given, one of {halt_reason_phrase()}. Reported, "
+                            "never acted on — membership is a checklist row, not "
+                            "a refusal, at this door."
+                        ),
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "phase='halt' only: the lead's own words.",
+                    },
                 },
             },
         ),
@@ -173,8 +458,10 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     # D-006 / D-007 — this enum is pinned to
                     # foundry_mark_phase_complete's OWN branch set by the drift
-                    # guard in tests/test_orchestrator_gates.py, which reads the
-                    # handler's AST. It drifted in both directions at once: it
+                    # guard
+                    # tests/orchestration/test_module_boundaries.py#test_phase_schema_enum_equals_the_handler_branch_set,
+                    # which reads the handler's AST.
+                    # It drifted in both directions at once: it
                     # advertised research_done / decompose_done / validate_done,
                     # which the handler has no branch for and refuses, while
                     # OMITTING inspect_start — the only token whose branch
@@ -182,39 +469,188 @@ async def list_tools() -> list[Tool]:
                     # enum before dispatch, so that omission made the counter
                     # unable to leave 0 over MCP however the handler behaved.
                     # Spelled out rather than imported from
-                    # foundry_orchestrator.PHASE_TOKENS because tests assert
+                    # orchestration.transitions.PHASE_TOKENS because tests assert
                     # these tokens are READABLE in this file's own source; the
                     # drift guard is what keeps the two copies honest. See the
                     # concerns entry recommending both be collapsed once that
                     # source-grep assertion is replaced.
+                    #
+                    # fallout FR-064 / GI-034 / AC-062 — `halt` joins the set.
+                    # It is a full PHASE_TOKENS member with its own preconditions
+                    # routine and its own branch, and the SDK validates against
+                    # this enum BEFORE dispatch, so the token, the branch and
+                    # this entry land in one commit or the token is unreachable
+                    # over MCP however the handler behaves.
                     "phase": {"type": "string", "enum": [
                         "start_cast", "cast", "inspect_start", "inspect_clean",
                         "grind_start", "assay_fail", "temper", "nyquist",
-                        "nyquist_done", "done",
+                        "nyquist_done", "done", "halt",
                     ]},
+                    # fallout CT-004 / CT-005 / FR-018 — the halt token's two
+                    # arguments. Not defaulted here: the transport layer never
+                    # defaults an argument, and `_halt_preconditions` refuses an
+                    # absent reason by name rather than picking one.
+                    #
+                    # fallout AC-062 / CT-013 / OT-007 (D-188 / D-189 / D-190) —
+                    # AND IT CARRIES NO `enum`, WHICH IS THE ONE PLACE ON THIS
+                    # SURFACE WHERE ADVERTISING A CLOSED SET WOULD BE WRONG.
+                    #
+                    # `"enum": sorted(HALT_REASONS)` stood here while
+                    # `Foundry-Gate`'s own `reason` carried none, and `call_tool`
+                    # validates arguments against the ADVERTISED schema before
+                    # dispatch — so the same non-member reason reached two
+                    # different answerers. Driven over
+                    # `request_handlers[CallToolRequest]` on a run at F3 with
+                    # `{phase: 'halt', reason: 'because', text: 'x'}`: the gate
+                    # published `_halt_preconditions`' named check ("halt reason
+                    # 'because' is not a member of the halt vocabulary") with its
+                    # checklist and its refusals ladder, and the transition
+                    # published "Foundry-Phase refused — unusable argument(s):
+                    # reason" with neither key. Both refused and `state.json`
+                    # was unchanged by both, so the whole of the harm was WHICH
+                    # CHECK SPOKE — which is the whole of what CT-013 and OT-007
+                    # are about, and it is invisible to an in-process pin that
+                    # calls the handlers directly.
+                    #
+                    # AC-062 says this token "refuses on `_halt_preconditions`
+                    # ALONE" and CT-021 says the gate REPORTS the same three
+                    # checks as data. A keyword that answers first falsifies the
+                    # first; giving the gate a matching enum would falsify the
+                    # second. So the vocabulary comes off the keyword and stays
+                    # on the wire in the sentence below, derived from the
+                    # constant exactly as the door's own refusal hint is —
+                    # `halt_reason_phrase()`, never a hand copy.
+                    "reason": {
+                        "type": "string",
+                        "description": (
+                            "phase='halt' only: why the run ended. One of "
+                            f"{halt_reason_phrase()}. Required for halt, ignored "
+                            "by every other token. Membership is judged by the "
+                            "halt door's own preconditions, not by this schema, "
+                            "so a non-member is refused naming the check — the "
+                            "same check Foundry-Gate(phase='halt') reports."
+                        ),
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": (
+                            "phase='halt' only: the lead's own words for why "
+                            "THIS run ended, carried beside the reason member."
+                        ),
+                    },
                 },
             },
         ),
         Tool(
             name="Foundry-Defect",
-            description="Log a defect from any verification stream. Appends to ledger and forge-log.",
+            description=(
+                "Log a defect from any verification stream. Appends to ledger "
+                "and forge-log."
+            ),
             inputSchema={
                 "type": "object",
-                "required": ["cycle", "source", "defect_type", "description"],
+                # CT-001 / CT-002 - `tier` and `defect_class` are REQUIRED, and
+                # they are in `required` rather than left to the handler because
+                # neither has a defensible default. `authored_by`'s sibling case
+                # in Foundry-Fix is different (D-039: two mandatory fields, and
+                # only the handler can name both in one refusal); here a single
+                # missing field is named by the schema and by the handler alike,
+                # and advertising the obligation is what makes a stream emit it.
+                "required": [
+                    "cycle", "source", "defect_type", "description", "tier",
+                    "defect_class",
+                ],
                 "properties": {
                     "cycle": {"type": "integer"},
                     "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
                     "defect_type": {"type": "string", "enum": sorted(DEFECT_TYPES)},
+                    "tier": {
+                        "type": "string",
+                        "enum": sorted(DEFECT_TIERS),
+                        # fallout CT-012 (D-093): one clause per member of the
+                        # SAME set the enum derives from.
+                        "description": _tier_description(),
+                    },
+                    "reproduction_attempted": {
+                        "type": "string",
+                        "description": _reproduction_description(),
+                    },
                     "description": {"type": "string"},
                     "spec_ref": {"type": "string"},
-                    "symbol": {"type": "string"},
-                    "file_path": {"type": "string"},
+                    "symbol": {
+                        "type": "string",
+                        "description": (
+                            "The symbol the finding is about, paired with "
+                            "file_path as a `path#Symbol` cite. The symbol is "
+                            "the authoritative half: a cite whose symbol "
+                            "resolves stays valid however far the code has "
+                            "moved inside the file. Expected on every filing, "
+                            "at any tier."
+                        ),
+                    },
+                    # D-101 — THE D-089 OBLIGATION IS WITHDRAWN, ON THE
+                    # SURFACE AS WELL AS IN THE GATE.
+                    #
+                    # D-089 made `file_path` REQUIRED on a LATENT filing and
+                    # this prose advertised the requirement to every stream that
+                    # reads the tool list. The LEAD RULING that established it
+                    # is REVERSED (run state.json, spec_ambiguities entry 6), so
+                    # the schema must stop asserting a rule the door no longer
+                    # enforces: a tool description that demands a field the
+                    # handler accepts without is the same drift as an enum the
+                    # handler rejects, and it is worse here because a stream
+                    # reading it will withhold a filing it should make.
+                    #
+                    # The field stays EXPECTED and is still what the F6 backlog
+                    # renders — a located row is better than an unlocated one —
+                    # but "expected" is guidance and "REQUIRED" was a contract.
+                    "file_path": {
+                        "type": "string",
+                        "description": (
+                            "Expected on every filing, at any tier. "
+                            "Repo-relative path. A LATENT defect is carried to "
+                            "the F6 report's backlog and read there by a lead "
+                            "with no defects.json to join against (D-029), so a "
+                            "backlog row with no location names a fault whose "
+                            "site costs more to re-find than to fix. Pair it "
+                            "with `symbol`."
+                        ),
+                    },
                     # FR-001 / FR-007 — the handler has accepted both since the
                     # observations split landed, but neither had a schema
                     # property or a dispatch path, so over MCP the comment-prose
                     # refusal and class tagging were dead: a line-drift finding
                     # filed over MCP was accepted as a defect because
                     # target_kind never arrived to make it demotable.
+                    # fallout FR-025 / CT-019 / ST-006 — THE TWO PROVENANCE
+                    # FIELDS, ON THE WIRE.
+                    #
+                    # Both doors persist these keys unconditionally, `None` when
+                    # the filer set neither, so `foundry_state.fallout_rows` can
+                    # tell "measured and zero" from "predates the field". The
+                    # handler has accepted them since casting 4 landed; without
+                    # a schema property and a dispatch entry the fields could
+                    # not ARRIVE, which is the shape D-006 and the target_kind
+                    # note below both record — a rule alive in the handler and
+                    # unreachable over MCP.
+                    "fallout_of": {
+                        "type": "string",
+                        "description": (
+                            "The D-NNN this finding is fallout OF — a defect a "
+                            "fix to that one created or exposed. Refused when it "
+                            "names no record in this run's ledger."
+                        ),
+                    },
+                    "supersedes": {
+                        "type": "string",
+                        "description": (
+                            "The open HARDENING D-NNN this filing PROMOTES. The "
+                            "cited record is closed as superseded in the same "
+                            "transaction; its tier is never rewritten, because "
+                            "promotion is a new filing that cites what a stream "
+                            "saw rather than an edit of it."
+                        ),
+                    },
                     "target_kind": {
                         "type": "string",
                         "description": (
@@ -228,11 +664,119 @@ async def list_tools() -> list[Tool]:
                     "defect_class": {
                         "type": "string",
                         "description": (
-                            "Optional root-cause class shared by several "
-                            "instances, persisted as the record's 'class'. A "
-                            "class filed in 3 consecutive cycles escalates to "
-                            "one structural-fix packet."
+                            "REQUIRED root-cause class shared by several "
+                            "instances, persisted as the record's 'class'. "
+                            "Escalation keys on it, so a filing without one "
+                            "cannot recur as anything. A class filed in 3 "
+                            "consecutive cycles escalates to one structural-fix "
+                            "packet, and clears mechanically after two clean "
+                            "cycles or two structural passes."
                         ),
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="Foundry-Concern",
+            description=(
+                "Record a cross-casting concern, or close one. A teammate who "
+                "finds that its fix reaches another casting's files files it "
+                "here; `concerns.md` keeps the prose and this keeps the ledger "
+                "the server can act on. An OPEN concern from the closing GRIND "
+                "refuses Foundry-Phase(phase='inspect_start') by id, and "
+                "Foundry-Tasks marks it dispatched when it emits the "
+                "co-dispatch set that reaches its target. Closing takes a "
+                "reason, and appends a handoff record."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "casting_id": {
+                        "type": ["string", "integer"],
+                        "description": "The casting raising the concern.",
+                    },
+                    "cycle": {
+                        "type": "integer",
+                        "description": (
+                            "The GRIND cycle this concern was raised in. "
+                            "REQUIRED on the write arm; the close arm neither "
+                            "takes it nor asks for it."
+                        ),
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": (
+                            "The casting id, file or symbol the concern reaches "
+                            "— resolvable in castings/manifest.json, or refused."
+                        ),
+                    },
+                    "text": {"type": "string", "description": "What was found."},
+                    "close": {
+                        "type": "string",
+                        "description": "A concern id to close instead of opening one.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Required with `close`: why it is closed.",
+                    },
+                },
+                # fallout D-060 / AC-004 — `cycle` IS REQUIRED ON THE ARM THAT
+                # WRITES, AND ONLY ON THAT ARM.
+                #
+                # This door was the only ledger-WRITING tool in this file with
+                # no `required` list at all, and the field it silently defaulted
+                # is the one `_inspect_start_preconditions` scopes its refusal
+                # on: a concern stored under cycle 0 is a concern no closing
+                # GRIND owns, so the gate that exists to refuse over it passed.
+                # Foundry-Defect, Foundry-Observation, Foundry-Fix, Foundry-Sync
+                # and Foundry-Stream all require `cycle`; this now does too.
+                #
+                # A FLAT `required` WOULD BE WRONG, and the two arms are why.
+                # `close=id` with a `reason` moves a record that already carries
+                # its stamp (ST-004) and takes no cycle, so an unconditional
+                # requirement would refuse every close at the transport and
+                # break the half of AC-004 that says the same call succeeds once
+                # the lead closes the concern with a reason. `if`/`then` says
+                # exactly what the door means — a call that is not a close is a
+                # write, and a write carries its cycle — and the SDK selects the
+                # draft with `validator_for`, so the applicator is evaluated by
+                # the same validator every other schema in this file is judged
+                # by.
+                #
+                # SCOPED TO `cycle` AND NOTHING ELSE. `casting_id`, `target` and
+                # `text` stay the handler's to refuse, because casting 1's door
+                # answers each with a NAMED refusal that says what to do next
+                # (CONCERN_TARGET_UNRESOLVED, an empty-text refusal), and a
+                # schema failure would replace those sentences with a generic
+                # validation message. `cycle` is here because absence is the one
+                # thing the handler cannot tell from a value once a default has
+                # been substituted for it.
+                "if": {"not": {"required": ["close"]}},
+                "then": {"required": ["cycle"]},
+            },
+        ),
+        Tool(
+            name="Foundry-Roster",
+            description=(
+                "Persist a verifying stream's item roster at its FIRST "
+                "derivation, so later cycles read it instead of re-deriving a "
+                "different one. `Foundry-Stream` refuses an items_total that "
+                "differs from the persisted length. A second write is refused "
+                "unless revise=true carries a reason, which is recorded."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["stream", "items"],
+                "properties": {
+                    "stream": {"type": "string", "enum": sorted(STREAM_WIRE_IDS)},
+                    "items": {
+                        "type": "array",
+                        "description": "The items this stream will check, in order.",
+                    },
+                    "revise": {"type": "boolean"},
+                    "reason": {
+                        "type": "string",
+                        "description": "Required with revise: why the roster changed.",
                     },
                 },
             },
@@ -260,7 +804,29 @@ async def list_tools() -> list[Tool]:
                     "classification": {
                         "type": "string",
                         "enum": sorted(OBSERVATION_CLASSES),
-                        "description": "Optional — derived from the description when omitted.",
+                        # fallout CT-017 / GI-027 / AC-018 (D-182) — THE WHOLE
+                        # TEMPER_CANDIDATE CONTRACT WAS INVISIBLE ON THE SURFACE
+                        # OF THE DOOR THAT OWNS IT.
+                        #
+                        # "Optional — derived from the description when omitted"
+                        # was the entirety of what a PROVE sub-agent reading
+                        # this schema learned, and only the four COMMENT-PROSE
+                        # classes are derivable: `TEMPER_CANDIDATE` is reachable
+                        # ONLY by declaring it, so a caller who read this
+                        # sentence and omitted the field could never record one.
+                        "description": (
+                            "Optional for the four comment-prose classes — "
+                            "derived from the description when omitted. "
+                            "TEMPER_CANDIDATE is NOT derivable and is reachable "
+                            "only by declaring it here: it is CT-017's channel "
+                            "for a probe idea PROVE has not driven, and TEMPER "
+                            "reads it back with "
+                            "Foundry-Observations(classification=TEMPER_CANDIDATE). "
+                            "Declaring it also lifts the target_kind='comment' "
+                            "requirement below, because a candidate's subject is "
+                            "code and nothing has been shown to be wrong about "
+                            "it yet."
+                        ),
                     },
                     # D-074 — NO "default" KEY. jsonschema.validate never
                     # applies schema defaults, so this one was inert as
@@ -269,19 +835,46 @@ async def list_tools() -> list[Tool]:
                     # dispatch lambda below then made that true. Absence must
                     # travel to the writer AS absence, so it reaches the
                     # NON_COMMENT branch that fails the demotion closed.
+                    # fallout CT-017 / GI-027 / AC-018 / FR-044 (D-182) — THE
+                    # ONE EXCEPTION THE HANDLER HAS AND THIS SENTENCE DENIED.
+                    #
+                    # Every clause below was true for the comment-prose classes
+                    # and FALSE for TEMPER_CANDIDATE, whose whole subject is
+                    # code. Driven twice at HEAD: in-process,
+                    # `foundry_add_observation(classification='TEMPER_CANDIDATE')`
+                    # with NO target_kind was ACCEPTED with no tripwire, and so
+                    # was the same call with target_kind='code'; and over the
+                    # real wire this cycle PROVE recorded a TEMPER_CANDIDATE
+                    # with no target_kind at all.
+                    #
+                    # It mattered past cosmetics because this schema is the
+                    # surface a PROVE sub-agent reads at dispatch, and the last
+                    # sentence instructed precisely GI-027's named violation —
+                    # "PROVE filing a candidate as a defect". A TEMPER-on run
+                    # whose PROVE obeyed it routed every off-row probe idea into
+                    # Foundry-Defect instead of the candidate ledger, which is
+                    # the outcome AC-018 and FR-044 exist to prevent.
                     "target_kind": {
                         "type": "string",
                         "description": (
-                            "REQUIRED IN PRACTICE, and only 'comment' is "
-                            "accepted: recording an observation IS a demotion "
-                            "out of the blocking defect ledger, so the "
-                            "declaration must be made rather than assumed. "
-                            "Omitting the field is refused server-side under "
-                            "the NON_COMMENT denylist entry and fires the "
-                            "audit tripwire, exactly as a present non-comment "
-                            "value does. A finding about code — a function, a "
-                            "handler, a wiring path — is a defect and belongs "
-                            "in Foundry-Defect."
+                            "REQUIRED IN PRACTICE for every comment-prose "
+                            "class, and only 'comment' is accepted there: "
+                            "recording an observation IS a demotion out of the "
+                            "blocking defect ledger, so the declaration must be "
+                            "made rather than assumed. Omitting the field is "
+                            "refused server-side under the NON_COMMENT denylist "
+                            "entry and fires the audit tripwire, exactly as a "
+                            "present non-comment value does. A finding that "
+                            "something about code IS WRONG — a function, a "
+                            "handler, a wiring path — is a defect and belongs in "
+                            "Foundry-Defect. THE ONE EXCEPTION is a declared "
+                            "classification='TEMPER_CANDIDATE': that class is "
+                            "not about comment prose at all but about a probe "
+                            "nobody has driven yet, so the subject rung does not "
+                            "apply to it and this field may be omitted. A "
+                            "candidate is NOT a defect and must not be filed as "
+                            "one; the three never-demote CLAIM entries still "
+                            "apply to it unchanged."
                         ),
                     },
                     "spec_ref": {"type": "string"},
@@ -307,6 +900,42 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="Foundry-Drive-Candidate",
+            description=(
+                "Close an open TEMPER_CANDIDATE observation as DRIVEN. The "
+                "write half of ST-007: TEMPER reads its roster with "
+                "Foundry-Observations(classification=TEMPER_CANDIDATE) and "
+                "closes each candidate here. A probe driven and filed against "
+                "names the defect in `filed`; a probe driven and found sound "
+                "omits it, and clean is a closure, not a blank. Re-driving a "
+                "closed candidate is idempotent and the first closure stands."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["observation_id"],
+                "properties": {
+                    "observation_id": {
+                        "type": "string",
+                        "description": "The O-NNN of the candidate that was driven.",
+                    },
+                    # D-074 — NO `default` KEY HERE, DELIBERATELY. An omitted
+                    # `filed` IS the clean closure, and a schema default would
+                    # manufacture a value the caller never sent; absence has to
+                    # travel as absence all the way to the writer, which is why
+                    # the dispatch below spells `args.get("filed", "")`.
+                    "filed": {
+                        "type": "string",
+                        "description": (
+                            "Optional \u2014 the D-NNN this drive produced. Omitted "
+                            "means the probe was driven and found clean. "
+                            "Recorded verbatim and not ranked against the "
+                            "defect ledger (ST-007 admits no error on it)."
+                        ),
+                    },
+                },
+            },
+        ),
+        Tool(
             name="Foundry-Defects",
             description="Query the defect ledger with optional filters (status, cycle, source, spec_ref).",
             inputSchema={
@@ -321,13 +950,37 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Fix",
+            # GI-003 / AC-011 / D-066 — THE DESCRIPTION IS THE SURFACE A CALLER
+            # READS WHEN IT CHOOSES ARGUMENTS, SO IT STATES BOTH LANES.
+            #
+            # This still described the pre-change contract: the adjacent-path
+            # pair as unconditional, no mention of LATENT, regression_test or
+            # tier anywhere in it. The per-property strings below WERE updated
+            # correctly (`regression_test` says "REQUIRED on a LATENT defect";
+            # `adjacent_path_statement` says "Not demanded on a LATENT defect"),
+            # so only the top-level text was left stale — and it is the text an
+            # agent reads first. Driven: a caller following it verbatim on a
+            # LATENT defect, supplying a valid adjacent_path_statement and
+            # adjacent_path_test, is refused with missing_fields
+            # ['regression_test']. US-003's whole purpose — ceremony
+            # proportional to the evidence tier — was negated at the one place a
+            # teammate decides what to send.
             description=(
-                "Mark a defect as fixed in this cycle. Requires an adjacent-path "
-                "statement (who else calls this, what else transitions here, what "
-                "runs concurrently) and a reference to a test that drives at least "
-                "one of those adjacent paths. The call is REFUSED without both, "
-                "naming each missing field — a fix whose blast radius is undeclared "
-                "is how a defect closes and a regression opens in the same cycle."
+                "Mark a defect as fixed in this cycle. `authored_by` is always "
+                "required: 'teammate' (name the prompt_hash and casting_id it "
+                "was dispatched with) or 'lead' (name fix_commit). The rest of "
+                "the ceremony is proportional to the defect's TIER. LIVE, or a "
+                "pre-change record with no tier: an adjacent-path statement "
+                "(who else calls this, what else transitions here, what runs "
+                "concurrently) AND a reference to a test that drives one of "
+                "those adjacent paths — the call is REFUSED without both, "
+                "naming each missing field, because a fix whose blast radius is undeclared "
+                "is how a defect closes and a regression opens in the same "
+                "cycle. LATENT: a `regression_test` locator of the form "
+                "path::test and nothing else — the adjacent-path pair is NOT "
+                "demanded, and no failing-then-passing statement is taken here "
+                "(that belongs in your completion report). A LIVE lead fix is "
+                "additionally measured against the lead lane from its commit."
             ),
             inputSchema={
                 "type": "object",
@@ -345,22 +998,89 @@ async def list_tools() -> list[Tool]:
                 #
                 # The descriptions below carry the obligation to the caller, and
                 # the tool description states the refusal outright.
-                "required": ["defect_id", "cycle"],
+                # GI-003 / CT-005 / AC-020 - `authored_by` IS in `required`,
+                # unlike the two adjacent-path declarations above it. The D-039
+                # reasoning does not apply: those two are a PAIR, and listing
+                # both made the handler's "name every missing field" refusal
+                # unreachable because the SDK returns on the first error. There
+                # is only one author field, so the schema naming it costs no
+                # message, and advertising the obligation is what makes a lead
+                # supply it.
+                "required": ["defect_id", "cycle", "authored_by"],
                 "properties": {
                     "defect_id": {"type": "string"},
                     "cycle": {"type": "integer"},
+                    "authored_by": {
+                        "type": "string",
+                        "enum": sorted(FIX_AUTHORS),
+                        "description": (
+                            "REQUIRED. Who wrote the fix. 'lead' additionally "
+                            "requires fix_commit whatever the tier, and on a LIVE "
+                            "defect the commit is measured against the lead lane "
+                            "(one non-test file, <= 20 added-plus-deleted lines). "
+                            "'teammate' additionally requires prompt_hash and "
+                            "casting_id."
+                        ),
+                    },
+                    "regression_test": {
+                        "type": "string",
+                        "description": (
+                            "REQUIRED on a LATENT defect, and the ONLY declaration "
+                            "it needs: a locator of the form path::test naming the "
+                            "test that would fail if this gap came back (e.g. "
+                            "tests/test_report.py::test_absent_section_is_named). "
+                            "The failing-then-passing statement belongs in your "
+                            "completion report, not on this call."
+                        ),
+                    },
+                    "fix_commit": {
+                        "type": "string",
+                        "description": (
+                            "REQUIRED when authored_by is 'lead', whatever the "
+                            "tier - it is what the server's lead_fix handoff "
+                            "record carries. It is measured with `git show "
+                            "--numstat` on BOTH tiers, and the record carries "
+                            "the files and the line count either way; what is "
+                            "LIVE-only is the LANE LIMIT the measurement is "
+                            "judged against. On a LATENT defect the fix is "
+                            "recorded with the lane limit not applied - never "
+                            "'unmeasured', which is what a record reads when "
+                            "git could not read the commit at all."
+                        ),
+                    },
+                    "prompt_hash": {
+                        "type": "string",
+                        "description": (
+                            "REQUIRED when authored_by is 'teammate': the sha256 "
+                            "the teammate reported for the casting prompt it read, "
+                            "in the published 'sha256:xxxxxxxxxxxxxxxx' spelling. "
+                            "Refused when it differs from the file's - only an "
+                            "agent that actually read the prompt can state it back."
+                        ),
+                    },
+                    "casting_id": {
+                        "type": ["integer", "string"],
+                        "description": (
+                            "REQUIRED when authored_by is 'teammate': which "
+                            "casting's prompt prompt_hash is claimed to be. It is "
+                            "what resolves the prompt file the hash is checked "
+                            "against."
+                        ),
+                    },
                     "adjacent_path_statement": {
                         "type": "string",
                         "description": (
-                            "REQUIRED. Who ELSE calls this, what else transitions here, "
-                            "what runs concurrently. Must name a path other than the one "
-                            "the defect was found on."
+                            "REQUIRED on a LIVE (or untiered) defect. Who ELSE calls this, "
+                            "what else transitions here, what runs concurrently. Must name "
+                            "a path other than the one the defect was found on. Not "
+                            "demanded on a LATENT defect, which closes on regression_test."
                         ),
                     },
                     "adjacent_path_test": {
                         "type": "string",
                         "description": (
-                            "REQUIRED. Reference to a test exercising at least one NAMED "
+                            "REQUIRED on a LIVE (or untiered) defect. Reference to a test "
+                            "exercising at least one NAMED "
                             "adjacent path (e.g. tests/test_auth.py::test_refresh_reuses_session). "
                             "A locator, not a sentence: 'n/a', 'TODO' and 'tested it "
                             "manually' are refused, as is a test named for the defect's "
@@ -377,7 +1097,9 @@ async def list_tools() -> list[Tool]:
                 "automatically. source and type are validated against the canonical "
                 "vocabulary and never coerced: an unknown or absent source is refused "
                 "rather than silently recorded as 'trace'. The whole batch is refused "
-                "if any finding is invalid, so nothing lands half-applied."
+                "if any finding is invalid, so nothing lands half-applied. Comment-prose "
+                "findings are refused here exactly as they are at Foundry-Defect, and "
+                "belong in Foundry-Observation (D-098: one pipeline order, both doors)."
             ),
             inputSchema={
                 "type": "object",
@@ -388,20 +1110,101 @@ async def list_tools() -> list[Tool]:
                         "type": "array",
                         "items": {
                             "type": "object",
-                            "required": ["description", "source"],
+                            # CT-001 / CT-002 - the SAME obligations the single
+                            # door advertises. Two filing doors that disagree
+                            # about what a defect is would be a worse bug than
+                            # any they could each have, and this is the door a
+                            # whole INSPECT stream files through, so a gap here
+                            # would be the common path rather than the rare one.
+                            "required": ["description", "source", "tier", "class"],
                             "properties": {
                                 "description": {"type": "string"},
                                 "source": {"type": "string", "enum": sorted(DEFECT_SOURCE_IDS)},
-                                "symbol": {"type": "string"},
-                                "file": {"type": "string"},
+                                "symbol": {
+                                    "type": "string",
+                                    "description": (
+                                        "The symbol the finding is about, "
+                                        "paired with `file` as a `path#Symbol` "
+                                        "cite. The symbol is the authoritative "
+                                        "half and survives line drift. Expected "
+                                        "on every finding, at any tier."
+                                    ),
+                                },
+                                # D-101 — WITHDRAWN HERE TOO, ON THE SAME TERMS.
+                                #
+                                # The D-089 ruling that made `file` REQUIRED on
+                                # a LATENT finding is REVERSED (run state.json,
+                                # spec_ambiguities entry 6). Both doors advertise
+                                # the same obligations, so the withdrawal lands
+                                # on both: this is the door a whole INSPECT
+                                # stream files through, and a batch refused for a
+                                # rule the handler no longer applies is the
+                                # costliest place for the surface to be wrong.
+                                "file": {
+                                    "type": "string",
+                                    "description": (
+                                        "Expected on every finding, at either "
+                                        "tier. Repo-relative path. A LATENT "
+                                        "defect is carried to the F6 report's "
+                                        "backlog and read there by a lead with "
+                                        "no defects.json to join against "
+                                        "(D-029), so a backlog row with no "
+                                        "location names a fault whose site costs "
+                                        "more to re-find than to fix. Pair it "
+                                        "with `symbol`."
+                                    ),
+                                },
                                 "spec_ref": {"type": "string"},
                                 "type": {"type": "string", "enum": sorted(DEFECT_TYPES)},
+                                "tier": {
+                                    "type": "string",
+                                    "enum": sorted(DEFECT_TIERS),
+                                    # fallout CT-012 (D-093): the SAME sentence
+                                    # the single door advertises, from the same
+                                    # table. Two doors describing one vocabulary
+                                    # in two spellings is how this drifted.
+                                    "description": (
+                                        _tier_description()
+                                        + " The whole batch is refused if any "
+                                        "finding omits it."
+                                    ),
+                                },
+                                "reproduction_attempted": {
+                                    "type": "string",
+                                    "description": _reproduction_description(
+                                        batch=True
+                                    ),
+                                },
                                 "class": {
                                     "type": "string",
                                     "description": (
-                                        "Optional root-cause class shared by several "
-                                        "instances. A class filed in 3 consecutive "
-                                        "cycles escalates to one structural-fix packet."
+                                        "REQUIRED root-cause class shared by "
+                                        "several instances. Escalation keys on it. "
+                                        "A class filed in 3 consecutive cycles "
+                                        "escalates to one structural-fix packet."
+                                    ),
+                                },
+                                # fallout FR-025 / CT-019 / ST-006 — the same
+                                # two provenance fields the single door takes.
+                                # Both doors persist both keys unconditionally;
+                                # a batch filing that could not carry them was
+                                # the half of "both filing doors" that no
+                                # casting's key_files reached until now.
+                                "fallout_of": {
+                                    "type": "string",
+                                    "description": (
+                                        "The D-NNN this finding is fallout OF. "
+                                        "The whole batch is refused if it names "
+                                        "no record in this run's ledger."
+                                    ),
+                                },
+                                "supersedes": {
+                                    "type": "string",
+                                    "description": (
+                                        "The open HARDENING D-NNN this finding "
+                                        "PROMOTES. Closed as superseded in the "
+                                        "same transaction; its tier is never "
+                                        "rewritten."
                                     ),
                                 },
                                 "target_kind": {
@@ -458,7 +1261,45 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Stream",
-            description="Mark a verification stream complete with coverage data. Requires items_checked > 0.",
+            # fallout GI-016 / FR-023 / OT-029 (concern C-132) — THE ONE TOOL IN
+            # THIS LIST THAT IS NOT THE LEAD'S TO CALL, AND THE DESCRIPTION HAS
+            # TO SAY SO.
+            #
+            # It read "Mark a verification stream complete with coverage data",
+            # which is the LITERAL second member of
+            # `test_lead_prose.py#_LEAD_RECORDS_A_STREAM` — the same start.md row
+            # OT-029 removed, surviving here as the last carrier in the shipped
+            # tree. Casting 8 could not fix it (this file is not theirs) and
+            # handed over the judgement instead of a red node.
+            #
+            # RULED A DEFECT RATHER THAN A REGISTER. The argument for leaving it
+            # is real: an API description names what the TOOL does, and this tool
+            # genuinely does mark a stream complete, in the same imperative gloss
+            # every sibling entry uses. It loses on this file's OWN declared
+            # standard for a description, stated at the Foundry-Accept-Casting
+            # entry below — "this string is the surface a lead reads at the
+            # moment of the call". Judged as lead-facing prose, a uniform
+            # imperative register is exactly the harm: every OTHER tool in the
+            # list IS the lead's to call, so the shared register made the one
+            # agent-only tool indistinguishable from the thirty-six that are not.
+            # GI-016's violation column is "a lead imperative that records".
+            #
+            # So it names the caller, which is the fact a lead most needs and the
+            # old string omitted. What the tool DOES and the refusal it names are
+            # unchanged: `items_checked <= 0` is still refused by the handler
+            # (`streams.py#foundry_mark_stream`), and replace-per-(stream, cycle)
+            # with `replaced` returned is CT-003's shipped behaviour, not new
+            # prose. The spelling cannot come back:
+            # `test_module_boundaries.py#test_no_advertised_tool_description_tells_the_lead_to_record_a_stream`
+            # sweeps every description this function advertises against casting
+            # 8's own recogniser.
+            description=(
+                "The verifying AGENT records its own stream as it finishes; the "
+                "lead never records on its behalf and only confirms the record "
+                "exists. Replaces this (stream, cycle)'s totals, keeps the "
+                "earlier record in history and returns the one it replaced. "
+                "Requires items_checked > 0."
+            ),
             inputSchema={
                 "type": "object",
                 "required": ["stream", "cycle", "items_checked"],
@@ -496,9 +1337,20 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="Foundry-Spawn-Teammate",
             description=(
-                "Read the pre-authored teammate prompt for a casting and return it verbatim. "
-                "The lead MUST pass the returned `prompt` field directly to the Agent tool without "
-                "modification. Authored at F0.5 DECOMPOSE from the spec, validated at F0.9, frozen. "
+                # D-012 — THIS SENTENCE USED TO NAME A FIELD THAT IS NOW ALWAYS
+                # NULL. It read "The lead MUST pass the returned `prompt` field
+                # directly to the Agent tool", while `foundry_spawn` returns
+                # `prompt: None` unless full_prompt=true. Pointer dispatch made
+                # `dispatch` the field to pass, and three of the run's four
+                # instruction surfaces still described the old one — with
+                # start.md telling the lead to follow Foundry-Next literally.
+                "Return the DISPATCH BLOCK for a casting's pre-authored teammate prompt. "
+                "The lead MUST pass the returned `dispatch` field directly to the Agent tool "
+                "without modification: it names the prompt FILE and the sha256 the teammate must "
+                "read that file to obtain and state back, which Foundry-Accept-Casting and "
+                "Foundry-Fix then check. `prompt` is null unless full_prompt=true, and is for "
+                "your own inspection — never for the Agent call. Authored at F0.5 DECOMPOSE from "
+                "the spec, validated at F0.9, frozen. "
                 "Plans are prompts: the lead is a router, not an interpreter. "
                 "Prefer Foundry-Cast-Wave for wave-level bulk fetch — single casting lookups "
                 "are for GRIND or one-off re-dispatches."
@@ -509,17 +1361,34 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "casting_id": {"type": ["integer", "string"], "description": "Casting id from manifest.json."},
                     "phase": {"type": "string", "enum": ["cast", "grind"], "default": "cast"},
+                    "full_prompt": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Return the prompt TEXT instead of a pointer. The "
+                            "default hands back prompt_path plus its sha256 and "
+                            "tells the teammate to read the file and state the "
+                            "hash back, which Foundry-Accept-Casting and "
+                            "Foundry-Fix then check. Pass true only when you "
+                            "genuinely need the text in your own context."
+                        ),
+                    },
                 },
             },
         ),
         Tool(
             name="Foundry-Cast-Wave",
             description=(
-                "Bulk-fetch prompts for every casting in a wave as a single MCP call. "
+                # D-012 — same stale field named here. `prompt` is null by
+                # default in every returned casting; `dispatch` is the field
+                # that goes to the Agent tool.
+                "Bulk-fetch the dispatch block for every casting in a wave as a single MCP call. "
                 "Replaces N sequential Foundry-Spawn-Teammate roundtrips for a CAST wave. "
-                "Returns {castings: [{casting_id, prompt, prompt_hash}, ...], team_name_suggestion, "
-                "instructions}. Lead then does TeamCreate + Foundry-Team-Up + a SINGLE parallel Agent "
-                "tool-use message with one Agent per casting. Preserves audit trail — every casting "
+                "Returns {castings: [{casting_id, dispatch, prompt_path, prompt_hash, prompt}, ...], "
+                "team_name_suggestion, instructions}, where `prompt` is null unless full_prompt=true. "
+                "Lead then does TeamCreate + Foundry-Team-Up + a SINGLE parallel Agent "
+                "tool-use message with one Agent per casting, passing that casting's `dispatch` "
+                "field VERBATIM as the prompt. Preserves audit trail — every casting "
                 "is still logged to spawns.log with bulk=true."
             ),
             inputSchema={
@@ -528,6 +1397,16 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "wave": {"type": "integer", "description": "1-indexed wave number from manifest.waves."},
                     "phase": {"type": "string", "enum": ["cast", "grind"], "default": "cast"},
+                    "full_prompt": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Return each prompt's TEXT instead of a pointer. The "
+                            "default hands back prompt_path plus sha256 per "
+                            "casting; a wave of eight full prompts is the single "
+                            "largest thing a lead's context ever absorbs."
+                        ),
+                    },
                 },
             },
         ),
@@ -587,9 +1466,11 @@ async def list_tools() -> list[Tool]:
             # surface a lead reads at the moment of the call; it must name what
             # engaging the gate costs and what omitting it costs.
             #
-            # PINNED, not merely written: test_orchestrator_gates.py derives
-            # every hard-reject guard in `foundry_accept_casting` from its AST
-            # and fails on any branch this description does not account for.
+            # PINNED, not merely written:
+            # tests/orchestration/test_module_boundaries.py#test_the_accept_casting_description_accounts_for_every_hard_reject_branch
+            # derives every hard-reject guard in `foundry_accept_casting` from
+            # its AST and fails on any branch this description does not account
+            # for.
             description=(
                 "Gate acceptance of a completed casting. Requires fresh spec_hash and prompt_hash "
                 "(verifies re-reads happened), extracts the casting's acceptance criteria from the "
@@ -602,20 +1483,30 @@ async def list_tools() -> list[Tool]:
                 "EVID-01 re-executes every committed `# evidence-cmd:` at that commit in an "
                 "isolated worktree and rejects the casting on byte-mismatch, and EVID-02 rejects "
                 "it when any requirement ID in the slice is bound to no evidence file. OMIT "
-                "casting_commit and BOTH are skipped SILENTLY while the call still returns "
-                "ok:true — an acceptance that verified no evidence at all. "
+                "casting_commit and the call is REFUSED, naming the field: casting_commit is "
+                "REQUIRED, because a gate whose evidence re-execution is opt-in verified "
+                "nothing. "
                 "Returns the AC list, requirement IDs, any missing citations, any unresolved "
                 "symbol cites, and the evidence verdict and provenance. "
                 "Blocks acceptance if evidence re-execution rejected the casting, if any "
                 "requirement is bound to no evidence, if the teammate reported scope cuts, if any "
                 "requirement has no citation, or if any path#Symbol cite resolves nowhere. "
-                "Refuses before running anything on a stale spec_hash or prompt_hash, a casting "
+                "Refuses before running anything on an absent casting_commit, a stale "
+                "spec_hash, a prompt_hash that differs from the prompt file's, a casting "
                 "prompt with no <spec_requirements> block, or a spec whose declared "
                 "spec_format_version is malformed."
             ),
             inputSchema={
                 "type": "object",
-                "required": ["casting_id", "spec_hash", "prompt_hash", "completion_report"],
+                # CT-015 / AC-015 / FR-010 — casting_commit is REQUIRED.
+                # Optional, it was ALWAYS omitted, so EVID-01 and EVID-02 never
+                # ran from a real run and every casting was accepted with its
+                # evidence unverified while the call returned ok:true. A gate
+                # whose verification is opt-in is not a gate.
+                "required": [
+                    "casting_id", "spec_hash", "prompt_hash", "completion_report",
+                    "casting_commit",
+                ],
                 "properties": {
                     "casting_id": {"type": ["integer", "string"]},
                     "spec_hash": {"type": "string", "description": "Fresh hash from Foundry-Spec-Hash."},
@@ -632,9 +1523,11 @@ async def list_tools() -> list[Tool]:
                     "casting_commit": {
                         "type": "string",
                         "description": (
-                            "The casting's commit SHA. Supplying it runs evidence "
-                            "re-execution for that commit in an isolated worktree "
-                            "and binds each requirement ID to committed evidence."
+                            "REQUIRED. The casting's commit SHA. Evidence "
+                            "re-execution runs at that commit in an isolated "
+                            "worktree and each requirement ID is bound to "
+                            "committed evidence; omitting it is refused, naming "
+                            "the field."
                         ),
                     },
                 },
@@ -726,6 +1619,93 @@ async def list_tools() -> list[Tool]:
         ),
         # ── Forge-Spec ─────────────────────────────────────────────
         Tool(
+            name="Foundry-Spend",
+            description=(
+                "Record one agent's token and time cost after it completes. The "
+                "LEAD reads its own harness usage block and types the two numbers "
+                "here — this server parses no transcript and no usage block, ever, "
+                "because a parser for a format nobody owns does not fail loudly, it "
+                "silently starts reporting a wrong number. Rolls up per phase, per "
+                "server cycle and for the run, and Foundry-Next shows the totals. "
+                "NEVER refuses and never blocks a gate: a dispatch with no spend "
+                "record is LISTED as unreported so the gap is visible. No dollar "
+                "figure is produced anywhere — this server does not know your rate "
+                "card."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["agent", "phase", "tokens", "duration_ms"],
+                "properties": {
+                    # D-013 / D-048 — THE DOCUMENTED SPELLINGS ARE THE RECORDED
+                    # ONES, AND THE PHASE IS A RUN PHASE.
+                    #
+                    # D-013 found these two descriptions naming spellings no
+                    # ledger wrote, and closed it by documenting `spawns.log`'s
+                    # DISPATCH VERBS (`cast`, `grind`). That put a verb in the
+                    # phase field: `by_phase` then grew a bucket keyed `grind`,
+                    # which is not a phase, and the unreported list cleared only
+                    # through an agent-wide fallback that hid every per-phase
+                    # gap. D-048 reconciles the two vocabularies the other way —
+                    # the dispatch side maps its verbs to run phase ids
+                    # (`DISPATCH_PHASE_TO_RUN_PHASE`) and the ledger stores run
+                    # phase ids — so this description names those.
+                    "agent": {
+                        "type": "string",
+                        "description": (
+                            "The agent id, spelled as the progress ledger and "
+                            "spawns.log spell it: 'casting-<id>' for a teammate "
+                            "(e.g. 'casting-3'), the stream wire id for an "
+                            "INSPECT stream (e.g. 'trace', 'prove')."
+                        ),
+                    },
+                    "phase": {
+                        "type": "string",
+                        "description": (
+                            "The RUN PHASE the agent was dispatched in: one of "
+                            "F0, F1, F2, F3, F4, F5, F5.5, F6. A CAST teammate "
+                            "is 'F1', a GRIND teammate 'F3', an INSPECT stream "
+                            "agent 'F2'. The dispatch verbs spawns.log records "
+                            "('cast', 'grind') are accepted and mapped to 'F1' "
+                            "and 'F3' before the ledger is written, so either "
+                            "spelling clears the dispatch; any other value is "
+                            "recorded verbatim and still counts toward the "
+                            "totals."
+                        ),
+                    },
+                    "tokens": {"type": "integer", "description": "Total tokens from the usage block."},
+                    "duration_ms": {"type": "integer", "description": "Wall-clock duration in milliseconds."},
+                    "cycle": {
+                        "type": "integer",
+                        "description": (
+                            "Optional asserted cycle, recorded beside the server "
+                            "counter for audit. The bucket key is always the "
+                            "server's own counter."
+                        ),
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="Foundry-Report",
+            description=(
+                "Generate the run's REPORT.md and report.json from its own ledgers: "
+                "verdict matrix, defects by tier and status, the LATENT backlog, "
+                "unknown-tier defects, escalated classes with their exit reason, "
+                "lead_fix records, the FULL/DELTA decision per cycle, tokens and "
+                "minutes per phase and per cycle, unreported dispatches, the "
+                "executing server and plugin version and commit, and the baseline "
+                "comparison. The report is GENERATED, not hand-written: you may "
+                "append prose under your own `## ` heading — the F6 seal carries it "
+                "verbatim into `## Lead notes (carried by the seal)`, and prose typed "
+                "inside a generated section's body is not carried — but you cannot "
+                "omit a section, and "
+                "Foundry-Phase(phase='done') refuses while it is absent or a section "
+                "is missing. Refuses — never raises — naming any ledger it could not "
+                "read."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
             name="Forge-Spec-Start",
             description=(
                 "Initialize a forge-spec project directory and state machine. "
@@ -777,30 +1757,24 @@ async def list_tools() -> list[Tool]:
 # ── Tool name -> function dispatch ───────────────────────────────────────────
 
 
-def _dispatch_liveness(args: dict) -> dict:
-    """Dispatch Foundry-Liveness to its handler in tools/foundry_spawn.py.
-
-    Imported lazily and unguarded: a module-top import would take the ENTIRE
-    server down while the casting that owns foundry_spawn.py is still landing
-    this handler, and swallowing the ImportError would hide a real wiring break
-    behind a silent no-op. Failing here fails one tool, loudly, naming the
-    symbol. The agent identifier and the threshold override are passed
-    positionally so this registration does not depend on the handler's
-    parameter NAMES.
-
-    ``stall_seconds`` is forwarded unvalidated and un-defaulted (D-002): the
-    handler owns both the default and the named refusal for a bad value, and
-    re-deciding either here would give MCP callers different answers from
-    in-process ones. ``None`` — the shape an omitted key takes — is exactly
-    what the handler reads as "use the derived default".
-    """
-    from foundry_mcp.tools.foundry_spawn import foundry_liveness
-
-    return foundry_liveness(
-        args.get("agent"),
-        args.get("stall_seconds"),
-        project_root=_project_root,
-    )
+# fallout D-223 / research/holmes-orchestrator.md#reg-2 — TWO ADAPTERS STOOD HERE
+# AND EVERY FACT THEY CARRIED IS NOW WHERE IT BELONGS.
+#
+# `_dispatch_liveness` and `_dispatch_report` were handler-side adapters holding
+# run-dir resolution, a hand-spelled no-run refusal and a default policy, in the
+# REGISTRAR. Both are gone: `foundry_report#foundry_report` is the tool-shaped
+# door that resolves the active run, and both symbols are module-top names above,
+# so every entry below is the plain `lambda args: handler(...)` this file's own
+# header claims for all of them. The refusal string moved byte for byte.
+#
+# THE ENTRY IS ALSO THE ONLY SPELLING THE REGISTRY CAN READ.
+# `width#_registry_tool_modules` answers "which module implements this tool" by
+# walking the entry's code object for a name resolving to a `foundry_mcp`
+# function. A plain lambda naming the handler global resolves in one step; a
+# wrapped handler, a `functools.partial` or a table lookup resolves to nothing,
+# and the tool's ownership then reads as UNKNOWN to `_test01_scope_touched`
+# (Holmes introspect-1, D-209). That property is pinned by
+# tests/orchestration/test_width.py#test_no_dispatch_entry_hides_its_handler_behind_a_server_helper.
 
 
 _DISPATCH = {
@@ -810,20 +1784,47 @@ _DISPATCH = {
     "Verify-Citations": lambda args: verify_citations(
         spec_path=args["spec_path"], report_path=args["report_path"],
         strict=args.get("strict", False), project_root=_project_root),
+    # fallout D-067 (casting 4's concern C-043) — `max_cycles` PASSES THROUGH AS
+    # ABSENCE, for the same reason Foundry-Concern's `cycle` does.
+    # `args.get("max_cycles", 0)` turned a bare `/foundry:resume` into a
+    # deliberate `--max-cycles 0` at the handler, which REWRITES the persisted
+    # ceiling to unbounded — so the one call that must leave a running cap alone
+    # was the call that lifted it. The handler's default is `None`, meaning "no
+    # cap was passed"; the schema above no longer carries a `default: 0` that
+    # would re-manufacture the value a layer earlier.
     "Foundry-Init": lambda args: foundry_init(
         spec_path=args.get("spec_path"), temper=args.get("temper", False),
         nyquist=args.get("nyquist", False), no_ui=args.get("no_ui", False),
         resume=args.get("resume"), ticket=args.get("ticket", ""), description=args.get("description", ""),
-        url=args.get("url", ""), project_root=_project_root),
-    "Foundry-Next": lambda args: foundry_next_action(project_root=_project_root),
-    "Foundry-Context": lambda args: foundry_get_context(project_root=_project_root),
-    "Foundry-Gate": lambda args: foundry_gate(phase=args["phase"], project_root=_project_root),
-    "Foundry-Phase": lambda args: foundry_mark_phase_complete(phase=args["phase"], project_root=_project_root),
+        url=args.get("url", ""), max_cycles=args.get("max_cycles"),
+        project_root=_project_root),
+    "Foundry-Next": lambda args: foundry_next_action(
+        project_root=_project_root, caller=args.get("caller", LEAD_CALLER)),
+    "Foundry-Context": lambda args: foundry_get_context(
+        project_root=_project_root, caller=args.get("caller", LEAD_CALLER)),
+    "Foundry-Gate": lambda args: foundry_gate(
+        phase=args["phase"], reason=args.get("reason", ""),
+        text=args.get("text", ""), project_root=_project_root),
+    "Foundry-Phase": lambda args: foundry_mark_phase_complete(
+        phase=args["phase"], reason=args.get("reason", ""),
+        text=args.get("text", ""), project_root=_project_root),
     "Foundry-Defect": lambda args: foundry_add_defect(
         cycle=args["cycle"], source=args["source"], defect_type=args["defect_type"],
         description=args["description"], spec_ref=args.get("spec_ref", ""),
         symbol=args.get("symbol", ""), file_path=args.get("file_path", ""),
         target_kind=args.get("target_kind", ""), defect_class=args.get("defect_class", ""),
+        # CT-001 — passed through as absence, never defaulted here. The D-074
+        # ruling above applies verbatim: a transport-layer default re-decides,
+        # one frame above the writer, a question the writer owns. `tier=""` is
+        # what `validate_defect_filing` reads as "no tier was declared", and
+        # that is the answer it must get.
+        tier=args.get("tier", ""),
+        reproduction_attempted=args.get("reproduction_attempted", ""),
+        # fallout FR-025 / CT-019 / ST-006: absence travels as absence here too,
+        # for the D-074 reason above. `None` is what the writer reads as "the
+        # filer cited nothing", and it is what both doors then persist.
+        fallout_of=args.get("fallout_of"),
+        supersedes=args.get("supersedes"),
         project_root=_project_root),
     "Foundry-Defects": lambda args: foundry_query_defects(
         status=args.get("status"), cycle=args.get("cycle"), source=args.get("source"),
@@ -838,6 +1839,25 @@ _DISPATCH = {
     # real one, and the tripwire stayed silent on the bypass. Defaulting here
     # in EITHER direction re-decides, in transport, a question the writer owns:
     # pass absence through as absence.
+    # Plain lambdas naming the handler GLOBAL, which is the spelling
+    # `_registry_tool_modules` can read: a wrapped handler, a functools.partial
+    # or a table lookup makes the tool vanish from the registry (Holmes
+    # introspect-1). Casting 1 owns both handlers; this is their registration.
+    # fallout D-060 / AC-004 — `cycle` PASSES THROUGH AS ABSENCE.
+    # `args.get("cycle", 0)` manufactured a real cycle out of an omitted key,
+    # and 0 is a cycle a CAST-time concern legitimately carries, so nothing
+    # downstream could tell the two apart once one was written. The handler's
+    # default is the `None` sentinel it refuses on (CONCERN_CYCLE_REQUIRED);
+    # this entry's job is to hand it absence, not a substitute.
+    "Foundry-Concern": lambda args: foundry_concern(
+        casting_id=args.get("casting_id", ""), cycle=args.get("cycle"),
+        target=args.get("target", ""), text=args.get("text", ""),
+        close=args.get("close", ""), reason=args.get("reason", ""),
+        project_root=_project_root),
+    "Foundry-Roster": lambda args: foundry_roster(
+        stream=args["stream"], items=args["items"],
+        revise=args.get("revise", False), reason=args.get("reason", ""),
+        project_root=_project_root),
     "Foundry-Observation": lambda args: foundry_add_observation(
         cycle=args["cycle"], source=args["source"], description=args["description"],
         classification=args.get("classification", ""),
@@ -847,11 +1867,22 @@ _DISPATCH = {
     "Foundry-Observations": lambda args: foundry_query_observations(
         cycle=args.get("cycle"), source=args.get("source"),
         classification=args.get("classification"), project_root=_project_root),
+    "Foundry-Drive-Candidate": lambda args: foundry_drive_temper_candidate(
+        observation_id=args["observation_id"], filed=args.get("filed", ""),
+        project_root=_project_root),
     "Foundry-Fix": lambda args: foundry_mark_defect_fixed(
         defect_id=args["defect_id"], cycle=args["cycle"],
         adjacent_path_statement=args.get("adjacent_path_statement", ""),
         adjacent_path_test=args.get("adjacent_path_test", ""),
-        project_root=_project_root),
+        project_root=_project_root,
+        # Absence passed through as absence, as everywhere else on this surface:
+        # the handler owns which lane each field belongs to and what a missing
+        # one costs, and it is the only frame that can name several at once.
+        authored_by=args.get("authored_by", ""),
+        regression_test=args.get("regression_test", ""),
+        fix_commit=args.get("fix_commit", ""),
+        prompt_hash=args.get("prompt_hash"),
+        casting_id=args.get("casting_id")),
     "Foundry-Sync": lambda args: foundry_sync_defects(
         cycle=args["cycle"], findings=args["findings"], project_root=_project_root),
     "Foundry-Tasks": lambda args: foundry_defects_to_tasks(project_root=_project_root),
@@ -868,9 +1899,11 @@ _DISPATCH = {
     "Foundry-Validate-Castings": lambda args: foundry_validate_castings(project_root=_project_root),
     "Foundry-Intent-Coverage": lambda args: foundry_intent_coverage(project_root=_project_root),
     "Foundry-Spawn-Teammate": lambda args: foundry_spawn_teammate(
-        casting_id=args["casting_id"], phase=args.get("phase", "cast"), project_root=_project_root),
+        casting_id=args["casting_id"], phase=args.get("phase", "cast"),
+        project_root=_project_root, full_prompt=args.get("full_prompt", False)),
     "Foundry-Cast-Wave": lambda args: foundry_cast_wave(
-        wave=args["wave"], phase=args.get("phase", "cast"), project_root=_project_root),
+        wave=args["wave"], phase=args.get("phase", "cast"),
+        project_root=_project_root, full_prompt=args.get("full_prompt", False)),
     "Foundry-Spec-Hash": lambda args: foundry_spec_hash(project_root=_project_root),
     "Foundry-Handoff": lambda args: foundry_handoff(
         event=args["event"], source=args.get("source", ""), destination=args.get("destination", ""),
@@ -879,14 +1912,34 @@ _DISPATCH = {
     "Foundry-Accept-Casting": lambda args: foundry_accept_casting(
         casting_id=args["casting_id"], spec_hash=args["spec_hash"],
         prompt_hash=args["prompt_hash"], completion_report=args["completion_report"],
+        # CT-015: required in the schema, and still read with .get so the
+        # handler's own named refusal is what a caller sees if it ever arrives
+        # absent — a KeyError across the MCP boundary is not the house shape.
         casting_commit=args.get("casting_commit"),
         project_root=_project_root),
-    "Foundry-Liveness": lambda args: _dispatch_liveness(args),
+    # D-002 — `stall_seconds` IS FORWARDED UN-DEFAULTED, and that is the whole
+    # of the policy this entry carries. The handler owns both the default and
+    # the named refusal for a bad value; re-deciding either here would give MCP
+    # callers different answers from in-process ones. `None` — the shape
+    # `args.get` gives an omitted key — is exactly what the handler reads as
+    # "use the derived default". Both values are passed POSITIONALLY so the
+    # registration does not depend on the handler's parameter NAMES.
+    "Foundry-Liveness": lambda args: foundry_liveness(
+        args.get("agent"), args.get("stall_seconds"), project_root=_project_root),
     "Foundry-Team-Up": lambda args: foundry_register_team(team_name=args["team_name"], project_root=_project_root),
     "Foundry-Team-Down": lambda args: foundry_unregister_team(team_name=args["team_name"], project_root=_project_root),
     "Foundry-Directive": lambda args: foundry_inject_directive(
         directive=args["directive"], priority=args.get("priority", "normal"), project_root=_project_root),
     "Foundry-Clear": lambda args: foundry_clear_directives(project_root=_project_root),
+    "Foundry-Spend": lambda args: foundry_record_spend(
+        agent=args["agent"], phase=args["phase"], tokens=args["tokens"],
+        duration_ms=args["duration_ms"], cycle=args.get("cycle"),
+        project_root=_project_root),
+    # THE TOOL TAKES NO ARGUMENTS, DELIBERATELY: the run a report is generated
+    # for is always the ACTIVE one, and letting a caller name a different one
+    # would let a lead generate a report over another run's ledgers. The door
+    # resolves it; `project_root` is the repo, never a run selector.
+    "Foundry-Report": lambda args: foundry_report(project_root=_project_root),
     "Forge-Spec-Start": lambda args: forge_spec_start(
         project_name=args["project_name"], project_root=_project_root),
     "Forge-Spec-Check": lambda args: forge_spec_check(
@@ -896,18 +1949,352 @@ _DISPATCH = {
 }
 
 
-@server.call_tool()
+# D-042 — THE SDK'S REFUSAL DOES NOT NAME THE FIELD, SO THIS SERVER TAKES THE
+# VALIDATION BACK.
+# ---------------------------------------------------------------------------
+# `mcp.server.lowlevel.Server.call_tool` validates `arguments` against the
+# advertised `inputSchema` BEFORE dispatch and, on failure, returns
+# `Input validation error: <jsonschema message>` and nothing else. Driven over
+# the real MCP transport: `Foundry-Defect(tier='MAJOR')` came back as the whole
+# response text
+#
+#     Input validation error: 'MAJOR' is not one of ['LATENT', 'LIVE']
+#
+# — a message indistinguishable from the same validator's output for
+# `defect_type`, `target_kind` or `authored_by`, because the offending PROPERTY
+# is nowhere in it. CT-001's errors column requires "refusal naming the missing
+# tier" and AC-006 requires a tier outside the vocabulary to be "refused naming
+# the field". The handler's own field-naming refusal (`validate_defect_filing`)
+# never ran: the SDK had already answered.
+#
+# `validate_input=False` turns off the SDK's copy and this module runs the SAME
+# validation itself, against the SAME advertised schema, so nothing is relaxed
+# — `required`, `type` and every `enum` are still enforced, and `list_tools`
+# still advertises them for a client to read. What changes is only who renders
+# the failure: the house `{error, hint, missing_fields, invalid_fields}` shape
+# every other refusal in this server uses, naming each offending property.
+#
+# Applied at the boundary rather than per handler deliberately: the defect is
+# one property short in one tool, but the SHAPE is every enum-valued argument of
+# every tool, and thirty handlers each remembering to re-check their own enums
+# is the arrangement this run has already paid for twice. D-098: the
+# comment-prose rung sat at a different point in each filing door's pipeline,
+# so the two doors disagreed about what a defect IS. D-077: FR-051's untiered
+# exit was implemented at ONE of the two doors, so following the server's own
+# hint through the other one made the ledger worse. `validate_defect_filing`
+# is the shape both of those produced — one shared decision, called twice.
+#
+# D-156: this argued from D-127, which is the waiting-notice and liveness
+# defect (`_waiting_on_agents` gating on the team scan rather than on the
+# liveness roster) and supports nothing here. A reader who followed the cite
+# reached a record that did not hold up the claim beside it, which costs the
+# comment exactly the thing the house style writes it for.
+_SCHEMAS: dict[str, dict] = {}
+
+
+async def _tool_schema(name: str) -> dict | None:
+    """The advertised `inputSchema` for ``name``, read from `list_tools` itself.
+
+    One source of truth: whatever a client is told the arguments must satisfy is
+    exactly what this server checks them against. Cached because the tool list
+    is built from module-level vocabulary frozensets and cannot change within a
+    process.
+    """
+    if not _SCHEMAS:
+        for tool in await list_tools():
+            _SCHEMAS[tool.name] = tool.inputSchema
+    return _SCHEMAS.get(name)
+
+
+def _instance_label(path) -> str:
+    """`err.absolute_path` rendered the way this server names a batch item.
+
+    `['findings', 1]` becomes `findings[1]`, `['findings', 1, 'tier']` becomes
+    `findings[1].tier`, and an empty path (a failure on the arguments object
+    itself) becomes `""`.
+
+    ONE SPELLING, and it is the one already in the tree. `schemas/findings.py`
+    and `foundry_sync_defects` both name an offending batch member
+    `findings[N]` — `tests/orchestration/test_fix_gate.py#
+    test_a_non_dict_finding_refuses_the_batch_naming_the_index` pins that
+    exact substring against the handler's refusal. This rung is the one BEFORE
+    the handler, refusing the same batch about the same member, so it says the
+    same thing. The previous `".".join(...)` rendered `findings.1.tier`, which
+    is a second spelling of one address and reads as a nested key rather than
+    an index (D-176).
+    """
+    label = ""
+    for part in path:
+        if isinstance(part, int) and not isinstance(part, bool):
+            label += f"[{part}]"
+        elif label:
+            label += f".{part}"
+        else:
+            label = str(part)
+    return label
+
+
+def _argument_refusal(name: str, schema: dict, arguments: dict) -> dict | None:
+    """None when ``arguments`` satisfy ``schema``; otherwise the house refusal.
+
+    EVERY failing property is named in ONE refusal, under the two keys this
+    server already uses for the distinction that matters to a caller: a field
+    that is absent goes in `missing_fields`, a field that is present and
+    unusable goes in `invalid_fields` with the reason. That is
+    `foundry_mark_defect_fixed`'s established shape, reused rather than
+    reinvented.
+
+    An `enum` failure names the vocabulary it missed, because the caller's next
+    move is to pick a member of it and no other message tells them what the
+    members are.
+
+    D-176 — A NESTED `required` FAILURE IS JUDGED AGAINST THE ITEM IT WAS
+    RAISED ON, AND NAMED BY ITS INDEX.
+    --------------------------------------------------------------------
+    The `required` branch read `for prop in err.validator_value: if prop not in
+    (arguments or {})`. On a batch door that is the wrong object on both sides.
+    `err.validator_value` is the ITEM schema's whole `required` list, and
+    `arguments` is the TOP-LEVEL dict — which for `Foundry-Sync` holds only
+    `cycle` and `findings` — so EVERY member of the item's required list came
+    back absent. Driven at the real door with a two-item batch whose second
+    finding carried description, source, tier, file, symbol and type and omitted
+    only `class`: the refusal read "unusable argument(s): description —
+    required, and absent; source — required, and absent; tier — required, and
+    absent; class — required, and absent." Three of those four were supplied,
+    and the message was byte-identical whether the offender was the only
+    finding, the second of two or the third of three, so a caller could not tell
+    which finding was at fault and its rational next move was to re-send fields
+    it had already sent.
+
+    Both facts the message needed were already on the error and were thrown
+    away by the `continue`: `err.absolute_path` had been resolved to
+    ['findings', 1], and `err.message` already read "'class' is a required
+    property". jsonschema's `required` validator yields ONE error per missing
+    property, so testing `err.validator_value` against `err.instance` — the
+    object the rule was actually applied to — names exactly the properties that
+    object lacks, and the path labels which object that was.
+
+    OT-029 is "Foundry-Sync with one finding lacking class refuses the whole
+    batch naming the finding", and the batch IS refused whole — nothing is
+    persisted. It was only the diagnostic that could not say which finding. The
+    rendering is generic, not Foundry-Sync-specific: every nested `required`
+    violation in every tool rendered the same way and is fixed by the same rung.
+    """
+    import jsonschema
+
+    # `validator_for` is what `jsonschema.validate` — the call the SDK made —
+    # selects with, so the DRAFT SEMANTICS are unchanged by moving the check
+    # here. Only the rendering of a failure moves.
+    validator = jsonschema.validators.validator_for(schema)(schema)
+    errors = sorted(validator.iter_errors(arguments or {}), key=str)
+    if not errors:
+        return None
+
+    missing: list[str] = []
+    invalid: list[dict] = []
+    for err in errors:
+        if err.validator == "required":
+            # The object the rule was applied to, and the label that says which
+            # one it was. At the top level `absolute_path` is empty and
+            # `instance` IS `arguments`, so the single-door spelling is
+            # unchanged: a bare `tier` stays `tier`.
+            container = err.instance if isinstance(err.instance, dict) else {}
+            prefix = _instance_label(err.absolute_path)
+            for prop in err.validator_value:
+                if prop in container:
+                    continue
+                label = f"{prefix}.{prop}" if prefix else prop
+                if label not in missing:
+                    missing.append(label)
+            continue
+        field = _instance_label(err.absolute_path) or "<arguments>"
+        if err.validator == "enum":
+            reason = (
+                f"{err.instance!r} is not one of "
+                f"{sorted(str(v) for v in err.validator_value)}"
+            )
+        else:
+            reason = err.message
+        entry = {"field": field, "reason": reason}
+        if entry not in invalid:
+            invalid.append(entry)
+
+    named = [f"{item['field']} — {item['reason']}" for item in invalid]
+    named += [f"{field} — required, and absent" for field in missing]
+    return {
+        "error": f"{name} refused — unusable argument(s): " + "; ".join(named) + ".",
+        "missing_fields": missing + [item["field"] for item in invalid],
+        "invalid_fields": invalid,
+        "hint": (
+            "Each field named above is checked against the schema this server "
+            f"advertises for {name}; read it back with the client's tool "
+            "listing. A value refused against an enum must be one of the "
+            "members quoted in the reason — the vocabulary is closed and the "
+            "server rejects anything outside it before the handler runs."
+        ),
+    }
+
+
+#: The two filing doors whose refusals the security audit tripwire follows.
+#: Keyed to the argument shape each one takes: `Foundry-Defect` files ONE
+#: finding out of its top-level arguments, `Foundry-Sync` files a batch.
+_FILING_TOOLS = ("Foundry-Defect", "Foundry-Sync")
+
+
+def _refused_filing_findings(name: str, arguments: dict) -> list[tuple[dict, str]]:
+    """The `(finding, source)` pairs a refused filing call was trying to file.
+
+    One mapping per finding, in the key shape both doors' validators already
+    judge — built through `foundry.py`'s own `filing_finding_mapping` for the
+    single door rather than re-spelled here, because a SECOND spelling of the
+    finding shape is how the audit record and the refusal come to describe
+    different things (D-083). The batch door's findings arrive in that shape
+    already.
+
+    D-158 (structural packet 2) — AND THE ARGUMENT NAMES ARE READ, NOT RETYPED.
+    --------------------------------------------------------------------------
+    This called `_finding_mapping` — foundry.py's PRIVATE helper — through an
+    eight-argument block that re-spelled, as `args.get(...)` string literals,
+    the same argument names `foundry_add_defect` carries as parameters. Two
+    spellings of "which arguments carry claim prose" is the arrangement that
+    produced D-128, D-146/D-147 and D-158 in turn. `filing_finding_mapping` is
+    casting 2's public single spelling, and its own guard fails if a
+    claim-bearing parameter is added to the door and not to the mapping, so the
+    pre-dispatch rung and the handler can no longer read different fields.
+
+    fallout FR-037 (D-211, research/holmes-orchestrator.md#reg-1) — THE BATCH
+    DOOR HAS NO TOP-LEVEL `source`, SO IT MUST NOT READ ONE.
+
+    This fell back to `(arguments or {}).get("source")` per finding. Three
+    readings of the same surface say that argument does not exist:
+    `Foundry-Sync`'s schema declares `source` only INSIDE each `findings` item,
+    its `_DISPATCH` lambda passes `cycle` and `findings` and nothing else, and
+    `foundry_sync_defects` reads `finding.get("source", "")` with no fallback of
+    its own. So a stray top-level `source` — a key the schema does not declare
+    and the handler would never look at — was the value this audit record
+    attributed the attempt to. That is CT-002's mis-attribution and D-158's
+    class exactly: one surface read by two spellings, and the spelling that is
+    never executed deciding what gets written down.
+
+    THE NARROW HALF OF reg-1, AND ONLY THAT HALF. reg-1's headline calls
+    `_FILING_TOOLS` a fourth hand-spelled copy of the audit; reg-1's own
+    skeptic's case retracts the headline — "The audit itself is not re-spelled
+    anywhere: all three refusal sites call the same validator, the same exported
+    writer, and the same record shape ... The proposed per-tool `on_refused`
+    hook ... would be over-engineering." What survives that retraction is this
+    one fallback, and removing it is the whole of the change.
+    """
+    from foundry_mcp.tools.foundry import filing_finding_mapping
+
+    if name == "Foundry-Sync":
+        findings = (arguments or {}).get("findings")
+        if not isinstance(findings, list):
+            return []
+        return [
+            (dict(item), str(item.get("source") or ""))
+            for item in findings
+            if isinstance(item, dict)
+        ]
+
+    args = arguments or {}
+    finding = filing_finding_mapping(args)
+    return [(finding, str(args.get("source") or ""))]
+
+
+def _audit_security_claim_on_refusal(name: str, arguments: dict) -> None:
+    """Write the denylist tripwire for a filing refused BEFORE dispatch (D-146).
+
+    AC-007 and OT-005 are unconditional on the description matching the
+    security predicate, and CT-003's audit record exists to capture the
+    ATTEMPT: a stream trying to file a security-property claim as a gap it
+    merely reasoned about is precisely what an auditor needs to see, and the
+    refusal alone leaves no trace of it.
+
+    D-128 CLOSED THIS ONE FRAME LOWER AND THE SAME HOLE SURVIVED ONE FRAME UP.
+    -------------------------------------------------------------------------
+    `foundry_add_defect` now walks its whole validation ladder before returning,
+    so a bad `source` no longer leaves a security claim unaudited. But this
+    module validates arguments against the advertised schema BEFORE dispatch
+    (see `_argument_refusal`'s block above for why that check moved here), and
+    a pre-dispatch refusal returns without the handler ever running. Driven
+    over the real dispatch path at GRIND cycle 8:
+    `call_tool('Foundry-Defect', {...tier: 'LATENT', description: 'the login
+    endpoint does not verify the authentication token signature', source:
+    'bogus'})` refused naming `source`, the handler never ran, and the
+    `observations.json` tripwire delta was 0. Same result with
+    `type: 'NOTATYPE'`, and the same on `Foundry-Sync`. The identical filings
+    driven IN-PROCESS DO fire the tripwire, so the hole was exactly this rung:
+    over MCP a filer could switch the audit record off by also getting an
+    unrelated field wrong.
+
+    The decision is NOT re-made here. `validate_defect_filing` is asked — the
+    same shared validator both doors ask, whose denylist rung reads
+    `security_scan_text` over every prose value the filing carries (D-147), so
+    a claim hidden in an extra key is caught here exactly as it is below — and
+    the record is written through `record_denylist_tripwire`, the one exported
+    writer every other path uses. A second predicate or a second writer at this
+    rung would be the FR-002 defect returning: an audit control that records
+    only the attempts one of its callers makes.
+
+    Never raises and never changes the refusal. The caller still receives the
+    schema refusal naming the field it got wrong; the audit record is a side
+    effect of the attempt, not a second answer to it.
+    """
+    if name not in _FILING_TOOLS:
+        return
+    try:
+        from foundry_mcp.tools.foundry import (
+            record_denylist_tripwire,
+            tripwire_finding,
+            validate_defect_filing,
+        )
+        from foundry_mcp.tools.foundry_state import current_cycle as _current_cycle
+        from foundry_mcp.tools.foundry_state import get_run_dir
+
+        fdir = get_run_dir(_project_root)
+        if not fdir or not fdir.exists():
+            return
+        for finding, source in _refused_filing_findings(name, arguments):
+            refusal = validate_defect_filing(finding)
+            if not (isinstance(refusal, dict) and refusal.get("denylist_class")):
+                continue
+            record_denylist_tripwire(
+                fdir,
+                tripwire_finding(finding),
+                cycle=_current_cycle(fdir),
+                source=source,
+            )
+    except Exception:
+        # The audit record is a side effect of a call that is already being
+        # refused. It must never turn that refusal into an unhandled-error
+        # banner, and it must never be the reason a filing cannot be refused
+        # at all — the house rule is that a tool never raises across this
+        # boundary, and this is the one path with nothing to return.
+        pass
+
+
+@server.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     handler = _DISPATCH.get(name)
     if not handler:
-        return [TextContent(type="text", text=format_result(name, {"error": f"Unknown tool: {name}"}))]
+        return [TextContent(type="text", text=format_result_blocks(name, {"error": f"Unknown tool: {name}"}))]
+
+    schema = await _tool_schema(name)
+    if schema is not None:
+        refusal = _argument_refusal(name, schema, arguments)
+        if refusal is not None:
+            # D-146: the audit record is written BEFORE the refusal returns, so
+            # a schema-invalid argument set cannot switch off the tripwire a
+            # security-property claim owes.
+            _audit_security_claim_on_refusal(name, arguments)
+            return [TextContent(type="text", text=format_result_blocks(name, refusal))]
 
     # D-098: the outermost net. Every handler returns named refusals as dicts
     # (the house pattern) and none is supposed to raise, but this boundary used
     # to have no try/except at all — so one unguarded read of a corrupt
     # state.json raised out of Foundry-Next, the mandatory pre-transition
     # handshake, and the operator could not even read state to diagnose it. The
-    # tolerant loader in foundry_orchestrator means no KNOWN input reaches this
+    # tolerant loader in tools/artifacts.py means no KNOWN input reaches this
     # branch; it exists for the unknown one, so a bug degrades to an error
     # message naming the tool instead of bricking the run.
     try:
@@ -922,7 +2309,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             ),
         }
 
-    return [TextContent(type="text", text=format_result(name, result))]
+    # D-173: `format_result_blocks`, not `format_result`. The display half is
+    # lossy by design — every formatter truncates — and this is the only rung
+    # where the result dict still exists, so a caller that needs the DATA (a
+    # stream reading `inspect_mode.touched_files`, say) can only be served
+    # here. All three return sites use it, so a refused call and an unknown
+    # tool are as machine-readable as a successful one.
+    return [TextContent(type="text", text=format_result_blocks(name, result))]
 
 
 def main():

@@ -28,7 +28,14 @@ from pathlib import Path
 # gone entirely: `_document_transaction` does the read-modify-write under an
 # flock with a per-writer tmp sidecar, so the shared `path.with_suffix(".tmp")`
 # that carried the D-103 shape here has no successor.
-from foundry_mcp.tools.foundry_orchestrator import (
+#
+# The three names now resolve in `tools/artifacts.py`, the package's artifact
+# leaf, rather than at the top of the stack. That ruling is unchanged by the
+# move and is what the move is for: this module wanted three document
+# utilities and imported a 15,000-line state machine to reach them. The
+# bodies are byte-identical, the flock filename included, which is what lets
+# the two definitions that stand during the carve exclude each other.
+from foundry_mcp.tools.artifacts import (
     _document_problem,
     _document_transaction,
     _load_json,

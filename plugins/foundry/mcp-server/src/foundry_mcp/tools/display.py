@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 
-from foundry_mcp.schemas.vocab import STREAM_WIRE_IDS
+from foundry_mcp.schemas.vocab import PHASE_NAMES, STREAM_WIRE_IDS
 
 
 def _short_path(p: str) -> str:
@@ -32,6 +32,21 @@ def _short_path(p: str) -> str:
 
 
 # ── ANSI colors ──────────────────────────────────────────────────────────────
+#
+# D-202 — THE PALETTE IS WHAT THE RENDERERS USE, NOT A CATALOGUE OF WHAT ANSI
+# OFFERS. Seven names here had no reader anywhere in the plugin — the five
+# background codes, bold magenta, and the plain blue that only one of those
+# background codes mentioned — and "it is a named colour table, keep it whole"
+# is the same argument that kept `_spec_relative_path` alive after its caller
+# was rewired away (D-196). A private module-level binding nothing names is
+# dead by definition, whether it holds a function or an escape code, and
+# `test_every_private_function_the_plugin_ships_is_reachable` now says so on
+# both node types. Add a code back the moment a renderer needs it.
+#
+# The seven are spelled in English above rather than as backticked cites,
+# because a code span is a CLAIM that the name resolves. These do not, so a
+# reader who greps one finds nothing and cannot tell a stale comment from a
+# missing file — D-063's class, and this module held an instance of it.
 
 _RESET = "\033[0m"
 _BOLD = "\033[1m"
@@ -40,34 +55,51 @@ _DIM = "\033[2m"
 _RED = "\033[31m"
 _GREEN = "\033[32m"
 _YELLOW = "\033[33m"
-_BLUE = "\033[34m"
-_MAGENTA = "\033[35m"
 _CYAN = "\033[36m"
 _WHITE = "\033[37m"
-
-_BG_RED = "\033[41m"
-_BG_GREEN = "\033[42m"
-_BG_YELLOW = "\033[43m"
-_BG_BLUE = "\033[44m"
-_BG_CYAN = "\033[46m"
 
 _BRED = f"{_BOLD}{_RED}"
 _BGREEN = f"{_BOLD}{_GREEN}"
 _BYELLOW = f"{_BOLD}{_YELLOW}"
 _BCYAN = f"{_BOLD}{_CYAN}"
 _BWHITE = f"{_BOLD}{_WHITE}"
-_BMAGENTA = f"{_BOLD}{_MAGENTA}"
+
+# fallout D-014 — THE EIGHT CODES ANOTHER MODULE RENDERS WITH ARE PUBLISHED.
+#
+# `orchestration/guidance.py#_format_status_display` draws the status banner,
+# the phase ladder and the defect/verdict/stream lines with THIS palette, and
+# it reached the underscore spellings across a module boundary — a published
+# contract written as if it were internal, which is half of what D-014 files
+# against the split status renderer.
+#
+# ALIASES, NOT A SECOND PALETTE: each name below IS the binding above, so the
+# public and private spellings cannot drift the way `display.py`'s copy and
+# `tools/foundry.py`'s third copy already did (`_KNOWN_DUPLICATION`). Exactly
+# the eight `guidance.py` imports are published — a public name for a code
+# nobody outside renders with would be surface nothing asked for. When that
+# module repoints onto these, the private spellings keep their in-module
+# readers and nothing else changes.
+RESET = _RESET
+DIM = _DIM
+GREEN = _GREEN
+BRED = _BRED
+BGREEN = _BGREEN
+BYELLOW = _BYELLOW
+BCYAN = _BCYAN
+BWHITE = _BWHITE
 
 
 # ── Box drawing helpers ──────────────────────────────────────────────────────
 
 _W = 60  # default box width (inner)
 
-_PHASE_NAMES = {
-    "F0": "RESEARCH", "F0.5": "DECOMPOSE", "F0.9": "VALIDATE",
-    "F1": "CAST", "F2": "INSPECT", "F3": "GRIND", "F4": "ASSAY",
-    "F5": "TEMPER", "F5.5": "NYQUIST", "F6": "DONE",
-}
+# fallout D-015 — THE PHASE VOCABULARY IS `vocab.PHASE_NAMES` AND IS IMPORTED.
+# The ten rows were typed here AND again in
+# `orchestration/guidance.py#_format_status_display` as a list of pairs, so one
+# ladder had two declarations and nothing compared them. `schemas/vocab.py`
+# declares `PHASE_LADDER` (ordered, for a renderer walking the ladder) and
+# derives `PHASE_NAMES` from it (for a renderer holding an id); both readers
+# now derive from the one tuple.
 
 
 def _box(title: str, lines: list[str], width: int = _W, color: str = _BCYAN) -> str:
@@ -203,15 +235,136 @@ def _fmt_verify_citations(r: dict) -> str:
 # ── Foundry formatters ────────────────────────────────────────────────────────
 
 
+def _executing_build_lines(r: dict) -> list[str]:
+    """AC-027 / OT-018 / FR-017 — WHICH BUILD IS EXECUTING THIS RUN.
+
+    A plugin-targeting run whose executing server is a stale cached copy cannot
+    use the process fixes it is itself shipping, and nothing on screen said so.
+    These four facts are written by `foundry_init` at F0 and merely rendered
+    here; a missing key omits its line rather than raising, which is this
+    module's rule for every optional fact (see the named-refusal block).
+
+    D-041 — WHY THIS IS A FUNCTION AND WHY BOTH CALLERS APPEND IT.
+    -------------------------------------------------------------
+    These lines lived inline in `_fmt_foundry_init`, below an
+    ``if "display" in r: return r["display"]`` early return — and `foundry_init`
+    sets `display` on EVERY success, so on the success path they were
+    unreachable. On the refusal path they were unreachable for a second,
+    independent reason: `foundry_init`'s self-target refusal carries no
+    `display`, so the block did render, but it rendered no `error` text, and
+    `format_result` therefore threw the whole rendering away for
+    `_house_refusal_display`. Code with no reachable caller, carrying the one
+    fact the run exists to make visible.
+
+    So the block is a helper both paths APPEND, rather than a tail both paths
+    have to fall through to. Same shape `_fmt_foundry_next_lines` uses against
+    the Foundry-Next result: the pre-rendered box is built by a different
+    module (`foundry.py#_format_init_display`, which renders none of these) and
+    is concatenated with, never returned instead of.
+    """
+    lines: list[str] = []
+    for label, key in (
+        ("Server", "server_version"),
+        ("Plugin", "plugin_version"),
+        ("Root", "server_root"),
+        ("Commit", "server_commit"),
+    ):
+        value = r.get(key)
+        if not value:
+            continue
+        shown = _short_path(str(value)) if key == "server_root" else str(value)
+        lines.append(f"  {_BWHITE}{label}:{_RESET}{' ' * max(1, 8 - len(label))}{shown}")
+    if r.get("self_target"):
+        lines.append(
+            f"  {_BWHITE}Target:{_RESET} {_BYELLOW}self{_RESET} "
+            f"{_DIM}(this run builds the plugin it is executing on){_RESET}"
+        )
+    return lines
+
+
 def _fmt_foundry_init(r: dict) -> str:
+    build = _executing_build_lines(r)
+
+    # D-011 / D-041 / ST-009 / CT-010 — THE REFUSAL PATH RENDERS ITS OWN
+    # REFUSAL, OR THE HOUSE NET TAKES THE WHOLE RENDERING AWAY.
+    #
+    # `format_result` discards a formatter's output when the result named a
+    # refusal the rendering does not contain. This formatter had no error
+    # branch at all, so a self-target refusal — the one refusal whose entire
+    # value is four version facts and a command to relaunch with — fell through
+    # to `_house_refusal_display`, which knows only error / corrupt_artifacts /
+    # hint. Driven: `foundry_init` against a 9.9.9 tree rendered no
+    # `claude --plugin-dir` substring anywhere, while its own hint said
+    # "relaunch with the command above".
+    refusal = _named_refusal(r)
+    if refusal is not None:
+        lines = [f"  {_RED}{refusal}{_RESET}"]
+        if build:
+            lines.append("")
+            lines.extend(build)
+        lines.extend(_launch_command_lines(r))
+        hint = r.get("hint")
+        if isinstance(hint, str) and hint.strip():
+            lines.append("")
+            lines.append(f"  {_DIM}{hint}{_RESET}")
+        return _foundry_display(f"F O U N D R Y  {_BRED}Init refused{_RESET}", lines)
+
     if "display" in r:
-        return r["display"]
-    return _foundry_display("F O U N D R Y  Initialized", [
+        pre_rendered = r["display"]
+        if build:
+            return pre_rendered + "\n" + "\n".join(build)
+        return pre_rendered
+    lines = [
         f"  {_BWHITE}Dir:{_RESET}    {_short_path(r.get('foundry_dir', '?'))}",
         f"  {_BWHITE}Name:{_RESET}   {r.get('run_name', '?')}",
         f"  {_BWHITE}Files:{_RESET}  {', '.join(r.get('files_created', []))}",
         f"  {_BWHITE}Spec:{_RESET}   {'copied' if r.get('spec_copied') else 'none'}",
-    ])
+    ]
+    lines.extend(build)
+    return _foundry_display("F O U N D R Y  Initialized", lines)
+
+
+def _retier_line(r: dict) -> str:
+    """The `re-tiered <id> <TIER>` line both filing doors' formatters render.
+
+    D-100 — THE RE-TIER OUTCOME NEVER CROSSED THE MCP BOUNDARY.
+    ----------------------------------------------------------
+    Both doors return `retiered` and `retiered_ids`, under the same two key
+    names and with a comment saying so "so a lead or a report reading either
+    door's result handles one shape" — and `format_result` dropped both, on both
+    doors. Driven with ANSI stripped: `foundry_add_defect` against a ledger
+    holding an open untiered D-001 returned retiered=1, retiered_ids=['D-001']
+    and rendered "F O U N D R Y  Defect: D-001 / Total: 1  Open: 1"; the
+    identical call against an EMPTY ledger returned retiered=0, retiered_ids=[]
+    and rendered the BYTE-IDENTICAL two lines. `foundry_sync_defects` returning
+    retiered=1 rendered "Added: +0 / Reopened: 0 / Total open: 1", which reads
+    as "the batch recorded nothing" for a batch that reclassified an open
+    blocking record in place.
+
+    That matters because `_blocking_defects`' hint instructs the lead to re-file
+    each untiered defect through either door PRECISELY so the blocking count
+    moves. The screen never said it did, so the return trip on the documented
+    recovery path failed and the lead's rational next move was to re-file again
+    or conclude the exit does not work.
+
+    ONE renderer for both doors, for the same reason the two doors report under
+    one pair of key names: a second spelling of one event is how the two
+    surfaces come to disagree about it. The heading is the one the forge-log.md
+    mirror already computes — "<id> re-tiered <TIER>" — so the terminal and the
+    human log say the same thing about the same event. The tier is rendered when
+    the result carries one and omitted when it does not, rather than re-read
+    from the ledger: this module renders result dicts and reads no run artifact.
+    """
+    ids = r.get("retiered_ids")
+    if not isinstance(ids, list) or not ids:
+        return ""
+    tier = r.get("tier")
+    suffix = f" {tier}" if isinstance(tier, str) and tier.strip() else ""
+    named = ", ".join(str(i) for i in ids)
+    return (
+        f"  {_BGREEN}re-tiered{_RESET} {_BYELLOW}{named}{_RESET}{suffix} "
+        f"{_DIM}(classified in place — the record keeps its id){_RESET}"
+    )
 
 
 def _fmt_foundry_add_defect(r: dict) -> str:
@@ -222,9 +375,14 @@ def _fmt_foundry_add_defect(r: dict) -> str:
     defect_id = r.get("defect_id", "?")
     total = r.get("total_defects", 0)
     open_count = r.get("open_defects", 0)
-    return _foundry_display(f"F O U N D R Y  Defect: {_BYELLOW}{defect_id}{_RESET}", [
-        f"  Total: {total}  Open: {_BYELLOW}{open_count}{_RESET}",
-    ])
+    lines = [f"  Total: {total}  Open: {_BYELLOW}{open_count}{_RESET}"]
+    # D-100: a re-tier and a fresh append rendered identically, so the lead
+    # could not tell which of the two had just happened.
+    if (retier := _retier_line(r)):
+        lines.append(retier)
+    return _foundry_display(
+        f"F O U N D R Y  Defect: {_BYELLOW}{defect_id}{_RESET}", lines
+    )
 
 
 def _fmt_foundry_query_defects(r: dict) -> str:
@@ -345,7 +503,7 @@ def _fmt_foundry_gate(r: dict) -> str:
         ])
     passed = r.get("passed", False)
     phase = r.get("phase", "?")
-    phase_name = _PHASE_NAMES.get(phase.upper(), phase)
+    phase_name = PHASE_NAMES.get(phase.upper(), phase)
 
     # Hide failed gate checks — the lead retries automatically, no need to surface
     if not passed:
@@ -370,25 +528,392 @@ def _fmt_foundry_mark_phase_complete(r: dict) -> str:
         reason = r.get("error", "")
         return f"{_DIM}Phase transition blocked: {reason}{_RESET}"
     phase = r.get("phase", "?")
-    phase_name = _PHASE_NAMES.get(phase, phase)
+    phase_name = PHASE_NAMES.get(phase, phase)
     return _foundry_display(f"F O U N D R Y  \u2192 {phase} {phase_name}", [
         f"  {r.get('message', '')}",
     ])
 
 
+def _stated_count(source: object, key: str, rows: list) -> int:
+    """The integer the RESULT states under ``key``; ``len(rows)`` only when it
+    states none.
+
+    D-179 — A RENDERED COUNT THAT WAS DERIVED A SECOND TIME, OFF A SECOND AXIS.
+    --------------------------------------------------------------------------
+    Every renderer below draws a number beside a machine-readable body that
+    `format_result_blocks` puts on the same wire. When the handler has already
+    published that number, re-deriving it here does not "check" it — it makes a
+    second answer to one question, and the two are free to differ. They did.
+    Driven at the real MCP surface on this run's own archive: the SAME
+    Foundry-Next response carried `spend.unreported_count 19` in its JSON and
+    rendered "Unreported: 58" in the box above it, because the box counted
+    `len(unreported_dispatches)` — the per-cycle ROW list — under a header that
+    then spelled every entry "agent@phase", the PAIR grammar. `prove@F2`
+    printed ten times under a number that counted rows.
+
+    This is the same defect D-162 fixed one rung lower and the same class
+    D-047 / D-048 / D-013 fixed one rung lower again: two derivations of one
+    number. The rule that ends it here is that the DISPLAY never derives. It
+    reads what the result states, and falls back to `len(rows)` only where the
+    result states nothing — in which case there is no second number for it to
+    disagree with. `_fmt_foundry_defects_to_tasks` has read `r.get("count",
+    len(tasks))` since C-12; this is that shape, named once, for every caller.
+
+    ``source`` is typed loosely because a formatter is handed whatever the
+    handler returned: a non-mapping, or a count key holding a string, must
+    contribute a rendering rather than a raise (this module's standing rule —
+    D-157). A bool is not an int here, for the same reason it is not one at the
+    spend door: `True` is not a count of anything.
+    """
+    if isinstance(source, dict):
+        stated = source.get(key)
+        if isinstance(stated, int) and not isinstance(stated, bool):
+            return stated
+    return len(rows)
+
+
+def _unreported_pairs(source: object) -> tuple[int, list[str]]:
+    """The unreported count the result states, and the pairs it names (D-179).
+
+    ONE READER OF THIS AXIS, so the number and the names cannot drift apart.
+    `Foundry-Next`'s `spend` block and `Foundry-Spend`'s own result both carry
+    `unreported_dispatches` (row-shaped, one row per cycle a stream agent was
+    missed in) beside `unreported_count` (the PAIR count `_spend_summary` and
+    the F6 report both publish). A caller that read the list for its names and
+    its number took two different axes; the names are collapsed to distinct
+    `agent@phase` pairs here so the list it returns is the axis the count is on.
+
+    FR-022 asks for "N agents unreported per phase". Rows are neither agents
+    nor agent-phase pairs, which is why the row list was never the number to
+    render even before the two surfaces disagreed about it.
+    """
+    rows = source.get("unreported_dispatches") if isinstance(source, dict) else None
+    if not isinstance(rows, list):
+        rows = []
+    pairs: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        pair = f"{row.get('agent', '?')}@{row.get('phase', '?')}"
+        if pair not in seen:
+            seen.add(pair)
+            pairs.append(pair)
+    return _stated_count(source, "unreported_count", pairs), pairs
+
+
+def _fmt_foundry_next_lines(r: dict) -> list[str]:
+    """The per-fact lines Foundry-Next gained: width, spend, unreported, halt.
+
+    One labelled line per fact and never a raise — a key that is not there
+    contributes no line. That is this module's rule and not a stylistic one: a
+    formatter that indexes an optional key is how D-157 put a literal '?' on
+    screen while the handler had returned a fully-worded refusal.
+
+    Everything here is REPORTED (GI-008 / GI-009). The width and its rule were
+    decided by the transition that opened the INSPECT and recorded in
+    state.json; the spend totals are what the lead typed into Foundry-Spend. No
+    line below computes a value, and none of them contains a money figure — this
+    server does not know anyone's rate card (AC-033).
+    """
+    lines: list[str] = []
+
+    mode = r.get("inspect_mode")
+    if isinstance(mode, dict) and mode.get("mode"):
+        colour = _BYELLOW if mode["mode"] == "FULL" else _BGREEN
+        lines.append(
+            f"  {_BWHITE}Inspect:{_RESET}  {colour}{mode['mode']}{_RESET} "
+            f"{_DIM}(rule {mode.get('rule', '?')}, decided at "
+            f"{mode.get('decided_by', '?')}){_RESET}"
+        )
+        required = mode.get("required_streams") or []
+        if required:
+            lines.append(f"  {_BWHITE}Roster:{_RESET}   {', '.join(required)}")
+        scope = mode.get("stream_scope") or {}
+        skipped = sorted(
+            wire for wire, v in scope.items()
+            if isinstance(v, dict) and v.get("scope") == "skipped"
+        )
+        if skipped:
+            lines.append(f"  {_BWHITE}Skipped:{_RESET}  {_DIM}{', '.join(skipped)}{_RESET}")
+        sample = mode.get("prove_sample") or []
+        if sample:
+            shown = ", ".join(sample[:8]) + ("..." if len(sample) > 8 else "")
+            lines.append(f"  {_BWHITE}PROVE:{_RESET}    {len(sample)} row(s) — {shown}")
+        # D-140 / AC-019: the TRACE half of the same roster. PROVE's rows have
+        # been on this screen since D-104 and TRACE's files were on none — the
+        # stream was left to scope its walk from the spec while the server had
+        # the file list recorded. Truncated for the terminal exactly as the
+        # PROVE line is; the whole array is `inspect_mode.touched_files` in the
+        # JSON after `RESULT_JSON_MARKER`, which is what the stream reads.
+        #
+        # D-173: that last clause used to say "in the response body", and there
+        # was no response body — `call_tool` returned this rendering and
+        # nothing else, so the truncated line was the only thing on the wire
+        # and the safety property this comment asserts was false. It is true
+        # now because `format_result_blocks` appends the result; keep the
+        # truncation, and keep the marker.
+        touched = mode.get("touched_files") or []
+        trace_scope = (mode.get("stream_scope") or {}).get("trace")
+        if touched and isinstance(trace_scope, dict) and trace_scope.get("scope") == "delta":
+            shown = ", ".join(_short_path(p) for p in touched[:5])
+            more = f" (+{len(touched) - 5} more)" if len(touched) > 5 else ""
+            lines.append(
+                f"  {_BWHITE}TRACE:{_RESET}    {len(touched)} file(s) — {shown}{more}"
+            )
+
+    spend = r.get("spend")
+    if isinstance(spend, dict):
+        total = spend.get("total") or {}
+        if total.get("agents") or spend.get("unreported_count"):
+            minutes = int(total.get("duration_ms", 0) // 60000)
+            # D-189: a phantom must not read as an attributed agent while a real
+            # dispatch sits unreported on the line below. One typo'd
+            # `Foundry-Spend` — `casting-l` for `casting-1` — rendered "over 1
+            # reported agent(s)" here and "Unreported: 1 casting-1@F3" two lines
+            # down, two agents on the display for what was ONE dispatch, with
+            # nothing distinguishing them. The COUNT is not filtered (the tokens
+            # were really spent, and `foundry_report` cross-checks that number
+            # against the ledger's distinct names — see `foundry_record_spend`);
+            # the names of the agents the run could not match are stated beside
+            # it instead, so the reader can tell which is which.
+            unmatched = spend.get("unmatched_agents")
+            unmatched = unmatched if isinstance(unmatched, list) else []
+            shown = ", ".join(str(name) for name in unmatched[:4])
+            more = f" (+{len(unmatched) - 4} more)" if len(unmatched) > 4 else ""
+            tail = (
+                f", {_BYELLOW}{len(unmatched)}{_RESET} matching no dispatch "
+                f"{_DIM}({shown}{more}){_RESET}"
+                if unmatched else ""
+            )
+            lines.append(
+                f"  {_BWHITE}Spend:{_RESET}    {total.get('tokens', 0):,} tokens  "
+                f"{minutes}m  over {total.get('agents', 0)} reported agent(s)"
+                f"{tail}"
+            )
+        # D-220 — THE CYCLE AXIS IS ORDERED BY THE COUNTER, THROUGH THE ONE KEY
+        # FUNCTION THAT ALREADY ORDERS IT.
+        #
+        # `sorted(buckets.items())` orders on the STRINGIFIED key, and
+        # `by_cycle`'s keys are `str(cycle)` (C-4 / FR-037), so cycle 21
+        # rendered before cycle 3 and cycle 10 before cycle 2. Observed on the
+        # live run, on the very call that opened the INSPECT which filed this:
+        # "By Cycle: 0: 0tok/0m  1: 0tok/0m  10: 0tok/0m  11: 0tok/0m ...
+        # 2: 0tok/0m  20: 0tok/0m ... 23: 1,430,191tok/145m  3: 0tok/0m ...".
+        # FR-037 requires the roll-ups to be keyed by the server cycle counter
+        # and AC-033 makes this the line the lead reads tokens and minutes per
+        # cycle on; a counter rendered out of counter order is the one thing it
+        # exists to show.
+        #
+        # THE KEY FUNCTION IS IMPORTED, NOT RE-TYPED. `foundry_report` renders
+        # the SAME mapping through it at both `by_cycle` and `per_cycle`, and
+        # `measure-run.py` at the same two axes, so one document had two
+        # orderings depending on which surface printed it — which is the whole
+        # class. A third copy here would make it three.
+        #
+        # GI-024 — AND THE DESTINATION IS THE LEAF NOW, NOT `foundry_report`.
+        # This read the spelling out of the report module, which is a
+        # RENDERER: two renderers agreeing because one imports the other is a
+        # sharing arrangement that survives only while the report keeps a
+        # helper it does not itself need. The ordering is a derived-table rule,
+        # so it lives in `foundry_state` with the rest of them, and all three
+        # surfaces — this one, the report, and `measure-run.py` — reach the
+        # same object. The import is function-local for the reason
+        # `foundry_report` gives where it imports `_agent_id_for_casting` from
+        # `foundry_spawn`: it runs at call time and closes no cycle.
+        #
+        # `by_phase` is UNCHANGED by it. Its keys are phase tokens ("F1",
+        # "F5.5"), which `cycle_sort_key` maps to `(1, raw)` — after every
+        # numeric key, and among themselves in exactly the lexicographic order
+        # `sorted()` gave them. One key function over both axes, and only the
+        # axis that was wrong moves.
+        from foundry_mcp.tools.foundry_state import cycle_sort_key as _cycle_sort_key
+
+        for label, section in (("by phase", "by_phase"), ("by cycle", "by_cycle")):
+            buckets = spend.get(section) or {}
+            if not isinstance(buckets, dict) or not buckets:
+                continue
+            parts = [
+                f"{key}: {b.get('tokens', 0):,}tok/{int(b.get('duration_ms', 0) // 60000)}m"
+                for key, b in sorted(
+                    buckets.items(), key=lambda kv: _cycle_sort_key(kv[0])
+                )
+                if isinstance(b, dict)
+            ]
+            if parts:
+                lines.append(f"  {_BWHITE}{label.title()}:{_RESET} {_DIM}{'  '.join(parts)}{_RESET}")
+        # D-179: the integer is the one `spend` STATES, and the names beside it
+        # are the same axis. This line used to render `len(unreported_
+        # dispatches)` — the per-cycle row list — and then spell each entry
+        # "agent@phase", so the header counted rows while the list named pairs
+        # and a stream missed in ten cycles printed ten times. See
+        # `_unreported_pairs`.
+        unreported_count, unreported_pairs = _unreported_pairs(spend)
+        if unreported_count or unreported_pairs:
+            names = ", ".join(unreported_pairs[:6])
+            more = (
+                f" (+{len(unreported_pairs) - 6} more)"
+                if len(unreported_pairs) > 6 else ""
+            )
+            lines.append(
+                f"  {_BWHITE}Unreported:{_RESET} {_BYELLOW}{unreported_count}{_RESET} "
+                f"{_DIM}{names}{more} — no gate blocks on these{_RESET}"
+            )
+
+    build = r.get("executing_server")
+    if isinstance(build, dict) and (build.get("server_version") or build.get("server_commit")):
+        commit = str(build.get("server_commit", "") or "")
+        lines.append(
+            f"  {_BWHITE}Server:{_RESET}   {build.get('server_version', '?')} "
+            f"{_DIM}(plugin {build.get('plugin_version', '?')} @ "
+            f"{commit[:12] or 'unknown'}, {_short_path(str(build.get('server_root', '?')))})"
+            f"{_RESET}"
+        )
+
+    waiting = r.get("waiting_on_agents")
+    if isinstance(waiting, dict) and waiting.get("waiting"):
+        lines.append(
+            f"  {_BWHITE}Waiting:{_RESET}  {waiting.get('count', 0)} agent(s) "
+            f"{_DIM}({waiting.get('detail', '')}){_RESET}"
+        )
+
+    # FR-021 / AC-028 / CT-007 — WHERE THE RUN IS HEADING, beside the facts it
+    # already prints.
+    #
+    # `Foundry-Next` is the mandatory handshake before every transition, and
+    # until now it told the lead everything about where the run IS and nothing
+    # about where it ENDS. CT-007 makes `heading_for` carry DONE or HALTED on
+    # every response, with the open counts that would form the backlog and the
+    # cycles left to the cap, so "a named backlog is a successful end" is a
+    # sentence the lead can act on rather than one they read afterwards.
+    #
+    # THE VALUE IS COMPUTED BY `_compute_next_action` AND RENDERED HERE. This
+    # module's rule is that the display never derives (D-179): a formatter that
+    # worked out where the run was heading would be a second answer to a
+    # question the handler already answers, free to disagree with the gate that
+    # acts on it. The key is ABSENT until that computation lands, and an absent
+    # key contributes no line — which is what lets this render correctly in a
+    # tree where the field does not exist yet, and light up the moment it does.
+    heading = r.get("heading_for")
+    if isinstance(heading, str) and heading:
+        colour = _BRED if heading == "HALTED" else _BGREEN
+        backlog = r.get("open_by_tier")
+        parts: list[str] = []
+        if isinstance(backlog, dict) and backlog:
+            parts.append(
+                "backlog " + ", ".join(
+                    f"{tier} {count}" for tier, count in sorted(backlog.items())
+                )
+            )
+        cycles = r.get("cycles_to_cap")
+        if isinstance(cycles, int) and not isinstance(cycles, bool):
+            parts.append(f"{cycles} cycle(s) to cap")
+        elif "cycles_to_cap" in r and r.get("cycles_to_cap") is None:
+            # `null` is a MEASUREMENT here — an unbounded run — and saying so
+            # is the difference between "no cap" and "nobody looked".
+            parts.append("no cap")
+        tail = f" {_DIM}({'; '.join(parts)}){_RESET}" if parts else ""
+        lines.append(
+            f"  {_BWHITE}Heading:{_RESET}  {colour}{heading}{_RESET}{tail}"
+        )
+
+    if r.get("phase") == "HALTED":
+        lines.append(
+            f"  {_BRED}HALTED:{_RESET}   "
+            f"{(r.get('details') or {}).get('halted_reason', 'cycle cap reached')}"
+        )
+    return lines
+
+
 def _fmt_foundry_next_action(r: dict) -> str:
-    # Always show BOTH the pixel-art status header (from the `display` field)
-    # AND the imperative instructions (which lead with a "YOUR NEXT CALL:"
-    # line from Phase 6).
+    # Always show the pixel-art status header (from the `display` field), THEN
+    # the per-fact lines, THEN the imperative instructions (which lead with a
+    # "YOUR NEXT CALL:" line from Phase 6).
+    #
+    # D-018 — THE PRE-RENDERED BLOCK WAS RETURNED *INSTEAD OF* THESE LINES.
+    #
+    # `foundry_next_action` sets `display` on every call, so both early returns
+    # below fired every time and `_fmt_foundry_next_lines` was never reached in
+    # production: the lead saw the run's spend TOTAL and nothing else, while
+    # per-phase and per-cycle roll-ups — the two numbers FR-021 exists to
+    # deliver — were computed, put in the result dict, and thrown away at the
+    # renderer. The second symptom was worse than the omission: the unreachable
+    # renderer held a second copy of the Inspect / Spend / Server lines that
+    # `_format_status_display` also drew, and the two had already drifted (the
+    # dead copy named `server_root`, the live one did not).
+    #
+    # Concatenated, never substituted. That is the same repair `_fmt_foundry_
+    # init` makes against the same cause, and it is what lets
+    # `_format_status_display` drop its copy of these four groups: there is now
+    # exactly ONE renderer for each of them, and it is this one.
     instructions = r.get("instructions", "")
     pre_rendered = r.get("display")
-    if pre_rendered and instructions:
-        return f"{pre_rendered}\n\n{instructions}"
+    facts = _fmt_foundry_next_lines(r)
     if pre_rendered:
-        return pre_rendered
+        block = pre_rendered
+        if facts:
+            block = block + "\n" + "\n".join(facts)
+        if instructions:
+            return f"{block}\n\n{instructions}"
+        return block
     return _foundry_display(f"F O U N D R Y  {r.get('phase', '?')}", [
         f"  {_BWHITE}Action:{_RESET}  {r.get('action', '?')}",
         f"  {instructions}",
+    ] + facts)
+
+
+def _fmt_foundry_record_spend(r: dict) -> str:
+    if r.get("error"):
+        return _foundry_display(f"F O U N D R Y  {_BRED}Spend{_RESET}", [
+            f"  {_RED}{r['error']}{_RESET}",
+            f"  {_DIM}{r.get('hint', '')}{_RESET}",
+        ])
+    row = r.get("recorded") or {}
+    total = r.get("total") or {}
+    minutes = int(total.get("duration_ms", 0) // 60000)
+    lines = [
+        f"  {_BWHITE}Agent:{_RESET}   {row.get('agent', '?')} @ {row.get('phase', '?')}"
+        f" {_DIM}(cycle {row.get('cycle', '?')}){_RESET}",
+        f"  {_BWHITE}Recorded:{_RESET} {row.get('tokens', 0):,} tokens  "
+        f"{int(row.get('duration_ms', 0) // 1000)}s",
+        f"  {_BWHITE}Run total:{_RESET} {total.get('tokens', 0):,} tokens  {minutes}m  "
+        f"over {total.get('agents', 0)} agent(s)",
+    ]
+    # D-179: the same expression `_fmt_foundry_next_lines` held, on the same
+    # two keys, so the same wrong axis reached this box too. Read, never
+    # derived — `foundry_record_spend` publishes `unreported_count` from the
+    # one `_spend_summary` call it already makes.
+    unreported_count, _unreported_names = _unreported_pairs(r)
+    if unreported_count:
+        lines.append(
+            f"  {_BWHITE}Unreported:{_RESET} {_BYELLOW}{unreported_count}{_RESET} "
+            f"{_DIM}dispatch(es) still have no spend record — nothing blocks on them{_RESET}"
+        )
+    if row.get("ledger_problem"):
+        lines.append(f"  {_BYELLOW}Ledger:{_RESET} {row['ledger_problem']}")
+    # D-004: a coercion the result names but the display swallows is still a
+    # silent mis-attribution — the lead reads THIS box, not the raw dict. Beside
+    # `ledger_problem`, which is the same kind of fact: something is not as you
+    # typed it, and nothing is blocked.
+    for warning in r.get("warnings") or []:
+        lines.append(f"  {_BYELLOW}Note:{_RESET} {_DIM}{warning}{_RESET}")
+    return _foundry_display("F O U N D R Y  Spend recorded", lines)
+
+
+def _fmt_foundry_report(r: dict) -> str:
+    if r.get("ok") is False or r.get("error"):
+        return _foundry_display(f"F O U N D R Y  {_BRED}Report{_RESET}", [
+            f"  {_RED}{r.get('error', 'the report could not be generated')}{_RESET}",
+            f"  {_DIM}{r.get('hint', '')}{_RESET}",
+        ])
+    sections = r.get("sections") or []
+    return _foundry_display("F O U N D R Y  Report generated", [
+        f"  {_BWHITE}Markdown:{_RESET} {_short_path(str(r.get('report_md', '?')))}",
+        f"  {_BWHITE}JSON:{_RESET}     {_short_path(str(r.get('report_json', '?')))}",
+        f"  {_BWHITE}Sections:{_RESET} {len(sections)} — {', '.join(sections)}",
+        f"  {_DIM}Append prose under your own `## ` heading; the F6 seal carries"
+        f" it into 'Lead notes'. You may not omit a section —"
+        f" Foundry-Phase(phase='done') refuses while any is missing.{_RESET}",
     ])
 
 
@@ -449,10 +974,47 @@ def _fmt_foundry_unregister_team(r: dict) -> str:
 
 
 def _fmt_foundry_mark_defect_fixed(r: dict) -> str:
+    """Foundry-Fix's render — and its refusals carry what the rung named.
+
+    D-121 — ONE REFUSAL, TWO DOORS, TWO DIFFERENT ANSWERS.
+    -----------------------------------------------------
+    `check_reported_prompt_hash` (the C-8 shared rung) returns `error`,
+    `hint`, `expected_hash` and `reported_hash`; its `error` is the bare token
+    `stale_prompt_hash` and every VALUE it compared lives in the other three
+    keys. `foundry_mark_defect_fixed` returns that dict unchanged, and this
+    branch rendered `r['error']` alone — so on the Foundry-Fix door the whole
+    screen read `stale_prompt_hash`, while Foundry-Accept-Casting, which has
+    no formatter and falls through to the JSON dump, showed both hashes for
+    the identical refusal. Driven (TEST-01 OBS-032): 7 of 7 fix-door examples
+    carried neither hash; all 3 accept-door examples carried both.
+    spec.md's Error Handling row names BOTH doors for this refusal
+    ("Reported prompt hash differs from file | Foundry-Accept-Casting,
+    Foundry-Fix | refused | expected and reported hash"), and FR-019 makes the
+    hash the one thing the teammate states back — a refusal that hides both
+    values cannot tell the lead whether the dispatch went stale or the
+    teammate never read the file, which is the distinction the check exists to
+    expose.
+
+    Written as the general refusal shape rather than a `stale_prompt_hash`
+    special case: `hint` is the house key every refusal in this server carries
+    (`foundry_state.py`'s `{"ok": False, "error": ..., "hint": ...}`), and a
+    formatter that renders `error` and drops `hint` loses the remedy for every
+    OTHER Foundry-Fix refusal too — the missing-field ladder's "Name a second
+    path that touches this code..." was going the same way.
+    """
     if r.get("error"):
-        return _foundry_display(f"F O U N D R Y  {_BRED}Error{_RESET}", [
-            f"  {_RED}{r['error']}{_RESET}",
-        ])
+        lines = [f"  {_RED}{r['error']}{_RESET}"]
+        for label, key in (("Expected:", "expected_hash"), ("Reported:", "reported_hash")):
+            value = r.get(key)
+            if value is not None:
+                lines.append(f"  {_BWHITE}{label}{_RESET} {_BYELLOW}{value!r}{_RESET}")
+        fields = r.get("missing_fields")
+        if isinstance(fields, list) and fields:
+            lines.append(f"  {_BWHITE}Fields:{_RESET}   {', '.join(str(f) for f in fields)}")
+        hint = r.get("hint")
+        if isinstance(hint, str) and hint.strip():
+            lines.append(f"  {_DIM}{hint}{_RESET}")
+        return _foundry_display(f"F O U N D R Y  {_BRED}Error{_RESET}", lines)
     defect_id = r.get("defect_id", "?")
     cycle = r.get("fixed_in_cycle", "?")
     remaining = r.get("remaining_open", 0)
@@ -473,11 +1035,20 @@ def _fmt_foundry_sync_defects(r: dict) -> str:
     total_open = r.get("total_open", 0)
     regressions = r.get("regressions", [])
 
+    retiered = r.get("retiered", 0)
+
     lines = [
         f"  Added:      {_BYELLOW}+{added}{_RESET}",
         f"  Reopened:   {_RED}{reopened}{_RESET}" if reopened > 0 else f"  Reopened:   0",
+        # D-100: beside Added and Reopened, because it is the third thing a
+        # batch can do to the ledger and the only one the screen did not say.
+        # A batch that re-tiered one record and appended none rendered
+        # "Added: +0  Reopened: 0", which reads as "nothing happened".
+        f"  Re-tiered:  {_BGREEN}{retiered}{_RESET}" if retiered else "  Re-tiered:  0",
         f"  Total open: {_BWHITE}{total_open}{_RESET}",
     ]
+    if (retier := _retier_line(r)):
+        lines.append(retier)
     if regressions:
         lines.append(f"  {_BRED}Regressions: {', '.join(regressions)}{_RESET}")
 
@@ -557,7 +1128,7 @@ def _fmt_foundry_get_context(r: dict) -> str:
     verdicts = r.get("verdicts", {})
 
     phase = state.get("phase", "?")
-    phase_name = _PHASE_NAMES.get(phase, "")
+    phase_name = PHASE_NAMES.get(phase, "")
 
     lines = [
         f"  {_BWHITE}Spec:{_RESET}     {_short_path(state.get('spec_path', '')) or 'none'}",
@@ -772,6 +1343,8 @@ _FORMATTERS: dict[str, callable] = {
     "Foundry-Context": _fmt_foundry_get_context,
     "Foundry-Directive": _fmt_foundry_inject_directive,
     "Foundry-Clear": _fmt_foundry_clear_directives,
+    "Foundry-Spend": _fmt_foundry_record_spend,
+    "Foundry-Report": _fmt_foundry_report,
     "Forge-Spec-Start": _fmt_forge_spec_start,
     "Forge-Spec-Check": _fmt_forge_spec_check,
     "Forge-Spec-Status": _fmt_forge_spec_status,
@@ -833,18 +1406,54 @@ def _named_refusal(result: object) -> str | None:
     return None
 
 
+def _launch_command_lines(result: dict) -> list[str]:
+    """The shell command a refusal named, rendered so it can be copied.
+
+    D-011 — A HINT THAT SAYS "THE COMMAND ABOVE" NEEDS A COMMAND ABOVE.
+    ------------------------------------------------------------------
+    `foundry_init`'s self-target refusal sets `launch_command` into the result
+    dict at two sites and its `hint` reads "Quit, relaunch with the command
+    above". Nothing rendered it: `server.py#call_tool` returns only
+    `format_result(...)`, so the key never crossed the MCP boundary and the
+    only readers in the whole tree were test assertions. Driven against a
+    9.9.9 tree, the operator's screen carried no `claude --plugin-dir`
+    substring at all — a refusal that names the remedy in a key nobody prints
+    is a refusal with no remedy.
+
+    Rendered as its own indented line rather than folded into the hint prose,
+    because the entire point is that it is copied verbatim into a shell.
+    """
+    command = result.get("launch_command")
+    if not isinstance(command, str) or not command.strip():
+        return []
+    return [
+        "",
+        f"  {_BWHITE}Relaunch with:{_RESET}",
+        f"    {_BCYAN}{command.strip()}{_RESET}",
+    ]
+
+
 def _house_refusal_display(tool_name: str, result: dict, refusal: str) -> str:
     """The house refusal, rendered for a tool whose formatter dropped it.
 
-    Same three rungs the refusal dict carries: what is wrong, WHICH files, and
-    what to do about it -- so the operator learns the file to repair instead of
-    reading a banner about a phase the tool never got far enough to know.
+    Same rungs the refusal dict carries: what is wrong, WHICH files, the
+    command that fixes it, and what to do -- so the operator learns the file to
+    repair instead of reading a banner about a phase the tool never got far
+    enough to know.
+
+    `launch_command` is rendered HERE, and not only in the one formatter whose
+    tool emits it today, because this is the net every formatter falls into:
+    any tool that names a remedy command in its refusal is rendered by this
+    function the moment its own formatter does not repeat the refusal text.
+    Fixing it one formatter up would have left the net dropping the same field
+    for the next tool that names one.
     """
     lines = [f"  {_RED}{refusal}{_RESET}"]
     corrupt = result.get("corrupt_artifacts")
     if isinstance(corrupt, list):
         for artifact in corrupt:
             lines.append(f"    {_BYELLOW}{artifact}{_RESET}")
+    lines.extend(_launch_command_lines(result))
     hint = result.get("hint")
     if isinstance(hint, str) and hint.strip():
         lines.append(f"  {_DIM}{hint}{_RESET}")
@@ -857,6 +1466,14 @@ def format_result(tool_name: str, result: dict) -> str:
     Returns a visually formatted string if a formatter exists for the tool,
     otherwise falls back to indented JSON. A refusal the handler named always
     survives to the output -- see the note above.
+
+    THIS IS THE DISPLAY HALF ONLY. It is deliberately lossy: every formatter in
+    the table above summarises, truncates and drops keys, which is what makes
+    the terminal readable (NFR-005). `format_result_blocks` is what crosses the
+    MCP boundary, and it is what a caller that needs the DATA reads. Nothing
+    here changed when that was added, because
+    `test_a_result_that_names_no_refusal_is_left_exactly_as_the_formatter_rendered_it`
+    pins this function to exactly what the formatter produced.
     """
     formatter = _FORMATTERS.get(tool_name)
 
@@ -872,3 +1489,74 @@ def format_result(tool_name: str, result: dict) -> str:
             return rendered
 
     return json.dumps(result, indent=2)
+
+
+#: D-173 — the line after which the response IS the result, as JSON.
+#:
+#: A marker line and no terminator, because the JSON runs to the end of the
+#: response. A ```json fence was the first shape and was rejected: result dicts
+#: here routinely carry defect descriptions containing backtick runs, so the
+#: fence would have to vary in length and no consumer could pin one spelling.
+#: The rule a stream follows is one sentence -- everything after this line is
+#: the complete result, `json.loads` it -- and a mis-split fails loudly at the
+#: parse rather than quietly returning half a roster.
+RESULT_JSON_MARKER = "── machine-readable result ──"
+
+#: The sentence above the marker. Prose, so the operator reading the terminal
+#: knows what the JSON below is and why it repeats what the box just said.
+RESULT_JSON_PREAMBLE = (
+    "The display above is a summary and truncates its lists; the complete "
+    "result, with every array in full, is the JSON after the line below."
+)
+
+
+def format_result_blocks(tool_name: str, result: dict) -> str:
+    """The text one tool result crosses the MCP boundary as (D-173).
+
+    A formatted tool: the display, then the marker, then the whole result as
+    JSON. An unformatted tool: unchanged -- `format_result` already returns the
+    whole result as JSON and a second copy would say everything twice.
+
+    D-173 — THE RECORDED ROSTER NEVER REACHED THE STREAM THAT MUST OBEY IT.
+    ----------------------------------------------------------------------
+    `server.py#call_tool` returned exactly `format_result(name, result)`, and
+    `format_result` returns ONLY the formatter's string whenever a formatter
+    exists. So for the twenty-five formatted tools the result dict was built,
+    populated and discarded one rung below the boundary -- and the three
+    unformatted ones DO return their whole dict, which is what makes the
+    "response body" assumption read as true in review and be false in
+    production.
+
+    Driven at the real MCP surface on a synthetic repo: an `inspect_start`
+    whose GRIND touched 9 files recorded `inspect_modes[].touched_files` with 9
+    entries and `prove_sample` with 10 rows; the COMPLETE `Foundry-Next`
+    response named 5 files then "(+4 more)" and 8 rows then "...", and the
+    literals `inspect_mode`, `touched_files` and `prove_sample` appeared
+    NOWHERE in it. `Foundry-Context`, `Foundry-Coverage`, `Foundry-Tasks` and
+    `Foundry-Gate` named 0 of the 9. So there was no MCP surface at all from
+    which a stream could obtain the roster, while FR-047 / FR-049 make that
+    roster the exact set the streams-complete check judges the stream against,
+    and D-104 / D-140 / D-160 / D-161 each wired one more field into a payload
+    no reader could reach.
+
+    AT THE BOUNDARY, NOT PER FORMATTER. Every formatter summarises -- that is
+    its job and NFR-005 is why -- so "also print the arrays" is a fix that has
+    to be re-made in each of the twenty-five, and re-made again in the
+    twenty-sixth. D-011 is the same defect one field over (`launch_command`
+    reached no screen because `call_tool` returned only the rendering) and was
+    fixed one formatter at a time; this is the rung both belong on. The display
+    stays exactly as truncated as it was, deliberately: the summary is for the
+    operator and the JSON is for the parser, and collapsing them would cost
+    one of the two.
+    """
+    rendered = format_result(tool_name, result)
+    if tool_name not in _FORMATTERS:
+        return rendered
+    try:
+        payload = json.dumps(result, indent=2, default=str)
+    except (TypeError, ValueError):
+        # Never raise across the MCP boundary, and never lose the display over
+        # a payload that would not serialise: the rendering is still correct
+        # and is still the operator's answer.
+        return rendered
+    return f"{rendered}\n\n{RESULT_JSON_PREAMBLE}\n{RESULT_JSON_MARKER}\n{payload}"

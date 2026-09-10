@@ -1,29 +1,97 @@
-"""Casting 3 — the observation/defect split, the never-demote tripwire, the
-reconciled Foundry-Defect vocabulary, and defect-id uniqueness under
-concurrency.
+"""process-fixes casting 3 — the observation/defect split, the never-demote
+tripwire, the reconciled Foundry-Defect vocabulary, and defect-id uniqueness
+under concurrency. The casting number is qualified for the same reason every
+requirement id below is: under the convergence spec this file belongs to
+casting 2, by the lead ruling recorded in that run's concerns.md.
+
+WHICH SPEC EACH ID BELONGS TO — READ THIS BEFORE GREPPING AN ID HERE
+-------------------------------------------------------------------
+This module was built under ``forge-specs/foundry-run-process-fixes/spec.md``
+(the thunder-viper run) and is maintained under
+``forge-specs/foundry-run-convergence/spec.md``. Both specs number their rows
+from 1, so an id here means two different things depending on which spec the
+reader is holding. That is not a partial overlap to be waved at: EVERY id this
+file names — AC-001, AC-002, AC-004, AC-005, AC-006, AC-007, AC-010, AC-011,
+AC-019, AC-025, CT-001, CT-002, FR-004, FR-007, FR-020, FR-023, NFR-002,
+OT-001, OT-002, OT-008, ST-001, ST-002 — was checked against both files, and
+every one of them resolves in BOTH. Not a single id disambiguates itself, so
+the qualification below is the only thing that tells them apart. ``AC-001`` is
+the comment-prose refusal below in the first spec and the clean-cycles
+escalation exit in the second; ``ST-001`` is the server-owned cycle counter
+here and the ESCALATED->CLEARED transition there; ``CT-002`` is the reconciled
+vocabulary here and the required ``class`` there.
+
+D-178 is what leaving that implicit cost. This docstring tagged the
+comment-prose refusal "AC-001 / OT-001" with no spec named, TRACE resolved
+those ids against the convergence spec — where they name the escalation exit
+driven in ``tests/test_escalation.py`` — and filed the mismatch. The ids were
+never wrong; they were UNQUALIFIED. So the convention is now explicit and
+holds for every id in this file:
+
+  * ``process-fixes AC-001`` cites
+    ``forge-specs/foundry-run-process-fixes/spec.md``;
+  * a BARE id cites ``forge-specs/foundry-run-convergence/spec.md``, the spec
+    this tree is under;
+  * a requirement-shaped string in a KEYWORD ARGUMENT (``spec_ref="AC-007"``,
+    ``requirement_id="AC-025"``) is neither. It is fixture input handed to the
+    door under test — arbitrary, because ``is_spec_required_behaviour_claim``
+    accepts any non-empty ``spec_ref`` — and it cites nothing, exactly as
+    ``FIXTURE_CLASS`` below cites nothing.
 
 One regression test per acceptance criterion:
 
-  AC-001 / OT-001  comment-prose filed as a defect is REFUSED naming the class
-                   and the legal set, the same finding is ACCEPTED into
-                   observations.json, and defects.json never contains it.
-  AC-002 / OT-002  a denylisted finding filed as an observation is REJECTED and
-                   the audit tripwire fires durably (observations.json +
-                   forge-log.md); a security-property claim about a comment is
-                   a DEFECT and files successfully.
-  AC-004           a fresh run carries the seeded F0 ruling (see also
-                   test_foundry_init.py, which asserts the parse).
-  AC-019 / OT-008  defect_type PARTIAL is accepted and stored verbatim, with
-                   source preserved verbatim.
-  AC-025           concurrently filed defects get unique ids and BOTH survive.
-  CT-002           unknown source / defect_type are rejected server-side with a
-                   named error; source is never coerced onto "trace".
-  FR-023           the ledger is typed, per-run, and never mixed into
-                   defects.json.
+  process-fixes AC-001 / OT-001
+      comment-prose filed as a defect is REFUSED naming the class and the
+      legal set, the same finding is ACCEPTED into observations.json, and
+      defects.json never contains it.
+  process-fixes AC-002 / OT-002
+      a denylisted finding filed as an observation is REJECTED and the audit
+      tripwire fires durably (observations.json + forge-log.md); a
+      security-property claim about a comment is a DEFECT and files
+      successfully.
+  process-fixes AC-004
+      a fresh run carries the seeded F0 ruling (see also test_foundry_init.py,
+      which asserts the parse).
+  process-fixes AC-019 / OT-008
+      defect_type PARTIAL is accepted and stored verbatim, with source
+      preserved verbatim.
+  process-fixes AC-025
+      concurrently filed defects get unique ids and BOTH survive.
+  process-fixes CT-002
+      unknown source / defect_type are rejected server-side with a named
+      error, and source is never coerced onto "trace".
+  CT-002 / FR-007 / AC-010
+      the root-cause `class` is REQUIRED, refused by name when absent. This
+      row is convergence numbering, and it is where the two CT-002s meet:
+      process-fixes CT-002 governs the reconciled vocabulary, convergence
+      CT-002 governs the required class. One test carries both, and says so.
+  process-fixes FR-023
+      the ledger is typed, per-run, and never mixed into defects.json.
+  fallout FR-008 / GI-024 (D-061)
+      the package defines ``_artifact_guard`` exactly ONCE. This module's
+      scoped guard — the one the refusal test above drives — was a name-alike
+      of the leaf's for three cycles and is now ``_named_artifact_guard``, so
+      no accounting row has to excuse the collision to a name-keyed sweep.
+  fallout CT-017 / GI-027 (D-182, co-dispatched from casting 2)
+      the observation door's own prose agrees with the observation door. Both
+      refusal arms offer the TEMPER_CANDIDATE lane, in ONE spelling
+      (``_TEMPER_CANDIDATE_ROUTE``), and the handler docstring's three
+      pre-fifth-class absolutes each carry the lane they are true of. D-182
+      was filed against server.py's wire description; the same rule is carried
+      on this casting's files and is pinned at the tail of this module.
+
+Every filing below goes through ``_file_defect``, which supplies the ``tier``
+(CT-001 / FR-004) and ``class`` (CT-002 / FR-007) both doors now require. Those
+two fields are stated once there rather than at twenty-five call sites whose
+subject they are not; the refusals themselves are driven in
+``tests/test_defect_tier.py``, where they ARE the subject. One filing reaches
+past the wrapper on purpose — the class-required half of
+``test_defect_class_is_required_and_persisted_under_the_class_key``, which must
+arrive without the very field the wrapper exists to supply.
 
 The safety property this file guards hardest is the one that is NOT stated as
-an AC but is the whole point of A-004: the split must never weaken the defect
-standard. ``test_undeclared_subject_is_never_refused``,
+an AC but is the whole point of process-fixes A-004: the split must never
+weaken the defect standard. ``test_undeclared_subject_is_never_refused``,
 ``test_denylist_outranks_observation_class`` and the D-093 promote-direction
 battery below are the tests that fail if a future change lets a real defect
 slip into the non-blocking channel — or, in the battery's case, if it lets one
@@ -49,6 +117,7 @@ from foundry_mcp.tools.foundry import (
     foundry_add_defect,
     foundry_add_observation,
     foundry_add_verdict,
+    foundry_drive_temper_candidate,
     foundry_init,
     foundry_query_defects,
     foundry_query_observations,
@@ -187,7 +256,47 @@ def _drop_server_cycle(fdir: Path) -> None:
     state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
 
-# --- AC-001 / OT-001 --------------------------------------------------------
+#: The root-cause class every filing in this module supplies when its own
+#: subject is not the class field. Named as a fixture value rather than
+#: borrowed from a real taxonomy, because a reader must not mistake it for a
+#: finding this file is making about the code under test.
+FIXTURE_CLASS = "FIXTURE_ROOT_CAUSE"
+
+
+def _file_defect(**kwargs) -> dict:
+    """``foundry_add_defect`` with the two fields convergence CT-001 and
+    convergence CT-002 now require.
+
+    WHY THIS WRAPPER EXISTS
+    -----------------------
+    ``tier`` (convergence CT-001 / FR-004 / AC-006) and ``class`` (convergence
+    CT-002 / FR-007 / AC-010) became REQUIRED at both filing doors, so the
+    twenty-five filings in
+    this module — every one of which predates the evidence axis — would
+    otherwise be refused before reaching the behaviour each test is actually
+    about. Not one of those tests is ABOUT the tier: their subjects are the
+    observation/defect split, the never-demote tripwire, the reconciled
+    vocabulary, cycle stamping, and the persistence layer under a malformed
+    ledger. The two fields are therefore stated ONCE, here, rather than
+    twenty-five times at sites whose subject they are not.
+
+    ``LIVE`` is the honest default for all of them: each drives the door and
+    asserts what came back, which is the reproduction LIVE means. A test whose
+    subject IS a LATENT filing passes ``tier="LATENT"`` and its own
+    ``reproduction_attempted``; a test whose subject IS the class field passes
+    its own ``defect_class``. ``setdefault`` is what makes both overrides win.
+
+    NOTHING IS WEAKENED HERE. This calls the real door with the real
+    arguments — no bypass, no relaxed validator, no default supplied inside
+    ``foundry.py``. The refusals themselves are driven in
+    ``tests/test_defect_tier.py``, where they are the subject.
+    """
+    kwargs.setdefault("tier", "LIVE")
+    kwargs.setdefault("defect_class", FIXTURE_CLASS)
+    return foundry_add_defect(**kwargs)
+
+
+# --- process-fixes AC-001 / OT-001 ------------------------------------------
 @pytest.mark.parametrize(
     "description,expected_class",
     [
@@ -200,10 +309,10 @@ def _drop_server_cycle(fdir: Path) -> None:
 def test_comment_prose_filed_as_defect_is_refused(
     run: Path, tmp_path: Path, description: str, expected_class: str
 ) -> None:
-    """AC-001 — each of the four comment-prose classes is refused by
-    Foundry-Defect, with an error naming the offending class AND the legal
+    """process-fixes AC-001 — each of the four comment-prose classes is refused
+    by Foundry-Defect, with an error naming the offending class AND the legal
     set."""
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="trace",
         defect_type="WRONG",
@@ -225,17 +334,116 @@ def test_comment_prose_filed_as_defect_is_refused(
     assert "foundry_add_observation" in result["hint"]
     # And it forecloses the wrong fix: re-wording prose to slip past the gate.
     assert "Do NOT re-word" in result["hint"]
-    # OT-001 — it never reaches defects.json.
+    # process-fixes OT-001 — it never reaches defects.json.
+    assert _defects(run) == []
+
+
+def test_both_doors_label_the_printed_set_as_the_observation_classes(
+    run: Path, tmp_path: Path
+) -> None:
+    """concern C-100 (sibling half of C-095, fallout of D-182) — THE PRINTED
+    SET AND ITS LABEL AGREE, AT BOTH DOORS.
+
+    The refusal above asserts that every member of the set is PRINTED. This one
+    asserts what the sentence CALLS that set, which is the half nothing pinned
+    and the half that went stale in silence.
+
+    It read "The comment-prose classes are:" over a
+    ``sorted(OBSERVATION_CLASSES)`` that has held five members since casting 10
+    landed ``TEMPER_CANDIDATE`` — the member ``schemas/vocab.py`` describes in
+    its own words as the one that is not about comment prose at all, a probe
+    idea nobody has driven rather than a comment that stopped agreeing with its
+    code. So a stream refused here was told a probe idea is comment prose, on
+    the one surface a stream reads when it is being told its finding is not a
+    defect. The same shape as D-182: a published routing sentence that a fifth
+    vocabulary member falsified.
+
+    THE FIRST CLAUSE IS ASSERTED TOO, BECAUSE IT MUST NOT MOVE. Seven sites pin
+    "is a comment-prose observation class" by substring, and it is true of
+    every value that can reach it: ``_observation_refusal`` ends in
+    ``vocab.observation_class``, which walks the four comment-prose predicates
+    in ``_OBSERVATION_PREDICATES`` and can never answer ``TEMPER_CANDIDATE``.
+    Only the label on the printed set was ever wrong.
+
+    DRIVEN AT BOTH DOORS IN ONE TEST, which is the property the concern is
+    actually about. ``tools/foundry.py#foundry_add_defect`` and
+    ``tools/orchestration/fix_gate.py#foundry_sync_defects`` spell this sentence
+    twice, in two castings' files, and casting 2 landed the reworded label on
+    its copy a cycle before this one followed. A pin on either door alone would
+    have stayed green through exactly that interval, with the two doors telling
+    the same stream two different things about the same finding. So the
+    assertion is EQUALITY between the doors, not a substring at one of them —
+    and the membership half is derived from the vocabulary rather than spelled
+    here, so a sixth member joins both sentences with nothing to remember.
+    """
+    from foundry_mcp.schemas.vocab import TEMPER_CANDIDATE
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
+
+    single = _file_defect(
+        cycle=1,
+        source="trace",
+        defect_type="WRONG",
+        description=COUNT,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+    batch = foundry_sync_defects(
+        cycle=1,
+        findings=[{
+            "source": "trace",
+            "type": "WRONG",
+            "description": COUNT,
+            "spec_ref": "",
+            "symbol": "",
+            "file": "",
+            "class": FIXTURE_CLASS,
+            "tier": "LIVE",
+            "target_kind": "comment",
+        }],
+        project_root=str(tmp_path),
+    )
+
+    single_sentence = single["error"]
+    batch_sentence = batch["refusals"][0]["reason"]
+
+    # The two doors say the SAME thing, which is what the concern is about.
+    assert single_sentence == batch_sentence, (single_sentence, batch_sentence)
+
+    for sentence in (single_sentence, batch_sentence):
+        # The pinned half, unmoved.
+        assert "is a comment-prose observation class, not a defect" in sentence, (
+            sentence
+        )
+        # The half that lied. Every member is printed...
+        for member in OBSERVATION_CLASSES:
+            assert member in sentence, (member, sentence)
+        # ...including the one whose arrival made the old label false...
+        assert TEMPER_CANDIDATE in sentence, sentence
+        # ...and the label no longer claims all of them are comment prose.
+        # Pinned on the DEAD spelling by name: a test that only asserted the new
+        # text would pass again the day somebody re-added the old one beside it.
+        assert "The comment-prose classes are" not in sentence, sentence
+        assert "The observation classes are" in sentence, sentence
+
+    # The structured field beside the prose, which carried the correct name for
+    # this same set at both doors all along — the evidence that the label was
+    # the half that was wrong and not the set.
+    assert single["observation_classes"] == sorted(OBSERVATION_CLASSES), single
+    assert batch["refusals"][0]["observation_classes"] == sorted(
+        OBSERVATION_CLASSES
+    ), batch
+
+    # process-fixes OT-001 — neither door let it reach defects.json.
     assert _defects(run) == []
 
 
 def test_refused_finding_is_accepted_as_an_observation(
     run: Path, tmp_path: Path
 ) -> None:
-    """AC-001 — the SAME finding the defect ledger refused is recordable in the
-    observations ledger, and lands there with its class."""
+    """process-fixes AC-001 — the SAME finding the defect ledger refused is
+    recordable in the observations ledger, and lands there with its class."""
     _set_server_cycle(run, 2)
-    refusal = foundry_add_defect(
+    refusal = _file_defect(
         cycle=2,
         source="prove",
         defect_type="WRONG",
@@ -263,7 +471,7 @@ def test_refused_finding_is_accepted_as_an_observation(
     assert record["source"] == "prove"
     assert record["cycle"] == 2
     assert record["created_at"]
-    # FR-023 / OT-001 — never mixed into defects.json.
+    # process-fixes FR-023 / OT-001 — never mixed into defects.json.
     assert _defects(run) == []
 
 
@@ -295,7 +503,7 @@ def test_undeclared_subject_is_never_refused(run: Path, tmp_path: Path) -> None:
     the declaration once D-093 made a substantive finding pass regardless: the
     pair would have gone green for a second reason and stopped guarding this
     one."""
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="trace",
         defect_type="BROKEN",
@@ -313,7 +521,7 @@ def test_same_prose_is_refused_once_declared_a_comment(
     """The mirror of the test above: the identical description IS refused once
     the caller declares the subject is a comment. Declaration is the whole
     discriminator — the two calls differ in exactly one argument."""
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="trace",
         defect_type="BROKEN",
@@ -344,7 +552,7 @@ def test_a_substantive_finding_is_never_refused_however_its_prose_reads(
     before the change meant to strengthen it. A declaration must be able to
     route a finding to the right ledger; it must never be able to delete one.
     """
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="trace",
         defect_type="BROKEN",
@@ -360,7 +568,8 @@ def test_a_substantive_finding_is_never_refused_however_its_prose_reads(
 def test_security_property_claims_always_file_as_defects(
     run: Path, tmp_path: Path, description: str
 ) -> None:
-    """OT-002, driven over the phrasings a stream actually writes.
+    """process-fixes OT-002, driven over the phrasings a stream actually
+    writes.
 
     "A comment claiming a security property the code does not implement is
     filed as a DEFECT and cannot be demoted to observation." The suite went
@@ -373,7 +582,7 @@ def test_security_property_claims_always_file_as_defects(
     declaration: the finding IS about a comment, one that lies. That
     declaration is exactly what used to make the filing refusable.
     """
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="prove",
         defect_type="WRONG",
@@ -418,7 +627,7 @@ def test_a_substantive_finding_with_no_security_vocabulary_still_files(
         "exercises the promote-direction guard at all"
     )
 
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="assay",
         defect_type="WRONG",
@@ -434,13 +643,14 @@ def test_a_substantive_finding_with_no_security_vocabulary_still_files(
     "description", [DRIFT, COUNT, DIRECTION, ENUMERATION]
 )
 def test_the_fail_safe_is_silent_on_real_comment_prose(description: str) -> None:
-    """The boundary that keeps AC-001 from being gutted by its own fix.
+    """The boundary that keeps process-fixes AC-001 from being gutted by its
+    own fix.
 
     The promote-side guard is biased to over-match, and over-matching is the
     safe direction — but a guard that matched EVERYTHING would refuse nothing
     and quietly delete the observation channel. These four are the canonical
-    comment-prose findings AC-001 names; the guard must stay silent on all of
-    them, or the refusal above it can never fire again."""
+    comment-prose findings process-fixes AC-001 names; the guard must stay
+    silent on all of them, or the refusal above it can never fire again."""
     assert asserts_code_behaviour({"description": description}) is False
 
 
@@ -492,10 +702,10 @@ def test_the_fail_safe_did_not_open_the_demotion_channel(
 def test_denylist_outranks_observation_class(
     run: Path, tmp_path: Path, kwargs: dict
 ) -> None:
-    """OT-002 / AC-002 — a finding matching BOTH a denylist entry and an
-    observation class is a DEFECT. The denylist outranks the observation
+    """process-fixes OT-002 / AC-002 — a finding matching BOTH a denylist entry
+    and an observation class is a DEFECT. The denylist outranks the observation
     class, so the filing succeeds rather than being refused."""
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1,
         source="assay",
         defect_type="WRONG",
@@ -507,12 +717,12 @@ def test_denylist_outranks_observation_class(
     assert result["defect_id"] == "D-001"
 
 
-# --- AC-002 / OT-002 --------------------------------------------------------
+# --- process-fixes AC-002 / OT-002 ------------------------------------------
 def test_security_claim_cannot_be_demoted_and_fires_tripwire(
     run: Path, tmp_path: Path
 ) -> None:
-    """AC-002 — a security-property claim can never be recorded as an
-    observation; the attempt is rejected and the audit tripwire fires."""
+    """process-fixes AC-002 — a security-property claim can never be recorded
+    as an observation; the attempt is rejected and the audit tripwire fires."""
     result = foundry_add_observation(
         cycle=4,
         source="assay",
@@ -543,9 +753,9 @@ def test_security_claim_cannot_be_demoted_and_fires_tripwire(
 
 
 def test_spec_ref_makes_a_finding_undemotable(run: Path, tmp_path: Path) -> None:
-    """AC-002 — a spec-required-behaviour claim can never be an observation. A
-    non-empty spec_ref IS such a claim, so citing a requirement is by itself
-    enough to keep a finding in the blocking channel."""
+    """process-fixes AC-002 — a spec-required-behaviour claim can never be an
+    observation. A non-empty spec_ref IS such a claim, so citing a requirement
+    is by itself enough to keep a finding in the blocking channel."""
     result = foundry_add_observation(
         cycle=1,
         source="prove",
@@ -561,9 +771,9 @@ def test_spec_ref_makes_a_finding_undemotable(run: Path, tmp_path: Path) -> None
 def test_non_comment_subject_cannot_be_an_observation(
     run: Path, tmp_path: Path
 ) -> None:
-    """AC-002 — "anything non-comment" can never be an observation, and an
-    UNDECLARED subject cannot be shown to be a comment either. Both are
-    rejected under the NON_COMMENT entry."""
+    """process-fixes AC-002 — "anything non-comment" can never be an
+    observation, and an UNDECLARED subject cannot be shown to be a comment
+    either. Both are rejected under the NON_COMMENT entry."""
     for target_kind in ("function", ""):
         result = foundry_add_observation(
             cycle=1,
@@ -579,8 +789,8 @@ def test_non_comment_subject_cannot_be_an_observation(
 def test_omitting_target_kind_entirely_is_refused_and_audited(
     run: Path, tmp_path: Path
 ) -> None:
-    """D-069 / AC-002 — the demotion path fails CLOSED when the argument is not
-    passed AT ALL, not merely when it is passed empty.
+    """D-069 / process-fixes AC-002 — the demotion path fails CLOSED when the
+    argument is not passed AT ALL, not merely when it is passed empty.
 
     The matched pair PROVE drove: the same finding, the same classification,
     one argument apart. It is deliberately worded so no OTHER denylist entry
@@ -674,13 +884,13 @@ def test_non_comment_prose_is_not_recordable_as_an_observation(
     assert _observations(run)["observations"] == []
 
 
-# --- CT-002 / AC-019 / OT-008 -----------------------------------------------
+# --- process-fixes CT-002 / AC-019 / OT-008 ---------------------------------
 def test_partial_defect_type_is_accepted_and_stored_verbatim(
     run: Path, tmp_path: Path
 ) -> None:
-    """AC-019 / OT-008 — Foundry-Defect accepts PARTIAL and stores it
-    verbatim."""
-    result = foundry_add_defect(
+    """process-fixes AC-019 / OT-008 — Foundry-Defect accepts PARTIAL and
+    stores it verbatim."""
+    result = _file_defect(
         cycle=1,
         source="flow_trace",
         defect_type="PARTIAL",
@@ -690,7 +900,8 @@ def test_partial_defect_type_is_accepted_and_stored_verbatim(
     assert "error" not in result, result
     record = _defects(run)[0]
     assert record["type"] == "PARTIAL"
-    # AC-019 — source attribution is preserved verbatim, not coerced.
+    # process-fixes AC-019 — source attribution is preserved verbatim, not
+    # coerced.
     assert record["source"] == "flow_trace"
 
 
@@ -707,10 +918,11 @@ def test_both_placement_spellings_persist_as_one_canonical_type(
     could never cluster with one filed through Foundry-Sync, and the escalation
     counter that keys on type saw two half-populated classes instead of one.
 
-    This is normalisation, not the coercion CT-002 forbids: that rule governs
-    UNKNOWN values, which the membership check rejects by name."""
+    This is normalisation, not the coercion process-fixes CT-002 forbids:
+    that rule governs UNKNOWN values, which the membership check rejects by
+    name."""
     for i, spelling in enumerate(("MISPLACED", "ARCHITECTURAL_PLACEMENT")):
-        result = foundry_add_defect(
+        result = _file_defect(
             cycle=1,
             source="trace",
             defect_type=spelling,
@@ -734,11 +946,11 @@ def test_both_placement_spellings_persist_as_one_canonical_type(
 def test_unknown_source_is_rejected_without_coercion(
     run: Path, tmp_path: Path
 ) -> None:
-    """CT-002 — server-side rejection of an unknown source, naming the legal
-    set. Emphatically NOT coerced onto "trace", which is what the old sync
-    path did and what made a finding show up under a stream that never filed
-    it."""
-    result = foundry_add_defect(
+    """process-fixes CT-002 — server-side rejection of an unknown source,
+    naming the legal set. Emphatically NOT coerced onto "trace", which is what
+    the old sync path did and what made a finding show up under a stream that
+    never filed it."""
+    result = _file_defect(
         cycle=1,
         source="bogus_stream",
         defect_type="WRONG",
@@ -752,8 +964,8 @@ def test_unknown_source_is_rejected_without_coercion(
 
 
 def test_unknown_defect_type_is_rejected(run: Path, tmp_path: Path) -> None:
-    """CT-002 — unknown defect_type is refused by name."""
-    result = foundry_add_defect(
+    """process-fixes CT-002 — unknown defect_type is refused by name."""
+    result = _file_defect(
         cycle=1,
         source="trace",
         defect_type="COSMETIC",
@@ -766,12 +978,30 @@ def test_unknown_defect_type_is_rejected(run: Path, tmp_path: Path) -> None:
     assert _defects(run) == []
 
 
-def test_defect_class_field_is_persisted_under_the_class_key(
+def test_defect_class_is_required_and_persisted_under_the_class_key(
     run: Path, tmp_path: Path
 ) -> None:
-    """The optional root-cause field is named exactly "class" — escalation
-    keys on it."""
-    foundry_add_defect(
+    """The root-cause field is named exactly "class" — escalation keys on it.
+
+    RENAMED, because this test's subject moved to convergence CT-002 /
+    FR-007 / AC-010 — the required-class rule. It is also still the
+    process-fixes CT-002 test, which is the reconciled-vocabulary rule, so this
+    is the one place in the file where both CT-002s are live at once and the
+    bare-means-convergence convention is worth spelling out rather than
+    relying on. It used to say "the OPTIONAL root-cause field", and optional
+    is what made the field worthless where it mattered: escalation counts
+    consecutive cycles per declared class, so a filing without one cannot
+    recur as anything — it is invisible to process-fixes ST-002 however many
+    times its root cause comes back, and the path fallback that stood in for
+    it survives only for READING pre-change archives.
+
+    The persistence assertion below is unchanged. What is added is the other
+    half of the same property, which is now the Locked one: omitting the field
+    is a refusal naming it, and nothing is filed. Keeping only the first half
+    would leave this file asserting that a class is stored when one is given
+    while saying nothing about the case that used to be legal.
+    """
+    _file_defect(
         cycle=1,
         source="trace",
         defect_type="MISSING",
@@ -781,15 +1011,32 @@ def test_defect_class_field_is_persisted_under_the_class_key(
     )
     assert _defects(run)[0]["class"] == "UNWIRED_DISPATCH"
 
+    # The behaviour this test used to be named for: filing with no class at
+    # all. Driven through the REAL door rather than the module's wrapper,
+    # because the wrapper's whole job is to supply the field this half must
+    # arrive without.
+    refused = foundry_add_defect(
+        cycle=1,
+        source="trace",
+        defect_type="MISSING",
+        description="fourth instance of the same root cause",
+        tier="LIVE",
+        project_root=str(tmp_path),
+    )
+    assert refused["ok"] is False, refused
+    assert refused["field"] == "class"
+    assert "class" in refused["error"]
+    assert len(_defects(run)) == 1, "the refused filing must persist nothing"
 
-# --- AC-025 / FR-020 --------------------------------------------------------
+
+# --- process-fixes AC-025 / FR-020 ------------------------------------------
 def test_concurrent_defects_get_unique_ids_and_all_survive(
     run: Path, tmp_path: Path
 ) -> None:
-    """AC-025 — the positional ``len(defects) + 1`` allocation let two
-    simultaneous filings compute the same id, and the second .tmp rename
-    discarded the first record entirely. Both properties are asserted: ids are
-    unique AND no record is lost."""
+    """process-fixes AC-025 — the positional ``len(defects) + 1`` allocation
+    let two simultaneous filings compute the same id, and the second .tmp
+    rename discarded the first record entirely. Both properties are asserted:
+    ids are unique AND no record is lost."""
     filings = 24
     barrier = threading.Barrier(filings)
     results: list[dict] = []
@@ -797,7 +1044,7 @@ def test_concurrent_defects_get_unique_ids_and_all_survive(
 
     def _file(n: int) -> None:
         barrier.wait(timeout=30)
-        r = foundry_add_defect(
+        r = _file_defect(
             cycle=1,
             source="trace",
             defect_type="MISSING",
@@ -829,9 +1076,9 @@ def test_concurrent_defects_get_unique_ids_and_all_survive(
 def test_observations_and_defects_are_separate_ledgers(
     run: Path, tmp_path: Path
 ) -> None:
-    """FR-023 — the separation is the locked part: observations are typed,
-    persisted per run, and never mixed into defects.json."""
-    foundry_add_defect(
+    """process-fixes FR-023 — the separation is the locked part: observations
+    are typed, persisted per run, and never mixed into defects.json."""
+    _file_defect(
         cycle=1,
         source="trace",
         defect_type="MISSING",
@@ -928,7 +1175,7 @@ def test_ledger_transaction_can_mutate_existing_records(
     """The reopen-a-regression pass mutates records already in the ledger and
     appends new ones in ONE critical section — an append-only helper could not
     make that atomic, which is why the exported surface is a transaction."""
-    foundry_add_defect(
+    _file_defect(
         cycle=1,
         source="trace",
         defect_type="MISSING",
@@ -946,7 +1193,7 @@ def test_ledger_transaction_can_mutate_existing_records(
     assert persisted[1]["id"] == "D-002"
 
 
-# --- query surface (FR-023) --------------------------------------------------
+# --- query surface (process-fixes FR-023) ------------------------------------
 def test_query_observations_filters_and_summarizes(
     run: Path, tmp_path: Path
 ) -> None:
@@ -974,8 +1221,8 @@ def test_query_observations_filters_and_summarizes(
 
     # Every record above was stamped with the SERVER's cycle (0 on a fresh
     # run), whatever the caller asserted — so the cycle filter selects all
-    # three, not the two whose argument said 2. That is the point of ST-001:
-    # the filter and the stamp read the same counter.
+    # three, not the two whose argument said 2. That is the point of
+    # process-fixes ST-001: the filter and the stamp read the same counter.
     by_cycle = foundry_query_observations(cycle=0, project_root=str(tmp_path))
     assert len(by_cycle["observations"]) == 3
     assert foundry_query_observations(
@@ -991,12 +1238,12 @@ def test_query_observations_filters_and_summarizes(
     assert len(by_source["observations"]) == 1
 
 
-# --- ST-001 — the server owns the cycle number ------------------------------
+# --- process-fixes ST-001 — the server owns the cycle number ----------------
 def test_defect_is_stamped_with_the_server_cycle_not_the_callers(
     run: Path, tmp_path: Path
 ) -> None:
-    """ST-001 — where a server-side counter exists it is the authority, and a
-    caller-supplied cycle is not trusted against it.
+    """process-fixes ST-001 — where a server-side counter exists it is the
+    authority, and a caller-supplied cycle is not trusted against it.
 
     grand-vulture's state.json read `"cycle": 0` for its entire life while its
     defects carried lead-asserted cycles 0-17, because every cycle number in
@@ -1004,7 +1251,7 @@ def test_defect_is_stamped_with_the_server_cycle_not_the_callers(
     consecutive cycles per class and the roll-up is keyed by cycle: both are
     meaningless against a number the caller picked."""
     _set_server_cycle(run, 7)
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=99,  # the lead's assertion — wrong, and ignored
         source="trace",
         defect_type="WRONG",
@@ -1060,15 +1307,16 @@ def test_an_absent_counter_stamps_zero_and_keeps_the_callers_claim(
     ruling. A run whose state.json predates the counter used to keep the
     caller's number, on the reasoning that the server had "no better answer".
     It does: 0. Trusting the caller in the degraded case is precisely what
-    ST-001 exists to remove, ``foundry_orchestrator._current_cycle`` has
-    resolved this input to 0 since D-059, and a filing door that disagrees with
-    its sibling about WHICH cycle a record belongs to breaks escalation's
+    process-fixes ST-001 exists to remove,
+    ``foundry_state.py#current_cycle`` has resolved this input to 0 since
+    D-059, and a filing door that disagrees with its sibling about WHICH cycle
+    a record belongs to breaks escalation's
     consecutive-cycle count no matter which door is "right".
 
     The caller is not silently overruled — its 12 is on the record.
     """
     _drop_server_cycle(run)
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=12,
         source="trace",
         defect_type="WRONG",
@@ -1103,12 +1351,13 @@ def test_a_malformed_counter_stamps_zero_not_the_callers_cycle(
     """D-119, the single door's half of the cross-door contract.
 
     ``foundry.py`` used to read a malformed counter as "no counter" and stamp
-    the caller's 8, while ``foundry_orchestrator.py`` read the identical file
+    the caller's 8, while ``orchestration/fix_gate.py`` read the identical file
     and stamped 0. Identical findings filed through Foundry-Defect and
     Foundry-Sync therefore landed in different cycles: mixed filing persisted
     [1,0,3] where one door alone would have persisted [1,2,3], the longest
-    consecutive run was 2, and a genuine systemic class evaded ST-002
-    escalation while the AC-011 DONE guard passed.
+    consecutive run was 2, and a genuine systemic class evaded
+    process-fixes ST-002 escalation while the process-fixes AC-011 DONE guard
+    passed.
 
     ``test_escalation.test_both_filing_doors_stamp_the_same_cycle`` pins the
     two doors against each other over this same matrix; this pins THIS door
@@ -1123,7 +1372,7 @@ def test_a_malformed_counter_stamps_zero_not_the_callers_cycle(
         state["cycle"] = bogus
     state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=8,
         source="trace",
         defect_type="WRONG",
@@ -1142,11 +1391,11 @@ def test_a_malformed_counter_stamps_zero_not_the_callers_cycle(
 def test_a_healthy_counter_still_outranks_the_caller_and_keeps_the_claim(
     run: Path, tmp_path: Path
 ) -> None:
-    """NFR-002 guard on the ruling: D-119 changes the MALFORMED path only. A
-    real counter is still the authority and the caller's number is still
-    ignored — it is now merely recorded as well."""
+    """process-fixes NFR-002 guard on the ruling: D-119 changes the MALFORMED
+    path only. A real counter is still the authority and the caller's number is
+    still ignored — it is now merely recorded as well."""
     _set_server_cycle(run, 6)
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=99,
         source="trace",
         defect_type="WRONG",
@@ -1159,12 +1408,12 @@ def test_a_healthy_counter_still_outranks_the_caller_and_keeps_the_claim(
     assert _defects(run)[0]["declared_cycle"] == 99
 
 
-# --- AC-002 — the tripwire is reachable, not just present -------------------
+# --- process-fixes AC-002 — the tripwire is reachable, not just present -----
 def test_tripwire_fires_through_the_public_observation_surface(
     run: Path, tmp_path: Path
 ) -> None:
-    """AC-002 — a denylisted finding arriving through the Foundry-Observation
-    surface is rejected AND drives the tripwire non-empty.
+    """process-fixes AC-002 — a denylisted finding arriving through the
+    Foundry-Observation surface is rejected AND drives the tripwire non-empty.
 
     The tripwire existed but no MCP path could reach it: every production
     caller pre-filtered on the denylist before calling the writer, so the
@@ -1284,7 +1533,7 @@ def test_tools_guard_on_no_active_run(tmp_path: Path, call) -> None:
 
 def test_query_defects_still_reports_only_defects(run: Path, tmp_path: Path) -> None:
     """No-regression — the pre-existing defect query is unchanged by the split."""
-    foundry_add_defect(
+    _file_defect(
         cycle=1, source="trace", defect_type="MISSING",
         description="a real one", project_root=str(tmp_path),
     )
@@ -1336,7 +1585,7 @@ def test_filing_a_defect_against_a_corrupt_ledger_is_a_named_refusal(
     to repair.
     """
     _write_defects(run, raw)
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1, source="trace", defect_type="WRONG",
         description="a real behavioural defect", project_root=str(tmp_path),
     )
@@ -1364,7 +1613,7 @@ def test_a_corrupt_ledger_is_never_written_over(run: Path, tmp_path: Path) -> No
     cannot."""
     raw = '{"defects": [{"id": "D-00'
     _write_defects(run, raw)
-    foundry_add_defect(
+    _file_defect(
         cycle=1, source="trace", defect_type="WRONG",
         description="a real behavioural defect", project_root=str(tmp_path),
     )
@@ -1391,7 +1640,7 @@ def test_object_valued_defects_container_refuses_without_destroying(
     }
     _write_defects(run, json.dumps(prior))
 
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1, source="trace", defect_type="WRONG",
         description="a real behavioural defect", project_root=str(tmp_path),
     )
@@ -1418,7 +1667,7 @@ def test_a_malformed_record_does_not_discard_the_new_filing(
         "defects": ["i am not a record", {"id": "D-002", "status": "open"}],
     }))
 
-    result = foundry_add_defect(
+    result = _file_defect(
         cycle=1, source="trace", defect_type="PARTIAL",
         description="a real behavioural defect", project_root=str(tmp_path),
     )
@@ -1446,7 +1695,7 @@ def test_a_malformed_record_does_not_brick_the_queries(
 def test_ledger_transaction_refuses_a_non_list_container(run: Path) -> None:
     """D-096 at the primitive. The backstop for a caller that skips the guard:
     it raises and writes NOTHING, rather than coercing the container to ``[]``
-    and reporting success. ``foundry_orchestrator``'s two ledger writers import
+    and reporting success. ``orchestration/fix_gate.py``'s two ledger writers import
     this primitive, so the refusal has to live here and not only at this
     module's entry points."""
     from foundry_mcp.tools.foundry import LedgerShapeError
@@ -1548,6 +1797,7 @@ import inspect  # noqa: E402
 import foundry_mcp.server as foundry_server  # noqa: E402
 from foundry_mcp.tools import foundry as foundry_module  # noqa: E402
 from foundry_mcp.tools.foundry import (  # noqa: E402
+    LedgerRefusal,
     LedgerShapeError,
     _dict_records,
     _locked_document,
@@ -1590,6 +1840,157 @@ def _enclosing_function(tree: ast.Module, target: ast.AST) -> str | None:
             if any(node is target for node in ast.walk(fn)):
                 return fn.name
     return None
+
+
+#: The module both filing doors live in, spelled ONCE. Every reading below
+#: derives the three import spellings from this one string, so they cannot come
+#: to disagree about which module they are resolving.
+_FOUNDRY_DOTTED = "foundry_mcp.tools.foundry"
+
+
+def _dotted_name(node: ast.AST) -> str | None:
+    """``a.b.c`` as a dotted string; ``None`` for any other expression.
+
+    A call written through a module alias is an ``ast.Attribute`` chain, and
+    the only way to tell ``foundry.foundry_add_defect`` from
+    ``self.registry.foundry_add_defect`` is to flatten the chain and look at
+    what it is rooted in. Anything rooted in a subscript, a call or a literal
+    is not a module path, and returns ``None`` rather than a partial string a
+    caller would then have to distrust.
+    """
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def _foundry_bindings(tree: ast.Module) -> tuple[dict[str, str], set[str]]:
+    """Every local name bound to a ``tools/foundry.py`` SYMBOL, and every one
+    bound to the MODULE, in ALL THREE import spellings.
+
+    fallout OT-015 / GI-025 (concern C-116) — THE ROSTER READ ONE SPELLING OF
+    THREE, AND THE FLOOR THAT WAS SUPPOSED TO CATCH THAT DID NOT FIRE.
+
+    The reading this replaces was ``node.module == _FOUNDRY_DOTTED`` over
+    ``ast.ImportFrom``, which is one spelling of the three Python has. Driven,
+    one plant per spelling: CAUGHT 1 OF 3. ``from foundry_mcp.tools import
+    foundry`` puts the module in ``node.names`` and reports ``node.module`` as
+    ``foundry_mcp.tools``; ``import foundry_mcp.tools.foundry`` is an
+    ``ast.Import`` and never reaches an ``ImportFrom`` test at all. This is
+    D-081's class in its fourth instance on this run, after both layering walks
+    (D-192, concern C-107), the no-facade walk (D-198) and the arming condition
+    (concern C-115) — which is why the spelling is resolved HERE by the helper
+    all of those now share, and not by a fifth private reading.
+
+    THE FAIL-CLOSED GRADING THIS WAS FILED UNDER IS WRONG, and the correction
+    is the reason the fix is not optional. The grading said the very next line,
+    ``assert imported``, goes red on a wholesale spelling switch. Driven
+    against the real ``server.py``: IT DOES NOT. That file imports
+    ``validate_defect_filing``, ``record_denylist_tripwire``,
+    ``tripwire_finding`` and ``filing_finding_mapping`` from this module
+    function-locally in spelling one, so rewriting the module-top block to
+    spelling two leaves ``imported`` holding four names and the floor silent.
+    What went red was ``assert writing_doors`` two assertions further down,
+    whose message reads "the derivation is broken, not the code" — right about
+    the tree, and not the line anybody was relying on.
+
+    WHAT THE MISS COSTS, driven with a real defect planted rather than argued.
+    Strip ``@ledger_refusals`` from ``foundry_add_defect`` and leave the
+    spelling uniform: RED, naming ``Foundry-Defect -> foundry_add_defect``.
+    Plant the SAME defect and move that ONE door to spelling two: GREEN, seven
+    doors on the roster and the eighth silently absent. So the exposure is not
+    a mixed tree somebody has to contrive — one door changing spelling is
+    enough, and this tree is already mixed. A door that drops off the roster
+    takes its ``@ledger_refusals`` check with it, which is D-127 exactly: the
+    tool ships ``call_tool``'s unhandled-error banner instead of the house
+    refusal.
+
+    A FOURTH BLIND SPOT IN THE SAME SITE, found while driving the three: the
+    old reading keyed the roster on ``sub.func.id``, the LOCAL name, so
+    importing the door under any alias put THE ALIAS in the roster, and the
+    foundry-side call graph — which knows only the defining name — then
+    dropped it. Aliasing spelling one lost the door as completely as not
+    reading spellings two and three. The map below is
+    ``{local name: DEFINING name}`` and the roster keys on the value.
+
+    RESOLVED ON DISK, through ``_submodules_named_by`` — the helper both
+    layering walks call — so ``from foundry_mcp.tools import foundry`` is read
+    as a module edge because ``foundry_mcp/tools/foundry.py`` is a file, while
+    ``from foundry_mcp.schemas.vocab import DEFECT_TIERS`` stays a symbol. No
+    ``also_by_name`` roster is needed here and that is a fact about this
+    target, not a preference: the prefix guard that opens that helper takes
+    only ``foundry_mcp`` packages, and ours is one. Driven,
+    ``_submodules_named_by("foundry_mcp.tools", ["foundry"]) == {"foundry"}``,
+    which the pin test asserts so the arm cannot quietly start resolving
+    nothing. ``tests/test_protocol_prose.py`` needs the roster for the exact
+    opposite reason — its package is ``tests``, which that guard refuses.
+    """
+    from tests.orchestration.test_module_boundaries import _submodules_named_by
+
+    package, _, stem = _FOUNDRY_DOTTED.rpartition(".")
+    symbols: dict[str, str] = {}
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            # A relative import reports `node.module` as a suffix rather than a
+            # package path, and this package writes none; left to the same
+            # reading the shared walks leave it to.
+            if node.level or not node.module:
+                continue
+            if node.module == _FOUNDRY_DOTTED:
+                symbols.update({a.asname or a.name: a.name for a in node.names})
+            elif node.module == package:
+                for alias in (a for a in node.names if a.name == stem):
+                    if _submodules_named_by(node.module, [alias.name]):
+                        modules.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in (a for a in node.names if a.name == _FOUNDRY_DOTTED):
+                # Unaliased, `import a.b.c` binds `a` and the call site spells
+                # the whole path, so the full dotted name IS the prefix to
+                # match on.
+                modules.add(alias.asname or alias.name)
+    return symbols, modules
+
+
+def _dispatched_foundry_doors(tree: ast.Module) -> dict[str, str]:
+    """``{defining name in tools/foundry.py: tool name}`` for every
+    ``_DISPATCH`` entry that calls into this module, in ANY spelling.
+
+    Built from import BINDINGS rather than from callee names alone, which is
+    what keeps a phantom out: ``_DISPATCH`` also calls ``get_run_dir`` and
+    ``current_cycle`` from ``foundry_state`` and ``foundry_gate`` from
+    ``orchestration/gates.py``, and matching callee names against this module's
+    function set would count any collision as a door and then judge its
+    decorator. A guard that reports edges the tree does not have is a guard
+    somebody adds an exception table to.
+    """
+    symbols, modules = _foundry_bindings(tree)
+
+    dispatch = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "_DISPATCH" for t in node.targets
+        ):
+            dispatch = node.value
+    assert isinstance(dispatch, ast.Dict), "server.py has no _DISPATCH dict"
+
+    doors: dict[str, str] = {}
+    for key, value in zip(dispatch.keys, dispatch.values):
+        for sub in ast.walk(value):
+            if not isinstance(sub, ast.Call):
+                continue
+            if isinstance(sub.func, ast.Name):
+                name = symbols.get(sub.func.id)
+            else:
+                prefix, _, attr = (_dotted_name(sub.func) or "").rpartition(".")
+                name = attr if prefix and prefix in modules else None
+            if name is not None:
+                doors[name] = key.value
+    return doors
 
 
 def test_no_unlocked_run_artifact_write_path() -> None:
@@ -1681,7 +2082,7 @@ def test_every_ledger_writing_door_answers_in_band() -> None:
     discovered inside the locked primitive, frames below the entry point, and
     the old arrangement trusted each entry point to remember a pre-flight check
     for it. D-127 is what that costs: this module's doors remembered,
-    ``foundry_orchestrator``'s did not, and Foundry-Sync and Foundry-Fix
+    ``orchestration/fix_gate.py``'s did not, and Foundry-Sync and Foundry-Fix
     surfaced ``call_tool``'s unhandled-error banner instead of a refusal.
 
     The member set is not typed here. It is computed: the tools ``server.py``
@@ -1689,30 +2090,28 @@ def test_every_ledger_writing_door_answers_in_band() -> None:
     to find which of them reach a locked transaction. Add a ledger-writing tool
     to ``_DISPATCH`` without ``@ledger_refusals`` and this fails, naming it.
     """
+    from tests.orchestration.test_module_boundaries import _all_imports
+
     server_tree = ast.parse(_SERVER_SRC.read_text(encoding="utf-8"))
-    imported = set()
-    for node in ast.walk(server_tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "foundry_mcp.tools.foundry":
-            imported |= {a.asname or a.name for a in node.names}
-    assert imported, "server.py imports nothing from tools.foundry"
 
-    dispatch = None
-    for node in ast.walk(server_tree):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "_DISPATCH" for t in node.targets
-        ):
-            dispatch = node.value
-    assert isinstance(dispatch, ast.Dict), "server.py has no _DISPATCH dict"
-
-    doors: dict[str, str] = {}
-    for key, value in zip(dispatch.keys, dispatch.values):
-        for sub in ast.walk(value):
-            if (
-                isinstance(sub, ast.Call)
-                and isinstance(sub.func, ast.Name)
-                and sub.func.id in imported
-            ):
-                doors[sub.func.id] = key.value
+    # THE FLOOR IS READ BY A DIFFERENT HELPER THAN THE ROSTER, deliberately.
+    # `_all_imports` answers a MODULE question in all three spellings and knows
+    # nothing about symbols; `_foundry_bindings` answers the symbol question.
+    # When the first resolves tools/foundry.py out of server.py and the second
+    # resolves no door at all, the roster has gone blind in a spelling and says
+    # so here -- rather than reporting a short door list as a clean one, which
+    # is the whole of concern C-116 (see `_foundry_bindings`).
+    reached = _all_imports(_SERVER_SRC)
+    assert "foundry" in reached, (
+        f"server.py imports nothing from tools.foundry in any of the three "
+        f"spellings; _all_imports resolved {sorted(reached)}"
+    )
+    doors = _dispatched_foundry_doors(server_tree)
+    assert doors, (
+        f"_all_imports resolves tools/foundry.py out of server.py and the "
+        f"dispatch roster is empty -- the binding walk has gone blind in a "
+        f"spelling, which is C-116's shape recurring. Reached: {sorted(reached)}"
+    )
 
     foundry_tree = ast.parse(_FOUNDRY_SRC.read_text(encoding="utf-8"))
     functions = _module_functions(foundry_tree)
@@ -1747,6 +2146,126 @@ def test_every_ledger_writing_door_answers_in_band() -> None:
     )
 
 
+def test_the_dispatch_roster_reads_all_three_import_spellings() -> None:
+    """fallout OT-015 / GI-025 (concern C-116) -- CAUGHT 1 OF 3, AND THE MISS
+    LANDED GREEN OVER A REAL DEFECT.
+
+    The roster above decides which tools ``server.py`` dispatches into
+    ``tools/foundry.py``, and everything after it -- the call-graph walk, the
+    ``@ledger_refusals`` check -- judges only what the roster holds. A door the
+    roster cannot see is a door D-127's guard does not cover, so the roster's
+    reading of an import statement is load-bearing and is pinned here rather
+    than trusted.
+
+    WHY THIS IS PINNED AND NOT ASSUMED. The reading it replaces was blind to
+    two of Python's three import spellings and to aliasing in the third, and
+    the assertion that was supposed to catch that did not fire on the real
+    tree; ``_foundry_bindings`` carries the driven account. What matters for
+    this test is the consequence: uniform spelling plus a real defect (
+    ``@ledger_refusals`` stripped from ``foundry_add_defect``) went RED naming
+    the door, and the SAME defect with that ONE door moved to spelling two went
+    GREEN with seven doors on the roster and the eighth silently absent.
+
+    So each spelling gets a plant, and a spelling the roster cannot see is a
+    named failure on the day somebody writes it -- which is the only form of
+    this rule that survives the next mechanical import repoint.
+    """
+    door = "foundry_add_defect"
+    tool = "Foundry-Defect"
+    plants = {
+        f"one   from {_FOUNDRY_DOTTED} import X": (
+            f"from {_FOUNDRY_DOTTED} import {door}\n"
+            f'_DISPATCH = {{"{tool}": lambda a: {door}(**a)}}\n'
+        ),
+        "two   from foundry_mcp.tools import foundry": (
+            "from foundry_mcp.tools import foundry\n"
+            f'_DISPATCH = {{"{tool}": lambda a: foundry.{door}(**a)}}\n'
+        ),
+        f"three import {_FOUNDRY_DOTTED}": (
+            f"import {_FOUNDRY_DOTTED}\n"
+            f'_DISPATCH = {{"{tool}": lambda a: {_FOUNDRY_DOTTED}.{door}(**a)}}\n'
+        ),
+        "one, aliased symbol": (
+            f"from {_FOUNDRY_DOTTED} import {door} as _d\n"
+            f'_DISPATCH = {{"{tool}": lambda a: _d(**a)}}\n'
+        ),
+        "two, aliased module": (
+            "from foundry_mcp.tools import foundry as _f\n"
+            f'_DISPATCH = {{"{tool}": lambda a: _f.{door}(**a)}}\n'
+        ),
+        "three, aliased module": (
+            f"import {_FOUNDRY_DOTTED} as _f\n"
+            f'_DISPATCH = {{"{tool}": lambda a: _f.{door}(**a)}}\n'
+        ),
+    }
+    blind = sorted(
+        label
+        for label, source in plants.items()
+        if _dispatched_foundry_doors(ast.parse(source)) != {door: tool}
+    )
+    assert blind == [], (
+        f"{blind} are import spellings the dispatch roster cannot see. A door "
+        f"written in one of them drops off the roster silently, and the "
+        f"@ledger_refusals check then passes over a door that can raise "
+        f"LedgerShapeError across the MCP boundary -- D-127's shape, reopened "
+        f"by a punctuation mark."
+    )
+
+    # The MIXED tree is the one that goes green rather than red, so it is
+    # asserted about directly: a second door in an unseen spelling must join
+    # the roster beside the first, not replace the question of whether it is
+    # there.
+    mixed = (
+        f"from {_FOUNDRY_DOTTED} import foundry_add_observation\n"
+        "from foundry_mcp.tools import foundry\n"
+        f'_DISPATCH = {{"Foundry-Observation": lambda a: foundry_add_observation(**a),\n'
+        f'             "{tool}": lambda a: foundry.{door}(**a)}}\n'
+    )
+    assert _dispatched_foundry_doors(ast.parse(mixed)) == {
+        "foundry_add_observation": "Foundry-Observation",
+        door: tool,
+    }
+
+    # THE BOUNDARY, both directions. On-disk resolution is what separates a
+    # module alias from a symbol that merely shares a package with one, so a
+    # frozenset read as a module cannot invent a door...
+    phantom = (
+        "from foundry_mcp.schemas.vocab import DEFECT_TIERS\n"
+        f'_DISPATCH = {{"{tool}": lambda a: DEFECT_TIERS.{door}(**a)}}\n'
+    )
+    assert _dispatched_foundry_doors(ast.parse(phantom)) == {}
+
+    # ...a real sibling module is not this one...
+    sibling = (
+        "from foundry_mcp.tools import foundry_state\n"
+        f'_DISPATCH = {{"{tool}": lambda a: foundry_state.{door}(**a)}}\n'
+    )
+    assert _dispatched_foundry_doors(ast.parse(sibling)) == {}
+
+    # ...and a same-named function reached through a DIFFERENT module is not
+    # this module's door. This is why the roster is built from import bindings
+    # and not from callee names, which would be spelling-agnostic for free and
+    # wrong.
+    elsewhere = (
+        f"from foundry_mcp.tools.orchestration.fix_gate import {door}\n"
+        f'_DISPATCH = {{"{tool}": lambda a: {door}(**a)}}\n'
+    )
+    assert _dispatched_foundry_doors(ast.parse(elsewhere)) == {}
+
+    # The spelling-two arm resolves ON DISK and needs no caller-named roster,
+    # which is a fact about this target rather than a preference: the prefix
+    # guard opening `_submodules_named_by` takes only `foundry_mcp` packages
+    # and ours is one. Pinned so the arm cannot quietly start resolving
+    # nothing -- the failure mode would be a green test and a short roster.
+    from tests.orchestration.test_module_boundaries import _submodules_named_by
+
+    assert _submodules_named_by("foundry_mcp.tools", ["foundry"]) == {"foundry"}, (
+        "on-disk resolution no longer answers for tools/foundry.py, so the "
+        "spelling-two arm above is matching nothing and this module needs the "
+        "`also_by_name` roster tests/test_protocol_prose.py needs for `tests`"
+    )
+
+
 def test_the_refusal_a_door_returns_is_the_one_the_guard_would_have_given(
     run: Path, tmp_path: Path
 ) -> None:
@@ -1756,13 +2275,16 @@ def test_the_refusal_a_door_returns_is_the_one_the_guard_would_have_given(
     before the tool starts, the primitive names it once the lock is held. An
     operator must not be able to tell which noticed.
     """
-    from foundry_mcp.tools.foundry import _artifact_guard, ledger_shape_problem
+    from foundry_mcp.tools.foundry import (
+        _named_artifact_guard,
+        ledger_shape_problem,
+    )
 
     path = run / "defects.json"
     prior = {"defects": {"D-001": {"id": "D-001"}}, "sibling": "must survive"}
     path.write_text(json.dumps(prior), encoding="utf-8")
 
-    pre_flight = _artifact_guard(run, "defects.json")
+    pre_flight = _named_artifact_guard(run, "defects.json")
     assert pre_flight is not None
 
     raised = None
@@ -1780,6 +2302,76 @@ def test_the_refusal_a_door_returns_is_the_one_the_guard_would_have_given(
     assert ledger_shape_problem(path, "defects") in raised.refusal["error"]
     # Fails closed: the file is untouched.
     assert json.loads(path.read_text(encoding="utf-8")) == prior
+
+
+def test_the_scoped_guard_and_the_leafs_no_longer_share_a_name() -> None:
+    """fallout FR-008 / GI-024 (D-061) — ONE definition of ``_artifact_guard``.
+
+    The guard the test above drives used to be called ``_artifact_guard``, and
+    so is ``tools/artifacts.py``'s — a different function reachable under the
+    same name. Every sweep keyed on names read that as one rule copied twice,
+    and because neither copy could go (deleting either breaks the other's call
+    sites on ARITY, and folding this one's ledger rung into the leaf is what
+    fallout GI-033 forbids) the finding could only ever be ACCOUNTED for, in
+    two tables in two other modules. Renaming is the exit that closes it.
+
+    THE PIN IS ON THE PACKAGE, not on this module: the duplication was never
+    visible from either file alone, which is exactly how it survived. Asserted
+    over every shipped module so a third definition appearing anywhere fails
+    here rather than in a table that has to be maintained to notice.
+    """
+    import ast
+    import inspect
+
+    from foundry_mcp.tools import artifacts
+    from foundry_mcp.tools import foundry as foundry_module
+    from foundry_mcp.tools.foundry import _named_artifact_guard
+
+    package = Path(artifacts.__file__).resolve().parent.parent
+
+    def defines(path: Path) -> set[str]:
+        """Top-level ``def``/``class`` names. An import is not a definition."""
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        return {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        }
+
+    shipped = [
+        path
+        for path in package.rglob("*.py")
+        if "__pycache__" not in path.parts
+    ]
+    assert len(shipped) >= 15, [str(p) for p in shipped]
+
+    homes = sorted(
+        path.relative_to(package).as_posix()
+        for path in shipped
+        if "_artifact_guard" in defines(path)
+    )
+    assert homes == ["tools/artifacts.py"], (
+        f"`_artifact_guard` is defined in {homes}. One name over two functions "
+        "is what D-061 closed; a second definition re-opens it, and no "
+        "name-keyed sweep can tell the two contracts apart."
+    )
+
+    # ...and the scoped guard is still here under its own name, still taking
+    # the ``*names`` that make it a different rule rather than a copy. The
+    # arity is not decoration: it is why neither function could be deleted for
+    # the other, and a signature that lost it would mean the rename had folded
+    # two contracts into one instead of separating them.
+    scoped = defines(Path(foundry_module.__file__).resolve())
+    assert "_named_artifact_guard" in scoped
+    assert "_artifact_guard" not in scoped
+    kinds = [
+        p.kind for p in inspect.signature(_named_artifact_guard).parameters.values()
+    ]
+    assert inspect.Parameter.VAR_POSITIONAL in kinds, kinds
+    leaf_kinds = [
+        p.kind for p in inspect.signature(artifacts._artifact_guard).parameters.values()
+    ]
+    assert inspect.Parameter.VAR_POSITIONAL not in leaf_kinds, leaf_kinds
 
 
 def test_ledger_transaction_yields_only_mapping_records(run: Path) -> None:
@@ -1806,7 +2398,7 @@ def test_ledger_transaction_yields_only_mapping_records(run: Path) -> None:
 
 
 def test_the_dict_only_filter_loses_no_record_and_no_position(run: Path) -> None:
-    """NFR-002 against the fix itself.
+    """process-fixes NFR-002 against the fix itself.
 
     A filter that DROPPED the records it hides would be a quieter D-096:
     refusing to lose records to a bad container while losing them to a bad
@@ -1859,8 +2451,8 @@ def test_dict_records_stays_exported_for_out_of_module_scans() -> None:
 
 
 def test_concurrent_verdicts_all_survive(run: Path, tmp_path: Path) -> None:
-    """D-125 / AC-025 for verdicts.json, the last shared run artifact whose
-    read-modify-write window was still open.
+    """D-125 / process-fixes AC-025 for verdicts.json, the last shared run
+    artifact whose read-modify-write window was still open.
 
     ``foundry_add_verdict`` loaded, mutated and saved as three separate steps
     with no lock at all, so two callers landing between one another's read and
@@ -1904,7 +2496,7 @@ def test_a_verdict_and_a_peer_writer_do_not_discard_each_other(
 ) -> None:
     """The D-125 pairing exactly as it occurs in a run.
 
-    ``foundry_orchestrator._synthesize_clean_prove_verdicts`` writes
+    ``orchestration/gates.py#_synthesize_clean_prove_verdicts`` writes
     verdicts.json through the locked transaction; ``foundry_add_verdict`` did
     not. One writer holding the lock is not a lock — it is a coincidence — so
     an F4 auto-VERIFY synthesis interleaving with a real Foundry-Verdict call
@@ -1992,14 +2584,33 @@ def test_seeding_re_writes_a_corrupt_artifact_the_transaction_would_refuse(
         assert document["requirements"] == []
 
 
-def test_ledger_refusals_converts_only_the_shape_error() -> None:
+def test_ledger_refusals_converts_only_a_ledger_refusal() -> None:
     """The decorator is a translation, not a swallow. Anything that is not a
-    ledger-shape refusal must still propagate, or a real bug would come back as
-    a tidy dict and be read as a refusal."""
+    ledger refusal must still propagate, or a real bug would come back as a
+    tidy dict and be read as a refusal.
+
+    fallout D-157 — AND IT CONVERTS THE BASE, NOT ONE SUBCLASS. The shape error
+    was the only in-transaction refusal when this pin was written, so the
+    ``except`` clause named it and a second one had to be REMEMBERED there.
+    `retier_matching_untiered`'s tier guard is that second one: it can only ask
+    its question with the ledger open, and it must abort the transaction rather
+    than persist a record the doors would refuse. Catching ``LedgerRefusal``
+    makes the decorator's own promise — "every path through the function,
+    present and future, converts" — the mechanism rather than a habit.
+
+    ``LedgerShapeError``'s ``str()`` is asserted here too: it is what a
+    traceback shows and what every existing reader of this exception matches
+    on, and giving it a base whose ``str()`` is the refusal's ``error`` is
+    exactly how that would have been rewritten silently.
+    """
 
     @ledger_refusals
     def _shape() -> dict:
         raise LedgerShapeError("defects.json has a 'defects' key holding dict")
+
+    @ledger_refusals
+    def _in_transaction() -> dict:
+        raise LedgerRefusal({"ok": False, "error": "refused", "hint": "re-file"})
 
     @ledger_refusals
     def _bug() -> dict:
@@ -2007,5 +2618,1080 @@ def test_ledger_refusals_converts_only_the_shape_error() -> None:
 
     refusal = _shape()
     assert "error" in refusal and "hint" in refusal
+    assert str(LedgerShapeError("a named problem")) == "a named problem"
+    assert issubclass(LedgerShapeError, LedgerRefusal)
+
+    assert _in_transaction() == {"ok": False, "error": "refused", "hint": "re-file"}
+
     with pytest.raises(ZeroDivisionError):
         _bug()
+
+
+
+# --------------------------------------------------------------------------- #
+# D-178 — THE TWO-SPEC ID CONVENTION IS PINNED, NOT MERELY DOCUMENTED.
+#
+# THE MACHINERY MOVED, and this is a shim. It lives in
+# tests/test_spec_id_convention.py now, together with the roster pin that
+# applies it to every module in this directory, and that module's banner
+# carries the full history and the two reasons the per-file pins did not hold.
+# Not repeated here: two copies of one explanation drift exactly as two copies
+# of one scan do, which is the whole argument the move rests on.
+#
+# WHY THE SHIM STAYS RATHER THAN THE CALL SITES MOVING. tests/test_escalation.py
+# is casting 3's and imports these four private names by hand —
+# `_prose_blocks`, `_unqualified_ids`, `_TWO_SPEC_ID_RE`, and
+# `_CONVERGENCE_IDS`, which it monkeypatches ON THIS MODULE before calling the
+# other two. Deleting them here to tidy up would turn its pin into a collection
+# error in the same cycle that was supposed to make the convention stick.
+#
+# WHY `_unqualified_ids` IS A FUNCTION AND NOT A RE-EXPORT. A re-exported
+# function's globals are the module that DEFINED it, so
+# `monkeypatch.setattr(shared, "_CONVERGENCE_IDS", ...)` would set a name
+# nothing reads: casting 3's pin would go on scanning against this file's
+# declared ids instead of its own, stay green, and check the wrong thing. The
+# indirection is load-bearing; `test_the_shim_reads_this_modules_own_data` below
+# is what keeps someone from "simplifying" it away.
+#
+# WHAT THE SENTINEL LINE ABOVE STILL DOES. `prose_blocks` keys its exemption off
+# it: a module carrying the sentinel is one that EXPLAINS the collision, so its
+# docstring and this comment block are free to name both sides of it. The shim
+# passes `require_sentinel=True`, so deleting the line raises instead of quietly
+# widening what this file scans.
+# --------------------------------------------------------------------------- #
+
+from tests.test_spec_id_convention import (  # noqa: E402
+    LEGACY_ID_FAMILIES,
+    id_pattern,
+    prose_blocks,
+    unqualified_ids,
+)
+
+
+def _own_source() -> str:
+    return Path(__file__).read_text(encoding="utf-8")
+
+
+#: The requirement-id families this module's pin matches. One deliberate step
+#: narrower than the roster pin's: tests/test_escalation.py runs its own pin
+#: through this shim and cites three bare `GI` ids, so widening here would turn
+#: a green pin red in a file this casting may not edit.
+_TWO_SPEC_ID_RE = id_pattern(LEGACY_ID_FAMILIES)
+
+#: The convergence-spec ids this module cites BARE. EMPTY now, because the
+#: convention became total and every id in this module's prose carries its spec.
+#: The name survives only because tests/test_escalation.py monkeypatches it here
+#: with its own declared set before calling `_unqualified_ids`.
+_CONVERGENCE_IDS = frozenset()  # 0 items
+
+
+
+def _unqualified_ids(text: str) -> list[str]:
+    """`unqualified_ids` bound to whatever data THIS module declares.
+
+    The `_CONVERGENCE_IDS` lookup is deliberately a module-global read at call
+    time rather than a default argument captured at definition time, so
+    casting 3's `monkeypatch.setattr` on this module reaches it.
+    """
+    return unqualified_ids(text, bare_ok=_CONVERGENCE_IDS, families=LEGACY_ID_FAMILIES)
+
+
+def _prose_blocks(source: str) -> list[tuple[int, str]]:
+    """`prose_blocks` with the sentinel deletion guard armed."""
+    return prose_blocks(source, require_sentinel=True)
+
+
+def test_every_requirement_id_in_this_module_names_its_spec() -> None:
+    """D-178's root cause, refused structurally rather than re-tagged by hand.
+
+    Held here as well as by the roster pin in tests/test_spec_id_convention.py,
+    because this is the pair casting 3's own pin runs through: if the shim ever
+    stops reporting what it used to, it fails HERE, on this module's own prose,
+    rather than silently in a file this casting cannot edit.
+    """
+    offenders: list[str] = []
+    for lineno, text in _prose_blocks(_own_source()):
+        for offence in _unqualified_ids(text):
+            offenders.append(f"line {lineno}: {offence}")
+
+    assert not offenders, (
+        "unqualified requirement id(s) — D-178 again. Every id in prose names "
+        "its spec: 'process-fixes AC-001' for "
+        "forge-specs/foundry-run-process-fixes, 'convergence AC-001' for "
+        "forge-specs/foundry-run-convergence. There is no bare form:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+def test_the_pin_catches_the_bare_tag_it_was_written_for() -> None:
+    """The pin's own fail-safe: a guard that cannot fail guards nothing.
+
+    D-093's lesson one rung over — the comment-prose battery stayed green for
+    eleven cycles while eight of its ten cases were unreachable, because it was
+    only ever pinned where it already worked. So the scan is driven directly
+    over the tag D-178 was filed against, which must be reported, and over each
+    legal form, which must not be.
+    """
+    # The shapes D-178 was filed against, verbatim from the old prose.
+    assert _unqualified_ids("AC-001 / OT-001 comment-prose filed as a defect")
+    assert _unqualified_ids("AC-001 — each of the four comment-prose classes")
+    assert _unqualified_ids("ST-001 — the server owns the cycle number")
+    # A chain whose HEAD is unqualified is not rescued by its own tail.
+    assert _unqualified_ids("CT-002 / AC-019 / OT-008 — accepts PARTIAL")
+
+    # The legal forms stay silent, including across a `/` chain and a wrap.
+    assert not _unqualified_ids("process-fixes AC-001 / OT-001 is refused")
+    assert not _unqualified_ids("process-fixes CT-002 / AC-019 / OT-008 — PARTIAL")
+    assert not _unqualified_ids("evaded process-fixes ST-002 escalation while")
+    # The convergence half of the total convention, which is what replaced the
+    # bare form this line used to assert. `_CONVERGENCE_IDS` is empty here now,
+    # so nothing is silent by declaration any more — only by qualification.
+    assert not _unqualified_ids("``tier`` (convergence CT-001 / FR-004 / AC-006)")
+    assert _unqualified_ids("``tier`` (CT-001 / FR-004 / AC-006) and ``class``")
+
+
+def test_the_prose_scan_sees_comments_and_docstrings_alike() -> None:
+    """Both carriers, because D-178 lived in both.
+
+    The filed instance was a module docstring AND a section-header comment. A
+    scan that read only one of them would have closed half the defect and left
+    the other half to be re-filed.
+    """
+    blocks = _prose_blocks(_own_source())
+    joined = " ".join(text for _, text in blocks)
+    # A docstring this file owns.
+    assert "each of the four comment-prose classes is refused" in joined
+    # A comment this file owns.
+    assert "it never reaches defects.json" in joined
+    # And the two exempt blocks are absent: the legend and this pin's rationale.
+    assert "READ THIS BEFORE GREPPING AN ID HERE" not in joined
+    assert "THE TWO-SPEC ID CONVENTION IS PINNED" not in joined
+
+
+def test_the_shim_reads_this_modules_own_data(monkeypatch) -> None:
+    """The seam tests/test_escalation.py hangs on, pinned from this side.
+
+    That module patches ``_CONVERGENCE_IDS`` ON THIS MODULE and then calls
+    ``_unqualified_ids`` here, so the lookup has to happen in this namespace at
+    call time. Turn the shim into a plain re-export — the obvious tidy-up —
+    and the patch sets a name nothing reads: casting 3's pin would keep
+    scanning against whatever set this file declares, stay green, and be
+    checking the wrong module's ids. Green and wrong is the failure mode that
+    has no symptom, so it is pinned here rather than left to be noticed.
+    """
+    assert _CONVERGENCE_IDS == frozenset()
+    assert _unqualified_ids("AC-004 verbatim: 'escalation.json records'")
+
+    monkeypatch.setattr(
+        "tests.test_observations._CONVERGENCE_IDS", frozenset({"AC-004"})
+    )
+    assert not _unqualified_ids("AC-004 verbatim: 'escalation.json records'")
+
+    # The family stays narrow through the shim whatever the patch says, which
+    # is the other half of what keeps casting 3's file green: its three bare
+    # ``GI`` citations are outside LEGACY_ID_FAMILIES and stay unreported here.
+    assert not _unqualified_ids("GI-006 requires the generated report")
+    assert unqualified_ids("GI-006 requires the generated report")
+
+
+# ---------------------------------------------------------------------------
+# fallout CT-017 / FR-017 / GI-027 — TEMPER_CANDIDATE, the fifth observation
+# class and the one that is not about comment prose at all.
+# ---------------------------------------------------------------------------
+
+
+def test_a_temper_candidate_is_accepted_and_read_back(run: Path, tmp_path: Path) -> None:
+    """fallout CT-017 / OT-022 verbatim: 'A TEMPER_CANDIDATE observation is
+    accepted, TEMPER reads it first, and an undriven candidate is listed in the
+    F6 report.'
+
+    The first two clauses, driven end to end: recorded at the door, then read
+    back through the query TEMPER uses,
+    ``Foundry-Observations(classification=TEMPER_CANDIDATE)``.
+
+    ``target_kind="code"`` IS THE POINT. A candidate is a probe idea about the
+    implementation — vocab's own block calls it 'the one that is not about
+    comment prose at all', and casting 10's report fixture seeds one with
+    exactly this subject. Every other class in this ledger requires
+    ``target_kind="comment"`` because recording one IS a demotion of a
+    comment-prose finding; nothing has been shown to be wrong here, so there is
+    no defect for the ledger to hide and the subject rung does not apply.
+    """
+    result = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=(
+            "nobody has driven what the reaper does to a session the purge "
+            "cascade is halfway through"
+        ),
+        classification="TEMPER_CANDIDATE",
+        target_kind="code",
+        symbol="reap_expired",
+        file_path="src/session/reaper.py",
+        project_root=str(tmp_path),
+    )
+
+    assert result.get("observation_id"), result
+    assert result["classification"] == "TEMPER_CANDIDATE", result
+
+    read_back = foundry_query_observations(
+        classification="TEMPER_CANDIDATE", project_root=str(tmp_path)
+    )
+    assert [o["id"] for o in read_back["observations"]] == [result["observation_id"]]
+    assert read_back["observations"][0]["target_kind"] == "code"
+    # No demotion was attempted, so no audit signal fired.
+    assert read_back["tripwire"] == [], read_back
+    assert _defects(run) == [], "a candidate is not a defect"
+
+
+def test_an_undeclared_candidate_still_meets_the_comment_subject_rung(
+    run: Path, tmp_path: Path
+) -> None:
+    """The narrowing, asserted from the side that must NOT move.
+
+    The exemption is keyed on the classification the caller DECLARED. An
+    omitted ``classification`` reaches the comment-subject rung exactly as it
+    did before this casting — which is process-fixes D-069's ruling applied
+    rather than re-argued: a default that decides this question for a caller
+    who said nothing is how a fabricated ``target_kind="comment"`` got into the
+    ledger in the first place. ``observation_class`` walks four comment-prose
+    predicates and can never answer TEMPER_CANDIDATE, so there is no path by
+    which the exemption is reached without somebody asking for it.
+    """
+    refusal = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=(
+            "nobody has driven what the reaper does to a session the purge "
+            "cascade is halfway through"
+        ),
+        target_kind="code",
+        project_root=str(tmp_path),
+    )
+
+    assert refusal.get("denylist_class") == "NON_COMMENT", refusal
+    assert len(_observations(run)["tripwire"]) == 1, _observations(run)
+    assert _observations(run)["observations"] == []
+
+
+def test_a_candidate_that_claims_a_security_property_is_still_refused(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout GI-004: 'The never-demote denylist ... is UNCHANGED by the fifth
+    member and still outranks every one of them ... a probe idea whose
+    description makes a security-property claim is a DEFECT, and the tripwire
+    fires naming the entry that matched.'
+
+    The exemption lifts ONE denylist entry — NON_COMMENT, which reads the
+    finding's subject — and leaves the three that read what the finding CLAIMS
+    exactly where they were. A tier or a class is never a route around the
+    never-weaken guarantee, and this is the test that fails if the exemption is
+    ever widened from 'the subject rung' to 'the denylist'.
+    """
+    from foundry_mcp.schemas.vocab import SECURITY_PROPERTY_CLAIM
+
+    refusal = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=(
+            "the login endpoint does not verify the authentication token "
+            "signature"
+        ),
+        classification="TEMPER_CANDIDATE",
+        target_kind="code",
+        project_root=str(tmp_path),
+    )
+
+    assert refusal.get("denylist_class") == SECURITY_PROPERTY_CLAIM, refusal
+    fired = _observations(run)["tripwire"]
+    assert len(fired) == 1 and fired[0]["denylist_class"] == SECURITY_PROPERTY_CLAIM
+    assert _observations(run)["observations"] == []
+
+
+def test_a_classification_outside_the_vocabulary_is_refused_naming_the_set(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout CT-017's one error: 'classification not in OBSERVATION_CLASSES'.
+
+    The refusal names the set by DERIVING it from the constant rather than by
+    listing it, which is this package's third convention — so the sentence an
+    operator reads gained TEMPER_CANDIDATE the moment casting 10 added the
+    member, with no edit here. Asserted against the live frozenset, not against
+    a copy of its members typed into this file, since a hand-typed expectation
+    would agree with a hand-typed hint and prove nothing.
+    """
+    from foundry_mcp.schemas.vocab import OBSERVATION_CLASSES
+
+    refusal = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description="the comment above the guard still says line 244",
+        classification="TEMPER_CANDIDATES",  # one letter off a real member
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+
+    assert "Invalid classification" in refusal["error"], refusal
+    for member in OBSERVATION_CLASSES:
+        assert member in refusal["error"], (member, refusal["error"])
+    assert _observations(run)["observations"] == []
+# --------------------------------------------------------------------------- #
+# fallout ST-007 / fallout AC-019 / fallout AC-020 — DRIVING a candidate, the
+# write half of the transition. Nothing in the package could reach the terminal
+# state before this door: the create door above OPENS a candidate and the F6
+# report reader splits open from driven, and between the two there was no
+# writer at all — so the driven side of that split was unreachable and every
+# candidate was undriven by construction.
+# --------------------------------------------------------------------------- #
+
+#: One probe idea, shared by the tests below so the SUBJECT never varies while
+#: the closure does. Code, not comment prose: a candidate is the one class
+#: whose subject is the implementation.
+CANDIDATE_PROBE = (
+    "nobody has driven what the reaper does to a session the purge cascade is "
+    "halfway through"
+)
+
+
+def _open_candidate(tmp_path: Path, description: str = CANDIDATE_PROBE) -> str:
+    """Record one TEMPER_CANDIDATE through the real door; return its id."""
+    result = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=description,
+        classification="TEMPER_CANDIDATE",
+        target_kind="code",
+        symbol="reap_expired",
+        file_path="src/session/reaper.py",
+        project_root=str(tmp_path),
+    )
+    assert result.get("observation_id"), result
+    return result["observation_id"]
+
+
+def _enter_temper(fdir: Path) -> None:
+    """Carry the run into TEMPER through the ONE writer of ``phase_history``.
+
+    fallout D-254: the drive door refuses unless TEMPER ran on this run
+    (fallout ST-007's guard column), so every test below that closes a
+    candidate enters the phase first — through
+    ``orchestration/transitions.py#_update_phase``, never a hand-written row,
+    so the door is proven against the history a real crossing writes.
+    """
+    from foundry_mcp.tools.foundry_report import TEMPER_PHASE_ID
+    from foundry_mcp.tools.orchestration.transitions import _update_phase
+
+    _update_phase(fdir, TEMPER_PHASE_ID)
+
+
+def _report_reader(fdir: Path) -> dict:
+    """The F6 section reader, driven over the ledger these doors wrote.
+
+    Imported at call time rather than at module top because it is the OTHER
+    side of the boundary this section is about: the assertion is that two
+    modules agree about one record, and reaching for it here rather than in the
+    import block says so.
+    """
+    from foundry_mcp.tools.foundry_report import _read_undriven_temper_candidates
+
+    payload, problem = _read_undriven_temper_candidates(fdir)
+    assert problem is None, problem
+    return payload
+
+
+def test_a_driven_candidate_leaves_the_report_readers_undriven_list(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout ST-007 verbatim: 'TEMPER_CANDIDATE observation open' ->
+    'DRIVEN (filed or clean)'; and fallout AC-020, 'the F6 report lists every
+    TEMPER candidate that was not driven'.
+
+    Driven ACROSS THE MODULE BOUNDARY rather than against this door's own
+    return value, because the two halves of fallout ST-007 live in two files:
+    the writer here and the reader at
+    ``foundry_mcp/tools/foundry_report.py#_read_undriven_temper_candidates``,
+    which counts a record driven when it carries ``driven`` truthy OR
+    ``status`` "DRIVEN". A door that wrote a THIRD spelling would return a
+    perfectly good result and move nothing in the report — which is the exact
+    shape of what this closes: a state machine whose terminal state no writer
+    could reach, so the undriven section listed every candidate on every run
+    and the count could never fall.
+
+    The undriven assertion comes FIRST because it is the state every run was in
+    before this door existed, and a closure test that never saw the open state
+    proves the transition rather than assuming it.
+    """
+    _enter_temper(run)
+    candidate = _open_candidate(tmp_path)
+
+    before = _report_reader(run)
+    assert [c["id"] for c in before["candidates"]] == [candidate], before
+    assert before["count"] == 1, before
+    assert before["driven_count"] == 0, before
+
+    closed = foundry_drive_temper_candidate(
+        observation_id=candidate, project_root=str(tmp_path)
+    )
+    assert "error" not in closed, closed
+    assert closed["already_driven"] is False, closed
+    # The clean closure: driven, and no defect came of it.
+    assert closed["driven_finding"] == "", closed
+
+    after = _report_reader(run)
+    assert after["candidates"] == [], after
+    assert after["count"] == 0, after
+    assert after["driven_count"] == 1, after
+
+
+def test_a_candidate_driven_and_filed_records_the_defect_it_produced(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout ST-007's parenthetical, the other closure: 'DRIVEN (filed or
+    clean)' — both are closures and neither is the blank.
+
+    ``filed`` is recorded VERBATIM and is never ranked against the defect
+    ledger. fallout ST-007 admits no error on the field, and D-101 is this
+    package's record of what inventing a rung a contract does not admit costs:
+    the door refuses its own documented example and the stream's next move is
+    to fabricate the field. So what is asserted is that the id reads back
+    exactly as the stream wrote it, and that the record reaches DRIVEN by the
+    same route the clean closure takes — the closure kind is a FACT on the
+    record, not a second code path.
+    """
+    _enter_temper(run)
+    candidate = _open_candidate(tmp_path)
+
+    closed = foundry_drive_temper_candidate(
+        observation_id=candidate, filed="D-404", project_root=str(tmp_path)
+    )
+
+    assert "error" not in closed, closed
+    assert closed["driven_finding"] == "D-404", closed
+    assert closed["status"] == "DRIVEN", closed
+
+    stored = _observations(run)["observations"]
+    assert [o["id"] for o in stored] == [candidate], stored
+    assert stored[0]["driven_finding"] == "D-404", stored
+    assert stored[0]["status"] == "DRIVEN", stored
+    # The record keeps everything it was FILED with: driving a candidate
+    # records a result about it and rewrites nothing it said.
+    assert stored[0]["classification"] == "TEMPER_CANDIDATE", stored
+    assert stored[0]["description"] == CANDIDATE_PROBE, stored
+    assert stored[0]["symbol"] == "reap_expired", stored
+    # And it is driven as far as the report reader is concerned, exactly as the
+    # clean closure is: the reader splits on driven-ness, not on outcome.
+    assert _report_reader(run)["driven_count"] == 1
+
+
+def test_the_query_door_reads_a_driven_candidate_back_with_its_closure(
+    run: Path, tmp_path: Path
+) -> None:
+    """The OTHER door onto the same ledger, which the closure travels through
+    untouched (fallout CT-017: 'TEMPER reads it via
+    Foundry-Observations(classification=TEMPER_CANDIDATE)').
+
+    TEMPER's roster read is the adjacent path this write has to leave working:
+    a query that dropped the new keys, or a census that stopped counting a
+    record once it carried a status, would leave the roster unreadable in a
+    different way than the one just repaired. The summary is asserted as well
+    as the records, because ``by_classification`` counts EVERY observation
+    regardless of status and a driven candidate is still a candidate.
+    """
+    _enter_temper(run)
+    candidate = _open_candidate(tmp_path)
+    foundry_drive_temper_candidate(
+        observation_id=candidate, filed="D-404", project_root=str(tmp_path)
+    )
+
+    read_back = foundry_query_observations(
+        classification="TEMPER_CANDIDATE", project_root=str(tmp_path)
+    )
+
+    assert [o["id"] for o in read_back["observations"]] == [candidate]
+    record = read_back["observations"][0]
+    assert record["status"] == "DRIVEN", record
+    assert record["driven_finding"] == "D-404", record
+    assert record["driven_in_cycle"] == 0, record
+    assert read_back["summary"]["by_classification"] == {"TEMPER_CANDIDATE": 1}
+    assert read_back["tripwire"] == [], read_back
+
+
+def test_driving_an_unknown_observation_is_refused_naming_the_id(
+    run: Path, tmp_path: Path
+) -> None:
+    """A call that closed nothing is a caller error, and it says so.
+
+    Unlike ``supersedes`` — which rides along a filing that succeeded whatever
+    it cited, so reporting the id it actually closed is the honest answer —
+    the whole of this call is the closure. A success result over a record that
+    does not exist would be a door reporting a transition it did not make,
+    which is the class of defect the whole section exists to close.
+    """
+    _enter_temper(run)
+    refusal = foundry_drive_temper_candidate(
+        observation_id="O-404", project_root=str(tmp_path)
+    )
+
+    assert refusal.get("field") == "observation_id", refusal
+    assert "O-404" in refusal["error"], refusal
+    assert "TEMPER_CANDIDATE" in refusal["hint"], refusal
+    assert _observations(run)["observations"] == []
+
+
+def test_driving_an_observation_that_is_not_a_candidate_is_refused(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout ST-007's from-state is TEMPER_CANDIDATE and nothing else.
+
+    The four comment-prose classes record a finding ABOUT prose — a statement,
+    not a question — so there is nothing to drive and no closure to record. The
+    refusal names the class the record actually carries, because the caller
+    that reached here has an id it believed was a candidate and the useful
+    thing to tell it is what that id really is.
+    """
+    _enter_temper(run)
+    filed = foundry_add_observation(
+        cycle=1,
+        source="trace",
+        description=DRIFT,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+    observation_id = filed["observation_id"]
+    assert filed["classification"] != "TEMPER_CANDIDATE", filed
+
+    refusal = foundry_drive_temper_candidate(
+        observation_id=observation_id, project_root=str(tmp_path)
+    )
+
+    assert refusal.get("field") == "classification", refusal
+    assert filed["classification"] in refusal["error"], refusal
+    assert "TEMPER_CANDIDATE" in refusal["error"], refusal
+    # Refused, and the record is untouched -- no status, no closure.
+    stored = _observations(run)["observations"][0]
+    assert "status" not in stored, stored
+    assert "driven_finding" not in stored, stored
+
+
+def test_re_driving_a_closed_candidate_keeps_the_first_closure(
+    run: Path, tmp_path: Path
+) -> None:
+    """Idempotent, not a refusal, and the FIRST closure is the one that stands.
+
+    A retry after a dropped answer must not report failure over work that
+    landed, so the second call succeeds and says ``already_driven``. What it
+    must not do is overwrite: the stream that drove the probe first is the one
+    that drove it, and a later call that rewrote the finding and the cycle
+    would let a second reader silently replace the first reader's result.
+    """
+    _enter_temper(run)
+    candidate = _open_candidate(tmp_path)
+    first = foundry_drive_temper_candidate(
+        observation_id=candidate, filed="D-404", project_root=str(tmp_path)
+    )
+    assert first["already_driven"] is False, first
+
+    _set_server_cycle(run, 7)
+    second = foundry_drive_temper_candidate(
+        observation_id=candidate, filed="D-999", project_root=str(tmp_path)
+    )
+
+    assert second["already_driven"] is True, second
+    assert second["driven_finding"] == "D-404", second
+    assert second["driven_in_cycle"] == 0, second
+
+    stored = _observations(run)["observations"][0]
+    assert stored["driven_finding"] == "D-404", stored
+    assert stored["driven_in_cycle"] == 0, stored
+    # Still exactly one driven record, not two closures on one candidate.
+    assert _report_reader(run)["driven_count"] == 1
+def test_a_malformed_historical_record_does_not_derail_the_closure(
+    run: Path, tmp_path: Path
+) -> None:
+    """D-097 / D-128 at this door, driven rather than left to the AST pin.
+
+    The transaction yields the ledger and a run carrying one junk record from
+    an older writer is a run this door still has to close a candidate in. An
+    element scan that assumed dicts raised MID-TRANSACTION on exactly this
+    input once, and it raised after the mutation, so nothing was written and
+    the caller got a traceback instead of an answer.
+
+    NOTHING IS LOST TO THE FILTER either: the junk is set aside by index and
+    re-inserted, so the ledger comes back off the lock with the closure written
+    and the record it could not read still in place. Refusing to lose records
+    to a bad container while losing them to a bad record is the quieter half of
+    the same defect.
+    """
+    _enter_temper(run)
+    candidate = _open_candidate(tmp_path)
+
+    path = run / "observations.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["observations"].insert(0, "a string where a record should be")
+    path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+
+    closed = foundry_drive_temper_candidate(
+        observation_id=candidate, filed="D-404", project_root=str(tmp_path)
+    )
+
+    assert "error" not in closed, closed
+    assert closed["already_driven"] is False, closed
+
+    stored = _observations(run)["observations"]
+    assert "a string where a record should be" in stored, stored
+    record = next(o for o in stored if isinstance(o, dict))
+    assert record["status"] == "DRIVEN", record
+    assert record["driven_finding"] == "D-404", record
+
+
+# --- fallout D-254: the row's guard -- TEMPER ran on this run ---------------
+#     (fallout ST-007's guard column, fallout AC-020) -------------------------
+
+
+def test_a_candidate_on_a_run_where_temper_never_ran_is_refused(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout ST-007's guard column: 'TEMPER ran on this run; a candidate
+    never driven is listed in the F6 report'; fallout AC-020: 'When TEMPER
+    never ran, the F6 report lists every TEMPER candidate that was not driven.'
+
+    fallout D-254, driven as the stream drove it: a fresh run standing at F0
+    with no TEMPER row in its history, one candidate recorded, the real drive
+    door called. Before the fix the door answered DRIVEN and the candidate
+    dropped out of the roster AND the report listing -- the one listing that
+    exists to carry it as debt on exactly this run. So the refusal is asserted,
+    and then all three reads of the candidate: the record untouched, the roster
+    still offering it, and the F6 reader still listing it undriven.
+    """
+    from foundry_mcp.tools.foundry import OPEN_CANDIDATES_KEY
+    from foundry_mcp.tools.foundry_report import TEMPER_PHASE_ID
+
+    candidate = _open_candidate(tmp_path)
+
+    refusal = foundry_drive_temper_candidate(
+        observation_id=candidate, project_root=str(tmp_path)
+    )
+
+    assert "error" in refusal, refusal
+    assert "TEMPER ran on this run" in refusal["error"], refusal
+    assert TEMPER_PHASE_ID in refusal["error"], refusal
+    assert "AC-020" in refusal["hint"], refusal
+    stored = _observations(run)["observations"][0]
+    assert "status" not in stored, stored
+    assert "driven_finding" not in stored, stored
+    roster = foundry_query_observations(
+        classification="TEMPER_CANDIDATE", project_root=str(tmp_path)
+    )
+    assert [o["id"] for o in roster[OPEN_CANDIDATES_KEY]] == [candidate], roster
+    listed = _report_reader(run)
+    assert [c["id"] for c in listed["candidates"]] == [candidate], listed
+    assert listed["driven_count"] == 0, listed
+
+
+def test_opting_in_to_temper_is_not_the_guard(run: Path, tmp_path: Path) -> None:
+    """fallout ST-007: 'TEMPER ran', not 'TEMPER was asked for'.
+
+    The ``temper`` key in state.json is the ``--temper`` opt-in flag, written
+    once by Foundry-Init; fallout D-055 is the record of what reading it as
+    "ran" printed. A run that opted in and has not reached TEMPER is still a
+    run TEMPER has not run on, and the door refuses it the same way.
+    """
+    state_path = run / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["temper"] = True
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    candidate = _open_candidate(tmp_path)
+
+    refusal = foundry_drive_temper_candidate(
+        observation_id=candidate, project_root=str(tmp_path)
+    )
+
+    assert "TEMPER ran on this run" in refusal.get("error", ""), refusal
+    assert "status" not in _observations(run)["observations"][0]
+
+
+def test_a_run_that_entered_temper_and_moved_on_may_still_drive(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout ST-007: the guard is that TEMPER RAN, not that it is running.
+
+    The adjacent transition: a run crosses into TEMPER and out again (to
+    NYQUIST here), and the history still carries the TEMPER row, so a closure
+    that arrives after the crossing -- a retried answer, a late stream -- lands.
+    A guard keyed on the CURRENT phase alone would refuse it and strand a
+    candidate TEMPER actually drove.
+    """
+    from foundry_mcp.tools.orchestration.transitions import _update_phase
+
+    candidate = _open_candidate(tmp_path)
+    _enter_temper(run)
+    _update_phase(run, "F5.5")
+
+    closed = foundry_drive_temper_candidate(
+        observation_id=candidate, project_root=str(tmp_path)
+    )
+
+    assert "error" not in closed, closed
+    assert closed["status"] == "DRIVEN", closed
+
+
+# --- fallout D-114: the door provides the roster its own hint names ---------
+#     (fallout FR-017 / GI-027, fallout ST-007 / CT-017) -------------------
+#
+# `_CANDIDATE_ROSTER_HINT` is spelled ONCE precisely so the three arms of
+# `foundry_drive_temper_candidate` cannot drift, and it said "Read the OPEN
+# candidates with Foundry-Observations(classification=TEMPER_CANDIDATE)". That
+# call filtered on cycle, source and classification and nothing else, so an
+# already-driven candidate came back in TEMPER's roster. The only "undriven"
+# derivation in the package was a private second one in
+# `foundry_mcp/tools/foundry_report.py#_read_undriven_temper_candidates`, so
+# the surface TEMPER read and the surface the report rendered answered
+# different questions about one ledger. A hint naming an exit its door does not
+# provide is this package's own recorded failure shape.
+
+
+def test_a_driven_candidate_leaves_the_roster_the_hint_names(run, tmp_path):
+    """fallout FR-017: TEMPER's roster is the OPEN candidates.
+
+    DRIVEN: file one candidate, close it through the real drive door (status
+    becomes 'DRIVEN'), then query with classification=TEMPER_CANDIDATE. Before
+    the fix the record was still returned, statuses ['DRIVEN'].
+    """
+    _enter_temper(run)
+    from foundry_mcp.tools.foundry import OPEN_CANDIDATES_KEY
+
+    open_id = _open_candidate(tmp_path)
+    driven_id = _open_candidate(tmp_path, description=CANDIDATE_PROBE + " (second)")
+    foundry_drive_temper_candidate(
+        observation_id=driven_id, project_root=str(tmp_path)
+    )
+
+    result = foundry_query_observations(
+        classification="TEMPER_CANDIDATE", project_root=str(tmp_path)
+    )
+
+    assert [o["id"] for o in result[OPEN_CANDIDATES_KEY]] == [open_id], result
+    assert sorted(o["id"] for o in result["observations"]) == sorted(
+        [open_id, driven_id]
+    ), "the general query stopped answering the general question"
+
+
+def test_the_hint_names_the_key_the_door_returns(run, tmp_path):
+    """fallout D-114: the hint and the result read ONE spelling.
+
+    `OPEN_CANDIDATES_KEY` is the constant both sides derive from, so a rename
+    cannot leave the hint pointing at a key the door stopped returning — which
+    is the shape of the defect, one field along.
+    """
+    from foundry_mcp.tools.foundry import (
+        OPEN_CANDIDATES_KEY,
+        _CANDIDATE_ROSTER_HINT,
+    )
+
+    _open_candidate(tmp_path)
+    result = foundry_query_observations(
+        classification="TEMPER_CANDIDATE", project_root=str(tmp_path)
+    )
+
+    assert OPEN_CANDIDATES_KEY in result, sorted(result)
+    assert OPEN_CANDIDATES_KEY in _CANDIDATE_ROSTER_HINT, _CANDIDATE_ROSTER_HINT
+    assert "Foundry-Observations(classification=TEMPER_CANDIDATE)" in (
+        _CANDIDATE_ROSTER_HINT
+    ), _CANDIDATE_ROSTER_HINT
+
+
+def test_the_roster_counts_both_halves_of_the_partition(run, tmp_path):
+    """fallout ST-007: 'TEMPER_CANDIDATE observation open' -> 'DRIVEN'.
+
+    The two halves are reported beside each other and the driven count is the
+    COMPLEMENT rather than a second scan, so the pair can never sum to
+    something other than the candidate count.
+    """
+    _enter_temper(run)
+    first = _open_candidate(tmp_path)
+    _open_candidate(tmp_path, description=CANDIDATE_PROBE + " (second)")
+    foundry_drive_temper_candidate(observation_id=first, project_root=str(tmp_path))
+
+    summary = foundry_query_observations(project_root=str(tmp_path))["summary"]
+
+    assert summary["temper_candidates"] == 2, summary
+    assert summary["open_temper_candidates"] == 1, summary
+    assert summary["driven_temper_candidates"] == 1, summary
+    assert (
+        summary["open_temper_candidates"] + summary["driven_temper_candidates"]
+        == summary["temper_candidates"]
+    ), summary
+
+
+def test_the_roster_ignores_the_filter_this_call_happened_to_pass(run, tmp_path):
+    """fallout D-114: the roster is a property of the RUN, not of the query.
+
+    A caller that narrowed by cycle must not be told the candidates from other
+    cycles are driven — which is precisely how a roster and a report come to
+    answer different questions about one ledger.
+    """
+    from foundry_mcp.tools.foundry import OPEN_CANDIDATES_KEY
+
+    candidate = _open_candidate(tmp_path)
+
+    narrowed = foundry_query_observations(cycle=99, project_root=str(tmp_path))
+
+    assert narrowed["observations"] == [], narrowed
+    assert [o["id"] for o in narrowed[OPEN_CANDIDATES_KEY]] == [candidate], narrowed
+
+
+def test_the_roster_and_the_idempotence_rung_ask_one_predicate(run, tmp_path):
+    """fallout D-114: BOTH driven spellings, ONE derivation.
+
+    `foundry_drive_temper_candidate` writes `status`; casting 11's TEMPER prose
+    may write `driven`; the report reader tolerates either. The roster and the
+    idempotence rung must therefore agree about a record spelled either way, and
+    a second inline `or` is how they would come to disagree — so both ask
+    `temper_candidate_is_driven`.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from foundry_mcp.tools.foundry import (
+        OPEN_CANDIDATES_KEY,
+        foundry_drive_temper_candidate as drive_door,
+        foundry_query_observations as query_door,
+        temper_candidate_is_driven,
+    )
+
+    assert temper_candidate_is_driven({"status": "DRIVEN"}) is True
+    assert temper_candidate_is_driven({"driven": True}) is True
+    assert temper_candidate_is_driven({}) is False
+
+    # The OTHER spelling, written into the ledger by hand the way an archive or
+    # a later tool would, and read back through the real query door.
+    candidate = _open_candidate(tmp_path)
+    path = run / "observations.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    for record in document["observations"]:
+        if record.get("id") == candidate:
+            record["driven"] = True
+    path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+
+    result = foundry_query_observations(project_root=str(tmp_path))
+    assert result[OPEN_CANDIDATES_KEY] == [], (
+        "the roster offers TEMPER a candidate the drive door would refuse to "
+        "close as already driven"
+    )
+
+    for site in (drive_door, query_door):
+        called = {
+            node.func.id
+            for node in ast.walk(ast.parse(textwrap.dedent(inspect.getsource(site))))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        assert "temper_candidate_is_driven" in called, (
+            f"{site.__name__} decides the driven question in its own voice; it "
+            f"calls {sorted(called)}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# fallout D-182 (co-dispatched from casting 2; fallout CT-017) — THE DOOR'S OWN PROSE
+# HAS TO AGREE WITH THE DOOR.
+#
+# D-182 was filed against the PUBLISHED wire description in server.py, whose
+# target_kind text said an omitted field "is refused server-side under the
+# NON_COMMENT denylist entry ... exactly as a present non-comment value does"
+# and then closed with "A finding about code — a function, a handler, a wiring
+# path — is a defect and belongs in Foundry-Defect". Both sentences are false
+# for a declared TEMPER_CANDIDATE, which the handler accepts with no
+# target_kind at all, and the second one instructs fallout GI-027's named
+# violation: "PROVE filing a candidate as a defect".
+#
+# The same rule is carried on THIS casting's files, so it is fixed here in this
+# module's own idiom: the handler's docstring is foundry.py's published
+# contract, and the two refusal HINTS are what a PROVE agent actually reads at
+# the moment it is deciding where a finding goes. Both hints offered exactly
+# two destinations, neither of them the candidate ledger, on the door that is
+# the only writer of candidates.
+#
+# These tests are the pins that keep the three surfaces agreeing. They assert
+# the constant, never a copy of its text, so a re-wording moves them with it
+# and a DELETION fails them.
+# --------------------------------------------------------------------------- #
+
+
+def _one_line(text: str) -> str:
+    """Prose with its line wrapping removed, so a pin survives a re-flow.
+
+    A docstring assertion that matches the source's line breaks is a pin on
+    the formatter, not on the sentence: re-wrapping a paragraph would fail it
+    while changing nothing a reader relies on.
+    """
+    return " ".join(text.split())
+
+
+def test_both_refusal_arms_offer_the_candidate_lane_in_one_spelling(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout CT-017 / GI-027 verbatim: 'PROVE filing a candidate as a defect'
+    is the violation, and a refusal naming only two doors is that violation
+    written as an instruction.
+
+    Both arms driven, and the SHARED CONSTANT asserted rather than a copy of
+    its words — this module's third convention. Two arms spelling the same
+    routing rule in two places is how they drift; ``_TEAMS_DOWN_HINT`` is the
+    pattern (D-186: three gate arms, three spellings, one of them missing
+    entirely), and this pin is what makes the single spelling load-bearing
+    rather than tidy.
+
+    The arms are reached differently and that is the point of driving both.
+    The FIRST is the denylist tripwire arm, reached with ``target_kind``
+    omitted — the caller declared no subject, so the NON_COMMENT rung fires.
+    The SECOND is the no-class arm, reached with ``target_kind="comment"``
+    declared and no comment-prose predicate matching. A PROVE agent holding an
+    undriven probe idea lands on one or the other depending only on whether it
+    guessed at the subject field, and before this fix both told it to file a
+    defect.
+    """
+    from foundry_mcp.schemas.vocab import TEMPER_CANDIDATE
+    from foundry_mcp.tools.foundry import _TEMPER_CANDIDATE_ROUTE
+
+    probe = (
+        "nobody has driven what the reaper does to a session the purge "
+        "cascade is halfway through"
+    )
+
+    # Arm 1 — the tripwire refusal, subject undeclared.
+    tripwire_arm = foundry_add_observation(
+        cycle=1, source="prove", description=probe, project_root=str(tmp_path)
+    )
+    # Arm 2 — the no-class refusal, subject declared a comment, no predicate
+    # matching. `target_kind="comment"` is the only value that reaches here:
+    # any other trips NON_COMMENT one rung above.
+    no_class_arm = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=probe,
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+
+    assert tripwire_arm.get("denylist_class") == "NON_COMMENT", tripwire_arm
+    assert "No comment-prose observation class matches" in no_class_arm["error"]
+
+    for arm, refusal in (("tripwire", tripwire_arm), ("no-class", no_class_arm)):
+        assert _TEMPER_CANDIDATE_ROUTE in refusal["hint"], (
+            f"the {arm} arm no longer offers the candidate lane, or offers it "
+            f"in a second spelling: {refusal['hint']}"
+        )
+
+    # The constant names the class by deriving it from the vocabulary, so the
+    # sentence an operator reads cannot name a member that does not exist.
+    assert TEMPER_CANDIDATE in _TEMPER_CANDIDATE_ROUTE
+
+    # The two pins this hint already carried must survive the third door being
+    # added — the missing field is still named, and the defect door is still
+    # one of the destinations.
+    assert "target_kind" in tripwire_arm["hint"], tripwire_arm
+    assert "Foundry-Defect" in tripwire_arm["hint"], tripwire_arm
+
+    # Nothing was recorded by either attempt; this is about the refusal text.
+    assert _observations(run)["observations"] == []
+
+
+def test_the_no_class_refusal_no_longer_contradicts_the_set_it_names(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout CT-017 — a refusal that contradicts itself inside one message.
+
+    The error lists the classes a caller may declare, derived from
+    ``OBSERVATION_CLASSES``, so it gained ``TEMPER_CANDIDATE`` the moment
+    casting 10 added the member. The hint one line below it read 'Only comment
+    prose is an observation.' — flatly false about the very set the line above
+    had just printed, and false in the direction that costs: the reader it
+    misinforms is a PROVE agent holding a probe idea, and the door it sends
+    them to is the blocking one.
+
+    Pinned on the dead sentence BY NAME. A test that only asserted the new text
+    would pass again the day somebody re-added the old one beside it.
+    """
+    from foundry_mcp.schemas.vocab import OBSERVATION_CLASSES, TEMPER_CANDIDATE
+
+    refusal = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=(
+            "nobody has driven what the reaper does to a session the purge "
+            "cascade is halfway through"
+        ),
+        target_kind="comment",
+        project_root=str(tmp_path),
+    )
+
+    # Every member the error offers is still offered...
+    for member in OBSERVATION_CLASSES:
+        assert member in refusal["error"], (member, refusal["error"])
+
+    # ...and the one that is NOT comment prose is the one the hint has to
+    # explain, because it is the only member of that list an operator cannot
+    # reach by re-wording anything.
+    assert TEMPER_CANDIDATE in refusal["hint"], refusal["hint"]
+    assert "Only comment prose is an observation" not in refusal["hint"], (
+        "the refusal has gone back to denying the existence of the class it "
+        "lists one line above"
+    )
+
+    assert _observations(run)["observations"] == []
+
+
+def test_the_handler_docstring_states_the_candidate_lane_beside_its_absolutes(
+    run: Path, tmp_path: Path
+) -> None:
+    """fallout D-182 verbatim: 'the PUBLISHED wire description contradicts it'.
+
+    ``foundry.py``'s published contract is this docstring — it is what a
+    ``path#Symbol`` cite resolves to and what a reader auditing the door
+    reaches first. It carried three absolutes written before the fifth class
+    existed: the summary said the door records 'a comment-prose finding', the
+    denylist paragraph said 'anything that is not a declared comment' is
+    rejected, and the fail-closed paragraph said 'RECORDING AN OBSERVATION *IS*
+    THE DEMOTION'. A declared ``TEMPER_CANDIDATE`` falsifies all three, and the
+    only qualification appeared three paragraphs later under ``target_kind``.
+
+    The pin is on the QUALIFICATION, not on the wording: each absolute must
+    carry the lane it is true of, in the same sentence, so a reader cannot take
+    one on its own. Asserted against the behaviour in the same test, so the
+    docstring cannot pass while the door disagrees with it.
+    """
+    import inspect
+
+    from foundry_mcp.schemas.vocab import TEMPER_CANDIDATE
+    from foundry_mcp.tools.foundry import foundry_add_observation as door
+
+    doc = _one_line(inspect.getdoc(door) or "")
+
+    # The summary names both lanes, not just the first.
+    assert "or an undriven probe idea" in doc, doc[:200]
+    # The two-lane paragraph exists, names the class, and states the routing
+    # rule fallout GI-027's violation column is about.
+    assert TEMPER_CANDIDATE in doc
+    assert "a probe idea is not a defect and must not be filed as one" in doc
+    # The denylist absolute carries its lane.
+    assert "in the comment-prose lane — anything that is not a declared comment" in doc
+    # ...as does the fail-closed absolute.
+    assert "RECORDING A COMMENT-PROSE OBSERVATION *IS* THE DEMOTION" in doc
+
+    # And the door actually behaves the way the docstring now claims: a
+    # declared candidate is recorded with no target_kind at all. This is the
+    # half D-182 drove — the handler was right and only the prose was wrong —
+    # and it is asserted HERE so the two can never be checked apart again.
+    accepted = foundry_add_observation(
+        cycle=1,
+        source="prove",
+        description=(
+            "nobody has driven what the reaper does to a session the purge "
+            "cascade is halfway through"
+        ),
+        classification=TEMPER_CANDIDATE,
+        project_root=str(tmp_path),
+    )
+    assert accepted.get("observation_id"), accepted
+    assert _observations(run)["tripwire"] == [], "no demotion was attempted"

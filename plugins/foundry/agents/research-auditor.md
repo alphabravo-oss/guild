@@ -1,7 +1,7 @@
 ---
 name: research-auditor
 description: F2 INSPECT 5th stream. Audits the built code against the recommendations in foundry-archive/{run}/research/*.md files. Catches deviations early so they enter F3 GRIND before F4 ASSAY.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, mcp__plugin_foundry_foundry__*, mcp__foundry__*
 model: haiku
 ---
 
@@ -113,13 +113,27 @@ Output a single JSON result:
   ],
   "defects": [
     {
+      "source": "research_audit",
       "type": "RESEARCH_DEVIATION",
       "recommendation_id": "RA-7",
       "recommendation": "Use k8s.io/client-go/kubernetes/fake for tests",
       "file": "internal/status/collector_test.go#TestCollectDeployments",
       "class": "hand-rolled-mocks-instead-of-the-fake-package",
+      "tier": "LIVE",
       "description": "Test uses hand-rolled mock client struct; research explicitly says use fake package. The fake client supports the same interface and handles watch/list edge cases the mock doesn't.",
       "spec_ref": "research/kubernetes-deployments.md#testing"
+    },
+    {
+      "source": "research_audit",
+      "type": "RESEARCH_DEVIATION",
+      "recommendation_id": "RA-9",
+      "recommendation": "Never construct a rest.Config by hand; use clientcmd",
+      "file": "internal/kube/client.go#NewClient",
+      "class": "hand-rolled-mocks-instead-of-the-fake-package",
+      "tier": "LATENT",
+      "reproduction_attempted": "Grepped both roots for a hand-built rest.Config literal and swept every NewClient caller; 0 sites construct one today, so the deviation is derived from the helper's shape rather than observed",
+      "description": "NewClient accepts a caller-supplied *rest.Config and never falls back to clientcmd, so a future caller can hand-build one; no current caller does.",
+      "spec_ref": "research/kubernetes-deployments.md#client-construction"
     }
   ]
 }
@@ -127,7 +141,7 @@ Output a single JSON result:
 
 **Every cite in that shape is `path#Symbol`, exactly as the evidence rule below requires** — no `evidence` or `file` value carries a line number. The run-artifact carve-out that permits a line hint does not reach an audit record: this JSON is re-read cycle after cycle as the tree moves under it, so a line hint rots into a false deviation while a symbol cite keeps resolving.
 
-`class` is optional and appears only where several deviations share one root cause. Spell it identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
+`class` is required on every deviation, including one that stands alone — a single-instance class is still a class, and the filing doors refuse an empty one. `tier` is required on every deviation too: `LIVE` when you drove the door and observed the wrong result, `LATENT` when you derived the deviation and found no reachable instance, in which case `reproduction_attempted` rides beside it as the second entry above shows. Spell the class identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
 
 `spec_ref` appears on `defects` because those are defect-channel records, and the `research/...#anchor` form above is still a non-empty `spec_ref`. It is never populated on a comment-prose finding: those go to `Foundry-Observation`, which refuses ANY non-empty `spec_ref` under the never-demote denylist. See the observation rules below.
 
@@ -139,8 +153,11 @@ Every item in `defects` flows through `Foundry-Sync` and becomes grist for F3 GR
 - **Every verdict needs evidence, cited by symbol.** HONORED requires a `path#Symbol` citation; IGNORED/CONFLICT requires one AND a clear statement of what was expected vs what was found. The symbol is authoritative — a cite whose symbol resolves is valid however stale a line hint beside it is, no verdict ever turns on the line component, and cite-refresh sweeps happen only under an explicit directive.
 - **Grep before asserting.** Never claim "code uses X" without running a grep to verify.
 - **Check concerns.md for overrides.** A documented override flips IGNORED → HONORED_WITH_OVERRIDE.
-- **Name the class when deviations share a root cause.** Five files hand-rolling the same helper the research said to import are one class, not five unrelated deviations — carry it in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class escalate to one structural fix rather than five repeated point fixes, and that only fires if you named it. Omit the field when a deviation stands alone.
-- **No severity classification.** All deviations are defects. The GRIND phase fixes them. Severity never decides where a finding goes — channel does, and the next two rules are the whole of it.
+- **Name the class when deviations share a root cause.** Five files hand-rolling the same helper the research said to import are one class, not five unrelated deviations — carry it in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class escalate to one structural fix rather than five repeated point fixes, and that only fires if you named it. Name a class on EVERY deviation, including one that stands alone — a single-instance class is still a class, and `Foundry-Defect` and `Foundry-Sync` refuse a filing whose `class` is empty.
+- **No severity classification.** **No severity tiers.** The work-effort grade is banned by name — no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`, and no fresh spelling invented next cycle — because every defect gets fixed and a grade for how much a fix is worth has nothing left to decide. Grade a finding by whether you actually drove it or only derived it from a scan, and never by how much work it would take to fix: the first is the `tier` axis the next rule makes required, the second stays abolished. `tier` is evidence, not effort, and it displaces nothing below it — `classification` still decides the channel a finding goes down and `target_kind` still rides on every filing. No exceptions, no deferrals, no "this one is only cosmetic."
+- **Set `tier` on every filing; the stream that files the defect is the one that sets it.** `tier` is a closed vocabulary declared once at `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS` — read the members there and never re-type them, or a count of them, anywhere else. `LIVE` means you drove the door and observed the wrong result, and the description names both the door and the result. `LATENT` means you derived the finding and found no reachable instance, and that filing MUST carry a `reproduction_attempted` statement naming what you drove and what it found ("AST sweep of both roots finds 0 sites"); `Foundry-Defect` and `Foundry-Sync` refuse a `LATENT` filing without one. `HARDENING` means you drove a probe of your own devising and observed a wrong result no requirement asks about — LIVE's evidence standard on an off-spec subject, so the filing carries no `spec_ref` (one that sets a `spec_ref` is refused at both doors) and no gate holds shut on it, while the F6 backlog still names it. A security-property claim can NEVER be `LATENT`, and never `HARDENING` either — that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record, so a claim that a security property is broken is one you drive and file `LIVE`, or one you do not file at all. Every tier is a defect, every tier gets fixed, and `tier` buys you no discretion over anything else. No exceptions, no deferrals, no "I could not reproduce it, so it is probably fine."
+- **Name a location on every `LATENT` filing.** A `LATENT` record is carried into the report's LATENT backlog as a promise that a later cycle can go and drive it, and a row carrying a description and no path is a promise nothing can collect. Put the bare repo-relative path in `file` — no line number; a `#Symbol` beside it is fine — exactly as this file's report shape shows it. This one is EXPECTED rather than refused: the doors accept a `LATENT` filing that names no location and the report renders that row as unlocated, which is worth more than a filing re-worded until it claims a location the stream never had. Expected is not optional in practice — you swept something to write `reproduction_attempted`, so say where you swept. No exceptions, no deferrals, no "the description says roughly where."
+- **All deviations are defects.** The GRIND phase fixes them.
 - **Comment-prose findings are observations, not defects.** A drifted line number in a cite, a count stated in prose, a direction word ("above", "below", "the following"), an enumeration that no longer matches what it enumerates — that class is comment prose, not a research deviation. Record it in the run's `observations.json` ledger, never in the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. Every real deviation from a recommendation stays a defect, and this rule gives you no discretion to call one "cosmetic."
 - **Declare `target_kind` on every filing.** Pass `target_kind: "comment"` when the deviation you are recording is about a code comment, otherwise the kind of artifact that departed from the recommendation (`code`, `test`, `config`, `doc`). That refusal engages on the declaration alone — leave it out and a drifted line number is filed as a research deviation, the exact outcome the split exists to prevent. It rides on every `Foundry-Defect` and `Foundry-Sync` call, never on some of them.
 - **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation — each is a defect whatever else is true about it. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no "the research was only advisory."
@@ -148,6 +165,51 @@ Every item in `defects` flows through `Foundry-Sync` and becomes grist for F3 GR
 - **If there's no research (no files in `research/` and no Informational items in spec), return immediately with empty findings and a note**: "No research recommendations to audit." Don't make up checks.
 - **Run in parallel with other INSPECT streams.** Don't wait for TRACE/PROVE/SIGHT/TEST. Return your findings independently.
 - **Regression check.** If a previous cycle's research audit had HONORED items that are now IGNORED, flag as regression.
+- **You record your own stream; the lead only confirms the record exists.** Call
+  `Foundry-Stream` yourself with `stream`, `cycle`, `items_checked`, `items_total` and
+  `findings_count` once every RA-N item carries a verdict — the `stream` value is your wire id,
+  a member of the closed vocabulary at
+  `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#STREAM_WIRE_IDS`; read it there
+  and never re-type the set here. Take `cycle` from `Foundry-Next`; `items_checked` is the
+  recommendations you verified and `items_total` the persisted roster's length rather than a
+  number you re-counted, which is why the roster rule below is the other half of this one.
+  **That read carries the caller argument, and so does every other one.** If you are a SUB-AGENT
+  rather than the lead, pass caller='subagent' on every Foundry-Next call. The lead's call is a
+  protocol step — it arms the ordering token the next Foundry-Gate requires and resets the stall
+  clock; yours is a read, and passing the argument keeps it one. That sentence is
+  `plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+  quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+  The
+  early return is the single case with nothing to record: with no files under `research/` and no
+  Informational items there is no roster and no item, and `Foundry-Stream` refuses
+  `items_checked` of zero rather than accepting an empty audit as coverage — say so in the
+  returned note instead of manufacturing a count to satisfy the door. A second call for the same
+  stream and cycle REPLACES the first, names in `replaced` what it replaced, and keeps every
+  record under `records[]`, so re-auditing a recommendation corrects the cycle rather than
+  doubling it. No exceptions, no deferrals, no waiting for the lead to record on your behalf: a
+  stream that never records contributes nothing to the cycle's coverage roll-up, where its
+  absence reads as no coverage rather than as a broken call.
+- **Read the roster before you derive one.** Your item list is persisted at
+  `rosters/research_audit.json` under the run directory, named for the wire id exactly as your
+  stream record is. Read it first; derive `RA-1..RA-n` from `research/` and the spec's `##
+  Informational` section ONLY when no roster is there, and call `Foundry-Roster(stream,
+  items=[...])` at that first derivation so the numbering has an identity a later cycle can hold
+  you to. A later cycle READS the persisted roster and does not re-derive: a list re-derived
+  every cycle renumbers silently, and the `HONORED → IGNORED` regression check you owe has no
+  stable prior state to compare against. Then a second write is refused `ROSTER_EXISTS` unless
+  you pass `revise=true` with a reason naming what changed in the source material, and the prior
+  items are kept under `revisions[]` rather than replaced. This rule and the stream record above
+  are one rule: `Foundry-Stream` refuses `ROSTER_MISMATCH` when `items_total` differs from the
+  persisted roster's length, so a shorter list you re-derived cannot be reported as full
+  coverage of a population it quietly shrank. The door judges what you pass before it writes
+  anything: the population is judged at publication: `ROSTER_ITEMS_EMPTY`, `ROSTER_ITEM_NOT_NAMED`
+  and `ROSTER_ITEMS_DUPLICATED` refuse the list before either arm writes, so two research files
+  stating one recommendation must not arrive as two identically worded `RA-n` items. If
+  `research/` and the spec's `## Informational` section genuinely name nothing to audit, record
+  that on the stream's own record rather than publishing an empty roster — an empty roster wedges
+  the stream, since the real derivation is then refused `ROSTER_EXISTS` and no legal recording is
+  left. No exceptions, no deferrals, no "the research had
+  obviously not changed."
 - **Log your own progress, don't just verify everyone else's.** Append a ledger line at every new step, per the `## Progress ledger` section. You demand a grep behind every claim; the lead is owed the same evidence that you are still running.
 
 ## Progress ledger

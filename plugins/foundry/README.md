@@ -4,7 +4,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/foundry-4.9.0-F57C00?style=flat-square" alt="foundry 4.9.0"/>
+  <img src="https://img.shields.io/badge/foundry-4.11.0-F57C00?style=flat-square" alt="foundry 4.11.0"/>
+  <img src="https://img.shields.io/badge/foundry--mcp-1.10.0-F57C00?style=flat-square" alt="foundry-mcp 1.10.0"/>
   <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
   <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
@@ -18,7 +19,7 @@
 
 ## What it is
 
-Foundry is a Claude Code plugin that takes a Forge-produced spec and runs an **autonomous build-verify-fix loop** until the feature is shipped or an error stops the run. There are no approval gates. No "is this what you wanted?" checkpoints. The Lead inside Claude Code reads the spec, decomposes it into castings, dispatches teammate prompts verbatim, runs up to eight parallel verification streams, grinds defects to zero, then assays the result with fresh eyes against the original spec.
+Foundry is a Claude Code plugin that takes a Forge-produced spec and runs an **autonomous build-verify-fix loop** until the feature is shipped or an error stops the run. There are no approval gates. No "is this what you wanted?" checkpoints. The Lead inside Claude Code reads the spec, decomposes it into castings, dispatches a pointer to each frozen teammate prompt, runs up to eight parallel verification streams, grinds defects to zero, then assays the result with fresh eyes against the original spec.
 
 The discipline is the product. Every mechanism in Foundry exists to keep the spec intact across the build.
 
@@ -113,7 +114,7 @@ In V3 packet mode, `<spec_requirements>` is replaced by structural blocks: `<ups
 | `/foundry:setup` | Install MCP server + verify Python prerequisites |
 | `/foundry:start "<scope>" --spec PATH` | Start a build-verify-fix loop |
 | `/foundry:status` | Show current foundry run status |
-| `/foundry:resume` | Resume an interrupted run |
+| `/foundry:resume [--max-cycles N]` | Resume an interrupted run. `--max-cycles N` **rewrites** the persisted cap in the same locked write as the refreshed provenance, lowering a ceiling onto a run that is already moving; the next GRIND door halts when `N` is below the cycle it would open. Same semantics as the `/foundry:start` row below |
 | `/foundry:stop` | Gracefully stop the current run |
 | `/foundry:help` | Show plugin help |
 
@@ -125,9 +126,20 @@ In V3 packet mode, `<spec_requirements>` is replaced by structural blocks: `<ups
 | `--url URL` | Run against a URL surface (alternative to filesystem-only) |
 | `--temper` | Enable F5 TEMPER stress testing |
 | `--nyquist` | Enable F5.5 NYQUIST regression test generation |
-| `--max-cycles N` | Cap GRIND cycle count |
-| `--no-ui` | Suppress orchestrator banners |
-| `--output-dir DIR` | Override `foundry-archive/` location |
+| `--max-cycles N` | Cap the verify-fix cycles. Default `0` = unbounded. The phase transition that would open a GRIND cycle past the cap **succeeds** — it is not a refusal: the run's phase becomes `HALTED`, the report is generated as part of that transition, naming every open defect at every tier (every open `LIVE` one, and every open `LATENT` and `HARDENING` one in its own `latent_backlog` and `hardening_backlog` section), and the next guidance call reports the halt and dispatches nothing. **`HALTED` is a named terminal state distinct from `DONE`** — a halted run stopped with open work |
+| `--no-ui` | `--no-ui` declares that this run has no browsable UI, so the SIGHT browser audit is not part of it. It says nothing about banners — the display is not a UI the run audits |
+
+### Building foundry itself — launch with `--plugin-dir`
+
+A run whose TARGET is the foundry plugin must be started with:
+
+```bash
+claude --plugin-dir <project_root>/plugins/foundry
+```
+
+This loads the plugin in place for the session and wins over a same-named marketplace install, so the executing MCP server IS the working tree and the process fixes the run ships are available to that same run. `Foundry-Init` detects a self-targeting run by finding a `plugin.json` named `foundry` under the project root and then compares two things: that manifest's version against the version in the executing server's OWN `.claude-plugin/plugin.json`, resolved from the directory the server was imported from, and the project root's HEAD commit against that same directory's HEAD commit. The comparison is plugin manifest against plugin manifest — the MCP server's `__version__` is a third number, recorded as `server_version` and displayed, but never compared — and a commit git could not read is never treated as a match. Either mismatch **refuses at F0 with a named reason and the exact launch command**, before any run directory is written. A run that does not target foundry compares nothing and is never warned — its executing versions are simply recorded and displayed.
+
+**A mid-run server switch is never attempted.** No run step calls `/reload-plugins`, rewrites `.mcp.json`, or installs a plugin mid-run. Prose and code a run ships take effect for the NEXT run, never the one that wrote them.
 
 ---
 
@@ -140,7 +152,7 @@ The `skills/` directory carries the Lead's verification-stream methodology refer
 - `skills/temper/` — micro-domain stress-testing methodology
 - `skills/trace/` — LSP-anchored upstream wiring methodology
 
-Foundry-Sight runs these as Claude Code skills directly during the corresponding INSPECT streams.
+None of these is a tool — no Foundry MCP door runs a skill. The lead runs SIGHT directly in its own thread, because Playwright MCP is reachable only from the main thread; TRACE and PROVE reach a run through the `tracer` and `assayer` agents that wrap them; and TEMPER runs at F5 on a `--temper` run, after ASSAY rather than inside INSPECT.
 
 ---
 
@@ -166,7 +178,7 @@ Foundry-Sight runs these as Claude Code skills directly during the corresponding
 
 The `Model` column mirrors each agent's `model:` frontmatter, which is the single source of truth for which model an agent runs on. Which of these the `model` config option can steer is documented under [Model selection](#model-selection); the allocation of foundry's *orchestration* roles — the Lead itself, F0.5 DECOMPOSE — lives in `commands/start.md`'s MODEL ALLOCATION table.
 
-The Lead never authors teammate prompts — F0.5 DECOMPOSE wrote them once, F1/F3 dispatch them verbatim. The Lead is a router, not an interpreter.
+The Lead never authors teammate prompts — F0.5 DECOMPOSE wrote them once, and F1/F3 dispatch a pointer to the frozen file rather than its text; the teammate reads it and states the sha256 back. The Lead is a router, not an interpreter.
 
 ---
 
@@ -185,20 +197,37 @@ The server stores all run state under `foundry-archive/{run}/` in your project �
 | `Foundry-Init` | F0: create the run |
 | `Foundry-Next` | Every step: returns `YOUR NEXT CALL:` imperative |
 | `Foundry-Gate` | Before phase transitions |
-| `Foundry-Phase` | Mark phase transitions |
-| `Foundry-Spawn-Teammate` | F0.5 / F1 / F3: read pre-authored teammate prompt |
-| `Foundry-Cast-Wave` | F1: bulk-fetch every casting prompt for a wave |
+| `Foundry-Phase` | Mark phase transitions — including `phase='halt'`, the lead's deliberate end (see below) |
+| `Foundry-Spawn-Teammate` | F0.5 / F1 / F3: dispatch block (path + sha256) for one casting's pre-authored prompt |
+| `Foundry-Cast-Wave` | F1: one bulk call returning the dispatch block for every casting in a wave |
 | `Foundry-Validate-Castings` | F0.9: 11-dimension validate |
 | `Foundry-Intent-Coverage` | F0.7: A-NNN coverage check |
 | `Foundry-Spec-Hash` | Before acceptance: fresh hash forces spec re-read |
 | `Foundry-Accept-Casting` | F1: re-run cited evidence + bind to requirement IDs |
 | `Foundry-Handoff` | Record every phase / artifact transition |
 | `Foundry-Defect` / `Foundry-Sync` / `Foundry-Tasks` / `Foundry-Fix` | F2 / F3 defect lifecycle |
+| `Foundry-Concern` | F1 / F3: a teammate whose fix reaches ANOTHER casting's files records it here, and the lead closes it with a reason. `concerns.md` keeps the prose; this is the ledger the server acts on — an open concern from the closing GRIND refuses `Foundry-Phase(phase='inspect_start')` by id, and `Foundry-Tasks` marks it dispatched when the co-dispatch set reaches its target |
 | `Foundry-Verdict` | F4 ASSAY verdicts |
 | `Foundry-Coverage` | Traceability matrix |
-| `Foundry-Stream` | Mark verification stream complete |
+| `Foundry-Roster` | F2, first derivation: persists a stream's item list to `rosters/<stream>.json` so later cycles read it instead of re-deriving a different one. A second write is refused unless `revise=true` carries a reason |
+| `Foundry-Stream` | F2: the verifying **agent** records its own `(stream, cycle)` counts — never the lead, which would assert numbers it did not measure. A later record for the same pair REPLACES the earlier one and names what it replaced, with the history kept, so a cycle carries one account of one run and a total can never exceed 100% |
 | `Foundry-Context` | Reload state after compaction |
-| `Foundry-Team-Up` / `Foundry-Team-Down` | Teammate lifecycle around CAST + GRIND waves |
+| `Foundry-Team-Up` / `Foundry-Team-Down` | Teammate lifecycle around CAST + GRIND waves. Team-Down is **refused** while a defect dispatched this cycle is still open and its file appears in the commits since the cycle baseline, named by id |
+
+### Ending a run on purpose — `Foundry-Phase(phase='halt')`
+
+A run does not only end by finishing. `Foundry-Phase` takes a `halt` token that ends it deliberately, and the reason is a closed vocabulary — `schemas/vocab.py`'s `HALT_REASONS`, four members:
+
+| Reason | When |
+|---|---|
+| `cap_reached` | the GRIND door found the persisted `max_cycles` below the cycle it was about to open. The only member a transition writes on its own |
+| `lead_ruling` | the lead stopped the run deliberately |
+| `spec_change_required` | the run cannot converge without a spec change, so continuing would grind against a target that is itself wrong |
+| `user_stop` | the user asked for it |
+
+The member is what the report and `measure-run.py` group on; the lead's own free text rides alongside it and says why *this* run ended, which no closed set can carry. Neither substitutes for the other.
+
+**`HALTED` with a named backlog is a successful end, not a failure.** The halt is a transition that succeeds: the phase becomes `HALTED`, the report regenerates with every open `LIVE`, `LATENT` and `HARDENING` defect named in it, and `phase_history` gains a `HALTED` row. It is refused only on the three things `Foundry-Gate(phase='halt')` will report first — a reason outside the four, a team still registered, or a run already halted. **`HALTED` is a named terminal state distinct from `DONE`**: a halted run stopped with open work, and the report says what.
 
 ---
 
@@ -270,18 +299,48 @@ A blocked model does not fail the spawn. Claude Code checks the value against yo
 
 ---
 
-## What's new since v4.2.0
+## What's new
 
-Foundry ships four additions over the v4.2.0 base:
+### foundry 4.11.0 — the loop stops making work for itself
 
-- **EVID-01** — `Foundry-Accept-Casting` re-runs cited evidence commands server-side
-- **EVID-02** — completion-report evidence binds to specific requirement IDs
-- **TEST-01** — 8th INSPECT stream: spec-only Hypothesis test derivation
-- **INTENT-01** — F0.7 intent-carrier between F0.5 and F0.9; A-NNN coverage check
+4.10.0 taught a run when to stop. Building it showed what a run does *until* it stops: `daring-orca` shipped it in 29 GRIND cycles and sealed `HALTED` with four defects still open, and a large share of what those cycles found was the loop's own fallout — a fix in one casting breaking a sibling nobody had dispatched, one finding re-filed as three because no channel existed for a probe that was never a spec requirement, and a 15,000-line orchestrator shaped cycle by cycle by the defect loop rather than by a design. This release is about that: work the machine manufactures for itself. Concerns become a ledger the server can act on instead of prose nobody joins; a fix dispatches to every casting it reaches rather than to the one it was filed against; each transition token gets exactly one routine that decides it; and the monolith is split, with a guard that keeps it split. The sections above document each mechanism in place; the table below maps what shipped to where it lives.
 
-F0.9 grew from 9 dimensions to 11 (added File-Change-Map ↔ key_files cross-check + Pattern Compliance) and gained six new propagation sub-checks (7e / 7g / 7h / 7i / 7j / 7m).
+| Adds | Where |
+|---|---|
+| **`Foundry-Concern` — the cross-casting concern ledger** — a teammate whose fix reaches another casting's files records it against a target the manifest can resolve, and the lead closes it with a reason. `concerns.md` stays prose; the ledger is what the server reads. An open concern from the closing GRIND refuses the next INSPECT by id | `Foundry-Concern` · `concerns.json` · `_inspect_start_preconditions` |
+| **Co-dispatch instead of a lone fix** — `Foundry-Tasks` emits, per task, the set of castings whose `requirement_ids` intersect the fix, under a **server-generated** alignment block naming the originating defects and each sibling's files. `Foundry-Directive` gets the same set from the ids the requirement-ID regex finds in its text | `Foundry-Tasks` · `Foundry-Directive` · `castings/manifest.json` |
+| **One preconditions routine per transition token** — every `PHASE_TOKENS` member has exactly one `_<token>_preconditions`, and the transition makes no other read and adds no refusal of its own. `Foundry-Gate` reports that same checklist through `GATE_TO_TRANSITION`, so a gate and the transition it guards can no longer disagree. The cap arrives as a non-refusing `would_halt` fact the transition acts on | `transitions.py` · `gates.py` |
+| **The orchestrator split — no facade** — the 1.9.0 monolith is deleted rather than shimmed, and every importer rewritten: `tools/orchestration/` is fourteen modules with their own test package, and the verifier set narrows to the gates, transitions, width and sweep modules. A stdlib-only pytest guard holds the import graph acyclic, keeps each symbol defined once, and keeps verifier modules out of the presentation layer | `tools/orchestration/` · `tests/orchestration/test_module_boundaries.py` |
+| **`HARDENING` tier** — a third channel for a probe the stream drove *itself* and saw fail, with no spec row behind it. It does not block a gate, it gets its own report backlog, and it is never re-tiered in place: a promotion is a new filing that cites it through `supersedes`. A `HARDENING` filing carrying any `spec_ref` is refused at both doors | `vocab.DEFECT_TIERS` · both filing doors · `Foundry-Report` |
+| **The lead halt door** — `Foundry-Phase(phase='halt')` ends a run deliberately on one of four reasons (`cap_reached`, `lead_ruling`, `spec_change_required`, `user_stop`) plus the lead's own text. `halt` is a full token with its own preconditions function and its own gate | `Foundry-Phase` · `Foundry-Gate` · `vocab.HALT_REASONS` |
+| **Stream records replace; rosters persist** — a second `Foundry-Stream` for one `(stream, cycle)` REPLACES the first and names what it replaced, history kept, so totals can never exceed 100%. The verifying **agent** records; the lead confirms the record exists. `Foundry-Roster` fixes a stream's item list at first derivation and later cycles read it | `Foundry-Stream` · `Foundry-Roster` · `rosters/` |
+| **Evidence commands linted at both doors** — an `# evidence-cmd:` that will not parse under `/bin/sh -n` is `BLOCKED` at the commit guard naming the log and the shell's own message, and refused *before execution* at every sweep crossing with `EVIDENCE_COMMAND_SYNTAX`. Linting at one door only is what let a broken command reach the corpus | `hooks/pre-commit-guard.sh` · `evidence.py` |
+| **The run measures its own fallout** — `measure-run.py` reports `fallout_per_cycle` (findings that are fallout of an earlier fix) and `full_cycle_ratio` (FULL over total INSPECT cycles), each with a pass/fail verdict; defect records gained `fallout_of` and `supersedes` to feed it | `scripts/measure-run.py` · `Foundry-Report` |
+| **Ownership is declared, not inferred** — each casting persists its `requirement_ids` at F0.5 instead of having ownership re-read out of prose at dispatch time, and F0.9 refuses a requirement spanning more than two castings without a recorded `split_reason` | `castings/manifest.json` · `Foundry-Validate-Castings` |
+| **`Foundry-Team-Down` refuses a live hand-off** — tearing a GRIND team down while a defect dispatched this cycle is still open, with its file among the commits since the cycle baseline, is refused by id | `Foundry-Team-Down` · `handoffs.jsonl` |
+| **`TEMPER_CANDIDATE` observations** — PROVE records a probe idea instead of filing it as a defect; TEMPER's roster is the open candidates plus its own micro-domains, and each is closed as driven — filed or clean | `Foundry-Observation` · `skills/prove` · `skills/temper` |
+| **`/foundry:resume --max-cycles N`** — the resume path rewrites the persisted cap in the same locked write as the refreshed provenance, lowering a ceiling onto a run already moving. A negative cap is refused at the door rather than silently read as unbounded | `Foundry-Init` · `commands/resume.md` |
+| **Archives keep reading** — `migrate-archive.py` takes a schema-3 archive to schema 4 idempotently: rollup totals rewritten to the LAST record with history kept, and defaults filled for `requirement_ids`, `split_reason`, `fallout_of`, `supersedes`, `concerns.json` and `rosters/` | `scripts/migrate-archive.py` |
 
-Each is verified by the synthetic-fixture suite. Empirical proof from a live cross-cohort matrix is tracked separately and ships in a future milestone.
+### foundry 4.10.0 — the run knows when to stop
+
+This release is about how a run *ends*. `thunder-viper` shipped 4.9.0 in 22 GRIND cycles, eight of them after verification was already clean, and TEMPER had no stated end — it stopped when a human said so. Every addition below moves a stopping decision out of judgement and onto evidence: a finding records whether it was *observed* or merely *derived*, gates count only the observed ones, an escalated defect family exits by a rule instead of a verdict call, and the run's report is generated from its own ledgers rather than written by the lead who is tired of it. The sections above document each mechanism in place; the table below is the map from what shipped to where it lives.
+
+| Adds | Where |
+|---|---|
+| **A tier on every finding** — `LIVE` means the stream drove the door and saw the wrong result; `LATENT` means it derived the finding with no reachable instance and must say what it drove. A security-property claim can never be `LATENT`. 4.11.0 widened the set with `HARDENING` (see its row in the 4.11.0 table); `vocab.DEFECT_TIERS` holds the members | `Foundry-Defect` · `Foundry-Sync` · all four stream agents · temper |
+| **Tier-aware gates** — `LIVE` and unknown-tier defects block; a `LATENT`-only backlog passes every gate and stays open, tracked, and named in the report | `inspect_clean` · ASSAY · TEMPER · NYQUIST · DONE |
+| **Escalation exits mechanically** — two consecutive cycles drawing zero `LIVE` instances, or an exhausted two-pass structural budget; `CLEARED` persists its exit reason. Clearing ends escalation, never a defect | `Foundry-Tasks` · `escalation.json` |
+| **`LATENT` fix lane** — a `LATENT` defect closes on a named regression test, without the adjacent-path declaration a `LIVE` fix still requires | `Foundry-Fix` |
+| **Bounded lead-fix lane** — the lead may fix `LATENT` at any size and `LIVE` within one non-test file and 20 lines; the **server** measures it with `git show --numstat` and writes the `lead_fix` handoff | `Foundry-Fix` · `foundry_handoff.py` |
+| **Server-side evidence sweep at the GRIND boundary** — every evidence log re-executes byte-identical at HEAD in a detached worktree, delta by default and whole-corpus before ASSAY / NYQUIST / DONE; a mismatch refuses the transition naming the log | `Foundry-Phase(inspect_start)` · `evidence.py` |
+| **FULL vs DELTA INSPECT** — the transition that OPENS an INSPECT decides its width and records the rule that fired; `Foundry-Next` only reports it | `Foundry-Phase` · `state.json` `inspect_modes` |
+| **Self-target preflight** — a run building foundry is launched with `claude --plugin-dir`, and F0 refuses when the executing server is not the working tree, naming the launch command | `Foundry-Init` |
+| **Pointer dispatch** — spawn tools return a path and a sha256 instead of prompt text; the agent reads the file and states the hash, and acceptance refuses on mismatch | `Foundry-Spawn-Teammate` · `Foundry-Cast-Wave` |
+| **Liveness-aware stall detector** — a waiting-on-N-agents notice while agents are running; a stall warning only when none are | `Foundry-Next` · `Foundry-Liveness` |
+| **`Foundry-Spend`** — per-agent tokens and duration, rolled up per phase and per cycle. The lead pastes the numbers; **the server never parses a transcript**. A forgotten record is reported, never blocking | `Foundry-Spend` |
+| **`Foundry-Report`** — `REPORT.md` and `report.json` generated from the run's ledgers across eleven required sections. The lead may append prose under a heading of their own, which the F6 seal carries verbatim into a trailing `Lead notes (carried by the seal)` section, but can never omit a generated section; `Foundry-Phase('done')` refuses a missing section | `Foundry-Report` |
+| **`--max-cycles N`** — caps the verify-fix cycles. Reaching the cap **succeeds** into a named `HALTED` state, generating the report; `HALTED` is not `DONE` | `setup-foundry.sh` · `Foundry-Init` · `Foundry-Phase` |
 
 ---
 

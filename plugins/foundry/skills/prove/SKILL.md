@@ -4,7 +4,7 @@ description: "Relentless spec-to-code verification with fresh eyes. Reads the sp
 user_invocable: true
 model: opus
 effort: max
-allowed-tools: Read, Grep, Glob, Bash
+allowed-tools: Read, Grep, Glob, Bash, mcp__plugin_foundry_foundry__Foundry-Context, mcp__plugin_foundry_foundry__Foundry-Defect, mcp__plugin_foundry_foundry__Foundry-Next, mcp__plugin_foundry_foundry__Foundry-Observation, mcp__plugin_foundry_foundry__Foundry-Stream, mcp__plugin_foundry_foundry__Foundry-Sync, mcp__plugin_foundry_foundry__Foundry-Verdict, mcp__plugin_foundry_foundry__Validate-Report, mcp__foundry__Foundry-Context, mcp__foundry__Foundry-Defect, mcp__foundry__Foundry-Next, mcp__foundry__Foundry-Observation, mcp__foundry__Foundry-Stream, mcp__foundry__Foundry-Sync, mcp__foundry__Foundry-Verdict, mcp__foundry__Validate-Report
 context: fork
 ---
 
@@ -63,6 +63,28 @@ you are almost certainly wrong. Go back and read the hardest functions again.
 
    Observable truths are harder to rubber-stamp than code existence checks. They
    require reading actual logic, not just seeing an import.
+
+## Step 0.5: Read the Width the Run Recorded
+
+The checklist is what the spec says. What you must CHECK this cycle is what the run recorded — you read the width, you never decide it. Call `Foundry-Next` and read `inspect_mode` out of the RESPONSE, not out of the display:
+
+- `inspect_mode.mode` — `FULL` or `DELTA`, decided by the `Foundry-Phase` transition that opened this INSPECT.
+- `inspect_mode.prove_sample` — the PROVE roster on a `DELTA` cycle: the rows tied to the defects the preceding GRIND fixed, plus a deterministic sample of the remainder.
+- `inspect_mode.cycle` — the cycle that roster belongs to. A roster stamped with a different cycle is not yours.
+
+**That read carries the caller argument, and so does every other one.** If you are a
+SUB-AGENT rather than the lead, pass caller='subagent' on every Foundry-Next call. The
+lead's call is a protocol step — it arms the ordering token the next Foundry-Gate requires
+and resets the stall clock; yours is a read, and passing the argument keeps it one. That
+sentence is
+`plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+
+**On `DELTA`, verify exactly the rows in `inspect_mode.prove_sample`** — every one of them and no fewer — and report `items_checked` and `items_total` against that roster's length rather than against the spec. **On `FULL`, verify the whole matrix** and report `items_total` as every requirement in the spec. **With no recorded `inspect_mode` at all, verify the whole matrix**: a missing width means no narrowing was decided, never that you may narrow it yourself.
+
+**Read the array, never the terminal line.** The `Foundry-Next` display truncates the roster at eight rows; the roster itself is `inspect_mode.prove_sample`, below that display and after the marker line. Copying the eight visible rows checks eight rows and reports a width that was never run.
+
+**Where `inspect_mode` actually is: after the marker line.** A formatted tool's response is the rendered display, then a line reading `── machine-readable result ──`, then the complete result as JSON — every array in full, nothing truncated, no fence to strip and no terminator to find, because the JSON runs to the end of the response. Everything after that marker line IS the JSON: `json.loads` it and read `inspect_mode` off the object it returns. That is what "out of the RESPONSE" means here and it is the whole of it — a tool with no display formatter appends no marker, because its entire response is already that JSON. No exceptions, no deferrals, no "the printed list looked complete."
 
 ## Step 1: Verify — Line by Line
 
@@ -151,7 +173,10 @@ it shouldn't exist. New features should REPLACE old code, not pile on top.
 
 1. **Tally**: VERIFIED vs each non-verified category. What % is truly implemented?
 2. **Displacement tally**: how many functions/files exist without spec justification?
-3. **Critical path gaps**: which non-VERIFIED items are on the core user journey?
+3. **Journey placement**: name the user journey each non-VERIFIED item sits on, so
+   the report says what a user actually hits. Description, never triage — an item
+   nothing on the happy path reaches is a defect on exactly the same terms as one
+   the first click hits, and this tally hands you no discretion to rank them.
 4. **Cross-cutting concerns**: auth on all protected endpoints? Errors propagated
    with context or swallowed? Race conditions? Input validation at boundaries?
 
@@ -188,19 +213,77 @@ When run standalone, write to `prove-reports/prove-{timestamp}.md`. When run fro
   systemic fix approach
 - **Observable Truths**: per feature — each OT-N with YES/NO verdict
 - **Audit Cross-Reference**: table of findings vs logical/UI audit overlap
-- **Overall Assessment**: 2-3 sentences, quality confidence (HIGH/MEDIUM/LOW),
-  recommendation (PROCEED/FIX_SYSTEMIC_FIRST/SIGNIFICANT_GAPS)
+- **Overall Assessment**: 2-3 sentences naming what you drove and what you only
+  read, plus the recommendation (PROCEED/FIX_SYSTEMIC_FIRST/SIGNIFICANT_GAPS). No
+  confidence ladder over the report as a whole: `tier` already records the evidence
+  behind each finding one finding at a time, and a single rung averaged over all of
+  them is that axis in a form nothing downstream can act on.
 
 ## Step 6: Decide
 
 **Standalone (`/foundry:prove`):** present report. Done.
 
+**Foundry F2 PROVE stream:** record findings via `Foundry-Sync` (or `Foundry-Defect`,
+one call per finding), then mark the stream complete via `Foundry-Stream` with
+`stream: "prove"`, `cycle`, `items_checked`, `items_total` and `findings_count`.
+`stream`, `cycle` and `items_checked` are all REQUIRED — a call omitting any of them is
+rejected at the MCP boundary, and a stream that cannot mark itself complete records no
+coverage for the cycle at all. Take `cycle` from `Foundry-Next`, and take `items_checked`
+and `items_total` from the width Step 0.5 read — on a `DELTA` cycle they are counted
+against `inspect_mode.prove_sample`, not against the spec.
+
+**You record your own stream; the lead only confirms the record exists.** A second call
+for the same stream and cycle REPLACES the first, names in `replaced` what it replaced,
+and keeps every record under `records[]` — so widening the sweep and recording again is
+a correction, not a second stream, and the cycle's totals can never exceed 100%. Nobody
+records on your behalf: a pass that ends without the call leaves the cycle showing no
+PROVE coverage at all, which reads as a stream that did nothing rather than as one that
+finished and forgot.
+
+**Which INSPECT filing arm is live is a READ, not a call you make.** `Foundry-Context`
+returns `state.temper` — the run's persisted `--temper` setting, written once at
+`Foundry-Init` and false unless the lead passed the flag. Take it in the same breath as
+the Step 0.5 width read, because it decides what happens to a finding that Step 1.5 or
+Step 1.7 turned up OFF your checklist: something you drove, that came back wrong, and
+that no VC-N row in Step 0 ever claimed would come back right.
+
+- **TEMPER on.** A defect filed at INSPECT MUST cite the matrix row whose stated
+  behaviour failed — the VC-N row's requirement id in `spec_ref`, and the behaviour that
+  row states named in the description beside what the code did instead. Everything else
+  is a probe idea, and a probe idea is recorded rather than filed: `Foundry-Observation`
+  with `cycle`, `source: "prove"`, `description` and
+  `classification: "TEMPER_CANDIDATE"`. That is the one observation class whose subject
+  is code rather than comment prose, so declaring it lifts the `target_kind: "comment"`
+  rung the other four carry. F5 TEMPER reads the recorded candidates before it builds
+  its own roster, so a recorded idea is a probe deferred to the phase built for it — not
+  a finding dropped.
+- **TEMPER off.** F5 never runs, so this step is the whole of the adversarial half and a
+  PROVE pass narrowed to checklist rows leaves the cycle with no novel probe driven
+  anywhere. Drive the novel probes at INSPECT. A probe you DROVE that failed on a path
+  no requirement states is filed as `HARDENING` — never `LIVE` unless the never-demote
+  denylist fires — which holds no gate shut and is carried into the F6 backlog. It owes
+  the same evidence a `LIVE` filing owes: a `reproduction_attempted` naming the probe
+  you ran and the wrong result you saw, without which `Foundry-Defect` and
+  `Foundry-Sync` refuse it. Any `spec_ref` on a `HARDENING` filing is refused
+  `TIER_NOT_ALLOWED` — citing a requirement is what makes a failure on-row, and an
+  on-row failure is `LIVE`.
+
+Neither arm reaches the never-demote denylist, and neither is allowed to. A
+security-property claim and a spec-required-behaviour claim can never be parked in a
+non-blocking tier and can never be recorded as an observation: the filing is refused
+naming the class that matched, the tripwire fires, and the finding stays a blocking
+defect. `HARDENING` is a home for a driven failure on a path the spec never stated,
+never a quieter rung for one it did. No exceptions, no deferrals, no "the spec never
+mentioned it, so it cannot have mattered."
+
 **Foundry F4 ASSAY:** return report path, finding counts, and verification %
 via the `Foundry-Verdict` MCP tool. Four parallel `foundry:assayer` agents each
 verify a domain slice with `effort: max`. SP-N patterns become single fix items
-(fix root cause, not instances). HOLLOW verdicts are highest priority. Fix
-direction for HOLLOW/PARTIAL must be "FILL OUT" — stubs exist because something
-belongs there.
+(fix root cause, not instances). Fix direction for HOLLOW/PARTIAL must be
+"FILL OUT" — stubs exist because something belongs there. Nothing here ranks one
+verdict above another: every non-VERIFIED verdict is a defect and every defect
+gets fixed, so there is no fix order left for this step to state. No exceptions,
+no deferrals, no "this one is only cosmetic."
 
 ## MCP Validation (optional)
 
@@ -273,14 +356,18 @@ the `foundry_add_verdict` MCP tool for defect tracking.
                      "COVERAGE_INCOMPLETE", "THIN_MIGRATION"],
             "description": "DEFECT_TYPES member. MISPLACED is accepted as an alias and folds onto ARCHITECTURAL_PLACEMENT."},
           "class": {"type": "string",
-            "description": "Optional root-cause group, spelled identically on every instance that shares it. Not a tier — it is what lets three cycles of one root cause escalate to a single structural fix."},
+            "description": "Required root-cause group, non-empty on every filing and spelled identically on every instance that shares it. Not a tier — it is what lets three cycles of one root cause escalate to a single structural fix. Foundry-Defect and Foundry-Sync refuse a filing without it, and one classless finding refuses the whole Foundry-Sync batch."},
+          "tier": {"type": "string", "enum": ["LIVE", "LATENT", "HARDENING"],
+            "description": "Evidence axis, never a work-effort grade. LIVE: the stream drove the door and observed the wrong result. LATENT: the stream derived the finding and found no reachable instance. HARDENING: the stream drove a probe that failed on a path no requirement states, and the record blocks no gate. Closed vocabulary, source of truth plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS."},
+          "reproduction_attempted": {"type": "string",
+            "description": "Required on a LATENT finding and on a HARDENING one; both doors refuse either filing without it. The two owe different evidence: LATENT names what was driven and what it did not find, HARDENING names the probe that was driven and the wrong result it produced."},
           "file": {"type": "string", "description": "Bare path. Never carries a line number."},
           "symbol": {"type": "string", "description": "The symbol the finding is about. With `file` this is the `path#Symbol` cite."},
           "description": {"type": "string", "description": "What's wrong, with spec text quoted"},
           "spec_reference": {"type": "string", "description": "VC-N item or spec section cited"},
           "suggested_fix": {"type": "string", "description": "Concrete fix direction"}
         },
-        "required": ["id", "classification", "type", "file", "symbol", "description"]
+        "required": ["id", "classification", "type", "class", "tier", "file", "symbol", "description"]
       }
     },
     "summary": {
@@ -301,12 +388,12 @@ the `foundry_add_verdict` MCP tool for defect tracking.
 }
 ```
 
-**There is no `severity` field, and adding one is a vocabulary violation.** Every non-VERIFIED verdict is a defect and every defect gets fixed, so a tier has nothing left to decide. What decides where a finding *goes* is `classification`, which is a channel: comment prose to the observations ledger, everything else to the defect ledger. `type` and `classification` are the closed vocabularies, and their one source of truth is `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES` and `#FINDING_CLASSES` — a value outside them is rejected server-side rather than coerced onto something known.
+**There is no `severity` field, and adding one is a vocabulary violation.** The work-effort grade is banned by name — no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact` — because every defect gets fixed and a grade for how much a fix is worth has nothing left to decide. What decides where a finding *goes* is `classification`, which is a channel: comment prose to the observations ledger, everything else to the defect ledger. What records how much evidence stands behind it is `tier`: grade a finding by whether you actually drove it or only derived it from a scan, and never by how much work it would take to fix. `LIVE` means you drove the door and observed the wrong result; `LATENT` means you derived the finding and found no reachable instance, and a `LATENT` finding MUST carry a `reproduction_attempted` statement naming what you drove and what it found — the server refuses a `LATENT` filing without one. `HARDENING` means you drove a probe of your own devising and observed a wrong result no requirement asks about — LIVE's evidence standard on an off-spec subject, so it owes a `reproduction_attempted` statement of its own naming the probe you ran and the wrong result you saw, and the doors refuse a `HARDENING` filing without one exactly as they refuse a `LATENT` one; it carries no `spec_ref` (a filing that sets one is refused naming `spec_ref`) and holds no gate shut, while the F6 backlog still names it. The never-demote denylist reaches every non-blocking tier: a security-property claim can NEVER be `LATENT`, and never `HARDENING` either, because that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record. Every tier is a defect, every tier gets fixed, and `tier` buys the stream no discretion over anything else. `type`, `classification` and `tier` are the closed vocabularies, and their one source of truth is `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES`, `#FINDING_CLASSES` and `#DEFECT_TIERS` — a value outside them is rejected server-side rather than coerced onto something known.
 
 **There is no `line` field either.** A finding cites `path#Symbol` — `file` bare, `symbol` beside it. The symbol is authoritative, and the commit-pinned-run-artifact carve-out that permits a line hint does not reach a findings record: this JSON can be passed straight to the foundry defect sync tools and is then re-read cycle after cycle as the tree moves under it, so a line hint rots into a false finding while a symbol cite keeps resolving.
 
 **Verdict rules:**
-- **FAIL**: any finding classified `DEFECT` — there is no off-the-critical-path exemption, because that was the severity axis wearing a different name
+- **FAIL**: any finding classified `DEFECT` — there is no off-the-critical-path exemption, because that was the severity axis wearing a different name, and no `LATENT` exemption either, because `tier` records the evidence behind a defect and never whether it is worth fixing
 - **WARN**: findings exist but every one is classified `OBSERVATION`
 - **PASS**: no findings at all — all items VERIFIED (verify this isn't a false positive)
 
@@ -343,6 +430,27 @@ guarantee valid pointers into the provided document.
 ## Constraints
 
 - **Read-only** — never modify code, only read and report
+- **Grade the evidence, never the effort** — every finding carries `tier`, and the stream
+  that files it is the one that sets it. `LIVE` when you drove the door and observed the
+  wrong result; `LATENT` when you derived the finding and found no reachable instance, in
+  which case `reproduction_attempted` names what you drove and what it found or the server
+  refuses the filing; `HARDENING` when you drove a probe of your own devising and observed
+  a wrong result no requirement asks about, in which case `reproduction_attempted` names
+  the probe and the result and the server refuses that filing without one too. A
+  security-property claim can never be `LATENT` and never `HARDENING`. Every tier is a
+  defect and every tier gets fixed — `tier` records evidence, never how much work a fix is
+  worth. No exceptions, no deferrals, no "this one is only cosmetic."
+- **Set `fallout_of` when the finding is fallout of an earlier fix.** A sibling surface
+  left on a contract a previous cycle's fix changed is not a fresh defect — it is the
+  half of that fix that did not reach, and the CR-N you are about to write is a second
+  description of one incomplete repair rather than a new one. Carry `fallout_of` naming
+  the `D-NNN` whose fix moved the contract, in the same call as `spec_ref`, `class` and
+  `tier`. An id the ledger does not carry is REFUSED at the door rather than stored, so
+  take the parent from `defects.json` and never from a fix's own account of itself.
+  Unset is correct when the finding stands alone: `scripts/measure-run.py` counts
+  fallout per cycle against a target of zero across the last two, so an unmarked cycle
+  reads as a clean one and a decorative `fallout_of` reads as a dirty one. No
+  exceptions, no deferrals, no "the earlier fix was probably unrelated."
 - **Spec-anchored** — every finding references exact spec text with `[SPEC:...]` citations
 - **Fresh eyes** — read spec and code BEFORE any audit reports
 - **Exhaustive** — verify every item, no batching or skipping

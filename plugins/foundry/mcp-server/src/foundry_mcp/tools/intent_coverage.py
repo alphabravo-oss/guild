@@ -63,15 +63,25 @@ castings/manifest.json was loadable and the ghost/unverifiable integrity
 checks actually ran (D-018c), so a dark state is visible instead of
 silently green.
 
-  - PASS (no zero-coverage answer): stamps .f07-intent-clean marker;
-    orchestrator transitions to F0.9 VALIDATE.
+  - PASS (no zero-coverage answer): stamps the .f07-intent-clean marker
+    with the DIGEST of the matrix it passed on (D-117), which F0.9
+    sub-check 7m recomputes and compares; orchestrator transitions to
+    F0.9 VALIDATE.
   - FAIL (any zero-coverage answer): returns redecompose action +
     dropped_answers list + redecompose_hints; orchestrator routes lead
     BACK to F0.5 DECOMPOSE with the missing A-NNN list as guidance.
     NEVER amends casting prompts in place (REQUIREMENTS.md Out of Scope).
 
+Anti-skip discipline (D-117): every standing verdict — the marker and
+manifest.intent_coverage_summary — is withdrawn on ENTRY and
+re-established only by a pass, so F0.9 can never read an earlier run's
+answer; and the marker carries the matrix digest rather than "ok", so a
+regenerated matrix withdraws the verdict even when nobody re-runs this
+gate.
+
 Locked decisions (per 08-RESEARCH.md Open Questions 2 + 3):
-  - On pass: stamp .f07-intent-clean marker file in run dir.
+  - On pass: stamp .f07-intent-clean marker file in run dir, carrying
+    the matrix digest.
   - On fail: structured payload with action / dropped_answers /
     redecompose_hints / hint / validator_stdout / validator_exit.
 """
@@ -79,10 +89,25 @@ from __future__ import annotations
 
 import contextlib
 import io
-import json
 from pathlib import Path
 
-from foundry_mcp.tools.foundry_orchestrator import _resolve_spec_path, _save_json
+# The artifact leaf, `tools/artifacts.py`: the canonical spec-path resolver
+# (run-dir copy first, state.json's declaration second) and the atomic write.
+# Both were reached at the top of the stack until the leaf existed. The
+# bodies are the same bodies; only the module that defines them changed.
+#
+# fallout D-117 — `INTENT_CLEAN_MARKER` and `_hash_file` join them. The marker
+# name is the leaf's already (one spelling for the writer here and the reader in
+# F0.9), and the digest is the leaf's because BOTH sides of the comparison need
+# it in one spelling: this module writes it and `foundry_validate` reads it
+# back. A second sha256 helper on either side would be two answers to "is this
+# the matrix F0.7 passed on".
+from foundry_mcp.tools.artifacts import (
+    INTENT_CLEAN_MARKER,
+    _hash_file,
+    _resolve_spec_path,
+    _save_json,
+)
 from foundry_mcp.tools.foundry_state import get_run_dir, read_document, read_json
 
 
@@ -102,6 +127,43 @@ def _save_json_atomic(path: Path, data: dict) -> None:
     defect class, not a smaller version of it.
     """
     _save_json(path, data)
+
+
+def _clear_intent_verdict(fdir: Path) -> None:
+    """Withdraw any standing F0.7 verdict, so only THIS run's can be read.
+
+    fallout D-117 — THE ANTI-SKIP GUARD WAS AN ABSENT-VALUE PREDICATE A
+    PREVIOUS PASS HAD PERMANENTLY SATISFIED.
+
+    Both of the things F0.9's dimension 7 asks about — the marker below and
+    ``manifest.intent_coverage_summary`` — used to be written on the PASS
+    branch and removed by nothing. No failing path withdrew either, so a run
+    that passed F0.7 once and then regenerated a matrix that fails still
+    answered dimension 7 out of the stale record. That is the opposite of the
+    anti-skip discipline the marker is named for: the guard could only ever
+    fail open.
+
+    ``foundry_validate_castings`` already had the shape this borrows —
+    ``.validate-passed`` is unlinked on failure "so the marker only reflects
+    the latest verdict" — and this is that rule, moved one rung earlier. The
+    verdict is withdrawn on ENTRY rather than on each failing return, because
+    the returns are six and a rule each of them has to remember is the shape
+    D-127 and D-119 both took. Withdrawing first also covers the exits no
+    return statement owns: a validator crash, a raise, an interrupted run. What
+    re-establishes the verdict is a pass, and nothing else.
+
+    The manifest is only written when there is something to withdraw, so the
+    common case (a first F0.7 on a clean run) touches nothing.
+    """
+    (fdir / INTENT_CLEAN_MARKER).unlink(missing_ok=True)
+
+    manifest_path = fdir / "castings" / "manifest.json"
+    if not manifest_path.exists():
+        return
+    manifest = read_document(manifest_path)[0]
+    if "intent_coverage_summary" in manifest:
+        manifest.pop("intent_coverage_summary")
+        _save_json_atomic(manifest_path, manifest)
 
 
 def _run_validator_in_process(
@@ -195,6 +257,10 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"passed": False, "reason": "No active foundry run"}
+
+    # fallout D-117: withdraw any standing verdict BEFORE doing the work, so
+    # what F0.9 reads afterwards is this run's answer or no answer at all.
+    _clear_intent_verdict(fdir)
 
     coverage_path = fdir / "intent-coverage.json"
     # GRIND D-012: resolve the spec via the canonical resolver (run-dir
@@ -376,9 +442,26 @@ def foundry_intent_coverage(project_root: str = ".") -> dict:
 
     if validator_exit == 0 and not dropped:
         # Locked decision (Open Question 2): stamp marker file on pass.
-        # Orchestrator's F0.9 sub-check 7m reads this marker to confirm
-        # F0.7 actually ran (anti-skip discipline).
-        (fdir / ".f07-intent-clean").write_text("ok\n", encoding="utf-8")
+        # F0.9 sub-check 7m reads this marker to confirm F0.7 actually ran
+        # (anti-skip discipline).
+        #
+        # fallout D-117 — AND WHAT IT STAMPS IS THE MATRIX IT PASSED ON, NOT
+        # THE WORD "ok". Sub-check 7m really did read nothing: the sentence
+        # above described a reader that did not exist, and the two keys 7m did
+        # read — intent-coverage.json's presence and the manifest summary —
+        # were both absent-value predicates, satisfied by any earlier pass
+        # forever. A marker whose CONTENT is the digest of the matrix it was
+        # computed from is not that: 7m recomputes the digest of the matrix on
+        # disk and compares, so regenerating the matrix withdraws the verdict
+        # whether or not anyone re-ran this gate. That is the difference
+        # between "F0.7 ran once" and "F0.7 ran on THIS matrix", and only the
+        # second is an anti-skip guard.
+        #
+        # `_hash_file`, not a digest of the decoded text: the comparison is
+        # over bytes on both sides (D-108).
+        (fdir / INTENT_CLEAN_MARKER).write_text(
+            f"{_hash_file(coverage_path)}\n", encoding="utf-8"
+        )
 
         # FR-009 / Bug2: append manifest.intent_coverage_summary to
         # castings/manifest.json atomically, alongside the .f07-intent-clean

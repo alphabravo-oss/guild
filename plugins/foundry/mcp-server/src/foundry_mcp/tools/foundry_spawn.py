@@ -11,6 +11,33 @@ This eliminates the "lead drafts prompt from casting" step where spec
 fidelity used to silently erode via paraphrasing, scope cuts, or hedge
 language. The lead is a router, not an interpreter.
 
+POINTER DISPATCH — THE LEAD ROUTES THE PATH, NOT THE TEXT (FR-019 / AC-030)
+---------------------------------------------------------------------------
+"The lead is a router" was true of the DECISION and false of the BYTES. Both
+doors here returned the prompt's whole text, so every casting's prompt landed
+in the lead's context on the way to the teammate's, and a wave landed all of
+them at once — for a document neither of them is allowed to alter a word of.
+The lead was a router carrying the freight.
+
+So by default the doors return a POINTER: ``dispatch``, a short block naming
+``prompt_path`` and the ``prompt_hash`` the teammate must read the file to
+obtain, and ``prompt: null``. The teammate reads the file itself and states
+the hash back in its completion report, where ``Foundry-Accept-Casting`` and
+``Foundry-Fix`` compare it against the file's. That comparison is what makes
+the pointer safe: under the old shape the lead's verbatim-pass discipline was
+the only thing standing between the teammate and a paraphrased prompt, and it
+was unfalsifiable — nothing downstream could tell a modified prompt from a
+faithful one. A hash the teammate could only have got by reading the file can.
+
+``prompt: null`` is a PRESENT key rather than an absent one, and deliberately:
+it is the door's positive statement that it withheld the text, which an absent
+key cannot make — that reads identically to a build predating this feature.
+The same reasoning the ``model`` key carries a few hundred lines down.
+
+``full_prompt=True`` puts the text back in ``prompt`` for debugging, and leaves
+``dispatch`` in place beside it: the hash the teammate will be judged against
+is exactly what a lead debugging a hash mismatch needs to see.
+
 PROGRESS LEDGER (FR-015)
 ------------------------
 This module also owns both halves of the per-agent progress ledger:
@@ -39,6 +66,33 @@ does not stop being watched when it finishes — it stops writing, crosses the
 stall threshold, and reports ``stalled`` for the remainder of the run, so every
 completed casting silts up ``needs_attention`` until the lead stops reading it.
 A watchlist that is mostly finished work is a watchlist nobody watches.
+
+THE SERVER WRITES LINE ONE (AC-031 / FR-020)
+--------------------------------------------
+An agent's FIRST line is written by the server, at dispatch, before the door
+returns: ``{"step": "dispatched", "seeded_by": "server", ...}``. So a ledger
+EXISTS for every dispatched teammate whether or not that teammate ever runs.
+
+The read side already had a second-best answer for the gap this closes —
+``_missing_teammate_records`` synthesizes a ``no_ledger`` row from
+``spawns.log`` — but that row can only appear once the dispatch is past the
+stall threshold, because before then "no ledger yet" is indistinguishable from
+"still reading the spec". A seeded line dates the dispatch from the first
+second, in the ledger's own vocabulary, so ``foundry_liveness`` answers "when
+was this agent last heard from" without a special case for the interval before
+an agent's first write.
+
+That does not retire the ``no_ledger`` arm, and it must not: seeding is an
+audit write, and an audit write that can fail a dispatch is worse than one
+with a gap in it (``_append_spawn_records``'s rule, held here too). When the
+seed fails, the ``spawns.log``-derived row is what still makes the agent
+visible. It is the safety net for exactly the case where this section's
+promise did not hold.
+
+The seed is written under the SAME whole-dispatch-or-nothing discipline as the
+spawn record, for the same reason: a seeded ledger is as much a claim that an
+agent exists as a spawn record is, and a wave refused on its third prompt must
+not leave two of them behind (D-144).
 
 WHO GETS A LEDGER
 -----------------
@@ -127,13 +181,84 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from foundry_mcp.schemas import vocab
-from foundry_mcp.tools.foundry_orchestrator import agent_model
+# fallout FR-004 / GI-010: each symbol from the module that defines it.
+# fallout FR-043 / GI-033 / AC-061 — THE ORCHESTRATOR-TO-SPAWN CYCLE, NAMED.
+#
+# This module and `tools/orchestration/` reach each other, and FR-043 requires
+# that cycle to be preserved or removed DELIBERATELY rather than left to be
+# rediscovered. It is preserved, and this is where it is written down:
+#
+#   forward — this module needs `agent_model` (the model policy) and
+#             `git_changed_paths` (the one git invocation);
+#   back    — `teams.py`, `spend.py`, `width.py` and `transitions.py` each
+#             reach `_manifest_shape_problem`, `_agent_id_for_casting` or
+#             `_skipped_stream_ids` out of this module.
+#
+# EVERY EDGE OF IT IS LAZY, in both directions, which is what keeps the cycle
+# from existing at import time. The back edges were already written that way;
+# these two were not, and `orchestration.width` is additionally a VERIFIER
+# module, so a module-top import here was a lifecycle-to-verifier edge GI-033
+# refuses outright. A call-time import runs when every module in the chain is
+# already built, so nothing is deferred except the coupling.
+#
+# The spec's own sentence says the seams are "kept in teams.py and guidance.py".
+# `guidance.py` holds no reference to this module and needs none; the seam set
+# is the four named above, and saying so here is the deliberate part.
+
+
+# Named with the leading underscore the other seams in this package use, and
+# NOT with the wrapped symbol's own name: a seam that shadows its target is a
+# second top-level definition of that name, which the package-wide
+# single-definition guard refuses and which would make "where is agent_model
+# defined" have two answers.
+
+
+def _agent_model(subagent_type: str, baseline: str = "") -> dict:
+    """`orchestration.teams`' model policy, reached through the named seam."""
+    from foundry_mcp.tools.orchestration.teams import agent_model
+
+    return agent_model(subagent_type, baseline)
+
+
+
+
 from foundry_mcp.tools.foundry_state import (
     document_refusal,
     get_run_dir,
+    git_changed_paths,
     read_document,
     read_json,
     read_text_file,
+    skipped_stream_ids,
+)
+# fallout GI-033 / AC-061 / FR-063 (D-080, concerns C-059 / C-060) — FOUR
+# SYMBOLS LEFT THIS MODULE FOR THE LEAVES, AND THE EDGES LEFT WITH THEM.
+#
+# `_git_changed_paths` and `_skipped_stream_ids` were read from here by
+# `orchestration/width.py`, and the manifest predicate — now
+# `artifacts.manifest_shape_problem`, with its `_document_shape_problem`
+# walker, `_MANIFEST_DOCUMENT_SHAPE` declaration and `_REQUIRED_RUNG`
+# sentinel — by width, transitions, gates and teams: four VERIFIER modules
+# reaching this LIFECYCLE one, which GI-033's violation column names outright
+# and which no module-top import scan could see because every reach was lazy.
+# A symbol read from both layers can live only in a leaf, and each went to the
+# leaf its subject names: the git and run-state readers to `foundry_state.py`,
+# the manifest-document predicate to `artifacts.py`.
+#
+# THE ALIAS IS LOAD-BEARING. D-134's scan recognises a manifest reader as
+# GUARDED by the NAME it calls, pinned by
+# `tests/test_spawn_progress.py#test_the_locked_validator_names_are_still_the_
+# ones_the_scan_looks_for` to `_manifest_shape_problem` and
+# `_manifest_shape_error`. Importing the leaf's public spelling under its own
+# name would report every reader in this module as UNGUARDED with the guard
+# still standing there — which its own docstring calls worse than an import
+# error, because it looks like a finding.
+# fallout FR-009 (D-170 / C-079) — the ONE statement of what a `key_files`
+# entry is. A leaf, so this lifecycle module and the verifier doors that ask
+# the same question read the same body (GI-033).
+from foundry_mcp.tools.orchestration.keyfiles import covers_path
+from foundry_mcp.tools.artifacts import (
+    manifest_shape_problem as _manifest_shape_problem,
 )
 
 
@@ -144,10 +269,34 @@ from foundry_mcp.tools.foundry_state import (
 TEAMMATE_SUBAGENT_TYPE = "foundry:teammate"
 
 # Per-agent progress ledgers live one directory below the run root, one
-# ``{agent_id}.jsonl`` per agent. Created lazily by whichever agent writes
-# first — the server never creates it, so an empty roster and an unstarted run
-# are the same observable state.
+# ``{agent_id}.jsonl`` per agent.
+#
+# Created by whichever writer gets there first, which since AC-031 is normally
+# the SERVER: both spawn doors seed a dispatched teammate's ledger before they
+# return, so the directory appears at the run's first dispatch rather than at
+# the first agent that obeyed its protocol block. It is still created lazily —
+# a run that has dispatched nothing has no `progress/`, and `foundry_liveness`
+# still answers an absent directory with an empty roster and `ok: True`.
 PROGRESS_DIR_NAME = "progress"
+
+# The ledger line the SERVER writes at dispatch (AC-031). Named constants
+# rather than literals at the two call sites because both are read back: the
+# step is what `foundry_liveness` reports until the agent writes its own first
+# line, and the author field is what tells a reader of a raw ledger that the
+# opening line is the run's, not the agent's.
+#
+# `step` is "dispatched" and not "started" or "spawned" on purpose. The lead
+# ASKED at this moment; nothing yet says the agent read anything. A seed
+# claiming more than the run knows is the failure mode `no_progress` exists to
+# catch, committed by the server itself on line one.
+LEDGER_SEED_STEP = "dispatched"
+
+# The field distinguishing the seeded line from the agent's own. Additive to
+# the three-field shape `_progress_protocol_block` asks agents for, and safe
+# to add precisely because `_read_progress_ledger` reads by KEY rather than by
+# schema: an unknown field is carried along and ignored by every consumer.
+LEDGER_SEED_AUTHOR_FIELD = "seeded_by"
+LEDGER_SEED_AUTHOR = "server"
 
 # ---------------------------------------------------------------------------
 # Cadence and stall threshold (FR-025).
@@ -177,7 +326,7 @@ PROGRESS_DIR_NAME = "progress"
 # (56 min), so a dead agent is caught roughly four times over within a normal
 # batch instead of at the end of one.
 #
-# NOT copied: the lead stall watchdog's 180s (`foundry_orchestrator.py`
+# NOT copied: the lead stall watchdog's 180s (`orchestration/guidance.py`
 # `.last-next-at`). That number is tuned to a LEAD's tool-call cadence, where
 # three quiet minutes is genuinely anomalous. A teammate that reads ten files
 # before writing a line would trip it constantly. The marker-plus-threshold
@@ -295,7 +444,7 @@ TEAMMATE_DISPATCH_PHASES = {"F1": "cast", "F3": "grind"}  # 2 items
 
 def _teammate_model() -> str:
     """Return the model to spawn ``foundry:teammate`` with, or ``""``."""
-    return agent_model(TEAMMATE_SUBAGENT_TYPE).get("model", "")
+    return _agent_model(TEAMMATE_SUBAGENT_TYPE).get("model", "")
 
 
 def _progress_dir(fdir: Path) -> Path:
@@ -376,6 +525,144 @@ def _append_spawn_records(spawn_log: Path, records: list[dict]) -> None:
     except Exception:
         # Logging failures must not block the spawn.
         pass
+
+
+def _seed_progress_ledgers(fdir: Path, seeds: list[tuple[str, str]]) -> None:
+    """Write each dispatched agent's FIRST ledger line, server-side (AC-031).
+
+    ``seeds`` is ``[(agent_id, phase), ...]`` — one entry per agent this
+    dispatch put to work. Both doors write through here, which is what keeps
+    "a dispatched teammate always has a ledger" one property rather than an
+    agreement between two call sites; the single door passes a list of one and
+    the bulk door a list of N, and the difference is the length, not the
+    discipline (``_append_spawn_records``, one function up, is the same rule
+    for the other artifact).
+
+    The payload is built for EVERY seed before any file is opened, so a record
+    that will not serialise cannot leave half a wave of ledgers behind. Callers
+    must in turn call this only after every casting in the dispatch has cleared
+    every check, so no refusal a door can reach leaves a seeded ledger claiming
+    an agent that was never spawned (D-144).
+
+    Never raises and never blocks the spawn, the rule every audit write in this
+    module holds. A ledger that can fail a dispatch is worse than a missing
+    one, and a missing one is not silence: ``_missing_teammate_records`` still
+    reports the agent from ``spawns.log``, which is precisely the arm that
+    exists for the case where this write did not happen.
+
+    NOT flocked, where ``_append_spawn_records`` is, and the asymmetry is the
+    artifact's rather than an oversight. ``spawns.log`` is ONE file whose
+    readers must see a whole wave or none of it, so its writer and reader hold
+    a lock pair. A seed is one line in its OWN file, appended with ``O_APPEND``
+    well under ``PIPE_BUF``, and its only concurrent writer is the agent that
+    file belongs to. There is no multi-record window for a reader to land in,
+    and ``_read_progress_ledger`` already skips a torn line rather than being
+    blinded by one.
+    """
+    if not seeds:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        payloads = [
+            (
+                agent_id,
+                json.dumps(
+                    {
+                        "timestamp": now,
+                        "phase": phase,
+                        "step": LEDGER_SEED_STEP,
+                        "agent": agent_id,
+                        LEDGER_SEED_AUTHOR_FIELD: LEDGER_SEED_AUTHOR,
+                    }
+                )
+                + "\n",
+            )
+            for agent_id, phase in seeds
+        ]
+        pdir = _progress_dir(fdir)
+        pdir.mkdir(parents=True, exist_ok=True)
+        for agent_id, line in payloads:
+            with (pdir / f"{agent_id}.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(line)
+                handle.flush()
+    except Exception:
+        # Seeding failures must not block the spawn.
+        pass
+
+
+def _published_prompt_hash(path: Path) -> str | None:
+    """The prompt hash as PUBLISHED: sha256 over the file's BYTES (D-108).
+
+    ``None`` when the bytes could not be read, which the callers turn into the
+    house ``document_refusal`` — the same answer the decode guard beside them
+    gives, because "I could not read the file" is one answer however it failed.
+
+    WHY BYTES AND NOT THE DECODED TEXT
+    ----------------------------------
+    Both publish sites used to hash ``prompt_text.encode("utf-8")``, where
+    ``prompt_text`` came back from ``read_text_file`` — a TEXT read, which
+    applies universal-newline translation, so every ``\\r\\n`` in the file had
+    already become ``\\n`` before the digest was taken. The teammate is told to
+    state this value back "character for character", and the command
+    ``agents/teammate.md`` documents for producing it is a shell digest of the
+    FILE. A shell cannot translate newlines. So for any prompt file written
+    with CRLF endings the publisher and the teammate computed different
+    values, ``check_reported_prompt_hash`` refused an honest report as stale,
+    and the remedy the refusal offers ("re-read the prompt file in full") could
+    never work — re-reading produces the same right answer that keeps being
+    called wrong.
+
+    Bytes are the only digest both sides can compute independently, so bytes
+    are what is published. ``check_reported_prompt_hash`` compares the same
+    thing, through ``foundry_handoff._hash_file``, in the same spelling.
+
+    THIS IS NOT A HOLE IN THE D-138 READ RULE. That rule closes the DECODE
+    family — ``UnicodeDecodeError`` raised across the MCP boundary from a text
+    read with the wrong handler. ``read_bytes`` decodes nothing and cannot
+    raise it; the ``OSError`` it can raise is handled here, and every caller
+    still routes its text read through ``read_text_file`` first, so the decode
+    contract is unchanged.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    return "sha256:" + hashlib.sha256(raw).hexdigest()[:16]
+
+
+def _dispatch_block(prompt_path: str, prompt_hash: str) -> str:
+    """The pointer the lead hands the teammate in place of the prompt text.
+
+    Names three things, and FR-040 requires all three: the path, the hash, and
+    the instruction to read the file IN FULL. The fourth sentence — state the
+    hash in the completion report — is what turns the other three from advice
+    into something checkable: ``check_reported_prompt_hash`` compares the
+    teammate's reported value against the file's at ``Foundry-Accept-Casting``
+    and ``Foundry-Fix``, and only a teammate that actually read the file can
+    produce it.
+
+    ``prompt_hash`` is interpolated whole, INCLUDING its ``sha256:`` prefix and
+    16-hex truncation, because the published spelling is the contract: the
+    teammate states back exactly this string and the checker compares exactly
+    this string. Naming a bare hexdigest here — or the full 64 characters —
+    would make every honest report a mismatch.
+    """
+    return "\n".join(
+        [
+            "## Your task prompt is a FILE — read it before anything else",
+            "",
+            f"Read `{prompt_path}` in full. Every line of it, start to finish, "
+            "before you take any other action. It is the authorized statement of "
+            "your task and nothing in this message replaces it.",
+            "",
+            f"Its sha256 is `{prompt_hash}`. State that value, character for "
+            "character, as the `prompt_hash` in your completion report — the "
+            "server compares it against the file's own hash and refuses the "
+            "acceptance or fix if the two differ. Only reading the file gets you "
+            "the right answer, which is the point.",
+            "",
+        ]
+    )
 
 
 def _read_spawn_log(spawn_log: Path) -> tuple[str, str | None]:
@@ -500,8 +787,37 @@ def _progress_protocol_block(
             "file in append mode — never rewrite it. A failed append must NEVER block your "
             "work: swallow the error and carry on.",
             "",
+            # fallout FR-034 / FR-055 / AC-053 — THE ONE SURFACE EVERY SPAWNED
+            # AGENT PROVABLY READS.
+            #
+            # The `caller` argument that keeps a sub-agent's orienting read out
+            # of the lead's ordering token was published on the wire and told to
+            # nobody: it defaults to the lead value, and no shipped agent, skill
+            # or command file names it, so every spawned agent took the default
+            # and armed the handshake the lead owes. This block is appended
+            # verbatim to every spawn this module makes, which makes it the one
+            # place the instruction reaches an agent MECHANICALLY rather than by
+            # someone remembering to write it into that agent's prose. Quoted
+            # from the constant, so the sentence here and the sentence in the
+            # tool description cannot drift.
+            "### Foundry-Next is a READ for you, not a protocol step",
+            "",
+            _subagent_caller_instruction(),
+            "",
         ]
     )
+
+
+def _subagent_caller_instruction() -> str:
+    """guidance.py's one spelling of the sub-agent caller rule.
+
+    LAZY, in the shape this module's other cross-package seams use: the
+    orchestration package imports `foundry_spawn`, so a module-top import here
+    closes a cycle that takes every tool in this server down at once.
+    """
+    from foundry_mcp.tools.orchestration.guidance import SUBAGENT_CALLER_INSTRUCTION
+
+    return SUBAGENT_CALLER_INSTRUCTION
 
 
 def _parse_progress_timestamp(value: object) -> datetime | None:
@@ -774,47 +1090,6 @@ def _load_run_state(fdir: Path) -> dict:
     return read_document(fdir / "state.json")[0]
 
 
-def _skipped_stream_ids(fdir: Path) -> set[str]:
-    """Return the wire ids of streams this run declared it would not spawn.
-
-    ``manifest.stream_skips`` is F0.5's predictive skip list (entries carry a
-    ``stream_id`` in the canonical UPPERCASE spelling plus a ``reason``); a
-    bare string entry is accepted too, so an older manifest still reads. The
-    canonical spelling is mapped back to its wire id through
-    ``vocab.WIRE_TO_CANONICAL`` rather than by lowercasing, because the two
-    spellings are not related by case alone (``TEST-01`` / ``test01``).
-
-    Degrades to "no declared skips" on any shape this module's readers cannot
-    index, decided by the SHARED validator rather than by the private
-    ``isinstance(manifest, dict)`` this used to hold. That private check is the
-    reason ``stream_skips: 42`` reached ``for entry in 42`` and raised
-    ``TypeError`` out of Foundry-Liveness — from the very reader the module's
-    own prose held up as the one that had always guarded this (D-132).
-    """
-    read = read_json(fdir / "castings" / "manifest.json")
-    if read[1] is not None:
-        return set()
-    manifest = read[0]
-    if _manifest_shape_problem(manifest) is not None:
-        return set()
-
-    canonical_to_wire = {
-        canonical: wire for wire, canonical in vocab.WIRE_TO_CANONICAL.items()
-    }
-    skipped: set[str] = set()
-    for entry in manifest.get("stream_skips") or []:
-        if isinstance(entry, dict):
-            raw = entry.get("stream_id") or entry.get("stream") or entry.get("id")
-        else:
-            raw = entry
-        if not isinstance(raw, str) or not raw.strip():
-            continue
-        token = raw.strip()
-        if token.lower() in vocab.STREAM_WIRE_IDS:
-            skipped.add(token.lower())
-        elif token.upper() in canonical_to_wire:
-            skipped.add(canonical_to_wire[token.upper()])
-    return skipped
 
 
 def _expected_inspect_stream_agents(fdir: Path) -> list[str]:
@@ -830,7 +1105,12 @@ def _expected_inspect_stream_agents(fdir: Path) -> list[str]:
       * FLOW_TRACE is "V3 only, when ``flow-delta.json`` exists";
       * RESEARCH_AUDIT is skipped when the run gathered no research.
     """
-    skipped = _skipped_stream_ids(fdir)
+    skipped = skipped_stream_ids(
+        fdir,
+        wire_ids=vocab.STREAM_WIRE_IDS,
+        wire_to_canonical=vocab.WIRE_TO_CANONICAL,
+        shape_problem=_manifest_shape_problem,
+    )
     expected: list[str] = []
     for wire_id in INSPECT_STREAM_AGENT_IDS:
         if wire_id in skipped:
@@ -1002,7 +1282,7 @@ def _unreadable_artifacts_refusal(problems: list[str]) -> dict:
     spawn doors return; this is the same sentence for the many-file case, which
     liveness needs because it reads a whole directory of ledgers and a lead told
     about only the first corrupt one goes round the loop once per bad file.
-    ``foundry_orchestrator._artifact_guard`` is the same shape one module over
+    ``artifacts._artifact_guard`` is the same shape one module over
     and is deliberately mirrored down to ``corrupt_artifacts``; it omits ``ok``
     because its callers return bare dicts, and this module's contract is the
     ``ok: False`` variant (house rule 1), which is the only difference.
@@ -1326,113 +1606,25 @@ def foundry_liveness(
     return result
 
 
-#: Sentinel for a mapping key that must be PRESENT and non-null, whose value is
-#: otherwise unconstrained. ``castings[].id`` and ``waves[].wave`` are the two:
-#: every reader in this module locates its record by one of them, so an entry
-#: without one is not a record the readers can address, whatever else it holds.
-_REQUIRED = object()
-
-#: The manifest's structure AS THE READERS IN THIS MODULE INDEX IT. Declared
-#: ONCE, walked recursively by ``_shape_problem``, and consulted by all four
-#: manifest readers here — so a corrupt document produces the same named
-#: refusal at both spawn doors and the same silent degrade in both tolerant
-#: readers BY CONSTRUCTION, not by four guards agreeing with each other.
-#:
-#: This is the ESCALATED class (D-095 / D-098 / D-115 / D-132) answered
-#: structurally. D-115 guarded the top-level container and stopped, so the
-#: RECORDS the readers then index were never guarded: ``castings: "nope"``,
-#: ``[1,2,3]`` and ``[null]`` each reached ``c.get("id")`` and raised
-#: ``AttributeError`` out of Foundry-Spawn-Teammate while Foundry-Cast-Wave
-#: tolerated the identical document — the D-097 asymmetry tell, two doors
-#: disagreeing about one corrupt file. The fix is not a filter at the six
-#: index sites (that is the class); it is one declaration of the shape.
-#:
-#: Grammar, read by ``_shape_problem``:
-#:   ``[shape]``    a list; every element must satisfy the single inner shape
-#:   ``{k: shape}`` a mapping; each key is OPTIONAL, and when present and
-#:                  non-null its value must satisfy its shape
-#:   ``_REQUIRED``  the key must be present and non-null; value unconstrained
-#:   ``None``       unconstrained from here down — an EXPLICIT statement that
-#:                  the reader below this point is on its own. ``stream_skips``
-#:                  entries are None because ``_skipped_stream_ids`` accepts
-#:                  both a mapping and a bare string by documented contract and
-#:                  isinstance-checks each entry itself.
-#:
-#: Every key named here is one a reader in this module actually indexes, and
-#: ``test_every_manifest_key_the_module_indexes_is_declared`` derives that set
-#: from this file's AST and fails if the two ever disagree — so a reader that
-#: starts indexing a new key cannot land without declaring it, and this table
-#: cannot rot into a hand-kept list of the keys some past defect happened to
-#: name. That test is the derivation; the table is only its subject.
-_MANIFEST_SHAPE: dict = {
-    "castings": [{"id": _REQUIRED, "key_files": [None]}],
-    "waves": [{"wave": _REQUIRED, "casting_ids": [None]}],
-    "stream_skips": [None],
-}
-
-
-def _shape_problem(value: object, shape: object, path: str) -> str | None:
-    """The first named reason ``value`` does not satisfy ``shape``, else None.
-
-    Recursive over the shape, so depth is a property of the DECLARATION rather
-    than of this function: the rung below the one a defect was reported at is
-    covered the moment it is declared, which is precisely what a hand-written
-    ``isinstance`` chain at the reported rung cannot do.
-
-    ``path`` is the dotted key path being validated, carried down so the
-    message names WHICH rung failed. That is not cosmetic. The message this
-    replaces was ``"manifest.json is not a JSON object — parsed as {type}"``,
-    and reusing it one rung down produces the self-contradicting
-    ``"manifest.json is not a JSON object — parsed as dict"`` — a refusal that
-    sends the operator to look at a top-level object that is perfectly fine.
-    Each branch below therefore states the shape IT expected.
-    """
-    if shape is None:
-        return None
-
-    if isinstance(shape, list):
-        if not isinstance(value, list):
-            return f"{path} is not a list — parsed as {type(value).__name__}"
-        element = shape[0]
-        for index, item in enumerate(value):
-            problem = _shape_problem(item, element, f"{path}[{index}]")
-            if problem is not None:
-                return problem
-        return None
-
-    if not isinstance(value, dict):
-        return f"{path} is not a JSON object — parsed as {type(value).__name__}"
-    for key, sub in shape.items():
-        member = value.get(key)
-        if sub is _REQUIRED:
-            # No "parsed as" here, because there is nothing parsed to name —
-            # so the actionable equivalent is the keys the object DOES carry.
-            if member is None:
-                return (
-                    f"{path}.{key} is absent or null — {path} carries "
-                    f"{sorted(str(k) for k in value)} and every reader of this "
-                    f"manifest addresses its record by `{key}`"
-                )
-            continue
-        if member is None:
-            continue
-        problem = _shape_problem(member, sub, f"{path}.{key}")
-        if problem is not None:
-            return problem
-    return None
-
-
-def _manifest_shape_problem(manifest: object) -> str | None:
-    """The named reason a parsed manifest is unusable, or None.
-
-    The string half, mirroring ``foundry.py``'s ``_document_problem`` beside
-    its ``_artifact_guard``: the two TOLERANT readers here
-    (``_build_grind_cycle_context``, ``_skipped_stream_ids``) owe a degrade
-    rather than a refusal, and must decide on exactly the same evidence the
-    refusing doors use. Calling this rather than growing a private
-    ``isinstance`` check is what keeps all four readers on one policy.
-    """
-    return _shape_problem(manifest, _MANIFEST_SHAPE, "manifest.json")
+# fallout GI-033 / AC-061 (D-080, concern C-060 row 3) — THE DECLARATION AND
+# ITS GRAMMAR WENT WITH THE VALIDATOR, AND SO DID THEIR PROSE.
+#
+# Forty lines of `#:` documentation stood here after the symbols they document
+# left: the presence-sentinel note and the shape table's own block, describing
+# "the readers in this module", a grammar read by a walker that had gone, and a
+# derivation test whose subject had moved. All four names are
+# `tools/artifacts.py`'s now — `_REQUIRED_RUNG`, `_MANIFEST_DOCUMENT_SHAPE`,
+# `_document_shape_problem` and `manifest_shape_problem` — and casting 7
+# carries the prose at the new home,
+# where `tests/test_artifacts.py#test_every_manifest_key_the_declarations_
+# readers_index_is_declared` runs the same derivation over THIS module's
+# readers.
+#
+# Recorded rather than silently deleted, because the miss is worth naming: the
+# deletion that moved those symbols walked the AST, and a `#:` comment is not
+# an AST node. Statements moved and their documentation did not. That is
+# casting 10's rule about resolvers one axis over — prose refers to code
+# without invoking it, and this tree guards prose for exactly that reason.
 
 
 def _manifest_shape_error(manifest: object, manifest_path: Path) -> dict | None:
@@ -1476,14 +1668,20 @@ def foundry_spawn_teammate(
     casting_id: int | str,
     phase: str = "cast",
     project_root: str = ".",
+    *,
+    full_prompt: bool = False,
 ) -> dict:
-    """Read and return the pre-authored prompt for a casting.
+    """Dispatch a casting's teammate: return a pointer to its pre-authored prompt.
 
     Args:
         casting_id: The id of the casting whose teammate prompt to read.
         phase: "cast" (F1) or "grind" (F3). Affects which prompt variant to
             return if both exist; otherwise identical.
         project_root: Repo root.
+        full_prompt: Return the prompt TEXT in ``prompt`` as well as the
+            pointer. Keyword-only, because it is a debugging opt-in and not
+            part of the positional call every caller makes — a lead that wants
+            the text asks for it by name (FR-019).
 
     Returns:
         On success:
@@ -1493,11 +1691,18 @@ def foundry_spawn_teammate(
                 "phase": "cast" | "grind",
                 "prompt_path": "foundry-archive/{run}/castings/casting-N-prompt.md",
                 "prompt_hash": "sha256:...",
-                "prompt": "<full text of the pre-authored prompt>",
-                "instructions": "Pass the `prompt` field verbatim to the Agent tool. Do NOT modify it. Do NOT prepend, append, or substitute text. Only the `prompt` content is authorized teammate context."
+                "dispatch": "<block naming the path and the hash to read>",
+                "prompt": None,          # the text, when full_prompt=True
+                "progress_protocol": "<the agent's ledger protocol block>",
+                "instructions": "Pass the `dispatch` field verbatim to the Agent tool ..."
             }
         On failure:
             {"ok": False, "error": "...", "hint": "..."}
+
+    Two records are written before this returns, and only once every check
+    above has passed: the agent's first progress-ledger line (AC-031) and the
+    ``spawns.log`` dispatch record. No refusal this door can reach leaves
+    either behind.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -1566,8 +1771,11 @@ def foundry_spawn_teammate(
             "hint": "Re-run F0.5 DECOMPOSE to regenerate the prompt file.",
         }
 
-    # Hash the prompt for audit tracking.
-    prompt_hash = "sha256:" + hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16]
+    # Hash the prompt for audit tracking — over the file's BYTES, which is the
+    # only digest the teammate's own shell command can reproduce (D-108).
+    prompt_hash = _published_prompt_hash(prompt_path)
+    if prompt_hash is None:
+        return document_refusal(prompt_path, f"{prompt_path.name} could not be read")
 
     model = _teammate_model()
 
@@ -1581,32 +1789,58 @@ def foundry_spawn_teammate(
     # this door can reach leaves a record behind. That ordering is what the bulk
     # door lacked (D-144); routing both through `_append_spawn_records` is what
     # keeps it one property rather than two call sites that agree today.
+    rel_prompt_path = str(
+        prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path
+    )
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "casting_id": casting_id,
         "phase": phase,
         "prompt_hash": prompt_hash,
-        "prompt_path": str(prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path),
+        "prompt_path": rel_prompt_path,
     }
     if model:
         entry["model"] = model
+
+    # The seed goes first, so no reader can observe a dispatch record whose
+    # ledger has not appeared yet. The ordering is not load-bearing for
+    # correctness — a dispatch this young is below every threshold and
+    # synthesizes no row either way — but it makes the invariant "a record in
+    # spawns.log has a ledger beside it" true at every instant rather than
+    # true-shortly-afterwards, and an invariant with no window is the one worth
+    # having. Both writes are here, after every check above, for the reason
+    # D-144 gives at `_append_spawn_records`.
+    _seed_progress_ledgers(fdir, [(_agent_id_for_casting(casting_id), phase)])
     _append_spawn_records(fdir / "spawns.log", [entry])
 
     result: dict = {
         "ok": True,
         "casting_id": casting_id,
         "phase": phase,
-        "prompt_path": str(prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path),
+        "prompt_path": rel_prompt_path,
         "prompt_hash": prompt_hash,
-        "prompt": prompt_text,
+        "dispatch": _dispatch_block(rel_prompt_path, prompt_hash),
+        # Present and null by default: the door's positive statement that it
+        # withheld the text, which an absent key cannot make (FR-019, AC-030).
+        "prompt": prompt_text if full_prompt else None,
         "instructions": (
-            "Pass the `prompt` field VERBATIM to the Agent tool as the teammate's prompt. "
-            "Do NOT modify, summarize, paraphrase, or augment the text. Do NOT add your own context, "
-            "hedges, or scope notes. The prompt was authored at F0.5 DECOMPOSE with the master spec "
-            "as source of truth and was validated at F0.9. Modifying it reintroduces the exact drift "
-            "failure mode this architecture was built to prevent."
+            "Pass the `dispatch` field VERBATIM to the Agent tool as the teammate's prompt. "
+            "It names the prompt FILE and the hash the teammate must read that file to obtain, "
+            "and the teammate states that hash back in its completion report, where the server "
+            "compares it against the file's. Do NOT paste, summarize, paraphrase, or augment "
+            "the prompt text yourself — the file was authored at F0.5 DECOMPOSE with the master "
+            "spec as source of truth, validated at F0.9, and is the teammate's to read. Routing "
+            "the text through you reintroduces the exact drift failure mode this architecture "
+            "was built to prevent, and unlike the hash, nothing downstream can detect it."
         ),
     }
+
+    if full_prompt:
+        result["instructions"] += (
+            " full_prompt=true: the `prompt` field carries the file's text for your own "
+            "inspection. It is NOT what you pass to the Agent tool — pass `dispatch`, so "
+            "the teammate still reads the file and still produces a checkable hash."
+        )
 
     # Model steering. Present ONLY when the option is configured — an absent
     # key means "pass no model parameter", indistinguishable from a build where
@@ -1674,18 +1908,39 @@ def _build_grind_cycle_context(fdir, casting_id, project_root: str) -> str:
     if not baseline_sha:
         return ""
 
-    import subprocess
-    try:
-        diff = subprocess.run(
-            ["git", "-C", project_root, "diff", "--name-only", baseline_sha, "HEAD"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return ""
-    if diff.returncode != 0:
+    # D-239 — THE DIFF CAME BACK SPELLED THE WAY GIT PRINTS A PATH, NOT THE
+    # WAY THE PATH IS.
+    # ---------------------------------------------------------------------
+    # This ran its own `git diff --name-only` with `core.quotepath` at its
+    # default (true) and no `-z`, and consumed the output lines verbatim. Git
+    # C-quotes any path holding a non-ASCII byte, so `src/modèle.py` arrived
+    # here as `"src/mod\303\250le.py"` — the double quotes and the octal
+    # escapes are IN the string. The membership test below then compared THAT
+    # against the manifest's `key_files` and missed, so a file the casting
+    # OWNS was filed under "Other files changed (may be upstream
+    # dependencies)" and the teammate was handed a path no reader can resolve,
+    # under prose whose whole authority is that the paths beneath it are real.
+    # The lane measures a commit in the TARGET repo, which owes this repo no
+    # filename charset.
+    #
+    # IMPORTED RATHER THAN RE-SPELLED. `_grind_diff` and the trace-skip
+    # predicate beside it each ran a copy of this invocation and this was the
+    # third; a rule fixed in one copy is this run's repeated failure shape, and
+    # PROVE filed the sibling site under this same defect id. (The predicate has
+    # since been deleted for having no caller — fallout D-057 — which is one
+    # fewer copy rather than a change to this one.) `git_changed_paths` is
+    # public for exactly this import.
+    #
+    # `ok` False is an UNKNOWN diff, which is not an empty one — but both
+    # degrade HERE to the same "no scoped context" an absent baseline gives,
+    # because this helper's standing contract is that it never fails a spawn.
+    # The orchestrator, whose delta roster cannot rest on a diff it does not
+    # know, is the caller that must keep the two apart and forces FULL instead.
+    diff = git_changed_paths(project_root, baseline_sha, "HEAD", timeout=10.0)
+    if not diff["ok"]:
         return ""
 
-    changed = [line.strip() for line in diff.stdout.splitlines() if line.strip()]
+    changed = diff["files"]
     if not changed:
         return ""
 
@@ -1723,8 +1978,29 @@ def _build_grind_cycle_context(fdir, casting_id, project_root: str) -> str:
     # key_files exist — so the block emitted its header over an empty list and
     # that label was unreachable. Each list is now empty exactly when its
     # section is absent, which is what lets the guards below be the list itself.
-    relevant = [f for f in changed if f in casting_keyfiles] if casting_keyfiles else []
-    other = [f for f in changed if f not in casting_keyfiles] if casting_keyfiles else changed
+    #
+    # fallout FR-009 (D-170, casting 7's concern C-079) — AND THE PARTITION IS
+    # BY COVERAGE, BECAUSE A DIRECTORY ENTRY OWNS WHAT IS INSIDE IT.
+    # ----------------------------------------------------------------------
+    # `f in casting_keyfiles` is a set-membership test, and a `key_files` entry
+    # is either a file path or a DIRECTORY spelled with a trailing slash. For a
+    # casting that names a package once — the spelling `Foundry-Gate('cast')`'s
+    # eight-entry cap forces on any casting carving one, and the spelling F0.9
+    # VALIDATE accepts — `relevant` was ALWAYS EMPTY, so its own changed files
+    # rendered under "Other files changed (may be upstream dependencies)".
+    # That label's whole authority is that the paths beneath it belong to
+    # someone else, so the block told a teammate the opposite of the truth about
+    # its own work, in the one section written to orient it.
+    #
+    # DRIVEN on this run, on this casting's own GRIND cycle-5 prompt: casting 2
+    # owns `.../tools/orchestration/` and `tests/orchestration/`, and every
+    # orchestration module it had changed in prior cycles appeared under "Other
+    # files changed" while "Your casting's key_files that changed" listed only
+    # the two entries spelled as files.
+    covered = [f for f in changed if any(covers_path(k, f) for k in casting_keyfiles)]
+    covered_set = set(covered)
+    relevant = covered if casting_keyfiles else []
+    other = [f for f in changed if f not in covered_set] if casting_keyfiles else changed
 
     sections: list[str] = []
     if relevant:
@@ -1772,8 +2048,10 @@ def foundry_cast_wave(
     wave: int,
     phase: str = "cast",
     project_root: str = ".",
+    *,
+    full_prompt: bool = False,
 ) -> dict:
-    """Read and return prompts for every casting in the specified wave.
+    """Dispatch every casting in a wave: return one prompt pointer per casting.
 
     Optimization: replaces N sequential `Foundry-Spawn-Teammate` calls
     (each ~1s of lead deliberation + 1 MCP roundtrip) with a single bulk
@@ -1785,6 +2063,9 @@ def foundry_cast_wave(
         wave: 1-indexed wave number from manifest.waves.
         phase: "cast" or "grind".
         project_root: Repo root.
+        full_prompt: Include each casting's prompt TEXT alongside its pointer.
+            Keyword-only, and the field this door benefits from most: a wave is
+            where returning N whole prompts cost the most context (FR-019).
 
     Returns on success:
         {
@@ -1793,11 +2074,17 @@ def foundry_cast_wave(
             "phase": "cast",
             "team_name_suggestion": "cast-{run}-wave-N  (or grind-{run}-cycle-N for phase='grind')",
             "castings": [
-                {"casting_id": 1, "prompt": "...", "prompt_hash": "sha256:..."},
+                {"casting_id": 1, "dispatch": "...", "prompt_path": "...",
+                 "prompt_hash": "sha256:...", "prompt": None,
+                 "progress_protocol": "..."},
                 ...
             ],
             "instructions": "Spawn every casting as a SEPARATE Agent tool call in ONE message..."
         }
+
+    Per casting rather than per wave, for ``dispatch`` as for everything else
+    here: each casting has its own prompt file and its own hash, so one
+    wave-level pointer could only name one of them.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
@@ -1850,6 +2137,11 @@ def foundry_cast_wave(
     # locked append below is the only write, so a refusal anywhere in the wave
     # leaves the audit trail exactly as it found it.
     dispatched: list[dict] = []
+    # The wave's ledger seeds, buffered under the same rule and for the same
+    # reason (AC-031 / D-144). A seeded ledger asserts that an agent exists
+    # every bit as much as a spawn record does, so a wave that refuses on its
+    # third prompt must not have seeded two.
+    seeds: list[tuple[str, str]] = []
     model = _teammate_model()
 
     for cid in casting_ids:
@@ -1879,12 +2171,23 @@ def foundry_cast_wave(
                 "error": f"casting-{cid}-prompt.md is empty (wave {wave})",
                 "hint": "Re-run F0.5 DECOMPOSE to regenerate the prompt file.",
             }
-        prompt_hash = "sha256:" + hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16]
+        # Over the BYTES, for the reason the single door gives (D-108). Both
+        # doors publish through the one helper so they cannot come to disagree
+        # about what the teammate is being asked to state back.
+        prompt_hash = _published_prompt_hash(prompt_path)
+        if prompt_hash is None:
+            return document_refusal(prompt_path, f"{prompt_path.name} could not be read")
+        rel_prompt_path = str(
+            prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path
+        )
         entry_out: dict = {
             "casting_id": cid,
-            "prompt": prompt_text,
+            # FR-019 / AC-030, per casting for the same reason the block below
+            # is: one prompt file and one hash each.
+            "dispatch": _dispatch_block(rel_prompt_path, prompt_hash),
+            "prompt": prompt_text if full_prompt else None,
             "prompt_hash": prompt_hash,
-            "prompt_path": str(prompt_path.relative_to(Path(project_root)) if prompt_path.is_absolute() else prompt_path),
+            "prompt_path": rel_prompt_path,
             # FR-015. Per casting, because the ledger id is per casting.
             "progress_protocol": _progress_protocol_block(
                 fdir.name, _agent_id_for_casting(cid)
@@ -1918,12 +2221,17 @@ def foundry_cast_wave(
         if model:
             entry["model"] = model
         dispatched.append(entry)
+        seeds.append((_agent_id_for_casting(cid), phase))
 
     # Every casting in the wave cleared every check, so this wave really was
     # handed out and the audit trail may say so — all of it, in one locked
     # append (D-144). Above this line no refusal has left a record behind;
     # below it the whole wave is on record or, if the write itself fails, none
     # of it is. There is no state in between for Foundry-Liveness to read.
+    #
+    # Both writes, in the single door's order: every teammate this wave
+    # dispatched has a ledger before any of them has a spawn record.
+    _seed_progress_ledgers(fdir, seeds)
     _append_spawn_records(spawn_log, dispatched)
 
     run_name = fdir.name
@@ -1959,7 +2267,11 @@ def foundry_cast_wave(
         "castings": results,
         "instructions": (
             f"Spawn {len(results)} Agent tool calls in a SINGLE MESSAGE (parallel tool use). "
-            "Each Agent call gets its corresponding casting's prompt VERBATIM \u2014 no modification. "
+            "Each Agent call gets its corresponding casting's `dispatch` block VERBATIM as the "
+            "teammate's prompt \u2014 no modification. The block names that casting's prompt FILE "
+            "and the hash the teammate must read it to obtain, and the teammate states that hash "
+            "back in its completion report where the server checks it. Do NOT paste the prompt "
+            "text yourself. "
             "Required per-Agent params: subagent_type='foundry:teammate', "
             f"mode='bypassPermissions'. {model_clause}"
             "NEVER run_in_background=true (foreground, TeamCreate-managed). "
@@ -1975,4 +2287,11 @@ def foundry_cast_wave(
     }
     if model:
         result["model"] = model
+    if full_prompt:
+        result["instructions"] += (
+            " full_prompt=true: each casting entry's `prompt` field carries its file's text "
+            "for your own inspection. It is NOT what you pass to the Agent tool — pass "
+            "`dispatch`, so each teammate still reads its file and still produces a "
+            "checkable hash."
+        )
     return result

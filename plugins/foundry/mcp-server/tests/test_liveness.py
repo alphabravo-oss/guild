@@ -1924,3 +1924,321 @@ def test_render_decode_refusal_matrix(run_env) -> None:
             ]
         )
     )
+
+
+# --------------------------------------------------------------------------- #
+# AC-031 — the server's own first line, read back through this tool
+# --------------------------------------------------------------------------- #
+#
+# `test_spawn_progress.py` proves the doors WRITE a seeded line. That proves
+# nothing about whether `foundry_liveness` can read one: the seed is the first
+# line this module ever parses that it did not ask an agent to write, and it
+# carries two fields (`agent`, `seeded_by`) the protocol block never mentions.
+# A reader that choked on them, or that treated the extra keys as a malformed
+# line and skipped it, would leave every freshly dispatched teammate reporting
+# `unknown` — "a ledger file exists but holds no parseable progress line" —
+# which is a worse answer than the `no_ledger` row the seed replaced, because
+# it asserts the agent wrote something unreadable.
+#
+# So these tests drive the REAL doors and read back through the REAL tool. The
+# manifest fixture is the price of that, and it is worth paying: a seeded line
+# this file authored itself would only prove the parser agrees with the test.
+
+
+def _dispatchable(fdir: Path, casting_ids: list[int]) -> None:
+    """Give this run enough of a manifest for the spawn doors to dispatch.
+
+    Mirrors ``test_spawn_progress._write_manifest`` — the same three artifacts
+    F0.5 DECOMPOSE leaves behind (a manifest, a wave grouping, one prompt file
+    per casting) — because a door that refuses cannot seed anything, and a test
+    that silently exercised a refusal would pass by asserting on an empty
+    roster.
+    """
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps(
+            {
+                "castings": [{"id": cid, "key_files": []} for cid in casting_ids],
+                "waves": [{"wave": 1, "casting_ids": casting_ids}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    for cid in casting_ids:
+        (fdir / "castings" / f"casting-{cid}-prompt.md").write_text(
+            f"# Casting {cid}\n\nBuild the thing.\n", encoding="utf-8"
+        )
+
+
+def _backdate_seed(fdir: Path, agent: str, seconds: float) -> None:
+    """Move the server-seeded line back in time, leaving agent lines alone.
+
+    The module reads real wall-clock time by design (see this file's header),
+    so a seed written a millisecond ago is correctly `progressing` and no
+    threshold branch is reachable through it. Only lines the SERVER wrote move:
+    backdating an agent's own line would manufacture a silence it never had.
+    """
+    path = fdir / "progress" / f"{agent}.jsonl"
+    moment = (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get(fs.LEDGER_SEED_AUTHOR_FIELD) == fs.LEDGER_SEED_AUTHOR:
+            record["timestamp"] = moment
+        out.append(json.dumps(record))
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def test_a_freshly_dispatched_teammate_is_already_a_liveness_row(run_env) -> None:
+    """AC-031's whole point, from the reading end.
+
+    Before the seed this agent was invisible for the first 15 minutes of its
+    life: no ledger to glob, and a dispatch too young for the spawns.log half
+    of the roster to synthesize a row from. Now the answer is a real row from
+    the first second — which is the difference between "I cannot tell you
+    anything about this agent yet" and "it was dispatched, and nothing has
+    happened since".
+    """
+    project_root, fdir = run_env
+    _dispatchable(fdir, [4])
+    _enter_phase(fdir, "F3", minutes_ago=90)
+
+    assert fs.foundry_spawn_teammate(4, "grind", project_root)["ok"] is True
+
+    row = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert row["status"] == fs.STATUS_PROGRESSING
+    assert row["step"] == fs.LEDGER_SEED_STEP
+    assert row["phase"] == "grind"
+    assert row["lines"] == 1
+
+
+def test_the_seeded_line_is_parsed_rather_than_skipped(run_env) -> None:
+    """The two extra fields must not make the line unreadable.
+
+    `agent` and `seeded_by` are additive to the three the protocol block asks
+    for. A parser that rejected unknown keys would count the ledger as holding
+    no parseable line and report `unknown` — an assertion that the AGENT wrote
+    something broken, about a line the SERVER wrote.
+    """
+    project_root, fdir = run_env
+    _dispatchable(fdir, [4])
+    _enter_phase(fdir, "F3", minutes_ago=90)
+    fs.foundry_spawn_teammate(4, "grind", project_root)
+
+    row = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert row["status"] != fs.STATUS_UNKNOWN
+    assert row["lines"] == 1
+    assert row["last_timestamp"] is not None
+    assert row["last_progress_age_seconds"] is not None
+
+
+def test_the_row_is_not_the_synthesized_no_ledger_one(run_env) -> None:
+    """A seeded agent leaves the ``no_ledger`` half of the roster entirely.
+
+    Both halves key on `_agent_id_for_casting`, so a seeded ledger that failed
+    to match the glob's `path.stem` would give this one agent TWO rows — a live
+    one and a phantom — which the module's own docstring calls worse than the
+    invisibility the second half was added to fix.
+    """
+    project_root, fdir = run_env
+    _dispatchable(fdir, [4])
+    _enter_phase(fdir, "F3", minutes_ago=200)
+    fs.foundry_spawn_teammate(4, "grind", project_root)
+    _backdate_seed(fdir, "casting-4", 3600)
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert [row["agent"] for row in result["agents"]] == ["casting-4"]
+    assert result["agents"][0]["status"] != fs.STATUS_NO_LEDGER
+
+
+def test_an_aged_seed_reports_stalled_like_any_other_last_line(run_env) -> None:
+    """The seed is a real line, so it obeys the real thresholds.
+
+    A seed exempt from the age check would be worse than no seed: every
+    dispatched teammate would report healthy forever off a line the server
+    wrote about itself.
+    """
+    project_root, fdir = run_env
+    _dispatchable(fdir, [4])
+    _enter_phase(fdir, "F3", minutes_ago=200)
+    fs.foundry_spawn_teammate(4, "grind", project_root)
+    _backdate_seed(fdir, "casting-4", 3600)
+
+    row = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert row["status"] == fs.STATUS_STALLED
+    assert row["step"] == fs.LEDGER_SEED_STEP
+    assert 3500 <= row["last_line_age_seconds"] <= 3700
+    assert "casting-4" in fs.foundry_liveness(project_root=project_root)[
+        "needs_attention"
+    ]
+
+
+def test_the_seeded_row_still_carries_the_dispatch_that_produced_it(run_env) -> None:
+    """Both halves of the answer on one row: what the agent said, what the run
+    asked. A lead reading "last line an hour ago, dispatched an hour ago" can
+    see the silence started AT the dispatch, which is the signature of a
+    teammate that died before doing anything."""
+    project_root, fdir = run_env
+    _dispatchable(fdir, [4])
+    _enter_phase(fdir, "F3", minutes_ago=200)
+    fs.foundry_spawn_teammate(4, "grind", project_root)
+    _backdate_seed(fdir, "casting-4", 3600)
+    # The dispatch record has to be overdue too, or the row carries no
+    # dispatch annotation — "too early to say" is silence for that half.
+    log = fdir / "spawns.log"
+    aged = (datetime.now(timezone.utc) - timedelta(seconds=3600)).isoformat()
+    log.write_text(
+        "\n".join(
+            json.dumps({**json.loads(line), "timestamp": aged})
+            for line in log.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    row = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert 3500 <= row["dispatched_age_seconds"] <= 3700
+    assert 3500 <= row["last_line_age_seconds"] <= 3700
+
+
+def test_a_seeded_ledger_never_reports_done(run_env) -> None:
+    """`done` is the agent's own word and the server must not put it in.
+
+    A seed that read as terminal would retire the agent the instant it was
+    dispatched — it outranks every age check, so the teammate would never be
+    watched at all.
+    """
+    project_root, fdir = run_env
+    _dispatchable(fdir, [4])
+    _enter_phase(fdir, "F3", minutes_ago=200)
+    fs.foundry_spawn_teammate(4, "grind", project_root)
+    _backdate_seed(fdir, "casting-4", 99999)
+
+    row = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert row["status"] != fs.STATUS_DONE
+    (line,) = [
+        json.loads(raw)
+        for raw in (fdir / "progress" / "casting-4.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if raw.strip()
+    ]
+    assert fs.TERMINAL_FIELD not in line
+
+
+def test_the_agents_first_real_line_supersedes_the_seeded_step(run_env) -> None:
+    """The seed is a floor, not a ceiling.
+
+    An agent that appends its own line must own the row from then on — the
+    step the lead reads has to be the agent's, or the ledger reports
+    "dispatched" for the whole run while the teammate works.
+    """
+    project_root, fdir = run_env
+    _dispatchable(fdir, [4])
+    _enter_phase(fdir, "F3", minutes_ago=200)
+    fs.foundry_spawn_teammate(4, "grind", project_root)
+    _backdate_seed(fdir, "casting-4", 3600)
+
+    with (fdir / "progress" / "casting-4.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "phase": "grind",
+                    "step": "hypotheses written",
+                }
+            )
+            + "\n"
+        )
+
+    row = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert row["status"] == fs.STATUS_PROGRESSING
+    assert row["step"] == "hypotheses written"
+    assert row["lines"] == 2
+
+
+def test_an_agent_repeating_the_seeded_step_reports_no_progress(run_env) -> None:
+    """The `no_progress` axis has to survive the server owning line one.
+
+    `_step_key` walks back over trailing repeats of the CURRENT step to date
+    when it was first reached. The seed is now the oldest of those repeats, so
+    an agent pinging "dispatched" back at the server must date its lack of
+    progress from the SEED — the earliest moment that step was reached — not
+    from its own most recent echo of it.
+    """
+    project_root, fdir = run_env
+    _dispatchable(fdir, [4])
+    _enter_phase(fdir, "F3", minutes_ago=200)
+    fs.foundry_spawn_teammate(4, "grind", project_root)
+    _backdate_seed(fdir, "casting-4", 3600)
+
+    with (fdir / "progress" / "casting-4.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "phase": "grind",
+                    "step": fs.LEDGER_SEED_STEP,
+                }
+            )
+            + "\n"
+        )
+
+    row = _by_agent(fs.foundry_liveness(project_root=project_root))["casting-4"]
+
+    assert row["status"] == fs.STATUS_NO_PROGRESS
+    assert row["last_line_age_seconds"] < 60
+    assert 3500 <= row["last_progress_age_seconds"] <= 3700
+
+
+def test_a_wave_puts_every_casting_on_the_roster_at_once(run_env) -> None:
+    """OT-021 read back: one bulk dispatch, three rows, no waiting.
+
+    The bulk door is how CAST and GRIND waves are actually dispatched, so this
+    is the shape the lead sees in a real run — and before the seed it saw
+    nothing at all until the stall threshold expired.
+    """
+    project_root, fdir = run_env
+    _dispatchable(fdir, [1, 2, 3])
+    _enter_phase(fdir, "F1", minutes_ago=90)
+
+    assert fs.foundry_cast_wave(1, "cast", project_root)["ok"] is True
+
+    result = fs.foundry_liveness(project_root=project_root)
+
+    assert [row["agent"] for row in result["agents"]] == [
+        "casting-1",
+        "casting-2",
+        "casting-3",
+    ]
+    assert all(row["status"] == fs.STATUS_PROGRESSING for row in result["agents"])
+    assert all(row["step"] == fs.LEDGER_SEED_STEP for row in result["agents"])
+    assert result["needs_attention"] == []
+
+
+def test_a_named_seeded_agent_is_queryable_by_id(run_env) -> None:
+    """CT-004's single-agent form, over a ledger the server wrote.
+
+    "No agent 'casting-4' is known to this run" was the honest answer before a
+    dispatch produced any artifact. It is the wrong answer afterwards, and this
+    is where that changes.
+    """
+    project_root, fdir = run_env
+    _dispatchable(fdir, [4])
+    _enter_phase(fdir, "F3", minutes_ago=90)
+    fs.foundry_spawn_teammate(4, "grind", project_root)
+
+    result = fs.foundry_liveness(agent="casting-4", project_root=project_root)
+
+    assert result["ok"] is True
+    assert [row["agent"] for row in result["agents"]] == ["casting-4"]

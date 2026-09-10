@@ -1,0 +1,2800 @@
+"""F0.9 VALIDATE: who owns a requirement, and how many owners it may have.
+
+Requirements: ``forge-specs/foundry-run-fallout/spec.md``. The rows each test
+proves are named, with the symbol each lands on, in casting 7's completion
+report and in the ``# evidence-for:`` headers of
+``evidence/casting-7-ownership-consistency.log``,
+``evidence/casting-7-requirement-span.log`` and
+``evidence/casting-7-span-table.log``. They stay out of the prose below except
+where naming one is the point: ``tests/test_spec_id_convention.py`` demands that
+every three-digit requirement id in a docstring or comment in this directory
+name its spec, and this release's qualification — ``fallout`` — did not exist
+when this module was written, so the only spellings that would then have passed
+the pin named a DIFFERENT spec's requirement. It exists now, so a citation that
+earns its place carries it.
+
+The two answers this module is built from, verbatim:
+
+    "Persist `requirement_ids` per casting at F0.5, validated at F0.9"
+
+    "Report the span; refuse at F0.9 when any requirement spans more than two
+    castings without a recorded reason"
+
+Two dimensions, and each is a claim the manifest makes that F0.9 can check.
+
+  OWNERSHIP. `requirement_ids` is a persisted list; the casting's own
+  <spec_requirements> excerpt is prose. They must agree in BOTH directions. A
+  requirement declared in the excerpt but absent from the list has nobody
+  answerable for it — the acceptance gate demands no evidence for it and a fix
+  is routed to no casting. A requirement in the list that the excerpt never
+  declares hands the teammate no text to build from while the manifest reports
+  it covered.
+
+  SPAN. How many castings own one requirement, computed from the PERSISTED
+  field and never from the prose. Above the threshold the manifest must carry a
+  recorded reason naming the id, or F0.9 refuses with a named token.
+
+WHAT IS ACTUALLY AT RISK, and it is not the arithmetic. Both dimensions are
+easy to write in a way that answers a slightly different question than the one
+asked — counting ids a casting merely QUOTES as if it owned them, or exempting
+a span because SOME reason was recorded rather than a reason for THAT id. So
+the tests below drive the negative control beside every positive one: the
+cross-reference line that is not a declaration, the mid-prose mention that is
+not a declaration, and the recorded reason for a different id that does not
+exempt.
+
+  SHIPPED SURFACE. The claim the manifest was not making at all, and the
+  fourth thing this module pins. `requirement_ids` and `key_files` both say
+  what a casting OWNS; neither says what the run SHIPS, so a file in no
+  casting's `key_files` and no row of the spec's File Change Map was owned by
+  nobody and refused by nothing. `surface_globs` is that claim, and the
+  dimension measures the difference between it and the `key_files` union. A
+  manifest that makes no claim is not computable and passes — there is no
+  archive marker that could tell a manifest predating the field from one
+  omitting it, because the field arrives inside the current generation.
+
+  KEY FILES. The manifest's OTHER ownership claim, and the third thing this
+  module pins. A ``key_files`` entry is a file path or a DIRECTORY spelled with
+  a trailing slash, and the two dimensions that compare those entries against
+  something — is one file claimed twice, does the File Change Map's every row
+  reach a teammate — ask coverage rather than equality. The section at the foot
+  of this module carries the drive and its controls.
+
+Every test drives ``foundry_validate_castings`` itself against a ``tmp_path``
+run directory with a written manifest and spec, and reads the returned
+dimensions, issues and table. The module carries its own harness rather than
+sharing one through ``conftest.py``, which is this suite's convention.
+"""
+
+from __future__ import annotations
+
+import ast
+import inspect
+import json
+from pathlib import Path
+
+import pytest
+
+from foundry_mcp.tools.artifacts import INTENT_CLEAN_MARKER, _hash_file
+from foundry_mcp.tools.foundry import foundry_init
+from foundry_mcp.tools.intent_coverage import _clear_intent_verdict
+from foundry_mcp.tools.foundry_state import (
+    ARCHIVE_DIR,
+    clear_active_run,
+    set_active_run,
+)
+from foundry_mcp.tools.foundry_validate import (
+    INTENT_COVERAGE_STALE,
+    REQUIREMENT_IDS_SCHEMA_FLOOR,
+    REQUIREMENT_SPAN_EXCEEDED,
+    REQUIREMENT_SPAN_MAX,
+    SURFACE_UNOWNED,
+    _SURFACE_EXITS_HINT,
+    _SURFACE_ISSUE_CAP,
+    _archive_schema_version,
+    foundry_validate_castings,
+    requirement_span_table,
+)
+
+
+# ── Harness ───────────────────────────────────────────────────────────────
+
+
+def _run_validate(
+    project_root: Path,
+    castings: list[dict],
+    *,
+    spec_text: str = "",
+    state: dict | None = None,
+    manifest_extra: dict | None = None,
+    complete: bool = False,
+    external_spec: str | None = None,
+    run_name: str = "ownership-test",
+) -> dict:
+    """Write a minimal run and invoke the validator against it.
+
+    ``spec_text`` defaults to empty so the dimensions this module is about are
+    isolated from requirement coverage and the file-change-map cross-check.
+    ``state`` writes state.json, which is where the archive schema marker lives
+    — absent by default, which is what a run created before the marker existed
+    looks like. ``state=None`` therefore also means "leave whatever is already
+    there", which is what the one test below that creates its run through
+    ``Foundry-Init`` relies on.
+
+    ``run_name`` exists for that same one test: it points the manifest and the
+    validator at a run directory this harness did not invent, so the state
+    document the door reads is the one the real creating call wrote. Every
+    other caller takes the default and the two are the same thing.
+
+    ``external_spec`` is the run that kept NO copy of its spec: the text is
+    written at that path under ``project_root`` and recorded as
+    ``state.spec_path`` instead of at ``<run>/spec.md``, which is the second
+    rung of the one ladder every requirement-counting dimension climbs. Absent
+    — the default, and every other caller — the run holds its own copy and only
+    the first rung is ever reached.
+
+    ``complete=True`` writes the rest of what F0.5 emits — a prompt file per
+    casting carrying the three blocks, a spec.md the excerpts are a verbatim
+    copy of, and the stream-skip entry that tells F0.9 the intent matrix was
+    not routed. It is what a test asserting the whole run VALIDATES needs; a
+    test asserting one dimension does not, and paying for it everywhere would
+    hide which dimension a failure came from.
+    """
+    fdir = project_root / ARCHIVE_DIR / run_name
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    manifest = {"castings": castings, "spec_type": "GREENFIELD"}
+    if complete:
+        manifest["stream_skips"] = [{"stream_id": "INTENT-01"}]
+    manifest.update(manifest_extra or {})
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    if complete:
+        for c in castings:
+            (fdir / "castings" / f"casting-{c['id']}-prompt.md").write_text(
+                "<mandatory_rules></mandatory_rules>\n"
+                "<global_invariants></global_invariants>\n"
+                f"<spec_requirements>\n{c.get('spec_text', '')}\n</spec_requirements>\n",
+                encoding="utf-8",
+            )
+    if external_spec is None:
+        (fdir / "spec.md").write_text(spec_text, encoding="utf-8")
+    else:
+        live = project_root / external_spec
+        live.parent.mkdir(parents=True, exist_ok=True)
+        live.write_text(spec_text, encoding="utf-8")
+        state = {**(state or {}), "spec_path": external_spec}
+    if state is not None:
+        (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    set_active_run(run_name)
+    try:
+        return foundry_validate_castings(str(project_root))
+    finally:
+        clear_active_run()
+
+
+def _casting(
+    cid,
+    *,
+    excerpt: str = "",
+    owns=None,
+    split_reason: dict | None = None,
+    include_owns: bool = True,
+) -> dict:
+    """One casting entry.
+
+    ``excerpt`` is the verbatim <spec_requirements> blob, which is what
+    ``spec_text`` holds in a real manifest. ``include_owns=False`` writes NO
+    `requirement_ids` key at all, which is the un-migrated record shape — a
+    different claim from an empty list, and the two must not be conflated.
+    """
+    entry = {
+        "id": cid,
+        "title": f"Casting {cid}",
+        "spec_text": excerpt,
+        "observable_truths": ["user sees X", "user sees Y", "user sees Z"],
+        "key_files": [f"src/{cid}.py"],
+        "must_haves": {
+            "truths": ["does the thing"],
+            "artifacts": [{"path": f"src/{cid}.py"}],
+            "key_links": [{"from": f"src/{cid}.py", "to": "src/shared.py"}],
+        },
+    }
+    if include_owns:
+        entry["requirement_ids"] = list(owns or [])
+    if split_reason is not None:
+        entry["split_reason"] = split_reason
+    return entry
+
+
+def _ownership(result: dict) -> dict:
+    return result["dimensions"]["requirement_ownership"]
+
+
+def _issue_kinds(dimension: dict) -> list[str]:
+    return sorted(i.get("issue", "") for i in dimension["issues"])
+
+
+def _span(result: dict) -> dict:
+    return result["dimensions"]["requirement_span"]
+
+
+def _row(result: dict, requirement_id: str) -> dict:
+    """The span row for one requirement, or a failure that names what is there."""
+    rows = {r["id"]: r for r in _span(result)["rows"]}
+    assert requirement_id in rows, sorted(rows)
+    return rows[requirement_id]
+
+
+def _sharers(count: int, *, reason_on=None, reason: str = "") -> list[dict]:
+    """``count`` castings that all declare and own the same one requirement.
+
+    ``reason_on`` is the casting id that records a ``split_reason``, which is
+    the shape decompose emits: the reason sits beside the ownership it
+    explains. ``reason_on=0`` writes it at the manifest's top level instead,
+    the other position the manifest may record one in.
+    """
+    out = []
+    for cid in range(1, count + 1):
+        entry = _casting(cid, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])
+        if reason_on == cid:
+            entry["split_reason"] = {"FR-009": reason}
+        out.append(entry)
+    return out
+
+
+def _stamp_intent_marker(matrix: Path, digest: str | None = None) -> Path:
+    """Stamp `.f07-intent-clean` beside ``matrix`` the way the F0.7 gate does.
+
+    fallout D-117 — the marker's CONTENT is the digest of the matrix the gate
+    passed on, so a test that wants a standing F0.7 verdict has to produce the
+    same thing the gate produces. Computed through the leaf's `_hash_file`
+    rather than re-typed here: a test that hashes the matrix its own way would
+    agree with the reader by coincidence, which is the drift these two sides
+    were split apart to avoid.
+
+    ``digest`` overrides it, for the tests that want a marker vouching for a
+    matrix that is not the one on disk.
+    """
+    marker = matrix.parent / INTENT_CLEAN_MARKER
+    marker.write_text(f"{digest or _hash_file(matrix)}\n", encoding="utf-8")
+    return marker
+
+
+#: A run created under the current release: the schema marker at the floor.
+CURRENT_RUN = {"archive_schema_version": REQUIREMENT_IDS_SCHEMA_FLOOR}
+
+#: Where a run's LIVE spec sits when the run kept no copy of its own: outside
+#: the run directory, reached through `state.spec_path`.
+LIVE_SPEC = "forge-specs/live-spec/spec.md"
+
+#: A row appended to that live spec: a requirement id no casting here owns, so
+#: the verdict it produces differs from the verdict before it.
+GROWN_ROW = "\n- **NFR-777** [from A-000]: a row no casting owns\n"
+
+#: The excerpt shape F0.5 emits: bold bullets, typed-table rows and story
+#: headings all declare, and the two shapes that are NOT declarations sit in it
+#: as controls — a `Maps to:` cross-reference and an id quoted mid-prose.
+#:
+#: fallout D-181 — THE TWO CONTROLS NO LONGER CONTROL FOR THE SAME THING, and
+#: that is the whole of what changed. This dimension asks what the excerpt
+#: CITES, which is the verb fallout AC-001 / OT-001 / FR-040 all use. The id on
+#: the `Maps to:` line is still not a citation: it is DECOMPOSE transcribing
+#: the spec's own back-pointer to the user story the bullet above it serves, a
+#: fact about the cited requirement rather than a claim by this casting. The id
+#: in the closing sentence now IS one — an id this casting's text names and its
+#: ownership list must account for. So a casting carrying this excerpt cites
+#: three ids, and the positive control below owns exactly those three.
+DECLARES_TWO = (
+    "### US-001: A fix reaches every surface of its rule\n"
+    "\n"
+    "- **FR-009** [from A-009]: persist the ownership list at decompose time\n"
+    "  - Maps to: US-777\n"
+    "\n"
+    "The gate refuses a filing that cites FR-888 with no reproduction.\n"
+)
+
+#: The same excerpt with ONLY the cross-reference control, so the test that
+#: isolates it is not also carrying the mid-prose one. It cites the story
+#: heading and the bullet, and nothing else.
+CROSS_REFERENCED = (
+    "### US-001: A fix reaches every surface of its rule\n"
+    "\n"
+    "- **FR-009** [from A-009]: persist the ownership list at decompose time\n"
+    "  - Maps to: US-777\n"
+)
+
+#: The three shapes fallout D-181 drove at HEAD 6244c04 and found invisible:
+#: an id named later on a declaration's own line, one named mid-sentence in
+#: running prose, and one inside inline code backticks. Each cites one id no
+#: ownership list in these tests names.
+CITES_MID_LINE = (
+    "- **FR-009** [from A-009]: persist ids, the way AC-042 already demands\n"
+)
+CITES_MID_PROSE = (
+    "- **FR-009** [from A-009]: persist the ownership list\n"
+    "\n"
+    "This casting also touches the behaviour AC-042 states.\n"
+)
+CITES_IN_CODE = (
+    "- **FR-009** [from A-009]: persist the ownership list\n"
+    "\n"
+    "The `AC-042` rule, restated for the reader who arrives here first.\n"
+)
+
+#: The same two declarations with the two control lines removed, so the spec
+#: this excerpt is copied from names exactly the ids the castings own. Used by
+#: the tests that assert the WHOLE run validates, where an id nobody covers
+#: would fail requirement coverage for a reason this module is not about.
+CLEAN_EXCERPT = (
+    "### US-001: A fix reaches every surface of its rule\n"
+    "\n"
+    "- **FR-009** [from A-009]: persist the ownership list at decompose time\n"
+)
+
+
+# ── The consistency check, in both directions ─────────────────────────────
+
+
+def test_a_manifest_whose_lists_match_its_excerpts_passes_the_ownership_check(
+    tmp_path: Path,
+):
+    """The positive control, and it comes first: a dimension that refused
+    everything would pass every negative test below and block every run.
+
+    The excerpt cites exactly three ids — two declared and one named in its
+    prose — the ownership list names exactly those three, and the dimension is
+    clean. The id on the `Maps to:` line is in nobody's list and must stay out
+    of the reckoning for this to pass at all, so the exemption is under test
+    here as much as in the control that names it.
+    """
+    castings = [
+        _casting(1, excerpt=DECLARES_TWO, owns=["US-001", "FR-009", "FR-888"])
+    ]
+
+    result = _run_validate(tmp_path, castings, state=CURRENT_RUN)
+    dim = _ownership(result)
+
+    assert dim["ok"] is True, dim["issues"]
+    assert dim["issues"] == []
+    assert dim["not_computable"] is False
+
+
+def test_a_citation_the_ownership_list_omits_is_refused_naming_both(
+    tmp_path: Path,
+):
+    """"a manifest whose casting cites an id in `spec_text` that is absent from
+    its `requirement_ids` is refused by F0.9 VALIDATE naming the casting and
+    the id."
+
+    Nobody is answerable for it: the acceptance gate demands no evidence and a
+    fix is routed to no casting.
+
+    Both citation shapes are named in one issue, which is the point of reading
+    CITES rather than DECLARATIONS (fallout D-181): one id is declared on its
+    own line and the other is named in the excerpt's closing prose, and the
+    ownership list has to account for each.
+    """
+    castings = [_casting(1, excerpt=DECLARES_TWO, owns=["US-001"])]
+
+    result = _run_validate(tmp_path, castings, state=CURRENT_RUN)
+    dim = _ownership(result)
+
+    assert dim["ok"] is False
+    assert _issue_kinds(dim) == ["cited_but_not_owned"]
+    issue = dim["issues"][0]
+    assert issue["casting"] == 1
+    assert issue["ids"] == ["FR-009", "FR-888"]
+    assert "FR-009" in issue["detail"]
+    assert "Casting 1" in issue["detail"]
+    # A blocking error, and the whole report still renders.
+    assert result["passed"] is False
+    assert any(
+        i.get("dimension") == "requirement_ownership" and i.get("severity") == "error"
+        for i in result["issues"]
+    )
+    # The hint names the two edits a lead can actually make.
+    assert any(
+        "FR-009" in h and "requirement_ids" in h for h in result["revision_hints"]
+    )
+
+
+def test_an_owned_id_the_excerpt_never_cites_is_refused_naming_both(
+    tmp_path: Path,
+):
+    """"and a casting whose `requirement_ids` names an id its `spec_text` never
+    cites" — the same rule read the other way.
+
+    The teammate is handed no text to build from while the manifest reports the
+    requirement covered, which is the more dangerous of the two directions
+    because it reports success.
+    """
+    castings = [
+        _casting(
+            1,
+            excerpt=DECLARES_TWO,
+            owns=["US-001", "FR-009", "FR-888", "AC-042"],
+        )
+    ]
+
+    result = _run_validate(tmp_path, castings, state=CURRENT_RUN)
+    dim = _ownership(result)
+
+    assert dim["ok"] is False
+    assert _issue_kinds(dim) == ["owned_but_not_cited"]
+    issue = dim["issues"][0]
+    assert issue["casting"] == 1
+    assert issue["ids"] == ["AC-042"]
+    assert "AC-042" in issue["detail"]
+    assert result["passed"] is False
+
+
+def test_both_directions_are_reported_together_rather_than_one_at_a_time(
+    tmp_path: Path,
+):
+    """A lead fixing a manifest should learn everything wrong with it in one
+    pass. Reporting one direction and returning would send them round the loop
+    twice for one edit.
+    """
+    castings = [_casting(1, excerpt=DECLARES_TWO, owns=["US-001", "CT-011"])]
+
+    dim = _ownership(_run_validate(tmp_path, castings, state=CURRENT_RUN))
+
+    assert _issue_kinds(dim) == ["cited_but_not_owned", "owned_but_not_cited"]
+
+
+def test_a_cross_reference_line_is_not_a_citation(tmp_path: Path):
+    """A `Maps to:` line names a requirement without citing it, so the casting
+    is NOT answerable for it and F0.9 does not ask it to be.
+
+    This is the one exemption in the cite rule and the only negative control
+    left after fallout D-181. `Maps to:` is not a sentence the casting wrote:
+    it is DECOMPOSE transcribing the spec's own back-pointer from a requirement
+    to the user story that requirement serves, so its object is a fact about
+    the CITED row rather than a claim by the casting carrying it.
+
+    Counting it would not make F0.9 stricter, it would make F0.9 unpassable.
+    Six of this run's own twelve castings carry a `Maps to:` naming a user
+    story they do not own, and the only exit the refusal offers — add the id to
+    `requirement_ids` — drives four user stories past the span fallout AC-042
+    refuses without a recorded reason. fallout AC-001 / AC-042 would then be
+    mutually destructive, and the manifest satisfying one would be the manifest
+    the other rejects.
+    """
+    castings = [_casting(1, excerpt=CROSS_REFERENCED, owns=["US-001", "FR-009"])]
+
+    dim = _ownership(_run_validate(tmp_path, castings, state=CURRENT_RUN))
+
+    assert dim["ok"] is True, dim["issues"]
+
+
+def test_a_cross_reference_skip_cannot_swallow_a_declaration(tmp_path: Path):
+    """The cross-reference skip drops a LINE, so the rule it is exempting has
+    to be one no declaration can ever sit on.
+
+    It is: `Maps to:` opens the line, and a declaration is an id immediately
+    after the structural markdown, so the two shapes are disjoint by
+    construction rather than by luck. Driven here because "skip the line" is
+    the kind of shortcut that silently loses a declaration the day the grammar
+    grows a field, and this assertion is what would notice.
+    """
+    castings = [_casting(1, excerpt=CROSS_REFERENCED, owns=["US-001"])]
+
+    dim = _ownership(_run_validate(tmp_path, castings, state=CURRENT_RUN))
+
+    assert _issue_kinds(dim) == ["cited_but_not_owned"]
+    assert dim["issues"][0]["ids"] == ["FR-009"], (
+        "the declaration on the line ABOVE the cross-reference is still seen"
+    )
+
+
+@pytest.mark.parametrize(
+    "excerpt, shape",
+    [
+        (CITES_MID_LINE, "later on a declaration's own line"),
+        (CITES_MID_PROSE, "mid-sentence in running prose"),
+        (CITES_IN_CODE, "inside inline code backticks"),
+    ],
+    # Explicit ids, because the default ones inline the excerpt — and this
+    # module's two evidence logs are split by a `-k` filter, so a case whose id
+    # carried the excerpt's own words would drift between the two logs on a
+    # wording change that has nothing to do with either.
+    ids=["mid_line", "mid_prose", "in_backticks"],
+)
+def test_an_id_named_anywhere_but_a_cross_reference_is_a_citation(
+    tmp_path: Path, excerpt: str, shape: str
+):
+    """fallout D-181, driven in each of the three shapes it found invisible.
+
+    "a manifest whose casting cites an id in `spec_text` that is absent from
+    its `requirement_ids` is refused by F0.9 VALIDATE naming the casting and
+    id" (fallout AC-001); "F0.9 refuses a casting whose prose CITES an id
+    outside that list" (fallout OT-001); fallout FR-040 the same verb in both
+    directions.
+
+    At HEAD 6244c04 this dimension read the SUBJECT-POSITION derivation the
+    acceptance gate needs, so an id named in any of these three positions was
+    counted by nothing and a casting citing a requirement it did not own passed
+    F0.9 clean — the state fallout AC-001 says is refused. Each excerpt here
+    names one id the ownership list does not.
+    """
+    castings = [_casting(1, excerpt=excerpt, owns=["FR-009"])]
+
+    dim = _ownership(_run_validate(tmp_path, castings, state=CURRENT_RUN))
+
+    assert dim["ok"] is False, f"a citation {shape} is still invisible"
+    assert _issue_kinds(dim) == ["cited_but_not_owned"]
+    assert dim["issues"][0]["ids"] == ["AC-042"]
+    assert "AC-042" in dim["issues"][0]["detail"]
+
+
+def test_the_gate_the_citation_rule_must_not_widen_still_reads_declarations(
+    tmp_path: Path,
+):
+    """fallout D-181's standing hazard, pinned rather than argued.
+
+    D-180 is what happens when ONE derivation answers both questions: a bare
+    scan made the acceptance gate demand evidence for a requirement another
+    casting owned, and the teammate's only way through was a knowingly false
+    `# evidence-for:` header. The remedy for D-181 is a SECOND derivation, so
+    the first one has to still answer the way the gate needs — an id merely
+    named in prose is not a requirement this casting owes evidence for.
+
+    Asserted against the derivations themselves, because that is where the two
+    populations are decided; the dimension above only reads them.
+    """
+    # fallout GI-033 (D-191 / D-192) — the pair is split across the layering
+    # line and each half is read where it is defined: the DECLARATION rule lives
+    # in the leaf (both layers read it), the CITE rule in the lifecycle module
+    # whose two readers are both lifecycle.
+    from foundry_mcp.tools.artifacts import declared_requirement_ids
+    from foundry_mcp.tools.foundry_handoff import cited_requirement_ids
+
+    for excerpt in (CITES_MID_LINE, CITES_MID_PROSE, CITES_IN_CODE):
+        assert declared_requirement_ids(excerpt) == ["FR-009"], (
+            "the gate's population must not grow: that is D-180"
+        )
+        assert "AC-042" in cited_requirement_ids(excerpt), (
+            "the F0.9 population must: that is D-181"
+        )
+        assert set(cited_requirement_ids(excerpt)) >= set(
+            declared_requirement_ids(excerpt)
+        ), "a declaration is always a citation"
+
+
+def test_a_cited_id_has_an_exit_the_other_direction_does_not_refuse(
+    tmp_path: Path,
+):
+    """The two directions read the SAME population, and this is why.
+
+    A forward check on citations with a reverse check on declarations gives a
+    cited-but-undeclared id no accepting state at all: owning it trips the
+    reverse refusal, disowning it trips the forward one, and a lead loops
+    between two refusals forever with no edit that satisfies both. So the exit
+    the forward hint names — add the id to `requirement_ids` — is driven here
+    and the manifest has to come out clean.
+    """
+    refused = _ownership(
+        _run_validate(
+            tmp_path,
+            [_casting(1, excerpt=CITES_MID_PROSE, owns=["FR-009"])],
+            state=CURRENT_RUN,
+        )
+    )
+    assert refused["ok"] is False
+    assert any(
+        "AC-042" in h and "requirement_ids" in h
+        for h in _run_validate(
+            tmp_path,
+            [_casting(1, excerpt=CITES_MID_PROSE, owns=["FR-009"])],
+            state=CURRENT_RUN,
+        )["revision_hints"]
+    ), "the hint has to name the exit this test then takes"
+
+    taken = _ownership(
+        _run_validate(
+            tmp_path,
+            [_casting(1, excerpt=CITES_MID_PROSE, owns=["FR-009", "AC-042"])],
+            state=CURRENT_RUN,
+        )
+    )
+
+    assert taken["ok"] is True, taken["issues"]
+
+
+def test_a_requirement_nobody_declares_is_still_reported_uncovered(
+    tmp_path: Path,
+):
+    """The harm the reverse direction used to guard, caught one dimension over.
+
+    Reading CITES in both directions means an id a casting owns and merely
+    quotes no longer refuses there — so the check that a teammate is handed
+    real text for what they own has to live somewhere. It does:
+    `requirement_coverage` is built from DECLARATIONS, so a spec requirement
+    no casting declares is reported uncovered even when a casting owns it and
+    its prose names it.
+    """
+    castings = [_casting(1, excerpt=CITES_MID_PROSE, owns=["FR-009", "AC-042"])]
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=(
+            "- **FR-009** [from A-009]: persist the ownership list\n"
+            "- **AC-042** [from A-017]: refuse a span above two\n"
+        ),
+        state=CURRENT_RUN,
+    )
+
+    assert _ownership(result)["ok"] is True, "cites agree in both directions"
+    coverage = result["dimensions"]["requirement_coverage"]
+    assert coverage["ok"] is False
+    assert coverage["issues"][0]["ids"] == ["AC-042"], (
+        "quoted is not declared, and the coverage verdict still says so"
+    )
+
+
+def test_every_casting_is_judged_not_only_the_first(tmp_path: Path):
+    """A loop that returned on the first offender would report one casting and
+    leave the rest of the manifest unexamined.
+    """
+    castings = [
+        _casting(1, excerpt=DECLARES_TWO, owns=["US-001", "FR-009", "FR-888"]),
+        _casting(2, excerpt=DECLARES_TWO, owns=["US-001"]),
+        _casting(
+            3,
+            excerpt=DECLARES_TWO,
+            owns=["US-001", "FR-009", "FR-888", "OT-038"],
+        ),
+    ]
+
+    dim = _ownership(_run_validate(tmp_path, castings, state=CURRENT_RUN))
+
+    offenders = sorted(i["casting"] for i in dim["issues"])
+    assert offenders == [2, 3]
+
+
+# ── The legacy-versus-new-run reading ─────────────────────────────────────
+
+
+def test_an_archive_that_predates_the_field_reports_not_computable_and_passes(
+    tmp_path: Path,
+):
+    """"on a legacy manifest without the field the check reports not computable
+    rather than failing."
+
+    Every archive written before the field existed must keep validating, so the
+    dimension is `ok`, the fact is in the payload, and the explanation is an
+    informational issue rather than a blocking one.
+    """
+    castings = [
+        _casting(1, excerpt=CLEAN_EXCERPT, include_owns=False),
+        _casting(2, excerpt=CLEAN_EXCERPT, include_owns=False),
+    ]
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state={"cycle": 0}, complete=True
+    )
+    dim = _ownership(result)
+
+    assert dim["not_computable"] is True
+    assert dim["ok"] is True
+    assert dim["archive_schema_version"] == 0
+    assert _issue_kinds(dim) == ["requirement_ids_not_computable"]
+    assert dim["issues"][0]["severity"] == "info"
+    # The run still validates, which is the half of this rule that matters: an
+    # archive written before the field existed must not be blocked by it.
+    assert result["passed"] is True, result["issues"]
+    # And the explanation is reported without moving a counted number: an
+    # informational entry stays inside the dimension rather than joining the
+    # top-level list, where it would be counted as a warning.
+    assert not any(
+        i.get("dimension") == "requirement_ownership" for i in result["issues"]
+    )
+    assert result["summary"]["error_count"] == 0
+
+
+def test_an_archive_with_no_state_document_at_all_reports_not_computable(
+    tmp_path: Path,
+):
+    """A run whose state.json was never written reads as below the floor. An
+    absent marker and a marker below the floor are the same answer — this run
+    predates the field — and neither may raise.
+    """
+    castings = [_casting(1, excerpt=DECLARES_TWO, include_owns=False)]
+
+    dim = _ownership(_run_validate(tmp_path, castings))
+
+    assert dim["not_computable"] is True
+    assert dim["ok"] is True
+
+
+def test_a_marker_that_is_not_an_integer_reads_as_below_the_floor(tmp_path: Path):
+    """A schema marker of the wrong type is not a reason to raise, and not a
+    reason to fail closed on an archive that may well predate the field.
+    """
+    castings = [_casting(1, excerpt=DECLARES_TWO, include_owns=False)]
+
+    dim = _ownership(
+        _run_validate(tmp_path, castings, state={"archive_schema_version": "four"})
+    )
+
+    assert dim["archive_schema_version"] == 0
+    assert dim["not_computable"] is True
+
+
+def test_a_run_created_under_the_current_schema_is_refused_for_a_missing_list(
+    tmp_path: Path,
+):
+    """"a run created under the current schema is refused when the list is
+    missing."
+
+    The other half of "fail closed only for new runs": the same manifest that
+    passes on a legacy archive is refused here, and the refusal names the
+    casting.
+    """
+    castings = [_casting(1, excerpt=DECLARES_TWO, include_owns=False)]
+
+    result = _run_validate(tmp_path, castings, state=CURRENT_RUN)
+    dim = _ownership(result)
+
+    assert dim["not_computable"] is False
+    assert dim["ok"] is False
+    assert _issue_kinds(dim) == ["missing_requirement_ids"]
+    assert dim["issues"][0]["casting"] == 1
+    assert result["passed"] is False
+
+
+def test_a_run_this_server_created_is_refused_the_same_way_a_hand_written_one_is(
+    tmp_path: Path,
+):
+    """The door reads the marker a REAL run-creating call writes, not a literal.
+
+    Every other test in this section stands a hand-written state document in
+    for "a run created under the current release", and a stand-in nobody checks
+    is a suite that proves the door against a shape that need not exist. It did
+    not exist: for a whole cycle nothing stamped the marker at creation, so a
+    run this server had made minutes earlier read as version 0 — the same
+    answer an archive written long before the field existed gives — and the
+    fail-closed half of fallout FR-054 could not fire on one real run while
+    every test above this one passed. A fixture cannot see that, because the
+    value it asserts against is the value it just wrote.
+
+    So this is the one test in the module that takes no state document from the
+    harness. It creates a run through the real door, and ``state=None`` below
+    is the load-bearing argument: what that door wrote is left exactly where it
+    is, and F0.9 is driven against it. A marker written under another key, into
+    another document, with another value, or on no branch at all fails here and
+    passes everything above it.
+
+    The first assertion reads the marker through ``_archive_schema_version``,
+    the reader the dimension itself compares — not the raw key — because a
+    marker of the wrong TYPE under the right key coerces to 0 there and would
+    sail past an assertion on the literal, leaving the refusal below to explain
+    a failure whose cause is two frames away.
+    """
+    spec = tmp_path / "spec.md"
+    spec.write_text(DECLARES_TWO, encoding="utf-8")
+
+    created = foundry_init(spec_path=str(spec), project_root=str(tmp_path))
+    state = json.loads(
+        (Path(created["foundry_dir"]) / "state.json").read_text(encoding="utf-8")
+    )
+
+    assert _archive_schema_version(state) >= REQUIREMENT_IDS_SCHEMA_FLOOR, (
+        f"a run this server just created reads as schema "
+        f"{_archive_schema_version(state)}, below the "
+        f"{REQUIREMENT_IDS_SCHEMA_FLOOR} every CURRENT_RUN test above assumes — "
+        f"so those tests describe a run that cannot be created and the "
+        f"fail-closed half of this rule is unreachable. state.json: {state}"
+    )
+
+    castings = [_casting(1, excerpt=DECLARES_TWO, include_owns=False)]
+    result = _run_validate(
+        tmp_path, castings, run_name=created["run_name"], state=None
+    )
+    dim = _ownership(result)
+
+    assert dim["archive_schema_version"] == _archive_schema_version(state)
+    assert dim["not_computable"] is False
+    assert dim["ok"] is False
+    assert _issue_kinds(dim) == ["missing_requirement_ids"]
+    assert dim["issues"][0]["severity"] == "error"
+    assert dim["issues"][0]["casting"] == 1
+    assert result["passed"] is False
+
+
+def test_a_partly_filled_manifest_is_judged_whatever_the_schema(tmp_path: Path):
+    """Not computable needs BOTH halves: no casting carrying the field AND an
+    archive below the floor.
+
+    Somebody has started populating this one, so its gaps are real and are
+    reported even though the schema marker is absent. Answering "not
+    computable" here would let a half-migrated manifest hide behind its own
+    incompleteness.
+    """
+    castings = [
+        _casting(1, excerpt=DECLARES_TWO, owns=["US-001", "FR-009", "FR-888"]),
+        _casting(2, excerpt=DECLARES_TWO, include_owns=False),
+    ]
+
+    dim = _ownership(_run_validate(tmp_path, castings, state={"cycle": 0}))
+
+    assert dim["not_computable"] is False
+    assert _issue_kinds(dim) == ["missing_requirement_ids"]
+    assert dim["issues"][0]["casting"] == 2
+
+
+def test_an_empty_list_is_a_claim_and_an_absent_one_is_not(tmp_path: Path):
+    """Presence and emptiness are different claims. A casting that owns nothing
+    and says so is checkable — and is checked: its excerpt must cite nothing
+    either.
+    """
+    castings = [_casting(1, excerpt="Nothing declared here.\n", owns=[])]
+
+    dim = _ownership(_run_validate(tmp_path, castings, state=CURRENT_RUN))
+
+    assert dim["not_computable"] is False
+    assert dim["ok"] is True, dim["issues"]
+
+
+def test_a_requirement_ids_field_of_the_wrong_type_is_reported_not_raised(
+    tmp_path: Path,
+):
+    """A `requirement_ids` that is a string is not a shape the manifest's own
+    nested-shape guard judges, and a tool never raises across the MCP boundary.
+
+    It reads as present-and-empty, so every id the excerpt cites is reported
+    unowned by name — the operator learns what is wrong with the file rather
+    than receiving a traceback.
+    """
+    castings = [_casting(1, excerpt=DECLARES_TWO)]
+    castings[0]["requirement_ids"] = "US-001, FR-009"
+
+    result = _run_validate(tmp_path, castings, state=CURRENT_RUN)
+    dim = _ownership(result)
+
+    assert isinstance(result, dict)
+    assert _issue_kinds(dim) == ["cited_but_not_owned"]
+    assert dim["issues"][0]["ids"] == ["FR-009", "FR-888", "US-001"]
+
+
+def test_a_spec_text_of_the_wrong_type_is_reported_not_raised(tmp_path: Path):
+    """The sibling read, guarded the same way. A `spec_text` that is not a
+    string reaches TWO line-splitting derivations now (fallout D-181), so an
+    unguarded read raises out of F0.9 rather than rendering the report — and
+    the guard has to sit above both, which is why it stays in the one loop that
+    fills them.
+    """
+    castings = [_casting(1, owns=["US-001"])]
+    castings[0]["spec_text"] = {"not": "a string"}
+
+    result = _run_validate(tmp_path, castings, state=CURRENT_RUN)  # must not raise
+    dim = _ownership(result)
+
+    assert isinstance(result, dict)
+    assert _issue_kinds(dim) == ["owned_but_not_cited"]
+    assert dim["issues"][0]["ids"] == ["US-001"]
+
+
+# ── The archive-schema marker reaches the cache fingerprint ───────────────
+
+
+def test_a_schema_bump_alone_invalidates_a_cached_pass(tmp_path: Path):
+    """The cache is keyed on what the verdict depends on, and the verdict now
+    depends on the archive schema marker.
+
+    Driven end to end: the same manifest passes on a legacy archive, the marker
+    is bumped with no byte of the manifest or the spec touched, and the second
+    call must recompute and refuse rather than serve the cached pass.
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, include_owns=False)]
+    args = dict(spec_text=CLEAN_EXCERPT, complete=True)
+
+    first = _run_validate(tmp_path, castings, state={"cycle": 0}, **args)
+    assert first["passed"] is True, first["issues"]
+    assert first["cache"]["hit"] is False
+
+    # Proof the cache is live at all, or the assertion below proves nothing.
+    again = _run_validate(tmp_path, castings, state={"cycle": 0}, **args)
+    assert again["cache"]["hit"] is True
+
+    second = _run_validate(tmp_path, castings, state=CURRENT_RUN, **args)
+
+    assert second["cache"]["hit"] is False
+    assert second["passed"] is False
+    assert _issue_kinds(_ownership(second)) == ["missing_requirement_ids"]
+
+
+# ── Every other input the verdict depends on reaches it too ───────────────
+
+
+def test_removing_the_only_recorded_reason_invalidates_a_cached_pass(
+    tmp_path: Path,
+):
+    """fallout AC-042: "a span above two without a `split_reason` entry naming
+    the id refuses; with one it passes and the reason is printed."
+
+    The recorded reason is an INPUT to that verdict, so it belongs in the cache
+    key. Driven on the position the manifest carries it at the TOP LEVEL — the
+    one `commands/start.md` names beside the per-casting position, and the one
+    no casting entry holds, so a fingerprint built from the casting entries
+    plus a hand-listed handful of shared fields is exactly the shape that
+    cannot see it go. Nothing else changes between the two calls: the same
+    castings, the same ownership, the same spec. The second call must recompute
+    and refuse rather than serve the pass the reason bought.
+    """
+    reason = "one requirement, three surfaces, no shared owner"
+    recorded = {"split_reason": {"FR-009": reason, "US-001": reason}}
+    castings = _sharers(REQUIREMENT_SPAN_MAX + 1)
+    args = dict(spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True)
+
+    allowed = _run_validate(tmp_path, castings, manifest_extra=recorded, **args)
+    assert allowed["passed"] is True, allowed["issues"]
+    assert allowed["cache"]["hit"] is False
+
+    # Proof the cache is live at all, or the assertion below proves nothing.
+    again = _run_validate(tmp_path, castings, manifest_extra=recorded, **args)
+    assert again["cache"]["hit"] is True
+
+    removed = _run_validate(tmp_path, castings, **args)
+
+    assert removed["cache"]["hit"] is False
+    assert removed["passed"] is False
+    assert any(
+        i.get("id") == "FR-009" and i.get("issue") == REQUIREMENT_SPAN_EXCEEDED
+        for i in _span(removed)["issues"]
+    )
+
+
+def test_a_spec_the_run_never_copied_reaches_the_cache_fingerprint(
+    tmp_path: Path,
+):
+    """The spec the fingerprint hashes is the spec the validator READ.
+
+    A run that kept no copy in its own directory resolves its spec through
+    `state.spec_path` — the second rung of the one ladder, which
+    `_spec_requirement_ids` climbs for every dimension that counts
+    requirements. A fingerprint that reached only for `<run>/spec.md` hashed an
+    absent file on such a run, and the digest of no bytes never moves: the live
+    spec could gain a requirement nobody owns and F0.9 would keep serving the
+    pass it gave before that requirement existed.
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])]
+    args = dict(state=CURRENT_RUN, complete=True, external_spec=LIVE_SPEC)
+
+    first = _run_validate(tmp_path, castings, spec_text=CLEAN_EXCERPT, **args)
+    assert first["passed"] is True, first["issues"]
+    assert first["cache"]["hit"] is False
+
+    # Proof the cache is live at all, or the assertion below proves nothing.
+    again = _run_validate(tmp_path, castings, spec_text=CLEAN_EXCERPT, **args)
+    assert again["cache"]["hit"] is True
+
+    grown = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT + GROWN_ROW, **args
+    )
+
+    assert grown["cache"]["hit"] is False
+    assert grown["passed"] is False
+    assert grown["dimensions"]["requirement_coverage"]["issues"] == [
+        {"type": "uncovered_requirements", "ids": ["NFR-777"]}
+    ]
+
+
+def test_a_research_artifact_appearing_invalidates_a_cached_pass(
+    tmp_path: Path,
+):
+    """The run DIRECTORY is an input too, not only the documents in it.
+
+    Research integration reports on a fact no document carries: whether the run
+    holds research artifacts at all. A lead who runs F0.9, then commissions the
+    research the run was missing, then runs F0.9 again is asking a question the
+    first answer cannot contain — and a fingerprint built only from documents
+    hands back the answer given before the research existed.
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])]
+    args = dict(spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True)
+
+    first = _run_validate(tmp_path, castings, **args)
+    assert first["dimensions"]["research_integration"]["ok"] is True
+    assert first["cache"]["hit"] is False
+
+    # Proof the cache is live at all, or the assertion below proves nothing.
+    again = _run_validate(tmp_path, castings, **args)
+    assert again["cache"]["hit"] is True
+
+    research = tmp_path / ARCHIVE_DIR / "ownership-test" / "research"
+    research.mkdir(parents=True, exist_ok=True)
+    (research / "auth.md").write_text("JWT findings", encoding="utf-8")
+
+    after = _run_validate(tmp_path, castings, **args)
+
+    assert after["cache"]["hit"] is False
+    assert after["dimensions"]["research_integration"]["ok"] is False
+    assert any(
+        "no casting references" in i.get("issue", "")
+        for i in after["dimensions"]["research_integration"]["issues"]
+    )
+
+
+def test_the_intent_matrix_going_missing_invalidates_a_cached_pass(
+    tmp_path: Path,
+):
+    """The same axis, on the input whose absence is an ERROR.
+
+    Prompt fidelity refuses when INTENT-01 is an active stream and the F0.7
+    matrix is not on disk. The matrix is a file, so a run can lose it — to a
+    re-decompose, a cleanup, a partial restore — between two calls with no
+    document touched, and the refusal that exists to catch exactly that is the
+    one the cache would skip.
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])]
+    args = dict(
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        # INTENT-01 is NOT skipped, which is what makes the matrix required,
+        # and the summary is stamped, so the run passes while the file is there.
+        manifest_extra={
+            "stream_skips": [],
+            "intent_coverage_summary": {"verdict": "PROPAGATED"},
+        },
+    )
+    matrix = tmp_path / ARCHIVE_DIR / "ownership-test" / "intent-coverage.json"
+    matrix.parent.mkdir(parents=True, exist_ok=True)
+    matrix.write_text("{}", encoding="utf-8")
+    # fallout D-117: and the marker vouching for THIS matrix, because the
+    # summary alone no longer carries the dimension. Stamped the way the F0.7
+    # gate stamps it — the digest, not the word "ok".
+    _stamp_intent_marker(matrix)
+
+    first = _run_validate(tmp_path, castings, **args)
+    assert first["passed"] is True, first["issues"]
+    assert first["cache"]["hit"] is False
+
+    # Proof the cache is live at all, or the assertion below proves nothing.
+    again = _run_validate(tmp_path, castings, **args)
+    assert again["cache"]["hit"] is True
+
+    matrix.unlink()
+
+    after = _run_validate(tmp_path, castings, **args)
+
+    assert after["cache"]["hit"] is False
+    assert after["passed"] is False
+    assert any(
+        i.get("issue") == "intent_coverage_record_incomplete"
+        for i in after["dimensions"]["prompt_fidelity"]["issues"]
+    )
+
+
+# ── The F0.7 anti-skip guard, which used to be able only to fail open ─────
+#
+# fallout D-117. Sub-check 7m's own prose in `intent_coverage.py` claimed
+# "Orchestrator's F0.9 sub-check 7m reads this marker to confirm F0.7 actually
+# ran (anti-skip discipline)" while nothing anywhere read `.f07-intent-clean`.
+# The two keys 7m did read — the matrix's presence and the manifest summary —
+# are both ABSENT-VALUE predicates, so any earlier pass satisfied them forever
+# and no failing path ever withdrew either. The tests below drive the state that
+# made that a hole: a verdict standing over a matrix that has since changed.
+
+
+def _matrix_and_marker(tmp_path: Path, body: str = "{}") -> Path:
+    """A run holding an F0.7 matrix and a marker vouching for exactly it."""
+    matrix = tmp_path / ARCHIVE_DIR / "ownership-test" / "intent-coverage.json"
+    matrix.parent.mkdir(parents=True, exist_ok=True)
+    matrix.write_text(body, encoding="utf-8")
+    _stamp_intent_marker(matrix)
+    return matrix
+
+
+#: What the two tests below hold constant: INTENT-01 active, so the matrix is
+#: required, and a stamped summary, so the only thing left to decide the
+#: dimension is whether the verdict answers for the matrix on disk.
+_INTENT_ACTIVE = {
+    "stream_skips": [],
+    "intent_coverage_summary": {"verdict": "PROPAGATED"},
+}
+
+
+def test_a_marker_vouching_for_this_matrix_passes_the_intent_check(
+    tmp_path: Path,
+):
+    """The positive control. A guard that refused every run would pass the
+    negative below and block F0.9 for everyone.
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])]
+    _matrix_and_marker(tmp_path)
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra=_INTENT_ACTIVE,
+    )
+
+    assert result["dimensions"]["prompt_fidelity"]["ok"] is True, result["issues"]
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_regenerated_matrix_withdraws_the_standing_f07_verdict(
+    tmp_path: Path,
+):
+    """THE HOLE, DRIVEN. F0.7 passed; the matrix was then regenerated and F0.7
+    was NOT re-run — which is precisely the skip the marker is named for.
+
+    Before this fix the run validated: intent-coverage.json still existed and
+    manifest.intent_coverage_summary still said PROPAGATED, and those were the
+    only two things 7m asked. Now the marker vouches for a digest the matrix no
+    longer has, and the refusal names both sides so a lead can see WHICH
+    document moved.
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])]
+    matrix = _matrix_and_marker(tmp_path)
+    stale_digest = _hash_file(matrix)
+
+    # The regeneration. Nothing else about the run changes — no document the
+    # old dimension read is touched.
+    matrix.write_text('{"matrix": [{"answer_id": "A-001"}]}', encoding="utf-8")
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra=_INTENT_ACTIVE,
+    )
+
+    assert result["passed"] is False
+    stale = [
+        i
+        for i in result["dimensions"]["prompt_fidelity"]["issues"]
+        if i.get("issue") == "intent_coverage_stale"
+    ]
+    assert stale, result["dimensions"]["prompt_fidelity"]["issues"]
+    detail = stale[0]["detail"]
+    assert INTENT_COVERAGE_STALE in detail
+    # Both sides named: what the marker vouches for, and what is on disk.
+    assert stale_digest in detail, detail
+    assert _hash_file(matrix) in detail, detail
+    assert any(
+        INTENT_COVERAGE_STALE in hint for hint in result["revision_hints"]
+    )
+
+
+def test_a_verdict_with_no_marker_at_all_does_not_carry_the_dimension(
+    tmp_path: Path,
+):
+    """The summary alone is not a verdict.
+
+    A manifest can be copied, restored or hand-edited into a run whose F0.7
+    never ran — the summary is a key in a document, and a key is cheap. The
+    marker is what the gate leaves behind, so its absence is the absence of a
+    verdict however complete the manifest looks.
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])]
+    matrix = _matrix_and_marker(tmp_path)
+    (matrix.parent / INTENT_CLEAN_MARKER).unlink()
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra=_INTENT_ACTIVE,
+    )
+
+    assert result["passed"] is False
+    assert any(
+        i.get("issue") == "intent_coverage_stale"
+        for i in result["dimensions"]["prompt_fidelity"]["issues"]
+    )
+
+
+def test_the_f07_gate_withdraws_its_own_standing_verdict_before_it_runs(
+    tmp_path: Path,
+):
+    """The other half of the same fix, driven at the writer.
+
+    `.validate-passed` is unlinked when F0.9 fails "so the marker only reflects
+    the latest verdict", and F0.7 had no such rule at all: both of its records
+    were written on the pass branch and removed by nothing. Withdrawal happens
+    on ENTRY, which covers the exits no return statement owns — a validator
+    crash, a raise, an interrupted run — and not only the six returns.
+    """
+    fdir = tmp_path / ARCHIVE_DIR / "ownership-test"
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    matrix = _matrix_and_marker(tmp_path)
+    manifest_path = fdir / "castings" / "manifest.json"
+    manifest_path.write_text(
+        json.dumps({"castings": [], "intent_coverage_summary": {"passed": True}}),
+        encoding="utf-8",
+    )
+
+    _clear_intent_verdict(fdir)
+
+    assert not (fdir / INTENT_CLEAN_MARKER).exists()
+    assert "intent_coverage_summary" not in json.loads(
+        manifest_path.read_text(encoding="utf-8")
+    )
+    # The matrix itself is the agent's artifact, not the gate's verdict, and is
+    # left exactly where it was.
+    assert matrix.is_file()
+
+
+def test_a_malformed_casting_does_not_stop_the_ownership_and_span_dimensions(
+    tmp_path: Path,
+):
+    """fallout GI-004 (D-151 / concern C-072) — WHAT THE RAISE ACTUALLY COST.
+
+    A casting whose `must_haves` is a list raised AttributeError out of
+    dimension 2, which runs BEFORE these two. So F0.9 answered an
+    unhandled-error banner and reported NOTHING — not the ownership check, not
+    the span table, not the requirement coverage — where the malformed casting
+    should have produced one named row and left every other verdict standing.
+
+    That is why the repair is a tolerant read plus a report rather than a
+    stricter manifest guard: refusing the whole document would have replaced a
+    traceback with a refusal and still told a lead nothing about the eleven
+    castings that are fine. Driven here rather than in the type-guard module
+    because the loss this defect caused is measured in THESE dimensions.
+    """
+    good = _casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])
+    broken = _casting(2, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])
+    broken["must_haves"] = ["a list, not a mapping"]
+
+    result = _run_validate(
+        tmp_path, [good, broken], spec_text=CLEAN_EXCERPT, state=CURRENT_RUN
+    )
+
+    # The malformed casting is NAMED, and named as itself.
+    completeness = result["dimensions"]["casting_completeness"]["issues"]
+    assert any(
+        i.get("casting") == 2 and "must_haves is of type list" in i.get("issue", "")
+        for i in completeness
+    ), completeness
+
+    # ...and both dimensions the raise used to pre-empt still answer.
+    assert result["dimensions"]["requirement_ownership"]["ok"] is True, result[
+        "dimensions"
+    ]["requirement_ownership"]
+    spans = {row["id"]: row for row in result["requirement_span"]["rows"]}
+    assert set(spans) >= {"US-001", "FR-009"}, sorted(spans)
+    assert spans["FR-009"]["owners"] == [1, 2], spans["FR-009"]
+    assert spans["FR-009"]["span"] == 2
+
+
+# ── The span, and the token that fires above the threshold ────────────────
+
+
+def test_the_span_table_names_every_requirement_the_spec_declares(tmp_path: Path):
+    """"A lead running F0.9 VALIDATE sees a span table listing every
+    requirement id the spec declares, the castings that own it, and the number
+    of owners."
+
+    Every id, not only the ones with a problem: the ones with a single owner
+    are the ownership picture too, and a table that showed only failures would
+    tell a lead nothing about the slice they are about to build.
+    """
+    castings = [
+        _casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+        _casting(2, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+    ]
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert sorted(r["id"] for r in _span(result)["rows"]) == ["FR-009", "US-001"]
+    assert _row(result, "US-001")["owners"] == [1, 2]
+    assert _row(result, "US-001")["span"] == 2
+    assert _span(result)["threshold"] == REQUIREMENT_SPAN_MAX
+
+
+def test_a_requirement_with_one_owner_is_a_row_like_any_other(tmp_path: Path):
+    """A single owner is the common case and the table's most useful row: it is
+    how a lead confirms who to dispatch a fix to.
+    """
+    castings = [
+        _casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+    ]
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert _row(result, "FR-009") == {
+        "id": "FR-009",
+        "owners": [1],
+        "span": 1,
+        "split_reason": None,
+    }
+    assert _span(result)["ok"] is True
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_span_at_the_threshold_passes(tmp_path: Path):
+    """The boundary itself is accepted: "more than two" is the refusal, so two
+    is the largest span that needs no reason. An off-by-one here would demand a
+    recorded reason for every ordinary two-surface requirement in the spec.
+    """
+    result = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+
+    assert _row(result, "FR-009")["span"] == REQUIREMENT_SPAN_MAX
+    assert _span(result)["ok"] is True
+    assert _span(result)["issues"] == []
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_span_above_the_threshold_with_no_reason_refuses_with_the_token(
+    tmp_path: Path,
+):
+    """"F0.9 refuses a requirement spanning three castings without
+    `split_reason`" — the token, the id and all three owners, named.
+
+    A refusal that named only the id would leave the lead grepping the manifest
+    for who has it; the owners are the actionable half.
+    """
+    result = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+    dim = _span(result)
+
+    assert dim["ok"] is False
+    errors = [i for i in dim["issues"] if i.get("severity") == "error"]
+    assert len(errors) == 2, dim["issues"]  # both shared ids are over
+    offender = next(i for i in errors if i["id"] == "FR-009")
+    assert offender["issue"] == REQUIREMENT_SPAN_EXCEEDED
+    assert offender["castings"] == [1, 2, 3]
+    assert offender["span"] == 3
+    assert REQUIREMENT_SPAN_EXCEEDED in offender["detail"]
+    assert "FR-009" in offender["detail"]
+    for owner in ("#1", "#2", "#3"):
+        assert owner in offender["detail"]
+    assert result["passed"] is False
+
+
+def test_the_refusal_hint_names_the_two_exits_a_lead_can_take(tmp_path: Path):
+    """A refusal with no way out teaches the reader to reach for --no-verify.
+
+    Both exits are real: regroup the requirement onto at most the threshold, or
+    record a reason. The second is driven by the very next test, which takes it
+    and passes.
+    """
+    result = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+    offender = next(
+        i for i in _span(result)["issues"] if i.get("id") == "FR-009"
+    )
+
+    assert "split_reason" in offender["hint"]
+    assert str(REQUIREMENT_SPAN_MAX) in offender["hint"]
+    assert any(
+        REQUIREMENT_SPAN_EXCEEDED in h and "FR-009" in h
+        for h in result["revision_hints"]
+    )
+    top = [i for i in result["issues"] if i.get("dimension") == "requirement_span"]
+    assert len(top) == 1
+    assert REQUIREMENT_SPAN_EXCEEDED in top[0]["message"]
+    assert "FR-009" in top[0]["message"]
+
+
+def test_the_same_manifest_passes_once_a_reason_names_the_id(tmp_path: Path):
+    """"adding a recorded reason for that id makes the same manifest pass, and
+    the reason is printed."
+
+    The SAME manifest — same castings, same ownership, same span — with one
+    `split_reason` entry added. Anything else changing between the two would
+    make this prove nothing.
+    """
+    reason = "the door, its report row and its command prose cannot share an owner"
+    before = _sharers(REQUIREMENT_SPAN_MAX + 1)
+    after = _sharers(REQUIREMENT_SPAN_MAX + 1, reason_on=1, reason=reason)
+    assert [c["requirement_ids"] for c in before] == [
+        c["requirement_ids"] for c in after
+    ]
+
+    refused = _run_validate(
+        tmp_path, before, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+    assert refused["passed"] is False
+
+    allowed = _run_validate(
+        tmp_path, after, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    row = _row(allowed, "FR-009")
+    assert row["span"] == 3
+    assert row["split_reason"] == reason
+    # The recorded reason is PRINTED, not merely honoured.
+    recorded = [
+        i for i in _span(allowed)["issues"] if i.get("issue") == "requirement_span_recorded"
+    ]
+    assert len(recorded) == 1
+    assert recorded[0]["id"] == "FR-009"
+    assert reason in recorded[0]["detail"]
+    assert recorded[0]["severity"] == "info"
+    # The OTHER shared requirement is still over the threshold with no reason,
+    # so the run is still refused — the exemption is for the requirement the
+    # reason names and for nothing else.
+    assert any(
+        i.get("id") == "US-001" and i.get("issue") == REQUIREMENT_SPAN_EXCEEDED
+        for i in _span(allowed)["issues"]
+    )
+
+
+def test_a_reason_recorded_at_the_manifest_top_level_exempts_too(tmp_path: Path):
+    """The other position a reason may be recorded in.
+
+    Both are authoritative and one derivation reads both, so a lead who records
+    the reason where it belongs — beside the casting, or at the top for a
+    reason that belongs to no single casting — is not refused for choosing the
+    other one.
+    """
+    reason = "one requirement, three surfaces, no shared owner"
+    castings = _sharers(REQUIREMENT_SPAN_MAX + 1)
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"split_reason": {"FR-009": reason, "US-001": reason}},
+    )
+
+    assert _row(result, "FR-009")["split_reason"] == reason
+    assert _span(result)["ok"] is True
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_reason_for_a_different_id_does_not_exempt(tmp_path: Path):
+    """The negative control that separates a recorded reason from a blanket
+    waiver: a reason names an id, and exempts THAT id.
+
+    Without this the cheapest way past the gate would be to record any reason
+    at all, which is a waiver dressed as a decision.
+    """
+    castings = _sharers(
+        REQUIREMENT_SPAN_MAX + 1, reason_on=1, reason="about something else"
+    )
+    castings[0]["split_reason"] = {"OT-038": "a requirement no casting here owns"}
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert _row(result, "FR-009")["split_reason"] is None
+    assert any(
+        i.get("id") == "FR-009" and i.get("issue") == REQUIREMENT_SPAN_EXCEEDED
+        for i in _span(result)["issues"]
+    )
+    assert result["passed"] is False
+
+
+def test_the_span_is_computed_from_the_persisted_field_and_not_the_prose(
+    tmp_path: Path,
+):
+    """"computes each requirement id's span from `requirement_ids`" — the
+    persisted claim, never the excerpt.
+
+    Driven where the two answers differ: three castings all DECLARE the same
+    requirement in their excerpts, and only one owns it. The span is one. A
+    prose-derived span would read three and refuse a manifest whose ownership
+    is unambiguous — and the ownership dimension is what reports the excerpts
+    that disagree, which is a different finding with a different fix.
+    """
+    castings = [
+        _casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+        _casting(2, excerpt=CLEAN_EXCERPT, owns=[]),
+        _casting(3, excerpt=CLEAN_EXCERPT, owns=[]),
+    ]
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert _row(result, "FR-009")["span"] == 1
+    assert _span(result)["ok"] is True
+    # ...and the disagreement IS reported, by the dimension whose question it is.
+    assert _issue_kinds(_ownership(result)) == [
+        "cited_but_not_owned",
+        "cited_but_not_owned",
+    ]
+
+
+def test_an_id_a_casting_owns_that_the_spec_never_declares_is_still_spanned(
+    tmp_path: Path,
+):
+    """Membership is the union of what the spec declares and what castings own.
+
+    An id could otherwise carry three owners and no row at all, and the span
+    rule — which is about ownership — would have nothing to act on.
+    """
+    castings = _sharers(REQUIREMENT_SPAN_MAX + 1)
+    for c in castings:
+        c["requirement_ids"] = ["US-001", "FR-009", "AC-042"]
+        c["spec_text"] = CLEAN_EXCERPT + "\n- **AC-042** [from A-017]: the span rule\n"
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert "AC-042" not in set(CLEAN_EXCERPT.split())
+    assert _row(result, "AC-042")["span"] == 3
+    assert any(
+        i.get("id") == "AC-042" and i.get("issue") == REQUIREMENT_SPAN_EXCEEDED
+        for i in _span(result)["issues"]
+    )
+
+
+def test_the_span_reports_not_computable_on_an_archive_predating_the_field(
+    tmp_path: Path,
+):
+    """The span is computed from the persisted field, so an archive that has no
+    such field has no span to report — and must not be blocked by one.
+    """
+    castings = [
+        _casting(1, excerpt=CLEAN_EXCERPT, include_owns=False),
+        _casting(2, excerpt=CLEAN_EXCERPT, include_owns=False),
+    ]
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state={"cycle": 0}, complete=True
+    )
+    dim = _span(result)
+
+    assert dim["not_computable"] is True
+    assert dim["ok"] is True
+    assert dim["rows"] == []
+    assert _issue_kinds(dim) == ["requirement_span_not_computable"]
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_split_reason_of_the_wrong_type_is_ignored_not_raised(tmp_path: Path):
+    """`split_reason` is not a shape the manifest's nested-shape guard judges.
+
+    A string where a map belongs must leave the id unexempted and the report
+    rendered — a tool never raises across the MCP boundary, and failing OPEN
+    here would be worse than failing closed: it would waive the rule.
+    """
+    castings = _sharers(REQUIREMENT_SPAN_MAX + 1)
+    castings[0]["split_reason"] = "because I said so"
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"split_reason": ["not", "a", "map"]},
+    )
+
+    assert isinstance(result, dict)
+    assert _row(result, "FR-009")["split_reason"] is None
+    assert result["passed"] is False
+
+
+# ── The table in the F0.9 payload ─────────────────────────────────────────
+
+
+def test_the_span_table_ships_as_records_and_as_a_rendered_block(tmp_path: Path):
+    """"The span table appears in the F0.9 output."
+
+    Both ways, because the tool has no display module of its own: `rows` for a
+    reader that will render them — the F6 report draws the same table — and
+    `text` for the lead reading F0.9's output directly.
+    """
+    castings = [
+        _casting(1, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+        _casting(2, excerpt=CLEAN_EXCERPT, owns=["FR-009"]),
+    ]
+    castings[1]["spec_text"] = (
+        "- **FR-009** [from A-009]: persist the ownership list at decompose time\n"
+    )
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+    table = result["requirement_span"]
+
+    assert table["threshold"] == REQUIREMENT_SPAN_MAX
+    assert table["not_computable"] is False
+    assert [r["id"] for r in table["rows"]] == ["FR-009", "US-001"]
+    assert "| requirement | owners | span | recorded reason |" in table["text"]
+    assert "| FR-009 | #1, #2 | 2 |" in table["text"]
+    assert "| US-001 | #1 | 1 |" in table["text"]
+
+
+def test_one_computation_feeds_the_table_and_the_refusal(tmp_path: Path):
+    """"Compute it ONCE and let both the refusal and the table read that one
+    computation, so the printed table and the refusal can never disagree about
+    who owns what."
+
+    Asserted as identity, not as equality: two lists that happen to match today
+    are two computations that can drift tomorrow, which is the whole shape this
+    rule exists to prevent.
+    """
+    result = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+
+    assert result["requirement_span"]["rows"] is _span(result)["rows"]
+    offender = next(
+        i for i in _span(result)["issues"] if i.get("id") == "FR-009"
+    )
+    assert offender["castings"] == _row(result, "FR-009")["owners"]
+
+
+def test_the_table_is_present_on_a_passing_manifest_as_well_as_a_failing_one(
+    tmp_path: Path,
+):
+    """The table is a REPORT, not a failure artefact. A lead reading a green
+    F0.9 should still see who owns what before dispatching the wave.
+    """
+    passing = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+    assert passing["passed"] is True, passing["issues"]
+    assert len(passing["requirement_span"]["rows"]) == 2
+    assert "| FR-009 | #1, #2 | 2 |" in passing["requirement_span"]["text"]
+
+    failing = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+    assert failing["passed"] is False
+    assert len(failing["requirement_span"]["rows"]) == 2
+    assert "| FR-009 | #1, #2, #3 | 3 |" in failing["requirement_span"]["text"]
+
+
+def test_an_exempted_row_carries_its_recorded_reason_into_the_table(tmp_path: Path):
+    """"with the recorded reason on any exempted row."
+
+    A waiver nobody can see is a waiver nobody reviews, so the reason travels
+    with the row rather than living only in the manifest a reader would have to
+    go open.
+    """
+    reason = "the door and its report row cannot share an owner"
+    result = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1, reason_on=2, reason=reason),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+
+    assert _row(result, "FR-009")["split_reason"] == reason
+    assert f"| FR-009 | #1, #2, #3 | 3 | {reason} |" in result["requirement_span"]["text"]
+    # A row with no reason prints one spelling of "nothing", not an empty cell.
+    assert "| US-001 | #1, #2, #3 | 3 | — |" in result["requirement_span"]["text"]
+
+
+def test_the_table_says_so_rather_than_rendering_empty_when_not_computable(
+    tmp_path: Path,
+):
+    """An empty table reads as "this spec has no requirements", which is a
+    different and alarming claim from "this archive predates the field".
+    """
+    castings = [_casting(1, excerpt=CLEAN_EXCERPT, include_owns=False)]
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state={"cycle": 0}, complete=True
+    )
+    table = result["requirement_span"]
+
+    assert table["not_computable"] is True
+    assert table["rows"] == []
+    assert "not computable" in table["text"]
+    assert str(REQUIREMENT_IDS_SCHEMA_FLOOR) in table["text"]
+    assert "|---|" not in table["text"]
+
+
+def test_the_table_orders_its_rows_deterministically(tmp_path: Path):
+    """A table whose row order depends on dict iteration is a table two runs
+    disagree about, and the F6 report renders these same records.
+    """
+    excerpt = (
+        "- **US-001** [from A-009]: a fix reaches every surface\n"
+        "- **FR-009** [from A-009]: persist the ownership list\n"
+        "- **AC-042** [from A-017]: refuse above the threshold\n"
+        "- **OT-038** [from A-017]: three castings without a reason\n"
+    )
+    castings = [_casting(1, excerpt=excerpt, owns=["OT-038", "AC-042", "FR-009", "US-001"])]
+
+    first = _run_validate(
+        tmp_path, castings, spec_text=excerpt, state=CURRENT_RUN, complete=True
+    )
+    second = _run_validate(
+        tmp_path, list(reversed(castings)), spec_text=excerpt, state=CURRENT_RUN,
+        complete=True,
+    )
+
+    assert [r["id"] for r in first["requirement_span"]["rows"]] == [
+        "AC-042", "FR-009", "OT-038", "US-001",
+    ]
+    assert first["requirement_span"]["text"] == second["requirement_span"]["text"]
+
+
+# ── The archives this release has to keep validating ──────────────────────
+#
+# THE SHAPES BELOW WERE MEASURED, NOT ASSUMED. Read off the three real archives
+# in this repository at the time this was written:
+#
+#   foundry-archive/daring-orca      archive_schema_version 3, 8 castings,
+#                                    none carrying `requirement_ids`
+#   foundry-archive/thunder-viper    no schema marker at all, 6 castings, none
+#                                    carrying `requirement_ids`
+#   foundry-archive/grand-vulture    no schema marker at all, 6 castings, none
+#                                    carrying `requirement_ids`
+#
+# Every one of them has requirement ids inside each casting's `spec_text` blob
+# and nowhere else, which is the state this field was added to replace — so all
+# three are exactly the archive a naive check would refuse, and all three must
+# validate. The shapes are rebuilt here against `tmp_path` rather than read out
+# of `foundry-archive/`, for two reasons: the validator WRITES to the run it
+# judges (a pass marker and a cache), which has no business touching a sealed
+# archive, and those directories are untracked, so a test that read them would
+# pass or skip depending on who ran it. The live check against the real
+# directories is the test after these; it skips where they are absent.
+
+
+def test_the_shape_of_a_schema_three_archive_still_validates(tmp_path: Path):
+    """`daring-orca`'s shape: a schema marker below the floor, eight castings,
+    no ownership list on any of them, requirement ids only in the prose.
+
+    The marker is 3 rather than absent, which is the case a floor comparison
+    has to get right and a truthiness test would not: `3` is present, non-zero
+    and still below the floor.
+    """
+    castings = [
+        _casting(cid, excerpt=CLEAN_EXCERPT, include_owns=False) for cid in range(1, 9)
+    ]
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state={"archive_schema_version": 3, "cycle": 29, "phase": "HALTED"},
+        complete=True,
+    )
+
+    assert _ownership(result)["archive_schema_version"] == 3
+    assert _ownership(result)["not_computable"] is True
+    assert _span(result)["not_computable"] is True
+    assert result["passed"] is True, result["issues"]
+
+
+def test_the_shape_of_an_archive_with_no_marker_at_all_still_validates(
+    tmp_path: Path,
+):
+    """`thunder-viper`'s and `grand-vulture`'s shape: no marker, six castings,
+    no ownership list.
+
+    Written before the marker existed, so absence is the only signal there is,
+    and it must read as "predates the field" rather than as "unknown, refuse".
+    """
+    castings = [
+        _casting(cid, excerpt=CLEAN_EXCERPT, include_owns=False) for cid in range(1, 7)
+    ]
+
+    result = _run_validate(
+        tmp_path,
+        castings,
+        spec_text=CLEAN_EXCERPT,
+        state={"cycle": 0, "phase": "F6"},
+        complete=True,
+    )
+
+    assert _ownership(result)["archive_schema_version"] == 0
+    assert _ownership(result)["not_computable"] is True
+    assert _span(result)["not_computable"] is True
+    assert result["passed"] is True, result["issues"]
+
+
+@pytest.mark.parametrize("run_name", ["daring-orca", "thunder-viper", "grand-vulture"])
+def test_the_real_archives_in_this_repository_report_not_computable(
+    tmp_path: Path, run_name: str
+):
+    """The same answer, driven against the ACTUAL manifest and state document.
+
+    The two tests above rebuild the shape; this one takes the bytes. The
+    documents are COPIED into a tmp_path run rather than judged in place,
+    because `foundry_validate_castings` writes a pass marker and a cache into
+    the run it judges and a sealed archive is not a place to write.
+
+    Skipped where the archives are absent — they are untracked, so a fresh
+    checkout has none, and a test that silently changed its verdict with the
+    contents of an ignored directory would be worse than one that says it did
+    not run.
+    """
+    source = Path(__file__).resolve().parents[4] / "foundry-archive" / run_name
+    manifest_path = source / "castings" / "manifest.json"
+    if not manifest_path.exists():
+        pytest.skip(f"{run_name} is not present in this checkout (untracked)")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    state_path = source / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+
+    result = _run_validate(
+        tmp_path,
+        manifest.get("castings", []),
+        manifest_extra={
+            k: v for k, v in manifest.items() if k not in ("castings",)
+        },
+        state=state,
+    )
+
+    assert _ownership(result)["not_computable"] is True, _ownership(result)["issues"]
+    assert _span(result)["not_computable"] is True
+    assert result["requirement_span"]["rows"] == []
+    # Whatever else this archive is told about, it is told nothing about a
+    # field that did not exist when it was written.
+    assert not any(
+        i.get("dimension") in ("requirement_ownership", "requirement_span")
+        for i in result["issues"]
+    )
+
+
+def test_owners_are_ordered_the_way_a_lead_reads_them(tmp_path: Path):
+    """Casting ids are integers, and ordering them by their printed form puts
+    #10 between #1 and #2 — in the F0.9 table AND in the F6 report that renders
+    the same records.
+
+    Driven at the only width where the two orderings differ, which is why this
+    needs twelve castings and not three: with single digits the wrong ordering
+    is indistinguishable from the right one.
+    """
+    castings = [
+        _casting(cid, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])
+        for cid in range(1, 13)
+    ]
+    castings[0]["split_reason"] = {
+        "US-001": "twelve surfaces, no shared owner",
+        "FR-009": "twelve surfaces, no shared owner",
+    }
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert _row(result, "FR-009")["owners"] == list(range(1, 13))
+    assert (
+        "| FR-009 | #1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12 | 12 |"
+        in result["requirement_span"]["text"]
+    )
+
+
+def test_an_id_spelled_as_a_string_still_orders_and_does_not_raise(tmp_path: Path):
+    """The ordering has to be TOTAL: a manifest is free to spell a casting id
+    as a string, and a sort that compared one to an integer would raise out of
+    F0.9 rather than render the table.
+    """
+    castings = [
+        _casting(2, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+        _casting("alpha", excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+        _casting(10, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"]),
+    ]
+
+    result = _run_validate(
+        tmp_path, castings, spec_text=CLEAN_EXCERPT, state=CURRENT_RUN, complete=True
+    )
+
+    assert _row(result, "FR-009")["owners"] == [2, 10, "alpha"]
+
+
+# ── The public span entry point: one table, two surfaces ──────────────────
+#
+# fallout AC-044 / CT-011 — the F0.9 gate refuses on this table and the F6
+# report prints it, and they have to be the SAME table. A second assembly on
+# the reporting side would be a second answer to "who owns this requirement",
+# free to disagree with the answer a run was passed or refused on, which is
+# exactly what "the span table appears in the F0.9 output AND in the F6 report"
+# forbids. `requirement_span_table` is the one public entry point that makes
+# that structural rather than a matter of two implementations agreeing.
+#
+# The tests below drive it the way the reporting surface does — with a run
+# directory and nothing else in hand — and drive the gate over the SAME run,
+# then compare. They also drive every shape the reporting surface can meet that
+# the gate never does, because the report must render where the gate refuses.
+
+
+def _span_table_for(project_root: Path, run_name: str = "ownership-test") -> dict:
+    """`requirement_span_table` the way a renderer calls it: paths only."""
+    fdir = project_root / ARCHIVE_DIR / run_name
+    return requirement_span_table(str(project_root), fdir)
+
+
+def test_the_entry_point_returns_the_gate_s_own_table(tmp_path: Path):
+    """The property the whole entry point exists for: a renderer that never
+    ran the gate still gets the gate's answer, key for key.
+
+    Driven over a manifest with a real over-threshold span, so the comparison
+    is over a table with something IN it — two empty tables matching proves
+    nothing about who owns what.
+    """
+    result = _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+    gate_table = result["requirement_span"]
+    assert gate_table["rows"], "the drive must produce a non-empty table"
+
+    table = _span_table_for(tmp_path)
+
+    assert table["problem"] is None
+    assert {k: v for k, v in table.items() if k != "problem"} == gate_table
+    # And the refusal the gate raised names the owners this table prints, so a
+    # lead reading the report sees what the gate acted on.
+    assert _row(result, "FR-009")["owners"] == next(
+        r for r in table["rows"] if r["id"] == "FR-009"
+    )["owners"]
+
+
+def test_the_entry_point_finds_the_run_when_it_is_given_no_directory(
+    tmp_path: Path,
+):
+    """`fdir=None` resolves the active run, for a caller that has only a root."""
+    _run_validate(
+        tmp_path,
+        _sharers(REQUIREMENT_SPAN_MAX + 1),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+    set_active_run("ownership-test")
+    try:
+        table = requirement_span_table(str(tmp_path))
+    finally:
+        clear_active_run()
+
+    assert table["rows"] == _span_table_for(tmp_path)["rows"]
+
+
+def test_an_absent_manifest_renders_an_empty_table_rather_than_refusing(
+    tmp_path: Path,
+):
+    """The reporting surface must not refuse. A run halted before decompose
+    legitimately has no manifest, and an empty table is what is true of it —
+    NOT "not computable", which would blame a schema floor for an absent
+    decomposition.
+    """
+    fdir = tmp_path / ARCHIVE_DIR / "no-manifest"
+    fdir.mkdir(parents=True)
+
+    table = requirement_span_table(str(tmp_path), fdir)
+
+    assert table["rows"] == []
+    assert table["not_computable"] is False
+    assert table["threshold"] == REQUIREMENT_SPAN_MAX
+    assert "no requirement ids" in table["text"].lower()
+
+
+def test_an_unreadable_manifest_is_named_rather_than_read_as_empty(
+    tmp_path: Path,
+):
+    """A corrupt manifest and an absent one are different claims, and a
+    renderer that could not tell them apart would print "no requirements" over
+    a file it simply failed to parse.
+    """
+    fdir = tmp_path / ARCHIVE_DIR / "corrupt"
+    (fdir / "castings").mkdir(parents=True)
+    (fdir / "castings" / "manifest.json").write_text('{"castings":', encoding="utf-8")
+
+    table = requirement_span_table(str(tmp_path), fdir)
+
+    assert table["problem"] is not None
+    assert "manifest.json" in table["problem"]
+    assert table["rows"] == []
+
+
+@pytest.mark.parametrize(
+    "castings",
+    ["not a list", [1, 2], [None]],
+    ids=["a-string", "a-list-of-ints", "a-list-of-nulls"],
+)
+def test_a_manifest_of_the_wrong_shape_is_named_rather_than_indexed(
+    tmp_path: Path, castings
+):
+    """D-132's shapes, at this door. Each is valid JSON that parses cleanly and
+    then meets `.get()` one rung in — an AttributeError across the MCP boundary
+    from a surface whose whole contract is a named answer.
+
+    Named rather than rendered empty, for the same reason the corrupt manifest
+    above is: an empty table reads as "no requirements", which is a different
+    and alarming claim about a file that is simply not a manifest.
+    """
+    fdir = tmp_path / ARCHIVE_DIR / "wrong-type"
+    (fdir / "castings").mkdir(parents=True)
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({"castings": castings}), encoding="utf-8"
+    )
+
+    table = requirement_span_table(str(tmp_path), fdir)
+
+    assert table["problem"] is not None
+    assert "castings" in table["problem"]
+    assert table["rows"] == []
+    assert table["not_computable"] is False
+
+
+def test_the_entry_point_reports_not_computable_on_a_legacy_archive(
+    tmp_path: Path,
+):
+    """fallout FR-054 — an archive predating the persisted ownership field
+    answers with the sentence the gate prints, not with an empty table, and the
+    two surfaces spell it the same because they share one rule.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_casting(1, excerpt=CLEAN_EXCERPT, include_owns=False)],
+        spec_text=CLEAN_EXCERPT,
+        state={"archive_schema_version": REQUIREMENT_IDS_SCHEMA_FLOOR - 1},
+    )
+    table = _span_table_for(tmp_path)
+
+    assert table["not_computable"] is True
+    assert result["requirement_span"]["not_computable"] is True
+    assert table["text"] == result["requirement_span"]["text"]
+    assert "not computable" in table["text"].lower()
+
+
+# ── What a `key_files` entry may be ───────────────────────────────────────
+#
+# fallout FR-009 — D-170. The manifest's ownership field is not only
+# `requirement_ids`; `key_files` is the OTHER ownership claim a casting makes,
+# and F0.9 is the door that accepts both. This module pinned the first and said
+# nothing about the second, which is how the two halves of the system came to
+# disagree about what a `key_files` entry may be: F0.9's own eight-entry cap is
+# what made a DIRECTORY entry the way to fit a new package under it, F0.9
+# accepted the manifest that used one, and the GRIND ownership resolver then
+# compared the same strings for equality and resolved thirteen files to no
+# casting at all.
+#
+# The contract, stated once at `foundry_validate._key_file_covers` and driven
+# here: an entry ending in a slash names a DIRECTORY and covers every path
+# beneath it; every other entry names a file and covers itself. Both dimensions
+# of this module that compare `key_files` against something ask coverage.
+#
+# The negative controls are the point as much as the positives. A prefix that
+# is not a path prefix (`src/pkg/` against `src/pkgx/one.py`) must NOT match,
+# and a directory a casting shares with nobody must not become an overlap with
+# itself — those are the two ways a coverage test goes wrong in the direction
+# that invents findings.
+
+#: A spec whose File Change Map names two files that sit inside one package.
+FILE_CHANGE_MAP_UNDER_A_PACKAGE = (
+    "## File Change Map\n"
+    "\n"
+    "| File | What changes |\n"
+    "|---|---|\n"
+    "| `src/pkg/one.py` | the packet |\n"
+    "| `src/pkg/two.py` | its sibling |\n"
+)
+
+
+def _owning(cid, *key_files: str) -> dict:
+    """A casting whose `key_files` are exactly ``key_files``."""
+    entry = _casting(cid, excerpt=CLEAN_EXCERPT, owns=["US-001", "FR-009"])
+    entry["key_files"] = list(key_files)
+    return entry
+
+
+def _overlap_rows(result: dict) -> list[dict]:
+    return result["dimensions"]["dependency_correctness"]["issues"]
+
+
+def _map_coverage(result: dict) -> dict:
+    return result["dimensions"]["file_change_map_coverage"]
+
+
+def test_a_directory_entry_and_a_file_beneath_it_are_one_file_two_castings(
+    tmp_path: Path,
+):
+    """The overlap this dimension exists to catch, spelled the way the cap
+    forces a package-carving casting to spell it.
+
+    Two teammates owning one file is the error the dimension raises, and the
+    directory spelling is the one shape in which it was invisible.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/"), _owning(2, "src/pkg/one.py")],
+    )
+
+    dim = result["dimensions"]["dependency_correctness"]
+    assert dim["ok"] is False, dim
+    rows = {r["file"]: r for r in _overlap_rows(result)}
+    assert "src/pkg/one.py" in rows, sorted(rows)
+    row = rows["src/pkg/one.py"]
+    assert sorted(str(c) for c in row["castings"]) == ["1", "2"]
+    assert row["via_directory"] == "src/pkg/"
+
+
+def test_the_overlap_hint_names_the_directory_and_not_only_the_file(
+    tmp_path: Path,
+):
+    """`src/pkg/one.py` appears in nobody's `key_files` literally, so a hint
+    naming only the file sends the lead looking for a line that is not there.
+    The hint has to name the entry that actually reaches it.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/"), _owning(2, "src/pkg/one.py")],
+    )
+
+    hints = [h for h in result["revision_hints"] if "src/pkg/one.py" in h]
+    assert hints, result["revision_hints"]
+    assert any("src/pkg/" in h and "directory" in h for h in hints), hints
+
+
+def test_a_path_that_merely_starts_with_the_directory_name_is_not_covered(
+    tmp_path: Path,
+):
+    """The control that separates a path prefix from a string prefix.
+
+    `src/pkgx/one.py` starts with `src/pkg` and is in a different package. The
+    trailing slash is what makes the reading segment-safe, which is why it is
+    part of the spelling and not decoration.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/"), _owning(2, "src/pkgx/one.py")],
+    )
+
+    assert result["dimensions"]["dependency_correctness"]["ok"] is True, (
+        _overlap_rows(result)
+    )
+
+
+def test_one_casting_owning_a_directory_and_a_file_inside_it_is_not_an_overlap(
+    tmp_path: Path,
+):
+    """An overlap is two CASTINGS, never one casting's own two entries.
+
+    Naming a package and then naming one file in it again is redundant, not a
+    conflict, and reporting it as an error would refuse a manifest that hands
+    every file to exactly one teammate.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/", "src/pkg/one.py"), _owning(2, "src/other.py")],
+    )
+
+    assert result["dimensions"]["dependency_correctness"]["ok"] is True, (
+        _overlap_rows(result)
+    )
+
+
+def test_a_manifest_of_file_entries_alone_reports_exactly_what_it_did_before(
+    tmp_path: Path,
+):
+    """The unchanged half, pinned so it stays unchanged.
+
+    For an entry naming a file, coverage and equality are the same question, so
+    a manifest with no directory entry must be answered by the same rows —
+    including the duplicate-file overlap, which still carries no
+    `via_directory` because no directory reached it.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/shared.py"), _owning(2, "src/shared.py")],
+    )
+
+    rows = _overlap_rows(result)
+    assert result["dimensions"]["dependency_correctness"]["ok"] is False
+    assert [r["file"] for r in rows] == ["src/shared.py"]
+    assert "via_directory" not in rows[0]
+
+
+def test_a_directory_entry_reaches_the_file_change_map_rows_beneath_it(
+    tmp_path: Path,
+):
+    """The other direction, and the one that is an ERROR.
+
+    Compared as bare strings, every file the map names under a casting's
+    directory entry reads as an orphan no teammate can reach — F0.9 refusing a
+    manifest whose slicing is correct, and refusing it for the spelling the cap
+    pushed the lead into.
+    """
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/")],
+        spec_text=FILE_CHANGE_MAP_UNDER_A_PACKAGE,
+    )
+
+    dim = _map_coverage(result)
+    assert dim["active"] is True
+    orphans = [i for i in dim["issues"] if i.get("issue") == "file_change_map_orphan"]
+    assert orphans == [], orphans
+    assert dim["ok"] is True
+    assert dim["covered"] == 0
+
+
+def test_a_directory_entry_that_reaches_a_mapped_file_is_not_scope_creep(
+    tmp_path: Path,
+):
+    """The same reading on the creep arm: an entry that covers a mapped file is
+    authorized by the map, whatever it is spelled as."""
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/")],
+        spec_text=FILE_CHANGE_MAP_UNDER_A_PACKAGE,
+    )
+
+    dim = _map_coverage(result)
+    creep = [i["file"] for i in dim["issues"]
+             if i.get("issue") == "file_change_map_scope_creep"]
+    assert creep == [], creep
+    assert dim["scope_creep"] == 0
+
+
+def test_a_directory_entry_that_reaches_no_mapped_file_is_still_scope_creep(
+    tmp_path: Path,
+):
+    """The control. A directory is not a blanket exemption — one covering
+    nothing the map names is exactly the overreach the creep warning is for."""
+    result = _run_validate(
+        tmp_path,
+        [_owning(1, "src/pkg/", "docs/notes/")],
+        spec_text=FILE_CHANGE_MAP_UNDER_A_PACKAGE,
+    )
+
+    dim = _map_coverage(result)
+    creep = [i["file"] for i in dim["issues"]
+             if i.get("issue") == "file_change_map_scope_creep"]
+    assert creep == ["docs/notes/"], creep
+
+
+# ── Shipped surface: is every file the run ships owned by SOMEBODY? ────────
+#
+# fallout D-172. The dimension above asks whether the File Change Map's rows
+# reach a teammate. This one asks the question NEITHER of them could: a file in
+# neither the map nor any `key_files` list is invisible to both by
+# construction, and 61 of this repository's own 159 shipped surfaces were
+# exactly that when the defect was measured — a parser package, eight agent
+# definitions, five commands, owned by nobody and refused by nothing.
+#
+# THE SURFACE IS DECLARED. A derived one — the directories `key_files` sits in,
+# or the union's common ancestor — reads correctly on a run that owns its whole
+# product and catastrophically on a brownfield run that touches three files of
+# a sixty-file directory. So the manifest says what ships and this dimension
+# measures the difference; a manifest that says nothing is NOT COMPUTABLE and
+# passes, which is what keeps every archive written before the field validating.
+#
+# The controls matter as much as the drives here, because every way this check
+# can silently disable itself looks exactly like a pass: an undeclared surface,
+# an empty declaration, a pattern with a typo in it. Each has a test that says
+# so out loud.
+
+
+def _surface(result: dict) -> dict:
+    return result["dimensions"]["surface_ownership"]
+
+
+def _ship(project_root: Path, *relative_paths: str) -> None:
+    """Write a file at each path under ``project_root`` — the shipped tree."""
+    for rel in relative_paths:
+        target = project_root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("shipped\n", encoding="utf-8")
+
+
+def _owns_everything(cid=1, *key_files: str) -> list[dict]:
+    """One casting, owning exactly ``key_files``, that validates on its own."""
+    return [_owning(cid, *key_files)]
+
+
+def test_a_manifest_that_declares_no_surface_reports_not_computable_and_passes(
+    tmp_path: Path,
+):
+    """The legacy reading, and the reason there is no schema floor here.
+
+    `requirement_ids` can be refused on ABSENCE because it became mandatory in
+    the generation that bumped the archive marker, so the marker separates a
+    manifest that predates the field from one that omits it. `surface_globs`
+    arrives inside that same generation with no bump — no marker separates the
+    two — so refusing on absence would refuse every archive of this generation
+    for a field its decompose never wrote. Absent is not computable, and the
+    run still validates.
+    """
+    _ship(tmp_path, "src/1.py", "src/orphan.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+    )
+
+    dim = _surface(result)
+    assert dim["not_computable"] is True
+    assert dim["ok"] is True
+    assert dim["unowned"] == []
+    assert _issue_kinds(dim) == ["surface_globs_not_computable"]
+    # And the whole gate still passes, which is the property that keeps every
+    # archive written before the field usable.
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_declared_surface_every_casting_reaches_passes(tmp_path: Path):
+    """The positive control. Nothing ships that nobody owns, so nothing fires."""
+    _ship(tmp_path, "src/1.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+
+    dim = _surface(result)
+    assert dim["not_computable"] is False
+    assert dim["ok"] is True
+    assert dim["surfaces"] == 1
+    assert dim["unowned"] == []
+    assert dim["issues"] == []
+    assert result["passed"] is True, result["issues"]
+
+
+def test_a_shipped_file_no_casting_owns_refuses_with_the_token(tmp_path: Path):
+    """The door. The same manifest that passed above, with one more file in the
+    tree and nobody named for it.
+
+    Driven as a PAIR against the test above rather than alone, because a
+    dimension that refuses everything is indistinguishable from a working one
+    when only its failures are driven.
+    """
+    _ship(tmp_path, "src/1.py", "src/parsers/prove.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+
+    dim = _surface(result)
+    assert dim["ok"] is False
+    assert dim["unowned"] == ["src/parsers/prove.py"]
+    assert dim["unowned_count"] == 1
+    assert dim["surfaces"] == 2
+
+    rows = [i for i in dim["issues"] if i.get("issue") == SURFACE_UNOWNED]
+    assert len(rows) == 1
+    assert rows[0]["file"] == "src/parsers/prove.py"
+    assert rows[0]["severity"] == "error"
+    assert "src/parsers/prove.py" in rows[0]["detail"]
+
+    # The top-level entry a lead reads, and the verdict it moves.
+    top = [i for i in result["issues"] if i.get("dimension") == "surface_ownership"]
+    assert len(top) == 1
+    assert SURFACE_UNOWNED in top[0]["message"]
+    assert result["passed"] is False
+
+
+def test_the_surface_refusal_hint_names_the_two_exits_a_lead_can_take(
+    tmp_path: Path,
+):
+    """A refusal that names no exit is a wall. Both exits are things a lead can
+    DO to the manifest: widen the ownership, or narrow the claim."""
+    _ship(tmp_path, "src/1.py", "src/orphan.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+
+    row = next(i for i in _surface(result)["issues"] if i.get("issue") == SURFACE_UNOWNED)
+    assert row["hint"] == _SURFACE_EXITS_HINT
+    assert "key_files" in row["hint"]
+    assert "surface_globs" in row["hint"]
+    # And the same one sentence reaches the revision hints, rather than a
+    # second spelling of the same two exits.
+    assert any(_SURFACE_EXITS_HINT in h for h in result["revision_hints"])
+
+
+def test_a_directory_entry_owns_every_surface_beneath_it(tmp_path: Path):
+    """The manifest format, asked the way the rest of this module asks it.
+
+    A casting carving a package names it once with a trailing slash — the cap
+    on `key_files` is what forces that spelling — and every file beneath is
+    owned. Compared as bare strings they would all read as unowned, which is
+    D-170's shape and the reason coverage is asked in exactly one place.
+    """
+    _ship(tmp_path, "src/pkg/a.py", "src/pkg/deep/b.py", "src/loose.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/pkg/", "src/loose.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+
+    dim = _surface(result)
+    assert dim["surfaces"] == 3
+    assert dim["unowned"] == []
+    assert dim["ok"] is True
+
+
+def test_tool_cache_and_run_archive_are_never_shipped_surface(tmp_path: Path):
+    """The exclusions, driven rather than asserted about the constant.
+
+    A glob names a tree and an extension; it cannot know that the run's own
+    archive, a virtualenv and a bytecode cache sit inside that tree. Reporting
+    them unowned would be reporting files no `key_files` entry could sanely
+    name.
+    """
+    _ship(
+        tmp_path,
+        "src/1.py",
+        f"src/{ARCHIVE_DIR}/old-run/notes.py",
+        "src/.venv/lib/thing.py",
+        "src/__pycache__/1.cpython-312.py",
+        "src/worktrees/casting-3/copy.py",
+    )
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+
+    dim = _surface(result)
+    assert dim["surfaces"] == 1, dim["unowned"]
+    assert dim["unowned"] == []
+    assert dim["ok"] is True
+
+
+def test_a_pattern_that_matches_nothing_is_named_rather_than_passing_quietly(
+    tmp_path: Path,
+):
+    """The failure mode that looks exactly like success.
+
+    A typo in a declared pattern disables the check for everything it was meant
+    to cover, and a dimension that reports `ok` for it is the same silence
+    D-172 was filed against. So a pattern reaching zero files is said out loud.
+    """
+    _ship(tmp_path, "src/1.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py", "sorc/**/*.md"]},
+    )
+
+    dim = _surface(result)
+    empty = [i for i in dim["issues"] if i.get("issue") == "surface_glob_matched_nothing"]
+    assert [i["glob"] for i in empty] == ["sorc/**/*.md"]
+    assert empty[0]["severity"] == "warning"
+    # A warning, not an error: the typo is worth naming, and refusing the whole
+    # gate for it would make a lead delete the declaration to get past F0.9.
+    assert dim["ok"] is True
+
+
+def test_an_absolute_or_escaping_pattern_is_reported_not_raised(tmp_path: Path):
+    """`Path.glob` refuses an absolute pattern outright on the Python floor, and
+    a surface outside the project is one no `key_files` entry could ever name.
+    Both are named entries, not tracebacks: a tool never raises across the MCP
+    boundary."""
+    _ship(tmp_path, "src/1.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["/etc/**/*.py", "../outside/**/*.py",
+                                          "src/**/*.py"]},
+    )
+
+    dim = _surface(result)
+    unusable = [i for i in dim["issues"] if i.get("issue") == "surface_glob_unusable"]
+    assert sorted(i["glob"] for i in unusable) == ["../outside/**/*.py", "/etc/**/*.py"]
+    # The usable pattern still did its job beside them.
+    assert dim["globs"] == ["src/**/*.py"]
+    assert dim["surfaces"] == 1
+    assert dim["ok"] is True
+
+
+def test_a_surface_globs_of_the_wrong_type_is_reported_not_raised(tmp_path: Path):
+    """The shape guard says nothing about this field, so anything reaches the
+    reader. A string where a list belongs is the shape that raised
+    `AttributeError` out of two other dimensions of this module."""
+    _ship(tmp_path, "src/1.py", "src/orphan.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": "src/**/*.py"},
+    )
+
+    dim = _surface(result)
+    assert dim["not_computable"] is False
+    assert [i.get("issue") for i in dim["issues"]] == [
+        "surface_glob_unusable",
+        "surface_globs_empty",
+    ]
+    assert dim["ok"] is True
+    # Every other dimension still rendered, which is what "reported" means.
+    assert "requirement_span" in result["dimensions"]
+
+
+def test_a_declared_but_empty_surface_says_so(tmp_path: Path):
+    """An empty list is a CLAIM — that the run ships nothing — and a run with
+    castings ships something. Absent stays a different answer from empty, as it
+    is one dimension up."""
+    _ship(tmp_path, "src/1.py")
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": []},
+    )
+
+    dim = _surface(result)
+    assert dim["not_computable"] is False
+    assert _issue_kinds(dim) == ["surface_globs_empty"]
+    assert dim["ok"] is True
+
+
+def test_every_unowned_surface_reaches_the_payload_however_many_get_prose(
+    tmp_path: Path,
+):
+    """The cap is on the NARRATION, never on the list a lead has to act on.
+
+    Twenty-five orphans produce twenty prose rows and twenty-five paths,
+    because one broken manifest must not bury the other dimensions in
+    paragraphs and must not hide a file either.
+    """
+    orphans = [f"src/orphan{n:02d}.py" for n in range(25)]
+    _ship(tmp_path, "src/1.py", *orphans)
+    result = _run_validate(
+        tmp_path,
+        _owns_everything(1, "src/1.py"),
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+
+    dim = _surface(result)
+    rows = [i for i in dim["issues"] if i.get("issue") == SURFACE_UNOWNED]
+    assert len(rows) == _SURFACE_ISSUE_CAP
+    assert dim["unowned"] == sorted(orphans)
+    assert dim["unowned_count"] == len(orphans)
+
+
+def test_a_new_unowned_surface_invalidates_a_cached_pass(tmp_path: Path):
+    """The PROJECT tree is a cache input, for the reason the run directory is.
+
+    A file added after a passing verdict moves no byte of the manifest and no
+    byte of the spec. A fingerprint built from documents alone would hand back
+    the pass given before the file existed — and this dimension's whole subject
+    is files that arrive without anyone claiming them.
+    """
+    _ship(tmp_path, "src/1.py")
+    args = dict(
+        spec_text=CLEAN_EXCERPT,
+        state=CURRENT_RUN,
+        complete=True,
+        manifest_extra={"surface_globs": ["src/**/*.py"]},
+    )
+    castings = _owns_everything(1, "src/1.py")
+
+    first = _run_validate(tmp_path, castings, **args)
+    assert first["cache"]["hit"] is False
+    assert _surface(first)["ok"] is True
+
+    # Proof the cache is live at all, or the assertion below proves nothing.
+    again = _run_validate(tmp_path, castings, **args)
+    assert again["cache"]["hit"] is True
+
+    _ship(tmp_path, "src/arrived-later.py")
+    after = _run_validate(tmp_path, castings, **args)
+
+    assert after["cache"]["hit"] is False
+    assert _surface(after)["ok"] is False
+    assert _surface(after)["unowned"] == ["src/arrived-later.py"]
+
+
+# ── The one per-casting map off the excerpt (fallout GI-024, concern C-099) ──
+#
+# WHAT C-099 REMOVED, AND WHY THE SENTENCE IT LEFT COULD NOT HOLD IT.
+# ``foundry_validate_castings`` once built TWO per-casting maps off the same
+# ``spec_text`` blob in the same manifest loop: the CITED one the ownership
+# dimension reads, and a DECLARED one that D-181 orphaned when it gave that
+# dimension its own derivation. The second was read by nothing. C-099 deleted it
+# and wrote the ruling into the annotation above ``covered_reqs`` — "There is
+# deliberately NO per-casting map of the declared side beside it ... a second
+# dict keyed by casting would be a derivation with no reader."
+#
+# That ruling is prose, and prose is what this release holds unpinnable. The
+# whole fix reverted against a byte-identical green suite, so nothing in the
+# tree refused the state it removed. The sibling one-definition claims ARE
+# pinned — ``tests/orchestration/test_module_boundaries.py`` walks TOP-LEVEL
+# definitions — and a FUNCTION-LOCAL dict is invisible to every one of them,
+# which is precisely why this shape needed an assertion of its own rather than a
+# sentence a reader has to agree with.
+#
+# The pin is stated in the two shapes a per-casting map has, because either one
+# alone leaves a door: a map DECLARED with a different annotation still has to
+# be FILLED off the casting record, and a map filled through some other key
+# still has to be declared. Both are asserted against a NAMED list rather than a
+# count, so a scan that has gone blind reports ``[]`` and fails exactly as
+# loudly as a second map does.
+
+#: The annotation a per-casting requirement-id map carries where it is
+#: declared: casting id -> the ids that casting's excerpt answers for.
+_PER_CASTING_ID_MAP_ANNOTATION = "dict[str, set[str]]"
+
+#: The manifest loop's own spelling of the key, and what makes a dict
+#: PER-CASTING rather than merely a dict: the id read off the casting record
+#: being iterated. ``invariant_hashes[cid]`` and its siblings key off a bound
+#: name and are a different question; this is the inline derivation.
+_CASTING_ID_KEY = 'str(c.get("id", ...))'
+
+#: The one map, by name. The ownership dimension asks its question of this and
+#: of the manifest's persisted ``requirement_ids``; nothing else off the excerpt
+#: is keyed by casting, and a second name here is the state C-099 removed.
+_THE_PER_CASTING_ID_MAP = "cited_by_casting"
+
+
+def _is_casting_id_key(node: ast.expr) -> bool:
+    """Is this subscript key ``str(c.get("id", ...))``?
+
+    Matched structurally rather than by unparsing, so the answer does not turn
+    on which quote character ``ast.unparse`` happens to emit.
+    """
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "str"
+        and len(node.args) == 1
+    ):
+        return False
+    inner = node.args[0]
+    return (
+        isinstance(inner, ast.Call)
+        and isinstance(inner.func, ast.Attribute)
+        and inner.func.attr == "get"
+        and isinstance(inner.func.value, ast.Name)
+        and inner.func.value.id == "c"
+        and bool(inner.args)
+        and isinstance(inner.args[0], ast.Constant)
+        and inner.args[0].value == "id"
+    )
+
+
+def _per_casting_id_maps(source: str) -> tuple[list[str], list[str]]:
+    """``(declared, filled)`` — the per-casting requirement-id maps in *source*.
+
+    DECLARED: a local annotated ``dict[str, set[str]]``.
+    FILLED:   a subscript store whose key is the casting record's own id, read
+              inline off the record being iterated.
+
+    Both sorted, because ``ast.walk`` does not promise source order and an
+    assertion that depends on traversal order is an assertion about the wrong
+    thing.
+    """
+    tree = ast.parse(source)
+    declared = sorted(
+        node.target.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and ast.unparse(node.annotation) == _PER_CASTING_ID_MAP_ANNOTATION
+    )
+    filled = sorted(
+        target.value.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Subscript)
+        and isinstance(target.value, ast.Name)
+        and _is_casting_id_key(target.slice)
+    )
+    return declared, filled
+
+
+def test_exactly_one_per_casting_map_is_built_off_the_excerpt():
+    """fallout GI-024 (concern C-099) — the ruling, as an assertion.
+
+    ``inspect.getsource`` rather than ``ast.parse(module.__file__)``: the pin
+    follows the function object, so the casting that eventually moves this
+    validator does not have to remember to repoint a path.
+    """
+    declared, filled = _per_casting_id_maps(
+        inspect.getsource(foundry_validate_castings)
+    )
+
+    assert declared == [_THE_PER_CASTING_ID_MAP], (
+        f"per-casting requirement-id map(s) DECLARED as "
+        f"{_PER_CASTING_ID_MAP_ANNOTATION} in foundry_validate_castings: "
+        f"{declared}. Exactly one is expected — {_THE_PER_CASTING_ID_MAP}, the "
+        "one the ownership dimension reads. A second is the derivation with no "
+        "reader C-099 removed; if it has acquired a reader, name the reader "
+        "here and widen this pin on purpose."
+    )
+    assert filled == [_THE_PER_CASTING_ID_MAP], (
+        f"per-casting requirement-id map(s) FILLED at "
+        f"{_CASTING_ID_KEY} in foundry_validate_castings: {filled}. The blob is "
+        "scanned ONCE, for the one question the ownership dimension asks of it."
+    )
+
+
+def test_a_reintroduced_second_map_is_seen_by_that_pin():
+    """The anchor: the pin above recognises the shape it is named for.
+
+    The tree is clean, and a scan over a clean function is green whether it
+    works or not. So the recogniser is driven over the exact source C-099
+    deleted — both statements, in their original spelling — and it must report
+    BOTH maps in BOTH shapes, or the assertions above prove nothing.
+    """
+    reintroduced = (
+        "def foundry_validate_castings(project_root='.'):\n"
+        "    covered_reqs: set[str] = set()\n"
+        "    declared_by_casting: dict[str, set[str]] = {}\n"
+        "    cited_by_casting: dict[str, set[str]] = {}\n"
+        "    for c in castings:\n"
+        "        casting_reqs = set(declared_requirement_ids(spec_text_field))\n"
+        '        declared_by_casting[str(c.get("id", "?"))] = casting_reqs\n'
+        '        cited_by_casting[str(c.get("id", "?"))] = set(\n'
+        "            cited_requirement_ids(spec_text_field)\n"
+        "        )\n"
+    )
+
+    declared, filled = _per_casting_id_maps(reintroduced)
+
+    assert declared == ["cited_by_casting", "declared_by_casting"], declared
+    assert filled == ["cited_by_casting", "declared_by_casting"], filled

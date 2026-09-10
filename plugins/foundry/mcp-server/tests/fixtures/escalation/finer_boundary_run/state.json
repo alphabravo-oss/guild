@@ -1,0 +1,447 @@
+{
+  "phase": "F5.5",
+  "cycle": 5,
+  "max_cycles": 0,
+  "temper": true,
+  "nyquist": true,
+  "spec_path": "foundry-archive/finer-boundary-run/spec.md",
+  "started_at": "2026-09-02T04:30:00.662915+00:00",
+  "server_version": "1.9.0",
+  "plugin_version": "4.10.0",
+  "server_root": "/repo/plugins/foundry",
+  "server_commit": "3f9c1a284d6b7e05aa1177c0d4e93b62f8a5c410",
+  "self_target": true,
+  "updated_at": "2026-09-02T05:45:59.676204+00:00",
+  "phase_times": {
+    "F1": {
+      "started_at": "2026-09-02T04:30:47.663052+00:00",
+      "ended_at": "2026-09-02T04:34:42.663737+00:00",
+      "duration": "3m 55s"
+    },
+    "F2": {
+      "started_at": "2026-09-02T05:06:02.669217+00:00",
+      "ended_at": "2026-09-02T05:24:50.672505+00:00",
+      "duration": "18m 48s"
+    },
+    "F3": {
+      "started_at": "2026-09-02T04:55:51.667436+00:00",
+      "ended_at": "2026-09-02T04:58:59.667984+00:00",
+      "duration": "3m 8s"
+    },
+    "F4": {
+      "started_at": "2026-09-02T05:24:50.672505+00:00",
+      "ended_at": "2026-09-02T05:27:58.673053+00:00",
+      "duration": "3m 8s"
+    },
+    "F5": {
+      "started_at": "2026-09-02T05:27:58.673053+00:00",
+      "ended_at": "2026-09-02T05:45:59.676204+00:00",
+      "duration": "18m 1s"
+    },
+    "F5.5": {
+      "started_at": "2026-09-02T05:45:59.676204+00:00"
+    }
+  },
+  "phase_history": [
+    {
+      "phase": "F1",
+      "entered_at": "2026-09-02T04:30:47.663052+00:00"
+    },
+    {
+      "phase": "F2",
+      "entered_at": "2026-09-02T04:34:42.663737+00:00"
+    },
+    {
+      "phase": "F3",
+      "entered_at": "2026-09-02T04:38:37.664422+00:00"
+    },
+    {
+      "phase": "F2",
+      "entered_at": "2026-09-02T04:41:45.664970+00:00"
+    },
+    {
+      "phase": "F3",
+      "entered_at": "2026-09-02T04:47:14.665929+00:00"
+    },
+    {
+      "phase": "F2",
+      "entered_at": "2026-09-02T04:50:22.666477+00:00"
+    },
+    {
+      "phase": "F3",
+      "entered_at": "2026-09-02T04:55:51.667436+00:00"
+    },
+    {
+      "phase": "F2",
+      "entered_at": "2026-09-02T04:58:59.667984+00:00"
+    },
+    {
+      "phase": "F2",
+      "entered_at": "2026-09-02T05:06:02.669217+00:00"
+    },
+    {
+      "phase": "F4",
+      "entered_at": "2026-09-02T05:24:50.672505+00:00"
+    },
+    {
+      "phase": "F5",
+      "entered_at": "2026-09-02T05:27:58.673053+00:00"
+    },
+    {
+      "phase": "F5.5",
+      "entered_at": "2026-09-02T05:45:59.676204+00:00"
+    }
+  ],
+  "inspect_modes": [
+    {
+      "cycle": 1,
+      "phase": "F2",
+      "mode": "FULL",
+      "rule": "first_of_phase",
+      "rule_detail": "phase-entry transition into F2",
+      "decided_by": "cast",
+      "decided_at": "2026-09-02T04:32:21.663326+00:00",
+      "required_streams": [
+        "trace",
+        "prove",
+        "test",
+        "research_audit",
+        "test01"
+      ],
+      "stream_scope": {
+        "trace": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "prove": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "test": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "research_audit": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "test01": {
+          "scope": "full",
+          "detail": "every item in scope"
+        }
+      },
+      "touched_files": [],
+      "prove_sample": [],
+      "diff_base": "",
+      "trace_skip": {
+        "skip": false,
+        "reason": "this INSPECT is recorded FULL (rule first_of_phase) \u2014 the full roster runs, and TRACE is in it"
+      }
+    },
+    {
+      "cycle": 2,
+      "phase": "F2",
+      "mode": "FULL",
+      "rule": "verifier_touched",
+      "rule_detail": "1 verifier file(s) changed: plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py",
+      "decided_by": "inspect_start",
+      "decided_at": "2026-09-02T04:40:11.664696+00:00",
+      "required_streams": [
+        "trace",
+        "prove",
+        "test",
+        "research_audit",
+        "test01"
+      ],
+      "stream_scope": {
+        "trace": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "prove": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "test": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "research_audit": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "test01": {
+          "scope": "full",
+          "detail": "every item in scope"
+        }
+      },
+      "touched_files": [
+        "plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py"
+      ],
+      "prove_sample": [],
+      "diff_base": "ac27f69b48850c71e9778d891b22bc49145f0a07",
+      "trace_skip": {
+        "skip": false,
+        "reason": "this INSPECT is recorded FULL (rule verifier_touched) \u2014 the full roster runs, and TRACE is in it"
+      }
+    },
+    {
+      "cycle": 3,
+      "phase": "F2",
+      "mode": "DELTA",
+      "rule": "delta",
+      "rule_detail": "",
+      "decided_by": "inspect_start",
+      "decided_at": "2026-09-02T04:48:48.666203+00:00",
+      "required_streams": [
+        "trace",
+        "prove",
+        "test"
+      ],
+      "stream_scope": {
+        "trace": {
+          "scope": "delta",
+          "detail": "symbols in the 1 file(s) the GRIND touched"
+        },
+        "prove": {
+          "scope": "delta",
+          "detail": "12 row(s): 2 tied to the fixed defects plus 10 sampled"
+        },
+        "test": {
+          "scope": "full",
+          "detail": "whole suite, cold, from a clean worktree"
+        },
+        "research_audit": {
+          "scope": "skipped",
+          "detail": "no file research_audit covers was touched"
+        },
+        "test01": {
+          "scope": "skipped",
+          "detail": "no file test01 covers was touched"
+        }
+      },
+      "touched_files": [
+        "plugins/foundry/mcp-server/tests/test_report.py"
+      ],
+      "prove_sample": [
+        "CT-007",
+        "CT-013",
+        "AC-002",
+        "AC-013",
+        "AC-022",
+        "CT-014",
+        "FR-038",
+        "FR-051",
+        "GI-002",
+        "GI-006",
+        "NFR-003",
+        "NFR-004"
+      ],
+      "diff_base": "6d839c60f6001f9424cc6d6d05ddbbbdaf91afd7",
+      "trace_skip": {
+        "skip": false,
+        "reason": "DELTA width over 1 touched file(s) \u2014 TRACE runs over the symbols the GRIND commits touched",
+        "details": {
+          "touched_files": [
+            "plugins/foundry/mcp-server/tests/test_report.py"
+          ]
+        }
+      }
+    },
+    {
+      "cycle": 4,
+      "phase": "F2",
+      "mode": "DELTA",
+      "rule": "delta",
+      "rule_detail": "",
+      "decided_by": "inspect_start",
+      "decided_at": "2026-09-02T04:57:25.667710+00:00",
+      "required_streams": [
+        "trace",
+        "prove",
+        "test"
+      ],
+      "stream_scope": {
+        "trace": {
+          "scope": "delta",
+          "detail": "symbols in the 1 file(s) the GRIND touched"
+        },
+        "prove": {
+          "scope": "delta",
+          "detail": "12 row(s): 2 tied to the fixed defects plus 10 sampled"
+        },
+        "test": {
+          "scope": "full",
+          "detail": "whole suite, cold, from a clean worktree"
+        },
+        "research_audit": {
+          "scope": "skipped",
+          "detail": "no file research_audit covers was touched"
+        },
+        "test01": {
+          "scope": "skipped",
+          "detail": "no file test01 covers was touched"
+        }
+      },
+      "touched_files": [
+        "plugins/foundry/mcp-server/tests/test_evidence.py"
+      ],
+      "prove_sample": [
+        "CT-007",
+        "CT-013",
+        "AC-002",
+        "AC-013",
+        "AC-014",
+        "AC-022",
+        "AC-036",
+        "CT-014",
+        "FR-023",
+        "FR-042",
+        "GI-006",
+        "NFR-002"
+      ],
+      "diff_base": "08ce784b7a760d7161a4859d5d63f996caff37a1",
+      "trace_skip": {
+        "skip": false,
+        "reason": "DELTA width over 1 touched file(s) \u2014 TRACE runs over the symbols the GRIND commits touched",
+        "details": {
+          "touched_files": [
+            "plugins/foundry/mcp-server/tests/test_evidence.py"
+          ]
+        }
+      }
+    },
+    {
+      "cycle": 5,
+      "phase": "F2",
+      "mode": "FULL",
+      "rule": "final_gate",
+      "rule_detail": "the F2->F2 widening re-open: the preceding DELTA INSPECT came back clean, so this crossing is the INSPECT before ASSAY",
+      "decided_by": "inspect_start",
+      "decided_at": "2026-09-02T05:04:28.668943+00:00",
+      "required_streams": [
+        "trace",
+        "prove",
+        "test",
+        "research_audit",
+        "test01"
+      ],
+      "stream_scope": {
+        "trace": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "prove": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "test": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "research_audit": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "test01": {
+          "scope": "full",
+          "detail": "every item in scope"
+        }
+      },
+      "touched_files": [],
+      "prove_sample": [],
+      "diff_base": "ef7ecda3a25223784d333248f57fb4f2c320b564",
+      "trace_skip": {
+        "skip": false,
+        "reason": "this INSPECT is recorded FULL (rule final_gate) \u2014 the full roster runs, and TRACE is in it"
+      }
+    },
+    {
+      "cycle": 5,
+      "phase": "F5",
+      "mode": "FULL",
+      "rule": "first_of_phase",
+      "rule_detail": "phase-entry transition into F5",
+      "decided_by": "temper",
+      "decided_at": "2026-09-02T05:26:24.672779+00:00",
+      "required_streams": [
+        "trace",
+        "prove",
+        "test",
+        "research_audit",
+        "test01"
+      ],
+      "stream_scope": {
+        "trace": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "prove": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "test": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "research_audit": {
+          "scope": "full",
+          "detail": "every item in scope"
+        },
+        "test01": {
+          "scope": "full",
+          "detail": "every item in scope"
+        }
+      },
+      "touched_files": [],
+      "prove_sample": [],
+      "diff_base": "ef7ecda3a25223784d333248f57fb4f2c320b564",
+      "trace_skip": {
+        "skip": false,
+        "reason": "this INSPECT is recorded FULL (rule first_of_phase) \u2014 the full roster runs, and TRACE is in it"
+      }
+    }
+  ],
+  "spend": {
+    "by_phase": {
+      "F1": {
+        "tokens": 1240000,
+        "duration_ms": 3000000,
+        "agents": 3,
+        "unreported": 1
+      },
+      "F2": {
+        "tokens": 980000,
+        "duration_ms": 3000000,
+        "agents": 2,
+        "unreported": 3
+      },
+      "F3": {
+        "tokens": 610000,
+        "duration_ms": 1800000,
+        "agents": 1,
+        "unreported": 1
+      }
+    },
+    "by_cycle": {
+      "1": {
+        "tokens": 980000,
+        "duration_ms": 3000000,
+        "agents": 2,
+        "unreported": 3
+      },
+      "2": {
+        "tokens": 610000,
+        "duration_ms": 1800000,
+        "agents": 1,
+        "unreported": 1
+      }
+    },
+    "total": {
+      "tokens": 2830000,
+      "duration_ms": 7800000,
+      "agents": 6,
+      "unreported": 5
+    }
+  }
+}

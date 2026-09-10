@@ -26,18 +26,98 @@ import os
 import re
 import shlex
 import subprocess
+import time
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
-from foundry_mcp.tools.foundry_handoff import _hash_str
-from foundry_mcp.tools.foundry_spawn import _manifest_shape_problem
-from foundry_mcp.tools.foundry_state import get_run_dir, read_document
+# fallout FR-063 / GI-033 / D-127 — READ FROM THE LEAF, NOT THROUGH A LIFECYCLE
+# MODULE THAT RE-EXPORTS IT.
+#
+# This line used to be `from foundry_mcp.tools.foundry_spawn import
+# _manifest_shape_problem`, and `foundry_spawn` is a lifecycle module by GI-033
+# and a member of the boundary guard's own `_LIFECYCLE_FLOOR` by name. It was
+# never a lifecycle SYMBOL: concern C-060 moved the predicate into the leaf
+# `artifacts.py` precisely "because verifier modules were reaching it through a
+# lifecycle module, which is GI-033's violation column", and `foundry_spawn`'s
+# own import of it has been a bare re-export alias ever since — the two names
+# are the same object. This module was simply not repointed with the others, so
+# the edge outlived the reason for it.
+#
+# THE ALIAS IS LOAD-BEARING, for the reason `foundry_spawn` and
+# `foundry_validate` both record at their copies of this line: D-134's scan
+# recognises a manifest reader as GUARDED by the NAME it calls, pinned to
+# `_manifest_shape_problem` / `_manifest_shape_error` by
+# `tests/test_spawn_progress.py#test_the_locked_validator_names_are_still_the_
+# ones_the_scan_looks_for`. Importing the leaf's public spelling under its own
+# name would leave the guard standing and report this module's manifest reader
+# as UNGUARDED — a failure that looks like a finding.
+#
+# fallout FR-063 / GI-033 (D-191) — AND THE SAME SENTENCE NOW CARRIES TWO MORE
+# SYMBOLS, WHICH IS THE HALF OF D-127 THIS MODULE COULD NOT CLOSE THEN.
+#
+# The line above this block used to be `from foundry_mcp.tools.foundry_handoff
+# import _hash_str, declared_requirement_ids`, and it was the tree's ONE
+# verifier-to-lifecycle crossing outside GI-033's named transitions-to-halt
+# seam: `foundry_handoff` is lifecycle by the boundary guard's own
+# `_LIFECYCLE_FLOOR` and this module is a verifier by the same guard's
+# `_VERIFIER_MODULES`, by `vocab.VERIFIER_PATH_PATTERNS` and by the spec's
+# dependency-flow paragraph. D-127 widened the guard so the crossing could be
+# SEEN; D-191 is the record that seeing it was never the same as closing it.
+#
+# NEITHER SYMBOL WAS EVER LIFECYCLE MATERIAL, which is why the remedy is a
+# repoint and not a redesign. `_hash_str` is the published spelling of a string
+# digest and has been defined in this leaf since C-067 moved it; `foundry_handoff`
+# has been re-importing it from here all along, so reading it there was reaching
+# through a lifecycle module for a leaf symbol — the identical shape the
+# `_manifest_shape_problem` paragraph above records. `declared_requirement_ids`
+# is pure text over `REQUIREMENT_ID_RE.pattern` and joined it in the leaf under
+# D-191, in the same hoisted section and for the same stated arithmetic: the two
+# layers are mutually unreachable, so a symbol read from BOTH can live in
+# neither.
+#
+# A LAZY IMPORT WOULD NOT HAVE DONE. `tests/orchestration/test_module_boundaries.py
+# #test_no_verifier_module_reaches_a_lifecycle_module_lazily_either` says a lazy
+# import is still a reach, "asserted over EVERY import in the file", and the
+# lifecycle direction takes no exception at any depth. Deferring the import is
+# the same crossing with the evidence hidden, and it is not what this is.
+#
+# fallout AC-061 / GI-033 (D-192, concern C-107) — AND THE NEXT THREE NAMES ARE
+# THE ACCEPTANCE DOOR'S, WHICH IS WHY THEY ARE IN THE LEAF AT ALL.
+# `foundry_accept_casting` moved into this module because it RUNS
+# `verify_evidence`; the move put a verifier-layer reader on the ledger writer,
+# the prompt-hash rung and the spec-hash reader, each of which keeps a
+# lifecycle-layer reader too (`orchestration/directives.py` and
+# `tools/concerns.py` for the writer, `orchestration/fix_gate.py` for the rung,
+# the registrar for the reader). A symbol read from both layers can live in
+# neither, so all three sit in `tools/artifacts.py` and this module reads them
+# there. See the banner above the door at the foot of this file.
+from foundry_mcp.tools.artifacts import (
+    _hash_str,
+    check_reported_prompt_hash,
+    declared_requirement_ids,
+    foundry_spec_hash,
+    manifest_shape_problem as _manifest_shape_problem,
+    record_handoff_event,
+)
+# The citation grammar and the symbol-resolution guard, both leaves. The
+# acceptance door below is their only reader in this module: FR-004 / AC-005 put
+# the cite grammar in `tools/citation.py` so the gate and the resolution guard
+# cannot drift apart, and reading it anywhere else would be a second grammar.
+from foundry_mcp.tools.citation import CITATION_PATTERN, unresolved_symbol_cites
+from foundry_mcp.tools.foundry_state import (
+    document_refusal,
+    get_run_dir,
+    read_document,
+    read_text_file,
+)
 from foundry_mcp.tools.worktree_helpers import (
     _PRUNE_DONE_FOR,
-    _WORKTREE_LOCK,
+    _child_environment,
     _prune_orphaned_worktrees,
     _run_command_with_timeout,
     _setup_worktree,
@@ -62,6 +142,7 @@ KNOWN_EVIDENCE_FAILURE_TOKENS: tuple[str, ...] = (
     "EVIDENCE_NETWORK_VIOLATION",        # Phase 4 / EVID-01 reserved; never fires; activated by future per-evidence network-deny opt-in
     "EVIDENCE_REQUIREMENT_UNBOUND",      # Phase 5 / EVID-02 addition
     "EVIDENCE_FOR_MALFORMED",            # Phase 5 / EVID-02 addition
+    "EVIDENCE_COMMAND_SYNTAX",           # fallout / US-008 — CT-015 parse-before-execute
 )
 
 # Sanity-bounded timeout discipline. Default fires when an evidence file omits
@@ -128,24 +209,34 @@ _KNOWN_HEADER_DIRECTIVES: frozenset[str] = frozenset(
 # ignored so Phase 5's introduction lands without parser edits — Phase 5
 # grep contract from CONTEXT.md.
 # ---------------------------------------------------------------------------
+# D-076: A DIRECTIVE IS ONE LINE. Every whitespace class here is ``[ \t]`` and
+# never ``\s``, because Python's ``\s`` MATCHES ``\n`` — and this pattern is
+# applied with ``re.MULTILINE`` to a multi-line block, so a ``\s*`` beside the
+# colon was free to walk off the end of its own line. A directive with an empty
+# value then took its value from the NEXT line of the header: ``# evidence-cmd:``
+# followed by ``# evidence-cmd: if [ 1 ; then`` resolved to the whole of that
+# second line, ``'# evidence-cmd: if [ 1 ; then'`` — a string that is an inert
+# shell comment, so the sweep ran a no-op and refused the crossing as an output
+# mismatch, naming nothing about the typo that caused it.
+#
+# The narrowing also ends a split INSIDE THIS MODULE. ``_is_directive_line``
+# reads ``_EVIDENCE_DIRECTIVE_LINE_RE``, which is already strictly line-oriented
+# (``[ \t]`` throughout), and is documented there as "the WRITER'S grammar" —
+# so the writer and the reader disagreed about what a directive line is, and
+# ``evidence.py`` held both halves of the disagreement. They now spell one rule.
+#
+# ``(\S.*?)`` requires the value to BEGIN on the directive's own line: an empty
+# or whitespace-only value is not a match at all, so the scan simply continues
+# and the first directive line that actually carries a value wins. That is what
+# the guard's Check 4 does (``plugins/foundry/hooks/pre-commit-guard.sh``), and
+# it is why the two doors of US-008 can no longer resolve different text from
+# the same bytes. Verified invariant over the committed corpus: every log and
+# every test fixture parses to the identical header under both spellings.
 _EVIDENCE_HEADER_LINE_RE = re.compile(
-    r"^\s*#\s*evidence-([a-z][a-z0-9-]*)\s*:\s*(.+?)\s*$",
+    r"^[ \t]*#[ \t]*evidence-([a-z][a-z0-9-]*)[ \t]*:[ \t]*(\S.*?)[ \t]*$",
     re.MULTILINE,
 )
 _EVIDENCE_HEADER_BLOCK_RE = re.compile(r"\A(?:#[^\n]*\n|[ \t]*\n)+")
-
-# Phase 5 / EVID-02 — the requirement-ID grammar, READ from the vocabulary
-# module rather than re-typed here.
-#
-# D-150: this was a hand-copied literal whose comment claimed to be a
-# "single-source-of-truth ... re-used from foundry_handoff.py" while being the
-# second of seven copies. All seven knew the same seven families and none knew
-# OT- or GI-, so `# evidence-for: OT-011` parsed to the EMPTY LIST and was
-# dropped without a word — an evidence file could never bind to an observable
-# truth, and EVID-02's requirement-binding check could never see one. The
-# canonical pattern is a strict superset of what this copy matched, so no
-# `# evidence-for:` header that bound before binds less now (NFR-002).
-_REQUIREMENT_ID_RE: re.Pattern[str] = REQUIREMENT_ID_RE
 
 
 def _parse_evidence_header(text: str) -> dict[str, Any]:
@@ -169,8 +260,12 @@ def _parse_evidence_header(text: str) -> dict[str, Any]:
     time and raises ``EVIDENCE_VOLATILE_MALFORMED`` on ``re.error``. Plan
     04-02 SUMMARY documents this application-time-validation choice.
 
-    Multiple ``# evidence-cmd:`` lines: first wins; subsequent ignored. Plan
-    04-04 may upgrade to a hard-fail if abuse surfaces.
+    Multiple ``# evidence-cmd:`` lines: the first one CARRYING A VALUE wins;
+    subsequent ones are ignored. A directive whose value is empty or only
+    whitespace is not a directive match at all (D-076 — see the comment on
+    ``_EVIDENCE_HEADER_LINE_RE``), so the scan continues past it rather than
+    resolving it from the following line. Plan 04-04 may upgrade to a hard-fail
+    if abuse surfaces.
 
     Phase 5 grep contract: unknown ``# evidence-*:`` directives are silently
     ignored at this parser level. Phase 5 owns the parsing of its own
@@ -227,7 +322,42 @@ def _parse_evidence_header(text: str) -> dict[str, Any]:
             # Multiple ``# evidence-for:`` lines accumulate (mirrors
             # ``# evidence-volatile:`` multi-line discipline). De-dup is
             # caller responsibility; declared order preserved.
-            ids = _REQUIREMENT_ID_RE.findall(raw_val)
+            #
+            # THE GRAMMAR IS `schemas/vocab.py#REQUIREMENT_ID_RE`, READ UNDER
+            # ITS OWN NAME — NEITHER RE-TYPED NOR REBOUND.
+            #
+            # D-150: this scan ran over a hand-copied literal whose comment
+            # called itself a "single-source-of-truth ... re-used from
+            # foundry_handoff.py" while being the second of seven copies. All
+            # seven knew the same seven families and none knew OT- or GI-, so
+            # `# evidence-for: OT-011` parsed to the EMPTY LIST and was
+            # dropped without a word — an evidence file could never bind to an
+            # observable truth, and EVID-02's requirement-binding check could
+            # never see one. The declaration is a strict superset of what that
+            # copy matched, so no `# evidence-for:` header that bound before
+            # binds less now (NFR-002).
+            #
+            # fallout AC-015 / OT-011 (D-219, concern C-127) — AND NO PRIVATE
+            # REBINDING STANDS BETWEEN THE DECLARATION AND THIS CALL.
+            #
+            # This module carried `_REQUIREMENT_ID_RE: re.Pattern[str] =
+            # REQUIREMENT_ID_RE` at module scope for this single use — a THIRD
+            # top-level definition of a name whose homes do not agree about
+            # what it means. `schemas/vocab.py`'s private alias is the same
+            # object; `tools/test_deriver.py#_REQUIREMENT_ID_RE` is a SECOND,
+            # NARROWER grammar (US- and FR- only) that its `# tests-spec:`
+            # header parser needs. One spelling over two grammars is what
+            # D-219 was filed about, and a third binding of it here — for one
+            # call, to an object this module does not own — read as though
+            # this module had a grammar of its own.
+            #
+            # `test_deriver`'s fork does NOT close the same way and must not:
+            # importing the declaration there would silently widen TEST-01's
+            # `# tests-spec:` header grammar to all twelve families, and
+            # GI-003 keeps that stream narrow and code-blind. Its exit is a
+            # rename, or an import argued for against the header — never an
+            # import taken because this one was.
+            ids = REQUIREMENT_ID_RE.findall(raw_val)
             if raw_val and not ids:
                 raise ValueError(
                     f"EVIDENCE_FOR_MALFORMED: no requirement IDs found in {raw_val!r}"
@@ -745,13 +875,41 @@ class _EnvironmentalGrammar:
 #: notably a byte-size and a content hash, which the lead's brief anticipated
 #: but which no committed log varies and no teammate.md example declares.
 #: Adding one means adding its witness, which is the point.
+#:
+#: D-051: ``witness`` is checked BY NAME. The corpus rung used to ask only
+#: whether SOME committed log erased a token of the shape, so it never read
+#: the name beside it, and four entries went on citing `casting-1-pytest.log`,
+#: `casting-3-observations.log` and `casting-8-suite.log` for cycles after the
+#: tree stopped holding them — the human-readable pointer outliving the corpus
+#: while the mechanical rung stayed green. ``_grammar_witness_sweep`` now
+#: RESOLVES the named log and re-derives the shape from THAT log's own
+#: declarations, so a repointed or retired witness turns the sweep red rather
+#: than passing on a sibling's evidence. Repointing an entry means naming a
+#: log the tree holds today which declares this shape today; the trailing
+#: comments below record where each pointer moved from.
+#:
+#: C-103: a witness must not be collateral damage. ``planning_root`` and
+#: ``archive_root`` used to cite ``casting-10-blast-radius.log``, a
+#: deliberately WIDE log driving four peer-owned modules — and the standing
+#: ruling on a log like that is to stop printing its population and print a
+#: derived verdict, which applied to that body deletes the skip roster and
+#: with it both witness tokens. The next casting to apply the ruling would
+#: have turned a test in this module's own suite red from a commit in another
+#: casting's file, and nothing in the log, the ruling or the recapture
+#: instructions said so. A witness wants to be narrow and stable; a
+#: blast-radius log wants to be wide and derived; one log cannot be both. The
+#: two entries moved to ``casting-5-corpus-witness.log``, whose only job is to
+#: be that witness and which states the obligation in its own body — the one
+#: place a recapture actually happens. Every corpus witness below now names a
+#: log owned by the same casting as this registry, which is what keeps a
+#: peer's commit from being able to kill a grammar's witness at all.
 _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
     "duration_seconds": _EnvironmentalGrammar(
         token=re.compile(r"\d+\.\d+s"),
         varies_in="digits",
         key=None,  # the `s` unit is in the token
         witness_kind="corpus",
-        witness="casting-1-pytest.log",
+        witness="casting-5-both-doors.log",  # D-051: was casting-1-pytest.log
         witness_pair=("", "0.47s", "0.76s"),
         falsifier=("", "0.47", "0.76"),  # strip the unit: a bare ratio-less number
         note=(
@@ -787,7 +945,8 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         varies_in="text",
         key=re.compile(r"(?:^|\s)rootdir:$"),
         witness_kind="corpus",
-        witness="casting-3-observations.log",
+        # D-051: was casting-3-observations.log
+        witness="casting-5-platform-witness.log",
         witness_pair=(
             "rootdir:",
             "/Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server",
@@ -811,7 +970,7 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         varies_in="text",
         key=re.compile(r"(?:^|\s)platform \S+ -- Python \S+.* --$"),
         witness_kind="corpus",
-        witness="casting-5-protocol-prose.log",
+        witness="casting-5-platform-witness.log",
         witness_pair=(
             "platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 --",
             "/Users/rayjanoka/.cache/uv/builds-v0/.tmphgnUSu/bin/python",
@@ -824,11 +983,27 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         ),
         note=(
             "the interpreter pytest -v reports, which under uv is a per-build "
-            "temp directory: 6 of the 16 path disagreements, one per log that "
-            "declares the whole `platform … --` line. The varying segment is "
-            "INTERIOR (`.tmphgnUSu` against `.tmpvRAwWQ`), which is why the "
-            "bound is this key and not a rule about where in the path the "
-            "disagreement sits — see the block comment."
+            "temp directory. The varying segment is INTERIOR (`.tmphgnUSu` "
+            "against `.tmpvRAwWQ`), which is why the bound is this key and not "
+            "a rule about where in the path the disagreement sits — see the "
+            "block comment.\n\n"
+            "D-003/D-045/D-019: only `pytest -v` prints the interpreter at "
+            "all, and for a while no committed log ran `-v` — the logs that "
+            "once witnessed this entry were recaptured at `-q` or deferred, "
+            "and the entry outlived every one of them while still naming a "
+            "log the tree no longer holds. It is kept rather than retired "
+            "because the field it admits is not hypothetical: the same "
+            "declaration a `-q` log already carries "
+            "(`casting-10-blast-radius.log`'s `(?:^|\\s)platform \\S+ -- "
+            "Python \\S+.*`) swallows this path the moment anyone adds `-v`, "
+            "and a sweep re-executes in a detached worktree with no project "
+            "`.venv`, where uv builds a FRESH `builds-v0/.tmpXXXXXX` env every "
+            "run. So a `-v` log's interpreter disagrees on every honest "
+            "verification, and without this entry the sweep would refuse it. "
+            "The witness is now a log that actually runs `-v` and declares "
+            "the whole line — captured inside such a worktree so the pytest, "
+            "pluggy and Python versions beside the path agree across runs and "
+            "the path is the ONE token left disagreeing."
         ),
     ),
     "planning_root": _EnvironmentalGrammar(
@@ -836,7 +1011,9 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         varies_in="text",
         key=None,  # the `/.planning/` anchor is in the token
         witness_kind="corpus",
-        witness="casting-1-pytest.log",
+        # C-103: was casting-10-blast-radius.log (D-051: was
+        # casting-1-pytest.log). See the C-103 paragraph above the registry.
+        witness="casting-5-corpus-witness.log",
         witness_pair=(
             "",
             "/private/var/folders/kq/T/tmp.X6ktF5/wt/.planning/phases/09",
@@ -853,6 +1030,42 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
             "`/[^ ]*/\\.planning/[^ ]*` declaration. Self-keyed: the pattern "
             "erases the bare token with nothing beside it, so the anchor has "
             "to be IN the token or this field has no identifier at all."
+        ),
+    ),
+    "archive_root": _EnvironmentalGrammar(
+        token=re.compile(r"/\S*/foundry-archive/\S*"),
+        varies_in="text",
+        key=None,  # the `/foundry-archive/` anchor is in the token
+        witness_kind="corpus",
+        # C-103: was casting-10-blast-radius.log (D-051: was
+        # casting-8-suite.log). See the C-103 paragraph above the registry.
+        witness="casting-5-corpus-witness.log",
+        witness_pair=(
+            "",
+            "/private/tmp/c3wt/foundry-archive/thunder-viper",
+            "/private/var/folders/kq/T/tmp.X6ktF5/wt/foundry-archive/thunder-viper",
+        ),
+        falsifier=(
+            "",  # the same relocation with the anchor removed
+            "/private/tmp/c3wt/thunder-viper",
+            "/private/var/folders/kq/T/tmp.X6ktF5/wt/thunder-viper",
+        ),
+        note=(
+            "the run-archive root, printed by the `<name> archive not present "
+            "in this checkout: <path>` skip in test_measure_run and "
+            "test_migrate_archive. `foundry-archive/` is git-ignored, so those "
+            "tests skip in EVERY detached worktree and name that worktree in "
+            "the message -- which is to say the line appears exactly when a "
+            "sweep re-executes the log and never when it was captured in the "
+            "main tree, so without this entry a suite log can be re-captured "
+            "any number of times and still never re-execute. Sibling of "
+            "`planning_root` in every respect: same shape, same reason, same "
+            "self-keying. Self-keyed because the declaration erases the bare "
+            "token with nothing beside it, so the anchor has to be IN the "
+            "token or the field has no identifier at all; `varies_in='text'` "
+            "because what moved is the checkout, not a number. The CLAIM -- "
+            "that the archive is absent -- is byte-identical on both sides "
+            "and stays visible."
         ),
     ),
     "process_id": _EnvironmentalGrammar(
@@ -888,7 +1101,7 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
             "digit skeletons and is REFUSED — the shape is the identity."
         ),
     ),
-}  # 7 grammars
+}  # 8 grammars
 
 
 def _digit_skeleton(token: str) -> str:
@@ -1122,10 +1335,16 @@ def _erased_disagreement_problem(
 # (Phase 7 / Plan 07-03 — RESEARCH.md Open Question 1 recommendation).
 #
 # ``_run_command_with_timeout``, ``_setup_worktree``, ``_teardown_worktree``,
-# ``_prune_orphaned_worktrees``, ``_WORKTREE_LOCK``, ``_PRUNE_DONE_FOR``
-# are imported at module-top so identity is preserved across the import
-# boundary — Phase 4/5 callers and Phase 7 callers serialize on the same
-# lock and share the same once-per-session prune guard.
+# ``_prune_orphaned_worktrees`` and ``_PRUNE_DONE_FOR`` are imported at
+# module-top so identity is preserved across the import boundary — Phase 4/5
+# callers and Phase 7 callers share the same once-per-session prune guard.
+#
+# ``_WORKTREE_LOCK`` is NOT imported here (casting 3's unused-import pin, under
+# the D-203 structural packet). It is taken inside ``_setup_worktree``, which
+# is where the `.git/config.lock` race it exists for lives; nothing in this
+# module ever took it, so the name only ever LOOKED like this module shared
+# the lock. It does share it — through the helper that holds it — and the
+# import was the misleading half.
 # ---------------------------------------------------------------------------
 
 
@@ -1351,26 +1570,246 @@ _STUB_TIMESTAMP_LINE_RE = re.compile(
 
 
 def _strip_leading_header_block(text: str) -> str:
-    """Drop the leading ``# evidence-*:`` comment block, keeping the body.
+    """Drop the maximal leading run of ``#`` and blank lines, keeping the rest.
 
     Unlike ``_strip_header_and_blank_lines`` this preserves the body verbatim
     — interior blank lines and all — because the byte comparator's whole job
     is an exact match on what the command emitted.
+
+    THIS IS A RUN FINDER, NOT A HEADER FINDER (D-200). The run it drops is a
+    SUPERSET of the header: ``_EVIDENCE_HEADER_BLOCK_RE`` alternates ``#``
+    lines and blank lines in one pass, so it does not stop at the header/body
+    blank separator and keeps eating any further leading ``#`` or blank lines
+    past it. That is harmless on a committed log whose body starts with real
+    output, and it is why this remains the right helper for the test harnesses
+    that build a replay file from a synthetic log. It is NOT sound to apply
+    independently to the two sides of a comparison — see
+    ``_split_committed_header`` for what the comparator uses and why.
     """
     return _EVIDENCE_HEADER_BLOCK_RE.sub("", text, count=1)
 
 
-def _strip_header_and_blank_lines(text: str) -> list[str]:
-    """Return body lines (header `# evidence-*:` comments and blanks dropped).
+# D-205 — THE HEADER GRAMMAR, DEFINED ONCE, AND THE ONLY TEXT EVER DISCARDED.
+#
+# THE STRUCTURAL PRINCIPLE (D-197, D-201, D-205 are one class).
+# ------------------------------------------------------------
+# Three cycles running, a guard here asked a NARROWER question than the harm
+# it names, and the gap between the two questions was the whole defect:
+# D-197/D-201 asked "is this suffix in a table" where the harm was "does a
+# reader open this name"; D-200 asked "is the strip symmetric" where the harm
+# was "did the command emit this"; D-205 asked "is the capture's run a suffix"
+# where the harm is "is every line I am about to discard actually header".
+# The principle all three violate, and the one pinned here:
+#
+#     A GUARD THAT DISCARDS, SKIPS OR EXEMPTS INPUT MUST PROVE EACH DISCARDED
+#     UNIT AGAINST THE RULE THAT NAMES THE EXEMPTION. ANYTHING NOT PROVEN IS
+#     SUBJECT TO THE CHECK.
+#
+# Concretely, for the byte comparator: the accept branch must prove every
+# discarded LINE against the directive grammar, and anything not proven is
+# COMPARED. That is why there is no longer a helper in this module that
+# returns the wide leading ``#``/blank run for the comparator to reason about
+# — a superset computed first and narrowed by a second rule is exactly the
+# shape that failed three times, because the next author reaches for the
+# superset and forgets the narrowing.
+#
+# WHAT THE WRITER'S GRAMMAR ACCOUNTS FOR (the lead's binding ruling, D-205).
+# -------------------------------------------------------------------------
+# The committed leading ``#`` run is INSIDE the byte-identical guarantee. The
+# only text outside it is the header the writers emit BY GRAMMAR: a contiguous
+# leading run of ``# evidence-<directive>:`` lines whose directive is one the
+# parser actually honours, plus the ONE blank separator that follows them.
+# Every other line, ``#``-prefixed or not, is body and must match the capture
+# byte for byte — so a claim the command never emitted can never be made
+# reproducible by prefixing it with ``#``.
+#
+# Driven at the wire at cb77e83, before this change, through
+# ``server.request_handlers[CallToolRequest]`` — three runs identical but for
+# the committed log's body: an honest log accepted; the SAME log with
+# ``# FABRICATED: all 47 assertions passed on a clean tree`` inserted between
+# the directives and the body ALSO accepted, ``mismatches: []``, cycle counter
+# advanced; the identical claim without the leading ``#`` correctly REFUSED.
+# B and C differed by one character, because the accept branch returned the
+# whole committed ``#``/blank run as "header" and never tested a line of it
+# against the writer's grammar — the one ``_provable_header_lines`` applies,
+# over the closed directive set ``_KNOWN_HEADER_DIRECTIVES``.
+#
+# WHY THE KNOWN-DIRECTIVE SET AND NOT ANY ``# evidence-*:`` SHAPE.
+# ---------------------------------------------------------------
+# ``_parse_evidence_header`` silently IGNORES a directive it does not know, so
+# an unknown ``# evidence-<word>:`` line is not something a writer emits by
+# grammar — it is unread text, and a fabricator who spells the claim
+# ``# evidence-summary: all 47 assertions passed`` would get it discarded
+# unread all over again, one notch narrower. So the grammar is the CLOSED set
+# the parser honours (``_KNOWN_HEADER_DIRECTIVES``). This fails CLOSED: a
+# future phase that starts writing a new directive into logs before adding it
+# to that set gets a loud refusal naming the log, not a silent discard. That
+# coupling is the point — it is what keeps "text this module does not read is
+# body" true by construction.
+_EVIDENCE_DIRECTIVE_LINE_RE = re.compile(
+    r"^[ \t]*#[ \t]*evidence-([a-z][a-z0-9-]*)[ \t]*:"
+)
 
-    Helper for stub-pattern checks that operate on "real content lines"
-    rather than the literal evidence-file bytes (which include the header
-    comment block).
+
+def _is_directive_line(line: str) -> bool:
+    """True when the WRITER'S grammar accounts for this line as a directive."""
+    match = _EVIDENCE_DIRECTIVE_LINE_RE.match(line)
+    return match is not None and match.group(1) in _KNOWN_HEADER_DIRECTIVES
+
+
+def _provable_header_lines(text: str) -> list[str]:
+    """The header, and nothing else: known directives + one blank separator.
+
+    Lines keep their newlines, so a caller can ``"".join`` them back into the
+    exact prefix they occupy. The blank separator is consumed only when at
+    least one directive preceded it — which is also what makes the suffix test
+    in ``_split_committed_header`` line-aligned by construction, since a bare
+    ``"\\n"`` can never be a provable header on its own and so can never
+    "match" the tail of a directive line's newline.
     """
-    return [
-        ln for ln in text.splitlines()
-        if ln.strip() and not ln.lstrip().startswith("#")
-    ]
+    lines = text.splitlines(keepends=True)
+    i = 0
+    while i < len(lines) and _is_directive_line(lines[i]):
+        i += 1
+    if i and i < len(lines) and not lines[i].strip():
+        i += 1  # the single blank separator every writer emits
+    return lines[:i]
+
+
+def _split_committed_header(log_text: str, captured: str) -> str:
+    """Return the committed log's header — the provable prefix the command did NOT emit.
+
+    WHY THE TWO SIDES ARE DECIDED TOGETHER (FR-010 / D-200 / D-205)
+    ---------------------------------------------------------------
+    Both comparator call sites used to run ``_strip_leading_header_block``
+    independently on each side and hand the two results to
+    ``_compare_byte_match``. The comment above them asserted the regex "only
+    matches a LEADING run of ``#`` comment and blank lines, so it cannot eat
+    content" — false the moment the CONTENT starts with ``#``, which is
+    exactly the shape D-198 had just established is legitimate. Driven live at
+    f5b487b: a committed log of ``<directives> + "# FABRICATED..." + blank +
+    "REAL_TAIL"`` and a capture of ``"# a completely different comment" +
+    blank + "REAL_TAIL"`` both reduced to ``"REAL_TAIL\\n"`` and the comparator
+    returned matched=True. Driven one door further, ``Foundry-Phase
+    (inspect_start)`` on a committed log whose three captured ``#`` lines
+    disagree with HEAD returned no error, no mismatches, and advanced the
+    cycle counter — so a fabricated leading comment block passed both
+    ``Foundry-Accept-Casting`` (FR-010) and the boundary sweep (GI-002 /
+    ST-005). D-198 was the false-REFUSAL half of the same helper family; this
+    is the false-ACCEPT half.
+
+    THE STRIP IS ONE DECISION OVER BOTH SIDES, WHICH IS WHY IT LIVES HERE.
+    The sound definition of the header is not a shape at all: it is the part
+    of the committed file the re-execution did not produce. So the captured
+    side is NEVER stripped, and the committed side loses exactly the prefix
+    the capture did not emit.
+
+    D-205 NARROWS WHAT "THE PREFIX" MAY EVEN CONTAIN. D-200 fixed the SYMMETRY
+    of that decision and left its GRAMMAR wide: the run it discarded was the
+    whole leading ``#``/blank run, never tested line by line against the
+    directive grammar, so a committed-only ``# FABRICATED: ...`` line inside
+    that run was discarded unread and the forgery ACCEPTED at both doors (see
+    the module comment above ``_provable_header_lines`` for the wire runs).
+    The candidate set is now the PROVABLE HEADER — known directives plus the
+    one blank separator — so every line this function returns has been proven
+    header, and every line it does not return is compared. The four cases:
+
+      * capture emits no provable header (every log whose command output does
+        not begin with a ``# evidence-<known>:`` line — the whole shipped
+        corpus): the header is the committed provable header. Writer prose in
+        the committed leading run is NOT in it, so it is compared, which is
+        the D-205 refusal.
+      * capture's provable header EQUALS the committed one (the
+        ``use_cat_replay`` harness, whose replay file holds the FULL rewritten
+        evidence so both sides carry the directives as output): the header is
+        empty and the two full texts are compared. Still a match, for the
+        right reason.
+      * capture's provable header is a proper suffix of the committed one (a
+        replay that emits from the second directive on): the header is the
+        committed one minus those lines, so the directives the capture really
+        emitted are compared on both sides instead of vanishing from both.
+      * capture's provable header is NOT a suffix: the two sides disagree
+        about their directives. Discard the committed provable header — the
+        most that could ever be header — and let ``_compare_byte_match``
+        refuse with a diff naming the first differing line.
+
+    A committed body that legitimately BEGINS with ``#`` lines — D-198's own
+    subject, a command that shows the source it changed — is untouched by all
+    of this: those lines are not directives, so they are never candidates for
+    the strip, and they are compared on both sides and agree.
+
+    Line alignment is load-bearing: a raw ``str.endswith`` would accept a
+    capture whose run is ``"\\n"`` against a committed run of
+    ``"# evidence-cmd: X\\n"``, splitting mid-line and silently donating the
+    directive's own newline to the body. The comparison is over lines, so the
+    suffix test is over lines — and ``_provable_header_lines`` cannot return a
+    lone blank line, so the mid-line split has no shape left to take.
+    """
+    committed_header = _provable_header_lines(log_text)
+    captured_header = _provable_header_lines(captured)
+    n = len(captured_header)
+    if n and n <= len(committed_header) and committed_header[len(committed_header) - n :] == captured_header:
+        return "".join(committed_header[: len(committed_header) - n])
+    return "".join(committed_header)
+
+
+def _header_stripped_pair(log_text: str, captured: str) -> tuple[str, str]:
+    """``(committed_body, captured_body)`` for the byte comparator.
+
+    The single entry point both comparator call sites use, so the two halves
+    of the strip cannot drift apart again (D-200), and the ONE place the
+    header grammar is consulted, so the accept branch cannot go wide again
+    (D-205). The captured side is returned verbatim: a re-execution capture is
+    all output.
+    """
+    header = _split_committed_header(log_text, captured)
+    return log_text[len(header) :], captured
+
+
+def _strip_header_and_blank_lines(text: str) -> list[str]:
+    """Return body lines: the leading header block and blanks dropped.
+
+    "Header block" is the CONTIGUOUS leading run of ``#`` lines — the
+    ``# evidence-*:`` directives plus whatever prose the writer wrote under
+    them — terminated by the first line that is not one, which is the blank
+    separator every writer in this plugin emits between header and body. A
+    ``#`` line BELOW that separator is captured output and survives.
+
+    WHY THE HEADER IS A LEADING RUN AND NOT "EVERY # LINE" (FR-010 / D-198)
+    ----------------------------------------------------------------------
+    This dropped every line whose lstrip started with ``#``, anywhere in the
+    file, and its two consumers then judged a body that was missing the
+    captured lines. Driven end to end at the MCP door on two runs identical
+    but for three characters: a teammate's log whose command was
+    ``sed -n '1,3p' src/guard.py && printf '<three stamps>'``, where those
+    three source lines are comments in this codebase's own house style, is a
+    six-line body of which three are timestamps (50%) — but read as a
+    three-line body of which three are timestamps (100%), because the strip
+    deleted the denominator. ``Foundry-Accept-Casting`` refused it as
+    EVIDENCE_STUB_TIMESTAMP_CLUSTER; the same capture with the leading ``# ``
+    removed was accepted. The bare-ack arm failed the same way: nine comment
+    lines then ``PASS`` fullmatched ``_STUB_BARE_ACK_RE`` on a body that had
+    been reduced to the word ``PASS``.
+
+    So the discriminator was punctuation, not fabrication, and FR-010's
+    converse went false: evidence that ran, reproduces byte-identically and
+    is honest was refused. Of the 70 logs this run has committed, 15 already
+    have a majority-``#`` body under the old strip. Whole-file ``#`` deletion
+    was rejected for exactly that reason; the leading run is what the header
+    grammar (``_EVIDENCE_HEADER_BLOCK_RE``, ``_parse_evidence_header``) has
+    always meant by "header block".
+
+    Narrowing costs the detector nothing it was catching: a genuine bare-ack
+    stub (header, then ``PASS``) and a genuine timestamp cluster (header,
+    then only timestamps) have no ``#`` line below the separator to restore,
+    so both still fire. ``tests/test_evidence.py`` pins both true positives
+    beside the two false negatives this closes.
+    """
+    lines = text.splitlines()
+    start = 0
+    while start < len(lines) and lines[start].lstrip().startswith("#"):
+        start += 1
+    return [ln for ln in lines[start:] if ln.strip()]
 
 
 def _is_stub_pattern_too_small(
@@ -1515,6 +1954,14 @@ def _is_stub_pattern_timestamp_cluster(text: str) -> bool:
     catches "fabricated bulk" logs that pad out to bypass the TOO_SMALL
     threshold by repeating a timestamp shape.
 
+    D-198: "non-header" means what ``_strip_header_and_blank_lines`` now
+    implements — the CONTIGUOUS leading ``#`` block — and no longer every
+    ``#`` line in the file. This sentence was already written this way while
+    the call under it deleted comment lines out of the captured body, which
+    is what inflated the ratio: deleting a line that is not a timestamp
+    shrinks the denominator and can only push the fraction up, never down.
+    A capture that is half comments and half timestamps read as 100%.
+
     CONTEXT.md describes a stricter "<1ms cluster" rule for
     ``_check_stub_patterns``; this helper uses the broader "fabricated-bulk
     timestamp lines" heuristic that the test fixture exercises (5 ISO
@@ -1606,9 +2053,15 @@ def _make_provenance_record(
         soft-companion to failure_token; tests only require the 13 above.)
 
     ``env_keys_present`` carries the SORTED list of env-var NAMES present
-    at re-exec time (NEVER values — abuse trail per CONTEXT.md). The
-    redacted_* SHA256s let auditors verify the comparator decision after
-    the fact without re-deriving regex application.
+    at re-exec time (NEVER values — abuse trail per CONTEXT.md), and it is
+    read from ``worktree_helpers#_child_environment`` — THE SAME FUNCTION THE
+    LAUNCH USES — not from ``os.environ``. Those stopped being the same list
+    at fallout D-175, when the runner's inherited copy of the server's whole
+    environment became a closed allowlist: a record still built from
+    ``os.environ`` would name variables the command could not see and would
+    hide the fact that this door drops them, which is the opposite of what an
+    abuse trail is for. The redacted_* SHA256s let auditors verify the
+    comparator decision after the fact without re-deriving regex application.
 
     Plan 05-03 / EVID-02: ``evidence_for`` field carries the requirement
     IDs declared in the artifact's ``# evidence-for:`` header (parsed
@@ -1626,7 +2079,7 @@ def _make_provenance_record(
         rel_path = str(evidence_path.relative_to(evidence_path.parents[1]))
     except (ValueError, IndexError):
         rel_path = str(evidence_path)
-    env_keys = sorted(os.environ.keys())
+    env_keys = sorted(_child_environment())
     return {
         "evidence_path": rel_path,
         "evidence_cmd": evidence_cmd,
@@ -1652,10 +2105,12 @@ def _make_provenance_record(
 # Decomposed from ``verify_evidence`` so the iteration loop stays readable.
 # Each evidence file goes through:
 #
-#   parse header → run cmd → compare → check stub patterns → produce record
+#   parse header → parse cmd → run cmd → compare → check stub patterns
+#                                                            → produce record
 #
-# Failures short-circuit: header parse failure → no re-exec; non-zero exit →
-# no comparison (would always mismatch on error output anyway); timeout →
+# Failures short-circuit: header parse failure → no re-exec; COMMAND parse
+# failure → no re-exec either (fallout FR-002 / D-107); non-zero exit → no
+# comparison (would always mismatch on error output anyway); timeout →
 # returns -1 from the executor.
 # ---------------------------------------------------------------------------
 def _verify_one_evidence_file(
@@ -1716,6 +2171,52 @@ def _verify_one_evidence_file(
             evidence_for=header.get("evidence_for", []),
         )
 
+    # Step 2b: fallout FR-002 / GI-019 / D-107 — PARSED BEFORE IT IS EXECUTED,
+    # AT THIS CROSSING TOO.
+    #
+    # `_sweep_one_log` has parsed first since CT-015 landed; this door — the one
+    # `verify_evidence` walks, reached from `foundry_handoff#foundry_accept_
+    # casting` at F1 acceptance — went from `header["cmd"]` straight to the
+    # runner. So the SAME command met two server-side executors that disagreed
+    # about whether it could run: refused unexecuted at the boundary sweep,
+    # executed and then called `EVIDENCE_EXIT_NONZERO` at acceptance. FR-002 is
+    # "server refuses at every crossing", and a crossing that runs what it
+    # cannot parse is not refusing, it is discovering.
+    #
+    # The cost of discovering it by running it is not the wrong token. It is
+    # that everything BEFORE the syntax error in a partially-valid script has
+    # already happened — `touch x && (` creates the file and then abandons the
+    # script — so "it only failed to parse" was never "it had no effect", and
+    # the effect landed inside the casting's own worktree.
+    #
+    # ONE LINT, NOT A SECOND COPY OF ONE. `_shell_parse_problem` is the single
+    # spelling both doors call and the one the commit guard's Check 4 models, so
+    # the three cannot come to judge a command by different rules; the record
+    # below is the ordinary rejected provenance record, so nothing downstream of
+    # here — the manifest write, the gate's reading of `failure_token` — is
+    # re-decided.
+    parse_problem = _shell_parse_problem(header["cmd"])
+    if parse_problem is not None:
+        return _make_provenance_record(
+            evidence_path=evidence_path,
+            evidence_cmd=header["cmd"],
+            casting_commit=casting_commit,
+            log_text=log_text,
+            captured_text="",
+            redacted_log="",
+            redacted_captured="",
+            exit_code=None,
+            elapsed_seconds=0.0,
+            verdict="rejected",
+            failure_token="EVIDENCE_COMMAND_SYNTAX",
+            failure_detail=(
+                f"`# evidence-cmd:` in {evidence_path.name} does not parse "
+                f"under `{_EVIDENCE_SHELL} -n`, so it was NOT executed: "
+                f"{parse_problem}"
+            ),
+            evidence_for=header.get("evidence_for", []),
+        )
+
     timeout = header.get("timeout") or EVIDENCE_TIMEOUT_DEFAULT_SECONDS
 
     # Step 3: Re-execute.
@@ -1770,16 +2271,30 @@ def _verify_one_evidence_file(
     # header lines. It went unnoticed because `casting_commit` was unreachable
     # over MCP, so this comparison had never run outside the test harness.
     #
-    # The strip is applied SYMMETRICALLY, which is what keeps both conventions
-    # working: a real evidence file (committed header+body vs captured body)
-    # matches on the body, and the `use_cat_replay` harness (whose replay file
-    # deliberately holds the full rewritten evidence, so BOTH sides carry the
-    # header) still compares body against body. The regex only matches a
-    # LEADING run of `#` comment and blank lines, so it cannot eat content.
+    # D-200 CORRECTS THIS COMMENT. It used to say the strip was applied
+    # SYMMETRICALLY and that "the regex only matches a LEADING run of `#`
+    # comment and blank lines, so it cannot eat content" — false whenever the
+    # CONTENT starts with `#`, and a symmetric strip is precisely what let two
+    # differing leading comment blocks reduce to the same bytes and ACCEPT.
+    # `_header_stripped_pair` decides the strip once, over both sides: the
+    # capture is never stripped, and the committed side loses exactly the
+    # prefix the capture did not emit. Both conventions still work — a real
+    # evidence file (committed header+body vs captured body) matches on the
+    # body, and the `use_cat_replay` harness (whose replay file deliberately
+    # holds the full rewritten evidence, so BOTH sides carry the header) lands
+    # on the equal-runs case and compares the two full texts.
+    #
+    # D-205 NARROWS WHAT MAY BE STRIPPED. D-200 left the accept branch's
+    # GRAMMAR wide — it discarded the whole leading `#`/blank run without
+    # testing a line of it — so a committed-only `# FABRICATED: ...` line was
+    # discarded unread and this door returned `accepted`. The candidate set is
+    # now the provable header alone (known `# evidence-<directive>:` lines plus
+    # one blank separator); anything else in that run is body and is compared.
+    committed_body, captured_body = _header_stripped_pair(log_text, captured)
     try:
         matched, diff, redacted_log, redacted_captured = _compare_byte_match(
-            committed=_strip_leading_header_block(log_text),
-            captured=_strip_leading_header_block(captured),
+            committed=committed_body,
+            captured=captured_body,
             volatile_patterns=header.get("volatile", []),
         )
     except ValueError as exc:
@@ -2331,4 +2846,2225 @@ def _verify_evidence_v21_body(
         "failure_detail": overall_detail,
         "provenance_records": provenance_records,
         "manifest_updates": {},
+    }
+
+
+# ---------------------------------------------------------------------------
+# GI-002 / ST-005 / CT-007 — the GRIND-boundary evidence sweep.
+#
+# WHY THIS IS A NEW CALLER AND NOT A NEW ENGINE
+# ---------------------------------------------
+# `verify_evidence` above already knows how to re-execute a committed log in an
+# isolated checkout and decide whether the bytes still match: the redaction
+# ladder, the D-126 residue floor and the D-135 disagreement guard are all
+# reached through `_compare_byte_match`, and every one of them exists because a
+# specific forgery got past the shape that preceded it. A sweep that re-decided
+# any of that would be a SECOND opinion about what a byte-match is, and the two
+# would drift the first time one of them was hardened — which is the exact
+# failure class `schemas/vocab.py` exists to make unrepresentable one layer up.
+#
+# So the sweep reuses the ladder verbatim and owns only what is genuinely new:
+#
+#   * WHICH logs run (`select_sweep_scope` — delta by default, whole corpus
+#     when the FULL rule fired or the run is about to reach ASSAY, NYQUIST or
+#     DONE), and
+#   * WHERE they run (ONE detached worktree at HEAD of the shared tree, rather
+#     than per-casting worktrees at each casting's own commit).
+#
+# The second difference is the load-bearing one. Acceptance asks "did casting N
+# tell the truth at its own commit"; the sweep asks "does the whole committed
+# corpus still reproduce on the tree the run is about to INSPECT". A GRIND cycle
+# that quietly broke casting 3's evidence while fixing casting 7's defect is
+# invisible to the first question and is precisely what the second one catches.
+#
+# WHY THE SWEEP DOES NOT RE-RUN THE STUB LIBRARY
+# ----------------------------------------------
+# `_check_stub_patterns` is acceptance's step 6 and is deliberately NOT reached
+# here. It judges whether a COMMITTED LOG is a fabrication — too small, replayed
+# by a vacuous command, a bare `PASS`, a timestamp cluster — and that judgment
+# is a property of the log's own bytes, which have not changed since the
+# casting commit where acceptance already made it and passed it. Re-making it
+# at every GRIND boundary could only ever produce the same answer, and the one
+# case where it would NOT is the case where it is wrong: a log whose acceptance
+# passed being refused at cycle 9 for a reason that was true at cycle 1.
+#
+# What the sweep adds over acceptance is the TREE, not the log. Acceptance
+# asked whether the bytes reproduced at the casting's commit; the sweep asks
+# whether they still reproduce on the tree the next INSPECT will read.
+#
+# Neither function writes anything: no manifest append, no provenance record,
+# no state mutation. The refusal, the cycle counter and the `evidence_sweep`
+# roll-up all belong to the `inspect_start` transition that calls these.
+# ---------------------------------------------------------------------------
+
+#: The worktree directory prefix for a sweep, passed to `_setup_worktree`'s
+#: `dir_prefix`. Distinct from the Phase 4 `casting-` default so a sweep in
+#: flight and an acceptance in flight for casting N can never derive the same
+#: path — the D-111 claim would step one of them to a suffix, which is safe but
+#: costs a directory; a distinct prefix means the collision never arises.
+SWEEP_WORKTREE_PREFIX: str = "sweep-"
+
+# FR-031 / NFR-004 — the parallel pool ceiling, DERIVED, not decreed.
+#
+# Measured from the corpus this sweep actually runs. Every `# evidence-cmd:`
+# committed to `evidence/` in this repo is one of: a `uv run ... pytest`
+# invocation, a `python3 scripts/*.py` run, or a `grep`/`awk` pipeline. The
+# first kind dominates (9 of the 13 logs standing when this was written) and
+# each is a SINGLE CPU-bound interpreter process, so useful parallelism is
+# bounded by cores, not by I/O — past that point the workers only contend.
+#
+# The ceiling is 8 rather than "all cores" for two corpus-derived reasons.
+# First, each `uv run --with pytest` materialises its own environment and reads
+# the shared uv cache, so the peak is eight simultaneous interpreters plus
+# their imports, not eight bare `grep`s. Second, the sweep runs INSIDE the
+# `inspect_start` transition on the lead's own machine while nothing else is
+# scheduled to run, and leaving half a typical 16-core box free is what keeps
+# NFR-004 ("well inside the wall time of the INSPECT it precedes") true without
+# making the lead's session unresponsive for the duration.
+#
+# At the observed run scale (A-AUTO-002: ~85 agent spawns, so a corpus around
+# 40-50 logs by DONE) a full sweep is therefore ~6 waves of 8. A DELTA sweep is
+# usually one wave or none at all, which is the point of DELTA.
+SWEEP_POOL_CEILING: int = 8
+
+
+def _sweep_relative_log_name(log: Path, project_root: Path) -> str:
+    """The repo-relative spelling of a log, for the result and the refusal.
+
+    A mismatch record names the log the lead has to go and look at, so it is
+    reported the way the lead types it: `evidence/casting-3-login.log`, never
+    an absolute path through someone's tmpdir and never a bare basename that
+    two directories could both claim. Falls back to the absolute path when the
+    log genuinely sits outside the tree, which is a caller error worth seeing
+    rather than hiding behind a prettier string.
+    """
+    try:
+        return str(log.resolve().relative_to(project_root.resolve()))
+    except (ValueError, OSError):
+        return str(log)
+
+
+def _sweep_requirement_to_castings(manifest: dict) -> dict[str, set[str]]:
+    """Map each requirement ID to the casting ids that DECLARE it.
+
+    This is the SECOND source for keying a log to a casting, and it exists
+    because the first one is a filename convention. `# evidence-for:` names
+    REQUIREMENTS, not castings, so resolving it needs the manifest: a casting's
+    `spec_text` is the verbatim `<spec_requirements>` block its prompt carried,
+    and the IDs it DECLARES there are the IDs that casting is answerable for.
+
+    Both sources are used, unioned, because either alone loses logs. A log
+    named off-convention has no filename key; a log with no `# evidence-for:`
+    header has no requirement key. A log with neither is not silently dropped —
+    it simply falls through to the command-reference test in
+    `select_sweep_scope`, and is back in scope the moment `full=True`.
+
+    DECLARED, NOT MENTIONED (D-184 / D-187)
+    ---------------------------------------
+    The sentence above used to end "and the IDs IN it are exactly the IDs that
+    casting is answerable for", and this loop was a bare
+    `REQUIREMENT_ID_RE.findall(spec_text)` over the whole block. That claim is
+    false and D-180 disproved it at two other doors — the acceptance gate and
+    the F0.9 validator — by replacing the same `findall` with
+    `declared_requirement_ids`, which judges POSITION: an ID is declared when it
+    is the subject of its own line, and merely quoted when it appears inside
+    another requirement's prose. This reader was the third and was not migrated
+    with them, so one rule kept two owners and a survivor.
+
+    Driven on this run's manifest at HEAD 0e09b40: `['NFR-002']` resolved to
+    castings `{'5', '2'}` — casting 5 declares it, casting 2 merely quotes
+    'NFR-002' once inside OT-005's statement text — so casting 5's own evidence
+    became keyed to casting 2 and was re-executed on any DELTA cycle whose diff
+    touched casting 2. Nine IDs were mis-attributed that way (GI-003, NFR-002,
+    US-001..US-005, US-007, US-008; US-008 alone widened from {3,5} to
+    {1,2,3,5,7,8}), and on the one-file diff PROVE drove the boundary selected
+    44 of 62 logs where FR-009's rule selects 28. FR-009 defines the delta set
+    as "casting key_files intersect the GRIND diff, plus any log whose command
+    references a touched file" — a log keyed through a QUOTATION satisfies
+    neither arm, so every one of those extra 16 was outside the rule.
+
+    Widening is the cheap direction of that error and is why it survived: it
+    costs seconds per cycle and refuses nothing. The expensive direction is the
+    same mapping used in a boundary refusal, which would name a log the diff
+    never touched (FR-042 / OT-008).
+
+    The requirement GRAMMAR still comes from
+    `schemas/vocab.py#REQUIREMENT_ID_RE` — via `declared_requirement_ids`,
+    which builds its position rule from its `.pattern` rather than re-typing
+    it (D-150). The header
+    scan at the top of this module keeps the bare `findall`, and correctly: a
+    `# evidence-for:` line is a comma-separated LIST of ids, not prose, so
+    there is no subject position for the rule to judge.
+    """
+    mapping: dict[str, set[str]] = {}
+    castings = manifest.get("castings")
+    if not isinstance(castings, list):
+        return mapping
+    for entry in castings:
+        if not isinstance(entry, dict):
+            continue
+        casting_id = entry.get("id")
+        if casting_id is None:
+            continue
+        spec_text = entry.get("spec_text")
+        if not isinstance(spec_text, str):
+            continue
+        for req_id in declared_requirement_ids(spec_text):
+            mapping.setdefault(req_id, set()).add(str(casting_id))
+    return mapping
+
+
+def _sweep_touched_castings(manifest: dict, touched: list[str]) -> set[str]:
+    """The casting ids whose `key_files` intersect the GRIND diff (GI-002).
+
+    A `key_files` entry is either a file path or a DIRECTORY, spelled with a
+    trailing slash — casting 5's own manifest entry carries
+    `tests/fixtures/escalation/finer_boundary_run/`, and a diff touching a file
+    inside it must count as touching that casting. Comparing the two as bare
+    strings would miss every directory entry, so a trailing-slash entry is
+    matched as a path PREFIX and everything else exactly.
+
+    Paths are compared with forward slashes and no leading `./`, which is how
+    both `git diff --name-only` and the manifest spell them.
+    """
+    def _norm(raw: object) -> str:
+        text = str(raw).replace("\\", "/").strip()
+        while text.startswith("./"):
+            text = text[2:]
+        return text
+
+    touched_norm = {_norm(t) for t in touched if str(t).strip()}
+    hits: set[str] = set()
+    castings = manifest.get("castings")
+    if not isinstance(castings, list):
+        return hits
+    for entry in castings:
+        if not isinstance(entry, dict):
+            continue
+        casting_id = entry.get("id")
+        key_files = entry.get("key_files")
+        if casting_id is None or not isinstance(key_files, list):
+            continue
+        for key_file in key_files:
+            key = _norm(key_file)
+            if not key:
+                continue
+            if key.endswith("/"):
+                if any(t.startswith(key) for t in touched_norm):
+                    hits.add(str(casting_id))
+                    break
+            elif key in touched_norm:
+                hits.add(str(casting_id))
+                break
+    return hits
+
+
+def _sweep_command_references(cmd: str, touched: list[str]) -> bool:
+    """Does this `# evidence-cmd:` reference a file the GRIND diff touched?
+
+    GI-002's second delta arm. The test errs deliberately toward INCLUSION,
+    and the asymmetry is the whole point: a log swept that need not have been
+    costs seconds, while a log NOT swept that should have been is a broken
+    evidence artifact carried silently past the boundary that exists to catch
+    it. When the two errors are that unequal, the loose test is the correct
+    one.
+
+    Matching is on any trailing path-suffix of the touched file, down to the
+    bare basename, because commands do not spell paths the way the diff does:
+    the committed corpus is full of `cd plugins/foundry/mcp-server && ... pytest
+    tests/test_vocab.py`, where the diff says
+    `plugins/foundry/mcp-server/tests/test_vocab.py` and the command says
+    `tests/test_vocab.py`. Requiring the full repo-relative spelling would
+    match none of them.
+
+    A suffix must begin at a path boundary in the command text — start of
+    string, or a character that is not a path character — so `vocab.py` does
+    not match `myvocab.py` and `evidence.py` does not match `test_evidence.py`.
+
+    A LITERAL SUFFIX IS NOT THE ONLY WAY A COMMAND REACHES A FILE (D-030)
+    ---------------------------------------------------------------------
+    The literal test alone answered False for `pytest tests/`, for a bare
+    `pytest`, and for `grep -r foo src/` — every one of which genuinely
+    re-executes the changed surface. The delta arm therefore under-selected in
+    exactly the shape the corpus is full of, and under-selection is the error
+    this test is built to avoid: a log NOT swept that should have been is a
+    broken artifact carried silently past the boundary.
+
+    So a second arm reads the command's WALK ROOTS (`_sweep_walk_roots`): a
+    recursive program's directory operand, or its working directory when it was
+    given no operand at all. A touched file beneath a walk root is referenced.
+
+    The two arms are deliberately different tests, and the difference is what
+    keeps the boundary rule intact. `cd plugins/foundry/mcp-server && pytest
+    tests/test_evidence.py` names its target exactly, so it does NOT walk
+    `plugins/foundry/mcp-server` and does not reference every file under it —
+    a `cd` sets the cwd, it does not make the shell read the tree. Only a
+    walking program with no path operand promotes its cwd to a walk root.
+
+    A SHELL GLOB IS A PATH OPERAND AND NEITHER ARM EXPANDED ONE (D-045)
+    ------------------------------------------------------------------
+    D-030 named "glob forms" among the shapes that "all resolve to nothing"
+    and closed the directory-operand, bare-command and `grep -r` halves. The
+    glob half stayed open, and it fails in BOTH arms at once: `cat src/*.py`
+    reaches no walker so only the literal arm runs, and it searches the command
+    text for `src/mod.py`, which a glob never spells; `ruff check src/*.py`
+    DOES reach a walker, and the operand `src/*.py` is then compared as a
+    literal path segment, so `src/mod.py` neither equals it nor starts with
+    `src/*.py/`. Driven at the door: `cat src/*.py`, `pytest tests/*.py`,
+    `grep foo src/**/*.py`, `wc -l evidence/*.log`, `uv run pytest
+    tests/test_*.py` and `ruff check src/*.py` every one answered False.
+
+    So a glob-shaped operand gets its own arm (`_sweep_glob_operands`), and it
+    is the LITERAL ARM GENERALISED, not a new kind of test: where that arm asks
+    "is this exact suffix present at a path boundary", this one asks "does this
+    glob match this suffix". Both quantify over the same suffix ladder for the
+    same reason — commands spell `tests/*.py` where the diff says
+    `plugins/foundry/mcp-server/tests/test_vocab.py` — which is also why the
+    glob arm needs NO cwd tracking: matching every suffix already subsumes what
+    joining a `cd`-established cwd onto the pattern would buy, so re-deriving
+    the cwd here would be a second derivation of a fact this arm never reads.
+
+    A glob-shaped WALK ROOT is handled separately and more loosely, because a
+    walker handed `tests/*` reads the SUBTREES the glob names: such a root
+    matches the touched path or any directory above it. `cat *` therefore
+    selects every touched file, which is what `cat *` honestly does; a quoted
+    `grep '*' f.txt` over-selects and costs the seconds the asymmetry above
+    says are the right ones to spend.
+    """
+    if not cmd:
+        return False
+    walk_roots = _sweep_walk_roots(cmd)
+    literal_roots = [root for root in walk_roots if not _sweep_is_glob(root)]
+    root_globs = _sweep_glob_matchers(
+        [root for root in walk_roots if _sweep_is_glob(root)]
+    )
+    operand_globs = _sweep_glob_matchers(_sweep_glob_operands(cmd))
+    for raw in touched:
+        path = str(raw).replace("\\", "/").strip()
+        while path.startswith("./"):
+            path = path[2:]
+        if not path:
+            continue
+        segments = [seg for seg in path.split("/") if seg]
+        # Longest suffix first is only an ordering nicety — any hit is a hit.
+        for start in range(len(segments)):
+            suffix = "/".join(segments[start:])
+            for index in _iter_substring_starts(cmd, suffix):
+                before = cmd[index - 1] if index else ""
+                if before not in _SWEEP_PATH_CHARS:
+                    return True
+            # The walk-root arm: is this touched path (or a suffix of it)
+            # inside a directory the command walks? "" is the whole cwd, which
+            # a walker with no operand reads in full.
+            for root in literal_roots:
+                if root == "" or suffix == root or suffix.startswith(root + "/"):
+                    return True
+            # The glob-operand arm: the literal arm generalised (D-045).
+            for matcher in operand_globs:
+                if matcher.fullmatch(suffix):
+                    return True
+            # A glob WALK ROOT names directories, so everything beneath a
+            # matched one is walked: test the suffix and every path above it.
+            for matcher in root_globs:
+                if matcher.fullmatch(suffix):
+                    return True
+                for end in range(start + 1, len(segments)):
+                    if matcher.fullmatch("/".join(segments[start:end])):
+                        return True
+    return False
+
+
+#: The three shell-glob metacharacters. `{a,b}` brace expansion is deliberately
+#: absent: it is a bash-ism rather than a glob, `shlex` does not treat it as one
+#: either, and every form D-045 names is built from these three.
+_SWEEP_GLOB_CHARS: frozenset[str] = frozenset("*?[")  # 3 metacharacters
+
+
+def _sweep_is_glob(token: str) -> bool:
+    """Does ``token`` carry a shell-glob metacharacter?"""
+    return any(ch in _SWEEP_GLOB_CHARS for ch in token)
+
+
+def _sweep_glob_to_regex(pattern: str) -> str:
+    """Translate a shell glob into a regex source string. Never raises.
+
+    NOT ``fnmatch.translate`` (D-045). ``fnmatch`` is a FILENAME matcher: its
+    ``*`` crosses ``/`` freely, so ``src/*.py`` would match ``src/a/b/c.py``
+    and, worse, ``tests/*`` would match every file at any depth — turning every
+    DELTA scope containing one glob into a FULL one. The separator rules here
+    are the shell's own:
+
+      ``**/``  zero or more leading directories  -> ``(?:.*/)?``
+      ``**``   crosses separators                -> ``.*``
+      ``*``    within one segment                -> ``[^/]*``
+      ``?``    one character, not a separator    -> ``[^/]``
+      ``[..]`` a character class, ``!`` negating -> ``[..]`` / ``[^..]``
+
+    An unterminated ``[`` is emitted as a literal bracket rather than treated
+    as a class, which is what the shell does with it too, and means a command
+    carrying a stray bracket degrades to a narrower match instead of an
+    exception. Everything else is ``re.escape``d, so a `.` in `*.py` is a dot.
+    """
+    parts: list[str] = []
+    index = 0
+    length = len(pattern)
+    while index < length:
+        char = pattern[index]
+        if char == "*":
+            if pattern.startswith("**", index):
+                index += 2
+                if index < length and pattern[index] == "/":
+                    index += 1
+                    parts.append("(?:.*/)?")
+                else:
+                    parts.append(".*")
+                continue
+            parts.append("[^/]*")
+            index += 1
+            continue
+        if char == "?":
+            parts.append("[^/]")
+            index += 1
+            continue
+        if char == "[":
+            close = index + 1
+            if close < length and pattern[close] in "!^":
+                close += 1
+            if close < length and pattern[close] == "]":
+                close += 1
+            while close < length and pattern[close] != "]":
+                close += 1
+            if close >= length:
+                parts.append(re.escape("["))
+                index += 1
+                continue
+            body = pattern[index + 1:close].replace("\\", "\\\\")
+            if body[:1] in ("!", "^"):
+                body = "^" + body[1:]
+            parts.append(f"[{body}]")
+            index = close + 1
+            continue
+        parts.append(re.escape(char))
+        index += 1
+    return "".join(parts)
+
+
+def _sweep_glob_matchers(patterns: list[str]) -> list[re.Pattern[str]]:
+    """Compile each glob ONCE per call, dropping any that will not compile.
+
+    Compiled up front rather than inside the touched-file loop because that
+    loop runs once per suffix of every path in the GRIND diff, and at the
+    observed run scale (A-AUTO-002) a diff of fifty files is ordinary.
+
+    A pattern that will not compile is DROPPED rather than raised on: this
+    predicate's contract is a bool, `select_sweep_scope`'s other arms still
+    run, and a FULL sweep re-executes the log regardless. Refusing here would
+    turn a stray metacharacter in one command into a refused transition.
+    """
+    matchers: list[re.Pattern[str]] = []
+    for pattern in patterns:
+        if not pattern:
+            continue
+        try:
+            matchers.append(re.compile(_sweep_glob_to_regex(pattern)))
+        except re.error:
+            continue
+    return matchers
+
+
+def _sweep_glob_operands(cmd: str) -> list[str]:
+    """Every glob-shaped path operand in ``cmd``. ``[]`` when it cannot be lexed.
+
+    D-045. The operand rules are `_sweep_walk_roots`' rules, held to
+    deliberately: a token is not an operand when it is a separator, when it is
+    a flag (`-l`, `--quiet`), or when it is the VALUE of a flag that takes one
+    (`-k 'test_*'` is a pytest SELECTOR, not a path, and reading it as one
+    would select every log whose command filters by name).
+
+    Unlike `_sweep_walk_roots` this does NOT track a `cd`-established cwd, and
+    the omission is the point rather than an oversight: the caller matches each
+    pattern against every trailing suffix of the touched path, so the bare
+    `tests/*.py` already answers everything the cwd-joined
+    `plugins/foundry/mcp-server/tests/*.py` would. Tracking the cwd here would
+    be a second derivation of a fact this arm never consults — the house
+    anti-pattern the module comment on `_dispatched_agents` names.
+
+    Returns `[]` on an unlexable command, which is the same fail-OPEN rule
+    `_sweep_walk_roots` holds: the literal arm still runs, and the log is
+    re-executed by any FULL sweep.
+    """
+    tokens = _shell_tokens(cmd)
+    if tokens is None:
+        return []
+    consumed = {
+        index + 1
+        for index, token in enumerate(tokens)
+        if token in _SWEEP_OPERAND_FLAG_VALUES and index + 1 < len(tokens)
+    }
+    operands: list[str] = []
+    for index, token in enumerate(tokens):
+        if index in consumed or token in _STUB_CMD_SEPARATORS:
+            continue
+        if token.startswith("-") or not _sweep_is_glob(token):
+            continue
+        text = token.replace("\\", "/").strip().rstrip("/")
+        while text.startswith("./"):
+            text = text[2:]
+        if text:
+            operands.append(text)
+    return operands
+
+
+#: Programs that read a directory tree rather than the operands they are
+#: handed. DERIVED from the committed corpus's own `# evidence-cmd:` headers —
+#: every command in `evidence/` is a pytest invocation, a `python3 scripts/*.py`
+#: run, or a grep/awk pipeline — plus the linters and type checkers a foundry
+#: casting's verification command routinely adds. `grep` is listed
+#: unconditionally rather than only under `-r`: including a log that did not
+#: need sweeping costs seconds, and the asymmetry stated above says which way
+#: to err.
+_SWEEP_WALKER_PROGRAMS: frozenset[str] = frozenset(
+    {
+        "pytest", "py.test", "unittest", "nosetests", "tox",
+        "grep", "egrep", "fgrep", "rg", "ag", "ack", "find",
+        "ruff", "mypy", "pyright", "flake8", "pylint", "black", "isort",
+    }
+)  # 20 programs
+
+
+#: Tokens that are never a path operand: a flag, a separator, or a `-k`-style
+#: value. Anything else in operand position is treated as a path, because a
+#: false path costs an unnecessary sweep and a missed one costs a defect.
+_SWEEP_OPERAND_FLAG_VALUES: frozenset[str] = frozenset(
+    {"-k", "-m", "-e", "--deselect", "-p", "--ignore", "-n", "--with", "-c"}
+)
+
+
+def _sweep_walk_roots(cmd: str) -> list[str]:
+    """Directories ``cmd`` reads recursively. ``""`` means the whole cwd.
+
+    D-030. Walks the token stream tracking two things: the current working
+    directory (set by a `cd` at any command position, since the corpus spells
+    almost every command `cd plugins/foundry/mcp-server && …`) and, at each
+    command position, whether the program is one that walks a tree.
+
+    A walker with directory or path operands contributes each of them, joined
+    onto the current cwd. A walker with NO path operand — a bare `pytest`, a
+    `ruff check` — walks its cwd, so the cwd itself becomes the root; when no
+    `cd` preceded it that is `""`, the whole tree, which is the honest answer.
+
+    Returns ``[]`` when the command cannot be lexed. That is the same
+    fail-OPEN rule `_shell_tokens`'s callers hold: an unparseable command is
+    never judged on this rule's word, and the literal-suffix arm still runs.
+    """
+    tokens = _shell_tokens(cmd)
+    if tokens is None:
+        return []
+
+    def _norm(raw: str) -> str:
+        text = raw.replace("\\", "/").strip().rstrip("/")
+        while text.startswith("./"):
+            text = text[2:]
+        return text
+
+    def _join(base: str, path: str) -> str:
+        if not base or path.startswith("/"):
+            return path
+        return f"{base}/{path}"
+
+    # A flag's VALUE is not an operand and is not a program. `-p
+    # no:cacheprovider` and `--deselect tests/x.py::y` both appear verbatim in
+    # the committed corpus, and reading either as a path would invent a root.
+    consumed = {
+        index + 1
+        for index, token in enumerate(tokens)
+        if token in _SWEEP_OPERAND_FLAG_VALUES and index + 1 < len(tokens)
+    }
+
+    def _operands(start: int) -> list[str]:
+        out: list[str] = []
+        for index in range(start, len(tokens)):
+            if tokens[index] in _STUB_CMD_SEPARATORS:
+                break
+            if index in consumed or tokens[index].startswith("-"):
+                continue
+            out.append(tokens[index])
+        return out
+
+    # A walker is looked for at EVERY token position, not only at a command
+    # position, because the corpus almost never invokes one directly: the
+    # standing spelling is `uv run --quiet --with pytest pytest …`, where
+    # `uv` holds the command position and the program that actually walks the
+    # tree is an operand of it. Restricting the search to command position
+    # found a walker in none of those, which is most of the corpus.
+    roots: list[str] = []
+    cwd = ""
+    at_command_position = True
+    for index, token in enumerate(tokens):
+        if token in _STUB_CMD_SEPARATORS:
+            at_command_position = True
+            continue
+        if index in consumed:
+            at_command_position = False
+            continue
+        if at_command_position and re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*=.*", token, re.DOTALL
+        ):
+            continue
+        name = token.rsplit("/", 1)[-1]
+        if at_command_position and name == "cd":
+            targets = _operands(index + 1)
+            if targets:
+                cwd = _join(cwd, _norm(targets[0]))
+            at_command_position = False
+            continue
+        at_command_position = False
+        if name not in _SWEEP_WALKER_PROGRAMS:
+            continue
+        # A walker's sub-command (`ruff check`) is an operand too. A bare word
+        # naming no real path simply never matches a touched file, so keeping
+        # it costs nothing and dropping it would need a per-program operand
+        # grammar this does not have.
+        paths = [_norm(o) for o in _operands(index + 1) if _norm(o)]
+        if paths:
+            for path in paths:
+                roots.append(_join(cwd, path))
+                roots.append(path)       # the cwd-relative spelling too
+        else:
+            # No path operand: the walker reads its working directory. With no
+            # preceding `cd` that is `""` — the whole tree, which is what a
+            # bare `pytest` at the repo root honestly does.
+            roots.append(cwd)
+    return roots
+
+
+#: Characters that may appear immediately before a path without ending it. A
+#: suffix preceded by one of these is the tail of a LONGER path, not a
+#: reference to this file, which is what keeps `test_evidence.py` from
+#: matching a diff that touched `evidence.py`.
+_SWEEP_PATH_CHARS: frozenset[str] = frozenset("abcdefghijklmnopqrstuvwxyz"
+                                              "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                              "0123456789_-.")
+
+
+def _iter_substring_starts(haystack: str, needle: str):
+    """Yield every start index of ``needle`` in ``haystack``. Never raises."""
+    if not needle:
+        return
+    start = haystack.find(needle)
+    while start != -1:
+        yield start
+        start = haystack.find(needle, start + 1)
+
+
+def _sweep_git(args: list[str], *, stdin: bytes | None = None) -> bytes | None:
+    """Run a read-only git command. Returns stdout, or None on ANY failure.
+
+    Never raises and never reports a reason: every caller's fallback is the
+    working tree, and a sweep that could not consult git degrades to the
+    behaviour it had before rather than refusing. The refusal that matters is
+    the sweep's own, and it is raised where HEAD is resolved.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            input=stdin,
+            capture_output=True,
+            timeout=30,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _sweep_repo_root(evidence_dir: Path) -> Path | None:
+    """The work-tree root containing ``evidence_dir``, or None outside git."""
+    probe = evidence_dir
+    while not probe.is_dir():
+        parent = probe.parent
+        if parent == probe:
+            return None
+        probe = parent
+    out = _sweep_git(["-C", str(probe), "rev-parse", "--show-toplevel"])
+    if not out:
+        return None
+    root = out.decode("utf-8", errors="replace").strip()
+    return Path(root) if root else None
+
+
+def _sweep_head_blobs(root: Path, rel_names: list[str]) -> dict[str, str]:
+    """Read every named path's content AT HEAD in ONE `git cat-file --batch`.
+
+    One subprocess for the whole corpus, not one per log: at the observed run
+    scale (A-AUTO-002 — around forty to fifty logs by DONE) a `git show` per
+    log is fifty process spawns inside a transition NFR-004 asks to finish
+    well inside the INSPECT it precedes.
+
+    `--batch` answers each `HEAD:<path>` request with ``<oid> SP <type> SP
+    <size> LF``, then exactly ``<size>`` bytes, then a trailing LF; a request
+    it cannot resolve comes back as ``<request> SP missing LF`` and is simply
+    absent from the result. Parsed on BYTES because the size is a byte count —
+    decoding first would desynchronise the cursor on any log holding a
+    multi-byte character, and the corpus is full of pytest output that does.
+    """
+    if not rel_names:
+        return {}
+    stdin = "".join(f"HEAD:{name}\n" for name in rel_names).encode("utf-8")
+    out = _sweep_git(["-C", str(root), "cat-file", "--batch"], stdin=stdin)
+    if out is None:
+        return {}
+
+    blobs: dict[str, str] = {}
+    cursor = 0
+    for name in rel_names:
+        newline = out.find(b"\n", cursor)
+        if newline == -1:
+            break
+        header = out[cursor:newline].decode("utf-8", errors="replace").split()
+        cursor = newline + 1
+        if len(header) < 3 or header[1] != "blob":
+            # "missing" / "ambiguous": no content follows, so the cursor is
+            # already at the next header.
+            continue
+        try:
+            size = int(header[2])
+        except ValueError:
+            break
+        blobs[name] = out[cursor:cursor + size].decode("utf-8", errors="replace")
+        cursor += size + 1  # the trailing LF git writes after the content
+    return blobs
+
+
+def _sweep_corpus(evidence_dir: Path) -> tuple[list[Path], dict[Path, str]]:
+    """The committed corpus AT HEAD, plus each log's text at HEAD (D-016).
+
+    Returns ``(sorted absolute log paths, {path: text at HEAD})``. The paths
+    are spelled in the WORKING tree — `_sweep_one_log` maps them through
+    `relative_to(project_root)` into the sweep worktree, so a log that exists
+    at HEAD and not in the working tree resolves correctly and is re-executed.
+
+    WHY HEAD AND NOT THE WORKING TREE
+    ---------------------------------
+    This globbed `evidence_dir` in the live tree while `sweep_evidence_at_head`
+    compared inside a detached worktree at HEAD, so the two halves of one
+    boundary disagreed about what the corpus IS. Driven: a log committed at
+    HEAD but removed from the working tree produced a FULL scope of ZERO, and
+    the boundary that exists to prove the committed evidence still reproduces
+    returned ``ok: True`` having checked none of it. ST-005 says "byte-identical
+    at HEAD"; the enumeration has to be at HEAD too or the sweep is measuring a
+    corpus nobody committed.
+
+    `ls-tree -r` is also RECURSIVE, which closes the second half of the same
+    defect: the old `glob('*.log')` was flat, so a log under `evidence/<subdir>/`
+    was in no scope, ever — not even a FULL one.
+
+    Outside a git work tree (a synthetic fixture directory, a tarball) there is
+    no HEAD to read, so this falls back to a RECURSIVE filesystem walk. That is
+    a degradation, never a refusal: `select_sweep_scope` returns a scope and the
+    sweep's own HEAD resolution is where an un-sweepable tree is named.
+    """
+    root = _sweep_repo_root(evidence_dir)
+    if root is not None:
+        try:
+            rel_dir = evidence_dir.resolve().relative_to(root.resolve())
+        except (ValueError, OSError):
+            rel_dir = None
+        if rel_dir is not None:
+            out = _sweep_git(
+                ["-C", str(root), "ls-tree", "-r", "-z", "--name-only", "HEAD",
+                 "--", str(rel_dir)]
+            )
+            if out is not None:
+                names = sorted(
+                    name
+                    for name in out.decode("utf-8", errors="replace").split("\0")
+                    if name.endswith(".log")
+                )
+                blobs = _sweep_head_blobs(root, names)
+                logs = [root / name for name in names]
+                return logs, {
+                    root / name: text for name, text in blobs.items()
+                }
+
+    try:
+        logs = sorted(p for p in evidence_dir.rglob("*.log") if p.is_file())
+    except OSError:
+        # An unreadable evidence directory is not this function's refusal to
+        # make: it returns nothing, and the caller's own sweep reports a corpus
+        # of zero rather than a traceback across the MCP boundary.
+        return [], {}
+    texts: dict[Path, str] = {}
+    for log in logs:
+        try:
+            texts[log] = log.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+    return logs, texts
+
+
+def select_sweep_scope(
+    *,
+    manifest: dict,
+    evidence_dir: Path,
+    touched_files: list[str],
+    full: bool,
+) -> list[Path]:
+    """The evidence logs this boundary must re-execute (GI-002 / AC-014).
+
+    Args:
+        manifest: the run's `castings/manifest.json` as a dict. Read for each
+            casting's `key_files` (the delta intersection) and `spec_text`
+            (the requirement-ID -> casting resolution). An empty or malformed
+            manifest degrades to "no casting can be keyed", never raises.
+        evidence_dir: the directory holding the committed corpus — repo-root
+            `evidence/`, the same directory `verify_evidence` globs inside the
+            casting's worktree.
+        touched_files: repo-relative paths from the GRIND diff since the last
+            sweep. Ignored entirely when `full` is True.
+        full: the FULL-rule outcome the calling transition already computed.
+            GI-009 is emphatic that the decision lives at the transition and
+            nowhere else, so this function is told the answer and never
+            re-derives it.
+
+    Returns:
+        A sorted list of absolute log paths. Sorted because a sweep result is
+        read by a human comparing two cycles, and a set's iteration order would
+        make two identical sweeps look different.
+
+    `full=True` returns EVERY committed log. `full=False` returns every log
+    whose casting's `key_files` intersect `touched_files`, plus every log whose
+    `# evidence-cmd:` references a touched file — and an empty list when
+    neither holds, which is AC-014's "re-executes zero logs" and is a correct
+    answer, not a degenerate one.
+
+    A log is keyed to its casting by BOTH the `casting-{id}-*.log` filename
+    convention and the casting its `# evidence-for:` header resolves to; see
+    `_sweep_requirement_to_castings` for why one source is not enough. A log
+    that cannot be keyed by either is not dropped silently — its only delta
+    test is the command-reference arm, and `full=True` sweeps it regardless.
+    """
+    candidates, texts = _sweep_corpus(evidence_dir)
+    if full:
+        return candidates
+
+    touched = [str(t) for t in (touched_files or []) if str(t).strip()]
+    if not touched:
+        return []
+
+    touched_castings = _sweep_touched_castings(manifest, touched)
+    req_to_castings = _sweep_requirement_to_castings(manifest)
+
+    selected: list[Path] = []
+    for log in candidates:
+        keyed: set[str] = set()
+        name_match = re.match(r"^casting-([^-]+)-", log.name)
+        if name_match:
+            keyed.add(name_match.group(1))
+        header: dict[str, Any] = {"cmd": None, "evidence_for": []}
+        try:
+            header = _parse_evidence_header(texts.get(log, ""))
+        except ValueError:
+            # A log whose header will not parse is still a log. It cannot be
+            # keyed by requirement and its command cannot be read, so it falls
+            # out of the DELTA scope — and a FULL sweep will re-execute it and
+            # surface the malformed header as the mismatch it is.
+            pass
+        for req_id in header.get("evidence_for") or []:
+            keyed |= req_to_castings.get(req_id, set())
+        if keyed & touched_castings:
+            selected.append(log)
+            continue
+        if _sweep_command_references(header.get("cmd") or "", touched):
+            selected.append(log)
+    return selected
+
+
+def _derive_sweep_pool_size(logs: list[Path], override: int | None) -> int:
+    """FR-031 — the worker count, derived from the corpus about to be swept.
+
+    Never more workers than there is work (`len(logs)`), never more than the
+    machine can actually run in parallel (`os.cpu_count()`), and never past
+    `SWEEP_POOL_CEILING`, whose derivation from the committed corpus is stated
+    at its definition. An explicit `override` from the caller wins, clamped to
+    at least one, because a lead debugging a flaky log wants to force
+    serialisation and a pool of zero would simply hang.
+    """
+    if override is not None:
+        return max(1, int(override))
+    if not logs:
+        return 0
+    return max(1, min(len(logs), os.cpu_count() or 1, SWEEP_POOL_CEILING))
+
+
+def _sweep_log_timeout(header: dict[str, Any], override: float | None) -> int:
+    """FR-031 — the per-log timeout, taken from the log's own measurement.
+
+    A `# evidence-timeout:` header is the artifact author's own statement about
+    how long their command needs, already validated by `_parse_evidence_header`
+    against `EVIDENCE_TIMEOUT_CEILING_SECONDS`. Honouring it is what keeps the
+    sweep and acceptance agreeing about the same log: `_verify_one_evidence_file`
+    reads exactly this value, and a sweep that imposed its own would kill a
+    300-second integration log that acceptance had already passed.
+
+    Undeclared falls back to `EVIDENCE_TIMEOUT_DEFAULT_SECONDS`, the same
+    default acceptance uses. A caller-supplied `override` wins for every log,
+    which is the knob a lead uses to bound a whole sweep.
+    """
+    if override is not None:
+        return max(1, int(override))
+    declared = header.get("timeout")
+    if isinstance(declared, int) and declared > 0:
+        return declared
+    return EVIDENCE_TIMEOUT_DEFAULT_SECONDS
+
+
+def _sweep_mismatch(
+    *,
+    log_name: str,
+    reason: str,
+    failure_token: str,
+    redacted_log: str | None = None,
+    redacted_captured: str | None = None,
+    exit_code: int | None = None,
+    elapsed_seconds: float = 0.0,
+) -> dict[str, Any]:
+    """One mismatch record, carrying BOTH vocabularies for the same two hashes.
+
+    C-7 names the fields `expected_sha256` / `actual_sha256`; the provenance
+    records `_make_provenance_record` writes name the same two values
+    `redacted_log_sha256` / `redacted_captured_sha256`. A reader that arrives
+    from either direction — a lead reading a sweep refusal, or a tool
+    correlating that refusal against the casting's accepted provenance — must
+    find the value under the spelling it knows, so both are carried and the
+    hash is computed ONCE per side and assigned to both names.
+
+    The four hash fields are `None`, not the hash of the empty string, on every
+    path where redaction never ran (a timeout, a non-zero exit, a header that
+    would not parse). `_hash_str("")` is a real, stable, meaningless value, and
+    publishing it would let a reader compare two logs that were never compared
+    and find them equal.
+    """
+    expected = None if redacted_log is None else _hash_str(redacted_log)
+    actual = None if redacted_captured is None else _hash_str(redacted_captured)
+    return {
+        "log": log_name,
+        "reason": reason,
+        "failure_token": failure_token,
+        "expected_sha256": expected,
+        "actual_sha256": actual,
+        "redacted_log_sha256": expected,
+        "redacted_captured_sha256": actual,
+        "exit_code": exit_code,
+        "elapsed_seconds": round(elapsed_seconds, 3),
+    }
+
+
+def _sweep_head_log_path(log: Path, project_root: Path, worktree_path: Path) -> Path:
+    """Where ``log`` lives inside the sweep worktree, best effort."""
+    try:
+        return worktree_path / log.resolve().relative_to(project_root.resolve())
+    except (ValueError, OSError):
+        return worktree_path / log.name
+
+
+def _sweep_submission_order(
+    logs: list[Path], *, project_root: Path, worktree_path: Path
+) -> list[Path]:
+    """NFR-004 — dispatch order chosen for WALL TIME, not for reading.
+
+    "pool size and log ordering are tuned to that", where "that" is finishing
+    well inside the INSPECT the sweep precedes. The order was a plain
+    `sorted()`, which is tuned for a reader diffing two sweeps — a real goal,
+    but a different one, and the requirement names wall time.
+
+    Longest Processing Time first: with a fixed pool, dispatching the longest
+    jobs first is the classic makespan heuristic, and it bounds the finish at
+    (4/3 - 1/(3m)) times optimal. The failure it removes is concrete — the
+    corpus holds one 300-second integration log among a dozen 5-second greps,
+    and a `sorted()` order that happens to dispatch it LAST leaves seven idle
+    workers waiting five minutes on one straggler.
+
+    The estimate is the log's own `# evidence-timeout:` — the author's stated
+    upper bound, already validated at acceptance — falling back to the shared
+    default, with byte size breaking ties because a longer capture came from a
+    longer command (a pytest suite prints more than a grep). Read from the
+    WORKTREE, so a log absent from the working tree is still estimated.
+
+    Reporting order is unaffected: the caller re-keys results into the input
+    order, so two identical sweeps still print identically (see
+    `sweep_evidence_at_head`).
+    """
+    def _weight(log: Path) -> tuple[int, int, str]:
+        head_log = _sweep_head_log_path(log, project_root, worktree_path)
+        declared = EVIDENCE_TIMEOUT_DEFAULT_SECONDS
+        size = 0
+        try:
+            text = head_log.read_text(encoding="utf-8", errors="replace")
+            size = len(text)
+            header = _parse_evidence_header(text)
+            value = header.get("timeout")
+            if isinstance(value, int) and value > 0:
+                declared = value
+        except (OSError, ValueError):
+            pass
+        # Negated so `sorted` ascending puts the heaviest first; the name is
+        # the final tie-break so the order is deterministic for a given corpus.
+        return (-declared, -size, log.name)
+
+    return sorted(logs, key=_weight)
+
+
+#: The shell every `# evidence-cmd:` is parsed with AND executed by, named once.
+#
+# BOTH SERVER-SIDE DOORS READ IT (fallout FR-002 / D-107). `_sweep_one_log` at
+# the boundary and terminal crossings, and `_verify_one_evidence_file` at
+# casting acceptance: two executors, one constant, so neither can drift onto a
+# shell the other does not run. The commit guard's Check 4 is the third reader
+# and cannot import this module, which is why its `/bin/sh -n` is written out
+# there and pinned against this constant by `tests/test_commit_guard.py`.
+#
+# `worktree_helpers._run_command_with_timeout` launches the command through
+# `Popen(shell=True)` with no `executable=` argument — there is none anywhere in
+# the plugin — which on POSIX is `['/bin/sh', '-c', cmd]`. The lint below has to
+# parse with the shell that will run the command or it would be judging a
+# dialect nobody executes, so the path is one constant both halves read rather
+# than a literal spelled twice that can drift.
+_EVIDENCE_SHELL: str = "/bin/sh"
+
+
+def _shell_parse_problem(cmd: str) -> str | None:
+    """The shell's own complaint when ``cmd`` will not parse; None when it will.
+
+    ``-n`` READS AND PARSES WITHOUT EXECUTING. Nothing in ``cmd`` runs here, at
+    any size, under any content — that is the whole of the check, and it is the
+    only reason handing an unreviewed command to a shell is safe at all.
+
+    NOT A CONTRADICTION OF ``_shell_tokens``, which returns None on an unlexable
+    command so that the log still RUNS. The two answer different questions and
+    fail in opposite directions on purpose. ``_shell_tokens`` decides whether a
+    GRIND diff INVALIDATES a log — a question about relevance, where rejecting a
+    command nobody can lex would discard evidence for a reason unrelated to
+    whether it still reproduces, so it fails OPEN. This decides whether the
+    command CAN RUN AT ALL, where "I cannot parse this" is the same sentence the
+    shell about to execute it is going to say, so it fails CLOSED. Neither
+    rationale is weakened by the other; changing one does not license changing
+    the other.
+
+    The command is an ARGUMENT to ``-c``, never written to the child's stdin:
+    ``sh -n`` abandons a broken script without draining its input, so a pipe
+    would race the writer against a reader that has already gone.
+
+    Never raises. A shell that cannot be spawned at all is reported AS a problem
+    rather than swallowed, because a door that cannot answer this question must
+    not answer it with silence — EVERY caller's whole contract is that a command
+    reaching the runner has been parsed.
+
+    WHICH CALLERS THOSE ARE IS DERIVED, NEVER COUNTED (fallout AC-035). Both
+    crossings turn a problem here into a named `EVIDENCE_COMMAND_SYNTAX`
+    refusal: `_sweep_one_log` at the boundary and terminal sweeps, and
+    `_verify_one_evidence_file` at casting acceptance (FR-002 / D-107, which is
+    what the acceptance door was missing). `_sweep_warm_worktree` calls this too
+    and refuses nothing — a warm-up owns no verdict, so it skips a candidate it
+    cannot parse (D-176). This paragraph said "there are two" while that third
+    caller sat one screen below it; the enumeration is now derived from the tree
+    in
+    `tests/test_evidence.py#test_the_runner_documents_the_callers_that_must_lint`
+    rather than from what the last editor remembered.
+
+    The commit guard parses the same way and cannot call this — it is a shell
+    script — so it spells `/bin/sh -n` out and `tests/test_commit_guard.py` pins
+    the two spellings against each other.
+    """
+    try:
+        proc = subprocess.run(
+            [_EVIDENCE_SHELL, "-n", "-c", cmd],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        return f"{_EVIDENCE_SHELL} -n could not run: {type(exc).__name__}: {exc}"
+    if proc.returncode == 0:
+        return None
+    return (proc.stderr or proc.stdout or "").strip() or (
+        f"{_EVIDENCE_SHELL} -n exited {proc.returncode} without a message"
+    )
+
+
+def _sweep_warm_worktree(
+    order: list[Path],
+    *,
+    project_root: Path,
+    worktree_path: Path,
+    timeout_seconds: float | None,
+) -> str | None:
+    """Run ONE corpus command and THROW IT AWAY, to warm the sweep's worktree.
+
+    Returns the command it warmed with, or None when it warmed with nothing.
+
+    WHAT IT REMOVES (fallout NFR-005 / D-176). The sweep runs inside a
+    ``git worktree add --detach`` checkout, so every build artefact the project
+    keeps OUTSIDE git — a ``.venv``, a ``node_modules``, a ``target/`` — is
+    absent from it. The FIRST command that needs one CONSTRUCTS it, and the
+    construction prints into the merged stdout/stderr this sweep byte-compares.
+    Driven on the one-log DELTA scope the width rule produces on a quiet cycle:
+    ``evidence/casting-11-hardening-reproduction-door.log`` failed
+    EVIDENCE_OUTPUT_MISMATCH on five ``uv`` lines it never captured, one of them
+    naming the worktree's own absolute path — a path that differs on every
+    sweep and that no capture could ever have contained.
+
+    WHY THE FULL SWEEP PASSED ANYWAY, AND WHY THAT WAS NOT HEALTH. The
+    construction is paid ONCE per worktree, by whichever of the eight pool
+    workers reaches the toolchain first, and it happened to be a
+    ``uv run --quiet`` log whose flag suppresses exactly those lines. Nothing
+    enforced that ordering: the pool size, the machine's core count, the corpus
+    contents, or one log being narrowed all reorder it, and the sweep then
+    refuses a log that is correct. Warming here removes the race rather than
+    reordering it.
+
+    WHY THE COMMAND COMES FROM THE CORPUS RATHER THAN BEING NAMED HERE. This
+    sweep runs against whatever repository the run is building, and it has no
+    way to know that THIS one's Python project lives under
+    ``plugins/foundry/mcp-server`` — the repo root carries no ``pyproject.toml``
+    at all, so a root-level ``uv sync`` would warm nothing while putting one
+    toolchain's name into machinery that must serve every toolchain. The corpus
+    is the one thing that does know: its commands ARE the project's toolchain.
+    Running one of them warms the tree with the project's own build and leaves
+    no toolchain name in this module.
+
+    WHICH ONE, AND WHY NOT SIMPLY THE CHEAPEST. The candidate is the cheapest —
+    by ``_sweep_submission_order``'s own weight, so no second notion of cost is
+    invented — among the logs invoking the corpus's most common command-position
+    program (``_command_position_programs``, which steps over ``cd`` and env
+    assignments and recurses into ``sh -c`` payloads). DOMINANCE is what makes
+    the choice stable: picking the cheapest log outright would hand the warm-up
+    to the next tiny ``grep`` log somebody commits, the tree would go cold
+    again, and the failure would come back silently. That is the fragility
+    D-176 was filed about, not a fix for it.
+
+    PARSED FIRST, LIKE EVERY OTHER COMMAND. ``_shell_parse_problem`` runs over
+    the candidate before anything warms with it, because FR-002's "NOT executed"
+    is a property of this door and not only of ``_sweep_one_log``: a warm-up
+    that ran ``touch x && (`` would perform the ``touch`` the parse check exists
+    to prevent, FIRST, outside any per-log result, and the sweep would then
+    report EVIDENCE_COMMAND_SYNTAX for a command it had already partly run. A
+    candidate that will not parse is skipped, not warmed with.
+
+    SELECTING AND EXECUTING ARE ONE FUNCTION ON PURPOSE.
+    ``test_every_caller_of_the_runner_parses_the_command_first`` derives its
+    rule from the tree rather than from a list — every function reaching
+    ``_run_command_with_timeout`` must also reach ``_shell_parse_problem`` —
+    and that rule is what caught D-107, where two doors disagreed about
+    whether a command could run. A warm-up that chose here and executed at the
+    call site would put the runner in a function the parse check is not in,
+    and the third executor added tomorrow would inherit the same gap.
+
+    WHY RUNNING A CORPUS COMMAND TWICE IS SAFE. The corpus's own contract says
+    so. Every one of these commands is already re-executed on every FULL sweep,
+    eight at a time in one shared checkout, and byte-compared against its
+    capture; a command that changed the tree could not be in the corpus at all.
+
+    WHAT IT CANNOT DO, said plainly so the next reader does not over-trust it.
+    It warms the toolchain THAT command uses. A corpus mixing two toolchains
+    warms one of them, and the second still pays its construction inside a
+    compared capture — the remedy there is a second warm-up rule, not a wider
+    reading of this one. And a warm-up that fails leaves the sweep exactly
+    where it stood without one, which is why the caller discards its outcome:
+    a warm-up is evidence of nothing, and a sweep that refused because one
+    failed would refuse for a reason no log owns.
+    """
+    commands: list[tuple[str, dict[str, Any]]] = []
+    programs: list[set[str]] = []
+    for log in order:
+        head_log = _sweep_head_log_path(log, project_root, worktree_path)
+        try:
+            header = _parse_evidence_header(
+                head_log.read_text(encoding="utf-8", errors="replace")
+            )
+        except (OSError, ValueError):
+            # A log that is absent, unreadable or malformed at HEAD is
+            # `_sweep_one_log`'s to refuse, by name, with its own token. It is
+            # not this function's to report, and it is certainly not the tree's
+            # to warm with.
+            continue
+        cmd = header.get("cmd")
+        if not isinstance(cmd, str) or not cmd.strip():
+            continue
+        commands.append((cmd, header))
+        programs.append(set(_command_position_programs(cmd) or ()))
+
+    counts: Counter[str] = Counter()
+    for names in programs:
+        counts.update(names)
+    if not counts:
+        return None
+    # Counted per LOG, not per occurrence, so a command naming its program
+    # twice does not out-vote two logs that name another once. The name breaks
+    # ties, so a corpus with no dominant program still picks deterministically
+    # rather than following dict insertion order.
+    dominant = min(counts, key=lambda name: (-counts[name], name))
+
+    # `order` is heaviest-first (NFR-004's makespan heuristic), so walking it
+    # backwards is cheapest-first — the warm-up should cost the least the
+    # corpus can offer while still exercising the dominant toolchain.
+    for index in range(len(commands) - 1, -1, -1):
+        if dominant not in programs[index]:
+            continue
+        cmd, header = commands[index]
+        if _shell_parse_problem(cmd) is not None:
+            continue
+        try:
+            _run_command_with_timeout(
+                cmd=cmd,
+                cwd=worktree_path,
+                timeout=_sweep_log_timeout(header, timeout_seconds),
+            )
+        except (subprocess.SubprocessError, OSError):
+            # The same rule `_prune_orphaned_worktrees` holds one frame up:
+            # housekeeping must never decide a verdict. The exit code, the
+            # output and a timeout kill are discarded here for that reason too
+            # — a warm-up is evidence of nothing, and a sweep that refused
+            # because one failed would refuse for a reason no log owns.
+            return None
+        return cmd
+    return None
+
+
+def _sweep_one_log(
+    log: Path,
+    *,
+    project_root: Path,
+    worktree_path: Path,
+    timeout_seconds: float | None,
+) -> tuple[str, dict[str, Any] | None]:
+    """Re-execute ONE log at HEAD. Returns ``(log_name, mismatch_or_None)``.
+
+    Runs on a pool worker, so it NEVER raises: an exception here would surface
+    at `future.result()` in the collector and take the whole sweep — and with
+    it the `inspect_start` transition — down with a traceback naming no log.
+    Every failure becomes a named mismatch instead, which is the same rule
+    `_verify_one_evidence_file` holds one layer down.
+
+    The committed bytes are read from INSIDE the worktree, not from the working
+    tree. That is ST-005's "byte-identical at HEAD" taken literally: a log the
+    lead edited but did not commit is not the corpus, and comparing a working-
+    tree log against a HEAD re-execution would report a mismatch that says
+    nothing about whether the committed evidence still reproduces.
+    """
+    log_name = _sweep_relative_log_name(log, project_root)
+    try:
+        try:
+            relative = log.resolve().relative_to(project_root.resolve())
+        except (ValueError, OSError):
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=(
+                    f"{log_name} is not inside the swept tree, so it has no "
+                    f"counterpart at HEAD"
+                ),
+                failure_token="EVIDENCE_COMMAND_MISSING",
+            )
+        head_log = worktree_path / relative
+        if not head_log.is_file():
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=(
+                    f"{log_name} is not committed at HEAD; the sweep compares "
+                    f"the COMMITTED corpus, so an uncommitted log has nothing "
+                    f"to re-execute against"
+                ),
+                failure_token="EVIDENCE_COMMAND_MISSING",
+            )
+
+        log_text = head_log.read_text(encoding="utf-8", errors="replace")
+        try:
+            header = _parse_evidence_header(log_text)
+        except ValueError as exc:
+            msg = str(exc)
+            token = (
+                "EVIDENCE_FOR_MALFORMED"
+                if msg.startswith("EVIDENCE_FOR_MALFORMED")
+                else "EVIDENCE_VOLATILE_MALFORMED"
+            )
+            return log_name, _sweep_mismatch(
+                log_name=log_name, reason=msg, failure_token=token
+            )
+
+        cmd = header.get("cmd")
+        if cmd is None:
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=f"no `# evidence-cmd:` header in {log.name}",
+                failure_token="EVIDENCE_COMMAND_MISSING",
+            )
+
+        # CT-015 / FR-002 — PARSED BEFORE IT IS EXECUTED, and refused here if it
+        # will not parse. Until this rung a command with a syntax error was
+        # discovered by RUNNING it: the shell exited non-zero, the sweep called
+        # that EVIDENCE_EXIT_NONZERO, and the operator read "your command
+        # failed" for what was a typo the shell had already diagnosed in full.
+        # Worse, everything before the syntax error in a partially-valid script
+        # ran first — `rm -rf x && (` executes the `rm` — so "it only failed to
+        # parse" was never the same as "it had no effect".
+        #
+        # The refusal is a per-log mismatch like every other, so the boundary and
+        # terminal crossings that read this result name the log and the token
+        # without a new path: nothing downstream of here is re-decided.
+        parse_problem = _shell_parse_problem(cmd)
+        if parse_problem is not None:
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=(
+                    f"`# evidence-cmd:` in {log.name} does not parse under "
+                    f"`{_EVIDENCE_SHELL} -n`, so it was NOT executed: "
+                    f"{parse_problem}"
+                ),
+                failure_token="EVIDENCE_COMMAND_SYNTAX",
+            )
+
+        timeout = _sweep_log_timeout(header, timeout_seconds)
+        exit_code, captured, elapsed = _run_command_with_timeout(
+            cmd=cmd, cwd=worktree_path, timeout=timeout
+        )
+        if exit_code == -1:
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=f"command exceeded {timeout}s; killed via SIGTERM/SIGKILL",
+                failure_token="EVIDENCE_TIMEOUT",
+                exit_code=exit_code,
+                elapsed_seconds=elapsed,
+            )
+        if exit_code != 0:
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=f"command exited with code {exit_code}",
+                failure_token="EVIDENCE_EXIT_NONZERO",
+                exit_code=exit_code,
+                elapsed_seconds=elapsed,
+            )
+
+        # D-200: the same one-decision strip the acceptance door uses. The
+        # boundary sweep took the same false ACCEPT — driven at f5b487b,
+        # `Foundry-Phase(inspect_start)` on a committed log whose three
+        # captured `#` lines disagreed with HEAD reported no mismatch and
+        # advanced the cycle counter — so both callers route through
+        # `_header_stripped_pair` rather than stripping each side alone.
+        #
+        # D-205: and the same NARROWED grammar. Driven at cb77e83, this
+        # boundary advanced the counter with `mismatches: []` on a committed
+        # log carrying `# FABRICATED: all 47 assertions passed on a clean
+        # tree` above its body, because the discarded run was never tested
+        # against the grammar. One entry point, one grammar, both doors.
+        committed_body, captured_body = _header_stripped_pair(log_text, captured)
+        try:
+            matched, diff, redacted_log, redacted_captured = _compare_byte_match(
+                committed=committed_body,
+                captured=captured_body,
+                volatile_patterns=header.get("volatile", []),
+            )
+        except ValueError as exc:
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=str(exc),
+                failure_token="EVIDENCE_VOLATILE_MALFORMED",
+                exit_code=exit_code,
+                elapsed_seconds=elapsed,
+            )
+        if not matched:
+            return log_name, _sweep_mismatch(
+                log_name=log_name,
+                reason=diff or "re-execution output differs from the committed log",
+                failure_token="EVIDENCE_OUTPUT_MISMATCH",
+                redacted_log=redacted_log,
+                redacted_captured=redacted_captured,
+                exit_code=exit_code,
+                elapsed_seconds=elapsed,
+            )
+        return log_name, None
+    except BaseException as exc:  # noqa: BLE001 — see the docstring
+        return log_name, _sweep_mismatch(
+            log_name=log_name,
+            reason=f"sweep worker failed: {type(exc).__name__}: {exc}",
+            failure_token="EVIDENCE_COMMAND_MISSING",
+        )
+
+
+def _sweep_run_one(
+    log: Path,
+    *,
+    project_root: Path,
+    worktree_path: Path,
+    timeout_seconds: float | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """`_sweep_one_log` plus its own wall time. Returns ``(record, mismatch)``.
+
+    CT-007 asks for the sweep result "recorded per log with scope (delta or
+    full) and elapsed seconds", and only MISMATCHES carried a time — so the
+    column the contract names was absent for exactly the logs that passed, and
+    a lead tuning NFR-004's pool could not see which log was the straggler.
+
+    The measurement is the WHOLE per-log operation: reading the committed bytes
+    out of the worktree, running the command, and comparing. A mismatch record
+    keeps its own narrower `elapsed_seconds` — the command's run alone — beside
+    this one, because that is the number a lead debugging a timeout wants and
+    it is not the same number.
+    """
+    started = time.monotonic()
+    log_name, mismatch = _sweep_one_log(
+        log,
+        project_root=project_root,
+        worktree_path=worktree_path,
+        timeout_seconds=timeout_seconds,
+    )
+    record = {
+        "log": log_name,
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "matched": mismatch is None,
+        # A matched log reached the comparison, which `_sweep_one_log` only
+        # does after the command exited 0.
+        "exit_code": 0 if mismatch is None else mismatch.get("exit_code"),
+        "failure_token": None if mismatch is None else mismatch.get("failure_token"),
+    }
+    return record, mismatch
+
+
+def sweep_evidence_at_head(
+    *,
+    project_root: Path,
+    run_dir: Path,
+    logs: list[Path],
+    pool_size: int | None = None,
+    timeout_seconds: float | None = None,
+) -> dict[str, Any]:
+    """Re-execute the in-scope corpus at HEAD (GI-002 / ST-005 / CT-007).
+
+    ONE detached worktree at HEAD of ``project_root`` for the whole sweep, torn
+    down on the success path and on every failure path. It is WARMED once,
+    serially, before the pool opens — `_sweep_warm_worktree` picks the corpus
+    command whose throwaway run pays whatever one-time construction a fresh
+    checkout owes, so no compared capture ever carries it (D-176). Each log's
+    ``# evidence-cmd:`` is PARSED with `_shell_parse_problem` before it is run —
+    a command that will not parse is refused as EVIDENCE_COMMAND_SYNTAX and
+    never reaches the runner (CT-015) — then runs inside the worktree in a
+    bounded thread pool, and each capture goes through the SAME comparison
+    `verify_evidence` uses —
+    `_compare_byte_match`, with the same declared-volatile redaction, the same
+    D-126 residue floor and the same D-135 disagreement guard. None of those
+    rules is re-decided here.
+
+    Args:
+        project_root: the shared tree the run is building in. HEAD of THIS repo
+            is what the sweep checks out — not any casting's own commit, which
+            is acceptance's question and a different one.
+        run_dir: the run directory; the worktree is created beneath it, exactly
+            as acceptance's is.
+        logs: what `select_sweep_scope` returned. An empty list is a complete
+            answer: zero logs re-executed, no worktree created, no subprocess
+            spawned (AC-014).
+        pool_size: optional worker-count override; otherwise derived from the
+            corpus by `_derive_sweep_pool_size`.
+        timeout_seconds: optional per-log timeout override; otherwise each log's
+            own `# evidence-timeout:` is honoured, falling back to
+            `EVIDENCE_TIMEOUT_DEFAULT_SECONDS`.
+
+    Returns:
+        ``{'ok': bool, 'scope_count': int, 'logs_reexecuted': [str],
+        'per_log': [{'log', 'elapsed_seconds', 'matched', 'exit_code',
+        'failure_token'}],
+        'mismatches': [{'log', 'reason', 'expected_sha256', 'actual_sha256',
+        'redacted_log_sha256', 'redacted_captured_sha256', 'failure_token',
+        'exit_code', 'elapsed_seconds'}], 'elapsed_seconds': float,
+        'pool_size': int, 'head_commit': str | None, 'error': str | None}``.
+
+    ``per_log`` is CT-007's "recorded per log ... and elapsed seconds", and it
+    carries a row for EVERY log in scope, matched or not — the timing column
+    used to exist only on mismatches, so the logs that passed had none.
+
+    ``ok`` is False when any log mismatched OR when the sweep could not run at
+    all (no HEAD to resolve, no worktree to create). ``error`` is non-None only
+    in that second case, and the caller must name it in the refusal — a sweep
+    that could not run is emphatically not a sweep that passed, and returning
+    ``ok: True`` with an empty mismatch list is the shape that would let a
+    broken sweep quietly clear the boundary it exists to hold.
+
+    Never raises. The `inspect_start` transition owns the refusal, the cycle
+    counter and the `evidence_sweep` roll-up record; this function writes
+    nothing and decides nothing about the run.
+    """
+    started = time.monotonic()
+    scope_count = len(logs)
+    result: dict[str, Any] = {
+        "ok": True,
+        "scope_count": scope_count,
+        "logs_reexecuted": [],
+        "per_log": [],
+        "mismatches": [],
+        "elapsed_seconds": 0.0,
+        "pool_size": _derive_sweep_pool_size(logs, pool_size),
+        "head_commit": None,
+        "error": None,
+    }
+    if not logs:
+        # AC-014's zero-log case, and the reason it is handled BEFORE anything
+        # else: a DELTA sweep whose GRIND touched nothing in scope must cost no
+        # worktree, no `.git/config.lock` contention and no subprocess at all.
+        # Creating a worktree and immediately tearing it down would be the same
+        # answer at a cost NFR-004 exists to avoid.
+        result["elapsed_seconds"] = round(time.monotonic() - started, 3)
+        return result
+
+    try:
+        head = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        result["ok"] = False
+        result["error"] = (
+            f"could not resolve HEAD of {project_root}: {type(exc).__name__}: {exc}"
+        )
+        result["elapsed_seconds"] = round(time.monotonic() - started, 3)
+        return result
+    if head.returncode != 0 or not head.stdout.strip():
+        result["ok"] = False
+        result["error"] = (
+            f"could not resolve HEAD of {project_root}: "
+            f"{head.stderr.strip() or 'git rev-parse HEAD produced no output'}"
+        )
+        result["elapsed_seconds"] = round(time.monotonic() - started, 3)
+        return result
+    head_commit = head.stdout.strip()
+    result["head_commit"] = head_commit
+
+    try:
+        _prune_orphaned_worktrees(project_root)
+    except (subprocess.SubprocessError, OSError):
+        # D-116, same reasoning as the acceptance path: housekeeping must never
+        # decide a verdict. If it matters, `_setup_worktree` fails next.
+        pass
+
+    worktree_path: Path | None = None
+    try:
+        try:
+            worktree_path = _setup_worktree(
+                project_root,
+                "evidence",
+                head_commit,
+                run_dir,
+                dir_prefix=SWEEP_WORKTREE_PREFIX,
+            )
+        except (RuntimeError, subprocess.SubprocessError, OSError) as exc:
+            result["ok"] = False
+            result["error"] = (
+                f"could not create the sweep worktree at HEAD "
+                f"{head_commit[:12]}: {type(exc).__name__}: {exc}"
+            )
+            result["elapsed_seconds"] = round(time.monotonic() - started, 3)
+            return result
+
+        pool = result["pool_size"]
+        # NFR-004 — DISPATCH order is longest-first (see
+        # `_sweep_submission_order`); REPORTING order is the caller's, restored
+        # below. The two goals are different and were previously served by one
+        # `sorted()` that met neither: a lead diffing cycle N against N-1 needs
+        # a stable list, and the pool needs the straggler started first.
+        order = _sweep_submission_order(
+            logs, project_root=project_root, worktree_path=worktree_path
+        )
+
+        # D-176 — WARM THE TREE BEFORE ANY COMPARED COMMAND RUNS IN IT. A
+        # detached checkout carries none of the project's gitignored build
+        # artefacts, so the first command that needs one builds it and prints
+        # the build into the bytes this sweep compares. Serial, and BEFORE the
+        # pool opens, because the whole failure is eight workers racing to be
+        # the one that pays that cost. Which command pays it, whether it may
+        # run at all, and what becomes of its output are all that function's
+        # to decide; nothing about the sweep's verdict is.
+        _sweep_warm_worktree(
+            order,
+            project_root=project_root,
+            worktree_path=worktree_path,
+            timeout_seconds=timeout_seconds,
+        )
+
+        outcomes: dict[Path, tuple[dict[str, Any], dict[str, Any] | None]] = {}
+        with ThreadPoolExecutor(max_workers=pool) as executor:
+            futures = {
+                executor.submit(
+                    _sweep_run_one,
+                    log,
+                    project_root=project_root,
+                    worktree_path=worktree_path,
+                    timeout_seconds=timeout_seconds,
+                ): log
+                for log in order
+            }
+            for future, log in futures.items():
+                outcomes[log] = future.result()
+
+        executed: list[str] = []
+        per_log: list[dict[str, Any]] = []
+        mismatches: list[dict[str, Any]] = []
+        for log in logs:
+            record, mismatch = outcomes[log]
+            executed.append(record["log"])
+            per_log.append(record)
+            if mismatch is not None:
+                mismatches.append(mismatch)
+        result["logs_reexecuted"] = executed
+        # CT-007's per-log column. `logs_reexecuted` stays a list of relative
+        # paths because that is what C-6 writes into `stream-rollup.json` and
+        # casting 3 reads; the timing rides beside it rather than changing the
+        # element type of a field another casting already consumes.
+        result["per_log"] = per_log
+        result["mismatches"] = mismatches
+        result["ok"] = not mismatches
+    finally:
+        if worktree_path is not None and worktree_path.exists():
+            try:
+                _teardown_worktree(project_root, worktree_path)
+            except (subprocess.SubprocessError, OSError):
+                # D-116: an exception in a `finally` REPLACES the result the
+                # body computed. A slow git during cleanup must not discard a
+                # sweep that already ran; the worst case is a stale directory
+                # the next prune removes.
+                pass
+
+    result["elapsed_seconds"] = round(time.monotonic() - started, 3)
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# fallout AC-061 / FR-063 / GI-033 / OT-015 (D-192, concern C-107) — THE
+# ACCEPTANCE DOOR, MOVED HERE BECAUSE IT RUNS THE ENGINE THIS MODULE IS.
+#
+# `Foundry-Accept-Casting` lived in `tools/foundry_handoff.py`, which the
+# boundary guard names in its own `_LIFECYCLE_FLOOR`, and reached
+# `verify_evidence` below through a call-time import. That was the tree's one
+# lifecycle-to-verifier crossing outside GI-033's named transitions-to-halt
+# seam, and AC-061 refuses this direction ENTIRELY — not a seam, not a table,
+# not a lazy import, at no depth.
+#
+# THREE NAMED CONTAINERS STOOD IN THIS DIRECTION'S WAY BEFORE THE DOOR MOVED,
+# and the difference between the first two and the third is why the edge is
+# closed rather than re-excused. A layering-debt allowlist the two module-top
+# assertions consulted BEFORE judging an edge was deleted at concern C-054, with
+# fourteen real violations in it wearing explanations. Its successor
+# `_UNCLOSED_CROSS_PACKAGE_EDGES` was a two-row frozenset all three assertions
+# skipped on with `continue`, so the guard reported a clean tree over a tree
+# holding both of its live crossings; D-193 deleted that one. Neither edge ever
+# entered `offenders`, which is what made both tables hollow rather than
+# lenient. `_OPEN_LAYERING_VIOLATIONS` replaced them and was a different shape
+# on purpose: the lifecycle assertion COMPARED its result against the roster
+# instead of skipping on it, so this crossing stayed inside `offenders` and the
+# guard said "this tree has exactly this violation" rather than "this tree is
+# clean". It was written to be unable to outlive its debt, and it did not — this
+# move emptied `offenders`, the exact-equality assertion failed naming the stale
+# row, and the roster went with the row. The rule reads `offenders == []`
+# outright now, with no second operand a reader has to go and check.
+#
+# WHY THE DOOR MOVED RATHER THAN A SYMBOL. GI-033's remedy is "a symbol read
+# from BOTH layers belongs in a leaf", and C-107 measured this edge and found it
+# does not answer to that arithmetic: what the door reached is not a symbol but
+# the evidence ENGINE. So the edge could only be REVERSED or ELIMINATED. It is
+# eliminated here, and the placement is the honest one rather than the cheap
+# one: a handler that re-executes a casting's evidence corpus and refuses the
+# casting on a byte-mismatch IS a decider, and `vocab.VERIFIER_PATH_PATTERNS`
+# already calls this file "the module that re-executes it decides whether a log
+# passes". The verifier set is not widened by this move — the door joins a
+# module already in it.
+#
+# WHAT CAME WITH IT AND WHAT DID NOT. Four symbols the door reads went to the
+# leaf `tools/artifacts.py` in the same reshaping, because the move is what made
+# them both-layers symbols: `record_handoff_event` and `_append_handoff_record`
+# (the ledger writer, which `concerns.py`, `orchestration/directives.py` and
+# `record_lead_fix_handoff` reach from the lifecycle side), and the
+# `check_reported_prompt_hash` / `foundry_spec_hash` pair (the first shared with
+# `orchestration/fix_gate.py`, the second bound by the registrar). The
+# `Foundry-Handoff` MCP door did NOT come with them: its first rung reserves the
+# `lead_fix` token to the server, and that is a policy of that door rather than
+# of the writer, so it stays in `foundry_handoff.py` and calls the leaf.
+#
+# The body below is the body that was there, unchanged but for the seam comment
+# the move deleted and the two ledger calls, which now name the leaf writer
+# directly rather than the lifecycle door that wraps it. A placement fix that
+# also edits behaviour is two changes wearing one defect id.
+# --------------------------------------------------------------------------- #
+
+
+def foundry_accept_casting(
+    casting_id: int | str,
+    spec_hash: str,
+    prompt_hash: str,
+    completion_report: str,
+    project_root: str = ".",
+    *,
+    casting_commit: str | None = None,
+) -> dict:
+    """Gate the acceptance of a completed casting.
+
+    The lead MUST call this before marking any casting done. The tool:
+      1. Verifies spec_hash matches the current spec.md (forces re-read)
+      2. Verifies prompt_hash matches the casting's prompt file (forces
+         the lead to have read the authoritative prompt, not a memory)
+      3. Records the acceptance as a handoff entry
+      4. Returns the list of acceptance criteria from the casting's
+         <spec_requirements> block so the lead can verify each against
+         the completion report
+      5. **Phase 4 / EVID-01:** Re-runs the teammate's cited evidence
+         commands server-side via ``verify_evidence``. On v2.0 specs,
+         records an EVID-01 stream-skip (Phase 1/2/3 backwards-compat).
+         On v2.1+ specs, re-executes each ``evidence/casting-{id}-*.log``
+         in an isolated worktree and rejects on byte-mismatch, timeout,
+         non-zero exit, missing command, malformed volatile regex, or
+         stub-pattern hit.
+
+    It does NOT mechanically check that the completion report satisfies
+    the ACs — that requires semantic understanding. It provides the
+    authoritative AC list and forces the lead to acknowledge it.
+
+    Args:
+        casting_id: Casting id from manifest.json
+        spec_hash: Fresh sha256 of spec.md (from Foundry-Spec-Hash)
+        prompt_hash: Hash of casting-{id}-prompt.md (from Foundry-Spawn-Teammate)
+        completion_report: The teammate's completion report text
+        project_root: Repo root
+        casting_commit: REQUIRED (CT-015 / FR-010 / AC-015) — full SHA of the
+            casting's commit (rev-parseable). ``verify_evidence`` checks this
+            commit out in a detached worktree, so acceptance without it would
+            have nothing to verify. Omitting it is a refusal naming the
+            parameter, on the first rung of the precondition ladder. The
+            parameter keeps its ``None`` default so the refusal is the
+            handler's and reads identically however the call arrived — over
+            MCP, from a test, or from another handler — rather than being an
+            argument-binding TypeError at one door and a named refusal at the
+            next.
+
+            The backwards-compat shim this used to carry is GONE: when
+            ``casting_commit`` was optional, omitting it bypassed BOTH EVID-01
+            and EVID-02 and still returned ``ok: true``, which bought a green
+            acceptance that verified nothing. Note that ``evidence_provenance``
+            being an EMPTY list is still a legitimate outcome — a v2.0 spec
+            routes through the stream-skip branch — but it is now always the
+            RESULT of running the evidence path rather than a default from a
+            bypassed block.
+
+    Returns:
+        On success:
+            {"ok": True, "casting_id": N, "acceptance_criteria": [...],
+             "must_verify": [...], "warning": str | None,
+             "unresolved_symbol_cites": [],
+             "evidence_verdict": "accepted" | "skipped",
+             "evidence_provenance": [...],
+             "evidence_tally": {"accepted": N, "rejected": N,
+                                "failure_tokens": [...]} | None,
+             "evidence_spec_path": str | None}
+        On failure:
+            {"ok": False, "error": "...", "hint": "..."}
+        On evidence rejection:
+            {"ok": False, "failure_token": "EVIDENCE_*", "failure_detail": "...",
+             "evidence_provenance": [...], "evidence_tally": {...}}
+
+    ``evidence_tally`` is the per-casting verdict count. It is a RETURN VALUE
+    and never a printed line (D-149): this server speaks JSON-RPC over stdio,
+    so anything written to stdout lands inside the protocol channel.
+
+    ``evidence_spec_path`` names the spec the evidence run actually read —
+    resolved from the RUN (``foundry_spec_hash``), never re-derived from a
+    fixed ``<project_root>/specs/spec.md`` guess. It is the observable proof
+    that a v2.1 run engaged evidence re-execution rather than silently routing
+    through the v2.0 stream-skip branch.
+    """
+    fdir = get_run_dir(project_root)
+    if not fdir:
+        return {"ok": False, "error": "No active foundry run"}
+
+    # CT-015 / FR-010 / AC-015 / OT-027 — casting_commit is REQUIRED.
+    #
+    # It was optional, and optional is what made it dangerous: omitting it
+    # bypassed BOTH EVID-01 (evidence re-execution) and EVID-02 (per-requirement
+    # binding) and still returned ok:true. The failure mode was not an error a
+    # lead would notice, it was a GREEN ACCEPTANCE THAT VERIFIED NOTHING —
+    # the most expensive kind, because the run proceeds on it. "No acceptance
+    # without EVID-01/EVID-02 running" (FR-010) is the rule, and a default that
+    # silently disables both is that rule's exact negation.
+    #
+    # It is the FIRST rung deliberately. A missing required parameter is a
+    # fault in the CALL, not in the run's artifacts, so making a lead produce a
+    # fresh spec hash before learning they omitted a parameter answers a
+    # question they did not ask. It also lands before any worktree or
+    # subprocess work by construction rather than by placement luck.
+    if not casting_commit:
+        return {
+            "ok": False,
+            "error": (
+                "casting_commit is required. Acceptance re-executes the "
+                "casting's committed evidence at that commit; without it "
+                "there is nothing to check out and nothing to verify."
+            ),
+            "hint": (
+                "Pass the full SHA of the casting's commit — the teammate "
+                "states it in the completion report, and `git rev-parse HEAD` "
+                "in the casting's worktree produces it. Acceptance is not "
+                "available without evidence re-execution: a casting that "
+                "cannot name its commit has not been shown to have built "
+                "anything."
+            ),
+            "casting_id": casting_id,
+            "field": "casting_commit",
+        }
+
+    # Verify spec hash
+    spec_result = foundry_spec_hash(project_root=project_root)
+    if not spec_result.get("ok"):
+        return {"ok": False, "error": f"Cannot hash spec: {spec_result.get('error')}"}
+    current_spec_hash = spec_result["spec_hash"]
+    if spec_hash != current_spec_hash:
+        return {
+            "ok": False,
+            "error": "stale_spec_hash",
+            "hint": (
+                f"Spec hash mismatch. You passed {spec_hash!r} but current is "
+                f"{current_spec_hash!r}. Re-read spec.md and try again with the "
+                f"fresh hash. Never accept a casting using a spec hash from "
+                f"memory — the spec may have been updated mid-run."
+            ),
+        }
+
+    # Load the casting prompt
+    prompt_path = fdir / "castings" / f"casting-{casting_id}-prompt.md"
+    if not prompt_path.exists():
+        return {
+            "ok": False,
+            "error": f"casting-{casting_id}-prompt.md not found",
+            "hint": "Re-run F0.5 DECOMPOSE",
+        }
+
+    # D-146: the whole read sits behind ONE guarded call. A casting prompt that
+    # exists but cannot be decoded used to raise UnicodeDecodeError straight
+    # across the MCP boundary, where the lead sees a traceback instead of a
+    # named refusal — the D-137 family's exact shape, one door further along.
+    prompt_text, prompt_problem = read_text_file(prompt_path)
+    if prompt_problem is not None:
+        return document_refusal(prompt_path, prompt_problem)
+
+    # CT-011 / AC-030 — the hash rung is `check_reported_prompt_hash`, not a
+    # second inline comparison. Foundry-Fix applies the same check to the same
+    # value, and two implementations of "does the reported hash match the
+    # file" is how one door ends up accepting a prompt the other would refuse.
+    # The helper re-reads the file rather than taking `prompt_text` as an
+    # argument, so the bytes it hashes are the bytes on disk at the moment of
+    # the check at BOTH doors.
+    hash_refusal = check_reported_prompt_hash(fdir, casting_id, prompt_hash)
+    if hash_refusal is not None:
+        return hash_refusal
+
+    # Extract acceptance criteria from the <spec_requirements> block
+    match = re.search(
+        r"<spec_requirements>(.*?)</spec_requirements>",
+        prompt_text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if not match:
+        return {
+            "ok": False,
+            "error": "casting prompt has no <spec_requirements> block",
+            "hint": "F0.9 VALIDATE should have caught this. Re-run validation.",
+        }
+
+    spec_block = match.group(1).strip()
+    acs = [ln.strip() for ln in spec_block.splitlines() if ln.strip()]
+
+    # Requirement-ID citation check.
+    #
+    # Parse every tagged requirement ID from the casting's <spec_requirements>
+    # block. For each ID, verify the completion report contains a citation
+    # within 300 chars of the ID mention. Missing citations mean the teammate
+    # did not (or cannot) prove that requirement was implemented — mechanical
+    # proof-of-coverage, prevents drift between what the spec asked for and
+    # what the teammate claims was built.
+    #
+    # FR-004 / AC-005: BOTH cite forms count — the durable `path#Symbol` form
+    # and the legacy `file:line` form. The grammar lives in
+    # `citation.CITATION_PATTERN` so the gate and the resolution guard below
+    # cannot drift apart; widening it here never narrows what was accepted
+    # before, because the file:line alternative is carried through unchanged.
+    # THE WINDOW IS SYMMETRIC (D-118). It used to be
+    # `completion_report[start:start + 300]` — forward from the ID only — while
+    # agents/teammate.md tells every teammate the gate "verifies each
+    # requirement ID has a citation WITHIN 300 CHARACTERS OF the ID mention".
+    # So `src/mod.py#foo implements FR-001` satisfies the documented
+    # instruction and was rejected, costing a re-dispatch bounce on a report
+    # that was already correct. The failure was safe (over-strict, never
+    # over-permissive), which is why it survived — a gate that only ever
+    # refuses too much produces no bad acceptances to notice, just wasted
+    # cycles. Widening the code to match the prose is the fix; the prose is
+    # another casting's file and needs no change.
+    CITATION_WINDOW = 300
+    # D-150: the requirement-ID families are declared ONCE, in the vocabulary
+    # module. This was the first of seven hand-typed copies, and like the rest
+    # it knew seven families and neither OT- nor GI-, so an observable truth
+    # quoted into a casting's <spec_requirements> block was invisible here: no
+    # citation was ever demanded for it and none could be credited. The
+    # canonical pattern is a strict SUPERSET, so every ID that required a
+    # citation before still does (NFR-002) — and OT-/GI-/CT-/ST- rows quoted
+    # into the block now require one too, which is the point.
+    #
+    # D-180: ...and WHICH of those rows the casting owns is `declared_requirement_ids`,
+    # not a `findall` over the block. D-150 widened the FAMILIES this reader can
+    # see; it left the SUBJECT unjudged, so an ID quoted as an example inside
+    # another requirement's prose was harvested exactly like a requirement
+    # assigned to the casting. Both consumers below read this one list — the
+    # citation window and the EVID-02 binding check — so the wrong subject was
+    # demanded twice from the same mistake. The helper's docstring carries the
+    # driven case and why the narrower `- **ID**` reading was rejected.
+    casting_req_ids = declared_requirement_ids(spec_block)
+    citation_pattern = CITATION_PATTERN
+    missing_citations: list = []
+    for rid in casting_req_ids:
+        # Find every occurrence of the requirement ID in the report.
+        found_citation = False
+        for m in re.finditer(re.escape(rid), completion_report):
+            start = m.start()
+            window = completion_report[
+                max(0, start - CITATION_WINDOW):m.end() + CITATION_WINDOW
+            ]
+            if citation_pattern.search(window):
+                found_citation = True
+                break
+        if not found_citation:
+            missing_citations.append(rid)
+
+    # Mechanical symbol-resolution guard (FR-004 / AC-006 / AC-007).
+    #
+    # A new rung on the precondition ladder: every `path#Symbol` cite in the
+    # report must resolve in the tree. A cite whose symbol resolves is VALID
+    # however stale a `:line` hint beside it has become — the guard never
+    # reads the line component, so a moved line produces no finding of any
+    # kind. A symbol that resolves nowhere is a defect and blocks acceptance.
+    unresolved_cites = unresolved_symbol_cites(completion_report, project_root)
+
+    # ============================================================
+    # Phase 4 / EVID-01: server-side evidence re-execution.
+    #
+    # Inserted between the req-ID citation check and the scope-flag check.
+    # On v2.0 specs, verify_evidence routes through manifest.stream_skips
+    # (Phase 1/2/3 backwards-compat — same machinery as Phase 3 stream-skips
+    # but with EVID-01 as a virtual stream owned by foundry_accept_casting).
+    # On v2.1+ specs, every cited evidence command is re-run server-side
+    # and rejected on byte-mismatch, timeout, non-zero exit, missing
+    # command, malformed volatile regex, or stub-pattern hit.
+    #
+    # THIS BLOCK IS NO LONGER CONDITIONAL (CT-015 / FR-010). It used to sit
+    # under `if casting_commit is not None:` — a backwards-compat shim for
+    # callsites that had not migrated — and the branch is dead now that the
+    # first rung refuses an absent commit. It is REMOVED rather than left
+    # standing as an unreachable guard, because an `if` that can no longer be
+    # false still reads as a supported mode to the next author, and the mode it
+    # advertised was "acceptance with no verification". `evidence_provenance`
+    # is therefore always the result of running this path.
+    # ============================================================
+    evidence_verdict = None
+    evidence_tally: dict | None = None
+    evidence_provenance: list[dict] = []
+    evidence_spec_path: Path | None = None
+    evidence_stream_skips: list[dict] = []
+    # fallout AC-061 / FR-063 / GI-033 (D-192, concern C-107) — THE SEAM IS GONE
+    # BECAUSE THE DOOR CROSSED IT.
+    #
+    # `_read_spec_format_version`, `_declared_spec_format_version` and
+    # `verify_evidence` were reached here through a call-time import from
+    # `tools/foundry_handoff.py`, and that was the tree's one
+    # lifecycle-to-verifier crossing. A call-time import is not a load-time
+    # edge, but AC-061 refuses this direction "ENTIRELY" and
+    # `tests/orchestration/test_module_boundaries.py#test_no_lifecycle_module_reaches_a_verifier_module_at_any_depth`
+    # walks every import at any depth, so laziness was never what excused it —
+    # an allowlist was, twice, and both tables have now been deleted for it.
+    #
+    # GI-033's arithmetic gives "a symbol read from BOTH layers belongs in a
+    # leaf", and C-107 drove it and found nothing to move: what the door reached
+    # was not a symbol but the evidence ENGINE. `verify_evidence` has one caller
+    # in the package — this one — and its closure shares `_make_provenance_record`
+    # and the worktree helpers with the sweep, so the edge could only be REVERSED
+    # or ELIMINATED, never relayed through an intermediary that would violate at
+    # its own edge instead. Moving the door eliminates it: a handler that RUNS
+    # the verification is a verifier, and it now sits in the module that defines
+    # the three names above, which is why there is no import here to read.
+    # Resolve run_dir for worktree storage. fdir is the active foundry
+    # run dir (computed at function entry); pass it through so the
+    # worktree lives under foundry-archive/{run}/worktrees/.
+    #
+    # FR-017 / AC-023: the spec path is the RUN's spec, not a third
+    # re-derivation. `foundry_spec_hash` already resolved it above
+    # (fdir/spec.md, else the spec_path recorded in state.json) and the
+    # result is in `spec_result`. The hardcoded
+    # `<project_root>/specs/spec.md` this replaces pointed at a file most
+    # runs do not have; `verify_evidence` reads `spec_format_version` off
+    # whatever path it is handed and defaults to v2.0 on a miss, so the
+    # wrong path silently downgraded every v2.1 run to the stream-skip
+    # branch and no evidence was ever re-executed.
+    evidence_spec_path = Path(spec_result["spec_path"])
+
+    # A DECLARED but unparseable spec_format_version is a precondition
+    # failure, and it is refused HERE, in the same {ok, error, hint} shape
+    # as every other rung of this ladder. It is not an evidence failure —
+    # nothing was re-executed and no evidence file is at fault — so it
+    # carries no KNOWN_EVIDENCE_FAILURE_TOKENS name. What it must not do is
+    # what it used to: parse as v2.0, skip re-execution, and return
+    # `ok: true`. A typo in one frontmatter line bought a green gate.
+    if _read_spec_format_version(evidence_spec_path) is None:
+        declared = _declared_spec_format_version(evidence_spec_path)
+        return {
+            "ok": False,
+            "casting_id": casting_id,
+            "error": "malformed_spec_format_version",
+            "evidence_spec_path": str(evidence_spec_path),
+            "declared_spec_format_version": declared,
+            "hint": (
+                f"{evidence_spec_path} declares spec_format_version "
+                f"{declared!r}, which is not a vN.N version. Evidence "
+                f"verification will not guess a version and will not "
+                f"silently downgrade the run to v2.0. Fix the spec's "
+                f"frontmatter to a real version (e.g. `spec_format_version: "
+                f"v2.1`) and re-run acceptance."
+            ),
+        }
+
+    evidence_result = verify_evidence(
+        casting_id=casting_id,
+        project_root=Path(project_root),
+        casting_commit=casting_commit,
+        spec_path=evidence_spec_path,
+        run_dir=fdir,
+    )
+    evidence_verdict = evidence_result["verdict"]
+    evidence_provenance = list(evidence_result.get("provenance_records", []))
+    # A v2.0 stream-skip means evidence verification was structurally
+    # bypassed for this casting. It is persisted in the run's manifest, but
+    # the lead reads THIS return — surfacing the record here is what makes
+    # the bypass visible at the moment it happens rather than only to
+    # whoever later opens the manifest.
+    evidence_stream_skips = list(
+        evidence_result.get("manifest_updates", {}).get("stream_skips", [])
+    )
+
+    # Audit-log per evidence file (two-channel audit: manifest +
+    # handoffs.jsonl). Mirrors Phase 1/2/3 dual-channel pattern.
+    for record in evidence_provenance:
+        record_handoff_event(
+            event="evidence_verified",
+            source=f"castings/casting-{casting_id}-prompt.md",
+            destination=record.get("evidence_path", ""),
+            source_reread=True,
+            summary=(
+                f"casting {casting_id} evidence verdict={record.get('verdict')} "
+                f"token={record.get('failure_token') or 'none'} "
+                f"elapsed={record.get('elapsed_seconds')}s"
+            ),
+            information_loss=record.get("failure_detail") or "",
+            project_root=project_root,
+        )
+
+    # D-149 — THE TALLY IS A RETURN VALUE, NOT A PRINT.
+    #
+    # This block used to end in a bare ``print(..., flush=True)``, carried
+    # over from an "F0.5 stdout-summary precedent" that belongs to CLI
+    # scripts, not to a handler. The MCP server speaks JSON-RPC over stdio:
+    # stdout IS the protocol channel. One non-protocol line ahead of the
+    # response frame and a conforming client's parser fails on the whole
+    # message — and the only way to reach it was to pass ``casting_commit``,
+    # which is precisely the path FR-017 exists to make reachable over MCP.
+    # Wiring the evidence gate would therefore have broken the channel the
+    # first time it fired.
+    #
+    # The tally is data the caller asked for, so it travels in the returned
+    # dict beside ``evidence_verdict`` and ``evidence_provenance``. Nothing
+    # in the handler tree writes to stdout now, and
+    # ``test_no_handler_writes_to_the_protocol_channel`` derives that over
+    # the whole installed package rather than over this one site.
+    evidence_tally = {
+        "accepted": sum(
+            1 for r in evidence_provenance if r.get("verdict") == "accepted"
+        ),
+        "rejected": sum(
+            1 for r in evidence_provenance if r.get("verdict") == "rejected"
+        ),
+        "failure_tokens": sorted(
+            {
+                r.get("failure_token")
+                for r in evidence_provenance
+                if r.get("failure_token")
+            }
+        ),
+    }
+
+    # Hard-reject on evidence verdict='rejected'. Skip path (v2.0)
+    # falls through to scope-flag check; the manifest.stream_skips
+    # record is the audit signal that evidence verification was
+    # structurally bypassed for this run.
+    if evidence_verdict == "rejected":
+        return {
+            "ok": False,
+            "casting_id": casting_id,
+            "failure_token": evidence_result["failure_token"],
+            "failure_detail": evidence_result["failure_detail"],
+            "evidence_provenance": evidence_provenance,
+            "evidence_tally": evidence_tally,
+            "evidence_spec_path": str(evidence_spec_path),
+            "hint": (
+                "Evidence re-execution rejected the casting. The teammate's "
+                "committed log diverges from a clean re-execution of "
+                "`# evidence-cmd:`. Re-run the command yourself, inspect "
+                "the diff, and re-dispatch with corrected evidence."
+            ),
+        }
+
+    # ============================================================
+    # Phase 5 / EVID-02: per-requirement-coverage check (strictness
+    # upgrade to EVID-01).
+    #
+    # Runs only when:
+    #   1. evidence verification engaged AND verdict was "accepted"
+    #      (skipped → v2.0 stream-skip routing; rejected → Phase 4
+    #      already returned; both bypass this check)
+    #   2. casting_req_ids is non-empty (zero-req castings — refactors,
+    #      doc edits — legitimately need no per-requirement binding)
+    #
+    # Computes the set difference of casting requirement IDs against
+    # the union of `evidence_for` lists across all provenance records.
+    # Non-empty difference → reject with named missing IDs.
+    #
+    # casting_commit=None bypasses the entire enclosing block (Phase 4
+    # backwards-compat shim — Pitfall 7); this check inherits.
+    #
+    # Why set(casting_req_ids) - bound_ids (not the reverse): "unbound"
+    # = "in the casting but not bound by any artifact". The reverse
+    # direction would surface "over-coverage" (artifact cites IDs not
+    # in the casting), which 05-RESEARCH.md decided to silently drop
+    # (closed-vocabulary minimization). Over-coverage is not an error.
+    # ============================================================
+    if (
+        evidence_verdict == "accepted"  # don't double-reject after Phase 4 fail
+        and casting_req_ids  # zero-req castings need no per-req binding
+    ):
+        bound_ids: set[str] = set()
+        for record in evidence_provenance:
+            for rid in record.get("evidence_for", []):
+                bound_ids.add(rid)
+        unbound = sorted(set(casting_req_ids) - bound_ids)
+        if unbound:
+            # Hard-reject with named missing IDs (SC#4 satisfied).
+            return {
+                "ok": False,
+                "casting_id": casting_id,
+                "failure_token": "EVIDENCE_REQUIREMENT_UNBOUND",
+                "failure_detail": (
+                    f"casting {casting_id} has no evidence artifact bound to "
+                    f"requirement(s): {', '.join(unbound)}. Each committed "
+                    f"evidence file must carry a `# evidence-for: <ids>` "
+                    f"header listing the requirement IDs it demonstrates."
+                ),
+                "unbound_requirements": unbound,
+                "evidence_verdict": evidence_verdict,
+                "evidence_provenance": evidence_provenance,
+                "evidence_tally": evidence_tally,
+                "requirement_ids": casting_req_ids,
+                "hint": (
+                    f"Add a `# evidence-for: {', '.join(unbound)}` header "
+                    f"line to the relevant evidence file(s) and re-commit. "
+                    f"Multiple files may bind to the same requirement; one "
+                    f"file may bind to multiple requirements (comma-separated "
+                    f"list). See plugins/foundry/agents/teammate.md Step 11 "
+                    f"for the canonical evidence-file format."
+                ),
+            }
+
+    # Check for "out of scope" or "cut scope" mentions in the teammate report
+    warning_phrases = [
+        "out-of-scope",
+        "out of scope",
+        "intentionally skipped",
+        "deferred",
+        "partial coverage",
+        "subset of",
+        "core only",
+        "manual validation",
+        "follow-up",
+    ]
+    report_lower = completion_report.lower()
+    scope_flags = [p for p in warning_phrases if p in report_lower]
+    warning = None
+    if scope_flags:
+        warning = (
+            f"Teammate completion report contains scope-flag phrases: {scope_flags}. "
+            f"Do NOT accept this casting. Re-dispatch with explicit instruction to "
+            f"complete the missing work. Build-green is necessary but NOT sufficient."
+        )
+    elif missing_citations:
+        warning = (
+            f"Completion report is missing citations for "
+            f"{len(missing_citations)} requirement(s): {', '.join(missing_citations)}. "
+            f"Every requirement ID in the casting's <spec_requirements> block must "
+            f"have a corresponding citation in the completion report proving where it "
+            f"was implemented. Do NOT accept this casting. Re-dispatch with "
+            f"instruction: 'For each requirement ID (US-N, FR-N, etc.) cite the exact "
+            f"path#Symbol where it was implemented.' Build-green is necessary but NOT sufficient."
+        )
+    elif unresolved_cites:
+        # AC-006 — an unresolvable symbol is a defect, not a warning about
+        # formatting. Named individually so the teammate can fix the cite
+        # rather than re-scan the whole report.
+        warning = (
+            f"Completion report cites {len(unresolved_cites)} symbol(s) that resolve "
+            f"nowhere in the tree: "
+            f"{', '.join(c['cite'] for c in unresolved_cites)}. "
+            f"Each is a defect from the mechanical symbol-resolution guard. Do NOT "
+            f"accept this casting. Re-dispatch with instruction: 'Every path#Symbol "
+            f"cite must name a symbol that exists in the named file.' A stale :line "
+            f"hint is NOT the problem — the line component is never judged, so do not "
+            f"run a cite-refresh sweep."
+        )
+
+    # Record the acceptance attempt as a handoff entry.
+    # Use the raw path string to avoid macOS /tmp ↔ /private/tmp symlink
+    # mismatches during relative_to computation.
+    record_handoff_event(
+        event="acceptance",
+        source=f"castings/casting-{casting_id}-prompt.md",
+        destination=f"casting-{casting_id}-accepted",
+        source_reread=True,  # the MCP tool enforces it by requiring fresh hashes
+        summary=f"casting {casting_id} acceptance check",
+        information_loss=", ".join(scope_flags) if scope_flags else "",
+        project_root=project_root,
+    )
+
+    return {
+        "ok": warning is None,
+        "casting_id": casting_id,
+        "acceptance_criteria": acs,
+        "requirement_ids": casting_req_ids,
+        "missing_citations": missing_citations,
+        "unresolved_symbol_cites": unresolved_cites,
+        "must_verify": [
+            f"Every AC above has a corresponding artifact/behavior in the completion report",
+            f"Every requirement ID has a path#Symbol or file:line citation in the completion report",
+            f"Every path#Symbol cite resolves in the tree (a stale :line hint is never a finding)",
+            f"Build is green AND tests pass",
+            f"No scope-flag phrases in the completion report",
+            f"Research compliance check (if research_context applies): each recommendation honored",
+        ],
+        "warning": warning,
+        "evidence_verdict": evidence_verdict,
+        "evidence_provenance": evidence_provenance,
+        "evidence_tally": evidence_tally,
+        "evidence_stream_skips": evidence_stream_skips,
+        "evidence_spec_path": (
+            str(evidence_spec_path) if evidence_spec_path is not None else None
+        ),
     }

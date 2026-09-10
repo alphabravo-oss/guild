@@ -358,6 +358,7 @@ def test_a_finding_carrying_severity_is_rejected(name: str) -> None:
         "id": "L-1",
         "classification": "DEFECT",
         "type": "WRONG",
+        "class": "EXAMPLE_ROOT_CAUSE",
         "file": "src/example.py",
         "symbol": "example#Thing",
         "description": "a description well past the ten-character floor",
@@ -465,15 +466,24 @@ def test_temper_domain_statuses_are_the_ones_the_skill_counts() -> None:
 
 
 def test_temper_findings_are_the_reconciled_record() -> None:
-    """temper/SKILL.md:123 documents `T-N` findings synced through
+    """temper/SKILL.md documents `T-N` findings synced through
     Foundry-Defect, i.e. across the same reconciled vocabulary — and the
-    pre-D-071 schema had no `findings` container at all, only `domains`."""
+    pre-D-071 schema had no `findings` container at all, only `domains`.
+
+    The record carries a `tier` since D-063 made the axis required, and it
+    carries one for the reason the shared item's comment already gives: temper
+    ships no findings block of its own, so an exemption shaped to fit it would
+    be the same defect one stream over. Temper's own prose already tells it to
+    set the axis on every finding.
+    """
     report = {
         "findings": [
             {
                 "id": "T-1",
                 "classification": "DEFECT",
                 "type": "HOLLOW",
+                "class": "STUB_BEHIND_THE_DOMAIN",
+                "tier": "LIVE",
                 "file": "src/example.py",
                 "symbol": "example#probe",
                 "description": "the probe found a stub behind the domain",
@@ -516,4 +526,375 @@ def test_schemas_registry_matches_the_published_schema_name_enum() -> None:
     assert published - {"custom"} == set(SCHEMAS), {
         "published_but_unserved": sorted(published - {"custom"} - set(SCHEMAS)),
         "served_but_unpublished": sorted(set(SCHEMAS) - published),
+    }
+
+
+# ---------------------------------------------------------------------------
+# GI-001 / AC-009 — the evidence tier, and the axis it is NOT.
+#
+# GI-001 widens the finding item with `tier`, and the obvious risk is that a
+# closed enum on a finding is the abolished work-effort grade wearing a new
+# name — `test_skill_schemas_carry_no_enum_outside_the_allowed_axes` in
+# tests/test_protocol_prose.py names "tier" as exactly that hazard. So both
+# directions are driven here at INSTANCE level, on the same schema, in the same
+# file: a finding carrying `tier` validates, and a finding carrying the
+# abolished axis is still rejected BY NAME. A widening that lost the second
+# half would pass every assertion above.
+# ---------------------------------------------------------------------------
+
+
+def _minimal_finding(**extra: object) -> dict:
+    """The eight required fields, plus whatever the caller is testing.
+
+    `class` became the seventh in D-003 and `tier` the eighth in D-063, both
+    for the same reason: the filing door refuses a finding without either, so
+    a "minimal conforming finding" that omitted one was minimal only against
+    the validator and not against the surface the finding is actually bound
+    for. A caller testing the tier axis passes its own `tier=` and overrides
+    the default here.
+    """
+    return {
+        "id": "L-1",
+        "classification": "DEFECT",
+        "type": "WRONG",
+        "class": "EXAMPLE_ROOT_CAUSE",
+        "tier": "LIVE",
+        "file": "src/example.py",
+        "symbol": "example#Thing",
+        "description": "a description well past the ten-character floor",
+        **extra,
+    }
+
+
+def _finding_errors(schema: dict, finding: dict) -> list[str]:
+    """Validation errors attributable to the FINDING, not to the summary.
+
+    TRACE_SCHEMA's summary requires five fields (verbatim from its skill's own
+    block), so a bare ``{"summary": {}}`` draws five errors that say nothing
+    about the finding item under test. ``test_a_finding_carrying_severity_is_
+    rejected`` works around that by comparing error COUNTS; these assertions
+    want "no error at all", so they filter by path instead. Both the property
+    errors (``findings.0.tier``) and the closed-set error (``findings.0``) live
+    under that prefix.
+    """
+    return [
+        error
+        for error in _errors(schema, {"findings": [finding], "summary": {}})
+        if error.startswith("findings")
+    ]
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS), ids=sorted(SCHEMAS))
+@pytest.mark.parametrize("tier", sorted(vocab.DEFECT_TIERS))
+def test_a_finding_carrying_a_tier_validates(name: str, tier: str) -> None:
+    """AC-009 — the finding schema accepts `tier` on a finding item.
+
+    Driven per schema AND per tier: `additionalProperties: False` rejects an
+    undeclared key, so before this widening a stream filing a LATENT gap
+    against the validator its own skill tells it to call was refused at the
+    one surface it was instructed to use — D-071's exact shape, recurring.
+    """
+    errors = _finding_errors(SCHEMAS[name], _minimal_finding(tier=tier))
+    assert not errors, {"schema": name, "tier": tier, "errors": errors}
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS), ids=sorted(SCHEMAS))
+def test_a_latent_finding_may_carry_its_reproduction_statement(name: str) -> None:
+    """CT-001 / FR-004 — the statement travels on the finding, so it must fit.
+
+    A LATENT filing is refused at the door without a `reproduction_attempted`
+    statement. If the report schema rejected the field, the stream would have
+    to strip the very thing the door demands before it could validate.
+    """
+    errors = _finding_errors(
+        SCHEMAS[name],
+        _minimal_finding(
+            tier="LATENT",
+            reproduction_attempted="AST sweep of both roots finds 0 sites",
+        ),
+    )
+    assert not errors, {"schema": name, "errors": errors}
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS), ids=sorted(SCHEMAS))
+def test_the_tier_enum_is_closed_over_exactly_the_vocab_members(name: str) -> None:
+    """The widening must not be a free-text field wearing an enum's name.
+
+    `unknown` is the interesting rejection: it is a READ-side sentinel for a
+    record nobody classified (FR-051), and a schema that accepted it as a
+    filed value would hand every stream a legal way to decline the axis.
+    """
+    shipped = frozenset(
+        SCHEMAS[name]["properties"]["findings"]["items"]["properties"]["tier"]["enum"]
+    )
+    assert shipped == frozenset(vocab.DEFECT_TIERS), sorted(shipped)
+    for refused in (vocab.TIER_UNKNOWN, "MINOR", "MAJOR", "P0", "live", ""):
+        errors = _finding_errors(SCHEMAS[name], _minimal_finding(tier=refused))
+        assert errors, (
+            f"SCHEMAS[{name!r}] accepts tier={refused!r}. The tier is a CLOSED "
+            f"vocabulary; a validator that shrugs at an unknown value lets the "
+            f"abolished grade back in one spelling at a time."
+        )
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS), ids=sorted(SCHEMAS))
+def test_the_tier_widening_did_not_reopen_the_finding_item(name: str) -> None:
+    """AC-009's other half, and the reason this file exists.
+
+    The cheap way to make `tier` validate is to relax `additionalProperties`.
+    That would also readmit the abolished axis, so the enforcement point is
+    asserted directly rather than only through the `severity` case above: an
+    invented key must still be refused BY NAME.
+    """
+    item = SCHEMAS[name]["properties"]["findings"]["items"]
+    assert item["additionalProperties"] is False, (
+        f"SCHEMAS[{name!r}]'s finding item no longer closes its property set. "
+        f"That flag is what makes 'there is no severity field, and adding one "
+        f"is a vocabulary violation' enforceable at the validator."
+    )
+    errors = _finding_errors(SCHEMAS[name], _minimal_finding(priority="P0"))
+    assert any("priority" in e for e in errors), (
+        f"SCHEMAS[{name!r}] accepts an undeclared `priority` key — a graded "
+        f"axis passes every substring check ever written for the old name: "
+        f"{errors}"
+    )
+
+
+def test_the_tier_property_never_mentions_the_abolished_axis() -> None:
+    """The prose half, guarded where a well-meaning author would break it.
+
+    ``test_no_shipped_schema_mentions_severity_anywhere`` greps the serialized
+    registry, so a `tier` description that explained itself as "replaces
+    severity" would fail there with a confusing message. This says why first.
+    """
+    item = SCHEMAS["trace"]["properties"]["findings"]["items"]["properties"]
+    description = item["tier"]["description"].lower()
+    assert "severity" not in description, (
+        "the tier description names the abolished axis. Describe tier by what "
+        "it measures — what the stream DROVE — not by the grade it is not."
+    )
+    for word in ("live", "latent"):
+        assert word in description, (
+            f"the tier description does not say what {word.upper()} means, so "
+            f"a stream reading the schema cannot tell which value it owes."
+        )
+
+
+def test_tier_is_required_and_reproduction_attempted_is_not() -> None:
+    """D-063 — the validator is no longer laxer than the door it feeds.
+
+    THIS TEST USED TO ASSERT THE OPPOSITE. It recorded two reasons `tier`
+    could stay optional while `class` was required, and the first of them was
+    the one that eventually moved: this module derives its `required` list
+    from the skills' own blocks, and both blocks declared `tier` optional. The
+    reason was never "tier does not belong here" -- it was "the document has
+    not said so yet", and it came with the pin that would fail the day the
+    document did.
+
+    Driven, which is why the direction flipped: a finding carrying exactly the
+    keys both blocks listed as required validated clean through
+    Validate-Report(schema="prove") and was then refused by Foundry-Sync --
+    "findings[0].tier: Invalid tier: None" -- which refuses the WHOLE batch. A
+    stream that validated its report before sending it lost every finding in
+    it, told on the way out that the shape was conforming.
+
+    `reproduction_attempted` stays optional here and that is not the same
+    omission. It is required CONDITIONALLY, on a LATENT filing only, and the
+    condition lives in `validate_defect_filing` (CT-001). Expressing it here
+    would be a second copy of a rule the door already owns -- and a second
+    copy is what this module was written to stop.
+    """
+    for name, schema in SCHEMAS.items():
+        required = schema["properties"]["findings"]["items"]["required"]
+        assert "tier" in required, (
+            f"SCHEMAS[{name!r}] no longer requires `tier` of a finding. The "
+            f"filing door does (CT-001, first in its check order), so dropping "
+            f"it here makes this validator laxer than the surface every "
+            f"finding it validates is bound for -- and one untiered finding "
+            f"refuses a whole Foundry-Sync batch."
+        )
+        assert "reproduction_attempted" not in required, (
+            f"SCHEMAS[{name!r}] requires `reproduction_attempted` "
+            f"unconditionally. It is owed on a LATENT filing only; demanding "
+            f"it of every finding refuses conforming LIVE reports."
+        )
+        assert not _finding_errors(schema, _minimal_finding()), name
+
+
+@pytest.mark.parametrize("path", BLOCK_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_the_finding_required_list_is_exactly_what_the_documents_require(
+    path: Path,
+) -> None:
+    """D-039 — the `tier`/`class` split is DERIVED, not decided here.
+
+    findings.py states its rule for `required` as "what that skill's own block
+    requires". Nothing checked it, so the difference between a required `class`
+    and an optional `tier` read as an unexplained inconsistency, which is
+    exactly how D-039 was filed.
+
+    Asserting equality against the document turns the split into a fact with an
+    owner. It also makes it self-correcting in the one direction that matters:
+    when the blocks add `tier` to their `required` lists, this fails naming the
+    field, and findings.py has to follow before the suite is green again. The
+    reverse is covered too — a field quietly added here that no block requires
+    would make this module stricter than the document, which is D-071.
+    """
+    block = _documented_block(path)
+    documented = block["properties"]["findings"]["items"].get("required") or []
+    served = SCHEMAS[_documented_schema_name(path)]
+    enforced = served["properties"]["findings"]["items"]["required"]
+
+    assert sorted(enforced) == sorted(documented), (
+        f"{_rel(path)} requires {sorted(documented)} of a finding and "
+        f"SCHEMAS[{_documented_schema_name(path)!r}] enforces {sorted(enforced)}. "
+        f"findings.py derives its `required` list from these blocks, so the two "
+        f"cannot differ: if the block moved, move the schema to match — do not "
+        f"relax this assertion."
+    )
+
+
+def test_the_read_side_sentinel_is_not_a_filable_tier() -> None:
+    """D-039's second reason, as a fact rather than a claim.
+
+    The recorded reason `tier` may stay optional while `class` is required is
+    that an untiered finding has no legal value to supply. That holds only
+    while TIER_UNKNOWN is outside the enum — put it in and the reason
+    evaporates, and with it the read-side guarantee FR-051 rests on (an
+    unclassified record blocks like LIVE precisely because no door can write
+    `unknown`).
+    """
+    for name, schema in SCHEMAS.items():
+        enum = schema["properties"]["findings"]["items"]["properties"]["tier"]["enum"]
+        assert vocab.TIER_UNKNOWN not in enum, (
+            f"SCHEMAS[{name!r}] accepts {vocab.TIER_UNKNOWN!r} as a tier. That "
+            f"makes the read-side sentinel filable, which CT-001 refuses at the "
+            f"door, and removes the reason `tier` is exempt from `required`."
+        )
+        assert sorted(enum) == sorted(vocab.DEFECT_TIERS), name
+
+    assert vocab.TIER_UNKNOWN not in vocab.DEFECT_TIERS
+    assert vocab.defect_tier({}) == vocab.TIER_UNKNOWN, (
+        "a record with no tier key must READ as unknown; that is the value the "
+        "finding item has no way to accept, which is the whole argument"
+    )
+
+
+def test_the_tier_enum_is_read_from_vocab_and_not_re_typed() -> None:
+    """The FR-013 key link, at the one surface D-071 found a seventh copy on.
+
+    Sorted equality against vocab is weak on its own (both sides could be the
+    same re-typed literal), so the module source is checked for the derivation
+    too — the same shape test_measure_run pins with `is`.
+    """
+    findings_py = (
+        REPO_ROOT / "plugins" / "foundry" / "mcp-server" / "src" / "foundry_mcp"
+        / "schemas" / "findings.py"
+    )
+    source = findings_py.read_text(encoding="utf-8")
+    assert "sorted(vocab.DEFECT_TIERS)" in source, (
+        "schemas/findings.py re-types the tier enum instead of deriving it "
+        "from vocab. That is exactly the drift D-071 found here."
+    )
+    for literal in ('"LIVE"', "'LIVE'", '"LATENT"', "'LATENT'"):
+        assert literal not in source, (
+            f"schemas/findings.py spells {literal} as a literal; the tier "
+            f"vocabulary is declared once, in schemas/vocab.py"
+        )
+
+
+# ---------------------------------------------------------------------------
+# D-003 / FR-007 / AC-010 — the validator and the door agree about `class`.
+#
+# The finding item mirrors the skills' required list by its own stated
+# derivation rule, and all three sites carried "Optional root-cause" while the
+# filing door refused a classless filing outright. So a stream emitting
+# EXACTLY the shape its own SKILL.md documents validated here and was then
+# refused one surface later, with nothing in either document to warn it.
+#
+# The pin is therefore CROSS-SURFACE and instance-level: one finding, driven
+# through both the validator and the door, asserting they answer the same way.
+# Asserting only that "class" is in `required` would pass just as happily if
+# the door were the thing that drifted.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS), ids=sorted(SCHEMAS))
+def test_a_classless_finding_is_refused_by_the_validator_and_the_door(
+    name: str,
+) -> None:
+    """D-003, driven on both surfaces at once."""
+    from foundry_mcp.tools.foundry import validate_defect_filing
+
+    classless = _minimal_finding(tier="LIVE")
+    classless.pop("class")
+
+    errors = _finding_errors(SCHEMAS[name], classless)
+    assert any("class" in error for error in errors), {
+        "schema": name,
+        "errors": errors,
+        "why": (
+            "SCHEMAS[%r] accepts a finding with no `class`, but "
+            "validate_defect_filing refuses it. A validator laxer than the "
+            "door it feeds tells a stream its report conforms and lets the "
+            "filing fail later, where nothing connects the refusal back to "
+            "the block the stream was reading." % name
+        ),
+    }
+
+    refusal = validate_defect_filing(classless)
+    assert refusal is not None and refusal.get("field") == "class", {
+        "schema": name,
+        "refusal": refusal,
+        "why": (
+            "the filing door stopped refusing a classless finding. If the "
+            "door relaxed deliberately, this schema's `required` list and "
+            "both skills' blocks relax with it -- never one side alone."
+        ),
+    }
+
+
+@pytest.mark.parametrize("name", sorted(SCHEMAS), ids=sorted(SCHEMAS))
+def test_the_classed_finding_both_surfaces_accept_is_the_same_instance(
+    name: str,
+) -> None:
+    """The other direction: agreement, not merely matched strictness.
+
+    Two surfaces can both refuse an instance for unrelated reasons. This says
+    the shape a stream is told to emit is accepted by BOTH.
+    """
+    from foundry_mcp.tools.foundry import validate_defect_filing
+
+    finding = _minimal_finding(tier="LIVE")
+    assert not _finding_errors(SCHEMAS[name], finding), {
+        "schema": name,
+        "errors": _finding_errors(SCHEMAS[name], finding),
+    }
+    assert validate_defect_filing(finding) is None, validate_defect_filing(finding)
+
+
+@pytest.mark.parametrize("path", BLOCK_BEARING_SKILLS, ids=lambda p: p.parent.name)
+def test_no_skill_block_still_calls_the_class_axis_optional(path: Path) -> None:
+    """The prose half of D-003, at the two documents streams actually read.
+
+    ``test_skill_schemas_require_the_new_axes`` in tests/test_protocol_prose.py
+    pins the `required` list as a substring; this pins the DESCRIPTION beside
+    it, parsed out of the block, so a required-but-still-described-as-optional
+    field fails here naming the contradiction rather than passing both checks.
+    """
+    block = _documented_block(path)
+    item = block["properties"]["findings"]["items"]
+    description = item["properties"]["class"].get("description", "")
+    assert "class" in item.get("required", []), {
+        "skill": _rel(path),
+        "required": item.get("required"),
+        "why": "the block leaves `class` optional; the filing door requires it.",
+    }
+    assert "optional" not in description.lower(), {
+        "skill": _rel(path),
+        "description": description,
+        "why": (
+            "the block requires `class` and then describes it as optional. A "
+            "stream resolves that contradiction in its own favour, which is "
+            "how the axis went missing from filings in the first place."
+        ),
     }

@@ -65,7 +65,7 @@ Three frozen, byte-identical blocks ride in every casting prompt:
 - `<global_invariants>` — cross-cutting spec rules (auth, validation, security, architectural placement)
 - `<spec_requirements>` — the casting's specific spec slice (V2) OR `<upstream_anchor>`/`<this_hop>`/`<downstream_contract>` (V3 brownfield)
 
-F0.9 mechanically verifies byte-identical propagation across every casting. The lead at F1/F3 calls `Foundry-Spawn-Teammate`, gets the pre-authored prompt back, and passes it to the Agent tool **verbatim** — no re-drafting, no paraphrasing.
+F0.9 mechanically verifies byte-identical propagation across every casting. The lead at F1/F3 calls `Foundry-Spawn-Teammate` or `Foundry-Cast-Wave` and gets back a **dispatch pointer** — the prompt file's path and its sha256, never its text — which it passes to the Agent tool verbatim; the teammate reads the frozen file itself and states the hash back, and acceptance refuses on a mismatch. No re-drafting, no paraphrasing, and nothing for the lead to re-type.
 
 ## Commands
 
@@ -84,9 +84,36 @@ Start a new build run.
 - `--url <url>` — base URL for SIGHT (Playwright UI audit)
 - `--temper` — enable F5 micro-domain stress testing
 - `--nyquist` — enable F5.5 regression test generation
-- `--max-cycles <n>` — cap on F2/F3 verify-fix loops
+- `--max-cycles <n>` — cap on F2/F3 verify-fix loops (default `0`, unbounded)
 - `--no-ui` — skip SIGHT
-- `--output-dir <dir>` — custom run directory (default: `foundry-archive/{run}/`)
+
+**`--max-cycles N` and the HALTED state.** `N` caps the verify-fix cycles; the default `0` is
+unbounded. The phase transition that would open a GRIND cycle beyond the cap **succeeds** — it
+is a successful transition, not a refusal. The run's phase becomes `HALTED`, the report is
+generated as part of that transition naming every open defect at every tier — the blocking
+`LIVE` ones, and the `LATENT` and `HARDENING` ones the run carried rather than blocked on, each
+in its own `latent_backlog` and `hardening_backlog` section — and the next guidance call reports
+the run halted and issues no further dispatch. **`HALTED` is a named
+terminal state distinct from `DONE`:** a halted run stopped with open work, and calling it
+"finished" is the one reading the state exists to prevent.
+
+**Building foundry itself — start the session with `--plugin-dir`.** A run whose TARGET is the
+foundry plugin must be launched as:
+
+```bash
+claude --plugin-dir <project_root>/plugins/foundry
+```
+
+That makes the executing MCP server the working tree, so process fixes the run ships are
+available to that same run. A self-targeting run is refused at F0 with a named reason and the
+exact launch command when either of two comparisons disagrees: the version in the working
+tree's `plugin.json` against the version in the executing server's OWN `plugin.json`, and the
+HEAD commit of the project root against the HEAD commit of the directory the server was
+imported from. It is plugin manifest against plugin manifest — the MCP server's `__version__`
+is recorded and displayed but never compared — and an unreadable commit is never a match. A
+run that does not target foundry compares nothing and is never warned. **A mid-run server switch is never
+attempted** — no step calls `/reload-plugins`, rewrites `.mcp.json`, or installs a plugin
+mid-run. Prose and code a run ships take effect for the next run, never the one that wrote them.
 
 ### `/foundry:resume`
 
@@ -133,7 +160,7 @@ will otherwise serve the same one indefinitely.
 
 - **One command, zero approval gates** — fully autonomous from `/foundry:start` to F6 DONE
 - **Lead never edits code** — delegates everything to teammates (SIGHT/Playwright is the one exception)
-- **Plans are prompts** — decompose authors once at F0.5, teammates receive the prompt verbatim
+- **Plans are prompts** — decompose authors once at F0.5; teammates are dispatched a pointer and read that frozen prompt verbatim from disk
 - **Every non-passing verdict is a defect** — no deferrals, no "close enough"
 - **Full re-verify after every fix** — no spot-checking
 - **Methodical teammate** — tuned for correctness over wall-clock speed (read floor, approach deliberation, blast radius, competing hypotheses)

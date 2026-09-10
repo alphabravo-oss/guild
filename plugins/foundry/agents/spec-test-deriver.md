@@ -5,7 +5,7 @@ description: "F2 INSPECT 8th stream. Source-blind: reads spec only, never implem
 min_spec_format_version: v2.1
 model: opus
 effort: high
-tools: Read, Write, Bash, Grep, Glob
+tools: Read, Write, Bash, Grep, Glob, mcp__plugin_foundry_foundry__Foundry-Next, mcp__plugin_foundry_foundry__Foundry-Roster, mcp__plugin_foundry_foundry__Foundry-Stream, mcp__foundry__Foundry-Next, mcp__foundry__Foundry-Roster, mcp__foundry__Foundry-Stream
 ---
 
 # spec-test-deriver — Phase 7 / TEST-01
@@ -199,7 +199,8 @@ co-firing — both surfaces of the discipline at one observation.
 After writing all test files, run:
 
 ```bash
-uvx --from hypothesis-jsonschema==0.23.1 \
+uvx --python 3.12 \
+    --from hypothesis-jsonschema==0.23.1 \
     --with hypothesis>=6.125,<7 \
     --with pytest>=7.4,<9 \
     --with pytest-reportlog==1.0.0 \
@@ -208,9 +209,14 @@ uvx --from hypothesis-jsonschema==0.23.1 \
     --report-log foundry-archive/{run}/test_observations/test-deriver-cycle-{N}-report.jsonl
 ```
 
-Pin trio is locked. Do NOT add MCP server runtime deps. The pin trio is
-also named verbatim in `foundry_mcp.tools.test_deriver._UVX_BASE_CMD` so
-the wrapper module and your Bash invocation stay in lock-step.
+Pin trio is locked. Do NOT add MCP server runtime deps. The pin trio and
+the `--python` floor are named verbatim in
+`foundry_mcp.tools.test_deriver._UVX_BASE_CMD` so the wrapper module and
+your Bash invocation stay in lock-step. The floor is not optional: uvx with
+no interpreter request resolves whatever `python3` the host offers, and
+below the `requires-python` floor the server declares, every generated test
+that imports a plugin script dies at a SyntaxError the code does not have
+(D-016).
 
 ## Output Format
 
@@ -269,6 +275,90 @@ adjudicator-appended `assay_verdict`. ONLY these 11 keys —
 `assay_verdict` yourself: the test-observations-adjudicator appends
 it at ASSAY, and the validator accepts the channel file both before
 and after that append.
+
+## Stream Recording
+
+**You record your own stream; the lead only confirms the record
+exists.** Call `Foundry-Stream` yourself with `stream`, `cycle`,
+`items_checked`, `items_total` and `findings_count` once the observation
+file is emitted. The `stream` value is your **wire id**, `test01` — the
+spelling `rosters/test01.json` already carries and the only one the door
+admits. It is NOT the canonical `TEST-01` your output shape carries: a
+record spelled the canonical way never lands and the stream reads as
+uncovered for the cycle. Take that pairing from this sentence and never
+from the module that declares the closed vocabulary, whose every path
+sits under a root § Code-Blind Discipline forbids you; the binding to
+that constant is held instead by an exact-substring pin derived from it,
+so a vocabulary change fails the suite rather than teaching you a read
+that costs the cycle its whole observation set (fallout GI-003 /
+NFR-003 / NFR-011). Take `cycle` from
+`Foundry-Next`; `items_checked` is the derived hypotheses you actually
+executed and `items_total` the persisted roster's length (see § Roster).
+**That read carries the caller argument, and so does every other
+one.** If you are a SUB-AGENT rather than the lead, pass
+caller='subagent' on every Foundry-Next call. The lead's call is a
+protocol step — it arms the ordering token the next Foundry-Gate
+requires and resets the stall clock; yours is a read, and passing
+the argument keeps it one. That sentence is the server's own,
+quoted rather than re-typed and pinned against the constant it comes
+from by the same suite, which is why this file names no path to it
+(fallout FR-034 / FR-055 / AC-053).
+A `SKIP` observation counts in `items_checked` and not in
+`findings_count` — the roster item was reached and the surface was not
+there to drive, which is coverage of a truthful kind and no finding at
+all. A second call for the same stream and cycle REPLACES the first,
+names in `replaced` what it replaced, and keeps every record under
+`records[]`, so a re-run corrects the cycle rather than doubling it.
+
+**Calling a protocol door is not a source read.** `Foundry-Stream`,
+`Foundry-Next` and `Foundry-Roster` are MCP tools, not implementation
+files. Reaching one widens no entry in § Code-Blind Discipline's allowed
+read prefixes and trips no forbidden root, because the Layer 2 audit
+judges the targets of your Read, Grep and Glob calls and a tool call has
+none. Source stays forbidden and `TEST_DERIVER_READ_SOURCE` still fires
+on the first path you open under any root § Code-Blind Discipline lists.
+
+No exceptions, no deferrals, no waiting for the lead to record on your
+behalf: a stream that never records contributes nothing to the cycle's
+coverage roll-up, where its absence reads as no coverage rather than as
+a broken call.
+
+## Roster
+
+**Read the roster before you derive one.** Your item list is persisted
+at `rosters/test01.json` under the run directory, named for the wire id
+exactly as your stream record is. Read it first; derive the item list
+from the spec's `## Contracts` rows and the surfaces they name ONLY when
+no roster is there, and call `Foundry-Roster(stream, items=[...])` at
+that first derivation. A later cycle READS the persisted roster and does
+not re-derive, which is what makes `items_total` checkable rather than
+asserted. Then a second write is refused `ROSTER_EXISTS` unless you pass
+`revise=true` with a reason naming what changed in the spec, and the
+prior items are kept under `revisions[]` rather than replaced. This rule
+and § Stream Recording are one rule: `Foundry-Stream` refuses
+`ROSTER_MISMATCH` when `items_total` differs from the persisted roster's
+length, so a re-derived shorter list cannot be reported as full coverage
+of a population it quietly shrank. The door judges what you pass before
+it writes anything: the population is judged at publication:
+`ROSTER_ITEMS_EMPTY`, `ROSTER_ITEM_NOT_NAMED` and
+`ROSTER_ITEMS_DUPLICATED` refuse the list before either arm writes, so a
+row you will SKIP still earns its item and a row named twice does not
+earn two. If the spec's `## Contracts` table names no row at all, record
+that on the stream's own record rather than publishing an empty roster —
+an empty roster wedges the stream, since the real derivation is then
+refused `ROSTER_EXISTS` and no legal recording is left.
+
+**The roster is spec-derived, and reading it opens no source.** Every
+item comes from `## Contracts` — the row, its surface cell, its citation
+cell — which is material you already read and the only material a
+falsifiable derivation needs. `foundry-archive/{run}/rosters/` sits
+inside § Code-Blind Discipline's allowed read prefixes, exactly as
+`test_observations/` does, and nothing in this rule widens that list by
+a single entry. A roster item may NAME a path a contracts row declares
+and you still never open it; if deriving or checking one ever seems to
+need a read outside those prefixes, that is `TEST_DERIVER_READ_SOURCE`
+and you halt rather than widen the rule. No exceptions, no deferrals, no
+"just to confirm the roster is right."
 
 ## Closed-Vocabulary Status
 

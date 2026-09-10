@@ -4,7 +4,7 @@ description: "Trace every function, every data flow, and simulate user workflows
 user_invocable: true
 model: opus
 effort: high
-allowed-tools: Read, Grep, Glob, Bash
+allowed-tools: Read, Grep, Glob, Bash, mcp__plugin_foundry_foundry__Foundry-Context, mcp__plugin_foundry_foundry__Foundry-Defect, mcp__plugin_foundry_foundry__Foundry-Next, mcp__plugin_foundry_foundry__Foundry-Stream, mcp__plugin_foundry_foundry__Foundry-Sync, mcp__plugin_foundry_foundry__Validate-Report, mcp__foundry__Foundry-Context, mcp__foundry__Foundry-Defect, mcp__foundry__Foundry-Next, mcp__foundry__Foundry-Stream, mcp__foundry__Foundry-Sync, mcp__foundry__Validate-Report
 context: fork
 ---
 
@@ -38,6 +38,29 @@ with zero findings, you failed — go back and look harder.
    target. Observable truths are often MORE specific than spec requirements and catch
    THIN implementations that technically satisfy the spec but miss the intent.
 6. Store the spec reference for re-reading in subsequent verification iterations
+
+### Step 0.5: WIDTH — read the scope the run recorded
+
+The checklist is what the spec says. What you must WALK this cycle is what the run recorded — you read the width, you never decide it. Call `Foundry-Next` and read `inspect_mode` out of the RESPONSE, not out of the display:
+
+- `inspect_mode.mode` — `FULL` or `DELTA`, decided by the `Foundry-Phase` transition that opened this INSPECT. Nothing you do changes it and `Foundry-Next` only reports it.
+- `inspect_mode.stream_scope.trace.scope` — `full`, `delta` or `skipped` for YOUR stream; its `detail` names by how much the walk was narrowed. A cycle recorded `DELTA` whose TRACE scope is `full` is still a full walk for you.
+- `inspect_mode.touched_files` — the repo-relative files the GRIND commits touched, measured at the boundary from `inspect_mode.diff_base`. This is the TRACE roster on a `DELTA` cycle.
+- `inspect_mode.cycle` — the cycle that scope belongs to. A scope stamped with a different cycle is not yours; walk everything.
+
+**That read carries the caller argument, and so does every other one.** If you are a
+SUB-AGENT rather than the lead, pass caller='subagent' on every Foundry-Next call. The
+lead's call is a protocol step — it arms the ordering token the next Foundry-Gate requires
+and resets the stall clock; yours is a read, and passing the argument keeps it one. That
+sentence is
+`plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+
+**On `DELTA` with `stream_scope.trace.scope == "delta"`, walk exactly the symbols declared in `inspect_mode.touched_files`** — every declared symbol whose file appears in that list and no fewer — and report `items_checked` and `items_total` against those files rather than against the spec: `items_total` is the number of roster items that width drew, and `items_checked` the number of those you walked to the end. The walk is in symbols and the RECORD is in roster items, because `Foundry-Stream` measures the total against `rosters/trace.json` alone and refuses `ROSTER_MISMATCH` both below the count the width drew and above the roster's own length. **On `FULL`, walk every declared symbol** and report `items_total` as the persisted roster's length, which that same door requires exactly: any other total is refused `ROSTER_MISMATCH` naming the length it wanted. With no roster persisted for this stream nothing constrains the total, and the population is the one you walked. **With no recorded `inspect_mode` at all, walk everything**: a missing width means no narrowing was decided, never that you may narrow it yourself. (fallout FR-050 / CT-003 / ST-008)
+
+**Read the array, never the terminal line.** The `Foundry-Next` display prints `TRACE:    N file(s) — ...` and TRUNCATES that list at five files; the roster itself is `inspect_mode.touched_files`, below that display and after the marker line. Copying the five visible files walks five files and reports a width that was never run.
+
+**Where `inspect_mode` actually is: after the marker line.** A formatted tool's response is the rendered display, then a line reading `── machine-readable result ──`, then the complete result as JSON — every array in full, nothing truncated, no fence to strip and no terminator to find, because the JSON runs to the end of the response. Everything after that marker line IS the JSON: `json.loads` it and read `inspect_mode` off the object it returns. That is what "out of the RESPONSE" means here and it is the whole of it — a tool with no display formatter appends no marker, because its entire response is already that JSON. No exceptions, no deferrals, no "the printed list looked complete."
 
 ### Step 1: STATIC ANALYSIS — Map the Wiring
 
@@ -73,6 +96,14 @@ Cross-reference inventory against the spec:
 - Every data model in spec → type exists? Used in handlers AND repo?
 - Every frontend page in spec → route exists? Calls the right APIs?
 - Every integration in spec → client wired? Actually called?
+
+**The spec is what you cross-reference against; the width Step 0.5 read is how
+much of it you cross-reference this cycle.** On a `DELTA` cycle whose
+`stream_scope.trace.scope` is `delta`, run this list over the declarations whose
+files appear in `inspect_mode.touched_files` and count those — cross-referencing
+the whole spec anyway is not a safe over-delivery, because it spends the cycle
+the `DELTA` width exists to save and reports a coverage pair describing a
+different denominator than the one the gate reads.
 
 **Optional: Serena MCP** — If available, use `find_symbol` and
 `find_referencing_symbols` for deterministic wiring verification. Supplements
@@ -209,7 +240,10 @@ will hit on their first interaction. A feature with working functions but broken
 workflows is worse than a missing feature (users expect it to work and get confused
 when it doesn't). This is a channel statement, not a severity one: a broken workflow
 is not a comment, so the never-demote denylist puts it in the defect ledger whatever
-else is true about it.
+else is true about it. The evidence axis is separate again — a PL-N flow you actually
+drove and watched fail is `LIVE`, one you derived from the wiring with no reachable
+path is `LATENT` and carries a `reproduction_attempted` statement — and neither
+tier is a grade on how much the fix is worth.
 
 In foundry TRACE mode, PL-N findings become defects alongside L-N and THIN-N findings.
 
@@ -246,8 +280,18 @@ call omitting any of them is rejected at the MCP boundary, and a stream that
 cannot mark itself complete contributes nothing to the cycle's coverage
 roll-up, where its absence reads as no coverage rather than as a broken call.
 Take `cycle` from `Foundry-Next`: the roll-up is keyed by the server's own
-counter, and the value you pass is retained on the record for audit only. F3
-GRIND converts findings into fix items.
+counter, and the value you pass is retained on the record for audit only. Take
+`items_checked` and `items_total` from the width Step 0.5 read — on a `DELTA`
+cycle they are counted against `inspect_mode.touched_files`, not against the
+spec. F3 GRIND converts findings into fix items.
+
+**You record your own stream; the lead only confirms the record exists.** A second call
+for the same stream and cycle REPLACES the first, names in `replaced` what it replaced,
+and keeps every record under `records[]`. That is what makes a re-walk safe: widen the
+scope, walk again, record again, and the roll-up holds the wider number instead of
+summing two passes over the same wiring into a coverage figure no walk ever achieved.
+The lead confirms the record is there and does not write it, so a walk that ends without
+the call is a walk the cycle cannot see.
 
 ## MCP Validation (optional)
 
@@ -293,14 +337,18 @@ JSON block at the end for tooling consumption.
                      "COVERAGE_INCOMPLETE", "THIN_MIGRATION"],
             "description": "DEFECT_TYPES member. MISPLACED is accepted as an alias and folds onto ARCHITECTURAL_PLACEMENT."},
           "class": {"type": "string",
-            "description": "Optional root-cause group, spelled identically on every instance that shares it. Not a tier — it is what lets three cycles of one root cause escalate to a single structural fix."},
+            "description": "Required root-cause group, non-empty on every filing and spelled identically on every instance that shares it. Not a tier — it is what lets three cycles of one root cause escalate to a single structural fix. Foundry-Defect and Foundry-Sync refuse a filing without it, and one classless finding refuses the whole Foundry-Sync batch."},
+          "tier": {"type": "string", "enum": ["LIVE", "LATENT", "HARDENING"],
+            "description": "Evidence axis, never a work-effort grade. LIVE: the stream drove the door and observed the wrong result. LATENT: the stream derived the finding and found no reachable instance. HARDENING: the stream drove a probe that failed on a path no requirement states, and the record blocks no gate. Closed vocabulary, source of truth plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS."},
+          "reproduction_attempted": {"type": "string",
+            "description": "Required on a LATENT finding and on a HARDENING one; both doors refuse either filing without it. The two owe different evidence: LATENT names what was driven and what it did not find, HARDENING names the probe that was driven and the wrong result it produced."},
           "file": {"type": "string", "description": "Bare path. Never carries a line number."},
           "symbol": {"type": "string", "description": "The symbol the finding is about. With `file` this is the `path#Symbol` cite."},
           "description": {"type": "string", "description": "What's wrong and why"},
           "spec_reference": {"type": "string", "description": "Spec section/requirement ID"},
           "suggested_fix": {"type": "string", "description": "Concrete fix direction"}
         },
-        "required": ["id", "classification", "type", "file", "symbol", "description"]
+        "required": ["id", "classification", "type", "class", "tier", "file", "symbol", "description"]
       }
     },
     "summary": {
@@ -315,8 +363,8 @@ JSON block at the end for tooling consumption.
           }
         },
         "verdict": {"type": "string", "enum": ["PASS", "WARN", "FAIL"]},
-        "items_checked": {"type": "integer", "description": "Number of spec items verified"},
-        "items_total": {"type": "integer", "description": "Total spec items in scope"},
+        "items_checked": {"type": "integer", "description": "Roster items walked to the end"},
+        "items_total": {"type": "integer", "description": "Roster items in the width: the persisted roster's length at FULL, the roster items that width drew at DELTA"},
         "findings_count": {"type": "integer", "description": "Number of non-passing findings"}
       },
       "required": ["total", "verdict", "items_checked", "items_total", "findings_count"]
@@ -325,7 +373,7 @@ JSON block at the end for tooling consumption.
 }
 ```
 
-**There is no `severity` field, and adding one is a vocabulary violation.** Every defect is a defect and GRIND fixes them all, so a tier has nothing left to decide. What decides where a finding *goes* is `classification`, which is a channel: comment prose to the observations ledger, everything else to the defect ledger. `type` and `classification` are the closed vocabularies, and their one source of truth is `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES` and `#FINDING_CLASSES` — a value outside them is rejected server-side rather than coerced onto something known.
+**There is no `severity` field, and adding one is a vocabulary violation.** The work-effort grade is banned by name — no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact` — because every defect gets fixed and a grade for how much a fix is worth has nothing left to decide. What decides where a finding *goes* is `classification`, which is a channel: comment prose to the observations ledger, everything else to the defect ledger. What records how much evidence stands behind it is `tier`: grade a finding by whether you actually drove it or only derived it from a scan, and never by how much work it would take to fix. `LIVE` means you drove the door and observed the wrong result; `LATENT` means you derived the finding and found no reachable instance, and a `LATENT` finding MUST carry a `reproduction_attempted` statement naming what you drove and what it found — the server refuses a `LATENT` filing without one. `HARDENING` means you drove a probe of your own devising and observed a wrong result no requirement asks about — LIVE's evidence standard on an off-spec subject, so it owes a `reproduction_attempted` statement of its own naming the probe you ran and the wrong result you saw, and the doors refuse a `HARDENING` filing without one exactly as they refuse a `LATENT` one; it carries no `spec_ref` (a filing that sets one is refused naming `spec_ref`) and holds no gate shut, while the F6 backlog still names it. The never-demote denylist reaches every non-blocking tier: a security-property claim can NEVER be `LATENT`, and never `HARDENING` either, because that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record. Every tier is a defect, every tier gets fixed, and `tier` buys the stream no discretion over anything else. `type`, `classification` and `tier` are the closed vocabularies, and their one source of truth is `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES`, `#FINDING_CLASSES` and `#DEFECT_TIERS` — a value outside them is rejected server-side rather than coerced onto something known.
 
 **There is no `line` field either.** A finding cites `path#Symbol` — `file` bare, `symbol` beside it. The symbol is authoritative, and the commit-pinned-run-artifact carve-out that permits a line hint does not reach a findings record: this JSON goes straight to the foundry defect sync tools and is then re-read cycle after cycle as the tree moves under it, so a line hint rots into a false finding while a symbol cite keeps resolving.
 
@@ -339,6 +387,28 @@ This JSON format can be passed directly to the foundry defect sync tools.
 ## Key Constraints
 
 - **Read-only** — never modify code, only read and report
+- **Grade the evidence, never the effort** — every finding carries `tier`, and the stream
+  that files it is the one that sets it. `LIVE` when you drove the door and observed the
+  wrong result; `LATENT` when you derived the finding and found no reachable instance, in
+  which case `reproduction_attempted` names what you drove and what it found or the server
+  refuses the filing; `HARDENING` when you drove a probe of your own devising and observed
+  a wrong result no requirement asks about, in which case `reproduction_attempted` names
+  the probe and the result and the server refuses that filing without one too. A
+  security-property claim can never be `LATENT` and never `HARDENING`. Every tier is a
+  defect and every tier gets fixed — `tier` records evidence, never how much work a fix is
+  worth. No exceptions, no deferrals, no "this one is only cosmetic."
+- **Set `fallout_of` when the finding is fallout of an earlier fix.** A sibling surface
+  left on a contract a previous cycle's fix changed is not a fresh defect — it is the
+  half of that fix that did not reach, and on this stream it is the commonest shape
+  there is: a fix rewires one caller and leaves the other three on the old signature, so
+  the UNWIRED symbols you are about to number are one incomplete repair. Carry
+  `fallout_of` naming the `D-NNN` whose fix moved the contract, in the same call as
+  `class` and `tier`. An id the ledger does not carry is REFUSED at the door rather than
+  stored, so read the parent id from `defects.json` rather than from the commit that
+  claims to have fixed it. Leave it unset when the finding stands on its own —
+  `scripts/measure-run.py` counts fallout per cycle, and both an unmarked real one and a
+  decorative fake one corrupt the same number. No exceptions, no deferrals, no "the
+  earlier fix was probably unrelated."
 - **Spec-anchored** — every finding references a spec requirement
 - **The symbol is authoritative** — cite `path#Symbol`, never `path:line`. A cite whose
   symbol resolves is valid however stale any line hint beside it has become. No finding
@@ -352,4 +422,8 @@ This JSON format can be passed directly to the foundry defect sync tools.
 - Do NOT mark a function ✓ without Q1+Q2 in the report
 - Do NOT finish with fewer than 3 findings — real codebases always have gaps
 - Do NOT recommend removing code — fix direction is always "fill out the body"
-- Do NOT flag cosmetic/style issues — only structural completeness gaps
+- **Scope is the subject, never the size** — TRACE audits wiring, data flow and
+  scenario completeness. A rendered-surface question belongs to SIGHT, which owns
+  that subject, and that is a division of labour between streams rather than a grade
+  on the findings. Everything inside TRACE's own subject is a defect however small
+  the fix looks, and this rule gives you no discretion to call one "cosmetic."

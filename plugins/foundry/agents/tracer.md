@@ -88,6 +88,25 @@ Read the spec/scope and extract every declared:
 - Type, interface, or struct
 - Data flow (input -> processing -> output)
 
+### 1.5. WIDTH — read the scope the server recorded
+
+The declarations above are what the spec says exists. **What you must WALK this cycle is what the run recorded**, and you read that rather than decide it. Call `Foundry-Next` and read `inspect_mode` out of the RESPONSE:
+
+- `inspect_mode.mode` — `FULL` or `DELTA`. It was decided by the `Foundry-Phase` transition that opened this INSPECT. Nothing you do changes it and `Foundry-Next` only reports it.
+- `inspect_mode.stream_scope.trace.scope` — `full`, `delta` or `skipped` for YOUR stream. `delta` means the walk was narrowed; its `detail` names by how much.
+- `inspect_mode.touched_files` — the repo-relative files the GRIND commits touched, measured at the boundary from `inspect_mode.diff_base`. This is the TRACE roster on a `DELTA` cycle.
+- `inspect_mode.cycle` — the cycle the scope belongs to. A scope stamped with a different cycle is not yours; walk everything.
+
+**On `DELTA` with `stream_scope.trace.scope == "delta"`, walk exactly the symbols declared in `inspect_mode.touched_files`.** Every declared symbol whose file appears in that list, and no fewer — that named list is this stream's whole width, and a symbol in a touched file you skipped is a symbol nothing else reaches this cycle. Report both counts in the unit `rosters/trace.json` lists: `items_total` is the number of roster items that width drew — the touched files the roster itself names — and `items_checked` the number of those you walked to the end. The walk is in symbols and the RECORD is in roster items, because `Foundry-Stream` measures the total against the persisted roster alone and refuses `ROSTER_MISMATCH` both below the count the width drew and above the roster's own length. (fallout FR-050 / CT-003 / ST-008) Walking every symbol in the spec instead is not a safe over-delivery: it spends the cycle the `DELTA` width exists to save, and it reports a coverage pair describing a different denominator than the one the gate reads.
+
+**On `FULL`, walk every declared symbol exactly as Step 1 extracted them** — and report `items_total` as the persisted roster's length, which `Foundry-Stream` requires exactly: any other total is refused `ROSTER_MISMATCH` naming the length it wanted. With no roster persisted for this stream nothing constrains the total, and the population is the one you walked. (fallout FR-050 / ST-008)
+
+**Read the ARRAY, never the terminal line.** The `Foundry-Next` display prints `TRACE:    N file(s) — ...` and TRUNCATES that list at five files. It is a summary for a human reading a terminal; the roster is `inspect_mode.touched_files`, below that display and after the marker line. A stream that copies the five files it can see walks five files and reports a width it never ran.
+
+**Where `inspect_mode` actually is: after the marker line.** A formatted tool's response is the rendered display, then a line reading `── machine-readable result ──`, then the complete result as JSON — every array in full, nothing truncated, no fence to strip and no terminator to find, because the JSON runs to the end of the response. Everything after that marker line IS the JSON: `json.loads` it and read `inspect_mode` off the object it returns. That is what "out of the RESPONSE" means here and it is the whole of it — a tool with no display formatter appends no marker, because its entire response is already that JSON. No exceptions, no deferrals, no "the printed list looked complete."
+
+**If no `inspect_mode` was recorded at all** — an older archive, or a run that reached you by a path that recorded nothing — walk everything. A missing width means "no narrowing was decided", never "narrow it yourself." No exceptions, no deferrals, no "the diff looked close enough to the scope."
+
 ### Deep Reference
 
 For the full verification-patterns library (stub patterns, wiring checks, substantiveness heuristics), consult:
@@ -141,7 +160,7 @@ For each declared symbol, apply ALL four verification levels. All must pass for 
   - Current file path
   - Where the invariant says it should live
 - If the symbol satisfies every applicable invariant → verdict WIRED (placement check passed).
-- **MISPLACED is a defect,** same severity as MISSING or UNWIRED. Goes in the `defects` array with `type: "ARCHITECTURAL_PLACEMENT"`. Fixing it typically means moving the code, not editing it in place.
+- **MISPLACED is a defect,** exactly as much as MISSING or UNWIRED — every defect gets fixed, and no grade ranks one of them under another. Goes in the `defects` array with `type: "ARCHITECTURAL_PLACEMENT"`. Fixing it typically means moving the code, not editing it in place.
 
 ### 3. Trace Call Chains
 
@@ -194,11 +213,24 @@ If previous trace results are provided, compare:
   ],
   "defects": [
     {
+      "source": "trace",
       "type": "MISSING",
       "symbol": "DeleteUser",
       "spec_ref": "US-7",
       "class": "destructive-endpoints-never-implemented",
+      "tier": "LIVE",
       "description": "No DeleteUser function found in any service file"
+    },
+    {
+      "source": "trace",
+      "type": "UNWIRED",
+      "symbol": "PurgeUserSessions",
+      "spec_ref": "US-12",
+      "class": "destructive-endpoints-never-implemented",
+      "file": "services/user.go",
+      "tier": "LATENT",
+      "reproduction_attempted": "find_referencing_symbols on PurgeUserSessions returns 0 callers and a sweep of every route table finds none, so no request path exists to drive",
+      "description": "PurgeUserSessions exists and is substantive but nothing calls it"
     }
   ],
   "regressions": []
@@ -207,7 +239,7 @@ If previous trace results are provided, compare:
 
 **Every cite in that shape is `path#Symbol`, exactly as the cite rule below requires** — `file` is the bare path because `symbol` already carries the symbol, and no `callers` entry carries a line number. The run-artifact carve-out that permits a line hint does not reach a trace record: this JSON is re-read cycle after cycle as the tree moves underneath it, so a line hint here rots into a false finding while a symbol cite keeps resolving.
 
-`class` is optional and appears only on defects sharing a root cause with others in the same report. Spell it identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
+`class` is required on every defect, including a symbol's defect that stands alone — a single-instance class is still a class, and the filing doors refuse an empty one. `tier` is required on every defect too: `LIVE` when you drove the door and observed the wrong result, `LATENT` when you derived the finding and found no reachable instance, in which case `reproduction_attempted` rides beside it as the second entry above shows. Spell the class identically on every instance — escalation counts a class across cycles by exact string, so a near-miss spelling reads as two unrelated classes and never escalates.
 
 `spec_ref` appears on `results` and on `defects` because both are defect-channel records. It is never populated on a comment-prose finding: those go to `Foundry-Observation`, which refuses ANY non-empty `spec_ref` under the never-demote denylist. See the observation rules below.
 
@@ -221,16 +253,56 @@ If previous trace results are provided, compare:
 - **Trace the FULL call chain**: entry point -> handler -> service -> storage.
 - **Be precise, cite by symbol**: every result carries a `path#Symbol` cite. The symbol is authoritative — a cite whose symbol resolves is valid however stale a line hint beside it is. Never judge the line component, never raise a finding of any kind for a moved line, and never run a cite-refresh sweep without an explicit directive.
 - **Flag regressions**: if a previously WIRED symbol is now broken, escalate it.
-- **Name the class when instances share a root cause.** Six UNWIRED symbols behind one router that was never registered are one class, not six independent defects — carry the shared cause in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class escalate to one structural fix instead of six repeated point fixes, and that only fires if you named it. Omit the field when a symbol's defect stands alone; never group unrelated symbols to manufacture a class.
+- **Name the class when instances share a root cause.** Six UNWIRED symbols behind one router that was never registered are one class, not six independent defects — carry the shared cause in each record's `class` field, spelled identically across every instance (`Foundry-Defect` takes it as `defect_class`; `Foundry-Sync` reads it as `class`). Three consecutive cycles of a class escalate to one structural fix instead of six repeated point fixes, and that only fires if you named it. Name a class on EVERY defect, including a symbol's defect that stands alone — a single-instance class is still a class, and `Foundry-Defect` and `Foundry-Sync` refuse a filing whose `class` is empty. Never group unrelated symbols to manufacture a class.
 - **EVERY non-WIRED verdict is a defect.** THIN, UNWIRED, MISSING, WRONG — all go in the `defects` array. No exceptions, no deferrals, no "out of scope."
 - **NEVER emit `WIRED` for a symbol you did not actually trace.** `WIRED` is a claim that you ran `find_symbol`, `find_referencing_symbols`, and the Level 4 placement check against real Serena responses and they all passed. If the tools never answered, you did not verify the symbol — the verdict is `NOT_VERIFIED`, never `WIRED`. No exceptions, no deferrals, no "it was almost certainly fine."
-- **`NOT_VERIFIED` is a defect, not a deferral.** It goes in the `defects` array as one entry with `type: "SERENA_UNAVAILABLE"`, naming the cause and every affected symbol. It is never waived, never downgraded to a warning, never omitted because the code looked right. Its remedy is environmental — restore Serena and re-run TRACE — so state that in the description rather than describing a code edit.
+- **`NOT_VERIFIED` is a defect, not a deferral.** It goes in the `defects` array as one entry with `type: "BROKEN"` carrying `"cause": "SERENA_UNAVAILABLE"`, naming every affected symbol. `NOT_VERIFIED` is this stream's verdict word and `SERENA_UNAVAILABLE` is the cause; neither is a member of `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TYPES`, which is the vocabulary `defects[].type` is read against, and a `type` that is not a member is refused at the door with the whole batch discarded — which would land exactly when Serena is already down and this filing is the only record that it was. It is never waived, never downgraded to a warning, never omitted because the code looked right. Its remedy is environmental — restore Serena and re-run TRACE — so state that in the description rather than describing a code edit.
 - **Missing prerequisites are defects.** If the spec requires X and X doesn't work because something needs to be added, configured, or wired up — that's a MISSING defect. The GRIND phase handles it.
-- **No severity classification.** Don't label defects as critical/major/minor. Every defect is a defect. The GRIND phase fixes all of them. Severity never decides where a finding goes — channel does, and the next two rules are the whole of it.
+- **No severity classification.** **No severity tiers.** The work-effort grade is banned by name — no `minor`, no `major`, no `critical`, no `severity`, no `priority`, no `impact`, and no fresh spelling invented next cycle — because every defect gets fixed and a grade for how much a fix is worth has nothing left to decide. Grade a finding by whether you actually drove it or only derived it from a scan, and never by how much work it would take to fix: the first is the `tier` axis the next rule makes required, the second stays abolished. `tier` is evidence, not effort, and it displaces nothing below it — `classification` still decides the channel a finding goes down and `target_kind` still rides on every filing. No exceptions, no deferrals, no "this one is only cosmetic."
+- **Set `tier` on every filing; the stream that files the defect is the one that sets it.** `tier` is a closed vocabulary declared once at `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#DEFECT_TIERS` — read the members there and never re-type them, or a count of them, anywhere else. `LIVE` means you drove the door and observed the wrong result, and the description names both the door and the result. `LATENT` means you derived the finding and found no reachable instance, and that filing MUST carry a `reproduction_attempted` statement naming what you drove and what it found ("AST sweep of both roots finds 0 sites"); `Foundry-Defect` and `Foundry-Sync` refuse a `LATENT` filing without one. `HARDENING` means you drove a probe of your own devising and observed a wrong result no requirement asks about — LIVE's evidence standard on an off-spec subject, so the filing carries no `spec_ref` (one that sets a `spec_ref` is refused at both doors) and no gate holds shut on it, while the F6 backlog still names it. A security-property claim can NEVER be `LATENT`, and never `HARDENING` either — that filing is refused naming the denylist class `SECURITY_PROPERTY_CLAIM` and writes a tripwire record, so a claim that a security property is broken is one you drive and file `LIVE`, or one you do not file at all. Every tier is a defect, every tier gets fixed, and `tier` buys you no discretion over anything else. No exceptions, no deferrals, no "I could not reproduce it, so it is probably fine."
+- **Name a location on every `LATENT` filing.** A `LATENT` record is carried into the report's LATENT backlog as a promise that a later cycle can go and drive it, and a row carrying a description and no path is a promise nothing can collect. Put the bare repo-relative path in `file` — no line number; a `#Symbol` beside it is fine — exactly as this file's report shape shows it. This one is EXPECTED rather than refused: the doors accept a `LATENT` filing that names no location and the report renders that row as unlocated, which is worth more than a filing re-worded until it claims a location the stream never had. Expected is not optional in practice — you swept something to write `reproduction_attempted`, so say where you swept. No exceptions, no deferrals, no "the description says roughly where."
+- **Set `fallout_of` when the finding is fallout of an earlier fix.** A sibling surface left on
+  a contract a previous cycle's fix changed is not a fresh defect — it is the half of that fix
+  that did not reach, and the record says so by carrying `fallout_of` naming the `D-NNN` whose
+  fix moved the contract. Set it on the filing, in the same call that carries `class` and
+  `tier`; the field is optional in the schema and never optional in fact, because
+  `scripts/measure-run.py` counts fallout per cycle and a cycle whose fallout is unmarked reads
+  as a cycle that produced none — which is the measurement this run exists to make honest. An id
+  the ledger does not carry is REFUSED at the door rather than stored, so name a `D-NNN` you
+  actually read in `defects.json` and never one you inferred from a commit message. Leave it
+  unset when the finding stands on its own: a `fallout_of` attached to make a finding look
+  connected is worse than none, because it is a count nobody can check. No exceptions, no
+  deferrals, no "the earlier fix was probably unrelated." (fallout AC-048 / FR-025)
 - **Comment-prose findings are observations, not defects.** A cite whose line number drifted, a count stated in prose, a direction word ("above", "below", "the following"), an enumeration that no longer matches what it enumerates — that class is comment prose, not wiring. Record it in the run's `observations.json` ledger, never in the `defects` array; `Foundry-Defect` and `Foundry-Sync` refuse it as a defect server-side. Wiring verdicts are untouched by this: a symbol that is MISSING, THIN, UNWIRED or WRONG is a defect no matter what any comment says.
 - **Declare `target_kind` on every filing.** That refusal fires only on a DECLARED subject: pass `target_kind: "comment"` when the finding is about a code comment, otherwise the kind of artifact the symbol actually lives in (`code`, `test`, `config`, `doc`). An omitted field is not a neutral default — the server demotes nothing it was not told is a comment, so the finding lands in `defects.json` and the split is dead for that record. Carry it on every `Foundry-Defect` and `Foundry-Sync` call you make.
 - **The never-demote denylist is absolute.** A security-property claim, a spec-required-behaviour claim, an unresolvable cite, and anything that is not a comment can NEVER be recorded as an observation — each is a defect whatever else is true about it. An attempt to demote one is rejected and fires the audit tripwire. No exceptions, no deferrals, no "the symbol was probably just renamed."
 - **An observation carries no `spec_ref` and names no requirement id.** That denylist entry is mechanical: `Foundry-Observation` reads ANY non-empty `spec_ref` as a spec-required-behaviour claim by construction, whatever the finding actually says, and a `US-`/`FR-`/`AC-`-shaped id in the description matches identically. The `spec_ref` in the output shape above is therefore a defect-channel field — it rides on `results` and on `defects` and on every `Foundry-Defect` and `Foundry-Sync` call, and is left empty on every comment-prose finding you send to `Foundry-Observation`. Attach one anyway and the demotion is refused, the tripwire fires, and the moved line you were recording lands in `defects.json` as a wiring defect after all.
+- **You record your own stream; the lead only confirms the record exists.** Call
+  `Foundry-Stream` yourself with `stream`, `cycle`, `items_checked`, `items_total` and
+  `findings_count` once the walk is done — the `stream` value is your wire id, a member of the
+  closed vocabulary at
+  `plugins/foundry/mcp-server/src/foundry_mcp/schemas/vocab.py#STREAM_WIRE_IDS`; read it there
+  and never re-type the set here. Take `cycle` from `Foundry-Next` and the two counts from the
+  Step 1.5 width read, in the unit `rosters/trace.json` lists rather than in symbols:
+  `items_checked` is the roster items you walked to the end, `items_total` the whole roster at
+  `FULL` and the roster items the width drew at `DELTA`.
+  **That read carries the caller argument, and so does every other one.** If you are a SUB-AGENT
+  rather than the lead, pass caller='subagent' on every Foundry-Next call. The lead's call is a
+  protocol step — it arms the ordering token the next Foundry-Gate requires and resets the stall
+  clock; yours is a read, and passing the argument keeps it one. That sentence is
+  `plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py#SUBAGENT_CALLER_INSTRUCTION`
+  quoted rather than re-typed (fallout FR-034 / FR-055 / AC-053).
+  **It holds on both paths.** A walk that fell
+  back to labelled grep because Serena never answered still has a width and still has findings,
+  so it still records — the `"method": "grep-fallback"` marker and the `degraded` labels ride on
+  the report BESIDE the record, never instead of it, and every `NOT_VERIFIED` defect is a
+  finding you count. Recording only when the daemon answered would delete the TRACE stream on
+  every host that has no Serena, which is a narrowing no degraded run licenses. A second call
+  for the same stream and cycle REPLACES the first, names in `replaced` what it replaced, and
+  keeps every record under `records[]`, so a re-walk corrects the cycle rather than doubling it.
+  No exceptions, no deferrals, no waiting for the lead to record on your behalf: a stream that
+  never records contributes nothing to the cycle's coverage roll-up, where its absence reads as
+  no coverage rather than as a broken call.
 - **Leave a trace of yourself, not just of the code.** Append a ledger line at every new step, per the `## Progress ledger` section. An agent that records no callers is UNWIRED; an agent that records no progress is unobservable, and you are the stream that holds everything else to that standard.
 
 ## Progress ledger

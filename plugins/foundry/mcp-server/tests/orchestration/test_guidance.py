@@ -1,0 +1,2354 @@
+"""Foundry-Next and Foundry-Context: what the lead is told to do.
+
+Carved from `tests/test_orchestrator_gates.py` (fallout FR-005 / GI-026 /
+AC-014 / OT-016): one test module per shipped orchestration module, landed in
+the same casting as the source move so no pin is ever left pointing at a module
+that no longer exists.
+"""
+from __future__ import annotations
+
+import ast
+import asyncio
+import inspect
+import json
+import tempfile
+import textwrap
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+from foundry_mcp.schemas import vocab
+from foundry_mcp.schemas.vocab import RUN_PHASE_HALTED
+from foundry_mcp.tools import artifacts, foundry_state
+from foundry_mcp.tools.foundry_state import now_iso
+
+# fallout FR-004 / AC-013 — THE MODULE OBJECTS, UNDER UNDERSCORE ALIASES.
+#
+# `streams`, `spend`, `width`, `gates`, `directives` and `teams` are all LOCAL
+# variable names somewhere in this suite, and a local rebinding shadows a
+# module for the rest of its function. The aliases are what `ORCHESTRATION`,
+# `owning_module` and every `monkeypatch.setattr` resolve through; individual
+# SYMBOLS are imported by name below, which is how the carved modules read.
+from foundry_mcp.tools.orchestration import guidance as _guidance
+
+# fallout AC-014 — THE TWO SIBLING SUITES THE CARVE MUST KEEP REACHING.
+#
+# `test_observations` owns the never-demote corpus and `test_spawn_progress`
+# owns the shipped-source-tree derivation. Both are imported rather than copied,
+# for the reason the monolith imported them: a parity test that owned its own
+# copy of the corpus would keep passing while the two corpora drifted, and two
+# scans over "the shipped source" must not be able to disagree about what that
+# is. If either renames a symbol the ImportError says so by name, which is the
+# loud failure rather than the silent one.
+
+# fallout FR-004 / AC-014 (D-183) — THE ROSTER AND ITS HELPERS COME FROM
+# `tests/orchestration/_env.py`, WHICH IS THE ONE PLACE THEY ARE STATED.
+#
+# This module carried its own byte-identical copy of a hand-typed thirteen-tuple
+# and of `orchestration_source`, `owning_module`, `patch_everywhere` and
+# `orchestration_has`. Fourteen copies of one roster is fourteen places to
+# forget a module, and `keyfiles.py` — shipped in cycle 5 — was forgotten in
+# every one of them: `owning_module` answered the IMPORTING module for
+# `covers_path` and raised for `owning_entries`, and `patch_everywhere` could
+# not reach a binding inside it. The roster is derived from the package
+# directory now, so there is one of it and it cannot go stale.
+from tests.orchestration._env import ORCHESTRATION, owning_module, patch_everywhere  # noqa: F401
+
+from tests.orchestration._env import (  # noqa: F401
+    _defect_ledger,
+    _halted_run,
+    _teams_active,
+    _tiered,
+    _record_full_inspect_mode,
+    _write_manifest_with_castings,
+    _write_prove,
+    _write_spec,
+    _write_state,
+    run_env,
+)
+
+from foundry_mcp.tools.orchestration.directives import (  # noqa: F401
+    foundry_defects_to_tasks,
+)
+
+from foundry_mcp.tools.orchestration.gates import (  # noqa: F401
+    foundry_gate,
+)
+
+from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
+    _ACTION_IMPERATIVES,
+    _waiting_on_agents,
+    _GATE_THEN_PHASE_EXCEPTION,
+    _GATE_THEN_PHASE_NOTE,
+    _STANDING_CRITICAL_RULES,
+    _compute_next_action,
+    _format_status_display,
+    foundry_get_context,
+    foundry_next_action,
+)
+
+from foundry_mcp.tools.orchestration.streams import (  # noqa: F401
+    _check_streams_complete,
+    foundry_mark_stream,
+)
+
+from foundry_mcp.tools.orchestration.teams import (  # noqa: F401
+    _check_active_teams,
+)
+
+from foundry_mcp.tools.orchestration.transitions import (  # noqa: F401
+    foundry_mark_phase_complete,
+)
+
+from tests.orchestration._env import (  # noqa: F401
+    _CORRUPTIBLE_ARTIFACTS,
+    _MALFORMED_BODIES,
+    _corrupt,
+    _plain,
+    _progressing_ledger,
+    _router_defect,
+    _router_ledger,
+    _stale_stall_clock,
+    _stalled_ledger,
+    _streams_done,
+)
+
+
+
+
+# --------------------------------------------------------------------------- #
+# P3 — verdict synthesis on clean PROVE (FR-003 / FR-004 / ST-001)
+# --------------------------------------------------------------------------- #
+
+
+def test_clean_prove_autopass_synthesizes_verified_verdict_per_id(run_env):
+    """AC FR-004: clean-PROVE auto-pass writes one VERIFIED row per spec ID."""
+    project_root, fdir = run_env
+    ids = ["FR-1", "FR-2", "US-3", "AC-4"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", temper=False)
+    _write_prove(fdir, items_checked=len(ids), items_total=len(ids), findings=0)
+    # verdicts.json does not exist yet — .prove-complete stores only aggregates.
+    assert not (fdir / "verdicts.json").exists()
+
+    result = _compute_next_action(project_root)
+
+    assert result["action"] == "transition_to_done"
+    verdicts = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))
+    got = {r["id"]: r["verdict"] for r in verdicts["requirements"]}
+    assert set(got) == set(ids)
+    assert all(v == "VERIFIED" for v in got.values())
+
+
+
+
+# --------------------------------------------------------------------------- #
+# P4 — ordering-token / stall-clock decouple (FR-005 / FR-008)
+# --------------------------------------------------------------------------- #
+
+
+def test_stall_clock_decoupled_from_ordering_token(run_env):
+    """AC FR-005 (decouple): the stall clock reads ``.last-next-at`` — which
+    gate/phase never unlink — so a consumed ordering token does NOT blind the
+    watchdog. A large gap still warns even when ``.next-action-called`` is
+    gone."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F0")
+
+    # Simulate: a prior Foundry-Next stamped .last-next-at 200s ago, and an
+    # intervening gate/phase consumed (unlinked) the ordering token.
+    old = (datetime.now(timezone.utc) - timedelta(seconds=200)).isoformat()
+    (fdir / ".last-next-at").write_text(f"{old}\n", encoding="utf-8")
+    assert not (fdir / ".next-action-called").exists()
+
+    result = foundry_next_action(project_root)
+
+    assert result.get("stall_detected_seconds", 0) >= 180
+    assert "STALL DETECTED" in result["instructions"]
+    # Both markers are (re)written by Foundry-Next.
+    assert (fdir / ".next-action-called").exists()
+    assert (fdir / ".last-next-at").exists()
+
+
+
+
+def test_real_stall_still_warns(run_env):
+    """AC FR-008: a genuine >180s gap between Foundry-Next calls warns."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F0")
+
+    old = (datetime.now(timezone.utc) - timedelta(seconds=240)).isoformat()
+    (fdir / ".last-next-at").write_text(f"{old}\n", encoding="utf-8")
+    (fdir / ".next-action-called").write_text(f"{old}\n", encoding="utf-8")
+
+    result = foundry_next_action(project_root)
+
+    assert result.get("stall_detected_seconds", 0) >= 180
+    assert "STALL DETECTED" in result["instructions"]
+
+
+
+
+def test_no_false_stall_on_recent_activity(run_env):
+    """AC FR-008 (no false positive): back-to-back Foundry-Next calls with a
+    tiny gap do NOT warn."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F0")
+
+    foundry_next_action(project_root)  # stamps .last-next-at = now
+    result = foundry_next_action(project_root)  # gap ~0s
+
+    assert "stall_detected_seconds" not in result
+    assert "STALL DETECTED" not in result["instructions"]
+
+
+
+
+@pytest.mark.parametrize(
+    "bad_cycle",
+    ["seven", None, [], {"a": 1}, -3, 2.5, True],
+    ids=["str", "null", "list", "dict", "negative", "float", "bool"],
+)
+def test_malformed_state_cycle_leaves_next_and_context_answering(run_env, bad_cycle):
+    """AC-008 / FR-005 on the defect path and its nearest neighbour.
+
+    Foundry-Next is the mandatory handshake before EVERY phase transition and
+    EVERY gate, and commands/start.md makes it the universal loop step, so an
+    unhandled raise there wedges the run with no recovery path through the
+    protocol. Driven over _DISPATCH because that is the surface the lead
+    actually calls, and because jsonschema validates the ARGUMENTS -- nothing
+    validates the state file the handler then reads.
+    """
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=bad_cycle)
+    _write_manifest_with_castings(fdir, ["src/api/handler.py"], no_ui=True)
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+
+        nxt = foundry_server._DISPATCH["Foundry-Next"]({})
+        ctx = foundry_server._DISPATCH["Foundry-Context"]({})
+    finally:
+        foundry_server._project_root = previous_root
+
+    # Answers rather than raising...
+    #
+    # Read through the rendered display rather than the old `context_budget`
+    # block, which is gone: it mapped the cycle counter onto the words
+    # low/moderate/high/critical and called the result "estimated_usage",
+    # reading no tokens and no durations. AC-033 replaced it with the spend the
+    # lead actually reported. The claim this test makes was never about that
+    # block — it is that a malformed counter still NORMALISES to 0 everywhere
+    # it surfaces, and the display is where Foundry-Next surfaces it.
+    assert "Cycle: 0" in nxt["display"]
+    assert ctx["state"]["cycle"] == 0
+    # ...and normalises rather than passing the malformed value through.
+    assert isinstance(ctx["state"]["cycle"], int)
+    assert not isinstance(ctx["state"]["cycle"], bool)
+    # The status display renders the normalised counter, not the raw value.
+    assert "Cycle: 0" in _format_status_display(project_root)
+
+
+
+
+def test_valid_state_cycle_still_reaches_next_and_context_unchanged(run_env):
+    """NFR-002: the fix normalises malformed values, it does not flatten real
+    ones. A run whose counter genuinely reads 4 still reports 4."""
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=4)
+    _write_manifest_with_castings(fdir, ["src/api/handler.py"], no_ui=True)
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        nxt = foundry_server._DISPATCH["Foundry-Next"]({})
+        ctx = foundry_server._DISPATCH["Foundry-Context"]({})
+    finally:
+        foundry_server._project_root = previous_root
+
+    assert "Cycle: 4" in nxt["display"]
+    assert ctx["state"]["cycle"] == 4
+    assert "Cycle: 4" in _format_status_display(project_root)
+
+
+
+
+# --- the ADJACENT path: a written record, not a response field -------------- #
+
+
+@pytest.mark.parametrize("bad_cycle", ["seven", -3, 2.5], ids=["str", "negative", "float"])
+def test_malformed_state_cycle_never_reaches_synthesized_verdicts(run_env, bad_cycle):
+    """D-059 adjacent-path test (AC-013).
+
+    The defect was found on Foundry-Next's context-budget path, where a bad
+    value lands in a response field. This drives a DIFFERENT caller and a
+    DIFFERENT transition: _compute_next_action's F4 clean-PROVE auto-pass,
+    which passes the same read as ``cycle=`` into
+    ``_synthesize_clean_prove_verdicts`` -- and that stamps it onto EVERY
+    synthesized row of verdicts.json. Here the consequence is persisted data
+    that outlives the call, and 'seven' never raises on this path because
+    nothing compares it; it is simply written.
+    """
+    project_root, fdir = run_env
+    ids = ["FR-1", "FR-2", "US-3"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", temper=False, cycle=bad_cycle)
+    _write_prove(fdir, items_checked=len(ids), items_total=len(ids), findings=0)
+
+    result = _compute_next_action(project_root)
+    assert result["action"] == "transition_to_done"
+
+    rows = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))["requirements"]
+    assert {r["id"] for r in rows} == set(ids)
+    for row in rows:
+        assert row["cycle"] == 0, f"{row['id']} carries the malformed state cycle"
+        assert isinstance(row["cycle"], int) and not isinstance(row["cycle"], bool)
+
+
+
+
+def test_valid_state_cycle_is_stamped_on_synthesized_verdicts(run_env):
+    """The same adjacent path with a real counter: the value is carried, not
+    zeroed. Without this the test above would pass on a hardcoded 0."""
+    project_root, fdir = run_env
+    ids = ["FR-1", "FR-2"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", temper=False, cycle=5)
+    _write_prove(fdir, items_checked=len(ids), items_total=len(ids), findings=0)
+
+    assert _compute_next_action(project_root)["action"] == "transition_to_done"
+
+    rows = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))["requirements"]
+    assert [r["cycle"] for r in rows] == [5, 5]
+
+
+
+
+# The orchestrator entry points reachable over MCP that read run artifacts.
+def _entry_point_calls(project_root: str) -> dict:
+    return {
+        "Foundry-Next": lambda: foundry_next_action(project_root=project_root),
+        "Foundry-Context": lambda: foundry_get_context(project_root=project_root),
+        "Foundry-Phase": lambda: foundry_mark_phase_complete("inspect_start", project_root),
+        "Foundry-Gate": lambda: foundry_gate("done", project_root=project_root),
+        "Foundry-Stream": lambda: foundry_mark_stream(
+            "trace", cycle=0, items_checked=1, items_total=1, project_root=project_root
+        ),
+        "Foundry-Tasks": lambda: foundry_defects_to_tasks(project_root=project_root),
+    }
+
+
+
+
+def _drive_matrix_cell(artifact: str, body: str, guarded: bool) -> str:
+    """Drive one (artifact, malformed body) pair through every entry point.
+
+    ``guarded=False`` restores the PRE-fix reader — the raw
+    ``json.loads(path.read_text())`` and no ``_artifact_guard`` — which is the
+    state group E's matrix was driven against. Shared by the pins below and by
+    this casting's evidence command, so the demonstration and the assertion
+    cannot drift apart.
+    """
+    import tempfile
+
+    from foundry_mcp.tools import foundry_state as _fs
+
+    root = Path(tempfile.mkdtemp())
+    fdir = root / "foundry-archive" / "matrix"
+    (fdir / "castings").mkdir(parents=True)
+    (fdir / artifact).write_text(body, encoding="utf-8")
+    _fs.set_active_run("matrix")
+
+    # fallout FR-004: the team scan is rebound on the MODULE that defines it and
+    # on every module that imported the name, because after the carve there is a
+    # binding per importer and a local of the same name reaches none of them.
+    def _bind(name, value):
+        """Rebind `name` on every module that carries it; return the originals.
+
+        fallout FR-004: after the carve a symbol is imported BY NAME into each
+        caller's namespace, so setting it on the module that DEFINES it reaches
+        none of the importers. This drive's whole subject is what the doors do
+        when the primitive misbehaves, so the primitive has to misbehave for
+        all of them or the table below measures nothing.
+        """
+        originals = {}
+        for module in (*ORCHESTRATION, artifacts):
+            if name in vars(module):
+                originals[module] = vars(module)[name]
+                setattr(module, name, value)
+        return originals
+
+    real_teams = _bind(
+        "_check_active_teams",
+        lambda _p: {"active": False, "teams": [], "live_panes": []},
+    )
+    real_load: dict = {}
+    real_guard: dict = {}
+    if not guarded:
+        real_load = _bind(
+            "_load_json",
+            lambda p: (json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}),
+        )
+        real_guard = _bind("_artifact_guard", lambda _f: None)
+    try:
+        raised, named = 0, 0
+        for _tool, call in _entry_point_calls(str(root)).items():
+            try:
+                if Path(artifact).name in json.dumps(call()):
+                    named += 1
+            except Exception:
+                raised += 1
+        if raised:
+            return "BRICKS %d/6" % raised
+        return "names %d/6" % named if named else "silent    "
+    finally:
+        for name, originals in (("_load_json", real_load),
+                                ("_artifact_guard", real_guard),
+                                ("_check_active_teams", real_teams)):
+            for module, original in originals.items():
+                setattr(module, name, original)
+        _fs.clear_active_run()
+
+
+
+
+def render_corruption_matrix(guarded: bool) -> str:
+    """The 24-combination matrix as a printable table. Used by the evidence log."""
+    bodies = [(p.id, p.values[0]) for p in _MALFORMED_BODIES]
+    head = (
+        "post-fix: tolerant loader + _artifact_guard at every entry point"
+        if guarded
+        else "PRE-fix: raw json.loads(read_text()), no shape check, no guard"
+    )
+    out = ["== %s ==" % head,
+           "   %-24s %s" % ("artifact", "  ".join("%-12s" % n for n, _ in bodies))]
+    bricked = named = 0
+    for artifact in _CORRUPTIBLE_ARTIFACTS:
+        cells = []
+        for _name, body in bodies:
+            verdict = _drive_matrix_cell(artifact, body, guarded)
+            bricked += verdict.startswith("BRICKS")
+            named += verdict.startswith("names")
+            cells.append("%-12s" % verdict)
+        out.append("   %-24s %s" % (artifact, "  ".join(cells)))
+    out.append(
+        "   -> %d of 24 brick at least one tool, %d of 24 name the offending file"
+        % (bricked, named)
+    )
+    return "\n".join(out)
+
+
+
+
+def test_the_matrix_bricks_before_the_fix_and_names_after():
+    """The headline numbers, asserted rather than only demonstrated.
+
+    Group E's audit: 24/24 bricked a tool and NOT ONE named the offending
+    file. The pre-fix arm reproduces the bricking; the post-fix arm must brick
+    nothing and name everything.
+    """
+    before = render_corruption_matrix(guarded=False)
+    bricked_before = int(before.rsplit("-> ", 1)[1].split(" of 24")[0])
+    assert bricked_before >= 20, before
+    assert "0 of 24 name the offending file" in before
+
+    after = render_corruption_matrix(guarded=True)
+    assert "BRICKS" not in after
+    assert "0 of 24 brick at least one tool, 24 of 24 name" in after
+
+
+
+
+@pytest.mark.parametrize("artifact", _CORRUPTIBLE_ARTIFACTS)
+@pytest.mark.parametrize("body", _MALFORMED_BODIES)
+def test_a_malformed_artifact_refuses_by_name_instead_of_raising(run_env, artifact, body):
+    """The 24-combination matrix, driven through every affected entry point.
+
+    Two assertions, and the second is the one group E's audit was really
+    about: 24/24 bricked a tool and NOT ONE named the offending file.
+    """
+    project_root, fdir = run_env
+    _corrupt(fdir, artifact, body)
+
+    for tool, call in _entry_point_calls(project_root).items():
+        result = call()  # must not raise
+
+        assert isinstance(result, dict), f"{tool} returned {type(result).__name__}"
+        named = json.dumps(result)
+        assert Path(artifact).name in named, (
+            f"{tool} did not name {artifact} in its refusal: {named[:300]}"
+        )
+
+
+
+
+def test_the_refusal_carries_the_house_error_and_hint_shape(run_env):
+    project_root, fdir = run_env
+    _corrupt(fdir, "state.json", "[1, 2, 3]")
+
+    result = foundry_next_action(project_root=project_root)
+
+    assert "state.json" in result["error"]
+    assert "list" in result["error"]  # names WHAT it found, not just that it failed
+    assert result["hint"]
+    assert result["corrupt_artifacts"]
+
+
+
+
+def test_every_corrupt_artifact_is_named_not_just_the_first(run_env):
+    """A run with three broken files must not send the operator round three
+    times. The scan is derived over the run dir, so it reports all of them."""
+    project_root, fdir = run_env
+    for artifact in ("state.json", "defects.json", "verdicts.json"):
+        _corrupt(fdir, artifact, "null")
+
+    result = foundry_next_action(project_root=project_root)
+
+    assert len(result["corrupt_artifacts"]) == 3
+    for artifact in ("state.json", "defects.json", "verdicts.json"):
+        assert any(artifact in p for p in result["corrupt_artifacts"])
+
+
+
+
+def test_a_new_artifact_is_covered_without_being_enrolled(run_env):
+    """Derived membership. The scan globs the run dir rather than consulting a
+    hand-kept list, so an artifact nobody remembered to enrol is still caught —
+    which is the failure mode the marker lists in this module keep repeating."""
+    project_root, fdir = run_env
+    _corrupt(fdir, "some-future-artifact.json", "[]")
+
+    result = foundry_next_action(project_root=project_root)
+
+    assert any("some-future-artifact.json" in p for p in result["corrupt_artifacts"])
+
+
+
+
+def test_an_absent_artifact_is_not_a_problem(run_env):
+    """A run legitimately has artifacts it has not written yet. Only a file that
+    EXISTS and cannot be read is a refusal."""
+    project_root, fdir = run_env
+
+    assert artifacts._run_artifact_problems(fdir) == []
+    assert artifacts._artifact_guard(fdir) is None
+    assert "corrupt_artifacts" not in foundry_next_action(project_root=project_root)
+
+
+
+
+def test_foundry_context_does_not_reset_the_stall_clock(run_env):
+    """OT-028's second half: 'Foundry-Context does not change .last-next-at.'
+
+    `foundry_get_context` calls `foundry_next_action` for its `next_action`
+    field, so every Foundry-Context call used to reset the stall clock to now.
+    The effect is the opposite of the watchdog's purpose: a lead that deliberates
+    for twenty minutes, calls Foundry-Context to reorient, and deliberates for
+    twenty more is measured from the Context call and never warned. The clock
+    measures Foundry-Next to Foundry-Next, and a read-only reorientation call is
+    not one of those.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+
+    foundry_next_action(project_root)
+    before = (fdir / ".last-next-at").read_text(encoding="utf-8")
+
+    foundry_get_context(project_root)
+
+    assert (fdir / ".last-next-at").read_text(encoding="utf-8") == before
+
+    # ...and a real Foundry-Next still arms it.
+    (fdir / ".last-next-at").write_text("2020-01-01T00:00:00+00:00\n", encoding="utf-8")
+    foundry_next_action(project_root)
+    assert (fdir / ".last-next-at").read_text(encoding="utf-8") != (
+        "2020-01-01T00:00:00+00:00\n"
+    )
+
+
+
+
+def test_a_halted_run_issues_no_dispatch(run_env):
+    """AC-037's last clause: 'the next Foundry-Next reports the run halted and
+    issues no dispatch.'
+
+    Checked before every other branch in the guidance engine, including the
+    active-teams one: a run that hit its cap is over, and emitting the ordinary
+    phase guidance would send the lead round the loop the cap just stopped.
+    """
+    project_root, fdir = run_env
+    _write_state(
+        fdir, phase=RUN_PHASE_HALTED, cycle=2, max_cycles=2,
+        halted_at_cycle=2, halted_reason="--max-cycles 2 reached",
+    )
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+
+    nxt = foundry_next_action(project_root)
+
+    assert nxt["action"] == "halted"
+    assert "HALTED" in nxt["instructions"]
+    assert "NOT DONE" in nxt["instructions"]
+    assert "YOUR NEXT CALL: NONE" in nxt["instructions"]
+    assert nxt["details"]["open_live_defects"] == ["D-001"]
+    # No agent config anywhere: nothing here tells the lead to spawn anything.
+    assert "agent_config" not in nxt["details"]
+    assert "agent_configs" not in nxt["details"]
+
+
+
+
+def test_a_long_gap_with_agents_progressing_reports_waiting_not_a_stall(run_env):
+    """AC-032 verbatim (first half): 'With an active team and a progressing
+    ledger, a Foundry-Next call more than 180 seconds after the previous one
+    reports waiting on N agents with the oldest progress age and sets no stall
+    warning.'
+
+    OT-022 drives the same claim at ten minutes. The warning used to fire on the
+    clock ALONE, so the most common multi-minute gap in a foundry run — the lead
+    waiting, correctly, for eight CAST teammates — was reported as "You were
+    silently deliberating. Stop deliberating." The lead is trained to obey that
+    literally, so the accusation actively pushed it to stop waiting and improvise
+    over half-built work. A watchdog whose false positive is the NORMAL case is
+    not a watchdog.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _progressing_ledger(fdir)
+    _stale_stall_clock(fdir, 600)
+    # AC-032's first half says "With an ACTIVE TEAM and a progressing ledger",
+    # and D-076 made both halves load-bearing: the fixture patches the team scan
+    # inactive by default, so the active arm has to be asked for explicitly.
+    _teams_active(True)
+
+    nxt = foundry_next_action(project_root)
+
+    assert "stall_detected_seconds" not in nxt, nxt.get("instructions", "")[:400]
+    assert nxt["waiting_on_agents"]["waiting"] is True
+    assert nxt["waiting_on_agents"]["count"] == 1
+    assert "oldest progress" in nxt["waiting_on_agents"]["detail"]
+    assert "WAITING ON 1 AGENT" in nxt["instructions"]
+    # FR-036's proviso: the notice never asserts deliberation while an agent is
+    # progressing.
+    assert "silently deliberating" not in nxt["instructions"]
+
+
+
+
+def test_a_long_gap_with_nothing_running_still_reports_the_stall(run_env):
+    """AC-032's second half: 'with no active teams it reports the stall.'
+
+    The watchdog is scoped, not removed. When nothing is running the silence IS
+    the lead's own, and the blunt instruction is the right one — that failure
+    mode (a lead deliberating instead of executing) is real and is what the
+    warning was written for.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _stale_stall_clock(fdir, 600)
+
+    nxt = foundry_next_action(project_root)
+
+    assert nxt["stall_detected_seconds"] >= 600
+    assert "STALL DETECTED" in nxt["instructions"]
+    assert "NO agent is running" in nxt["instructions"]
+    assert "waiting_on_agents" not in nxt
+
+
+
+
+def test_a_finished_agent_does_not_hold_the_lead_waiting(run_env):
+    """The notice must not become the false positive it replaced.
+
+    An agent whose ledger ends with a terminal line has declared itself finished,
+    and reporting the lead as "waiting" on it would teach the lead to ignore the
+    notice — the same way a roster where every finished agent looks stalled
+    teaches it to ignore `needs_attention`.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    (fdir / "progress").mkdir(parents=True, exist_ok=True)
+    (fdir / "progress" / "casting-3.jsonl").write_text(
+        json.dumps({
+            "timestamp": now_iso(), "phase": "cast", "step": "committed 9f21ac3",
+            "done": True, "agent": "casting-3",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    _stale_stall_clock(fdir, 600)
+
+    nxt = foundry_next_action(project_root)
+
+    assert "waiting_on_agents" not in nxt
+    assert "STALL DETECTED" in nxt["instructions"]
+
+
+
+
+def test_the_waiting_notice_never_blocks(run_env):
+    """CT-012: 'none; never blocks.'
+
+    Driven by breaking the liveness read outright. A watchdog that could raise —
+    or that could refuse a Foundry-Next because it failed to work out who was
+    running — would be strictly worse than the accusation it replaced, and the
+    degrade direction is toward WARNING rather than toward silence, so a broken
+    reader can never suppress a real stall.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _stale_stall_clock(fdir, 600)
+
+    from foundry_mcp.tools import foundry_spawn
+
+    def _explode(*_a, **_k):
+        raise RuntimeError("liveness is unavailable")
+
+    original = foundry_spawn.foundry_liveness
+    foundry_spawn.foundry_liveness = _explode
+    try:
+        nxt = foundry_next_action(project_root)
+    finally:
+        foundry_spawn.foundry_liveness = original
+
+    assert nxt["action"], "the call answered rather than raising"
+    assert "STALL DETECTED" in nxt["instructions"], (
+        "a liveness reader that cannot answer must not suppress a real stall"
+    )
+
+
+
+
+def test_a_short_gap_says_nothing_either_way(run_env):
+    """The threshold is unchanged (FR-036 leaves it to the implementer, and 180
+    seconds was never the defect — the accusation was). A normal cadence must
+    produce no notice at all, or the signal is noise."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _progressing_ledger(fdir)
+    _stale_stall_clock(fdir, 10)
+
+    nxt = foundry_next_action(project_root)
+
+    assert "stall_detected_seconds" not in nxt
+    assert "waiting_on_agents" not in nxt
+    assert "STALL DETECTED" not in nxt["instructions"]
+    assert "WAITING ON" not in nxt["instructions"]
+
+
+
+
+# --------------------------------------------------------------------------- #
+# D-012 / D-023 — the lead's imperatives describe the run that exists
+# --------------------------------------------------------------------------- #
+
+
+def test_the_imperatives_do_not_tell_the_lead_to_pass_the_prompt_field(run_env):
+    """D-012: 'The lead imperatives instruct the lead to pass prompt text that
+    is now always null. _ACTION_IMPERATIVES says "prompt=<returned prompt
+    VERBATIM...>" while foundry_spawn.py returns "prompt": prompt_text if
+    full_prompt else None.'
+
+    start.md was already correct, so the run shipped four instruction surfaces
+    with three wrong — and start.md is the one that tells the lead to follow
+    Foundry-Next literally. Pointer dispatch put the text behind a file and a
+    hash; an imperative naming the old field sends the lead to paste `None`.
+    """
+    for action in ("transition_to_cast", "transition_to_grind"):
+        text = _ACTION_IMPERATIVES[action]
+        assert "`dispatch` field VERBATIM" in text, action
+        assert "returned prompt VERBATIM" not in text, action
+        assert "prompt text VERBATIM" not in text, action
+        # The positive statement, so a lead reading only this line knows why
+        # the field it remembers is empty.
+        assert "null by default" in text, action
+
+
+
+
+def test_the_imperatives_say_foundry_next_is_optional_between_gate_and_phase(
+    run_env
+):
+    """D-023: 'The imperatives never say Foundry-Next is optional between Gate
+    and Phase. Text-verified: the word "optional" appears ZERO times in
+    _ACTION_IMPERATIVES, while FR-044 names "the imperatives and start.md" as
+    the two surfaces that must carry the rule.'
+
+    FR-044 verbatim: 'Foundry-Gate no longer unlinks the ordering token. The
+    imperatives and start.md say Gate then Phase, and note Foundry-Next may be
+    called between them (it is where the inspect mode is announced) but is not
+    required.' Both surfaces, not either.
+    """
+    # GATE then PHASE, in that order. `transition_to_assay` names both but the
+    # other way round, and a Foundry-Next before a Phase call that no Gate
+    # preceded is still REQUIRED — the token has to be armed by something.
+    gate_then_phase = [
+        action for action, text in _ACTION_IMPERATIVES.items()
+        if "Foundry-Gate(" in text and "Foundry-Phase(" in text
+        and text.index("Foundry-Gate(") < text.index("Foundry-Phase(")
+    ]
+    assert gate_then_phase, "no imperative pairs a Gate with a following Phase call"
+
+    for action in gate_then_phase:
+        text = _ACTION_IMPERATIVES[action]
+        assert "OPTIONAL" in text, action
+        assert "Foundry-Next" in text, action
+
+
+
+
+def test_the_optional_rule_has_one_spelling(run_env):
+    """FR-044's rule is stated once and appended, not typed into each
+    imperative. This file's own history is that a rule stated in N copies
+    becomes a rule stated N different ways — which is the
+    stale-prose-survives-beside-new-prose class D-012 and D-023 both belong
+    to."""
+    note = _GATE_THEN_PHASE_NOTE
+    assert "OPTIONAL" in note
+
+    carriers = [t for t in _ACTION_IMPERATIVES.values() if note in t]
+    assert len(carriers) >= 3
+    # No imperative says it in its own words.
+    for text in _ACTION_IMPERATIVES.values():
+        assert text.count("OPTIONAL") == (1 if note in text else 0)
+
+
+
+
+def test_a_latent_only_backlog_is_not_routed_back_into_grind(run_env):
+    """FR-006 verbatim: 'INSPECT-clean, ASSAY, TEMPER, NYQUIST and DONE all pass
+    when the only open defects are LATENT.' AC-008. D-055.
+
+    The GATES were made tier-aware and the ROUTER was not: `_compute_next_action`
+    counted raw open records and the F2 branch routed on `open_count > 0`, so a
+    LATENT-only backlog was sent back into GRIND forever — the exact
+    non-termination FR-006 exists to end. commands/start.md orders the lead to
+    follow Foundry-Next literally and not deliberate, so the run could not reach
+    ASSAY while any LATENT instance stayed open, contradicting AC-002's "the run
+    reaches NYQUIST" and NFR-003's "LATENT stays open, tracked, and listed in
+    the report".
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "FULL", "rule": "final_gate",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [_router_defect("D-001", tier="LATENT",
+                                         reproduction_attempted="drove it; nothing")])
+    _streams_done(fdir)
+
+    action = _compute_next_action(project_root)
+
+    assert action["action"] == "transition_to_assay", action
+    assert action["details"]["latent_backlog"] == ["D-001"]
+    assert "D-001" not in action["instructions"] or "block" in action["instructions"]
+
+
+
+
+def test_one_live_defect_still_routes_into_grind(run_env):
+    """The other side, unchanged: the tier is an evidence grade, not a waiver.
+    A reproduced failure routes to GRIND exactly as every open defect used to."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "FULL", "rule": "final_gate",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [
+        _router_defect("D-001", tier="LATENT",
+                       reproduction_attempted="drove it; nothing"),
+        _router_defect("D-002", tier="LIVE"),
+    ])
+    _streams_done(fdir)
+
+    action = _compute_next_action(project_root)
+
+    assert action["action"] == "transition_to_grind"
+    assert action["details"]["live_defects"] == ["D-002"]
+    assert action["details"]["latent_backlog"] == ["D-001"]
+
+
+
+
+def test_an_untiered_defect_routes_into_grind_like_a_live_one(run_env):
+    """FR-051: an open pre-change record with no tier 'blocks like LIVE'. The
+    router reads the same `_blocking_defects` the gates do, so the two cannot
+    answer differently about one ledger."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "FULL", "rule": "final_gate",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    untiered = _router_defect("D-009")
+    del untiered["tier"]
+    _router_ledger(fdir, [untiered])
+    _streams_done(fdir)
+
+    action = _compute_next_action(project_root)
+
+    assert action["action"] == "transition_to_grind"
+    assert action["details"]["unknown_tier_defects"] == ["D-009"]
+
+
+
+
+def test_the_grind_imperative_names_a_foundry_fix_the_server_accepts(run_env):
+    """AC-020 / AC-011 / CT-005. D-056.
+
+    The F3 arm dictated `Foundry-Fix(defect_id, cycle, adjacent_path_statement,
+    adjacent_path_test)` and stated beside it that "the two declarations are
+    required and the call is refused without them". The shipped schema's
+    required list is ['defect_id', 'cycle', 'authored_by'], so that exact
+    argument set is refused — a lead following Foundry-Next literally was
+    refused on its FIRST fix of every cycle. The sentence was wrong for LATENT
+    defects too, where AC-012 forbids demanding the adjacent-path pair.
+
+    Asserted against the ADVERTISED SCHEMA rather than against a remembered
+    field list, so the imperative and the tool cannot drift apart again.
+    """
+    from foundry_mcp import server as foundry_server
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=2)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [_router_defect("D-001")])
+
+    instructions = _compute_next_action(project_root)["instructions"]
+
+    tools = asyncio.run(foundry_server.list_tools())
+    fix = next(t for t in tools if t.name == "Foundry-Fix")
+    for field in fix.inputSchema["required"]:
+        assert field in instructions, (
+            f"{field} is required by the advertised schema and the imperative "
+            "does not name it — the lead's first fix of the cycle is refused"
+        )
+    # ...and both lanes are described, so a LATENT defect is not sent the LIVE
+    # ceremony (AC-012).
+    assert "regression_test" in instructions
+    assert "LATENT" in instructions
+
+
+
+
+def test_the_grind_imperative_names_the_recorded_width_not_full(run_env):
+    """FR-011 / GI-009. D-072's first half.
+
+    The F3 arm ended "run full INSPECT again", and that arm is the state DELTA
+    is reachable from — so it instructed full width while the very next
+    transition would record a DELTA roster. Foundry-Next REPORTS the recorded
+    decision and the next crossing DECIDES the next one; neither is a claim this
+    arm may make.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "DELTA", "rule": "delta",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [_router_defect("D-001")])
+
+    action = _compute_next_action(project_root)
+
+    assert "run full INSPECT again" not in action["instructions"]
+    assert action["details"]["inspect_mode"] == "DELTA"
+    assert action["details"]["inspect_rule"] == "delta"
+    assert "DELTA" in action["instructions"]
+
+
+
+
+def test_the_f1_imperative_names_the_tool_that_enters_f2(run_env):
+    """GI-009 verbatim: 'whichever Foundry-Phase transition opens an INSPECT
+    records the mode.' D-072's second half.
+
+    The F1 arm said "then update state to F2", naming no tool. The only thing
+    that records the F2 entry's mode is `Foundry-Phase(phase='cast')`, so
+    hand-editing state.json produced exactly GI-009's named violation — a first
+    INSPECT of a phase with no recorded mode.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [])
+    (fdir / ".cast-complete").write_text("x\n", encoding="utf-8")
+
+    action = _compute_next_action(project_root)
+
+    assert action["action"] == "transition_to_inspect"
+    assert "Foundry-Phase(phase='cast')" in action["instructions"]
+    assert "update state to F2" not in action["instructions"]
+
+
+
+
+def test_the_inspect_action_names_its_own_crossing_from_f1_and_from_f3(run_env):
+    """fallout D-058 / AC-059 / GI-001 — driven at BOTH emission sites.
+
+    `transition_to_inspect` is the only action `_compute_next_action` emits from
+    two phases, and the two are different crossings. It carried one frozen pair
+    of literals — `Foundry-Gate(phase='inspect')` above
+    `Foundry-Phase(phase='inspect_start')` — which is refused at both: from F3
+    the gate is refused ("Cannot enter F2 from phase F3 ... accepted from F1 and
+    from nowhere else"), and from F1 the phase call is ("accepted from F3, and
+    from F2"). Both tokens are legal enum members, so nothing rejects either
+    before the door and the mistake is invisible until the lead makes the call.
+
+    Driven through `foundry_next_action`, which is the surface the lead reads,
+    rather than off the constant: the substitution happens at emission and a
+    test that read the table would not exercise it. The stale-literal check is
+    the point of the second assertion in each half — a `{gate}` reaching the
+    lead is a call it would try to make.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+
+    # ── F1: CAST complete, and the crossing is `cast` behind the `inspect` gate.
+    _write_state(fdir, phase="F1", cycle=0)
+    _router_ledger(fdir, [])
+    (fdir / ".cast-complete").write_text("x\n", encoding="utf-8")
+
+    f1 = foundry_next_action(project_root)
+    assert f1["action"] == "transition_to_inspect", f1
+    text = f1["instructions"]
+    assert "Foundry-Gate(phase='inspect')" in text, text
+    assert "Foundry-Phase(phase='cast')" in text, text
+    assert "Foundry-Phase(phase='inspect_start')" not in text.split("CONTEXT")[0], text
+    assert "{gate}" not in text and "{token}" not in text, text
+
+    # ── F3: GRIND closed, and the crossing is `inspect_start` behind its OWN
+    # gate — the token AC-059 added so this transition would have one at all.
+    (fdir / ".cast-complete").unlink()
+    _write_state(fdir, phase="F3", cycle=2)
+    _router_ledger(fdir, [])
+
+    f3 = foundry_next_action(project_root)
+    assert f3["action"] == "transition_to_inspect", f3
+    text = f3["instructions"]
+    assert "Foundry-Gate(phase='inspect_start')" in text, text
+    assert "Foundry-Phase(phase='inspect_start')" in text, text
+    assert "{gate}" not in text and "{token}" not in text, text
+
+
+
+
+def test_the_gate_advance_signal_reads_the_gate_this_crossing_actually_needs(run_env):
+    """fallout D-058 / AC-059 — the second consumer, and it failed both ways.
+
+    `_expected_gate_for_action` is what `.gate-passed` is compared against. With
+    one frozen `inspect` for both phases, a lead at F3 who ran the CORRECT door
+    got `gate_advanced` absent and was told to run the refusing one; and a stale
+    `inspect` marker left over from the F1 entry produced "Foundry-Gate(phase=
+    inspect) ALREADY PASSED — do NOT re-run it" for a gate that never guarded
+    this crossing. Wrong in the reassuring direction is the worse of the two.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _write_state(fdir, phase="F3", cycle=2)
+    _router_ledger(fdir, [])
+    marker = fdir / artifacts.GATE_PASSED_MARKER
+
+    # The gate this crossing needs, passed: the advance signal names it.
+    marker.write_text(json.dumps({"phase": "inspect_start"}), encoding="utf-8")
+    advanced = foundry_next_action(project_root)
+    assert advanced.get("gate_advanced", {}).get("passed_gate") == "inspect_start", (
+        advanced.get("gate_advanced")
+    )
+
+    # The F1 entry's gate, stale on disk: NOT this crossing's, and not vouched
+    # for. The lead is left to run the door that guards what it is about to call.
+    marker.write_text(json.dumps({"phase": "inspect"}), encoding="utf-8")
+    stale = foundry_next_action(project_root)
+    assert "gate_advanced" not in stale, stale.get("gate_advanced")
+
+
+
+
+def test_a_clean_delta_cycle_is_told_to_widen_not_to_open_assay(run_env):
+    """AC-016 / D-068's ruling, on the router side: the imperative names the
+    crossing that actually works. Naming `inspect_clean` here would send the
+    lead into the refusal the transition now returns.
+
+    D-169: and the CONDITION it states is the one both ASSAY doors evaluate —
+    the recorded mode. It said "ASSAY is only opened by an INSPECT recorded
+    with rule final_gate", and neither door reads a rule, so a lead sitting on
+    a clean FULL / verifier_touched cycle was told to spend a widening cycle
+    the server would refuse as having nothing to widen."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=3, inspect_modes=[{
+        "cycle": 3, "phase": "F2", "mode": "DELTA", "rule": "delta",
+        "decided_by": "inspect_start",
+        "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [])
+    _streams_done(fdir)
+
+    action = _compute_next_action(project_root)
+
+    assert action["action"] == "widen_inspect"
+    assert "inspect_start" in action["instructions"]
+    assert "recorded mode is FULL" in action["instructions"], action["instructions"]
+    assert "rule final_gate" not in action["instructions"], (
+        "the rule is not the condition either ASSAY door reads"
+    )
+
+
+
+
+# --------------------------------------------------------------------------- #
+# D-097 — the payload does not argue with itself about Foundry-Next
+# --------------------------------------------------------------------------- #
+
+
+def test_the_rules_block_and_the_gate_note_are_the_same_string(run_env):
+    """FR-044 / AC-035 / OT-028 / D-097.
+
+    The CRITICAL RULES block that heads EVERY Foundry-Next payload read 'NEVER
+    stop between phases. Call Foundry-Next after each step and follow it.' A
+    gate is a step, so the lead met an unconditional instruction at the top of
+    the payload and the note that qualifies it at the tail of the imperative —
+    on the three imperatives that carry it, hundreds of tokens further down.
+    FR-044's own rationale is that 'the word optional appeared ZERO times in the
+    imperatives'; adding the note fixed that surface and left the contradicting
+    general rule standing above it.
+
+    Pinned as ONE STRING rather than as two texts that happen to agree: a test
+    asserting both say 'OPTIONAL' does not stop them saying different things,
+    and this file's documented failure mode is that a rule stated in N copies
+    becomes a rule stated N different ways.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F0")
+
+    instructions = foundry_next_action(project_root)["instructions"]
+
+    assert _GATE_THEN_PHASE_EXCEPTION in instructions
+    assert _GATE_THEN_PHASE_EXCEPTION in _GATE_THEN_PHASE_NOTE
+    assert _GATE_THEN_PHASE_NOTE == "\n" + _GATE_THEN_PHASE_EXCEPTION
+
+    # The exception is stated inside the rule it qualifies, not somewhere else
+    # in the payload: the rule line and the exception are one sentence sequence.
+    rule_line = next(
+        line for line in instructions.splitlines()
+        if line.startswith("- NEVER stop between phases")
+    )
+    assert "OPTIONAL" in rule_line
+    assert "REQUIRED everywhere except exactly one place" in rule_line
+    assert not rule_line.endswith("Call Foundry-Next after each step and follow it.")
+
+
+
+
+def test_the_announced_field_has_one_name_across_both_surfaces(run_env):
+    """D-097's second half: commands/start.md calls it the INSPECT 'mode' while
+    the imperatives called it the 'width and rule', so a lead reading the two
+    surfaces had to work out they meant the same field. The one string names it
+    both ways."""
+    assert "mode" in _GATE_THEN_PHASE_EXCEPTION
+    assert "width" in _GATE_THEN_PHASE_EXCEPTION
+    assert "rule" in _GATE_THEN_PHASE_EXCEPTION
+
+    start_md = (
+        # fallout FR-005: one directory deeper than the module this was
+        # carved from, so the index moves with it.
+        Path(__file__).resolve().parents[4] / "foundry" / "commands" / "start.md"
+    )
+    if start_md.exists():
+        gate_then_phase = next(
+            line for line in start_md.read_text(encoding="utf-8").splitlines()
+            if line.startswith("**Gate then Phase.**")
+        )
+        assert "OPTIONAL" in gate_then_phase
+        assert "mode" in gate_then_phase
+
+
+
+
+# --------------------------------------------------------------------------- #
+# D-136 / D-137 — a HALTED run is told to stop, once, in words that agree
+# --------------------------------------------------------------------------- #
+
+
+def test_a_halted_run_is_never_told_to_keep_going(run_env):
+    """FR-052 / FR-045 / NFR-005: Foundry-Next 'reports halted and stops
+    dispatching'. D-136.
+
+    Driven on a halted state, `instructions` was the standing CRITICAL RULES
+    block — "NEVER stop between phases. Call Foundry-Next after each step and
+    follow it", "If you catch yourself thinking, call Foundry-Next and execute
+    whatever it says", "The foundry runs until F6 DONE or an error stops it" —
+    followed by the halted imperative "YOUR NEXT CALL: NONE ... do NOT call
+    Foundry-Next in a loop ... stop". Dispatch was correctly withheld; the
+    lead-facing text told the lead to do the opposite, on the same surface.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _write_state(
+        fdir, phase=vocab.RUN_PHASE_HALTED, cycle=3,
+        halted_at_cycle=3, halted_reason="max_cycles 2 reached", max_cycles=2,
+    )
+    _defect_ledger(fdir, [])
+
+    nxt = foundry_next_action(project_root)
+    text = nxt["instructions"]
+
+    assert nxt["action"] == "halted"
+    # Each element below is the RETIRED wording this asserts is absent — test
+    # data, not a claim. The markers are inline because the pin scans a bare
+    # tuple element as its own code line, where the `assert ... not in` two
+    # lines down is not visible to it.
+    for contradiction in (
+        "NEVER stop between phases",  # retired on a halted run (D-136)
+        "call Foundry-Next and execute whatever it says",  # retired (D-136)
+        "runs until F6 DONE or an error stops it",  # retired by FR-024 (D-136)
+    ):
+        assert contradiction not in text, contradiction
+    assert "HALTED" in text
+    assert "do NOT call Foundry-Next in a loop" in text or "loop" in text
+
+
+
+
+def test_the_standing_rules_name_all_three_endings(run_env):
+    """FR-024: HALTED is a third ending, 'not a refusal'. D-136's other half.
+
+    The standing block is read on EVERY non-halted call, and it said the run
+    ends two ways. A lead told the halt cannot happen has been mis-briefed
+    about the one transition it will not recognise when it arrives.
+    """
+    assert "runs until F6 DONE or an error stops it" not in (
+        _STANDING_CRITICAL_RULES
+    )
+    assert "HALTED" in _STANDING_CRITICAL_RULES
+    assert "F6 DONE" in _STANDING_CRITICAL_RULES
+
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _write_state(fdir, phase="F1", cycle=0)
+    _defect_ledger(fdir, [])
+    assert "HALTED" in foundry_next_action(project_root)["instructions"]
+
+
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-019 / US-006 / CT-005 / CT-007 (D-103 / D-147) — the halted notice
+# reads the RECORDED reason, in prose, and does not assert the cap for the three
+# endings that are not the cap.
+# --------------------------------------------------------------------------- #
+
+
+def _halted_by_ruling(fdir: Path, member: str, text: str, **over) -> None:
+    """A run sealed through the halt DOOR — the `{reason, text}` shape.
+
+    `_halted_run` writes the CAP's shape (a bare f-string), which is the only
+    shape that existed before FR-018. Both are live on disk, which is why
+    `foundry_state.halted_state` folds them into one sentence, and this is the
+    half the notice had never been driven on.
+    """
+    _write_state(
+        fdir, phase=RUN_PHASE_HALTED, cycle=over.pop("cycle", 2),
+        halted_at_cycle=over.pop("halted_at_cycle", 2),
+        halted_reason={"reason": member, "text": text},
+        **over,
+    )
+
+
+def test_the_halted_notice_renders_the_reason_as_prose_not_a_dict(run_env):
+    """fallout FR-019 / CT-004 (D-103) — the normalised sentence, not the record.
+
+    `_leaf_halted_state` already folds both persisted shapes through
+    `vocab.halt_reason` into one sentence, and this branch computed it and then
+    interpolated `state['halted_reason']` RAW instead. Driven before the fix:
+    the instruction read "Run HALTED at cycle ? — {'reason': 'lead_ruling',
+    'text': 'the lead stopped it'}." and `details.halted_reason` was the dict,
+    which `display.py#_fmt_foundry_next_lines` prints verbatim.
+
+    TWO SURFACES, and both are asserted: the instruction a lead reads and the
+    detail a display renders. The cycle is asserted too — it rendered "?"
+    beside the dict, from the same raw read.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _halted_by_ruling(fdir, "lead_ruling", "the lead stopped it", cycle=2)
+    _defect_ledger(fdir, [])
+
+    nxt = foundry_next_action(project_root)
+
+    assert nxt["action"] == "halted", nxt
+    # No Python repr anywhere a human reads.
+    assert "{'reason'" not in nxt["instructions"], nxt["instructions"]
+    assert "{'reason'" not in str(nxt["details"]["halted_reason"]), nxt["details"]
+    assert isinstance(nxt["details"]["halted_reason"], str), nxt["details"]
+    # The normalised sentence: the member, then the lead's own words.
+    assert nxt["details"]["halted_reason"] == "lead_ruling: the lead stopped it", nxt
+    assert "lead_ruling: the lead stopped it" in nxt["instructions"], nxt["instructions"]
+    # ...and the cycle beside it is the recorded number, not "?".
+    assert "Run HALTED at cycle 2" in nxt["instructions"], nxt["instructions"]
+    assert nxt["details"]["halted_at_cycle"] == 2, nxt["details"]
+
+
+def test_the_legacy_free_string_halt_still_renders_its_own_text(run_env):
+    """fallout FR-019 (D-103) — the ADJACENT shape, which must not regress.
+
+    Every archive written before FR-018 carries `halted_reason` as a bare
+    f-string and no member at all. `vocab.halt_reason` refuses to guess a member
+    out of one, so the sentence IS the text — and a fix that reached for
+    `halted_reason_member` unconditionally would print an empty cause for every
+    pre-release run. Driven on `_halted_run`, the cap's own shape.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _halted_run(fdir, cycle=2)
+    _defect_ledger(fdir, [])
+
+    nxt = foundry_next_action(project_root)
+
+    assert nxt["details"]["halted_reason"].startswith("--max-cycles 2 reached"), nxt
+    assert nxt["details"]["halted_reason_member"] == "", nxt["details"]
+    assert "--max-cycles 2 reached" in nxt["instructions"], nxt["instructions"]
+    # A record with no member names no ending, rather than being sorted into one.
+    assert "it stopped with open work" in _plain(nxt["instructions"]), nxt["instructions"]
+
+
+def test_every_halt_reason_has_its_own_cause_sentence():
+    """fallout US-006 / CT-005 (D-147) — the table is pinned to the vocabulary.
+
+    Derived from `HALT_REASONS`, never a hand list: a member added to the closed
+    set fails HERE rather than falling through to `_HALT_CAUSE_UNNAMED` and
+    telling the lead nothing about the ending its own door just recorded.
+    """
+    assert vocab.HALT_REASONS, "the halt vocabulary is empty; the derivation is blind"
+    assert set(_guidance._HALT_CAUSE_SENTENCES) == set(vocab.HALT_REASONS), {
+        "member_without_a_sentence": sorted(
+            set(vocab.HALT_REASONS) - set(_guidance._HALT_CAUSE_SENTENCES)
+        ),
+        "sentence_without_a_member": sorted(
+            set(_guidance._HALT_CAUSE_SENTENCES) - set(vocab.HALT_REASONS)
+        ),
+    }
+    # Each sentence is distinct: four members that read the same say nothing.
+    assert len(set(_guidance._HALT_CAUSE_SENTENCES.values())) == len(vocab.HALT_REASONS)
+    # ...and only the cap's names the cap, which is the whole of D-147.
+    for member, sentence in _guidance._HALT_CAUSE_SENTENCES.items():
+        if member != "cap_reached":
+            assert "--max-cycles" not in sentence, (member, sentence)
+
+
+@pytest.mark.parametrize("member", sorted(vocab.HALT_REASONS))
+def test_the_halted_surfaces_name_the_recorded_ending_not_the_cap(run_env, member):
+    """fallout US-006 / FR-019 (D-147) — both lead-facing sentences, every member.
+
+    US-006 wants "a halt door with a named reason ... SO THAT A RULING IS
+    RECORDED IN THE ARCHIVE INSTEAD OF A HAND-EDITED CAP". The archive was
+    always right; the two sentences Foundry-Next emits before the lead's next
+    call were not. `_ACTION_IMPERATIVES['halted']` read "it reached its
+    --max-cycles limit" and the halted CRITICAL RULES block read "The run
+    stopped at its configured --max-cycles" — for all four members.
+
+    DRIVEN on a run at F3 cycle 2 with `max_cycles` 3, so the cap is NOT reached
+    and one cycle is still left: any surface naming the cap on a
+    `spec_change_required` halt is saying something the run itself refutes.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _halted_by_ruling(
+        fdir, member, "the recorded words", cycle=2, halted_at_cycle=2, max_cycles=3,
+    )
+    _defect_ledger(fdir, [])
+
+    nxt = foundry_next_action(project_root)
+    text = _plain(nxt["instructions"])
+
+    assert nxt["details"]["halted_reason_member"] == member, nxt["details"]
+    # The member's own cause clause reaches BOTH surfaces.
+    cause = _guidance._HALT_CAUSE_SENTENCES[member]
+    assert f"This run is HALTED — {cause}." in text, text
+    assert f"The run stopped because {cause}." in text, text
+    # ...and the lead's own words survive beside it.
+    assert "the recorded words" in text, text
+
+    if member == "cap_reached":
+        assert "--max-cycles limit" in text, text
+        assert "re-run with a higher --max-cycles" in text, text
+    else:
+        # The cap is not claimed as the cause, and the cap RAISE is not offered
+        # as the remedy for an ending a bigger cap would not have changed.
+        assert "reached its --max-cycles limit" not in text, text
+        assert "stopped at its configured --max-cycles" not in text, text
+        assert "re-run with a higher --max-cycles" not in text, text
+
+
+def test_the_status_header_renders_halted_once(run_env):
+    """NFR-005 / CT-016: HALTED is a named terminal state Foundry-Next reports.
+    D-137.
+
+    Driven on a halted state, the banner read "F O U N D R Y  HALTED HALTED":
+    `_format_status_display` renders the phase token followed by
+    `phase_names.get(phase, phase)`, and `phase_names` — built from the ten
+    ladder rows — has no entry for the halt, so the fallback repeated the
+    token. Every new notice has to read correctly in a terminal.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _write_state(
+        fdir, phase=vocab.RUN_PHASE_HALTED, cycle=3,
+        halted_at_cycle=3, halted_reason="max_cycles 2 reached",
+    )
+    _defect_ledger(fdir, [])
+
+    # The banner sits inside the hammer art block, so the whole render is the
+    # unit — reading line 1 alone reads the art.
+    rendered = _plain(_format_status_display(project_root))
+    banner = next(
+        line for line in rendered.splitlines() if "F O U N D R Y" in line
+    )
+
+    assert "HALTED HALTED" not in banner
+    assert banner.count("HALTED") == 1, banner
+    # The ordinary phases still render token AND name, which is what the
+    # fallback was there for.
+    _write_state(fdir, phase="F2", cycle=1)
+    ordinary = _plain(_format_status_display(project_root))
+    ordinary_banner = next(
+        line for line in ordinary.splitlines() if "F O U N D R Y" in line
+    )
+    assert "F2 INSPECT" in ordinary_banner
+
+
+
+
+def test_every_next_response_names_the_terminal_state_it_is_heading_for(run_env):
+    """fallout FR-021 / CT-007 / AC-028 / OT-026 — three fields, every response.
+
+    A named backlog is a SUCCESSFUL end. A lead that believes DONE is the only
+    acceptable ending grinds cycles against a target it has already met, so the
+    three facts that decide which ending is coming sit on the surface it reads
+    before every call rather than in a report it reads once.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1, max_cycles=3)
+    _defect_ledger(fdir, [
+        _tiered("D-1", "LIVE"),
+        _tiered("D-2", "HARDENING", reproduction_attempted="drove the probe; it failed"),
+    ])
+
+    result = foundry_next_action(project_root)
+    assert result["heading_for"] == "DONE", result
+    assert result["open_by_tier"]["LIVE"] == 1, result
+    assert result["open_by_tier"]["HARDENING"] == 1, result
+    assert result["cycles_to_cap"] == 2, result
+
+    # At the cap, the run is heading for HALTED BEFORE anything has stopped —
+    # which is the whole point of saying it at the door rather than after it.
+    _write_state(fdir, phase="F2", cycle=3, max_cycles=3)
+    at_cap = foundry_next_action(project_root)
+    assert at_cap["heading_for"] == vocab.RUN_PHASE_HALTED, at_cap
+    assert at_cap["cycles_to_cap"] == 0, at_cap
+
+    # An unbounded run reports None, not 0: "no cap" and "no cycles left" are
+    # opposite facts and a reader that conflates them halts a run that had no
+    # cap at all.
+    _write_state(fdir, phase="F2", cycle=3)
+    assert foundry_next_action(project_root)["cycles_to_cap"] is None
+
+    # And a halted run says so whatever the arithmetic.
+    _halted_run(fdir)
+    assert foundry_next_action(project_root)["heading_for"] == vocab.RUN_PHASE_HALTED
+
+    # fallout D-066 — AND THE TWO RESPONSES THAT USED TO CARRY NONE OF THE THREE.
+    #
+    # "Every response" was asserted here over the shapes a healthy run produces,
+    # and the merge that produced them sat below the only early return, inside a
+    # guard the no-run path does not pass. Driven, the corrupt-artifact response
+    # was exactly ['corrupt_artifacts', 'error', 'hint'] and the no-active-run
+    # response carried none of the three — which are the two responses a lead
+    # reads when something has already gone wrong.
+    fields = ("heading_for", "open_by_tier", "cycles_to_cap")
+
+    # (1) A corrupt artifact somewhere in the run. `state.json` is intact and
+    # every read is tolerant, so the outlook is a real answer here, not a
+    # placeholder: the cap is still 3 and the cycle is still 1.
+    _write_state(fdir, phase="F2", cycle=1, max_cycles=3)
+    (fdir / "verdicts.json").write_text("{ not json", encoding="utf-8")
+    corrupt = foundry_next_action(project_root)
+    assert corrupt.get("corrupt_artifacts"), corrupt
+    for field in fields:
+        assert field in corrupt, (field, sorted(corrupt))
+    assert corrupt["heading_for"] == "DONE", corrupt
+    assert corrupt["cycles_to_cap"] == 2, corrupt
+    (fdir / "verdicts.json").unlink()
+
+    # (2) No active run at all. The three fields are PRESENT and empty rather
+    # than absent — `heading_for` names where a run is heading and there is no
+    # run, and a reader must never have to test for the key itself.
+    foundry_state.clear_active_run()
+    try:
+        empty_root = Path(tempfile.mkdtemp())
+        none_run = foundry_next_action(str(empty_root))
+        assert none_run["action"] == "init", none_run
+        for field in fields:
+            assert field in none_run, (field, sorted(none_run))
+        assert none_run["heading_for"] is None, none_run
+        assert none_run["open_by_tier"] == {}, none_run
+        assert none_run["cycles_to_cap"] is None, none_run
+    finally:
+        foundry_state.set_active_run(fdir.name)
+
+
+
+
+def test_every_action_the_router_emits_has_an_imperative():
+    """fallout FR-035 / AC-054 — the survey counted nine holes; there are none.
+
+    An imperative table with holes is worse than none: the holes are invisible
+    and they are exactly where the lead improvises, because the generic fallback
+    header says "Execute the first tool call mentioned. Do not deliberate." over
+    a body that for several of them mentions no tool call at all.
+
+    Derived from `_compute_next_action`'s own AST, so the tenth is caught the
+    day it is written.
+    """
+    emitted: set[str] = set()
+    for name in ("_compute_next_action", "_nyquist_transition"):
+        tree = ast.parse(textwrap.dedent(inspect.getsource(getattr(owning_module(name), name))))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if (
+                    isinstance(key, ast.Constant) and key.value == "action"
+                    and isinstance(value, ast.Constant)
+                ):
+                    emitted.add(value.value)
+    assert len(emitted) >= 20, emitted
+    assert emitted <= set(_ACTION_IMPERATIVES), sorted(emitted - set(_ACTION_IMPERATIVES))
+
+
+
+
+def test_the_done_imperative_states_the_f6_order_exactly():
+    """fallout FR-035 / AC-054 — Report, Gate, strip, Phase.
+
+    It read "YOUR NEXT CALL: Foundry-Phase(phase='done')", which contradicts the
+    sequence the doors enforce: the DONE evaluation requires the generated
+    report AND re-executes the committed evidence corpus, so stripping
+    `evidence/` before the gate refuses it for a corpus that is not there, and
+    stripping after the gate passes changes the tree the gate judged.
+    """
+    imperative = _ACTION_IMPERATIVES["transition_to_done"]
+    order = [
+        imperative.index("Foundry-Report"),
+        imperative.index("Foundry-Gate(phase='done')"),
+        imperative.index("git rm"),
+        imperative.index("Foundry-Phase(phase='done')"),
+    ]
+    assert order == sorted(order), (order, imperative)
+
+
+
+
+def test_no_lead_imperative_tells_the_lead_to_record_a_stream():
+    """fallout FR-023 / FR-049 / GI-016 / AC-030 — the AGENT records.
+
+    A lead that records on an agent's behalf asserts numbers it did not measure,
+    and when the agent then records its own the cycle carries two accounts of
+    one run. Swept over every imperative rather than checked on `run_streams`
+    alone, because the instruction it was removed from is the one a lead reads
+    most and the next copy would land in a sibling.
+    """
+    # The distinguishing form is the IMPERATIVE one — a sentence telling the
+    # lead to make the call. A sentence stating that the agent records is the
+    # opposite claim and is what these now carry.
+    lead_is_told_to_record = (
+        "call foundry-stream",
+        "then foundry-stream",
+        "then call foundry-stream",
+    )
+    seen = 0
+    for action, imperative in _ACTION_IMPERATIVES.items():
+        if "Foundry-Stream" not in imperative:
+            continue
+        seen += 1
+        lowered = " ".join(imperative.lower().split())
+        for form in lead_is_told_to_record:
+            assert form not in lowered, (action, form, imperative)
+        assert "records its own" in lowered or "confirm" in lowered, (action, imperative)
+    assert seen >= 2, (
+        "no imperative mentions Foundry-Stream at all, so this sweep asserts "
+        "nothing — the scan has gone blind"
+    )
+
+
+
+
+def test_the_status_banner_declares_no_palette_and_no_phase_ladder_of_its_own():
+    """fallout research/holmes-orchestrator.md#coh-8 (D-014) / GI-024 / D-015.
+
+    `_format_status_display` is a RENDERER, and it lived beside its own copy of
+    two things another module owns: eight ANSI codes and the ten-row run-phase
+    ladder. Two declarations of one palette drift into two colour schemes in one
+    terminal; two declarations of one ladder mean a phase added to the
+    vocabulary renders as a run with a step missing, and the two agree only by
+    inspection until they do not.
+
+    Both are read now — `display`'s public spellings and
+    `schemas.vocab.PHASE_LADDER` / `PHASE_NAMES` — and this asserts the reading
+    on the SOURCE, because the harm is a second declaration and a behavioural
+    drive over agreeing copies proves nothing about which module owns them.
+    """
+    source = inspect.getsource(_guidance)
+
+    # No escape literal of any kind. The palette is display.py's, whole.
+    assert "\\x1b[" not in source and "\\033[" not in source, (
+        "guidance.py spells an ANSI escape of its own. The palette is "
+        "display.py's; import the public name."
+    )
+
+    # ...and no second phase ladder. A tuple pairing a run-phase id with that
+    # id's LABEL is the vocabulary's own row, wherever it is typed. A tuple of
+    # two phase IDS is a different thing — a source/destination pair — and is
+    # left alone, which is why the second element is judged against the labels
+    # rather than merely against "is a string".
+    tree = ast.parse(source)
+    typed_rows = [
+        ast.unparse(node)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Tuple)
+        and len(node.elts) == 2
+        and all(
+            isinstance(e, ast.Constant) and isinstance(e.value, str)
+            for e in node.elts
+        )
+        and vocab.PHASE_NAMES.get(node.elts[0].value) == node.elts[1].value
+    ]
+    assert typed_rows == [], (
+        f"guidance.py types run-phase ladder row(s) of its own: {typed_rows}. "
+        "The ladder is schemas/vocab.py#PHASE_LADDER."
+    )
+
+    # The positive half: the renderer reaches both declarations.
+    banner = inspect.getsource(_guidance._format_status_display)
+    assert "PHASE_LADDER" in banner and "PHASE_NAMES" in banner, banner[:400]
+
+
+
+
+def test_the_subagent_caller_instruction_reaches_a_subagent_mechanically():
+    """fallout FR-034 / FR-055 / AC-053 — D-047: a published argument nobody
+    is told to pass.
+
+    The guard is correct — `is_lead = caller == LEAD_CALLER` gates both the
+    ordering token and the stall clock — and it was unreachable. `caller`
+    defaults to the lead value at the server boundary, and a driven grep across
+    `agents/`, `skills/` and `commands/` returned zero files naming it, so every
+    shipped sub-agent took the default and armed the handshake the LEAD owes.
+    Nine stream surfaces are pinned to take the cycle from Foundry-Next with no
+    caller argument beside it.
+
+    The two surfaces a sub-agent provably reads are the tool description it
+    loads with the tool list and the protocol block the lead appends to its
+    prompt verbatim. Both carry the instruction, and both QUOTE the one
+    constant rather than re-wording it, which is what keeps a prose sweep in
+    one of them from silently diverging from the other.
+    """
+    from foundry_mcp import server as foundry_server
+    from foundry_mcp.tools.foundry_spawn import _progress_protocol_block
+    from foundry_mcp.tools.orchestration.guidance import (
+        LEAD_CALLER,
+        SUBAGENT_CALLER,
+        SUBAGENT_CALLER_INSTRUCTION,
+    )
+
+    # The sentence names the argument and the value, so an agent reading only
+    # this line knows what to type.
+    assert f"caller='{SUBAGENT_CALLER}'" in SUBAGENT_CALLER_INSTRUCTION
+    assert SUBAGENT_CALLER != LEAD_CALLER
+
+    tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
+    next_tool = tools["Foundry-Next"]
+    assert SUBAGENT_CALLER_INSTRUCTION in next_tool.description, next_tool.description
+    caller_property = next_tool.inputSchema["properties"]["caller"]
+    assert SUBAGENT_CALLER_INSTRUCTION in caller_property["description"]
+    # The wire enum is DERIVED from the two constants, so a third caller kind
+    # cannot reach the guard without appearing here.
+    assert caller_property["enum"] == [LEAD_CALLER, SUBAGENT_CALLER]
+
+    # ...and every spawn this server makes appends it, which is the half that
+    # does not depend on an agent file being rewritten.
+    block = _progress_protocol_block("a-run", "casting-1")
+    assert SUBAGENT_CALLER_INSTRUCTION in block, block[-600:]
+
+
+def test_only_the_leads_next_arms_the_ordering_token_and_the_stall_clock(run_env):
+    """fallout AC-053 — the guard the instruction above exists to make reachable.
+
+    Driven at the door rather than read: a sub-agent's call must leave the
+    ordering token absent and the stall clock untouched, and the lead's call
+    must arm both. This is what the argument BUYS, and it is why publishing a
+    default that says 'lead' and telling nobody was the whole defect.
+    """
+    from foundry_mcp.tools.orchestration.guidance import (
+        LEAD_CALLER,
+        SUBAGENT_CALLER,
+    )
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    token = fdir / artifacts.NEXT_ACTION_CALLED_MARKER
+    token.unlink(missing_ok=True)
+
+    foundry_next_action(project_root, caller=SUBAGENT_CALLER)
+    assert not token.exists(), "a sub-agent's read armed the lead's ordering token"
+
+    foundry_next_action(project_root, caller=LEAD_CALLER)
+    assert token.exists(), "the lead's own call did not arm the ordering token"
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-033 / AC-061 (D-021 / D-035) — CARVED OUT OF `test_width.py` WITH
+# THEIR SUBJECT.
+#
+# `_waiting_on_agents` and `STALL_NOTICE_SECONDS` moved from the verifier-set
+# `orchestration/width.py` to `orchestration/guidance.py`, whose
+# `_compute_next_action` is their only caller. GI-026 says the tests move in the
+# same casting as the source, so they move here — where the module that now
+# defines them already has its test module.
+# --------------------------------------------------------------------------- #
+
+
+
+def test_a_mode_less_inspect_routes_to_the_width_and_not_to_assay(run_env):
+    """fallout GI-008 / D-117 (concern C-040) — Foundry-Next is a THIRD caller.
+
+    `foundry_state.check_streams_complete` holds the unrecorded-width arm behind
+    an INJECTION, and the first version of this cycle's two compositions omitted
+    it. The doors stayed safe — `Foundry-Gate('assay')` and `inspect_clean` ask
+    `_unrecorded_width_problem` themselves — but Foundry-Next asks nothing of its
+    own, so on an INSPECT whose width was never recorded it answered over the
+    PRE-WIDTH roster and routed the lead to ASSAY with `research_audit` and
+    `test01` silently dropped. GI-008 names that shape in as many words: "a
+    streams-complete check that reads a roster nothing recorded".
+
+    DRIVEN THROUGH THE GUIDANCE SURFACE, not through the leaf, because the leaf
+    was never wrong: it is the composition that decides whether the arm can
+    fire, and only a drive of the reporting caller tells the two apart.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/a.py"], no_ui=True)
+    # F2 with NO `inspect_modes` entry at all — the D-117 shape — and the three
+    # pre-width markers on disk, which is what made the fallback look complete.
+    _write_state(fdir, phase="F2", cycle=2)
+    for stream in ("trace", "prove", "test"):
+        (fdir / f".{stream}-complete").write_text(
+            "2020-01-01T00:00:00+00:00 cycle=2\nitems_checked=1\n"
+            "items_total=1\ncoverage=100%\nfindings=0\n",
+            encoding="utf-8",
+        )
+
+    streams = _check_streams_complete(project_root)
+    assert streams["complete"] is False, streams
+    assert streams["missing"] == "inspect_mode", streams
+    assert streams.get("unrecorded_width") is True, streams
+
+    action = foundry_next_action(project_root)
+    assert action["action"] != "transition_to_assay", action
+    # ...and it says WHICH thing is missing, rather than routing on a roster
+    # nothing recorded.
+    assert "width" in action["action"] or "width" in str(action.get("details", {})), action
+
+
+
+
+
+
+
+
+def test_a_registered_team_with_dead_ledgers_does_not_suppress_the_stall(
+    run_env, monkeypatch
+):
+    """D-021: 'A registered-but-dead team suppresses the stall warning forever.
+    The function's own docstring states the intended rule ("a team dir that was
+    never cleaned up is the false positive"); the code does the opposite.'
+
+    Driven exactly as filed: a three-hour-old ledger, so `foundry_liveness`
+    reports every agent `stalled`, plus a registered team the run never cleaned
+    up. The old final arm returned `waiting: True` on that state and
+    Foundry-Next rendered "that gap is the agents working, not you
+    deliberating" indefinitely — a watchdog a stale directory can switch off.
+
+    `_check_active_teams` is monkeypatched ACTIVE here, against the fixture's
+    default. That inversion is the point: every fixture in the suite pins it
+    inactive, which is why the arm that only fires when it is active was
+    untestable as shipped.
+    """
+    project_root, fdir = run_env
+    patch_everywhere(monkeypatch, "_check_active_teams",
+        lambda _pr: {"active": True, "teams": ["cast-run-wave-1"], "live_panes": []},
+    )
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _stalled_ledger(fdir)
+    _stale_stall_clock(fdir, 600)
+
+    assert _waiting_on_agents(project_root)["waiting"] is False
+
+    nxt = foundry_next_action(project_root)
+
+    assert nxt.get("stall_detected_seconds", 0) >= 600
+    assert "waiting_on_agents" not in nxt
+    assert "WAITING ON" not in nxt["instructions"]
+    assert "silently deliberating" in nxt["instructions"]
+
+
+
+
+def test_a_progressing_ledger_with_no_team_registered_reports_waiting(run_env):
+    """FR-020 verbatim: 'IF AGENTS ARE RUNNING it reports waiting on N agents
+    (oldest progress Xm) instead of a stall'. FR-036, D-127.
+
+    This test asserted the opposite twice, in opposite directions, and the
+    second version is the defect. D-076's repair ANDed the team scan with the
+    liveness roster, so waiting required a REGISTERED tmux team. The F2 INSPECT
+    streams are background Agents and never tmux teammates, so
+    `_check_active_teams` cannot see them: driven with no registered team, two
+    progress ledgers written seconds earlier and `.last-next-at` 600s old,
+    `_waiting_on_agents` returned waiting False, teams_active False,
+    progressing_agents 2 — and Foundry-Next emitted stall_detected_seconds 600
+    beside "NO agent is running. You were silently deliberating", asserting
+    deliberation over two agents the same call had just measured progressing.
+    FR-036's proviso is that the notice never does that, and FR-020 is Locked,
+    so no GRIND ruling could amend it.
+
+    LEAD RULING, GRIND cycle 7 (superseding the cycle-4 AND where they
+    conflict): 'if agents are running' is decided by EVIDENCE OF PROGRESS. A
+    progressing roster is SUFFICIENT whether or not a team is registered.
+    `teams_active` is still read and still reported, so CT-012's declared input
+    set is unchanged — see the sibling test that pins the stale-team direction.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _progressing_ledger(fdir, agent="prove")
+    _stale_stall_clock(fdir, 600)
+    _teams_active(False)
+
+    waiting = _waiting_on_agents(project_root)
+
+    assert waiting["waiting"] is True
+    assert waiting["count"] == 1
+    assert waiting["teams_active"] is False, (
+        "reported, not asserted — waiting no longer implies a registered team"
+    )
+    assert waiting["progressing_agents"] == 1
+
+    nxt = foundry_next_action(project_root)
+    assert "stall_detected_seconds" not in nxt, (
+        "an agent is progressing; FR-020 makes this the waiting notice"
+    )
+    assert "silently deliberating" not in nxt["instructions"]
+    assert "WAITING ON" in nxt["instructions"]
+
+
+
+
+def test_a_registered_but_dead_team_still_reports_the_stall(run_env):
+    """D-021, which the AND must not undo.
+
+    A team dir that was never cleaned up is not an agent that is running. The
+    old code returned `waiting: True` on exactly that and Foundry-Next rendered
+    "that gap is the agents working, not you deliberating" forever, on a run
+    where nothing was working. Either source answering "nothing is running" is
+    enough to let the watchdog speak, so the stale directory can no longer
+    suppress it.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _stale_stall_clock(fdir, 600)
+    _teams_active(True)
+
+    waiting = _waiting_on_agents(project_root)
+
+    assert waiting["waiting"] is False
+    assert waiting["teams_active"] is True
+    assert waiting["progressing_agents"] == 0
+    assert "stall_detected_seconds" in foundry_next_action(project_root)
+
+
+
+
+def test_the_waiting_check_consults_both_declared_inputs(run_env):
+    """CT-012's input list, asserted on the SOURCE — because "which sources it
+    asked" is not observable from a return value that agrees on the tested
+    cases, and that is exactly how a declared input came to have a test
+    guarding its ABSENCE (`test_the_waiting_check_does_not_consult_the_team_scan`
+    AST-walked this function and failed if `_check_active_teams` appeared).
+    """
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_waiting_on_agents)))
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "_check_active_teams" in called, (
+        "FR-020 verbatim: 'Foundry-Next checks active teams AND "
+        "Foundry-Liveness'. Both, or the notice is not the one CT-012 declares."
+    )
+    assert "foundry_liveness" in called, (
+        "a registered team is not evidence that an agent is running; the "
+        "progress ledgers are the half that answers that (D-021)."
+    )
+
+
+
+# --------------------------------------------------------------------------- #
+# fallout GI-001 / NFR-001 (D-070) — AN EMPTY VERDICT LEDGER IS NOT A PASSING
+# ASSAY.
+#
+# GI-001's violation column is "a casting that removes a phase", and the F4
+# branch removed one by arithmetic: `non_verified` sums over the same list
+# `total` counts, so an empty ledger makes both zero, the `non_verified > 0`
+# test falls through, and the auto-pass tail tells the lead "ASSAY passed: all
+# requirements verified". On ENTERING F4 that is the ordinary state.
+# --------------------------------------------------------------------------- #
+
+
+def test_entering_f4_with_no_verdicts_routes_to_assay_not_past_it(run_env):
+    """fallout GI-001 / NFR-001 / FR-035 / AC-054 (D-070).
+
+    The state is the one every run passes through: phase F4, verdicts.json
+    absent, no `.prove-complete` marker — so the documented auto-pass path is
+    NOT what fires. Foundry-Next returned `transition_to_done` with "ASSAY
+    passed: all requirements verified", and the lead protocol is to follow it.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4", temper=False)
+    assert not (fdir / "verdicts.json").exists()
+    assert not (fdir / ".prove-complete").exists()
+
+    result = _compute_next_action(project_root)
+
+    assert result["action"] == "run_assay", result
+    assert "ASSAY has NOT run" in result["instructions"], result["instructions"]
+    assert result["details"] == {"non_verified": 0, "total": 0}, result["details"]
+
+
+def test_a_temper_run_with_no_verdicts_is_not_sent_into_f5(run_env):
+    """fallout GI-001 (D-070) — the harm, on the flag that makes it worst.
+
+    With `--temper` the auto-pass tail answered `transition_to_temper` and
+    `Foundry-Gate('temper')` passed on the same empty ledger, so the run entered
+    F5 having spawned zero assayers and recorded zero verdicts. Nothing caught
+    it until the DONE gate, a whole phase later.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4", temper=True)
+
+    assert _compute_next_action(project_root)["action"] == "run_assay"
+
+
+def test_the_empty_ledger_branch_emits_the_imperative_written_for_it(run_env):
+    """fallout FR-035 / AC-054 (D-070) — `run_assay` had a table entry and no
+    emitter.
+
+    Every action `_compute_next_action` emits has an imperative; the converse
+    held too until this branch existed. `run_assay` was the one key in
+    `_ACTION_IMPERATIVES` that appeared in no `{"action": <literal>}` dict in
+    the module, which is what a MISSING BRANCH looks like from inside a table
+    that is complete.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F4", temper=False)
+
+    result = foundry_next_action(project_root)
+    assert result["action"] == "run_assay", result
+    assert _ACTION_IMPERATIVES["run_assay"] in result["instructions"], result
+
+    # ...and the emitted set now covers the table it is measured against.
+    emitted = _actions_emitted_by_compute_next_action()
+    assert "run_assay" in emitted, sorted(emitted)
+
+
+def _actions_emitted_by_compute_next_action() -> set[str]:
+    """Every `"action": "<literal>"` `_compute_next_action` can return.
+
+    Derived from the module's own AST rather than from a hand list, so a branch
+    added later is walked without anyone remembering to add it — the same
+    derivation `_ACTION_IMPERATIVES`'s completeness pin depends on.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_guidance)))
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key, value in zip(node.keys, node.values):
+            if (
+                isinstance(key, ast.Constant) and key.value == "action"
+                and isinstance(value, ast.Constant)
+                and isinstance(value.value, str)
+            ):
+                out.add(value.value)
+    return out
+
+
+def test_a_clean_prove_still_tops_the_ledger_up_before_the_empty_branch(run_env):
+    """fallout FR-003 / FR-004 / ST-001 (D-070) — the auto-pass is not lost.
+
+    A ledger a clean PROVE has just filled is no longer empty, so the emptiness
+    branch must be asked AFTER the synthesis and not before it. This is the same
+    arrangement `test_clean_prove_autopass_synthesizes_verified_verdict_per_id`
+    drives; asserted here from the other side, so a fix for D-070 that hoisted
+    the branch above the synthesis fails.
+    """
+    project_root, fdir = run_env
+    ids = ["FR-1", "FR-2"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", temper=False)
+    _write_prove(fdir, items_checked=len(ids), items_total=len(ids), findings=0)
+    assert not (fdir / "verdicts.json").exists()
+
+    result = _compute_next_action(project_root)
+    assert result["action"] == "transition_to_done", result
+
+
+def test_a_partial_ledger_is_still_topped_up_by_a_clean_prove(run_env):
+    """fallout FR-003 / FR-004 (D-070) — the PARTIAL case, which is the one a
+    naive fix loses.
+
+    `.prove-complete` stores aggregates only, so verdicts.json may hold SOME
+    rows after a clean PROVE. Topping up only an EMPTY ledger would leave the
+    DONE gate reading 2/N and refusing the transition the auto-pass just
+    enabled, so the synthesis is guarded on "nothing is non-VERIFIED", which is
+    exactly the guard the retired arrangement expressed by its position.
+    """
+    project_root, fdir = run_env
+    ids = ["FR-1", "FR-2", "FR-3"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", temper=False)
+    _write_prove(fdir, items_checked=len(ids), items_total=len(ids), findings=0)
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": [{"id": "FR-1", "verdict": "VERIFIED"}]}),
+        encoding="utf-8",
+    )
+
+    result = _compute_next_action(project_root)
+    assert result["action"] == "transition_to_done", result
+    rows = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))
+    assert {r["id"] for r in rows["requirements"]} == set(ids), rows
+
+
+def test_a_failed_assay_still_loops_back_and_is_not_topped_up(run_env):
+    """fallout D-070 — the synthesis does not reach past the state it is for.
+
+    A ledger carrying non-VERIFIED rows records what ASSAY saw. Marking the
+    requirements ASSAY never reached VERIFIED on PROVE's word would shrink the
+    `{non_verified}/{total}` the lead is shown and silently verify work nobody
+    assayed, so the guard excludes it — before this change by standing below the
+    loop-back return, now by saying so.
+    """
+    project_root, fdir = run_env
+    ids = ["FR-1", "FR-2", "FR-3"]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", temper=False)
+    _write_prove(fdir, items_checked=len(ids), items_total=len(ids), findings=0)
+    (fdir / "verdicts.json").write_text(
+        json.dumps({"requirements": [{"id": "FR-1", "verdict": "THIN"}]}),
+        encoding="utf-8",
+    )
+
+    result = _compute_next_action(project_root)
+    assert result["action"] == "assay_failed_loop_back", result
+    assert result["details"]["non_verified"] == 1, result["details"]
+    assert result["details"]["total"] == 1, result["details"]
+    rows = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))
+    assert len(rows["requirements"]) == 1, rows
+
+
+# --------------------------------------------------------------------------- #
+# fallout FR-055 / FR-034 / AC-053 (D-089, fallout_of D-047) — THE SIBLING DOOR
+# THAT ARMS THE SAME TOKEN.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_subagents_context_call_arms_neither_marker(run_env):
+    """fallout FR-055 / AC-053 (D-089).
+
+    `foundry_get_context` calls `foundry_next_action` for its `next_action`
+    field and passed no `caller`, so `caller` took its default, `is_lead` was
+    True, and a SUB-AGENT's Foundry-Context armed `.next-action-called` — the
+    sole precondition of Foundry-Gate and Foundry-Phase. A lead could then gate
+    and transition having never called Foundry-Next, because a tracer or an
+    assayer had reoriented itself. Both agent files instruct exactly that call.
+    """
+    from foundry_mcp.tools.orchestration.guidance import (
+        LEAD_CALLER,
+        SUBAGENT_CALLER,
+        foundry_get_context,
+    )
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    token = fdir / artifacts.NEXT_ACTION_CALLED_MARKER
+    stall = fdir / artifacts.LAST_NEXT_AT_MARKER
+    token.unlink(missing_ok=True)
+    stall.unlink(missing_ok=True)
+
+    context = foundry_get_context(project_root, caller=SUBAGENT_CALLER)
+    assert context.get("initialized") is not False, context
+    assert not token.exists(), "a sub-agent's Foundry-Context armed the lead's token"
+    assert not stall.exists(), "a sub-agent's Foundry-Context reset the stall clock"
+
+    # The LEAD's own Foundry-Context still arms the ordering token, because it
+    # does return the full guidance payload...
+    foundry_get_context(project_root, caller=LEAD_CALLER)
+    assert token.exists(), "the lead's Foundry-Context stopped arming the token"
+    # ...and still does NOT reset the stall clock (AC-035 / OT-028), which is a
+    # different question from who called.
+    assert not stall.exists(), "Foundry-Context reset the stall clock"
+
+
+def test_the_context_door_publishes_the_caller_it_now_reads(run_env):
+    """fallout FR-055 / AC-053 (D-089) — an argument nothing advertises is an
+    argument no sub-agent can pass.
+
+    The Tool entry published an empty `properties` object, so the distinction
+    existed in the handler and nowhere a caller could reach it. Driven over
+    `_DISPATCH`, which is the surface the SDK actually calls.
+    """
+    from foundry_mcp import server as foundry_server
+    from foundry_mcp.tools.orchestration.guidance import (
+        LEAD_CALLER,
+        SUBAGENT_CALLER,
+        SUBAGENT_CALLER_INSTRUCTION,
+    )
+
+    tools = {t.name: t for t in asyncio.run(foundry_server.list_tools())}
+    context_tool = tools["Foundry-Context"]
+    caller_property = context_tool.inputSchema["properties"]["caller"]
+    assert caller_property["enum"] == [LEAD_CALLER, SUBAGENT_CALLER]
+    assert SUBAGENT_CALLER_INSTRUCTION in context_tool.description
+    assert SUBAGENT_CALLER_INSTRUCTION in caller_property["description"]
+
+    # concern C-057 — BOTH doors are named on BOTH wire surfaces, derived from
+    # `SUBAGENT_CALLER_DOORS` so a third door joins the sentence by construction.
+    from foundry_mcp.tools.orchestration.guidance import (
+        SUBAGENT_CALLER_DOOR_CLAUSE,
+        SUBAGENT_CALLER_DOORS,
+    )
+
+    assert set(SUBAGENT_CALLER_DOORS) == {"Foundry-Next", "Foundry-Context"}
+    for door in SUBAGENT_CALLER_DOORS:
+        assert door in SUBAGENT_CALLER_DOOR_CLAUSE, (door, SUBAGENT_CALLER_DOOR_CLAUSE)
+        tool = tools[door]
+        assert SUBAGENT_CALLER_DOOR_CLAUSE in tool.description, tool.description
+        assert SUBAGENT_CALLER_DOOR_CLAUSE in (
+            tool.inputSchema["properties"]["caller"]["description"]
+        ), door
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    token = fdir / artifacts.NEXT_ACTION_CALLED_MARKER
+    token.unlink(missing_ok=True)
+
+    previous_root = foundry_server._project_root
+    try:
+        foundry_server._project_root = project_root
+        foundry_server._DISPATCH["Foundry-Context"]({"caller": SUBAGENT_CALLER})
+        assert not token.exists(), "the dispatch dropped the caller argument"
+        foundry_server._DISPATCH["Foundry-Context"]({})
+        assert token.exists(), "the dispatch defaults to something other than lead"
+    finally:
+        foundry_server._project_root = previous_root
+
+
+# --------------------------------------------------------------------------- #
+# fallout AC-031 / GI-016 / AC-030 (D-165) — THE ONE STREAM THE LEAD EXECUTES.
+# --------------------------------------------------------------------------- #
+
+
+def _run_streams_instructions(run_env) -> str:
+    """The `instructions` string the F2 `run_streams` action actually carries.
+
+    Built through `_compute_next_action` rather than read off a constant,
+    because the claim is about what a LEAD is handed at that phase — a pin on
+    the literal would pass while the branch stopped emitting it.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/handler.py"], no_ui=True)
+    _write_spec(fdir, ["FR-001"])
+    _write_state(fdir, phase="F2", cycle=1)
+    # D-117: an INSPECT with no recorded width routes to `record_inspect_width`,
+    # not to `run_streams`. The width is what this branch stands behind.
+    _record_full_inspect_mode(fdir, cycle=1)
+    result = _compute_next_action(project_root)
+    assert result["action"] == "run_streams", result
+    return result["instructions"]
+
+
+def test_the_run_streams_imperative_leaves_sight_an_exit(run_env):
+    """fallout AC-031 / GI-016 / AC-030 (D-165) — every exit was closed, and the
+    consequence was a STALLED INSPECT rather than a wrong number.
+
+    The imperative listed "SIGHT: runs in MAIN THREAD via Playwright — execute
+    while the four background streams run" and then, unqualified, "YOU DO NOT
+    RECORD A STREAM. THE AGENT DOES. ... If a stream finished and no record
+    exists, that is a finding about the stream — re-dispatch it, or file it —
+    not a gap for you to fill in."
+
+    SIGHT has no agent to re-dispatch: `commands/start.md`'s F2 roster calls it
+    "the only exception to 'lead never does work'", and this same imperative
+    forbids spawning one. The other half of the contract points the opposite
+    way — `skills/sight/SKILL.md` says "Mark the stream complete via the foundry
+    MCP `Foundry-Stream` tool with `stream='sight'`" and "You record your own
+    stream; the lead only confirms the record exists" — and AC-031 names `sight`
+    in the roster of surfaces that must state they record. So on a --url run the
+    lead executed the skill, read this, and had no sanctioned move: with no
+    sight record the streams-complete rung stays short and
+    `Foundry-Phase('inspect_clean')` refuses.
+
+    The rule the imperative states is SOUND and AC-030 requires its wording — a
+    lead must not record on an AGENT's behalf, because it did not measure those
+    numbers. What was missing is the sentence that makes it consistent: the lead
+    running SIGHT in its own thread IS that stream's executor, and the numbers
+    it reports are ones it measured.
+    """
+    imperative = _ACTION_IMPERATIVES["run_streams"]
+
+    # AC-030's wording survives verbatim: this is a qualification, not a repeal.
+    assert "YOU DO NOT RECORD A STREAM. THE AGENT DOES." in imperative
+    assert "records on an agent's behalf" in imperative.lower(), imperative
+
+    # ...and the exit SIGHT needs is stated WITH its reason, rather than as a
+    # bare carve-out that the next reader would be free to read as sloppiness.
+    assert "SIGHT IS THE ONE STREAM YOU EXECUTE" in imperative, imperative
+    assert "there is no agent here" in imperative, imperative
+    assert "Every OTHER stream records its own and you only confirm." in imperative
+
+    # The re-dispatch remedy is scoped to the streams that HAVE an agent, so it
+    # no longer names a move SIGHT cannot make.
+    assert "If an AGENT stream finished and no record exists" in imperative, imperative
+
+    # The same qualification reaches the `instructions` string, which is the
+    # surface a lead reads FIRST and which stated the rule unqualified too.
+    instructions = _run_streams_instructions(run_env)
+    assert "never record on an AGENT's behalf" in instructions, instructions
+    assert "SIGHT is the exception" in instructions, instructions
+    assert "there is no sight agent" in instructions, instructions
+
+
+def test_the_run_streams_dispatch_names_the_peer_that_rewrites_the_tree(run_env):
+    """fallout AC-031 / GI-016 (D-169) — the readers were not told a mutating
+    peer exists.
+
+    The imperative orders every INSPECT stream dispatched in ONE parallel
+    message. One of them — TEST — verifies a GRIND's fixes by REVERTING each one
+    and re-running, in the shared working tree the reading streams are walking.
+    The imperative named no ordering, no exclusion and no snapshot discipline.
+
+    DRIVEN in cycle 5 of this run by following it literally: TRACE hit an
+    AttributeError that did not reproduce at HEAD, and independently reported
+    the tree churning between 04:20 and 04:26 UTC with tools/foundry_validate.py
+    showing a PRE-bac2c12 state and six orchestration modules modified, before
+    settling clean. TRACE recovered only because it re-verified everything
+    against a `git archive HEAD` snapshot on its own initiative and pinned its
+    findings to 13164ab. Nothing required that recovery or would have caught its
+    absence — a stream that trusted the tree files a phantom defect against a
+    mutation about to be reverted, or misses a real one masked by it, and
+    neither is distinguishable in the ledger from an honest finding.
+
+    Named rather than serialised (GI-007): the parallel dispatch is what makes
+    an INSPECT one wall-clock unit, so the hazard is answered by telling every
+    reader to pin rather than by spending a cycle's wall-clock on ordering.
+    """
+    imperative = _ACTION_IMPERATIVES["run_streams"]
+
+    assert "THE TREE MOVES UNDER YOU WHILE THESE RUN" in imperative, imperative
+    # The mutating peer is NAMED, and so is what it does: "a peer may write" is
+    # not something a reader can act on.
+    assert "TEST verifies a GRIND's fixes by REVERTING each one" in imperative
+    # The discipline is concrete enough to follow — a sha, a snapshot, a cite.
+    assert "PIN ITS WORK TO A SNAPSHOT" in imperative, imperative
+    assert "git archive HEAD" in imperative, imperative
+    assert "cite that sha" in imperative, imperative
+    # ...and it says why, so a stream that skips it knows what it is risking.
+    assert "indistinguishable in the ledger from an honest one" in imperative
+
+    # The `instructions` string carries it too, for the same reason the SIGHT
+    # qualification does.
+    instructions = _run_streams_instructions(run_env)
+    assert "TEST rewrites the shared tree" in instructions, instructions
+    assert "pin its findings to the HEAD sha" in instructions, instructions
+
+
+def test_a_run_at_its_cap_that_can_still_finish_is_heading_for_done(run_env):
+    """fallout CT-007 / FR-021 / AC-028 / OT-026 (D-232).
+
+    CT-007: "every response carries heading_for (DONE or HALTED)". The field
+    was set to HALTED whenever `cycles_to_cap` was 0, reading neither the phase
+    nor the ledger — so a run already in F6 named HALTED as its terminal state,
+    and a capped run converging on its last allowed cycle was told HALTED in
+    the same payload that told it to transition to DONE.
+
+    The cap seals HALTED at a GRIND door and nowhere else, and a GRIND opens
+    for blocking work. So at the cap: DONE when the run is DONE or has nothing
+    blocking, HALTED while a LIVE or untiered defect is open.
+    """
+    project_root, fdir = run_env
+    _defect_ledger(fdir, [])
+
+    _write_state(fdir, phase="F6", cycle=2, max_cycles=2)
+    done = foundry_next_action(project_root, caller="subagent")
+    assert done["cycles_to_cap"] == 0, done
+    assert done["heading_for"] == "DONE", done
+
+    for phase in ("F2", "F4"):
+        _write_state(fdir, phase=phase, cycle=2, max_cycles=2)
+        clean = foundry_next_action(project_root, caller="subagent")
+        assert clean["cycles_to_cap"] == 0, (phase, clean)
+        assert clean["heading_for"] == "DONE", (phase, clean)
+
+    # A non-blocking backlog opens no GRIND, so it is a named backlog on the way
+    # to DONE, not a reason to halt.
+    _defect_ledger(fdir, [
+        _tiered("D-1", "LATENT", reproduction_attempted="drove it; no instance"),
+        _tiered("D-2", "HARDENING", reproduction_attempted="drove the probe; it failed"),
+    ])
+    _write_state(fdir, phase="F2", cycle=2, max_cycles=2)
+    assert foundry_next_action(project_root, caller="subagent")["heading_for"] == "DONE"
+
+    # Blocking work at the cap does reach a GRIND door, and that door halts.
+    for tier in ("LIVE", None):
+        _defect_ledger(fdir, [_tiered("D-3", tier)])
+        blocked = foundry_next_action(project_root, caller="subagent")
+        assert blocked["heading_for"] == vocab.RUN_PHASE_HALTED, (tier, blocked)
