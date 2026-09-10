@@ -1,5 +1,0 @@
-# evidence-cmd: git grep -n "foundry_orchestrator" -- plugins/foundry/mcp-server/tests/test_spend.py plugins/foundry/mcp-server/tests/test_inspect_mode.py plugins/foundry/mcp-server/tests/test_stream_rollup.py plugins/foundry/mcp-server/tests/test_escalation.py plugins/foundry/mcp-server/tests/test_fix_gate.py plugins/foundry/mcp-server/tests/test_nyquist_flag.py plugins/foundry/mcp-server/tests/test_model_config.py plugins/foundry/mcp-server/tests/test_spawn_progress.py; echo "grep-found-nothing=$?"
-# evidence-for: FR-005, GI-026, OT-016, US-003
-# evidence-timeout: 300
-
-grep-found-nothing=1

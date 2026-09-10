@@ -1,7 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/orchestration/test_module_boundaries.py -k 'accept_casting or acyclic_at_module_top or three_layers_hold or leaf_module_imports_only_leaves or lifecycle_module_lazily or verifier_module_at_any_depth or one_exception_table or planted_lazy_gate or prose_cites_has_a_definition' 2>&1 | tail -3
-# evidence-for: fallout AC-061, FR-063, GI-033, AC-015, GI-025, GI-026, OT-015, FR-005, AC-014
-# evidence-volatile: \d+\.\d+s
-# evidence-timeout: 300
-
-....................                                                     [100%]
-20 passed, 137 deselected in 2.96s

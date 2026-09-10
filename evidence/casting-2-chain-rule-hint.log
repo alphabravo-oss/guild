@@ -1,9 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c 'import sys; sys.path.insert(0, "."); from tests.test_spec_id_convention import CHAIN_PHRASE, CHAIN_BROKEN, unqualified_ids; print(CHAIN_PHRASE); print("driven:", unqualified_ids(CHAIN_BROKEN))' && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_spec_id_convention.py::test_a_run_local_id_breaks_the_chain_however_the_run_began 2>&1 | tail -3
-# evidence-for: fallout NFR-011, FR-005
-# evidence-volatile: \d+\.\d+s
-# evidence-timeout: 300
-
-A `/`-joined run inherits its head's qualification only THROUGH REQUIREMENT IDS: every segment between the qualification and the id must itself be one of AC-NNN, CT-NNN, FR-NNN, GI-NNN, NFR-NNN, OT-NNN, ST-NNN, US-NNN, so one prefix covers 'convergence CT-002 / AC-019 / OT-008'. Anything else in the run -- a concern id, a defect id -- ends the inheritance where it stands, and every requirement id AFTER it is reported however the run began: 'fallout AC-022 / C-081 / GI-002' is qualified at its head and still reports its last id. Put the requirement ids first and the run-local ids last, 'fallout AC-022 / GI-002 / C-081', or give each id its own qualification.
-driven: ['GI-002 in ...fallout AC-022 / C-081 / GI-002...']
-.                                                                        [100%]
-1 passed in 0.01s

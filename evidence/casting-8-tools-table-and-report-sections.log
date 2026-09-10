@@ -1,7 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_lead_prose.py::test_start_md_tools_table_lists_every_registered_tool tests/test_lead_prose.py::test_start_md_tools_table_rows_are_two_column tests/test_lead_prose.py::test_the_report_step_names_every_required_section
-# evidence-for: FR-029, FR-037, US-012
-# evidence-volatile: \d+\.\d+s
-# evidence-timeout: 300
-
-...                                                                      [100%]
-3 passed in 0.02s

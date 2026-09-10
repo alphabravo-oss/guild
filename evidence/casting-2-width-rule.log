@@ -1,8 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/orchestration/test_width.py -k 'delta_inspect or verifier_surface or disjoint or classified_by_one_roster' 2>&1 | tail -3
-# evidence-for: fallout OT-013, OT-014, AC-014, OT-016, GI-026
-# evidence-volatile: \d+\.\d+s
-# evidence-volatile: \b\d+ms\b
-# evidence-timeout: 300
-
-....                                                                     [100%]
-4 passed, 11 deselected in 0.05s

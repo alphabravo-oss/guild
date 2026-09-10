@@ -1,8 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest python -c "import sys; sys.path[:0]=['src','.']; from pathlib import Path; from tests.orchestration.test_module_boundaries import _private_names_defined_anywhere as D, _private_names_cited_in_prose as C; from tests.orchestration._env import _PROSE_CITES_WITH_NO_DEFINITION as A; from foundry_mcp.tools import artifacts; r=Path(artifacts.__file__).resolve().parents[4]; d=D(r); f=['test_spend.py','test_inspect_mode.py','test_stream_rollup.py','test_escalation.py','test_fix_gate.py','test_nyquist_flag.py','test_model_config.py','test_spawn_progress.py']; c={n for p in f for _,n in C(Path('tests')/p)}; print('defined>=500: %s' % (len(d)>=500)); print('cited>=100: %s' % (len(c)>=100)); print('excused=%s' % sorted(c & set(A))); print('unresolved=%s' % sorted(c - d - set(A)))" 2>&1 | tail -4
-# evidence-for: AC-014, FR-005, OT-016, US-003
-# evidence-timeout: 300
-
-defined>=500: True
-cited>=100: True
-excused=['_overlay_unreported', '_ref_names_a_test_function', '_trace_skip_check']
-unresolved=[]

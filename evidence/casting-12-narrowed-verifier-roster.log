@@ -1,7 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q tests/test_inspect_mode.py -k "verifier_surface or narrowed_surface" 2>&1 | tail -3
-# evidence-for: FR-005, OT-016, US-003
-# evidence-volatile: [0-9]+\.[0-9]+s
-# evidence-timeout: 300
-
-.......................                                                  [100%]
-23 passed, 153 deselected in 4.32s

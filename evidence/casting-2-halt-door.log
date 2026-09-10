@@ -1,8 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/orchestration/test_halt.py tests/orchestration/test_transitions.py -k 'halt or would_halt or cap or HALTED or halted' 2>&1 | tail -3
-# evidence-for: fallout US-006, FR-018, FR-046, FR-062, FR-064, GI-032, GI-034, CT-004, CT-005, CT-021, ST-001, ST-002, ST-015, AC-025, AC-026, AC-029, AC-060, AC-062, OT-023, OT-024, OT-044, OT-045
-# evidence-volatile: \d+\.\d+s
-# evidence-volatile: \b\d+ms\b
-# evidence-timeout: 300
-
-......................................                                   [100%]
-38 passed, 199 deselected in 0.64s

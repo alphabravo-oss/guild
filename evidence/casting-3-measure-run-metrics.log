@@ -1,7 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_measure_run.py -k 'hardening or tier_roster or ratio or fallout or consolidated_derivations or acceptance_figures or process_status or last_record_as_the_total' 2>&1 | tail -2
-# evidence-for: CT-016, FR-025, FR-026, FR-037, FR-053, AC-024, AC-045, AC-046, GI-024, NFR-006, NFR-007, NFR-008, OT-039, OT-040, US-011
-# evidence-volatile: \d+\.\d+s
-# evidence-timeout: 300
-
-...............                                                          [100%]
-15 passed, 68 deselected in 1.59s

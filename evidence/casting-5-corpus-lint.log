@@ -1,5 +1,0 @@
-# evidence-cmd: floor=78; checked=0; fails=0; for log in evidence/*.log; do cmd=$(sed -n 's/^# evidence-cmd: //p' "$log" | head -1); [ -n "$cmd" ] || continue; checked=$((checked+1)); /bin/sh -n -c "$cmd" || { echo "SYNTAX FAIL: $log"; fails=$((fails+1)); }; done; [ "$checked" -ge "$floor" ] || echo "POPULATION COLLAPSE: only $checked logs carried a command, below the floor of $floor this witness was captured over"; echo "corpus population: at or above the floor of $floor logs carrying a command"; echo "logs with a syntax failure: $fails"
-# evidence-for: AC-036, AC-038, OT-035, GI-006
-
-corpus population: at or above the floor of 78 logs carrying a command
-logs with a syntax failure: 0

@@ -1,7 +1,0 @@
-# evidence-cmd: printf 'the rung re-attributed to this spec, in the pinned module: '; grep -c 'fallout CT-012 for HARDENING' plugins/foundry/mcp-server/tests/test_skill_prose.py; printf 'the predecessor number, named with its own spec: '; grep -c 'convergence CT-001 for LATENT' plugins/foundry/mcp-server/tests/test_skill_prose.py; cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -q -rN -p no:cacheprovider tests/test_skill_prose.py 2>&1 | tail -1
-# evidence-for: NFR-011
-# evidence-volatile: \d+\.\d+s
-
-the rung re-attributed to this spec, in the pinned module: 1
-the predecessor number, named with its own spec: 1
-122 passed, 9 skipped in 0.44s

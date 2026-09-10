@@ -1,6 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run python -c "import sys;sys.path.insert(0,'src');from foundry_mcp.tools.foundry import validate_defect_filing as v;from foundry_mcp.schemas import vocab;p={'id':'D-000','classification':'DEFECT','type':'WRONG','class':'PROSE_CONTRACT_DRIFT','file':'a.py','symbol':'f','description':'The pagination cursor repeats the last row whenever the page size divides the total exactly, on every page after the first.'};print('\n'.join('%s owes reproduction_attempted at the shared filing rung: %s'%(t,bool((r:=v(dict(p,tier=t))) and r.get('field')=='reproduction_attempted')) for t in sorted(vocab.DEFECT_TIERS)))"
-# evidence-for: AC-022
-
-HARDENING owes reproduction_attempted at the shared filing rung: True
-LATENT owes reproduction_attempted at the shared filing rung: True
-LIVE owes reproduction_attempted at the shared filing rung: False

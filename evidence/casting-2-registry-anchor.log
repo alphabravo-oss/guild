@@ -1,8 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_inspect_mode.py::test_every_contracts_surface_resolves_to_a_module_through_the_registry tests/test_inspect_mode.py::test_test01_scope_is_the_registry_binding_not_a_stem_in_the_contracts_prose tests/test_inspect_mode.py::test_delta_mode_requires_neither_conditional_stream_on_an_untouched_scope tests/test_inspect_mode.py::test_a_stem_colliding_grind_diff_leaves_test01_unrequired_over_mcp tests/test_inspect_mode.py::test_next_reports_the_recorded_decision_whenever_it_is_called tests/orchestration/test_gates.py::test_the_table_is_the_specs_enumeration_with_no_fifth_exception tests/orchestration/test_gates.py::test_the_cast_action_names_the_gate_that_guards_the_transition_it_calls 2>&1 | tail -3
-# evidence-for: fallout FR-030, FR-047, GI-026, AC-059
-# evidence-volatile: \d+\.\d+s
-# evidence-volatile: \b\d+ms\b
-# evidence-timeout: 300
-
-.......                                                                  [100%]
-7 passed in 1.17s

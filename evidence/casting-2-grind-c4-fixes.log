@@ -1,8 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/orchestration/test_fix_gate.py tests/orchestration/test_guidance.py tests/orchestration/test_transitions.py tests/orchestration/test_evidence_boundary.py tests/orchestration/test_tasks_codispatch.py tests/orchestration/test_module_boundaries.py -k 'absent_type or superseded_record or supersede_on_the_re_tier or append_exit or re_filings_provenance or halted_notice or legacy_free_string or cause_sentence or recorded_ending or temper_door or never_reach_f6 or empty_text or walked_cross_product or syntax_refusal or output_mismatch or mixed_sweep or no_failure_token or failure_token_has_a_remedy or head_read_goes_through or no_id_does_not_raise or subject_set or unclosed_crossing or measure_run or citation_pin or requirement_id_the_orchestration' 2>&1 | tail -3
-# evidence-for: FR-007, FR-011, FR-012, FR-018, FR-021, FR-035, FR-041, FR-058, FR-061, FR-063, FR-064, GI-004, GI-011, GI-021, GI-022, GI-025, GI-029, GI-033, CT-004, CT-005, CT-007, CT-013, CT-020, CT-021, ST-001, ST-006, ST-012, AC-008, AC-011, AC-035, AC-054, AC-056, AC-061, AC-062, OT-007, OT-011, OT-015, OT-045, NFR-011
-# evidence-volatile: \d+\.\d+s
-# evidence-timeout: 300
-
-SKIPPED [1] tests/orchestration/test_module_boundaries.py:7660: this checkout carries no forge-specs/foundry-run-fallout/spec.md
-SKIPPED [1] tests/orchestration/test_module_boundaries.py:7708: this checkout carries no run spec
-28 passed, 2 skipped, 571 deselected in 0.64s

@@ -1,8 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/orchestration/test_transitions.py -k 'closed_as_one_class' 2>&1 | tail -3
-# evidence-for: fallout GI-001, GI-002, FR-030, FR-042, AC-010, OT-008, ST-013
-# evidence-volatile: \d+\.\d+s
-# evidence-volatile: \b\d+ms\b
-# evidence-timeout: 300
-
-.                                                                        [100%]
-1 passed, 231 deselected in 0.47s

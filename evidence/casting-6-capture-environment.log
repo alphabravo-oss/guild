@@ -1,8 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --quiet --with pytest pytest -p no:cacheprovider -q --no-header tests/test_protocol_prose.py -k 'environment_the_evidence or worktree_directories or really_detached or contention_suffix' 2>&1 | tail -3
-# evidence-for: fallout NFR-011, GI-006
-# evidence-volatile: \d+\.\d+s
-# evidence-volatile: \b\d+ms\b
-# evidence-timeout: 600
-
-.........                                                                [100%]
-9 passed, 737 deselected in 0.15s
