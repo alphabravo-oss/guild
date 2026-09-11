@@ -701,6 +701,27 @@ def _grind_dispatch_records(fdir):
     return [r for r in records if r.get("event") == "grind_dispatched"]
 
 
+def _hand_over(project_root, fdir, casting_id, defect_ids):
+    """Hand `defect_ids` to a GRIND teammate — the one door that records it.
+
+    The should-not-stop spec's dispatch rule (A-015): `Foundry-Tasks` generates
+    packets and records no `grind_dispatched` row; `Foundry-Spawn-Teammate(phase=
+    "grind", defect_ids=[...])` records one per id it hands over. The prompt
+    file is written when the arrangement has none, because the door refuses
+    without one.
+    """
+    from foundry_mcp.tools.foundry_spawn import foundry_spawn_teammate
+
+    prompt = fdir / "castings" / f"casting-{casting_id}-prompt.md"
+    if not prompt.exists():
+        prompt.write_text(f"# Casting {casting_id}\n\nFix them.\n", encoding="utf-8")
+    result = foundry_spawn_teammate(
+        casting_id, "grind", str(project_root), defect_ids=defect_ids
+    )
+    assert result.get("ok") is True, result
+    return result
+
+
 def test_the_dispatch_record_carries_the_co_dispatch_set_the_report_reads(run_env):
     """fallout CT-008 / AC-025 / FR-053 (D-069).
 
@@ -727,10 +748,15 @@ def test_the_dispatch_record_carries_the_co_dispatch_set_the_report_reads(run_en
     task = next(t for t in result["tasks"] if "D-900" in t["defect_ids"])
     assert task["co_dispatch"] == [5], task
 
+    # should-not-stop A-015 — packeting recorded nothing; the hand-over does.
+    assert _grind_dispatch_records(fdir) == []
+    _hand_over(project_root, fdir, 3, ["D-900"])
+
     records = _grind_dispatch_records(fdir)
     assert len(records) == 1, records
     record = records[0]
-    # The COMPUTED set, not a recomputation: the same list the task carries.
+    # The ONE computation's set (`_annotate_co_dispatch`, run over the defects
+    # handed over): the same list the task carries.
     assert record["co_dispatch"] == [5], record
     assert record["defect_ids"] == ["D-900"], record
     assert record["requirement_ids"] == ["FR-007"], record
@@ -760,6 +786,7 @@ def test_the_report_section_populates_from_a_real_dispatch(run_env):
         dict(_tiered("D-900", "LIVE"), file="src/three.py", spec_ref="FR-007"),
     ])
     foundry_defects_to_tasks(project_root)
+    _hand_over(project_root, fdir, 3, ["D-900"])
 
     section, problem = _halt_and_co_dispatch_section(fdir, {"phase": "F3"})
     assert problem is None, problem
@@ -949,6 +976,7 @@ def test_a_compound_spec_ref_co_dispatches_every_casting_owning_any_of_its_ids(r
         for fragment in ("CT-004", "FR-007", "casting 4", "casting 5"):
             assert fragment in block, (spelling, fragment, block)
 
+        _hand_over(project_root, fdir, 3, ["D-900"])
         records = _grind_dispatch_records(fdir)
         assert [r["requirement_ids"] for r in records] == [["CT-004", "FR-007"]], (
             spelling, records,
@@ -967,6 +995,7 @@ def test_a_compound_spec_ref_co_dispatches_every_casting_owning_any_of_its_ids(r
     )
     assert task["co_dispatch"] == [], task
     assert anchor in task["alignment_block"], task["alignment_block"]
+    _hand_over(project_root, fdir, 3, ["D-901"])
     assert [r["requirement_ids"] for r in _grind_dispatch_records(fdir)] == [[anchor]]
 
 
@@ -998,6 +1027,7 @@ def test_a_dispatch_the_set_cannot_key_is_still_recorded_for_team_down(run_env):
     assert result["co_dispatch_computable"] is False, result
     task = next(t for t in result["tasks"] if "D-001" in t["defect_ids"])
     assert task["co_dispatch"] is None, task
+    _hand_over(project_root, fdir, 1, ["D-001"])
 
     records = _grind_dispatch_records(fdir)
     assert [(r["defect_id"], r["file"]) for r in records] == [("D-001", "a.txt")], records
@@ -1060,4 +1090,5 @@ def test_a_decorated_file_still_resolves_the_casting_that_owns_the_fix(run_env):
         assert "Fixed in casting 3" in block, (spelling, block)
         assert "not resolvable from the manifest" not in block, (spelling, block)
         assert "- casting 3:" not in block, (spelling, block)
+        _hand_over(project_root, fdir, task["owning_casting"], ["D-900"])
         assert [r["casting"] for r in _grind_dispatch_records(fdir)] == [3], spelling

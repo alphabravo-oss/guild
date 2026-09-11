@@ -246,11 +246,13 @@ def _active_teams(project_root: str) -> dict:
     """Is any team still holding the tree? The VERIFIER layer's composition.
 
     fallout GI-033 / AC-061 / FR-063 (D-021 / D-035, concern C-027). Both
-    halves of the answer — the registered directories and the live tmux panes —
-    are `foundry_state.active_teams`, because `orchestration/teams.py` is
+    halves of the answer — the registered teams and the live tmux panes — are
+    `foundry_state.active_teams`, because `orchestration/teams.py` is
     LIFECYCLE by GI-033's own violation column and this module is a verifier.
-    What is composed here is the two things a leaf may not know: where this
-    machine keeps its team directories, and the sentence to print.
+    should-not-stop GI-001 / GI-010 (A-005): the registered half is the
+    `state.json` ledger alone. No `~/.claude/teams` directory is consulted —
+    nothing creates one since TeamCreate was removed — so a team this run
+    registered holds the tree until `Foundry-Team-Down` unregisters it.
 
     NO SENTENCE IS PASSED, DELIBERATELY. `hint_for` is omitted, so the leaf
     reports the two lists and no prose, and every arm below falls back to
@@ -263,7 +265,7 @@ def _active_teams(project_root: str) -> dict:
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"active": False, "teams": [], "live_panes": []}
-    return active_teams(fdir, teams_dir=Path.home() / ".claude" / "teams")
+    return active_teams(fdir)
 
 
 
@@ -1160,8 +1162,13 @@ _GATE_RANK_REPORT = 90     # the generated report: DERIVED from every ledger
 #: The one spelling of "shut the teammates down", so the three gate arms that
 #: fall back to it cannot drift apart again (D-186: the assay copy had no
 #: fallback at all, and the other two spelled theirs differently).
+#:
+#: should-not-stop GI-001 / FR-021 (A-005): no TeamDelete step. The tool was
+#: removed from Claude Code, and `Foundry-Team-Down` is what ends a team — it
+#: clears the run's own ledger, which is the only place a team exists.
 _TEAMS_DOWN_HINT = (
-    "Shut down all teammates, call TeamDelete, then Foundry-Team-Down"
+    "Shut down all teammates (one parallel SendMessage batch), then "
+    "Foundry-Team-Down"
 )
 
 

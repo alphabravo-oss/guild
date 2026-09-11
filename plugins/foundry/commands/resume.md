@@ -1,7 +1,7 @@
 ---
 description: "Resume an interrupted foundry run"
 argument-hint: "[--max-cycles N]"
-allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/install-commit-guard.sh:*)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/migrate-archive.py:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(jq:*)", "AskUserQuestion", "Read", "Write", "Glob", "Grep", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TeamCreate", "TeamDelete", "SendMessage", "Edit", "Bash(git:*)", "Bash(go:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(make:*)", "Bash(curl:*)"]
+allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/install-commit-guard.sh:*)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/migrate-archive.py:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(jq:*)", "AskUserQuestion", "Read", "Write", "Glob", "Grep", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "SendMessage", "Edit", "Bash(git:*)", "Bash(go:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(make:*)", "Bash(curl:*)"]
 disable-model-invocation: "true"
 ---
 

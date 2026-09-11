@@ -183,13 +183,16 @@ def _teammate_shutdown_hint(live_panes: list[str]) -> str:
     two halves of "is a team still holding the tree" and takes this shaper as
     `hint_for`, on the same rule every other injected sentence in the leaf
     follows: the leaf may hold the READ and may not hold a sentence naming
-    SendMessage, TeamDelete and `tmux kill-pane`, because those are this
-    module's doors.
+    SendMessage and `tmux kill-pane`, because those are this module's doors.
+
+    should-not-stop GI-001 / FR-021 (A-005): no TeamDelete step. The tool was
+    removed from Claude Code in v2.1.178, so a sentence naming it sends the lead
+    after a call it cannot make.
     """
     return (
         f"{len(live_panes)} teammate pane(s) still running: {', '.join(live_panes)}. "
-        "Send 'All work complete, stop working.' to each teammate in a parallel SendMessage batch, "
-        "then TeamDelete immediately — do NOT wait for acks. "
+        "Send 'All work complete, stop working.' to each teammate in a parallel SendMessage batch "
+        "— do NOT wait for acks. "
         "If panes won't terminate, run: tmux kill-pane -t <pane_id>"
     )
 
@@ -202,9 +205,9 @@ def _check_active_teams(project_root: str) -> dict:
     fallout GI-033 / AC-061 / FR-063 (D-021 / D-035, concern C-027) — THE
     ANSWER IS THE LEAF'S; THIS IS THE COMPOSITION.
     ----------------------------------------------------------------------
-    Both halves — `state.json.active_teams` crossed against the directories
-    still on disk, and the tmux pane scan — now live in
-    `foundry_state.active_teams`, because the gates and transitions that ask
+    Both halves — the `state.json.active_teams` ledger and the tmux pane scan
+    — now live in `foundry_state.active_teams`, because the gates and
+    transitions that ask
     the question are VERIFIER modules and this one is lifecycle, so wherever
     the answer sat inside `orchestration/` exactly one of the two layers could
     reach it. The pane scan went with it: it is a READ that lists panes and
@@ -213,20 +216,22 @@ def _check_active_teams(project_root: str) -> dict:
     `lead_ruling_gi_033_leaf_moves`). `_kill_panes` stayed here with the doors
     that kill.
 
-    WHAT THIS ADDS is the two things the leaf may not know: where this machine
-    keeps its team directories, and the shutdown sentence. `gates.py` composes
-    the same leaf call for the verifier side and passes no sentence, falling
-    back to its own `_TEAMS_DOWN_HINT` — one answer, two callers, and neither
-    of them a second judgement about what "active" means.
+    WHAT THIS ADDS is the one thing the leaf may not know: the shutdown
+    sentence. `gates.py` composes the same leaf call for the verifier side and
+    passes no sentence, falling back to its own `_TEAMS_DOWN_HINT` — one
+    answer, two callers, and neither of them a second judgement about what
+    "active" means.
+
+    should-not-stop GI-001 / GI-010 (A-005) — NO TEAMS DIRECTORY. This used to
+    hand the leaf `~/.claude/teams`, and a registered team counted only while
+    its directory existed. Nothing creates that directory since TeamCreate was
+    removed, so the registered half always read empty; it is the ledger now,
+    and a team this run registered is active until `Foundry-Team-Down`.
     """
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"active": False, "teams": [], "live_panes": []}
-    return active_teams(
-        fdir,
-        teams_dir=Path.home() / ".claude" / "teams",
-        hint_for=_teammate_shutdown_hint,
-    )
+    return active_teams(fdir, hint_for=_teammate_shutdown_hint)
 
 
 
@@ -239,7 +244,12 @@ def foundry_register_team(
     team_name: str,
     project_root: str = ".",
 ) -> dict:
-    """Register a team for lifecycle tracking."""
+    """Register a team in the run's ledger (`state.json` `active_teams`).
+
+    should-not-stop GI-001 / FR-021 (A-005) \u2014 LEDGER-ONLY. There is no
+    TeamCreate to follow: teammates are named Agent spawns, and the team is
+    this ledger entry, active from here until `Foundry-Team-Down` removes it.
+    """
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"error": "No active foundry run. Call Foundry-Init first."}
@@ -256,12 +266,20 @@ def foundry_register_team(
         if not isinstance(teams, list):
             teams = []
 
-        teams_dir = Path.home() / ".claude" / "teams"
-        still_active = [t for t in teams if t != team_name and (teams_dir / t).is_dir()]
+        # should-not-stop GI-001 / GI-010 (A-005) \u2014 ONE TEAM AT A TIME, READ
+        # FROM THE LEDGER. This counted a registered team only while
+        # `~/.claude/teams/<name>` was a directory, and nothing makes that
+        # directory any more, so the check never fired. A team still named here
+        # is a team `Foundry-Team-Down` has not ended.
+        still_active = [t for t in teams if t != team_name]
         if still_active:
             refusal = {
                 "error": f"Cannot register '{team_name}' \u2014 active teams exist: {', '.join(still_active)}",
-                "hint": "Shut down existing teammates (SendMessage + TeamDelete) and Foundry-Team-Down before creating a new team. One team at a time.",
+                "hint": (
+                    "Shut down the existing teammates (one parallel SendMessage batch) and call "
+                    "Foundry-Team-Down for each active team before registering a new one. "
+                    "One team at a time."
+                ),
                 "active_teams": still_active,
             }
         else:
@@ -367,18 +385,38 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
 
     fallout FR-022 / FR-048 / GI-017 / CT-010 / ST-011 / AC-039 / AC-041.
 
-    For every defect `Foundry-Tasks` dispatched into THIS cycle that is still
-    open, ask whether a commit since the cycle's baseline touched its file. If
+    For every defect id HANDED to a teammate this cycle that has no Foundry-Fix
+    record, ask whether a commit since the cycle's baseline touched its file. If
     one did, the fix is on the branch and the ledger row is not -- which is the
     one state where tearing the team down loses the only person who could close
     it.
+
+    should-not-stop FR-039 / FR-020 / CT-012 / CT-009 (A-015, A-036) -- THREE
+    CONDITIONS, ALL REQUIRED, JOINED BY DEFECT ID. "Refuse only for a defect
+    that was actually dispatched, has no Foundry-Fix record, AND whose file a
+    commit in the cycle touched."
+
+      * DISPATCHED is a `grind_dispatched` row of this cycle, and the only
+        writer of one is `Foundry-Spawn-Teammate(phase="grind",
+        defect_ids=[...])`. `Foundry-Tasks` used to write a row for every open
+        defect it packeted, so a defect the lead triaged and backlogged was
+        "dispatched" here, and a fix commit touching its file refused the
+        teardown over a defect nobody was asked to fix -- the foundry-run-
+        fallout cycle-16 deadlock, cleared only by editing handoffs.jsonl.
+      * NO FOUNDRY-FIX RECORD is the ledger still holding the id `open`:
+        `Foundry-Fix` is the door that moves it to `fixed`, and an id some
+        other door closed (superseded) is a ledger that is not stale either.
+      * THE JOIN KEYS BY ID. The rows collapse to one per defect id (the
+        latest hand-over wins), so an id handed over twice in a cycle is one
+        finding and not two, and each id is judged by its own file. A file
+        two ids share does not make the one nobody holds refuse.
 
     THREE WAYS THIS ANSWERS NOTHING, and all three PASS rather than refuse,
     because an advisory join that blocks on its own blindness is worse than one
     that does not fire:
 
-      * no dispatch records -- a CAST team, or a GRIND that never ran
-        Foundry-Tasks. There is nothing dispatched to be stale about.
+      * no dispatch records -- a CAST team, or a GRIND that handed no defect
+        over. There is nothing dispatched to be stale about.
       * no baseline SHA -- a run whose first INSPECT has not happened. "Since
         when" has no answer, and a diff measured from nothing is not a diff.
       * the diff cannot be computed -- no git, a detached tree, a timeout.
@@ -396,15 +434,23 @@ def _unrecorded_fix_problem(fdir: Path, project_root: str) -> dict | None:
         _grind_dispatches,
     )
     cycle = current_cycle(fdir)
-    dispatched = _grind_dispatches(fdir, cycle)
+    # should-not-stop FR-039 / FR-020 — KEYED BY DEFECT ID: one row per id
+    # handed over this cycle, the latest hand-over winning, in first-seen order.
+    dispatched: dict[str, dict] = {}
+    for row in _grind_dispatches(fdir, cycle):
+        defect_id = row.get("defect_id")
+        if isinstance(defect_id, str) and defect_id:
+            dispatched[defect_id] = row
     if not dispatched:
         return None
+    # "No Foundry-Fix record": the ledger still holds the id open.
     open_ids = {
         d["id"] for d in _load_json(fdir / "defects.json").get("defects", [])
         if isinstance(d, dict) and d.get("status") == "open" and d.get("id")
     }
     still_open = [
-        r for r in dispatched if r.get("defect_id") in open_ids and r.get("file")
+        row for defect_id, row in dispatched.items()
+        if defect_id in open_ids and row.get("file")
     ]
     if not still_open:
         return None
@@ -534,15 +580,23 @@ def foundry_unregister_team(
     team_name: str,
     project_root: str = ".",
 ) -> dict:
-    """Unregister a team with verified teardown.
+    """Unregister a team from the run's ledger, with verified teardown.
 
-    Three-phase verification:
-    1. CHECK: team directory gone (TeamDelete was called)
+    Phases, each a refusal or a step:
+    0. CHECK: no dispatched defect is open while a cycle commit touched its
+       file (`_unrecorded_fix_problem`)
     2. CHECK: no live claude processes in non-lead panes
     3. CLEAN: kill zombie panes (dead + idle shells)
-    4. UNREGISTER: remove from foundry state
+    4. UNREGISTER: remove from `state.json` `active_teams`
 
-    Blocks if steps 1 or 2 fail — forces proper shutdown ordering.
+    Blocks if step 0 or 2 fails — forces proper shutdown ordering.
+
+    should-not-stop GI-001 / FR-021 / GI-010 (A-005) — PHASE 1 IS RETIRED, AND
+    ITS NUMBER WITH IT. It refused while `~/.claude/teams/<name>` was still a
+    directory ("TeamDelete must be called BEFORE Foundry-Team-Down"). TeamDelete
+    was removed from Claude Code in v2.1.178 and TeamCreate with it, so the
+    directory it tested is never created and the step it demanded is one the
+    lead cannot take. A team is a ledger entry; this door ends it.
     """
     import time
 
@@ -577,20 +631,9 @@ def foundry_unregister_team(
     if (unrecorded := _unrecorded_fix_problem(fdir, project_root)) is not None:
         return unrecorded
 
-
-    # ── Phase 1: Verify TeamDelete was called ────────────────────────
-    teams_dir = Path.home() / ".claude" / "teams"
-    if (teams_dir / team_name).is_dir():
-        return {
-            "error": f"Team directory still exists: ~/.claude/teams/{team_name}/",
-            "hint": (
-                "TeamDelete must be called BEFORE Foundry-Team-Down. "
-                "Proper order: SendMessage(shutdown) to each teammate in ONE parallel batch -> "
-                "TeamDelete immediately (do NOT wait for shutdown acks \u2014 idle panes ARE the signal) "
-                "-> Foundry-Team-Down."
-            ),
-            "phase": "team_dir_exists",
-        }
+    # should-not-stop GI-001 / FR-021 (A-005) — there is no Phase 1 any more.
+    # It refused while `~/.claude/teams/<name>` was a directory, which nothing
+    # creates since TeamCreate/TeamDelete were removed; see the docstring.
 
     # ── Phase 2: Verify no live teammate processes ───────────────────
     scan = live_teammate_panes()
@@ -600,8 +643,8 @@ def foundry_unregister_team(
             "error": f"{len(scan['live'])} teammate pane(s) still running: {', '.join(live_titles)}",
             "hint": (
                 "Teammates are still alive \u2014 they have active claude processes. "
-                "Send 'All work complete, stop working.' to each teammate (parallel SendMessage), "
-                "then TeamDelete immediately (do NOT wait for acks). Re-run Foundry-Team-Down after."
+                "Send 'All work complete, stop working.' to each teammate (parallel SendMessage) "
+                "and do NOT wait for acks. Re-run Foundry-Team-Down after."
             ),
             "phase": "live_teammates",
             "live_panes": live_titles,

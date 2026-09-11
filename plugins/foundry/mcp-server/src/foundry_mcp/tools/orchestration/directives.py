@@ -73,9 +73,10 @@ from foundry_mcp.tools.orchestration.fix_gate import (
 # a lead deciding, per wave, how much of the join to carry across.
 # --------------------------------------------------------------------------- #
 
-#: fallout FR-048 / GI-017 / CT-010 / ST-011 — the handoff event `Foundry-Tasks`
-#: writes per dispatched defect and `Foundry-Team-Down` reads. One event name,
-#: declared where both ends can see it.
+#: fallout FR-048 / GI-017 / CT-010 / ST-011, should-not-stop FR-020 / CT-009 —
+#: the handoff event `Foundry-Spawn-Teammate(phase="grind", defect_ids=[...])`
+#: writes per defect id it hands over, and `Foundry-Team-Down` reads. One event
+#: name, declared where both ends can see it.
 HANDOFF_EVENT_GRIND_DISPATCHED = "grind_dispatched"
 
 
@@ -753,11 +754,15 @@ def _append_grind_dispatch(
 
     fallout FR-022 / FR-048 / GI-017 / CT-010 / ST-011 / AC-039 / AC-041.
 
-    Written by `Foundry-Tasks`, because that is the call that dispatches: it is
-    what turns an open defect into a packet a teammate is handed. Read by
-    `Foundry-Team-Down`, which refuses while one of these is still open and a
-    commit since the cycle baseline touched its file — the shape of "the fix was
-    made and nobody closed the ledger".
+    Written by `Foundry-Spawn-Teammate(phase="grind", defect_ids=[...])`,
+    through `record_grind_hand_over`, once per id it hands to a teammate — and
+    by nothing else (should-not-stop FR-020 / CT-009, A-015). It used to be
+    written by `Foundry-Tasks` for every packet, on the theory that generating
+    a packet was dispatching it; a packet the lead triages and backlogs is never
+    handed to anyone, and its row made Team-Down refuse over a defect nobody
+    was asked to fix. Read by `Foundry-Team-Down`, which refuses while one of
+    these is still open and a commit since the cycle baseline touched its file —
+    the shape of "the fix was made and nobody closed the ledger".
 
     fallout CT-008 / AC-025 / FR-053 (D-069) — AND BY THE F6 REPORT, WHICH IS
     THE OTHER HALF OF THE CONTRACT AND SHIPPED ALONE.
@@ -833,6 +838,76 @@ def _append_grind_dispatch(
         pass
 
 
+
+
+def record_grind_hand_over(
+    fdir: Path, *, casting: int | None, defect_ids: list[str]
+) -> list[str]:
+    """Record the defect ids handed to one GRIND teammate. Returns them.
+
+    should-not-stop FR-020 / CT-009 / AC-024 (A-015) — "grind_dispatched is
+    written only for defects actually handed to a teammate." Called by
+    `foundry_spawn.foundry_spawn_teammate` on a `phase="grind"` call, with the
+    `defect_ids` the lead passed and after that door has refused any id that is
+    not an open defect in the ledger; one `grind_dispatched` row per id, and
+    none for an id the ledger does not hold. `Foundry-Tasks` writes none: a
+    packet it generates is a proposal until the lead hands it over, and a
+    backlogged defect is never handed to anyone.
+
+    THE ROW SHAPE IS UNCHANGED, only who writes it and when. `casting` is the
+    casting the ids were HANDED TO, which is who Team-Down's refusal names and
+    who can be asked. `co_dispatch` comes from `_annotate_co_dispatch` — the one
+    computation of the set — run over exactly the handed-over defects, shaped
+    as `Foundry-Tasks` shapes a location packet (their files and spec_refs), so
+    the F6 report reads the set the requirement join gives for what this
+    teammate was actually given. Castings a cross-casting concern added to a
+    packet are not put on the defect's row: that dispatch is recorded on the
+    concern itself, by `Foundry-Tasks`' `mark_concerns_dispatched`.
+
+    Moved here from `foundry_defects_to_tasks` with the rule it carried: the
+    record is written by the door that dispatches and by no reader. Asking
+    `_annotate_co_dispatch` for a set or an alignment block records nothing, so
+    `Foundry-Tasks` can compute blocks without recording a hand-over, and two
+    writers of one record can never name a defect nobody dispatched twice.
+
+    fallout GI-017 / FR-022 / FR-048 / AC-039 (D-264) — WRITTEN WHETHER OR NOT
+    THE SET IS COMPUTABLE. A manifest with no `requirement_ids` makes
+    `co_dispatch` None — AC-006's "not computable" — and the record carries
+    that as a null `co_dispatch`, which the F6 report reader skips as "not a
+    dispatch row". The hand-over and the set's computability are two facts.
+    """
+    ledger = _load_json(fdir / "defects.json").get("defects", [])
+    by_id = {
+        d["id"]: d for d in ledger
+        if isinstance(d, dict) and isinstance(d.get("id"), str)
+    }
+    handed = [by_id[did] for did in dict.fromkeys(defect_ids) if did in by_id]
+    task = {
+        "structural": False,
+        "defect_ids": [d["id"] for d in handed],
+        "files": list(dict.fromkeys(d["file"] for d in handed if d.get("file"))),
+        "spec_refs": list(dict.fromkeys(d["spec_ref"] for d in handed if d.get("spec_ref"))),
+    }
+    _annotate_co_dispatch(fdir, [task])
+    cycle = current_cycle(fdir)
+    run_phase = str(_load_json(fdir / "state.json").get("phase", "") or "")
+    # fallout D-231 — the PARSED ids, the same set the join used.
+    requirement_ids = sorted(_spec_ref_requirement_ids(task["spec_refs"]))
+    for defect in handed:
+        _append_grind_dispatch(
+            fdir,
+            defect_id=defect["id"],
+            file_path=str(defect.get("file") or ""),
+            cycle=cycle,
+            casting=casting,
+            # fallout CT-008 / AC-025 / FR-053 (D-069) — the computed set,
+            # onto the record the F6 report reads it off.
+            co_dispatch=task.get("co_dispatch"),
+            defect_ids=list(task["defect_ids"]),
+            requirement_ids=requirement_ids,
+            phase=run_phase,
+        )
+    return list(task["defect_ids"])
 
 
 def _grind_dispatches(fdir: Path, cycle: int) -> list[dict]:
@@ -1130,45 +1205,16 @@ def foundry_defects_to_tasks(
     open_concerns = open_concerns_for_other_castings(fdir)
     tasks.extend(_concern_only_tasks(fdir, tasks, open_concerns))
     ids_declared = _annotate_co_dispatch(fdir, tasks, open_concerns)
-    open_by_id = {d["id"]: d for d in open_defects}
-    run_phase = str(_load_json(fdir / "state.json").get("phase", "") or "")
-    for task in tasks:
-        # fallout FR-048 / GI-017 / ST-011 — the dispatch RECORD, written by the
-        # call that dispatches. `Foundry-Team-Down` reads these back and refuses
-        # to tear a GRIND team down with one of them still open and a commit
-        # since the cycle baseline touching its file.
-        #
-        # Written HERE and not inside `_annotate_co_dispatch`, which is what
-        # makes that function safe for a reader. `Foundry-Spawn-Teammate` needs
-        # the same alignment blocks to put them in the dispatch prompt (FR-038)
-        # and must not record a dispatch by asking for them: two writers of one
-        # handoff record is a Team-Down refusal naming a defect nobody
-        # dispatched twice.
-        #
-        # fallout GI-017 / FR-022 / FR-048 / AC-039 (D-264) — WRITTEN WHETHER
-        # OR NOT THE SET IS COMPUTABLE. A manifest with no `requirement_ids`
-        # makes `co_dispatch` None — AC-006's "not computable" — and this loop
-        # used to `continue` on it, so the defect was dispatched with no record
-        # and Team-Down, which reads nothing else, could never refuse on it. The
-        # set's computability and the dispatch are two facts; the record carries
-        # the first as a null `co_dispatch`, which the F6 report reader already
-        # skips as "not a dispatch row".
-        for did in task.get("defect_ids") or []:
-            defect = open_by_id.get(did) or {}
-            _append_grind_dispatch(
-                fdir,
-                defect_id=did,
-                file_path=str(defect.get("file") or ""),
-                cycle=packet_cycle,
-                casting=task.get("owning_casting"),
-                # fallout CT-008 / AC-025 / FR-053 (D-069) — the computed set,
-                # onto the record the F6 report reads it off.
-                co_dispatch=task.get("co_dispatch"),
-                defect_ids=list(task.get("defect_ids") or []),
-                # fallout D-231 — the PARSED ids, the same set the join used.
-                requirement_ids=sorted(_spec_ref_requirement_ids(task.get("spec_refs"))),
-                phase=run_phase,
-            )
+    # should-not-stop FR-020 / CT-009 / AC-024 (A-015) — GENERATING A PACKET
+    # RECORDS NO DISPATCH. This loop wrote a `grind_dispatched` row for every
+    # defect of every packet, and a packet is a proposal: the lead triages it,
+    # hands some defects to teammates and backlogs the rest. A backlogged
+    # defect's row still sat in the ledger, so a fix commit touching its file
+    # made Foundry-Team-Down refuse DISPATCHED_DEFECT_UNRECORDED over a defect
+    # nobody was asked to fix, and foundry-run-fallout could only tear its
+    # cycle-16 team down by editing handoffs.jsonl by hand. The row is written
+    # by `record_grind_hand_over`, from the door that actually hands ids over:
+    # `Foundry-Spawn-Teammate(phase="grind", defect_ids=[...])`.
 
     # fallout GI-023 / FR-012 / ST-003 / AC-004 — a concern whose target is in
     # the co-dispatch set is DISPATCHED by this call, which is what lets
