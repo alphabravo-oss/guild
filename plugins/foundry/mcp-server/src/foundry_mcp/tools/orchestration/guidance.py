@@ -2281,6 +2281,36 @@ def _open_item_by_ref(fdir: Path) -> dict[str, dict]:
     return out
 
 
+def _answered_item_by_ref(fdir: Path) -> dict[str, dict]:
+    """The NEWEST non-halt-answered parked item, keyed by the ref it released.
+
+    `_open_item_by_ref`'s counterpart, and the reason it needs one: an answered
+    item leaves that mapping entirely, while the attempts, blocker concerns and
+    liveness a route is derived from are all UNCHANGED by an answer. So the
+    router recomputed the very park the human had just answered, the park door
+    admitted it as a fresh item (its dedupe rung only holds a ref whose item is
+    still unanswered), and the next Foundry-Next asked the identical question —
+    for as long as the human kept answering it (D-009).
+
+    A halt answer is not here. `_unconsumed_halt_answer` consumes that ahead of
+    every route, and the rule this mapping serves is about the other kind:
+    "Recording a non-halt answer clears the item and the next Foundry-Next
+    routes its work again" (AC-009 / OT-012).
+    """
+    out: dict[str, dict] = {}
+    for item in read_parked(fdir)[PARKED_ITEMS_KEY]:
+        ref = item.get(PARKED_FIELD_ITEM_REF)
+        stamp = _iso(item.get(PARKED_FIELD_ANSWERED_AT))
+        if not isinstance(ref, str) or stamp is None:
+            continue
+        if item.get(PARKED_FIELD_ANSWER_IS_HALT) is True:
+            continue
+        current = out.get(ref)
+        if current is None or stamp > current["_answered_at"]:
+            out[ref] = {**item, "_answered_at": stamp}
+    return out
+
+
 def _unconsumed_halt_answer(fdir: Path) -> dict | None:
     """The newest parked item the human answered with halt, or None.
 
@@ -2417,13 +2447,21 @@ def _teammate_liveness(project_root: str) -> dict[str, str]:
     }
 
 
-def _failed_attempts(attempts: list[dict], excuses: list[datetime]) -> int:
+def _failed_attempts(
+    attempts: list[dict], excuses: list[datetime], settled: datetime | None = None
+) -> int:
     """Failed attempts on the model the LATEST attempt ran on.
 
     An attempt a later dispatch of the same casting superseded FAILED, unless
     something between the two excuses it: a blocker concern its teammate filed
     (a blocker return never counts toward the limit) or a judged handoff (it
     returned and was looked at, so the re-dispatch was a quality one).
+
+    ``settled`` is when the human last answered a park on this casting with
+    something other than a halt. Every failure at or before it is one that park
+    already asked about and the human already ruled on, so counting it again is
+    how the same question gets asked twice (D-009). None — nothing answered —
+    counts exactly what it always did.
     """
     if not attempts:
         return 0
@@ -2431,6 +2469,8 @@ def _failed_attempts(attempts: list[dict], excuses: list[datetime]) -> int:
     failed = 0
     for earlier, later in zip(attempts, attempts[1:]):
         if earlier["model"] != model:
+            continue
+        if settled is not None and earlier["at"] <= settled:
             continue
         if any(earlier["at"] <= stamp <= later["at"] for stamp in excuses):
             continue
@@ -2582,9 +2622,10 @@ def _casting_routes(
     and read as "an acceptance newer than its last dispatch"; in GRIND the
     caller passes the castings whose handed-over defects are all fixed.
 
-    Precedence, per casting: an open parked item; landed; a live blocker
-    concern (one no later dispatch has answered); a dispatched attempt, judged
-    against the same-model limit and against liveness; not dispatched at all.
+    Precedence, per casting: an open parked item; landed; a non-halt park
+    answer no dispatch has acted on yet; a live blocker concern (one no later
+    dispatch has answered); a dispatched attempt, judged against the same-model
+    limit and against liveness; not dispatched at all.
     """
     since = _episode_start(state, phase)
     verb = _dispatch_verb(phase)
@@ -2597,14 +2638,21 @@ def _casting_routes(
         }
     blockers = _blocker_concerns(fdir, since)
     open_refs = _open_item_by_ref(fdir)
+    answered_refs = _answered_item_by_ref(fdir)
     statuses = _teammate_liveness(project_root) if attempts else {}
     stalled_status, done_status, agent_of = _liveness_vocabulary()
 
     routes: dict[str, dict] = {}
     for cid in casting_ids:
         mine = attempts.get(cid, [])
+        # should-not-stop AC-009 / OT-012 / FR-005 (D-009) — AN ANSWERED PARK
+        # SETTLES THE FAILURES IT ASKED ABOUT. Nothing this loop reads is
+        # changed by an answer, so without `settled` the same count crosses the
+        # same limit and the human is asked the question they just answered.
+        answered = answered_refs.get(park_item_ref(PARK_ITEM_CASTING, cid))
+        settled = answered["_answered_at"] if answered is not None else None
         excuses = [b["_at"] for b in blockers.get(cid, [])] + judged.get(cid, [])
-        failed = _failed_attempts(mine, excuses)
+        failed = _failed_attempts(mine, excuses, settled)
         route: dict = {
             "casting_id": cid,
             "attempts": len(mine),
@@ -2619,6 +2667,14 @@ def _casting_routes(
             if b.get("status") != CONCERN_STATUS_CLOSED
             and not any(a["at"] > b["_at"] for a in mine)
         ]
+        # The answer nothing has acted on yet: no dispatch since it landed. One
+        # re-dispatch consumes it, after which `settled` above is what keeps
+        # the failures that park already asked about from being counted again.
+        released = (
+            answered if answered is not None
+            and not any(a["at"] > answered["_answered_at"] for a in mine)
+            else None
+        )
         if item is not None:
             route.update(
                 status=CASTING_PARKED,
@@ -2627,6 +2683,26 @@ def _casting_routes(
             )
         elif cid in landed:
             route["status"] = CASTING_ACCEPTED
+        elif released is not None and mine:
+            # "your answer resumes it" (FR-005), for a casting that HAS been
+            # dispatched. Above every park-deriving arm below, so the release
+            # covers each of them: the env-broken attempt limit, a scope
+            # conflict parked as a spec problem, a missing prerequisite no
+            # casting builds, and a hold whose upstream parked. One casting
+            # never dispatched has nothing to re-dispatch and keeps the
+            # undispatched arm, which routes it as dispatchable.
+            route.update(
+                status=CASTING_REDISPATCH,
+                parked_id=released.get(PARKED_FIELD_ID),
+                reason=(
+                    f"the human answered {released.get(PARKED_FIELD_ID)} "
+                    f"({released.get(PARKED_FIELD_CATEGORY)}) with instructions "
+                    "rather than a halt, which releases its work — and the "
+                    "failures that park already asked about do not count again"
+                ),
+            )
+            if live:
+                route["concern_id"] = live[-1].get("id")
         elif live:
             _route_blocker(route, cid, live[-1], upstream_of)
         elif mine:

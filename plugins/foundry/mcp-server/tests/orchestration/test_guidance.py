@@ -2554,6 +2554,94 @@ def test_a_non_halt_answer_clears_its_item_and_its_work_routes_again(run_env):
     assert _state(fdir)["parked"]["awaiting_human"] is None
 
 
+def test_a_non_halt_answer_releases_a_dispatched_casting_rather_than_re_parking_it(run_env):
+    """should-not-stop AC-009 / OT-012 / FR-005 (D-009): the answer ENDS the question.
+
+    The shipped AC-009 test above parks an UNDISPATCHED casting, where no
+    failure count is ever recomputed. Park one whose three same-model attempts
+    have all failed and the loop appears: the answer clears the item, but the
+    attempts and the liveness read the park was derived FROM are untouched by
+    it, so the router re-derived the identical env_broken park, the park door
+    admitted it as a fresh item (its dedupe rung holds only an UNanswered ref),
+    and the next Foundry-Next asked the question the human had just answered —
+    for as long as they were willing to keep answering it.
+    """
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, [])], entered=_ago(hours=10))
+    _stalled_ledger(fdir, agent="casting-1", hours=3)
+    for hours in (6, 5, 4):
+        _dispatched(fdir, 1, at=_ago(hours=hours))
+
+    owed = _compute_next_action(project_root)
+    assert owed["action"] == "park_item", owed
+    assert owed["details"]["category"] == "env_broken"
+
+    item = _park(
+        project_root, "casting:1", category="env_broken",
+        question=owed["details"]["question"],
+    )
+    assert foundry_next_action(project_root)["action"] == "ask_human"
+
+    _answer(project_root, item, "the API overload cleared, retry it")
+
+    after = _compute_next_action(project_root)
+    assert after["action"] == "redispatch_casting", after
+    assert after["details"]["casting_id"] == "1"
+    assert after["details"]["failed_attempts"] == 0
+    assert _state(fdir)["parked"]["awaiting_human"] is None
+
+    # The re-dispatch consumes the answer, and the failures that park already
+    # asked about stay settled: a fourth attempt is retry 1, never a third
+    # failure that parks the same question a second time.
+    _dispatched(fdir, 1, at=_ago(minutes=1))
+    resumed = _compute_next_action(project_root)
+    assert resumed["action"] != "park_item", resumed
+    assert resumed["details"]["failed_attempts"] == 0, resumed
+
+
+def test_an_answered_park_releases_a_grind_casting_through_the_f3_route(run_env):
+    """The ADJACENT path for D-009: `_casting_routes`' other caller.
+
+    `_cast_wave_routing` is the F1 caller the defect was driven on;
+    `_grind_cycle_routing` is the F3 one, and it is not a copy — it passes
+    `landed` explicitly and takes its casting ids from the cycle's grind
+    dispatches. A release that worked only on the CAST arm would leave a GRIND
+    cycle asking its answered question forever, so the arm the defect was NOT
+    found on is driven here.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/c1.py"], no_ui=True)
+    _write_state(
+        fdir, phase="F3", cycle=2,
+        phase_history=[{"phase": "F3", "entered_at": _ago(hours=10)}],
+    )
+    _router_ledger(fdir, [_router_defect("D-001")])
+    (fdir / "handoffs.jsonl").write_text(json.dumps({
+        "timestamp": _ago(hours=7), "event": "grind_dispatched",
+        "defect_id": "D-001", "file": "src/c1.py", "cycle": 2,
+        "casting": "1", "phase": "F3",
+    }) + "\n", encoding="utf-8")
+    _stalled_ledger(fdir, agent="casting-1", hours=3)
+    for hours in (6, 5, 4):
+        _dispatched(fdir, 1, at=_ago(hours=hours), phase="grind")
+
+    owed = _compute_next_action(project_root)
+    assert owed["action"] == "park_item", owed
+    assert owed["details"]["item_ref"] == "casting:1"
+
+    item = _park(
+        project_root, "casting:1", category="env_broken",
+        question=owed["details"]["question"],
+    )
+    _answer(project_root, item, "the crashed tool is fixed, run it again")
+
+    after = _compute_next_action(project_root)
+    assert after["action"] == "redispatch_casting", after
+    assert after["details"]["casting_id"] == "1"
+    assert after["details"]["spawn_phase"] == "grind"
+    assert after["details"]["failed_attempts"] == 0
+
+
 def test_the_router_clears_the_ask_once_work_can_move_without_an_answer(run_env):
     """FR-036: the marker is set by the ask step and is not left behind it.
 
