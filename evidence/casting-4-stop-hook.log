@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_stop_hook.py 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a Stop hook test failed or errored";; *passed*) if [ "$n" -ge 71 ]; then echo "tests/test_stop_hook.py: at least 71 Stop hook tests passed, none failed or errored"; else echo "FLOOR: fewer than 71 Stop hook tests passed"; fi;; *) echo "NO RESULT";; esac
+# evidence-for: US-001, FR-001, FR-007, FR-008, FR-010, FR-036, FR-041, AC-001, AC-002, AC-003, AC-004, AC-034, CT-001, CT-011, GI-002, GI-007, GI-009, GI-011, NFR-002, NFR-007, OT-001, OT-002, OT-003, OT-004, OT-011, ST-014
+# evidence-timeout: 300
+
+tests/test_stop_hook.py: at least 71 Stop hook tests passed, none failed or errored
