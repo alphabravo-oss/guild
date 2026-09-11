@@ -6225,7 +6225,13 @@ def test_a_computed_empty_co_dispatch_set_is_a_row_and_not_a_silence(
         "the manifest declares requirement_ids, so the question WAS answerable"
     )
 
-    rendered = _markdown(report_env).split("## Halt and co-dispatch")[1]
+    # Up to the section's `### Parked items` sub-block: that block is a
+    # different fact (should-not-stop A-016), rendered named-and-empty on a run
+    # that parked nothing, and this test is about the co-dispatch table.
+    rendered = (
+        _markdown(report_env).split("## Halt and co-dispatch")[1]
+        .split("### Parked items")[0]
+    )
     assert "_None recorded._" not in rendered
     assert "(owned alone)" in rendered, (
         "an empty cell reads as 'the report lost it', which is the one thing "
@@ -6589,3 +6595,246 @@ def test_the_span_rows_are_the_f0_9_gates_own_computation(report_env) -> None:
         _recorded_split_reasons(manifest, castings),
     )
     assert _document(report_env)["requirement_span"]["rows"] == expected
+
+
+# --------------------------------------------------------------------------- #
+# should-not-stop AC-032 / AC-033 / FR-016 / FR-019 / FR-032 / FR-033 — what a
+# run that is never stopped for diminishing returns, for STUCK domains or for
+# one parked item keeps instead of stopping: the record in its report. All
+# three render INSIDE existing sections, under `### ` sub-headings, so the
+# section tuple the DONE gate compares is untouched.
+# --------------------------------------------------------------------------- #
+
+
+def _section_text(md: str, heading: str) -> str:
+    """The body of the `## <heading>` section, up to the next `## ` heading."""
+    return md.split(f"## {heading}\n", 1)[1].split("\n## ", 1)[0]
+
+
+def _sub_block(section: str, heading: str) -> str:
+    """The body of a `### <heading>` block inside one section."""
+    return section.split(f"### {heading}\n", 1)[1].split("\n### ", 1)[0]
+
+
+def _filed(did: str, cycle: int) -> dict:
+    return {
+        "id": did, "cycle": cycle, "tier": "LIVE", "class": "K", "status": "fixed",
+        "source": "trace", "type": "UNWIRED", "description": f"{did} description",
+        "file": "src/a.py", "symbol": "handler", "fixed_in_cycle": cycle,
+    }
+
+
+def test_the_spend_section_carries_each_cycles_spend_beside_its_filings(tmp_path):
+    """AC-032 / FR-016 / FR-033 — the per-cycle trend, one row per cycle.
+
+    Each row is that cycle's tokens and minutes from the spend roll-up's own
+    by_cycle bucket beside the defects filed in it, so a long loop's spend and
+    yield read cycle by cycle. A cycle that filed a defect and recorded no
+    spend shows blank spend cells — nobody recorded any — never a zero.
+    """
+    _, doc, md = _demo_run(
+        tmp_path, "trend",
+        state={"phase": "F3", "cycle": 3, **_DEMO_VERSIONS},
+        spend=[
+            {"agent": "casting-1", "phase": "F1", "cycle": 0,
+             "tokens": 5_000, "duration_ms": 300_000},
+            {"agent": "trace", "phase": "F2", "cycle": 1,
+             "tokens": 2_000, "duration_ms": 120_000},
+            {"agent": "casting-1", "phase": "F3", "cycle": 1,
+             "tokens": 1_000, "duration_ms": 60_000},
+            {"agent": "prove", "phase": "F2", "cycle": 2,
+             "tokens": 700, "duration_ms": 30_000},
+        ],
+        defects=[_filed("D-001", 1), _filed("D-002", 1), _filed("D-003", 0),
+                 _filed("D-004", 3)],
+    )
+
+    spend = doc["spend_per_phase_and_cycle"]
+    trend = spend["cycle_trend"]
+    rows = {row["cycle"]: row for row in trend["rows"]}
+    assert [row["cycle"] for row in trend["rows"]] == ["0", "1", "2", "3"]
+    assert trend["row_count"] == 4
+    for cycle in ("0", "1", "2"):
+        for field in ("tokens", "minutes", "records"):
+            assert rows[cycle][field] == spend["by_cycle"][cycle][field], (cycle, field)
+    assert [rows[c]["defects_filed"] for c in ("0", "1", "2", "3")] == [1, 2, 0, 1]
+    assert rows["3"]["tokens"] is None and rows["3"]["minutes"] is None
+
+    block = _sub_block(_section_text(md, "Spend per phase and cycle"),
+                       "Per-cycle spend and finding trend")
+    assert "| Cycle | Tokens | Minutes | Spend records | Defects filed |" in block
+    assert "| 1 | 3000 | 3.0 | 2 | 2 |" in block
+    assert "| 3 |  |  |  | 1 |" in block
+    assert trend["note"] in block
+
+
+def test_with_no_defect_ledger_the_trends_filed_cells_are_unmeasured(tmp_path):
+    """FR-033 / D-104's rule on this axis: an absent ledger is not an empty one."""
+    run_dir, _doc, _md = _demo_run(
+        tmp_path, "no-ledger",
+        spend=[{"agent": "casting-1", "phase": "F1", "cycle": 0,
+                "tokens": 10, "duration_ms": 60_000}],
+    )
+    (run_dir / "defects.json").unlink()
+    _generate(run_dir)
+
+    rows = _document(run_dir)["spend_per_phase_and_cycle"]["cycle_trend"]["rows"]
+    assert rows == [{"cycle": "0", "tokens": 10, "minutes": 1.0, "records": 1,
+                     "defects_filed": None}]
+
+
+def test_parked_items_and_their_answers_are_carried_into_the_report(tmp_path):
+    """FR-032 — each item's category, question and cycle; once answered, the
+    answer, when, and whether it was a halt answer; and an outstanding ask."""
+    parked = {
+        vocab.PARKED_ITEMS_KEY: [
+            {"id": "P-001", "item_ref": "casting:3", "category": "spec_wrong",
+             "question": "Which row stands?", "cycle": 1,
+             "parked_at": "2026-09-11T01:00:00+00:00", "answer": "FR-1 stands",
+             "answered_at": "2026-09-11T02:00:00+00:00", "answer_is_halt": False},
+            {"id": "P-002", "item_ref": "defect:D-004", "category": "env_broken",
+             "question": "Retry offline?", "cycle": 2,
+             "parked_at": "2026-09-11T03:00:00+00:00", "answer": "Halt the run",
+             "answered_at": "2026-09-11T04:00:00+00:00", "answer_is_halt": True},
+            {"id": "P-003", "item_ref": "stream:prove", "category": "unknown_deadlock",
+             "question": "Nothing moves; why?", "cycle": 2,
+             "parked_at": "2026-09-11T05:00:00+00:00", "answer": None,
+             "answered_at": None, "answer_is_halt": False},
+        ],
+        vocab.PARKED_AWAITING_HUMAN_KEY: {
+            "set_at": "2026-09-11T05:30:00+00:00", "cycle": 2, "item_ids": ["P-003"],
+        },
+    }
+    _, doc, md = _demo_run(
+        tmp_path, "parked",
+        state={"phase": "F3", "cycle": 2, **_DEMO_VERSIONS,
+               vocab.PARKED_STATE_KEY: parked},
+    )
+
+    section = doc["halt_and_co_dispatch"]["parked_items"]
+    assert (section["count"], section["open_count"], section["answered_count"],
+            section["halt_answer_count"]) == (3, 1, 2, 1)
+    rows = {item["id"]: item for item in section["items"]}
+    assert rows["P-001"] == {
+        **parked[vocab.PARKED_ITEMS_KEY][0], "status": "answered",
+    }
+    assert rows["P-002"]["answer_is_halt"] is True
+    assert rows["P-003"]["status"] == "open" and rows["P-003"]["answer"] is None
+    assert section["awaiting_human"]["item_ids"] == ["P-003"]
+
+    block = _sub_block(_section_text(md, "Halt and co-dispatch"), "Parked items")
+    assert "3 item(s) parked on this run: 1 open, 2 answered, 1 of them with halt." in block
+    assert ("The run is waiting on the human for P-003, asked at "
+            "2026-09-11T05:30:00+00:00 (cycle 2).") in block
+    assert ("| P-001 | casting:3 | spec_wrong | 1 | Which row stands? | answered | "
+            "FR-1 stands | 2026-09-11T02:00:00+00:00 | no |") in block
+    assert ("| P-002 | defect:D-004 | env_broken | 2 | Retry offline? | answered | "
+            "Halt the run | 2026-09-11T04:00:00+00:00 | yes |") in block
+    assert ("| P-003 | stream:prove | unknown_deadlock | 2 | Nothing moves; why? | "
+            "open | (not yet answered) |  |  |") in block
+
+
+@pytest.mark.parametrize("parked", [None, "P-001", {"items": "P-001"}, [1, 2]])
+def test_an_archive_with_no_parked_field_reads_as_none_and_still_names_the_part(
+    tmp_path, parked
+):
+    """FR-032 — an absent `parked` key, or one of the wrong shape, is no parked
+    items: the additive migration. The part is still named, and empty."""
+    state = {"phase": "F3", "cycle": 1, **_DEMO_VERSIONS}
+    if parked is not None:
+        state[vocab.PARKED_STATE_KEY] = parked
+    _, doc, md = _demo_run(tmp_path, "unparked", state=state)
+
+    section = doc["halt_and_co_dispatch"]["parked_items"]
+    assert section["items"] == [] and section["count"] == 0
+    assert section["awaiting_human"] is None
+    block = _sub_block(_section_text(md, "Halt and co-dispatch"), "Parked items")
+    assert "0 item(s) parked on this run: 0 open, 0 answered, 0 of them with halt." in block
+    assert "_None recorded._" in block
+
+
+def _temper_finding(did: str, tier: str | None, **extra) -> dict:
+    record = {
+        "id": did, "cycle": 2, "source": "temper", "type": "HOLLOW",
+        "class": f"STUCK_{did.replace('-', '_')}", "description": f"{did} stayed STUCK",
+        "file": "src/t.py", "symbol": "probe", "status": "open",
+        "fixed_in_cycle": None,
+        "reproduction_attempted": "drove it three times; still wrong",
+    }
+    if tier is not None:
+        record["tier"] = tier
+    record.update(extra)
+    return record
+
+
+def test_three_or_more_stuck_temper_domains_are_backlog_by_their_own_tier(tmp_path):
+    """AC-033 / FR-019 — the edge case of 3+ STUCK domains, grouped by tier.
+
+    Every open TEMPER filing is listed, in either spelling of the source, under
+    the tier its own filing recorded — never re-tiered, so an untiered one
+    reads as the unknown sentinel. Closed ones and other filers' are not TEMPER
+    backlog.
+    """
+    defects = [
+        _temper_finding("D-010", "HARDENING", spec_ref=None),
+        _temper_finding("D-011", "LATENT"),
+        _temper_finding("D-012", "HARDENING", source="TEMPER", spec_ref=None),
+        _temper_finding("D-013", "LIVE"),
+        _temper_finding("D-014", None),
+        _temper_finding("D-015", "LATENT", status="fixed", fixed_in_cycle=2),
+        _temper_finding("D-016", "LATENT", source="trace"),
+    ]
+    _, doc, md = _demo_run(
+        tmp_path, "stuck",
+        state={"phase": "F5", "cycle": 2, "temper": True, **_DEMO_VERSIONS},
+        defects=defects,
+    )
+
+    backlog = doc["hardening_backlog"]["temper_backlog"]
+    assert backlog["open_count"] == 5
+    assert set(backlog["by_tier"]) == set(vocab.DEFECT_TIER_OR_UNKNOWN)
+    assert backlog["by_tier"]["HARDENING"] == {"count": 2, "ids": ["D-010", "D-012"]}
+    assert backlog["by_tier"]["LATENT"] == {"count": 1, "ids": ["D-011"]}
+    assert backlog["by_tier"]["LIVE"] == {"count": 1, "ids": ["D-013"]}
+    assert backlog["by_tier"][vocab.TIER_UNKNOWN] == {"count": 1, "ids": ["D-014"]}
+    order = sorted(vocab.DEFECT_TIER_OR_UNKNOWN)
+    ranks = [order.index(row["tier"]) for row in backlog["defects"]]
+    assert ranks == sorted(ranks), "rows read tier by tier"
+    for row in backlog["defects"]:
+        record = next(d for d in defects if d["id"] == row["id"])
+        assert row["tier"] == vocab.defect_tier(record), row
+
+    block = _sub_block(_section_text(md, "HARDENING backlog"),
+                       "TEMPER backlog (STUCK domains)")
+    assert "5 open finding(s) TEMPER filed, by their own tier:" in block
+    assert "nobody is asked (FR-019)" in block
+    for did in ("D-010", "D-011", "D-012", "D-013", "D-014"):
+        assert f"| {did} |" in block, did
+    for did in ("D-015", "D-016"):
+        assert f"| {did} |" not in block, did
+
+
+def test_the_new_renderings_add_no_report_section_and_the_done_read_is_unchanged(
+    tmp_path,
+):
+    """GI-008 / GI-010 — the trend, the parked items and the STUCK backlog
+    render inside existing sections, so REPORT_REQUIRED_SECTIONS, the `## `
+    headings and the DONE gate's report read are exactly what they were."""
+    run_dir, doc, md = _demo_run(
+        tmp_path, "sections",
+        spend=[{"agent": "casting-1", "phase": "F1", "cycle": 0,
+                "tokens": 10, "duration_ms": 60_000}],
+        defects=[_temper_finding("D-020", "LATENT")],
+    )
+
+    assert tuple(k for k in doc if k not in ("generated_at", "run")) == (
+        vocab.REPORT_REQUIRED_SECTIONS
+    )
+    assert [ln for ln in md.splitlines() if ln.startswith("## ")] == [
+        f"## {vocab.REPORT_SECTION_TITLES[k]}" for k in vocab.REPORT_REQUIRED_SECTIONS
+    ]
+    for sub in ("### Per-cycle spend and finding trend", "### Parked items",
+                "### TEMPER backlog (STUCK domains)"):
+        assert sub in md.splitlines(), sub
+    status = report_document_status(run_dir)
+    assert status["present"] is True, status

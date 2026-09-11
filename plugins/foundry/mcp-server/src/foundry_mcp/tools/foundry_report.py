@@ -55,12 +55,27 @@ from pathlib import Path
 from typing import Any
 
 from foundry_mcp.schemas.vocab import (
+    AWAITING_FIELD_CYCLE,
+    AWAITING_FIELD_ITEM_IDS,
+    AWAITING_FIELD_SET_AT,
     CONVERGENCE_TARGET,
     DEFECT_TIER_OR_UNKNOWN,
     ESCALATION_EXIT_REASONS,
     ESCALATION_STATUSES,
     HANDOFF_EVENT_LEAD_FIX,
     INSPECT_MODES,
+    PARKED_AWAITING_HUMAN_KEY,
+    PARKED_FIELD_ANSWER,
+    PARKED_FIELD_ANSWER_IS_HALT,
+    PARKED_FIELD_ANSWERED_AT,
+    PARKED_FIELD_CATEGORY,
+    PARKED_FIELD_CYCLE,
+    PARKED_FIELD_ID,
+    PARKED_FIELD_ITEM_REF,
+    PARKED_FIELD_QUESTION,
+    PARKED_ITEM_FIELDS,
+    PARKED_ITEMS_KEY,
+    PARKED_STATE_KEY,
     REPORT_JSON_FILENAME,
     REPORT_MD_FILENAME,
     REPORT_REQUIRED_SECTIONS,
@@ -71,6 +86,7 @@ from foundry_mcp.schemas.vocab import (
     THUNDER_VIPER_BASELINE,
     TIER_HARDENING,
     TIER_UNKNOWN,
+    canonical_defect_source,
     canonical_stream_id,
     defect_tier,
     escalation_status,
@@ -159,6 +175,57 @@ NO_LOCATION_CELL = "(none recorded)"
 #: the same kind of gap as a blank Symbol, when one is a filing that recorded
 #: less than it could and the other is the invariant holding.
 NO_SPEC_REF_CELL = "(none, as required)"
+
+#: should-not-stop FR-019 / AC-033 — the canonical `source` of a TEMPER filing.
+#:
+#: Resolved through `vocab.canonical_defect_source`, never compared as a raw
+#: string: the ledger carries the wire spelling `temper` from the filing doors
+#: and the canonical `TEMPER` from anything that normalised it, and a match on
+#: one spelling would drop every row written in the other from the backlog.
+_TEMPER_SOURCE = canonical_defect_source("temper")
+
+
+def _temper_backlog_section(rows: list[dict]) -> dict:
+    """FR-019 / AC-033 — every open finding TEMPER filed, grouped by its own tier.
+
+    TEMPER ends on its mechanical rule and the run moves on; a domain it could
+    not bring to SOLID within its attempts is marked STUCK and filed through
+    `Foundry-Defect` with a tier, and nobody is asked. So the STUCK residue is
+    not a status this module reads from anywhere — no code records one — it is
+    the set of open `source: temper` filings, and this groups them by the tier
+    each filing recorded. Nothing here re-tiers a row: `tier` is
+    `vocab.defect_tier`'s reading of the record, the same one the cross-tab and
+    the gates use, so a LIVE row still reads LIVE and still blocks as LIVE.
+
+    `by_tier` carries every member of `DEFECT_TIER_OR_UNKNOWN`, including
+    zeros, for the cross-tab's reason: "0 LATENT TEMPER findings" is a
+    measurement and an absent key is not. Three or more STUCK domains are three
+    or more rows here and nothing else; the count never changes what the run
+    does, because nothing reads this section but the report.
+    """
+    order = sorted(DEFECT_TIER_OR_UNKNOWN)
+    by_tier: dict[str, dict[str, Any]] = {tier: {"count": 0, "ids": []} for tier in order}
+    for row in rows:
+        bucket = by_tier[row["tier"]]
+        bucket["count"] += 1
+        bucket["ids"].append(row.get("id"))
+    return {
+        "open_count": len(rows),
+        "by_tier": by_tier,
+        # Grouped in the cross-tab's tier order, ledger order within a tier, so
+        # the markdown table reads tier by tier exactly as `by_tier` counts it.
+        "defects": sorted(rows, key=lambda r: order.index(r["tier"])),
+        "note": (
+            "Every open finding TEMPER filed, by the tier its own filing "
+            "recorded. TEMPER ends on its mechanical rule and the run moves on "
+            "through its doors: a domain it could not bring to SOLID within its "
+            "attempts is marked STUCK and filed through Foundry-Defect with a "
+            "tier, and nobody is asked (FR-019). No row is re-tiered here, so a "
+            "LIVE row still blocks the gates as LIVE and a LATENT or HARDENING "
+            "row is backlog the next run's lead receives; each row is also "
+            "counted under its tier in the sections above."
+        ),
+    }
 
 
 def _agent_id_for_casting(casting_id: int | str) -> str:
@@ -380,6 +447,7 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
     }
     latent_backlog: list[dict] = []
     hardening_backlog: list[dict] = []
+    temper_rows: list[dict] = []
     unknown_rows: list[dict] = []
     closed_unknown: list[Any] = []
     for record in records:
@@ -391,6 +459,24 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
         bucket = cross[tier].setdefault(status, {"count": 0, "ids": []})
         bucket["count"] += 1
         bucket["ids"].append(record.get("id"))
+
+        if status == "open" and canonical_defect_source(record.get("source")) == _TEMPER_SOURCE:
+            # FR-019 — a STUCK domain's filing, on this same parse. The row
+            # carries its own `tier` so `_temper_backlog_section` groups it
+            # without re-reading the record, and the location for D-029's
+            # reason: the next run's lead has no defects.json to join against.
+            temper_rows.append(
+                {
+                    "id": record.get("id"),
+                    "tier": tier,
+                    "class": record.get("class"),
+                    **_location_fields(record),
+                    "type": record.get("type"),
+                    "description": record.get("description"),
+                    "reproduction_attempted": record.get("reproduction_attempted"),
+                    "cycle": record.get("cycle"),
+                }
+            )
 
         if tier == "LATENT" and status == "open":
             # D-029 — `file` and `symbol` are part of the backlog row, not
@@ -529,6 +615,9 @@ def _read_defect_sections(run_dir: Path) -> tuple[dict[str, Any], str | None]:
             # the key exists before reading it.
             "undriven_temper_candidates": [],
             "temper_ran": None,
+            # FR-019 / AC-033 — the STUCK residue beside the TEMPER keys this
+            # section already carries, grouped by each finding's own tier.
+            "temper_backlog": _temper_backlog_section(temper_rows),
         },
         "unknown_tier_defects": {
             "count": len(unknown_rows),
@@ -1045,6 +1134,72 @@ def _read_spend(
     return table, None
 
 
+def _cycle_trend_section(
+    spend: dict, fallout: dict, *, defect_ledger_present: bool
+) -> dict:
+    """should-not-stop FR-016 / FR-033 / AC-032 — each cycle's spend beside what it found.
+
+    "Never stop for diminishing returns. The lead records a per-cycle
+    cost/finding trend in the ledger and report." Only the launch cap ends the
+    INSPECT/GRIND loop, so a long loop is kept going and its trend is what the
+    operator reads afterwards — this is the report half of that record.
+
+    A JOIN OF TWO EXISTING READINGS, AND NOTHING NEW (FR-033). The tokens,
+    minutes and record count are `spend_rollup`'s own `by_cycle` buckets — the
+    ledger's rows under the server cycle each `Foundry-Spend` call stamped —
+    copied, never re-summed. The finding count is `fallout_rows`' per-cycle
+    axis: every defect record lands in exactly one of its `measured` or
+    `unmeasured` counts for the cycle it was filed at, so their sum is the
+    defects filed in that cycle, whatever their tier or later status. Both
+    readers key cycles as `str(cycle)` and order them by `cycle_sort_key`,
+    which is what lets the two sit on one axis.
+
+    AN ABSENT ROW IS NOT A MEASURED ZERO. A cycle the spend ledger holds no
+    bucket for carries None in its spend cells — nobody recorded spend there —
+    and a run with no defects.json at all carries None in every finding cell,
+    because an absent ledger is not an empty one (`fallout_rows`' D-104 rule).
+    A cycle with a bucket and no filing reads 0 filed, which IS a measurement.
+
+    The `unreported` column is deliberately not joined: `_read_spend`'s note
+    says the cycle axis covers F2 stream agents only, and a trend row carrying
+    it would read as the per-cycle total that axis cannot give.
+    """
+    by_cycle = spend.get("by_cycle") or {}
+    per_cycle = fallout.get("per_cycle") or {}
+    rows: list[dict] = []
+    for key in sorted(set(by_cycle) | set(per_cycle), key=_cycle_sort_key):
+        bucket = by_cycle.get(key)
+        filing = per_cycle.get(key)
+        if not defect_ledger_present:
+            filed: int | None = None
+        elif filing is None:
+            filed = 0
+        else:
+            filed = _as_count(filing.get("measured")) + _as_count(filing.get("unmeasured"))
+        rows.append({
+            "cycle": key,
+            "tokens": bucket.get("tokens") if isinstance(bucket, dict) else None,
+            "minutes": bucket.get("minutes") if isinstance(bucket, dict) else None,
+            "records": bucket.get("records") if isinstance(bucket, dict) else None,
+            "defects_filed": filed,
+        })
+    return {
+        "row_count": len(rows),
+        "rows": rows,
+        "note": (
+            "One row per cycle, in cycle order: that cycle's tokens and "
+            "minutes from the spend ledger beside the defects filed in it, so "
+            "the loop's spend and its yield read cycle by cycle. The loop is "
+            "never stopped for diminishing returns — only the launch cap ends "
+            "it — and this trend is recorded, never acted on by a gate "
+            "(FR-016). A blank spend cell is a cycle with no spend recorded, "
+            "and a blank filed cell a run with no defect ledger; neither is a "
+            "measured zero. Tokens and minutes are the Tokens and Minutes of "
+            "the cycle rows above, the same numbers (FR-033)."
+        ),
+    }
+
+
 def _read_dispatch_summary(run_dir: Path) -> tuple[dict, str | None]:
     """AC-034 / CT-013 — the run's unreported-dispatch counts, derived ONCE.
 
@@ -1456,6 +1611,60 @@ def _stream_coverage_section(run_dir: Path) -> tuple[dict, str | None]:
     }, None
 
 
+def _parked_items_section(state: dict) -> dict:
+    """should-not-stop FR-032 — every parked item and its answer, carried into the report.
+
+    Read from the `state.json` this generator already loaded, in the shape
+    `schemas/vocab.py` fixes beside `PARKED_STATE_KEY` and spelled with its
+    constants. Never through `orchestration/park.py`: that is the lifecycle
+    module that WRITES the key, and this module reaches only the leaves.
+
+    TOLERANT, like every reader here, and for the report's reason: an archive
+    written before the park door existed has no `parked` key, and that reads as
+    no parked items — the additive migration — rather than as a refusal. A
+    value of the wrong shape reads the same way; the park door refuses to write
+    over one, so nothing tolerated here is ever silently overwritten.
+
+    NAMED AND EMPTY. `items` is always present, `[]` on a run that parked
+    nothing, and REPORT.md always carries the sub-heading: "no item was parked"
+    is a measurement, exactly as an empty cross-tab tier is.
+
+    `answer_is_halt` is read as the recorded boolean and never inferred from
+    the answer's words — the park door writes it only from the explicit halt
+    indicator, and a report that guessed it would claim a halt nobody recorded.
+    """
+    raw = state.get(PARKED_STATE_KEY)
+    raw_items = raw.get(PARKED_ITEMS_KEY) if isinstance(raw, dict) else None
+    awaiting = raw.get(PARKED_AWAITING_HUMAN_KEY) if isinstance(raw, dict) else None
+
+    items: list[dict] = []
+    for item in raw_items if isinstance(raw_items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        row = {field: item.get(field) for field in PARKED_ITEM_FIELDS}
+        row[PARKED_FIELD_ANSWER_IS_HALT] = item.get(PARKED_FIELD_ANSWER_IS_HALT) is True
+        row["status"] = "answered" if item.get(PARKED_FIELD_ANSWERED_AT) else "open"
+        items.append(row)
+
+    answered = [i for i in items if i["status"] == "answered"]
+    return {
+        "count": len(items),
+        "open_count": len(items) - len(answered),
+        "answered_count": len(answered),
+        "halt_answer_count": sum(1 for i in answered if i[PARKED_FIELD_ANSWER_IS_HALT]),
+        "items": items,
+        "awaiting_human": dict(awaiting) if isinstance(awaiting, dict) else None,
+        "note": (
+            "A parked item is one unit of work set aside with a question only "
+            "the human could settle, in one of the park categories, while "
+            "every casting, defect and stream it did not block kept moving. "
+            "Foundry-Next asked the human only when nothing else could move, "
+            "and an answer released the item where it stood. A halt answer is "
+            "the recorded halt indicator, never a reading of the words (FR-032)."
+        ),
+    }
+
+
 def _halt_and_co_dispatch_section(
     run_dir: Path, state: dict, *, requirements_not_computable: bool = False
 ) -> tuple[dict, str | None]:
@@ -1573,6 +1782,9 @@ def _halt_and_co_dispatch_section(
             else ""
         ),
         "co_dispatch_owned_alone_count": len(owned_alone),
+        # FR-032 — how the run WAITED sits beside how it stopped: a parked item
+        # is the one sanctioned wait on the human after start_cast.
+        "parked_items": _parked_items_section(state),
         "note": (
             "HALTED is a named terminal state and is NOT DONE (ST-001 / "
             "CT-004): the report is generated and every open defect is named "
@@ -2264,6 +2476,7 @@ def _render_section(key: str, value: dict) -> list[str]:
         # (GI-014) — a row without one is a record that should never have been
         # accepted, and printing the column is what makes that visible.
         candidates = value.get("undriven_temper_candidates") or []
+        temper = value.get("temper_backlog") or {}
         temper_ran = value.get("temper_ran")
         if temper_ran is False:
             temper_clause = (
@@ -2325,6 +2538,29 @@ def _render_section(key: str, value: dict) -> list[str]:
                   c.get("file") or NO_LOCATION_CELL,
                   c.get("symbol") or NO_LOCATION_CELL, c.get("description")]
                  for c in candidates],
+            )
+            # FR-019 / AC-033 — the STUCK residue, tier by tier. A `### `
+            # sub-heading, never `## `: the gate and the seal split on whole
+            # `## ` lines, so this stays inside the HARDENING section's body.
+            + ["",
+               "### TEMPER backlog (STUCK domains)",
+               "",
+               f"{temper.get('open_count', 0)} open finding(s) TEMPER filed, by "
+               "their own tier: "
+               + ", ".join(
+                   f"{tier} {bucket.get('count', 0)}"
+                   for tier, bucket in (temper.get("by_tier") or {}).items()
+               )
+               + ". " + str(temper.get("note", "")),
+               ""]
+            + _md_table(
+                ["Tier", "ID", "Class", "Cycle", "File", "Symbol",
+                 "Reproduction attempted", "Description"],
+                [[d.get("tier"), d.get("id"), d.get("class"), d.get("cycle"),
+                  d.get("file") or NO_LOCATION_CELL,
+                  d.get("symbol") or NO_LOCATION_CELL,
+                  d.get("reproduction_attempted"), d.get("description")]
+                 for d in temper.get("defects", [])],
             )
         )
     if key == "fallout_per_cycle":
@@ -2510,6 +2746,40 @@ def _render_section(key: str, value: dict) -> list[str]:
                 "manifest DOES declare requirement_ids, so the question was "
                 "answerable; nothing was dispatched with one."
             )
+        # FR-032 — the parked items and their answers, as a `### ` sub-heading
+        # that is always rendered: named and empty on a run that parked nothing.
+        parked = value.get("parked_items") or {}
+        parked_line = (
+            f"{parked.get('count', 0)} item(s) parked on this run: "
+            f"{parked.get('open_count', 0)} open, "
+            f"{parked.get('answered_count', 0)} answered, "
+            f"{parked.get('halt_answer_count', 0)} of them with halt."
+        )
+        waiting = parked.get("awaiting_human")
+        if isinstance(waiting, dict):
+            asked_cycle = waiting.get(AWAITING_FIELD_CYCLE)
+            parked_line += (
+                " The run is waiting on the human for "
+                + ", ".join(str(i) for i in (waiting.get(AWAITING_FIELD_ITEM_IDS) or []))
+                + (f", asked at {waiting[AWAITING_FIELD_SET_AT]}"
+                   if waiting.get(AWAITING_FIELD_SET_AT) else "")
+                + (f" (cycle {asked_cycle})"
+                   if isinstance(asked_cycle, int) and not isinstance(asked_cycle, bool)
+                   else "")
+                + "."
+            )
+        parked_rows = []
+        for item in parked.get("items") or []:
+            answered = item.get("status") == "answered"
+            parked_rows.append([
+                item.get(PARKED_FIELD_ID), item.get(PARKED_FIELD_ITEM_REF),
+                item.get(PARKED_FIELD_CATEGORY), item.get(PARKED_FIELD_CYCLE),
+                item.get(PARKED_FIELD_QUESTION), item.get("status"),
+                item.get(PARKED_FIELD_ANSWER) if answered else "(not yet answered)",
+                item.get(PARKED_FIELD_ANSWERED_AT) if answered else None,
+                ("yes" if item.get(PARKED_FIELD_ANSWER_IS_HALT) else "no")
+                if answered else None,
+            ])
         return (
             [headline, "", census, "", str(value.get("note", "")), ""]
             + _md_table(
@@ -2517,9 +2787,17 @@ def _render_section(key: str, value: dict) -> list[str]:
                  "Originating defects", "Requirement IDs"],
                 rows,
             )
+            + ["", "### Parked items", "", parked_line, "",
+               str(parked.get("note", "")), ""]
+            + _md_table(
+                ["ID", "Item", "Category", "Cycle", "Question", "Status",
+                 "Answer", "Answered at", "Halt answer"],
+                parked_rows,
+            )
         )
     if key == "spend_per_phase_and_cycle":
         total = value.get("total") or {}
+        trend = value.get("cycle_trend") or {}
 
         def _spend_row(scope: str, name: str, bucket: dict) -> list[Any]:
             return [scope, name, bucket.get("tokens"), bucket.get("minutes"),
@@ -2600,6 +2878,18 @@ def _render_section(key: str, value: dict) -> list[str]:
             )
             + trailer
             + ["", str(value.get("note", ""))]
+            # FR-016 / FR-033 — the per-cycle trend beside the cycle rows it
+            # reads, under a `### ` sub-heading so the section set is unchanged.
+            + ["", "### Per-cycle spend and finding trend", "",
+               f"{trend.get('row_count', 0)} cycle(s) on the trend. "
+               + str(trend.get("note", "")),
+               ""]
+            + _md_table(
+                ["Cycle", "Tokens", "Minutes", "Spend records", "Defects filed"],
+                [[r.get("cycle"), r.get("tokens"), r.get("minutes"),
+                  r.get("records"), r.get("defects_filed")]
+                 for r in trend.get("rows") or []],
+            )
         )
     if key == "unreported_dispatches":
         rows = [[phase, ", ".join(agents)]
@@ -2843,6 +3133,14 @@ def generate_report(project_root: Path, run_dir: Path) -> dict:
     fallout = fallout_rows(run_dir, axis_top=derive_cycle_count(run_dir)["index"])
     if fallout.get("problem") is not None:
         return _refusal(DEFECTS_FILENAME, fallout["problem"])
+
+    # should-not-stop FR-016 / FR-033 — the per-cycle trend, beside the spend
+    # section's own cycle rows. Joined here because it needs both readings and
+    # this is the first point at which both exist; see `_cycle_trend_section`.
+    spend["cycle_trend"] = _cycle_trend_section(
+        spend, fallout,
+        defect_ledger_present=(run_dir / DEFECTS_FILENAME).exists(),
+    )
 
     sections: dict[str, Any] = {
         "verdict_matrix": verdict_matrix,

@@ -1215,8 +1215,16 @@ def test_the_report_spend_table_is_the_leafs_spend_rollup(report_run) -> None:
     for field in ("records", "by_phase", "by_cycle", "total", "state_rollup",
                   "disagreements", "unreported_without_cycle"):
         assert section[field] == table[field], field
-    # The section adds prose and NOTHING else.
-    assert set(section) == set(table) | {"note"}
+    # The section adds prose and the should-not-stop per-cycle trend (interview
+    # answer A-012, cited as an answer id per the lead's ruling on concern
+    # C-003), and NOTHING else — and the trend is a JOIN, not a third copy of
+    # the arithmetic: every spend number on a trend row is the leaf's own
+    # by_cycle bucket, read back field by field.
+    assert set(section) == set(table) | {"note", "cycle_trend"}
+    for row in section["cycle_trend"]["rows"]:
+        bucket = table["by_cycle"].get(row["cycle"])
+        for field in ("tokens", "minutes", "records"):
+            assert row[field] == (bucket[field] if bucket else None), (row, field)
 
 
 def test_the_spend_unreported_column_and_the_dispatch_section_are_one_object(
