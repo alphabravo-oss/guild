@@ -1,0 +1,5 @@
+# evidence-cmd: n=$(grep -rlE 'TeamCreate|TeamDelete' plugins/foundry/commands plugins/foundry/agents plugins/foundry/skills plugins/foundry/references plugins/foundry/scripts plugins/foundry/hooks | wc -l | tr -d ' ') && echo "files under commands, agents, skills, references, scripts and hooks naming TeamCreate or TeamDelete: $n"
+# evidence-for: AC-027, FR-021, GI-001, OT-024
+# evidence-timeout: 300
+
+files under commands, agents, skills, references, scripts and hooks naming TeamCreate or TeamDelete: 0

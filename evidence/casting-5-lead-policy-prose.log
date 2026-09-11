@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_lead_prose.py 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a lead-prose test failed or errored";; *passed*) if [ "$n" -ge 340 ]; then echo "lead-prose: at least 340 tests passed, none failed or errored"; else echo "FLOOR: fewer than 340 lead-prose tests passed"; fi;; *) echo "NO RESULT";; esac
+# evidence-for: US-008, AC-019, AC-023, AC-027, AC-031, FR-002, FR-003, FR-004, FR-013, FR-016, FR-017, FR-021, FR-029, FR-030, NFR-006, GI-001, GI-003, GI-004, ST-012, OT-018, OT-024, OT-026, OT-028, OT-029
+# evidence-timeout: 300
+
+lead-prose: at least 340 tests passed, none failed or errored

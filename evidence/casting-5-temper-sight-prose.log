@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_skill_prose.py::test_temper_records_stuck_domains_instead_of_stopping_for_review tests/test_skill_prose.py::test_sight_parks_an_unavailable_browser_as_env_broken 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a temper-and-sight-prose test failed or errored";; *passed*) if [ "$n" -ge 2 ]; then echo "temper-and-sight-prose: at least 2 tests passed, none failed or errored"; else echo "FLOOR: fewer than 2 temper-and-sight-prose tests passed"; fi;; *) echo "NO RESULT";; esac
+# evidence-for: US-008, AC-033, FR-019, FR-026, ST-013, OT-027
+# evidence-timeout: 300
+
+temper-and-sight-prose: at least 2 tests passed, none failed or errored
