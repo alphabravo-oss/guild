@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/orchestration/test_park.py 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a park-door test failed or errored";; *passed*) if [ "$n" -ge 60 ]; then echo "tests/orchestration/test_park.py: at least 60 tests passed, none failed or errored"; else echo "FLOOR: fewer than 60 park-door tests passed"; fi;; *) echo "NO RESULT";; esac
+# evidence-for: US-002, US-003, FR-002, FR-006, FR-014, FR-031, AC-006, AC-010, AC-014, CT-003, CT-004, ST-001, ST-003, ST-004, OT-007, OT-008, OT-016, GI-006
+# evidence-timeout: 300
+
+tests/orchestration/test_park.py: at least 60 tests passed, none failed or errored

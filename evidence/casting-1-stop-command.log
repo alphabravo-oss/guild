@@ -1,0 +1,6 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/orchestration/test_transitions.py::test_the_stop_commands_own_shell_step_writes_the_token_the_door_consumes tests/orchestration/test_transitions.py::test_the_stop_step_writes_no_token_when_no_run_is_in_the_build tests/orchestration/test_transitions.py::test_the_stop_command_stops_agents_then_seals_user_stop_and_names_no_removed_team_tool tests/orchestration/test_transitions.py::test_no_tool_this_server_advertises_names_a_removed_team_tool 2>&1 | tail -1) && case "$out" in *failed*|*error*|*skipped*) echo "FAIL: a stop-command test failed, errored or skipped";; "4 passed"*) echo "stop-command tests: all 4 passed (its shell step writes the token the halt door consumes; it seals user_stop; no removed team tool is named)";; *) echo "NO RESULT";; esac; echo "TeamCreate/TeamDelete lines in commands/stop.md: $(grep -c -E 'TeamCreate|TeamDelete' ../commands/stop.md)"
+# evidence-for: US-003, FR-015, FR-021, FR-035, AC-013, AC-027, CT-007, CT-010, ST-005, OT-015, OT-024, GI-001, GI-012
+# evidence-timeout: 300
+
+stop-command tests: all 4 passed (its shell step writes the token the halt door consumes; it seals user_stop; no removed team tool is named)
+TeamCreate/TeamDelete lines in commands/stop.md: 0
