@@ -5043,10 +5043,24 @@ def _stop_md_shell_step() -> str:
     return blocks[0]
 
 
-def _run_stop_step(project_root) -> subprocess.CompletedProcess:
+def _run_stop_step(project_root, *, project_dir=None) -> subprocess.CompletedProcess:
+    """stop.md's shell step, run the way the human's invocation runs it.
+
+    CLAUDE_PROJECT_DIR is SCRUBBED unless a test sets it, exactly as
+    `tests/test_stop_hook.py#_hook_env` scrubs it for the hook that reads the
+    same rule. The step falls through to that root now (should-not-stop D-006),
+    so an ambient one — this suite is usually run from inside a Claude Code
+    session, which sets it — would point these tests at the operator's REAL
+    archive and the live run in it, instead of the tmp run they arranged.
+    """
+    import os
+
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+    if project_dir is not None:
+        env["CLAUDE_PROJECT_DIR"] = str(project_dir)
     return subprocess.run(
         ["bash", "-c", _stop_md_shell_step()], cwd=project_root,
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, timeout=60, env=env,
     )
 
 
@@ -5110,6 +5124,100 @@ def test_the_stop_step_writes_no_token_when_no_run_is_in_the_build(run_env):
     assert ran.returncode == 0, ran.stderr
     assert "no token was written" in ran.stdout, ran.stdout
     assert not (fdir / vocab.STOP_TOKEN_FILENAME).exists()
+
+
+@pytest.mark.skipif(_NO_SHELL, reason="the stop step needs bash and python3 on PATH")
+def test_a_cwd_drifted_below_the_project_still_writes_the_token_for_the_live_run(run_env):
+    """should-not-stop D-006 / C-008 — CT-010 / AC-013 / CT-007 / FR-015 / ST-005.
+
+    THE DRIFT CASE, which is routine on a self-targeting run: the lead ran
+    `cd plugins/foundry/mcp-server` to run the suite, so the session's working
+    directory sits BELOW the project and holds no `foundry-archive/`. The Stop
+    hook finds the run from there — `hooks/foundry_active_run.py#project_roots`
+    falls through to CLAUDE_PROJECT_DIR, which is the root the server writes the
+    archive under (plugin.json launches it with `--project-root
+    ${CLAUDE_PROJECT_DIR}`) — and holds the lead's turn open.
+
+    This step resolved `foundry-archive/` against the process cwd ALONE, so it
+    found nothing, wrote no token, and printed that no run was in F1..F5.5. The
+    two readers of one rule disagreed in exactly this case, and the cost landed
+    on the human: the hook holds the turn open on a live run while the human's
+    own /foundry:stop can write no proof, so `_usable_stop_token` refuses the
+    seal for want of a token nothing was able to write, and the human cannot
+    stop their own run.
+    """
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+    drifted = Path(project_root) / "plugins" / "foundry" / "mcp-server"
+    drifted.mkdir(parents=True)
+
+    ran = _run_stop_step(drifted, project_dir=project_root)
+
+    assert ran.returncode == 0, ran.stderr
+    assert fdir.name in ran.stdout, ran.stdout
+    written = json.loads((fdir / vocab.STOP_TOKEN_FILENAME).read_text(encoding="utf-8"))
+    assert written[vocab.STOP_TOKEN_FIELD_RUN] == fdir.name, written
+
+    # The token the DRIFTED invocation wrote is proof the door consumes: the
+    # human's stop seals from wherever the session's directory happened to be.
+    _arm_ordering_token(fdir)
+    sealed = foundry_mark_phase_complete(
+        "halt", project_root, reason="user_stop", text="the human's stop",
+    )
+    assert sealed.get("ok") is True, sealed
+    assert sealed["halt_proof"]["consumed"] is True, sealed
+
+
+@pytest.mark.skipif(_NO_SHELL, reason="the stop step needs bash and python3 on PATH")
+def test_a_drifted_cwd_with_no_project_dir_writes_no_token(run_env):
+    """The LIMIT of the fallthrough, pinned where the hook pins its own
+    (`tests/test_stop_hook.py#test_a_drifted_cwd_with_no_project_dir_finds_
+    nothing_to_hold`): with no root that holds the archive there is no run to
+    write a token for, and the step says so rather than guessing at one."""
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+    drifted = Path(project_root) / "sub"
+    drifted.mkdir()
+
+    ran = _run_stop_step(drifted)
+
+    assert ran.returncode == 0, ran.stderr
+    assert "no token was written" in ran.stdout, ran.stdout
+    assert not (fdir / vocab.STOP_TOKEN_FILENAME).exists()
+
+
+@pytest.mark.skipif(_NO_SHELL, reason="the stop step needs bash and python3 on PATH")
+def test_the_working_directorys_run_is_taken_before_the_project_dirs_run(run_env):
+    """THE ADJACENT PATH: the precedence branch, not the drift branch above.
+
+    The rule is FIRST ROOT THAT HOLDS A QUALIFYING RUN, never globally-newest
+    and never CLAUDE_PROJECT_DIR-first. The project-dir run here is deliberately
+    the NEWER of the two, so a step that scanned both roots and took the newest
+    state.json, or one that simply worked from CLAUDE_PROJECT_DIR, would write
+    the token for the wrong project and pass every other test in this file.
+    `tests/test_stop_hook.py#test_the_event_cwd_run_is_taken_before_the_project_
+    dir_run` holds the hook to the same precedence on the same inputs.
+    """
+    import os
+
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+    other_root = Path(project_root) / "other-project"
+    other = other_root / "foundry-archive" / "env-run"
+    other.mkdir(parents=True)
+    (other / "state.json").write_text(json.dumps({"phase": "F3"}), encoding="utf-8")
+    newer = (fdir / "state.json").stat().st_mtime + 3600
+    os.utime(other / "state.json", (newer, newer))
+
+    ran = _run_stop_step(project_root, project_dir=other_root)
+
+    assert ran.returncode == 0, ran.stderr
+    assert fdir.name in ran.stdout, ran.stdout
+    assert (fdir / vocab.STOP_TOKEN_FILENAME).exists()
+    assert not (other / vocab.STOP_TOKEN_FILENAME).exists(), (
+        "the project-dir root was reached even though the working directory "
+        "held a qualifying run"
+    )
 
 
 def test_the_stop_command_stops_agents_then_seals_user_stop_and_names_no_removed_team_tool():

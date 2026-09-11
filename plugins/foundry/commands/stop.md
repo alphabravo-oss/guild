@@ -12,7 +12,9 @@ Stop the active foundry run. This is the human's own stop: the run ends **HALTED
 
 After `start_cast` the halt door accepts `user_stop` from the lead only on proof the human asked for it. The shell step below writes that proof: a one-time token in the active run's archive, `foundry-archive/<run>/.stop-token.json`. Claude Code runs it when the human invokes `/foundry:stop`, before the model reads this file, and `disable-model-invocation` keeps the model from invoking this command at all. **The lead never writes, copies or edits this token** — a token the lead made is the lead's word, and the halt door exists to refuse that.
 
-**The active run** is the run under `foundry-archive/` whose `state.json` phase is F1..F5.5 and not HALTED or DONE. If several qualify, it is the one whose `state.json` was modified most recently. This is the same rule the Stop hook applies.
+**The active run** is the run under `foundry-archive/` whose `state.json` phase is F1..F5.5 and not HALTED or DONE. If several qualify, it is the one whose `state.json` was modified most recently. This is the same rule the Stop hook applies, and it is applied under the same roots in the same order: this session's working directory first, then `CLAUDE_PROJECT_DIR`, with the first root that holds a qualifying run winning. (The hook tries its event `cwd` ahead of both; for a shell step that is the working directory, so the two orders are one order.)
+
+**The fallthrough to `CLAUDE_PROJECT_DIR` is what makes the two agree when the session's directory has drifted below the project** — a lead that ran `cd plugins/foundry/mcp-server` to run the suite, which is routine on a self-targeting run. The server writes the archive under that root, because `plugin.json` launches it with `--project-root ${CLAUDE_PROJECT_DIR}`. Without the fallthrough the step resolves `foundry-archive/` against the working directory alone, finds nothing and writes no token, while the hook finds the run and holds the lead's turn open — and the cost lands on you: the halt door then refuses your own stop for want of proof that nothing was able to write.
 
 The token names its run, carries its creation time, and proves a halt for 60 minutes. The halt door refuses a token that is missing, names another run, is older than that, or has already been consumed. The halt it proves consumes it, and a second halt presenting it is refused. Before CAST (F0.x) no token is written and none is needed.
 
@@ -25,20 +27,49 @@ from pathlib import Path
 LIVE_PHASES = ("F1", "F2", "F3", "F4", "F5", "F5.5")  # start_cast to NYQUIST
 TOKEN_FILENAME = ".stop-token.json"
 
-candidates = []
-archive = Path("foundry-archive")
-for state_path in sorted(archive.glob("*/state.json")) if archive.is_dir() else []:
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        continue
-    if isinstance(state, dict) and state.get("phase") in LIVE_PHASES:
-        candidates.append((state_path.stat().st_mtime, state_path.parent))
+# THE ROOTS, IN THE ORDER THE STOP HOOK TRIES THEM: this session's working
+# directory, then CLAUDE_PROJECT_DIR — the root the server writes the archive
+# under, because plugin.json launches it with `--project-root
+# ${CLAUDE_PROJECT_DIR}`. The FIRST root holding a qualifying run wins.
+# hooks/foundry_active_run.py#project_roots tries a hook event's cwd ahead of
+# both; for a shell step that IS the working directory, so the two orders are
+# one order. A root naming a directory an earlier one already named is dropped,
+# so one archive is never scanned twice.
+try:
+    cwd = os.getcwd()
+except OSError:
+    cwd = ""
+roots, seen = [], set()
+for raw in (cwd, os.environ.get("CLAUDE_PROJECT_DIR")):
+    if raw:
+        key = os.path.realpath(raw)
+        if key not in seen:
+            seen.add(key)
+            roots.append(Path(raw))
 
-if not candidates:
+run_dir = None
+for root in roots:
+    archive = root / "foundry-archive"
+    try:
+        state_paths = sorted(archive.glob("*/state.json")) if archive.is_dir() else []
+    except OSError:
+        continue
+    candidates = []
+    for state_path in state_paths:
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            mtime = state_path.stat().st_mtime
+        except (OSError, ValueError):
+            continue
+        if isinstance(state, dict) and state.get("phase") in LIVE_PHASES:
+            candidates.append((mtime, state_path.parent))
+    if candidates:
+        run_dir = max(candidates)[1]
+        break
+
+if run_dir is None:
     print("foundry:stop token: no run under foundry-archive/ is in F1..F5.5, so no token was written (a run before start_cast needs none).")
 else:
-    run_dir = max(candidates)[1]
     token = {
         "run": run_dir.name,
         "created_at": datetime.now(timezone.utc).isoformat(),
