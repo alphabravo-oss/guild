@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry && if grep -n -E "TeamCreate|TeamDelete|EXPERIMENTAL_AGENT_TEAMS" commands/resume.md; then echo "FOUND a removed team tool or experimental agent-teams setting"; else echo "commands/resume.md: no TeamCreate, no TeamDelete, no experimental agent-teams setting"; fi
+# evidence-for: AC-027, FR-021, NFR-004, GI-001, OT-024
+# evidence-timeout: 60
+
+commands/resume.md: no TeamCreate, no TeamDelete, no experimental agent-teams setting
