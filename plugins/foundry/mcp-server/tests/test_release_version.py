@@ -2,11 +2,11 @@
 
 The release number is written down in FIVE places and DERIVED in none:
 
-  server number (1.10.0)
+  server number (1.11.0)
     * ``src/foundry_mcp/__init__.py``               ``__version__``
     * ``pyproject.toml``                            ``[project] version``
     * ``uv.lock``                                   the ``foundry-mcp`` entry
-  plugin number (4.11.0)
+  plugin number (4.12.0)
     * ``plugins/foundry/.claude-plugin/plugin.json``  ``version``
     * ``.claude-plugin/marketplace.json``             the ``foundry`` entry
 
@@ -71,8 +71,8 @@ MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 
 # The release declaration. These two literals ARE the release; every site is
 # judged against them, and against each other.
-SERVER_VERSION = "1.10.0"
-PLUGIN_VERSION = "4.11.0"
+SERVER_VERSION = "1.11.0"
+PLUGIN_VERSION = "4.12.0"
 
 # The dependency ceiling that keeps the bundled server on the 1.x protocol
 # library. server.py uses mcp's 1.x low-level decorator API, which 2.0.0
