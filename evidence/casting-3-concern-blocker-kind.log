@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_concerns.py::test_a_blocker_kind_from_the_closed_set_is_accepted_and_persisted tests/test_concerns.py::test_a_concern_filed_without_a_kind_carries_no_blocker_field tests/test_concerns.py::test_an_unknown_blocker_kind_is_refused_by_name_and_nothing_is_written tests/test_concerns.py::test_the_unknown_kind_refusal_is_reachable_over_the_wire tests/test_concerns.py::test_the_close_arm_takes_no_blocker_kind 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a concern blocker-kind test failed or errored";; *passed*) if [ "$n" -ge 12 ]; then echo "concern blocker-kind: at least 12 tests passed, none failed or errored"; else echo "FLOOR: fewer than 12 concern blocker-kind tests passed"; fi;; *) echo "NO RESULT";; esac
+# evidence-for: FR-018, FR-031, CT-008, GI-005
+# evidence-timeout: 300
+
+concern blocker-kind: at least 12 tests passed, none failed or errored

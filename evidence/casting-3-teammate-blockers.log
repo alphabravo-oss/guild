@@ -1,0 +1,6 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/orchestration/test_guidance.py::test_each_former_teammate_halt_files_a_blocker_and_returns 2>&1 | tail -1); cd ../../.. && d=$(git diff -U0 1ec4d98 HEAD -- plugins/foundry/agents/teammate.md); rm=$(printf '%s\n' "$d" | grep -c '^-[^-]'); add=$(printf '%s\n' "$d" | grep -c '^+[^+]'); blk=$(printf '%s\n' "$d" | grep '^+[^+]' | grep -c "blocker_kind='"); case "$out" in *failed*|*error*) echo "FAIL: the teammate blocker test failed or errored";; *passed*) echo "the teammate blocker test passed";; *) echo "NO RESULT";; esac; echo "agents/teammate.md since 1ec4d98: $rm line(s) removed, $add line(s) added, $blk added line(s) file a blocker_kind"
+# evidence-for: FR-031, FR-037, AC-020, GI-005, OT-019, OT-032
+# evidence-timeout: 300
+
+the teammate blocker test passed
+agents/teammate.md since 1ec4d98: 3 line(s) removed, 3 line(s) added, 3 added line(s) file a blocker_kind

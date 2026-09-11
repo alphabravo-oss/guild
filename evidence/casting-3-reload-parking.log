@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/orchestration/test_guidance.py::test_the_reload_rule_judges_display_and_tests_outside_it tests/orchestration/test_guidance.py::test_a_mid_run_crossing_parks_for_a_relaunch_only_on_what_it_depends_on tests/orchestration/test_guidance.py::test_before_done_any_relevant_change_parks_for_one_relaunch tests/orchestration/test_guidance.py::test_a_run_whose_target_is_not_foundry_never_parks_a_relaunch 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a reload-parking test failed or errored";; *passed*) if [ "$n" -ge 4 ]; then echo "reload-parking: at least 4 tests passed, none failed or errored"; else echo "FLOOR: fewer than 4 reload-parking tests passed"; fi;; *) echo "NO RESULT";; esac
+# evidence-for: US-007, FR-024, FR-025, FR-040, FR-042, AC-028, AC-029, AC-030, ST-011, ST-017
+# evidence-timeout: 300
+
+reload-parking: at least 4 tests passed, none failed or errored

@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/orchestration tests/test_concerns.py tests/test_protocol_prose.py tests/test_model_config.py tests/test_spend.py 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a orchestration + concerns + protocol prose + model config + spend test failed or errored";; *passed*) if [ "$n" -ge 2021 ]; then echo "orchestration + concerns + protocol prose + model config + spend: at least 2021 tests passed, none failed or errored"; else echo "FLOOR: fewer than 2021 orchestration + concerns + protocol prose + model config + spend tests passed"; fi;; *) echo "NO RESULT";; esac
+# evidence-for: GI-003, FR-034
+# evidence-timeout: 300
+
+orchestration + concerns + protocol prose + model config + spend: at least 2021 tests passed, none failed or errored
