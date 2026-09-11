@@ -2571,8 +2571,12 @@ def test_a_gate_and_its_transition_agree_on_the_passing_case(run_env, token):
     below drives the ones that are cheap to complete.
     """
     project_root, fdir = run_env
-    reason_kw = {"reason": "lead_ruling", "text": "stopped by hand"} if token == "halt" else {}
+    # should-not-stop — after start_cast the halt door passes only a user_stop
+    # carrying human-origin proof, so that is the halt token's passing case.
+    reason_kw = {"reason": "user_stop", "text": "stopped by hand"} if token == "halt" else {}
     _arrange_passing(project_root, fdir, token)
+    if token == "halt":
+        _write_stop_token(fdir)
     _arm_ordering_token(fdir)
     gate = foundry_gate(_gate_for(token), project_root, **reason_kw)
     assert gate["passed"] is True, (token, gate)
@@ -2614,17 +2618,31 @@ def test_the_grind_gate_passes_at_the_cap_and_shows_would_halt(run_env):
 # --------------------------------------------------------------------------- #
 
 
+#: The unused /foundry:stop token a post-CAST user_stop halts on, written the
+#: way the stop command's shell step writes it. One helper, owned beside the
+#: halt door's own tests.
+from tests.orchestration.test_transitions import _write_stop_token  # noqa: E402
+
+
 def test_the_halt_gate_reports_the_three_checks_as_data(run_env):
-    """fallout CT-021 / AC-062 / OT-045 — reported, not acted on."""
+    """fallout CT-021 / AC-062 / OT-045 — reported, not acted on.
+
+    After start_cast the should-not-stop halt rule adds two checks, the reason
+    accepted from the lead and the human-origin proof, and the gate reports
+    those as data too.
+    """
     project_root, fdir = run_env
     _arrange_passing(project_root, fdir, "halt")
+    _write_stop_token(fdir)
     _arm_ordering_token(fdir)
-    gate = foundry_gate("halt", project_root, reason="lead_ruling", text="enough")
+    gate = foundry_gate("halt", project_root, reason="user_stop", text="enough")
     assert gate["passed"] is True, gate
     names = [c["check"] for c in gate["checklist"]]
     assert any(n.startswith("halt_reason_is_a_member") for n in names), names
     assert "no_active_teams" in names, names
     assert "not_already_halted" in names, names
+    assert any(n.startswith("halt_reason_accepted_after_start_cast") for n in names), names
+    assert any(n.startswith("human_origin_proof") for n in names), names
     # Reported, not acted on: the run is exactly where it was.
     assert json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"] == "F3"
 

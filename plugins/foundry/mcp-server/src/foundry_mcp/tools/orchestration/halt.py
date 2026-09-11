@@ -6,12 +6,27 @@ dispatch into here, and nothing flows back.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from foundry_mcp.schemas.vocab import (
     DEFECT_TIERS,
+    HALT_PROOF_PARKED_ANSWER,
+    HALT_PROOF_STOP_TOKEN,
     HALT_REASON_CAP_REACHED,
+    PARKED_FIELD_ANSWER,
+    PARKED_FIELD_ANSWER_IS_HALT,
+    PARKED_FIELD_ANSWERED_AT,
+    PARKED_FIELD_ID,
+    PARKED_ITEMS_KEY,
+    PARKED_STATE_KEY,
     RUN_PHASE_HALTED,
+    STOP_TOKEN_FIELD_CONSUMED_AT,
+    STOP_TOKEN_FIELD_CREATED_AT,
+    STOP_TOKEN_FIELD_NONCE,
+    STOP_TOKEN_FIELD_RUN,
+    STOP_TOKEN_FILENAME,
+    STOP_TOKEN_MAX_AGE_SECONDS,
     TIER_HARDENING,
     TIER_UNKNOWN,
     defect_tier,
@@ -26,6 +41,7 @@ from foundry_mcp.tools.foundry_state import (
     # fallout AC-022 / GI-014 (C-077) — the reader that HAS every tier's
     # bucket. `blocking_defects` returns only the blocking three by design.
     open_defects_by_tier,
+    read_document,
 )
 from pathlib import Path
 from foundry_mcp.tools.orchestration.report_seal import (
@@ -48,6 +64,206 @@ from foundry_mcp.tools.orchestration.report_seal import (
 
 
 
+# --------------------------------------------------------------------------- #
+# should-not-stop — HUMAN-ORIGIN PROOF FOR A POST-CAST `user_stop`.
+#
+# From start_cast to NYQUIST the halt door takes `user_stop` from the lead only
+# on proof the human asked for it, and there are exactly two proofs:
+#
+#   * an unused /foundry:stop token for this run, written into the archive by
+#     `commands/stop.md`'s own shell step when the human invoked the command;
+#   * a parked question the human answered with halt, recorded through the park
+#     door with its explicit halt indicator.
+#
+# THE READ AND THE WRITE ARE BOTH HERE, AND THEY ARE NOT THE SAME CALL.
+# `transitions._halt_preconditions` asks `_human_halt_proof` over the one seam
+# the layering allows, and that routine is shared by Foundry-Gate('halt') and
+# Foundry-Phase('halt'), so the question has to be read-only: a gate that
+# reported a token as proof and burned it doing so would leave the very
+# transition it had cleared refused. The token is consumed by `_seal_halted`,
+# after the HALTED write, on the one path that actually halts.
+#
+# Both read `state.json` and the archive DIRECTLY through the leaf reader and
+# not through `park.py`, which owns the writers: a verifier reaches this module
+# and nothing past it, so what is read here is read from the file.
+# --------------------------------------------------------------------------- #
+
+#: How far in the future a token's `created_at` may sit before it is refused.
+#: Clock skew between the shell step and the server is seconds; a token dated
+#: further ahead than this was not written by that shell step.
+_STOP_TOKEN_FUTURE_SKEW_SECONDS = 300
+
+
+def _human_halt_proof(fdir: Path) -> dict:
+    """The human-origin proof a post-CAST `user_stop` would halt on. READ-ONLY.
+
+    Returns ``{"kind", "detail", "problems"}`` plus the proof's own identity.
+    ``kind`` is a `HALT_PROOF_KINDS` member, or None when nothing proves the
+    human asked. ``detail`` is the sentence naming what proved it. ``problems``
+    names everything looked at that did NOT count — a missing, reused, stale or
+    foreign token, and the absence of a halt answer — so a refusal built on this
+    says why and not only that. A token proof carries ``nonce``, which is how
+    the seal consumes exactly the token that was judged; a parked proof carries
+    ``item_id``.
+
+    An unused token is preferred when both exist: it is the human's most direct
+    act, and the one of the two a halt consumes. Never raises.
+    """
+    token, token_problem = _usable_stop_token(fdir)
+    if token is not None:
+        return {
+            "kind": HALT_PROOF_STOP_TOKEN,
+            "detail": (
+                f"the human's /foundry:stop token for run {fdir.name}, written "
+                f"at {token.get(STOP_TOKEN_FIELD_CREATED_AT)}"
+            ),
+            "nonce": token.get(STOP_TOKEN_FIELD_NONCE),
+            "problems": [],
+        }
+    item = _halt_answered_parked_item(fdir)
+    if item is not None:
+        return {
+            "kind": HALT_PROOF_PARKED_ANSWER,
+            "detail": (
+                f"the human's halt answer to parked item "
+                f"{item[PARKED_FIELD_ID]}: {item.get(PARKED_FIELD_ANSWER)!r}"
+            ),
+            "item_id": item[PARKED_FIELD_ID],
+            "problems": [token_problem],
+        }
+    return {
+        "kind": None,
+        "detail": "",
+        "problems": [token_problem, "no parked question has been answered with halt"],
+    }
+
+
+def _usable_stop_token(fdir: Path) -> tuple[dict | None, str]:
+    """This run's /foundry:stop token when it still proves a halt, else why not.
+
+    Refused, each by its own sentence: a token that is absent, unreadable,
+    names another run, already carries `consumed_at`, carries no readable UTC
+    `created_at`, is older than `STOP_TOKEN_MAX_AGE_SECONDS`, or is dated in the
+    future. A consumed token is refused as REUSED rather than as missing, which
+    is why the seal stamps it instead of deleting it.
+    """
+    path = fdir / STOP_TOKEN_FILENAME
+    if not path.exists():
+        return None, (
+            f"there is no /foundry:stop token in the run archive "
+            f"({STOP_TOKEN_FILENAME} is absent)"
+        )
+    token, problem = read_document(path)
+    if problem is not None:
+        return None, f"the /foundry:stop token cannot be read: {problem}"
+    named = token.get(STOP_TOKEN_FIELD_RUN)
+    if named != fdir.name:
+        return None, (
+            f"the /foundry:stop token names run {named!r}, not this run "
+            f"({fdir.name!r})"
+        )
+    if token.get(STOP_TOKEN_FIELD_CONSUMED_AT):
+        return None, (
+            f"the /foundry:stop token was already used — consumed at "
+            f"{token[STOP_TOKEN_FIELD_CONSUMED_AT]} by the halt it proved, and "
+            "a token proves one halt"
+        )
+    created = _stop_token_created_at(token.get(STOP_TOKEN_FIELD_CREATED_AT))
+    if created is None:
+        return None, "the /foundry:stop token carries no readable UTC created_at"
+    age = (datetime.now(tz=timezone.utc) - created).total_seconds()
+    if age > STOP_TOKEN_MAX_AGE_SECONDS:
+        return None, (
+            f"the /foundry:stop token is stale: it was written "
+            f"{int(age // 60)} minute(s) ago, and a token proves a halt for "
+            f"{STOP_TOKEN_MAX_AGE_SECONDS // 60} minutes"
+        )
+    if age < -_STOP_TOKEN_FUTURE_SKEW_SECONDS:
+        return None, (
+            "the /foundry:stop token is dated in the future, so no "
+            "/foundry:stop invocation wrote it"
+        )
+    return token, ""
+
+
+def _stop_token_created_at(value: object) -> datetime | None:
+    """A token's `created_at` as an aware datetime, or None. Never raises.
+
+    A stamp with no timezone is None too: the shell step writes UTC with its
+    offset, so a naive stamp is one that step did not write, and guessing its
+    zone is how a stale token would be read as a fresh one.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _halt_answered_parked_item(fdir: Path) -> dict | None:
+    """The most recent parked item the human answered with halt, or None.
+
+    Answered with halt is `answer_is_halt` exactly True AND an `answered_at`:
+    the park door sets both in one write, and a record carrying only one of
+    them was not written by it. Tolerant of every other shape — an absent
+    `parked` key and a malformed one both read as no such item.
+    """
+    state, _problem = read_document(fdir / "state.json")
+    parked = state.get(PARKED_STATE_KEY)
+    items = parked.get(PARKED_ITEMS_KEY) if isinstance(parked, dict) else None
+    for item in reversed(items if isinstance(items, list) else []):
+        if (
+            isinstance(item, dict)
+            and item.get(PARKED_FIELD_ANSWER_IS_HALT) is True
+            and item.get(PARKED_FIELD_ANSWERED_AT)
+            and isinstance(item.get(PARKED_FIELD_ID), str)
+        ):
+            return item
+    return None
+
+
+def _consume_stop_token(fdir: Path, nonce: object) -> tuple[bool, str]:
+    """Stamp `consumed_at` on the token a halt was sealed on.
+
+    Returns ``(consumed, error)``. Only the token the halt door JUDGED is
+    stamped — matched by its nonce — so a token rewritten between the check and
+    the seal is left alone rather than consumed on another token's authority.
+    """
+    try:
+        with _document_transaction(fdir / STOP_TOKEN_FILENAME) as token:
+            if (
+                token.get(STOP_TOKEN_FIELD_NONCE) != nonce
+                or token.get(STOP_TOKEN_FIELD_CONSUMED_AT)
+            ):
+                return False, (
+                    "the token on disk is no longer the unused one the halt "
+                    "door judged"
+                )
+            token[STOP_TOKEN_FIELD_CONSUMED_AT] = now_iso()
+    except OSError as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    return True, ""
+
+
+def _spend_halt_proof(fdir: Path, proof: dict) -> dict:
+    """What the seal did with the proof it halted on, as the result reports it.
+
+    A token is consumed here, after the HALTED write, so it proves this halt
+    and no other. A parked answer needs no write: the halt it proves makes the
+    run HALTED, and nothing leaves HALTED, so it can prove nothing further.
+    """
+    record = {"kind": proof.get("kind"), "detail": proof.get("detail", "")}
+    if proof.get("kind") == HALT_PROOF_STOP_TOKEN:
+        consumed, error = _consume_stop_token(fdir, proof.get("nonce"))
+        record["consumed"] = consumed
+        record["consume_error"] = error
+    elif proof.get("kind") == HALT_PROOF_PARKED_ANSWER:
+        record["item_id"] = proof.get("item_id")
+    return record
+
+
 def _seal_halted(
     fdir: Path,
     project_root: str,
@@ -57,6 +273,7 @@ def _seal_halted(
     token: str,
     detail: str = "",
     update_phase,
+    proof: dict | None = None,
 ) -> dict:
     """fallout FR-046 / CT-004 / ST-001 / AC-025 / AC-029 — THE ONE HALTED WRITER.
 
@@ -102,6 +319,11 @@ def _seal_halted(
         doc["halted_reason"] = {"reason": reason, "text": text or detail}
         doc["updated_at"] = now_iso()
 
+    # should-not-stop — THE PROOF A POST-CAST `user_stop` HALTED ON IS SPENT
+    # HERE, after the HALTED write and on this path alone. `proof` travels down
+    # the seam from `_halt_preconditions`; the cap path passes none and is
+    # exactly what it was.
+    proof_record = _spend_halt_proof(fdir, proof) if proof is not None else None
     # fallout CT-004 / AC-025 / OT-023: the seal "regenerat[es] REPORT.md with
     # lead prose preserved" as part of the transition.
     # Generated as PART of this transition rather than left to the lead, because
@@ -175,7 +397,7 @@ def _seal_halted(
     clauses = [f"{len(by_tier.get(t) or [])} open {t}" for t in sorted(DEFECT_TIERS)]
     clauses.append(f"{len(blocking['unknown'])} untiered")
     counts = ", ".join(clauses[:-1]) + f" and {clauses[-1]} defect(s)"
-    return {
+    result = {
         "ok": True,
         "halted": True,
         "phase": RUN_PHASE_HALTED,
@@ -223,6 +445,24 @@ def _seal_halted(
             )
         ),
     }
+    # should-not-stop — which human act this halt was sealed on, on the result
+    # the operator reads. Only on the path that has one: a cap has no proof,
+    # and a field that means something on one path and nothing on the other is
+    # the arrangement `_halt_if_capped` already declines for `max_cycles`.
+    if proof_record is not None:
+        result["halt_proof"] = proof_record
+        spent = (
+            "" if proof_record.get("consume_error") in (None, "")
+            else (
+                " — the token could NOT be marked consumed "
+                f"({proof_record['consume_error']}), but the run is HALTED, so "
+                "it can prove nothing further"
+            )
+        )
+        result["message"] += (
+            f" Sealed on human-origin proof: {proof_record['detail']}{spent}."
+        )
+    return result
 
 
 

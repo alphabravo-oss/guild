@@ -12,6 +12,7 @@ import asyncio
 import inspect
 import json
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -3443,8 +3444,13 @@ def test_a_gate_and_its_transition_refuse_the_same_check(run_env, monkeypatch, t
     token and rung to say so rather than the four the previous pin arranged.
     """
     project_root, fdir = run_env
-    reason_kw = {"reason": "lead_ruling", "text": "stopped by hand"} if token == "halt" else {}
+    # should-not-stop — after start_cast the halt door takes only a user_stop
+    # carrying human-origin proof, so the passing baseline each rung breaks in
+    # exactly one place is a user_stop beside an unused /foundry:stop token.
+    reason_kw = {"reason": "user_stop", "text": "stopped by hand"} if token == "halt" else {}
     _arrange_passing(project_root, fdir, token)
+    if token == "halt":
+        _write_stop_token(fdir)
     if not _RUNG_ARRANGEMENTS[rank](project_root, fdir, token, monkeypatch):
         pytest.skip(f"{rank} is not reachable for {token} on a real arrangement")
     if token == "halt" and rank == "_GATE_RANK_CONFIG":
@@ -4610,11 +4616,14 @@ def test_the_halt_door_reports_an_empty_text_without_refusing_it(run_env):
     """
     project_root, fdir = run_env
     _arrange_passing(project_root, fdir, "halt")
+    # After start_cast the reason a lead may seal with is user_stop, on the
+    # human's /foundry:stop token (the should-not-stop halt rule).
+    _write_stop_token(fdir)
 
     # (1) The fact is reported, ok=False, and the gate still PASSES: three
     #     refusing checks, and this is not one of them.
     _arm_ordering_token(fdir)
-    gate = foundry_gate("halt", project_root, reason="lead_ruling", text="")
+    gate = foundry_gate("halt", project_root, reason="user_stop", text="")
     assert gate["passed"] is True, gate
     row = next(c for c in gate["checklist"] if c["check"].startswith("halt_text_present"))
     assert row["ok"] is False, row
@@ -4623,7 +4632,7 @@ def test_the_halt_door_reports_an_empty_text_without_refusing_it(run_env):
 
     # (2) With text, the same row reports the length and passes.
     _arm_ordering_token(fdir)
-    with_text = foundry_gate("halt", project_root, reason="lead_ruling", text="enough")
+    with_text = foundry_gate("halt", project_root, reason="user_stop", text="enough")
     row = next(c for c in with_text["checklist"] if c["check"].startswith("halt_text_present"))
     assert row["ok"] is True and "chars=6" in row["check"], row
 
@@ -4639,11 +4648,11 @@ def test_the_halt_door_reports_an_empty_text_without_refusing_it(run_env):
     # (4) FR-046's three refusals are still exactly three: the new row refuses
     #     nothing, so an empty text still seals.
     _arm_ordering_token(fdir)
-    sealed = foundry_mark_phase_complete("halt", project_root, reason="lead_ruling", text="")
+    sealed = foundry_mark_phase_complete("halt", project_root, reason="user_stop", text="")
     assert sealed.get("ok") is True, sealed
     state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
     assert state["phase"] == vocab.RUN_PHASE_HALTED, state
-    assert state["halted_reason"] == {"reason": "lead_ruling", "text": ""}, state
+    assert state["halted_reason"] == {"reason": "user_stop", "text": ""}, state
 
 
 def test_a_gated_transition_still_crosses_on_a_clean_ledger(run_env):
@@ -4706,22 +4715,29 @@ def test_the_halt_door_refuses_while_a_team_is_registered(run_env):
     that leaves agents writing into a run nothing will read again."""
     project_root, fdir = run_env
     _arrange_passing(project_root, fdir, "halt")
+    _write_stop_token(fdir)
     _teams_active(True)
     _arm_ordering_token(fdir)
-    result = foundry_mark_phase_complete("halt", project_root, reason="lead_ruling", text="x")
+    result = foundry_mark_phase_complete("halt", project_root, reason="user_stop", text="x")
     assert result.get("ok") is not True, result
     assert "Active teammates" in result["error"], result
 
 
 
 
-def test_a_lead_ruling_seals_halted_with_the_member_the_text_and_the_history_row(run_env):
+def test_a_user_stop_seals_halted_with_the_member_the_text_and_the_history_row(run_env):
     """fallout FR-018 / FR-046 / CT-004 / ST-001 / AC-025 / AC-029 / OT-023.
 
     The whole contract in one drive: HALTED written through `_update_phase` so
     `phase_history` gains the row and `phase_times` closes the phase that was
     open, the reason stored as `{member, text}`, and the report regenerated with
     the lead's own prose carried.
+
+    Rewritten for the should-not-stop halt rule: this drive used to seal a
+    `lead_ruling` from F3, which that rule refuses. After start_cast the member
+    a lead can seal with is `user_stop`, on the human's /foundry:stop token, so
+    that is the seal driven; everything the contract says about the seal
+    itself is asserted unchanged.
     """
     project_root, fdir = run_env
     _arrange_passing(project_root, fdir, "halt")
@@ -4734,17 +4750,18 @@ def test_a_lead_ruling_seals_halted_with_the_member_the_text_and_the_history_row
         report.read_text(encoding="utf-8") + "\n## My own notes\n\nkeep this line\n",
         encoding="utf-8",
     )
+    _write_stop_token(fdir)
     _arm_ordering_token(fdir)
 
     result = foundry_mark_phase_complete(
-        "halt", project_root, reason="lead_ruling", text="the spec is wrong"
+        "halt", project_root, reason="user_stop", text="the spec is wrong"
     )
     assert result.get("ok") is True, result
     assert result["halted"] is True and result["phase"] == vocab.RUN_PHASE_HALTED, result
 
     state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
     assert state["phase"] == vocab.RUN_PHASE_HALTED, state
-    assert state["halted_reason"] == {"reason": "lead_ruling", "text": "the spec is wrong"}
+    assert state["halted_reason"] == {"reason": "user_stop", "text": "the spec is wrong"}
     assert state["halted_at_cycle"] == 1, state
     # AC-029: the history ends on HALTED and the phase that was open is closed.
     assert state["phase_history"][-1]["phase"] == vocab.RUN_PHASE_HALTED, state
@@ -4759,6 +4776,7 @@ def test_a_halted_run_refuses_every_door_including_a_second_halt(run_env):
     """fallout ST-001 — HALTED is terminal, and `halt` is not its own exit."""
     project_root, fdir = run_env
     _arrange_passing(project_root, fdir, "halt")
+    _write_stop_token(fdir)
     _arm_ordering_token(fdir)
     assert foundry_mark_phase_complete(
         "halt", project_root, reason="user_stop", text="stop"
@@ -4771,6 +4789,354 @@ def test_a_halted_run_refuses_every_door_including_a_second_halt(run_env):
         )
         assert result.get("ok") is not True, (token, result)
         assert "HALTED" in str(result.get("error", "")), (token, result)
+
+
+
+
+# --------------------------------------------------------------------------- #
+# should-not-stop AC-011 / AC-012 / AC-013 / AC-015 / AC-016 / AC-027 / AC-035 /
+# AC-036 / CT-006 / CT-007 / CT-010 / ST-005 / ST-006 / ST-007 / ST-015
+# (A-005, A-011, A-023, A-029) — the post-CAST halt door: from start_cast to
+# NYQUIST only the human ends a run. Qualified in the form casting 2 uses in
+# this waived module; the lead's ruling on concern C-003 keeps these ids out of
+# modules the citation convention scans.
+# --------------------------------------------------------------------------- #
+
+#: The human's stop command, whose own shell step writes the token this door
+#: takes as proof.
+_STOP_MD = Path(__file__).resolve().parents[3] / "commands" / "stop.md"
+
+
+def _write_stop_token(fdir: Path, **overrides) -> dict:
+    """An unused /foundry:stop token for ``fdir``, in the shape stop.md's shell
+    step writes — `test_the_stop_commands_own_shell_step_writes_the_token_the_
+    door_consumes` runs that step and holds the two shapes equal."""
+    token = {
+        vocab.STOP_TOKEN_FIELD_RUN: fdir.name,
+        vocab.STOP_TOKEN_FIELD_CREATED_AT: now_iso(),
+        vocab.STOP_TOKEN_FIELD_NONCE: "5eed" * 8,
+        vocab.STOP_TOKEN_FIELD_CONSUMED_AT: None,
+    }
+    token.update(overrides)
+    (fdir / vocab.STOP_TOKEN_FILENAME).write_text(json.dumps(token), encoding="utf-8")
+    return token
+
+
+def _set_phase(fdir: Path, phase: str) -> None:
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    state["phase"] = phase
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
+def _run_phase(fdir: Path) -> str:
+    return json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"]
+
+
+def _halt_at_both_doors(project_root, fdir: Path, *, reason: str, text: str = "the human's words"):
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("halt", project_root, reason=reason, text=text)
+    _arm_ordering_token(fdir)
+    transition = foundry_mark_phase_complete("halt", project_root, reason=reason, text=text)
+    return gate, transition
+
+
+@pytest.mark.parametrize("phase", sorted(vocab.POST_CAST_RUN_PHASES))
+@pytest.mark.parametrize("reason", ["lead_ruling", "spec_change_required", "cap_reached"])
+def test_after_start_cast_the_lead_cannot_halt_on_its_own_ruling(run_env, phase, reason):
+    """Refused at both doors, naming the same check, with the phase unchanged.
+
+    A valid /foundry:stop token beside the call changes nothing, because what is
+    refused is the lead choosing the reason, not a missing proof — and the
+    token is not spent on a halt that did not happen. `cap_reached` is refused
+    here too: it is written by the GRIND-opening doors, never supplied.
+    """
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+    _set_phase(fdir, phase)
+    token = _write_stop_token(fdir)
+
+    gate, transition = _halt_at_both_doors(project_root, fdir, reason=reason)
+
+    assert gate["passed"] is False, gate
+    assert transition.get("ok") is not True, transition
+    assert _run_phase(fdir) == phase
+    assert {r["reason"] for r in gate["refusals"]} == {
+        r["reason"] for r in transition["refusals"]
+    }, (gate["refusals"], transition["refusals"])
+    assert f"halt reason {reason!r} is refused in {phase}" in transition["error"], transition
+    assert "only the human can end a run" in transition["error"], transition
+    assert "Foundry-Park" in transition["hint"], transition["hint"]
+    row = next(
+        c for c in gate["checklist"]
+        if c["check"].startswith("halt_reason_accepted_after_start_cast")
+    )
+    assert row["ok"] is False and row["accepted"] == ["user_stop"], row
+    assert json.loads(
+        (fdir / vocab.STOP_TOKEN_FILENAME).read_text(encoding="utf-8")
+    ) == token
+
+
+def test_a_user_stop_with_no_human_origin_proof_is_refused_and_the_phase_stays(run_env):
+    """The lead's word alone is not a user stop: no token, no halt answer, no halt."""
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+
+    gate, transition = _halt_at_both_doors(project_root, fdir, reason="user_stop")
+
+    assert gate["passed"] is False, gate
+    assert transition.get("ok") is not True, transition
+    assert _run_phase(fdir) == "F3"
+    error = transition["error"]
+    assert "needs proof the human asked for it" in error, error
+    assert "no /foundry:stop token" in error, error
+    assert "no parked question has been answered with halt" in error, error
+    assert "/foundry:stop" in transition["hint"], transition["hint"]
+    assert "Foundry-Park" in transition["hint"], transition["hint"]
+    row = next(c for c in gate["checklist"] if c["check"].startswith("human_origin_proof"))
+    assert row["ok"] is False and "proof=none" in row["check"], row
+
+
+#: Every token that proves nothing, and the words the refusal names it by.
+_UNUSABLE_TOKENS = {
+    "missing": (None, "is absent"),
+    "reused": ({"consumed_at": "2026-09-11T00:00:00+00:00"}, "already used"),
+    "another_run": ({"run": "some-other-run"}, "names run 'some-other-run'"),
+    "stale": ("stale", "is stale"),
+    "future": ("future", "dated in the future"),
+    "naive_stamp": ({"created_at": "2026-09-11T00:00:00"}, "no readable UTC created_at"),
+    "unreadable": ("unreadable", "cannot be read"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_UNUSABLE_TOKENS))
+def test_a_token_that_proves_nothing_is_refused_naming_why(run_env, case):
+    from datetime import datetime, timedelta, timezone
+
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+    arrangement, named = _UNUSABLE_TOKENS[case]
+    now = datetime.now(tz=timezone.utc)
+    token_path = fdir / vocab.STOP_TOKEN_FILENAME
+    if arrangement == "stale":
+        _write_stop_token(fdir, created_at=(
+            now - timedelta(seconds=vocab.STOP_TOKEN_MAX_AGE_SECONDS + 120)
+        ).isoformat())
+    elif arrangement == "future":
+        _write_stop_token(fdir, created_at=(now + timedelta(hours=2)).isoformat())
+    elif arrangement == "unreadable":
+        token_path.write_text("{ not json", encoding="utf-8")
+    elif arrangement is not None:
+        _write_stop_token(fdir, **arrangement)
+    before = token_path.read_bytes() if token_path.exists() else None
+
+    gate, transition = _halt_at_both_doors(project_root, fdir, reason="user_stop")
+
+    assert gate["passed"] is False, gate
+    assert transition.get("ok") is not True, transition
+    assert named in transition["error"], (case, transition["error"])
+    assert _run_phase(fdir) == "F3"
+    assert (token_path.read_bytes() if token_path.exists() else None) == before
+
+
+def test_a_stop_token_proves_one_halt_and_that_halt_consumes_it(run_env):
+    """The gate reports the token and spends nothing; the transition seals
+    HALTED with user_stop and the human's words, regenerates the report, and
+    stamps the token consumed — so a second halt presenting it is refused, and
+    refused as REUSED rather than as missing."""
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+    token = _write_stop_token(fdir)
+    token_path = fdir / vocab.STOP_TOKEN_FILENAME
+    words = "Stopping for the night; the spec needs a rewrite."
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("halt", project_root, reason="user_stop", text=words)
+    assert gate["passed"] is True, gate
+    assert gate["halt_proof"]["kind"] == vocab.HALT_PROOF_STOP_TOKEN, gate
+    assert json.loads(token_path.read_text(encoding="utf-8")) == token
+
+    _arm_ordering_token(fdir)
+    sealed = foundry_mark_phase_complete("halt", project_root, reason="user_stop", text=words)
+
+    assert sealed.get("ok") is True, sealed
+    assert sealed["phase"] == vocab.RUN_PHASE_HALTED, sealed
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == vocab.RUN_PHASE_HALTED, state
+    assert state["halted_reason"] == {"reason": "user_stop", "text": words}, state
+    assert sealed["report_generated"] is True and (fdir / "REPORT.md").exists(), sealed
+    assert sealed["halt_proof"]["kind"] == vocab.HALT_PROOF_STOP_TOKEN, sealed
+    assert sealed["halt_proof"]["consumed"] is True, sealed
+    assert "human-origin proof" in sealed["message"], sealed["message"]
+    spent = json.loads(token_path.read_text(encoding="utf-8"))
+    assert spent["nonce"] == token["nonce"] and spent["consumed_at"], spent
+
+    _arm_ordering_token(fdir)
+    again = foundry_mark_phase_complete("halt", project_root, reason="user_stop", text=words)
+    assert again.get("ok") is not True and "HALTED" in again["error"], again
+
+    # The same token on a run that is live again proves nothing either.
+    _set_phase(fdir, "F3")
+    _arm_ordering_token(fdir)
+    reused = foundry_mark_phase_complete("halt", project_root, reason="user_stop", text=words)
+    assert reused.get("ok") is not True, reused
+    assert "already used" in reused["error"], reused
+
+
+@pytest.mark.parametrize("phase", ["F0", "F0.5", "F0.9"])
+@pytest.mark.parametrize("reason", sorted(vocab.HALT_REASONS))
+def test_before_cast_every_halt_is_exactly_what_it_was(run_env, phase, reason):
+    """Pre-CAST the door makes its three checks and nothing else: every member
+    is accepted without a token, no checklist row is added, the gate result
+    carries exactly the keys it always did, and the seal names no proof."""
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+    _set_phase(fdir, phase)
+
+    _arm_ordering_token(fdir)
+    gate = foundry_gate("halt", project_root, reason=reason, text="before the build")
+    assert gate["passed"] is True, gate
+    assert set(gate) == {"halt_reason", "halt_text", "phase", "passed", "checklist"}, sorted(gate)
+    assert [c["check"].split(" (")[0] for c in gate["checklist"]] == [
+        "halt_reason_is_a_member", "halt_text_present", "no_active_teams",
+        "not_already_halted",
+    ], gate["checklist"]
+
+    _arm_ordering_token(fdir)
+    sealed = foundry_mark_phase_complete(
+        "halt", project_root, reason=reason, text="before the build"
+    )
+    assert sealed.get("ok") is True, sealed
+    assert "halt_proof" not in sealed, sealed
+    assert json.loads((fdir / "state.json").read_text(encoding="utf-8"))[
+        "halted_reason"
+    ] == {"reason": reason, "text": "before the build"}
+
+
+@pytest.mark.parametrize("token", ["grind_start", "assay_fail"])
+def test_the_launch_cap_still_seals_cap_reached_with_no_human_proof(run_env, token):
+    """The cap reaches HALTED through the GRIND-opening doors, never through the
+    halt door's reason rule, so it needs no token and names no proof."""
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, token)
+    _write_state(fdir, phase="F2" if token == "grind_start" else "F4",
+                 cycle=2, max_cycles=2)
+    _record_full_inspect_mode(fdir, cycle=2)
+    assert not (fdir / vocab.STOP_TOKEN_FILENAME).exists()
+    _arm_ordering_token(fdir)
+
+    result = foundry_mark_phase_complete(token, project_root)
+
+    assert result.get("ok") is True and result["halted"] is True, result
+    assert result["halted_reason"] == vocab.HALT_REASON_CAP_REACHED, result
+    assert "halt_proof" not in result, result
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == vocab.RUN_PHASE_HALTED, state
+    assert state["halted_reason"]["reason"] == vocab.HALT_REASON_CAP_REACHED, state
+
+
+def _stop_md_shell_step() -> str:
+    """The one fenced shell step in stop.md — exactly the block Claude Code runs
+    when the human invokes the command."""
+    text = _STOP_MD.read_text(encoding="utf-8")
+    blocks = re.findall(r"```!\s*\n?([\s\S]*?)\n?```", text)
+    assert len(blocks) == 1, blocks
+    return blocks[0]
+
+
+def _run_stop_step(project_root) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", "-c", _stop_md_shell_step()], cwd=project_root,
+        capture_output=True, text=True, timeout=60,
+    )
+
+
+_NO_SHELL = shutil.which("bash") is None or shutil.which("python3") is None
+
+
+@pytest.mark.skipif(_NO_SHELL, reason="the stop step needs bash and python3 on PATH")
+def test_the_stop_commands_own_shell_step_writes_the_token_the_door_consumes(run_env):
+    """stop.md's shell step, run as the human's invocation runs it, writes the
+    token for the active run — the live one whose state.json changed last —
+    in the vocabulary's shape, and the halt door takes it as proof."""
+    import os
+    from datetime import datetime
+
+    project_root, fdir = run_env
+    _arrange_passing(project_root, fdir, "halt")
+    archive = fdir.parent
+    for name, phase in (
+        ("older-live", "F2"), ("newer-precast", "F0.5"),
+        ("newer-halted", vocab.RUN_PHASE_HALTED),
+    ):
+        (archive / name).mkdir()
+        (archive / name / "state.json").write_text(
+            json.dumps({"phase": phase}), encoding="utf-8",
+        )
+    older = (fdir / "state.json").stat().st_mtime - 3600
+    os.utime(archive / "older-live" / "state.json", (older, older))
+
+    ran = _run_stop_step(project_root)
+
+    assert ran.returncode == 0, ran.stderr
+    assert fdir.name in ran.stdout, ran.stdout
+    written = json.loads((fdir / vocab.STOP_TOKEN_FILENAME).read_text(encoding="utf-8"))
+    assert list(written) == list(vocab.STOP_TOKEN_FIELDS), written
+    assert written["run"] == fdir.name and written["consumed_at"] is None, written
+    assert datetime.fromisoformat(written["created_at"]).tzinfo is not None, written
+    for other in ("older-live", "newer-precast", "newer-halted"):
+        assert not (archive / other / vocab.STOP_TOKEN_FILENAME).exists(), other
+
+    # The step spells, in shell, the vocabulary it cannot import.
+    step = _stop_md_shell_step()
+    live = ast.literal_eval(re.search(r"LIVE_PHASES = (\([^)]*\))", step).group(1))
+    assert set(live) == set(vocab.POST_CAST_RUN_PHASES), live
+    assert re.search(r'TOKEN_FILENAME = "([^"]+)"', step).group(1) == vocab.STOP_TOKEN_FILENAME
+
+    _arm_ordering_token(fdir)
+    sealed = foundry_mark_phase_complete(
+        "halt", project_root, reason="user_stop", text="the human's stop",
+    )
+    assert sealed.get("ok") is True, sealed
+    assert sealed["halt_proof"]["consumed"] is True, sealed
+
+
+@pytest.mark.skipif(_NO_SHELL, reason="the stop step needs bash and python3 on PATH")
+def test_the_stop_step_writes_no_token_when_no_run_is_in_the_build(run_env):
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F0.5", cycle=0)
+
+    ran = _run_stop_step(project_root)
+
+    assert ran.returncode == 0, ran.stderr
+    assert "no token was written" in ran.stdout, ran.stdout
+    assert not (fdir / vocab.STOP_TOKEN_FILENAME).exists()
+
+
+def test_the_stop_command_stops_agents_then_seals_user_stop_and_names_no_removed_team_tool():
+    text = _STOP_MD.read_text(encoding="utf-8")
+
+    assert 'disable-model-invocation: "true"' in text
+    assert '"Bash(python3:*)"' in text, "the shell step needs its own grant"
+    assert "Foundry-Phase(phase='halt', reason='user_stop'" in text
+    for step in ("SendMessage", "TaskStop", "Foundry-Team-Down"):
+        assert step in text, step
+    assert text.index("STOP EVERY IN-FLIGHT AGENT") < text.index("SEAL THE RUN")
+    assert "already HALTED" in text
+    # The active-run rule, in the words the Stop hook matches.
+    assert (
+        "whose `state.json` phase is F1..F5.5 and not HALTED or DONE" in text
+    )
+    for removed in ("TeamCreate", "TeamDelete"):
+        assert removed not in text, removed
+
+
+def test_no_tool_this_server_advertises_names_a_removed_team_tool():
+    from foundry_mcp import server as foundry_server
+
+    for tool in asyncio.run(foundry_server.list_tools()):
+        advertised = (tool.description or "") + json.dumps(tool.inputSchema)
+        for removed in ("TeamCreate", "TeamDelete"):
+            assert removed not in advertised, (tool.name, removed)
 
 
 
