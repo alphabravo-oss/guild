@@ -777,6 +777,44 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
             f"{_DIM}({waiting.get('detail', '')}){_RESET}"
         )
 
+    # should-not-stop FR-032 / GI-006 — THE PARKED ITEMS, THEIR ANSWERS, AND
+    # WHETHER THE HUMAN HAS BEEN ASKED.
+    #
+    # Rendered from the `parked` block `foundry_next_action` publishes from
+    # state.json's server-owned `parked` key. Nothing here decides whether an
+    # item is parked or whether the ask is due; an absent or malformed block
+    # contributes no line, on this module's never-raise rule.
+    parked = r.get("parked")
+    if isinstance(parked, dict):
+        for item in parked.get("open") or []:
+            if not isinstance(item, dict):
+                continue
+            question = str(item.get("question") or "")
+            shown = question if len(question) <= 90 else question[:87] + "..."
+            lines.append(
+                f"  {_BWHITE}Parked:{_RESET}   {_BYELLOW}{item.get('id', '?')}{_RESET} "
+                f"{item.get('item_ref', '?')} {_DIM}({item.get('category', '?')}) "
+                f"— {shown}{_RESET}"
+            )
+        for item in parked.get("answered") or []:
+            if not isinstance(item, dict):
+                continue
+            answer = str(item.get("answer") or "")
+            shown = answer if len(answer) <= 90 else answer[:87] + "..."
+            halt = f" {_BRED}(halt){_RESET}" if item.get("answer_is_halt") is True else ""
+            lines.append(
+                f"  {_BWHITE}Answered:{_RESET} {item.get('id', '?')} "
+                f"{item.get('item_ref', '?')}{halt} {_DIM}— {shown}{_RESET}"
+            )
+        awaiting = parked.get("awaiting_human")
+        if isinstance(awaiting, dict):
+            asked = awaiting.get("item_ids")
+            names = ", ".join(str(i) for i in asked) if isinstance(asked, list) else "?"
+            lines.append(
+                f"  {_BWHITE}Asking:{_RESET}   {_BYELLOW}the human{_RESET} "
+                f"{_DIM}since {awaiting.get('set_at', '?')} ({names}){_RESET}"
+            )
+
     # FR-021 / AC-028 / CT-007 — WHERE THE RUN IS HEADING, beside the facts it
     # already prints.
     #
@@ -948,10 +986,11 @@ def _fmt_foundry_unregister_team(r: dict) -> str:
         if hint:
             lines.append(f"  {_DIM}{hint}{_RESET}")
 
+        # should-not-stop GI-001 / AC-027: no title arm names the removed team
+        # tools. Team-Down is ledger-only, so no refusal carries the old
+        # directory-exists phase any more and its arm had no producer.
         title = "Team Teardown Blocked"
-        if phase == "team_dir_exists":
-            title = "TeamDelete Not Called"
-        elif phase == "live_teammates":
+        if phase == "live_teammates":
             title = "Teammates Still Alive"
         elif phase == "cleanup_failed":
             title = "Pane Cleanup Failed"

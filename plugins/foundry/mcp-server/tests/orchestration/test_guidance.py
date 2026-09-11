@@ -1533,7 +1533,14 @@ def test_every_action_the_router_emits_has_an_imperative():
     day it is written.
     """
     emitted: set[str] = set()
-    for name in ("_compute_next_action", "_nyquist_transition"):
+    # should-not-stop: the parked-state routing emits its actions from named
+    # helpers the router calls, so they are walked too — a helper left off this
+    # tuple is an action whose imperative nothing checks.
+    for name in (
+        "_compute_next_action", "_nyquist_transition", "_cast_wave_routing",
+        "_park_step", "_redispatch_step", "_ask_human_step",
+        "_cleanup_teams_step", "_guard_crossing",
+    ):
         tree = ast.parse(textwrap.dedent(inspect.getsource(getattr(owning_module(name), name))))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Dict):
@@ -2352,3 +2359,806 @@ def test_a_run_at_its_cap_that_can_still_finish_is_heading_for_done(run_env):
         _defect_ledger(fdir, [_tiered("D-3", tier)])
         blocked = foundry_next_action(project_root, caller="subagent")
         assert blocked["heading_for"] == vocab.RUN_PHASE_HALTED, (tier, blocked)
+
+
+# --------------------------------------------------------------------------- #
+# should-not-stop — THE ROUTER KEEPS THE RUN MOVING AROUND WHAT IS BLOCKED.
+#
+# Parked items are routed around and the human is asked only when nothing else
+# can move (CT-005 / AC-007 / AC-008 / AC-009 / AC-034 / ST-002 / FR-005 /
+# FR-007 / FR-036); teammate blockers are routed (CT-008 / AC-021 / ST-009 /
+# ST-016 / FR-018 / FR-038); the first attempt plus two same-model retries
+# re-dispatch and the third failure parks (AC-022 / ST-010 / FR-022); a
+# live-target crossing parks for a relaunch only when it must (AC-028 / AC-029
+# / AC-030 / ST-011 / ST-017 / FR-024 / FR-025 / FR-040 / FR-042); waits are
+# bounded (AC-005 / FR-009 / FR-034); no text names a removed team tool
+# (AC-027 / GI-001); dead ends name exact calls (FR-027); team cleanup waits for
+# the wave (FR-028); the endings match the halt door (FR-030); parked items are
+# on the display (FR-032).
+# --------------------------------------------------------------------------- #
+
+import re as _re
+import shutil
+import subprocess
+
+from foundry_mcp.tools import foundry as _foundry_tool
+from foundry_mcp.tools.orchestration import park as _park_door
+from tests.orchestration._env import _write_verdicts
+
+
+def _ago(**delta) -> str:
+    """An ISO-8601 UTC stamp ``delta`` before now."""
+    return (datetime.now(timezone.utc) - timedelta(**delta)).isoformat()
+
+
+def _cast_state(
+    fdir: Path, castings: list[tuple[int, list[int]]], *, entered: str | None = None
+) -> None:
+    """A run in F1 whose manifest holds ``castings`` as ``(id, depends_on)``."""
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(json.dumps({
+        "target_url": "", "no_ui": True,
+        "castings": [
+            {"id": cid, "title": f"casting {cid}", "key_files": [f"src/c{cid}.py"],
+             "depends_on": deps}
+            for cid, deps in castings
+        ],
+    }), encoding="utf-8")
+    _write_state(
+        fdir, phase="F1", cycle=0,
+        phase_history=[{"phase": "F1", "entered_at": entered or _ago(days=1)}],
+    )
+    _defect_ledger(fdir, [])
+
+
+def _dispatched(
+    fdir: Path, casting_id: int, *, at: str, phase: str = "cast", model: str = ""
+) -> None:
+    """One `spawns.log` dispatch record, in the shape the spawn doors write."""
+    row = {
+        "timestamp": at, "casting_id": casting_id, "phase": phase,
+        "prompt_hash": "sha256:0000000000000000",
+    }
+    if model:
+        row["model"] = model
+    with (fdir / "spawns.log").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row) + "\n")
+
+
+def _handed_off(fdir: Path, event: str, destination: str, *, at: str) -> None:
+    with (fdir / "handoffs.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(
+            {"timestamp": at, "event": event, "destination": destination}
+        ) + "\n")
+
+
+def _accepted(fdir: Path, casting_id: int, *, at: str) -> None:
+    """The handoff Foundry-Accept-Casting records for an acceptance."""
+    _handed_off(fdir, "acceptance", f"casting-{casting_id}-accepted", at=at)
+
+
+def _blocker(
+    fdir: Path, concern_id: str, casting_id: int, kind: str, *, at: str,
+    target: int | None = None, status: str = "open", text: str = "blocked",
+) -> None:
+    """One concern record carrying a blocker kind, in the ledger's own shape."""
+    path = fdir / "concerns.json"
+    document = (
+        json.loads(path.read_text(encoding="utf-8")) if path.exists()
+        else {"concerns": []}
+    )
+    aimed = casting_id if target is None else target
+    document["concerns"].append({
+        "id": concern_id, "cycle": 0, "source_casting": casting_id,
+        "target": str(aimed), "target_kind": "casting",
+        "target_casting_id": aimed, "target_matched": str(aimed),
+        "text": text, "status": status, "recorded_at": at, "blocker_kind": kind,
+    })
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+
+def _park(
+    project_root: str, ref: str, *, category: str = "spec_wrong",
+    question: str = "Which rule wins?",
+) -> str:
+    """Park one item through the park door itself; returns its id."""
+    result = _park_door.foundry_park(
+        action="park", item_ref=ref, category=category, question=question,
+        project_root=project_root,
+    )
+    assert result["ok"] is True, result
+    return result["parked"]["id"]
+
+
+def _answer(project_root: str, parked_id: str, answer: str, **extra) -> dict:
+    result = _park_door.foundry_park(
+        action="answer", parked_id=parked_id, answer=answer,
+        project_root=project_root, **extra,
+    )
+    assert result["ok"] is True, result
+    return result
+
+
+def _state(fdir: Path) -> dict:
+    return json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+
+
+def _update_state(fdir: Path, **fields) -> None:
+    """Change fields of state.json in place, keeping `parked` and the rest."""
+    state = _state(fdir)
+    state.update(fields)
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
+def test_a_parked_casting_leaves_the_rest_of_the_wave_running(run_env):
+    """should-not-stop AC-007 / OT-009, and AC-034's router half.
+
+    A-008: "Record the blocked item and keep doing all unaffected work ... Ask
+    via AskUserQuestion only when nothing else can move." One casting parked,
+    one in flight: the answer is the wave, not the question, and the marker
+    that would let the Stop hook allow a turn-end is never written.
+    """
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, []), (2, [])])
+    _dispatched(fdir, 1, at=_ago(seconds=30))
+    _dispatched(fdir, 2, at=_ago(seconds=30))
+    _park(project_root, "casting:1")
+
+    action = _compute_next_action(project_root)
+
+    assert action["action"] == "build_castings", action
+    assert action["details"]["parked"] == ["1"]
+    assert action["details"]["in_flight"] == ["2"]
+    assert "AskUserQuestion" not in action["instructions"]
+    assert foundry_next_action(project_root)["action"] == "build_castings"
+    assert _state(fdir)["parked"]["awaiting_human"] is None
+
+
+def test_with_every_casting_parked_the_ask_is_emitted_and_the_marker_written(run_env):
+    """should-not-stop AC-008 / OT-010 / ST-002 / FR-036.
+
+    Every remaining unit of work parked: ONE ask listing each parked question,
+    the awaiting_human marker naming exactly those ids, and the phase unchanged
+    — the run waits in place, it is not HALTED.
+    """
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, []), (2, [1])])
+    first = _park(project_root, "casting:1", question="Which halt reasons stay?")
+    second = _park(project_root, "casting:2", question="Is the cap per run?")
+
+    action = _compute_next_action(project_root)
+
+    assert action["action"] == "ask_human", action
+    assert action["phase"] == "F1"
+    for text in (first, second, "Which halt reasons stay?", "Is the cap per run?"):
+        assert text in action["instructions"], text
+    assert _state(fdir)["parked"]["awaiting_human"]["item_ids"] == [first, second]
+    assert _state(fdir)["phase"] == "F1"
+    assert "AskUserQuestion" in _ACTION_IMPERATIVES["ask_human"]
+
+
+def test_a_non_halt_answer_clears_its_item_and_its_work_routes_again(run_env):
+    """should-not-stop AC-009 / OT-012 / ST-003: "your answer resumes it"."""
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, []), (2, [])])
+    first = _park(project_root, "casting:1")
+    _park(project_root, "casting:2")
+    assert foundry_next_action(project_root)["action"] == "ask_human"
+
+    _answer(project_root, first, "build it against the spec as written")
+    nxt = foundry_next_action(project_root)
+
+    assert nxt["action"] == "build_castings", nxt
+    assert nxt["details"]["dispatchable"] == ["1"]
+    assert nxt["details"]["parked"] == ["2"]
+    assert _state(fdir)["parked"]["awaiting_human"] is None
+
+
+def test_the_router_clears_the_ask_once_work_can_move_without_an_answer(run_env):
+    """FR-036: the marker is set by the ask step and is not left behind it.
+
+    A marker left standing while real work moves would let the Stop hook allow
+    a turn-end with nobody watching, which is the failure the hook exists for.
+    """
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, []), (2, [])])
+    parked = _park(project_root, "casting:1")
+    _dispatched(fdir, 2, at=_ago(seconds=20))
+    _park_door.set_awaiting_human(fdir, [parked])
+    assert _state(fdir)["parked"]["awaiting_human"]["item_ids"] == [parked]
+
+    nxt = foundry_next_action(project_root)
+
+    assert nxt["action"] == "build_castings", nxt
+    assert _state(fdir)["parked"]["awaiting_human"] is None
+
+
+def test_a_halt_answer_is_sealed_ahead_of_every_other_step(run_env):
+    """Lead ruling on halt answers (supports ST-004 / AC-014 / FR-014).
+
+    With a casting in flight and a team registered, an unconsumed halt answer
+    still comes first: the only check ahead of it is HALTED itself.
+    """
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, []), (2, [])])
+    _dispatched(fdir, 2, at=_ago(seconds=30))
+    _teams_active(True)
+    parked = _park(project_root, "casting:1")
+    _park_door.set_awaiting_human(fdir, [parked])
+    _answer(project_root, parked, "halt the run, the spec is wrong", halt=True)
+
+    action = _compute_next_action(project_root)
+
+    assert action["action"] == "seal_user_stop", action
+    assert action["details"]["next_call"] == {
+        "tool": "Foundry-Phase", "phase": "halt", "reason": "user_stop",
+        "text": "halt the run, the spec is wrong",
+    }
+    assert "Foundry-Phase(phase='halt', reason='user_stop'" in _ACTION_IMPERATIVES["seal_user_stop"]
+
+    _update_state(
+        fdir, phase=RUN_PHASE_HALTED, halted_at_cycle=0,
+        halted_reason={"reason": "user_stop", "text": "halt the run, the spec is wrong"},
+    )
+    assert _compute_next_action(project_root)["action"] == "halted"
+
+
+def test_a_prompt_hash_mismatch_blocker_is_redispatched(run_env):
+    """should-not-stop OT-020 / AC-021 / ST-009 / FR-018."""
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, []), (2, [])])
+    _dispatched(fdir, 1, at=_ago(seconds=90))
+    _dispatched(fdir, 2, at=_ago(seconds=90))
+    _blocker(fdir, "C-001", 1, "prompt_hash_mismatch", at=_ago(seconds=60))
+
+    action = _compute_next_action(project_root)
+
+    assert action["action"] == "redispatch_casting", action
+    assert action["details"]["casting_id"] == "1"
+    assert action["details"]["concern_id"] == "C-001"
+    assert action["details"]["spawn_phase"] == "cast"
+    assert "Foundry-Concern(close='C-001'" in action["instructions"]
+
+    _dispatched(fdir, 1, at=_ago(seconds=10))
+    after = _compute_next_action(project_root)
+    assert after["action"] == "build_castings", after
+    assert after["details"]["in_flight"] == ["1", "2"]
+    assert after["details"]["castings"]["1"]["failed_attempts"] == 0
+
+
+def test_a_missing_upstream_blocker_is_held_then_released_when_its_upstream_is_accepted(
+    run_env,
+):
+    """should-not-stop OT-033 / AC-021 / AC-037 / ST-016 / FR-038.
+
+    Held, not parked and no question, while its upstream is still moving;
+    re-dispatched once the upstream is accepted; and the blocker return leaves
+    its failed-attempt count where it was.
+    """
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, []), (2, [1])])
+    _dispatched(fdir, 1, at=_ago(seconds=120))
+    _dispatched(fdir, 2, at=_ago(seconds=120))
+    _blocker(fdir, "C-001", 2, "missing_prerequisite", at=_ago(seconds=100), target=1)
+
+    held = _compute_next_action(project_root)
+    assert held["action"] == "build_castings", held
+    assert held["details"]["held"] == ["2"]
+    assert held["details"]["castings"]["2"]["failed_attempts"] == 0
+    assert "AskUserQuestion" not in held["instructions"]
+    assert "parked" not in _state(fdir)
+
+    _accepted(fdir, 1, at=_ago(seconds=60))
+    released = _compute_next_action(project_root)
+    assert released["action"] == "redispatch_casting", released
+    assert released["details"]["casting_id"] == "2"
+    assert "accepted" in released["details"]["reason"]
+
+    _dispatched(fdir, 2, at=_ago(seconds=10))
+    resumed = _compute_next_action(project_root)
+    assert resumed["action"] == "build_castings", resumed
+    assert resumed["details"]["castings"]["2"]["attempts"] == 2
+    assert resumed["details"]["castings"]["2"]["failed_attempts"] == 0
+
+
+def test_a_held_casting_parks_with_its_parked_upstream(run_env):
+    """should-not-stop AC-037 (edge) / ST-016: "parks only if its upstream parks"."""
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, []), (2, [1])])
+    _dispatched(fdir, 1, at=_ago(seconds=120))
+    _dispatched(fdir, 2, at=_ago(seconds=120))
+    _blocker(fdir, "C-001", 2, "missing_prerequisite", at=_ago(seconds=100), target=1)
+    _park(project_root, "casting:1", category="env_broken")
+
+    action = _compute_next_action(project_root)
+
+    assert action["action"] == "park_item", action
+    assert action["details"]["item_ref"] == "casting:2"
+    assert action["details"]["category"] == "env_broken"
+
+    _park(project_root, "casting:2", category="env_broken", question=action["details"]["question"])
+    assert _compute_next_action(project_root)["action"] == "ask_human"
+
+
+def test_a_scope_cut_blocker_parks_as_a_spec_problem(run_env):
+    """should-not-stop AC-021 / FR-031: the spec-problem park replaces re-running F0.5."""
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, []), (2, [])])
+    _dispatched(fdir, 1, at=_ago(seconds=90))
+    _dispatched(fdir, 2, at=_ago(seconds=90))
+    _blocker(
+        fdir, "C-001", 1, "scope_instruction_conflict", at=_ago(seconds=60),
+        text="the prompt says to pick the core coverage",
+    )
+
+    action = _compute_next_action(project_root)
+
+    assert action["action"] == "park_item", action
+    assert action["details"]["item_ref"] == "casting:1"
+    assert action["details"]["category"] == "spec_wrong"
+    assert "pick the core coverage" in action["details"]["question"]
+
+
+def test_the_first_attempt_and_two_retries_redispatch_and_the_third_failure_parks(run_env):
+    """should-not-stop AC-022 / OT-025 / ST-010 / FR-022."""
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, [])], entered=_ago(hours=10))
+    _stalled_ledger(fdir, agent="casting-1", hours=3)
+
+    _dispatched(fdir, 1, at=_ago(hours=6))
+    first = _compute_next_action(project_root)
+    assert first["action"] == "redispatch_casting", first
+    assert first["details"]["failed_attempts"] == 0
+
+    _dispatched(fdir, 1, at=_ago(hours=5))
+    second = _compute_next_action(project_root)
+    assert second["action"] == "redispatch_casting", second
+    assert second["details"]["failed_attempts"] == 1
+
+    _dispatched(fdir, 1, at=_ago(hours=4))
+    third = _compute_next_action(project_root)
+    assert third["action"] == "park_item", third
+    assert third["details"]["item_ref"] == "casting:1"
+    assert third["details"]["category"] == "env_broken"
+
+    # The count is per model: a switch starts that model's own count.
+    _dispatched(fdir, 1, at=_ago(hours=3, minutes=30), model="sonnet")
+    switched = _compute_next_action(project_root)
+    assert switched["action"] == "redispatch_casting", switched
+    assert switched["details"]["model"] == "sonnet"
+
+
+def test_blocker_returns_and_judged_returns_never_count_as_failures(run_env):
+    """should-not-stop AC-037 / FR-038: "Blocker returns don't count toward the
+    3 attempts; only real agent failures do." A re-dispatch after an acceptance
+    check judged the attempt is a quality re-dispatch, not a failure either."""
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, [])], entered=_ago(hours=10))
+    _stalled_ledger(fdir, agent="casting-1", hours=3)
+    _dispatched(fdir, 1, at=_ago(hours=8))
+    _blocker(fdir, "C-001", 1, "prompt_hash_mismatch", at=_ago(hours=7), status="closed")
+    _dispatched(fdir, 1, at=_ago(hours=6))
+    _handed_off(fdir, "evidence_verified", "evidence/casting-1-login.log", at=_ago(hours=5))
+    _dispatched(fdir, 1, at=_ago(hours=4))
+
+    action = _compute_next_action(project_root)
+
+    assert action["action"] == "redispatch_casting", action
+    assert action["details"]["failed_attempts"] == 0
+
+
+def test_team_cleanup_waits_for_the_phase_s_work(run_env):
+    """should-not-stop FR-028: cleanup_teams no longer pre-empts the wave."""
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, [])])
+    _dispatched(fdir, 1, at=_ago(seconds=30))
+    _teams_active(True)
+    assert _compute_next_action(project_root)["action"] == "build_castings"
+    _accepted(fdir, 1, at=_ago(seconds=5))
+    assert _compute_next_action(project_root)["action"] == "cleanup_teams"
+    _teams_active(False)
+    assert _compute_next_action(project_root)["action"] == "transition_to_inspect"
+
+    _write_state(fdir, phase="F3", cycle=2)
+    _router_ledger(fdir, [_router_defect("D-001")])
+    _teams_active(True)
+    assert _compute_next_action(project_root)["action"] == "fix_defects"
+    _router_ledger(fdir, [_router_defect("D-001", status="fixed")])
+    assert _compute_next_action(project_root)["action"] == "cleanup_teams"
+
+    # Outside the two wave phases a registered team is left over: cleaned first.
+    _write_state(fdir, phase="F4", cycle=2)
+    assert _compute_next_action(project_root)["action"] == "cleanup_teams"
+    assert "TeamDelete" not in _compute_next_action(project_root)["instructions"]
+
+
+def test_a_parked_stream_is_routed_around_until_every_missing_stream_is_parked(run_env):
+    """should-not-stop FR-005 / FR-007: "keep doing ... INSPECT"."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _record_full_inspect_mode(fdir, cycle=1)
+    _router_ledger(fdir, [])
+    missing = _check_streams_complete(project_root)["missing"].split()
+    assert len(missing) >= 2, missing
+
+    _park(project_root, f"stream:{missing[0]}", category="env_broken")
+    action = _compute_next_action(project_root)
+    assert action["action"] == "run_streams", action
+    assert action["details"]["parked_streams"] == [missing[0]]
+
+    for wire in missing[1:]:
+        _park(project_root, f"stream:{wire}", category="env_broken")
+    assert _compute_next_action(project_root)["action"] == "ask_human"
+
+
+def test_a_parked_defect_is_routed_around_in_grind(run_env):
+    """should-not-stop FR-005: "other defects" keep moving."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=2)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [_router_defect("D-001"), _router_defect("D-002")])
+
+    _park(project_root, "defect:D-001")
+    action = _compute_next_action(project_root)
+    assert action["action"] == "fix_defects", action
+    assert action["details"]["parked_defects"] == ["D-001"]
+    assert "D-001" in action["instructions"]
+
+    _park(project_root, "defect:D-002")
+    assert _compute_next_action(project_root)["action"] == "ask_human"
+
+
+def test_parked_items_their_answers_and_the_ask_are_on_the_display(run_env):
+    """should-not-stop FR-032: shown in the Foundry-Next display."""
+    from foundry_mcp.tools.display import _fmt_foundry_next_lines
+
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, []), (2, [])])
+    first = _park(project_root, "casting:1", question="Which halt reasons stay?")
+    second = _park(project_root, "casting:2", question="Is the cap per run?")
+    ask = foundry_next_action(project_root)
+    assert ask["action"] == "ask_human"
+    asking = _plain("\n".join(_fmt_foundry_next_lines(ask)))
+    assert f"Asking:   the human since" in asking and first in asking
+
+    _answer(project_root, second, "per run")
+    nxt = foundry_next_action(project_root)
+
+    assert [i["id"] for i in nxt["parked"]["open"]] == [first]
+    assert [i["id"] for i in nxt["parked"]["answered"]] == [second]
+    rendered = _plain("\n".join(_fmt_foundry_next_lines(nxt)))
+    assert f"Parked:   {first} casting:1 (spec_wrong) — Which halt reasons stay?" in rendered
+    assert f"Answered: {second} casting:2 — per run" in rendered
+    assert "Asking:" not in rendered
+
+
+_RETIRED_WAIT_SPELLINGS = (
+    "TaskOutput", "Do NOT poll", "notifies you", "notification fires",
+    "You'll be notified", "Wait for completion", "WAIT for all to complete",
+    "Wait for all tasks to complete", "Do NOT call Foundry-Next while waiting",
+    "wait and call Foundry-Next again",
+)
+
+
+def test_no_wait_the_router_hands_the_lead_ends_the_turn(run_env):
+    """should-not-stop AC-005 / OT-006 / FR-009 / FR-034 / GI-003.
+
+    Every wait is a bounded one inside the turn, on every surface that tells
+    the lead to wait: the three wait imperatives, their router CONTEXT, and the
+    stall notice.
+    """
+    for action in ("build_castings", "fix_defects", "run_streams"):
+        text = _ACTION_IMPERATIVES[action]
+        assert "Monitor tool" in text and "bounded Bash wait loop" in text, action
+    for action, text in _ACTION_IMPERATIVES.items():
+        for retired in _RETIRED_WAIT_SPELLINGS:
+            assert retired not in text, (action, retired)
+
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, [])])
+    _dispatched(fdir, 1, at=_ago(seconds=30))
+    _stale_stall_clock(fdir, 600)
+    _progressing_ledger(fdir, agent="casting-1")
+    nxt = foundry_next_action(project_root)
+    assert nxt["action"] == "build_castings"
+    waiting = next(line for line in nxt["instructions"].splitlines() if "WAITING ON" in line)
+    assert "Monitor tool" in waiting, waiting
+    for retired in _RETIRED_WAIT_SPELLINGS:
+        assert retired not in nxt["instructions"], retired
+
+    _write_state(fdir, phase="F3", cycle=2)
+    _router_ledger(fdir, [_router_defect("D-001")])
+    grind = _compute_next_action(project_root)
+    assert "Monitor tool" in grind["instructions"]
+    for retired in _RETIRED_WAIT_SPELLINGS:
+        assert retired not in grind["instructions"], retired
+
+
+def test_a_stalled_teammate_is_recovered_by_the_lead_never_escalated():
+    """should-not-stop AC-023 / FR-023: "The lead watches liveness and
+    re-dispatches or messages stalled teammates." Both wave imperatives say so,
+    and neither sends a stalled teammate to the user."""
+    for action in ("build_castings", "fix_defects"):
+        text = _ACTION_IMPERATIVES[action]
+        assert "Foundry-Liveness reports a teammate stalled" in text, action
+        assert "SendMessage it to resume, or re-dispatch it" in text, action
+        assert "never escalate it to the user" in text, action
+
+
+def test_no_shipped_text_in_the_router_or_the_display_names_a_removed_team_tool():
+    """should-not-stop AC-027 / OT-024 / GI-001: TeamCreate and TeamDelete are gone."""
+    from foundry_mcp.tools import display as _display
+
+    for module in (_guidance, _display):
+        source = Path(inspect.getsourcefile(module)).read_text(encoding="utf-8")
+        for removed in ("TeamCreate", "TeamDelete"):
+            assert removed not in source, (module.__name__, removed)
+    display_source = Path(inspect.getsourcefile(_display)).read_text(encoding="utf-8")
+    assert "team_dir_exists" not in display_source
+    assert "Foundry-Team-Down" in _ACTION_IMPERATIVES["cleanup_teams"]
+
+
+def test_the_dead_ends_and_the_by_hand_state_updates_name_exact_calls(run_env):
+    """should-not-stop FR-027: `unknown` and the F4/F5/F6 CONTEXT name the call."""
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _defect_ledger(fdir, [])
+
+    _write_state(fdir, phase="F9", cycle=0)
+    unknown = _compute_next_action(project_root)
+    assert unknown["action"] == "unknown"
+    assert "AskUserQuestion" in unknown["instructions"]
+    assert "Check state.json" not in unknown["instructions"]
+    assert "AskUserQuestion" in _ACTION_IMPERATIVES["unknown"]
+
+    _write_state(fdir, phase="F4", cycle=1)
+    _write_verdicts(fdir, [{"id": "FR-001", "verdict": "VERIFIED"}])
+    done = _compute_next_action(project_root)
+    assert done["action"] == "transition_to_done", done
+    assert "Foundry-Phase(phase='done')" in done["instructions"]
+
+    _write_state(fdir, phase="F5", cycle=1, temper=True)
+    assert "Foundry-Phase(phase='done')" in _compute_next_action(project_root)["instructions"]
+    _write_state(fdir, phase="F5", cycle=1, temper=True, nyquist=True)
+    assert "Foundry-Phase(phase='nyquist')" in _compute_next_action(project_root)["instructions"]
+
+    _write_state(fdir, phase="F6", cycle=1)
+    assert "Foundry-Phase(phase='done')" in _compute_next_action(project_root)["instructions"]
+
+    for text in (
+        done["instructions"],
+        _ACTION_IMPERATIVES["transition_to_assay"],
+    ):
+        assert not _re.search(r"\b[Uu]pdate (state )?to F", text), text
+    assay = _ACTION_IMPERATIVES["transition_to_assay"]
+    assert assay.index("Foundry-Gate(phase='assay')") < assay.index(
+        "Foundry-Phase(phase='inspect_clean')"
+    )
+
+
+def test_the_standing_rules_name_the_post_cast_endings():
+    """should-not-stop FR-030: DONE, the launch cap, or a human-origin user_stop."""
+    rules = _STANDING_CRITICAL_RULES
+    assert "After start_cast a run ends only three ways" in rules
+    assert "the launch cap" in rules
+    assert "human-origin user_stop" in rules
+    assert "it is not a HALTED seal" in rules
+    assert "NEVER end your turn while the run is in F1..F5.5" in rules
+
+
+def test_every_grind_spawn_imperative_hands_over_defect_ids(run_env):
+    """Lead ruling (supports CT-009): the handed-over ids, never the backlog's."""
+    for action in ("transition_to_grind", "fix_defects", "redispatch_casting"):
+        assert "defect_ids" in _ACTION_IMPERATIVES[action], action
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=2)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [_router_defect("D-001")])
+    assert "defect_ids" in _compute_next_action(project_root)["instructions"]
+
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "FULL", "rule": "final_gate",
+        "decided_by": "inspect_start", "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }])
+    _streams_done(fdir)
+    opening = _compute_next_action(project_root)
+    assert opening["action"] == "transition_to_grind", opening
+    assert "defect_ids" in opening["instructions"]
+
+
+_TEAMMATE_MD = Path(__file__).resolve().parents[3] / "agents" / "teammate.md"
+
+
+def test_each_former_teammate_halt_files_a_blocker_and_returns():
+    """should-not-stop AC-020 / OT-019 / GI-005 / FR-031.
+
+    The three former halts — missing prerequisite, scope instruction conflict,
+    prompt hash mismatch — each file a Foundry-Concern with the matching blocker
+    kind and return; none of them still tells the teammate to halt or STOP.
+    """
+    text = _TEAMMATE_MD.read_text(encoding="utf-8")
+    passages = [p for p in text.split("\n\n") if "blocker_kind='" in p]
+    assert len(passages) == len(vocab.BLOCKER_KINDS), passages
+    for kind, passage in zip(vocab.BLOCKER_KINDS, passages):
+        assert f"blocker_kind='{kind}'" in passage, (kind, passage)
+        assert "Foundry-Concern(" in passage
+        assert "return" in passage
+        assert not _re.search(r"\bhalt\b", passage), passage
+        assert "STOP" not in passage
+    assert "re-runs F0.5 DECOMPOSE" not in text
+
+
+def _live_git(root: Path, *args: str) -> str:
+    proc = subprocess.run(
+        [
+            "git", "-c", "user.name=foundry-test", "-c", "user.email=test@example.invalid",
+            "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+            "-C", str(root), *args,
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    return proc.stdout.strip()
+
+
+_LIVE_FILES = {
+    ".claude-plugin/plugin.json": json.dumps({"name": "foundry", "version": "0.0.0"}),
+    "mcp-server/src/foundry_mcp/tools/orchestration/gates.py": "GATE = 1\n",
+    "mcp-server/src/foundry_mcp/tools/orchestration/guidance.py": "ROUTE = 1\n",
+    "mcp-server/src/foundry_mcp/tools/display.py": "SHOW = 1\n",
+    "mcp-server/tests/test_x.py": "def test_x():\n    pass\n",
+    "agents/teammate.md": "teammate\n",
+    "agents/tracer.md": "tracer\n",
+    "commands/start.md": "start\n",
+}
+
+_ROUTER_PATH = "mcp-server/src/foundry_mcp/tools/orchestration/guidance.py"
+_GATES_PATH = "mcp-server/src/foundry_mcp/tools/orchestration/gates.py"
+
+
+def _live_target(project_root: str) -> tuple[Path, str]:
+    """A project whose target IS a foundry plugin, committed; returns (plugin, HEAD)."""
+    root = Path(project_root)
+    plugin = root / "plugins" / "foundry"
+    for rel, body in _LIVE_FILES.items():
+        path = plugin / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    (root / ".gitignore").write_text("foundry-archive/\n", encoding="utf-8")
+    _live_git(root, "init", "-q")
+    _live_git(root, "add", "-A")
+    _live_git(root, "commit", "-q", "-m", "the build the running server loaded")
+    return plugin, _live_git(root, "rev-parse", "HEAD")
+
+
+def _f2_ready_for_grind(fdir: Path, **extra) -> None:
+    _write_state(fdir, phase="F2", cycle=2, inspect_modes=[{
+        "cycle": 2, "phase": "F2", "mode": "FULL", "rule": "final_gate",
+        "decided_by": "inspect_start", "required_streams": ["trace", "prove", "test"],
+        "stream_scope": {}, "prove_sample": [], "touched_files": [],
+    }], **extra)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _router_ledger(fdir, [_router_defect("D-001")])
+    _streams_done(fdir)
+
+
+def _f4_ready_for_done(fdir: Path, **extra) -> None:
+    _write_state(fdir, phase="F4", cycle=2, **extra)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _defect_ledger(fdir, [])
+    _write_verdicts(fdir, [{"id": "FR-001", "verdict": "VERIFIED"}])
+
+
+def test_the_reload_rule_judges_display_and_tests_outside_it():
+    """should-not-stop AC-029 / FR-025: display- and test-only changes never park."""
+    classify = _foundry_tool.reload_path_class
+    assert classify("mcp-server/src/foundry_mcp/tools/display.py") == _foundry_tool.RELOAD_CLASS_DISPLAY
+    assert classify("mcp-server/tests/orchestration/test_guidance.py") == _foundry_tool.RELOAD_CLASS_TESTS
+    assert classify(_GATES_PATH) == _foundry_tool.RELOAD_CLASS_SERVER
+    assert classify("agents/teammate.md") == _foundry_tool.RELOAD_CLASS_PROSE
+    assert classify("skills/prove/SKILL.md") == _foundry_tool.RELOAD_CLASS_PROSE
+    assert classify("commands/start.md") == _foundry_tool.RELOAD_CLASS_OTHER
+
+    doors = _foundry_tool._crossing_server_paths()
+    for path in (
+        _GATES_PATH,
+        "mcp-server/src/foundry_mcp/tools/orchestration/transitions.py",
+        "mcp-server/src/foundry_mcp/server.py",
+    ):
+        assert path in doors, path
+    assert _ROUTER_PATH not in doors, "the router is not a door a crossing loads"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+def test_a_mid_run_crossing_parks_for_a_relaunch_only_on_what_it_depends_on(run_env):
+    """should-not-stop AC-028 (mid-run half) / AC-029 / ST-011 / FR-024 / FR-025."""
+    project_root, fdir = run_env
+    plugin, loaded = _live_target(project_root)
+    _f2_ready_for_grind(fdir, self_target=True, server_commit=loaded)
+    assert _compute_next_action(project_root)["action"] == "transition_to_grind"
+
+    # Display, tests, lead prose and server code the doors do not load.
+    (plugin / "mcp-server/tests/test_x.py").write_text("def test_x():\n    assert True\n")
+    (plugin / "mcp-server/src/foundry_mcp/tools/display.py").write_text("SHOW = 2\n")
+    (plugin / _ROUTER_PATH).write_text("ROUTE = 2\n")
+    (plugin / "commands/start.md").write_text("start, reworded\n")
+    quiet = _compute_next_action(project_root)
+    assert quiet["action"] == "transition_to_grind", quiet
+
+    # The prose the phase this crossing opens loads: the GRIND teammate's.
+    (plugin / "agents/teammate.md").write_text("teammate, rewritten\n")
+    parked = _compute_next_action(project_root)
+    assert parked["action"] == "park_item", parked
+    assert parked["details"]["item_ref"] == "crossing:grind_start"
+    assert parked["details"]["category"] == vocab.PARK_CATEGORY_LIVE_PLUGIN_RELOAD
+    assert parked["details"]["reload"]["relevant"] == ["agents/teammate.md"]
+    assert "claude --plugin-dir" in parked["details"]["question"]
+
+    # A gate the crossing runs through.
+    _live_git(Path(project_root), "checkout", "--", "plugins/foundry/agents/teammate.md")
+    (plugin / _GATES_PATH).write_text("GATE = 2\n")
+    gated = _compute_next_action(project_root)
+    assert gated["action"] == "park_item", gated
+    assert gated["details"]["reload"]["relevant"] == [_GATES_PATH]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+def test_before_done_any_relevant_change_parks_for_one_relaunch(run_env):
+    """should-not-stop ST-017 / FR-040 / FR-042 / AC-028 (before-DONE half).
+
+    Server code no crossing's door loads still parks DONE, and the relaunch —
+    recorded by the resumed server — is what answers the item.
+    """
+    project_root, fdir = run_env
+    plugin, loaded = _live_target(project_root)
+    _f4_ready_for_done(fdir, self_target=True, server_commit=loaded)
+    assert _compute_next_action(project_root)["action"] == "transition_to_done"
+
+    (plugin / "mcp-server/src/foundry_mcp/tools/display.py").write_text("SHOW = 2\n")
+    (plugin / "mcp-server/tests/test_x.py").write_text("def test_x():\n    assert 1\n")
+    assert _compute_next_action(project_root)["action"] == "transition_to_done"
+
+    (plugin / _ROUTER_PATH).write_text("ROUTE = 2\n")
+    parked = _compute_next_action(project_root)
+    assert parked["action"] == "park_item", parked
+    assert parked["details"]["item_ref"] == "crossing:done"
+    assert parked["details"]["reload"]["rule"] == "before_done"
+    assert parked["details"]["reload"]["relevant"] == [_ROUTER_PATH]
+
+    item = _park(
+        project_root, "crossing:done", category=vocab.PARK_CATEGORY_LIVE_PLUGIN_RELOAD,
+        question=parked["details"]["question"],
+    )
+    assert _compute_next_action(project_root)["action"] == "ask_human"
+
+    root = Path(project_root)
+    _live_git(root, "add", "-A")
+    _live_git(root, "commit", "-q", "-m", "ship the router change")
+    _update_state(fdir, server_commit=_live_git(root, "rev-parse", "HEAD"))
+    relaunched = _compute_next_action(project_root)
+    assert relaunched["action"] == "record_reload_answer", relaunched
+    assert relaunched["details"]["parked_id"] == item
+
+    _answer(project_root, item, relaunched["details"]["answer"])
+    assert _compute_next_action(project_root)["action"] == "transition_to_done"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+def test_a_run_whose_target_is_not_foundry_never_parks_a_relaunch(run_env):
+    """should-not-stop AC-030: on a non-live target no reload item is ever parked."""
+    project_root, fdir = run_env
+    plugin, loaded = _live_target(project_root)
+    for rel in (_GATES_PATH, _ROUTER_PATH, "agents/teammate.md"):
+        (plugin / rel).write_text("changed\n")
+
+    _f4_ready_for_done(fdir, self_target=False, server_commit=loaded)
+    assert _compute_next_action(project_root)["action"] == "transition_to_done"
+    _f2_ready_for_grind(fdir, self_target=False, server_commit=loaded)
+    assert _compute_next_action(project_root)["action"] == "transition_to_grind"
+
+    # And a project holding no foundry plugin.json, whatever state.json claims.
+    (plugin / ".claude-plugin/plugin.json").write_text(json.dumps({"name": "not-foundry"}))
+    _f4_ready_for_done(fdir, self_target=True, server_commit=loaded)
+    assert _compute_next_action(project_root)["action"] == "transition_to_done"

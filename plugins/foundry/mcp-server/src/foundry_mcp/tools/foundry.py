@@ -2920,6 +2920,310 @@ def _self_target_preflight(project_root: Path) -> tuple[dict, dict | None]:
     return fields, None
 
 
+# --------------------------------------------------------------------------- #
+# should-not-stop FR-024 / FR-025 / FR-040 / FR-042 / ST-011 / ST-017 /
+# AC-028 / AC-029 / AC-030 — WHEN A LIVE-TARGET RUN OWES A RELAUNCH.
+#
+# `_self_target_preflight` above refuses to START or RESUME a self-targeting
+# run on a server that is not the working tree. This is the other half of that
+# rule, for the middle of a run: the run is changing the very code the server
+# it runs on was loaded from, so a crossing can be asked to run on code that is
+# no longer the code being shipped. Foundry-Next tells the lead to park the
+# crossing for ONE relaunch (category `live_plugin_reload`) when, and only
+# when:
+#
+#   * a MID-RUN crossing depends on server/gate code or agent/skill prose that
+#     changed since the running server loaded — the dependency test below; or
+#   * the crossing is into F6 and ANY server/gate code or agent/skill prose
+#     changed since load, whether or not DONE uses it, so the final gates and
+#     the report always run on the code being shipped. With no such change DONE
+#     proceeds with no reload (the lead's strict reading: A-037 and A-039
+#     supersede the "always before DONE" clause of A-024).
+#
+# Display-only and test-only changes never owe one, and a run whose target is
+# not the foundry plugin never owes one at all.
+#
+# "Since the running server loaded" is `state.json`'s `server_commit`: the
+# commit `Foundry-Init` recorded for the server that started — or resumed —
+# the run. A relaunch followed by `Foundry-Init(resume=...)` re-records it
+# (D-109), which is exactly what clears the changes the relaunch picked up.
+# --------------------------------------------------------------------------- #
+
+#: What a changed path is, for the reload rule. Only the first two classes ever
+#: owe a relaunch; the other three are named so a reader can see the path was
+#: looked at and judged rather than missed.
+RELOAD_CLASS_SERVER = "server_code"
+RELOAD_CLASS_PROSE = "agent_prose"
+RELOAD_CLASS_DISPLAY = "display"
+RELOAD_CLASS_TESTS = "tests"
+RELOAD_CLASS_OTHER = "other"
+RELOAD_CLASSES: tuple[str, ...] = (
+    RELOAD_CLASS_SERVER,
+    RELOAD_CLASS_PROSE,
+    RELOAD_CLASS_DISPLAY,
+    RELOAD_CLASS_TESTS,
+    RELOAD_CLASS_OTHER,
+)  # 5 classes
+
+#: The crossings into F6. Before them the rule is "any relevant change", not
+#: the dependency test.
+RELOAD_DONE_CROSSINGS = frozenset({"done", "nyquist_done"})
+
+#: Where each class lives, relative to the foundry plugin directory.
+_RELOAD_SERVER_PREFIX = "mcp-server/src/"
+_RELOAD_TESTS_PREFIX = "mcp-server/tests/"
+_RELOAD_DISPLAY_PATHS = frozenset({"mcp-server/src/foundry_mcp/tools/display.py"})
+_RELOAD_PROSE_PREFIXES = ("agents/", "skills/")
+
+#: Every Foundry-Gate / Foundry-Phase crossing enters through the server's
+#: dispatch and is decided by the verifier modules: the gate and transition
+#: doors, and the evidence engine whose sweep they run at the crossings that
+#: open an INSPECT or end the run. A mid-run crossing depends on these and on
+#: everything they load, in the RUNNING package.
+_CROSSING_DISPATCH_PATH = "mcp-server/src/foundry_mcp/server.py"
+_CROSSING_DOOR_MODULES = (
+    "foundry_mcp.tools.orchestration.gates",
+    "foundry_mcp.tools.orchestration.transitions",
+    "foundry_mcp.tools.evidence",
+)
+
+#: The agent and skill prose the phase a crossing OPENS loads: INSPECT's
+#: streams, GRIND's teammate, ASSAY's assayers, TEMPER's skill, NYQUIST's
+#: auditor. An entry ending in "/" stands for everything beneath it.
+_INSPECT_STREAM_PROSE = (
+    "agents/tracer.md",
+    "agents/assayer.md",
+    "agents/research-auditor.md",
+    "agents/coverage-diff.md",
+    "agents/spec-test-deriver.md",
+    "agents/flow-tracer.md",
+    "skills/trace/",
+    "skills/prove/",
+    "skills/sight/",
+)
+_CROSSING_PROSE: dict[str, tuple[str, ...]] = {
+    "cast": _INSPECT_STREAM_PROSE,
+    "inspect_start": _INSPECT_STREAM_PROSE,
+    "grind_start": ("agents/teammate.md",),
+    "assay_fail": ("agents/teammate.md",),
+    "inspect_clean": ("agents/assayer.md", "agents/test-observations-adjudicator.md"),
+    "temper": ("skills/temper/",),
+    "nyquist": ("agents/nyquist-auditor.md",),
+}
+
+
+def reload_path_class(plugin_rel_path: str) -> str:
+    """The `RELOAD_CLASSES` member a plugin-relative changed path belongs to.
+
+    Display is judged BEFORE server code, because `tools/display.py` lives under
+    the server's source tree and a display-only change must never owe a
+    relaunch however it is reached.
+    """
+    path = plugin_rel_path.replace("\\", "/")
+    if path in _RELOAD_DISPLAY_PATHS:
+        return RELOAD_CLASS_DISPLAY
+    if path.startswith(_RELOAD_TESTS_PREFIX):
+        return RELOAD_CLASS_TESTS
+    if path.startswith(_RELOAD_SERVER_PREFIX):
+        return RELOAD_CLASS_SERVER
+    if path.startswith(_RELOAD_PROSE_PREFIXES):
+        return RELOAD_CLASS_PROSE
+    return RELOAD_CLASS_OTHER
+
+
+def _crossing_server_paths() -> frozenset[str]:
+    """Plugin-relative paths of every module a mid-run crossing's doors load.
+
+    Derived from the RUNNING package's own source by `ast` rather than kept as
+    a hand list that goes stale the day a gate imports a new helper. MODULE-TOP
+    imports only, followed transitively: what Python executes when the gate and
+    transition modules load, which the layering rule keeps to the leaves and the
+    one halt seam. Following every function-local import as well reaches nearly
+    the whole package through function bodies no crossing runs, and a
+    dependency test that every change satisfies is the before-DONE "any change"
+    rule wearing another name. The server dispatch is added as itself, not as a
+    closure: it imports every tool.
+    """
+    import ast
+
+    def _module_top_imports(tree: ast.Module):
+        """Import statements Python runs when the module loads: none inside a function."""
+        stack = list(tree.body)
+        while stack:
+            node = stack.pop()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                yield node
+                continue
+            stack.extend(ast.iter_child_nodes(node))
+
+    src_root = _executing_server_root() / "mcp-server" / "src"
+    modules: dict[str, Path] = {}
+    for path in (src_root / "foundry_mcp").rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        parts = list(path.relative_to(src_root).with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts = parts[:-1]
+        modules[".".join(parts)] = path
+
+    def _reached(name: str) -> set[str]:
+        path = modules[name]
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
+            return set()
+        package = name if path.name == "__init__.py" else name.rpartition(".")[0]
+        named: set[str] = set()
+        for node in _module_top_imports(tree):
+            if isinstance(node, ast.Import):
+                named.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    base_parts = package.split(".")
+                    base_parts = base_parts[: len(base_parts) - node.level + 1]
+                    base = ".".join(base_parts + ([node.module] if node.module else []))
+                else:
+                    base = node.module or ""
+                named.add(base)
+                named.update(f"{base}.{alias.name}" for alias in node.names)
+        reached: set[str] = set()
+        for dotted in named:
+            parts = dotted.split(".")
+            for end in range(1, len(parts) + 1):
+                prefix = ".".join(parts[:end])
+                if prefix in modules:
+                    reached.add(prefix)
+        return reached
+
+    seen: set[str] = set()
+    queue = [name for name in _CROSSING_DOOR_MODULES if name in modules]
+    while queue:
+        name = queue.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        queue.extend(_reached(name) - seen)
+    paths = {
+        _RELOAD_SERVER_PREFIX + modules[name].relative_to(src_root).as_posix()
+        for name in seen
+    }
+    paths.add(_CROSSING_DISPATCH_PATH)
+    return frozenset(paths)
+
+
+def _changed_since(project_root: Path, commit: str) -> tuple[str, list[str], str | None]:
+    """``(top level, paths changed since commit, problem)``. Never raises.
+
+    The working tree against ``commit`` — committed, staged and unstaged edits
+    alike — plus untracked files, all spelled relative to the repository's top
+    level. ``capture_output`` for `_git_head`'s reason: this server speaks
+    JSON-RPC over stdio.
+    """
+    def _git(*args: str) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(
+                ["git", "-C", str(project_root), "-c", "core.quotepath=false", *args],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    top = _git("rev-parse", "--show-toplevel")
+    if top is None or top.returncode != 0 or not top.stdout.strip():
+        return "", [], "git could not name the working tree's top level"
+    tracked = _git("diff", "--name-only", "-z", "--end-of-options", commit)
+    if tracked is None or tracked.returncode != 0:
+        return "", [], f"git could not diff the working tree against {commit}"
+    untracked = _git("ls-files", "--others", "--exclude-standard", "-z", "--full-name")
+    if untracked is None or untracked.returncode != 0:
+        return "", [], "git could not list the untracked files"
+    paths = {p for p in tracked.stdout.split("\0") if p}
+    paths.update(p for p in untracked.stdout.split("\0") if p)
+    return top.stdout.strip(), sorted(paths), None
+
+
+def live_target_reload(project_root: str | Path, state: dict, token: str) -> dict:
+    """Does the crossing ``token`` owe a relaunch on this run? Never raises.
+
+    Returns ``{"live_target", "owed", "token", "rule", "loaded_commit",
+    "changed", "relevant", "launch_command", "problem"}``. ``changed`` maps every
+    `RELOAD_CLASSES` member to the plugin-relative paths judged into it;
+    ``relevant`` is the subset that owes the relaunch, and ``owed`` is whether
+    it is non-empty.
+
+    ``live_target`` needs BOTH the run's recorded provenance (``self_target``,
+    written by `_self_target_preflight` at init or resume) and a foundry
+    plugin.json under the project root to classify paths against. A run that is
+    not live never owes a relaunch. A problem — git unreadable, no recorded
+    load commit — owes nothing and is REPORTED in ``problem``: this is a
+    routing aid, and a diagnostic that cannot answer must not stop a build.
+    """
+    result: dict = {
+        "live_target": False,
+        "owed": False,
+        "token": token,
+        "rule": "before_done" if token in RELOAD_DONE_CROSSINGS else "dependency",
+        "loaded_commit": str(state.get("server_commit") or ""),
+        "changed": {cls: [] for cls in RELOAD_CLASSES},
+        "relevant": [],
+        "launch_command": "",
+        "problem": None,
+    }
+    if state.get("self_target") is not True:
+        return result
+    root = Path(project_root)
+    plugin_dir = _find_foundry_plugin_dir(root)
+    if plugin_dir is None:
+        result["problem"] = (
+            "the run is recorded as self-targeting, but no foundry plugin.json "
+            "is under the project root to classify changed paths against"
+        )
+        return result
+    result["live_target"] = True
+    result["launch_command"] = f"claude --plugin-dir {plugin_dir}"
+    commit = result["loaded_commit"]
+    if not commit or commit == UNKNOWN_COMMIT:
+        result["problem"] = "state.json records no commit the running server loaded at"
+        return result
+    top, paths, problem = _changed_since(root, commit)
+    if problem is not None:
+        result["problem"] = problem
+        return result
+    try:
+        plugin_rel = plugin_dir.resolve().relative_to(Path(top).resolve()).as_posix()
+    except ValueError:
+        result["problem"] = f"the foundry plugin at {plugin_dir} is outside the git tree at {top}"
+        return result
+    prefix = "" if plugin_rel in ("", ".") else plugin_rel + "/"
+    for path in paths:
+        if prefix and not path.startswith(prefix):
+            continue
+        rel = path[len(prefix):]
+        result["changed"][reload_path_class(rel)].append(rel)
+
+    server = result["changed"][RELOAD_CLASS_SERVER]
+    prose = result["changed"][RELOAD_CLASS_PROSE]
+    if token in RELOAD_DONE_CROSSINGS:
+        relevant = server + prose
+    else:
+        doors = _crossing_server_paths() if server else frozenset()
+        wanted = _CROSSING_PROSE.get(token, ())
+        relevant = [p for p in server if p in doors] + [
+            p for p in prose
+            if any(p == w or (w.endswith("/") and p.startswith(w)) for w in wanted)
+        ]
+    result["relevant"] = relevant
+    result["owed"] = bool(relevant)
+    return result
+
+
 def _generate_run_name(ticket: str = "", description: str = "") -> str:
     """Generate a human-friendly run name.
 
