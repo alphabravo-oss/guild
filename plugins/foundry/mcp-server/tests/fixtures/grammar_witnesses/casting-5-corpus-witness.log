@@ -1,0 +1,47 @@
+# evidence-cmd: cd plugins/foundry/mcp-server || exit 1; echo "== WHAT THIS LOG IS FOR, AND WHAT A RECAPTURE MUST KEEP =="; echo "   evidence.py#_ENVIRONMENTAL_GRAMMARS names THIS log, by name, as the live"; echo "   corpus witness for planning_root and archive_root. Being that witness is"; echo "   its whole job. The sweep in test_evidence.py#_corpus_witness_fields_by_log"; echo "   applies this log's OWN volatile declarations to this log's OWN body and"; echo "   asks whether a token of each shape is erased -- so the two roster lines"; echo "   under THE TWO WITNESS LINES below ARE those tokens, and the two matching"; echo "   '# evidence-volatile:' lines in the header are what erases them."; echo "   RECAPTURING THIS LOG MUST KEEP BOTH, header and body. Drop either and"; echo "   test_evidence.py#test_every_declared_grammar_has_a_live_witness turns red."; echo "   That is the whole of the obligation; nothing else in this body is load-"; echo "   bearing, and no count, percentage or population is printed on purpose."; echo; echo "== WHY THE WITNESS IS ITS OWN LOG (concern C-103) =="; echo "   These two grammars used to cite evidence/casting-10-blast-radius.log,"; echo "   whose job is the opposite of this one's: it is deliberately WIDE, it"; echo "   drives four peer-owned modules, and the standing derived-verdict ruling"; echo "   tells a log like that to stop printing its population and print a verdict."; echo "   Applied literally to that log, the ruling deletes the skip roster -- and"; echo "   with it both witness tokens -- turning a casting-5 test red from a"; echo "   casting-10 commit, with nothing in the log, the ruling or the recapture"; echo "   instructions saying so. A witness wants to be narrow and stable; a"; echo "   blast-radius log wants to be wide and derived. One log cannot be both, so"; echo "   the roles are split here and the witness now lives in a log owned by the"; echo "   same casting as the registry that names it."; echo; echo "== THE OBSERVATION, WHICH IS REAL AND NOT ECHOED =="; echo "   Both shapes are printed by pytest itself. foundry-archive/ and .planning/"; echo "   are git-ignored, so the artefacts those two skips look for are absent in"; echo "   every detached worktree a sweep re-executes in, and each skip message"; echo "   names the worktree it looked in -- which is exactly the environmental"; echo "   variation the two grammars license, appearing on every honest"; echo "   verification and never on a forged one. The lines below are pytest's own"; echo "   skip reports, module and message, sibling line numbers stripped because a"; echo "   line number is another casting's and carries no witness."; echo; out=$(mktemp) || exit 1; uv run --quiet --with pytest pytest -rs --tb=no -q -p no:cacheprovider tests/test_measure_run.py >"$out" 2>&1; roster=$(grep '^SKIPPED' "$out" | sed -E 's/^SKIPPED \[[0-9]+\] ([^:]+):[0-9]+: /\1  /'); rm -f "$out"; planning=$(printf '%s\n' "$roster" | grep '/[.]planning/' | LC_ALL=C sort -u | head -1); archive=$(printf '%s\n' "$roster" | grep '/foundry-archive/' | LC_ALL=C sort -u | head -1); echo "== THE TWO WITNESS LINES =="; [ -n "$planning" ] && printf '   %s\n' "$planning"; [ -n "$archive" ] && printf '   %s\n' "$archive"; echo; if [ -n "$planning" ] && [ -n "$archive" ]; then echo "VERDICT: PASS -- planning_root and archive_root are both witnessed above"; exit 0; fi; echo "VERDICT: FAIL -- planning_root [$planning] archive_root [$archive]"; exit 1
+# evidence-for: GI-006, NFR-005
+# evidence-volatile: /\S*/\.planning/\S*
+# evidence-volatile: /\S*/foundry-archive/[^/\s]+(?=\s|$)
+# evidence-timeout: 300
+
+== WHAT THIS LOG IS FOR, AND WHAT A RECAPTURE MUST KEEP ==
+   evidence.py#_ENVIRONMENTAL_GRAMMARS names THIS log, by name, as the live
+   corpus witness for planning_root and archive_root. Being that witness is
+   its whole job. The sweep in test_evidence.py#_corpus_witness_fields_by_log
+   applies this log's OWN volatile declarations to this log's OWN body and
+   asks whether a token of each shape is erased -- so the two roster lines
+   under THE TWO WITNESS LINES below ARE those tokens, and the two matching
+   '# evidence-volatile:' lines in the header are what erases them.
+   RECAPTURING THIS LOG MUST KEEP BOTH, header and body. Drop either and
+   test_evidence.py#test_every_declared_grammar_has_a_live_witness turns red.
+   That is the whole of the obligation; nothing else in this body is load-
+   bearing, and no count, percentage or population is printed on purpose.
+
+== WHY THE WITNESS IS ITS OWN LOG (concern C-103) ==
+   These two grammars used to cite evidence/casting-10-blast-radius.log,
+   whose job is the opposite of this one's: it is deliberately WIDE, it
+   drives four peer-owned modules, and the standing derived-verdict ruling
+   tells a log like that to stop printing its population and print a verdict.
+   Applied literally to that log, the ruling deletes the skip roster -- and
+   with it both witness tokens -- turning a casting-5 test red from a
+   casting-10 commit, with nothing in the log, the ruling or the recapture
+   instructions saying so. A witness wants to be narrow and stable; a
+   blast-radius log wants to be wide and derived. One log cannot be both, so
+   the roles are split here and the witness now lives in a log owned by the
+   same casting as the registry that names it.
+
+== THE OBSERVATION, WHICH IS REAL AND NOT ECHOED ==
+   Both shapes are printed by pytest itself. foundry-archive/ and .planning/
+   are git-ignored, so the artefacts those two skips look for are absent in
+   every detached worktree a sweep re-executes in, and each skip message
+   names the worktree it looked in -- which is exactly the environmental
+   variation the two grammars license, appearing on every honest
+   verification and never on a forged one. The lines below are pytest's own
+   skip reports, module and message, sibling line numbers stripped because a
+   line number is another casting's and carries no witness.
+
+== THE TWO WITNESS LINES ==
+   tests/test_measure_run.py  planning cohort stubs not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/cd0df849-d938-48c1-bffe-69a071468853/scratchpad/c5wt/.planning/phases/09-milestone-real-run-consolidation/runs
+   tests/test_measure_run.py  grand-vulture archive not present in this checkout: /private/tmp/claude-501/-Users-rayjanoka-ab-code-guild/cd0df849-d938-48c1-bffe-69a071468853/scratchpad/c5wt/foundry-archive/grand-vulture (foundry-archive/ is git-ignored)
+
+VERDICT: PASS -- planning_root and archive_root are both witnessed above
