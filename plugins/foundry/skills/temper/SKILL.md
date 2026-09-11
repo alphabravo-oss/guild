@@ -238,7 +238,13 @@ Temper is NOT a single pass. It cycles: probe → fix → re-probe → SOLID or 
 **Limits:**
 - Per-domain: 3 fix-reprobe cycles max, then STUCK
 - Batch efficiently: collect findings from multiple domains into single fix iterations
-- If 3+ domains are STUCK, stop temper — issues need human review
+- STUCK is a domain status, never a stop, and nobody is asked. A STUCK domain's findings
+  stay open in the defect ledger under the tier the filing rules gave them — filed through
+  `Foundry-Defect` with `source: "temper"`, never re-tiered to get past a gate — and the
+  report names them as tiered backlog; a `LIVE` one still holds the tier-aware gates exactly
+  as any `LIVE` defect does. Three or more STUCK domains change nothing: temper keeps
+  sweeping, ends on its mechanical rule (`### When the sweep ends`), and the run proceeds
+  through its doors.
 
 **Domain tracker:** `foundry-archive/{run}/temper/domains.md` — tracks each domain's
 status, entry point, probe count, pass count, findings fixed, and suggestions. Updated

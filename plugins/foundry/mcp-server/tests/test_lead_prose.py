@@ -456,6 +456,32 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         START_MD,
         "never report it as a finished run and never report it as a refusal",
     ),
+    # should-not-stop FR-030 / FR-017: after start_cast the three endings are
+    # the ones the halt door accepts -- DONE, the launch cap, or a human-origin
+    # user_stop -- and an unrecoverable error ends a SESSION without sealing
+    # HALTED. The same endings are listed in guidance.py's
+    # `_STANDING_CRITICAL_RULES` (casting 3), and rule 5 matches that wording.
+    (
+        "rule-5-launch-cap-is-an-ending",
+        "FR-017",
+        START_MD,
+        "after `start_cast` it ends in exactly THREE ways: **F6 DONE**; the "
+        "**launch cap**",
+    ),
+    (
+        "rule-5-human-origin-user-stop-is-the-third-ending",
+        "FR-030",
+        START_MD,
+        "or a **human-origin `user_stop`** — `/foundry:stop`, or a parked "
+        "question the human answered with halt",
+    ),
+    (
+        "rule-5-an-error-is-not-a-halted-seal",
+        "FR-030",
+        START_MD,
+        "**An unrecoverable error can end a SESSION, but it is not a `HALTED` "
+        "seal:** the run is resumed, never sealed, over an error.",
+    ),
     # --- D6: Foundry-Spend --------------------------------------------------
     ("spend-section", "FR-021", START_MD, "## SPEND ACCOUNTING"),
     (
@@ -934,10 +960,13 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         "**No field estimates YOUR remaining context, and none is coming:**",
     ),
     (
-        "context-nothing-to-save-before-handover",
+        # should-not-stop GI-004 moved this: there is no handover any more, so
+        # the far side of the read is a compaction or a resume.
+        "context-reads-back-after-compaction-saves-nothing",
         "US-007",
         START_MD,
-        "**`Foundry-Context` READS the run back on the far side of a handover; it saves nothing**",
+        "**`Foundry-Context` READS the run back on the far side of a "
+        "compaction or resume; it saves nothing.**",
     ),
     (
         "uncomputable-diff-is-full",
@@ -1330,7 +1359,9 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         "`Foundry-Phase(phase='halt', reason=…, text=…)` is the door",
     ),
     (
-        "halt-door-refuses-exactly-three-things",
+        # should-not-stop FR-013: these three are refused at EVERY phase; after
+        # start_cast the door refuses two more (pinned under D27 below).
+        "halt-door-refusals-at-every-phase",
         "FR-047",
         START_MD,
         "a reason that is not a member, a team still registered, and a run "
@@ -1447,12 +1478,15 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         "That is a SUCCESSFUL `Foundry-Phase` transition and never a refusal",
     ),
     # --- D23: the rationale sections (fallout OT-027 / FR-047 / FR-036) ------
+    # should-not-stop OT-018 / FR-013: the HALTED-as-success sentence is gone
+    # (asserted absent in `_RETIRED_POLICY_SPELLINGS`). What replaced it says a
+    # HALTED run stopped with work outstanding and is not a run that succeeded.
     (
-        "named-backlog-is-a-successful-end",
-        "OT-027",
+        "halted-is-not-a-run-that-succeeded",
+        "OT-018",
         LEAD_DISCIPLINE,
-        "**A run that reaches `HALTED` with every open finding written down "
-        "and tiered has succeeded.**",
+        "**A run that reaches `HALTED` stopped with work outstanding; it is "
+        "not a run that succeeded.**",
     ),
     (
         "empty-prove-is-not-the-goal",
@@ -1607,11 +1641,14 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         "`Foundry-Phase(phase='inspect_start')` REFUSES by id while a "
         "cross-casting concern from the closing GRIND is still open",
     ),
+    # should-not-stop FR-013 / FR-002: after start_cast the halt door refuses
+    # spec_change_required, so a spec problem parks ONE item as spec_wrong.
     (
-        "spec-change-names-its-halt-member",
-        "FR-010",
+        "spec-change-parks-as-spec-wrong",
+        "FR-002",
         LEAD_DISCIPLINE,
-        "`Foundry-Phase(phase='halt', reason='spec_change_required', text=…)`",
+        "`Foundry-Park(action='park', item_ref=…, category='spec_wrong', "
+        "question=…)`",
     ),
     (
         "start-md-concern-review-reads-the-ledger",
@@ -1621,10 +1658,241 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         "server reads",
     ),
     (
-        "start-md-spec-change-names-its-halt-member",
-        "FR-010",
+        "start-md-spec-change-is-a-park-not-a-halt",
+        "FR-013",
         START_MD,
-        "`spec_change_required` is a member of `HALT_REASONS`",
+        "that is a spec problem to PARK, never a ruling to end the run on and "
+        "never a grind fix",
+    ),
+    (
+        "start-md-spec-change-member-refused-after-cast",
+        "FR-013",
+        START_MD,
+        "`spec_change_required` is still a member of `HALT_REASONS`, but after "
+        "`start_cast` the halt door refuses it",
+    ),
+    (
+        "start-md-spec-change-parks-as-spec-wrong",
+        "FR-002",
+        START_MD,
+        "category='spec_wrong'",
+    ),
+    # --- D27: should-not-stop — the post-CAST policy the lead reads ---------
+    # After start_cast the operator is away and the run is theirs. Every row
+    # below is a sentence that used to invite a stop, rewritten to say what
+    # happens instead; the sentence each replaced is asserted ABSENT in
+    # `_RETIRED_START_MD_SPELLINGS` or `_RETIRED_POLICY_SPELLINGS`.
+    (
+        "halt-door-only-the-human-ends-a-run-after-cast",
+        "FR-013",
+        START_MD,
+        "**After `start_cast` — from F1 to F5.5 — only the human ends a run, "
+        "and the door takes exactly one member from you: `user_stop`, and only "
+        "with human-origin proof.**",
+    ),
+    (
+        "halt-door-refuses-rulings-after-cast",
+        "FR-013",
+        START_MD,
+        "**`lead_ruling` and `spec_change_required` are REFUSED from F1 to "
+        "F5.5 on every call**",
+    ),
+    (
+        "halt-door-proof-is-the-humans",
+        "FR-013",
+        START_MD,
+        "the one-time token `/foundry:stop`'s own shell step writes into the "
+        "run archive when the human invokes it, or a parked question the human "
+        "answered with halt",
+    ),
+    (
+        "major-issue-list-is-closed",
+        "FR-002",
+        START_MD,
+        "**After `start_cast`, only the closed park list involves the human, "
+        "and nothing else does.**",
+    ),
+    (
+        "parking-holds-back-one-item",
+        "FR-002",
+        START_MD,
+        "Parking holds back only that item: every other casting, defect and "
+        "stream keeps moving",
+    ),
+    (
+        "diminishing-returns-never-reach-the-human",
+        "AC-031",
+        START_MD,
+        "A triage preference, a hard defect, a slow cycle and diminishing "
+        "returns are not on the list, so none of them reaches the human and "
+        "none of them stops the run.",
+    ),
+    (
+        "foundry-does-not-push",
+        "FR-003",
+        START_MD,
+        "**Foundry does not push:** no step of a run pushes a branch, opens a "
+        "pull request or publishes a release.",
+    ),
+    (
+        "local-deploy-and-test-do-not-stop",
+        "FR-004",
+        START_MD,
+        "**Deploy, data deletion and a write outside the repo are not reasons "
+        "to stop either:** local deploy and test run inline, as ordinary build "
+        "work, with nobody asked.",
+    ),
+    (
+        "pre-cast-dead-ends-are-successor-backlog",
+        "NFR-006",
+        START_MD,
+        "a plan question or a dead end in F0 to F0.9 may still stop there; "
+        "name any such stop in the report as backlog for a successor run",
+    ),
+    (
+        "reload-owed-mid-run-only-on-a-dependency",
+        "OT-028",
+        START_MD,
+        "**A mid-run crossing owes a reload only when it depends on something "
+        "that changed since the running server loaded:**",
+    ),
+    (
+        "reload-owed-before-done-on-any-relevant-change",
+        "OT-028",
+        START_MD,
+        "**DONE needs one only when server or gate code, or agent or skill "
+        "prose, changed since the running server loaded:**",
+    ),
+    (
+        "reload-never-for-display-or-tests",
+        "OT-028",
+        START_MD,
+        "`tools/display.py` and tests never owe a reload",
+    ),
+    (
+        "no-diminishing-returns-stop",
+        "FR-016",
+        START_MD,
+        "**A long INSPECT/GRIND loop never stops for diminishing returns.**",
+    ),
+    (
+        "record-the-per-cycle-trend",
+        "FR-016",
+        START_MD,
+        "Record the per-cycle cost and finding trend instead",
+    ),
+    (
+        "only-the-launch-cap-ends-a-long-loop",
+        "FR-017",
+        START_MD,
+        "**Only the `--max-cycles` cap, which the human chose at launch, ends "
+        "a long loop**",
+    ),
+    (
+        "temper-stuck-is-backlog-not-a-stop",
+        "FR-019",
+        START_MD,
+        "**A domain still not SOLID after three is STUCK, and STUCK never "
+        "stops TEMPER or reaches the human:**",
+    ),
+    (
+        "temper-three-stuck-change-nothing",
+        "AC-033",
+        START_MD,
+        "Three or more STUCK domains change none of that; nobody is asked.",
+    ),
+    (
+        "waits-in-the-cast-wave-never-end-the-turn",
+        "GI-003",
+        START_MD,
+        'Wait for teammates to finish their **work** (report "complete" or '
+        "task list empty) WITHOUT ending your turn: use the Monitor tool, or a "
+        "bounded Bash wait loop that re-checks and returns within about ten "
+        "minutes",
+    ),
+    (
+        "waits-in-grind-never-end-the-turn",
+        "GI-003",
+        START_MD,
+        "While they run, wait WITHOUT ending your turn — the Monitor tool or a "
+        "bounded Bash wait loop, never a completion notification",
+    ),
+    (
+        "liveness-recovers-a-stalled-teammate",
+        "AC-023",
+        START_MD,
+        "**A stalled or hung teammate is yours to recover, never the user's:**",
+    ),
+    (
+        "liveness-never-escalates-to-the-user",
+        "AC-023",
+        START_MD,
+        "`SendMessage` it to resume, or re-dispatch it on the same model "
+        "(`Foundry-Spawn-Teammate` + `Agent`) — never escalate it to the user.",
+    ),
+    (
+        "context-never-end-the-session",
+        "GI-004",
+        START_MD,
+        "**You never deliberately end the session for context.**",
+    ),
+    (
+        "context-auto-compaction",
+        "AC-019",
+        START_MD,
+        "Auto-compaction handles context pressure, so keep working",
+    ),
+    (
+        "context-session-start-hook-reorients",
+        "AC-019",
+        START_MD,
+        "**After a compaction or a resume, the SessionStart hook puts the run "
+        "back in front of you:** it names the active run and tells you to call "
+        "`Foundry-Context`, then `Foundry-Next`",
+    ),
+    (
+        "team-up-is-ledger-only",
+        "FR-021",
+        START_MD,
+        "It registers the wave in the run ledger and nothing else: teammates "
+        "are named `Agent` spawns, and there is no team tool to call before it.",
+    ),
+    (
+        "team-down-is-the-whole-teardown",
+        "FR-021",
+        START_MD,
+        "so `Foundry-Team-Down` is the whole of the teardown",
+    ),
+    (
+        "help-names-the-stop-hook",
+        "FR-029",
+        HELP_MD,
+        "The Stop hook is what forces re-engagement",
+    ),
+    (
+        "help-stop-seals-halted",
+        "FR-030",
+        HELP_MD,
+        "It ends `HALTED` with reason `user_stop` and your words as its text",
+    ),
+    (
+        "lead-discipline-refuses-rulings-after-cast",
+        "FR-013",
+        LEAD_DISCIPLINE,
+        "**After `start_cast` the halt door refuses `lead_ruling` and "
+        "`spec_change_required`:**",
+    ),
+    (
+        "lead-discipline-waits-inside-the-turn",
+        "GI-003",
+        LEAD_DISCIPLINE,
+        "**The fix.** Wait inside the turn.",
+    ),
+    (
+        "lead-discipline-spec-problem-parks",
+        "FR-002",
+        LEAD_DISCIPLINE,
+        "A spec problem after `start_cast` parks ONE item; it never ends the run.",
     ),
 )
 
@@ -1672,8 +1940,8 @@ _RETIRED_START_MD_SPELLINGS: tuple[tuple[str, str, str], ...] = (
     (
         "save state via `Foundry-Context`",
         "US-007",
-        "Foundry-Context reads the run back after a handover -- it writes "
-        "nothing, so there is no state for it to save first",
+        "Foundry-Context reads the run back after a compaction or resume -- "
+        "it writes nothing, so there is no state for it to save first",
     ),
     # D-138 / FR-011: the pre-D-068 `final_gate` framing. `blocking == 0` was
     # the proxy, and removing it is what made DELTA reachable at all.
@@ -1705,8 +1973,10 @@ _RETIRED_START_MD_SPELLINGS: tuple[tuple[str, str, str], ...] = (
     (
         "runs until F6 DONE or an error stops it",
         "FR-024",
-        "a run ends three ways: F6 DONE, a HALTED --max-cycles stop reached by "
-        "a successful transition, or an error",
+        "after start_cast a run ends three ways: F6 DONE, the launch "
+        "--max-cycles cap (a HALTED stop reached by a successful transition), "
+        "or a human-origin user_stop; an unrecoverable error ends a session, "
+        "never the run",
     ),
     # D-159 / GI-002: the two-door count. GI-002 names three boundaries and the
     # crossing INTO F5.5 is one of them, so a sentence that closed the subject
@@ -1751,8 +2021,8 @@ _RETIRED_START_MD_SPELLINGS: tuple[tuple[str, str, str], ...] = (
         "it writes nothing and saves nothing",
         "FR-055",
         "Foundry-Context saves nothing -- there is no work for it to preserve "
-        "before a handover -- and it is scoped by the same `caller` argument "
-        "Foundry-Next carries",
+        "before a compaction or resume -- and it is scoped by the same "
+        "`caller` argument Foundry-Next carries",
     ),
     (
         "Foundry-Gate(phase='intent_coverage')",
@@ -1773,6 +2043,70 @@ _RETIRED_START_MD_SPELLINGS: tuple[tuple[str, str, str], ...] = (
         "every member of DEFECT_TIERS is a defect and every one of them gets "
         "fixed; the blocking set is BLOCKING_TIERS and it is a different, "
         "smaller set that HARDENING deliberately did not join",
+    ),
+    # should-not-stop -- the sentences that invited the lead to stop after
+    # start_cast. Each one names a mechanism the post-CAST halt door, the park
+    # door, the Stop hook or the SessionStart hook replaced.
+    (
+        "Ending the run on a ruling, from any live phase",
+        "FR-013",
+        "after start_cast the halt door refuses lead_ruling and "
+        "spec_change_required; only a human-origin user_stop seals HALTED",
+    ),
+    (
+        "`_halt_preconditions` refuses exactly three things",
+        "FR-013",
+        "the three refusals hold at every phase, and from F1 to F5.5 the door "
+        "also refuses any reason but user_stop and a user_stop with no "
+        "human-origin proof",
+    ),
+    (
+        "and `text` ends it on a ruling",
+        "FR-013",
+        "the tools table says `phase='halt'` seals HALTED, and after "
+        "start_cast only on a user_stop with human-origin proof",
+    ),
+    (
+        "for the mechanism); or an error.",
+        "FR-030",
+        "rule 5's third ending is a human-origin user_stop; an unrecoverable "
+        "error ends a session and is not a HALTED seal",
+    ),
+    (
+        "that is a ruling to END the run on, not a grind fix",
+        "FR-013",
+        "a spec problem after start_cast parks one item as spec_wrong through "
+        "Foundry-Park",
+    ),
+    (
+        'before escalating a "hung" run to the user',
+        "AC-023",
+        "a stalled teammate is recovered by SendMessage or a same-model "
+        "re-dispatch and never escalated to the user",
+    ),
+    (
+        "hand over rather than pushing on",
+        "AC-019",
+        "the lead never deliberately ends the session for context; "
+        "auto-compaction handles the pressure",
+    ),
+    (
+        "Then start the fresh session with `/foundry:resume`",
+        "AC-019",
+        "after a compaction or resume the SessionStart hook sends the lead to "
+        "Foundry-Context then Foundry-Next",
+    ),
+    (
+        "Do NOT continue in degraded context",
+        "GI-004",
+        "keep working; context pressure is auto-compaction's, never a reason "
+        "to end the session",
+    ),
+    (
+        "Prose and code a run ships take effect for the NEXT run",
+        "OT-028",
+        "they take effect only in a server started after they land, and the "
+        "reload rule parks a crossing that depends on them",
     ),
 )
 
@@ -1798,6 +2132,215 @@ def test_start_md_dropped_the_retired_spelling(
         f"Delete the retired sentence -- do not leave it beside the one that "
         f"replaced it."
     )
+
+
+#: should-not-stop -- retired sentences in the OTHER lead-facing files. The
+#: same shape as `_RETIRED_START_MD_SPELLINGS`, with the file named per row,
+#: because the stale-prose class does not stop at start.md: lead-discipline.md
+#: said a HALTED run had succeeded, and help.md said a watchdog forced the
+#: re-engagement the Stop hook now forces.
+_RETIRED_POLICY_SPELLINGS: tuple[tuple[Path, str, str, str], ...] = (
+    (
+        LEAD_DISCIPLINE,
+        "and tiered has succeeded",
+        "OT-018",
+        "a HALTED run stopped with work outstanding; it is not a run that "
+        "succeeded",
+    ),
+    (
+        LEAD_DISCIPLINE,
+        "makes ending on a ruling an ordinary successful transition",
+        "FR-013",
+        "after start_cast the halt door refuses lead_ruling and "
+        "spec_change_required, so the lead never ends a run on a ruling",
+    ),
+    (
+        LEAD_DISCIPLINE,
+        "that is a ruling to END the run on",
+        "FR-013",
+        "a spec problem after start_cast parks one item as spec_wrong through "
+        "Foundry-Park",
+    ),
+    (
+        HELP_MD,
+        "3+ minute silence triggers a visible warning that forces re-engagement",
+        "FR-029",
+        "the Stop hook is what forces re-engagement; a stall warning only "
+        "makes a quiet run visible",
+    ),
+    (
+        HELP_MD,
+        "Resumable later.",
+        "FR-030",
+        "/foundry:stop seals HALTED with reason user_stop, and HALTED is "
+        "terminal",
+    ),
+    (
+        HELP_MD,
+        "take effect for the next run, never the one that wrote them",
+        "OT-028",
+        "they take effect only in a server started after they land, and the "
+        "run parks for a relaunch when a crossing depends on them",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("path", "spelling", "requirement", "instead"),
+    _RETIRED_POLICY_SPELLINGS,
+    ids=[f"{p.name}:{s}" for p, s, _, _ in _RETIRED_POLICY_SPELLINGS],
+)
+def test_policy_prose_dropped_the_retired_spelling(
+    path: Path, spelling: str, requirement: str, instead: str
+) -> None:
+    """The retired sentence is GONE from the file that carried it."""
+    assert spelling not in _flat(path), (
+        f"{_rel(path)} still contains {spelling!r} ({requirement}). Instead: "
+        f"{instead}. Delete the retired sentence -- do not leave it beside the "
+        f"one that replaced it."
+    )
+
+
+# ---------------------------------------------------------------------------
+# should-not-stop AC-027 / OT-024 / GI-001: no shipped surface names a removed
+# team tool
+# ---------------------------------------------------------------------------
+#
+# TeamCreate and TeamDelete were removed as Claude Code tools in v2.1.178, so a
+# sentence telling anyone to call either is dead text the lead improvises
+# around on every wave. Teammates are named Agent spawns and Foundry-Team-Up /
+# Foundry-Team-Down are ledger-only. guidance.py's imperatives are swept by
+# tests/orchestration/test_guidance.py (casting 3); this sweeps the files.
+
+#: The directories whose files a lead, teammate or stream reads, plus the
+#: scripts and hooks that ship beside them. Derived by walking, so a file
+#: added to any of them is swept the day it lands.
+_TEAM_TOOL_ROOTS = (COMMANDS, AGENTS, SKILLS, REFERENCES, SCRIPTS, FOUNDRY_ROOT / "hooks")
+_TEAM_TOOL_SUFFIXES = frozenset({".md", ".sh", ".py", ".json"})
+_REMOVED_TEAM_TOOLS = ("TeamCreate", "TeamDelete")
+
+
+def _team_tool_surfaces() -> tuple[Path, ...]:
+    return tuple(
+        sorted(
+            path
+            for root in _TEAM_TOOL_ROOTS
+            for path in root.rglob("*")
+            if path.is_file()
+            and path.suffix in _TEAM_TOOL_SUFFIXES
+            and "__pycache__" not in path.parts
+        )
+    )
+
+
+def test_no_shipped_surface_names_a_removed_team_tool() -> None:
+    surfaces = _team_tool_surfaces()
+    # Floor: a walk that silently stopped matching would sweep nothing.
+    assert len(surfaces) >= 30, [_rel(p) for p in surfaces]
+    for required in (START_MD, SCRIPTS / "setup-prereqs.sh", TEMPER_SKILL, LEAD_DISCIPLINE):
+        assert required in surfaces, f"{_rel(required)} is not in the sweep"
+    offenders = sorted(
+        f"{_rel(path)}: {tool}"
+        for path in surfaces
+        for tool in _REMOVED_TEAM_TOOLS
+        if tool in path.read_text(encoding="utf-8")
+    )
+    assert not offenders, (
+        f"{offenders} name a team tool Claude Code no longer has. Teammates "
+        f"are named Agent spawns, and Foundry-Team-Up / Foundry-Team-Down are "
+        f"the whole team lifecycle. Delete the name -- do not leave it standing "
+        f"even inside a sentence saying the tool is gone."
+    )
+
+
+# ---------------------------------------------------------------------------
+# should-not-stop: the policy paragraphs, joined against what the server holds
+# ---------------------------------------------------------------------------
+
+
+def _policy_paragraph(path: Path, anchor: str) -> str:
+    """The ONE blank-line-bounded paragraph containing ``anchor``, flattened."""
+    hits = [
+        flat
+        for flat in (" ".join(block.split()) for block in _read(path).split("\n\n"))
+        if anchor in flat
+    ]
+    assert len(hits) == 1, (
+        f"{_rel(path)} carries {len(hits)} paragraphs containing {anchor!r}; "
+        f"this check needs exactly one. Repoint the anchor if the paragraph "
+        f"moved -- never delete it, because a parser that finds nothing is a "
+        f"check that passes."
+    )
+    return hits[0]
+
+
+def test_start_md_names_every_park_category_where_it_lists_them() -> None:
+    """should-not-stop FR-002 / GI-006: the closed list, derived from vocab.
+
+    `PARK_CATEGORIES` is the only set of reasons that involves the human after
+    start_cast, and the park door refuses anything outside it by name. A member
+    the paragraph does not name is a reason the lead learns only from a
+    refusal; a member it names that the vocabulary dropped is a reason the door
+    will refuse.
+    """
+    from foundry_mcp.schemas import vocab
+
+    assert len(vocab.PARK_CATEGORIES) >= 4, vocab.PARK_CATEGORIES
+    para = _policy_paragraph(START_MD, "only the closed park list involves the human")
+    missing = [c for c in vocab.PARK_CATEGORIES if f"`{c}`" not in para]
+    assert not missing, (
+        f"{_rel(START_MD)}'s major-issue paragraph does not name {missing}: "
+        f"{para!r}"
+    )
+    for action in vocab.PARK_ACTIONS:
+        call = f"`{vocab.PARK_TOOL_NAME}(action='{action}'"
+        assert call in para, f"the major-issue paragraph never shows {call}"
+
+
+def test_the_halt_door_paragraph_names_the_post_cast_checklist_rows() -> None:
+    """should-not-stop FR-013 / CT-006: the rows quoted from transitions.py.
+
+    `_halt_preconditions` adds two checklist rows from F1 to F5.5. The lead
+    reads them in `Foundry-Gate(phase='halt')`'s answer, so the protocol names
+    them by the strings the door writes rather than by a paraphrase.
+    """
+    source = (MCP_SRC / "tools" / "orchestration" / "transitions.py").read_text(
+        encoding="utf-8"
+    )
+    para = _policy_paragraph(START_MD, "is the door, and it is the SAME door the cap reaches")
+    for row in ("halt_reason_accepted_after_start_cast", "human_origin_proof"):
+        assert row in source, f"transitions.py no longer writes the {row!r} row"
+        assert f"`{row}`" in para, (
+            f"{_rel(START_MD)}'s halt-door paragraph does not name the {row!r} "
+            f"checklist row the door writes after start_cast."
+        )
+
+
+def test_the_reload_rule_names_every_done_crossing() -> None:
+    """should-not-stop OT-028: DONE's wider test names the crossings it covers.
+
+    Derived from `RELOAD_DONE_CROSSINGS` in tools/foundry.py, the set the
+    router tests before it holds a crossing for a relaunch with no dependency
+    test, so a crossing added to it fails here rather than going unexplained.
+    """
+    from foundry_mcp.tools.foundry import RELOAD_DONE_CROSSINGS
+
+    assert RELOAD_DONE_CROSSINGS, "RELOAD_DONE_CROSSINGS is empty"
+    para = _policy_paragraph(START_MD, "**When a live-target reload is owed.**")
+    missing = sorted(c for c in RELOAD_DONE_CROSSINGS if f"`{c}`" not in para)
+    assert not missing, (
+        f"{_rel(START_MD)}'s reload rule does not name {missing}, which the "
+        f"router holds to the before-DONE test."
+    )
+
+
+def test_context_management_names_the_reorientation_the_hook_injects() -> None:
+    """should-not-stop AC-019 / GI-004: prose and hook send the lead to the same
+    two calls, in the same order, after a compaction or resume."""
+    hook = (FOUNDRY_ROOT / "hooks" / "session-start-run.py").read_text(encoding="utf-8")
+    assert hook.find("Foundry-Context") != -1 and hook.find("Foundry-Next") != -1
+    para = _policy_paragraph(START_MD, "the SessionStart hook puts the run back in front of you")
+    assert para.find("`Foundry-Context`") < para.find("`Foundry-Next`"), para
 
 
 def test_temper_no_longer_claims_a_completion_check_nobody_performs() -> None:
@@ -2283,6 +2826,10 @@ def test_the_f6_evidence_rung_names_every_terminal_crossing_in_order() -> None:
         # again: the property belongs to the FILE, and a section carrying its
         # own bespoke check is a section free to drift into its own shape.
         "## Why every shipped surface needs an owner",
+        # should-not-stop GI-003 / FR-013 -- the two sections this release
+        # wrote or rewrote. Same reason as above: the shape is the file's.
+        "## Why waits never end the turn",
+        "## Spec change during GRIND",
     ),
 )
 def test_new_rationale_sections_keep_the_house_shape(heading: str) -> None:

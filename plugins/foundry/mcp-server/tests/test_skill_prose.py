@@ -2017,3 +2017,53 @@ def test_the_predecessors_number_for_that_rung_never_wears_this_specs_name() -> 
         f"cite the predecessor with its own name -- "
         f"`convergence {borrowed[0]}` -- when the predecessor is what you mean."
     )
+
+
+# ===========================================================================
+# should-not-stop: temper's STUCK domains and SIGHT's missing browser.
+#
+# Interview answer A-014: "TEMPER ends on its mechanical rule and the run
+# proceeds; nobody is asked." Answers A-007 and A-008: a broken environment is
+# one of the closed reasons to involve the human, and it parks the blocked item
+# while all unaffected work keeps going. Both skills used to stop instead --
+# temper for human review once three domains were STUCK, SIGHT with a bare STOP
+# in the lead's own thread.
+# ===========================================================================
+
+
+def test_temper_records_stuck_domains_instead_of_stopping_for_review() -> None:
+    """A-014: STUCK is a domain status that lands in the report, never a stop."""
+    flat = _flat(TEMPER_SKILL)
+    for retired in ("If 3+ domains are STUCK, stop temper", "issues need human review"):
+        assert retired not in flat, (
+            f"{_rel(TEMPER_SKILL)} still says {retired!r}. Temper ends on its "
+            f"mechanical rule and nobody is asked; STUCK domains are recorded "
+            f"as tiered backlog."
+        )
+    for kept in (
+        "STUCK is a domain status, never a stop, and nobody is asked.",
+        "never re-tiered to get past a gate",
+        "the report names them as tiered backlog",
+        "Three or more STUCK domains change nothing: temper keeps sweeping, "
+        "ends on its mechanical rule",
+    ):
+        assert kept in flat, f"{_rel(TEMPER_SKILL)} no longer says {kept!r}"
+
+
+def test_sight_parks_an_unavailable_browser_as_env_broken() -> None:
+    """A-007 / A-008: the park call is composed from the vocabulary, so a
+    renamed category, action or item kind fails here and in the skill at once."""
+    assert "sight" in vocab.STREAM_WIRE_IDS, sorted(vocab.STREAM_WIRE_IDS)
+    call = (
+        f"{vocab.PARK_TOOL_NAME}(action='{vocab.PARK_ACTION_PARK}', "
+        f"item_ref='{vocab.park_item_ref(vocab.PARK_ITEM_STREAM, 'sight')}', "
+        f"category='{vocab.PARK_CATEGORY_ENV_BROKEN}'"
+    )
+    flat = _flat(SIGHT_SKILL)
+    assert call in flat, f"{_rel(SIGHT_SKILL)} does not show {call!r}"
+    assert "do NOT stop the run" in flat, _rel(SIGHT_SKILL)
+    assert "STOP and report that Playwright MCP is not available" not in flat, (
+        f"{_rel(SIGHT_SKILL)} still stops the lead's thread when Playwright "
+        f"MCP is missing. SIGHT runs in the lead's thread, so that STOP is a "
+        f"run stop; park the stream as env_broken instead."
+    )
