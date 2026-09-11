@@ -377,7 +377,7 @@ When the spec references a flow delta, decomposition becomes **deterministic** â
 
    VERIFY before writing code:
    {one grep line per prerequisite}
-   If any symbol is absent, STOP â€” your dependency chain is broken. Do not invent.
+   If any symbol is absent your dependency chain is broken: build nothing, do not invent the missing symbol, and file the blocker. Call `Foundry-Concern(casting_id=<your casting id>, cycle=<this cycle>, target=<the upstream casting id you are missing, or your own id when you cannot tell which>, text=<the grep that came back empty and what it should have found>, blocker_kind='missing_prerequisite')`, then return with a completion report that names the concern id. `Foundry-Next` holds your casting until its upstream casting is accepted and then re-dispatches it; a blocker return never counts against your attempts.
    </prerequisite_hops>
 
    <this_hop>

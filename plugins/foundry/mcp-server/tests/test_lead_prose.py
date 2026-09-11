@@ -2108,6 +2108,18 @@ _RETIRED_START_MD_SPELLINGS: tuple[tuple[str, str, str], ...] = (
         "they take effect only in a server started after they land, and the "
         "reload rule parks a crossing that depends on them",
     ),
+    # should-not-stop AC-020 / FR-018 / GI-005 -- D-010. This one was not in
+    # prose the lead reads and acts on; it was in the V3 prompt TEMPLATE F0.5
+    # fills in, so F0.5 authored the retired halt fresh into every generated
+    # brownfield casting prompt while `agents/teammate.md` two files over had
+    # already retired it.
+    (
+        "If any symbol is absent, STOP",
+        "AC-020",
+        "the V3 `<prerequisite_hops>` template tells the teammate to build "
+        "nothing and file a `missing_prerequisite` blocker through "
+        "`Foundry-Concern`, then return with a report naming the concern id",
+    ),
 )
 
 
@@ -2199,6 +2211,104 @@ def test_policy_prose_dropped_the_retired_spelling(
         f"{instead}. Delete the retired sentence -- do not leave it beside the "
         f"one that replaced it."
     )
+
+
+# ---------------------------------------------------------------------------
+# should-not-stop AC-020 / FR-018 / GI-005: the V3 template AUTHORS the blocker
+# filing rather than the retired halt (D-010)
+# ---------------------------------------------------------------------------
+#
+# `agents/teammate.md` was rewritten so a V3 prerequisite failure is a blocker
+# the teammate FILES and returns on -- `Foundry-Concern(...,
+# blocker_kind='missing_prerequisite')`, which `Foundry-Next` then routes and
+# re-dispatches. The V3 prompt TEMPLATE in `commands/start.md` F0.5 was not
+# carried along with that rewrite, so a brownfield decompose would generate a
+# casting prompt whose whole instruction for the missing-prerequisite condition
+# was a bare `STOP`: no ledger record and no route back to the lead, which is
+# the violation shape GI-005 names in its own row, authored fresh into every V3
+# prompt in the wave.
+#
+# Nothing downstream of it could have caught that. The template is prose that
+# WRITES prose, and no V3 brownfield decompose ran in this run, so the
+# contradiction was reachable only by reading the authoring surface against the
+# file it authors for -- which is why the defect is LATENT rather than observed.
+#
+# The block is isolated and read WHOLE rather than pinned as one phrase,
+# because the property is that the entire instruction is the filing shape: a
+# template that gained the `Foundry-Concern` call and kept the `STOP` standing
+# beside it would satisfy any single positive pin while still shipping two
+# contradictory instructions for one condition -- the stale-prose class this
+# run escalated, one authoring level up.
+_V3_PREREQUISITE_DELIMITERS = ("<prerequisite_hops>", "</prerequisite_hops>")
+
+
+def _v3_prerequisite_block() -> str:
+    """The V3 template's ``<prerequisite_hops>`` body, whitespace-collapsed.
+
+    Paired from the CLOSER, never counted from the opener. ``start.md`` names
+    the tag in prose twice besides the template -- the V3/TYPE-01 note listing
+    the per-packet blocks, and the closing paragraph contrasting them with V2's
+    ``<spec_requirements>`` -- so the OPENING tag occurs three times and only
+    the closing tag is unique. Pairing from the last opener before the sole
+    closer reads the template body under any number of prose citations, and a
+    fourth citation added later cannot silently reshape what this guard reads.
+    An opener-counting version of this helper was written first and failed on
+    exactly that, which is the cheapest possible demonstration that the tag
+    name is prose here as well as syntax.
+    """
+    flat = _flat(START_MD)
+    opener, closer = _V3_PREREQUISITE_DELIMITERS
+    assert flat.count(closer) == 1, (
+        f"{_rel(START_MD)} carries {flat.count(closer)} {closer!r} tags; this "
+        f"check needs exactly one to pair against. If the V3 template was "
+        f"restructured, repoint these delimiters -- never delete them, "
+        f"because a parser that finds nothing is a check that passes."
+    )
+    end = flat.index(closer)
+    return flat[flat.rindex(opener, 0, end) + len(opener) : end]
+
+
+def test_the_v3_prerequisite_template_files_a_blocker_and_returns() -> None:
+    """should-not-stop AC-020 / FR-018 / GI-005 -- D-010.
+
+    The generated prompt is what a teammate reads FIRST and treats as the
+    authorized statement of its task, so the template has to author the same
+    filing `agents/teammate.md` states rather than leaving the condition to it.
+    """
+    from foundry_mcp.schemas import vocab
+
+    block = _v3_prerequisite_block()
+    # Floor first: an empty block satisfies every absence assertion below.
+    assert len(block) > 200, (
+        f"{_rel(START_MD)}'s V3 `<prerequisite_hops>` template read as "
+        f"{len(block)} characters. Assertions over a block this short are "
+        f"vacuous -- check the delimiters before trusting a pass."
+    )
+    kind = vocab.BLOCKER_KIND_MISSING_PREREQUISITE
+    assert f"blocker_kind='{kind}'" in block, (
+        f"{_rel(START_MD)}'s V3 `<prerequisite_hops>` template does not name "
+        f"`blocker_kind='{kind}'`. A prompt generated from this template is "
+        f"the teammate's authoritative block, so a template that omits the "
+        f"filing hands it a condition with no door to report through."
+    )
+    assert "Foundry-Concern(" in block, (
+        f"{_rel(START_MD)}'s V3 `<prerequisite_hops>` template names a blocker "
+        f"kind without the call that files it. The kind is an argument to "
+        f"`Foundry-Concern`; naming it alone records nothing."
+    )
+    assert "return" in block, (
+        f"{_rel(START_MD)}'s V3 `<prerequisite_hops>` template does not tell "
+        f"the teammate to RETURN after filing. Filing without returning leaves "
+        f"the casting running against a dependency it has just reported broken."
+    )
+    for retired in ("STOP", "halt"):
+        assert not re.search(rf"\b{retired}\b", block), (
+            f"{_rel(START_MD)}'s V3 `<prerequisite_hops>` template still tells "
+            f"the teammate to {retired!r} (AC-020 / GI-005). A teammate that "
+            f"stops here writes no ledger record and leaves the lead no route "
+            f"to re-dispatch it -- it files the blocker and returns. Delete "
+            f"the retired instruction; do not leave it beside the filing."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -3939,6 +4049,69 @@ def test_the_owned_lead_surface_roster_is_every_lead_facing_surface() -> None:
     # branch returning "" would sweep every imperative subject vacuously and
     # report success, which is precisely the green-over-nothing state D-226 was.
     assert _flat_prose("YOUR NEXT   CALL") == "YOUR NEXT CALL"
+
+
+# ---------------------------------------------------------------------------
+# should-not-stop OT-018 / FR-013: no lead-facing surface says the HALTED RUN
+# succeeded (D-008)
+# ---------------------------------------------------------------------------
+#
+# `_RETIRED_POLICY_SPELLINGS` retires this claim on the ONE file a defect was
+# filed against, `references/lead-discipline.md`. Two sweeps in this module
+# already record what a per-file absence pin costs -- the claim survives
+# wherever nobody was watching -- and it did, twice over: `commands/resume.md`
+# STEP 5 kept "tiered has succeeded rather than failed" and
+# `plugins/foundry/README.md` kept "with a named backlog is a successful end,
+# not a failure". Neither is reachable from the roster the retirement used:
+# `_LEAD_PROSE_CORPUS` does not contain `RESUME_MD` at all, so no absence sweep
+# in this module could read the file the retired sentence was actually in
+# (D-008). The window was the defect, exactly as it was for D-036 and D-217.
+#
+# So the window is every surface a LEAD reads, and the SPELLINGS are what
+# separate the retired claim from the live one. The transition into `HALTED`
+# genuinely succeeds, `resume.md` says so under a pin of its own -- "That is a
+# SUCCESSFUL `Foundry-Phase` transition and never a refusal" -- and has to keep
+# saying it. What FR-013 retired is predicating success of the RUN. A sweep on
+# "succeed" would forbid the transition truth alongside the run claim and be
+# reverted by the first person who read it; these two spellings reach the
+# run-level claim and nothing else.
+#
+# `## Why a named backlog is a successful end` in `lead-discipline.md` is
+# deliberately NOT matched. Its own body distinguishes the cases -- a named
+# backlog at DONE is a successful end -- so the heading stays true under the
+# rewrite, and it is pinned by
+# `test_new_rationale_sections_keep_the_house_shape` and cross-referenced by
+# `resume.md`. The positive floor for this sweep is the `_PINS` row
+# `halted-is-not-a-run-that-succeeded`, which pins the correction that replaced
+# the claim, so a surface going quiet on the subject entirely still fails there
+# rather than passing here.
+_RETIRED_HALT_SUCCESS_CLAIMS = (
+    "has succeeded",
+    "is a successful end, not a failure",
+)
+
+
+@pytest.mark.parametrize("path", _OWNED_LEAD_SURFACES, ids=_rel)
+def test_no_lead_facing_surface_says_the_halted_run_succeeded(path: Path) -> None:
+    """should-not-stop OT-018 / FR-013 -- D-008."""
+    flat = _flat(path)
+    # Floor: an absence assertion over a file that read as empty forbids
+    # nothing, and every surface in this roster is far larger than this.
+    assert len(flat) > 1000, (
+        f"{_rel(path)} read as {len(flat)} characters. An absence assertion "
+        f"over a file this short is vacuous -- check the path constant before "
+        f"trusting the result below."
+    )
+    for claim in _RETIRED_HALT_SUCCESS_CLAIMS:
+        assert claim not in flat, (
+            f"{_rel(path)} still contains {claim!r} (OT-018 / FR-013), which "
+            f"predicates success of the RUN rather than of the transition that "
+            f"sealed it. A run that reaches `HALTED` stopped with work "
+            f"outstanding; the transition succeeds and seals a report naming "
+            f"every open finding by tier, which is a different claim and is "
+            f"the one to make. Delete the retired sentence -- do not leave it "
+            f"beside the one that replaced it."
+        )
 
 
 # ---------------------------------------------------------------------------

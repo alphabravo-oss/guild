@@ -227,7 +227,7 @@ A run does not only end by finishing. `Foundry-Phase` takes a `halt` token that 
 
 The member is what the report and `measure-run.py` group on; the lead's own free text rides alongside it and says why *this* run ended, which no closed set can carry. Neither substitutes for the other.
 
-**`HALTED` with a named backlog is a successful end, not a failure.** The halt is a transition that succeeds: the phase becomes `HALTED`, the report regenerates with every open `LIVE`, `LATENT` and `HARDENING` defect named in it, and `phase_history` gains a `HALTED` row. It is refused only on the three things `Foundry-Gate(phase='halt')` will report first — a reason outside the four, a team still registered, or a run already halted. **`HALTED` is a named terminal state distinct from `DONE`**: a halted run stopped with open work, and the report says what.
+**A run that reaches `HALTED` stopped with work outstanding; it is not a run that succeeded.** The halt is a transition that succeeds: the phase becomes `HALTED`, the report regenerates with every open `LIVE`, `LATENT` and `HARDENING` defect named in it, and `phase_history` gains a `HALTED` row. It is refused only on the three things `Foundry-Gate(phase='halt')` will report first — a reason outside the four, a team still registered, or a run already halted. **`HALTED` is a named terminal state distinct from `DONE`**: a halted run stopped with open work, and the report says what.
 
 ---
 
