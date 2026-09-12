@@ -88,6 +88,7 @@ re-derive them.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import re
 import subprocess
@@ -3149,14 +3150,52 @@ def _changed_since(project_root: Path, commit: str) -> tuple[str, list[str], str
     return top.stdout.strip(), sorted(paths), None
 
 
+def _relevant_change_id(plugin_dir: Path, relevant: list[str]) -> str:
+    """A content fingerprint of the relevant paths AS THEY STAND. Never raises.
+
+    fallout D-020 — WHAT THE HUMAN WAS ASKED ABOUT IS CONTENT, NOT A PATH LIST.
+
+    `relevant` is a list of PATHS, and `loaded_commit` moves only on a relaunch,
+    so neither moves when a path already in the list is edited again. The reload
+    question is rendered from those two facts, and a question that does not move
+    is a question `park.py#_park_item` recognises as one already answered — so a
+    second edit to an already-listed file crossed DONE on content the human was
+    never shown. This digest is the missing fact: it moves whenever the bytes
+    under those paths move, which is what "changed since the answer" has to mean.
+
+    Rendered into the question rather than compared beside it, deliberately. The
+    door's loop rung sees only (ref, category, question, answered), so a release
+    scoped to anything the question does not carry would have the router parking
+    what the door refuses — D-017's deadlock. Putting the fingerprint IN the text
+    keeps the two predicates reading the same facts.
+
+    A path the list names and the tree does not have (a deletion is a change) is
+    fingerprinted as absent, so removing a file moves the digest exactly as
+    editing one does.
+    """
+    if not relevant:
+        return ""
+    digest = hashlib.sha256()
+    for rel in sorted(relevant):
+        digest.update(rel.encode("utf-8", "replace"))
+        digest.update(b"\0")
+        try:
+            digest.update(hashlib.sha256((plugin_dir / rel).read_bytes()).digest())
+        except OSError:
+            digest.update(b"absent")
+        digest.update(b"\0")
+    return digest.hexdigest()[:16]
+
+
 def live_target_reload(project_root: str | Path, state: dict, token: str) -> dict:
     """Does the crossing ``token`` owe a relaunch on this run? Never raises.
 
     Returns ``{"live_target", "owed", "token", "rule", "loaded_commit",
-    "changed", "relevant", "launch_command", "problem"}``. ``changed`` maps every
-    `RELOAD_CLASSES` member to the plugin-relative paths judged into it;
-    ``relevant`` is the subset that owes the relaunch, and ``owed`` is whether
-    it is non-empty.
+    "changed", "relevant", "change_id", "launch_command", "problem"}``.
+    ``changed`` maps every `RELOAD_CLASSES` member to the plugin-relative paths
+    judged into it; ``relevant`` is the subset that owes the relaunch, ``owed``
+    is whether it is non-empty, and ``change_id`` fingerprints those paths'
+    current content (`_relevant_change_id`, fallout D-020).
 
     ``live_target`` needs BOTH the run's recorded provenance (``self_target``,
     written by `_self_target_preflight` at init or resume) and a foundry
@@ -3173,6 +3212,7 @@ def live_target_reload(project_root: str | Path, state: dict, token: str) -> dic
         "loaded_commit": str(state.get("server_commit") or ""),
         "changed": {cls: [] for cls in RELOAD_CLASSES},
         "relevant": [],
+        "change_id": "",
         "launch_command": "",
         "problem": None,
     }
@@ -3220,6 +3260,7 @@ def live_target_reload(project_root: str | Path, state: dict, token: str) -> dic
             if any(p == w or (w.endswith("/") and p.startswith(w)) for w in wanted)
         ]
     result["relevant"] = relevant
+    result["change_id"] = _relevant_change_id(plugin_dir, relevant)
     result["owed"] = bool(relevant)
     return result
 

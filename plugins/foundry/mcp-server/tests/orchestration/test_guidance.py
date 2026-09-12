@@ -3290,6 +3290,13 @@ def test_a_reload_crossing_answered_without_a_relaunch_still_gets_a_move(run_env
     assert crossed["action"] == "transition_to_done", crossed
     assert crossed["details"]["reload"]["owed"] is True, crossed
     assert crossed["details"]["reload_answered"] == item, crossed
+    # fallout D-019 — the step carries WHAT THEY SAID, not only who was asked.
+    # Releasing the crossing rather than holding it is defensible only because
+    # the run records the answer it is proceeding on; an unread key is a record
+    # that can be deleted with the suite still green.
+    assert crossed["details"]["reload_answer"] == (
+        "Ship it as it stands; I am not relaunching now."
+    ), crossed
     assert "answered it without relaunching" in crossed["instructions"]
 
     # The step the router used to name here is the one the door refuses. Both
@@ -3310,6 +3317,71 @@ def test_a_reload_crossing_answered_without_a_relaunch_still_gets_a_move(run_env
     assert again["action"] == "park_item", again
     assert again["details"]["question"] != parked["details"]["question"]
     assert _GATES_PATH in again["details"]["question"], again
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+def test_a_second_edit_to_an_already_answered_file_asks_the_human_again(run_env):
+    """should-not-stop AC-028 / FR-042 (D-020): the release is scoped to CONTENT.
+
+    D-017's release is read off the rendered question, and that question used to
+    be rendered from a PATH LIST plus `loaded_commit`. Neither moves when a file
+    already in the list is edited AGAIN, so a second edit after the answer
+    crossed DONE on content the human had never been shown. The test above misses
+    it by changing a DIFFERENT file, which legitimately moves `relevant` — that
+    one distinction is the whole defect, so this one re-edits the same file.
+
+    The revert step is the guard against fixing it with a nonce or a timestamp:
+    either would re-ask forever and undo D-017. The identity has to be content,
+    so restoring the answered bytes restores the release.
+    """
+    project_root, fdir = run_env
+    plugin, loaded = _live_target(project_root)
+    _f4_ready_for_done(fdir, self_target=True, server_commit=loaded)
+
+    (plugin / _ROUTER_PATH).write_text("ROUTE = 2\n")
+    parked = _compute_next_action(project_root)
+    assert parked["action"] == "park_item", parked
+    item = _park(
+        project_root, "crossing:done",
+        category=vocab.PARK_CATEGORY_LIVE_PLUGIN_RELOAD,
+        question=parked["details"]["question"],
+    )
+    _answer(project_root, item, "Ship it as it stands; I am not relaunching now.")
+    assert _compute_next_action(project_root)["action"] == "transition_to_done"
+
+    # THE RE-EDIT: same path, new content, after the answer. `relevant` holds the
+    # same single path and no relaunch happened, so `loaded_commit` is unmoved.
+    (plugin / _ROUTER_PATH).write_text("ROUTE = 3  # never put to the human\n")
+    again = _compute_next_action(project_root)
+    assert again["action"] == "park_item", again
+    assert again["details"]["item_ref"] == "crossing:done"
+    assert again["details"]["reload"]["relevant"] == [_ROUTER_PATH], again
+    assert again["details"]["question"] != parked["details"]["question"], again
+    assert (
+        again["details"]["reload"]["change_id"]
+        != parked["details"]["reload"]["change_id"]
+    ), again
+
+    # Restoring the answered content restores the answered question, so the
+    # release holds again: what was approved is what is being crossed on.
+    (plugin / _ROUTER_PATH).write_text("ROUTE = 2\n")
+    reverted = _compute_next_action(project_root)
+    assert reverted["action"] == "transition_to_done", reverted
+    assert reverted["details"]["reload_answered"] == item, reverted
+
+    # And the park the router names on the new content is one the door ADMITS.
+    # The router never naming a call the door refuses is the other half of
+    # D-017, and it is what keeps this fix from being that deadlock again.
+    (plugin / _ROUTER_PATH).write_text("ROUTE = 3  # never put to the human\n")
+    renamed = _compute_next_action(project_root)
+    assert renamed["action"] == "park_item", renamed
+    admitted = _park_door.foundry_park(
+        action="park", item_ref="crossing:done",
+        category=vocab.PARK_CATEGORY_LIVE_PLUGIN_RELOAD,
+        question=renamed["details"]["question"], project_root=project_root,
+    )
+    assert admitted.get("ok") is True, admitted
+    assert _compute_next_action(project_root)["action"] == "ask_human"
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
@@ -3347,5 +3419,22 @@ def test_a_work_phase_exit_never_instructs_a_park_the_door_already_refuses(run_e
     assert released["action"] == "run_temper", released
     assert released["details"]["reload"]["owed"] is True, released
     assert released["details"]["reload_answered"] == item, released
+    # fallout D-019, as on the crossing arm: the answer the phase proceeds on is
+    # read back, so the record cannot be deleted with the suite still green.
+    assert released["details"]["reload_answer"] == (
+        "Finish TEMPER on this build; no relaunch."
+    ), released
     assert "do NOT call its Foundry-Gate or Foundry-Phase" not in released["instructions"]
     assert "Foundry-Phase(phase='done')" in released["instructions"]
+
+    # fallout D-020 on THIS arm too: a second edit to the same already-listed
+    # file is a question nobody has answered, so the work step goes back to
+    # instructing the park it had released.
+    (plugin / _ROUTER_PATH).write_text("ROUTE = 3  # never put to the human\n")
+    moved = _compute_next_action(project_root)
+    assert moved["action"] == "run_temper", moved
+    assert "do NOT call its Foundry-Gate or Foundry-Phase" in moved["instructions"]
+    assert (
+        moved["details"]["reload_question"] != owed["details"]["reload_question"]
+    ), moved
+    assert "reload_answered" not in moved["details"], moved

@@ -3061,7 +3061,17 @@ def _reload_facts(project_root: str, state: dict, token: str) -> dict:
 
 
 def _reload_question(fdir: Path, token: str, reload: dict) -> str:
-    """The question a reload park puts to the human, with the exact relaunch."""
+    """The question a reload park puts to the human, with the exact relaunch.
+
+    Carries `change_id`, the fingerprint of what the relevant paths CONTAIN
+    (fallout D-020). The rest of this text is rendered from a path list and a
+    commit, and neither moves when a path already in the list is edited again —
+    so without the fingerprint a second edit re-derived a question the human had
+    already answered, and `_reload_already_answered` released the crossing on
+    content nobody had been shown. The fingerprint is what makes "changed since
+    the answer" mean changed, and it belongs in the TEXT because the door's loop
+    rung compares the text (see `_reload_already_answered`).
+    """
     relevant = list(reload.get("relevant") or [])
     shown = ", ".join(relevant[:6]) + (
         f" and {len(relevant) - 6} more" if len(relevant) > 6 else ""
@@ -3074,7 +3084,9 @@ def _reload_question(fdir: Path, token: str, reload: dict) -> str:
     return (
         f"The running foundry server loaded at "
         f"{str(reload.get('loaded_commit') or '?')[:12]}, and {len(relevant)} "
-        f"file(s) changed since, which {why}: {shown}. Quit and relaunch with "
+        f"file(s) changed since (content fingerprint "
+        f"{reload.get('change_id') or '?'}), which {why}: {shown}. Quit and "
+        f"relaunch with "
         f"`{reload.get('launch_command') or 'claude --plugin-dir <plugin dir>'}`, "
         f"run Foundry-Init(resume='{fdir.name}'), then answer this item."
     )
@@ -3099,15 +3111,26 @@ def _reload_already_answered(fdir: Path, ref: str, question: str) -> dict | None
     disagree about whether the door would refuse the call.
 
     Scoped to the question rather than to the ref, for the same reason read the
-    other way: relevant code that changes AFTER the answer moves `relevant` or
-    `loaded_commit`, so `_reload_question` reads differently, the door admits it
-    as the new question it is, and this returns None so the router parks it.
+    other way: relevant code that changes AFTER the answer moves the question,
+    so the door admits it as the new question it is and this returns None, which
+    is what makes the router park it. That holds for a change of EITHER kind —
+    a new path entering `relevant`, or a fresh edit to a path already in it —
+    because `_reload_question` carries `change_id`, the fingerprint of what
+    those paths contain. It did not hold before D-020: the question was rendered
+    from the path list and `loaded_commit` alone, so re-editing an already-listed
+    file moved no input, this matched, and DONE crossed on content the human was
+    never asked about.
+
+    Compared against the STRIPPED question because that is what the door stores
+    (`_park_item` writes `body`, its stripped `question`). The two predicates
+    have to read the same bytes to be the same predicate.
     """
+    asked = question.strip()
     for item in read_parked(fdir)[PARKED_ITEMS_KEY]:
         if (
             item.get(PARKED_FIELD_ITEM_REF) == ref
             and item.get(PARKED_FIELD_CATEGORY) == PARK_CATEGORY_LIVE_PLUGIN_RELOAD
-            and item.get(PARKED_FIELD_QUESTION) == question
+            and item.get(PARKED_FIELD_QUESTION) == asked
             and item.get(PARKED_FIELD_ANSWERED_AT)
         ):
             return item
