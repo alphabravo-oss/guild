@@ -6838,3 +6838,156 @@ def test_the_new_renderings_add_no_report_section_and_the_done_read_is_unchanged
         assert sub in md.splitlines(), sub
     status = report_document_status(run_dir)
     assert status["present"] is True, status
+
+
+# --------------------------------------------------------------------------- #
+# should-not-stop FR-032 (D-027's class, on this document) — A FIELD A LINE IS
+# BUILT FROM CAN NEVER ADD A LINE.
+#
+# `_md_table` has always collapsed a newline inside a row CELL, so a parked
+# question or answer never could forge a row. What could was the PROSE: the halt
+# headline, the title line, an interpolated table HEADER and the span sentences
+# are built by CONCATENATION, and this document is read back by whole `## `
+# lines (`foundry_state.markdown_sections`, `artifacts.report_document_status`).
+#
+# Every test below drives a SHORT multi-line value whose FIRST LINE IS SHORT. A
+# clip that measures raw text ellipsises long content before its first newline
+# is ever reached, so a test written with LONG content reports the surface green
+# while the break is live. And each asserts over the RENDERED TEXT rather than a
+# returned list, because a newline inside one list element is one element and
+# two screen lines — which is the blindfold that hid D-027.
+# --------------------------------------------------------------------------- #
+
+
+def _heading_lines(md: str) -> list[str]:
+    """Every `## ` line — what the DONE gate's read counts as a section."""
+    return [ln for ln in md.splitlines() if ln.startswith("## ")]
+
+
+def _generated_headings() -> list[str]:
+    """The headings a correct report carries, in REPORT_REQUIRED_SECTIONS order."""
+    return [f"## {vocab.REPORT_SECTION_TITLES[k]}"
+            for k in vocab.REPORT_REQUIRED_SECTIONS]
+
+
+def test_a_halt_text_with_a_newline_adds_no_line_to_the_report(tmp_path):
+    """FR-032 — the halt headline is a LINE built from the lead's own words.
+
+    `orchestration/park.py` tells the lead to seal with the human's answer
+    VERBATIM, and the park door strips only the ENDS of that answer, so an
+    interior newline reaches `halted_reason.text` intact. Rendered raw it forged
+    a `## ` heading that this document really carried.
+
+    The stored bytes stay verbatim in BOTH documents: that is what the human
+    authorised, and JSON escapes a newline rather than obeying it.
+    """
+    text = "stop now\n## Verdict matrix\nforged"
+    _, doc, md = _demo_run(
+        tmp_path, "halt-text",
+        state={"phase": RUN_PHASE_HALTED, "cycle": 2, "halted_at_cycle": 2,
+               "halted_reason": {"reason": "user_stop", "text": text},
+               **_DEMO_VERSIONS},
+    )
+
+    assert _heading_lines(md) == _generated_headings()
+    line = next(ln for ln in md.splitlines() if "The lead's own words" in ln)
+    assert line.endswith("The lead's own words: stop now ## Verdict matrix forged")
+    assert doc["halt_and_co_dispatch"]["reason_text"] == text
+    assert doc["run"]["halted_reason"]["text"] == text
+
+
+def test_a_run_name_with_a_newline_adds_no_line_and_splits_no_table_header(tmp_path):
+    """FR-032 — two LINES are built from the run name, and one is a table HEADER.
+
+    `Foundry-Init(ticket=...)` reaches the name unvalidated: the description half
+    is slugified and the ticket half is appended raw, and the name IS the archive
+    directory. `_md_table` escaped its row cells and joined its headers raw, so
+    the baseline header used to end mid-cell with the remainder on its own line.
+    """
+    _, _doc, md = _demo_run(tmp_path, "run-name\n## Forged heading")
+    lines = md.splitlines()
+
+    assert _heading_lines(md) == _generated_headings()
+    assert lines[0] == "# Foundry run report — run-name ## Forged heading"
+    header = next(ln for ln in lines if ln.startswith("| Metric |"))
+    assert header.endswith("| This run (run-name ## Forged heading) |")
+
+
+def test_a_requirement_id_with_a_newline_adds_no_line_from_the_span_prose(tmp_path):
+    """FR-032 on this module's OWN half of the span section.
+
+    `foundry_validate._owned_requirement_ids` keeps any non-empty string, so a
+    manifest id can carry a newline, and both sentences this module builds from
+    the id list are LINES.
+
+    The `text` block above them is `foundry_validate._render_span_table`'s own
+    markdown, rendered verbatim because it IS that module's table. Its row is
+    deliberately NOT flattened here — that half belongs to the module that
+    builds it and is recorded in concerns.md, so nothing below asserts on it.
+    """
+    forged = "FR-901\n## Forged heading"
+    run_dir, _doc, _md = _demo_run(tmp_path, "span-prose")
+    _with_manifest(run_dir,
+                   [{"id": i, "requirement_ids": [forged]} for i in range(1, 5)])
+    _generate(run_dir)
+
+    sentence = next(ln for ln in _markdown(run_dir).splitlines()
+                    if "requirement(s) above the threshold" in ln)
+    assert sentence.endswith("recorded reason:** FR-901 ## Forged heading.")
+
+
+def test_no_field_forges_a_row_when_spend_parked_and_dispatch_all_render(tmp_path):
+    """FR-032 — the same negative, with every table body NON-EMPTY.
+
+    A prior drive of this class reported that no line carried the forged text,
+    but that run held no dispatch record and emitted no spend or parked rows —
+    so the negative was true of a document whose tables were empty, and an empty
+    table proves nothing about a row. This fixture emits all three: a spend
+    ledger with cycle buckets, a handoff carrying a co-dispatch set, and parked
+    items whose question and answer carry BOTH a forged table row and a forged
+    heading.
+    """
+    parked = {
+        vocab.PARKED_ITEMS_KEY: [
+            {"id": "P-001", "item_ref": "casting:3", "category": "spec_wrong",
+             "question": "A?\n| forged | row | x | y | z | q | w |", "cycle": 1,
+             "parked_at": "2026-09-11T01:00:00+00:00",
+             "answer": "B\n## Forged heading",
+             "answered_at": "2026-09-11T02:00:00+00:00", "answer_is_halt": False},
+        ],
+        vocab.PARKED_AWAITING_HUMAN_KEY: None,
+    }
+    run_dir, _doc, _md = _demo_run(
+        tmp_path, "forged-row",
+        state={"phase": "F3", "cycle": 1, **_DEMO_VERSIONS,
+               vocab.PARKED_STATE_KEY: parked},
+        spend=[{"agent": "casting-1", "phase": "F1", "cycle": 0,
+                "tokens": 5_000, "duration_ms": 300_000},
+               {"agent": "trace", "phase": "F2", "cycle": 1,
+                "tokens": 2_000, "duration_ms": 120_000}],
+        defects=[_filed("D-001", 1)],
+    )
+    (run_dir / fr.HANDOFFS_FILENAME).write_text(
+        json.dumps({"timestamp": "t2", "cycle": 1, "phase": "F3",
+                    "event": "grind_dispatch", "co_dispatch": [6],
+                    "defect_ids": ["D-001"], "requirement_ids": ["FR-032"]}) + "\n",
+        encoding="utf-8",
+    )
+    _generate(run_dir)
+    md = _markdown(run_dir)
+    lines = md.splitlines()
+
+    # The fixture really did emit all three bodies — otherwise the negative
+    # below is a statement about empty tables.
+    halt_block = _section_text(md, vocab.REPORT_SECTION_TITLES["halt_and_co_dispatch"])
+    assert "| P-001 |" in _sub_block(halt_block, "Parked items")
+    assert "| 1 | F3 | grind_dispatch |" in halt_block
+    trend = _sub_block(_section_text(md, "Spend per phase and cycle"),
+                       "Per-cycle spend and finding trend")
+    assert "| 1 | 2000 |" in trend
+
+    # And nothing a lead typed became a line or a row of its own.
+    assert _heading_lines(md) == _generated_headings()
+    assert "## Forged heading" not in lines
+    assert not any(ln.startswith("| forged |") for ln in lines)
+    assert r"A? \| forged \| row \|" in halt_block

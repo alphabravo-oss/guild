@@ -2271,20 +2271,73 @@ def _full_ratio_sentence(ratio: dict) -> str:
     )
 
 
+def _as_one_line(value: object) -> str:
+    """``value`` as ONE line: every run of whitespace collapses to one space.
+
+    should-not-stop FR-032 (D-027's class, on the document surface) — A FIELD A
+    LINE IS BUILT FROM CAN NEVER ADD A LINE.
+
+    `_cell` already collapses newlines inside every table CELL, so the tables
+    here were never the exposure. The PROSE was: a headline, a census sentence,
+    a table header or the title line is built by CONCATENATION and publishes
+    whatever the field holds, and this document is read back by whole `## `
+    lines — `foundry_state.markdown_sections` splits it and
+    `artifacts.report_document_status` compares the headings the DONE gate
+    needs. A newline in such a field therefore does not merely wrap the text: it
+    forges a `## ` heading, which the gate then reads as a section that exists
+    and the F6 seal reads as the boundary between generated body and the lead's
+    own appended words.
+
+    Driven at the real doors before this was written, with SHORT multi-line
+    values whose first line is short — a long one is ellipsised before its first
+    newline is reached, which is how a surface like this reports green while the
+    break is live. `Foundry-Phase(phase='halt', text=...)`, which
+    `orchestration/park.py` tells the lead to call with the human's answer
+    VERBATIM, and `Foundry-Init(ticket=...)`, whose ticket half reaches a run
+    name with neither validation nor a slug.
+
+    THE STORED BYTES ARE NOT TOUCHED, deliberately.
+    `orchestration/halt.py#_seal_halted` records the human's own words and the
+    park door compares them, so flattening at the WRITE would change what the
+    archive says the human authorised; `report.json` keeps the field raw for the
+    same reason, JSON escaping a newline rather than obeying it. This is a
+    RENDERING rule applied where a LINE is built — where
+    `tools/display.py#one_line` applies it for the banner and the router's ask.
+
+    RE-SPELLED HERE RATHER THAN IMPORTED, and only because the import graph
+    forbids the reach: `display.py` is not one of the leaves this module may
+    touch, and `test_report.py` pins the module-level roster AND the body-level
+    set as closed sets. One expression, two spellings, each naming the other.
+    """
+    return " ".join(str(value or "").split())
+
+
+def _cell(value: object) -> str:
+    """One table cell: no pipe starts a column, no newline starts a row.
+
+    The ROW half is old. The HEADER half is not: headers were joined RAW, and
+    the baseline table interpolates the run name into two of them — so a run
+    name carrying a newline split the header across two lines and left the
+    table with a header row that was no longer a header row.
+    """
+    return "" if value is None else str(value).replace("|", "\\|").replace("\n", " ")
+
+
 def _md_table(headers: list[str], rows: list[list[Any]]) -> list[str]:
     """A markdown table, or a single italic line when there are no rows.
 
     An empty table with only its header row reads as a rendering bug. "None
     recorded." reads as a measurement, which is what an empty section IS.
+
+    Headers and cells go through `_cell` alike: a header is as much a LINE as a
+    row is, and one caller interpolates a field into one (FR-032).
     """
     if not rows:
         return ["_None recorded._"]
-    out = ["| " + " | ".join(headers) + " |",
+    out = ["| " + " | ".join(_cell(h) for h in headers) + " |",
            "|" + "|".join("---" for _ in headers) + "|"]
     for row in rows:
-        cells = ["" if c is None else str(c).replace("|", "\\|").replace("\n", " ")
-                 for c in row]
-        out.append("| " + " | ".join(cells) + " |")
+        out.append("| " + " | ".join(_cell(c) for c in row) + " |")
     return out
 
 
@@ -2317,7 +2370,9 @@ def _render_markdown(run_name: str, generated_at: str, sections: dict) -> str:
     heading text as cosmetic.
     """
     lines: list[str] = [
-        f"# Foundry run report — {run_name}",
+        # FR-032 — the title is a LINE and the run name is a FIELD: a
+        # `Foundry-Init` ticket reaches it unvalidated. See `_as_one_line`.
+        f"# Foundry run report — {_as_one_line(run_name)}",
         "",
         # D-234 — THE ONE SURFACE THE CYCLE-27 RULING DID NOT REACH.
         #
@@ -2383,15 +2438,19 @@ def _render_section(key: str, value: dict) -> list[str]:
         lines = [value.get("text") or "_None recorded._", ""]
         over = value.get("over_threshold") or []
         recorded = value.get("recorded") or []
+        # FR-032 — both sentences are LINES built from ids a manifest declares,
+        # and `foundry_validate._owned_requirement_ids` keeps any non-empty
+        # string. The `text` block above is `foundry_validate`'s own rendering
+        # and is left exactly as that module builds it.
         if over:
             lines.append(
                 f"**{len(over)} requirement(s) above the threshold with no "
-                f"recorded reason:** {', '.join(over)}."
+                f"recorded reason:** {', '.join(_as_one_line(i) for i in over)}."
             )
         if recorded:
             lines.append(
                 f"{len(recorded)} above it with a recorded reason: "
-                f"{', '.join(recorded)}."
+                f"{', '.join(_as_one_line(i) for i in recorded)}."
             )
         if not over and not recorded and not value.get("not_computable"):
             lines.append(
@@ -2704,7 +2763,10 @@ def _render_section(key: str, value: dict) -> list[str]:
                 f"`{reason}`."
             )
             if text:
-                headline += f" The lead's own words: {text}"
+                # FR-032 — the lead's words are a FIELD and this is a LINE. The
+                # bytes stay verbatim in `state.json` and in `report.json`;
+                # only the rendering refuses to obey a newline.
+                headline += f" The lead's own words: {_as_one_line(text)}"
         else:
             # D-151's class: a None interpolated into operator prose reads as a
             # fact. The unknown is stated in WORDS, and the sentence names the
@@ -2715,7 +2777,9 @@ def _render_section(key: str, value: dict) -> list[str]:
                 "`halted_reason` carries no member of the halt vocabulary — it "
                 "predates FR-019, when the field was a free sentence — so the "
                 "text is printed as recorded rather than guessed onto a "
-                f"member: {text or value.get('reason_recorded') or NO_LOCATION_CELL}"
+                "member: "
+                + (_as_one_line(text or value.get("reason_recorded"))
+                   or NO_LOCATION_CELL)
             )
         dispatched = value.get("co_dispatch", [])
         rows = [[d.get("cycle"), d.get("phase"), d.get("event"),
