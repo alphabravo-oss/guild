@@ -2828,6 +2828,155 @@ def _routed_casting_step(fdir: Path, phase: str, routes: dict[str, dict]) -> dic
     return None
 
 
+#: The column every line of a parked item's QUESTION is rendered at in the ask
+#: listing. Deeper than the `  - ` a sibling ITEM starts at, which is the whole
+#: of why it exists — see `_ask_item_block`.
+_ASK_BODY_INDENT = "      "
+
+
+def _ask_item_block(item: dict) -> str:
+    """One parked item in the ask listing: its header, then its question, fenced.
+
+    should-not-stop AC-008 / CT-005 (D-022) — AN ITEM'S QUESTION CAN NEVER BE
+    READ AS A SIBLING ITEM.
+
+    This listing used to be ONE LINE per item — `  - <id> — <ref> (<cat>):
+    <question>` — which held only while every question was one line. D-021 made
+    the reload question MULTI-LINE (one `  - <path> (<digest>)` line per
+    relevant path) with the same two-space bullet prefix and the same indent, so
+    at a batch the two levels flattened into one list: two parked items rendered
+    FIVE bullets, byte-indistinguishable in prefix and indent, and the question's
+    own closing paragraph and `claude --plugin-dir` relaunch command came out
+    FLUSH-LEFT — reading as the ask step's own instructions, as though the
+    relaunch applied to the whole batch. The human authorized the crossing
+    without being able to see where one question ended and the next began. That
+    is D-021 one layer up: authorization text that is complete but not legible.
+
+    So the fence is structural rather than cosmetic, and it holds for ANY
+    question of ANY category at ANY number of lines. The item's header is the
+    only line of the block at the sibling column; every line of the body is
+    indented past it; and `(end of <id>)` closes it, so the step's own trailing
+    instructions cannot be read as the last item's question either. A question
+    that contains a literal `  - ` line of its OWN renders indented like every
+    other line of it — which is what makes this a fix at the level rather than
+    one more fix to the reload question. The next multi-line question, in a
+    category nobody has written yet, is already delimited.
+
+    The question is rendered VERBATIM, line for line. It is what the human
+    authorizes, and it is the byte-for-byte machine identity both
+    `_reload_already_answered` and `park.py#_park_item`'s loop rung compare, so
+    this function may move it in the display and may never rewrite it.
+    """
+    ident = item.get(PARKED_FIELD_ID)
+    body = str(item.get(PARKED_FIELD_QUESTION) or "")
+    lines = [
+        f"  - {ident} — {item.get(PARKED_FIELD_ITEM_REF)} "
+        f"({item.get(PARKED_FIELD_CATEGORY)}) asks the question indented below, "
+        f"down to the line that says (end of {ident}):"
+    ]
+    lines.extend(
+        f"{_ASK_BODY_INDENT}{line}" if line.strip() else ""
+        for line in (body.splitlines() or [""])
+    )
+    lines.append(f"{_ASK_BODY_INDENT}(end of {ident})")
+    return "\n".join(lines)
+
+
+def _prior_answered_question(fdir: Path, item: dict) -> dict | None:
+    """The newest answered item that asked about the SAME thing as ``item``.
+
+    Same `item_ref` and same category, answered, and not a halt — the park
+    door's loop identity MINUS the question, which is exactly the pair whose
+    questions are worth putting side by side: same thing blocked, same reason,
+    so anything that differs between the two questions is what moved since the
+    human answered.
+
+    Scanned over every prior item rather than kept per ref, the way
+    `_reload_already_answered` scans: a question answered two parks ago is still
+    the answer the human gave about this item.
+    """
+    ref = item.get(PARKED_FIELD_ITEM_REF)
+    category = item.get(PARKED_FIELD_CATEGORY)
+    newest: dict | None = None
+    # `_iso` returns a datetime, so the "nothing seen yet" value is None and not
+    # an empty string: an empty string is orderable against another string and
+    # NOT against a datetime, so it reads as a harmless sentinel and raises
+    # TypeError on the first answered item instead.
+    newest_at = None
+    for prior in read_parked(fdir)[PARKED_ITEMS_KEY]:
+        stamp = _iso(prior.get(PARKED_FIELD_ANSWERED_AT))
+        if stamp is None or prior.get(PARKED_FIELD_ANSWER_IS_HALT) is True:
+            continue
+        if prior.get(PARKED_FIELD_ITEM_REF) != ref:
+            continue
+        if prior.get(PARKED_FIELD_CATEGORY) != category:
+            continue
+        if newest_at is None or stamp > newest_at:
+            newest, newest_at = prior, stamp
+    return newest
+
+
+def _ask_question_delta(fdir: Path, item: dict) -> str:
+    """What moved in this item's question since the human last answered it.
+
+    should-not-stop AC-008 / CT-005 (D-021's deepest half) — THE DELTA LIVES IN
+    THE ASK STEP AND NEVER IN THE QUESTION.
+
+    D-021 made the question name every relevant path with the fingerprint of
+    what it contains, so a human CAN localize a change to a file. What they
+    still could not see is whether their OWN prior answer covered it: that is a
+    comparison against the ledger, and the question's text is the machine
+    identity `_reload_already_answered` and the park door's loop rung both
+    compare. A ledger-derived delta inside the question would make the same
+    content render different questions at different times — a soft nonce — so
+    restoring already-approved bytes would no longer restore the release, which
+    is D-017's deadlock arriving from the other side.
+
+    This string is compared by NOTHING. It is rendered fresh on every
+    Foundry-Next and stored nowhere, which is what makes it the safe home for a
+    history-dependent fact. It is also rendered OUTSIDE the item's fence, after
+    `(end of <id>)`, so it can never be read as part of the text being
+    authorized: it is the server's note ABOUT the question, not the question.
+
+    Nothing is rendered when there is no prior answer for this ref and category,
+    or when the question has not moved since it.
+    """
+    prior = _prior_answered_question(fdir, item)
+    if prior is None:
+        return ""
+    was = [
+        line.strip()
+        for line in str(prior.get(PARKED_FIELD_QUESTION) or "").splitlines()
+        if line.strip()
+    ]
+    now = [
+        line.strip()
+        for line in str(item.get(PARKED_FIELD_QUESTION) or "").splitlines()
+        if line.strip()
+    ]
+    added = [line for line in now if line not in was]
+    gone = [line for line in was if line not in now]
+    if not added and not gone:
+        return ""
+    answer = " ".join(str(prior.get(PARKED_FIELD_ANSWER) or "").split())
+    head = (
+        f"    Since you answered {prior.get(PARKED_FIELD_ID)} about "
+        f"{item.get(PARKED_FIELD_ITEM_REF)} with {answer!r}, "
+        f"{len(added)} line(s) of this question are new and {len(gone)} are "
+        "gone. Every other line is one you have already answered. This note is "
+        f"the server's, not part of what {item.get(PARKED_FIELD_ID)} asks:"
+    )
+    # Labelled in words rather than with `+` / `-` diff markers: the lines this
+    # compares are question lines, and a question that is itself a list (the
+    # reload question's per-path fingerprints, or a hand-typed one) has lines
+    # that already begin with `- `. A diff marker in front of one renders
+    # `+ - <path>`, which is a second thing to decode in the middle of the note
+    # that exists to make decoding unnecessary.
+    moved = [f"{_ASK_BODY_INDENT}NEW: {line}" for line in added]
+    moved += [f"{_ASK_BODY_INDENT}GONE: {line}" for line in gone]
+    return "\n".join([head, *moved])
+
+
 def _ask_human_step(fdir: Path, phase: str, why: str) -> dict:
     """The ask step: every open parked question in ONE batch, and the marker set.
 
@@ -2835,21 +2984,33 @@ def _ask_human_step(fdir: Path, phase: str, why: str) -> dict:
     the `awaiting_human` marker naming exactly the ids asked — the one thing
     that lets the Stop hook allow a mid-build turn-end — and a halt answer is
     accepted only for an id this ask named.
+
+    D-022: every item is rendered through `_ask_item_block`, so a question of
+    any length is delimited from its siblings, and `why` is flattened to one
+    line here rather than trusted to arrive as one. Those two together are the
+    whole invariant this step now holds: the ONLY multi-line content anywhere in
+    these instructions is a question body, and every question body is fenced.
     """
     items = open_parked_items(fdir)
     marker = set_awaiting_human(fdir, [item.get(PARKED_FIELD_ID) for item in items])
-    questions = "\n".join(
-        f"  - {item.get(PARKED_FIELD_ID)} — {item.get(PARKED_FIELD_ITEM_REF)} "
-        f"({item.get(PARKED_FIELD_CATEGORY)}): {item.get(PARKED_FIELD_QUESTION)}"
-        for item in items
-    )
+    blocks: list[str] = []
+    for item in items:
+        blocks.append(_ask_item_block(item))
+        delta = _ask_question_delta(fdir, item)
+        if delta:
+            blocks.append(delta)
+    questions = "\n".join(blocks)
+    reason = " ".join(str(why).split())
     return {
         "phase": phase,
         "action": "ask_human",
         "instructions": (
-            f"Nothing else can move: {why}. Every remaining unit of work is parked, "
-            "so ask the human now, in ONE AskUserQuestion carrying every parked "
-            f"question:\n{questions}\n"
+            f"Nothing else can move: {reason}. Every remaining unit of work is "
+            "parked, so ask the human now, in ONE AskUserQuestion carrying every "
+            "parked question. One item per bullet below: a bullet is a whole "
+            "item, and that item's question is every line indented under it, "
+            "down to its own (end of <id>) line — carry each question to the "
+            f"human whole:\n{questions}\n"
             f"The run waits in place — phase {phase}, NOT HALTED — until each answer "
             f"is recorded with {PARK_TOOL_NAME}(action='{PARK_ACTION_ANSWER}', "
             "parked_id=<id>, answer=<the human's words, verbatim>); add halt=true ONLY "
@@ -2860,7 +3021,7 @@ def _ask_human_step(fdir: Path, phase: str, why: str) -> dict:
                 "will keep holding your turn: ask anyway."
             )
         ),
-        "details": {"parked": items, "awaiting_human": marker, "why": why},
+        "details": {"parked": items, "awaiting_human": marker, "why": reason},
     }
 
 

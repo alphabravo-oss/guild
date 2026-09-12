@@ -3579,3 +3579,200 @@ def test_a_work_phase_exit_question_names_every_relevant_file_at_width(run_env):
     assert first.replace(owed["details"]["reload"]["change_id"], "") != (
         second.replace(moved["details"]["reload"]["change_id"], "")
     ), "the exit arm's two questions differ only in the combined digest"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+def test_the_ask_delimits_each_question_from_its_siblings_at_a_batch(run_env):
+    """should-not-stop AC-008 / CT-005 (D-022): the batch says which question is which.
+
+    AC-008 requires the ask step to list "each parked question", and at ONE
+    parked item it always did. The listing was one line per item, `  - <id> —
+    <ref> (<cat>): <question>`, which held only while every question was one
+    line — and D-021 made the reload question MULTI-LINE with the same `  - `
+    prefix at the same indent. At a batch the two levels flattened into one
+    list: two items rendered five bullets, byte-indistinguishable, and the
+    reload question's closing paragraph and its `claude --plugin-dir` relaunch
+    command came out flush-left, reading as the ask step's own instructions
+    rather than as part of that one item. The human authorized the DONE crossing
+    unable to see where one question began and the next ended.
+
+    NOTHING PINNED THE SHAPE, which is why the D-021 fix could turn the question
+    multi-line with a green suite: no test read the ask instructions with two
+    items parked. So this drives a BATCH, and it drives three kinds of question,
+    because the fix has to hold at the level rather than for the one category
+    that happened to break. One is a plain one-liner. One is HAND-TYPED and is
+    itself a list, with lines carrying the exact prefix and indent a sibling
+    item is rendered at — no category derives it, a lead types it into the park
+    door, and the fence has to hold for content the router never composed. One
+    is the router's own reload question at width.
+    """
+    project_root, fdir = run_env
+    plugin, loaded = _live_target(project_root)
+    _f4_ready_for_done(fdir, self_target=True, server_commit=loaded)
+    _probe_paths(plugin, count=3)
+
+    plain = "Which halt reasons stay?"
+    typed = (
+        "Two rules contradict each other:\n"
+        "  - FR-1 says the door seals\n"
+        "\n"
+        "  - FR-2 says it refuses\n"
+        "Which one stands?"
+    )
+    first = _park(project_root, "casting:1", question=plain)
+    second = _park(project_root, "casting:2", question=typed)
+    owed = _compute_next_action(project_root)
+    assert owed["action"] == "park_item", owed
+    third = _park(
+        project_root, "crossing:done",
+        category=vocab.PARK_CATEGORY_LIVE_PLUGIN_RELOAD,
+        question=owed["details"]["question"],
+    )
+
+    ask = _compute_next_action(project_root)
+    assert ask["action"] == "ask_human", ask
+    items = ask["details"]["parked"]
+    assert [item["id"] for item in items] == [first, second, third], items
+
+    lines = ask["instructions"].splitlines()
+    # THE DEFECT, AS ITS OWN ASSERTION: one bullet per ITEM. Three items used to
+    # render seven bullets — three item lines, three per-path fingerprint lines
+    # from the reload question and two from the typed one — and a human reading
+    # the single AskUserQuestion could not tell which were further parked items.
+    bullets = [line for line in lines if line.startswith("  - ")]
+    assert len(bullets) == len(items) == 3, bullets
+    for ident, bullet in zip([first, second, third], bullets):
+        assert bullet.startswith(f"  - {ident} "), (ident, bullet)
+
+    # ...and every question is recoverable WHOLE and VERBATIM from the text,
+    # between its own header and its own fence. That is what "the reader can
+    # tell where each begins and ends" means mechanically, and it is also the
+    # D-017 / D-020 constraint read from the display side: the ask may move the
+    # question's lines, and may never rewrite one.
+    fences = {}
+    for ident, question in (
+        (first, plain), (second, typed), (third, owed["details"]["question"]),
+    ):
+        start = next(
+            i for i, line in enumerate(lines) if line.startswith(f"  - {ident} ")
+        )
+        end = next(
+            i for i, line in enumerate(lines) if line.strip() == f"(end of {ident})"
+        )
+        assert start < end, (ident, start, end)
+        fences[ident] = end
+        body = "\n".join(
+            line[6:] if line.strip() else "" for line in lines[start + 1:end]
+        )
+        assert body == question, (ident, body, question)
+
+    # The step's own trailing instruction is OUTSIDE every fence. It used to
+    # arrive flush-left straight after the reload question's closing paragraph
+    # and relaunch command, so the relaunch read as something the whole batch
+    # owed rather than as part of the one item that asked for it.
+    tail = next(
+        i for i, line in enumerate(lines) if line.startswith("The run waits in place")
+    )
+    assert tail > fences[third], (tail, fences)
+    assert "claude --plugin-dir" not in "\n".join(lines[tail:]), lines[tail:]
+
+    # The one other way a line could reach the listing region is `why`, which
+    # every call site happens to pass as a joined id list and nothing enforced.
+    # The step flattens it, so after this the ONLY multi-line content anywhere
+    # in these instructions is a question body, and every question body is
+    # fenced. That is the invariant, rather than three categories that are
+    # currently fine.
+    injected = _guidance._ask_human_step(
+        fdir, "F4", "every defect is parked\n  - D-999 (not a parked item)"
+    )
+    assert injected["details"]["why"] == (
+        "every defect is parked - D-999 (not a parked item)"
+    ), injected["details"]["why"]
+    assert len([
+        line for line in injected["instructions"].splitlines()
+        if line.startswith("  - ")
+    ]) == 3, injected["instructions"]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+def test_the_ask_names_what_moved_since_the_human_last_answered(run_env):
+    """should-not-stop AC-008 / CT-005 (D-021's deepest half): the delta, in the STEP.
+
+    D-021 made the question name every relevant path with the fingerprint of
+    what it holds, so a human can localize a change to a file. What they still
+    could not see is whether their OWN prior answer covered it — and that is a
+    comparison against the ledger, which the QUESTION may never carry: its text
+    is the identity `_reload_already_answered` and `park.py#_park_item`'s loop
+    rung both compare, so a history-dependent question would stop matching on
+    restored content and undo D-017 from the other side.
+
+    The ask step's instructions are compared by nothing and stored nowhere, so
+    the delta belongs there. This drives both halves at once: the step names
+    what moved and what the human said last time, AND the question it is derived
+    from is still a pure function of content, so restoring the answered bytes
+    restores the release.
+    """
+    project_root, fdir = run_env
+    plugin, loaded = _live_target(project_root)
+    _f4_ready_for_done(fdir, self_target=True, server_commit=loaded)
+    rel = _probe_paths(plugin, count=3)
+    edited = f"{_PROBE_DIR}/m1.py"
+
+    asked_park = _compute_next_action(project_root)
+    assert asked_park["action"] == "park_item", asked_park
+    asked = _park(
+        project_root, "crossing:done",
+        category=vocab.PARK_CATEGORY_LIVE_PLUGIN_RELOAD,
+        question=asked_park["details"]["question"],
+    )
+    _answer(project_root, asked, "Ship it as it stands; I am not relaunching now.")
+    assert _compute_next_action(project_root)["action"] == "transition_to_done"
+
+    # One file moves after the answer, so this is a question nobody has answered
+    # and the router parks it again (D-020).
+    (plugin / edited).write_text("M = 1  # moved after the answer\n", encoding="utf-8")
+    moved = _compute_next_action(project_root)
+    assert moved["action"] == "park_item", moved
+
+    # THE CONSTRAINT THAT MUST NOT BREAK, asserted before the delta is read:
+    # identity is CONTENT. Restoring the answered bytes restores the answered
+    # question, so the release holds — a delta in the question would have made
+    # this a re-ask forever.
+    (plugin / edited).write_text("M = 1\n", encoding="utf-8")
+    assert _compute_next_action(project_root)["action"] == "transition_to_done"
+    (plugin / edited).write_text("M = 1  # moved after the answer\n", encoding="utf-8")
+    again = _compute_next_action(project_root)
+    assert again["action"] == "park_item", again
+    assert again["details"]["question"] == moved["details"]["question"], again
+    reasked = _park(
+        project_root, "crossing:done",
+        category=vocab.PARK_CATEGORY_LIVE_PLUGIN_RELOAD,
+        question=again["details"]["question"],
+    )
+
+    ask = _compute_next_action(project_root)
+    assert ask["action"] == "ask_human", ask
+    text = ask["instructions"]
+    before = asked_park["details"]["reload"]["change_digests"]
+    after = again["details"]["reload"]["change_digests"]
+
+    # What the human could not see before: which line moved since THEIR answer,
+    # and what they answered.
+    assert f"Since you answered {asked}" in text, text
+    assert "Ship it as it stands; I am not relaunching now." in text, text
+    assert f"NEW: - {edited} ({after[edited]})" in text, text
+    assert f"GONE: - {edited} ({before[edited]})" in text, text
+    # Only the file that moved is named as moved; the unedited paths are lines
+    # the human has already answered and are not re-raised as new.
+    for path in rel:
+        if path != edited:
+            assert f"NEW: - {path} ({after[path]})" not in text, path
+
+    # And the delta is in the STEP, never in the question: the item the door
+    # stores carries no word of it, so the two predicates still read the bytes
+    # they have always read.
+    stored = [
+        item for item in _state(fdir)["parked"]["items"] if item["id"] == reasked
+    ][0]
+    assert "Since you answered" not in stored["question"], stored["question"]
+    assert stored["question"] == again["details"]["question"], stored["question"]
