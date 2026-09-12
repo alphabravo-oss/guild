@@ -3150,6 +3150,44 @@ def _changed_since(project_root: Path, commit: str) -> tuple[str, list[str], str
     return top.stdout.strip(), sorted(paths), None
 
 
+def _relevant_path_content(plugin_dir: Path, rel: str) -> bytes:
+    """What ONE relevant path contains, as bytes to fingerprint. Never raises.
+
+    The per-path rung `_relevant_change_id` folds and
+    `_relevant_path_fingerprint` renders, extracted so the combined digest and
+    the per-path digests cannot drift: a question that decomposed the
+    fingerprint into per-file parts that were computed differently from the
+    whole would name a file as unmoved while the combined digest said moved.
+
+    A path the list names and the tree does not have is `b"absent"` — six
+    bytes, never a 32-byte digest, so absence cannot collide with content.
+    """
+    try:
+        return hashlib.sha256((plugin_dir / rel).read_bytes()).digest()
+    except OSError:
+        return b"absent"
+
+
+def _relevant_path_fingerprint(plugin_dir: Path, rel: str) -> str:
+    """One relevant path's content fingerprint, short enough for a human to scan.
+
+    fallout D-021 — THE DIGEST HAS TO NAME WHAT IT COVERS.
+
+    `_relevant_change_id` fingerprints the whole relevant set into one value,
+    which is what makes "changed since the answer" mean changed (D-020). But
+    one value over many files moves as a unit: a human re-asked after an edit
+    to the eighth of ten files saw the same count, the same paths and a
+    different 16-hex digest, and could not see what moved. Per path, the digest
+    is decomposed into the parts it is made of, so the line that moved is the
+    file that moved.
+
+    `absent` is rendered as the word rather than as hex: a deleted file is a
+    change, and "absent" is what a human can act on.
+    """
+    raw = _relevant_path_content(plugin_dir, rel)
+    return "absent" if raw == b"absent" else raw.hex()[:8]
+
+
 def _relevant_change_id(plugin_dir: Path, relevant: list[str]) -> str:
     """A content fingerprint of the relevant paths AS THEY STAND. Never raises.
 
@@ -3179,10 +3217,7 @@ def _relevant_change_id(plugin_dir: Path, relevant: list[str]) -> str:
     for rel in sorted(relevant):
         digest.update(rel.encode("utf-8", "replace"))
         digest.update(b"\0")
-        try:
-            digest.update(hashlib.sha256((plugin_dir / rel).read_bytes()).digest())
-        except OSError:
-            digest.update(b"absent")
+        digest.update(_relevant_path_content(plugin_dir, rel))
         digest.update(b"\0")
     return digest.hexdigest()[:16]
 
@@ -3191,11 +3226,14 @@ def live_target_reload(project_root: str | Path, state: dict, token: str) -> dic
     """Does the crossing ``token`` owe a relaunch on this run? Never raises.
 
     Returns ``{"live_target", "owed", "token", "rule", "loaded_commit",
-    "changed", "relevant", "change_id", "launch_command", "problem"}``.
-    ``changed`` maps every `RELOAD_CLASSES` member to the plugin-relative paths
-    judged into it; ``relevant`` is the subset that owes the relaunch, ``owed``
-    is whether it is non-empty, and ``change_id`` fingerprints those paths'
-    current content (`_relevant_change_id`, fallout D-020).
+    "changed", "relevant", "change_id", "change_digests", "launch_command",
+    "problem"}``. ``changed`` maps every `RELOAD_CLASSES` member to the
+    plugin-relative paths judged into it; ``relevant`` is the subset that owes
+    the relaunch, ``owed`` is whether it is non-empty, and ``change_id``
+    fingerprints those paths' current content (`_relevant_change_id`, fallout
+    D-020). ``change_digests`` maps each relevant path to its OWN content
+    fingerprint, the same digest decomposed per file so the reload question can
+    name what it covers rather than moving as one opaque value (fallout D-021).
 
     ``live_target`` needs BOTH the run's recorded provenance (``self_target``,
     written by `_self_target_preflight` at init or resume) and a foundry
@@ -3213,6 +3251,7 @@ def live_target_reload(project_root: str | Path, state: dict, token: str) -> dic
         "changed": {cls: [] for cls in RELOAD_CLASSES},
         "relevant": [],
         "change_id": "",
+        "change_digests": {},
         "launch_command": "",
         "problem": None,
     }
@@ -3261,6 +3300,9 @@ def live_target_reload(project_root: str | Path, state: dict, token: str) -> dic
         ]
     result["relevant"] = relevant
     result["change_id"] = _relevant_change_id(plugin_dir, relevant)
+    result["change_digests"] = {
+        rel: _relevant_path_fingerprint(plugin_dir, rel) for rel in relevant
+    }
     result["owed"] = bool(relevant)
     return result
 

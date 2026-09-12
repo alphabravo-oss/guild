@@ -3438,3 +3438,144 @@ def test_a_work_phase_exit_never_instructs_a_park_the_door_already_refuses(run_e
         moved["details"]["reload_question"] != owed["details"]["reload_question"]
     ), moved
     assert "reload_answered" not in moved["details"], moved
+
+
+_PROBE_DIR = "mcp-server/src/foundry_mcp/probe"
+
+
+def _probe_paths(plugin: Path, count: int = 10) -> list[str]:
+    """``count`` relevant server-code paths, so the question renders at width.
+
+    More than six, so the retired rendering showed six and hid the rest behind
+    "and N more". All of one class, which is why a per-class count cannot see an
+    edit among them either: the class composition never moves.
+    """
+    probe = plugin / _PROBE_DIR
+    probe.mkdir(parents=True, exist_ok=True)
+    for n in range(count):
+        (probe / f"m{n}.py").write_text(f"M = {n}\n", encoding="utf-8")
+    return [f"{_PROBE_DIR}/m{n}.py" for n in range(count)]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+def test_a_reload_question_names_the_content_of_every_relevant_file(run_env):
+    """should-not-stop AC-028 / FR-042 (D-021): the ask is not a bare digest.
+
+    D-020 put a content fingerprint IN the question, because the door's loop rung
+    compares the text and nothing else moved when an already-listed file was
+    edited again. That fixed the release and left the ASK mute: the text rendered
+    `relevant[:6]` plus "and N more" over a count, so with more than six relevant
+    paths an edit to a path OUTSIDE the shown six moved nothing a human could
+    read. Both asks said "10 file(s) changed since" over the same six names, and
+    the two differed only in the truncated digest — so the human was asked to
+    authorize the crossing a second time with no way to see what moved, and
+    FR-042 rests its guarantee on that answer.
+
+    The fix is not a wider digest and not a digest moved out of the text (D-017
+    forbids that: the router would name a park the door refuses). It is the
+    digest DECOMPOSED — every relevant path named with the fingerprint of what it
+    contains — so the line that moved is the file that moved.
+    """
+    project_root, fdir = run_env
+    plugin, loaded = _live_target(project_root)
+    _f4_ready_for_done(fdir, self_target=True, server_commit=loaded)
+    rel = _probe_paths(plugin)
+    edited = f"{_PROBE_DIR}/m7.py"
+
+    parked = _compute_next_action(project_root)
+    assert parked["action"] == "park_item", parked
+    first = parked["details"]["question"]
+    assert parked["details"]["reload"]["relevant"] == rel, parked
+    # Every relevant path is NAMED, not six of them and a count of the rest.
+    for path in rel:
+        assert path in first, (path, first)
+    assert "and 4 more" not in first, first
+
+    # THE DEFECT: edit the 8th path — outside the six the retired text showed.
+    (plugin / edited).write_text("M = 7  # never put to the human\n", encoding="utf-8")
+    again = _compute_next_action(project_root)
+    assert again["action"] == "park_item", again
+    second = again["details"]["question"]
+
+    # The count and the path list are the same, exactly as before. What must
+    # differ is something a human can attribute to m7.py: its OWN fingerprint.
+    # The assertion this test exists for, and the exact inverse of the
+    # reproduction: stripping each question's own combined digest used to leave
+    # two byte-identical strings. It is checked FIRST, so the defect's own
+    # symptom is what fails on the unfixed code.
+    assert first.replace(parked["details"]["reload"]["change_id"], "") != (
+        second.replace(again["details"]["reload"]["change_id"], "")
+    ), "the two asks differ only in the combined digest"
+
+    # What must differ is something a human can attribute to m7.py: its OWN
+    # fingerprint, the combined digest decomposed into the parts it is made of.
+    before = parked["details"]["reload"]["change_digests"]
+    after = again["details"]["reload"]["change_digests"]
+    assert after[edited] != before[edited], after
+    assert after[edited] in second, second
+    assert before[edited] not in second, second
+    # ...and every unedited path's fingerprint holds, so the moved line is
+    # attributable to m7.py alone rather than to the whole set shifting.
+    for path in rel:
+        if path != edited:
+            assert after[path] == before[path], path
+
+    # The identity is still CONTENT, so restoring the answered bytes restores
+    # the question byte for byte. This is the D-017/D-020 invariant the more
+    # legible text must not trade away: a timestamp, a nonce or a delta read off
+    # the ledger would all re-ask forever.
+    (plugin / edited).write_text("M = 7\n", encoding="utf-8")
+    restored = _compute_next_action(project_root)
+    assert restored["details"]["question"] == first, restored
+
+    # And at width the door ADMITS the question the router names: the router's
+    # predicate and the door's loop rung still read the same bytes.
+    (plugin / edited).write_text("M = 7  # never put to the human\n", encoding="utf-8")
+    named = _compute_next_action(project_root)["details"]["question"]
+    admitted = _park_door.foundry_park(
+        action="park", item_ref="crossing:done",
+        category=vocab.PARK_CATEGORY_LIVE_PLUGIN_RELOAD,
+        question=named, project_root=project_root,
+    )
+    assert admitted.get("ok") is True, admitted
+    assert _compute_next_action(project_root)["action"] == "ask_human"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+def test_a_work_phase_exit_question_names_every_relevant_file_at_width(run_env):
+    """should-not-stop AC-028 / FR-042 (D-021), the ADJACENT path: `_guard_exit`.
+
+    `_reload_question` has three call sites. The defect was driven through
+    `_guard_crossing`'s before-DONE arm; TEMPER and NYQUIST reach the same text
+    through `_guard_exit`, which parks nothing and rides the work step with
+    `details.reload_question` — the string the lead hands the door when the
+    phase's work is done. A mute question there is the same blind authorization,
+    arriving a phase later, so the fix belongs on both guards.
+    """
+    project_root, fdir = run_env
+    plugin, loaded = _live_target(project_root)
+    _write_state(
+        fdir, phase="F5", cycle=1, temper=True,
+        self_target=True, server_commit=loaded,
+    )
+    rel = _probe_paths(plugin)
+    edited = f"{_PROBE_DIR}/m7.py"
+
+    owed = _compute_next_action(project_root)
+    assert owed["action"] == "run_temper", owed
+    first = owed["details"]["reload_question"]
+    for path in rel:
+        assert path in first, (path, first)
+    assert "and 4 more" not in first, first
+
+    (plugin / edited).write_text("M = 7  # never put to the human\n", encoding="utf-8")
+    moved = _compute_next_action(project_root)
+    assert moved["action"] == "run_temper", moved
+    second = moved["details"]["reload_question"]
+    before = owed["details"]["reload"]["change_digests"][edited]
+    after = moved["details"]["reload"]["change_digests"][edited]
+    assert after != before, moved
+    assert after in second and before not in second, second
+    assert first.replace(owed["details"]["reload"]["change_id"], "") != (
+        second.replace(moved["details"]["reload"]["change_id"], "")
+    ), "the exit arm's two questions differ only in the combined digest"

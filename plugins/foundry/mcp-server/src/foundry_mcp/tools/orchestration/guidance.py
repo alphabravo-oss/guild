@@ -3063,19 +3063,40 @@ def _reload_facts(project_root: str, state: dict, token: str) -> dict:
 def _reload_question(fdir: Path, token: str, reload: dict) -> str:
     """The question a reload park puts to the human, with the exact relaunch.
 
-    Carries `change_id`, the fingerprint of what the relevant paths CONTAIN
-    (fallout D-020). The rest of this text is rendered from a path list and a
-    commit, and neither moves when a path already in the list is edited again —
-    so without the fingerprint a second edit re-derived a question the human had
-    already answered, and `_reload_already_answered` released the crossing on
-    content nobody had been shown. The fingerprint is what makes "changed since
-    the answer" mean changed, and it belongs in the TEXT because the door's loop
-    rung compares the text (see `_reload_already_answered`).
+    Names every relevant path with the fingerprint of what it CONTAINS, plus
+    the combined fingerprint (`change_id`) the whole set folds to.
+
+    THE FINGERPRINT IS IN THE TEXT ON PURPOSE (fallout D-020). The rest of this
+    question renders from a path list and a commit, and neither moves when a
+    path already in the list is edited again — so without the fingerprint a
+    second edit re-derived a question the human had already answered, and
+    `_reload_already_answered` released the crossing on content nobody had been
+    shown. It belongs in the TEXT because the door's loop rung compares the text
+    (see `_reload_already_answered`); moving it out would have the router naming
+    a park the door refuses, which is D-017's deadlock.
+
+    NAMED PER PATH, AND NEVER TRUNCATED (fallout D-021). One digest over many
+    files moves as a unit. This text used to render `relevant[:6]` plus "and N
+    more" over a bare count, so with more than six relevant paths an edit to a
+    path outside the shown six moved the digest and NOTHING a human could read:
+    same count, same six names, two 16-hex strings. The human was asked to
+    authorize the crossing a second time with no way to see what moved or
+    whether their first answer covered it — and FR-042 rests the guarantee that
+    the final gates and report run on the code being shipped on exactly that
+    answer, so the authorization was being given blind. Per path, the digest is
+    decomposed into the parts it is made of, and the line that moved is the file
+    that moved. A per-class count would not have served: `relevant` spans only
+    server code and agent prose, so an edit within one class moves no count.
+
+    Still a pure function of the CONTENT being approved — no timestamp, no
+    nonce, and nothing read from which items are already answered. A question
+    that varied with the ledger would re-ask content the human had already
+    approved and undo D-017 from the other side; restoring the answered bytes
+    has to restore this string byte for byte.
     """
     relevant = list(reload.get("relevant") or [])
-    shown = ", ".join(relevant[:6]) + (
-        f" and {len(relevant) - 6} more" if len(relevant) > 6 else ""
-    )
+    prints = reload.get("change_digests") or {}
+    listing = "\n".join(f"  - {rel} ({prints.get(rel) or '?'})" for rel in relevant)
     why = (
         "DONE must run its final gates and report on the code being shipped"
         if reload.get("rule") == "before_done"
@@ -3084,9 +3105,12 @@ def _reload_question(fdir: Path, token: str, reload: dict) -> str:
     return (
         f"The running foundry server loaded at "
         f"{str(reload.get('loaded_commit') or '?')[:12]}, and {len(relevant)} "
-        f"file(s) changed since (content fingerprint "
-        f"{reload.get('change_id') or '?'}), which {why}: {shown}. Quit and "
-        f"relaunch with "
+        f"file(s) changed since, which {why}. Each line below is one of them "
+        f"with the fingerprint of what it contains right now, and together they "
+        f"fingerprint to {reload.get('change_id') or '?'}:\n{listing}\n"
+        f"A question you have already answered carries the same paths AND the "
+        f"same fingerprints, so a line you do not recognise is a file that moved "
+        f"after you answered. Quit and relaunch with "
         f"`{reload.get('launch_command') or 'claude --plugin-dir <plugin dir>'}`, "
         f"run Foundry-Init(resume='{fdir.name}'), then answer this item."
     )
