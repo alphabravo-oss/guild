@@ -108,7 +108,10 @@ def _run_stop(
     )
 
 
-def _event(cwd: Path, **extra) -> str:
+def _event(cwd: Path | str, **extra) -> str:
+    """The hook event. ``cwd`` is passed through ``str``, so the unencodable-cwd
+    tests hand it the hostile string itself — it IS the event's `cwd`, and the
+    hook does not author it."""
     event = {
         "session_id": "test-session",
         "cwd": str(cwd),
@@ -293,6 +296,51 @@ def test_an_ask_naming_no_open_item_is_never_written_so_the_hook_keeps_blocking(
     _blocked(_run_stop(_event(project), cwd=project))
 
 
+@pytest.mark.parametrize(
+    "marker",
+    [
+        {},
+        {AWAITING_FIELD_SET_AT: TS},
+        {AWAITING_FIELD_SET_AT: TS, AWAITING_FIELD_CYCLE: 1},
+        {AWAITING_FIELD_SET_AT: TS, AWAITING_FIELD_CYCLE: 1, AWAITING_FIELD_ITEM_IDS: []},
+        {AWAITING_FIELD_ITEM_IDS: ""},
+        {AWAITING_FIELD_ITEM_IDS: "P-001"},
+        {AWAITING_FIELD_ITEM_IDS: {"P-001": True}},
+        {AWAITING_FIELD_ITEM_IDS: [""]},
+        {AWAITING_FIELD_ITEM_IDS: [None]},
+        {AWAITING_FIELD_ITEM_IDS: [7]},
+        {"item-ids": ["P-001"]},
+    ],
+    ids=[
+        "empty", "set-at-only", "no-item-ids", "item-ids-empty", "item-ids-empty-string",
+        "item-ids-bare-string", "item-ids-object", "item-ids-blank-entry",
+        "item-ids-null-entry", "item-ids-int-entry", "misspelt-item-ids",
+    ],
+)
+def test_an_ask_that_names_no_item_is_no_ask_and_still_blocks(project, marker):
+    """should-not-stop D-016 — an ask that names nothing is no ask.
+
+    THE READER WAS LAXER THAN THE WRITER. `park.py#set_awaiting_human` returns
+    None rather than writing a marker when none of the ids handed to it is an
+    open parked item, so an ask naming nothing is a thing the server never
+    writes. This hook keyed on "is an object" alone, so an `awaiting_human` of
+    `{}` — reachable from a corrupted or hand-edited state.json — opened its
+    ONE allow path for a live build: the turn ended on an ask with nothing to
+    wait for, which is the whole failure this spec exists to prevent.
+    """
+    _write_run(project, "brave-otter", "F3", parked=_parked([_item()], marker))
+    _blocked(_run_stop(_event(project), cwd=project))
+
+
+def test_an_ask_naming_one_item_allows_without_the_fields_the_hook_never_reads(project):
+    """The floor is the WRITER's and no stricter: one named id is an ask even
+    with no `set_at` and no `cycle`. Requiring more of the marker than the
+    decision uses would fail closed on a writer that changed a field this hook
+    never looks at — a block nobody could explain from the hook's own rule."""
+    _write_run(project, "brave-otter", "F3", parked=_parked([_item()], {AWAITING_FIELD_ITEM_IDS: ["P-001"]}))
+    _silent(_run_stop(_event(project), cwd=project))
+
+
 # ---------------------------------------------------------------------------
 # background_tasks: naming the agents in flight
 # ---------------------------------------------------------------------------
@@ -406,6 +454,93 @@ def test_an_unreadable_run_never_hides_a_readable_live_one(project):
 
 
 # ---------------------------------------------------------------------------
+# A `cwd` no filesystem call can encode: stdin the hook did not author
+# ---------------------------------------------------------------------------
+
+
+#: Strings a JSON `cwd` can carry that no filesystem call can encode: an
+#: embedded NUL, and a lone surrogate outside the surrogateescape range. The
+#: event is stdin, so these are not exotic — they are simply values this hook
+#: does not author and cannot refuse to be handed.
+UNENCODABLE_CWDS = {
+    "embedded-nul": "/tmp/\x00x",
+    "nul-alone": "\x00",
+    "lone-surrogate": "\ud800",
+    "surrogate-in-path": "/tmp/pre\udfffpost",
+}
+
+
+@pytest.mark.parametrize("cwd", list(UNENCODABLE_CWDS.values()), ids=list(UNENCODABLE_CWDS))
+def test_an_unencodable_cwd_still_blocks_from_the_project_dir(project, tmp_path, cwd):
+    """should-not-stop D-014 — a `cwd` no filesystem call can encode.
+
+    THE FAIL-OPEN IN THE BACKSTOP ITSELF. `cwd` arrives on stdin, and JSON
+    carries an embedded NUL or a lone surrogate as happily as a path. The
+    shared reader resolved it — only to tell two roots naming one directory
+    apart — that raised ValueError (UnicodeEncodeError for the surrogate), and
+    with no handler in `main` the script exited 1 having printed NEITHER a
+    block nor an allow. The platform reads no decision as "stop", so the turn
+    ended mid-build and the backstop was silently gone, on a run whose
+    state.json was readable, in a live phase, with no ask marker.
+
+    The spec's error-handling contract is explicit on all three points: a
+    malformed stdin is IGNORED and the decision taken from run state, such a
+    run still produces a block, and the allow is permitted ONLY when the run
+    state itself cannot be read. A root that cannot be named is dropped, and
+    CLAUDE_PROJECT_DIR — the root the server writes the archive under —
+    decides. The hook's own header names the rows behind each clause.
+    """
+    _write_run(project, "brave-otter", "F2")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    reason = _blocked(_run_stop(_event(cwd), cwd=elsewhere, project_dir=project))
+    assert "'brave-otter'" in reason
+    assert "in phase F2 and" in reason
+
+
+@pytest.mark.parametrize("cwd", list(UNENCODABLE_CWDS.values()), ids=list(UNENCODABLE_CWDS))
+def test_an_unencodable_cwd_with_no_project_dir_blocks_from_the_working_directory(project, cwd):
+    """The last root in the ruling's order carries it: with no
+    CLAUDE_PROJECT_DIR, the process working directory is where a hook actually
+    runs, and the live run is found from there."""
+    _write_run(project, "brave-otter", "F4")
+    reason = _blocked(_run_stop(_event(cwd), cwd=project))
+    assert "'brave-otter'" in reason
+
+
+@pytest.mark.parametrize("cwd", list(UNENCODABLE_CWDS.values()), ids=list(UNENCODABLE_CWDS))
+def test_an_unencodable_cwd_with_no_run_anywhere_still_says_nothing(project, cwd):
+    """THE OTHER DIRECTION, and the reason the fix is a dropped root rather
+    than a catch-all that blocks. This hook fires on every turn-end in every
+    session where the plugin is enabled, so a guard that answered an
+    unresolvable root with a block would hold turns open in sessions that have
+    no foundry run at all — eight times over, in every unrelated session on
+    the machine. Dropping the root it cannot name leaves the no-op a no-op."""
+    _silent(_run_stop(_event(cwd), cwd=project, project_dir=project))
+
+
+@pytest.mark.parametrize("cwd", list(UNENCODABLE_CWDS.values()), ids=list(UNENCODABLE_CWDS))
+def test_an_unencodable_cwd_over_an_unreadable_state_allows_silently(project, cwd):
+    """The one sanctioned allow still reads as itself through a hostile cwd: an
+    unreadable state.json is the only thing that lets the turn end mid-build,
+    and it does so with no error text."""
+    run_dir = project / "foundry-archive" / "brave-otter"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text("{", encoding="utf-8")
+    _silent(_run_stop(_event(cwd), cwd=project, project_dir=project))
+
+
+def test_an_unencodable_cwd_does_not_stop_the_project_dir_run_being_found_beside_it(project, tmp_path):
+    """The dropped root does not shift the ORDER of the ones that survive: the
+    event's cwd is still tried before CLAUDE_PROJECT_DIR, so dropping an
+    unnameable cwd falls through to the env root rather than skipping it."""
+    other = tmp_path / "other-project"
+    _write_run(other, "env-run", "F3")
+    reason = _blocked(_run_stop(_event("/tmp/\x00x"), cwd=project, project_dir=other))
+    assert "'env-run'" in reason
+
+
+# ---------------------------------------------------------------------------
 # The active-run rule: one run, the most recently modified live one
 # ---------------------------------------------------------------------------
 
@@ -513,6 +648,7 @@ def test_the_reader_spells_the_phases_and_keys_the_server_spells():
     assert set(literals["LIVE_PHASES"]) == set(POST_CAST_RUN_PHASES)
     assert literals["PARKED_KEY"] == PARKED_STATE_KEY
     assert literals["AWAITING_HUMAN_KEY"] == PARKED_AWAITING_HUMAN_KEY
+    assert literals["AWAITING_ITEM_IDS_KEY"] == AWAITING_FIELD_ITEM_IDS
 
     match = re.search(r"^LIVE_PHASES = (\(.*?\))", STOP_MD.read_text(encoding="utf-8"), re.MULTILINE)
     assert match, "commands/stop.md no longer spells LIVE_PHASES in its token step"

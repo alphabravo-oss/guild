@@ -153,6 +153,42 @@ def test_an_unreadable_state_json_gives_no_output(project):
     _silent(_run(SESSION_HOOK, _event(project), cwd=project))
 
 
+#: A `cwd` no filesystem call can encode — see `test_stop_hook.py`'s own copy.
+UNENCODABLE_CWDS = {"embedded-nul": "/tmp/\x00x", "lone-surrogate": "\ud800"}
+
+
+@pytest.mark.parametrize("cwd", list(UNENCODABLE_CWDS.values()), ids=list(UNENCODABLE_CWDS))
+def test_an_unencodable_cwd_still_re_orients_from_the_project_dir(project, tmp_path, cwd):
+    """should-not-stop D-014, THE ADJACENT PATH — the same reader, the other caller.
+
+    THE OTHER CALLER of `hooks/foundry_active_run.py#project_roots`. The same
+    unresolvable `cwd` that crashed the Stop hook reached this hook too; it
+    wrapped the call in its own try/except, so it swallowed the exception and
+    went silent. Its never-degrade contract sanctions that, which is exactly
+    why the bug was invisible here: a compacted session with a live run got no
+    re-orientation line, for a reason that had nothing to do with the run.
+
+    This is the test that says the fix went in the right LAYER. A guard
+    duplicated into the Stop hook's `main` would have left this path exactly as
+    broken; making the shared reader total reaches both callers, so the
+    unnameable root is dropped, CLAUDE_PROJECT_DIR decides, and the lead is
+    pointed back at the build.
+    """
+    _write_run(project, "brave-otter", "F3")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    context = _context(_run(SESSION_HOOK, _event(cwd), cwd=elsewhere, project_dir=project))
+    assert "'brave-otter'" in context
+    assert "(1) call Foundry-Context; (2) call Foundry-Next" in context
+
+
+@pytest.mark.parametrize("cwd", list(UNENCODABLE_CWDS.values()), ids=list(UNENCODABLE_CWDS))
+def test_an_unencodable_cwd_with_no_run_still_says_nothing(project, cwd):
+    """And the silence that matters stays silent: no live run under any
+    surviving root is still no run, in this hook as in the Stop hook."""
+    _silent(_run(SESSION_HOOK, _event(cwd), cwd=project, project_dir=project))
+
+
 def test_a_run_name_the_hook_did_not_author_still_yields_valid_json(project):
     odd = 'odd "quoted" \\ it\'s run'
     _write_run(project, odd, "F4")
