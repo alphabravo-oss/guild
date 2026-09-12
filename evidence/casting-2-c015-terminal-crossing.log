@@ -1,0 +1,6 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest tests/orchestration/test_gates.py -q -p no:randomly -k "parked or both_f6_doors" 2>&1 | tail -2
+# evidence-for: FR-005, FR-036
+# evidence-volatile: \d+\.\d+s
+
+.........                                                                [100%]
+9 passed, 100 deselected in 0.55s
