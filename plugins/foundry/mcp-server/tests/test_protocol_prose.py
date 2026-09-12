@@ -9215,3 +9215,282 @@ def test_no_recorded_bare_agent_cite_outlives_the_mirror_that_holds_it() -> None
         )
 
     _report_collectable_debt("_KNOWN_BARE_AGENT_CITES", collectable)
+
+
+# ---------------------------------------------------------------------------
+# GRIND cycle 2 -- D-013: the two cycle-1 fixes no test discriminated
+#
+# Cycle 1 closed D-003 and D-012 in agent prose alone, and nothing read that
+# prose back: reverting all four files it touched left this suite
+# byte-identical, so by the revert standard neither fix was verified. Both
+# closed a defect whose whole shape was "a rule nothing enforces", which makes
+# an unpinned fix the same shape as the defect.
+#
+# The structural reason the existing pins could not reach them is nameable.
+# `STREAM_LEDGER_IDS` above is asserted EQUAL to
+# `foundry_spawn#INSPECT_STREAM_AGENT_IDS`, whose members exclude `test01`, so
+# agents/spec-test-deriver.md sits outside every parametrised population in
+# this module; and agents/nyquist-auditor.md is not an INSPECT stream at all,
+# so the wire-id rosters further up cannot reach it either. Widening the
+# liveness roster was considered and rejected: it is asserted against a
+# spawn-side roster carrying an import-time drift guard, casting 3 relies on
+# `test01` being absent from it, and it would STILL miss the nyquist auditor.
+#
+# So the axis here is what these files DO rather than how they are dispatched.
+# An agent that builds a throwaway scratch tree is a different population from
+# an agent dispatched as an INSPECT stream, and the rule is about the scratch
+# tree. Both rosters below are explicit, because no frontmatter field or
+# ledger path declares "builds fixtures" -- and both carry a floor check,
+# because an explicit roster's failure mode is silent narrowing, exactly the
+# reason `test_the_non_prove_stream_agent_roster_is_derived` asserts its
+# members IN and the PROVE agent OUT by name.
+# ---------------------------------------------------------------------------
+
+
+#: The agent files that BUILD THROWAWAY FIXTURES, and so have to say how.
+#:
+#: Not the INSPECT-stream roster: the nyquist auditor is spawned at F5.5 to
+#: write regression tests, and the spec-test-deriver is a stream this module's
+#: liveness mapping deliberately excludes. What all three share is a scratch
+#: tree they create and destroy, which is the property the rule governs.
+#:
+#: agents/teammate.md is deliberately NOT a member. PROVE verified OT-032 this
+#: run against a diff scoped to three passages, so a pin forcing the teammate
+#: to state the fixture rule would contradict a verified spec row; the lead
+#: ruled that gap a successor-backlog item rather than a defect. Adding it here
+#: is therefore a spec question, not a test edit.
+FIXTURE_BUILDING_AGENTS = (ASSAYER, NYQUIST_AUDITOR, SPEC_TEST_DERIVER)
+
+
+def test_the_fixture_building_agent_roster_holds_its_members() -> None:
+    """Floor check: every pin below is vacuous if the roster narrows.
+
+    A parametrisation over two files looks exactly like a parametrisation over
+    three, so membership is asserted from the other side. The roster is
+    explicit rather than derived because the property it selects on -- "this
+    agent creates a scratch tree" -- is stated nowhere machine-readable; the
+    honest derivation by frontmatter tool grant would sweep in every
+    artifact-writing agent, teammate.md among them, which OT-032 forbids.
+    """
+    for path in FIXTURE_BUILDING_AGENTS:
+        assert path.is_file(), (
+            f"{_rel(path)} does not exist. If the agent was renamed, update "
+            f"this roster -- do not drop the member, the fixture rule is still "
+            f"required of whatever file replaced it."
+        )
+    assert TEAMMATE not in FIXTURE_BUILDING_AGENTS, (
+        "agents/teammate.md was added to FIXTURE_BUILDING_AGENTS. Its fixture-"
+        "rule gap is a RULED successor-backlog item, not a defect: PROVE "
+        "verified OT-032 against a diff scoped to three passages, so pinning "
+        "the rule here would make this module contradict a verified "
+        "requirement. Re-open the ruling before re-opening this roster."
+    )
+
+
+#: The mechanism sentences, each load-bearing for a different half of the rule:
+#: what to build a fixture WITH, what to tear it down with, and WHY the shell
+#: form is unsafe in a way `mode=bypassPermissions` cannot clear. Pinned as
+#: separate phrases rather than one long quote so a reflow or a reworded
+#: connective cannot fail while the rule itself is intact.
+#:
+#: The refusal string is the load-bearing one. Without it the bullet reads as a
+#: style preference, and a reader who thinks it is style writes the shell form
+#: the first time it is convenient -- which is precisely how TEST-01 lost ~20
+#: minutes to an approval prompt raised in the operator's session.
+_FIXTURE_RULE_PHRASES = (
+    "tempfile.mkdtemp()",
+    "shutil.rmtree()",
+    "matches the command's SHAPE rather than its safety",
+    "OVERRIDES `mode=bypassPermissions`",
+    "Dangerous rm operation on possibly-empty variable path",
+)
+
+
+@pytest.mark.parametrize("path", FIXTURE_BUILDING_AGENTS, ids=lambda p: p.name)
+def test_each_fixture_building_agent_states_the_python_fixture_rule(
+    path: Path,
+) -> None:
+    """D-013 / D-012: the rule that unblocked TEST-01, read back.
+
+    Claude Code's own guard matches a `rm -rf` by the command's SHAPE rather
+    than by whether the path is safe, and it OVERRIDES
+    `mode=bypassPermissions`. The refusal is not an error the agent can branch
+    on -- it raises an approval prompt in the OPERATOR's session, so the agent
+    blocks on a Bash call that never returns and stays blocked for as long as
+    nobody happens to be watching. Driven exactly that way, the TEST-01 stream
+    sat for roughly twenty minutes with no observation file and no ledger line.
+
+    The fix was three prose bullets and no test, which is why D-013 exists: an
+    unenforced rule against an invisible failure is indistinguishable from no
+    rule, and the next edit to any of these files can delete it in silence.
+    """
+    flat = _flat(path)
+    for phrase in _FIXTURE_RULE_PHRASES:
+        assert phrase in flat, (
+            f"{_rel(path)} no longer states {phrase!r}, so this agent's "
+            f"fixture rule is incomplete. Build scratch state with "
+            f"`tempfile.mkdtemp()` or remove it with `shutil.rmtree()` on an "
+            f"asserted scratchpad path, and say WHY the shell form is unsafe: "
+            f"a bullet that omits the refusal string reads as a style "
+            f"preference, and the failure it prevents is a silent block in the "
+            f"operator's session rather than an error the agent can see. If "
+            f"the wording genuinely had to change, move this phrase to the new "
+            f"sentence -- do not delete the pin."
+        )
+
+
+#: The agents whose fixture rule warns that a BLOCKED Bash call and a DEAD
+#: agent look identical from outside. The ledger-ordering clause is the other
+#: half of that same warning, so it is pinned over these files rather than
+#: over the ledger-bearing stream roster: `Foundry-Liveness` can only report
+#: on an agent it has a ledger for at all, so the FIRST line is what decides
+#: whether a stalled agent reads as BLOCKED or as never-existed.
+#:
+#: nyquist-auditor.md is out because it states no progress ledger of its own --
+#: it is not on the liveness roster, so it has no first line to order.
+LEDGER_BEFORE_BASH_AGENTS = (ASSAYER, SPEC_TEST_DERIVER)
+
+_LEDGER_ORDERING_CLAUSE = "Write the FIRST line BEFORE your first Bash call"
+
+
+def test_the_ledger_ordering_roster_is_a_subset_that_keeps_its_ledgers() -> None:
+    """Floor check: the ordering pin only means something where a ledger is.
+
+    Asserted as a SUBSET rather than retyped, so a file leaving the fixture
+    roster cannot keep a ledger obligation this module no longer sweeps.
+    """
+    extra = sorted(_rel(p) for p in set(LEDGER_BEFORE_BASH_AGENTS) - set(FIXTURE_BUILDING_AGENTS))
+    assert not extra, (
+        f"{extra} require the ledger-ordering clause without being fixture "
+        f"builders. The clause exists because an approval prompt blocks a Bash "
+        f"call silently; an agent that builds no fixtures meets that failure "
+        f"some other way and needs its own reason, not this roster's."
+    )
+    for path in LEDGER_BEFORE_BASH_AGENTS:
+        assert "progress/" in _read(path), (
+            f"{_rel(path)} no longer names a `progress/` ledger, so there is "
+            f"no first line for the clause below to order. Losing the ledger "
+            f"is itself the D-053 defect -- fix the file rather than dropping "
+            f"it from this roster."
+        )
+
+
+@pytest.mark.parametrize("path", LEDGER_BEFORE_BASH_AGENTS, ids=lambda p: p.name)
+def test_each_fixture_building_agent_orders_its_ledger_before_its_first_bash_call(
+    path: Path,
+) -> None:
+    """D-013 / D-012: the visibility half, which is the half that was reported.
+
+    The fixture rule stops the block; this clause is what makes a block that
+    happens anyway DIAGNOSABLE. With no line yet written there is no ledger
+    file, and `Foundry-Liveness` answers that no such agent is known to the
+    run -- which reads as dead rather than as blocked. That is the state the
+    lead actually saw during TEST-01: two status pings and a near-miss defect
+    filing before the operator surfaced the approval prompt.
+
+    So the ORDER is the requirement, not merely the existence of a ledger. A
+    file can keep a perfectly good progress-ledger section and still be
+    invisible for the one failure mode that matters, which is why this asserts
+    the ordering clause and not the section heading.
+    """
+    assert _LEDGER_ORDERING_CLAUSE in _flat(path), (
+        f"{_rel(path)} no longer tells this agent to {_LEDGER_ORDERING_CLAUSE!r}. "
+        f"Without that ordering a stall before the first line leaves "
+        f"`Foundry-Liveness` reporting that no such agent is known to the run, "
+        f"so a BLOCKED agent is indistinguishable from one that never started "
+        f"-- and the operator, not the lead, is the only one who can see the "
+        f"approval prompt that caused it."
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-003 -- the finished audit that reported its own door unavailable
+#
+# research-auditor.md's frontmatter grants `Foundry-Stream` through a WILDCARD,
+# so no per-tool line names the door. An audit scanned its own roster for the
+# literal tool name, concluded it was ungranted, and restated its counts in
+# prose: every item carried a verdict and the cycle got no record of any of
+# them. Cycle 1 answered with two bullets and no test.
+#
+# The grant half is DERIVED from the frontmatter rather than typed, per the
+# standard the GRIND-6 block above sets: a pin that cannot notice the grant
+# moving would defend a stale spelling, which is the D-067 failure.
+# ---------------------------------------------------------------------------
+
+
+def test_the_research_auditor_states_its_wildcard_tool_grant() -> None:
+    """D-013 / D-003: the roster claim, checked against the real roster.
+
+    Derived, so that re-spelling the grant in the frontmatter demands the prose
+    name the new spelling. A hand-typed pin would stay green over a grant that
+    had moved, and the whole defect was prose disagreeing with the roster.
+    """
+    declared = _declared_tools(RESEARCH_AUDITOR)
+    assert declared is not None, (
+        "agents/research-auditor.md declares no frontmatter `tools:` line. "
+        "With no allowlist it inherits every tool, and the bullet explaining "
+        "that its MCP grant is a wildcard no longer describes this file."
+    )
+    wildcards = sorted(
+        grant
+        for grant in (part.strip() for part in declared.split(","))
+        if grant.endswith("*") and _FOUNDRY_MCP_TOOL_RE.fullmatch(grant)
+    )
+    assert wildcards, (
+        f"agents/research-auditor.md's `tools:` line grants no wildcard MCP "
+        f"prefix ({declared!r}). D-003's bullet exists to explain a wildcard; "
+        f"if the grant became per-tool the bullet needs rewriting, not this "
+        f"assertion deleting."
+    )
+    flat = _flat(RESEARCH_AUDITOR)
+    for grant in wildcards:
+        assert grant in flat, (
+            f"agents/research-auditor.md grants `{grant}` in frontmatter and "
+            f"never names it in prose. The auditor that read its own roster "
+            f"for a literal `Foundry-Stream` concluded the door was ungranted "
+            f"and reported its counts in a paragraph instead, so the cycle got "
+            f"no record of a finished audit. Naming the actual grant is what "
+            f"stops that re-derivation."
+        )
+    assert "the grant is a WILDCARD" in flat, (
+        "agents/research-auditor.md no longer states that its tool grant is a "
+        "wildcard. Listing the prefixes without saying they are wildcards "
+        "leaves the same inference available: no line says `Foundry-Stream`, "
+        "so the door must be closed."
+    )
+    assert "the absence of one is not evidence of anything" in flat, (
+        "agents/research-auditor.md no longer rules on what a MISSING per-tool "
+        "line means. That inference is the defect itself -- the door was "
+        "granted the whole time -- so the file has to refuse it explicitly "
+        "rather than merely not inviting it."
+    )
+
+
+def test_the_research_auditor_forbids_prose_in_place_of_its_stream_record() -> None:
+    """D-013 / D-003: the other bullet, which rules on the fallback taken.
+
+    Naming the grant stops the wrong inference; this stops the wrong RESPONSE
+    to it. The auditor did not stop when it believed the door was shut -- it
+    substituted a paragraph, which reaches no roll-up and satisfies no roster
+    check, and reported success. So a refusal has to route to a blocker rather
+    than to a sentence carrying the numbers.
+    """
+    flat = _flat(RESEARCH_AUDITOR)
+    assert "Prose is never a substitute for the record." in flat, (
+        "agents/research-auditor.md no longer rules that prose cannot stand in "
+        "for a `Foundry-Stream` row. A paragraph naming `items_checked` "
+        "reaches no roll-up, so the cycle reads a finished audit as no "
+        "coverage rather than as a broken call -- which is why it survived a "
+        "whole cycle unnoticed."
+    )
+    assert "report the refusal verbatim" in flat, (
+        "agents/research-auditor.md no longer says what to do when the door "
+        "genuinely refuses. Forbidding the prose fallback without naming the "
+        "alternative leaves the agent to invent one, and the one it invented "
+        "was the prose fallback."
+    )
+    assert "never as a number in a sentence" in flat, (
+        "agents/research-auditor.md no longer forbids reporting coverage as a "
+        "number in a sentence. That phrasing is the specific fallback taken; "
+        "a general instruction to 'report the blocker' left it available."
+    )
