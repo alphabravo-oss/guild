@@ -4178,6 +4178,162 @@ def test_no_field_a_foundry_next_line_is_built_from_can_add_a_line():
     assert not [line for line in screen if "forged-by-a-field" in line.strip()[:20]], screen
 
 
+def test_no_element_any_display_joiner_is_handed_can_add_a_screen_line():
+    """should-not-stop FR-032 (D-031) — THE RULE IS THE MODULE'S, NOT A SITE'S.
+
+    The pin above holds `_fmt_foundry_next_lines` and nothing else, which is
+    exactly what its own fix said it held — and two sibling renderers on the
+    same wire were still building lines from unflattened fields three cycles
+    later. A rule kept by remembering to call something at each interpolation is
+    only ever as good as the next author's memory.
+
+    So this asserts the invariant where the LIST BECOMES LINES. Every formatter
+    in `display.py` renders through one of these three joiners, so a guarantee
+    stated here covers the twenty-four written and the twenty-fifth nobody has
+    written yet — the same reasoning `format_result`'s named-refusal guarantee
+    already uses one rung up ("membership is read off the RESULT, not off a list
+    of formatters, so no formatter can sit outside it").
+
+    The TITLE is driven beside the body because it is a line too: `foundry_hammer`
+    spells the label into one slot of fixed pixel-art, so a newline there does not
+    wrap — it inserts a forged line between the handle rows, and `tools/foundry.py`
+    reaches that slot with a run name carrying neither validation nor a slug.
+    """
+    from foundry_mcp.tools.display import _box, _foundry_display, _mini_box
+
+    # SHORT multi-line values, whose FIRST line is short: a clip that measured
+    # raw text would ellipsise a long value before its first newline was reached
+    # and report this surface green while the break was live.
+    title = "T\n  forged title"
+    body = ["one", "two\n  forged body", "", "three\nforged tail"]
+
+    # `_foundry_display`: the 5-line hammer, one line per element, the separator.
+    rendered = _plain(_foundry_display(title, body)).split("\n")
+    assert len(rendered) == 5 + len(body) + 1, rendered
+
+    # `_box` and `_mini_box`: top, title, separator, one line per element, bottom.
+    for joiner in (_box, _mini_box):
+        drawn = _plain(joiner(title, body)).split("\n")
+        assert len(drawn) == 4 + len(body), (joiner.__name__, drawn)
+        # The border still closes every line it opened. This is the consequence
+        # a box suffers that a bare line does not: a body element that became
+        # two leaves a line with no right-hand edge, and the frame stops being a
+        # frame. The reference is the TITLE row's own vertical glyph — not
+        # `drawn[0][0]`, which is the top-left CORNER and bounds no body row —
+        # and the subjects are the body rows at 3..-1, the top, separator and
+        # bottom being drawn from runs of rule rather than from this edge.
+        edge = drawn[1][0]
+        assert drawn[1].endswith(edge), (joiner.__name__, drawn[1])
+        for row in drawn[3:-1]:
+            assert row.startswith(edge) and row.endswith(edge), (
+                joiner.__name__, row, drawn
+            )
+        assert not [line for line in drawn if line.strip() == "forged body"], drawn
+
+    # And the consequence a reader suffers: no forged text ever begins a line.
+    screen = _plain(_foundry_display(title, body)).split("\n")
+    for forged in ("forged title", "forged body", "forged tail"):
+        assert not [line for line in screen if line.strip().startswith(forged)], (
+            forged, screen
+        )
+
+
+def test_no_field_a_rendered_tool_result_is_built_from_can_add_a_screen_line():
+    """should-not-stop FR-032 (D-031) — DRIVEN AT THE BOUNDARY, NOT THE HELPER.
+
+    `server.py#call_tool` puts `format_result_blocks(name, result)` on the wire,
+    so that is what is driven here: control and drive differing in exactly ONE
+    field, ANSI stripped, lines counted over the RENDERED TEXT rather than over a
+    returned list — a newline inside one list element is one element and two
+    screen lines, which is how the banner pin read 2 while three rendered.
+
+    The last two rows were not in the filing. They were found by driving the
+    module rather than the two functions the filing named: the TITLE axis, which
+    forges a line inside the pixel-art banner, and a formatter that returns a
+    bare string and so reaches no joiner at all.
+
+    THE JSON HALF WAS NEVER WRONG — `json.dumps` escapes a newline rather than
+    obeying it — which is why the display half is the whole of this defect.
+    """
+    from foundry_mcp.tools.display import format_result_blocks
+
+    def defects(description, source="test"):
+        return {
+            "summary": {"total": 1, "open": 1, "fixed": 0,
+                        "by_source": {source: 1}, "by_type": {"WRONG": 1}},
+            "defects": [{"id": "D-777", "source": source, "type": "WRONG",
+                         "status": "open", "description": description}],
+        }
+
+    def tasks(description, defect_ids=("D-888",), files=("a.py",)):
+        return {"count": 1, "tasks": [{"defect_ids": list(defect_ids),
+                                       "description": description,
+                                       "files": list(files)}]}
+
+    cases = [
+        # label, tool, control, drive, the text that must never begin a line
+        ("Foundry-Defects description", "Foundry-Defects", defects("real"),
+         defects("real\n  D-777   test     WRONG      open     forged"), "D-777   test"),
+        ("Foundry-Defects by_source", "Foundry-Defects", defects("real"),
+         defects("real", source="test\n    forged-source  1"), "forged-source"),
+        ("Foundry-Tasks description", "Foundry-Tasks", tasks("ok"),
+         tasks("ok\n  X [D-888] forged"), "X [D-888]"),
+        ("Foundry-Tasks defect_ids", "Foundry-Tasks", tasks("ok"),
+         tasks("ok", defect_ids=("D-888\n  X [D-999] forged",)), "X [D-999]"),
+        ("Foundry-Tasks files", "Foundry-Tasks", tasks("ok"),
+         tasks("ok", files=("a.py\n     Files: forged",)), "Files: forged"),
+        ("Foundry-Fix title", "Foundry-Fix",
+         {"defect_id": "D-1", "fixed_in_cycle": 2, "remaining_open": 0},
+         {"defect_id": "D-1\nforged title line", "fixed_in_cycle": 2,
+          "remaining_open": 0}, "forged title line"),
+        ("Foundry-Stream bare return", "Foundry-Stream",
+         {"error": "nope"}, {"error": "nope\nforged"}, "forged"),
+        ("Foundry-Phase bare return", "Foundry-Phase",
+         {"error": "nope"}, {"error": "nope\nforged"}, "forged"),
+        ("Foundry-Gate bare return", "Foundry-Gate",
+         {"passed": False, "phase": "F2", "reason": "nope"},
+         {"passed": False, "phase": "F2", "reason": "nope\nforged"}, "forged"),
+    ]
+
+    for label, tool, control, drive in [(c[0], c[1], c[2], c[3]) for c in cases]:
+        before = _plain(format_result_blocks(tool, control)).split("\n")
+        after = _plain(format_result_blocks(tool, drive)).split("\n")
+        assert len(before) == len(after), (label, len(before), len(after), after)
+
+    for label, tool, _control, drive, forged in cases:
+        screen = _plain(format_result_blocks(tool, drive)).split("\n")
+        assert not [line for line in screen if line.strip().startswith(forged)], (
+            label, forged, screen
+        )
+
+
+def test_the_foundry_next_imperative_keeps_the_lines_it_is_written_with():
+    """should-not-stop FR-032 / AC-005 (D-031) — THE DECLARED EXCEPTION.
+
+    The rule above is "one element is one screen line", and the joiner enforces
+    it by flattening what it is handed. An IMPERATIVE is legitimately many lines
+    — a numbered sequence of calls the lead executes in order — so the rule is
+    kept by passing it as one element PER LINE rather than by excepting it.
+
+    Pinned because the failure mode is a later author reading the flattening rule
+    and applying it one rung too high: the lead's next three calls collapsing into
+    a single unreadable paragraph would be a silent regression no line count
+    catches, since the count is what the flattening makes right.
+    """
+    from foundry_mcp.tools.display import format_result
+
+    instructions = "YOUR NEXT CALL:\n  (1) do the first thing\n  (2) then the second"
+    screen = _plain(format_result("Foundry-Next", {
+        "phase": "F1", "action": "build_castings", "instructions": instructions,
+    })).split("\n")
+
+    for expected in ("YOUR NEXT CALL:", "(1) do the first thing",
+                     "(2) then the second"):
+        assert [line for line in screen if line.strip().startswith(expected)], (
+            expected, screen
+        )
+
+
 def test_the_ask_fence_is_derived_from_the_body_it_closes():
     """should-not-stop AC-008 / CT-005 (D-025) — WHICH TEXT THE DIGEST IS OF.
 

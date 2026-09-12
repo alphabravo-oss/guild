@@ -51,6 +51,53 @@ def _clipped(value: object, limit: int = 90) -> str:
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
 
+def _one_screen_line(text: str) -> str:
+    """``text`` with its line BREAKS removed — ONE ELEMENT IS ONE SCREEN LINE.
+
+    should-not-stop FR-032 (D-031) — THE RULE IS THE MODULE'S, NOT A SITE'S.
+
+    Every renderer below composes a LIST whose elements a joiner puts on the
+    wire with newlines between them. A stored field carrying a newline
+    therefore stops being a value and becomes an extra LINE, at whatever column
+    its own text begins — so a reader counting rows of a block counts more rows
+    than the run has, and the forged row can spell any row the block draws.
+
+    WHY THIS IS STATED HERE AND NOT AT THE INTERPOLATIONS. `one_line` was
+    applied to `_fmt_foundry_next_lines`' own interpolations in cycle 9, and
+    that held for THAT function while two sibling renderers on the same wire
+    stayed exposed, because a rule enforced by remembering to call something is
+    only ever as good as the next author's memory. This is the same shape the
+    named-refusal guarantee below already uses: a POST-CONDITION over whatever
+    the formatter produced, so no formatter can sit outside it — including the
+    one nobody has written yet.
+
+    Driven at `format_result_blocks`, the function whose return value
+    `server.py` puts on the wire, control and drive differing in ONE field:
+    `Foundry-Defects` 42 -> 43 lines on a `description`, 42 -> 44 on a
+    `by_source` key; `Foundry-Tasks` 25 -> 26 on each of `description`,
+    `defect_ids` and `files`; `Foundry-Fix` 16 -> 17 on the TITLE, which forges
+    a line INSIDE the pixel-art banner; `Foundry-Stream` 7 -> 8 through a
+    formatter that returns a bare string and reaches no joiner at all. The last
+    two axes were not in the filing and were found by driving the module rather
+    than the two functions named in it.
+
+    NOT `one_line`, and the difference is load-bearing. That one collapses every
+    run of whitespace, which is right for a FIELD being placed into a line and
+    wrong for a composed LINE: it would eat the `{:<8}` column padding the defect
+    ledger aligns on and the double spaces the banner spells its title with. This
+    removes line breaks and touches no other whitespace, so every line that
+    carries none is returned unchanged — which is why this fix moves no existing
+    rendering.
+
+    THE DECLARED EXCEPTIONS, both composed OUTSIDE the joiners on purpose:
+    `_fmt_foundry_next_action` concatenates the pre-rendered status box and the
+    imperative `instructions`, and both are legitimately many lines. A block
+    that must keep its lines is passed as one element PER LINE, never as one
+    element carrying them.
+    """
+    return " ".join(text.splitlines())
+
+
 def _short_path(p: str) -> str:
     """Shorten an absolute path to be relative to cwd or home."""
     if not p or p == "?":
@@ -142,20 +189,35 @@ _W = 60  # default box width (inner)
 def _box(title: str, lines: list[str], width: int = _W, color: str = _BCYAN) -> str:
     """Draw a colored box with a title bar and content lines."""
     top = f"{color}\u2554{'\u2550' * (width + 2)}\u2557{_RESET}"
-    title_line = f"{color}\u2551{_RESET} {_BWHITE}{title:<{width}}{_RESET} {color}\u2551{_RESET}"
+    # D-031: one element is one screen line, title included \u2014 a box whose body
+    # gained a line from a field has a border that no longer closes it.
+    title_line = (
+        f"{color}\u2551{_RESET} {_BWHITE}{_one_screen_line(title):<{width}}{_RESET} "
+        f"{color}\u2551{_RESET}"
+    )
     sep = f"{color}\u2560{'\u2550' * (width + 2)}\u2563{_RESET}"
     bottom = f"{color}\u255a{'\u2550' * (width + 2)}\u255d{_RESET}"
-    body = [f"{color}\u2551{_RESET} {line:<{width}} {color}\u2551{_RESET}" for line in lines]
+    body = [
+        f"{color}\u2551{_RESET} {_one_screen_line(line):<{width}} {color}\u2551{_RESET}"
+        for line in lines
+    ]
     return "\n".join([top, title_line, sep, *body, bottom])
 
 
 def _mini_box(title: str, lines: list[str], width: int = 50, color: str = _BCYAN) -> str:
     """Compact colored box for quick status results."""
     top = f"{color}\u250c{'\u2500' * (width + 2)}\u2510{_RESET}"
-    title_line = f"{color}\u2502{_RESET} {_BWHITE}{title:<{width}}{_RESET} {color}\u2502{_RESET}"
+    # D-031: the same rule the full box holds \u2014 see `_one_screen_line`.
+    title_line = (
+        f"{color}\u2502{_RESET} {_BWHITE}{_one_screen_line(title):<{width}}{_RESET} "
+        f"{color}\u2502{_RESET}"
+    )
     sep = f"{color}\u251c{'\u2500' * (width + 2)}\u2524{_RESET}"
     bottom = f"{color}\u2514{'\u2500' * (width + 2)}\u2518{_RESET}"
-    body = [f"{color}\u2502{_RESET} {line:<{width}} {color}\u2502{_RESET}" for line in lines]
+    body = [
+        f"{color}\u2502{_RESET} {_one_screen_line(line):<{width}} {color}\u2502{_RESET}"
+        for line in lines
+    ]
     return "\n".join([top, title_line, sep, *body, bottom])
 
 
@@ -203,7 +265,14 @@ def foundry_hammer(label: str) -> str:
         f"{_BCYAN}   \u2584\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2584{_RESET}",
         f"{_BCYAN}   \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588{_RESET}",
         f"{_BCYAN}   \u2580\u2580\u2580\u2580\u2588\u2588\u2580\u2580\u2580\u2580{_RESET}",
-        f"{_BCYAN}       \u2588\u2588{_RESET}     {_BWHITE}{label}{_RESET}",
+        # D-031: the label occupies ONE slot of fixed pixel-art, so a newline in
+        # it does not wrap \u2014 it inserts a forged line between the handle rows.
+        # Flattened HERE rather than in `_foundry_display` because the other two
+        # callers of this function are `orchestration/guidance.py`'s status
+        # banner and `tools/foundry.py`'s init and resume banners, and the
+        # latter two interpolate a run name that reaches this slot with neither
+        # validation nor a slug.
+        f"{_BCYAN}       \u2588\u2588{_RESET}     {_BWHITE}{_one_screen_line(label)}{_RESET}",
         f"{_BCYAN}       \u2588\u2588{_RESET}",
     ])
 
@@ -212,7 +281,10 @@ def _foundry_display(label: str, lines: list[str]) -> str:
     """Render a foundry tool result with hammer header, body lines, and separator."""
     parts = [foundry_hammer(label)]
     for line in lines:
-        parts.append(line)
+        # D-031 — THE JOIN IS WHY. This function is what turns a list into
+        # lines, so it is where "one element is one line" is guaranteed for
+        # every formatter that renders through it, written and unwritten.
+        parts.append(_one_screen_line(line))
     parts.append(FOUNDRY_SEP)
     return "\n".join(parts)
 
@@ -545,7 +617,10 @@ def _fmt_foundry_gate(r: dict) -> str:
     # Hide failed gate checks — the lead retries automatically, no need to surface
     if not passed:
         reason = r.get("reason", "")
-        return f"{_DIM}Gate {phase_name}: not ready \u2014 {reason}{_RESET}"
+        # D-031: flattened HERE because this return reaches no joiner. The whole
+        # composed line goes through it rather than the `reason` alone, since
+        # `phase_name` falls back to the caller's own `phase` string.
+        return _one_screen_line(f"{_DIM}Gate {phase_name}: not ready \u2014 {reason}{_RESET}")
 
     lines = [f"  {_pass_fail(passed)}"]
 
@@ -563,7 +638,8 @@ def _fmt_foundry_mark_phase_complete(r: dict) -> str:
     if r.get("error"):
         # Hide blocked transitions — lead retries automatically
         reason = r.get("error", "")
-        return f"{_DIM}Phase transition blocked: {reason}{_RESET}"
+        # D-031: reaches no joiner, so the rule is applied to the line itself.
+        return _one_screen_line(f"{_DIM}Phase transition blocked: {reason}{_RESET}")
     phase = r.get("phase", "?")
     phase_name = PHASE_NAMES.get(phase, phase)
     return _foundry_display(f"F O U N D R Y  \u2192 {phase} {phase_name}", [
@@ -984,7 +1060,13 @@ def _fmt_foundry_next_action(r: dict) -> str:
         return block
     return _foundry_display(f"F O U N D R Y  {r.get('phase', '?')}", [
         f"  {_BWHITE}Action:{_RESET}  {r.get('action', '?')}",
-        f"  {instructions}",
+        # D-031 — THE DECLARED EXCEPTION, SPELLED AS THE RULE REQUIRES.
+        # An imperative is legitimately many lines, and the joiner flattens what
+        # it is handed. So a block that must KEEP its lines is passed as one
+        # element PER LINE rather than as one element carrying them — which is
+        # byte-identical to the single element this replaces, and leaves the
+        # invariant true instead of excepted.
+        *(f"  {instructions}".splitlines() or [""]),
     ] + facts)
 
 
@@ -1224,7 +1306,9 @@ def _fmt_foundry_mark_stream(r: dict) -> str:
     if r.get("error"):
         # Compact display for stream failures — these are expected during normal flow
         reason = r.get("error", "")
-        return f"{_DIM}Stream: {reason}{_RESET}"
+        # D-031: reaches no joiner, so the rule is applied to the line itself.
+        # Driven at `format_result_blocks`: 7 lines became 8 on a newline here.
+        return _one_screen_line(f"{_DIM}Stream: {reason}{_RESET}")
     stream = r.get("stream", "?").upper()
     coverage = r.get("coverage", "?")
     items = r.get("items_checked", 0)
@@ -1611,7 +1695,14 @@ def format_result(tool_name: str, result: dict) -> str:
             pass  # Fall through to JSON
         else:
             refusal = _named_refusal(result)
-            if refusal is not None and refusal not in rendered:
+            # D-031: the rendering is line-flattened now, so a refusal whose own
+            # text carries a newline is no longer present in it VERBATIM, and
+            # this check would read that as "the formatter dropped the refusal"
+            # for a formatter that rendered it faithfully. Membership is judged
+            # on the same flattened basis the renderer used. For a single-line
+            # refusal — every one this server ships today — it is the comparison
+            # it has always been.
+            if refusal is not None and _one_screen_line(refusal) not in _one_screen_line(rendered):
                 return _house_refusal_display(tool_name, result, refusal)
             return rendered
 
