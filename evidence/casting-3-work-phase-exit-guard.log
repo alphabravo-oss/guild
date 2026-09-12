@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider "tests/orchestration/test_guidance.py::test_a_work_phase_exit_asks_before_crossing_on_a_question_no_arm_routes" "tests/orchestration/test_guidance.py::test_an_open_question_no_arm_routes_still_reaches_the_human_before_a_crossing" "tests/orchestration/test_guidance.py::test_answering_the_unrouted_question_lets_the_crossing_go_ahead" 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a work-phase-exit guard test failed or errored";; *passed*) if [ "$n" -ge 4 ]; then echo "work-phase-exit guard: at least 4 tests passed, none failed or errored"; else echo "FLOOR: fewer than 4 work-phase-exit guard tests passed"; fi;; *) echo "NO RESULT";; esac
+# evidence-for: US-001, US-002, FR-005, FR-007, FR-036, AC-008, AC-009
+# evidence-timeout: 300
+
+work-phase-exit guard: at least 4 tests passed, none failed or errored

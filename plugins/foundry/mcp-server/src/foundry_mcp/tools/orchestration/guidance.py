@@ -3708,7 +3708,52 @@ def _guard_exit(
     rides the work step as a sentence the lead acts on at the end. A parked
     exit crossing was parked at the end of that work, by that sentence, so it
     is the run's only next move and is guarded like any other crossing.
+
+    should-not-stop FR-005 / AC-008 / FR-036 (D-040, D-041) — THE RUNG STANDS
+    ON THIS GUARD TOO, AND IT HAS TO BE STATED SEPARATELY.
+    ----------------------------------------------------------------------
+    D-039 put `_ask_before_crossing` in front of both of `_guard_crossing`'s
+    proceeding returns. This function is its sibling and it was left unwrapped,
+    which TRACE derived and PROVE then drove: at F5 with an orphan parked,
+    Foundry-Next answered `run_temper` rather than `ask_human`, the marker was
+    never written, the REAL Stop hook went on BLOCKING (so the marker was
+    genuinely unset, not merely unread), and `Foundry-Phase(phase='done')`
+    returned ok with the question still open. A `--temper` or `--nyquist` run
+    sealed F6 with a recorded human question nobody was ever asked.
+
+    WHY THIS GUARD IS NOT THE OTHER ONE. `_guard_crossing` wraps a CROSSING
+    step, emitted only once the phase's work is done. This one wraps a WORK
+    step, because F5 and F5.5 instruct their exit in that step's tail — there
+    is no separate crossing step to hang the rung on. That asymmetry is the
+    whole defect, and it is also why the fix does NOT generalise: `fix_defects`
+    and `build_castings` are work steps of the same shape, but F1, F2 and F3
+    each route items per unit, so an item open there coexists with unparked
+    work that can still move, and gating those steps would ask while the wave
+    is runnable — the AC-007 violation `_ask_human_step` exists to avoid.
+
+    F5 and F5.5 route nothing per item. Any item open here is one no arm will
+    ever release, so `_ask_before_crossing`'s "nothing else can move" holds by
+    construction rather than by accident. Asking before TEMPER's work is also
+    already this run's shipped behaviour, not a new policy: the F4 arm above
+    reaches `transition_to_temper` through `_guard_crossing`, so an orphan
+    present at F4 asks before TEMPER ever starts. This makes an orphan parked
+    DURING F5 behave as one parked a moment earlier did.
+
+    THE RESIDUE, NAMED RATHER THAN COVERED. This closes every path on which the
+    lead consults Foundry-Next before crossing, which is the only lever a router
+    has. It is not the whole door: `_GATE_THEN_PHASE_EXCEPTION` makes
+    Foundry-Next between a passing Foundry-Gate and its Foundry-Phase OPTIONAL,
+    and the gate does not consume the ordering token, so a lead still holding a
+    token armed by an earlier Foundry-Next can cross Gate -> Phase without
+    re-reading the router. That is how PROVE's own drive reached DONE. The same
+    residue sits behind `fix_defects` and `build_castings`, whose tails name
+    their exit crossings too. Closing it needs a check in `gates.py` or
+    `transitions.py`, which no door has (grep for `parked`, `open_parked_items`
+    and `awaiting_human` over `gates.py` returns nothing); it is filed as a
+    cross-casting concern rather than reached for from here, because a lifecycle
+    module may not import a verifier one (GI-033).
     """
+    phase = str(step.get("phase") or state.get("phase") or "")
     if park_item_ref(PARK_ITEM_CROSSING, token) in _open_item_by_ref(fdir):
         return _guard_crossing(fdir, state, project_root, token, step)
     reload = _reload_facts(project_root, state, token)
@@ -3722,7 +3767,10 @@ def _guard_exit(
         # arriving a phase late (D-017).
         answered = _reload_already_answered(fdir, ref, question)
         if answered is not None:
-            return _note_reload_answered(step, token, answered, reload)
+            return _ask_before_crossing(
+                fdir, phase, token,
+                _note_reload_answered(step, token, answered, reload),
+            )
         step["instructions"] = step.get("instructions", "") + (
             f" A relaunch is owed before the {token} crossing: "
             f"{len(reload.get('relevant') or [])} relevant file(s) changed since the "
@@ -3735,7 +3783,7 @@ def _guard_exit(
         details = step.setdefault("details", {})
         details["reload"] = reload
         details["reload_question"] = _reload_question(fdir, token, reload)
-    return step
+    return _ask_before_crossing(fdir, phase, token, step)
 
 
 def _sync_awaiting_human(fdir: Path, result: dict) -> None:

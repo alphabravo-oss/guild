@@ -4914,6 +4914,74 @@ def test_answering_the_unrouted_question_lets_the_crossing_go_ahead(run_env):
     assert _state(fdir)["parked"]["awaiting_human"] is None
 
 
+def _exit_phase_ready(fdir: Path, phase: str, **extra) -> None:
+    """A run sitting in a WORK phase whose exit is instructed by the work step."""
+    _write_state(fdir, phase=phase, cycle=2, **extra)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _defect_ledger(fdir, [])
+    _write_verdicts(fdir, [{"id": "FR-001", "verdict": "VERIFIED"}])
+
+
+@pytest.mark.parametrize(
+    ("phase", "flag", "action"),
+    [("F5", "temper", "run_temper"), ("F5.5", "nyquist", "run_nyquist")],
+    ids=["F5-temper", "F5.5-nyquist"],
+)
+def test_a_work_phase_exit_asks_before_crossing_on_a_question_no_arm_routes(
+    run_env, phase, flag, action
+):
+    """should-not-stop FR-005 / AC-008 / FR-036 / GI-011 (D-040, D-041) — THE SIBLING GUARD.
+
+    D-039 put `_ask_before_crossing` in front of `_guard_crossing`'s proceeding
+    returns, and every crossing that flows through it was driven and re-opened.
+    `_guard_exit` is the other guard and it was left unwrapped, so TEMPER and
+    NYQUIST — the two phases that instruct their exit inside the WORK step
+    rather than in a crossing step of their own — reached DONE with a recorded
+    question nobody had been asked. PROVE drove exactly that at 65d3706: the
+    router answered `run_temper`, `awaiting_human` stayed None, the REAL Stop
+    hook went on blocking (so the marker was unset, not merely unread), and
+    `Foundry-Phase(phase='done')` then returned ok with the item still open.
+
+    The CONTROL is half this test: with nothing parked the work step must come
+    back unchanged, or the ask below would be evidence of a broken fixture
+    rather than of the rung. And the answer half is the D-017 lesson — the rung
+    HOLDS the crossing, it does not wall it, so the hold lasts exactly as long
+    as the question does.
+
+    What this does NOT pin, because the fix does not do it: the DONE door itself
+    still admits the crossing. `_GATE_THEN_PHASE_EXCEPTION` makes Foundry-Next
+    between a passing gate and its transition optional, so a lead crossing on a
+    token armed by an earlier Foundry-Next never reads this answer. Only a
+    door-level check closes that, and no door has one.
+    """
+    project_root, fdir = run_env
+    _exit_phase_ready(fdir, phase, **{flag: True})
+
+    # CONTROL — nothing parked, so the phase's work step is what comes back.
+    control = _compute_next_action(project_root)
+    assert control["action"] == action, control
+
+    # A ref no arm of this run composes: F5 and F5.5 route nothing per item, so
+    # an item open here is one no amount of the phase's work will ever release.
+    orphan = _park(project_root, "casting:99", question="Does casting 99 exist?")
+
+    asked = _compute_next_action(project_root)
+    assert asked["action"] == "ask_human", asked
+    assert orphan in asked["instructions"], asked["instructions"]
+    assert "Does casting 99 exist?" in asked["instructions"], asked["instructions"]
+    assert _state(fdir)["phase"] == phase, "the run waits in place; it is not HALTED"
+
+    # FR-036 / GI-011 — the marker, the ONE thing that lets a mid-build turn end,
+    # and the thing `park.py` requires before it will accept a halt answer.
+    assert _state(fdir)["parked"]["awaiting_human"]["item_ids"] == [orphan]
+
+    # AC-009 / OT-012 — answering releases the work step it was holding.
+    _answer(project_root, orphan, "It does not; drop it and carry on")
+    released = _compute_next_action(project_root)
+    assert released["action"] == action, released
+    assert _state(fdir)["parked"]["awaiting_human"] is None
+
+
 def test_the_ask_fence_is_derived_from_the_body_it_closes():
     """should-not-stop AC-008 / CT-005 (D-025) — WHICH TEXT THE DIGEST IS OF.
 
