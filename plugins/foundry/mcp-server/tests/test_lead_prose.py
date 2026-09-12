@@ -1657,6 +1657,27 @@ _PINS: tuple[tuple[str, str, Path, str], ...] = (
         "`Foundry-Concern` writes `concerns.json` — the structured ledger the "
         "server reads",
     ),
+    # should-not-stop FR-031 -- D-044. F1 step 6 runs AFTER all waves, so every
+    # concern it reviews is post-`start_cast`, and it told the lead that a
+    # concern relaxing the spec was a decompose failure to re-run F0.5 on. That
+    # is the retired exit for the exact class FR-031 moved to the park door:
+    # `scope_instruction_conflict` routes to a `spec_wrong` park at
+    # `guidance.py#_route_blocker`, `agents/teammate.md` files it rather than
+    # halting, and this same file's F3 arm already said the exit is the park
+    # door. One file, one class of concern, two different post-CAST exits.
+    (
+        "start-md-scope-relaxing-concern-parks",
+        "FR-031",
+        START_MD,
+        "A concern that relaxes the spec is a spec problem to PARK",
+    ),
+    (
+        "start-md-scope-relaxing-concern-parks-the-casting",
+        "FR-031",
+        START_MD,
+        "`Foundry-Park(action='park', item_ref='casting:<id>', "
+        "category='spec_wrong', question=…)`",
+    ),
     (
         "start-md-spec-change-is-a-park-not-a-halt",
         "FR-013",
@@ -2077,6 +2098,16 @@ _RETIRED_START_MD_SPELLINGS: tuple[tuple[str, str, str], ...] = (
         "FR-013",
         "a spec problem after start_cast parks one item as spec_wrong through "
         "Foundry-Park",
+    ),
+    # should-not-stop FR-031 -- D-044, the F1 half of the exit retired one row
+    # up. F1 step 6 reviews the ledger after all waves, where there is no F0.5
+    # left to return to, so the scope-cut instruction parks as `spec_wrong`.
+    (
+        "is a decompose failure — re-run F0.5",
+        "FR-031",
+        "after start_cast a concern that relaxes the spec parks the casting it "
+        "names as spec_wrong through Foundry-Park; DECOMPOSE is not re-run "
+        "mid-run",
     ),
     (
         'before escalating a "hung" run to the user',
