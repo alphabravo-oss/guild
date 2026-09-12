@@ -69,6 +69,13 @@ THE READER IS NO LAXER THAN THE WRITER. `park.py#set_awaiting_human` returns
 None rather than writing a marker when none of the ids handed to it is an open
 parked item, so an ask naming nothing is a thing the server never writes. What
 the writer will not write, this reader will not honour: see `_awaiting_human`.
+
+WHAT THE HOOKS RENDER, THIS MODULE FLATTENS. The run's NAME is a value neither
+hook authors: it is a directory name read off disk, and the server admits an
+unsanitised `ticket` into it. Both hooks compose LINES around it, so it is
+collapsed to one line by `one_line` when the `ActiveRun` is BUILT, before it can
+reach any caller. See that function for why the rule lives here rather than at
+the interpolations (D-042).
 """
 from __future__ import annotations
 
@@ -96,8 +103,62 @@ AWAITING_HUMAN_KEY = "awaiting_human"
 AWAITING_ITEM_IDS_KEY = "item_ids"
 
 
+def one_line(value: object) -> str:
+    """``value`` as ONE line: every run of whitespace collapses to one space.
+
+    should-not-stop CT-001 / FR-010 / FR-011 (D-042) — A FIELD A LINE IS BUILT
+    FROM CAN NEVER ADD A LINE.
+
+    Both hooks compose LINES around the run's name, and neither authors it.
+    `_generate_run_name` slugifies its `description` but appends its `ticket`
+    RAW, so a ticket carrying a separator creates a directory under
+    `foundry-archive/` whose NAME carries it, and these hooks read that name
+    straight back off disk. Rendered raw it stops being a value and becomes an
+    extra LINE — inside the Stop hook's block reason, which the platform feeds
+    back to the lead as its next instruction, and inside the SessionStart
+    `additionalContext`, which is injected as context. A run name could
+    therefore author a line the lead reads as foundry's own imperative, on a
+    build whose whole purpose is that it must not stop.
+
+    `str.split()` WITH NO ARGUMENT IS WHAT MAKES THIS TOTAL. It splits on
+    whitespace as Python defines it, so all ELEVEN separators `str.splitlines()`
+    honours collapse — LF, CR, CRLF, VT, FF, FS, GS, RS, NEL, LS (U+2028) and
+    PS (U+2029) — and so does a tab. Measured, not assumed: driving both shipped
+    scripts over a directory name built from each of the eleven forged a line in
+    every one of the eleven by `splitlines()`, and in LF and CRLF by `split("\\n")`.
+    A remedy spelled `replace("\\n", " ")` would close two of the eleven and
+    leave nine open.
+
+    IT LIVES HERE, IN THE SHARED READER, AND NOT AT THE INTERPOLATIONS. That is
+    the choice `tools/display.py` reached only after fixing this shape twice at
+    call sites: a rule enforced by remembering to call something is only ever as
+    good as the next author's memory. Flattening where the `ActiveRun` is BUILT
+    means no consumer can render an unflattened name — including the third one
+    nobody has written yet. It is the same layer, for the same reason, that
+    D-014's fix went in one cycle ago.
+
+    NOTHING LEGITIMATE MOVES. A name this collapses is one carrying a tab, a run
+    of two or more spaces, or a line separator, and `_generate_run_name` emits
+    none of those; a single-space ticket survives byte for byte. So for every
+    real run name the rendered text is the directory name exactly, and
+    `Foundry-Init(resume='<name>')` still names the run on disk.
+    """
+    return " ".join(str(value or "").split())
+
+
 class ActiveRun(NamedTuple):
-    """The run the hooks act on, and the one fact about it the Stop hook needs."""
+    """The run the hooks act on, and the one fact about it the Stop hook needs.
+
+    `name` IS A RENDERING VALUE, flattened by `one_line` as this record is built
+    (D-042), because both hooks compose lines around it and neither authors it.
+    The exact directory name is never lost — it is `state_path.parent.name` —
+    and nothing that needs the true path on disk takes it from `name`.
+
+    `phase` needs no such treatment: `_active_run_under` admits a run only when
+    its phase is a member of `LIVE_PHASES`, so it is always one of those six
+    authored literals. Driven to confirm it: a phase carrying a payload fails
+    that membership test and the run does not qualify at all.
+    """
 
     name: str
     phase: str
@@ -201,7 +262,7 @@ def _active_run_under(root: Path) -> ActiveRun | None:
         return None
     _mtime, run_dir, phase, state = max(candidates, key=lambda c: (c[0], c[1]))
     return ActiveRun(
-        name=run_dir.name,
+        name=one_line(run_dir.name),
         phase=phase,
         state_path=run_dir / STATE_FILENAME,
         awaiting_human=_awaiting_human(state),
