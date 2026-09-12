@@ -1,5 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_release_version.py 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a release-version site test failed or errored";; *passed*) if [ "$n" -ge 10 ]; then echo "tests/test_release_version.py: at least 10 tests passed, none failed or errored - the five sites agree with the declared release and the mcp 1.x ceiling survived the relock"; else echo "FLOOR: fewer than 10 release-version tests passed"; fi;; *) echo "NO RESULT";; esac
-# evidence-for: NFR-003
-# evidence-timeout: 300
-
-tests/test_release_version.py: at least 10 tests passed, none failed or errored - the five sites agree with the declared release and the mcp 1.x ceiling survived the relock

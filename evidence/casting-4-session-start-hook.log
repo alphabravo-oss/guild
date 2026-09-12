@@ -1,5 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_session_start_run_hook.py 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a SessionStart hook or registry test failed or errored";; *passed*) if [ "$n" -ge 21 ]; then echo "tests/test_session_start_run_hook.py: at least 21 SessionStart hook and registry tests passed, none failed or errored"; else echo "FLOOR: fewer than 21 SessionStart hook and registry tests passed"; fi;; *) echo "NO RESULT";; esac
-# evidence-for: US-004, FR-011, AC-017, AC-018, CT-002, GI-004, GI-009, NFR-002, NFR-007, OT-005, ST-008
-# evidence-timeout: 300
-
-tests/test_session_start_run_hook.py: at least 21 SessionStart hook and registry tests passed, none failed or errored

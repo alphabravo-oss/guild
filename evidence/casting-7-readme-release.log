@@ -1,5 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider "tests/test_lead_prose.py::test_readme_badges_agree_with_the_shipped_versions" "tests/test_lead_prose.py::test_readme_describes_the_release_it_badges" 2>&1 | tail -1) && case "$out" in *failed*|*error*|*skipped*) echo "FAIL: a README badge or release-section test failed, errored or skipped";; "4 passed"*) echo "README badge and release-section tests: all 4 passed - both READMEs badge the shipped plugin and server versions and carry the release section their own badge claims";; *) echo "NO RESULT";; esac
-# evidence-for: NFR-003
-# evidence-timeout: 300
-
-README badge and release-section tests: all 4 passed - both READMEs badge the shipped plugin and server versions and carry the release section their own badge claims

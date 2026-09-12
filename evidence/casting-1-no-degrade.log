@@ -1,5 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/orchestration tests/test_inspect_mode.py tests/test_vocab.py 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a gate, transition, width or vocabulary test failed or errored";; *passed*) if [ "$n" -ge 1400 ]; then echo "tests/orchestration + tests/test_inspect_mode.py + tests/test_vocab.py: at least 1400 tests passed, none failed or errored"; else echo "FLOOR: fewer than 1400 tests passed"; fi;; *) echo "NO RESULT";; esac
-# evidence-for: NFR-001, NFR-009, GI-008, GI-010, OT-030
-# evidence-timeout: 300
-
-tests/orchestration + tests/test_inspect_mode.py + tests/test_vocab.py: at least 1400 tests passed, none failed or errored

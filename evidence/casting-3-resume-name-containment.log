@@ -1,5 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_foundry_init.py -k "escape_the_archive or replace_the_archive or cannot_hold_is_refused or resumes_however_it_is_named or separator_in_an_existing" 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a run-name containment test failed or errored";; *passed*) if [ "$n" -ge 27 ]; then echo "run-name containment: at least 27 tests passed at both admitting doors, none failed or errored"; else echo "FLOOR: fewer than 27 containment tests passed"; fi;; *) echo "NO RESULT";; esac
-# evidence-for: FR-032
-# evidence-timeout: 300
-
-run-name containment: at least 27 tests passed at both admitting doors, none failed or errored

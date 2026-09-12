@@ -1,5 +1,0 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/orchestration/test_continuity_walk.py 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*|*skipped*) echo "FAIL: a continuity walk failed, errored or skipped";; *passed*) if [ "$n" -ge 3 ]; then echo "tests/orchestration/test_continuity_walk.py: at least 3 walks passed through the real doors with the shipped Stop hook, none failed, errored or skipped"; else echo "FLOOR: fewer than 3 continuity walks passed"; fi;; *) echo "NO RESULT";; esac
-# evidence-for: FR-001, NFR-005
-# evidence-timeout: 300
-
-tests/orchestration/test_continuity_walk.py: at least 3 walks passed through the real doors with the shipped Stop hook, none failed, errored or skipped
