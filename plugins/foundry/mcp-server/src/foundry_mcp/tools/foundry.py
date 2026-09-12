@@ -3307,20 +3307,85 @@ def live_target_reload(project_root: str | Path, state: dict, token: str) -> dic
     return result
 
 
+def _name_slug(value: object) -> str:
+    """One field of a run NAME, reduced to what a directory name may hold.
+
+    should-not-stop C-014 — D-042'S OTHER HALF: THE NAME IS ADMITTED HERE.
+
+    `hooks/foundry_active_run.py#one_line` stops either hook FORGING a line from
+    a run name however it arrived, and that defends the HOOK surface only. This
+    is the door the name is ADMITTED at, and the name becomes a real directory
+    under `foundry-archive/` — a filesystem fact, not a display one, inherited by
+    every other consumer: report rendering, evidence log paths, the `{run}` shell
+    steps in `commands/*.md`, git pathspecs.
+
+    The `description` half was always reduced this way. `ticket` was appended RAW
+    (`parts.append(ticket)`). Driven at the REAL door before this was written —
+    `foundry_init(ticket=...)` against a fresh root, then reading back what
+    actually appeared on disk — a raw ticket produced all five of:
+
+      - Every one of the ELEVEN separators `str.splitlines()` honours, embedded
+        in the directory NAME: LF, CR, CRLF, VT, FF, FS, GS, RS, NEL, LS
+        (U+2028) and PS (U+2029). By `split("\\n")` only LF and CRLF show two
+        lines, which is why an earlier count called six of them clean — the
+        COUNTING METHOD was the artifact, not the defect. A remedy spelled for
+        `\\n` alone closes two of eleven and comes straight back.
+      - `../x` — a directory created OUTSIDE the archive entirely.
+      - `/etc/x` — an ABSOLUTE path: `Path.__truediv__` DISCARDS the left side
+        when the right is absolute, so the archive stops bounding anything. It
+        failed on filesystem permissions, not on any refusal of ours.
+      - `team/alpha` — `foundry-archive/team/`, a run whose directory is not its
+        name and whose `{run}` shell steps therefore name nothing.
+      - a NUL, and a 300-character ticket — `ValueError` and `OSError` raised
+        ACROSS the MCP boundary, which this server does not do.
+
+    Keeping only alnum and `-` closes all five with one rule, and closes them
+    where the name is MADE rather than at each of its readers — the same choice,
+    for the same reason, that `one_line` made one cycle ago in the shared reader.
+
+    CASE IS THE CALLER'S, and that is precisely why this takes an
+    already-lowered string rather than lowering here. `description` is lowered by
+    its caller exactly as it always was; `ticket` is NOT, because 'AQUA-123' must
+    reach the name intact — which is what this module's own `Examples:` line, the
+    `ticket` entry in `foundry_init`'s Args, and
+    `test_stop_hook.py::test_a_run_name_carrying_no_separator_is_rendered_byte_for_byte`
+    all state. Slugging the ticket with the description's own `.lower()` would
+    have silently renamed every ticketed run to close a separator.
+
+    WHAT IT COSTS, measured rather than asserted: `ABC-123` is unchanged,
+    `fix broken nav` becomes `fix-broken-nav`, `v1.2.3` becomes `v123`, and
+    `team_alpha_9` becomes `teamalpha9` — the underscore goes, exactly as it
+    always has on the description half. Widening the kept set to spare it would
+    change the output of a half that has no defect, so it stays out. Cyrillic
+    and CJK survive (`isalnum()` is Unicode-wide, as the description half always
+    was) and an emoji does not. A field is truncated at
+    40 characters, as the description half always was; `foundry_init`'s existing
+    collision suffix keeps two names that truncate alike distinct. A ticket that
+    reduces to empty contributes no part, so the name falls through to the
+    description or the random pair instead of raising.
+    """
+    slug = str(value or "").replace(" ", "-")[:40]
+    return "".join(c for c in slug if c.isalnum() or c == "-").strip("-")
+
+
 def _generate_run_name(ticket: str = "", description: str = "") -> str:
     """Generate a human-friendly run name.
 
     Uses ticket/description when available, falls back to random adjective-noun.
     Examples: 'AQUA-123-login-flow', 'fix-broken-nav', 'bold-falcon'
+
+    BOTH halves go through `_name_slug` (C-014). This name becomes a directory
+    under `foundry-archive/`, so neither half may carry a line separator, a
+    slash or a NUL. `ticket` keeps its case; `description` is lowered by this
+    caller, which is the only difference between the two halves.
     """
     parts: list[str] = []
-    if ticket:
-        parts.append(ticket)
-    if description:
-        slug = description.lower().replace(" ", "-")[:40]
-        slug = "".join(c for c in slug if c.isalnum() or c == "-").strip("-")
-        if slug:
-            parts.append(slug)
+    ticket_slug = _name_slug(ticket)
+    if ticket_slug:
+        parts.append(ticket_slug)
+    description_slug = _name_slug(str(description or "").lower())
+    if description_slug:
+        parts.append(description_slug)
     if parts:
         return "-".join(parts)
     # Fallback: random name when no context provided

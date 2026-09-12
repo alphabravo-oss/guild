@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_foundry_init.py -k "ticket or separator_table" 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a run-name admission test failed or errored";; *passed*) if [ "$n" -ge 22 ]; then echo "run-name admission: at least 22 tests passed, none failed or errored"; else echo "FLOOR: fewer than 22 run-name admission tests passed"; fi;; *) echo "NO RESULT";; esac
+# evidence-for: FR-032
+# evidence-timeout: 300
+
+run-name admission: at least 22 tests passed, none failed or errored
