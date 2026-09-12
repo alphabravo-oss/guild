@@ -2831,6 +2831,36 @@ def _park_step(
     to stay byte-equal to the ref the router looks up and park.py stores. The
     same split is already precedent at the env-broken arm above, where `model`
     is flattened for the sentence and left alone in the record.
+
+    should-not-stop FR-032 (D-039, fallout_of D-036) — AND THE FRAME THEREFORE
+    SPELLS NO REF AT ALL. The split above is right and it was incomplete: this
+    body ALSO spelled the park call, as a quoted ready-to-paste
+    `item_ref='<flattened>'`, so one response named the same call twice with two
+    different values and only the raw one is the key `_open_item_by_ref` stores
+    under and `_casting_routes` composes. Follow the literal and the door accepts
+    it — `parse_park_item_ref` strips only the ENDS, so an interior newline
+    survives storage while the flatten has already removed it — and the item is
+    stored under a ref no lookup composes. Every exit then closes behind it: the
+    router re-derives the same park (the door refuses it as
+    `PARK_ITEM_ALREADY_PARKED`), `awaiting_human` is never written so the Stop
+    hook can never allow turn-end, halt-by-answer is refused as
+    `PARK_HALT_NOT_ASKED` because no ask ever named the id, and a non-halt answer
+    releases nothing.
+
+    THE FIX IS TO DELETE THE SECOND SPELLING, not to keep two in step. The
+    machine values are named as `<details.…>` placeholders, which is what
+    `_ACTION_IMPERATIVES["park_item"]` — the authoritative header over this body
+    — has always said. `ref_line` stays in the PROSE, where it is a description
+    and not an argument, so the flatten D-036 installed is still exercised and
+    still measured by its own pin. A frame that spells no machine value cannot
+    disagree with the record about one.
+
+    The residue this leaves is named rather than covered: `_guard_exit` spells a
+    literal `item_ref='{ref}'` of its own, and that one cannot diverge because
+    its `ref` is `park_item_ref(PARK_ITEM_CROSSING, token)` over a token that is
+    a literal at every call site. It is safe by the closed vocabulary, not by
+    this rule — and `_ask_before_crossing` is what catches it if that ever stops
+    being true.
     """
     ref_line = _one_line(item_ref)
     category_line = _one_line(category)
@@ -2841,7 +2871,8 @@ def _park_step(
         "instructions": (
             f"Park {ref_line} ({category_line}): {reason_line}. Only that item waits on the "
             f"human. Call {PARK_TOOL_NAME}(action='{PARK_ACTION_PARK}', "
-            f"item_ref='{ref_line}', category='{category_line}', question=<details.question>) "
+            "item_ref=<details.item_ref>, category=<details.category>, "
+            "question=<details.question>) "
             "and keep every other casting, defect and stream moving; Foundry-Next asks "
             "the human only when nothing else can move."
         ),
@@ -3527,6 +3558,71 @@ def _note_reload_answered(step: dict, token: str, answered: dict, reload: dict) 
     return step
 
 
+def _ask_before_crossing(fdir: Path, phase: str, token: str, step: dict) -> dict:
+    """``step``, unless an open parked question stands that no work can release.
+
+    should-not-stop FR-005 / AC-008 / CT-005 / FR-036 (D-039) — NO CROSSING
+    WHILE A RECORDED QUESTION IS UNASKED.
+
+    THIS IS NOT A NEW RULE; IT IS THE ONE EVERY ARM ALREADY HAD, STATED WHERE IT
+    CANNOT BE FORGOTTEN. A parked CASTING keeps `_cast_wave_routing` from ever
+    reaching the F1 crossing (its group is not movable, so the arm asks); a
+    parked DEFECT keeps `open_count` above zero, so F3 never reaches its
+    crossing; a parked STREAM keeps `streams["complete"]` false. In each of those
+    the crossing is unreachable while the item is open — which is to say every
+    ROUTED park already held this property, and held it three times over, once
+    per arm, by a different mechanism each time.
+
+    What no arm holds is an item whose ref names something that arm does not
+    route. `park_item_ref` composes a ref from an id, `_open_item_by_ref` keys on
+    whatever string the door stored, and the two are only equal when the id the
+    router composes from is the id the lead parked under. D-039 is one way they
+    come apart (the frame spelled a flattened ref and the door stored it), and it
+    is not the only one: a lead types the ref by hand, so a casting id that is
+    not in the manifest, a defect the cycle has closed, or a manifest that moved
+    mid-run all produce the same state — an OPEN question that nothing the run
+    can do will ever release.
+
+    In that state every exit closes. The arm that would ask never fires, so
+    `set_awaiting_human` is never called; without the marker the Stop hook can
+    never allow a mid-build turn-end (GI-011), `park.py#_answer_item` refuses a
+    halt answer as `PARK_HALT_NOT_ASKED` because halt is accepted only for an id
+    an ask named, and the halt door then has no human-origin proof to seal
+    `user_stop` with (GI-012). The run can neither proceed, nor ask, nor end its
+    turn, nor halt by answer — on a build whose whole spec is that it should not
+    stop, that is the one class that can stop it in the single way the spec does
+    not sanction: silently, with no human asked.
+
+    So the rung is placed on the CROSSING rather than on any arm. A crossing is
+    the run declaring a phase's work finished, and a question the human has never
+    been put is work that is not finished. `_ask_human_step` lists EVERY open
+    item, not only the ones an arm accounted for, so one rung here reaches an
+    item under any ref, including refs nobody has invented yet — the post-
+    condition shape `display.py#_one_screen_line` gives the reasons for, rather
+    than a rule each future arm has to remember.
+
+    The crossing's OWN item never reaches here: `_guard_crossing` answers that
+    one above, with the ask or with the relaunch it has already had. So anything
+    open at this point belongs to some other ref by construction, and no
+    exclusion is needed.
+    """
+    items = open_parked_items(fdir)
+    if not items:
+        return step
+    return _ask_human_step(
+        fdir,
+        phase,
+        f"the {token} crossing is the run's next move and "
+        f"{len(items)} parked question(s) no remaining work can release are "
+        "still open: "
+        + ", ".join(
+            f"{_one_line(item.get(PARKED_FIELD_ID))} "
+            f"({_one_line(item.get(PARKED_FIELD_ITEM_REF))!r})"
+            for item in items
+        ),
+    )
+
+
 def _guard_crossing(
     fdir: Path, state: dict, project_root: str, token: str, step: dict
 ) -> dict:
@@ -3579,7 +3675,10 @@ def _guard_crossing(
         # `_reload_already_answered`): the answer released this crossing.
         answered = _reload_already_answered(fdir, ref, question)
         if answered is not None:
-            return _note_reload_answered(step, token, answered, reload)
+            return _ask_before_crossing(
+                fdir, phase, token,
+                _note_reload_answered(step, token, answered, reload),
+            )
         return _park_step(
             phase,
             ref,
@@ -3597,7 +3696,7 @@ def _guard_crossing(
         )
     if reload.get("problem"):
         step.setdefault("details", {})["reload"] = reload
-    return step
+    return _ask_before_crossing(fdir, phase, token, step)
 
 
 def _guard_exit(

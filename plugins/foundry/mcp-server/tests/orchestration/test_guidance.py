@@ -4788,6 +4788,132 @@ def test_no_spawn_record_model_can_forge_a_row_of_the_env_broken_park(run_env):
             assert len(value.splitlines()) <= 1, (label, field, value)
 
 
+def test_the_park_frame_names_no_ref_that_differs_from_the_one_it_records(run_env):
+    """should-not-stop FR-032 (D-039, fallout_of D-036) — ONE SPELLING PER CALL.
+
+    D-036's flatten is right and it was incomplete. `_park_step` flattened
+    `item_ref` for the instruction and deliberately left `details` raw, because
+    `details` is what the park door consumes — but the instruction ALSO spelled
+    the park call, as a quoted ready-to-paste `item_ref='<flattened>'`. So one
+    response named the same call twice with two different values, and only the
+    raw one is the key `_open_item_by_ref` stores under and `_casting_routes`
+    composes from the manifest id.
+
+    Following the literal is not a misreading: the door ACCEPTS it, because
+    `parse_park_item_ref` strips only the ENDS of a ref, so the interior newline
+    the flatten had already removed never comes back. The item lands under a ref
+    no lookup composes, the router re-derives the same park forever, and the door
+    refuses each repeat as `PARK_ITEM_ALREADY_PARKED`.
+
+    The fix deletes the second spelling rather than keeping two in step, so this
+    pins the invariant and not the wording: whatever ref the frame spells for the
+    call, it is the ref the record carries.
+    """
+    import re
+
+    project_root, fdir = run_env
+
+    # SHORT payload whose FIRST LINE IS SHORT: a clip that measures raw text
+    # ellipsises long content before its first newline and reports green.
+    forged = "7\n  Defects: 0 open  999 fixed"
+    action, _rendered = _env_broken_park_render(project_root, fdir, forged)
+    # GUARD THE FIXTURE: a drive that misses the park arm pins nothing.
+    assert action["action"] == "park_item", action
+    assert action["details"]["category"] == "env_broken", action
+
+    raw = action["details"]["item_ref"]
+    assert raw == f"casting:{forged}", raw
+    # THE CHANNEL IS REACHED, not merely present: the record really is two lines.
+    assert len(raw.splitlines()) == 2, raw
+
+    # The frame names the RECORD, the way `_ACTION_IMPERATIVES["park_item"]`
+    # always has — and any ref it does spell is the one the record carries.
+    assert "item_ref=<details.item_ref>" in action["instructions"], action["instructions"]
+    for spelled in re.findall(r"item_ref='([^']*)'", action["instructions"]):
+        assert spelled == raw, (spelled, raw)
+
+    # THE ROUND TRIP: park through what the frame names, and the router routes
+    # the casting AROUND the item instead of demanding the park again.
+    got = _park_door.foundry_park(
+        action="park", item_ref=raw, category=action["details"]["category"],
+        question=action["details"]["question"], project_root=project_root,
+    )
+    assert got["ok"] is True, got
+    assert got["parked"]["item_ref"] == raw, got
+
+    after = _guidance.foundry_next_action(project_root)
+    assert after["action"] == "ask_human", after
+    assert _state(fdir)["parked"]["awaiting_human"]["item_ids"] == [got["parked"]["id"]]
+
+
+def test_an_open_question_no_arm_routes_still_reaches_the_human_before_a_crossing(run_env):
+    """should-not-stop FR-005 / AC-008 / FR-036 / GI-011 (D-039) — THE EXIT.
+
+    The scope floor under D-039: re-aligning the frame closes ONE entrance into
+    "an item stored under a ref no lookup composes" and leaves every exit shut
+    for any other. A lead types the ref by hand, so a casting id no manifest
+    carries, a defect the cycle closed, or a manifest that moved mid-run all
+    reach the same state.
+
+    In it, no arm's ask condition is ever satisfied — the arms ask when THEIR own
+    work is all parked, and this item is nobody's work — so `set_awaiting_human`
+    is never called. Without the marker the Stop hook can never allow a mid-build
+    turn-end, `park.py#_answer_item` refuses a halt answer as
+    `PARK_HALT_NOT_ASKED` since halt is accepted only for an id an ask named, and
+    the halt door then has no human-origin proof for `user_stop`. The run can
+    neither proceed, nor ask, nor end its turn, nor halt by answer.
+
+    `_ask_before_crossing` is the rung: the run does not cross a phase boundary
+    while a recorded question is unasked. Every ROUTED park already had that
+    property three times over, once per arm; this states it once, at the choke
+    point all thirteen crossings pass through.
+    """
+    project_root, fdir = run_env
+    _f4_ready_for_done(fdir)
+    assert _compute_next_action(project_root)["action"] == "transition_to_done"
+
+    # A ref no arm of this run composes: the F4 arm routes no castings at all,
+    # and no manifest casting is 99.
+    orphan = _park(project_root, "casting:99", question="Does casting 99 exist?")
+
+    asked = _compute_next_action(project_root)
+    assert asked["action"] == "ask_human", asked
+    assert orphan in asked["instructions"], asked["instructions"]
+    assert "Does casting 99 exist?" in asked["instructions"], asked["instructions"]
+    assert _state(fdir)["phase"] == "F4", "the run waits in place; it is not HALTED"
+
+    # FR-036 / GI-011 — the marker, the ONE thing that lets a mid-build turn end.
+    assert _state(fdir)["parked"]["awaiting_human"]["item_ids"] == [orphan]
+
+    # And the halt exit is open, which it was not: halt is accepted only for an
+    # id an outstanding ask names, so this call was `PARK_HALT_NOT_ASKED`.
+    halted = _park_door.foundry_park(
+        action="answer", parked_id=orphan, answer="Halt; I mistyped the ref",
+        halt=True, project_root=project_root,
+    )
+    assert halted.get("ok") is True, halted
+    assert _compute_next_action(project_root)["action"] == "seal_user_stop"
+
+
+def test_answering_the_unrouted_question_lets_the_crossing_go_ahead(run_env):
+    """should-not-stop AC-009 / OT-012 (D-039): the rung HOLDS, it does not wall.
+
+    The other half of the rung above, and the D-017 lesson it must not repeat: a
+    guard whose only instruction is a call the door refuses leaves the run no
+    move at all. Answering releases the crossing, so the hold lasts exactly as
+    long as the question does.
+    """
+    project_root, fdir = run_env
+    _f4_ready_for_done(fdir)
+    orphan = _park(project_root, "casting:99", question="Does casting 99 exist?")
+    assert _compute_next_action(project_root)["action"] == "ask_human"
+
+    _answer(project_root, orphan, "It does not; drop it and ship")
+
+    assert _compute_next_action(project_root)["action"] == "transition_to_done"
+    assert _state(fdir)["parked"]["awaiting_human"] is None
+
+
 def test_the_ask_fence_is_derived_from_the_body_it_closes():
     """should-not-stop AC-008 / CT-005 (D-025) — WHICH TEXT THE DIGEST IS OF.
 
