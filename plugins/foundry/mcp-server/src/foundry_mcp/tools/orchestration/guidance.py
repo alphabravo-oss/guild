@@ -61,6 +61,7 @@ from foundry_mcp.tools.artifacts import (
     VALIDATE_PASSED_MARKER,
     _artifact_guard,
     _document_transaction,
+    _hash_str,
     _load_json,
     _read_text,
     _spec_requirement_ids,
@@ -2834,6 +2835,69 @@ def _routed_casting_step(fdir: Path, phase: str, routes: dict[str, dict]) -> dic
 _ASK_BODY_INDENT = "      "
 
 
+def _one_line(value: object) -> str:
+    """``value`` as ONE line: every run of whitespace collapses to one space.
+
+    should-not-stop AC-008 / CT-005 (D-024) — A FIELD THE FRAME IS BUILT FROM
+    CAN NEVER ADD A LINE TO THE FRAME.
+
+    The ask listing is a FRAME — one header line per item at the `  - ` sibling
+    column, one fence line closing it — wrapped around a body rendered verbatim.
+    Every field interpolated into a frame line comes off a parked item, and a
+    parked item's fields are what a lead typed into the park door.
+    `vocab.py#parse_park_item_ref` strips the ENDS of `item_ref` and validates
+    the kind, so a newline embedded in the id half survives into storage, and
+    the header interpolated it raw: ONE park of `casting:3` followed by a
+    newline and a hand-written `  - P-999 ...` rendered TWO bullets, the second
+    a forged sibling item carrying its own fence and a `claude --plugin-dir`
+    relaunch command nobody parked. The human was shown an item that does not
+    exist, in the one text they authorize.
+
+    So the rule is POSITIONAL rather than per-field: whatever reaches a frame
+    line is flattened here first, and the frame then has exactly the line count
+    the renderer wrote. `category` is closed vocabulary and `id` is
+    server-issued, so neither can carry a newline today — they go through this
+    anyway, because the next field added to that header is the next D-024 and
+    the guard has to already be standing in front of it.
+
+    Never applied to a question BODY. That is rendered verbatim and fenced: it
+    is what the human authorizes, and it is the byte-for-byte identity both
+    `_reload_already_answered` and `park.py#_park_item`'s loop rung compare.
+    """
+    return " ".join(str(value or "").split())
+
+
+def _ask_fence(ident: object, body: str) -> str:
+    """The line closing ONE item's question — the one no question can spell.
+
+    should-not-stop AC-008 / CT-005 (D-025) — THE TERMINATOR IS DERIVED FROM THE
+    BODY IT TERMINATES.
+
+    The fence was `(end of <id>)`, built from the id alone, while the header
+    tells the reader — and the lead composing the single AskUserQuestion this
+    step demands — to carry the question "down to the line that says (end of
+    <id>)". A question whose own text contains that line therefore ENDS EARLY:
+    everything after it reads as the step's own instructions, though it is part
+    of the stored question the human is authorizing. `P-001` is the first id
+    `park.py#_next_parked_id` issues on every run, so the string to forge was
+    the predictable one rather than an exotic one.
+
+    Appending the digest of the body closes that. To land a line equal to this
+    fence, a question would have to contain the sha256 of a text containing that
+    same digest — a hash fixed point, which is what "content cannot forge it"
+    means here. The digest is `artifacts.py#_hash_str`, the house spelling for a
+    string's digest, so the token reads like every other published fingerprint
+    in these questions rather than like a new kind of thing.
+
+    A pure function of the body, so it is as stable as the question is:
+    re-rendering the same item yields the same fence, and only editing the
+    question moves it. Nothing compares this string — the ask instructions are
+    rendered fresh on every Foundry-Next and stored nowhere — so it carries no
+    identity anything else depends on.
+    """
+    return f"(end of {_one_line(ident)} {_hash_str(body)})"
+
+
 def _ask_item_block(item: dict) -> str:
     """One parked item in the ask listing: its header, then its question, fenced.
 
@@ -2866,19 +2930,39 @@ def _ask_item_block(item: dict) -> str:
     authorizes, and it is the byte-for-byte machine identity both
     `_reload_already_answered` and `park.py#_park_item`'s loop rung compare, so
     this function may move it in the display and may never rewrite it.
+
+    D-024 / D-025 — AND THE FRAME IS THE RENDERER'S, NEVER THE DATA'S. D-022
+    fenced the body and left the frame itself composed from stored fields, so
+    the fence held for a question's LINES and not against the item's own: the
+    header interpolated `item_ref` unflattened (a second bullet, forged — that
+    docstring's claim that "the ONLY multi-line content anywhere in these
+    instructions is a question body" was false as driven), and the terminator
+    was spelled from the id alone, which a question can spell too. Both halves
+    are frame properties, so both are fixed here: every field on a frame line
+    goes through `_one_line`, and the fence comes from `_ask_fence`. Together
+    they are the invariant D-022 reached for — one bullet per item, one fence
+    per item, neither of them forgeable by what the item carries.
+
+    The ref is rendered QUOTED for the residue flattening alone leaves: a ref
+    holding prose (the D-024 park held a whole forged header) flattens onto the
+    header line and then reads as more of the header's own sentence, including
+    a second "down to the line that says ..." that names a fence no line
+    carries. Quoted, it is visibly one field's value — the `{answer!r}` idiom
+    `_ask_question_delta` already uses for the same reason one line down.
     """
     ident = item.get(PARKED_FIELD_ID)
     body = str(item.get(PARKED_FIELD_QUESTION) or "")
+    fence = _ask_fence(ident, body)
     lines = [
-        f"  - {ident} — {item.get(PARKED_FIELD_ITEM_REF)} "
-        f"({item.get(PARKED_FIELD_CATEGORY)}) asks the question indented below, "
-        f"down to the line that says (end of {ident}):"
+        f"  - {_one_line(ident)} — {_one_line(item.get(PARKED_FIELD_ITEM_REF))!r} "
+        f"({_one_line(item.get(PARKED_FIELD_CATEGORY))}) asks the question "
+        f"indented below, down to the line that says {fence}:"
     ]
     lines.extend(
         f"{_ASK_BODY_INDENT}{line}" if line.strip() else ""
         for line in (body.splitlines() or [""])
     )
-    lines.append(f"{_ASK_BODY_INDENT}(end of {ident})")
+    lines.append(f"{_ASK_BODY_INDENT}{fence}")
     return "\n".join(lines)
 
 
@@ -2958,13 +3042,17 @@ def _ask_question_delta(fdir: Path, item: dict) -> str:
     gone = [line for line in was if line not in now]
     if not added and not gone:
         return ""
-    answer = " ".join(str(prior.get(PARKED_FIELD_ANSWER) or "").split())
+    # Every field here is one the frame is built from, so every one of them is
+    # flattened (D-024): this head sits OUTSIDE the item's fence, where an
+    # unflattened `item_ref` would put its own lines flush against the listing
+    # with no fence around them at all.
+    answer = _one_line(prior.get(PARKED_FIELD_ANSWER))
     head = (
-        f"    Since you answered {prior.get(PARKED_FIELD_ID)} about "
-        f"{item.get(PARKED_FIELD_ITEM_REF)} with {answer!r}, "
+        f"    Since you answered {_one_line(prior.get(PARKED_FIELD_ID))} about "
+        f"{_one_line(item.get(PARKED_FIELD_ITEM_REF))} with {answer!r}, "
         f"{len(added)} line(s) of this question are new and {len(gone)} are "
         "gone. Every other line is one you have already answered. This note is "
-        f"the server's, not part of what {item.get(PARKED_FIELD_ID)} asks:"
+        f"the server's, not part of what {_one_line(item.get(PARKED_FIELD_ID))} asks:"
     )
     # Labelled in words rather than with `+` / `-` diff markers: the lines this
     # compares are question lines, and a question that is itself a list (the
@@ -3000,7 +3088,7 @@ def _ask_human_step(fdir: Path, phase: str, why: str) -> dict:
         if delta:
             blocks.append(delta)
     questions = "\n".join(blocks)
-    reason = " ".join(str(why).split())
+    reason = _one_line(why)
     return {
         "phase": phase,
         "action": "ask_human",
@@ -3009,8 +3097,9 @@ def _ask_human_step(fdir: Path, phase: str, why: str) -> dict:
             "parked, so ask the human now, in ONE AskUserQuestion carrying every "
             "parked question. One item per bullet below: a bullet is a whole "
             "item, and that item's question is every line indented under it, "
-            "down to its own (end of <id>) line — carry each question to the "
-            f"human whole:\n{questions}\n"
+            "down to the (end of ...) line that item's own header names — the "
+            "digest in it is taken from the question it closes, so no question "
+            f"can spell it. Carry each question to the human whole:\n{questions}\n"
             f"The run waits in place — phase {phase}, NOT HALTED — until each answer "
             f"is recorded with {PARK_TOOL_NAME}(action='{PARK_ACTION_ANSWER}', "
             "parked_id=<id>, answer=<the human's words, verbatim>); add halt=true ONLY "
