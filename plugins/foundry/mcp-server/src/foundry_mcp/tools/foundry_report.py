@@ -2313,14 +2313,35 @@ def _as_one_line(value: object) -> str:
 
 
 def _cell(value: object) -> str:
-    """One table cell: no pipe starts a column, no newline starts a row.
+    """One table cell: no pipe opens a column, no LINE BREAK opens a row.
 
     The ROW half is old. The HEADER half is not: headers were joined RAW, and
     the baseline table interpolates the run name into two of them — so a run
     name carrying a newline split the header across two lines and left the
     table with a header row that was no longer a header row.
+
+    AND "NEWLINE" WAS THE WRONG SET (D-029's class, on this module's own half
+    of FR-032). This replaced `"\\n"` — the separator a human TYPES — while the
+    document is read back by `foundry_state.markdown_sections`, which splits on
+    `str.splitlines()` and honours ELEVEN; `Path.read_text` turns a lone `\\r`
+    into a real `\\n` on the way in besides. So a parked question PASTED out of
+    a terminal forged a `## ` heading that the same question typed by hand
+    could not, and the DONE gate then read a section that was not there. Driven
+    at `generate_report` before this was widened: `\\r`, `\\f`, `\\v`, `\\x85`
+    and `\\u2028` each forged a heading through the parked-items table, and
+    `\\n` alone did not. Every one of the eleven is `isspace()`-true, so the
+    collapse closes the set without a character list to keep in step with the
+    reader.
+
+    NOT ROUTED THROUGH `_as_one_line`, though it is now the same collapse: that
+    one spells `str(value or "")`, which renders a FALSY value as empty, and
+    these cells carry ints — a span of `0`, a cycle of `0`, a token count of
+    `0`. Coalescing those would print a measured zero as "nothing recorded".
+    The None check stays explicit here for exactly that reason.
     """
-    return "" if value is None else str(value).replace("|", "\\|").replace("\n", " ")
+    if value is None:
+        return ""
+    return " ".join(str(value).split()).replace("|", "\\|")
 
 
 def _md_table(headers: list[str], rows: list[list[Any]]) -> list[str]:

@@ -302,6 +302,39 @@ def _requirement_span_rows(
 _SPAN_NO_REASON = "—"
 
 
+def _span_cell(value: object) -> str:
+    """One cell of the span table: no pipe opens a column, no break opens a row.
+
+    D-029 / D-030 (should-not-stop FR-032) — A FIELD A LINE IS BUILT FROM CAN
+    NEVER ADD A LINE. The row below is concatenated from four values a manifest
+    supplies, and `_owned_requirement_ids` keeps ANY non-empty string while
+    `_recorded_split_reasons` keeps any non-empty reason. So an id or a reason
+    carrying a line break did not merely wrap: it forged a `## ` heading, and
+    `foundry_state.markdown_sections` — which splits the F6 report by whole
+    `## ` lines for the DONE gate's read and the seal's boundary — then read the
+    genuine `Requirement span` section as ENDING there, its body cut mid-table
+    right after the first cell. An added heading is the visible half; the
+    severed section is the one that loses content.
+
+    THE READER SETTLES WHICH CHARACTERS COUNT, NOT THE KEYBOARD. That reader is
+    `str.splitlines()`, which honours ELEVEN separators, and `Path.read_text`
+    translates a lone `\\r` into a real `\\n` on the way back in besides.
+    Replacing `"\\n"` alone would close the separator a human types and leave
+    the ten a paste carries: `\\r`, `\\f`, `\\v`, `\\x85` and `\\u2028` were each
+    driven through `generate_report` and each forged a heading. Every one of
+    the eleven is `isspace()`-true, so collapsing whitespace closes the whole
+    set in one expression rather than in a character list that goes stale the
+    next time the reader learns a separator.
+
+    NOT ROUTED THROUGH A FALSY-COALESCING FLATTENER, deliberately. `span` is an
+    int and an unowned requirement's span is `0`, which a `str(value or "")`
+    spelling renders as an EMPTY cell — a measured zero turned into "nothing
+    recorded", which is a different claim. The None check is explicit for that
+    reason, and `0` renders as `0`.
+    """
+    return " ".join(str("" if value is None else value).split()).replace("|", "\\|")
+
+
 def _render_span_table(rows: list[dict], not_computable: bool) -> str:
     """The span table as a markdown block, for a surface with no formatter.
 
@@ -330,14 +363,23 @@ def _render_span_table(rows: list[dict], not_computable: bool) -> str:
     if not rows:
         return "Requirement span: no requirement ids declared or owned."
     lines = [
+        # These two interpolate nothing, so they are the only lines here no
+        # manifest value can reach. Every line below them is built from one.
         "| requirement | owners | span | recorded reason |",
         "|---|---|---|---|",
     ]
     for row in rows:
-        owners = ", ".join(f"#{owner}" for owner in row["owners"]) or _SPAN_NO_REASON
-        reason = row["split_reason"] or _SPAN_NO_REASON
+        # All four cells, because all four are manifest values. The owners
+        # column is no safer than the id column: `_requirement_span_rows` takes
+        # the casting id AS THE MANIFEST SPELLS IT, so what a lead reads there
+        # is an unvalidated document field too.
+        owners = ", ".join(
+            f"#{_span_cell(owner)}" for owner in row["owners"]
+        ) or _SPAN_NO_REASON
+        reason = _span_cell(row["split_reason"]) or _SPAN_NO_REASON
         lines.append(
-            f"| {row['id']} | {owners} | {row['span']} | {reason} |"
+            f"| {_span_cell(row['id'])} | {owners} | "
+            f"{_span_cell(row['span'])} | {reason} |"
         )
     return "\n".join(lines)
 

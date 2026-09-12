@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && out=$(uv run --quiet --with pytest pytest -q -p no:cacheprovider tests/test_report.py::test_a_forged_requirement_id_adds_no_row_and_no_column_to_the_span_table tests/test_report.py::test_a_forged_split_reason_adds_no_row_and_no_column_to_the_span_table tests/test_report.py::test_a_line_break_other_than_newline_adds_no_row_to_a_generated_table tests/test_report.py::test_a_requirement_id_with_a_newline_adds_no_line_from_the_span_prose tests/test_report.py::test_no_field_forges_a_row_when_spend_parked_and_dispatch_all_render 2>&1 | tail -1) && n=${out%% passed*} && case "$out" in *failed*|*error*) echo "FAIL: a forged-field rendering test failed or errored";; *passed*) if [ "$n" -ge 5 ]; then echo "no manifest field, parked field or lead text forges a report row, column or heading: at least 5 tests passed, none failed or errored"; else echo "FLOOR: fewer than 5 forged-field rendering tests passed"; fi;; *) echo "NO RESULT";; esac
+# evidence-for: FR-032
+# evidence-timeout: 300
+
+no manifest field, parked field or lead text forges a report row, column or heading: at least 5 tests passed, none failed or errored

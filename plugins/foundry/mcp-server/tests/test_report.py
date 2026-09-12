@@ -6921,9 +6921,12 @@ def test_a_requirement_id_with_a_newline_adds_no_line_from_the_span_prose(tmp_pa
     the id list are LINES.
 
     The `text` block above them is `foundry_validate._render_span_table`'s own
-    markdown, rendered verbatim because it IS that module's table. Its row is
-    deliberately NOT flattened here — that half belongs to the module that
-    builds it and is recorded in concerns.md, so nothing below asserts on it.
+    markdown, rendered verbatim because it IS that module's table. Its ROW half
+    was live when this was written and is closed now (D-029, D-030): the row is
+    asserted on by
+    `test_a_forged_requirement_id_adds_no_row_and_no_column_to_the_span_table`
+    below, which drives the same door. This test keeps the PROSE half, because
+    the two sentences below the block are built here and the block is not.
     """
     forged = "FR-901\n## Forged heading"
     run_dir, _doc, _md = _demo_run(tmp_path, "span-prose")
@@ -6991,3 +6994,168 @@ def test_no_field_forges_a_row_when_spend_parked_and_dispatch_all_render(tmp_pat
     assert "## Forged heading" not in lines
     assert not any(ln.startswith("| forged |") for ln in lines)
     assert r"A? \| forged \| row \|" in halt_block
+
+
+# --------------------------------------------------------------------------- #
+# D-029 / D-030 — the span table's ROW half, and the separator `_cell` did not
+# know about.
+#
+# The rule these share with everything above: A FIELD A LINE IS BUILT FROM CAN
+# NEVER ADD A LINE. The prose half of the span section was closed first and its
+# table half was not, so the same forged id that could no longer forge a
+# sentence still forged a `## ` heading one line above it.
+#
+# WHY THE READER, NOT THE WRITER, SETTLES WHICH CHARACTERS COUNT.
+# `foundry_state.markdown_sections` splits this document with `str.splitlines()`
+# — which honours ELEVEN separators, not one — and `Path.read_text` translates a
+# lone `\r` into a real `\n` on the way back in. So `.replace("\n", " ")` closed
+# the separator that gets typed and left the ten that get pasted. Every case
+# below was driven at `generate_report` and observed forging a heading BEFORE
+# the fix; none is a hypothetical.
+#
+# Each fixture is SHORT and its FIRST line is short, for the reason the block
+# above states: a clip that ellipsises long content never reaches the newline,
+# so a long-content test reports the surface green while the break is live.
+# --------------------------------------------------------------------------- #
+
+
+def _unescaped_fences(row: str) -> int:
+    """How many columns a rendered row really opens.
+
+    A cell is allowed to PRINT a pipe; it is not allowed to START a column. So
+    the escaped form is removed before counting, and what remains is the row's
+    real column structure — which is the property, rather than "no pipe
+    anywhere".
+    """
+    return row.replace(r"\|", "").count("|")
+
+
+#: ``{label: (the id a manifest declares, the one cell it must render as)}``.
+_SPAN_ID_FORGERIES = {
+    "newline": ("FR-901\n## Forged heading", "| FR-901 ## Forged heading |"),
+    "carriage-return": ("FR-901\r## Forged heading", "| FR-901 ## Forged heading |"),
+    "pipe": ("FR-901 | #9 | 99 | forged", r"| FR-901 \| #9 \| 99 \| forged |"),
+}
+
+
+def test_a_forged_requirement_id_adds_no_row_and_no_column_to_the_span_table(tmp_path):
+    """D-029 / D-030, FR-032 — the row `_render_span_table` builds.
+
+    `foundry_validate._owned_requirement_ids` keeps any non-empty string read
+    from `castings/manifest.json`, and `_render_span_table` built its row by
+    concatenating four of them, so the id reached the document raw.
+
+    TWO CLAIMS, because D-030's is the sharper one. The forged line does not
+    merely ADD a heading: it SEVERS the genuine section, whose body ended
+    mid-table right after the first cell. So the heading count is asserted AND
+    the section's own last line, which a severed section loses.
+    """
+    for label, (forged, cell) in _SPAN_ID_FORGERIES.items():
+        run_dir, _doc, _md = _demo_run(tmp_path, f"span-id-{label}")
+        _with_manifest(run_dir,
+                       [{"id": i, "requirement_ids": [forged]} for i in range(1, 5)])
+        _generate(run_dir)
+        md = _markdown(run_dir)
+
+        assert _heading_lines(md) == _generated_headings(), label
+        section = _section_text(md, vocab.REPORT_SECTION_TITLES["requirement_span"])
+        assert "The span is how many castings owned each requirement" in section, (
+            f"{label}: the genuine section was severed, not merely added to"
+        )
+
+        rows = [ln for ln in section.splitlines() if ln.startswith("| FR-901")]
+        assert len(rows) == 1, (label, rows)
+        assert rows[0].startswith(cell), (label, rows[0])
+        assert rows[0].endswith("| #1, #2, #3, #4 | 4 | — |"), (label, rows[0])
+        assert _unescaped_fences(rows[0]) == 5, (label, rows[0])
+
+
+#: The same two axes on the OTHER free-text column. `split_reason` is a value a
+#: manifest records in prose, so it is the cell most likely to carry a line
+#: break in real life — and it went through the same concatenation.
+_SPAN_REASON_FORGERIES = {
+    "newline": ("two surfaces\n## Forged heading", "| two surfaces ## Forged heading |"),
+    "carriage-return": ("two surfaces\r## Forged heading",
+                        "| two surfaces ## Forged heading |"),
+    "pipe": ("two surfaces | #9 | 99", r"| two surfaces \| #9 \| 99 |"),
+}
+
+
+def test_a_forged_split_reason_adds_no_row_and_no_column_to_the_span_table(tmp_path):
+    """D-029's class on the `recorded reason` column (FR-032).
+
+    `_recorded_split_reasons` keeps any non-empty string the manifest records,
+    from either of the two positions that may record one, and the reason is
+    rendered into the same row by the same concatenation. The filings named the
+    id column; the row builder has four cells and this is the other one a human
+    writes.
+    """
+    for label, (forged, cell) in _SPAN_REASON_FORGERIES.items():
+        run_dir, _doc, _md = _demo_run(tmp_path, f"span-reason-{label}")
+        _with_manifest(run_dir, [{"id": 1, "requirement_ids": ["FR-901"]}],
+                       top_reason={"FR-901": forged})
+        _generate(run_dir)
+        md = _markdown(run_dir)
+
+        assert _heading_lines(md) == _generated_headings(), label
+        section = _section_text(md, vocab.REPORT_SECTION_TITLES["requirement_span"])
+        assert "The span is how many castings owned each requirement" in section, label
+
+        rows = [ln for ln in section.splitlines() if ln.startswith("| FR-901 |")]
+        assert len(rows) == 1, (label, rows)
+        assert rows[0].startswith("| FR-901 | #1 | 1 |"), (label, rows[0])
+        assert rows[0].endswith(cell), (label, rows[0])
+        assert _unescaped_fences(rows[0]) == 5, (label, rows[0])
+
+
+#: Line separators `str.splitlines()` honours and `"\n"` is not. Driven, not
+#: derived: each one was observed forging a `## ` heading through
+#: `generate_report` before `_cell` was widened.
+_OTHER_LINE_BREAKS = {
+    "carriage-return": "\r",
+    "line-separator-u2028": " ",
+    "form-feed": "\f",
+}
+
+
+def test_a_line_break_other_than_newline_adds_no_row_to_a_generated_table(tmp_path):
+    """FR-032 on THIS module's `_cell` — the separator set, not one separator.
+
+    `_cell` escaped the pipe and replaced `"\\n"`, which is the separator a
+    human types. The document is read back by `str.splitlines()`, which honours
+    eleven, and `Path.read_text` turns a lone `\\r` into a real `\\n` besides —
+    so a parked question pasted out of a terminal forged a heading that a
+    parked question typed by hand could not.
+
+    Driven on the parked-items table because its question and answer are the
+    cells that carry a human's own words verbatim, which is where a pasted
+    break actually arrives.
+    """
+    for label, sep in _OTHER_LINE_BREAKS.items():
+        parked = {
+            vocab.PARKED_ITEMS_KEY: [
+                {"id": "P-001", "item_ref": "casting:3", "category": "spec_wrong",
+                 "question": f"A?{sep}## Forged heading", "cycle": 1,
+                 "parked_at": "2026-09-11T01:00:00+00:00",
+                 "answer": f"B{sep}## Forged answer",
+                 "answered_at": "2026-09-11T02:00:00+00:00",
+                 "answer_is_halt": False},
+            ],
+            vocab.PARKED_AWAITING_HUMAN_KEY: None,
+        }
+        _run, _doc, md = _demo_run(
+            tmp_path, f"cell-{label}",
+            state={"phase": "F3", "cycle": 1, **_DEMO_VERSIONS,
+                   vocab.PARKED_STATE_KEY: parked},
+        )
+
+        assert _heading_lines(md) == _generated_headings(), label
+        halt = _section_text(md, vocab.REPORT_SECTION_TITLES["halt_and_co_dispatch"])
+        rows = [ln for ln in _sub_block(halt, "Parked items").splitlines()
+                if ln.startswith("| P-001 |")]
+        assert len(rows) == 1, (label, rows)
+        # Flattened into its own cell, never dropped: what the human wrote is
+        # still readable, it just no longer opens a row.
+        assert "A? ## Forged heading" in rows[0], (label, rows[0])
+        assert "B ## Forged answer" in rows[0], (label, rows[0])
+        assert _unescaped_fences(rows[0]) == 10, (label, rows[0])
