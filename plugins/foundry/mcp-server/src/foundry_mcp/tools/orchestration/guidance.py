@@ -3080,6 +3080,72 @@ def _reload_question(fdir: Path, token: str, reload: dict) -> str:
     )
 
 
+def _reload_already_answered(fdir: Path, ref: str, question: str) -> dict | None:
+    """The answered item that already put THIS reload question to the human.
+
+    `park.py#_park_item`'s loop rung, read from the router's side and on purpose
+    the SAME predicate: same `item_ref`, same category, same question, already
+    answered. A park the door refuses as `PARK_ITEM_LOOP` is a park the router
+    must never NAME, because the router's step is the lead's only instruction
+    and an instruction the door refuses every time leaves the run no move at
+    all. That is the crossing half of D-009, which D-009's own fix reached only
+    for castings, and which the door's new backstop turned from a silent re-ask
+    into a deadlock (D-017).
+
+    Deliberately NOT `_answered_item_by_ref`: that keeps the newest answer per
+    ref, while the door scans EVERY prior item, so a question answered two
+    parks ago is refused there and has to be seen here too. The two predicates
+    agreeing is the whole guarantee — computed the same way, they cannot
+    disagree about whether the door would refuse the call.
+
+    Scoped to the question rather than to the ref, for the same reason read the
+    other way: relevant code that changes AFTER the answer moves `relevant` or
+    `loaded_commit`, so `_reload_question` reads differently, the door admits it
+    as the new question it is, and this returns None so the router parks it.
+    """
+    for item in read_parked(fdir)[PARKED_ITEMS_KEY]:
+        if (
+            item.get(PARKED_FIELD_ITEM_REF) == ref
+            and item.get(PARKED_FIELD_CATEGORY) == PARK_CATEGORY_LIVE_PLUGIN_RELOAD
+            and item.get(PARKED_FIELD_QUESTION) == question
+            and item.get(PARKED_FIELD_ANSWERED_AT)
+        ):
+            return item
+    return None
+
+
+def _note_reload_answered(step: dict, token: str, answered: dict, reload: dict) -> dict:
+    """Name, on the step that crosses, the owed relaunch an answer released.
+
+    A non-halt answer releases the work its item held (FR-005 / AC-009 /
+    OT-012), and the work a `crossing:` item holds is the crossing — so the
+    crossing goes ahead. It does not go ahead quietly: the hazard the reload
+    park exists to raise is being taken, against a server that never
+    relaunched, on the human's own instruction. It is named on the step that
+    takes it rather than left for the report to find.
+
+    The same shape `_casting_routes` already uses for the other derived park —
+    an answer settles the facts it asked about, and the route says whose answer
+    and why (`released` / `settled`, guidance.py:2686-2703).
+    """
+    step["instructions"] = step.get("instructions", "") + (
+        f" A relaunch is still owed before the {token} crossing "
+        f"({len(reload.get('relevant') or [])} relevant file(s) changed since the "
+        f"running server loaded), and {answered.get(PARKED_FIELD_ID)} already put "
+        "that exact question to the human, who answered it without relaunching: "
+        f"{str(answered.get(PARKED_FIELD_ANSWER) or '').strip()!r}. That answer "
+        "releases the crossing, so cross on the code this server has loaded and "
+        "do NOT park it again — the door refuses a question already answered. If "
+        "something the crossing depends on changes after this, that is a new "
+        "question, and Foundry-Next parks that one."
+    )
+    details = step.setdefault("details", {})
+    details["reload"] = reload
+    details["reload_answered"] = answered.get(PARKED_FIELD_ID)
+    details["reload_answer"] = answered.get(PARKED_FIELD_ANSWER)
+    return step
+
+
 def _guard_crossing(
     fdir: Path, state: dict, project_root: str, token: str, step: dict
 ) -> dict:
@@ -3125,11 +3191,19 @@ def _guard_crossing(
         )
     reload = _reload_facts(project_root, state, token)
     if reload.get("owed"):
+        question = _reload_question(fdir, token, reload)
+        # Before naming the park, ask what the door will say to it. An answered
+        # question re-derived unchanged is refused, and the refusal of the
+        # router's only instruction is the deadlock D-017 drove (see
+        # `_reload_already_answered`): the answer released this crossing.
+        answered = _reload_already_answered(fdir, ref, question)
+        if answered is not None:
+            return _note_reload_answered(step, token, answered, reload)
         return _park_step(
             phase,
             ref,
             PARK_CATEGORY_LIVE_PLUGIN_RELOAD,
-            _reload_question(fdir, token, reload),
+            question,
             (
                 "server/gate code or agent/skill prose changed since the running "
                 "server loaded, and DONE must run on the code being shipped"
@@ -3160,6 +3234,15 @@ def _guard_exit(
     reload = _reload_facts(project_root, state, token)
     if reload.get("owed"):
         ref = park_item_ref(PARK_ITEM_CROSSING, token)
+        question = _reload_question(fdir, token, reload)
+        # The same release as `_guard_crossing`, one step removed and reached by
+        # different transitions: this arm does not park, it tells the lead to
+        # park at the END of the phase's work. An answered question makes that a
+        # move the door refuses when the work is finally done — the deadlock
+        # arriving a phase late (D-017).
+        answered = _reload_already_answered(fdir, ref, question)
+        if answered is not None:
+            return _note_reload_answered(step, token, answered, reload)
         step["instructions"] = step.get("instructions", "") + (
             f" A relaunch is owed before the {token} crossing: "
             f"{len(reload.get('relevant') or [])} relevant file(s) changed since the "

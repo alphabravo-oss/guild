@@ -3250,3 +3250,102 @@ def test_a_run_whose_target_is_not_foundry_never_parks_a_relaunch(run_env):
     (plugin / ".claude-plugin/plugin.json").write_text(json.dumps({"name": "not-foundry"}))
     _f4_ready_for_done(fdir, self_target=True, server_commit=loaded)
     assert _compute_next_action(project_root)["action"] == "transition_to_done"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+def test_a_reload_crossing_answered_without_a_relaunch_still_gets_a_move(run_env):
+    """should-not-stop AC-009 / FR-005 (D-017): an answered crossing crosses.
+
+    The half of D-009 its own fix did not reach. `_answered_item_by_ref` is
+    consumed at one call site, `_casting_routes`, so only CASTING refs were
+    released by an answer; `_guard_crossing` resolved through
+    `_open_item_by_ref`, which an answered item has left. So a crossing parked
+    for a relaunch and answered non-halt WITHOUT relaunching was re-derived
+    from facts the answer does not change — and once the door refused that
+    repeat as `PARK_ITEM_LOOP`, the router's only instruction for the crossing
+    became the one call that can never succeed, and the run could not cross.
+
+    The three shipped reload tests all answer only after a commit plus a
+    `server_commit` update has made `owed` false. That is the intended
+    lifecycle, not the whole reachable set, which is why none of them saw this.
+    """
+    project_root, fdir = run_env
+    plugin, loaded = _live_target(project_root)
+    _f4_ready_for_done(fdir, self_target=True, server_commit=loaded)
+
+    (plugin / _ROUTER_PATH).write_text("ROUTE = 2\n")
+    parked = _compute_next_action(project_root)
+    assert parked["action"] == "park_item", parked
+    item = _park(
+        project_root, "crossing:done",
+        category=vocab.PARK_CATEGORY_LIVE_PLUGIN_RELOAD,
+        question=parked["details"]["question"],
+    )
+    assert _compute_next_action(project_root)["action"] == "ask_human"
+
+    # The human answers non-halt and does NOT relaunch, so `owed` stays true.
+    _answer(project_root, item, "Ship it as it stands; I am not relaunching now.")
+
+    crossed = _compute_next_action(project_root)
+    assert crossed["action"] == "transition_to_done", crossed
+    assert crossed["details"]["reload"]["owed"] is True, crossed
+    assert crossed["details"]["reload_answered"] == item, crossed
+    assert "answered it without relaunching" in crossed["instructions"]
+
+    # The step the router used to name here is the one the door refuses. Both
+    # halves matter: the refusal is why naming it leaves NO move, and the
+    # router declining to name it is what this fix is.
+    refused = _park_door.foundry_park(
+        action="park", item_ref="crossing:done",
+        category=vocab.PARK_CATEGORY_LIVE_PLUGIN_RELOAD,
+        question=parked["details"]["question"], project_root=project_root,
+    )
+    assert refused["phase"] == _park_door.PARK_ITEM_LOOP, refused
+
+    # A change the human was never asked about asks a NEW question, so it
+    # parks again: the release is scoped to the question that was answered,
+    # never to the ref, or a later change would cross unasked.
+    (plugin / _GATES_PATH).write_text("GATE = 2\n")
+    again = _compute_next_action(project_root)
+    assert again["action"] == "park_item", again
+    assert again["details"]["question"] != parked["details"]["question"]
+    assert _GATES_PATH in again["details"]["question"], again
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+def test_a_work_phase_exit_never_instructs_a_park_the_door_already_refuses(run_env):
+    """should-not-stop AC-009 / FR-005 (D-017), the ADJACENT path: `_guard_exit`.
+
+    TEMPER and NYQUIST reach their exit crossing through `_guard_exit`, which
+    never parks: it rides the work step with an instruction the lead acts on
+    when the phase's work is done. On a question already answered that
+    instruction is the same refused call, arriving a phase later — so the
+    release belongs on both guards, not only on the one the defect was driven
+    through.
+    """
+    project_root, fdir = run_env
+    plugin, loaded = _live_target(project_root)
+    _write_state(
+        fdir, phase="F5", cycle=1, temper=True,
+        self_target=True, server_commit=loaded,
+    )
+
+    (plugin / _ROUTER_PATH).write_text("ROUTE = 2\n")
+    owed = _compute_next_action(project_root)
+    assert owed["action"] == "run_temper", owed
+    assert "do NOT call its Foundry-Gate or Foundry-Phase" in owed["instructions"]
+
+    item = _park(
+        project_root, "crossing:done",
+        category=vocab.PARK_CATEGORY_LIVE_PLUGIN_RELOAD,
+        question=owed["details"]["reload_question"],
+    )
+    assert _compute_next_action(project_root)["action"] == "ask_human"
+    _answer(project_root, item, "Finish TEMPER on this build; no relaunch.")
+
+    released = _compute_next_action(project_root)
+    assert released["action"] == "run_temper", released
+    assert released["details"]["reload"]["owed"] is True, released
+    assert released["details"]["reload_answered"] == item, released
+    assert "do NOT call its Foundry-Gate or Foundry-Phase" not in released["instructions"]
+    assert "Foundry-Phase(phase='done')" in released["instructions"]
