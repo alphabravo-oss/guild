@@ -93,9 +93,50 @@ def _one_screen_line(text: str) -> str:
     `_fmt_foundry_next_action` concatenates the pre-rendered status box and the
     imperative `instructions`, and both are legitimately many lines. A block
     that must keep its lines is passed as one element PER LINE, never as one
-    element carrying them.
+    element carrying them — which is what `_screen_lines` below does, so the
+    exception is spelled AS the rule rather than excepted from it.
     """
     return " ".join(text.splitlines())
+
+
+#: `_one_screen_line` published for `orchestration/guidance.py`, which composes
+#: the status banner this module then renders (D-032).
+#:
+#: Same reason the eight colour codes below are published: that banner is built
+#: there, joined there, and reaches the screen through `_fmt_foundry_next_action`
+#: here, so the two modules have to keep ONE rule about what an element may
+#: contain. A second implementation over there is how the palette and the phase
+#: ladder each came to have two declarations (D-014, D-015).
+one_screen_line = _one_screen_line
+
+
+def _screen_lines(block: object) -> list[str]:
+    """A legitimately multi-line BLOCK as one element PER SCREEN LINE (D-032).
+
+    should-not-stop FR-032 — THE DECLARED EXCEPTION, GIVEN A BODY.
+
+    Two formatters concatenate a block that must KEEP its lines — the
+    pre-rendered status box and the imperative `instructions` — with fields that
+    must not add any. `_one_screen_line` is wrong for the block (it would
+    collapse the whole status display onto one line) and right for everything
+    beside it, so the block is turned into elements the joiner's rule can hold
+    rather than excepted from that rule.
+
+    SPLIT ON `"\\n"`, THEN FLATTEN EACH PIECE, and both halves are load-bearing:
+
+    - `.splitlines()` alone would be backwards here. It honours ELEVEN
+      separators, so a `\\r` or `\\u2028` sitting inside the block would be
+      PROMOTED to a real screen line by the very call meant to count them.
+    - `.split("\\n")` alone preserves the block's legitimate structure and
+      leaves an exotic separator inside an element, where it is no longer one
+      screen line.
+
+    Doing both keeps the legitimate newlines as elements and removes every other
+    separator from within them. For a block that carries none — every block this
+    server composes today — the result is byte-identical to the string it was
+    handed, which is why this moves no existing rendering.
+    """
+    return [_one_screen_line(line) for line in str(block).split("\n")]
 
 
 def _short_path(p: str) -> str:
@@ -419,10 +460,24 @@ def _fmt_foundry_init(r: dict) -> str:
         return _foundry_display(f"F O U N D R Y  {_BRED}Init refused{_RESET}", lines)
 
     if "display" in r:
-        pre_rendered = r["display"]
-        if build:
-            return pre_rendered + "\n" + "\n".join(build)
-        return pre_rendered
+        # D-034 — THE FOURTH JOIN, AND THE FOUR FIELDS THAT REACHED IT RAW.
+        #
+        # `foundry_init`'s success return carries `**version_fields` AND
+        # `display` in ONE dict, so this arm is the success path and it renders
+        # the four executing-build facts on every successful init. It carried
+        # its own `"\n".join`, reaching neither `_foundry_display` nor
+        # `_one_screen_line` — the two joins b6ca861's post-condition did not
+        # cover, because that fix enumerated the formatters that reach a joiner
+        # and these two ARE joiners.
+        #
+        # Driven at `format_result_blocks`, control and drive differing in ONE
+        # field, ANSI stripped: 24 -> 25 lines on each of `server_version`,
+        # `plugin_version`, `server_root` and `server_commit`. The covering test
+        # asserted four substrings, all of which stay true while the render
+        # grows a line, which is why it stayed green across the exposure.
+        parts = _screen_lines(r["display"])
+        parts.extend(_one_screen_line(line) for line in build)
+        return "\n".join(parts)
     lines = [
         f"  {_BWHITE}Dir:{_RESET}    {_short_path(r.get('foundry_dir', '?'))}",
         f"  {_BWHITE}Name:{_RESET}   {r.get('run_name', '?')}",
@@ -1052,12 +1107,32 @@ def _fmt_foundry_next_action(r: dict) -> str:
     pre_rendered = r.get("display")
     facts = _fmt_foundry_next_lines(r)
     if pre_rendered:
-        block = pre_rendered
-        if facts:
-            block = block + "\n" + "\n".join(facts)
+        # D-032 — THE ARM EVERY LIVE CALL TAKES, AND THE ONE THE RULE MISSED.
+        #
+        # `guidance.py#foundry_next_action` sets `display` UNCONDITIONALLY, so
+        # this arm answers every Foundry-Next of a live run — the most-called
+        # tool the server has — and it built its output by raw concatenation,
+        # reaching neither a joiner nor `_one_screen_line`. b6ca861 put the
+        # invariant at the three joiners and at the banner label and claimed
+        # every formatter reached one of them; these two sites are themselves
+        # joins, so the claim was false here and the fix could not see it.
+        #
+        # THE OTHER ARM IS NOT DEAD, and it matters for what this is pinned by:
+        # `_format_status_display` returns "" when there is no run directory, so
+        # the else-arm below is the NO-ACTIVE-RUN response (`action: "init"`).
+        # A test that omits `display` therefore drives a reachable path — just
+        # not this one, which is the whole of D-033.
+        #
+        # Driven at `format_result_blocks`: a team name carrying a newline took
+        # the render 5 -> 6 lines and put `Defects: 0 open  999 fixed` at column
+        # 0, spelling a row of the very block it was rendered beside.
+        parts = _screen_lines(pre_rendered)
+        parts.extend(_one_screen_line(line) for line in facts)
         if instructions:
-            return f"{block}\n\n{instructions}"
-        return block
+            # The blank line the concatenation used to spell as "\n\n".
+            parts.append("")
+            parts.extend(_screen_lines(instructions))
+        return "\n".join(parts)
     return _foundry_display(f"F O U N D R Y  {r.get('phase', '?')}", [
         f"  {_BWHITE}Action:{_RESET}  {r.get('action', '?')}",
         # D-031 — THE DECLARED EXCEPTION, SPELLED AS THE RULE REQUIRES.
@@ -1066,7 +1141,7 @@ def _fmt_foundry_next_action(r: dict) -> str:
         # element PER LINE rather than as one element carrying them — which is
         # byte-identical to the single element this replaces, and leaves the
         # invariant true instead of excepted.
-        *(f"  {instructions}".splitlines() or [""]),
+        *_screen_lines(f"  {instructions}"),
     ] + facts)
 
 

@@ -89,6 +89,7 @@ from foundry_mcp.tools.display import (
     RESET,
     foundry_hammer,
     one_line,
+    one_screen_line,
 )
 from foundry_mcp.tools.foundry_state import (
     current_cycle,
@@ -1793,7 +1794,14 @@ def _format_status_display(project_root: str) -> str:
     header_colour = BRED if halted_display else BCYAN
     run_name = fdir.name
 
-    lines = [foundry_hammer(f"F O U N D R Y  {header_colour}{header_label}{RESET}  Cycle: {cycle}  {elapsed}")]
+    # D-032 — THE BANNER IS FIVE LINES AND IS PASSED AS FIVE ELEMENTS.
+    # Every other element of `lines` is one screen line, and the join below
+    # enforces that. The pixel-art is the one block that legitimately carries
+    # its own newlines, so it is spread here rather than excepted there — the
+    # same shape `display._fmt_foundry_next_action` uses for an imperative.
+    lines = [*foundry_hammer(
+        f"F O U N D R Y  {header_colour}{header_label}{RESET}  Cycle: {cycle}  {elapsed}"
+    ).split("\n")]
 
     # Phase list
     for pid, pname in phases:
@@ -1890,14 +1898,33 @@ def _format_status_display(project_root: str) -> str:
     # Teams
     teams = _check_active_teams(project_root)
     if teams["active"]:
-        team_str = ", ".join(teams["teams"])
+        # D-032 — FLATTENED BEFORE IT IS MEASURED, which is what makes the
+        # truncation honest and is why a 40-character clip was the MASK here
+        # rather than the guard. `len()` over raw text measures content the line
+        # never shows, so a LONG team name was ellipsised before its embedded
+        # newline was ever reached while a SHORT one passed through intact and
+        # forged a screen line. The same mask `_clipped` was written against.
+        team_str = one_line(", ".join(teams["teams"]))
         if len(team_str) > 40:
             team_str = team_str[:37] + "..."
         lines.append(f"  {BWHITE}Teams:{RESET}    {BCYAN}{team_str}{RESET}")
 
     lines.append(FOUNDRY_SEP)
 
-    return "\n".join(lines)
+    # D-032 — THE POST-CONDITION AT THIS MODULE'S OWN JOIN.
+    #
+    # This is where a LIST becomes LINES, so it is where "one element is one
+    # screen line" is guaranteed for every field this banner renders — the ones
+    # above and the ones nobody has added yet. The alternative, flattening at
+    # each interpolation, is what the same class has now been filed against for
+    # five cycles: a rule kept by remembering to call something is only ever as
+    # good as the next author's memory.
+    #
+    # IT MATTERS HERE MORE THAN ANYWHERE, because this string is handed to
+    # `display._fmt_foundry_next_action` as an already-rendered block. Nothing
+    # downstream can tell a line this banner meant from a line a field forged,
+    # so if the two are not separated here they are not separable at all.
+    return "\n".join(one_screen_line(line) for line in lines)
 
 
 
@@ -2712,7 +2739,15 @@ def _casting_routes(
             stalled = stalled_status is not None and status == stalled_status
             total = failed + (1 if stalled else 0)
             if total >= SAME_MODEL_ATTEMPTS:
-                model = route["model"] or "the default model"
+                # D-032, same channel as the cleanup_teams team name below.
+                # `model` is carried from the spawn record rather than from a
+                # closed set, and it reaches an UNFENCED imperative. Closed by
+                # enumeration and inspection, NOT by a drive: reaching this arm
+                # needs a dispatched casting with a stalled agent and an
+                # exhausted attempt count, and I judged that fixture not worth
+                # building for a field this far from a human's keyboard. Named
+                # in the completion report as exactly that.
+                model = _one_line(route["model"]) or "the default model"
                 route.update(
                     status=CASTING_PARK,
                     category=PARK_CATEGORY_ENV_BROKEN,
@@ -3107,7 +3142,24 @@ def _cleanup_teams_step(phase: str, teams: dict, why: str) -> dict:
         "phase": phase,
         "action": "cleanup_teams",
         "instructions": (
-            f"Active teams: {', '.join(teams.get('teams') or [])} — {why}. Send 'All "
+            # D-032 — THE THIRD CHANNEL, FOUND BY DRIVING THE REAL DOOR.
+            #
+            # `display` is closed at this module's own join and the per-fact
+            # lines at `_fmt_foundry_next_lines`, and NEITHER closes this one.
+            # An imperative is legitimately many lines, so `display._screen_lines`
+            # splits it per line by design — and a newline inside a team name
+            # therefore becomes an element indistinguishable from a line this
+            # text meant to write. No rule stated in display.py can tell the two
+            # apart, because by the time it sees them the field is gone.
+            #
+            # Driven at `format_result_blocks` through `foundry_next_action`,
+            # control and drive differing in ONE team name: 87 -> 88 lines, with
+            # the forged text spelling a `Defects:` row of the status block
+            # rendered directly above it. Flattened HERE, which is the last rung
+            # at which the field is still a field.
+            f"Active teams: "
+            f"{', '.join(_one_line(name) for name in teams.get('teams') or [])} — "
+            f"{_one_line(why)}. Send 'All "
             "work complete, stop working.' to any teammate still running, in ONE "
             "parallel SendMessage batch, and do NOT wait for shutdown_response, "
             "shutdown_ack, idle confirmations, or any teammate reply: idle / "
