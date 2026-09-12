@@ -39,6 +39,7 @@ from foundry_mcp.schemas.vocab import (
     PARK_ACTION_PARK,
     PARK_ACTIONS,
     PARK_CATEGORIES,
+    PARK_CATEGORY_UNKNOWN_DEADLOCK,
     PARK_TOOL_NAME,
     PARKED_AWAITING_HUMAN_KEY,
     PARKED_FIELD_ANSWER,
@@ -87,6 +88,13 @@ PARK_ITEM_REF_INVALID = "PARK_ITEM_REF_INVALID"
 
 #: Named refusal: an unanswered parked item already holds this `item_ref`.
 PARK_ITEM_ALREADY_PARKED = "PARK_ITEM_ALREADY_PARKED"
+
+#: Named refusal: an ANSWERED parked item already holds this `item_ref` with the
+#: same category and the same question, so parking it again records the same
+#: question twice rather than a new one. `PARK_ITEM_ALREADY_PARKED`'s
+#: counterpart: that rung keeps ONE OPEN question per item, this one keeps a
+#: question the human has already answered from being asked a second time.
+PARK_ITEM_LOOP = "PARK_ITEM_LOOP"
 
 #: Named refusal: the run is HALTED, and nothing leaves HALTED.
 PARK_RUN_HALTED = "PARK_RUN_HALTED"
@@ -223,6 +231,37 @@ def _park_item(fdir: Path, item_ref: object, category: object, question: object)
                 f"has changed, record its answer with {PARK_TOOL_NAME}"
                 f"(action='{PARK_ACTION_ANSWER}', ...) and park the new one.",
                 PARK_ITEM_ALREADY_PARKED,
+            )
+        looped = [
+            prior.get(PARKED_FIELD_ID) for prior in items
+            if prior.get(PARKED_FIELD_ITEM_REF) == ref
+            and prior.get(PARKED_FIELD_CATEGORY) == category
+            and prior.get(PARKED_FIELD_QUESTION) == body
+            and prior.get(PARKED_FIELD_ANSWERED_AT)
+        ]
+        if looped:
+            # The ANSWERED counterpart of the rung above, and the door's own
+            # backstop against the loop D-009 named: the router re-derived a
+            # park from inputs an answer does not change, the rung above holds
+            # only a ref whose item is still OPEN, so the identical question
+            # landed as a fresh item and the next ask put it to the human
+            # again — for as long as they kept answering it. The same ref, the
+            # same category AND the same question is that loop by definition.
+            # All three together, never the ref alone: a casting legitimately
+            # parks twice in a run for different reasons (`env_broken` during
+            # CAST, `spec_wrong` later), so a genuinely new question differs in
+            # one of the three and still parks.
+            return _named_refusal(
+                f"{ref} was already parked as {looped[-1]} with this category "
+                "and this question, and the human answered it. Parking it again "
+                "records the same question twice rather than a new one, and the "
+                "answer already on file is the answer.",
+                "Act on the answer that item carries. If the item genuinely "
+                "cannot move for a DIFFERENT reason, park it under that "
+                "category, or with the question that reason raises — one of the "
+                "two has to differ. If nothing can move and no rule says why, "
+                f"that reason is {PARK_CATEGORY_UNKNOWN_DEADLOCK!r}.",
+                PARK_ITEM_LOOP,
             )
         item = {
             PARKED_FIELD_ID: _next_parked_id(items),

@@ -38,6 +38,7 @@ from foundry_mcp.tools.orchestration.park import (
     PARK_HALT_INDICATOR_INVALID,
     PARK_HALT_NOT_ASKED,
     PARK_ITEM_ALREADY_PARKED,
+    PARK_ITEM_LOOP,
     PARK_ITEM_REF_INVALID,
     PARK_PHASE_NOT_LIVE,
     PARK_QUESTION_EMPTY,
@@ -306,7 +307,50 @@ def test_one_open_question_per_item(run_env):
     assert "P-001" in again["error"], again
 
     _answer(project_root, "P-001", "Rule A wins.")
-    assert _park_one(project_root)["parked"]["id"] == "P-002"
+    # Once answered, the ref parks again — on a question that is not the one
+    # just answered. The identical question is a loop, and the rung below owns
+    # it.
+    assert _park_one(
+        project_root, question="Rule A needs a migration; write one now?",
+    )["parked"]["id"] == "P-002"
+
+
+def test_an_answered_question_parked_again_unchanged_is_refused_as_a_loop(run_env):
+    """The door's own backstop for the loop D-009 named (A-008, A-016).
+
+    The rung above holds only a ref whose item is still OPEN, so the identical
+    question on a ref the human had ALREADY answered landed as a fresh item and
+    the next ask put it to them a second time. The router half no longer
+    re-derives such a park — `guidance.py#_casting_routes` releases the answered
+    ref — which leaves this door the last thing between a caller and the same
+    question twice, and it carried no check of its own.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    question = _park_one(project_root)["parked"]["question"]
+    _answer(project_root, "P-001", "Rule A wins.")
+
+    looped = _park_one(project_root)
+
+    assert looped["phase"] == PARK_ITEM_LOOP, looped
+    assert "P-001" in looped["error"], looped
+    # Refused is refused: nothing was appended.
+    assert [i["id"] for i in read_parked(fdir)["items"]] == ["P-001"]
+    # ...and the comparison is on the question as STORED, so whitespace around
+    # the same question is the same question.
+    assert _park_one(project_root, question=f"  {question}  ")["phase"] == PARK_ITEM_LOOP
+
+    # All three together, never the ref alone. A genuinely different question
+    # about the same casting still parks...
+    fresh = _park_one(project_root, question="Does rule A need a migration?")
+    assert fresh["parked"]["id"] == "P-002", fresh
+
+    # ...and so does the same question raised for a different reason, which is
+    # the double-park a run legitimately makes: `spec_wrong` during CAST, then
+    # `env_broken` later.
+    _answer(project_root, "P-002", "No migration needed.")
+    recategorised = _park_one(project_root, category="env_broken")
+    assert recategorised["parked"]["id"] == "P-003", recategorised
 
 
 @pytest.mark.parametrize("parked_id", ["P-009", "", "   ", None])
