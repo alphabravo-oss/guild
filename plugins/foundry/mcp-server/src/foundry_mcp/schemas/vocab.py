@@ -1410,9 +1410,11 @@ PARK_ACTION_PARK, PARK_ACTION_ANSWER = PARK_ACTIONS
 #
 # `awaiting_human` is the ONE thing that lets the Stop hook allow a mid-build
 # turn-end. The router sets it when it emits the ask step because every
-# remaining unit of work is parked; recording ANY answer clears it, and the
-# next Foundry-Next decides afresh. A parked list that is merely non-empty
-# never lets the turn end.
+# remaining unit of work is parked; recording ANY answer clears it, and so does
+# PARKING A NEW ITEM — an item the standing ask does not name, which would
+# otherwise let the turn end on a question nobody was asked — and the next
+# Foundry-Next decides afresh. A parked list that is merely non-empty never
+# lets the turn end.
 #
 # `answer_is_halt` is true only when the lead recorded the answer with the
 # explicit halt indicator. It is never inferred from the answer's words.

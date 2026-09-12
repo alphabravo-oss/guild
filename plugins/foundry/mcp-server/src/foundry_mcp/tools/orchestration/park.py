@@ -165,7 +165,11 @@ def foundry_park(
 
 
 def _park_item(fdir: Path, item_ref: object, category: object, question: object) -> dict:
-    """The park action: one appended item, or one named refusal and no write."""
+    """The park action: one appended item, or one named refusal and no write.
+
+    An accepted park also tears down any `awaiting_human` marker, in the same
+    transaction as the append — see the comment at the append itself.
+    """
     # The input-shape rungs come first and read nothing — the `_open_concern`
     # order: a call that can never succeed does not earn a state read, and the
     # cheaper, more local refusal is the one the caller should see.
@@ -275,20 +279,48 @@ def _park_item(fdir: Path, item_ref: object, category: object, question: object)
             PARKED_FIELD_ANSWER_IS_HALT: False,
         }
         items.append(item)
+        # THE ASK THIS PARK INVALIDATES COMES DOWN WITH IT (D-028). The marker
+        # records an ask Foundry-Next put to the human naming the ids open AT
+        # THAT MOMENT, and it is the ONE thing that lets the Stop hook end a
+        # mid-build turn. The item just appended is a question that ask does not
+        # name, and the hook's reader keys on "an object naming at least one
+        # id": it cannot tell a complete ask from one this park has outgrown. So
+        # a marker left standing here ends the turn with this item open and
+        # named by no ask — nobody waiting on a question nobody was asked.
+        #
+        # `guidance.py#_sync_awaiting_human` tears a stale marker down too, but
+        # only on the NEXT router call, which is one call too late for the turn
+        # that ends first. Torn down HERE, inside the transaction that appends,
+        # so the two land together: a separate clear afterwards would leave the
+        # same window, only narrower.
+        #
+        # ON THE SUCCESS PATH ONLY. Every refusal rung above returns before the
+        # append, so a REFUSED park appends no unnamed question and leaves a
+        # standing ask exactly as it was.
+        asked = section[PARKED_AWAITING_HUMAN_KEY] is not None
+        section[PARKED_AWAITING_HUMAN_KEY] = None
         doc[PARKED_STATE_KEY] = section
         doc["updated_at"] = now_iso()
     open_ids = [i[PARKED_FIELD_ID] for i in items if not i.get(PARKED_FIELD_ANSWERED_AT)]
+    message = (
+        f"Parked {item[PARKED_FIELD_ID]} ({category}) on {ref}. Only {ref} "
+        "waits on the human: keep every other casting, defect and stream "
+        "moving, and call Foundry-Next — it asks the human, every parked "
+        "question in one batch, only when nothing else can move."
+    )
+    if asked:
+        message += (
+            f" The ask outstanding when {item[PARKED_FIELD_ID]} was parked did "
+            "not name it, so that ask has been cleared and your turn no longer "
+            "ends here: call Foundry-Next, and it asks again over every open "
+            "question, this one included."
+        )
     return {
         "ok": True,
         "action": PARK_ACTION_PARK,
         "parked": item,
         "open_items": open_ids,
-        "message": (
-            f"Parked {item[PARKED_FIELD_ID]} ({category}) on {ref}. Only {ref} "
-            "waits on the human: keep every other casting, defect and stream "
-            "moving, and call Foundry-Next — it asks the human, every parked "
-            "question in one batch, only when nothing else can move."
-        ),
+        "message": message,
     }
 
 

@@ -23,7 +23,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -82,6 +85,40 @@ def _answer(project_root, parked_id: object, answer: object, halt: object = None
     return foundry_park(
         action="answer", parked_id=parked_id, answer=answer, halt=halt,
         project_root=project_root,
+    )
+
+
+#: tests/orchestration -> tests -> mcp-server -> plugins/foundry.
+STOP_HOOK = Path(__file__).resolve().parents[3] / "hooks" / "stop-continue.py"
+
+
+def _turn_end(project_root) -> subprocess.CompletedProcess:
+    """One turn-end attempt: the SHIPPED Stop hook, the Stop event on stdin.
+
+    The hook as Claude Code runs it, not a unit call on a stub — the parked
+    state only matters through the decision this script takes from it.
+    CLAUDE_PROJECT_DIR is scrubbed, because the suite often runs inside a Claude
+    Code session whose own project holds a live run, and the hook falls back to
+    that variable: an unscrubbed attempt could be judged against the wrong run.
+    """
+    event = {
+        "session_id": "park-door",
+        "cwd": str(project_root),
+        "hook_event_name": "Stop",
+        "stop_hook_active": False,
+        "background_tasks": [],
+    }
+    return subprocess.run(
+        [str(STOP_HOOK)],
+        input=json.dumps(event),
+        cwd=str(project_root),
+        env={k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
     )
 
 
@@ -445,6 +482,84 @@ def test_the_ask_marker_names_only_open_items_and_is_never_empty(run_env):
     assert set_awaiting_human(fdir, []) is None
     assert set_awaiting_human(fdir, ["P-002"]) is None
     assert read_parked(fdir)["awaiting_human"] is None
+
+
+def test_a_park_after_an_ask_clears_it_and_the_turn_stops_ending(run_env):
+    """should-not-stop D-028 — an ask never outlives the ask it recorded.
+
+    THE WINDOW: a turn that parks AFTER an ask and then ends without calling
+    Foundry-Next again. The marker names the ids that were open when the ask was
+    put to the human; a park appends one it does not name. The hook's reader
+    answers True for an object naming at least one id, so it could not tell a
+    complete ask from an outgrown one and let the turn end with the new item
+    open and named by no ask. `guidance.py#_sync_awaiting_human` clears a stale
+    marker on the NEXT router call, which is one call too late for a turn that
+    ends first.
+
+    Driven as it was found: the SHIPPED hook in a subprocess against a real
+    state.json, never a unit call on a stub.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=2)
+    _park_one(project_root)
+    assert set_awaiting_human(fdir, ["P-001"]) is not None
+    # The sanctioned stop, before the park: every open item is named by the ask.
+    assert _turn_end(project_root).stdout == "", "the ask should let the turn end"
+
+    second = _park_one(
+        project_root, item_ref="casting:4",
+        question="Does casting 4 wait on that same rule?",
+    )
+
+    assert second["parked"]["id"] == "P-002", second
+    parked = read_parked(fdir)
+    assert [i["id"] for i in parked["items"]] == ["P-001", "P-002"], parked
+    # The exact shape this was found in — open ['P-001','P-002'] with the ask
+    # naming only ['P-001'] — is the shape no park can leave behind.
+    assert parked[vocab.PARKED_AWAITING_HUMAN_KEY] is None, parked
+    assert "Foundry-Next" in second["message"], second["message"]
+
+    blocked = _turn_end(project_root)
+    assert blocked.returncode == 0, blocked.stderr
+    assert blocked.stdout.strip(), "the turn ended with P-002 named by no ask"
+    assert json.loads(blocked.stdout)["decision"] == "block", blocked.stdout
+
+    # And the router asks again over BOTH, which is what re-opens the stop.
+    assert set_awaiting_human(fdir, ["P-001", "P-002"]) is not None
+    assert _turn_end(project_root).stdout == ""
+
+
+def test_a_refused_park_leaves_a_standing_ask_exactly_as_it_was(run_env):
+    """The ADJACENT path through `_park_item`: its refusal rungs (D-028).
+
+    A refused park appends nothing, so it creates no question the ask fails to
+    name, and the ask the human is already answering must survive untouched.
+    Both loop rungs return BEFORE the append, which is what keeps the teardown
+    on the success path from ever reaching them — and the human keeps the stop
+    they were asked for.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _park_one(project_root)
+    _answer(project_root, "P-001", "Rule A wins.")
+    # The ask stands on a DIFFERENT ref, so casting:3 carries only an ANSWERED
+    # item and the loop rung below is reachable at all: the open-item rung is
+    # checked first, and an open item on the same ref would shadow it.
+    _park_one(project_root, item_ref="casting:4",
+              question="Does casting 4 wait on that same rule?")
+    marker = set_awaiting_human(fdir, ["P-002"])
+    assert marker is not None
+    before = (fdir / "state.json").read_text(encoding="utf-8")
+
+    # The open-item rung, then the answered-loop rung: each refused by name.
+    already = _park_one(project_root, item_ref="casting:4",
+                        question="A third question entirely?")
+    assert already["phase"] == PARK_ITEM_ALREADY_PARKED, already
+    assert _park_one(project_root)["phase"] == PARK_ITEM_LOOP
+
+    assert (fdir / "state.json").read_text(encoding="utf-8") == before
+    assert read_parked(fdir)[vocab.PARKED_AWAITING_HUMAN_KEY] == marker
+    assert _turn_end(project_root).stdout == "", "a refused park took the ask down"
 
 
 # --------------------------------------------------------------------------- #
