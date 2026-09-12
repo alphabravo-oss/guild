@@ -2789,14 +2789,59 @@ def _casting_routes(
 def _park_step(
     phase: str, item_ref: str, category: str, question: str, reason: str, **extra
 ) -> dict:
-    """The step that names ONE park call. The router never writes `parked`."""
+    """The step that names ONE park call. The router never writes `parked`.
+
+    should-not-stop FR-032 (D-036) — FLATTENED POSITIONALLY, NOT PER FIELD.
+
+    Every field below reaches an IMPERATIVE, and an imperative is legitimately
+    many lines: `display.py#_fmt_foundry_next_action` splits `instructions` on
+    `"\\n"` and renders one screen line per piece. So a newline stored in any
+    field this frame interpolates stops being a value and becomes a ROW, at
+    whatever column its own text begins — and the forged row can spell a row of
+    the status block rendered directly above it.
+
+    THE CHANNEL WAS MEASURED, not argued. `item_ref` is
+    `park_item_ref(PARK_ITEM_CASTING, cid)`, built from the MANIFEST casting id,
+    which `_compute_next_action` reads as `str(c["id"])` with no charset
+    constraint anywhere in the server: a grep over `src/` for a casting-id
+    charset constant or compiled pattern returns no rows, and
+    `foundry_validate.py` reads the id as `c.get("id", "?")`.
+    Driven at the real door — `foundry_next_action` ->
+    `format_result_blocks`, ANSI stripped, control and drive differing in ONE
+    field — a casting id of `7` renders 100 screen lines and `7\\n  Defects: 0
+    open  999 fixed` renders 102. Delta +2, one per interpolation.
+
+    ONLY `\\n` AND CRLF FORGE, and the reason is worth stating because it is the
+    same per-line pass that protects a legitimate imperative: `_screen_lines`
+    splits on `"\\n"` and `_one_screen_line` then removes the other nine
+    separators from WITHIN each element. All eleven were measured; the nine are
+    delta 0.
+
+    WHY POSITIONAL AND NOT THE ONE FIELD THE FILING NAMED. `item_ref` is not the
+    only agent-authored text on this frame. `_resolve_pending` composes its park
+    `reason` as "it is held on casting {up}, which is parked", where `up` is
+    another manifest casting id — so a per-field fix on `item_ref` would close
+    the channel that was measured and leave its sibling open. `category` is
+    closed vocabulary today and goes through anyway, for the reason `_one_line`'s
+    own binding note gives two frames down: the next field added to this header
+    is the next D-024, and the guard has to already be standing in front of it.
+
+    `details` KEEPS THE RAW VALUES. The instruction text is a frame a human
+    reads; `details` is what the park door consumes, and `details.item_ref` has
+    to stay byte-equal to the ref the router looks up and park.py stores. The
+    same split is already precedent at the env-broken arm above, where `model`
+    is flattened for the sentence and left alone in the record.
+    """
+    ref_line = _one_line(item_ref)
+    category_line = _one_line(category)
+    reason_line = _one_line(reason)
     return {
         "phase": phase,
         "action": "park_item",
         "instructions": (
-            f"Park {item_ref} ({category}): {reason}. Only that item waits on the "
+            f"Park {ref_line} ({category_line}): {reason_line}. Only that item waits on the "
             f"human. Call {PARK_TOOL_NAME}(action='{PARK_ACTION_PARK}', "
-            f"item_ref='{item_ref}', category='{category}', question=<details.question>) "
+            f"item_ref='{ref_line}', category='{category_line}', question=<details.question>) "
             "and keep every other casting, defect and stream moving; Foundry-Next asks "
             "the human only when nothing else can move."
         ),

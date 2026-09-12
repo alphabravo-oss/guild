@@ -4541,6 +4541,253 @@ def test_no_field_the_real_foundry_next_door_renders_can_add_a_screen_line(
         ], (label, forged)
 
 
+#: The `display.py` functions that call `_screen_lines`, and how many calls they
+#: make between them. NOT a list this test trusts: the enumeration below is
+#: derived from that module's own AST and held against these two values, so a
+#: call site added tomorrow fails the day it is written rather than joining the
+#: three that shipped unmeasured (D-037).
+_SCREEN_LINE_CALLERS = {"_fmt_foundry_init", "_fmt_foundry_next_action"}
+_SCREEN_LINE_CALL_SITES = 4
+
+
+def test_every_screen_lines_call_site_is_one_the_separator_drives_cover():
+    """should-not-stop FR-032 (D-037) — THE ENUMERATION, NOT A FOURTH FIXTURE.
+
+    THE CLASS, THREE TIMES. D-035 was `_one_screen_line`'s separator set
+    unmeasured; its remedy added the separator drive below, which pinned
+    `_foundry_display`, `_box` and `_mini_box`. But `_screen_lines` — the helper
+    that SAME commit introduced as the mechanism of the fix — was never added to
+    it, so the fix for the unmeasured-separator class shipped with a new
+    unmeasured-separator site, and six single-edit mutations of it survived the
+    full suite. A fourth site-specific fixture would close the third instance and
+    pre-authorise a fourth.
+
+    So this pins the SHAPE instead: whatever calls `_screen_lines` is named here,
+    and the test above drives every name. The idiom is this suite's own —
+    `test_every_action_the_router_emits_has_an_imperative` derives the router's
+    action names from `_compute_next_action`'s AST "so the tenth is caught the
+    day it is written" — and this is that, one module over.
+
+    THE INSTRUMENT IS GUARDED, because this run has twice been fooled by a query
+    that matched nothing and reported a clean sweep (an `Assign`-only walk missed
+    `_FORMATTERS`, which is an `AnnAssign`). A broken query here yields an empty
+    `callers`, and an empty `callers` fails the count assertion rather than
+    passing as "no violations found".
+    """
+    import ast as _ast
+    import inspect as _inspect
+
+    from foundry_mcp.tools import display as _display
+
+    tree = _ast.parse(_inspect.getsource(_display))
+    callers: dict[str, int] = {}
+    for node in tree.body:
+        if not isinstance(node, _ast.FunctionDef):
+            continue
+        for inner in _ast.walk(node):
+            if (
+                isinstance(inner, _ast.Call)
+                and isinstance(inner.func, _ast.Name)
+                and inner.func.id == "_screen_lines"
+            ):
+                callers[node.name] = callers.get(node.name, 0) + 1
+
+    assert sum(callers.values()) == _SCREEN_LINE_CALL_SITES, (
+        f"display.py makes {sum(callers.values())} `_screen_lines` calls, not "
+        f"{_SCREEN_LINE_CALL_SITES}: {callers}. A call site was added or removed. "
+        f"Extend the separator drive above to cover it, then update this count -- "
+        f"do not just move the number, or the new site ships unmeasured exactly "
+        f"as the three D-037 found did."
+    )
+    assert set(callers) == _SCREEN_LINE_CALLERS, (
+        f"`_screen_lines` is now called from {sorted(set(callers))}, not "
+        f"{sorted(_SCREEN_LINE_CALLERS)}. Every calling formatter needs a drive in "
+        f"test_no_separator_in_a_pre_rendered_block_survives_the_formatters_that_split_it."
+    )
+
+
+def test_no_separator_in_a_pre_rendered_block_survives_the_formatters_that_split_it():
+    """should-not-stop FR-032 (D-037) — THE BLOCK'S OWN SEPARATORS, AT BOTH DOORS.
+
+    NOTHING in the suite constructs a pre-rendered block containing any separator
+    other than `"\\n"` — that single gap is what all six surviving mutations of
+    `_screen_lines` shared. Both halves of the function are load-bearing and both
+    could be deleted green: `.splitlines()` alone PROMOTES an exotic separator to
+    a real screen line, and `.split("\\n")` alone leaves one sitting INSIDE an
+    element where it is no longer one line.
+
+    ASSERTED ON THE RENDERED BYTES, not on a line count, and the distinction is
+    the point. Dropping the per-piece flatten leaves `A\\rB` one line by count
+    while the raw `\\r` is still in the bytes a lead reads, so a count-only
+    assertion would not kill it. `_plain` strips ANSI and nothing else, so the
+    separator survives into what is compared here.
+
+    THE DISPLAY HALF, DELIBERATELY. `format_result_blocks` appends the whole
+    result dict as JSON, and that half MUST differ between control and drive
+    because their inputs differ — a byte comparison spanning it could never hold,
+    and it would say nothing about the rendering either way. `_screen_lines`
+    shapes the display half only, and `format_result` is pinned to exactly what
+    the formatter produced, so that is the surface this property lives on. The
+    line-count drives for D-036 and D-038 below stay at `format_result_blocks`,
+    the function `server.py` puts on the wire, where JSON escapes every separator
+    and so costs no lines.
+    """
+    from foundry_mcp.tools.display import format_result
+
+    def init(display):
+        return {"display": display, "run_name": "r",
+                "server_version": "4.11.0", "plugin_version": "4.11.0",
+                "server_root": "/repo/plugins/foundry",
+                "server_commit": "3f9c1a284d6b"}
+
+    def nxt(**over):
+        base = {"phase": "F1", "action": "build_castings",
+                "display": "BOX-1\nBOX-2", "instructions": "do the thing"}
+        base.update(over)
+        return base
+
+    def render(tool, result):
+        return _plain(format_result(tool, result))
+
+    # GUARD THE FIXTURE: a real newline in the block must genuinely cost a line
+    # here, or every assertion below compares two renders that never reached the
+    # arm under test and the whole test passes vacuously.
+    flat = render("Foundry-Init", init("A B")).split("\n")
+    split = render("Foundry-Init", init("A\nB")).split("\n")
+    assert len(split) == len(flat) + 1, (flat, split)
+
+    for label, sep in _LINE_BREAKS.items():
+        # A block's REAL newline keeps its two screen lines; every other
+        # separator is removed from within the one line it sits in.
+        canonical = "A\nB" if "\n" in sep else "A B"
+
+        drive = render("Foundry-Init", init(f"A{sep}B"))
+        assert drive == render("Foundry-Init", init(canonical)), (label, drive)
+
+        for arm in ("display", "instructions"):
+            drive = render("Foundry-Next", nxt(**{arm: f"A{sep}B"}))
+            assert drive == render("Foundry-Next", nxt(**{arm: canonical})), (
+                label, arm, drive
+            )
+
+        # The else-arm: no `display`, so the formatter draws the box itself and
+        # passes the imperative through `_screen_lines` there instead.
+        drive = render("Foundry-Next", nxt(display=None, instructions=f"A{sep}B"))
+        assert drive == render(
+            "Foundry-Next", nxt(display=None, instructions=canonical)
+        ), (label, drive)
+
+
+def _env_broken_park_render(project_root, fdir, cid, model="opus"):
+    """Drive the env-broken park arm AT THE REAL DOOR; return (action, lines).
+
+    FOUR same-model `cast` rows make `_failed_attempts` count three superseded
+    attempts, which crosses `SAME_MODEL_ATTEMPTS` with `stalled` False — so this
+    arm is reached with no liveness fixture and no monkeypatching at all.
+
+    `foundry_next_action` -> `format_result_blocks` is the path `server.py` puts
+    on the wire. A hand-built result dict would reach an arm production no longer
+    takes, which is the whole of D-033.
+    """
+    from foundry_mcp.tools.display import format_result_blocks
+
+    (fdir / "spawns.log").unlink(missing_ok=True)
+    _cast_state(fdir, [(cid, [])], entered=_ago(hours=10))
+    for hours in (9, 8, 7, 6):
+        _dispatched(fdir, cid, at=_ago(hours=hours), model=model)
+    action = _guidance.foundry_next_action(project_root)
+    return action, _plain(format_result_blocks("Foundry-Next", action)).split("\n")
+
+
+def test_no_manifest_casting_id_can_forge_a_row_of_the_park_imperative(run_env):
+    """should-not-stop FR-032 (D-036) — THE FOURTH CHANNEL, AT THE REAL DOOR.
+
+    `_park_step` interpolated `item_ref` RAW at two sites of one f-string, and
+    `item_ref` is `park_item_ref(PARK_ITEM_CASTING, cid)` — built from the
+    MANIFEST casting id, which the router reads as `str(c["id"])` with no charset
+    constraint anywhere in the server. Measured: a casting id of `7` rendered 100
+    screen lines and `7\\n  Defects: 0 open  999 fixed` rendered 102, one forged
+    row per interpolation, each spelling a row of the status block drawn directly
+    above it.
+
+    Only the two `\\n`-bearing separators forge, and the reason is the per-line
+    pass that PROTECTS a legitimately multi-line imperative: `_screen_lines`
+    splits on `"\\n"` and `_one_screen_line` then removes the other nine from
+    within each element. All eleven are driven here anyway, so the nine that are
+    delta 0 stay delta 0.
+    """
+    project_root, fdir = run_env
+
+    control_action, control = _env_broken_park_render(project_root, fdir, "7")
+    # GUARD THE FIXTURE: a drive that silently misses the park arm asserts
+    # nothing about the imperative it was written to measure.
+    assert control_action["action"] == "park_item", control_action
+    assert control_action["details"]["category"] == "env_broken", control_action
+
+    for label, sep in _LINE_BREAKS.items():
+        forged_action, forged = _env_broken_park_render(
+            project_root, fdir, f"7{sep}  Defects: 0 open  999 fixed"
+        )
+
+        assert forged_action["action"] == "park_item", (label, forged_action)
+        assert len(forged) == len(control), (
+            label, len(control), len(forged), forged
+        )
+        assert not [
+            line for line in forged if line.strip().startswith("Defects:")
+        ], (label, forged)
+
+
+def test_no_spawn_record_model_can_forge_a_row_of_the_env_broken_park(run_env):
+    """should-not-stop FR-032 (D-038) — THE CLAIM THAT WAS REASONED, NOW DRIVEN.
+
+    `route["model"]` is the one flatten 4d32ae7 disclosed as closed BY INSPECTION
+    rather than by a drive, because reaching the arm was judged to need a stalled
+    agent and an exhausted attempt count. It does not: the attempt-count route
+    crosses the limit on its own, so the fixture is four spawn rows.
+
+    THE SHIPPED CODE IS CORRECT HERE and this test passes without changing it —
+    that is the point. `model` is carried from the spawn record rather than from
+    a closed set, reaches `reason`, and `_park_step` renders `reason` into the
+    imperative; deleting the flatten left the whole suite green, so the
+    correctness rested on nothing. It rests on this now.
+    """
+    project_root, fdir = run_env
+
+    control_action, control = _env_broken_park_render(
+        project_root, fdir, "1", model="opus"
+    )
+    assert control_action["action"] == "park_item", control_action
+    assert control_action["details"]["category"] == "env_broken", control_action
+    # The channel is REACHED, not merely present: the model string is in the
+    # imperative this render draws.
+    assert "opus" in control_action["instructions"], control_action
+
+    for label, sep in _LINE_BREAKS.items():
+        forged_action, forged = _env_broken_park_render(
+            project_root, fdir, "1", model=f"opus{sep}  Defects: 0 open  999 fixed"
+        )
+
+        assert forged_action["action"] == "park_item", (label, forged_action)
+        assert len(forged) == len(control), (
+            label, len(control), len(forged), forged
+        )
+        assert not [
+            line for line in forged if line.strip().startswith("Defects:")
+        ], (label, forged)
+
+        # PINNED AT ITS OWN EXPRESSION, not merely somewhere along the channel.
+        # `_park_step` flattens POSITIONALLY on its way to the screen, so the
+        # two screen assertions above would stay green if `_casting_routes`
+        # stopped flattening `model` — they would be measuring the downstream
+        # guard rather than the claim D-038 names. `reason` and `question` reach
+        # `details` RAW, so these two fail the moment that flatten at the
+        # env-broken arm goes, which is the mutation this defect was filed for.
+        for field in ("reason", "question"):
+            value = forged_action["details"][field]
+            assert len(value.splitlines()) <= 1, (label, field, value)
+
+
 def test_the_ask_fence_is_derived_from_the_body_it_closes():
     """should-not-stop AC-008 / CT-005 (D-025) — WHICH TEXT THE DIGEST IS OF.
 
