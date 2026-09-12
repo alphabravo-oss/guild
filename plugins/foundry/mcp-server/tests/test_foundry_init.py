@@ -1270,3 +1270,170 @@ def test_a_legitimate_ticket_reaches_the_run_name_intact(
     assert "error" not in result, result
     assert result["run_name"] == expected, result["run_name"]
     assert (tmp_path / "foundry-archive" / expected).is_dir()
+
+
+# ---------------------------------------------------------------------------
+# D-043 — the SIBLING door: a RESUME name cannot author a path out of the
+# archive. C-014 above closed the GENERATED name; these close the typed one.
+# ---------------------------------------------------------------------------
+
+
+def _archive_run(root: Path, name: str) -> Path:
+    """A real run directory, the way a server older than ``_name_slug`` left one."""
+    d = root / "foundry-archive" / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "state.json").write_text('{"phase": "F1", "cycle": 0}', encoding="utf-8")
+    return d
+
+
+@pytest.mark.parametrize(
+    "resume",
+    ["../outside-run", "a/b", "a/../b", "..", "."],
+    ids=["traversal", "nested", "traversal-that-cancels", "dotdot", "dot"],
+)
+def test_a_resume_name_cannot_escape_the_archive_directory(tmp_path, resume):
+    """D-043 — THE NAME IS ADMITTED HERE TOO, AND IT WAS ADMITTED RAW.
+
+    ``_generate_run_name`` is one door into ``foundry-archive/<name>``; ``resume``
+    is the other, and it never reached ``_name_slug`` — the branch did
+    ``run_dir = archive / resume`` on the string as typed. Driven at the real
+    door at d49dcce against a root whose archive was EMPTY and whose SIBLING
+    ``outside-run/`` held a ``state.json``, ``foundry_init(resume='../outside-run')``
+    returned ``resumed=true``, reported ``foundry_dir`` as
+    ``<root>/foundry-archive/../outside-run``, stored that traversing string
+    through ``set_active_run`` VERBATIM so every later ``get_run_dir()`` resolved
+    outside the archive, and WROTE ``server_version``, ``plugin_version``,
+    ``server_root`` and ``server_commit`` into that outside file.
+
+    THE WRITE IS THE ASSERTION THAT MATTERS, so it is made on the BYTES of the
+    outside file rather than only on the returned dict: a refusal that had
+    already touched the file would be no refusal at all.
+
+    ``a/b`` and ``a/../b`` are parametrized because they separate the two
+    candidate remedies. A resolve-and-contain rung ACCEPTS both — each lands
+    inside the archive — yet neither is a run OF the archive: its directory is
+    not its name, so the ``{run}`` shell steps in ``commands/*.md`` and every git
+    pathspec built from it name something else.
+    """
+    from foundry_mcp.tools.foundry_state import get_active_run
+
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    (outside / "state.json").write_text('{"phase": "F1"}', encoding="utf-8")
+    before = (outside / "state.json").read_bytes()
+    (tmp_path / "foundry-archive").mkdir()
+    clear_active_run()
+
+    refusal = foundry_init(resume=resume, project_root=str(tmp_path))
+
+    assert "does not name a run directory" in refusal.get("error", ""), refusal
+    assert refusal.get("hint"), refusal
+    assert "resumed" not in refusal, refusal
+    assert (outside / "state.json").read_bytes() == before
+    assert get_active_run() is None
+
+
+def test_an_absolute_resume_name_cannot_replace_the_archive(tmp_path):
+    """``Path.__truediv__`` DISCARDS THE LEFT OPERAND when the right is absolute.
+
+    So ``archive / '/abs/run'`` is ``/abs/run`` and the archive stops bounding
+    anything: measured at the real door before the fix, an absolute resume name
+    returned ``resumed=true`` and wrote this server's provenance into a
+    directory the archive never contained. It is the same trap C-014 recorded
+    for the ticket half, reached through the other door.
+    """
+    from foundry_mcp.tools.foundry_state import get_active_run
+
+    outside = tmp_path / "elsewhere" / "abs-run"
+    outside.mkdir(parents=True)
+    (outside / "state.json").write_text('{"phase": "F1"}', encoding="utf-8")
+    before = (outside / "state.json").read_bytes()
+    (tmp_path / "foundry-archive").mkdir()
+    clear_active_run()
+
+    refusal = foundry_init(resume=str(outside), project_root=str(tmp_path))
+
+    assert "does not name a run directory" in refusal.get("error", ""), refusal
+    assert (outside / "state.json").read_bytes() == before
+    assert get_active_run() is None
+
+
+@pytest.mark.parametrize("resume", ["probe\x00NUL", "T" * 300], ids=["nul", "overlong"])
+def test_a_resume_name_the_filesystem_cannot_hold_is_refused_not_raised(
+    tmp_path, resume
+):
+    """A TOOL NEVER RAISES ACROSS THE MCP BOUNDARY — the resume half of that rule.
+
+    These two inputs DIVERGED, and only one of them was ever visible.
+    ``Path.exists()`` swallows only the errnos in pathlib's own ignore set, so
+    measured at the real door at d49dcce the NUL name returned "not found" (its
+    ``ValueError`` is caught inside ``Path.exists``) while the 300-character one
+    left the handler as ``OSError: [Errno 63] File name too long``, raised by
+    ``os.stat`` through ``Path.exists`` and past ``ledger_refusals``, which
+    translates ``LedgerRefusal`` alone.
+
+    Both are ONE segment, so the containment rung does not catch them — this is
+    a second rung, mirroring on the typed half what
+    ``test_a_ticket_that_cannot_name_a_directory_is_reduced_not_raised`` pins on
+    the generated one.
+    """
+    (tmp_path / "foundry-archive").mkdir()
+
+    result = foundry_init(resume=resume, project_root=str(tmp_path))
+
+    assert "not found" in result.get("error", ""), result
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["v1.2.3", "team_alpha_9", "AQUA-123-login-flow", "bold-falcon", "run.with.dots"],
+)
+def test_a_legitimate_run_directory_still_resumes_however_it_is_named(tmp_path, name):
+    """THE OTHER DIRECTION, AND THE REASON THIS RUNG DOES NOT SLUG.
+
+    ``resume`` names a directory that ALREADY EXISTS — typed by a human, and
+    possibly created by a server older than ``_name_slug``. Reducing it the way
+    the generated half is reduced would rewrite the name and then fail to find
+    the run: ``v1.2.3`` would be sought as ``v123`` and ``team_alpha_9`` as
+    ``teamalpha9``, so the remedy for an escape would have stranded runs that
+    never escaped. Containment is the property; tidiness is not.
+    """
+    _archive_run(tmp_path, name)
+    clear_active_run()
+
+    resumed = foundry_init(resume=name, project_root=str(tmp_path))
+
+    assert "error" not in resumed, resumed
+    assert resumed["resumed"] is True
+    assert resumed["run_name"] == name
+    assert Path(resumed["foundry_dir"]).parent == tmp_path / "foundry-archive"
+
+
+@pytest.mark.parametrize(
+    "sep", list(_LINE_SEPARATORS.values()), ids=list(_LINE_SEPARATORS)
+)
+def test_a_separator_in_an_existing_run_directory_still_resumes_contained(tmp_path, sep):
+    """WHAT THIS RUNG DELIBERATELY DOES NOT REFUSE, measured rather than assumed.
+
+    A separator makes a name that is ugly but still ONE segment, so the
+    directory it names is inside the archive. Driven at the real door, all
+    eleven separators ``str.splitlines()`` honours resumed with ``foundry_dir``
+    inside the archive BOTH before and after this fix: containment was never
+    their problem. Their problem is RENDERING, and D-042 closed that in the
+    shared reader (``hooks/foundry_active_run.py#one_line``) rather than here.
+
+    Pinned because the tempting "hardening" — refusing separators at this rung
+    too — would strand exactly the runs an older server created while closing
+    nothing this rung is for. ``test_the_separator_table_is_not_mangled`` above
+    guards the table these ids come from.
+    """
+    name = f"probe{sep}x"
+    _archive_run(tmp_path, name)
+    clear_active_run()
+
+    resumed = foundry_init(resume=name, project_root=str(tmp_path))
+
+    assert "error" not in resumed, resumed
+    assert Path(resumed["foundry_dir"]).resolve().is_relative_to(
+        (tmp_path / "foundry-archive").resolve()
+    )

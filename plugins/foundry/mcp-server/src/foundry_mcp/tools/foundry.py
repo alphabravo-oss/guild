@@ -3395,6 +3395,72 @@ def _generate_run_name(ticket: str = "", description: str = "") -> str:
     return f"{adj}-{noun}"
 
 
+def _resume_name_problem(name: str) -> dict | None:
+    """The resume rung: a run NAME is ONE segment under the archive, or nothing.
+
+    should-not-stop D-043 — THE SIBLING DOOR C-014 DID NOT CLOSE.
+
+    C-014 reduced the GENERATED name (`_name_slug`), where `ticket` and
+    `description` become a directory. `resume` is the OTHER admitting door into
+    that same directory and it never reached that reduction: the branch below
+    did `run_dir = archive / resume` on the raw string. Driven at the real door
+    at d49dcce, against a tmp root with a sibling `outside-run/` holding a
+    `state.json`, `foundry_init(resume="../outside-run")` RETURNED
+    `resumed=true` with `foundry_dir` at `<root>/foundry-archive/../outside-run`;
+    `set_active_run` stored the traversing string VERBATIM, so every later
+    `get_run_dir()` resolved outside the archive; and the call WROTE
+    `server_version`, `plugin_version`, `server_root` and `server_commit` into
+    that outside directory's `state.json`. An ABSOLUTE name was worse:
+    `Path.__truediv__` DISCARDS the left operand when the right is absolute, so
+    the archive stopped bounding anything at all and only filesystem
+    permissions decided where the run landed.
+
+    IT DOES NOT SLUG, AND THAT IS THE WHOLE DESIGN. `resume` names a directory
+    that ALREADY EXISTS, typed by a human and possibly created by a server older
+    than `_name_slug`. Reducing it would rewrite the name and then fail to find
+    the run — `v1.2.3` sought as `v123`, `team_alpha_9` as `teamalpha9`. The
+    question asked here is CONTAINMENT, not tidiness, so every name a directory
+    under `foundry-archive/` can actually hold still resumes. `commands/resume.md`
+    discovers runs with `ls -d foundry-archive/*/`, which can only offer ONE
+    segment, so this rung accepts everything that step can produce.
+
+    ONE SEGMENT, checked on `Path.parts` rather than by scanning for separators:
+    `('..', 'x')` for `../x`, `('/', 'etc', 'x')` for an absolute name and
+    `('a', 'b')` for a nested one are all len != 1, and `a/../b` — the traversal
+    that CANCELS OUT — is caught here as three parts while a resolve-and-contain
+    rung would accept it. Measured at the real door, resolve-and-contain also
+    ACCEPTS `a/b`: contained, but `foundry-archive/a/b` is not a run OF the
+    archive — its directory is not its name, so the `{run}` shell steps in
+    `commands/*.md` and every git pathspec built from it name something else.
+    What that rung would have bought instead is the symlink case, a run
+    directory symlinked out of the archive; no NAME controls that, an operator
+    who builds it is not an injection, and the documented discovery step would
+    itself have offered it.
+
+    A SEPARATOR IS NOT REFUSED HERE, and that is measured rather than assumed:
+    driven at the real door, each of the eleven separators `str.splitlines()`
+    honours makes a directory that is still one segment INSIDE the archive. They
+    are a RENDERING hazard, closed for D-042 in the shared reader
+    (`hooks/foundry_active_run.py#one_line`); refusing them here would strand a
+    run an older server created while closing nothing this rung is for.
+    """
+    parts = Path(name).parts
+    if len(parts) != 1 or parts[0] in (".", ".."):
+        return {
+            "error": (
+                f"Invalid run name: {name!r} does not name a run directory "
+                f"inside {ARCHIVE_DIR}/. A run name is ONE directory segment, "
+                f"never a path — it is not joined, traversed or resolved."
+            ),
+            "hint": (
+                f"Pass the run's directory name on its own, as "
+                f"`ls -d {ARCHIVE_DIR}/*/` prints it — for example "
+                f"foundry_init(resume='bold-falcon')."
+            ),
+        }
+    return None
+
+
 #: FR-055 / AC-052 — THE ONE MEANING OF `--no-ui` USED TO BE DEFINED HERE, and
 #: it now lives at `foundry_mcp/schemas/vocab.py#NO_UI_MEANING` (concern C-059
 #: row 8, GI-033). The sentence is a closed-vocabulary value read ACROSS layers
@@ -3653,9 +3719,34 @@ def foundry_init(
 
     # --- Resume mode ---
     if resume:
+        # D-043 — THE PURE INPUT RUNG, BEFORE THE JOIN AND BEFORE THE FIRST
+        # READ. `archive / resume` is the expression that escaped, so nothing is
+        # probed, activated or written on the strength of a name this door has
+        # not yet judged. Ahead of the not-found and corrupt-state guards on
+        # purpose: those two name the artifact an operator is reaching for
+        # (D-095), and a name that could never BE an artifact of this archive
+        # has not earned a stat outside it.
+        if (name_problem := _resume_name_problem(resume)) is not None:
+            return name_problem
+
         run_dir = archive / resume
         state_path = run_dir / "state.json"
-        if not state_path.exists():
+        try:
+            run_exists = state_path.exists()
+        except (OSError, ValueError):
+            # D-043's third hazard, MEASURED rather than assumed: `Path.exists()`
+            # swallows only the errnos in pathlib's own ignore set, so the two
+            # diverge. A NUL name returns False there (its `ValueError` is
+            # caught) while a 300-character one RAISES `OSError: [Errno 63] File
+            # name too long` out of `os.stat`, through `Path.exists`, and across
+            # the MCP boundary — which this server does not do (house rule), and
+            # which `ledger_refusals` does not convert because it translates
+            # `LedgerRefusal` alone. A name the filesystem cannot even hold is a
+            # run that is not there, which is the answer the caller below
+            # already has a branch for. This is C-014's "reduced, not raised"
+            # property, owed by the resume half of the same door.
+            run_exists = False
+        if not run_exists:
             return {"error": f"Run '{resume}' not found in {ARCHIVE_DIR}/"}
         # D-095: a corrupt state.json used to raise here, and resuming is
         # exactly when an operator is trying to recover from whatever corrupted
