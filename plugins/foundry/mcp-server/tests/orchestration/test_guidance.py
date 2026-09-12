@@ -3993,3 +3993,63 @@ def test_the_delta_is_never_read_against_an_answer_that_halted_the_run(run_env):
     assert "FR-2 stands." in text, text
     assert f"Since you answered {halted} " not in text, text
     assert "Stop the run; I will rewrite the spec." not in text, text
+
+
+def test_the_parked_display_is_one_entry_per_item_whatever_the_item_carries(run_env):
+    """should-not-stop FR-032 / AC-008 (D-024 on the banner surface).
+
+    The banner renders one ENTRY per parked item, and a reader counts entries
+    to know how many items are parked. Both the `item_ref` a lead types and the
+    question it carries can hold newlines, and rendered raw one item's later
+    lines came out at column 0 — LEFT of the indent-2 column entries start at —
+    so nine parked items could read as twelve.
+
+    THE 90-CHARACTER CLIP WAS THE MASK, and it is why this surface survived the
+    ask step's own fix: `len()` over the RAW question measures text the line
+    never shows, so a LONG question was ellipsised before its first newline was
+    ever reached and the site looked clean, while a SHORT multi-line one passed
+    through intact and broke the block. The question below is therefore short
+    and multi-line — the shape that reaches the renderer whole — and any test
+    written with a long question would report this area green forever.
+    """
+    from foundry_mcp.tools.display import _fmt_foundry_next_lines
+
+    project_root, fdir = run_env
+    _cast_state(fdir, [(1, []), (2, []), (3, [])])
+    short_multiline = "FR-1 or FR-2?\n  - FR-1 seals\n  - FR-2 refuses\nWhich?"
+    assert len(short_multiline) <= 90, (
+        "a question longer than the clip is ellipsised before its first newline, "
+        "which is the mask this test exists to defeat"
+    )
+    first = _park(project_root, "casting:1", question=short_multiline)
+    second = _park(project_root, "casting:2", question="Is the cap per run?")
+    _park(
+        project_root,
+        "casting:3\n  Parked:   P-999 casting:9 (spec_wrong) — not a parked item",
+        question="Which rule stands?",
+    )
+    _answer(project_root, second, "per run\nand never per cycle")
+
+    plain = [_plain(line) for line in _fmt_foundry_next_lines(foundry_next_action(project_root))]
+
+    # THE DEFECT, AS ITS OWN ASSERTION: a question's later lines never become
+    # lines of this block. They used to, at column 0.
+    stripped = [line.strip() for line in plain]
+    for continuation in ("- FR-1 seals", "- FR-2 refuses", "Which?"):
+        assert continuation not in stripped, (continuation, plain)
+    # Nor does an entry the `item_ref` spells: one item is one entry, and the
+    # count a reader takes from this block is the count the run has.
+    assert not [line for line in stripped if line.startswith("Parked:   P-999")], plain
+    assert len([line for line in plain if line.startswith("  Parked:")]) == 2, plain
+    assert len([line for line in plain if line.startswith("  Answered:")]) == 1, plain
+
+    # Each item's text is still THERE, on its own entry, flattened rather than
+    # dropped — the fix is that it is one line, not that it is truncated away.
+    parked = [line for line in plain if line.startswith("  Parked:")]
+    assert any(
+        f"{first} casting:1 (spec_wrong) — FR-1 or FR-2? - FR-1 seals - FR-2 "
+        "refuses Which?" in line
+        for line in parked
+    ), parked
+    answered = [line for line in plain if line.startswith("  Answered:")][0]
+    assert "per run and never per cycle" in answered, answered

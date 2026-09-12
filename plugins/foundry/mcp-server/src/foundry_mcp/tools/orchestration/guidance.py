@@ -88,6 +88,7 @@ from foundry_mcp.tools.display import (
     GREEN,
     RESET,
     foundry_hammer,
+    one_line,
 )
 from foundry_mcp.tools.foundry_state import (
     current_cycle,
@@ -2835,36 +2836,22 @@ def _routed_casting_step(fdir: Path, phase: str, routes: dict[str, dict]) -> dic
 _ASK_BODY_INDENT = "      "
 
 
-def _one_line(value: object) -> str:
-    """``value`` as ONE line: every run of whitespace collapses to one space.
-
-    should-not-stop AC-008 / CT-005 (D-024) — A FIELD THE FRAME IS BUILT FROM
-    CAN NEVER ADD A LINE TO THE FRAME.
-
-    The ask listing is a FRAME — one header line per item at the `  - ` sibling
-    column, one fence line closing it — wrapped around a body rendered verbatim.
-    Every field interpolated into a frame line comes off a parked item, and a
-    parked item's fields are what a lead typed into the park door.
-    `vocab.py#parse_park_item_ref` strips the ENDS of `item_ref` and validates
-    the kind, so a newline embedded in the id half survives into storage, and
-    the header interpolated it raw: ONE park of `casting:3` followed by a
-    newline and a hand-written `  - P-999 ...` rendered TWO bullets, the second
-    a forged sibling item carrying its own fence and a `claude --plugin-dir`
-    relaunch command nobody parked. The human was shown an item that does not
-    exist, in the one text they authorize.
-
-    So the rule is POSITIONAL rather than per-field: whatever reaches a frame
-    line is flattened here first, and the frame then has exactly the line count
-    the renderer wrote. `category` is closed vocabulary and `id` is
-    server-issued, so neither can carry a newline today — they go through this
-    anyway, because the next field added to that header is the next D-024 and
-    the guard has to already be standing in front of it.
-
-    Never applied to a question BODY. That is rendered verbatim and fenced: it
-    is what the human authorizes, and it is the byte-for-byte identity both
-    `_reload_already_answered` and `park.py#_park_item`'s loop rung compare.
-    """
-    return " ".join(str(value or "").split())
+# should-not-stop AC-008 / CT-005 (D-024) — A BINDING, NOT A BODY.
+#
+# The one implementation is `display.py#one_line`, and its docstring carries
+# why it lives there: BOTH surfaces that render a parked item — this router's
+# ask listing and that module's banner — compose LINES around fields a lead
+# typed into the park door, so the flattening rule is one rule rather than the
+# same expression written twice in two files free to drift apart. This name
+# exists so every call site below reads as it always did.
+#
+# The rule it enforces here is POSITIONAL rather than per-field: whatever
+# reaches a frame line is flattened first, and the frame then has exactly the
+# line count the renderer wrote. `category` is closed vocabulary and `id` is
+# server-issued, so neither can carry a newline today — they go through it
+# anyway, because the next field added to that header is the next D-024 and the
+# guard has to already be standing in front of it.
+_one_line = one_line
 
 
 def _ask_fence(ident: object, body: str) -> str:

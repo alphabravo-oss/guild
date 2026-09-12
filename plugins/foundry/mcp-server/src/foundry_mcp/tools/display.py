@@ -14,6 +14,43 @@ import os
 from foundry_mcp.schemas.vocab import PHASE_NAMES, STREAM_WIRE_IDS
 
 
+def one_line(value: object) -> str:
+    """``value`` as ONE line: every run of whitespace collapses to one space.
+
+    should-not-stop AC-008 / FR-032 / CT-005 (D-024) — A FIELD A LINE IS BUILT
+    FROM CAN NEVER ADD A LINE.
+
+    Both surfaces that render a parked item compose LINES around fields a lead
+    typed into the park door, and `vocab.py#parse_park_item_ref` strips only the
+    ENDS of an `item_ref`, so a newline embedded in the id half survives into
+    storage. Rendered raw, such a field stops being one value and becomes extra
+    lines: in the router's ask listing a forged sibling bullet, and in the
+    banner below continuation lines at column 0 — LEFT of the indent-2 column
+    the item's own entry renders at, so a reader counting entries in that block
+    counts more parked items than are parked.
+
+    It lives HERE, in the rendering module, because it is a rendering rule and
+    because `orchestration/guidance.py` already imports this module: one
+    implementation both surfaces reach, rather than the same expression written
+    twice in two files free to drift apart.
+
+    Never applied to text that must KEEP its lines. The ask step renders a
+    question's body verbatim inside a fence, because that body is what the
+    human authorizes and the bytes the park door's loop rung compares.
+    """
+    return " ".join(str(value or "").split())
+
+
+def _clipped(value: object, limit: int = 90) -> str:
+    """``value`` as one line, ellipsised at ``limit`` characters.
+
+    Flattened BEFORE it is measured, which is what makes the truncation honest:
+    `len()` over raw text measures content the line never shows.
+    """
+    text = one_line(value)
+    return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
 def _short_path(p: str) -> str:
     """Shorten an absolute path to be relative to cwd or home."""
     if not p or p == "?":
@@ -786,33 +823,50 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
     # contributes no line, on this module's never-raise rule.
     parked = r.get("parked")
     if isinstance(parked, dict):
+        # EVERY FIELD ON THESE LINES IS FLATTENED, AND THE TRUNCATION MEASURES
+        # WHAT IT FLATTENED (D-024). One entry per parked item is the whole
+        # readability of this block — a reader counts entries to know how many
+        # items are parked — and both the `item_ref` a lead typed and the
+        # question it carries can hold newlines. Rendered raw, one item's later
+        # lines came out at column 0, LEFT of the indent-2 column entries start
+        # at, so nine parked items could read as twelve.
+        #
+        # The 90-character clip was also the MASK that kept this surface looking
+        # clean: `len()` over the raw question measures text this line never
+        # shows, so a LONG question was ellipsised before its first newline was
+        # ever reached while a SHORT multi-line one passed through intact and
+        # broke the block. Flattening first removes the mask and the defect
+        # together.
         for item in parked.get("open") or []:
             if not isinstance(item, dict):
                 continue
-            question = str(item.get("question") or "")
-            shown = question if len(question) <= 90 else question[:87] + "..."
             lines.append(
-                f"  {_BWHITE}Parked:{_RESET}   {_BYELLOW}{item.get('id', '?')}{_RESET} "
-                f"{item.get('item_ref', '?')} {_DIM}({item.get('category', '?')}) "
-                f"— {shown}{_RESET}"
+                f"  {_BWHITE}Parked:{_RESET}   "
+                f"{_BYELLOW}{one_line(item.get('id')) or '?'}{_RESET} "
+                f"{one_line(item.get('item_ref')) or '?'} "
+                f"{_DIM}({one_line(item.get('category')) or '?'}) "
+                f"— {_clipped(item.get('question'))}{_RESET}"
             )
         for item in parked.get("answered") or []:
             if not isinstance(item, dict):
                 continue
-            answer = str(item.get("answer") or "")
-            shown = answer if len(answer) <= 90 else answer[:87] + "..."
             halt = f" {_BRED}(halt){_RESET}" if item.get("answer_is_halt") is True else ""
             lines.append(
-                f"  {_BWHITE}Answered:{_RESET} {item.get('id', '?')} "
-                f"{item.get('item_ref', '?')}{halt} {_DIM}— {shown}{_RESET}"
+                f"  {_BWHITE}Answered:{_RESET} {one_line(item.get('id')) or '?'} "
+                f"{one_line(item.get('item_ref')) or '?'}{halt} "
+                f"{_DIM}— {_clipped(item.get('answer'))}{_RESET}"
             )
         awaiting = parked.get("awaiting_human")
         if isinstance(awaiting, dict):
             asked = awaiting.get("item_ids")
-            names = ", ".join(str(i) for i in asked) if isinstance(asked, list) else "?"
+            names = (
+                one_line(", ".join(one_line(i) for i in asked))
+                if isinstance(asked, list) else "?"
+            )
             lines.append(
                 f"  {_BWHITE}Asking:{_RESET}   {_BYELLOW}the human{_RESET} "
-                f"{_DIM}since {awaiting.get('set_at', '?')} ({names}){_RESET}"
+                f"{_DIM}since {one_line(awaiting.get('set_at')) or '?'} "
+                f"({names or '?'}){_RESET}"
             )
 
     # FR-021 / AC-028 / CT-007 — WHERE THE RUN IS HEADING, beside the facts it
