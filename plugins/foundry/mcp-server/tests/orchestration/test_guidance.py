@@ -4011,6 +4011,14 @@ def test_the_parked_display_is_one_entry_per_item_whatever_the_item_carries(run_
     through intact and broke the block. The question below is therefore short
     and multi-line — the shape that reaches the renderer whole — and any test
     written with a long question would report this area green forever.
+
+    D-026 — AND EVERY COUNT BELOW IS TAKEN OVER THE RENDERED TEXT, NEVER OVER
+    THE RETURNED LIST. A newline inside one list element is ONE element and TWO
+    screen lines, so an element count is blind to the whole class: D-027 put
+    THREE `Parked:` lines on screen over TWO parked items and this test's
+    element count read 2 and passed. The sibling test
+    `test_parked_items_their_answers_and_the_ask_are_on_the_display` joins
+    before asserting and this one did not, which is the only reason it missed.
     """
     from foundry_mcp.tools.display import _fmt_foundry_next_lines
 
@@ -4030,26 +4038,174 @@ def test_the_parked_display_is_one_entry_per_item_whatever_the_item_carries(run_
     )
     _answer(project_root, second, "per run\nand never per cycle")
 
-    plain = [_plain(line) for line in _fmt_foundry_next_lines(foundry_next_action(project_root))]
+    elements = [
+        _plain(line)
+        for line in _fmt_foundry_next_lines(foundry_next_action(project_root))
+    ]
+    # D-026: the SCREEN is what a reader counts, and it is what these assertions
+    # count. Joining is the whole difference — an element carrying a newline is
+    # one element and two lines, so every count below was blind before this.
+    screen = "\n".join(elements).split("\n")
 
     # THE DEFECT, AS ITS OWN ASSERTION: a question's later lines never become
     # lines of this block. They used to, at column 0.
-    stripped = [line.strip() for line in plain]
+    stripped = [line.strip() for line in screen]
     for continuation in ("- FR-1 seals", "- FR-2 refuses", "Which?"):
-        assert continuation not in stripped, (continuation, plain)
+        assert continuation not in stripped, (continuation, screen)
     # Nor does an entry the `item_ref` spells: one item is one entry, and the
     # count a reader takes from this block is the count the run has.
-    assert not [line for line in stripped if line.startswith("Parked:   P-999")], plain
-    assert len([line for line in plain if line.startswith("  Parked:")]) == 2, plain
-    assert len([line for line in plain if line.startswith("  Answered:")]) == 1, plain
+    assert not [line for line in stripped if line.startswith("Parked:   P-999")], screen
+    assert len([line for line in screen if line.startswith("  Parked:")]) == 2, screen
+    assert len([line for line in screen if line.startswith("  Answered:")]) == 1, screen
 
     # Each item's text is still THERE, on its own entry, flattened rather than
     # dropped — the fix is that it is one line, not that it is truncated away.
-    parked = [line for line in plain if line.startswith("  Parked:")]
+    parked = [line for line in screen if line.startswith("  Parked:")]
     assert any(
         f"{first} casting:1 (spec_wrong) — FR-1 or FR-2? - FR-1 seals - FR-2 "
         "refuses Which?" in line
         for line in parked
     ), parked
-    answered = [line for line in plain if line.startswith("  Answered:")][0]
+    answered = [line for line in screen if line.startswith("  Answered:")][0]
     assert "per run and never per cycle" in answered, answered
+
+
+def test_no_field_a_foundry_next_line_is_built_from_can_add_a_line():
+    """should-not-stop FR-032 / AC-008 / CT-005 (D-026, D-027) — THE CLASS.
+
+    `display.py#one_line`'s docstring states the invariant in capitals — A FIELD
+    A LINE IS BUILT FROM CAN NEVER ADD A LINE — and for four cycles the only
+    thing holding it was that somebody had remembered to call it at each
+    interpolation. Three per-instance fixes each flattened the site their defect
+    was found at, and the class came back on the next unflattened site.
+
+    So this asserts the invariant ITSELF rather than an enumeration of sites: no
+    element `_fmt_foundry_next_lines` returns may contain a newline, because the
+    caller joins them with newlines. A site that stops flattening fails here on
+    the day it is written, INCLUDING a site nobody has added yet — which is the
+    difference between this and the three fixes that did not hold.
+
+    Driven directly rather than through the park door, because the door issues
+    the ids itself: `P-001` can never carry a newline through it, so a
+    door-driven test cannot reach the `id` interpolation at all. Every
+    string-bearing field is driven at once, with SHORT multi-line values — a
+    clip that measured raw text would ellipsise long content before its first
+    newline was reached and report this surface green while the defect was live.
+
+    The counts NOT driven here are deliberate: `one_line` spells
+    `str(value or "")`, so `one_line(0)` is `""` and flattening a number would
+    erase a real zero. Numbers are pinned by
+    `tests/test_spend.py#test_every_counted_next_line_renders_the_integer_its_result_states`.
+    """
+    from foundry_mcp.tools.display import _fmt_foundry_next_lines
+
+    def forged(label: str, ident: str) -> str:
+        """A short value whose SECOND line forges an entry of this block."""
+        return f"real\n  {label} {ident} forged-by-a-field (spec_wrong) — invented"
+
+    payload = {
+        "phase": "HALTED",
+        "details": {"halted_reason": forged("Parked:  ", "P-990")},
+        "heading_for": "HALTED",
+        "open_by_tier": {forged("Parked:  ", "P-991"): 1},
+        "cycles_to_cap": 2,
+        "inspect_mode": {
+            "mode": "FULL",
+            "rule": forged("Parked:  ", "P-992"),
+            "decided_by": forged("Parked:  ", "P-993"),
+            "required_streams": [forged("Parked:  ", "P-994")],
+            "stream_scope": {
+                "trace": {"scope": "delta"},
+                forged("Parked:  ", "P-995"): {"scope": "skipped"},
+            },
+            "prove_sample": [forged("Parked:  ", "P-996")],
+            "touched_files": [forged("Parked:  ", "P-997")],
+        },
+        "spend": {
+            "total": {"tokens": 1, "duration_ms": 0, "agents": 1},
+            "by_phase": {forged("Parked:  ", "P-998"): {"tokens": 1, "duration_ms": 0}},
+            "by_cycle": {forged("Parked:  ", "P-999"): {"tokens": 1, "duration_ms": 0}},
+            "unmatched_agents": [forged("Parked:  ", "P-001")],
+            "unreported_dispatches": [
+                {"agent": forged("Parked:  ", "P-002"), "phase": "F2"}
+            ],
+            "unreported_count": 1,
+        },
+        "executing_server": {
+            "server_version": forged("Parked:  ", "P-003"),
+            "plugin_version": forged("Parked:  ", "P-004"),
+            "server_commit": forged("Parked:  ", "P-005"),
+            "server_root": forged("Parked:  ", "P-006"),
+        },
+        "waiting_on_agents": {
+            "waiting": True, "count": 1, "detail": forged("Parked:  ", "P-007"),
+        },
+        "parked": {
+            "open": [{
+                "id": forged("Parked:  ", "P-008"),
+                "item_ref": forged("Parked:  ", "P-009"),
+                "category": forged("Parked:  ", "P-010"),
+                "question": forged("Parked:  ", "P-011"),
+            }],
+            "answered": [{
+                "id": forged("Answered:", "P-012"),
+                "item_ref": forged("Answered:", "P-013"),
+                "answer": forged("Answered:", "P-014"),
+                "answer_is_halt": False,
+            }],
+            "awaiting_human": {
+                "set_at": forged("Asking:  ", "P-015"),
+                "item_ids": [forged("Asking:  ", "P-016")],
+            },
+        },
+    }
+
+    elements = _fmt_foundry_next_lines(payload)
+
+    # THE INVARIANT, MEASURED DIRECTLY. The list and the screen are the same
+    # length, so no field on any line contributed a line of its own.
+    offenders = [element for element in elements if "\n" in element]
+    assert offenders == [], offenders
+    assert len("\n".join(elements).split("\n")) == len(elements), elements
+
+    # And the consequence a reader actually suffers: one entry per item, so the
+    # count taken off this block is the count the run has. Every forged second
+    # line above spells one of these three labels at this block's own indent.
+    screen = [_plain(line) for line in "\n".join(elements).split("\n")]
+    for label in ("Parked:", "Answered:", "Asking:"):
+        shown = [line for line in screen if line.strip().startswith(label)]
+        assert len(shown) == 1, (label, screen)
+    assert not [line for line in screen if "forged-by-a-field" in line.strip()[:20]], screen
+
+
+def test_the_ask_fence_is_derived_from_the_body_it_closes():
+    """should-not-stop AC-008 / CT-005 (D-025) — WHICH TEXT THE DIGEST IS OF.
+
+    `_ask_fence` appends a digest so that no question can spell its own
+    terminator, and the property making that true is that the digest is taken
+    from the BODY. Nothing pinned which text it hashes: a fence built from the
+    id alone — the pre-D-025 spelling — still looks like a fence and still
+    carries a digest, but is forgeable by any question that spells it, because
+    the id is predictable (`P-001` is the first id every run issues).
+
+    TEST drove this against the real door in cycle 7 and confirmed the shipped
+    code is CORRECT, so nothing was filed; the gap was coverage only, and this
+    is that coverage. The two halves are pinned independently: the same id with
+    a CHANGED BODY must move the fence, and a changed id alone must leave the
+    body's digest exactly where it was.
+    """
+    body = "FR-1 or FR-2?"
+    fence = _guidance._ask_fence("P-001", body)
+
+    # The BODY is what the digest is taken from. A fence built from the id alone
+    # cannot tell these two apart, which is what makes this the pin.
+    assert fence != _guidance._ask_fence("P-001", "FR-1 or FR-3?"), fence
+    # Pure in the body, so re-rendering an unedited question does not move the
+    # terminator the human was told to read down to.
+    assert fence == _guidance._ask_fence("P-001", body), fence
+    # Changing only the id moves the id half and leaves the digest half put, so
+    # neither half is standing in for the other.
+    other = _guidance._ask_fence("P-002", body)
+    assert other != fence, (other, fence)
+    assert other.split()[-1] == fence.split()[-1], (other, fence)
+    assert "P-002" in other and "P-001" in fence, (other, fence)

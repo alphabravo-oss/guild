@@ -652,6 +652,28 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
     state.json; the spend totals are what the lead typed into Foundry-Spend. No
     line below computes a value, and none of them contains a money figure — this
     server does not know anyone's rate card (AC-033).
+
+    D-027 — AND EVERY STRING FIELD ON EVERY LINE BELOW IS FLATTENED, because
+    ONE ELEMENT OF THIS LIST IS ONE LINE ON SCREEN. The caller joins what this
+    returns with newlines, so a field that carries one stops being a value and
+    becomes an extra line — at column 0, LEFT of the indent-2 column the entries
+    below start at. Driven: a `Foundry-Spend` whose agent name carried a newline
+    put a forged `Parked:` entry on screen ABOVE two real ones, and a phase
+    token did it again on the By Phase line, while only ONE item was parked.
+
+    The three per-instance fixes before this one each flattened the site their
+    defect was found at, which is why the class came back for four cycles. The
+    rule is therefore the FUNCTION's and not a site's: every interpolation of a
+    stored string goes through `one_line` (or `_clipped`, which flattens before
+    it measures). Counts do NOT — `one_line(0)` is `""`, because it spells
+    `str(value or "")`, so flattening a number would erase a real zero.
+
+    The pin is `test_no_field_a_foundry_next_line_is_built_from_can_add_a_line`
+    in `tests/orchestration/test_guidance.py`. It holds the rule for the sites
+    here AND the ones nobody has written yet: it asserts that no element this
+    returns contains a newline, which is the invariant itself rather than an
+    enumeration of the sites — so a site added later is covered on the day it
+    is written, which is what the three per-instance fixes could not do.
     """
     lines: list[str] = []
 
@@ -659,23 +681,31 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
     if isinstance(mode, dict) and mode.get("mode"):
         colour = _BYELLOW if mode["mode"] == "FULL" else _BGREEN
         lines.append(
-            f"  {_BWHITE}Inspect:{_RESET}  {colour}{mode['mode']}{_RESET} "
-            f"{_DIM}(rule {mode.get('rule', '?')}, decided at "
-            f"{mode.get('decided_by', '?')}){_RESET}"
+            f"  {_BWHITE}Inspect:{_RESET}  {colour}{one_line(mode['mode'])}{_RESET} "
+            f"{_DIM}(rule {one_line(mode.get('rule')) or '?'}, decided at "
+            f"{one_line(mode.get('decided_by')) or '?'}){_RESET}"
         )
         required = mode.get("required_streams") or []
         if required:
-            lines.append(f"  {_BWHITE}Roster:{_RESET}   {', '.join(required)}")
+            lines.append(
+                f"  {_BWHITE}Roster:{_RESET}   "
+                f"{', '.join(one_line(wire) for wire in required)}"
+            )
         scope = mode.get("stream_scope") or {}
         skipped = sorted(
             wire for wire, v in scope.items()
             if isinstance(v, dict) and v.get("scope") == "skipped"
         )
         if skipped:
-            lines.append(f"  {_BWHITE}Skipped:{_RESET}  {_DIM}{', '.join(skipped)}{_RESET}")
+            lines.append(
+                f"  {_BWHITE}Skipped:{_RESET}  "
+                f"{_DIM}{', '.join(one_line(wire) for wire in skipped)}{_RESET}"
+            )
         sample = mode.get("prove_sample") or []
         if sample:
-            shown = ", ".join(sample[:8]) + ("..." if len(sample) > 8 else "")
+            shown = ", ".join(one_line(row) for row in sample[:8]) + (
+                "..." if len(sample) > 8 else ""
+            )
             lines.append(f"  {_BWHITE}PROVE:{_RESET}    {len(sample)} row(s) — {shown}")
         # D-140 / AC-019: the TRACE half of the same roster. PROVE's rows have
         # been on this screen since D-104 and TRACE's files were on none — the
@@ -693,7 +723,7 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
         touched = mode.get("touched_files") or []
         trace_scope = (mode.get("stream_scope") or {}).get("trace")
         if touched and isinstance(trace_scope, dict) and trace_scope.get("scope") == "delta":
-            shown = ", ".join(_short_path(p) for p in touched[:5])
+            shown = ", ".join(one_line(_short_path(p)) for p in touched[:5])
             more = f" (+{len(touched) - 5} more)" if len(touched) > 5 else ""
             lines.append(
                 f"  {_BWHITE}TRACE:{_RESET}    {len(touched)} file(s) — {shown}{more}"
@@ -716,7 +746,7 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
             # it instead, so the reader can tell which is which.
             unmatched = spend.get("unmatched_agents")
             unmatched = unmatched if isinstance(unmatched, list) else []
-            shown = ", ".join(str(name) for name in unmatched[:4])
+            shown = ", ".join(one_line(name) for name in unmatched[:4])
             more = f" (+{len(unmatched) - 4} more)" if len(unmatched) > 4 else ""
             tail = (
                 f", {_BYELLOW}{len(unmatched)}{_RESET} matching no dispatch "
@@ -771,7 +801,8 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
             if not isinstance(buckets, dict) or not buckets:
                 continue
             parts = [
-                f"{key}: {b.get('tokens', 0):,}tok/{int(b.get('duration_ms', 0) // 60000)}m"
+                f"{one_line(key)}: {b.get('tokens', 0):,}tok/"
+                f"{int(b.get('duration_ms', 0) // 60000)}m"
                 for key, b in sorted(
                     buckets.items(), key=lambda kv: _cycle_sort_key(kv[0])
                 )
@@ -787,7 +818,7 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
         # `_unreported_pairs`.
         unreported_count, unreported_pairs = _unreported_pairs(spend)
         if unreported_count or unreported_pairs:
-            names = ", ".join(unreported_pairs[:6])
+            names = ", ".join(one_line(pair) for pair in unreported_pairs[:6])
             more = (
                 f" (+{len(unreported_pairs) - 6} more)"
                 if len(unreported_pairs) > 6 else ""
@@ -799,11 +830,13 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
 
     build = r.get("executing_server")
     if isinstance(build, dict) and (build.get("server_version") or build.get("server_commit")):
-        commit = str(build.get("server_commit", "") or "")
+        commit = one_line(build.get("server_commit"))
         lines.append(
-            f"  {_BWHITE}Server:{_RESET}   {build.get('server_version', '?')} "
-            f"{_DIM}(plugin {build.get('plugin_version', '?')} @ "
-            f"{commit[:12] or 'unknown'}, {_short_path(str(build.get('server_root', '?')))})"
+            f"  {_BWHITE}Server:{_RESET}   "
+            f"{one_line(build.get('server_version')) or '?'} "
+            f"{_DIM}(plugin {one_line(build.get('plugin_version')) or '?'} @ "
+            f"{commit[:12] or 'unknown'}, "
+            f"{one_line(_short_path(str(build.get('server_root', '?'))))})"
             f"{_RESET}"
         )
 
@@ -811,7 +844,7 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
     if isinstance(waiting, dict) and waiting.get("waiting"):
         lines.append(
             f"  {_BWHITE}Waiting:{_RESET}  {waiting.get('count', 0)} agent(s) "
-            f"{_DIM}({waiting.get('detail', '')}){_RESET}"
+            f"{_DIM}({one_line(waiting.get('detail'))}){_RESET}"
         )
 
     # should-not-stop FR-032 / GI-006 — THE PARKED ITEMS, THEIR ANSWERS, AND
@@ -843,7 +876,7 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
             lines.append(
                 f"  {_BWHITE}Parked:{_RESET}   "
                 f"{_BYELLOW}{one_line(item.get('id')) or '?'}{_RESET} "
-                f"{one_line(item.get('item_ref')) or '?'} "
+                f"{_clipped(item.get('item_ref')) or '?'} "
                 f"{_DIM}({one_line(item.get('category')) or '?'}) "
                 f"— {_clipped(item.get('question'))}{_RESET}"
             )
@@ -853,7 +886,7 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
             halt = f" {_BRED}(halt){_RESET}" if item.get("answer_is_halt") is True else ""
             lines.append(
                 f"  {_BWHITE}Answered:{_RESET} {one_line(item.get('id')) or '?'} "
-                f"{one_line(item.get('item_ref')) or '?'}{halt} "
+                f"{_clipped(item.get('item_ref')) or '?'}{halt} "
                 f"{_DIM}— {_clipped(item.get('answer'))}{_RESET}"
             )
         awaiting = parked.get("awaiting_human")
@@ -894,7 +927,8 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
         if isinstance(backlog, dict) and backlog:
             parts.append(
                 "backlog " + ", ".join(
-                    f"{tier} {count}" for tier, count in sorted(backlog.items())
+                    f"{one_line(tier)} {count}"
+                    for tier, count in sorted(backlog.items())
                 )
             )
         cycles = r.get("cycles_to_cap")
@@ -906,13 +940,13 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
             parts.append("no cap")
         tail = f" {_DIM}({'; '.join(parts)}){_RESET}" if parts else ""
         lines.append(
-            f"  {_BWHITE}Heading:{_RESET}  {colour}{heading}{_RESET}{tail}"
+            f"  {_BWHITE}Heading:{_RESET}  {colour}{one_line(heading)}{_RESET}{tail}"
         )
 
     if r.get("phase") == "HALTED":
         lines.append(
             f"  {_BRED}HALTED:{_RESET}   "
-            f"{(r.get('details') or {}).get('halted_reason', 'cycle cap reached')}"
+            f"{one_line((r.get('details') or {}).get('halted_reason')) or 'cycle cap reached'}"
         )
     return lines
 
