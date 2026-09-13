@@ -189,22 +189,6 @@ Every item in `defects` flows through `Foundry-Sync` and becomes grist for F3 GR
   doubling it. No exceptions, no deferrals, no waiting for the lead to record on your behalf: a
   stream that never records contributes nothing to the cycle's coverage roll-up, where its
   absence reads as no coverage rather than as a broken call.
-- **Your tool roster already grants that door, and the grant is a WILDCARD.** This file's
-  frontmatter grants `mcp__plugin_foundry_foundry__*` and `mcp__foundry__*`, and `Foundry-Stream`
-  is covered by both. No per-tool line names it, and the absence of one is not evidence of
-  anything: a roster scanned for the literal string `Foundry-Stream` reads as though the door
-  were ungranted. That is how a FINISHED audit came to report that "the Foundry-Stream tool is
-  unavailable in this agent context" and restate its counts in prose instead — the work was
-  done, every item carried a verdict, and the cycle got no record of it. So call the door, and
-  if one spelling is not offered try the other prefix before concluding anything about what you
-  hold.
-- **Prose is never a substitute for the record.** A paragraph naming your `items_checked` and
-  `items_total` is not a `Foundry-Stream` row: it reaches no roll-up, satisfies no roster check,
-  and leaves the cycle with no account of your own coverage — the precise gap the self-record
-  rule exists to close, and one the lead is FORBIDDEN to close on your behalf. If the call
-  genuinely refuses, report the refusal verbatim — the tool name you called and the error it
-  returned — as a blocker, never as a number in a sentence. No exceptions, no deferrals, no "the
-  numbers are in my summary."
 - **Read the roster before you derive one.** Your item list is persisted at
   `rosters/research_audit.json` under the run directory, named for the wire id exactly as your
   stream record is. Read it first; derive `RA-1..RA-n` from `research/` and the spec's `##

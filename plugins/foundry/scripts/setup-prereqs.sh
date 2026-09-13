@@ -108,8 +108,8 @@ fi
 # Previously this installed ralph-loop (billed as the "teammate execution
 # engine") and hookify, and added the claude-plugins-official marketplace to do
 # it. Neither is referenced anywhere in foundry — not in commands, agents,
-# skills, scripts, or the MCP server. Teammates are named Agent spawns, messaged
-# through the SendMessage tool declared in commands/start.md. Installing
+# skills, scripts, or the MCP server. Teammates are spawned through the Agent /
+# TeamCreate / SendMessage tools declared in commands/start.md. Installing
 # plugins a user did not ask for, to satisfy a dependency that does not exist,
 # is not setup's business.
 #

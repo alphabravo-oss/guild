@@ -14,10 +14,7 @@ from foundry_mcp.schemas.vocab import (
     INSPECT_MODES,
     REPORT_MD_FILENAME,
     CONCERN_STATUS_OPEN,
-    HALT_REASON_CAP_REACHED,
-    HALT_REASON_USER_STOP,
     HALT_REASONS,
-    POST_CAST_RUN_PHASES,
     STREAM_WIRE_IDS,
     halt_reason,
     halt_reason_phrase,
@@ -107,10 +104,6 @@ from foundry_mcp.tools.orchestration.evidence_boundary import (
 # module the halt token already goes through. Nothing flows back.
 from foundry_mcp.tools.orchestration.halt import (
     _halt_if_capped,
-    # should-not-stop — the read-only human-origin proof `_halt_preconditions`
-    # asks for a post-CAST `user_stop`. On the same one-way seam: the answer
-    # flows back as a return value, and no halt.py code reaches this module.
-    _human_halt_proof,
     _seal_halted,
     seal_run_report,
     sealed_report_sentence,
@@ -1355,13 +1348,7 @@ def _nyquist_done_preconditions(fdir: Path, project_root: str) -> dict:
 def _halt_preconditions(
     fdir: Path, project_root: str, *, reason: str = "", text: str = ""
 ) -> dict:
-    """fallout FR-064 / GI-034 / CT-004 / CT-021 / AC-062 — three checks, as rungs,
-    and after start_cast the two the should-not-stop spec adds.
-
-    From F1 to F5.5 the reason must be `user_stop` and it must carry
-    human-origin proof (an unused /foundry:stop token or a parked question
-    answered with halt). Pre-CAST the routine is exactly the three checks it
-    was, with no new checklist row; see the rung itself for why.
+    """fallout FR-064 / GI-034 / CT-004 / CT-021 / AC-062 — three checks, as rungs.
 
     `halt` is a FULL member of `PHASE_TOKENS`: it has a preconditions routine
     like every other token and a gate token that reports it as data.
@@ -1452,111 +1439,13 @@ def _halt_preconditions(
         ),
     })
 
-    # should-not-stop — AFTER start_cast, ONLY THE HUMAN ENDS A RUN.
-    # --------------------------------------------------------------
-    # This routine refused three things and `lead_ruling` needed no criterion,
-    # so any ruling could end a run from F1..F5.5 — the predecessor run ended
-    # that way with thirty-nine defects open. From `start_cast` to NYQUIST the
-    # operator is away and the run is theirs: the one member this door takes
-    # from the lead is `user_stop`, and only on proof the human asked for it.
-    # `spec_change_required`, `lead_ruling` and a lead-supplied `cap_reached`
-    # are refused outright. The launch cap still ends a run from here, but
-    # through the GRIND-opening doors — `halt._halt_if_capped` seals without
-    # asking this routine — so that path is untouched.
-    #
-    # PRE-CAST IS BYTE-FOR-BYTE WHAT IT WAS. Outside `POST_CAST_RUN_PHASES`
-    # neither rung is made and no checklist row is added, so an F0.x halt
-    # answers exactly as it always did at both doors.
-    #
-    # THE PROOF IS READ HERE AND SPENT ONLY BY THE SEAL. Foundry-Gate('halt')
-    # shares this routine, and a gate that consumed the token it reported would
-    # refuse the very transition it had just cleared; the proof rides out as a
-    # non-refusing fact and `_seal_halted` consumes it after the HALTED write.
-    #
-    # Ranked at `_GATE_RANK_CONFIG` beside the membership rung, because all
-    # three judge the `reason` argument the caller chose.
-    run_phase = read_document(fdir / "state.json")[0].get("phase")
-    proof: dict | None = None
-    if (
-        member is not None
-        and isinstance(run_phase, str)
-        and run_phase in POST_CAST_RUN_PHASES
-    ):
-        lead_may_supply = member == HALT_REASON_USER_STOP
-        if not lead_may_supply:
-            ladder.fail(
-                _GATE_RANK_CONFIG,
-                (
-                    f"halt reason {member!r} is refused in {run_phase}: from "
-                    "start_cast on, only the human can end a run, so the one "
-                    f"reason this door takes from the lead is "
-                    f"{HALT_REASON_USER_STOP!r}, and only on proof the human "
-                    "asked for it"
-                    + (
-                        f" — {HALT_REASON_CAP_REACHED!r} is written by the "
-                        "GRIND-opening doors when the launch cap is reached, "
-                        "and is never supplied here"
-                        if member == HALT_REASON_CAP_REACHED
-                        else ""
-                    )
-                ),
-                "Keep the run going. If one item is blocked on something only "
-                "the human can settle — a spec that is wrong, an environment "
-                "that stays broken after retries, a live-plugin reload, a "
-                "deadlock no rule explains — park THAT item with "
-                "Foundry-Park(action='park', ...) and keep every other casting, "
-                "defect and stream moving; Foundry-Next asks the human only "
-                "when nothing else can move. The human ends a run with "
-                "/foundry:stop, or by answering a parked question with halt. "
-                "Do not bring a team down to clear this refusal: the halt "
-                "would still be refused.",
-            )
-        checklist.append({
-            "check": (
-                f"halt_reason_accepted_after_start_cast "
-                f"(phase={run_phase}, reason={member})"
-            ),
-            "ok": lead_may_supply,
-            "accepted": [HALT_REASON_USER_STOP],
-        })
-        if lead_may_supply:
-            proof = _human_halt_proof(fdir)
-            if proof["kind"] is None:
-                ladder.fail(
-                    _GATE_RANK_CONFIG,
-                    (
-                        f"halt reason {HALT_REASON_USER_STOP!r} in {run_phase} "
-                        "needs proof the human asked for it, and there is "
-                        "none: " + "; ".join(p for p in proof["problems"] if p)
-                    ),
-                    "After start_cast a user_stop is accepted on one of two "
-                    "proofs, and neither is one the lead can make: the human "
-                    "invokes /foundry:stop, whose own shell step writes a "
-                    "one-time token into the run archive, or the human answers "
-                    "a parked question with halt and you record it with "
-                    "Foundry-Park(action='answer', parked_id=..., answer=<their "
-                    "words>, halt=true). If the human did neither, the run is "
-                    "not stopping: call Foundry-Next and carry on.",
-                )
-            checklist.append({
-                "check": f"human_origin_proof (proof={proof['kind'] or 'none'})",
-                "ok": proof["kind"] is not None,
-                "detail": proof["detail"],
-                "problems": [p for p in proof["problems"] if p],
-            })
-
     _teams_rung(ladder, checklist, project_root)
 
     # The rung is made ABOVE, by `_halted_outcome`, which is the one spelling
     # every routine uses. Reaching this line means the run is not halted, so the
     # checklist records the check that passed.
     checklist.append({"check": "not_already_halted", "ok": True})
-    # The proof is a fact only where it was asked for, so a pre-CAST outcome
-    # carries exactly the keys it always carried.
-    facts: dict = {"halt_reason": member, "halt_text": text}
-    if proof is not None:
-        facts["halt_proof"] = proof
-    return _preconditions_outcome(ladder, checklist, **facts)
+    return _preconditions_outcome(ladder, checklist, halt_reason=member, halt_text=text)
 
 
 
@@ -2970,9 +2859,6 @@ def _phase_transition(
             text=outcome["halt_text"],
             token="halt",
             update_phase=_update_phase,
-            # should-not-stop — the human-origin proof the routine judged, so
-            # the seal spends exactly that one. Absent before CAST.
-            proof=outcome.get("halt_proof"),
         )
 
     else:

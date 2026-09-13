@@ -14,131 +14,6 @@ import os
 from foundry_mcp.schemas.vocab import PHASE_NAMES, STREAM_WIRE_IDS
 
 
-def one_line(value: object) -> str:
-    """``value`` as ONE line: every run of whitespace collapses to one space.
-
-    should-not-stop AC-008 / FR-032 / CT-005 (D-024) — A FIELD A LINE IS BUILT
-    FROM CAN NEVER ADD A LINE.
-
-    Both surfaces that render a parked item compose LINES around fields a lead
-    typed into the park door, and `vocab.py#parse_park_item_ref` strips only the
-    ENDS of an `item_ref`, so a newline embedded in the id half survives into
-    storage. Rendered raw, such a field stops being one value and becomes extra
-    lines: in the router's ask listing a forged sibling bullet, and in the
-    banner below continuation lines at column 0 — LEFT of the indent-2 column
-    the item's own entry renders at, so a reader counting entries in that block
-    counts more parked items than are parked.
-
-    It lives HERE, in the rendering module, because it is a rendering rule and
-    because `orchestration/guidance.py` already imports this module: one
-    implementation both surfaces reach, rather than the same expression written
-    twice in two files free to drift apart.
-
-    Never applied to text that must KEEP its lines. The ask step renders a
-    question's body verbatim inside a fence, because that body is what the
-    human authorizes and the bytes the park door's loop rung compares.
-    """
-    return " ".join(str(value or "").split())
-
-
-def _clipped(value: object, limit: int = 90) -> str:
-    """``value`` as one line, ellipsised at ``limit`` characters.
-
-    Flattened BEFORE it is measured, which is what makes the truncation honest:
-    `len()` over raw text measures content the line never shows.
-    """
-    text = one_line(value)
-    return text if len(text) <= limit else text[:limit - 3] + "..."
-
-
-def _one_screen_line(text: str) -> str:
-    """``text`` with its line BREAKS removed — ONE ELEMENT IS ONE SCREEN LINE.
-
-    should-not-stop FR-032 (D-031) — THE RULE IS THE MODULE'S, NOT A SITE'S.
-
-    Every renderer below composes a LIST whose elements a joiner puts on the
-    wire with newlines between them. A stored field carrying a newline
-    therefore stops being a value and becomes an extra LINE, at whatever column
-    its own text begins — so a reader counting rows of a block counts more rows
-    than the run has, and the forged row can spell any row the block draws.
-
-    WHY THIS IS STATED HERE AND NOT AT THE INTERPOLATIONS. `one_line` was
-    applied to `_fmt_foundry_next_lines`' own interpolations in cycle 9, and
-    that held for THAT function while two sibling renderers on the same wire
-    stayed exposed, because a rule enforced by remembering to call something is
-    only ever as good as the next author's memory. This is the same shape the
-    named-refusal guarantee below already uses: a POST-CONDITION over whatever
-    the formatter produced, so no formatter can sit outside it — including the
-    one nobody has written yet.
-
-    Driven at `format_result_blocks`, the function whose return value
-    `server.py` puts on the wire, control and drive differing in ONE field:
-    `Foundry-Defects` 42 -> 43 lines on a `description`, 42 -> 44 on a
-    `by_source` key; `Foundry-Tasks` 25 -> 26 on each of `description`,
-    `defect_ids` and `files`; `Foundry-Fix` 16 -> 17 on the TITLE, which forges
-    a line INSIDE the pixel-art banner; `Foundry-Stream` 7 -> 8 through a
-    formatter that returns a bare string and reaches no joiner at all. The last
-    two axes were not in the filing and were found by driving the module rather
-    than the two functions named in it.
-
-    NOT `one_line`, and the difference is load-bearing. That one collapses every
-    run of whitespace, which is right for a FIELD being placed into a line and
-    wrong for a composed LINE: it would eat the `{:<8}` column padding the defect
-    ledger aligns on and the double spaces the banner spells its title with. This
-    removes line breaks and touches no other whitespace, so every line that
-    carries none is returned unchanged — which is why this fix moves no existing
-    rendering.
-
-    THE DECLARED EXCEPTIONS, both composed OUTSIDE the joiners on purpose:
-    `_fmt_foundry_next_action` concatenates the pre-rendered status box and the
-    imperative `instructions`, and both are legitimately many lines. A block
-    that must keep its lines is passed as one element PER LINE, never as one
-    element carrying them — which is what `_screen_lines` below does, so the
-    exception is spelled AS the rule rather than excepted from it.
-    """
-    return " ".join(text.splitlines())
-
-
-#: `_one_screen_line` published for `orchestration/guidance.py`, which composes
-#: the status banner this module then renders (D-032).
-#:
-#: Same reason the eight colour codes below are published: that banner is built
-#: there, joined there, and reaches the screen through `_fmt_foundry_next_action`
-#: here, so the two modules have to keep ONE rule about what an element may
-#: contain. A second implementation over there is how the palette and the phase
-#: ladder each came to have two declarations (D-014, D-015).
-one_screen_line = _one_screen_line
-
-
-def _screen_lines(block: object) -> list[str]:
-    """A legitimately multi-line BLOCK as one element PER SCREEN LINE (D-032).
-
-    should-not-stop FR-032 — THE DECLARED EXCEPTION, GIVEN A BODY.
-
-    Two formatters concatenate a block that must KEEP its lines — the
-    pre-rendered status box and the imperative `instructions` — with fields that
-    must not add any. `_one_screen_line` is wrong for the block (it would
-    collapse the whole status display onto one line) and right for everything
-    beside it, so the block is turned into elements the joiner's rule can hold
-    rather than excepted from that rule.
-
-    SPLIT ON `"\\n"`, THEN FLATTEN EACH PIECE, and both halves are load-bearing:
-
-    - `.splitlines()` alone would be backwards here. It honours ELEVEN
-      separators, so a `\\r` or `\\u2028` sitting inside the block would be
-      PROMOTED to a real screen line by the very call meant to count them.
-    - `.split("\\n")` alone preserves the block's legitimate structure and
-      leaves an exotic separator inside an element, where it is no longer one
-      screen line.
-
-    Doing both keeps the legitimate newlines as elements and removes every other
-    separator from within them. For a block that carries none — every block this
-    server composes today — the result is byte-identical to the string it was
-    handed, which is why this moves no existing rendering.
-    """
-    return [_one_screen_line(line) for line in str(block).split("\n")]
-
-
 def _short_path(p: str) -> str:
     """Shorten an absolute path to be relative to cwd or home."""
     if not p or p == "?":
@@ -230,35 +105,20 @@ _W = 60  # default box width (inner)
 def _box(title: str, lines: list[str], width: int = _W, color: str = _BCYAN) -> str:
     """Draw a colored box with a title bar and content lines."""
     top = f"{color}\u2554{'\u2550' * (width + 2)}\u2557{_RESET}"
-    # D-031: one element is one screen line, title included \u2014 a box whose body
-    # gained a line from a field has a border that no longer closes it.
-    title_line = (
-        f"{color}\u2551{_RESET} {_BWHITE}{_one_screen_line(title):<{width}}{_RESET} "
-        f"{color}\u2551{_RESET}"
-    )
+    title_line = f"{color}\u2551{_RESET} {_BWHITE}{title:<{width}}{_RESET} {color}\u2551{_RESET}"
     sep = f"{color}\u2560{'\u2550' * (width + 2)}\u2563{_RESET}"
     bottom = f"{color}\u255a{'\u2550' * (width + 2)}\u255d{_RESET}"
-    body = [
-        f"{color}\u2551{_RESET} {_one_screen_line(line):<{width}} {color}\u2551{_RESET}"
-        for line in lines
-    ]
+    body = [f"{color}\u2551{_RESET} {line:<{width}} {color}\u2551{_RESET}" for line in lines]
     return "\n".join([top, title_line, sep, *body, bottom])
 
 
 def _mini_box(title: str, lines: list[str], width: int = 50, color: str = _BCYAN) -> str:
     """Compact colored box for quick status results."""
     top = f"{color}\u250c{'\u2500' * (width + 2)}\u2510{_RESET}"
-    # D-031: the same rule the full box holds \u2014 see `_one_screen_line`.
-    title_line = (
-        f"{color}\u2502{_RESET} {_BWHITE}{_one_screen_line(title):<{width}}{_RESET} "
-        f"{color}\u2502{_RESET}"
-    )
+    title_line = f"{color}\u2502{_RESET} {_BWHITE}{title:<{width}}{_RESET} {color}\u2502{_RESET}"
     sep = f"{color}\u251c{'\u2500' * (width + 2)}\u2524{_RESET}"
     bottom = f"{color}\u2514{'\u2500' * (width + 2)}\u2518{_RESET}"
-    body = [
-        f"{color}\u2502{_RESET} {_one_screen_line(line):<{width}} {color}\u2502{_RESET}"
-        for line in lines
-    ]
+    body = [f"{color}\u2502{_RESET} {line:<{width}} {color}\u2502{_RESET}" for line in lines]
     return "\n".join([top, title_line, sep, *body, bottom])
 
 
@@ -306,14 +166,7 @@ def foundry_hammer(label: str) -> str:
         f"{_BCYAN}   \u2584\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2584{_RESET}",
         f"{_BCYAN}   \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588{_RESET}",
         f"{_BCYAN}   \u2580\u2580\u2580\u2580\u2588\u2588\u2580\u2580\u2580\u2580{_RESET}",
-        # D-031: the label occupies ONE slot of fixed pixel-art, so a newline in
-        # it does not wrap \u2014 it inserts a forged line between the handle rows.
-        # Flattened HERE rather than in `_foundry_display` because the other two
-        # callers of this function are `orchestration/guidance.py`'s status
-        # banner and `tools/foundry.py`'s init and resume banners, and the
-        # latter two interpolate a run name that reaches this slot with neither
-        # validation nor a slug.
-        f"{_BCYAN}       \u2588\u2588{_RESET}     {_BWHITE}{_one_screen_line(label)}{_RESET}",
+        f"{_BCYAN}       \u2588\u2588{_RESET}     {_BWHITE}{label}{_RESET}",
         f"{_BCYAN}       \u2588\u2588{_RESET}",
     ])
 
@@ -322,10 +175,7 @@ def _foundry_display(label: str, lines: list[str]) -> str:
     """Render a foundry tool result with hammer header, body lines, and separator."""
     parts = [foundry_hammer(label)]
     for line in lines:
-        # D-031 — THE JOIN IS WHY. This function is what turns a list into
-        # lines, so it is where "one element is one line" is guaranteed for
-        # every formatter that renders through it, written and unwritten.
-        parts.append(_one_screen_line(line))
+        parts.append(line)
     parts.append(FOUNDRY_SEP)
     return "\n".join(parts)
 
@@ -460,24 +310,10 @@ def _fmt_foundry_init(r: dict) -> str:
         return _foundry_display(f"F O U N D R Y  {_BRED}Init refused{_RESET}", lines)
 
     if "display" in r:
-        # D-034 — THE FOURTH JOIN, AND THE FOUR FIELDS THAT REACHED IT RAW.
-        #
-        # `foundry_init`'s success return carries `**version_fields` AND
-        # `display` in ONE dict, so this arm is the success path and it renders
-        # the four executing-build facts on every successful init. It carried
-        # its own `"\n".join`, reaching neither `_foundry_display` nor
-        # `_one_screen_line` — the two joins b6ca861's post-condition did not
-        # cover, because that fix enumerated the formatters that reach a joiner
-        # and these two ARE joiners.
-        #
-        # Driven at `format_result_blocks`, control and drive differing in ONE
-        # field, ANSI stripped: 24 -> 25 lines on each of `server_version`,
-        # `plugin_version`, `server_root` and `server_commit`. The covering test
-        # asserted four substrings, all of which stay true while the render
-        # grows a line, which is why it stayed green across the exposure.
-        parts = _screen_lines(r["display"])
-        parts.extend(_one_screen_line(line) for line in build)
-        return "\n".join(parts)
+        pre_rendered = r["display"]
+        if build:
+            return pre_rendered + "\n" + "\n".join(build)
+        return pre_rendered
     lines = [
         f"  {_BWHITE}Dir:{_RESET}    {_short_path(r.get('foundry_dir', '?'))}",
         f"  {_BWHITE}Name:{_RESET}   {r.get('run_name', '?')}",
@@ -672,10 +508,7 @@ def _fmt_foundry_gate(r: dict) -> str:
     # Hide failed gate checks — the lead retries automatically, no need to surface
     if not passed:
         reason = r.get("reason", "")
-        # D-031: flattened HERE because this return reaches no joiner. The whole
-        # composed line goes through it rather than the `reason` alone, since
-        # `phase_name` falls back to the caller's own `phase` string.
-        return _one_screen_line(f"{_DIM}Gate {phase_name}: not ready \u2014 {reason}{_RESET}")
+        return f"{_DIM}Gate {phase_name}: not ready \u2014 {reason}{_RESET}"
 
     lines = [f"  {_pass_fail(passed)}"]
 
@@ -693,8 +526,7 @@ def _fmt_foundry_mark_phase_complete(r: dict) -> str:
     if r.get("error"):
         # Hide blocked transitions — lead retries automatically
         reason = r.get("error", "")
-        # D-031: reaches no joiner, so the rule is applied to the line itself.
-        return _one_screen_line(f"{_DIM}Phase transition blocked: {reason}{_RESET}")
+        return f"{_DIM}Phase transition blocked: {reason}{_RESET}"
     phase = r.get("phase", "?")
     phase_name = PHASE_NAMES.get(phase, phase)
     return _foundry_display(f"F O U N D R Y  \u2192 {phase} {phase_name}", [
@@ -783,28 +615,6 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
     state.json; the spend totals are what the lead typed into Foundry-Spend. No
     line below computes a value, and none of them contains a money figure — this
     server does not know anyone's rate card (AC-033).
-
-    D-027 — AND EVERY STRING FIELD ON EVERY LINE BELOW IS FLATTENED, because
-    ONE ELEMENT OF THIS LIST IS ONE LINE ON SCREEN. The caller joins what this
-    returns with newlines, so a field that carries one stops being a value and
-    becomes an extra line — at column 0, LEFT of the indent-2 column the entries
-    below start at. Driven: a `Foundry-Spend` whose agent name carried a newline
-    put a forged `Parked:` entry on screen ABOVE two real ones, and a phase
-    token did it again on the By Phase line, while only ONE item was parked.
-
-    The three per-instance fixes before this one each flattened the site their
-    defect was found at, which is why the class came back for four cycles. The
-    rule is therefore the FUNCTION's and not a site's: every interpolation of a
-    stored string goes through `one_line` (or `_clipped`, which flattens before
-    it measures). Counts do NOT — `one_line(0)` is `""`, because it spells
-    `str(value or "")`, so flattening a number would erase a real zero.
-
-    The pin is `test_no_field_a_foundry_next_line_is_built_from_can_add_a_line`
-    in `tests/orchestration/test_guidance.py`. It holds the rule for the sites
-    here AND the ones nobody has written yet: it asserts that no element this
-    returns contains a newline, which is the invariant itself rather than an
-    enumeration of the sites — so a site added later is covered on the day it
-    is written, which is what the three per-instance fixes could not do.
     """
     lines: list[str] = []
 
@@ -812,31 +622,23 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
     if isinstance(mode, dict) and mode.get("mode"):
         colour = _BYELLOW if mode["mode"] == "FULL" else _BGREEN
         lines.append(
-            f"  {_BWHITE}Inspect:{_RESET}  {colour}{one_line(mode['mode'])}{_RESET} "
-            f"{_DIM}(rule {one_line(mode.get('rule')) or '?'}, decided at "
-            f"{one_line(mode.get('decided_by')) or '?'}){_RESET}"
+            f"  {_BWHITE}Inspect:{_RESET}  {colour}{mode['mode']}{_RESET} "
+            f"{_DIM}(rule {mode.get('rule', '?')}, decided at "
+            f"{mode.get('decided_by', '?')}){_RESET}"
         )
         required = mode.get("required_streams") or []
         if required:
-            lines.append(
-                f"  {_BWHITE}Roster:{_RESET}   "
-                f"{', '.join(one_line(wire) for wire in required)}"
-            )
+            lines.append(f"  {_BWHITE}Roster:{_RESET}   {', '.join(required)}")
         scope = mode.get("stream_scope") or {}
         skipped = sorted(
             wire for wire, v in scope.items()
             if isinstance(v, dict) and v.get("scope") == "skipped"
         )
         if skipped:
-            lines.append(
-                f"  {_BWHITE}Skipped:{_RESET}  "
-                f"{_DIM}{', '.join(one_line(wire) for wire in skipped)}{_RESET}"
-            )
+            lines.append(f"  {_BWHITE}Skipped:{_RESET}  {_DIM}{', '.join(skipped)}{_RESET}")
         sample = mode.get("prove_sample") or []
         if sample:
-            shown = ", ".join(one_line(row) for row in sample[:8]) + (
-                "..." if len(sample) > 8 else ""
-            )
+            shown = ", ".join(sample[:8]) + ("..." if len(sample) > 8 else "")
             lines.append(f"  {_BWHITE}PROVE:{_RESET}    {len(sample)} row(s) — {shown}")
         # D-140 / AC-019: the TRACE half of the same roster. PROVE's rows have
         # been on this screen since D-104 and TRACE's files were on none — the
@@ -854,7 +656,7 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
         touched = mode.get("touched_files") or []
         trace_scope = (mode.get("stream_scope") or {}).get("trace")
         if touched and isinstance(trace_scope, dict) and trace_scope.get("scope") == "delta":
-            shown = ", ".join(one_line(_short_path(p)) for p in touched[:5])
+            shown = ", ".join(_short_path(p) for p in touched[:5])
             more = f" (+{len(touched) - 5} more)" if len(touched) > 5 else ""
             lines.append(
                 f"  {_BWHITE}TRACE:{_RESET}    {len(touched)} file(s) — {shown}{more}"
@@ -877,7 +679,7 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
             # it instead, so the reader can tell which is which.
             unmatched = spend.get("unmatched_agents")
             unmatched = unmatched if isinstance(unmatched, list) else []
-            shown = ", ".join(one_line(name) for name in unmatched[:4])
+            shown = ", ".join(str(name) for name in unmatched[:4])
             more = f" (+{len(unmatched) - 4} more)" if len(unmatched) > 4 else ""
             tail = (
                 f", {_BYELLOW}{len(unmatched)}{_RESET} matching no dispatch "
@@ -932,8 +734,7 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
             if not isinstance(buckets, dict) or not buckets:
                 continue
             parts = [
-                f"{one_line(key)}: {b.get('tokens', 0):,}tok/"
-                f"{int(b.get('duration_ms', 0) // 60000)}m"
+                f"{key}: {b.get('tokens', 0):,}tok/{int(b.get('duration_ms', 0) // 60000)}m"
                 for key, b in sorted(
                     buckets.items(), key=lambda kv: _cycle_sort_key(kv[0])
                 )
@@ -949,7 +750,7 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
         # `_unreported_pairs`.
         unreported_count, unreported_pairs = _unreported_pairs(spend)
         if unreported_count or unreported_pairs:
-            names = ", ".join(one_line(pair) for pair in unreported_pairs[:6])
+            names = ", ".join(unreported_pairs[:6])
             more = (
                 f" (+{len(unreported_pairs) - 6} more)"
                 if len(unreported_pairs) > 6 else ""
@@ -961,13 +762,11 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
 
     build = r.get("executing_server")
     if isinstance(build, dict) and (build.get("server_version") or build.get("server_commit")):
-        commit = one_line(build.get("server_commit"))
+        commit = str(build.get("server_commit", "") or "")
         lines.append(
-            f"  {_BWHITE}Server:{_RESET}   "
-            f"{one_line(build.get('server_version')) or '?'} "
-            f"{_DIM}(plugin {one_line(build.get('plugin_version')) or '?'} @ "
-            f"{commit[:12] or 'unknown'}, "
-            f"{one_line(_short_path(str(build.get('server_root', '?'))))})"
+            f"  {_BWHITE}Server:{_RESET}   {build.get('server_version', '?')} "
+            f"{_DIM}(plugin {build.get('plugin_version', '?')} @ "
+            f"{commit[:12] or 'unknown'}, {_short_path(str(build.get('server_root', '?')))})"
             f"{_RESET}"
         )
 
@@ -975,63 +774,8 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
     if isinstance(waiting, dict) and waiting.get("waiting"):
         lines.append(
             f"  {_BWHITE}Waiting:{_RESET}  {waiting.get('count', 0)} agent(s) "
-            f"{_DIM}({one_line(waiting.get('detail'))}){_RESET}"
+            f"{_DIM}({waiting.get('detail', '')}){_RESET}"
         )
-
-    # should-not-stop FR-032 / GI-006 — THE PARKED ITEMS, THEIR ANSWERS, AND
-    # WHETHER THE HUMAN HAS BEEN ASKED.
-    #
-    # Rendered from the `parked` block `foundry_next_action` publishes from
-    # state.json's server-owned `parked` key. Nothing here decides whether an
-    # item is parked or whether the ask is due; an absent or malformed block
-    # contributes no line, on this module's never-raise rule.
-    parked = r.get("parked")
-    if isinstance(parked, dict):
-        # EVERY FIELD ON THESE LINES IS FLATTENED, AND THE TRUNCATION MEASURES
-        # WHAT IT FLATTENED (D-024). One entry per parked item is the whole
-        # readability of this block — a reader counts entries to know how many
-        # items are parked — and both the `item_ref` a lead typed and the
-        # question it carries can hold newlines. Rendered raw, one item's later
-        # lines came out at column 0, LEFT of the indent-2 column entries start
-        # at, so nine parked items could read as twelve.
-        #
-        # The 90-character clip was also the MASK that kept this surface looking
-        # clean: `len()` over the raw question measures text this line never
-        # shows, so a LONG question was ellipsised before its first newline was
-        # ever reached while a SHORT multi-line one passed through intact and
-        # broke the block. Flattening first removes the mask and the defect
-        # together.
-        for item in parked.get("open") or []:
-            if not isinstance(item, dict):
-                continue
-            lines.append(
-                f"  {_BWHITE}Parked:{_RESET}   "
-                f"{_BYELLOW}{one_line(item.get('id')) or '?'}{_RESET} "
-                f"{_clipped(item.get('item_ref')) or '?'} "
-                f"{_DIM}({one_line(item.get('category')) or '?'}) "
-                f"— {_clipped(item.get('question'))}{_RESET}"
-            )
-        for item in parked.get("answered") or []:
-            if not isinstance(item, dict):
-                continue
-            halt = f" {_BRED}(halt){_RESET}" if item.get("answer_is_halt") is True else ""
-            lines.append(
-                f"  {_BWHITE}Answered:{_RESET} {one_line(item.get('id')) or '?'} "
-                f"{_clipped(item.get('item_ref')) or '?'}{halt} "
-                f"{_DIM}— {_clipped(item.get('answer'))}{_RESET}"
-            )
-        awaiting = parked.get("awaiting_human")
-        if isinstance(awaiting, dict):
-            asked = awaiting.get("item_ids")
-            names = (
-                one_line(", ".join(one_line(i) for i in asked))
-                if isinstance(asked, list) else "?"
-            )
-            lines.append(
-                f"  {_BWHITE}Asking:{_RESET}   {_BYELLOW}the human{_RESET} "
-                f"{_DIM}since {one_line(awaiting.get('set_at')) or '?'} "
-                f"({names or '?'}){_RESET}"
-            )
 
     # FR-021 / AC-028 / CT-007 — WHERE THE RUN IS HEADING, beside the facts it
     # already prints.
@@ -1058,8 +802,7 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
         if isinstance(backlog, dict) and backlog:
             parts.append(
                 "backlog " + ", ".join(
-                    f"{one_line(tier)} {count}"
-                    for tier, count in sorted(backlog.items())
+                    f"{tier} {count}" for tier, count in sorted(backlog.items())
                 )
             )
         cycles = r.get("cycles_to_cap")
@@ -1071,13 +814,13 @@ def _fmt_foundry_next_lines(r: dict) -> list[str]:
             parts.append("no cap")
         tail = f" {_DIM}({'; '.join(parts)}){_RESET}" if parts else ""
         lines.append(
-            f"  {_BWHITE}Heading:{_RESET}  {colour}{one_line(heading)}{_RESET}{tail}"
+            f"  {_BWHITE}Heading:{_RESET}  {colour}{heading}{_RESET}{tail}"
         )
 
     if r.get("phase") == "HALTED":
         lines.append(
             f"  {_BRED}HALTED:{_RESET}   "
-            f"{one_line((r.get('details') or {}).get('halted_reason')) or 'cycle cap reached'}"
+            f"{(r.get('details') or {}).get('halted_reason', 'cycle cap reached')}"
         )
     return lines
 
@@ -1107,41 +850,15 @@ def _fmt_foundry_next_action(r: dict) -> str:
     pre_rendered = r.get("display")
     facts = _fmt_foundry_next_lines(r)
     if pre_rendered:
-        # D-032 — THE ARM EVERY LIVE CALL TAKES, AND THE ONE THE RULE MISSED.
-        #
-        # `guidance.py#foundry_next_action` sets `display` UNCONDITIONALLY, so
-        # this arm answers every Foundry-Next of a live run — the most-called
-        # tool the server has — and it built its output by raw concatenation,
-        # reaching neither a joiner nor `_one_screen_line`. b6ca861 put the
-        # invariant at the three joiners and at the banner label and claimed
-        # every formatter reached one of them; these two sites are themselves
-        # joins, so the claim was false here and the fix could not see it.
-        #
-        # THE OTHER ARM IS NOT DEAD, and it matters for what this is pinned by:
-        # `_format_status_display` returns "" when there is no run directory, so
-        # the else-arm below is the NO-ACTIVE-RUN response (`action: "init"`).
-        # A test that omits `display` therefore drives a reachable path — just
-        # not this one, which is the whole of D-033.
-        #
-        # Driven at `format_result_blocks`: a team name carrying a newline took
-        # the render 5 -> 6 lines and put `Defects: 0 open  999 fixed` at column
-        # 0, spelling a row of the very block it was rendered beside.
-        parts = _screen_lines(pre_rendered)
-        parts.extend(_one_screen_line(line) for line in facts)
+        block = pre_rendered
+        if facts:
+            block = block + "\n" + "\n".join(facts)
         if instructions:
-            # The blank line the concatenation used to spell as "\n\n".
-            parts.append("")
-            parts.extend(_screen_lines(instructions))
-        return "\n".join(parts)
+            return f"{block}\n\n{instructions}"
+        return block
     return _foundry_display(f"F O U N D R Y  {r.get('phase', '?')}", [
         f"  {_BWHITE}Action:{_RESET}  {r.get('action', '?')}",
-        # D-031 — THE DECLARED EXCEPTION, SPELLED AS THE RULE REQUIRES.
-        # An imperative is legitimately many lines, and the joiner flattens what
-        # it is handed. So a block that must KEEP its lines is passed as one
-        # element PER LINE rather than as one element carrying them — which is
-        # byte-identical to the single element this replaces, and leaves the
-        # invariant true instead of excepted.
-        *_screen_lines(f"  {instructions}"),
+        f"  {instructions}",
     ] + facts)
 
 
@@ -1231,11 +948,10 @@ def _fmt_foundry_unregister_team(r: dict) -> str:
         if hint:
             lines.append(f"  {_DIM}{hint}{_RESET}")
 
-        # should-not-stop GI-001 / AC-027: no title arm names the removed team
-        # tools. Team-Down is ledger-only, so no refusal carries the old
-        # directory-exists phase any more and its arm had no producer.
         title = "Team Teardown Blocked"
-        if phase == "live_teammates":
+        if phase == "team_dir_exists":
+            title = "TeamDelete Not Called"
+        elif phase == "live_teammates":
             title = "Teammates Still Alive"
         elif phase == "cleanup_failed":
             title = "Pane Cleanup Failed"
@@ -1381,9 +1097,7 @@ def _fmt_foundry_mark_stream(r: dict) -> str:
     if r.get("error"):
         # Compact display for stream failures — these are expected during normal flow
         reason = r.get("error", "")
-        # D-031: reaches no joiner, so the rule is applied to the line itself.
-        # Driven at `format_result_blocks`: 7 lines became 8 on a newline here.
-        return _one_screen_line(f"{_DIM}Stream: {reason}{_RESET}")
+        return f"{_DIM}Stream: {reason}{_RESET}"
     stream = r.get("stream", "?").upper()
     coverage = r.get("coverage", "?")
     items = r.get("items_checked", 0)
@@ -1770,14 +1484,7 @@ def format_result(tool_name: str, result: dict) -> str:
             pass  # Fall through to JSON
         else:
             refusal = _named_refusal(result)
-            # D-031: the rendering is line-flattened now, so a refusal whose own
-            # text carries a newline is no longer present in it VERBATIM, and
-            # this check would read that as "the formatter dropped the refusal"
-            # for a formatter that rendered it faithfully. Membership is judged
-            # on the same flattened basis the renderer used. For a single-line
-            # refusal — every one this server ships today — it is the comparison
-            # it has always been.
-            if refusal is not None and _one_screen_line(refusal) not in _one_screen_line(rendered):
+            if refusal is not None and refusal not in rendered:
                 return _house_refusal_display(tool_name, result, refusal)
             return rendered
 

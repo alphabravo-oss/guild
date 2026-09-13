@@ -4,8 +4,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/foundry-4.12.0-F57C00?style=flat-square" alt="foundry 4.12.0"/>
-  <img src="https://img.shields.io/badge/foundry--mcp-1.11.0-F57C00?style=flat-square" alt="foundry-mcp 1.11.0"/>
+  <img src="https://img.shields.io/badge/foundry-4.11.0-F57C00?style=flat-square" alt="foundry 4.11.0"/>
+  <img src="https://img.shields.io/badge/foundry--mcp-1.10.0-F57C00?style=flat-square" alt="foundry-mcp 1.10.0"/>
   <img src="https://img.shields.io/badge/guild-pipeline-1E88E5?style=flat-square" alt="guild pipeline"/>
   <img src="https://img.shields.io/badge/Claude%20Code-plugin-8E44AD?style=flat-square" alt="Claude Code plugin"/>
   <img src="https://img.shields.io/badge/license-MIT-2E7D32?style=flat-square" alt="MIT license"/>
@@ -227,7 +227,7 @@ A run does not only end by finishing. `Foundry-Phase` takes a `halt` token that 
 
 The member is what the report and `measure-run.py` group on; the lead's own free text rides alongside it and says why *this* run ended, which no closed set can carry. Neither substitutes for the other.
 
-**A run that reaches `HALTED` stopped with work outstanding; it is not a run that succeeded.** The halt is a transition that succeeds: the phase becomes `HALTED`, the report regenerates with every open `LIVE`, `LATENT` and `HARDENING` defect named in it, and `phase_history` gains a `HALTED` row. It is refused only on the three things `Foundry-Gate(phase='halt')` will report first — a reason outside the four, a team still registered, or a run already halted. **`HALTED` is a named terminal state distinct from `DONE`**: a halted run stopped with open work, and the report says what.
+**`HALTED` with a named backlog is a successful end, not a failure.** The halt is a transition that succeeds: the phase becomes `HALTED`, the report regenerates with every open `LIVE`, `LATENT` and `HARDENING` defect named in it, and `phase_history` gains a `HALTED` row. It is refused only on the three things `Foundry-Gate(phase='halt')` will report first — a reason outside the four, a team still registered, or a run already halted. **`HALTED` is a named terminal state distinct from `DONE`**: a halted run stopped with open work, and the report says what.
 
 ---
 
@@ -300,27 +300,6 @@ A blocked model does not fail the spawn. Claude Code checks the value against yo
 ---
 
 ## What's new
-
-### foundry 4.12.0 — the run only stops when you stop it
-
-4.11.0 stopped the loop making work for itself. Building it exposed the opposite failure: the loop stopping *itself*. A run left alone after `start_cast` kept ending before completion, with the operator away for the whole build and hours of unattended progress expected — and the causes were spread across the prose and the doors alike: a lead whose turn ended while it waited on agent notifications with nothing to bring it back, a halt door any lead ruling could reach, a context-handover rule that ended the session mid-build, teammate halts with no route back to the lead, and door deadlocks that only a human hand-edit cleared. This release closes each one without loosening a single gate — continuity comes from routing and waiting, never from skipping a check. Planning-phase questions stay exactly as they were; after `start_cast` a closed list of four major issues is the only reason to involve you, one parked item never stops the work it does not block, and ending a run becomes something only you can do, with proof the instruction came from you. The sections above document each mechanism in place; the table below maps what shipped to where it lives.
-
-| Adds | Where |
-|---|---|
-| **`Foundry-Park` — the sanctioned question** — a major issue parks ONE item carrying its category from a closed four-member list (`live_plugin_reload`, `spec_wrong`, `env_broken`, `unknown_deadlock`) and the question to put to you, persisted in `state.json`. Every casting, defect and stream the item does not block keeps moving; you are asked only when nothing else can | `Foundry-Park` · `orchestration/park.py` · `vocab.PARK_CATEGORIES` |
-| **After `start_cast`, only the human ends the run** — the halt door refuses `lead_ruling`, `spec_change_required` and a lead-supplied `cap_reached` outright in F1..F5.5, and accepts `user_stop` only with human-origin proof: a parked item you answered with a halt, or the one-time token `/foundry:stop` writes in its own shell step and the seal consumes. The launch cap still ends a run, through the GRIND-opening doors | `_halt_preconditions` · `orchestration/halt.py` · `commands/stop.md` |
-| **A Stop hook as the backstop** — while the active run sits in F1..F5.5 and no `awaiting_human` marker is set, the lead's turn-end is blocked, and the reason names the run, its phase and every in-flight agent before saying to call `Foundry-Next` or to bounded-wait. A non-empty parked list alone never allows the stop; malformed stdin still decides from run state, and only unreadable run state allows | `hooks/stop-continue.py` · `hooks/hooks.json` |
-| **Compaction re-orients instead of handing over** — SessionStart on `compact` and `resume` names the active run and sends the lead to `Foundry-Context` then `Foundry-Next`, so the lead never deliberately ends a session for context. Both hooks read files only; neither ever calls the MCP server | `hooks/session-start-run.py` · `hooks/foundry_active_run.py` |
-| **Teammates file a blocker instead of halting** — each former teammate halt becomes a `Foundry-Concern` carrying a machine-readable `blocker_kind`, then returns. `prompt_hash_mismatch` re-dispatches, `missing_prerequisite` is held until its upstream casting is accepted, and `scope_instruction_conflict` parks as a spec problem rather than re-running DECOMPOSE | `vocab.BLOCKER_KINDS` · `Foundry-Concern` · `agents/teammate.md` |
-| **`Foundry-Next` routes around what is parked** — parked work is skipped rather than waited on, and the ask step is emitted only when every remaining unit of work is parked, setting the same server-owned marker the Stop hook reads. An unconsumed halt answer routes to the seal ahead of every other step | `Foundry-Next` · `orchestration/guidance.py` |
-| **Three attempts, then park** — a first attempt and two same-model retries re-dispatch; the third failure on the same model parks as `env_broken`. Blocker returns and judged returns never count toward it | `orchestration/guidance.py` |
-| **A stale live target parks for one relaunch** — on a run whose target is foundry itself, a mid-run crossing that depends on server, gate or agent prose changed since the running server loaded parks as `live_plugin_reload`, and before DONE any such change parks. Display-only and test-only changes never park, and a run on any other target never parks at all | `tools/foundry.py` |
-| **Ledger-only teams** — `TeamCreate` and `TeamDelete` are gone from every shipped imperative, and team activity is read from the run's own ledger rather than from a `~/.claude/teams` directory, so a missing directory is no longer taken as proof a team ended | `foundry_state.py` · `Foundry-Team-Up` · `Foundry-Team-Down` |
-| **The Team-Down join keys by handed-over defect id** — the spawn door records one dispatch row per id it actually hands a teammate, and the join refuses only for an id that was dispatched, is still open, and whose file a commit since the cycle baseline touched. A backlogged defect's file no longer holds the team down | `Foundry-Spawn-Teammate` · `Foundry-Team-Down` · `handoffs.jsonl` |
-| **Every wait is bounded** — no imperative ends the turn to wait for a notification; a wait is a `Monitor` watch or a time-limited loop, and the dead-end and contradictory imperatives are gone. There is no stop for diminishing returns: only the launch cap ends a long loop | `orchestration/guidance.py` · `commands/start.md` · `references/lead-discipline.md` |
-| **The report records what a never-stopped run accumulates** — each cycle's spend beside the defects filed in it, every parked item with its category, question and answer, and TEMPER's STUCK domains as backlog under their own tier. All inside existing sections, so the DONE gate's report read is unchanged | `Foundry-Report` |
-| **A scripted F1-to-F6 continuity walk** — a synthetic run crosses every phase through the real doors, running the shipped Stop hook as a subprocess at each step, and asserts a block everywhere except the `awaiting_human` ask, a human-origin `user_stop` seal and F6 | `tests/orchestration/test_continuity_walk.py` |
-| **Nothing else loosened** — the only refusals that changed are the post-CAST halt door, the Team-Down dispatch join, and team activity read from the ledger. Every other gate, stream, evidence check and tier-aware DONE refusal keeps the semantics it had | `gates.py` · `transitions.py` · `evidence.py` |
 
 ### foundry 4.11.0 — the loop stops making work for itself
 

@@ -170,15 +170,8 @@ empty. These aren't UI bugs — they're a missing backend.
 ```
 mcp__playwright__browser_navigate  url: "<target_url>"
 ```
-If this fails with "unknown tool", Playwright MCP is not available and the environment
-is broken for this stream. A tool the session does not have is not transient, so there is
-nothing to retry. Do NOT fall back to Bash/curl/code reading, and do NOT stop the run.
-When SIGHT runs from F2, park the stream as `env_broken`:
-`Foundry-Park(action='park', item_ref='stream:sight', category='env_broken', question=…)`,
-with a question that names the failed call and asks the human to configure Playwright MCP
-(`/foundry:setup`). Then return to `Foundry-Next`, which keeps every other stream, defect and
-casting moving and asks the human only when nothing else can move. Run standalone, outside a
-foundry run, report that Playwright MCP is not available and end the audit.
+If this fails with "unknown tool", STOP and report that Playwright MCP is not
+available. Do NOT fall back to Bash/curl/code reading.
 
 1. Navigate to the target URL using `mcp__playwright__browser_navigate`
 2. Take a screenshot: `mcp__playwright__browser_take_screenshot`
