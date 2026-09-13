@@ -845,14 +845,6 @@ class _EnvironmentalGrammar:
     names the literal ``# evidence-volatile:`` example ``agents/teammate.md``
     ships.
 
-    A ``corpus`` name is resolved against TWO roots by
-    ``test_evidence.py#_corpus_witness_fields_by_log``: the run's live
-    ``evidence/`` corpus, and the frozen bodies committed under
-    ``tests/fixtures/grammar_witnesses/``. The frozen half exists because F6
-    DONE strips the live corpus, so a pointer into ``evidence/`` alone resolves
-    for one run and rots at its end — see the D-011 paragraph above the
-    registry.
-
     ``witness_pair`` is ``(key_context, side_a, side_b)`` — a REAL disagreement
     this grammar must ADMIT, taken from the cold corpus run rather than
     invented. ``falsifier`` is the same triple with the grammar's identifier
@@ -911,32 +903,6 @@ class _EnvironmentalGrammar:
 #: place a recapture actually happens. Every corpus witness below now names a
 #: log owned by the same casting as this registry, which is what keeps a
 #: peer's commit from being able to kill a grammar's witness at all.
-#:
-#: should-not-stop D-011: and a witness must not be collateral damage of the
-#: RUN either. Every ``corpus`` pointer below named a log the fallout run
-#: committed and main's f1f32c5 then DELETED — F6 DONE strips the evidence
-#: corpus, because a commit-pinned log on main would be re-executed against a
-#: tree that has moved past it. That is the third time these pointers rotted
-#: (D-051, C-103, this), and repointing them at whatever the current run
-#: happens to have committed only restarts the clock. The three named bodies
-#: are therefore committed VERBATIM under
-#: ``tests/fixtures/grammar_witnesses/`` (recovered from 57e7e1d), and the
-#: sweep resolves a name against that root as well as the live corpus. Nothing
-#: is invented: they are the same bytes the fallout run captured, and
-#: ``casting-5-corpus-witness.log`` was purpose-built to be this registry's
-#: witness and states that obligation in its own body. A grammar added
-#: tomorrow still owes a real body there, which is what keeps this allowlist
-#: from widening on an assertion.
-#:
-#: What that gives up, stated rather than left to be discovered: a grammar the
-#: LIVE corpus stops varying is no longer retired by corpus turnover. That
-#: signal was already unreliable — ``pytest_platform_interpreter`` sits below
-#: "kept rather than retired because the field it admits is not hypothetical",
-#: having outlived every log that once witnessed it — because whether pytest
-#: prints a ``rootdir:`` is a property of the environment, not of whether this
-#: run's logs happened to include one. Narrowness is still driven, corpus-
-#: independently, by each entry's own ``witness_pair`` and ``falsifier`` in
-#: ``test_every_grammar_admits_its_witness_pair_and_refuses_its_falsifier``.
 _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
     "duration_seconds": _EnvironmentalGrammar(
         token=re.compile(r"\d+\.\d+s"),

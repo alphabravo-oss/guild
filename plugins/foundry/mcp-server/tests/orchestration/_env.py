@@ -3215,38 +3215,6 @@ def _break_report(project_root, fdir, token, monkeypatch) -> bool:
 
 
 
-def _break_parked(project_root, fdir, token, monkeypatch) -> bool:
-    """One recorded question the human has not answered (C-015).
-
-    Reachable at the TWO F6 tokens and nowhere else, which is the rung's whole
-    point: a mid-run crossing is backstopped by the Stop hook and is
-    deliberately not gated, so `False` here SKIPS those cases rather than
-    asserting a refusal that must not happen. `test_a_parked_question_does_not_
-    gate_a_midrun_crossing` states that other half positively.
-    """
-    if token not in ("done", "nyquist_done"):
-        return False
-    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
-    state[vocab.PARKED_STATE_KEY] = {
-        vocab.PARKED_ITEMS_KEY: [{
-            vocab.PARKED_FIELD_ID: "P-001",
-            vocab.PARKED_FIELD_ITEM_REF: "casting:99",
-            vocab.PARKED_FIELD_CATEGORY: vocab.PARK_CATEGORY_SPEC_WRONG,
-            vocab.PARKED_FIELD_QUESTION: "Does casting 99 exist?",
-            vocab.PARKED_FIELD_CYCLE: 1,
-            vocab.PARKED_FIELD_PARKED_AT: "2020-01-01T00:00:00+00:00",
-            vocab.PARKED_FIELD_ANSWER: None,
-            vocab.PARKED_FIELD_ANSWERED_AT: None,
-            vocab.PARKED_FIELD_ANSWER_IS_HALT: False,
-        }],
-        vocab.PARKED_AWAITING_HUMAN_KEY: None,
-    }
-    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
-    return True
-
-
-
-
 #: One arranger per `_GATE_RANK_*` constant, keyed by the constant's NAME.
 #: Each returns True when it could provoke that rung for that token, and False
 #: when the rung is not reachable there — a `False` SKIPS the case rather than
@@ -3254,7 +3222,6 @@ def _break_parked(project_root, fdir, token, monkeypatch) -> bool:
 #: quietly empty.
 _RUNG_ARRANGEMENTS = {
     "_GATE_RANK_HALTED": _break_halted,
-    "_GATE_RANK_PARKED": _break_parked,
     "_GATE_RANK_ESCALATION": _break_escalation,
     "_GATE_RANK_WIDTH": _break_width,
     "_GATE_RANK_TEAMS": _break_teams,

@@ -27,10 +27,6 @@ from foundry_mcp import __version__
 #                                   `enum` keyword — see the note at the
 #                                   Foundry-Phase entry (fallout AC-062 /
 #                                   CT-013 / OT-007, D-188..D-190)
-#   park category / item ref /      vocab's phrase helpers, in PROSE for the
-#   blocker kind                    same reason: the park door and the concern
-#                                   door each refuse a non-member BY NAME, and
-#                                   an advertised enum would answer first
 #
 # That drift is not cosmetic on this surface. The MCP SDK validates arguments
 # against the advertised enum BEFORE dispatch, so a token missing from an enum
@@ -43,14 +39,9 @@ from foundry_mcp.schemas.vocab import (
     DEFECT_TIERS,
     DEFECT_TYPES,
     FIX_AUTHORS,
-    HALT_REASON_USER_STOP,
     OBSERVATION_CLASSES,
-    PARK_ACTIONS,
     STREAM_WIRE_IDS,
-    blocker_kind_phrase,
     halt_reason_phrase,
-    park_category_phrase,
-    park_item_ref_phrase,
 )
 from foundry_mcp.tools.citation import verify_citations
 from foundry_mcp.tools.concerns import foundry_concern
@@ -92,7 +83,6 @@ from foundry_mcp.tools.orchestration.guidance import (
     foundry_get_context,
     foundry_next_action,
 )
-from foundry_mcp.tools.orchestration.park import foundry_park
 from foundry_mcp.tools.orchestration.spend import foundry_record_spend
 from foundry_mcp.tools.orchestration.streams import foundry_mark_stream
 from foundry_mcp.tools.orchestration.teams import (
@@ -449,10 +439,7 @@ async def list_tools() -> list[Tool]:
                             "phase='halt' only: the reason the halt door would "
                             f"be given, one of {halt_reason_phrase()}. Reported, "
                             "never acted on — membership is a checklist row, not "
-                            "a refusal, at this door. From F1 to F5.5 the door "
-                            f"takes only {HALT_REASON_USER_STOP!r} from the lead, "
-                            "and only on human-origin proof; the gate reports "
-                            "that check too."
+                            "a refusal, at this door."
                         ),
                     },
                     "text": {
@@ -541,12 +528,7 @@ async def list_tools() -> list[Tool]:
                             "by every other token. Membership is judged by the "
                             "halt door's own preconditions, not by this schema, "
                             "so a non-member is refused naming the check — the "
-                            "same check Foundry-Gate(phase='halt') reports. "
-                            "After start_cast (F1..F5.5) only the human ends a "
-                            f"run: the door takes {HALT_REASON_USER_STOP!r} and "
-                            "nothing else from the lead, and only on proof the "
-                            "human asked — an unused /foundry:stop token, or a "
-                            "parked question answered with halt."
+                            "same check Foundry-Gate(phase='halt') reports."
                         ),
                     },
                     "text": {
@@ -737,23 +719,6 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Required with `close`: why it is closed.",
                     },
-                    # should-not-stop FR-031 / CT-008 — a teammate that cannot
-                    # proceed files its blocker here with a kind and RETURNS,
-                    # instead of halting. No `enum`, for the reason the halt
-                    # `reason` carries none: `_argument_refusal` enforces an
-                    # advertised enum before the handler runs, which would make
-                    # the handler's own named refusal of an unknown kind
-                    # unreachable. The set is on the wire in the sentence,
-                    # derived from the vocabulary.
-                    "blocker_kind": {
-                        "type": "string",
-                        "description": (
-                            "Optional. Set only when the teammate filing this "
-                            "is BLOCKED and returning: one of "
-                            f"{blocker_kind_phrase()}. An unknown kind is "
-                            "refused by name."
-                        ),
-                    },
                 },
                 # fallout D-060 / AC-004 — `cycle` IS REQUIRED ON THE ARM THAT
                 # WRITES, AND ONLY ON THAT ARM.
@@ -788,82 +753,6 @@ async def list_tools() -> list[Tool]:
                 # been substituted for it.
                 "if": {"not": {"required": ["close"]}},
                 "then": {"required": ["cycle"]},
-            },
-        ),
-        # should-not-stop FR-006 / CT-003 / CT-004 / ST-001 — THE PARK DOOR.
-        #
-        # One tool, two actions: the Foundry-Concern shape. Every closed set it
-        # takes — the action, the category and the item-ref kinds — is on the
-        # wire in the description PROSE, built from the vocabulary's phrase
-        # helpers, and never as an `enum`: `_argument_refusal` enforces an
-        # advertised enum before the handler runs, and the door's own named
-        # refusals (an unknown category refused BY NAME, with the set it
-        # accepts) are the contract. The name is a literal because the
-        # tool-table pins read `name=` by AST; `vocab.PARK_TOOL_NAME` is held
-        # equal to it by `tests/orchestration/test_park.py`.
-        Tool(
-            name="Foundry-Park",
-            description=(
-                "Park ONE blocked item with the question only the human can "
-                "answer, or record the human's answer to one. Parking never "
-                "stops the run: every casting, defect and stream the item does "
-                "not block keeps moving, and Foundry-Next asks the human — every "
-                "parked question in one batch — only when nothing else can move. "
-                "Accepted from F1 to F5.5 and refused on a HALTED run. "
-                "action='park' takes item_ref, category and question; "
-                "action='answer' takes parked_id, answer and, ONLY when the "
-                "human chose to halt the run, halt=true — that answer is then "
-                "the proof Foundry-Phase(phase='halt', "
-                f"reason={HALT_REASON_USER_STOP!r}) accepts."
-            ),
-            inputSchema={
-                "type": "object",
-                "required": ["action"],
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "description": f"One of {', '.join(PARK_ACTIONS)}.",
-                    },
-                    "item_ref": {
-                        "type": "string",
-                        "description": (
-                            "action='park': what the item blocks, as "
-                            f"<kind>:<id> — one of {park_item_ref_phrase()}."
-                        ),
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": (
-                            "action='park': why only the human can settle it — "
-                            f"one of {park_category_phrase()}. Anything else is "
-                            "refused by name."
-                        ),
-                    },
-                    "question": {
-                        "type": "string",
-                        "description": (
-                            "action='park': the question for the human, in "
-                            "words they can answer without the transcript."
-                        ),
-                    },
-                    "parked_id": {
-                        "type": "string",
-                        "description": "action='answer': the P-NNN id of the parked item.",
-                    },
-                    "answer": {
-                        "type": "string",
-                        "description": "action='answer': the human's answer, verbatim.",
-                    },
-                    "halt": {
-                        "type": "boolean",
-                        "description": (
-                            "action='answer': true ONLY when the human chose to "
-                            "halt the run. Never inferred from the answer's "
-                            "words, and accepted only for an item Foundry-Next's "
-                            "ask step actually put to the human."
-                        ),
-                    },
-                },
             },
         ),
         Tool(
@@ -1484,21 +1373,6 @@ async def list_tools() -> list[Tool]:
                             "genuinely need the text in your own context."
                         ),
                     },
-                    # should-not-stop (lead ruling for casting 2's dispatch
-                    # join) — the defects actually HANDED to this teammate. The
-                    # handler writes a grind_dispatched row for exactly these
-                    # ids, so a backlogged defect nobody was handed never holds
-                    # Foundry-Team-Down shut. Passed through as absence when
-                    # omitted.
-                    "defect_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "phase='grind' only: the D-NNN ids you are actually "
-                            "handing THIS teammate. A grind_dispatched row is "
-                            "written for exactly these ids and no others."
-                        ),
-                    },
                 },
             },
         ),
@@ -1512,8 +1386,8 @@ async def list_tools() -> list[Tool]:
                 "Replaces N sequential Foundry-Spawn-Teammate roundtrips for a CAST wave. "
                 "Returns {castings: [{casting_id, dispatch, prompt_path, prompt_hash, prompt}, ...], "
                 "team_name_suggestion, instructions}, where `prompt` is null unless full_prompt=true. "
-                "Lead then does Foundry-Team-Up + a SINGLE parallel Agent "
-                "tool-use message with one named Agent per casting, passing that casting's `dispatch` "
+                "Lead then does TeamCreate + Foundry-Team-Up + a SINGLE parallel Agent "
+                "tool-use message with one Agent per casting, passing that casting's `dispatch` "
                 "field VERBATIM as the prompt. Preserves audit trail — every casting "
                 "is still logged to spawns.log with bulk=true."
             ),
@@ -1701,11 +1575,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="Foundry-Team-Up",
-            description=(
-                "Register a team in the run ledger (state.json active_teams). "
-                "Teammates are named Agent spawns; this ledger entry is the only "
-                "team record."
-            ),
+            description="Register a team for lifecycle tracking. Call after TeamCreate.",
             inputSchema={
                 "type": "object",
                 "required": ["team_name"],
@@ -1979,25 +1849,11 @@ _DISPATCH = {
     # downstream could tell the two apart once one was written. The handler's
     # default is the `None` sentinel it refuses on (CONCERN_CYCLE_REQUIRED);
     # this entry's job is to hand it absence, not a substitute.
-    # should-not-stop FR-031 / CT-008 — `blocker_kind` is handed on ONLY WHEN
-    # THE CALLER SENT IT, under exactly that name. Absence then reaches the
-    # handler as its own default, which is absence passed through as absence;
-    # and the concern door keeps answering while its handler has not yet grown
-    # the parameter, where an unconditional keyword would raise on every call.
     "Foundry-Concern": lambda args: foundry_concern(
         casting_id=args.get("casting_id", ""), cycle=args.get("cycle"),
         target=args.get("target", ""), text=args.get("text", ""),
         close=args.get("close", ""), reason=args.get("reason", ""),
-        project_root=_project_root,
-        **({"blocker_kind": args["blocker_kind"]} if "blocker_kind" in args else {})),
-    # should-not-stop FR-006 / CT-003 / CT-004 — the park door. Strings pass
-    # through as the handler's own empty sentinel, which it refuses by name;
-    # `halt` passes through as None when omitted, which is "not a halt answer".
-    "Foundry-Park": lambda args: foundry_park(
-        action=args.get("action", ""), item_ref=args.get("item_ref", ""),
-        category=args.get("category", ""), question=args.get("question", ""),
-        parked_id=args.get("parked_id", ""), answer=args.get("answer", ""),
-        halt=args.get("halt"), project_root=_project_root),
+        project_root=_project_root),
     "Foundry-Roster": lambda args: foundry_roster(
         stream=args["stream"], items=args["items"],
         revise=args.get("revise", False), reason=args.get("reason", ""),
@@ -2042,13 +1898,9 @@ _DISPATCH = {
         project_root=_project_root),
     "Foundry-Validate-Castings": lambda args: foundry_validate_castings(project_root=_project_root),
     "Foundry-Intent-Coverage": lambda args: foundry_intent_coverage(project_root=_project_root),
-    # should-not-stop (lead ruling for casting 2's dispatch join) — `defect_ids`
-    # is handed on only when sent, under exactly that name, for the reason
-    # `blocker_kind` is above.
     "Foundry-Spawn-Teammate": lambda args: foundry_spawn_teammate(
         casting_id=args["casting_id"], phase=args.get("phase", "cast"),
-        project_root=_project_root, full_prompt=args.get("full_prompt", False),
-        **({"defect_ids": args["defect_ids"]} if "defect_ids" in args else {})),
+        project_root=_project_root, full_prompt=args.get("full_prompt", False)),
     "Foundry-Cast-Wave": lambda args: foundry_cast_wave(
         wave=args["wave"], phase=args.get("phase", "cast"),
         project_root=_project_root, full_prompt=args.get("full_prompt", False)),

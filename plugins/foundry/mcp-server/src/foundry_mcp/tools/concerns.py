@@ -65,12 +65,10 @@ import json
 from pathlib import Path
 
 from foundry_mcp.schemas.vocab import (
-    BLOCKER_KINDS,
     CONCERN_STATUS_CLOSED,
     CONCERN_STATUS_DISPATCHED,
     CONCERN_STATUS_OPEN,
     CONCERN_STATUSES,
-    blocker_kind_phrase,
 )
 from foundry_mcp.tools.citation import iter_symbol_cites
 from foundry_mcp.tools.foundry import (
@@ -177,13 +175,6 @@ CONCERN_UNKNOWN_ID = "CONCERN_UNKNOWN_ID"
 
 #: Named refusal: ``close=id`` arrived without a reason.
 CONCERN_CLOSE_REASON_REQUIRED = "CONCERN_CLOSE_REASON_REQUIRED"
-
-#: Named refusal: ``blocker_kind`` was given and is not a member of
-#: ``vocab.BLOCKER_KINDS`` (should-not-stop CT-008 error column: "unknown
-#: blocker kind refused"). Kept in this handler rather than left to a transport
-#: enum, so the refusal names the set and says what to do next however the call
-#: arrived.
-CONCERN_BLOCKER_KIND_UNKNOWN = "CONCERN_BLOCKER_KIND_UNKNOWN"
 
 #: The three kinds of thing a concern may target, per CT-001.
 TARGET_KIND_CASTING = "casting"
@@ -484,11 +475,6 @@ def _render_entry(entry: dict) -> str:
         f"({entry.get('target_kind')}, casting {entry.get('target_casting_id')})"
     )
     lines.append(f"- **Recorded:** {entry.get('recorded_at')}")
-    if entry.get("blocker_kind"):
-        lines.append(
-            f"- **Blocker:** `{entry['blocker_kind']}` — the filing teammate "
-            "returned instead of halting; Foundry-Next routes it"
-        )
     if entry.get("dispatched_at"):
         lines.append(f"- **Dispatched:** {entry['dispatched_at']}")
     if entry.get("status") == CONCERN_STATUS_CLOSED:
@@ -587,22 +573,12 @@ def foundry_concern(
     close: str = "",
     reason: str = "",
     project_root: str = ".",
-    blocker_kind: str | None = None,
 ) -> dict:
     """Record a cross-casting concern, or close one (CT-001).
 
     Two arms, one door. ``close=id`` with a ``reason`` takes the close arm
     (ST-004); everything else takes the write arm, which needs
     ``casting_id``, ``cycle``, ``target`` and ``text``.
-
-    should-not-stop CT-008 / FR-018 / FR-031 — ``blocker_kind`` is set only by
-    a teammate that CANNOT PROCEED and is returning instead of halting: one of
-    ``vocab.BLOCKER_KINDS``, persisted on the record under exactly that name so
-    Foundry-Next can route it (re-dispatch, hold, or park). ``None`` — the
-    default, and what ``server.py`` hands on when the caller sent nothing —
-    means the concern is not a blocker and the record carries no such key. Any
-    other value outside the set is refused by name. The close arm takes no
-    blocker kind.
 
     ``cycle`` is the caller's declaration, exactly as CT-001 lists it, and on
     the write arm it is REQUIRED. This module does NOT derive one:
@@ -628,7 +604,7 @@ def foundry_concern(
 
     if close:
         return _close_concern(fdir, str(close).strip(), reason)
-    return _open_concern(fdir, casting_id, cycle, target, text, blocker_kind)
+    return _open_concern(fdir, casting_id, cycle, target, text)
 
 
 def _cycle_refusal(cycle: object) -> dict | None:
@@ -689,41 +665,12 @@ def _cycle_refusal(cycle: object) -> dict | None:
     )
 
 
-def _blocker_kind_refusal(blocker_kind: object) -> dict | None:
-    """Refuse a ``blocker_kind`` outside ``vocab.BLOCKER_KINDS``; None to proceed.
-
-    should-not-stop CT-008 / FR-031 (A-013). ``None`` is ABSENCE — the concern
-    is not a blocker — and is what ``server.py`` hands on when the caller sent
-    no kind, so it passes. A member of the closed set passes. Everything else
-    is refused by name, the empty string and a non-string included: an explicit
-    value that names no kind is not "no kind", and a record stored with it
-    would be a blocker the router cannot route.
-
-    The set in the sentence is built from ``vocab.blocker_kind_phrase``, never
-    re-typed here, so the refusal cannot come to name a set the vocabulary no
-    longer declares.
-    """
-    if blocker_kind is None:
-        return None
-    if isinstance(blocker_kind, str) and blocker_kind in BLOCKER_KINDS:
-        return None
-    return _named_refusal(
-        f"{blocker_kind!r} is not a blocker kind. A teammate that cannot "
-        f"proceed files exactly one of: {blocker_kind_phrase()}.",
-        "Call Foundry-Concern(casting_id=..., cycle=..., target=..., text=..., "
-        f"blocker_kind=<one of: {blocker_kind_phrase()}>), or omit blocker_kind "
-        "for a concern that is not a blocker.",
-        CONCERN_BLOCKER_KIND_UNKNOWN,
-    )
-
-
 def _open_concern(
     fdir: Path,
     casting_id: str | int,
     cycle: int | None,
     target: str,
     text: str,
-    blocker_kind: object = None,
 ) -> dict:
     """The write arm: one appended entry, one rendered entry (AC-005/OT-005)."""
     body = str(text or "").strip()
@@ -742,12 +689,6 @@ def _open_concern(
     cycle_refused = _cycle_refusal(cycle)
     if cycle_refused is not None:
         return cycle_refused
-
-    # should-not-stop CT-008 — the third pure input rung, before the manifest
-    # read for the same reason as the two above.
-    kind_refused = _blocker_kind_refusal(blocker_kind)
-    if kind_refused is not None:
-        return kind_refused
 
     castings, problem = _manifest_castings(fdir)
     if problem is not None:
@@ -788,11 +729,6 @@ def _open_concern(
             "status": CONCERN_STATUS_OPEN,
             "recorded_at": _now(),
         }
-        # should-not-stop CT-008 — carried ONLY on a blocker, under exactly
-        # this name, so every record written before the field existed (and
-        # every non-blocker since) keeps the shape it always had.
-        if blocker_kind is not None:
-            entry["blocker_kind"] = blocker_kind
         records.append(entry)
         render_problem = render_concerns_markdown(fdir, records)
 

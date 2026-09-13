@@ -675,9 +675,6 @@ _NO_LONGER_VERIFIER_SURFACES = [
     "foundry_mcp/tools/orchestration/spend.py",
     "foundry_mcp/tools/orchestration/teams.py",
     "foundry_mcp/tools/orchestration/halt.py",
-    # should-not-stop's park door: a lifecycle writer of the parked state,
-    # outside the verifier set, so a diff confined to it stays DELTA.
-    "foundry_mcp/tools/orchestration/park.py",
     "foundry_mcp/tools/orchestration/report_seal.py",
     "foundry_mcp/tools/orchestration/directives.py",
     "foundry_mcp/tools/orchestration/fix_gate.py",

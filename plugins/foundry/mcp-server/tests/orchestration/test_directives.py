@@ -1349,15 +1349,6 @@ def test_team_down_refuses_a_dispatched_defect_whose_fix_is_on_the_branch(run_en
         dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
     ])
     assert foundry_defects_to_tasks(project_root)["ok"] is True
-    # should-not-stop FR-020 / CT-009 — packeting records no dispatch; handing
-    # the id to a GRIND teammate does, and that is what Team-Down joins on.
-    from foundry_mcp.tools.foundry_spawn import foundry_spawn_teammate
-
-    (fdir / "castings" / "casting-1-prompt.md").write_text(
-        "# Casting 1\n\nFix the defects handed to you.\n", encoding="utf-8"
-    )
-    handed = foundry_spawn_teammate(1, "grind", project_root, defect_ids=["D-900"])
-    assert handed.get("grind_dispatched") == ["D-900"], handed
 
     # AC-041: dispatched and open, and NOTHING committed since the baseline.
     # The fix was not made, which is a GRIND that ran out of time and not a

@@ -16,11 +16,6 @@ from foundry_mcp.schemas.vocab import (
     FULL_ROSTER_STREAMS,
     INSPECT_MODES,
     DEFECT_TYPES,
-    PARKED_FIELD_ANSWERED_AT,
-    PARKED_FIELD_ID,
-    PARKED_FIELD_ITEM_REF,
-    PARKED_ITEMS_KEY,
-    PARKED_STATE_KEY,
     REPORT_JSON_FILENAME,
     REPORT_MD_FILENAME,
     REQUIREMENT_ID_RE,
@@ -251,13 +246,11 @@ def _active_teams(project_root: str) -> dict:
     """Is any team still holding the tree? The VERIFIER layer's composition.
 
     fallout GI-033 / AC-061 / FR-063 (D-021 / D-035, concern C-027). Both
-    halves of the answer — the registered teams and the live tmux panes — are
-    `foundry_state.active_teams`, because `orchestration/teams.py` is
+    halves of the answer — the registered directories and the live tmux panes —
+    are `foundry_state.active_teams`, because `orchestration/teams.py` is
     LIFECYCLE by GI-033's own violation column and this module is a verifier.
-    should-not-stop GI-001 / GI-010 (A-005): the registered half is the
-    `state.json` ledger alone. No `~/.claude/teams` directory is consulted —
-    nothing creates one since TeamCreate was removed — so a team this run
-    registered holds the tree until `Foundry-Team-Down` unregisters it.
+    What is composed here is the two things a leaf may not know: where this
+    machine keeps its team directories, and the sentence to print.
 
     NO SENTENCE IS PASSED, DELIBERATELY. `hint_for` is omitted, so the leaf
     reports the two lists and no prose, and every arm below falls back to
@@ -270,7 +263,7 @@ def _active_teams(project_root: str) -> dict:
     fdir = get_run_dir(project_root)
     if not fdir:
         return {"active": False, "teams": [], "live_panes": []}
-    return active_teams(fdir)
+    return active_teams(fdir, teams_dir=Path.home() / ".claude" / "teams")
 
 
 
@@ -460,44 +453,6 @@ def _report_status(fdir: Path) -> dict:
 # --- Phase gate ---
 
 
-def _open_parked_questions(fdir: Path) -> list[dict]:
-    """Every parked item still waiting on an answer, oldest first.
-
-    should-not-stop FR-005 / FR-036 / AC-008 / GI-011 (casting 3's concern
-    C-015) — WHY A VERIFIER READS THIS KEY AT ALL, AND WHY IT READS IT HERE.
-
-    `orchestration/park.py` owns the parked state and already publishes
-    `open_parked_items`, but it is a LIFECYCLE module and this one is a
-    VERIFIER: GI-033 forbids the import, and `test_module_boundaries.py`'s
-    `_VERIFIER_MODULES` walk fails the tree if it is written. `halt.py` reads
-    the same key straight off `state.json` for the same reason
-    (`_halt_answered_parked_item`), so this is that precedent, not a new one —
-    the SHAPE is `schemas/vocab.py`'s, a leaf both layers may reach, which is
-    what keeps the two readers from drifting apart on anything that matters.
-
-    Tolerant like every other reader of this key: an absent `parked`, a
-    malformed one and a non-mapping item each contribute nothing rather than
-    raising. The park door refuses a malformed shape on WRITE, which is where
-    a question can still be rescued; a door refusing to let a run finish
-    because its archive is odd would strand it instead.
-
-    THE MARKER IS DELIBERATELY NOT READ. C-015 asked whether to refuse while
-    `awaiting_human` is unset, and at this crossing the narrower rule is the
-    wrong one: `awaiting_human` records that the question was ASKED, and a
-    question asked but not answered is exactly as unfinished as one never put.
-    Sealing F6 over either is sealing over a question the archive says is open,
-    so the rung reads the answer and not the ask.
-    """
-    parked = _load_json(fdir / "state.json").get(PARKED_STATE_KEY)
-    if not isinstance(parked, dict):
-        return []
-    items = parked.get(PARKED_ITEMS_KEY)
-    return [
-        item for item in (items if isinstance(items, list) else [])
-        if isinstance(item, dict) and not item.get(PARKED_FIELD_ANSWERED_AT)
-    ]
-
-
 def _done_preconditions(
     fdir: Path, project_root: str, *, token: str = "done"
 ) -> dict:
@@ -617,68 +572,6 @@ def _done_preconditions(
     # else. Everything BELOW this rung is what "the run may finish" means, and
     # that is one definition for both.
     source = _source_phase_rung(ladder, checklist, fdir, token)
-
-    # should-not-stop FR-005 / FR-036 / AC-008 / GI-011 (casting 3's concern
-    # C-015) — THE RUN DOES NOT FINISH OVER A QUESTION NOBODY ANSWERED.
-    #
-    # WHY THIS RUNG IS HERE AND AT NO OTHER CROSSING. Driven, both doors, every
-    # token, with one open parked item and no ask outstanding: EVERY gate
-    # answered `passed=True`, while `Foundry-Next` on the identical state
-    # answered `ask_human` — one state, two surfaces, opposite answers, which is
-    # the D-240 shape this release exists to end. Casting 3 closed the ROUTER
-    # half in `guidance.py#_guard_exit`; a router is only consulted when the
-    # lead consults it, and `_GATE_THEN_PHASE_EXCEPTION` makes `Foundry-Next`
-    # between a passing gate and its transition OPTIONAL (ST-011 / FR-044 /
-    # AC-035), so a lead holding a token armed by an EARLIER `Foundry-Next`
-    # crosses without ever reading the ask. That is how PROVE's cycle-13 drive
-    # reached DONE with a recorded question still open.
-    #
-    # The same drive is also why the rung is NOT general, and the measurement is
-    # the whole argument. At a MID-RUN crossing the REAL Stop hook was driven
-    # before and after: it BLOCKS on both sides (F1..F5.5, marker unset), so the
-    # lead cannot end the turn, must keep working, and the next `Foundry-Next`
-    # puts the question to the human — the crossing self-heals and gating it
-    # would only ask while unparked work is still runnable, the AC-007 / FR-005
-    # violation `_ask_human_step` exists to prevent. At THIS crossing the hook
-    # was driven the same way and BLOCKS before, ALLOWS after: F6 is outside the
-    # phases it holds. So the terminal crossing is the one crossing no backstop
-    # covers, and the only one where an unanswered question is unrecoverable.
-    #
-    # Both F6 tokens are covered by one rung because `_nyquist_done_preconditions`
-    # IS this function (`token="nyquist_done"`), and both doors make it because
-    # `foundry_gate` composes nothing and calls this routine through
-    # `_token_preconditions` — so the pair cannot drift.
-    #
-    # `halt` NEVER reaches here: FR-046 scopes that token to
-    # `_halt_preconditions` alone, and it must stay open — a question answered
-    # with halt is the human-origin proof GI-012 requires, and a run whose
-    # second question is still open must still be able to stop.
-    #
-    # NO STRAND. The remedy is reachable at the moment of refusal and stays
-    # reachable: the park door accepts an answer throughout F1..F5.5
-    # (`POST_CAST_RUN_PHASES`), `Foundry-Next` asks when nothing else can move,
-    # and `/foundry:stop` seals through the halt token this rung does not touch.
-    unanswered = _open_parked_questions(fdir)
-    if unanswered:
-        ladder.fail(
-            _GATE_RANK_PARKED,
-            f"{len(unanswered)} parked question(s) the human has not answered: "
-            + ", ".join(
-                f"{item.get(PARKED_FIELD_ID)} ({item.get(PARKED_FIELD_ITEM_REF)})"
-                for item in unanswered
-            ),
-            "Call Foundry-Next — when nothing else can move it puts every parked "
-            "question to the human in one batch — then record each answer with "
-            "Foundry-Park(action='answer', parked_id=..., answer=<the human's "
-            "answer, verbatim>). This is the one crossing the Stop hook cannot "
-            "hold: F6 is outside the phases it blocks, so a question still open "
-            "here is one nobody will ever be asked.",
-        )
-    checklist.append({
-        "check": f"parked_questions_answered (open={len(unanswered)})",
-        "ok": not unanswered,
-        "open_parked_ids": [item.get(PARKED_FIELD_ID) for item in unanswered],
-    })
 
     verdicts = _load_json(fdir / "verdicts.json")
     verdict_list = verdicts.get("requirements", [])
@@ -1227,16 +1120,6 @@ CASTING_KEY_FILE_CAP = 8
 _GATE_RANK_HALTED = 0      # the run has already stopped: no other remedy can be
 
 
-#: should-not-stop FR-005 / FR-036 / AC-008 (casting 3's concern C-015) — a
-#: recorded question the human has not answered, at the crossing that ENDS the
-#: run. Ranked directly under HALTED and above every work-shaped remedy because
-#: the answer may decide what that work should be: fixing a defect never
-#: invalidates "answer the question", while the answer can invalidate the fix.
-#: It cannot contest HALTED — `_done_preconditions` short-circuits there — and
-#: on a halted run there is no crossing left for an answer to release.
-_GATE_RANK_PARKED = 3
-
-
 _GATE_RANK_ESCALATION = 5  # a class still ESCALATED — the only remedy measured
 
 
@@ -1277,13 +1160,8 @@ _GATE_RANK_REPORT = 90     # the generated report: DERIVED from every ledger
 #: The one spelling of "shut the teammates down", so the three gate arms that
 #: fall back to it cannot drift apart again (D-186: the assay copy had no
 #: fallback at all, and the other two spelled theirs differently).
-#:
-#: should-not-stop GI-001 / FR-021 (A-005): no TeamDelete step. The tool was
-#: removed from Claude Code, and `Foundry-Team-Down` is what ends a team — it
-#: clears the run's own ledger, which is the only place a team exists.
 _TEAMS_DOWN_HINT = (
-    "Shut down all teammates (one parallel SendMessage batch), then "
-    "Foundry-Team-Down"
+    "Shut down all teammates, call TeamDelete, then Foundry-Team-Down"
 )
 
 

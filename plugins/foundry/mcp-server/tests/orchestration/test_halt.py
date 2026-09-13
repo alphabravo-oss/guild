@@ -202,23 +202,18 @@ def test_a_halt_whose_report_could_not_be_written_is_never_a_clean_seal(run_env)
     exchange that the incompleteness be legible "at the surfaces a human or a
     later door actually reads", because a caller reading only `ok` sees success.
 
-    DRIVEN: `Foundry-Phase('halt', reason='user_stop', text=...)` on the
-    human's /foundry:stop token, against a run with a deliberately corrupt
-    verdicts.json, returns ok True, phase HALTED and no REPORT.md on disk.
-    Everything below is what the run says about that afterwards. (This drive
-    sealed `spec_change_required` from F3 until the should-not-stop halt rule
-    refused every post-CAST reason but a proven user_stop.)
+    DRIVEN: `Foundry-Phase('halt', reason='spec_change_required', text=...)`
+    against a run with a deliberately corrupt verdicts.json returns ok True,
+    phase HALTED and no REPORT.md on disk. Everything below is what the run says
+    about that afterwards.
     """
-    from tests.orchestration.test_transitions import _write_stop_token
-
     project_root, fdir = run_env
     _write_state(fdir, phase="F3", cycle=2)
     _defect_ledger(fdir, [])
     (fdir / "verdicts.json").write_text("{ not json", encoding="utf-8")
-    _write_stop_token(fdir)
 
     sealed = _transitions.foundry_mark_phase_complete(
-        "halt", project_root, reason="user_stop",
+        "halt", project_root, reason="spec_change_required",
         text="the spec needs an edit before this run can continue",
     )
 
