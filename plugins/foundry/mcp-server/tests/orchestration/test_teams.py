@@ -5,6 +5,7 @@ own test module, carved in the same casting as the source move.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -14,10 +15,17 @@ from foundry_mcp.tools.orchestration.teams import (
     _unrecorded_fix_problem,
     agent_model,
     configured_model,
+    foundry_register_team,
     foundry_unregister_team,
 )
-from foundry_mcp.tools.orchestration.directives import foundry_defects_to_tasks
+from foundry_mcp.tools.orchestration.directives import (
+    DISPATCHED_DEFECT_UNRECORDED,
+    _grind_dispatches,
+    foundry_defects_to_tasks,
+)
 from foundry_mcp.tools import artifacts
+from foundry_mcp.tools.foundry_spawn import foundry_cast_wave, foundry_spawn_teammate
+from foundry_mcp.tools.foundry_state import current_cycle, read_jsonl
 
 from tests.orchestration._env import (  # noqa: F401
     _defect_ledger,
@@ -28,6 +36,32 @@ from tests.orchestration._env import (  # noqa: F401
     _write_state,
     run_env,
 )
+
+
+def _hand_over(project_root, fdir: Path, casting_id: int, defect_ids: list[str]) -> dict:
+    """Hand `defect_ids` to casting `casting_id`'s GRIND teammate.
+
+    should-not-stop FR-020 / CT-009 — `Foundry-Spawn-Teammate(phase="grind",
+    defect_ids=[...])` is the one door that records a dispatch; generating
+    packets with Foundry-Tasks records none. The prompt file is written when
+    the arrangement has none, because the spawn door refuses without one.
+    """
+    prompt = fdir / "castings" / f"casting-{casting_id}-prompt.md"
+    if not prompt.exists():
+        prompt.write_text(
+            f"# Casting {casting_id}\n\nFix the defects handed to you.\n",
+            encoding="utf-8",
+        )
+    result = foundry_spawn_teammate(
+        casting_id, "grind", str(project_root), defect_ids=defect_ids
+    )
+    assert result.get("ok") is True, result
+    return result
+
+
+def _rows(fdir: Path) -> list[dict]:
+    """Every `grind_dispatched` row of the current cycle, oldest first."""
+    return _grind_dispatches(fdir, current_cycle(fdir))
 
 
 def test_the_model_policy_answers_for_every_steerable_type(run_env):
@@ -138,6 +172,7 @@ def test_team_down_answers_nothing_when_it_cannot_measure(run_env):
         dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
     ])
     assert foundry_defects_to_tasks(project_root)["ok"] is True
+    _hand_over(project_root, fdir, 1, ["D-900"])
 
     # 2. dispatched, but no baseline SHA: "since when" has no answer.
     assert not (fdir / artifacts.INSPECT_BOUNDARY_SHA_MARKER).exists()
@@ -178,6 +213,7 @@ def test_the_teardown_refusal_names_the_commit_that_made_the_change(run_env):
         dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
     ])
     assert foundry_defects_to_tasks(project_root)["ok"] is True
+    _hand_over(project_root, fdir, 1, ["D-900"])
 
     # Nothing has moved since the baseline, so nothing is unrecorded yet.
     assert _unrecorded_fix_problem(fdir, project_root) is None
@@ -238,6 +274,7 @@ def test_an_open_concern_naming_the_id_is_not_an_exit_past_the_refusal(run_env):
         dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
     ])
     assert foundry_defects_to_tasks(project_root)["ok"] is True
+    _hand_over(project_root, fdir, 1, ["D-900"])
     _repo_with_commit(project_root, "src/one.py", "print('after')\n")
 
     before = _unrecorded_fix_problem(fdir, project_root)
@@ -292,6 +329,7 @@ def test_the_only_sanctioned_exit_is_still_the_one_ac_041_names(run_env):
         dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-007"),
     ])
     assert foundry_defects_to_tasks(project_root)["ok"] is True
+    _hand_over(project_root, fdir, 1, ["D-900"])
     # A commit that touches a DIFFERENT file.
     _repo_with_commit(project_root, "src/two.py", "print('b')\n")
 
@@ -325,6 +363,8 @@ def test_a_concern_is_reported_only_against_the_id_it_actually_names(run_env):
         dict(_tiered("D-901", "LIVE"), file="src/two.py", spec_ref="FR-008"),
     ])
     assert foundry_defects_to_tasks(project_root)["ok"] is True
+    _hand_over(project_root, fdir, 1, ["D-900"])
+    _hand_over(project_root, fdir, 2, ["D-901"])
     _repo_with_commit(project_root, "src/one.py", "print('b')\n")
     _repo_with_commit(project_root, "src/two.py", "print('c')\n")
 
@@ -347,8 +387,7 @@ def test_the_teardown_door_states_the_call_order_it_enforces(run_env):
     """The hint names the exact sequence, because the door refuses on ordering.
 
     A refusal whose remedy is "shut things down properly" is D-011's shape: the
-    lead has to guess which of four calls comes first, and the guess that costs
-    a cycle is TeamDelete last.
+    lead has to guess which call comes first, and a wrong guess costs a cycle.
     """
     project_root, fdir = run_env
     _write_state(fdir, phase="F3", cycle=1)
@@ -392,6 +431,7 @@ def test_a_decorated_file_field_still_joins_the_commit_that_touched_it(run_env):
         for did, spelling in spellings.items()
     ])
     assert foundry_defects_to_tasks(project_root)["ok"] is True
+    _hand_over(project_root, fdir, 1, list(spellings))
     fix = _repo_with_commit(project_root, "src/one.py", "print('b')\n")
 
     problem = _unrecorded_fix_problem(fdir, project_root)
@@ -441,6 +481,7 @@ def test_an_absolute_file_under_the_project_root_still_joins_its_commit(
         for did, spelling in {**spellings, **outside}.items()
     ])
     assert foundry_defects_to_tasks(project_root)["ok"] is True
+    _hand_over(project_root, fdir, 1, [*spellings, *outside])
     fix = _repo_with_commit(project_root, "src/one.py", "print('b')\n")
 
     problem = _unrecorded_fix_problem(fdir, project_root)
@@ -512,7 +553,7 @@ def test_an_unresolvable_file_matches_nothing_and_masks_no_real_refusal(
         monkeypatch.chdir(project_root)
         root = "."
 
-    # Foundry-Tasks: the wave is dispatched whole. The unresolvable row is
+    # Foundry-Tasks: the wave is packeted whole. The unresolvable row is
     # owned by nobody; the healthy sibling keeps its owner.
     tasks = foundry_defects_to_tasks(root)
     assert tasks["ok"] is True, tasks
@@ -520,6 +561,11 @@ def test_an_unresolvable_file_matches_nothing_and_masks_no_real_refusal(
         did: t["owning_casting"] for t in tasks["tasks"] for did in t["defect_ids"]
     }
     assert owners == {"D-030": None, "D-031": 4}, owners
+    # should-not-stop FR-020 / AC-024: packeting recorded no hand-over. Both
+    # ids are then handed to casting 4, and the spawn door records both -- the
+    # unresolvable spelling rides the same guarded fold there as well.
+    assert _grind_dispatches(fdir, current_cycle(fdir)) == []
+    _hand_over(root, fdir, 4, ["D-030", "D-031"])
     dispatched = {
         r["defect_id"] for r in _grind_dispatches(fdir, current_cycle(fdir))
     }
@@ -535,3 +581,360 @@ def test_an_unresolvable_file_matches_nothing_and_masks_no_real_refusal(
     assert set(named) == {"D-031"}, refused["defects"]
     assert named["D-031"]["commit"], named
     assert fix.startswith(named["D-031"]["commit"]), named
+
+
+# --------------------------------------------------------------------------- #
+# should-not-stop US-006 — GRIND teardown never deadlocks on backlog, and teams
+# are ledger-only (FR-020 / FR-021 / FR-039, CT-009 / CT-012, AC-024..AC-027).
+# --------------------------------------------------------------------------- #
+
+
+def test_packets_record_no_hand_over_and_the_spawn_records_exactly_the_handed_ids(
+    run_env,
+):
+    """should-not-stop AC-024 / OT-021 / CT-009 / FR-020 (A-015).
+
+    "After Foundry-Tasks generates packets for 5 open defects and 2 are
+    dispatched, handoffs.jsonl holds 2 grind_dispatched rows." Foundry-Tasks
+    used to write a row for every packeted defect, so the three the lead
+    backlogged read as dispatched too. Driven: five open defects, packets
+    generated twice (a lead may call Foundry-Tasks again in one cycle), and two
+    ids handed to casting 1.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        2: (["FR-008"], ["src/two.py"]),
+    })
+    _defect_ledger(fdir, [
+        dict(_tiered("D-901", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+        dict(_tiered("D-902", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+        dict(_tiered("D-903", "LIVE"), file="src/two.py", spec_ref="FR-008"),
+        dict(_tiered("D-904", "LIVE"), file="src/two.py", spec_ref="FR-008"),
+        dict(_tiered("D-905", "LIVE"), file="src/two.py", spec_ref="FR-008"),
+    ])
+    tasks = foundry_defects_to_tasks(project_root)
+    assert tasks["ok"] is True, tasks
+    assert {d for t in tasks["tasks"] for d in t["defect_ids"]} == {
+        "D-901", "D-902", "D-903", "D-904", "D-905",
+    }, tasks["tasks"]
+    assert _rows(fdir) == [], "generating packets recorded a hand-over"
+
+    handed = _hand_over(project_root, fdir, 1, ["D-901", "D-902"])
+    assert handed["grind_dispatched"] == ["D-901", "D-902"], handed
+    assert "2 defect id(s) recorded" in handed["instructions"], handed["instructions"]
+
+    assert foundry_defects_to_tasks(project_root)["ok"] is True
+
+    records, problem = read_jsonl(fdir / "handoffs.jsonl")
+    assert problem is None, problem
+    rows = [r for r in records if r.get("event") == "grind_dispatched"]
+    assert [(r["defect_id"], r["casting"], r["file"]) for r in rows] == [
+        ("D-901", 1, "src/one.py"), ("D-902", 1, "src/one.py"),
+    ], rows
+    # The row shape the F6 report reads is unchanged: the handed-over ids, the
+    # parsed requirement ids, the computed set and the run's phase.
+    for row in rows:
+        assert row["defect_ids"] == ["D-901", "D-902"], row
+        assert row["requirement_ids"] == ["FR-007"], row
+        assert row["co_dispatch"] == [], row
+        assert row["phase"] == "F3" and row["cycle"] == current_cycle(fdir), row
+
+
+def test_a_grind_spawn_with_no_defect_ids_records_nothing_and_says_so(run_env):
+    """should-not-stop FR-020 / CT-009 — absence hands over nothing.
+
+    A GRIND packet can carry no defect (a concern-only packet), so a GRIND
+    spawn without `defect_ids` is not refused. It records nothing, and the
+    response says so, so a lead that forgot the argument learns it at the spawn
+    rather than at a Team-Down that cannot see the hand-over.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _manifest_with_requirement_ids(fdir, {1: (["FR-007"], ["src/one.py"])})
+    _defect_ledger(fdir, [
+        dict(_tiered("D-500", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+    ])
+    (fdir / "castings" / "casting-1-prompt.md").write_text("# Casting 1\n", encoding="utf-8")
+
+    result = foundry_spawn_teammate(1, "grind", project_root)
+    assert result["ok"] is True, result
+    assert result["grind_dispatched"] == [], result
+    assert "0 defect id(s) recorded" in result["instructions"], result["instructions"]
+    assert _rows(fdir) == []
+
+
+@pytest.mark.parametrize(
+    ("phase", "defect_ids", "fragment"),
+    [
+        ("grind", ["D-999"], "not in the defect ledger: D-999"),
+        ("grind", ["D-501"], "not open: D-501"),
+        ("cast", ["D-500"], "only a GRIND teammate is handed defects"),
+        ("grind", "D-500", "must be a list"),
+        ("grind", ["D-500", 7], "must be a list"),
+    ],
+    ids=["unknown-id", "closed-id", "cast-phase", "not-a-list", "non-string-member"],
+)
+def test_the_spawn_door_refuses_a_hand_over_it_cannot_record_and_writes_nothing(
+    run_env, phase, defect_ids, fragment,
+):
+    """should-not-stop FR-020 / CT-009 — never a row for an id not handed over.
+
+    An id recorded that nobody holds is a Team-Down refusal over a defect no
+    teammate was given; an id dropped silently is a hand-over Team-Down cannot
+    see. So each mistake is refused by name BEFORE the door writes anything:
+    no `grind_dispatched` row, no spawns.log record and no seeded progress
+    ledger for a spawn that did not happen (the D-144 property every refusal
+    on this door keeps).
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _manifest_with_requirement_ids(fdir, {1: (["FR-007"], ["src/one.py"])})
+    _defect_ledger(fdir, [
+        dict(_tiered("D-500", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+        dict(_tiered("D-501", "LIVE", status="fixed"), file="src/one.py", spec_ref="FR-007"),
+    ])
+    (fdir / "castings" / "casting-1-prompt.md").write_text("# Casting 1\n", encoding="utf-8")
+
+    refused = foundry_spawn_teammate(1, phase, project_root, defect_ids=defect_ids)
+    assert refused.get("ok") is False, refused
+    assert fragment in refused["error"], refused
+    assert refused.get("hint"), refused
+    assert _rows(fdir) == []
+    assert not (fdir / "spawns.log").exists()
+    assert not (fdir / "progress" / "casting-1.jsonl").exists()
+
+
+def test_a_fix_touching_a_backlogged_defects_file_does_not_hold_the_team(run_env):
+    """should-not-stop AC-025 / OT-022 / FR-020 — the fallout cycle-16 deadlock.
+
+    The GRIND triaged its packets: D-801 was handed to casting 1, D-802 (the
+    same file) and D-803 (another file) were backlogged. Casting 1's commits
+    touched both files and its fix was recorded. With a row per PACKETED defect
+    the two backlogged ids read as dispatched-and-unrecorded and Team-Down
+    refused, and foundry-run-fallout could only tear the team down by editing
+    handoffs.jsonl by hand. Now the team comes down through the door.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _repo_with_commit(project_root, "src/one.py", "print('a')\n")
+    base = _repo_with_commit(project_root, "src/two.py", "print('a')\n")
+    (fdir / artifacts.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+        base + "\n", encoding="utf-8"
+    )
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py", "src/two.py"]),
+    })
+    backlog = [
+        dict(_tiered("D-802", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+        dict(_tiered("D-803", "LIVE"), file="src/two.py", spec_ref="FR-007"),
+    ]
+    _defect_ledger(fdir, [
+        dict(_tiered("D-801", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+        *backlog,
+    ])
+    assert foundry_defects_to_tasks(project_root)["ok"] is True
+    assert foundry_register_team("grind-c16", project_root).get("ok") is True
+    _hand_over(project_root, fdir, 1, ["D-801"])
+
+    _repo_with_commit(project_root, "src/one.py", "print('fixed')\n")
+    _repo_with_commit(project_root, "src/two.py", "print('tidied')\n")
+    _defect_ledger(fdir, [
+        dict(_tiered("D-801", "LIVE", status="fixed"), file="src/one.py", spec_ref="FR-007"),
+        *backlog,
+    ])
+
+    assert _unrecorded_fix_problem(fdir, project_root) is None
+    down = foundry_unregister_team("grind-c16", project_root)
+    assert down.get("ok") is True, down
+    assert down["unregistered"] == "grind-c16", down
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["active_teams"] == [], state
+    # No row was ever written for either backlogged id.
+    assert {r["defect_id"] for r in _rows(fdir)} == {"D-801"}, _rows(fdir)
+
+
+def test_the_join_keys_by_defect_id_and_refuses_only_the_id_that_earns_it(run_env):
+    """should-not-stop AC-026 / OT-023 / FR-039 / CT-012 (A-015, A-036).
+
+    "Refuse only for a defect that was actually dispatched, has no Foundry-Fix
+    record, AND whose file a commit in the cycle touched." D-701 meets all
+    three. D-702 shares its file and was never handed over. D-703 was handed
+    over and no commit touched its file. The refusal still fires at the door
+    (the no-degrade half) and names D-701 alone; before the touching commit
+    nothing refuses, and the fix record clears it.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    _repo_with_commit(project_root, "src/three.py", "print('a')\n")
+    base = _repo_with_commit(project_root, "src/one.py", "print('a')\n")
+    (fdir / artifacts.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+        base + "\n", encoding="utf-8"
+    )
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        3: (["FR-009"], ["src/three.py"]),
+    })
+    others = [
+        dict(_tiered("D-702", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+        dict(_tiered("D-703", "LIVE"), file="src/three.py", spec_ref="FR-009"),
+    ]
+    _defect_ledger(fdir, [
+        dict(_tiered("D-701", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+        *others,
+    ])
+    assert foundry_defects_to_tasks(project_root)["ok"] is True
+    _hand_over(project_root, fdir, 1, ["D-701"])
+    _hand_over(project_root, fdir, 3, ["D-703"])
+
+    # Dispatched and open, and no commit since the baseline: nothing to refuse.
+    assert _unrecorded_fix_problem(fdir, project_root) is None
+
+    fix = _repo_with_commit(project_root, "src/one.py", "print('b')\n")
+    refused = foundry_unregister_team("grind-team", project_root)
+    assert refused.get("error") == DISPATCHED_DEFECT_UNRECORDED, refused
+    assert [(d["id"], d["casting"]) for d in refused["defects"]] == [
+        ("D-701", 1),
+    ], refused["defects"]
+    assert fix.startswith(refused["defects"][0]["commit"]), refused
+    assert "D-702" not in refused["reason"], refused["reason"]
+    assert "D-703" not in refused["reason"], refused["reason"]
+
+    _defect_ledger(fdir, [
+        dict(_tiered("D-701", "LIVE", status="fixed"), file="src/one.py", spec_ref="FR-007"),
+        *others,
+    ])
+    assert _unrecorded_fix_problem(fdir, project_root) is None
+
+
+def test_an_id_handed_over_twice_is_one_finding_naming_its_latest_holder(run_env):
+    """should-not-stop FR-039 / FR-020 — the rows collapse by defect id.
+
+    A retried spawn, or a defect moved to another casting, writes a second row
+    for the same id in the same cycle (a repeat inside one call collapses at
+    the door). The join is keyed by id, so the refusal names it once, beside
+    the casting that holds it now.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    base = _repo_with_commit(project_root, "src/one.py", "print('a')\n")
+    (fdir / artifacts.INSPECT_BOUNDARY_SHA_MARKER).write_text(
+        base + "\n", encoding="utf-8"
+    )
+    _manifest_with_requirement_ids(fdir, {
+        1: (["FR-007"], ["src/one.py"]),
+        2: (["FR-007"], ["src/two.py"]),
+    })
+    _defect_ledger(fdir, [
+        dict(_tiered("D-601", "LIVE"), file="src/one.py", spec_ref="FR-007"),
+    ])
+    _hand_over(project_root, fdir, 1, ["D-601", "D-601"])
+    _hand_over(project_root, fdir, 2, ["D-601"])
+    assert [r["casting"] for r in _rows(fdir)] == [1, 2], _rows(fdir)
+
+    _repo_with_commit(project_root, "src/one.py", "print('b')\n")
+    problem = _unrecorded_fix_problem(fdir, project_root)
+    assert problem is not None, "a committed fix with an open handed-over id passed"
+    assert [(d["id"], d["casting"]) for d in problem["defects"]] == [
+        ("D-601", 2),
+    ], problem["defects"]
+
+
+def test_team_down_ends_a_registered_team_whatever_the_teams_directory_says(
+    run_env, tmp_path, monkeypatch,
+):
+    """should-not-stop GI-001 / FR-021 / GI-010 (A-005) — ledger-only teardown.
+
+    Team-Down refused `team_dir_exists` while `~/.claude/teams/<name>` was a
+    directory, telling the lead to call TeamDelete first; TeamDelete was
+    removed from Claude Code, so that step could not be taken. HOME is pointed
+    at a temp directory holding the directory for the first name and not the
+    second: both teams come off the ledger, and no refusal names the retired
+    phase.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    home = tmp_path / "home"
+    (home / ".claude" / "teams" / "cast-wave-1").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    for name in ("cast-wave-1", "cast-wave-2"):
+        assert foundry_register_team(name, project_root).get("ok") is True
+        down = foundry_unregister_team(name, project_root)
+        assert down.get("ok") is True, down
+        assert down.get("phase") != "team_dir_exists", down
+        state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+        assert state["active_teams"] == [], state
+
+
+def test_team_up_is_one_team_at_a_time_read_from_the_ledger(
+    run_env, tmp_path, monkeypatch,
+):
+    """should-not-stop GI-001 / GI-010 (A-005).
+
+    The one-team-at-a-time check counted a registered team only while its
+    `~/.claude/teams` directory existed, so with no directory it never fired.
+    It reads the ledger now: a second team is refused while the first is
+    registered, the hint names Foundry-Team-Down and no removed tool, and the
+    second registers once the first is down.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=1)
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+
+    assert foundry_register_team("cast-wave-1", project_root).get("ok") is True
+    refused = foundry_register_team("cast-wave-2", project_root)
+    assert refused.get("active_teams") == ["cast-wave-1"], refused
+    assert "Foundry-Team-Down" in refused["hint"], refused
+    for removed in ("TeamDelete", "TeamCreate"):
+        assert removed not in refused["hint"], refused
+    # Registering the SAME name again is not a second team.
+    assert foundry_register_team("cast-wave-1", project_root).get("ok") is True
+
+    assert foundry_unregister_team("cast-wave-1", project_root).get("ok") is True
+    assert foundry_register_team("cast-wave-2", project_root).get("ok") is True
+
+
+def test_no_team_sentence_this_casting_ships_names_a_removed_tool(run_env):
+    """should-not-stop AC-027 / FR-021 / OT-024 / GI-001 (A-005).
+
+    The sentences the lead actually reads, driven rather than grepped: the
+    gate's teardown hint, the lifecycle shutdown hint, the cast-wave
+    instructions in both phases, and `commands/resume.md`'s tool allowlist.
+    None tells the lead to call TeamCreate or TeamDelete; the cast wave names
+    Foundry-Team-Up, and its GRIND form names the one door that records a
+    hand-over.
+    """
+    from foundry_mcp.tools.orchestration.gates import _TEAMS_DOWN_HINT
+    from foundry_mcp.tools.orchestration.teams import _teammate_shutdown_hint
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    (fdir / "castings" / "manifest.json").write_text(json.dumps({
+        "castings": [{"id": 1, "key_files": []}],
+        "waves": [{"wave": 1, "casting_ids": [1]}],
+    }), encoding="utf-8")
+    (fdir / "castings" / "casting-1-prompt.md").write_text("# Casting 1\n", encoding="utf-8")
+
+    cast = foundry_cast_wave(1, "cast", project_root)
+    grind = foundry_cast_wave(1, "grind", project_root)
+    assert cast["ok"] is True and grind["ok"] is True, (cast, grind)
+    assert "Foundry-Team-Up(team_name_suggestion)" in cast["instructions"]
+    assert (
+        "Foundry-Spawn-Teammate(phase='grind', defect_ids=[...])" in grind["instructions"]
+    ), grind["instructions"]
+
+    resume = Path(__file__).resolve().parents[3] / "commands" / "resume.md"
+    frontmatter = resume.read_text(encoding="utf-8").split("\n---", 1)[0]
+    sentences = {
+        "gates._TEAMS_DOWN_HINT": _TEAMS_DOWN_HINT,
+        "teams._teammate_shutdown_hint": _teammate_shutdown_hint(["@grind-c1"]),
+        "cast-wave instructions (cast)": cast["instructions"],
+        "cast-wave instructions (grind)": grind["instructions"],
+        "commands/resume.md frontmatter": frontmatter,
+    }
+    for where, sentence in sentences.items():
+        for removed in ("TeamCreate", "TeamDelete"):
+            assert removed not in sentence, (where, removed, sentence)
+    assert "Foundry-Team-Down" in _TEAMS_DOWN_HINT

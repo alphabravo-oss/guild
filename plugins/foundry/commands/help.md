@@ -113,7 +113,10 @@ imported from. It is plugin manifest against plugin manifest — the MCP server'
 is recorded and displayed but never compared — and an unreadable commit is never a match. A
 run that does not target foundry compares nothing and is never warned. **A mid-run server switch is never
 attempted** — no step calls `/reload-plugins`, rewrites `.mcp.json`, or installs a plugin
-mid-run. Prose and code a run ships take effect for the next run, never the one that wrote them.
+mid-run. Prose and code a run ships take effect only in a server started after they land, never in
+the one that wrote them: when a crossing depends on changed server code or agent or skill prose —
+and before DONE, whenever either changed — the run parks for you to relaunch rather than running
+on the old code.
 
 ### `/foundry:resume`
 
@@ -125,7 +128,10 @@ Show current run status — phase, cycle, defects, stream coverage.
 
 ### `/foundry:stop`
 
-Gracefully stop the active run. Resumable later.
+Stop the active run. It ends `HALTED` with reason `user_stop` and your words as its text, and the
+report is regenerated and sealed in the same step. After CAST this is how a run ends early — the
+lead cannot end one on its own ruling. `HALTED` is terminal: carry the remaining work into a NEW
+run.
 
 ### `/foundry:setup`
 
@@ -164,7 +170,7 @@ will otherwise serve the same one indefinitely.
 - **Every non-passing verdict is a defect** — no deferrals, no "close enough"
 - **Full re-verify after every fix** — no spot-checking
 - **Methodical teammate** — tuned for correctness over wall-clock speed (read floor, approach deliberation, blast radius, competing hypotheses)
-- **Stall watchdog** — 3+ minute silence triggers a visible warning that forces re-engagement
+- **Stop hook** — while a build is live (F1..F5.5), the Stop hook blocks the lead's turn from ending and sends it back to `Foundry-Next`; the turn ends only at a sanctioned stop — every remaining item parked and put to you, a `HALTED` seal, or F6 DONE. The Stop hook is what forces re-engagement; a stall warning only makes a quiet run visible
 - **MCP-guided** — `Foundry-Next` returns a literal "YOUR NEXT CALL" imperative every step
 - **Full audit trail** — every casting prompt, every acceptance, every handoff written to `foundry-archive/{run}/`
 

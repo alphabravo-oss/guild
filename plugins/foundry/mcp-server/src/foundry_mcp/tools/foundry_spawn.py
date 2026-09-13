@@ -188,8 +188,10 @@ from foundry_mcp.schemas import vocab
 # that cycle to be preserved or removed DELIBERATELY rather than left to be
 # rediscovered. It is preserved, and this is where it is written down:
 #
-#   forward — this module needs `agent_model` (the model policy) and
-#             `git_changed_paths` (the one git invocation);
+#   forward — this module needs `agent_model` (the model policy),
+#             `git_changed_paths` (the one git invocation) and
+#             `record_grind_hand_over` (the one `grind_dispatched` writer,
+#             should-not-stop FR-020);
 #   back    — `teams.py`, `spend.py`, `width.py` and `transitions.py` each
 #             reach `_manifest_shape_problem`, `_agent_id_for_casting` or
 #             `_skipped_stream_ids` out of this module.
@@ -218,6 +220,22 @@ def _agent_model(subagent_type: str, baseline: str = "") -> dict:
     from foundry_mcp.tools.orchestration.teams import agent_model
 
     return agent_model(subagent_type, baseline)
+
+
+def _record_grind_hand_over(
+    fdir: Path, casting: int | None, defect_ids: list[str]
+) -> list[str]:
+    """`orchestration.directives`' dispatch recorder, through the named seam.
+
+    should-not-stop FR-020 / CT-009 — the one writer of `grind_dispatched`,
+    called by `foundry_spawn_teammate` when it hands a GRIND teammate its ids.
+    Lazy for the reason every forward edge of this module is: `directives`
+    reaches this package's lifecycle modules, so a module-top import would
+    close the orchestrator-to-spawn cycle at import time.
+    """
+    from foundry_mcp.tools.orchestration.directives import record_grind_hand_over
+
+    return record_grind_hand_over(fdir, casting=casting, defect_ids=defect_ids)
 
 
 
@@ -1664,12 +1682,91 @@ def _manifest_shape_error(manifest: object, manifest_path: Path) -> dict | None:
     }
 
 
+def _grind_hand_over_ids(
+    fdir: Path, phase: str, defect_ids: object
+) -> tuple[list[str], dict | None]:
+    """The defect ids a spawn hands over, or the refusal that stops the spawn.
+
+    should-not-stop FR-020 / CT-009 / AC-024 (A-015). The ids are recorded as
+    `grind_dispatched` rows, and `Foundry-Team-Down` refuses on exactly those
+    rows, so both ways of getting the list wrong cost a teardown: an id recorded
+    that nobody holds becomes a refusal over a defect no teammate was given, and
+    an id silently dropped becomes a hand-over the door cannot see. So the list
+    is checked, and refused by name, before this door writes anything.
+
+    Absent or empty hands over nothing and is not a refusal: a GRIND packet may
+    carry no defect at all (a concern-only packet), and a CAST dispatch never
+    carries one. Repeats collapse to one id, in first-seen order.
+    """
+    if defect_ids is None:
+        return [], None
+    if not isinstance(defect_ids, list) or not all(
+        isinstance(did, str) and did for did in defect_ids
+    ):
+        return [], {
+            "ok": False,
+            "error": "defect_ids must be a list of defect id strings (D-NNN)",
+            "hint": (
+                "Pass the ids of the defects you are handing this teammate, e.g. "
+                "defect_ids=['D-012', 'D-015'], or omit the argument. Nothing was "
+                "recorded and no spawn was logged."
+            ),
+        }
+    ids = list(dict.fromkeys(defect_ids))
+    if not ids:
+        return [], None
+    if phase != "grind":
+        return [], {
+            "ok": False,
+            "error": (
+                f"defect_ids was passed on a phase={phase!r} dispatch; only a GRIND "
+                "teammate is handed defects"
+            ),
+            "hint": (
+                "Pass defect_ids with phase='grind', or drop it from this dispatch. "
+                "Nothing was recorded and no spawn was logged."
+            ),
+        }
+    ledger_path = fdir / "defects.json"
+    ledger, problem = read_document(ledger_path)
+    if problem is not None:
+        return [], document_refusal(ledger_path, problem)
+    records = ledger.get("defects")
+    status = {
+        d["id"]: d.get("status")
+        for d in (records if isinstance(records, list) else [])
+        if isinstance(d, dict) and isinstance(d.get("id"), str)
+    }
+    unknown = [did for did in ids if did not in status]
+    not_open = [did for did in ids if did in status and status[did] != "open"]
+    if unknown or not_open:
+        named = []
+        if unknown:
+            named.append(f"not in the defect ledger: {', '.join(unknown)}")
+        if not_open:
+            named.append(f"not open: {', '.join(not_open)}")
+        return [], {
+            "ok": False,
+            "error": f"defect_ids names ids that are not open defects ({'; '.join(named)})",
+            "hint": (
+                "Hand a teammate only defects the ledger holds OPEN. An unknown id is a "
+                "typo; a closed one is already fixed or superseded and has nothing left to "
+                "hand over. Nothing was recorded and no spawn was logged: correct the list "
+                "and call again."
+            ),
+            "unknown": unknown,
+            "not_open": not_open,
+        }
+    return ids, None
+
+
 def foundry_spawn_teammate(
     casting_id: int | str,
     phase: str = "cast",
     project_root: str = ".",
     *,
     full_prompt: bool = False,
+    defect_ids: list[str] | None = None,
 ) -> dict:
     """Dispatch a casting's teammate: return a pointer to its pre-authored prompt.
 
@@ -1682,6 +1779,16 @@ def foundry_spawn_teammate(
             pointer. Keyword-only, because it is a debugging opt-in and not
             part of the positional call every caller makes — a lead that wants
             the text asks for it by name (FR-019).
+        defect_ids: The D-NNN ids of the defects this GRIND teammate is being
+            HANDED (should-not-stop FR-020 / CT-009 / AC-024). On a
+            ``phase="grind"`` call one ``grind_dispatched`` row is recorded
+            per id, and this is the only door that records one: it is what
+            `Foundry-Team-Down` joins against. Omitted or empty records
+            nothing. Every id must be an OPEN defect in the ledger, and a
+            ``cast`` call hands over no defects; either mistake is refused
+            before anything is written, because an id recorded wrongly is a
+            Team-Down refusal over a defect nobody holds and an id dropped
+            silently is a hand-over Team-Down cannot see.
 
     Returns:
         On success:
@@ -1777,6 +1884,13 @@ def foundry_spawn_teammate(
     if prompt_hash is None:
         return document_refusal(prompt_path, f"{prompt_path.name} could not be read")
 
+    # should-not-stop FR-020 / CT-009 / AC-024 — THE HAND-OVER IS CHECKED HERE,
+    # above both writes below, for the reason D-144 gives for every refusal on
+    # this door: none of them may leave a spawn record behind.
+    handed_over, hand_over_refusal = _grind_hand_over_ids(fdir, phase, defect_ids)
+    if hand_over_refusal is not None:
+        return hand_over_refusal
+
     model = _teammate_model()
 
     # Log the spawn for the audit trail. When a model is configured the record
@@ -1812,6 +1926,19 @@ def foundry_spawn_teammate(
     # D-144 gives at `_append_spawn_records`.
     _seed_progress_ledgers(fdir, [(_agent_id_for_casting(casting_id), phase)])
     _append_spawn_records(fdir / "spawns.log", [entry])
+
+    # should-not-stop FR-020 / CT-009 / AC-024 — THE HAND-OVER, RECORDED BY THE
+    # DOOR THAT MAKES IT. One `grind_dispatched` row per id, written after the
+    # spawn record so no dispatch row exists for a spawn the log does not hold.
+    # `Foundry-Tasks` writes none: a packet is a proposal until it is handed
+    # over, and a backlogged defect never is.
+    recorded: list[str] = []
+    if handed_over:
+        try:
+            handed_to: int | None = int(casting.get("id"))
+        except (TypeError, ValueError):
+            handed_to = None
+        recorded = _record_grind_hand_over(fdir, handed_to, handed_over)
 
     result: dict = {
         "ok": True,
@@ -1868,6 +1995,18 @@ def foundry_spawn_teammate(
                 "prepend the `grind_cycle_context` block FIRST so the teammate reads current "
                 "file state before acting on defects."
             )
+        # should-not-stop FR-020 / CT-009 — SAID ON THE RESPONSE, both ways. A
+        # GRIND spawn with no `defect_ids` records nothing, and the lead is told
+        # so here rather than finding out at Team-Down.
+        result["grind_dispatched"] = recorded
+        result["instructions"] += (
+            f" Hand-over: {len(recorded)} defect id(s) recorded as handed to this teammate"
+            + (f" ({', '.join(recorded)})" if recorded else "")
+            + ". Put exactly those ids in the defect block. Foundry-Team-Down refuses "
+            "while a handed-over id is still open and a commit since the cycle baseline "
+            "touched its file; a defect handed over WITHOUT `defect_ids` on this call is "
+            "invisible to that check, and a backlogged defect must never be passed."
+        )
 
     # Progress ledger protocol (FR-015). Appended LAST, after any
     # grind_cycle_context and defect blocks, so the established (a) context
@@ -2274,11 +2413,17 @@ def foundry_cast_wave(
             "text yourself. "
             "Required per-Agent params: subagent_type='foundry:teammate', "
             f"mode='bypassPermissions'. {model_clause}"
-            "NEVER run_in_background=true (foreground, TeamCreate-managed). "
-            "Before spawning: TeamCreate(team_name_suggestion) + Foundry-Team-Up(team_name_suggestion). "
+            "NEVER run_in_background=true (foreground). "
+            "Before spawning: Foundry-Team-Up(team_name_suggestion), which registers the team in "
+            "the run's ledger, the only place a team exists; each teammate is a named Agent "
+            "spawn (name it `casting-<id>`, the id its progress ledger uses). "
             "GRIND phase only: append that casting's own `grind_cycle_context` block (present on "
             "the casting entry whenever it is non-empty) then a "
             "'## Defects to fix this cycle:' block BELOW each prompt, never inside it. "
+            "GRIND hand-over: this bulk door records NO `grind_dispatched` row, so "
+            "Foundry-Team-Down cannot see a defect handed over through it; for GRIND, dispatch "
+            "each casting with Foundry-Spawn-Teammate(phase='grind', defect_ids=[...]) naming "
+            "exactly the ids you hand it. "
             "EVERY phase: append that casting's `progress_protocol` block BELOW its prompt, LAST "
             "— after any grind_cycle_context and defect blocks. It tells the teammate where to "
             "write its progress lines; without it Foundry-Liveness has nothing to read back and a "

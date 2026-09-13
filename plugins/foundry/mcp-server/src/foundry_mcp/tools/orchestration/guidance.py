@@ -5,6 +5,7 @@ is heading for, the backlog by tier, and the cycles left before the cap.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,17 +14,44 @@ from datetime import (
     timezone,
 )
 from foundry_mcp.schemas.vocab import (
+    BLOCKER_KIND_PROMPT_HASH_MISMATCH,
+    BLOCKER_KIND_SCOPE_INSTRUCTION_CONFLICT,
+    BLOCKER_KINDS,
     BLOCKING_TIERS,
+    CONCERN_STATUS_CLOSED,
     DEFECT_TIERS,
+    HALT_REASON_USER_STOP,
     INSPECT_MODES,
+    PARK_ACTION_ANSWER,
+    PARK_ACTION_PARK,
+    PARK_CATEGORY_ENV_BROKEN,
+    PARK_CATEGORY_LIVE_PLUGIN_RELOAD,
+    PARK_CATEGORY_SPEC_WRONG,
+    PARK_CATEGORY_UNKNOWN_DEADLOCK,
+    PARK_ITEM_CASTING,
+    PARK_ITEM_CROSSING,
+    PARK_ITEM_DEFECT,
+    PARK_ITEM_STREAM,
+    PARK_TOOL_NAME,
+    PARKED_AWAITING_HUMAN_KEY,
+    PARKED_FIELD_ANSWER,
+    PARKED_FIELD_ANSWER_IS_HALT,
+    PARKED_FIELD_ANSWERED_AT,
+    PARKED_FIELD_CATEGORY,
+    PARKED_FIELD_ID,
+    PARKED_FIELD_ITEM_REF,
+    PARKED_FIELD_QUESTION,
+    PARKED_ITEMS_KEY,
     PHASE_LADDER,
     PHASE_NAMES,
+    POST_CAST_RUN_PHASES,
     REPORT_MD_FILENAME,
     RUN_PHASE_HALTED,
     STREAM_WIRE_IDS,
     TIER_UNKNOWN,
     defect_tier,
     halt_reason,
+    park_item_ref,
 )
 from foundry_mcp.tools.artifacts import (
     CAST_COMPLETE_MARKER,
@@ -33,6 +61,7 @@ from foundry_mcp.tools.artifacts import (
     VALIDATE_PASSED_MARKER,
     _artifact_guard,
     _document_transaction,
+    _hash_str,
     _load_json,
     _read_text,
     _spec_requirement_ids,
@@ -59,6 +88,8 @@ from foundry_mcp.tools.display import (
     GREEN,
     RESET,
     foundry_hammer,
+    one_line,
+    one_screen_line,
 )
 from foundry_mcp.tools.foundry_state import (
     current_cycle,
@@ -71,6 +102,7 @@ from foundry_mcp.tools.foundry_state import (
     get_run_dir,
     now_iso,
     read_document,
+    read_jsonl,
 )
 from pathlib import Path
 from foundry_mcp.tools.orchestration.escalation import (
@@ -92,7 +124,21 @@ from foundry_mcp.tools.orchestration.teams import (
 )
 from foundry_mcp.tools.orchestration.spend import _spend_summary
 
-from foundry_mcp.tools.orchestration.directives import _read_directives
+from foundry_mcp.tools.orchestration.directives import (
+    _grind_dispatches,
+    _read_directives,
+)
+# should-not-stop — THE PARKED STATE IS READ FROM THE MODULE THAT OWNS EVERY
+# WRITER OF IT. Lifecycle to lifecycle. This router never writes `parked`
+# itself: it reads it to route around parked items, sets the `awaiting_human`
+# marker through park.py's setter when it emits the ask step, and clears it
+# through park.py when work it had found blocked can move again.
+from foundry_mcp.tools.orchestration.park import (
+    clear_awaiting_human,
+    open_parked_items,
+    read_parked,
+    set_awaiting_human,
+)
 
 
 
@@ -572,6 +618,13 @@ def foundry_next_action(
     result = _compute_next_action(project_root)
     if trace_skip_decision and trace_skip_decision.get("skip"):
         result["trace_skip"] = trace_skip_decision
+    # should-not-stop — the ask marker follows the router's answer, and the
+    # parked items and their answers ride every response the lead reads.
+    if fdir_stamp and fdir_stamp.exists():
+        _sync_awaiting_human(fdir_stamp, result)
+        parked_view = _parked_view(fdir_stamp)
+        if parked_view is not None:
+            result["parked"] = parked_view
 
     # P4 (FR-005 / ST-002): passing-gate → guidance-state advance. If the gate
     # for the current transition action already passed (recorded in
@@ -658,8 +711,10 @@ def foundry_next_action(
                             f"your last Foundry-Next call — that gap is the "
                             f"agents working, not you deliberating. Do NOT "
                             f"improvise over their half-finished work. Call "
-                            f"Foundry-Liveness for per-agent detail, otherwise "
-                            f"wait and call Foundry-Next again."
+                            f"Foundry-Liveness for per-agent detail; otherwise "
+                            f"keep waiting WITHOUT ending your turn (the Monitor "
+                            f"tool or a bounded Bash wait loop), then call "
+                            f"Foundry-Next again."
                         )
                     else:
                         stall_warning = (
@@ -1003,6 +1058,26 @@ _GATE_THEN_PHASE_EXCEPTION = (
 _GATE_THEN_PHASE_NOTE = "\n" + _GATE_THEN_PHASE_EXCEPTION
 
 
+#: should-not-stop — HOW THE LEAD WAITS, SPELLED ONCE.
+#:
+#: Every wait the router handed the lead ended in "wait for completion", "the
+#: completion notification fires" or "the harness notifies you", which tells a
+#: lead to END ITS TURN and trust a wake-up. Completion notifications for
+#: background agents are real and lossy — they do not survive a session pause
+#: or resume — so a lead that ended its turn to wait on one could sit idle for
+#: hours with the operator away. A wait is done INSIDE the turn now: the Monitor
+#: tool, or a bounded Bash loop that re-checks and returns, then Foundry-Next
+#: again. Stated once and concatenated into every imperative and router text
+#: that waits, so the rule cannot come to be spelled two ways.
+_BOUNDED_WAIT = (
+    "wait WITHOUT ending your turn: use the Monitor tool, or a bounded Bash "
+    "wait loop that re-checks and returns within about ten minutes, then call "
+    "Foundry-Next again. Never end the turn to wait for a completion "
+    "notification — one lost across a pause or resume leaves the run idle "
+    "with nobody watching."
+)
+
+
 
 
 #: D-136 — the standing rules block, named once so the HALTED branch in
@@ -1030,7 +1105,7 @@ _STANDING_CRITICAL_RULES = (
     "\n- NEVER deliberate for more than 30 seconds between tool calls. If you catch yourself thinking, call Foundry-Next and execute whatever it says."
     "\n- NEVER narrate progress as 'Checkpoint \u2014 X complete', 'Checkpoint reached', 'Milestone \u2014 X', or similar. Foundry has NO checkpoints. You are not a checkpointing orchestrator. Execute the next tool call silently and keep moving."
     "\n- NEVER skip SIGHT because 'no URL.' If frontend files exist, you need a URL. Gate will block."
-    "\n- NEVER spawn foundry:teammate agents (CAST or GRIND) with run_in_background=true. They are foreground, TeamCreate-managed, and must run through Foundry-Cast-Wave or Foundry-Spawn-Teammate + verbatim Agent. Background-spawning bypasses the router architecture and breaks spec fidelity."
+    "\n- NEVER spawn foundry:teammate agents (CAST or GRIND) with run_in_background=true. They are foreground, named Agent spawns, and must run through Foundry-Cast-Wave or Foundry-Spawn-Teammate + verbatim Agent. Background-spawning bypasses the router architecture and breaks spec fidelity."
     "\n- NEVER modify, paraphrase, or augment a prompt returned by Foundry-Spawn-Teammate. Pass it to Agent VERBATIM. GRIND is the only exception: append (a) the `grind_cycle_context` block if returned (prior-cycle file changes) and (b) the '## Defects to fix this cycle:' block BELOW the prompt, in that order. Never inside the prompt."
     "\n- If the user typed a message, treat it as a directive. Absorb and keep going."
     # D-136 — THE THIRD ENDING. This read "The foundry runs until F6 DONE or an
@@ -1038,12 +1113,28 @@ _STANDING_CRITICAL_RULES = (
     # named HALTED state reached by a SUCCESSFUL transition, which is neither
     # DONE nor an error. A lead reading the old sentence and then receiving a
     # halt has been told the halt cannot happen.
-    "\n- Zero approval gates. The foundry runs until it ends: F6 DONE, a HALTED "
-    "--max-cycles stop (a successful transition, not an error), or an error."
+    #
+    # should-not-stop \u2014 AND AFTER start_cast THE ENDINGS ARE THE HALT DOOR'S.
+    # The halt door refuses a lead's own ruling once CAST has started, so the
+    # list this line gives the lead is exactly what the door accepts: DONE, the
+    # launch cap, or a user_stop the human can be shown to have asked for. An
+    # unrecoverable error still ends a SESSION, and the run is resumed rather
+    # than sealed over it.
+    "\n- Zero approval gates. After start_cast a run ends only three ways: F6 "
+    "DONE; the launch cap, a HALTED --max-cycles stop reached by a successful "
+    "transition; or a human-origin user_stop \u2014 /foundry:stop, or a parked "
+    "question the human answered with halt. An unrecoverable error can end a "
+    "SESSION, but it is not a HALTED seal: the run is resumed, never sealed, "
+    "over an error."
+    "\n- NEVER end your turn while the run is in F1..F5.5 unless Foundry-Next "
+    "has just emitted the ask step. Waiting happens inside the turn \u2014 the "
+    "Monitor tool or a bounded Bash wait loop \u2014 never by ending it for a "
+    "completion notification. A major issue parks ONE item with Foundry-Park, "
+    "and everything else keeps moving."
     "\n- NEVER wait for teammate 'shutdown_response', 'shutdown_ack', idle-confirmation, or any reply after "
-    "issuing shutdown. The ONLY shutdown signals foundry recognizes are (a) TeamDelete returning ok and "
-    "(b) Foundry-Team-Down succeeding. Narrating 'awaiting shutdown approvals' is a stall \u2014 call TeamDelete "
-    "immediately. Idle / terminated panes ARE the signal; TeamDelete cleans them."
+    "issuing shutdown. The ONLY shutdown signal foundry recognizes is Foundry-Team-Down succeeding: a team "
+    "is a run-ledger entry, and there is no team tool to call before it. Narrating 'awaiting shutdown "
+    "approvals' is a stall \u2014 call Foundry-Team-Down immediately. Idle / terminated panes ARE the signal."
 )
 
 
@@ -1130,13 +1221,16 @@ _ACTION_IMPERATIVES = {
     ),
     "cleanup_teams": (
         "YOUR NEXT CALLS (in order \u2014 do NOT wait for shutdown acks):\n"
-        "  (1) Send shutdown to each teammate: SendMessage(to=<teammate>, message='All work complete, stop working.') "
-        "\u2014 one SendMessage per teammate in ONE parallel-tool-use message. Do not use structured messages with "
-        "to='*' broadcast \u2014 broadcast rejects structured payloads.\n"
-        "  (2) Immediately call TeamDelete for each active team. Do NOT wait for 'shutdown_response' events, "
+        "  (1) If any teammate is still running, send it shutdown: SendMessage(to=<teammate>, message='All work "
+        "complete, stop working.') \u2014 one SendMessage per teammate in ONE parallel-tool-use message; TaskStop "
+        "any background agent. Do not use structured messages with to='*' broadcast \u2014 broadcast rejects "
+        "structured payloads.\n"
+        "  (2) Foundry-Team-Down(team_name=<each registered team>). A team is a run-ledger entry and Team-Down "
+        "is what ends it: there is no team tool to call first. Do NOT wait for 'shutdown_response' events, "
         "'shutdown_ack' events, idle confirmations, or any teammate reply. Idle / terminated panes ARE the "
-        "shutdown signal. TeamDelete cleans zombie panes.\n"
-        "  (3) Foundry-Team-Down for each team name.\n"
+        "shutdown signal.\n"
+        "  (3) Foundry-Next \u2014 team cleanup is routed only once the phase's work is done, so the call it "
+        "names next is the crossing.\n"
         "Stalling here is the #1 cleanup failure mode: the lead sends shutdown, sees panes idle, and waits "
         "forever for a reply that never comes."
     ),
@@ -1147,18 +1241,20 @@ _ACTION_IMPERATIVES = {
         "prompt=<per commands/start.md \u00a7F0.5 DECOMPOSE: write the domain's entry into "
         "manifest.json AND write casting-{id}-prompt.md to foundry-archive/{run}/castings/ "
         "following the layout in start.md \u00a76>. "
-        "No team needed \u2014 these are short-lived file writers; TeamCreate ceremony is skipped. "
-        "You'll be notified as each completes; use TaskOutput(task_id) to retrieve any return "
-        "message. After all complete, call Foundry-Validate-Castings."
+        "No team is registered for them \u2014 these are short-lived file writers. "
+        "Wait for them WITHOUT ending your turn: the Monitor tool, or a bounded Bash wait loop "
+        "until every casting-{id}-prompt.md they own exists \u2014 never end the turn for a "
+        "completion notification. Read a finished agent's return with Read on the output file "
+        "its launch returned. After all complete, call Foundry-Validate-Castings."
     ),
     "transition_to_cast": (
         "YOUR NEXT CALLS (in order — bulk flow saves N-1 roundtrips):\n"
         "  (1) Foundry-Gate(phase='validate')\n"
         "  (2) Foundry-Phase(phase='start_cast')\n"
-        "  (3) TeamCreate('cast-{run}-wave-1')\n"
-        "  (4) Foundry-Team-Up(team_name='cast-{run}-wave-1')\n"
-        "  (5) Foundry-Cast-Wave(wave=1, phase='cast') \u2014 returns ALL wave-1 dispatch blocks in ONE call.\n"
-        "  (6) In a SINGLE message (parallel tool use), spawn one Agent per returned casting: "
+        "  (3) Foundry-Team-Up(team_name='cast-{run}-wave-1') \u2014 registers the wave in the run "
+        "ledger. Teammates are named Agent spawns; there is no team tool to call.\n"
+        "  (4) Foundry-Cast-Wave(wave=1, phase='cast') \u2014 returns ALL wave-1 dispatch blocks in ONE call.\n"
+        "  (5) In a SINGLE message (parallel tool use), spawn one Agent per returned casting: "
         "subagent_type='foundry:teammate', mode='bypassPermissions', "
         "prompt=<that casting's `dispatch` field VERBATIM \u2014 it names the prompt FILE and the "
         "sha256 the teammate must read that file to obtain. The `prompt` field is null by "
@@ -1177,11 +1273,21 @@ _ACTION_IMPERATIVES = {
         "carries model/effort/tools." + _GATE_THEN_PHASE_NOTE
     ),
     "build_castings": (
-        "YOUR NEXT ACTION depends on wave state:\n"
-        "  - IF no CAST team has been registered this wave yet (first entry to F1): follow the transition_to_cast sequence "
-        "(TeamCreate \u2192 Foundry-Team-Up \u2192 Foundry-Spawn-Teammate per casting \u2192 Agent spawn VERBATIM, foreground).\n"
-        "  - IF teammates are currently running: WAIT for all to complete, then TeamDelete + Foundry-Team-Down + "
-        "Foundry-Phase(phase='cast'). Do NOT call Foundry-Next while waiting \u2014 it will re-emit this action."
+        "YOUR NEXT ACTION depends on where each casting is (details.castings names them):\n"
+        "  - IF no casting has been dispatched yet (first entry to F1): follow the transition_to_cast sequence "
+        "(Foundry-Team-Up \u2192 Foundry-Cast-Wave \u2192 one named Agent per casting, `dispatch` VERBATIM, "
+        "foreground).\n"
+        "  - IF details.dispatchable names castings: every casting they depend on is accepted, so dispatch "
+        "them with Foundry-Cast-Wave(wave=N, phase='cast') and one named Agent per casting.\n"
+        "  - IF a teammate returned a completion report: Foundry-Accept-Casting for it. IF its Agent call "
+        "returned an error or no report, re-dispatch it on the SAME model (Foundry-Spawn-Teammate + Agent); "
+        "Foundry-Next counts the attempts and names the park call after the third failure.\n"
+        "  - IF a teammate is still running: " + _BOUNDED_WAIT + "\n"
+        "  - IF Foundry-Liveness reports a teammate stalled: SendMessage it to resume, or re-dispatch "
+        "it on the same model. A stalled teammate is yours to recover; never escalate it to the user.\n"
+        "  - details.held and details.parked name castings to leave alone: Foundry-Next re-dispatches a held "
+        "casting once its upstream casting is accepted, and asks the human about parked ones only when "
+        "nothing else can move. Every other casting keeps going."
     ),
     # fallout D-058 / AC-059 — ONE ACTION, TWO CROSSINGS, AND THE STEPS ARE
     # SUBSTITUTED FROM ONE ROW SO THEY CANNOT NAME DOORS THAT DO NOT MATCH.
@@ -1223,9 +1329,12 @@ _ACTION_IMPERATIVES = {
         "  - COVERAGE_DIFF (MIGRATION only): Agent(subagent_type='foundry:coverage-diff', run_in_background=true, prompt='Run COVERAGE_DIFF for the active foundry run.')\n"
         "  - SIGHT: runs in MAIN THREAD via Playwright \u2014 execute while the four background streams run\n"
         "  - TEST / PROBE: may also run as background Agents\n"
-        "When each background stream's completion notification fires: call TaskOutput(task_id) "
-        "to retrieve its findings, then CONFIRM THE STREAM'S OWN RECORD EXISTS \u2014 "
-        "Foundry-Context shows the cycle's roll-up. Do NOT poll \u2014 the harness notifies you.\n"
+        "While the background streams run, " + _BOUNDED_WAIT + " Read a finished stream's "
+        "findings with Read on the output file its Agent launch returned, then CONFIRM THE "
+        "STREAM'S OWN RECORD EXISTS \u2014 Foundry-Context shows the cycle's roll-up. A stream "
+        "agent whose attempt fails is re-dispatched on the same model; after its third failed "
+        "attempt on that model, park it \u2014 Foundry-Park(action='park', item_ref='stream:<id>', "
+        "category='env_broken', question=...) \u2014 and keep every other stream going.\n"
         "\n"
         # fallout AC-031 / GI-016 / FR-049 (D-169) \u2014 THE READING STREAMS ARE
         # TOLD THAT ONE OF THEIR PEERS REWRITES THE TREE.
@@ -1310,10 +1419,13 @@ _ACTION_IMPERATIVES = {
         "  (1) Foundry-Tasks\n"
         "  (2) Foundry-Gate(phase='grind')\n"
         "  (3) Foundry-Phase(phase='grind_start')\n"
-        "  (4) TeamCreate('grind-{run}-cycle-N')\n"
-        "  (5) Foundry-Team-Up(team_name='grind-{run}-cycle-N')\n"
-        "  (6) For each casting with open defects: Foundry-Spawn-Teammate(casting_id=N, phase='grind')\n"
-        "  (7) Spawn Agent(subagent_type='foundry:teammate', mode='bypassPermissions', "
+        "  (4) Foundry-Team-Up(team_name='grind-{run}-cycle-N') — registers the cycle's team in "
+        "the run ledger; there is no team tool to call.\n"
+        "  (5) For each casting with open defects: Foundry-Spawn-Teammate(casting_id=N, phase='grind', "
+        "defect_ids=[<the ids of the defects you hand THIS teammate>]) — never a backlogged "
+        "defect's id. Those ids are the only hand-over record Foundry-Team-Down joins on, so a defect "
+        "handed over without them is invisible to it.\n"
+        "  (6) Spawn Agent(subagent_type='foundry:teammate', mode='bypassPermissions', "
         "prompt=<the returned `dispatch` field VERBATIM \u2014 it names the prompt FILE and the sha256 the "
         "teammate must read that file to obtain; the `prompt` field is null by default and is NOT what "
         "you pass. Then APPEND (a) the `grind_cycle_context` block from the spawn "
@@ -1357,20 +1469,30 @@ _ACTION_IMPERATIVES = {
     # is told to make the same two calls in the same order.
     "fix_defects": (
         "YOUR NEXT ACTION depends on GRIND state:\n"
-        "  - IF no GRIND team registered yet: follow the transition_to_grind sequence.\n"
-        "  - IF teammates are running: WAIT. When all report complete, TeamDelete + Foundry-Team-Down + "
+        "  - IF no GRIND team registered yet: follow the transition_to_grind sequence, handing each "
+        "teammate the ids of the defects you give it in Foundry-Spawn-Teammate's defect_ids — never "
+        "a backlogged defect's id.\n"
+        "  - IF a teammate returned: record each fix with Foundry-Fix. IF its Agent call failed, "
+        "re-dispatch it on the SAME model with the same defect_ids; Foundry-Next counts the attempts "
+        "and names the park call after the third failure.\n"
+        "  - IF teammates are running: " + _BOUNDED_WAIT + "\n"
+        "  - IF Foundry-Liveness reports a teammate stalled: SendMessage it to resume, or re-dispatch "
+        "it on the same model with the same defect_ids. A stalled teammate is yours to recover; never "
+        "escalate it to the user.\n"
+        "  - When every dispatched defect is fixed: Foundry-Team-Down + "
         "Foundry-Gate(phase='inspect_start') + Foundry-Phase(phase='inspect_start') + re-run INSPECT."
         + _GATE_THEN_PHASE_NOTE
     ),
     "transition_to_assay": (
         "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Phase(phase='inspect_clean')\n"
-        "  (2) Foundry-Gate(phase='assay')\n"
-        "  (3) Update state to F4\n"
-        "  (4) Spawn 4 parallel Agent(subagent_type='foundry:assayer', "
+        "  (1) Foundry-Gate(phase='assay') — the gate that guards the crossing below.\n"
+        "  (2) Foundry-Phase(phase='inspect_clean') — that call is what enters F4. Never edit "
+        "state.json by hand.\n"
+        "  (3) Spawn 4 parallel Agent(subagent_type='foundry:assayer', "
         "prompt='Assay requirement group N of 4 for the active foundry run. "
         "Spec-before-code; default posture is find the failure.') in a SINGLE message. "
         "(The assayer's frontmatter carries model=opus and effort=max.)"
+        + _GATE_THEN_PHASE_NOTE
     ),
     "run_assay": (
         "YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type='foundry:assayer', "
@@ -1481,12 +1603,69 @@ _ACTION_IMPERATIVES = {
         "do NOT call Foundry-Next in a loop. Start a NEW run with Foundry-Init "
         "if there is more work."
     ),
+    # should-not-stop — THE DEAD END NAMES ITS EXIT. This told the lead to call
+    # Foundry-Context and then Foundry-Next again, which returns this same
+    # action: a loop with no call in it that changes anything. An unrecognised
+    # phase is outside the F1..F5.5 window the build runs in, so the one call
+    # that moves the run is the question to the human, and it is named.
     "unknown": (
-        "YOUR NEXT CALL: Foundry-Context. The guidance engine does not recognise "
-        "this run's phase, which means `state.json` carries a value no "
-        "transition writes. Read the run's state, then Foundry-Next again. Do "
-        "NOT guess a transition token — an unrecognised phase is a state to "
-        "diagnose, not one to advance out of."
+        "YOUR NEXT CALLS (in order):\n"
+        "  (1) Foundry-Context — read state.phase and the last phase_history entry.\n"
+        "  (2) AskUserQuestion — tell the human state.json carries a phase no transition "
+        "writes, name that value and the last phase the history records, and ask how to "
+        "proceed. An unrecognised phase is outside the build's F1..F5.5 window, so this "
+        "question stops no running build.\n"
+        "Do NOT edit state.json by hand and do NOT guess a transition token: Foundry-Next "
+        "returns this same action until the phase is one it recognises."
+    ),
+    # should-not-stop — THE ACTIONS THE PARKED-STATE ROUTING EMITS. Each is a
+    # step the lead takes without deliberating, and none of them ends the run.
+    "seal_user_stop": (
+        "YOUR NEXT CALLS (in order):\n"
+        "  (1) Stop every in-flight agent: SendMessage(to=<teammate>, message='All work complete, "
+        "stop working.') to each running teammate and TaskStop each background agent, in ONE "
+        "parallel-tool-use message.\n"
+        "  (2) Foundry-Team-Down(team_name=<each registered team>).\n"
+        "  (3) Foundry-Phase(phase='halt', reason='user_stop', text=<details.text — the "
+        "human's halt answer, VERBATIM>).\n"
+        "The human answered a parked question with halt, and that recorded answer is the proof "
+        "the halt door accepts for user_stop. Make no other call first: no wave, no gate, no "
+        "other transition."
+    ),
+    "ask_human": (
+        "YOUR NEXT CALL: AskUserQuestion — ONE call carrying every item in details.parked: "
+        "its id, what it blocks (item_ref), its category and its question, verbatim. Every "
+        "remaining unit of work is parked, so this is the one point the run asks; it waits in "
+        "place, NOT HALTED, until the answers come back.\n"
+        "Then, for each answer: Foundry-Park(action='answer', parked_id=<id>, answer=<the "
+        "human's words, verbatim>) — add halt=true ONLY when the human chose to halt the "
+        "run — and then call Foundry-Next."
+    ),
+    "park_item": (
+        "YOUR NEXT CALL: Foundry-Park(action='park', item_ref=<details.item_ref>, "
+        "category=<details.category>, question=<details.question — sharpen it if you can, "
+        "never drop what it asks>). Parking holds back ONLY that item: call Foundry-Next straight "
+        "after and keep every other casting, defect and stream moving. The human is asked only "
+        "when nothing else can move."
+    ),
+    "redispatch_casting": (
+        "YOUR NEXT CALLS (in order):\n"
+        "  (1) Foundry-Spawn-Teammate(casting_id=<details.casting_id>, "
+        "phase=<details.spawn_phase>) — in GRIND also defect_ids=[<the ids you hand it "
+        "again>].\n"
+        "  (2) Agent(subagent_type='foundry:teammate', mode='bypassPermissions', prompt=<the "
+        "returned `dispatch` field VERBATIM>), obeying the model clause Foundry-Spawn-Teammate "
+        "returns — the same model the last attempt ran on (details.model; empty means pass "
+        "no model parameter).\n"
+        "  (3) When details.concern_id names a blocker concern: Foundry-Concern(close="
+        "<details.concern_id>, reason='re-dispatched: <details.reason>').\n"
+        "  (4) Foundry-Next."
+    ),
+    "record_reload_answer": (
+        "YOUR NEXT CALL: Foundry-Park(action='answer', parked_id=<details.parked_id>, "
+        "answer=<details.answer>) — the relaunch this item waited on has happened: the "
+        "running server loaded the current code, and nothing the crossing depends on has changed "
+        "since. Then call Foundry-Next, which names the crossing."
     ),
 }
 
@@ -1615,7 +1794,14 @@ def _format_status_display(project_root: str) -> str:
     header_colour = BRED if halted_display else BCYAN
     run_name = fdir.name
 
-    lines = [foundry_hammer(f"F O U N D R Y  {header_colour}{header_label}{RESET}  Cycle: {cycle}  {elapsed}")]
+    # D-032 — THE BANNER IS FIVE LINES AND IS PASSED AS FIVE ELEMENTS.
+    # Every other element of `lines` is one screen line, and the join below
+    # enforces that. The pixel-art is the one block that legitimately carries
+    # its own newlines, so it is spread here rather than excepted there — the
+    # same shape `display._fmt_foundry_next_action` uses for an imperative.
+    lines = [*foundry_hammer(
+        f"F O U N D R Y  {header_colour}{header_label}{RESET}  Cycle: {cycle}  {elapsed}"
+    ).split("\n")]
 
     # Phase list
     for pid, pname in phases:
@@ -1712,14 +1898,33 @@ def _format_status_display(project_root: str) -> str:
     # Teams
     teams = _check_active_teams(project_root)
     if teams["active"]:
-        team_str = ", ".join(teams["teams"])
+        # D-032 — FLATTENED BEFORE IT IS MEASURED, which is what makes the
+        # truncation honest and is why a 40-character clip was the MASK here
+        # rather than the guard. `len()` over raw text measures content the line
+        # never shows, so a LONG team name was ellipsised before its embedded
+        # newline was ever reached while a SHORT one passed through intact and
+        # forged a screen line. The same mask `_clipped` was written against.
+        team_str = one_line(", ".join(teams["teams"]))
         if len(team_str) > 40:
             team_str = team_str[:37] + "..."
         lines.append(f"  {BWHITE}Teams:{RESET}    {BCYAN}{team_str}{RESET}")
 
     lines.append(FOUNDRY_SEP)
 
-    return "\n".join(lines)
+    # D-032 — THE POST-CONDITION AT THIS MODULE'S OWN JOIN.
+    #
+    # This is where a LIST becomes LINES, so it is where "one element is one
+    # screen line" is guaranteed for every field this banner renders — the ones
+    # above and the ones nobody has added yet. The alternative, flattening at
+    # each interpolation, is what the same class has now been filed against for
+    # five cycles: a rule kept by remembering to call something is only ever as
+    # good as the next author's memory.
+    #
+    # IT MATTERS HERE MORE THAN ANYWHERE, because this string is handed to
+    # `display._fmt_foundry_next_action` as an already-rendered block. Nothing
+    # downstream can tell a line this banner meant from a line a field forged,
+    # so if the two are not separated here they are not separable at all.
+    return "\n".join(one_screen_line(line) for line in lines)
 
 
 
@@ -2001,6 +2206,1616 @@ def _still_escalated_notice(
 
 
 
+# --------------------------------------------------------------------------- #
+# should-not-stop — THE ROUTER KEEPS THE RUN MOVING AROUND WHAT IS BLOCKED.
+#
+# After start_cast the operator is away. A major issue parks ONE item through
+# the park door (`orchestration/park.py`, the owner of every writer of
+# state.json's `parked` key), and everything that item does not block keeps
+# moving: the other castings, the other defects, the other INSPECT streams.
+# This router reads the parked state, routes around it, and asks the human —
+# every parked question in one batch — only when nothing else can move.
+#
+# A teammate that cannot proceed files a Foundry-Concern carrying a blocker
+# kind and returns, and the router routes that too: a prompt-hash mismatch is
+# re-dispatched, a missing upstream is HELD (not parked, no question) until its
+# upstream casting is accepted and then re-dispatched, and a scope-cut
+# instruction is a spec problem that parks. An agent gets its first attempt and
+# two retries on one model; the third failure parks it as env_broken, and a
+# blocker return is never counted as a failure.
+#
+# On a run whose target is the foundry plugin itself, a crossing that needs the
+# code the run has changed parks for one relaunch (`live_plugin_reload`), and
+# the rule for when is `tools/foundry.py#live_target_reload`'s.
+# --------------------------------------------------------------------------- #
+
+#: The first attempt plus two retries, on one model. The third failure parks.
+SAME_MODEL_ATTEMPTS = 3
+
+#: The phases whose team runs a teammate WAVE. Team cleanup waits there until
+#: the phase's work is done; anywhere else a registered team is cleaned up
+#: before anything else is routed.
+_TEAM_WAVE_PHASES = frozenset({"F1", "F3"})
+
+#: The two handoff events `tools/evidence.py#foundry_accept_casting` writes. An
+#: attempt followed by either was JUDGED — it returned and was looked at — so a
+#: re-dispatch after it is a quality re-dispatch, never a failed agent; and an
+#: `acceptance` newer than a casting's last dispatch is what "accepted" reads.
+_HANDOFF_ACCEPTANCE = "acceptance"
+_HANDOFF_EVIDENCE_VERIFIED = "evidence_verified"
+_ACCEPTED_DESTINATION = re.compile(r"casting-(\d+)-accepted")
+_EVIDENCE_DESTINATION = re.compile(r"evidence/casting-(\d+)-")
+
+#: Where one casting of a CAST wave or a GRIND cycle stands, for the router.
+CASTING_ACCEPTED = "accepted"          # its work landed
+CASTING_PARKED = "parked"              # an open parked item holds it back
+CASTING_PARK = "park"                  # owes a park, which the router names
+CASTING_REDISPATCH = "redispatch"      # owes a re-dispatch, which the router names
+CASTING_HELD = "held"                  # missing-upstream blocker; its upstream still moving
+CASTING_BLOCKED = "blocked"            # waits on a parked casting; asks nothing itself
+CASTING_IN_FLIGHT = "in_flight"        # dispatched, and no failure seen
+CASTING_DISPATCHABLE = "dispatchable"  # not dispatched; every upstream accepted
+CASTING_WAITING = "waiting"            # not dispatched; an upstream still moving
+CASTING_STATUSES: tuple[str, ...] = (
+    CASTING_ACCEPTED,
+    CASTING_PARKED,
+    CASTING_PARK,
+    CASTING_REDISPATCH,
+    CASTING_HELD,
+    CASTING_BLOCKED,
+    CASTING_IN_FLIGHT,
+    CASTING_DISPATCHABLE,
+    CASTING_WAITING,
+)  # 9 statuses
+
+#: Statuses of work that is still moving without the human.
+_CASTING_MOVABLE = frozenset({
+    CASTING_IN_FLIGHT, CASTING_DISPATCHABLE, CASTING_WAITING, CASTING_HELD,
+})
+
+
+def _iso(value: object) -> datetime | None:
+    """A recorded ISO-8601 stamp as an aware datetime, or None. Never raises."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        stamp = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+def _episode_start(state: dict, phase: str) -> datetime | None:
+    """When the run last ENTERED ``phase``: the start of this CAST or GRIND.
+
+    Every phase transition appends to `phase_history`, and each GRIND cycle
+    enters F3 afresh, so the newest entry for the phase scopes the attempts,
+    blockers and dispatches the router counts to the episode it is routing.
+    None — no recorded entry — counts everything.
+    """
+    history = state.get("phase_history")
+    for entry in reversed(history if isinstance(history, list) else []):
+        if isinstance(entry, dict) and entry.get("phase") == phase:
+            return _iso(entry.get("entered_at"))
+    return None
+
+
+def _open_item_by_ref(fdir: Path) -> dict[str, dict]:
+    """The open parked items, keyed by the item_ref each one holds back."""
+    out: dict[str, dict] = {}
+    for item in open_parked_items(fdir):
+        ref = item.get(PARKED_FIELD_ITEM_REF)
+        if isinstance(ref, str) and ref not in out:
+            out[ref] = item
+    return out
+
+
+def _answered_item_by_ref(fdir: Path) -> dict[str, dict]:
+    """The NEWEST non-halt-answered parked item, keyed by the ref it released.
+
+    `_open_item_by_ref`'s counterpart, and the reason it needs one: an answered
+    item leaves that mapping entirely, while the attempts, blocker concerns and
+    liveness a route is derived from are all UNCHANGED by an answer. So the
+    router recomputed the very park the human had just answered, the park door
+    admitted it as a fresh item (its dedupe rung only holds a ref whose item is
+    still unanswered), and the next Foundry-Next asked the identical question —
+    for as long as the human kept answering it (D-009).
+
+    A halt answer is not here. `_unconsumed_halt_answer` consumes that ahead of
+    every route, and the rule this mapping serves is about the other kind:
+    "Recording a non-halt answer clears the item and the next Foundry-Next
+    routes its work again" (AC-009 / OT-012).
+    """
+    out: dict[str, dict] = {}
+    for item in read_parked(fdir)[PARKED_ITEMS_KEY]:
+        ref = item.get(PARKED_FIELD_ITEM_REF)
+        stamp = _iso(item.get(PARKED_FIELD_ANSWERED_AT))
+        if not isinstance(ref, str) or stamp is None:
+            continue
+        if item.get(PARKED_FIELD_ANSWER_IS_HALT) is True:
+            continue
+        current = out.get(ref)
+        if current is None or stamp > current["_answered_at"]:
+            out[ref] = {**item, "_answered_at": stamp}
+    return out
+
+
+def _unconsumed_halt_answer(fdir: Path) -> dict | None:
+    """The newest parked item the human answered with halt, or None.
+
+    Called only on a run that is not HALTED, and that is the whole of "not yet
+    consumed": the halt such an answer proves is the transition that makes the
+    run HALTED, and nothing leaves HALTED.
+    """
+    answered = [
+        item for item in read_parked(fdir)[PARKED_ITEMS_KEY]
+        if item.get(PARKED_FIELD_ANSWER_IS_HALT) is True
+        and item.get(PARKED_FIELD_ANSWERED_AT)
+    ]
+    if not answered:
+        return None
+    return max(answered, key=lambda item: str(item.get(PARKED_FIELD_ANSWERED_AT)))
+
+
+def _dispatch_verb(phase: str) -> str | None:
+    """The verb `spawns.log` records a teammate dispatch under in ``phase``."""
+    try:
+        from foundry_mcp.tools.foundry_spawn import TEAMMATE_DISPATCH_PHASES
+    except Exception:  # noqa: BLE001 - a routing aid never raises into Foundry-Next
+        return None
+    verb = TEAMMATE_DISPATCH_PHASES.get(phase)
+    return verb if isinstance(verb, str) else None
+
+
+def _teammate_attempts(
+    fdir: Path, verb: str, since: datetime | None
+) -> dict[str, list[dict]]:
+    """``{casting id: [{"at", "model"}, ...]}`` — this episode's dispatches, oldest first.
+
+    Read from `spawns.log`, the record of what the run actually dispatched. The
+    model is the one the dispatch named ("" when none was configured), which is
+    what "the same model" compares.
+    """
+    rows, _problem = read_jsonl(fdir / "spawns.log")
+    out: dict[str, list[dict]] = {}
+    for row in rows:
+        if row.get("phase") != verb or row.get("casting_id") is None:
+            continue
+        stamp = _iso(row.get("timestamp"))
+        if stamp is None or (since is not None and stamp < since):
+            continue
+        out.setdefault(str(row["casting_id"]), []).append(
+            {"at": stamp, "model": str(row.get("model") or "")}
+        )
+    for attempts in out.values():
+        attempts.sort(key=lambda attempt: attempt["at"])
+    return out
+
+
+def _judged_and_accepted(
+    fdir: Path,
+) -> tuple[dict[str, list[datetime]], dict[str, datetime]]:
+    """Per casting: when an attempt of it was JUDGED, and its newest acceptance."""
+    records, _problem = read_jsonl(fdir / "handoffs.jsonl")
+    judged: dict[str, list[datetime]] = {}
+    accepted: dict[str, datetime] = {}
+    for record in records:
+        stamp = _iso(record.get("timestamp"))
+        if stamp is None:
+            continue
+        destination = str(record.get("destination") or "")
+        match = None
+        if record.get("event") == _HANDOFF_ACCEPTANCE:
+            match = _ACCEPTED_DESTINATION.fullmatch(destination)
+            if match and (
+                match.group(1) not in accepted or stamp > accepted[match.group(1)]
+            ):
+                accepted[match.group(1)] = stamp
+        elif record.get("event") == _HANDOFF_EVIDENCE_VERIFIED:
+            match = _EVIDENCE_DESTINATION.match(destination)
+        if match:
+            judged.setdefault(match.group(1), []).append(stamp)
+    return judged, accepted
+
+
+def _blocker_concerns(fdir: Path, since: datetime | None) -> dict[str, list[dict]]:
+    """``{source casting: [concern, ...]}`` — this episode's blocker filings, oldest first.
+
+    Only records carrying a `blocker_kind` from the closed set, each with its
+    recorded stamp parsed beside it. Closed ones stay in the list: a blocker
+    return excuses the attempt it ended whether or not its concern was closed
+    since.
+    """
+    document, _problem = read_document(fdir / "concerns.json")
+    records = document.get("concerns")
+    out: dict[str, list[dict]] = {}
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict) or record.get("blocker_kind") not in BLOCKER_KINDS:
+            continue
+        stamp = _iso(record.get("recorded_at"))
+        source = record.get("source_casting")
+        if stamp is None or source is None or (since is not None and stamp < since):
+            continue
+        out.setdefault(str(source), []).append({**record, "_at": stamp})
+    for rows in out.values():
+        rows.sort(key=lambda row: row["_at"])
+    return out
+
+
+def _liveness_vocabulary():
+    """``(stalled, done, agent id of a casting)`` from the liveness door, lazily.
+
+    `foundry_spawn` reaches back into the orchestration package, so it is
+    imported where it is used, as `_waiting_on_agents` imports it.
+    """
+    try:
+        from foundry_mcp.tools.foundry_spawn import (
+            STATUS_DONE,
+            STATUS_STALLED,
+            _agent_id_for_casting,
+        )
+    except Exception:  # noqa: BLE001 - a routing aid never raises into Foundry-Next
+        return None, None, None
+    return STATUS_STALLED, STATUS_DONE, _agent_id_for_casting
+
+
+def _teammate_liveness(project_root: str) -> dict[str, str]:
+    """``{agent id: liveness status}``, or {} when the liveness door cannot answer."""
+    try:
+        from foundry_mcp.tools.foundry_spawn import foundry_liveness
+
+        liveness = foundry_liveness(None, None, project_root=project_root)
+    except Exception:  # noqa: BLE001 - a routing aid never raises into Foundry-Next
+        return {}
+    if not liveness.get("ok"):
+        return {}
+    return {
+        str(row.get("agent")): str(row.get("status"))
+        for row in liveness.get("agents") or []
+        if isinstance(row, dict)
+    }
+
+
+def _failed_attempts(
+    attempts: list[dict], excuses: list[datetime], settled: datetime | None = None
+) -> int:
+    """Failed attempts on the model the LATEST attempt ran on.
+
+    An attempt a later dispatch of the same casting superseded FAILED, unless
+    something between the two excuses it: a blocker concern its teammate filed
+    (a blocker return never counts toward the limit) or a judged handoff (it
+    returned and was looked at, so the re-dispatch was a quality one).
+
+    ``settled`` is when the human last answered a park on this casting with
+    something other than a halt. Every failure at or before it is one that park
+    already asked about and the human already ruled on, so counting it again is
+    how the same question gets asked twice (D-009). None — nothing answered —
+    counts exactly what it always did.
+    """
+    if not attempts:
+        return 0
+    model = attempts[-1]["model"]
+    failed = 0
+    for earlier, later in zip(attempts, attempts[1:]):
+        if earlier["model"] != model:
+            continue
+        if settled is not None and earlier["at"] <= settled:
+            continue
+        if any(earlier["at"] <= stamp <= later["at"] for stamp in excuses):
+            continue
+        failed += 1
+    return failed
+
+
+def _route_blocker(route: dict, cid: str, blocker: dict, upstream_of: dict) -> None:
+    """Route one casting on the live blocker concern its teammate filed."""
+    kind = blocker.get("blocker_kind")
+    text = str(blocker.get("text") or "").strip()
+    concern_id = blocker.get("id")
+    route["concern_id"] = concern_id
+    route["blocker_kind"] = kind
+    if kind == BLOCKER_KIND_PROMPT_HASH_MISMATCH:
+        route.update(
+            status=CASTING_REDISPATCH,
+            reason=(
+                "its teammate read a prompt whose hash differs from the one the "
+                "dispatch named, so it is re-dispatched to read the file the lead "
+                "published (a blocker return does not count against its attempts)"
+            ),
+        )
+    elif kind == BLOCKER_KIND_SCOPE_INSTRUCTION_CONFLICT:
+        route.update(
+            status=CASTING_PARK,
+            category=PARK_CATEGORY_SPEC_WRONG,
+            reason=(
+                "its prompt tells its teammate to cut scope, which after CAST is a "
+                "spec problem"
+            ),
+            question=(
+                f"Casting {cid}'s prompt tells its teammate to cut scope (concern "
+                f"{concern_id}: {text[:400]}). Which scope should casting {cid} "
+                "build — the full requirement set, or a narrower one you name?"
+            ),
+        )
+    else:
+        target = blocker.get("target_casting_id")
+        route["upstream"] = (
+            [str(target)] if target is not None and str(target) != cid
+            else list(upstream_of.get(cid, []))
+        )
+        route["pending"] = "held"
+        route["blocker_text"] = text
+
+
+def _resolve_pending(
+    cid: str,
+    routes: dict[str, dict],
+    open_refs: dict[str, dict],
+    landed: set[str],
+    trail: frozenset[str],
+) -> str:
+    """Settle a held or undispatched casting against its upstream castings.
+
+    Upstream first, so a chain resolves in dependency order. A casting outside
+    the routed set answers from the parked state and ``landed`` alone. A
+    dependency cycle reads as still moving: it must never manufacture a park.
+    """
+    route = routes.get(cid)
+    if route is None:
+        if park_item_ref(PARK_ITEM_CASTING, cid) in open_refs:
+            return CASTING_PARKED
+        return CASTING_ACCEPTED if cid in landed else CASTING_WAITING
+    if "status" in route:
+        return route["status"]
+    if cid in trail:
+        return CASTING_WAITING
+    upstream = list(route.get("upstream", []))
+    states = {
+        u: _resolve_pending(u, routes, open_refs, landed, trail | {cid})
+        for u in upstream
+    }
+    parked_up = [u for u, s in states.items() if s in (CASTING_PARKED, CASTING_PARK)]
+    blocked_up = [u for u, s in states.items() if s == CASTING_BLOCKED]
+    all_landed = all(s == CASTING_ACCEPTED for s in states.values())
+    if route.pop("pending", None) == "held":
+        concern_id = route.get("concern_id")
+        text = str(route.get("blocker_text") or "")
+        if not upstream:
+            route.update(
+                status=CASTING_PARK,
+                category=PARK_CATEGORY_SPEC_WRONG,
+                reason=(
+                    "its teammate found a prerequisite missing and no casting in "
+                    "this run is building it"
+                ),
+                question=(
+                    f"Casting {cid}'s teammate found a prerequisite missing (concern "
+                    f"{concern_id}: {text[:400]}), and no casting in this run builds "
+                    "it. Is the spec wrong to assume it, or which casting should "
+                    "build it?"
+                ),
+            )
+        elif parked_up:
+            up = parked_up[0]
+            up_route = routes.get(up) or {}
+            item = open_refs.get(park_item_ref(PARK_ITEM_CASTING, up)) or {}
+            category = (
+                up_route.get("category") or item.get(PARKED_FIELD_CATEGORY)
+                or PARK_CATEGORY_UNKNOWN_DEADLOCK
+            )
+            route.update(
+                status=CASTING_PARK,
+                category=category,
+                reason=f"it is held on casting {up}, which is parked, so it parks with it",
+                question=(
+                    f"Casting {cid} is held on casting {up} (concern {concern_id}: "
+                    f"{text[:300]}), and casting {up} is parked. Once casting {up}'s "
+                    f"question is answered, should casting {cid} be re-dispatched "
+                    "as it is, or does its prompt have to change?"
+                ),
+            )
+        elif blocked_up:
+            route["status"] = CASTING_BLOCKED
+        elif all_landed:
+            route.update(
+                status=CASTING_REDISPATCH,
+                reason=(
+                    f"the upstream casting(s) it was held on ({', '.join(upstream)}) "
+                    "are accepted, so the prerequisite it was missing has landed "
+                    "(a blocker return does not count against its attempts)"
+                ),
+            )
+        else:
+            route["status"] = CASTING_HELD
+    elif parked_up or blocked_up:
+        route["status"] = CASTING_BLOCKED
+    elif all_landed:
+        route["status"] = CASTING_DISPATCHABLE
+    else:
+        route["status"] = CASTING_WAITING
+    return route["status"]
+
+
+def _casting_routes(
+    fdir: Path,
+    state: dict,
+    phase: str,
+    project_root: str,
+    casting_ids: list[str],
+    upstream_of: dict[str, list[str]],
+    landed: set[str] | None = None,
+) -> dict[str, dict]:
+    """Where each casting stands, and what, if anything, it owes right now.
+
+    ``landed`` is the set of castings whose work is in. In CAST it is left None
+    and read as "an acceptance newer than its last dispatch"; in GRIND the
+    caller passes the castings whose handed-over defects are all fixed.
+
+    Precedence, per casting: an open parked item; landed; a non-halt park
+    answer no dispatch has acted on yet; a live blocker concern (one no later
+    dispatch has answered); a dispatched attempt, judged against the same-model
+    limit and against liveness; not dispatched at all.
+    """
+    since = _episode_start(state, phase)
+    verb = _dispatch_verb(phase)
+    attempts = _teammate_attempts(fdir, verb, since) if verb else {}
+    judged, accepted_at = _judged_and_accepted(fdir)
+    if landed is None:
+        landed = {
+            cid for cid, stamp in accepted_at.items()
+            if not attempts.get(cid) or stamp > attempts[cid][-1]["at"]
+        }
+    blockers = _blocker_concerns(fdir, since)
+    open_refs = _open_item_by_ref(fdir)
+    answered_refs = _answered_item_by_ref(fdir)
+    statuses = _teammate_liveness(project_root) if attempts else {}
+    stalled_status, done_status, agent_of = _liveness_vocabulary()
+
+    routes: dict[str, dict] = {}
+    for cid in casting_ids:
+        mine = attempts.get(cid, [])
+        # should-not-stop AC-009 / OT-012 / FR-005 (D-009) — AN ANSWERED PARK
+        # SETTLES THE FAILURES IT ASKED ABOUT. Nothing this loop reads is
+        # changed by an answer, so without `settled` the same count crosses the
+        # same limit and the human is asked the question they just answered.
+        answered = answered_refs.get(park_item_ref(PARK_ITEM_CASTING, cid))
+        settled = answered["_answered_at"] if answered is not None else None
+        excuses = [b["_at"] for b in blockers.get(cid, [])] + judged.get(cid, [])
+        failed = _failed_attempts(mine, excuses, settled)
+        route: dict = {
+            "casting_id": cid,
+            "attempts": len(mine),
+            "failed_attempts": failed,
+            "attempt_limit": SAME_MODEL_ATTEMPTS,
+            "model": mine[-1]["model"] if mine else "",
+        }
+        routes[cid] = route
+        item = open_refs.get(park_item_ref(PARK_ITEM_CASTING, cid))
+        live = [
+            b for b in blockers.get(cid, [])
+            if b.get("status") != CONCERN_STATUS_CLOSED
+            and not any(a["at"] > b["_at"] for a in mine)
+        ]
+        # The answer nothing has acted on yet: no dispatch since it landed. One
+        # re-dispatch consumes it, after which `settled` above is what keeps
+        # the failures that park already asked about from being counted again.
+        released = (
+            answered if answered is not None
+            and not any(a["at"] > answered["_answered_at"] for a in mine)
+            else None
+        )
+        if item is not None:
+            route.update(
+                status=CASTING_PARKED,
+                parked_id=item.get(PARKED_FIELD_ID),
+                category=item.get(PARKED_FIELD_CATEGORY),
+            )
+        elif cid in landed:
+            route["status"] = CASTING_ACCEPTED
+        elif released is not None and mine:
+            # "your answer resumes it" (FR-005), for a casting that HAS been
+            # dispatched. Above every park-deriving arm below, so the release
+            # covers each of them: the env-broken attempt limit, a scope
+            # conflict parked as a spec problem, a missing prerequisite no
+            # casting builds, and a hold whose upstream parked. One casting
+            # never dispatched has nothing to re-dispatch and keeps the
+            # undispatched arm, which routes it as dispatchable.
+            route.update(
+                status=CASTING_REDISPATCH,
+                parked_id=released.get(PARKED_FIELD_ID),
+                reason=(
+                    f"the human answered {released.get(PARKED_FIELD_ID)} "
+                    f"({released.get(PARKED_FIELD_CATEGORY)}) with instructions "
+                    "rather than a halt, which releases its work — and the "
+                    "failures that park already asked about do not count again"
+                ),
+            )
+            if live:
+                route["concern_id"] = live[-1].get("id")
+        elif live:
+            _route_blocker(route, cid, live[-1], upstream_of)
+        elif mine:
+            status = statuses.get(agent_of(cid)) if agent_of else None
+            stalled = stalled_status is not None and status == stalled_status
+            total = failed + (1 if stalled else 0)
+            if total >= SAME_MODEL_ATTEMPTS:
+                # D-032, same channel as the cleanup_teams team name below.
+                # `model` is carried from the spawn record rather than from a
+                # closed set, and it reaches an UNFENCED imperative. Closed by
+                # enumeration and inspection, NOT by a drive: reaching this arm
+                # needs a dispatched casting with a stalled agent and an
+                # exhausted attempt count, and I judged that fixture not worth
+                # building for a field this far from a human's keyboard. Named
+                # in the completion report as exactly that.
+                model = _one_line(route["model"]) or "the default model"
+                route.update(
+                    status=CASTING_PARK,
+                    category=PARK_CATEGORY_ENV_BROKEN,
+                    reason=(
+                        f"its teammate has failed {total} attempt(s) on {model} — "
+                        "the first attempt and both retries"
+                    ),
+                    question=(
+                        f"Casting {cid}'s teammate failed {total} attempts on {model} "
+                        "(the first attempt and both retries), so something in the "
+                        "environment is failing it — an API overload, a crashed "
+                        "tool, a missing binary. Fix what you can and answer to have "
+                        "it re-dispatched, or answer halt to stop the run."
+                    ),
+                )
+            elif stalled:
+                route.update(
+                    status=CASTING_REDISPATCH,
+                    reason=(
+                        "its last attempt failed — Foundry-Liveness reports it "
+                        f"stalled — so it gets retry {total} of "
+                        f"{SAME_MODEL_ATTEMPTS - 1} on the same model"
+                    ),
+                )
+            else:
+                route["status"] = CASTING_IN_FLIGHT
+                route["returned"] = done_status is not None and status == done_status
+        else:
+            route["upstream"] = list(upstream_of.get(cid, []))
+            route["pending"] = "undispatched"
+
+    for cid in casting_ids:
+        _resolve_pending(cid, routes, open_refs, landed, frozenset())
+    for route in routes.values():
+        route.pop("blocker_text", None)
+    return routes
+
+
+def _park_step(
+    phase: str, item_ref: str, category: str, question: str, reason: str, **extra
+) -> dict:
+    """The step that names ONE park call. The router never writes `parked`.
+
+    should-not-stop FR-032 (D-036) — FLATTENED POSITIONALLY, NOT PER FIELD.
+
+    Every field below reaches an IMPERATIVE, and an imperative is legitimately
+    many lines: `display.py#_fmt_foundry_next_action` splits `instructions` on
+    `"\\n"` and renders one screen line per piece. So a newline stored in any
+    field this frame interpolates stops being a value and becomes a ROW, at
+    whatever column its own text begins — and the forged row can spell a row of
+    the status block rendered directly above it.
+
+    THE CHANNEL WAS MEASURED, not argued. `item_ref` is
+    `park_item_ref(PARK_ITEM_CASTING, cid)`, built from the MANIFEST casting id,
+    which `_compute_next_action` reads as `str(c["id"])` with no charset
+    constraint anywhere in the server: a grep over `src/` for a casting-id
+    charset constant or compiled pattern returns no rows, and
+    `foundry_validate.py` reads the id as `c.get("id", "?")`.
+    Driven at the real door — `foundry_next_action` ->
+    `format_result_blocks`, ANSI stripped, control and drive differing in ONE
+    field — a casting id of `7` renders 100 screen lines and `7\\n  Defects: 0
+    open  999 fixed` renders 102. Delta +2, one per interpolation.
+
+    ONLY `\\n` AND CRLF FORGE, and the reason is worth stating because it is the
+    same per-line pass that protects a legitimate imperative: `_screen_lines`
+    splits on `"\\n"` and `_one_screen_line` then removes the other nine
+    separators from WITHIN each element. All eleven were measured; the nine are
+    delta 0.
+
+    WHY POSITIONAL AND NOT THE ONE FIELD THE FILING NAMED. `item_ref` is not the
+    only agent-authored text on this frame. `_resolve_pending` composes its park
+    `reason` as "it is held on casting {up}, which is parked", where `up` is
+    another manifest casting id — so a per-field fix on `item_ref` would close
+    the channel that was measured and leave its sibling open. `category` is
+    closed vocabulary today and goes through anyway, for the reason `_one_line`'s
+    own binding note gives two frames down: the next field added to this header
+    is the next D-024, and the guard has to already be standing in front of it.
+
+    `details` KEEPS THE RAW VALUES. The instruction text is a frame a human
+    reads; `details` is what the park door consumes, and `details.item_ref` has
+    to stay byte-equal to the ref the router looks up and park.py stores. The
+    same split is already precedent at the env-broken arm above, where `model`
+    is flattened for the sentence and left alone in the record.
+
+    should-not-stop FR-032 (D-039, fallout_of D-036) — AND THE FRAME THEREFORE
+    SPELLS NO REF AT ALL. The split above is right and it was incomplete: this
+    body ALSO spelled the park call, as a quoted ready-to-paste
+    `item_ref='<flattened>'`, so one response named the same call twice with two
+    different values and only the raw one is the key `_open_item_by_ref` stores
+    under and `_casting_routes` composes. Follow the literal and the door accepts
+    it — `parse_park_item_ref` strips only the ENDS, so an interior newline
+    survives storage while the flatten has already removed it — and the item is
+    stored under a ref no lookup composes. Every exit then closes behind it: the
+    router re-derives the same park (the door refuses it as
+    `PARK_ITEM_ALREADY_PARKED`), `awaiting_human` is never written so the Stop
+    hook can never allow turn-end, halt-by-answer is refused as
+    `PARK_HALT_NOT_ASKED` because no ask ever named the id, and a non-halt answer
+    releases nothing.
+
+    THE FIX IS TO DELETE THE SECOND SPELLING, not to keep two in step. The
+    machine values are named as `<details.…>` placeholders, which is what
+    `_ACTION_IMPERATIVES["park_item"]` — the authoritative header over this body
+    — has always said. `ref_line` stays in the PROSE, where it is a description
+    and not an argument, so the flatten D-036 installed is still exercised and
+    still measured by its own pin. A frame that spells no machine value cannot
+    disagree with the record about one.
+
+    The residue this leaves is named rather than covered: `_guard_exit` spells a
+    literal `item_ref='{ref}'` of its own, and that one cannot diverge because
+    its `ref` is `park_item_ref(PARK_ITEM_CROSSING, token)` over a token that is
+    a literal at every call site. It is safe by the closed vocabulary, not by
+    this rule — and `_ask_before_crossing` is what catches it if that ever stops
+    being true.
+    """
+    ref_line = _one_line(item_ref)
+    category_line = _one_line(category)
+    reason_line = _one_line(reason)
+    return {
+        "phase": phase,
+        "action": "park_item",
+        "instructions": (
+            f"Park {ref_line} ({category_line}): {reason_line}. Only that item waits on the "
+            f"human. Call {PARK_TOOL_NAME}(action='{PARK_ACTION_PARK}', "
+            "item_ref=<details.item_ref>, category=<details.category>, "
+            "question=<details.question>) "
+            "and keep every other casting, defect and stream moving; Foundry-Next asks "
+            "the human only when nothing else can move."
+        ),
+        "details": {
+            "item_ref": item_ref,
+            "category": category,
+            "question": question,
+            "reason": reason,
+            **extra,
+        },
+    }
+
+
+def _redispatch_step(fdir: Path, phase: str, cid: str, route: dict) -> dict:
+    """The step that names ONE re-dispatch of a casting's teammate."""
+    spawn_phase = _dispatch_verb(phase) or "cast"
+    concern_id = route.get("concern_id")
+    close = (
+        f" Then close its blocker concern: Foundry-Concern(close='{concern_id}', "
+        f"reason='re-dispatched: {route.get('reason', '')}')."
+        if concern_id else ""
+    )
+    return {
+        "phase": phase,
+        "action": "redispatch_casting",
+        "instructions": (
+            f"Re-dispatch casting {cid}: {route.get('reason', '')}. "
+            f"Foundry-Spawn-Teammate(casting_id={cid}, phase='{spawn_phase}')"
+            + (", with the defect_ids you hand it" if spawn_phase == "grind" else "")
+            + ", then ONE Agent with the returned `dispatch` VERBATIM on the same "
+            "model as its last attempt." + close + " Every other casting keeps going."
+        ),
+        "details": {
+            "casting_id": cid,
+            "spawn_phase": spawn_phase,
+            "reason": route.get("reason", ""),
+            "concern_id": concern_id,
+            "model": route.get("model", ""),
+            "failed_attempts": route.get("failed_attempts", 0),
+            "attempt_limit": SAME_MODEL_ATTEMPTS,
+        },
+    }
+
+
+def _routed_casting_step(fdir: Path, phase: str, routes: dict[str, dict]) -> dict | None:
+    """The one thing a casting's route says to do NOW, or None.
+
+    Parks first, so the castings behind them resolve on the next call; then
+    re-dispatches. One step per Foundry-Next: the lead makes the call, and the
+    next Foundry-Next names the next one.
+    """
+    for cid, route in routes.items():
+        if route.get("status") == CASTING_PARK:
+            return _park_step(
+                phase,
+                park_item_ref(PARK_ITEM_CASTING, cid),
+                route["category"],
+                route["question"],
+                route["reason"],
+                casting_id=cid,
+                concern_id=route.get("concern_id"),
+            )
+    for cid, route in routes.items():
+        if route.get("status") == CASTING_REDISPATCH:
+            return _redispatch_step(fdir, phase, cid, route)
+    return None
+
+
+#: The column every line of a parked item's QUESTION is rendered at in the ask
+#: listing. Deeper than the `  - ` a sibling ITEM starts at, which is the whole
+#: of why it exists — see `_ask_item_block`.
+_ASK_BODY_INDENT = "      "
+
+
+# should-not-stop AC-008 / CT-005 (D-024) — A BINDING, NOT A BODY.
+#
+# The one implementation is `display.py#one_line`, and its docstring carries
+# why it lives there: BOTH surfaces that render a parked item — this router's
+# ask listing and that module's banner — compose LINES around fields a lead
+# typed into the park door, so the flattening rule is one rule rather than the
+# same expression written twice in two files free to drift apart. This name
+# exists so every call site below reads as it always did.
+#
+# The rule it enforces here is POSITIONAL rather than per-field: whatever
+# reaches a frame line is flattened first, and the frame then has exactly the
+# line count the renderer wrote. `category` is closed vocabulary and `id` is
+# server-issued, so neither can carry a newline today — they go through it
+# anyway, because the next field added to that header is the next D-024 and the
+# guard has to already be standing in front of it.
+_one_line = one_line
+
+
+def _ask_fence(ident: object, body: str) -> str:
+    """The line closing ONE item's question — the one no question can spell.
+
+    should-not-stop AC-008 / CT-005 (D-025) — THE TERMINATOR IS DERIVED FROM THE
+    BODY IT TERMINATES.
+
+    The fence was `(end of <id>)`, built from the id alone, while the header
+    tells the reader — and the lead composing the single AskUserQuestion this
+    step demands — to carry the question "down to the line that says (end of
+    <id>)". A question whose own text contains that line therefore ENDS EARLY:
+    everything after it reads as the step's own instructions, though it is part
+    of the stored question the human is authorizing. `P-001` is the first id
+    `park.py#_next_parked_id` issues on every run, so the string to forge was
+    the predictable one rather than an exotic one.
+
+    Appending the digest of the body closes that. To land a line equal to this
+    fence, a question would have to contain the sha256 of a text containing that
+    same digest — a hash fixed point, which is what "content cannot forge it"
+    means here. The digest is `artifacts.py#_hash_str`, the house spelling for a
+    string's digest, so the token reads like every other published fingerprint
+    in these questions rather than like a new kind of thing.
+
+    A pure function of the body, so it is as stable as the question is:
+    re-rendering the same item yields the same fence, and only editing the
+    question moves it. Nothing compares this string — the ask instructions are
+    rendered fresh on every Foundry-Next and stored nowhere — so it carries no
+    identity anything else depends on.
+    """
+    return f"(end of {_one_line(ident)} {_hash_str(body)})"
+
+
+def _ask_item_block(item: dict) -> str:
+    """One parked item in the ask listing: its header, then its question, fenced.
+
+    should-not-stop AC-008 / CT-005 (D-022) — AN ITEM'S QUESTION CAN NEVER BE
+    READ AS A SIBLING ITEM.
+
+    This listing used to be ONE LINE per item — `  - <id> — <ref> (<cat>):
+    <question>` — which held only while every question was one line. D-021 made
+    the reload question MULTI-LINE (one `  - <path> (<digest>)` line per
+    relevant path) with the same two-space bullet prefix and the same indent, so
+    at a batch the two levels flattened into one list: two parked items rendered
+    FIVE bullets, byte-indistinguishable in prefix and indent, and the question's
+    own closing paragraph and `claude --plugin-dir` relaunch command came out
+    FLUSH-LEFT — reading as the ask step's own instructions, as though the
+    relaunch applied to the whole batch. The human authorized the crossing
+    without being able to see where one question ended and the next began. That
+    is D-021 one layer up: authorization text that is complete but not legible.
+
+    So the fence is structural rather than cosmetic, and it holds for ANY
+    question of ANY category at ANY number of lines. The item's header is the
+    only line of the block at the sibling column; every line of the body is
+    indented past it; and `(end of <id>)` closes it, so the step's own trailing
+    instructions cannot be read as the last item's question either. A question
+    that contains a literal `  - ` line of its OWN renders indented like every
+    other line of it — which is what makes this a fix at the level rather than
+    one more fix to the reload question. The next multi-line question, in a
+    category nobody has written yet, is already delimited.
+
+    The question is rendered VERBATIM, line for line. It is what the human
+    authorizes, and it is the byte-for-byte machine identity both
+    `_reload_already_answered` and `park.py#_park_item`'s loop rung compare, so
+    this function may move it in the display and may never rewrite it.
+
+    D-024 / D-025 — AND THE FRAME IS THE RENDERER'S, NEVER THE DATA'S. D-022
+    fenced the body and left the frame itself composed from stored fields, so
+    the fence held for a question's LINES and not against the item's own: the
+    header interpolated `item_ref` unflattened (a second bullet, forged — that
+    docstring's claim that "the ONLY multi-line content anywhere in these
+    instructions is a question body" was false as driven), and the terminator
+    was spelled from the id alone, which a question can spell too. Both halves
+    are frame properties, so both are fixed here: every field on a frame line
+    goes through `_one_line`, and the fence comes from `_ask_fence`. Together
+    they are the invariant D-022 reached for — one bullet per item, one fence
+    per item, neither of them forgeable by what the item carries.
+
+    The ref is rendered QUOTED for the residue flattening alone leaves: a ref
+    holding prose (the D-024 park held a whole forged header) flattens onto the
+    header line and then reads as more of the header's own sentence, including
+    a second "down to the line that says ..." that names a fence no line
+    carries. Quoted, it is visibly one field's value — the `{answer!r}` idiom
+    `_ask_question_delta` already uses for the same reason one line down.
+    """
+    ident = item.get(PARKED_FIELD_ID)
+    body = str(item.get(PARKED_FIELD_QUESTION) or "")
+    fence = _ask_fence(ident, body)
+    lines = [
+        f"  - {_one_line(ident)} — {_one_line(item.get(PARKED_FIELD_ITEM_REF))!r} "
+        f"({_one_line(item.get(PARKED_FIELD_CATEGORY))}) asks the question "
+        f"indented below, down to the line that says {fence}:"
+    ]
+    lines.extend(
+        f"{_ASK_BODY_INDENT}{line}" if line.strip() else ""
+        for line in (body.splitlines() or [""])
+    )
+    lines.append(f"{_ASK_BODY_INDENT}{fence}")
+    return "\n".join(lines)
+
+
+def _prior_answered_question(fdir: Path, item: dict) -> dict | None:
+    """The newest answered item that asked about the SAME thing as ``item``.
+
+    Same `item_ref` and same category, answered, and not a halt — the park
+    door's loop identity MINUS the question, which is exactly the pair whose
+    questions are worth putting side by side: same thing blocked, same reason,
+    so anything that differs between the two questions is what moved since the
+    human answered.
+
+    Scanned over every prior item rather than kept per ref, the way
+    `_reload_already_answered` scans: a question answered two parks ago is still
+    the answer the human gave about this item.
+    """
+    ref = item.get(PARKED_FIELD_ITEM_REF)
+    category = item.get(PARKED_FIELD_CATEGORY)
+    newest: dict | None = None
+    # `_iso` returns a datetime, so the "nothing seen yet" value is None and not
+    # an empty string: an empty string is orderable against another string and
+    # NOT against a datetime, so it reads as a harmless sentinel and raises
+    # TypeError on the first answered item instead.
+    newest_at = None
+    for prior in read_parked(fdir)[PARKED_ITEMS_KEY]:
+        stamp = _iso(prior.get(PARKED_FIELD_ANSWERED_AT))
+        if stamp is None or prior.get(PARKED_FIELD_ANSWER_IS_HALT) is True:
+            continue
+        if prior.get(PARKED_FIELD_ITEM_REF) != ref:
+            continue
+        if prior.get(PARKED_FIELD_CATEGORY) != category:
+            continue
+        if newest_at is None or stamp > newest_at:
+            newest, newest_at = prior, stamp
+    return newest
+
+
+def _ask_question_delta(fdir: Path, item: dict) -> str:
+    """What moved in this item's question since the human last answered it.
+
+    should-not-stop AC-008 / CT-005 (D-021's deepest half) — THE DELTA LIVES IN
+    THE ASK STEP AND NEVER IN THE QUESTION.
+
+    D-021 made the question name every relevant path with the fingerprint of
+    what it contains, so a human CAN localize a change to a file. What they
+    still could not see is whether their OWN prior answer covered it: that is a
+    comparison against the ledger, and the question's text is the machine
+    identity `_reload_already_answered` and the park door's loop rung both
+    compare. A ledger-derived delta inside the question would make the same
+    content render different questions at different times — a soft nonce — so
+    restoring already-approved bytes would no longer restore the release, which
+    is D-017's deadlock arriving from the other side.
+
+    This string is compared by NOTHING. It is rendered fresh on every
+    Foundry-Next and stored nowhere, which is what makes it the safe home for a
+    history-dependent fact. It is also rendered OUTSIDE the item's fence, after
+    `(end of <id>)`, so it can never be read as part of the text being
+    authorized: it is the server's note ABOUT the question, not the question.
+
+    Nothing is rendered when there is no prior answer for this ref and category,
+    or when the question has not moved since it.
+    """
+    prior = _prior_answered_question(fdir, item)
+    if prior is None:
+        return ""
+    was = [
+        line.strip()
+        for line in str(prior.get(PARKED_FIELD_QUESTION) or "").splitlines()
+        if line.strip()
+    ]
+    now = [
+        line.strip()
+        for line in str(item.get(PARKED_FIELD_QUESTION) or "").splitlines()
+        if line.strip()
+    ]
+    added = [line for line in now if line not in was]
+    gone = [line for line in was if line not in now]
+    if not added and not gone:
+        return ""
+    # Every field here is one the frame is built from, so every one of them is
+    # flattened (D-024): this head sits OUTSIDE the item's fence, where an
+    # unflattened `item_ref` would put its own lines flush against the listing
+    # with no fence around them at all.
+    answer = _one_line(prior.get(PARKED_FIELD_ANSWER))
+    head = (
+        f"    Since you answered {_one_line(prior.get(PARKED_FIELD_ID))} about "
+        f"{_one_line(item.get(PARKED_FIELD_ITEM_REF))} with {answer!r}, "
+        f"{len(added)} line(s) of this question are new and {len(gone)} are "
+        "gone. Every other line is one you have already answered. This note is "
+        f"the server's, not part of what {_one_line(item.get(PARKED_FIELD_ID))} asks:"
+    )
+    # Labelled in words rather than with `+` / `-` diff markers: the lines this
+    # compares are question lines, and a question that is itself a list (the
+    # reload question's per-path fingerprints, or a hand-typed one) has lines
+    # that already begin with `- `. A diff marker in front of one renders
+    # `+ - <path>`, which is a second thing to decode in the middle of the note
+    # that exists to make decoding unnecessary.
+    moved = [f"{_ASK_BODY_INDENT}NEW: {line}" for line in added]
+    moved += [f"{_ASK_BODY_INDENT}GONE: {line}" for line in gone]
+    return "\n".join([head, *moved])
+
+
+def _ask_human_step(fdir: Path, phase: str, why: str) -> dict:
+    """The ask step: every open parked question in ONE batch, and the marker set.
+
+    Emitted only when nothing else can move. `park.set_awaiting_human` writes
+    the `awaiting_human` marker naming exactly the ids asked — the one thing
+    that lets the Stop hook allow a mid-build turn-end — and a halt answer is
+    accepted only for an id this ask named.
+
+    D-022: every item is rendered through `_ask_item_block`, so a question of
+    any length is delimited from its siblings, and `why` is flattened to one
+    line here rather than trusted to arrive as one. Those two together are the
+    whole invariant this step now holds: the ONLY multi-line content anywhere in
+    these instructions is a question body, and every question body is fenced.
+    """
+    items = open_parked_items(fdir)
+    marker = set_awaiting_human(fdir, [item.get(PARKED_FIELD_ID) for item in items])
+    blocks: list[str] = []
+    for item in items:
+        blocks.append(_ask_item_block(item))
+        delta = _ask_question_delta(fdir, item)
+        if delta:
+            blocks.append(delta)
+    questions = "\n".join(blocks)
+    reason = _one_line(why)
+    return {
+        "phase": phase,
+        "action": "ask_human",
+        "instructions": (
+            f"Nothing else can move: {reason}. Every remaining unit of work is "
+            "parked, so ask the human now, in ONE AskUserQuestion carrying every "
+            "parked question. One item per bullet below: a bullet is a whole "
+            "item, and that item's question is every line indented under it, "
+            "down to the (end of ...) line that item's own header names — the "
+            "digest in it is taken from the question it closes, so no question "
+            f"can spell it. Carry each question to the human whole:\n{questions}\n"
+            f"The run waits in place — phase {phase}, NOT HALTED — until each answer "
+            f"is recorded with {PARK_TOOL_NAME}(action='{PARK_ACTION_ANSWER}', "
+            "parked_id=<id>, answer=<the human's words, verbatim>); add halt=true ONLY "
+            "when the human chose to halt the run. Then call Foundry-Next."
+            + (
+                "" if marker else
+                " The awaiting_human marker could not be written, so the Stop hook "
+                "will keep holding your turn: ask anyway."
+            )
+        ),
+        "details": {"parked": items, "awaiting_human": marker, "why": reason},
+    }
+
+
+def _cleanup_teams_step(phase: str, teams: dict, why: str) -> dict:
+    """Team cleanup: a ledger entry ends with Foundry-Team-Down, and nothing else."""
+    return {
+        "phase": phase,
+        "action": "cleanup_teams",
+        "instructions": (
+            # D-032 — THE THIRD CHANNEL, FOUND BY DRIVING THE REAL DOOR.
+            #
+            # `display` is closed at this module's own join and the per-fact
+            # lines at `_fmt_foundry_next_lines`, and NEITHER closes this one.
+            # An imperative is legitimately many lines, so `display._screen_lines`
+            # splits it per line by design — and a newline inside a team name
+            # therefore becomes an element indistinguishable from a line this
+            # text meant to write. No rule stated in display.py can tell the two
+            # apart, because by the time it sees them the field is gone.
+            #
+            # Driven at `format_result_blocks` through `foundry_next_action`,
+            # control and drive differing in ONE team name: 87 -> 88 lines, with
+            # the forged text spelling a `Defects:` row of the status block
+            # rendered directly above it. Flattened HERE, which is the last rung
+            # at which the field is still a field.
+            f"Active teams: "
+            f"{', '.join(_one_line(name) for name in teams.get('teams') or [])} — "
+            f"{_one_line(why)}. Send 'All "
+            "work complete, stop working.' to any teammate still running, in ONE "
+            "parallel SendMessage batch, and do NOT wait for shutdown_response, "
+            "shutdown_ack, idle confirmations, or any teammate reply: idle / "
+            "terminated panes ARE the shutdown signal. Then Foundry-Team-Down for "
+            "each team name — a team is a run-ledger entry, and Team-Down is what "
+            "ends it."
+        ),
+        "details": {"active_teams": teams.get("teams") or [], "why": why},
+    }
+
+
+def _cast_wave_sentence(routes: dict[str, dict], groups: dict[str, list[str]]) -> str:
+    """The CONTEXT line for a CAST wave that is still moving."""
+    parts = [
+        f"CAST phase: {len(groups[CASTING_ACCEPTED])}/{len(routes)} casting(s) accepted."
+    ]
+    if groups[CASTING_IN_FLIGHT]:
+        parts.append(f"In flight: {', '.join(groups[CASTING_IN_FLIGHT])}.")
+        returned = [c for c in groups[CASTING_IN_FLIGHT] if routes[c].get("returned")]
+        if returned:
+            parts.append(
+                f"Returned and waiting for Foundry-Accept-Casting: {', '.join(returned)}."
+            )
+    if groups[CASTING_DISPATCHABLE]:
+        parts.append(
+            "Ready to dispatch, every casting they depend on accepted: "
+            f"{', '.join(groups[CASTING_DISPATCHABLE])} — Foundry-Cast-Wave."
+        )
+    if groups[CASTING_WAITING]:
+        parts.append(
+            f"Waiting on their upstream castings: {', '.join(groups[CASTING_WAITING])}."
+        )
+    if groups[CASTING_HELD]:
+        parts.append(
+            "Held on a missing-upstream blocker until the upstream casting is accepted "
+            "(not parked; nobody is asked): "
+            + ", ".join(
+                f"{c} (on {', '.join(routes[c].get('upstream') or [])})"
+                for c in groups[CASTING_HELD]
+            )
+            + "."
+        )
+    if groups[CASTING_PARKED]:
+        parts.append(
+            "Parked, so the rest of the wave keeps going: "
+            + ", ".join(
+                f"{c} ({routes[c].get('parked_id')}, {routes[c].get('category')})"
+                for c in groups[CASTING_PARKED]
+            )
+            + "."
+        )
+    if groups[CASTING_BLOCKED]:
+        parts.append(
+            f"Waiting on a parked casting: {', '.join(groups[CASTING_BLOCKED])}."
+        )
+    parts.append("While teammates run, " + _BOUNDED_WAIT)
+    parts.append(
+        "When every casting is accepted, call Foundry-Next: it routes team cleanup "
+        "and then the crossing into INSPECT."
+    )
+    return " ".join(parts)
+
+
+def _cast_wave_routing(
+    fdir: Path, state: dict, project_root: str, teams: dict, agent_config: dict
+) -> dict | None:
+    """F1's routing while the wave is still being built, or None once it is done.
+
+    None means every casting is accepted and no team is registered: the caller
+    then names the crossing into INSPECT.
+    """
+    manifest = _load_json(fdir / "castings" / "manifest.json")
+    castings = [
+        c for c in (manifest.get("castings") or [])
+        if isinstance(c, dict) and c.get("id") is not None
+    ]
+    ids = [str(c["id"]) for c in castings]
+    upstream_of = {
+        str(c["id"]): [
+            str(u) for u in (c.get("depends_on") or []) if isinstance(u, (int, str))
+        ]
+        for c in castings
+    }
+    routes = _casting_routes(fdir, state, "F1", project_root, ids, upstream_of)
+    owed = _routed_casting_step(fdir, "F1", routes)
+    if owed is not None:
+        return owed
+    groups = {
+        status: [cid for cid, route in routes.items() if route.get("status") == status]
+        for status in CASTING_STATUSES
+    }
+    # An empty manifest is a wave nothing has decomposed into yet, not a wave
+    # whose every casting is accepted, so it keeps the building step.
+    if not ids or any(groups[status] for status in _CASTING_MOVABLE):
+        return {
+            "phase": "F1",
+            "action": "build_castings",
+            "instructions": _cast_wave_sentence(routes, groups),
+            "details": {
+                "agent_config": agent_config,
+                "castings": routes,
+                "accepted": groups[CASTING_ACCEPTED],
+                "in_flight": groups[CASTING_IN_FLIGHT],
+                "dispatchable": groups[CASTING_DISPATCHABLE],
+                "waiting": groups[CASTING_WAITING],
+                "held": groups[CASTING_HELD],
+                "parked": groups[CASTING_PARKED],
+                "blocked": groups[CASTING_BLOCKED],
+            },
+        }
+    if (groups[CASTING_PARKED] or groups[CASTING_BLOCKED]) and open_parked_items(fdir):
+        return _ask_human_step(
+            fdir, "F1",
+            "every casting not yet accepted is parked, or waits on one that is",
+        )
+    if teams.get("active"):
+        return _cleanup_teams_step("F1", teams, "every casting of this CAST is accepted")
+    return None
+
+
+def _grind_cycle_routing(
+    fdir: Path, state: dict, project_root: str, blocking: dict
+) -> dict:
+    """F3's routing while blocking defects are open.
+
+    ``{"step": dict | None, "parked_defects": [...], "note": str}``. A defect is
+    held back when it is parked itself or the casting it was handed to this
+    cycle is parked. The step is an owed park or re-dispatch for a GRIND
+    teammate, or the ask when every blocking defect left is held back.
+    """
+    blocking_ids = list(blocking["live"]) + list(blocking["unknown"])
+    handed_to: dict[str, str] = {}
+    for record in _grind_dispatches(fdir, current_cycle(fdir)):
+        if isinstance(record.get("defect_id"), str) and record.get("casting") is not None:
+            handed_to[record["defect_id"]] = str(record["casting"])
+    open_refs = _open_item_by_ref(fdir)
+    parked = [
+        did for did in blocking_ids
+        if park_item_ref(PARK_ITEM_DEFECT, did) in open_refs
+        or (
+            did in handed_to
+            and park_item_ref(PARK_ITEM_CASTING, handed_to[did]) in open_refs
+        )
+    ]
+    manifest = _load_json(fdir / "castings" / "manifest.json")
+    upstream_of = {
+        str(c["id"]): [
+            str(u) for u in (c.get("depends_on") or []) if isinstance(u, (int, str))
+        ]
+        for c in (manifest.get("castings") or [])
+        if isinstance(c, dict) and c.get("id") is not None
+    }
+    verb = _dispatch_verb("F3")
+    dispatched = list(_teammate_attempts(fdir, verb, _episode_start(state, "F3"))) if verb else []
+    still_holding = {handed_to[did] for did in blocking_ids if did in handed_to}
+    landed = {cid for cid in set(dispatched) | set(upstream_of) if cid not in still_holding}
+    routes = _casting_routes(fdir, state, "F3", project_root, dispatched, upstream_of, landed)
+    step = _routed_casting_step(fdir, "F3", routes)
+    if step is None and blocking_ids and len(parked) == len(blocking_ids):
+        step = _ask_human_step(
+            fdir, "F3", f"every blocking defect left is parked ({', '.join(parked)})"
+        )
+    note = (
+        f" Parked, so every other defect keeps moving: {', '.join(parked)}."
+        if parked else ""
+    )
+    return {"step": step, "parked_defects": parked, "note": note}
+
+
+def _reload_facts(project_root: str, state: dict, token: str) -> dict:
+    """`tools/foundry.py#live_target_reload`, for a run whose target is foundry.
+
+    Imported where it is used: the reload rule lives beside the self-target
+    preflight whose recorded provenance it reads, and nothing in this module is
+    worth loading that module for on a run that is not self-targeting.
+    """
+    if state.get("self_target") is not True:
+        return {"live_target": False, "owed": False, "token": token}
+    try:
+        from foundry_mcp.tools.foundry import live_target_reload
+
+        return live_target_reload(project_root, state, token)
+    except Exception as exc:  # noqa: BLE001 - a routing aid never raises into Foundry-Next
+        return {
+            "live_target": True, "owed": False, "token": token,
+            "problem": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _reload_question(fdir: Path, token: str, reload: dict) -> str:
+    """The question a reload park puts to the human, with the exact relaunch.
+
+    Names every relevant path with the fingerprint of what it CONTAINS, plus
+    the combined fingerprint (`change_id`) the whole set folds to.
+
+    THE FINGERPRINT IS IN THE TEXT ON PURPOSE (fallout D-020). The rest of this
+    question renders from a path list and a commit, and neither moves when a
+    path already in the list is edited again — so without the fingerprint a
+    second edit re-derived a question the human had already answered, and
+    `_reload_already_answered` released the crossing on content nobody had been
+    shown. It belongs in the TEXT because the door's loop rung compares the text
+    (see `_reload_already_answered`); moving it out would have the router naming
+    a park the door refuses, which is D-017's deadlock.
+
+    NAMED PER PATH, AND NEVER TRUNCATED (fallout D-021). One digest over many
+    files moves as a unit. This text used to render `relevant[:6]` plus "and N
+    more" over a bare count, so with more than six relevant paths an edit to a
+    path outside the shown six moved the digest and NOTHING a human could read:
+    same count, same six names, two 16-hex strings. The human was asked to
+    authorize the crossing a second time with no way to see what moved or
+    whether their first answer covered it — and FR-042 rests the guarantee that
+    the final gates and report run on the code being shipped on exactly that
+    answer, so the authorization was being given blind. Per path, the digest is
+    decomposed into the parts it is made of, and the line that moved is the file
+    that moved. A per-class count would not have served: `relevant` spans only
+    server code and agent prose, so an edit within one class moves no count.
+
+    Still a pure function of the CONTENT being approved — no timestamp, no
+    nonce, and nothing read from which items are already answered. A question
+    that varied with the ledger would re-ask content the human had already
+    approved and undo D-017 from the other side; restoring the answered bytes
+    has to restore this string byte for byte.
+    """
+    relevant = list(reload.get("relevant") or [])
+    prints = reload.get("change_digests") or {}
+    listing = "\n".join(f"  - {rel} ({prints.get(rel) or '?'})" for rel in relevant)
+    why = (
+        "DONE must run its final gates and report on the code being shipped"
+        if reload.get("rule") == "before_done"
+        else f"the {token} crossing depends on it"
+    )
+    return (
+        f"The running foundry server loaded at "
+        f"{str(reload.get('loaded_commit') or '?')[:12]}, and {len(relevant)} "
+        f"file(s) changed since, which {why}. Each line below is one of them "
+        f"with the fingerprint of what it contains right now, and together they "
+        f"fingerprint to {reload.get('change_id') or '?'}:\n{listing}\n"
+        f"A question you have already answered carries the same paths AND the "
+        f"same fingerprints, so a line you do not recognise is a file that moved "
+        f"after you answered. Quit and relaunch with "
+        f"`{reload.get('launch_command') or 'claude --plugin-dir <plugin dir>'}`, "
+        f"run Foundry-Init(resume='{fdir.name}'), then answer this item."
+    )
+
+
+def _reload_already_answered(fdir: Path, ref: str, question: str) -> dict | None:
+    """The answered item that already put THIS reload question to the human.
+
+    `park.py#_park_item`'s loop rung, read from the router's side and on purpose
+    the SAME predicate: same `item_ref`, same category, same question, already
+    answered. A park the door refuses as `PARK_ITEM_LOOP` is a park the router
+    must never NAME, because the router's step is the lead's only instruction
+    and an instruction the door refuses every time leaves the run no move at
+    all. That is the crossing half of D-009, which D-009's own fix reached only
+    for castings, and which the door's new backstop turned from a silent re-ask
+    into a deadlock (D-017).
+
+    Deliberately NOT `_answered_item_by_ref`: that keeps the newest answer per
+    ref, while the door scans EVERY prior item, so a question answered two
+    parks ago is refused there and has to be seen here too. The two predicates
+    agreeing is the whole guarantee — computed the same way, they cannot
+    disagree about whether the door would refuse the call.
+
+    Scoped to the question rather than to the ref, for the same reason read the
+    other way: relevant code that changes AFTER the answer moves the question,
+    so the door admits it as the new question it is and this returns None, which
+    is what makes the router park it. That holds for a change of EITHER kind —
+    a new path entering `relevant`, or a fresh edit to a path already in it —
+    because `_reload_question` carries `change_id`, the fingerprint of what
+    those paths contain. It did not hold before D-020: the question was rendered
+    from the path list and `loaded_commit` alone, so re-editing an already-listed
+    file moved no input, this matched, and DONE crossed on content the human was
+    never asked about.
+
+    Compared against the STRIPPED question because that is what the door stores
+    (`_park_item` writes `body`, its stripped `question`). The two predicates
+    have to read the same bytes to be the same predicate.
+    """
+    asked = question.strip()
+    for item in read_parked(fdir)[PARKED_ITEMS_KEY]:
+        if (
+            item.get(PARKED_FIELD_ITEM_REF) == ref
+            and item.get(PARKED_FIELD_CATEGORY) == PARK_CATEGORY_LIVE_PLUGIN_RELOAD
+            and item.get(PARKED_FIELD_QUESTION) == asked
+            and item.get(PARKED_FIELD_ANSWERED_AT)
+        ):
+            return item
+    return None
+
+
+def _note_reload_answered(step: dict, token: str, answered: dict, reload: dict) -> dict:
+    """Name, on the step that crosses, the owed relaunch an answer released.
+
+    A non-halt answer releases the work its item held (FR-005 / AC-009 /
+    OT-012), and the work a `crossing:` item holds is the crossing — so the
+    crossing goes ahead. It does not go ahead quietly: the hazard the reload
+    park exists to raise is being taken, against a server that never
+    relaunched, on the human's own instruction. It is named on the step that
+    takes it rather than left for the report to find.
+
+    The same shape `_casting_routes` already uses for the other derived park —
+    an answer settles the facts it asked about, and the route says whose answer
+    and why (`released` / `settled`, guidance.py:2686-2703).
+    """
+    step["instructions"] = step.get("instructions", "") + (
+        f" A relaunch is still owed before the {token} crossing "
+        f"({len(reload.get('relevant') or [])} relevant file(s) changed since the "
+        f"running server loaded), and {answered.get(PARKED_FIELD_ID)} already put "
+        "that exact question to the human, who answered it without relaunching: "
+        f"{str(answered.get(PARKED_FIELD_ANSWER) or '').strip()!r}. That answer "
+        "releases the crossing, so cross on the code this server has loaded and "
+        "do NOT park it again — the door refuses a question already answered. If "
+        "something the crossing depends on changes after this, that is a new "
+        "question, and Foundry-Next parks that one."
+    )
+    details = step.setdefault("details", {})
+    details["reload"] = reload
+    details["reload_answered"] = answered.get(PARKED_FIELD_ID)
+    details["reload_answer"] = answered.get(PARKED_FIELD_ANSWER)
+    return step
+
+
+def _ask_before_crossing(fdir: Path, phase: str, token: str, step: dict) -> dict:
+    """``step``, unless an open parked question stands that no work can release.
+
+    should-not-stop FR-005 / AC-008 / CT-005 / FR-036 (D-039) — NO CROSSING
+    WHILE A RECORDED QUESTION IS UNASKED.
+
+    THIS IS NOT A NEW RULE; IT IS THE ONE EVERY ARM ALREADY HAD, STATED WHERE IT
+    CANNOT BE FORGOTTEN. A parked CASTING keeps `_cast_wave_routing` from ever
+    reaching the F1 crossing (its group is not movable, so the arm asks); a
+    parked DEFECT keeps `open_count` above zero, so F3 never reaches its
+    crossing; a parked STREAM keeps `streams["complete"]` false. In each of those
+    the crossing is unreachable while the item is open — which is to say every
+    ROUTED park already held this property, and held it three times over, once
+    per arm, by a different mechanism each time.
+
+    What no arm holds is an item whose ref names something that arm does not
+    route. `park_item_ref` composes a ref from an id, `_open_item_by_ref` keys on
+    whatever string the door stored, and the two are only equal when the id the
+    router composes from is the id the lead parked under. D-039 is one way they
+    come apart (the frame spelled a flattened ref and the door stored it), and it
+    is not the only one: a lead types the ref by hand, so a casting id that is
+    not in the manifest, a defect the cycle has closed, or a manifest that moved
+    mid-run all produce the same state — an OPEN question that nothing the run
+    can do will ever release.
+
+    In that state every exit closes. The arm that would ask never fires, so
+    `set_awaiting_human` is never called; without the marker the Stop hook can
+    never allow a mid-build turn-end (GI-011), `park.py#_answer_item` refuses a
+    halt answer as `PARK_HALT_NOT_ASKED` because halt is accepted only for an id
+    an ask named, and the halt door then has no human-origin proof to seal
+    `user_stop` with (GI-012). The run can neither proceed, nor ask, nor end its
+    turn, nor halt by answer — on a build whose whole spec is that it should not
+    stop, that is the one class that can stop it in the single way the spec does
+    not sanction: silently, with no human asked.
+
+    So the rung is placed on the CROSSING rather than on any arm. A crossing is
+    the run declaring a phase's work finished, and a question the human has never
+    been put is work that is not finished. `_ask_human_step` lists EVERY open
+    item, not only the ones an arm accounted for, so one rung here reaches an
+    item under any ref, including refs nobody has invented yet — the post-
+    condition shape `display.py#_one_screen_line` gives the reasons for, rather
+    than a rule each future arm has to remember.
+
+    The crossing's OWN item never reaches here: `_guard_crossing` answers that
+    one above, with the ask or with the relaunch it has already had. So anything
+    open at this point belongs to some other ref by construction, and no
+    exclusion is needed.
+    """
+    items = open_parked_items(fdir)
+    if not items:
+        return step
+    return _ask_human_step(
+        fdir,
+        phase,
+        f"the {token} crossing is the run's next move and "
+        f"{len(items)} parked question(s) no remaining work can release are "
+        "still open: "
+        + ", ".join(
+            f"{_one_line(item.get(PARKED_FIELD_ID))} "
+            f"({_one_line(item.get(PARKED_FIELD_ITEM_REF))!r})"
+            for item in items
+        ),
+    )
+
+
+def _guard_crossing(
+    fdir: Path, state: dict, project_root: str, token: str, step: dict
+) -> dict:
+    """The step that crosses ``token``, unless the crossing is parked or owes a relaunch.
+
+    A crossing that is parked is the run's only next move, so the ask is due —
+    except for a relaunch item whose relaunch has visibly happened, which is
+    answered by it. A crossing that owes a relaunch is parked first.
+    """
+    phase = str(step.get("phase") or state.get("phase") or "")
+    ref = park_item_ref(PARK_ITEM_CROSSING, token)
+    item = _open_item_by_ref(fdir).get(ref)
+    if item is not None:
+        if item.get(PARKED_FIELD_CATEGORY) == PARK_CATEGORY_LIVE_PLUGIN_RELOAD:
+            reload = _reload_facts(project_root, state, token)
+            if reload.get("live_target") and not reload.get("owed") and not reload.get("problem"):
+                loaded = str(reload.get("loaded_commit") or "")[:12]
+                return {
+                    "phase": phase,
+                    "action": "record_reload_answer",
+                    "instructions": (
+                        f"{item.get(PARKED_FIELD_ID)} parked the {token} crossing for a "
+                        f"relaunch, and the relaunch has happened: the running server "
+                        f"loaded at {loaded} and nothing the crossing depends on changed "
+                        f"since. Record that as the item's answer with {PARK_TOOL_NAME}"
+                        f"(action='{PARK_ACTION_ANSWER}', parked_id='{item.get(PARKED_FIELD_ID)}', "
+                        "answer=<details.answer>), then call Foundry-Next."
+                    ),
+                    "details": {
+                        "parked_id": item.get(PARKED_FIELD_ID),
+                        "answer": (
+                            f"Relaunched: the running server loaded at {loaded}, and "
+                            f"nothing the {token} crossing depends on has changed since."
+                        ),
+                        "crossing": token,
+                        "reload": reload,
+                    },
+                }
+        return _ask_human_step(
+            fdir, phase,
+            f"the {token} crossing is parked as {item.get(PARKED_FIELD_ID)}, and it is "
+            "the run's next move",
+        )
+    reload = _reload_facts(project_root, state, token)
+    if reload.get("owed"):
+        question = _reload_question(fdir, token, reload)
+        # Before naming the park, ask what the door will say to it. An answered
+        # question re-derived unchanged is refused, and the refusal of the
+        # router's only instruction is the deadlock D-017 drove (see
+        # `_reload_already_answered`): the answer released this crossing.
+        answered = _reload_already_answered(fdir, ref, question)
+        if answered is not None:
+            return _ask_before_crossing(
+                fdir, phase, token,
+                _note_reload_answered(step, token, answered, reload),
+            )
+        return _park_step(
+            phase,
+            ref,
+            PARK_CATEGORY_LIVE_PLUGIN_RELOAD,
+            question,
+            (
+                "server/gate code or agent/skill prose changed since the running "
+                "server loaded, and DONE must run on the code being shipped"
+                if reload.get("rule") == "before_done"
+                else f"the {token} crossing depends on server/gate code or "
+                "agent/skill prose that changed since the running server loaded"
+            ),
+            crossing=token,
+            reload=reload,
+        )
+    if reload.get("problem"):
+        step.setdefault("details", {})["reload"] = reload
+    return _ask_before_crossing(fdir, phase, token, step)
+
+
+def _guard_exit(
+    fdir: Path, state: dict, project_root: str, token: str, step: dict
+) -> dict:
+    """A work phase whose exit crossing is ``token``: TEMPER and NYQUIST.
+
+    The router cannot see when the phase's work is done, so the relaunch rule
+    rides the work step as a sentence the lead acts on at the end. A parked
+    exit crossing was parked at the end of that work, by that sentence, so it
+    is the run's only next move and is guarded like any other crossing.
+
+    should-not-stop FR-005 / AC-008 / FR-036 (D-040, D-041) — THE RUNG STANDS
+    ON THIS GUARD TOO, AND IT HAS TO BE STATED SEPARATELY.
+    ----------------------------------------------------------------------
+    D-039 put `_ask_before_crossing` in front of both of `_guard_crossing`'s
+    proceeding returns. This function is its sibling and it was left unwrapped,
+    which TRACE derived and PROVE then drove: at F5 with an orphan parked,
+    Foundry-Next answered `run_temper` rather than `ask_human`, the marker was
+    never written, the REAL Stop hook went on BLOCKING (so the marker was
+    genuinely unset, not merely unread), and `Foundry-Phase(phase='done')`
+    returned ok with the question still open. A `--temper` or `--nyquist` run
+    sealed F6 with a recorded human question nobody was ever asked.
+
+    WHY THIS GUARD IS NOT THE OTHER ONE. `_guard_crossing` wraps a CROSSING
+    step, emitted only once the phase's work is done. This one wraps a WORK
+    step, because F5 and F5.5 instruct their exit in that step's tail — there
+    is no separate crossing step to hang the rung on. That asymmetry is the
+    whole defect, and it is also why the fix does NOT generalise: `fix_defects`
+    and `build_castings` are work steps of the same shape, but F1, F2 and F3
+    each route items per unit, so an item open there coexists with unparked
+    work that can still move, and gating those steps would ask while the wave
+    is runnable — the AC-007 violation `_ask_human_step` exists to avoid.
+
+    F5 and F5.5 route nothing per item. Any item open here is one no arm will
+    ever release, so `_ask_before_crossing`'s "nothing else can move" holds by
+    construction rather than by accident. Asking before TEMPER's work is also
+    already this run's shipped behaviour, not a new policy: the F4 arm above
+    reaches `transition_to_temper` through `_guard_crossing`, so an orphan
+    present at F4 asks before TEMPER ever starts. This makes an orphan parked
+    DURING F5 behave as one parked a moment earlier did.
+
+    THE RESIDUE, NAMED RATHER THAN COVERED. This closes every path on which the
+    lead consults Foundry-Next before crossing, which is the only lever a router
+    has. It is not the whole door: `_GATE_THEN_PHASE_EXCEPTION` makes
+    Foundry-Next between a passing Foundry-Gate and its Foundry-Phase OPTIONAL,
+    and the gate does not consume the ordering token, so a lead still holding a
+    token armed by an earlier Foundry-Next can cross Gate -> Phase without
+    re-reading the router. That is how PROVE's own drive reached DONE. The same
+    residue sits behind `fix_defects` and `build_castings`, whose tails name
+    their exit crossings too. Closing it needs a check in `gates.py` or
+    `transitions.py`, which no door has (grep for `parked`, `open_parked_items`
+    and `awaiting_human` over `gates.py` returns nothing); it is filed as a
+    cross-casting concern rather than reached for from here, because a lifecycle
+    module may not import a verifier one (GI-033).
+    """
+    phase = str(step.get("phase") or state.get("phase") or "")
+    if park_item_ref(PARK_ITEM_CROSSING, token) in _open_item_by_ref(fdir):
+        return _guard_crossing(fdir, state, project_root, token, step)
+    reload = _reload_facts(project_root, state, token)
+    if reload.get("owed"):
+        ref = park_item_ref(PARK_ITEM_CROSSING, token)
+        question = _reload_question(fdir, token, reload)
+        # The same release as `_guard_crossing`, one step removed and reached by
+        # different transitions: this arm does not park, it tells the lead to
+        # park at the END of the phase's work. An answered question makes that a
+        # move the door refuses when the work is finally done — the deadlock
+        # arriving a phase late (D-017).
+        answered = _reload_already_answered(fdir, ref, question)
+        if answered is not None:
+            return _ask_before_crossing(
+                fdir, phase, token,
+                _note_reload_answered(step, token, answered, reload),
+            )
+        step["instructions"] = step.get("instructions", "") + (
+            f" A relaunch is owed before the {token} crossing: "
+            f"{len(reload.get('relevant') or [])} relevant file(s) changed since the "
+            "running server loaded. When this phase's work is done, do NOT call its "
+            f"Foundry-Gate or Foundry-Phase: call {PARK_TOOL_NAME}(action="
+            f"'{PARK_ACTION_PARK}', item_ref='{ref}', category="
+            f"'{PARK_CATEGORY_LIVE_PLUGIN_RELOAD}', question=<details.reload_question>) "
+            "instead."
+        )
+        details = step.setdefault("details", {})
+        details["reload"] = reload
+        details["reload_question"] = _reload_question(fdir, token, reload)
+    return _ask_before_crossing(fdir, phase, token, step)
+
+
+def _sync_awaiting_human(fdir: Path, result: dict) -> None:
+    """Clear the ask marker once the router answers with anything but the ask.
+
+    The marker is set by the ask step itself. When the next answer routes real
+    work — an upstream accepted, a parked item answered — the ask is over, and
+    the Stop hook must go back to holding the turn.
+    """
+    if result.get("action") == "ask_human":
+        return
+    if _load_json(fdir / "state.json").get("phase") not in POST_CAST_RUN_PHASES:
+        return
+    if read_parked(fdir)[PARKED_AWAITING_HUMAN_KEY] is not None:
+        clear_awaiting_human(fdir)
+
+
+def _parked_view(fdir: Path) -> dict | None:
+    """The parked items, their answers and the ask marker, for every response."""
+    parked = read_parked(fdir)
+    items = parked[PARKED_ITEMS_KEY]
+    if not items and parked[PARKED_AWAITING_HUMAN_KEY] is None:
+        return None
+    return {
+        "open": [item for item in items if not item.get(PARKED_FIELD_ANSWERED_AT)],
+        "answered": [item for item in items if item.get(PARKED_FIELD_ANSWERED_AT)],
+        "awaiting_human": parked[PARKED_AWAITING_HUMAN_KEY],
+    }
+
+
+
+
 def _compute_next_action(project_root: str) -> dict:
     """Internal: compute next action without directive overlay."""
     fdir = get_run_dir(project_root)
@@ -2142,20 +3957,56 @@ def _compute_next_action(project_root: str) -> dict:
             },
         }
 
-    teams = _check_active_teams(project_root)
-    if teams["active"]:
+    # should-not-stop \u2014 A HUMAN'S HALT ANSWER IS SEALED BEFORE ANYTHING ELSE.
+    #
+    # The one check ahead of this is the HALTED one above. A parked question the
+    # human answered with halt is the proof the halt door accepts for
+    # user_stop, and routing it here rather than trusting the lead to remember
+    # it is what makes the answer survive a context reset between the answer
+    # and the seal: the next Foundry-Next names the seal again, and nothing else,
+    # until the run is HALTED.
+    halt_answer = _unconsumed_halt_answer(fdir)
+    if halt_answer is not None:
+        answer = str(halt_answer.get(PARKED_FIELD_ANSWER) or "")
         return {
             "phase": phase,
-            "action": "cleanup_teams",
+            "action": "seal_user_stop",
             "instructions": (
-                f"Active teams detected: {', '.join(teams['teams'])}. "
-                "Send 'All work complete, stop working.' to each teammate in ONE parallel SendMessage batch, "
-                "then IMMEDIATELY call TeamDelete for each team \u2014 do NOT wait for shutdown_response, "
-                "shutdown_ack, idle confirmations, or any teammate reply. Idle / terminated panes ARE the "
-                "shutdown signal. TeamDelete cleans lingering tmux panes. Then Foundry-Team-Down for each team name."
+                f"The human answered parked item {halt_answer.get(PARKED_FIELD_ID)} "
+                f"with halt: {answer!r}. That recorded answer is the proof the halt "
+                "door accepts, so seal the run now, ahead of every other step: stop "
+                "every in-flight agent, Foundry-Team-Down for each registered team, "
+                f"then Foundry-Phase(phase='halt', reason='{HALT_REASON_USER_STOP}', "
+                "text=<the answer, verbatim>)."
             ),
-            "details": {"active_teams": teams["teams"]},
+            "details": {
+                "parked_id": halt_answer.get(PARKED_FIELD_ID),
+                "item_ref": halt_answer.get(PARKED_FIELD_ITEM_REF),
+                "text": answer,
+                "next_call": {
+                    "tool": "Foundry-Phase",
+                    "phase": "halt",
+                    "reason": HALT_REASON_USER_STOP,
+                    "text": answer,
+                },
+            },
         }
+
+    # should-not-stop \u2014 TEAM CLEANUP NO LONGER PRE-EMPTS A WAVE THAT IS RUNNING.
+    #
+    # This returned `cleanup_teams` ahead of EVERY phase arm, which was latent
+    # only while a registered team also needed a directory on disk to count.
+    # Team activity is read from the run ledger now, so a team is registered for
+    # the whole of every CAST wave and GRIND cycle, and this branch would have
+    # told the lead to tear down each wave on every call. In the two phases
+    # whose team runs a wave, cleanup is routed by that phase's arm once its
+    # work is done; anywhere else a registered team is left over and is cleaned
+    # up first, as it always was.
+    teams = _check_active_teams(project_root)
+    if teams["active"] and phase not in _TEAM_WAVE_PHASES:
+        return _cleanup_teams_step(
+            phase, teams, "no teammate wave runs in this phase, so the team is left over",
+        )
 
     # FR-006 / AC-008 / D-055 — THE ROUTER IS TIER-AWARE, LIKE THE GATES.
     #
@@ -2234,7 +4085,9 @@ def _compute_next_action(project_root: str) -> dict:
                     f"     prompt='<per commands/start.md \u00a7F0.5: write manifest.json entry +\n"
                     f"              casting-<id>-prompt.md for your domain>'\n"
                     f"3. All files go under {fdir}/castings/ \u2014 NOT castings/ at project root.\n"
-                    f"4. You'll be notified as each Agent completes; retrieve via TaskOutput(task_id).\n"
+                    f"4. Wait for them WITHOUT ending your turn (the Monitor tool, or a bounded\n"
+                    f"   Bash wait loop until every casting file exists), and read a finished\n"
+                    f"   agent's return with Read on its output file.\n"
                     f"   After all complete, call Foundry-Validate-Castings."
                 ),
                 "details": {"foundry_dir": str(fdir), "agent_config": DECOMPOSE_AGENT_CONFIG},
@@ -2245,7 +4098,8 @@ def _compute_next_action(project_root: str) -> dict:
             "instructions": (
                 f"Decomposition complete ({casting_count} castings). "
                 "Call Foundry-Gate(phase='validate'), then Foundry-Phase(phase='start_cast'). "
-                "Create a CAST team (TeamCreate), register it (Foundry-Team-Up). "
+                "Register the CAST wave in the run ledger with Foundry-Team-Up "
+                "(teammates are named Agent spawns). "
                 "Spawn ONE teammate per casting (or per wave of independent castings). "
                 "Do NOT overload one teammate with many castings \u2014 distribute evenly."
             ),
@@ -2254,16 +4108,15 @@ def _compute_next_action(project_root: str) -> dict:
 
     elif phase == "F1":
         if not (fdir / CAST_COMPLETE_MARKER).exists():
-            return {
-                "phase": "F1",
-                "action": "build_castings",
-                "instructions": (
-                    "CAST phase: teammates are building. Wait for all tasks to complete. "
-                    "When done: shut down team, TeamDelete, Foundry-Team-Down, "
-                    "then Foundry-Phase(phase='cast')."
-                ),
-                "details": {"agent_config": CAST_AGENT_CONFIG},
-            }
+            # should-not-stop — THE WAVE IS ROUTED PER CASTING. Parked castings
+            # are routed around, teammate blockers are re-dispatched, held or
+            # parked, failed attempts are retried on the same model and parked
+            # after the third, and the human is asked only when every casting
+            # left is parked or waits on one that is. None means the wave is
+            # done and no team is registered: the crossing below is next.
+            routed = _cast_wave_routing(fdir, state, project_root, teams, CAST_AGENT_CONFIG)
+            if routed is not None:
+                return routed
         # D-072 / GI-009 — THE F2 ENTRY IS A TOOL CALL, AND THIS ARM NAMES IT.
         #
         # This said "then update state to F2", naming no tool. The ONLY thing
@@ -2274,7 +4127,7 @@ def _compute_next_action(project_root: str) -> dict:
         # fell back to the pre-width roster while the report's cycle table
         # carried a blank. Every sibling arm was updated to name its transition
         # token; this one and the F3 arm above were not.
-        return {
+        return _guard_crossing(fdir, state, project_root, "cast", {
             "phase": "F1",
             "action": "transition_to_inspect",
             "instructions": (
@@ -2297,7 +4150,7 @@ def _compute_next_action(project_root: str) -> dict:
                     },
                 },
             },
-        }
+        })
 
     elif phase == "F2":
         streams = _check_streams_complete(project_root)
@@ -2308,7 +4161,7 @@ def _compute_next_action(project_root: str) -> dict:
         # agents for this roster" would be an instruction to run a roster
         # nothing recorded — this arm exists so the lead is never told to.
         if streams.get("unrecorded_width"):
-            return {
+            return _guard_crossing(fdir, state, project_root, "inspect_start", {
                 "phase": "F2",
                 "action": "record_inspect_width",
                 "instructions": (
@@ -2320,8 +4173,22 @@ def _compute_next_action(project_root: str) -> dict:
                     "inspect_rule": "",
                     "missing_streams": ["inspect_mode"],
                 },
-            }
+            })
         if not streams["complete"]:
+            # should-not-stop — a parked stream is routed around: the rest of the
+            # roster keeps running, and the human is asked only when every stream
+            # still missing is parked.
+            missing_now = streams["missing"].split()
+            stream_refs = _open_item_by_ref(fdir)
+            parked_streams = [
+                wire for wire in missing_now
+                if park_item_ref(PARK_ITEM_STREAM, wire) in stream_refs
+            ]
+            if missing_now and len(parked_streams) == len(missing_now):
+                return _ask_human_step(
+                    fdir, "F2",
+                    f"every INSPECT stream still missing ({', '.join(missing_now)}) is parked",
+                )
             return {
                 "phase": "F2",
                 "action": "run_streams",
@@ -2349,9 +4216,14 @@ def _compute_next_action(project_root: str) -> dict:
                     "TEST rewrites the shared tree to verify the GRIND's fixes, so "
                     "tell every reading stream to pin its findings to the HEAD sha "
                     "and verify them against a snapshot, not the live tree."
+                    + (
+                        f" Parked, so leave them and run the rest: {', '.join(parked_streams)}."
+                        if parked_streams else ""
+                    )
                 ),
                 "details": {
                     "missing_streams": streams["missing"].split(),
+                    "parked_streams": parked_streams,
                     "required": streams["required"],
                     # GI-008 / CT-009: reported from the recorded decision.
                     "inspect_mode": streams.get("inspect_mode", ""),
@@ -2369,7 +4241,7 @@ def _compute_next_action(project_root: str) -> dict:
             }
 
         if open_count > 0:
-            return {
+            return _guard_crossing(fdir, state, project_root, "grind_start", {
                 "phase": "F2",
                 "action": "transition_to_grind",
                 "instructions": (
@@ -2385,7 +4257,10 @@ def _compute_next_action(project_root: str) -> dict:
                     + " Call Foundry-Tasks to generate task list, "
                     "then Foundry-Gate(phase='grind'), then "
                     "Foundry-Phase(phase='grind_start') to clear markers and "
-                    "enter F3. Create grind team, assign tasks."
+                    "enter F3. Register the cycle's team with Foundry-Team-Up, then "
+                    "hand each teammate its defects with Foundry-Spawn-Teammate("
+                    "casting_id=N, phase='grind', defect_ids=[...]) — the ids of the "
+                    "defects handed to that teammate, never a backlogged defect's."
                 ),
                 "details": {
                     "open_defects": open_count,
@@ -2395,7 +4270,7 @@ def _compute_next_action(project_root: str) -> dict:
                     "agent_config": GRIND_AGENT_CONFIG,
                     "escalation": _escalated_classes(fdir, project_root),
                 },
-            }
+            })
 
         # AC-016 / D-068 / D-072 — A CLEAN DELTA CYCLE WIDENS; IT DOES NOT OPEN
         # ASSAY. Reported, never decided (GI-008): the width was recorded by the
@@ -2418,7 +4293,7 @@ def _compute_next_action(project_root: str) -> dict:
             fdir, project_root, inspect_mode=f2_mode.get("mode", "")
         )
         if f2_mode.get("mode") == "DELTA":
-            return {
+            return _guard_crossing(fdir, state, project_root, "inspect_start", {
                 "phase": "F2",
                 "action": "widen_inspect",
                 "instructions": (
@@ -2457,9 +4332,9 @@ def _compute_next_action(project_root: str) -> dict:
                         },
                     },
                 },
-            }
+            })
 
-        return {
+        return _guard_crossing(fdir, state, project_root, "inspect_clean", {
             "phase": "F2",
             "action": "transition_to_assay",
             "instructions": (
@@ -2468,8 +4343,9 @@ def _compute_next_action(project_root: str) -> dict:
                 f"(rule {f2_mode.get('rule') or 'unrecorded'})."
                 + carried
                 + still_escalated_note
-                + " Call Foundry-Phase(phase='inspect_clean'), then "
-                "Foundry-Gate(phase='assay'). "
+                + " Call Foundry-Gate(phase='assay'), then "
+                "Foundry-Phase(phase='inspect_clean') — that call is what enters "
+                "F4. "
                 "Spawn 4 parallel assayer agents using the config below (subagent_type='foundry:assayer' — frontmatter carries opus + effort=max)."
             ),
             "details": {
@@ -2483,7 +4359,7 @@ def _compute_next_action(project_root: str) -> dict:
                 "inspect_rule": f2_mode.get("rule", ""),
                 "agent_config": ASSAY_AGENT_CONFIG,
             },
-        }
+        })
 
     elif phase == "F3":
         if open_count > 0:
@@ -2506,6 +4382,13 @@ def _compute_next_action(project_root: str) -> dict:
             # state DELTA is reachable from. So it names the recorded width of
             # the cycle just verified and defers the next one to the crossing
             # that decides it.
+            # should-not-stop — parked defects, and the defects of a parked
+            # casting, are routed around; a GRIND teammate's blockers and failed
+            # attempts are routed as a CAST teammate's are; and the human is asked
+            # only when every blocking defect left is parked.
+            grind = _grind_cycle_routing(fdir, state, project_root, blocking)
+            if grind["step"] is not None:
+                return grind["step"]
             f3_mode = _recorded_inspect_mode(fdir) or {}
             return {
                 "phase": "F3",
@@ -2520,7 +4403,10 @@ def _compute_next_action(project_root: str) -> dict:
                         "otherwise. "
                         if latent_backlog else ""
                     )
-                    + "Teammates are fixing. Wait for completion. "
+                    + "Teammates are fixing: " + _BOUNDED_WAIT + " Each GRIND spawn "
+                    "hands its teammate exactly the defects it fixes, in "
+                    "Foundry-Spawn-Teammate(casting_id=N, phase='grind', "
+                    "defect_ids=[...]) — never a backlogged defect's id. "
                     "After each fix call Foundry-Fix(defect_id, cycle, "
                     "authored_by, ...): authored_by is 'teammate' (with the "
                     "prompt_hash and casting_id it was dispatched for) or "
@@ -2528,12 +4414,13 @@ def _compute_next_action(project_root: str) -> dict:
                     "adjacent_path_statement and adjacent_path_test; on a "
                     "LATENT defect add regression_test alone — the "
                     "adjacent-path pair is NOT demanded there. "
-                    "When all done: shut down team, then "
+                    "When every dispatched defect is fixed: Foundry-Team-Down, then "
                     "Foundry-Phase(phase='inspect_start'), which decides and "
                     "records the next INSPECT's width and names the roster to "
                     "run — run exactly that roster. "
                     f"(The cycle just verified ran {f3_mode.get('mode') or 'FULL'} "
                     f"width, rule {f3_mode.get('rule') or 'unrecorded'}.)"
+                    + grind["note"]
                 ),
                 "details": {
                     "open_defects": open_count,
@@ -2543,9 +4430,16 @@ def _compute_next_action(project_root: str) -> dict:
                     "inspect_mode": f3_mode.get("mode", ""),
                     "inspect_rule": f3_mode.get("rule", ""),
                     "agent_config": GRIND_AGENT_CONFIG,
+                    "parked_defects": grind["parked_defects"],
                 },
             }
-        return {
+        # should-not-stop — cleanup comes after the cycle's work: every
+        # dispatched defect is fixed, so the team is what is left.
+        if teams["active"]:
+            return _cleanup_teams_step(
+                "F3", teams, "every blocking defect of this GRIND cycle is fixed",
+            )
+        return _guard_crossing(fdir, state, project_root, "inspect_start", {
             "phase": "F3",
             "action": "transition_to_inspect",
             "instructions": (
@@ -2573,7 +4467,7 @@ def _compute_next_action(project_root: str) -> dict:
                     },
                 },
             },
-        }
+        })
 
     elif phase == "F4":
         verdicts = _load_json(fdir / "verdicts.json")
@@ -2653,7 +4547,7 @@ def _compute_next_action(project_root: str) -> dict:
             }
 
         if non_verified > 0:
-            return {
+            return _guard_crossing(fdir, state, project_root, "assay_fail", {
                 "phase": "F4",
                 "action": "assay_failed_loop_back",
                 "instructions": (
@@ -2670,11 +4564,11 @@ def _compute_next_action(project_root: str) -> dict:
                     "non_verified": non_verified, "total": total,
                     "agent_config": GRIND_AGENT_CONFIG,
                 },
-            }
+            })
 
         temper = state.get("temper", False)
         if temper:
-            return {
+            return _guard_crossing(fdir, state, project_root, "temper", {
                 "phase": "F4",
                 "action": "transition_to_temper",
                 "instructions": (
@@ -2692,34 +4586,49 @@ def _compute_next_action(project_root: str) -> dict:
                         "subagent_type": "general-purpose",
                     },
                 },
-            }
+            })
 
         # F5.5 is the second optional phase. It is reached from here when
         # --nyquist was set and --temper was not; the --temper path reaches it
         # from F5 instead, so the two options compose as F4 → F5 → F5.5 → F6.
         if state.get("nyquist", False):
-            return _nyquist_transition("F4")
+            return _guard_crossing(
+                fdir, state, project_root, "nyquist", _nyquist_transition("F4")
+            )
 
-        return {
+        # should-not-stop — the F6 order is named call by call, never "update
+        # state to F6": the DONE crossing is a transition, and it is the one
+        # whose relaunch rule is "any relevant change", checked by the guard.
+        return _guard_crossing(fdir, state, project_root, "done", {
             "phase": "F4",
             "action": "transition_to_done",
             "instructions": (
-                "ASSAY passed: all requirements verified. "
-                "Call Foundry-Gate(phase='done'), update state to F6. "
-                "Generate report, append lessons, archive."
+                "ASSAY passed: all requirements verified. Follow the F6 order "
+                "exactly: Foundry-Report, then Foundry-Gate(phase='done'), then "
+                "the evidence strip, then Foundry-Phase(phase='done') — that call "
+                "seals F6 and archives the run. Never edit state.json by hand."
             ),
             "details": {},
-        }
+        })
 
     elif phase == "F5":
         # A --temper --nyquist run reaches F5.5 from here; --temper alone goes
         # straight to F6. Same guard as the F4 path so the two options compose.
+        #
+        # should-not-stop — each exit names its exact calls, never "update to
+        # F5.5" or "update to F6", and the relaunch rule for the exit crossing
+        # rides the work step (`_guard_exit`).
+        exit_token = "nyquist" if state.get("nyquist", False) else "done"
         tail = (
-            "When clean, call Foundry-Gate(phase='nyquist'), update to F5.5."
-            if state.get("nyquist", False)
-            else "When clean, call Foundry-Gate(phase='done'), update to F6."
+            "When clean, call Foundry-Gate(phase='nyquist'), then "
+            "Foundry-Phase(phase='nyquist') — that call enters F5.5."
+            if exit_token == "nyquist"
+            else "When clean, follow the F6 order exactly: Foundry-Report, "
+            "Foundry-Gate(phase='done'), the evidence strip, then "
+            "Foundry-Phase(phase='done') — that call enters F6. Never edit "
+            "state.json by hand."
         )
-        return {
+        return _guard_exit(fdir, state, project_root, exit_token, {
             "phase": "F5",
             "action": "run_temper",
             "instructions": (
@@ -2729,10 +4638,10 @@ def _compute_next_action(project_root: str) -> dict:
                 + tail
             ),
             "details": {},
-        }
+        })
 
     elif phase == "F5.5":
-        return {
+        return _guard_exit(fdir, state, project_root, "nyquist_done", {
             "phase": "F5.5",
             "action": "run_nyquist",
             "instructions": (
@@ -2753,20 +4662,28 @@ def _compute_next_action(project_root: str) -> dict:
                 },
                 "batch_size": 5,
             },
-        }
+        })
 
     elif phase == "F6":
         return {
             "phase": "F6",
             "action": "done",
-            "instructions": "Foundry complete. Generate report, archive state.",
+            "instructions": (
+                "Foundry complete: Foundry-Phase(phase='done') sealed F6, generated "
+                "the report and archived the run — there is nothing to update by "
+                "hand. Read REPORT.md and tell the user what shipped."
+            ),
             "details": {},
         }
 
     return {
         "phase": phase,
         "action": "unknown",
-        "instructions": f"Unknown phase: {phase}. Check state.json.",
+        "instructions": (
+            f"Unknown phase: {phase!r} — no transition writes it and no arm routes "
+            "it. Call Foundry-Context, then AskUserQuestion naming this value and "
+            "the last phase in phase_history. Do NOT edit state.json by hand."
+        ),
         "details": {},
     }
 

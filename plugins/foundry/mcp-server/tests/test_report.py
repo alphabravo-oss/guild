@@ -6225,7 +6225,13 @@ def test_a_computed_empty_co_dispatch_set_is_a_row_and_not_a_silence(
         "the manifest declares requirement_ids, so the question WAS answerable"
     )
 
-    rendered = _markdown(report_env).split("## Halt and co-dispatch")[1]
+    # Up to the section's `### Parked items` sub-block: that block is a
+    # different fact (should-not-stop A-016), rendered named-and-empty on a run
+    # that parked nothing, and this test is about the co-dispatch table.
+    rendered = (
+        _markdown(report_env).split("## Halt and co-dispatch")[1]
+        .split("### Parked items")[0]
+    )
     assert "_None recorded._" not in rendered
     assert "(owned alone)" in rendered, (
         "an empty cell reads as 'the report lost it', which is the one thing "
@@ -6589,3 +6595,567 @@ def test_the_span_rows_are_the_f0_9_gates_own_computation(report_env) -> None:
         _recorded_split_reasons(manifest, castings),
     )
     assert _document(report_env)["requirement_span"]["rows"] == expected
+
+
+# --------------------------------------------------------------------------- #
+# should-not-stop AC-032 / AC-033 / FR-016 / FR-019 / FR-032 / FR-033 — what a
+# run that is never stopped for diminishing returns, for STUCK domains or for
+# one parked item keeps instead of stopping: the record in its report. All
+# three render INSIDE existing sections, under `### ` sub-headings, so the
+# section tuple the DONE gate compares is untouched.
+# --------------------------------------------------------------------------- #
+
+
+def _section_text(md: str, heading: str) -> str:
+    """The body of the `## <heading>` section, up to the next `## ` heading."""
+    return md.split(f"## {heading}\n", 1)[1].split("\n## ", 1)[0]
+
+
+def _sub_block(section: str, heading: str) -> str:
+    """The body of a `### <heading>` block inside one section."""
+    return section.split(f"### {heading}\n", 1)[1].split("\n### ", 1)[0]
+
+
+def _filed(did: str, cycle: int) -> dict:
+    return {
+        "id": did, "cycle": cycle, "tier": "LIVE", "class": "K", "status": "fixed",
+        "source": "trace", "type": "UNWIRED", "description": f"{did} description",
+        "file": "src/a.py", "symbol": "handler", "fixed_in_cycle": cycle,
+    }
+
+
+def test_the_spend_section_carries_each_cycles_spend_beside_its_filings(tmp_path):
+    """AC-032 / FR-016 / FR-033 — the per-cycle trend, one row per cycle.
+
+    Each row is that cycle's tokens and minutes from the spend roll-up's own
+    by_cycle bucket beside the defects filed in it, so a long loop's spend and
+    yield read cycle by cycle. A cycle that filed a defect and recorded no
+    spend shows blank spend cells — nobody recorded any — never a zero.
+    """
+    _, doc, md = _demo_run(
+        tmp_path, "trend",
+        state={"phase": "F3", "cycle": 3, **_DEMO_VERSIONS},
+        spend=[
+            {"agent": "casting-1", "phase": "F1", "cycle": 0,
+             "tokens": 5_000, "duration_ms": 300_000},
+            {"agent": "trace", "phase": "F2", "cycle": 1,
+             "tokens": 2_000, "duration_ms": 120_000},
+            {"agent": "casting-1", "phase": "F3", "cycle": 1,
+             "tokens": 1_000, "duration_ms": 60_000},
+            {"agent": "prove", "phase": "F2", "cycle": 2,
+             "tokens": 700, "duration_ms": 30_000},
+        ],
+        defects=[_filed("D-001", 1), _filed("D-002", 1), _filed("D-003", 0),
+                 _filed("D-004", 3)],
+    )
+
+    spend = doc["spend_per_phase_and_cycle"]
+    trend = spend["cycle_trend"]
+    rows = {row["cycle"]: row for row in trend["rows"]}
+    assert [row["cycle"] for row in trend["rows"]] == ["0", "1", "2", "3"]
+    assert trend["row_count"] == 4
+    for cycle in ("0", "1", "2"):
+        for field in ("tokens", "minutes", "records"):
+            assert rows[cycle][field] == spend["by_cycle"][cycle][field], (cycle, field)
+    assert [rows[c]["defects_filed"] for c in ("0", "1", "2", "3")] == [1, 2, 0, 1]
+    assert rows["3"]["tokens"] is None and rows["3"]["minutes"] is None
+
+    block = _sub_block(_section_text(md, "Spend per phase and cycle"),
+                       "Per-cycle spend and finding trend")
+    assert "| Cycle | Tokens | Minutes | Spend records | Defects filed |" in block
+    assert "| 1 | 3000 | 3.0 | 2 | 2 |" in block
+    assert "| 3 |  |  |  | 1 |" in block
+    assert trend["note"] in block
+
+
+def test_with_no_defect_ledger_the_trends_filed_cells_are_unmeasured(tmp_path):
+    """FR-033 / D-104's rule on this axis: an absent ledger is not an empty one."""
+    run_dir, _doc, _md = _demo_run(
+        tmp_path, "no-ledger",
+        spend=[{"agent": "casting-1", "phase": "F1", "cycle": 0,
+                "tokens": 10, "duration_ms": 60_000}],
+    )
+    (run_dir / "defects.json").unlink()
+    _generate(run_dir)
+
+    rows = _document(run_dir)["spend_per_phase_and_cycle"]["cycle_trend"]["rows"]
+    assert rows == [{"cycle": "0", "tokens": 10, "minutes": 1.0, "records": 1,
+                     "defects_filed": None}]
+
+
+def test_parked_items_and_their_answers_are_carried_into_the_report(tmp_path):
+    """FR-032 — each item's category, question and cycle; once answered, the
+    answer, when, and whether it was a halt answer; and an outstanding ask."""
+    parked = {
+        vocab.PARKED_ITEMS_KEY: [
+            {"id": "P-001", "item_ref": "casting:3", "category": "spec_wrong",
+             "question": "Which row stands?", "cycle": 1,
+             "parked_at": "2026-09-11T01:00:00+00:00", "answer": "FR-1 stands",
+             "answered_at": "2026-09-11T02:00:00+00:00", "answer_is_halt": False},
+            {"id": "P-002", "item_ref": "defect:D-004", "category": "env_broken",
+             "question": "Retry offline?", "cycle": 2,
+             "parked_at": "2026-09-11T03:00:00+00:00", "answer": "Halt the run",
+             "answered_at": "2026-09-11T04:00:00+00:00", "answer_is_halt": True},
+            {"id": "P-003", "item_ref": "stream:prove", "category": "unknown_deadlock",
+             "question": "Nothing moves; why?", "cycle": 2,
+             "parked_at": "2026-09-11T05:00:00+00:00", "answer": None,
+             "answered_at": None, "answer_is_halt": False},
+        ],
+        vocab.PARKED_AWAITING_HUMAN_KEY: {
+            "set_at": "2026-09-11T05:30:00+00:00", "cycle": 2, "item_ids": ["P-003"],
+        },
+    }
+    _, doc, md = _demo_run(
+        tmp_path, "parked",
+        state={"phase": "F3", "cycle": 2, **_DEMO_VERSIONS,
+               vocab.PARKED_STATE_KEY: parked},
+    )
+
+    section = doc["halt_and_co_dispatch"]["parked_items"]
+    assert (section["count"], section["open_count"], section["answered_count"],
+            section["halt_answer_count"]) == (3, 1, 2, 1)
+    rows = {item["id"]: item for item in section["items"]}
+    assert rows["P-001"] == {
+        **parked[vocab.PARKED_ITEMS_KEY][0], "status": "answered",
+    }
+    assert rows["P-002"]["answer_is_halt"] is True
+    assert rows["P-003"]["status"] == "open" and rows["P-003"]["answer"] is None
+    assert section["awaiting_human"]["item_ids"] == ["P-003"]
+
+    block = _sub_block(_section_text(md, "Halt and co-dispatch"), "Parked items")
+    assert "3 item(s) parked on this run: 1 open, 2 answered, 1 of them with halt." in block
+    assert ("The run is waiting on the human for P-003, asked at "
+            "2026-09-11T05:30:00+00:00 (cycle 2).") in block
+    assert ("| P-001 | casting:3 | spec_wrong | 1 | Which row stands? | answered | "
+            "FR-1 stands | 2026-09-11T02:00:00+00:00 | no |") in block
+    assert ("| P-002 | defect:D-004 | env_broken | 2 | Retry offline? | answered | "
+            "Halt the run | 2026-09-11T04:00:00+00:00 | yes |") in block
+    assert ("| P-003 | stream:prove | unknown_deadlock | 2 | Nothing moves; why? | "
+            "open | (not yet answered) |  |  |") in block
+
+
+@pytest.mark.parametrize("parked", [None, "P-001", {"items": "P-001"}, [1, 2]])
+def test_an_archive_with_no_parked_field_reads_as_none_and_still_names_the_part(
+    tmp_path, parked
+):
+    """FR-032 — an absent `parked` key, or one of the wrong shape, is no parked
+    items: the additive migration. The part is still named, and empty."""
+    state = {"phase": "F3", "cycle": 1, **_DEMO_VERSIONS}
+    if parked is not None:
+        state[vocab.PARKED_STATE_KEY] = parked
+    _, doc, md = _demo_run(tmp_path, "unparked", state=state)
+
+    section = doc["halt_and_co_dispatch"]["parked_items"]
+    assert section["items"] == [] and section["count"] == 0
+    assert section["awaiting_human"] is None
+    block = _sub_block(_section_text(md, "Halt and co-dispatch"), "Parked items")
+    assert "0 item(s) parked on this run: 0 open, 0 answered, 0 of them with halt." in block
+    assert "_None recorded._" in block
+
+
+def _temper_finding(did: str, tier: str | None, **extra) -> dict:
+    record = {
+        "id": did, "cycle": 2, "source": "temper", "type": "HOLLOW",
+        "class": f"STUCK_{did.replace('-', '_')}", "description": f"{did} stayed STUCK",
+        "file": "src/t.py", "symbol": "probe", "status": "open",
+        "fixed_in_cycle": None,
+        "reproduction_attempted": "drove it three times; still wrong",
+    }
+    if tier is not None:
+        record["tier"] = tier
+    record.update(extra)
+    return record
+
+
+def test_three_or_more_stuck_temper_domains_are_backlog_by_their_own_tier(tmp_path):
+    """AC-033 / FR-019 — the edge case of 3+ STUCK domains, grouped by tier.
+
+    Every open TEMPER filing is listed, in either spelling of the source, under
+    the tier its own filing recorded — never re-tiered, so an untiered one
+    reads as the unknown sentinel. Closed ones and other filers' are not TEMPER
+    backlog.
+    """
+    defects = [
+        _temper_finding("D-010", "HARDENING", spec_ref=None),
+        _temper_finding("D-011", "LATENT"),
+        _temper_finding("D-012", "HARDENING", source="TEMPER", spec_ref=None),
+        _temper_finding("D-013", "LIVE"),
+        _temper_finding("D-014", None),
+        _temper_finding("D-015", "LATENT", status="fixed", fixed_in_cycle=2),
+        _temper_finding("D-016", "LATENT", source="trace"),
+    ]
+    _, doc, md = _demo_run(
+        tmp_path, "stuck",
+        state={"phase": "F5", "cycle": 2, "temper": True, **_DEMO_VERSIONS},
+        defects=defects,
+    )
+
+    backlog = doc["hardening_backlog"]["temper_backlog"]
+    assert backlog["open_count"] == 5
+    assert set(backlog["by_tier"]) == set(vocab.DEFECT_TIER_OR_UNKNOWN)
+    assert backlog["by_tier"]["HARDENING"] == {"count": 2, "ids": ["D-010", "D-012"]}
+    assert backlog["by_tier"]["LATENT"] == {"count": 1, "ids": ["D-011"]}
+    assert backlog["by_tier"]["LIVE"] == {"count": 1, "ids": ["D-013"]}
+    assert backlog["by_tier"][vocab.TIER_UNKNOWN] == {"count": 1, "ids": ["D-014"]}
+    order = sorted(vocab.DEFECT_TIER_OR_UNKNOWN)
+    ranks = [order.index(row["tier"]) for row in backlog["defects"]]
+    assert ranks == sorted(ranks), "rows read tier by tier"
+    for row in backlog["defects"]:
+        record = next(d for d in defects if d["id"] == row["id"])
+        assert row["tier"] == vocab.defect_tier(record), row
+
+    block = _sub_block(_section_text(md, "HARDENING backlog"),
+                       "TEMPER backlog (STUCK domains)")
+    assert "5 open finding(s) TEMPER filed, by their own tier:" in block
+    assert "nobody is asked (FR-019)" in block
+    for did in ("D-010", "D-011", "D-012", "D-013", "D-014"):
+        assert f"| {did} |" in block, did
+    for did in ("D-015", "D-016"):
+        assert f"| {did} |" not in block, did
+
+
+def test_the_new_renderings_add_no_report_section_and_the_done_read_is_unchanged(
+    tmp_path,
+):
+    """GI-008 / GI-010 — the trend, the parked items and the STUCK backlog
+    render inside existing sections, so REPORT_REQUIRED_SECTIONS, the `## `
+    headings and the DONE gate's report read are exactly what they were."""
+    run_dir, doc, md = _demo_run(
+        tmp_path, "sections",
+        spend=[{"agent": "casting-1", "phase": "F1", "cycle": 0,
+                "tokens": 10, "duration_ms": 60_000}],
+        defects=[_temper_finding("D-020", "LATENT")],
+    )
+
+    assert tuple(k for k in doc if k not in ("generated_at", "run")) == (
+        vocab.REPORT_REQUIRED_SECTIONS
+    )
+    assert [ln for ln in md.splitlines() if ln.startswith("## ")] == [
+        f"## {vocab.REPORT_SECTION_TITLES[k]}" for k in vocab.REPORT_REQUIRED_SECTIONS
+    ]
+    for sub in ("### Per-cycle spend and finding trend", "### Parked items",
+                "### TEMPER backlog (STUCK domains)"):
+        assert sub in md.splitlines(), sub
+    status = report_document_status(run_dir)
+    assert status["present"] is True, status
+
+
+# --------------------------------------------------------------------------- #
+# should-not-stop FR-032 (D-027's class, on this document) — A FIELD A LINE IS
+# BUILT FROM CAN NEVER ADD A LINE.
+#
+# `_md_table` has always collapsed a newline inside a row CELL, so a parked
+# question or answer never could forge a row. What could was the PROSE: the halt
+# headline, the title line, an interpolated table HEADER and the span sentences
+# are built by CONCATENATION, and this document is read back by whole `## `
+# lines (`foundry_state.markdown_sections`, `artifacts.report_document_status`).
+#
+# Every test below drives a SHORT multi-line value whose FIRST LINE IS SHORT. A
+# clip that measures raw text ellipsises long content before its first newline
+# is ever reached, so a test written with LONG content reports the surface green
+# while the break is live. And each asserts over the RENDERED TEXT rather than a
+# returned list, because a newline inside one list element is one element and
+# two screen lines — which is the blindfold that hid D-027.
+# --------------------------------------------------------------------------- #
+
+
+def _heading_lines(md: str) -> list[str]:
+    """Every `## ` line — what the DONE gate's read counts as a section."""
+    return [ln for ln in md.splitlines() if ln.startswith("## ")]
+
+
+def _generated_headings() -> list[str]:
+    """The headings a correct report carries, in REPORT_REQUIRED_SECTIONS order."""
+    return [f"## {vocab.REPORT_SECTION_TITLES[k]}"
+            for k in vocab.REPORT_REQUIRED_SECTIONS]
+
+
+def test_a_halt_text_with_a_newline_adds_no_line_to_the_report(tmp_path):
+    """FR-032 — the halt headline is a LINE built from the lead's own words.
+
+    `orchestration/park.py` tells the lead to seal with the human's answer
+    VERBATIM, and the park door strips only the ENDS of that answer, so an
+    interior newline reaches `halted_reason.text` intact. Rendered raw it forged
+    a `## ` heading that this document really carried.
+
+    The stored bytes stay verbatim in BOTH documents: that is what the human
+    authorised, and JSON escapes a newline rather than obeying it.
+    """
+    text = "stop now\n## Verdict matrix\nforged"
+    _, doc, md = _demo_run(
+        tmp_path, "halt-text",
+        state={"phase": RUN_PHASE_HALTED, "cycle": 2, "halted_at_cycle": 2,
+               "halted_reason": {"reason": "user_stop", "text": text},
+               **_DEMO_VERSIONS},
+    )
+
+    assert _heading_lines(md) == _generated_headings()
+    line = next(ln for ln in md.splitlines() if "The lead's own words" in ln)
+    assert line.endswith("The lead's own words: stop now ## Verdict matrix forged")
+    assert doc["halt_and_co_dispatch"]["reason_text"] == text
+    assert doc["run"]["halted_reason"]["text"] == text
+
+
+def test_a_run_name_with_a_newline_adds_no_line_and_splits_no_table_header(tmp_path):
+    """FR-032 — two LINES are built from the run name, and one is a table HEADER.
+
+    `Foundry-Init(ticket=...)` reaches the name unvalidated: the description half
+    is slugified and the ticket half is appended raw, and the name IS the archive
+    directory. `_md_table` escaped its row cells and joined its headers raw, so
+    the baseline header used to end mid-cell with the remainder on its own line.
+    """
+    _, _doc, md = _demo_run(tmp_path, "run-name\n## Forged heading")
+    lines = md.splitlines()
+
+    assert _heading_lines(md) == _generated_headings()
+    assert lines[0] == "# Foundry run report — run-name ## Forged heading"
+    header = next(ln for ln in lines if ln.startswith("| Metric |"))
+    assert header.endswith("| This run (run-name ## Forged heading) |")
+
+
+def test_a_requirement_id_with_a_newline_adds_no_line_from_the_span_prose(tmp_path):
+    """FR-032 on this module's OWN half of the span section.
+
+    `foundry_validate._owned_requirement_ids` keeps any non-empty string, so a
+    manifest id can carry a newline, and both sentences this module builds from
+    the id list are LINES.
+
+    The `text` block above them is `foundry_validate._render_span_table`'s own
+    markdown, rendered verbatim because it IS that module's table. Its ROW half
+    was live when this was written and is closed now (D-029, D-030): the row is
+    asserted on by
+    `test_a_forged_requirement_id_adds_no_row_and_no_column_to_the_span_table`
+    below, which drives the same door. This test keeps the PROSE half, because
+    the two sentences below the block are built here and the block is not.
+    """
+    forged = "FR-901\n## Forged heading"
+    run_dir, _doc, _md = _demo_run(tmp_path, "span-prose")
+    _with_manifest(run_dir,
+                   [{"id": i, "requirement_ids": [forged]} for i in range(1, 5)])
+    _generate(run_dir)
+
+    sentence = next(ln for ln in _markdown(run_dir).splitlines()
+                    if "requirement(s) above the threshold" in ln)
+    assert sentence.endswith("recorded reason:** FR-901 ## Forged heading.")
+
+
+def test_no_field_forges_a_row_when_spend_parked_and_dispatch_all_render(tmp_path):
+    """FR-032 — the same negative, with every table body NON-EMPTY.
+
+    A prior drive of this class reported that no line carried the forged text,
+    but that run held no dispatch record and emitted no spend or parked rows —
+    so the negative was true of a document whose tables were empty, and an empty
+    table proves nothing about a row. This fixture emits all three: a spend
+    ledger with cycle buckets, a handoff carrying a co-dispatch set, and parked
+    items whose question and answer carry BOTH a forged table row and a forged
+    heading.
+    """
+    parked = {
+        vocab.PARKED_ITEMS_KEY: [
+            {"id": "P-001", "item_ref": "casting:3", "category": "spec_wrong",
+             "question": "A?\n| forged | row | x | y | z | q | w |", "cycle": 1,
+             "parked_at": "2026-09-11T01:00:00+00:00",
+             "answer": "B\n## Forged heading",
+             "answered_at": "2026-09-11T02:00:00+00:00", "answer_is_halt": False},
+        ],
+        vocab.PARKED_AWAITING_HUMAN_KEY: None,
+    }
+    run_dir, _doc, _md = _demo_run(
+        tmp_path, "forged-row",
+        state={"phase": "F3", "cycle": 1, **_DEMO_VERSIONS,
+               vocab.PARKED_STATE_KEY: parked},
+        spend=[{"agent": "casting-1", "phase": "F1", "cycle": 0,
+                "tokens": 5_000, "duration_ms": 300_000},
+               {"agent": "trace", "phase": "F2", "cycle": 1,
+                "tokens": 2_000, "duration_ms": 120_000}],
+        defects=[_filed("D-001", 1)],
+    )
+    (run_dir / fr.HANDOFFS_FILENAME).write_text(
+        json.dumps({"timestamp": "t2", "cycle": 1, "phase": "F3",
+                    "event": "grind_dispatch", "co_dispatch": [6],
+                    "defect_ids": ["D-001"], "requirement_ids": ["FR-032"]}) + "\n",
+        encoding="utf-8",
+    )
+    _generate(run_dir)
+    md = _markdown(run_dir)
+    lines = md.splitlines()
+
+    # The fixture really did emit all three bodies — otherwise the negative
+    # below is a statement about empty tables.
+    halt_block = _section_text(md, vocab.REPORT_SECTION_TITLES["halt_and_co_dispatch"])
+    assert "| P-001 |" in _sub_block(halt_block, "Parked items")
+    assert "| 1 | F3 | grind_dispatch |" in halt_block
+    trend = _sub_block(_section_text(md, "Spend per phase and cycle"),
+                       "Per-cycle spend and finding trend")
+    assert "| 1 | 2000 |" in trend
+
+    # And nothing a lead typed became a line or a row of its own.
+    assert _heading_lines(md) == _generated_headings()
+    assert "## Forged heading" not in lines
+    assert not any(ln.startswith("| forged |") for ln in lines)
+    assert r"A? \| forged \| row \|" in halt_block
+
+
+# --------------------------------------------------------------------------- #
+# D-029 / D-030 — the span table's ROW half, and the separator `_cell` did not
+# know about.
+#
+# The rule these share with everything above: A FIELD A LINE IS BUILT FROM CAN
+# NEVER ADD A LINE. The prose half of the span section was closed first and its
+# table half was not, so the same forged id that could no longer forge a
+# sentence still forged a `## ` heading one line above it.
+#
+# WHY THE READER, NOT THE WRITER, SETTLES WHICH CHARACTERS COUNT.
+# `foundry_state.markdown_sections` splits this document with `str.splitlines()`
+# — which honours ELEVEN separators, not one — and `Path.read_text` translates a
+# lone `\r` into a real `\n` on the way back in. So `.replace("\n", " ")` closed
+# the separator that gets typed and left the ten that get pasted. Every case
+# below was driven at `generate_report` and observed forging a heading BEFORE
+# the fix; none is a hypothetical.
+#
+# Each fixture is SHORT and its FIRST line is short, for the reason the block
+# above states: a clip that ellipsises long content never reaches the newline,
+# so a long-content test reports the surface green while the break is live.
+# --------------------------------------------------------------------------- #
+
+
+def _unescaped_fences(row: str) -> int:
+    """How many columns a rendered row really opens.
+
+    A cell is allowed to PRINT a pipe; it is not allowed to START a column. So
+    the escaped form is removed before counting, and what remains is the row's
+    real column structure — which is the property, rather than "no pipe
+    anywhere".
+    """
+    return row.replace(r"\|", "").count("|")
+
+
+#: ``{label: (the id a manifest declares, the one cell it must render as)}``.
+_SPAN_ID_FORGERIES = {
+    "newline": ("FR-901\n## Forged heading", "| FR-901 ## Forged heading |"),
+    "carriage-return": ("FR-901\r## Forged heading", "| FR-901 ## Forged heading |"),
+    "pipe": ("FR-901 | #9 | 99 | forged", r"| FR-901 \| #9 \| 99 \| forged |"),
+}
+
+
+def test_a_forged_requirement_id_adds_no_row_and_no_column_to_the_span_table(tmp_path):
+    """D-029 / D-030, FR-032 — the row `_render_span_table` builds.
+
+    `foundry_validate._owned_requirement_ids` keeps any non-empty string read
+    from `castings/manifest.json`, and `_render_span_table` built its row by
+    concatenating four of them, so the id reached the document raw.
+
+    TWO CLAIMS, because D-030's is the sharper one. The forged line does not
+    merely ADD a heading: it SEVERS the genuine section, whose body ended
+    mid-table right after the first cell. So the heading count is asserted AND
+    the section's own last line, which a severed section loses.
+    """
+    for label, (forged, cell) in _SPAN_ID_FORGERIES.items():
+        run_dir, _doc, _md = _demo_run(tmp_path, f"span-id-{label}")
+        _with_manifest(run_dir,
+                       [{"id": i, "requirement_ids": [forged]} for i in range(1, 5)])
+        _generate(run_dir)
+        md = _markdown(run_dir)
+
+        assert _heading_lines(md) == _generated_headings(), label
+        section = _section_text(md, vocab.REPORT_SECTION_TITLES["requirement_span"])
+        assert "The span is how many castings owned each requirement" in section, (
+            f"{label}: the genuine section was severed, not merely added to"
+        )
+
+        rows = [ln for ln in section.splitlines() if ln.startswith("| FR-901")]
+        assert len(rows) == 1, (label, rows)
+        assert rows[0].startswith(cell), (label, rows[0])
+        assert rows[0].endswith("| #1, #2, #3, #4 | 4 | — |"), (label, rows[0])
+        assert _unescaped_fences(rows[0]) == 5, (label, rows[0])
+
+
+#: The same two axes on the OTHER free-text column. `split_reason` is a value a
+#: manifest records in prose, so it is the cell most likely to carry a line
+#: break in real life — and it went through the same concatenation.
+_SPAN_REASON_FORGERIES = {
+    "newline": ("two surfaces\n## Forged heading", "| two surfaces ## Forged heading |"),
+    "carriage-return": ("two surfaces\r## Forged heading",
+                        "| two surfaces ## Forged heading |"),
+    "pipe": ("two surfaces | #9 | 99", r"| two surfaces \| #9 \| 99 |"),
+}
+
+
+def test_a_forged_split_reason_adds_no_row_and_no_column_to_the_span_table(tmp_path):
+    """D-029's class on the `recorded reason` column (FR-032).
+
+    `_recorded_split_reasons` keeps any non-empty string the manifest records,
+    from either of the two positions that may record one, and the reason is
+    rendered into the same row by the same concatenation. The filings named the
+    id column; the row builder has four cells and this is the other one a human
+    writes.
+    """
+    for label, (forged, cell) in _SPAN_REASON_FORGERIES.items():
+        run_dir, _doc, _md = _demo_run(tmp_path, f"span-reason-{label}")
+        _with_manifest(run_dir, [{"id": 1, "requirement_ids": ["FR-901"]}],
+                       top_reason={"FR-901": forged})
+        _generate(run_dir)
+        md = _markdown(run_dir)
+
+        assert _heading_lines(md) == _generated_headings(), label
+        section = _section_text(md, vocab.REPORT_SECTION_TITLES["requirement_span"])
+        assert "The span is how many castings owned each requirement" in section, label
+
+        rows = [ln for ln in section.splitlines() if ln.startswith("| FR-901 |")]
+        assert len(rows) == 1, (label, rows)
+        assert rows[0].startswith("| FR-901 | #1 | 1 |"), (label, rows[0])
+        assert rows[0].endswith(cell), (label, rows[0])
+        assert _unescaped_fences(rows[0]) == 5, (label, rows[0])
+
+
+#: Line separators `str.splitlines()` honours and `"\n"` is not. Driven, not
+#: derived: each one was observed forging a `## ` heading through
+#: `generate_report` before `_cell` was widened.
+_OTHER_LINE_BREAKS = {
+    "carriage-return": "\r",
+    "line-separator-u2028": " ",
+    "form-feed": "\f",
+}
+
+
+def test_a_line_break_other_than_newline_adds_no_row_to_a_generated_table(tmp_path):
+    """FR-032 on THIS module's `_cell` — the separator set, not one separator.
+
+    `_cell` escaped the pipe and replaced `"\\n"`, which is the separator a
+    human types. The document is read back by `str.splitlines()`, which honours
+    eleven, and `Path.read_text` turns a lone `\\r` into a real `\\n` besides —
+    so a parked question pasted out of a terminal forged a heading that a
+    parked question typed by hand could not.
+
+    Driven on the parked-items table because its question and answer are the
+    cells that carry a human's own words verbatim, which is where a pasted
+    break actually arrives.
+    """
+    for label, sep in _OTHER_LINE_BREAKS.items():
+        parked = {
+            vocab.PARKED_ITEMS_KEY: [
+                {"id": "P-001", "item_ref": "casting:3", "category": "spec_wrong",
+                 "question": f"A?{sep}## Forged heading", "cycle": 1,
+                 "parked_at": "2026-09-11T01:00:00+00:00",
+                 "answer": f"B{sep}## Forged answer",
+                 "answered_at": "2026-09-11T02:00:00+00:00",
+                 "answer_is_halt": False},
+            ],
+            vocab.PARKED_AWAITING_HUMAN_KEY: None,
+        }
+        _run, _doc, md = _demo_run(
+            tmp_path, f"cell-{label}",
+            state={"phase": "F3", "cycle": 1, **_DEMO_VERSIONS,
+                   vocab.PARKED_STATE_KEY: parked},
+        )
+
+        assert _heading_lines(md) == _generated_headings(), label
+        halt = _section_text(md, vocab.REPORT_SECTION_TITLES["halt_and_co_dispatch"])
+        rows = [ln for ln in _sub_block(halt, "Parked items").splitlines()
+                if ln.startswith("| P-001 |")]
+        assert len(rows) == 1, (label, rows)
+        # Flattened into its own cell, never dropped: what the human wrote is
+        # still readable, it just no longer opens a row.
+        assert "A? ## Forged heading" in rows[0], (label, rows[0])
+        assert "B ## Forged answer" in rows[0], (label, rows[0])
+        assert _unescaped_fences(rows[0]) == 10, (label, rows[0])

@@ -1215,8 +1215,16 @@ def test_the_report_spend_table_is_the_leafs_spend_rollup(report_run) -> None:
     for field in ("records", "by_phase", "by_cycle", "total", "state_rollup",
                   "disagreements", "unreported_without_cycle"):
         assert section[field] == table[field], field
-    # The section adds prose and NOTHING else.
-    assert set(section) == set(table) | {"note"}
+    # The section adds prose and the should-not-stop per-cycle trend (interview
+    # answer A-012, cited as an answer id per the lead's ruling on concern
+    # C-003), and NOTHING else — and the trend is a JOIN, not a third copy of
+    # the arithmetic: every spend number on a trend row is the leaf's own
+    # by_cycle bucket, read back field by field.
+    assert set(section) == set(table) | {"note", "cycle_trend"}
+    for row in section["cycle_trend"]["rows"]:
+        bucket = table["by_cycle"].get(row["cycle"])
+        for field in ("tokens", "minutes", "records"):
+            assert row[field] == (bucket[field] if bucket else None), (row, field)
 
 
 def test_the_spend_unreported_column_and_the_dispatch_section_are_one_object(
@@ -2132,37 +2140,46 @@ def test_halted_state_is_none_when_the_run_is_not_halted(run_env) -> None:
     ) is None
 
 
-def test_registered_team_dirs_is_the_roster_intersected_with_the_disk(
-    run_env, tmp_path,
+def test_registered_team_dirs_is_the_ledger_with_or_without_a_teams_directory(
+    run_env, tmp_path, monkeypatch,
 ) -> None:
-    """A team is active while the roster names it AND its directory is there.
+    """should-not-stop A-005 / A-030 — THE LEDGER ALONE.
 
-    The directory going away is what `TeamDelete` does, so a name with no
-    directory is a roster entry nobody cleaned up — not a team holding the
-    tree. The OTHER half, a scan for live teammate panes, reads no run artifact
-    and stays with the module that knows how to look.
+    This counted a registered name only while `~/.claude/teams/<name>` was a
+    directory. Nothing creates that directory since TeamCreate and TeamDelete
+    were removed from Claude Code, so every registered team read as ended the
+    moment it was registered. HOME is pointed at a temp directory holding the
+    directory for ONE of two registered names: both come back, in recorded
+    order, because the directory is no longer part of the question. The
+    roster's non-string and empty members still contribute nothing. The OTHER
+    half, a scan for live teammate panes, reads no run artifact and stays with
+    the module that knows how to look.
     """
-    teams_dir = tmp_path / "teams"
-    (teams_dir / "cast-run-wave-1").mkdir(parents=True)
+    home = tmp_path / "home"
+    (home / ".claude" / "teams" / "cast-run-wave-1").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
     _write_json(run_env, "state.json", {"active_teams": [
         "cast-run-wave-1", "grind-run-cycle-1", 7, "",
     ]})
-    assert fs.registered_team_dirs(run_env, teams_dir=teams_dir) == [
-        "cast-run-wave-1"
+    assert fs.registered_team_dirs(run_env) == [
+        "cast-run-wave-1", "grind-run-cycle-1",
     ]
+
+    # ...and a name the ledger no longer carries is not active, whatever is
+    # still on disk: Foundry-Team-Down removing it is what ends the team.
+    _write_json(run_env, "state.json", {"active_teams": ["grind-run-cycle-1"]})
+    assert fs.registered_team_dirs(run_env) == ["grind-run-cycle-1"]
 
 
 def test_registered_team_dirs_answers_an_empty_or_malformed_roster(
-    run_env, tmp_path,
+    run_env,
 ) -> None:
-    teams_dir = tmp_path / "teams"
-    teams_dir.mkdir()
     for state in ({}, {"active_teams": []}, {"active_teams": "nope"},
                   {"active_teams": None}):
         _write_json(run_env, "state.json", state)
-        assert fs.registered_team_dirs(run_env, teams_dir=teams_dir) == [], state
+        assert fs.registered_team_dirs(run_env) == [], state
     (run_env / "state.json").write_text("{ not json", encoding="utf-8")
-    assert fs.registered_team_dirs(run_env, teams_dir=teams_dir) == []
+    assert fs.registered_team_dirs(run_env) == []
 
 
 def test_sight_required_honours_the_no_ui_declaration(run_env) -> None:
@@ -2896,88 +2913,99 @@ def _scan(*, available=True, live=()) -> object:
     }
 
 
-def test_active_teams_is_active_when_either_half_says_so(run_env, tmp_path) -> None:
+def test_active_teams_is_active_when_either_half_says_so(run_env) -> None:
     """BOTH halves must be clear for a gate to pass (C-020's drive).
 
     The artifact half alone passes while teammates are still running; the pane
-    half alone passes while a roster entry nobody cleaned up still names a team.
+    half alone passes while the ledger still names a team nobody took down.
     """
-    teams_dir = tmp_path / "teams"
-    (teams_dir / "cast-team").mkdir(parents=True)
     _write_json(run_env, "state.json", {"active_teams": ["cast-team"]})
 
-    only_dirs = fs.active_teams(run_env, teams_dir=teams_dir, scan=_scan())
-    assert only_dirs == {
+    only_ledger = fs.active_teams(run_env, scan=_scan())
+    assert only_ledger == {
         "active": True, "teams": ["cast-team"], "live_panes": [],
     }
 
     _write_json(run_env, "state.json", {"active_teams": []})
     only_panes = fs.active_teams(
-        run_env, teams_dir=teams_dir,
-        scan=_scan(live=[("%1", "@grind-c10", "2.1.80")]),
+        run_env, scan=_scan(live=[("%1", "@grind-c10", "2.1.80")]),
     )
     assert only_panes == {
         "active": True, "teams": [], "live_panes": ["@grind-c10"],
     }
 
 
-def test_active_teams_is_clear_only_when_both_halves_are(run_env, tmp_path) -> None:
-    """A roster naming a team whose directory TeamDelete removed is an entry
-    nobody cleaned up, not a live team — so with no panes the gate may pass."""
-    teams_dir = tmp_path / "teams"
-    teams_dir.mkdir()
-    _write_json(run_env, "state.json", {"active_teams": ["deleted-team"]})
-    assert fs.active_teams(run_env, teams_dir=teams_dir, scan=_scan()) == {
+def test_active_teams_reads_the_ledger_and_not_the_teams_directory(
+    run_env, tmp_path, monkeypatch,
+) -> None:
+    """should-not-stop A-005 / A-030 — team activity from the ledger.
+
+    This is the team-activity test the spec rewrites. It asserted that a roster
+    naming a team with NO `~/.claude/teams/<name>` directory was clear, on the
+    theory that TeamDelete had removed the directory. Nothing creates that
+    directory any more, so that reading made every registered team clear the
+    moment it registered and every gate that asks this question passed while a
+    wave was still running. A registered team is active with the directory and
+    without it, and clear once the ledger no longer names it.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    _write_json(run_env, "state.json", {"active_teams": ["cast-team"]})
+    without_dir = fs.active_teams(run_env, scan=_scan())
+    assert without_dir == {
+        "active": True, "teams": ["cast-team"], "live_panes": [],
+    }
+
+    (home / ".claude" / "teams" / "cast-team").mkdir(parents=True)
+    assert fs.active_teams(run_env, scan=_scan()) == without_dir
+
+    # Unregistered: clear, with the directory still sitting on disk.
+    _write_json(run_env, "state.json", {"active_teams": []})
+    assert fs.active_teams(run_env, scan=_scan()) == {
         "active": False, "teams": [], "live_panes": [],
     }
 
 
 def test_the_shutdown_hint_is_offered_only_for_the_case_it_explains(
-    run_env, tmp_path
+    run_env,
 ) -> None:
     """Panes running with no team registered is the state an operator cannot
     work out from the two lists — the roster says gone, the machine says not.
 
-    The sentence itself is passed in: it names SendMessage, TeamDelete and
-    `tmux kill-pane`, which is the lifecycle layer's protocol and not this
-    module's to spell.
+    The sentence itself is passed in: it names SendMessage and `tmux
+    kill-pane`, which is the lifecycle layer's protocol and not this module's
+    to spell.
     """
-    teams_dir = tmp_path / "teams"
-    (teams_dir / "cast-team").mkdir(parents=True)
     _write_json(run_env, "state.json", {"active_teams": ["cast-team"]})
     hint_for = lambda panes: f"shut down {len(panes)}"
 
     with_team = fs.active_teams(
-        run_env, teams_dir=teams_dir, hint_for=hint_for,
+        run_env, hint_for=hint_for,
         scan=_scan(live=[("%1", "@grind-c10", "2.1.80")]),
     )
     assert "hint" not in with_team
 
     _write_json(run_env, "state.json", {"active_teams": []})
     without_team = fs.active_teams(
-        run_env, teams_dir=teams_dir, hint_for=hint_for,
+        run_env, hint_for=hint_for,
         scan=_scan(live=[("%1", "@grind-c10", "2.1.80"), ("%2", "@grind-c4", "2.1.80")]),
     )
     assert without_team["hint"] == "shut down 2"
 
     # No hint asked for, no hint invented.
     assert "hint" not in fs.active_teams(
-        run_env, teams_dir=teams_dir,
-        scan=_scan(live=[("%1", "@grind-c10", "2.1.80")]),
+        run_env, scan=_scan(live=[("%1", "@grind-c10", "2.1.80")]),
     )
 
 
-def test_a_scan_that_could_not_look_contributes_no_live_panes(
-    run_env, tmp_path
-) -> None:
+def test_a_scan_that_could_not_look_contributes_no_live_panes(run_env) -> None:
     """`available: False` is "this half could not be checked", and it must not
     be read as "this half is clear" — nor may it invent panes from a listing
     the scan could not make. A machine with no tmux is the common case."""
-    teams_dir = tmp_path / "teams"
-    teams_dir.mkdir()
     _write_json(run_env, "state.json", {"active_teams": []})
     unavailable = _scan(available=False, live=[("%1", "@grind-c10", "2.1.80")])
-    assert fs.active_teams(run_env, teams_dir=teams_dir, scan=unavailable) == {
+    assert fs.active_teams(run_env, scan=unavailable) == {
         "active": False, "teams": [], "live_panes": [],
     }
 

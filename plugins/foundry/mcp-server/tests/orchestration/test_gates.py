@@ -1384,6 +1384,109 @@ def test_the_done_checklist_carries_an_evidence_rung(run_env):
 
 
 
+# --------------------------------------------------------------------------- #
+# should-not-stop FR-005 / FR-036 / AC-008 — casting 3's concern C-015: the
+# terminal crossing is the one the Stop hook cannot hold.
+# --------------------------------------------------------------------------- #
+
+
+def _ready_for_done_with_a_question(project_root, fdir):
+    """A run ready to finish, then ONE unanswered question through the real door."""
+    from foundry_mcp.tools.orchestration.park import foundry_park
+
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=1)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+    _at_the_phase_for(fdir, "done")
+    parked = foundry_park(
+        action="park", item_ref="casting:99",
+        category=vocab.PARK_CATEGORY_SPEC_WRONG,
+        question="Does casting 99 exist?", project_root=project_root,
+    )
+    assert parked["ok"] is True, parked
+    return parked["parked"][vocab.PARKED_FIELD_ID]
+
+
+def test_an_unanswered_parked_question_refuses_the_terminal_crossing(run_env):
+    """C-015: DONE does not seal over a question the archive says is open.
+
+    The CONTROL is the same run one fact earlier — ready to finish, nothing
+    parked — so the refusal is attributable to the question and to nothing else.
+    """
+    from foundry_mcp.tools.orchestration.gates import _GATE_RANK_PARKED
+
+    project_root, fdir = run_env
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F4", cycle=1)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+    _generate_report(project_root, fdir)
+    _at_the_phase_for(fdir, "done")
+    assert _done_preconditions(fdir, project_root)["passed"] is True, "the control"
+
+    ident = _ready_for_done_with_a_question(project_root, fdir)
+    outcome = _done_preconditions(fdir, project_root)
+
+    assert outcome["passed"] is False, outcome
+    assert _GATE_RANK_PARKED in [r["rank"] for r in outcome["refusals"]], outcome
+    assert ident in outcome["reason"], outcome["reason"]
+    row = next(c for c in outcome["checklist"]
+               if c["check"].startswith("parked_questions_answered"))
+    assert row["ok"] is False and row["open_parked_ids"] == [ident], row
+
+
+def test_both_f6_doors_refuse_it_and_the_answer_releases_the_crossing(run_env):
+    """Both doors, because `foundry_gate` composes nothing and both call the
+    routine — and the remedy the hint names actually clears it (no strand)."""
+    from foundry_mcp.tools.orchestration.park import foundry_park
+
+    project_root, fdir = run_env
+    ident = _ready_for_done_with_a_question(project_root, fdir)
+    before = json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"]
+
+    (fdir / artifacts.NEXT_ACTION_CALLED_MARKER).write_text("x", encoding="utf-8")
+    gate = foundry_gate("done", project_root)
+    (fdir / artifacts.NEXT_ACTION_CALLED_MARKER).write_text("x", encoding="utf-8")
+    crossed = _transitions.foundry_mark_phase_complete("done", project_root)
+
+    assert gate["passed"] is False, gate
+    assert crossed.get("ok") is not True, crossed
+    after = json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"]
+    assert after == before, (before, after)
+
+    answered = foundry_park(action="answer", parked_id=ident,
+                            answer="It does not exist; drop it and ship",
+                            project_root=project_root)
+    assert answered["ok"] is True, answered
+    assert _done_preconditions(fdir, project_root)["passed"] is True
+
+
+@pytest.mark.parametrize("token", ["cast", "inspect_start", "grind_start",
+                                   "inspect_clean", "temper", "nyquist", "halt"])
+def test_a_parked_question_does_not_gate_a_midrun_crossing(run_env, token):
+    """FR-005 / AC-007: only the TERMINAL crossing reads the question.
+
+    A mid-run crossing is backstopped by the Stop hook, which BLOCKS on both
+    sides of it, so gating one would ask the human while unparked work is still
+    runnable. `halt` is here for a second reason: FR-046 scopes it to
+    `_halt_preconditions`, and a question answered with halt is the proof
+    GI-012 needs, so an open one must never wall that door.
+    """
+    from foundry_mcp.tools.orchestration.gates import _GATE_RANK_PARKED
+
+    project_root, fdir = run_env
+    _ready_for_done_with_a_question(project_root, fdir)
+
+    outcome = _transitions._token_preconditions(token, fdir, project_root,
+                                                reason="user_stop", text="by hand")
+    ranks = [r["rank"] for r in (outcome or {}).get("refusals", [])]
+    assert _GATE_RANK_PARKED not in ranks, (token, outcome)
+
+
+
+
 def test_a_log_that_no_longer_reproduces_refuses_nyquist_and_done(run_env,
                                                                   monkeypatch):
     """GI-002 / CT-007: the sweep 'refuses on mismatch', naming each log.
@@ -2571,8 +2674,12 @@ def test_a_gate_and_its_transition_agree_on_the_passing_case(run_env, token):
     below drives the ones that are cheap to complete.
     """
     project_root, fdir = run_env
-    reason_kw = {"reason": "lead_ruling", "text": "stopped by hand"} if token == "halt" else {}
+    # should-not-stop — after start_cast the halt door passes only a user_stop
+    # carrying human-origin proof, so that is the halt token's passing case.
+    reason_kw = {"reason": "user_stop", "text": "stopped by hand"} if token == "halt" else {}
     _arrange_passing(project_root, fdir, token)
+    if token == "halt":
+        _write_stop_token(fdir)
     _arm_ordering_token(fdir)
     gate = foundry_gate(_gate_for(token), project_root, **reason_kw)
     assert gate["passed"] is True, (token, gate)
@@ -2614,17 +2721,31 @@ def test_the_grind_gate_passes_at_the_cap_and_shows_would_halt(run_env):
 # --------------------------------------------------------------------------- #
 
 
+#: The unused /foundry:stop token a post-CAST user_stop halts on, written the
+#: way the stop command's shell step writes it. One helper, owned beside the
+#: halt door's own tests.
+from tests.orchestration.test_transitions import _write_stop_token  # noqa: E402
+
+
 def test_the_halt_gate_reports_the_three_checks_as_data(run_env):
-    """fallout CT-021 / AC-062 / OT-045 — reported, not acted on."""
+    """fallout CT-021 / AC-062 / OT-045 — reported, not acted on.
+
+    After start_cast the should-not-stop halt rule adds two checks, the reason
+    accepted from the lead and the human-origin proof, and the gate reports
+    those as data too.
+    """
     project_root, fdir = run_env
     _arrange_passing(project_root, fdir, "halt")
+    _write_stop_token(fdir)
     _arm_ordering_token(fdir)
-    gate = foundry_gate("halt", project_root, reason="lead_ruling", text="enough")
+    gate = foundry_gate("halt", project_root, reason="user_stop", text="enough")
     assert gate["passed"] is True, gate
     names = [c["check"] for c in gate["checklist"]]
     assert any(n.startswith("halt_reason_is_a_member") for n in names), names
     assert "no_active_teams" in names, names
     assert "not_already_halted" in names, names
+    assert any(n.startswith("halt_reason_accepted_after_start_cast") for n in names), names
+    assert any(n.startswith("human_origin_proof") for n in names), names
     # Reported, not acted on: the run is exactly where it was.
     assert json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"] == "F3"
 

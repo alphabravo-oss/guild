@@ -2686,26 +2686,37 @@ def halted_state(
     }
 
 
-def registered_team_dirs(run_dir: Path, *, teams_dir: Path) -> list[str]:
-    """The registered teams whose directory still exists, in recorded order.
+def registered_team_dirs(run_dir: Path) -> list[str]:
+    """The teams the run's ledger has registered, in recorded order.
 
     THE ARTIFACT HALF of "is a team still holding the tree". A team is active
-    while `state.json.active_teams` names it AND its directory is still there —
-    the directory going away is what `TeamDelete` does, and a name with no
-    directory is a roster entry nobody cleaned up.
+    from the `Foundry-Team-Up` that writes its name into `state.json`
+    `active_teams` until the `Foundry-Team-Down` that removes it, and nothing
+    else starts or ends one.
+
+    should-not-stop GI-001 / GI-010 / FR-021 (A-005) — THE LEDGER IS THE WHOLE
+    ANSWER. This used to count a registered name only while
+    `~/.claude/teams/<name>` was still a directory, on the theory that the
+    directory going away was what `TeamDelete` did. `TeamCreate` and
+    `TeamDelete` were removed as Claude Code tools in v2.1.178, so no directory
+    is ever created: every registered team read as ended the moment it was
+    registered, and every gate that asks this question was answering from a
+    directory no step of the protocol makes. Teammates are named Agent spawns;
+    a team is a ledger entry and is read as one. The name is kept because the
+    readers that compose it are named for it.
 
     The OTHER half is a scan of the machine for live teammate panes, which
     reads no run artifact and belongs with the module that knows how to look;
-    so does the hint naming SendMessage, TeamDelete and `tmux kill-pane`. Both
-    halves must be clear for a gate to pass, and this is the half a run
-    artifact can answer. Total: a non-list roster and a non-string member each
-    contribute nothing rather than raising.
+    so does the hint naming SendMessage and `tmux kill-pane`. Both halves must
+    be clear for a gate to pass, and this is the half a run artifact can
+    answer. Total: a non-list roster and a non-string member each contribute
+    nothing rather than raising.
     """
     state, _ = read_document(run_dir / "state.json")
     teams = state.get("active_teams")
     return [
         name for name in (teams if isinstance(teams, list) else [])
-        if isinstance(name, str) and name and (Path(teams_dir) / name).is_dir()
+        if isinstance(name, str) and name
     ]
 
 
@@ -3208,9 +3219,7 @@ def live_teammate_panes() -> dict:
     return {"available": True, "live": live, "zombie": zombie, "user": user, "lead": lead}
 
 
-def active_teams(
-    run_dir: Path, *, teams_dir: Path, hint_for=None, scan=None
-) -> dict:
+def active_teams(run_dir: Path, *, hint_for=None, scan=None) -> dict:
     """Is any team still holding the tree? Both halves, composed. Never raises.
 
     Returns ``{"active": bool, "teams": [names], "live_panes": [titles]}``,
@@ -3220,22 +3229,21 @@ def active_teams(
     from the two lists alone.
 
     TWO LAYERS, BOTH REQUIRED. `registered_team_dirs` answers the artifact
-    half: `state.json.active_teams` crossed against the directories still on
-    disk, so a name whose directory `TeamDelete` removed is a roster entry
-    nobody cleaned up rather than a live team. `live_teammate_panes` answers
-    the machine half. Either one alone lets a gate pass while teammates are
-    still running, which is why the composition is here and not at each caller.
+    half: the `state.json.active_teams` ledger, which `Foundry-Team-Up` writes
+    and `Foundry-Team-Down` clears (should-not-stop GI-001 / GI-010, A-005 —
+    no `~/.claude/teams` directory is consulted, because nothing makes one any
+    more). `live_teammate_panes` answers the machine half. Either one alone lets
+    a gate pass while teammates are still running, which is why the composition
+    is here and not at each caller.
 
-    ``teams_dir`` is supplied rather than known: where a machine keeps its team
-    directories is not a fact about the run. ``hint_for`` takes the live pane
-    titles and returns the shutdown sentence — protocol prose naming
-    SendMessage, TeamDelete and `tmux kill-pane`, which belongs to the
+    ``hint_for`` takes the live pane titles and returns the shutdown sentence —
+    protocol prose naming SendMessage and `tmux kill-pane`, which belongs to the
     lifecycle module that owns those doors, so it is passed in on the same rule
     every other sentence in this module follows. ``scan`` is the pane reader,
     defaulting to `live_teammate_panes`; a test passes its own rather than
     shelling out to a tmux the machine may not have.
     """
-    teams = registered_team_dirs(run_dir, teams_dir=teams_dir)
+    teams = registered_team_dirs(run_dir)
 
     panes = (scan or live_teammate_panes)()
     live_panes: list[str] = []

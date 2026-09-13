@@ -151,6 +151,8 @@ _DELTA_SURFACES = (
     f"{_ORCHESTRATION}report_seal.py",
     f"{_ORCHESTRATION}spend.py",
     f"{_ORCHESTRATION}halt.py",
+    # should-not-stop's park door: a lifecycle writer of the parked state.
+    f"{_ORCHESTRATION}park.py",
     f"{_ORCHESTRATION}directives.py",
     f"{_ORCHESTRATION}teams.py",
     f"{_ORCHESTRATION}fix_gate.py",

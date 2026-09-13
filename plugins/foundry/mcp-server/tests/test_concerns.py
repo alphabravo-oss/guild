@@ -36,6 +36,7 @@ from foundry_mcp.tools.concerns import (
     CARRIED_PROSE_MARKER,
     CONCERNS_FILENAME,
     CONCERNS_MARKDOWN_FILENAME,
+    CONCERN_BLOCKER_KIND_UNKNOWN,
     CONCERN_CLOSE_REASON_REQUIRED,
     CONCERN_CYCLE_REQUIRED,
     CONCERN_ID_PREFIX,
@@ -148,6 +149,116 @@ def _open_one(project_root: str, **kwargs) -> dict:
     }
     args.update(kwargs)
     return foundry_concern(**args)
+
+
+# --------------------------------------------------------------------------- #
+# The blocker kind (should-not-stop A-013): a teammate that cannot proceed
+# files its blocker with a kind from the closed set and RETURNS, so the ledger
+# carries a record the router can route instead of prose nothing reads.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("kind", vocab.BLOCKER_KINDS)
+def test_a_blocker_kind_from_the_closed_set_is_accepted_and_persisted(run_env, kind):
+    """A-013 verbatim: 'The teammate files a Foundry-Concern with a
+    machine-readable blocker kind and returns.'
+
+    The kind is carried on the ledger record under exactly that name — the
+    field the router reads — and the rendered twin names it too.
+    """
+    project_root, fdir = run_env
+
+    result = _open_one(project_root, target="1", blocker_kind=kind)
+
+    assert result["ok"] is True, result
+    assert result["concern"]["blocker_kind"] == kind
+    (stored,) = _ledger(fdir)
+    assert stored["blocker_kind"] == kind, stored
+    rendered = _file(fdir, CONCERNS_MARKDOWN_FILENAME).read_text(encoding="utf-8")
+    assert f"**Blocker:** `{kind}`" in rendered, rendered
+
+
+def test_a_concern_filed_without_a_kind_carries_no_blocker_field(run_env):
+    """Absence is absence: a concern that is not a blocker keeps the record
+    shape every concern had before the field existed, and the router, which
+    routes on the key, never mistakes it for one."""
+    project_root, fdir = run_env
+
+    result = _open_one(project_root)
+
+    assert result["ok"] is True, result
+    (stored,) = _ledger(fdir)
+    assert "blocker_kind" not in stored, stored
+    rendered = _file(fdir, CONCERNS_MARKDOWN_FILENAME).read_text(encoding="utf-8")
+    assert "**Blocker:**" not in rendered
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["missing_upstream", "", "PROMPT_HASH_MISMATCH", "spec_wrong", 3, ["missing_prerequisite"]],
+)
+def test_an_unknown_blocker_kind_is_refused_by_name_and_nothing_is_written(run_env, kind):
+    """A-013's error column: an unknown blocker kind is refused.
+
+    THE REFUSAL TEST FOR ``CONCERN_BLOCKER_KIND_UNKNOWN``. The hint names the
+    closed set, built from the vocabulary, so a teammate told "no" is also told
+    what "yes" is. A park category (`spec_wrong`) is not a blocker kind, and an
+    explicit empty string is not absence.
+    """
+    project_root, fdir = run_env
+
+    result = _open_one(project_root, target="1", blocker_kind=kind)
+
+    assert result["phase"] == CONCERN_BLOCKER_KIND_UNKNOWN, result
+    for member in vocab.BLOCKER_KINDS:
+        assert member in result["hint"], (member, result["hint"])
+    assert not _file(fdir, CONCERNS_FILENAME).exists()
+
+
+def test_the_unknown_kind_refusal_is_reachable_over_the_wire(run_env):
+    """Through `call_tool`, schema check included, the HANDLER'S named refusal
+    is what a caller meets: the transport advertises the set in prose and no
+    enum, so nothing answers before this door does."""
+    import asyncio
+
+    from foundry_mcp import server as srv
+
+    project_root, fdir = run_env
+    srv._project_root = str(project_root)
+    try:
+        blocks = asyncio.run(srv.call_tool("Foundry-Concern", {
+            "casting_id": 1, "cycle": 0, "target": "1",
+            "text": "the prerequisite grep came back empty",
+            "blocker_kind": "missing_upstream",
+        }))
+        accepted = srv._DISPATCH["Foundry-Concern"]({
+            "casting_id": 1, "cycle": 0, "target": "1",
+            "text": "the prompt hash differs from the dispatch",
+            "blocker_kind": "prompt_hash_mismatch",
+        })
+    finally:
+        srv._project_root = "."
+
+    assert CONCERN_BLOCKER_KIND_UNKNOWN in blocks[0].text, blocks[0].text
+    assert accepted["ok"] is True, accepted
+    assert accepted["concern"]["blocker_kind"] == "prompt_hash_mismatch"
+
+
+def test_the_close_arm_takes_no_blocker_kind(run_env):
+    """Closing moves a record that already carries its kind; a kind handed to
+    the close arm is neither judged nor written over the stored one."""
+    project_root, fdir = run_env
+    opened = _open_one(project_root, target="1", blocker_kind="missing_prerequisite")
+
+    closed = foundry_concern(
+        close=opened["concern_id"], reason="re-dispatched after casting 2 landed",
+        blocker_kind="not-a-kind", project_root=project_root,
+    )
+
+    assert closed["ok"] is True, closed
+    (stored,) = _ledger(fdir)
+    assert stored["blocker_kind"] == "missing_prerequisite"
+    assert stored["status"] == CONCERN_STATUS_CLOSED
 
 
 # --------------------------------------------------------------------------- #

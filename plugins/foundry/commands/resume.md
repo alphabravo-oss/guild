@@ -1,7 +1,7 @@
 ---
 description: "Resume an interrupted foundry run"
 argument-hint: "[--max-cycles N]"
-allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/install-commit-guard.sh:*)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/migrate-archive.py:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(jq:*)", "AskUserQuestion", "Read", "Write", "Glob", "Grep", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TeamCreate", "TeamDelete", "SendMessage", "Edit", "Bash(git:*)", "Bash(go:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(make:*)", "Bash(curl:*)"]
+allowed-tools: ["Bash(${CLAUDE_PLUGIN_ROOT}/scripts/install-commit-guard.sh:*)", "Bash(${CLAUDE_PLUGIN_ROOT}/scripts/migrate-archive.py:*)", "Bash(ls:*)", "Bash(cat:*)", "Bash(jq:*)", "AskUserQuestion", "Read", "Write", "Glob", "Grep", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "SendMessage", "Edit", "Bash(git:*)", "Bash(go:*)", "Bash(npm:*)", "Bash(npx:*)", "Bash(pnpm:*)", "Bash(make:*)", "Bash(curl:*)"]
 disable-model-invocation: "true"
 ---
 
@@ -83,7 +83,7 @@ The absence is carried at the parameter rather than guessed at from falsiness: `
 
 **The rewrite does not halt anything by itself, and the door is where the halt happens.** `Foundry-Init` writes the number and returns; the cap is READ once, in the preconditions of the two transitions that open a GRIND cycle — `grind_start` and `assay_fail` — as a non-refusing fact those transitions then act on. So a run sitting in F4 with a cap below its cycle stays in F4, working, until something tries to open a GRIND. `Foundry-Gate(phase='grind')` REPORTS that fact and does not refuse on it, which is the difference between a door telling you where the run is going and a door standing in its way.
 
-**A value BELOW the cycle the run is on halts it at the next GRIND door**, with reason `cap_reached`. That is a SUCCESSFUL `Foundry-Phase` transition and never a refusal: the phase becomes `HALTED`, `halted_at_cycle` and `halted_reason` are written beside it, and the report is generated inside that same transition, naming every open defect. The next `Foundry-Next` reports the run halted and issues no dispatch. **`HALTED` is a named terminal state distinct from `DONE`** — a halted run stopped with open work, and a run that reaches it with every open finding written down and tiered has succeeded rather than failed. Never describe it as a refusal and never describe it as a finished run; `references/lead-discipline.md` carries why a named backlog is a successful end.
+**A value BELOW the cycle the run is on halts it at the next GRIND door**, with reason `cap_reached`. That is a SUCCESSFUL `Foundry-Phase` transition and never a refusal: the phase becomes `HALTED`, `halted_at_cycle` and `halted_reason` are written beside it, and the report is generated inside that same transition, naming every open defect. The next `Foundry-Next` reports the run halted and issues no dispatch. **`HALTED` is a named terminal state distinct from `DONE`** — a halted run stopped with work outstanding, and it is not a run that succeeded. The transition into it succeeds and seals a report naming every open finding by tier, which is a different thing from the work being done. Never describe it as a refusal and never describe it as a finished run; `references/lead-discipline.md` carries why.
 
 ## STEP 6: RESUME SELECTED RUN
 
