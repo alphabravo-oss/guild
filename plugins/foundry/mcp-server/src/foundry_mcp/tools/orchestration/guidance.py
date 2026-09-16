@@ -1609,6 +1609,12 @@ _ACTION_IMPERATIVES = {
         "You'll be notified as each completes; use TaskOutput(task_id) to retrieve any return "
         "message. After all complete, call Foundry-Validate-Castings."
     ),
+    # lead-stalls D-009 — AND THE LITERAL `1` BELOW IS CORRECT HERE, WHICH IS
+    # WHY IT IS NOT `{wave}`. `_compute_next_action` returns this action from F0
+    # and from nowhere else, so the only wave it can ever describe is the
+    # first. The entry that DOES serve later waves is `build_castings`'s
+    # dispatch branch, which carries the slot. Making this one a slot too would
+    # resolve it off a liveness reading taken before any wave exists.
     "transition_to_cast": (
         "YOUR NEXT CALLS (in order — bulk flow saves N-1 roundtrips):\n"
         "  (1) Foundry-Gate(phase='validate')\n"
@@ -1992,8 +1998,8 @@ def _format_imperative_header(
     Falls back to a generic header if the action is unmapped.
 
     Substitutes `{run}` in the imperative with the active run slug so team
-    names (cast-{run}-wave-N, grind-{run}-cycle-N) are distinguishable across
-    concurrent runs. DECOMPOSE no longer uses a team — it spawns background
+    names (cast-{run}-wave-{wave}, grind-{run}-cycle-{cycle}) are
+    distinguishable across concurrent runs. DECOMPOSE no longer uses a team — it spawns background
     Agents (per commands/start.md \u00a7F0.5).
     If no run is active, `{run}` is replaced with `active` as a safe default.
 
