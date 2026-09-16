@@ -212,7 +212,7 @@ def test_the_accept_casting_description_accounts_for_every_hard_reject_branch():
     )
 
     def _is_hard_reject(stmt: ast.stmt, test: ast.expr) -> bool:
-        """The gate refusing, not warning — in either of its two spellings.
+        """The gate refusing, not warning — in any of its three spellings.
 
         (1) `return {... "ok": False ...}` — a refusal built inline.
 
@@ -225,19 +225,49 @@ def test_the_accept_casting_description_accounts_for_every_hard_reject_branch():
             blocking condition nobody has to roster or describe — which is the
             control failing quietly, in the exact direction the test exists to
             prevent. The detector is WIDENED rather than the roster trimmed.
+
+        (3) `if <name> is not None: return {**<name>, "next_call": ...}` — the
+            SAME forwarded refusal, additively decorated by the door before it
+            goes out. lead-stalls GI-005 / OT-006 put `next_call` on every
+            return path of this handler, and the shared helpers that build two
+            of those refusals are consumed by five other doors — so the key has
+            to be added at the call site, which turns spelling (2) into a dict
+            display. Shape (1) does not catch it: the spread carries the
+            helper's `ok: False` rather than restating it, so there is no `ok`
+            key in the literal to read.
+
+            Widened, again, rather than the roster trimmed — for the reason
+            (2) records. Dropping `hash_refusal is not None` from `owed` would
+            have made this test pass while leaving the prompt-hash rung
+            unrostered and undescribed, which is the control failing quietly in
+            the direction it exists to prevent.
+
+            Deliberately keyed on a `**<Name>` whose name the GUARD names, not
+            on `**<anything>`: `return {**document_refusal(...), ...}` two rungs
+            above spreads a CALL, and it was invisible to this detector before
+            `next_call` existed (`prompt_problem is not None` has never been in
+            `owed`). Matching it here would add an unrostered guard and fail
+            this assert from the other side — a pre-existing gap, and not one
+            an additive payload key is entitled to close on its way past.
         """
         if not isinstance(stmt, ast.Return):
             return False
+        guard_names = {
+            node.id for node in ast.walk(test) if isinstance(node, ast.Name)
+        }
         if isinstance(stmt.value, ast.Dict):
             for key, value in zip(stmt.value.keys, stmt.value.values):
                 if isinstance(key, ast.Constant) and key.value == "ok":
                     return isinstance(value, ast.Constant) and value.value is False
-            return False
+            # The decorated-forward shape: a `**` unpacking (which parses as a
+            # None key) of the very name the guard tested.
+            return any(
+                key is None and isinstance(value, ast.Name) and value.id in guard_names
+                for key, value in zip(stmt.value.keys, stmt.value.values)
+            )
         # The forwarded-refusal shape: the guard names the very thing returned.
         if isinstance(stmt.value, ast.Name):
-            return stmt.value.id in {
-                node.id for node in ast.walk(test) if isinstance(node, ast.Name)
-            }
+            return stmt.value.id in guard_names
         return False
 
     # The guard expression is the identity: it IS the blocking condition, and

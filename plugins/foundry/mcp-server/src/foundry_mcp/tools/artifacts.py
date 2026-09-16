@@ -998,6 +998,45 @@ INSPECT_BOUNDARY_SHA_MARKER = ".inspect-boundary-sha"
 CAST_BASELINE_SHA_MARKER = ".cast-baseline-sha"
 TRACE_CLEAN_AT_MARKER = ".trace-clean-at"
 
+
+#: lead-stalls FR-003 / FR-011 / GI-003 / GI-005 / GI-008 / CT-004 / CT-005 —
+#: THE ONE THING A DOOR SAYS TO DO NEXT, DECLARED ONCE.
+#:
+#: The defect: the lead accepted a wave's last casting, tore the team down, and
+#: received two payloads that between them described everything that had just
+#: FINISHED and named nothing to CALL — so it reported status and ended its turn
+#: with no agent running and the run neither DONE nor HALTED (ST-003). Every key
+#: in both payloads was true. None of them was an instruction. `next_call`
+#: carries this string on `Foundry-Team-Down`'s success payload and on EVERY
+#: return path of `Foundry-Accept-Casting`, refusals included (GI-005 / OT-006),
+#: because a refusal that leaves the lead with nowhere to go parks the run just
+#: as surely as a success that does.
+#:
+#: HERE, AND NOT ONCE PER DOOR. `orchestration/teams.py` is LIFECYCLE and
+#: `evidence.py` is a VERIFIER; neither may import the other at any depth
+#: (AC-061), so a per-module copy was the first shape tried and
+#: `test_no_top_level_symbol_is_defined_in_two_shipped_modules` refused it —
+#: correctly, and its escape hatch did not apply: `_DELIBERATE_REDEFINITIONS`
+#: is for a value with NO leaf that may hold it, and this module is a leaf BOTH
+#: doors already import from. It joins `check_reported_prompt_hash` and
+#: `record_handoff_event` here on exactly the rule evidence.py states over its
+#: own import of them — a symbol read from both layers can live in neither.
+#: Neither door gains an import edge; both gain a name on a list they already
+#: had.
+#:
+#: `schemas/vocab.py` was the other candidate and was rejected: it holds closed
+#: vocabularies whose MEMBERSHIP is enforced, and this is payload copy.
+#:
+#: UNCONDITIONAL, AND A LITERAL CALL (GI-008). It names `Foundry-Next` and
+#: nothing else, because `Foundry-Next` already reads the run's phase, wave and
+#: ledger — routing is ITS job, and it knows whether the casting was accepted,
+#: which is why the reject path takes the same wording rather than a branch
+#: (A-014 rules reject-specific wording out of scope). Any condition encoded
+#: here would be a judgment task handed to the lead, the exact shape FR-007's
+#: audit is removing from `_ACTION_IMPERATIVES`. It instructs no sleep, poll or
+#: wait loop (GI-004): ending the turn is what the completion notification wakes.
+LEAD_NEXT_CALL = "Call Foundry-Next now."
+
 #: Phase-progress sentinels: written by a transition, read by the gate and by
 #: ``_compute_next_action`` to decide what the lead is told to do next.
 CAST_COMPLETE_MARKER = ".cast-complete"

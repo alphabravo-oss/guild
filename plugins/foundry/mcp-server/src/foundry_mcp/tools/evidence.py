@@ -98,6 +98,7 @@ from foundry_mcp.schemas.vocab import REQUIREMENT_ID_RE
 # there. See the banner above the door at the foot of this file.
 from foundry_mcp.tools.artifacts import (
     _hash_str,
+    LEAD_NEXT_CALL,
     check_reported_prompt_hash,
     declared_requirement_ids,
     foundry_spec_hash,
@@ -4498,6 +4499,24 @@ def sweep_evidence_at_head(
 # --------------------------------------------------------------------------- #
 
 
+# lead-stalls FR-011 / GI-005 / CT-005 / OT-006 / ST-004 — `LEAD_NEXT_CALL` IS
+# ON EVERY RETURN PATH BELOW, INCLUDING THE REFUSALS.
+#
+# US-003's shape: an acceptance is REFUSED, the lead reads a refusal naming what
+# is wrong and how to fix it, and then has nothing telling it where to re-enter
+# the protocol — so it deliberates at the boundary and the run parks with no
+# agent running (ST-003). A refusal that ends the run is a worse outcome than
+# the refusal was meant to produce, which is why GI-005 says every path and not
+# every SUCCESSFUL path.
+#
+# The constant is the leaf's, imported at the head of this module beside
+# `check_reported_prompt_hash` — see `tools/artifacts.py#LEAD_NEXT_CALL` for why
+# it lives there and not once per door. `tests/test_next_call_payloads.py` walks
+# every `return` in the function below and fails if one is added without the
+# key, which is what makes "every path" a property of the code rather than a
+# claim about it.
+
+
 def foundry_accept_casting(
     casting_id: int | str,
     spec_hash: str,
@@ -4564,12 +4583,22 @@ def foundry_accept_casting(
              "evidence_provenance": [...],
              "evidence_tally": {"accepted": N, "rejected": N,
                                 "failure_tokens": [...]} | None,
-             "evidence_spec_path": str | None}
+             "evidence_spec_path": str | None,
+             "next_call": LEAD_NEXT_CALL}
         On failure:
-            {"ok": False, "error": "...", "hint": "..."}
+            {"ok": False, "error": "...", "hint": "...",
+             "next_call": LEAD_NEXT_CALL}
         On evidence rejection:
             {"ok": False, "failure_token": "EVIDENCE_*", "failure_detail": "...",
-             "evidence_provenance": [...], "evidence_tally": {...}}
+             "evidence_provenance": [...], "evidence_tally": {...},
+             "next_call": LEAD_NEXT_CALL}
+
+    ``next_call`` is on ALL THREE shapes and on every return path within them
+    (GI-005 / OT-006), which is why it is declared on each rather than noted
+    once below: this block is the payload's declared contract, and an additive
+    key listed in prose but absent from the shapes is an undocumented key. It
+    is purely additive — no key above it is renamed, retyped or removed
+    (FR-004 / NFR-002) — so every existing reader is unaffected.
 
     ``evidence_tally`` is the per-casting verdict count. It is a RETURN VALUE
     and never a printed line (D-149): this server speaks JSON-RPC over stdio,
@@ -4583,7 +4612,11 @@ def foundry_accept_casting(
     """
     fdir = get_run_dir(project_root)
     if not fdir:
-        return {"ok": False, "error": "No active foundry run"}
+        return {
+            "ok": False,
+            "error": "No active foundry run",
+            "next_call": LEAD_NEXT_CALL,
+        }
 
     # CT-015 / FR-010 / AC-015 / OT-027 — casting_commit is REQUIRED.
     #
@@ -4618,12 +4651,17 @@ def foundry_accept_casting(
             ),
             "casting_id": casting_id,
             "field": "casting_commit",
+            "next_call": LEAD_NEXT_CALL,
         }
 
     # Verify spec hash
     spec_result = foundry_spec_hash(project_root=project_root)
     if not spec_result.get("ok"):
-        return {"ok": False, "error": f"Cannot hash spec: {spec_result.get('error')}"}
+        return {
+            "ok": False,
+            "error": f"Cannot hash spec: {spec_result.get('error')}",
+            "next_call": LEAD_NEXT_CALL,
+        }
     current_spec_hash = spec_result["spec_hash"]
     if spec_hash != current_spec_hash:
         return {
@@ -4635,6 +4673,7 @@ def foundry_accept_casting(
                 f"fresh hash. Never accept a casting using a spec hash from "
                 f"memory — the spec may have been updated mid-run."
             ),
+            "next_call": LEAD_NEXT_CALL,
         }
 
     # Load the casting prompt
@@ -4644,6 +4683,7 @@ def foundry_accept_casting(
             "ok": False,
             "error": f"casting-{casting_id}-prompt.md not found",
             "hint": "Re-run F0.5 DECOMPOSE",
+            "next_call": LEAD_NEXT_CALL,
         }
 
     # D-146: the whole read sits behind ONE guarded call. A casting prompt that
@@ -4652,7 +4692,20 @@ def foundry_accept_casting(
     # named refusal — the D-137 family's exact shape, one door further along.
     prompt_text, prompt_problem = read_text_file(prompt_path)
     if prompt_problem is not None:
-        return document_refusal(prompt_path, prompt_problem)
+        # lead-stalls GI-005 / OT-006 — SPREAD AT THE CALL SITE, NEVER INSIDE
+        # THE HELPER. `document_refusal` is `foundry_state`'s house refusal with
+        # ten callers across six modules, and `check_reported_prompt_hash`
+        # below is the C-8 rung SHARED with `Foundry-Fix`
+        # (`orchestration/fix_gate.py`). Adding the key inside either would put
+        # `next_call` on the Foundry-Fix, Cast-Wave, Spawn-Teammate, Validate
+        # and Report payloads too — payloads this spec does not name, which is
+        # the exact non-additive blast radius FR-004 and NFR-002 forbid.
+        #
+        # These two are also why the build notes' "ten `return {` statements"
+        # undercounts: neither is a dict literal, so a sweep for `return {`
+        # walks straight past them and leaves two refusal paths with no
+        # `next_call` — the GI-005 violation, in the two places hardest to see.
+        return {**document_refusal(prompt_path, prompt_problem), "next_call": LEAD_NEXT_CALL}
 
     # CT-011 / AC-030 — the hash rung is `check_reported_prompt_hash`, not a
     # second inline comparison. Foundry-Fix applies the same check to the same
@@ -4663,7 +4716,10 @@ def foundry_accept_casting(
     # the check at BOTH doors.
     hash_refusal = check_reported_prompt_hash(fdir, casting_id, prompt_hash)
     if hash_refusal is not None:
-        return hash_refusal
+        # Spread, not mutated: `check_reported_prompt_hash` hands the SAME dict
+        # shape to `Foundry-Fix`, and an in-place `hash_refusal["next_call"] =`
+        # would edit an object this door does not own. See the note above.
+        return {**hash_refusal, "next_call": LEAD_NEXT_CALL}
 
     # Extract acceptance criteria from the <spec_requirements> block
     match = re.search(
@@ -4676,6 +4732,7 @@ def foundry_accept_casting(
             "ok": False,
             "error": "casting prompt has no <spec_requirements> block",
             "hint": "F0.9 VALIDATE should have caught this. Re-run validation.",
+            "next_call": LEAD_NEXT_CALL,
         }
 
     spec_block = match.group(1).strip()
@@ -4834,6 +4891,7 @@ def foundry_accept_casting(
                 f"frontmatter to a real version (e.g. `spec_format_version: "
                 f"v2.1`) and re-run acceptance."
             ),
+            "next_call": LEAD_NEXT_CALL,
         }
 
     evidence_result = verify_evidence(
@@ -4923,6 +4981,7 @@ def foundry_accept_casting(
                 "`# evidence-cmd:`. Re-run the command yourself, inspect "
                 "the diff, and re-dispatch with corrected evidence."
             ),
+            "next_call": LEAD_NEXT_CALL,
         }
 
     # ============================================================
@@ -4983,6 +5042,7 @@ def foundry_accept_casting(
                     f"list). See plugins/foundry/agents/teammate.md Step 11 "
                     f"for the canonical evidence-file format."
                 ),
+                "next_call": LEAD_NEXT_CALL,
             }
 
     # Check for "out of scope" or "cut scope" mentions in the teammate report
@@ -5067,4 +5127,16 @@ def foundry_accept_casting(
         "evidence_spec_path": (
             str(evidence_spec_path) if evidence_spec_path is not None else None
         ),
+        # lead-stalls US-001 / CT-005 / OT-006 — the wave-boundary path, and the
+        # one this defect was actually filed about. `ok` here is
+        # `warning is None`, so this single return is BOTH the clean acceptance
+        # and the warned one; both carry the key, because a warned acceptance
+        # parks the run exactly as readily as a refused one.
+        #
+        # It sits beside `must_verify`, the six-item judgment checklist the
+        # Problem Statement blames for the stall: the checklist tells the lead
+        # what to THINK about and named nothing to CALL, so the turn ended on
+        # deliberation. The checklist is unchanged — it is doing its job — and
+        # this key answers the question it leaves open.
+        "next_call": LEAD_NEXT_CALL,
     }

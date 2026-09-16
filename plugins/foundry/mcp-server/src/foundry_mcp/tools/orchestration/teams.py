@@ -14,6 +14,7 @@ from foundry_mcp.tools.orchestration.keyfiles import DIRECTORY_ENTRY_SUFFIX
 from foundry_mcp.tools.artifacts import (
     CAST_BASELINE_SHA_MARKER,
     INSPECT_BOUNDARY_SHA_MARKER,
+    LEAD_NEXT_CALL,
     TRACE_CLEAN_AT_MARKER,
     # fallout GI-033 / AC-061 (D-080, concern C-060) — ALIASED, and the alias
     # is load-bearing rather than a leftover: D-134's scan recognises a manifest
@@ -644,12 +645,26 @@ def foundry_unregister_team(
         teams = [t for t in teams if t != team_name]
         state["active_teams"] = teams
 
+    # lead-stalls CT-004 / OT-005 / FR-004 / NFR-002 — ADDED, alongside the five
+    # existing keys. None of them is renamed, retyped or removed, so every
+    # reader that worked before works unchanged: `display.py#_fmt_foundry_
+    # unregister_team` reads each key with `.get` and simply does not render
+    # this one, and `format_result_blocks` (D-173) appends the WHOLE dict as
+    # JSON after the rendering, which is how the key reaches the lead without a
+    # display edit.
+    #
+    # SUCCESS ONLY, deliberately. GI-005's every-path rule is Accept-Casting's
+    # (GI-003 and CT-004 scope this door to its success payload), and the four
+    # refusals above already name their own remedy in `hint` — a refusal that
+    # also said "Call Foundry-Next now." would be telling the lead to move on
+    # from a door that just refused to let it.
     return {
         "ok": True,
         "unregistered": team_name,
         "remaining_teams": len(teams),
         "tmux_panes_killed": killed,
         "verified_clean": True,
+        "next_call": LEAD_NEXT_CALL,
     }
 
 
