@@ -1,0 +1,116 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.test_next_call_payloads import acceptance_route_report; [print(r) for r in acceptance_route_report()]' 2>/dev/null
+# evidence-for: ST-004, US-003, US-001, GI-005, CT-005, OT-006, FR-011, CT-004, GI-003
+
+Foundry-Accept-Casting, then the Foundry-Next its next_call names
+  wave 1 = casting 1 (done); wave 2 = casting 2 (not started)
+
+  accepted, team registered
+    payload ok                  True
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          ['casting-1-accepted']
+    Foundry-Next action         cleanup_teams
+    first call named            Send
+    tears the team down         True
+    dispatches wave 2           False
+    returns to casting 1        False
+
+  accepted, team torn down
+    payload ok                  True
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          ['casting-1-accepted']
+    Foundry-Next action         build_castings
+    first call named            TeamCreate
+    tears the team down         False
+    dispatches wave 2           True
+    returns to casting 1        False
+
+  stale_prompt_hash, team registered
+    payload ok                  False
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          ['casting-1-refused']
+    Foundry-Next action         build_castings
+    first call named            SendMessage
+    tears the team down         False
+    dispatches wave 2           False
+    returns to casting 1        True
+
+  stale_prompt_hash, team torn down
+    payload ok                  False
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          ['casting-1-refused']
+    Foundry-Next action         build_castings
+    first call named            SendMessage
+    tears the team down         False
+    dispatches wave 2           False
+    returns to casting 1        True
+
+  stale_spec_hash, team registered
+    payload ok                  False
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          []
+    Foundry-Next action         build_castings
+    first call named            Foundry-Spec-Hash
+    tears the team down         False
+    dispatches wave 2           False
+    returns to casting 1        True
+
+  stale_spec_hash, team torn down
+    payload ok                  False
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          []
+    Foundry-Next action         build_castings
+    first call named            Foundry-Spec-Hash
+    tears the team down         False
+    dispatches wave 2           False
+    returns to casting 1        True
+
+  warned, team registered
+    payload ok                  False
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          ['casting-1-refused']
+    Foundry-Next action         build_castings
+    first call named            SendMessage
+    tears the team down         False
+    dispatches wave 2           False
+    returns to casting 1        True
+
+  warned, team torn down
+    payload ok                  False
+    payload next_call           'Call Foundry-Next now.'
+    acceptance records          ['casting-1-refused']
+    Foundry-Next action         build_castings
+    first call named            SendMessage
+    tears the team down         False
+    dispatches wave 2           False
+    returns to casting 1        True
+
+  warned, then the teammate reworked it and wrote done again
+    acceptance records          ['casting-1-refused']
+    Foundry-Next action         build_castings
+    first call named            Foundry-Spec-Hash
+    sends the refusal back      False
+    returns to casting 1        True
+
+foundry_accept_casting return paths that judge the casting
+  judged                        8
+  recording no verdict          0
+
+a real Foundry-Team-Up, casting 1 done, casting 2 still writing
+  stall clock fresh
+    Team-Up payload keys        ['ok', 'registered', 'total_teams']
+    Foundry-Next action         build_castings
+    first call named            NONE
+    any teardown in the payload False
+    header ends the turn        True
+  stall clock stale
+    Team-Up payload keys        ['ok', 'registered', 'total_teams']
+    Foundry-Next action         build_castings
+    first call named            NONE
+    any teardown in the payload False
+    header ends the turn        True
+
+wave 1 accepted, TeamDelete, a real Foundry-Team-Down, then Foundry-Next
+  Team-Down next_call           'Call Foundry-Next now.'
+  Foundry-Next action           build_castings
+  dispatches wave 2             True
+  tears the team down           False
