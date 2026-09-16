@@ -7,12 +7,14 @@ names-wake: it names the completion notification as what resumes the lead.
 names-call: it names at least one literal tool call.
 denies-poll: it forbids a sleep, a poll and a re-call loop by name.
 
-  ST-001 / ST-002  build_castings  live          ends-turn=yes names-wake=yes names-call=yes denies-poll=yes
-  ST-001 / ST-002  fix_defects     live          ends-turn=yes names-wake=yes names-call=yes denies-poll=yes
-  ST-003           build_castings  idle          ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
-  ST-003           fix_defects     idle          ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
-  ST-003           build_castings  undispatched  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
-  ST-003           fix_defects     undispatched  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
+  ST-001 / ST-002  build_castings  live                   ends-turn=yes names-wake=yes names-call=yes denies-poll=yes
+  ST-001 / ST-002  fix_defects     live                   ends-turn=yes names-wake=yes names-call=yes denies-poll=yes
+  ST-003           build_castings  idle                   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
+  ST-003           fix_defects     idle                   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
+  ST-003           build_castings  registered-not-spawned ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
+  ST-003           fix_defects     registered-not-spawned ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
+  ST-003           build_castings  undispatched           ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
+  ST-003           fix_defects     undispatched           ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
 
 ST-003 is discharged by 'names-call=yes in every state where no agent is
 running': a lead that is handed a call cannot park for want of a move.

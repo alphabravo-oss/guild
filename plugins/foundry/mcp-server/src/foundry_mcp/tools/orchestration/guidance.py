@@ -1201,6 +1201,51 @@ _WAITING_IS_NOT_STOPPING = (
 )
 
 
+#: lead-stalls FR-006 / GI-004 / US-002 / OT-003 (D-005) — WHAT THE `CONTEXT:`
+#: BLOCK OF A BRANCHED ACTION SAYS INSTEAD OF A SECOND SEQUENCE.
+#:
+#: `foundry_next_action` assembles ONE payload out of two lead-facing surfaces:
+#: the imperative header, which `_select_branch` picks from the roster this
+#: server read on THIS call, and the `CONTEXT:` block printed directly beneath
+#: it, which is whatever `_compute_next_action` put in `instructions`. Only the
+#: first is substituted on run state. So a CONTEXT that named the crossing
+#: wrote a SECOND, unconditional sequence beside a state-chosen one, and the
+#: two disagreed the moment the state moved.
+#:
+#: They did, on every F1 call. The arm read "CAST phase: teammates are
+#: building. Wait for all tasks to complete. When done: shut down team,
+#: TeamDelete, Foundry-Team-Down, then Foundry-Phase(phase='cast')." — shipped
+#: immediately below an imperative that had just said END YOUR TURN, do NOT
+#: poll, do NOT re-call a tool in a loop. Three defects in one block:
+#:
+#:   1. A bare wait naming no mechanism, which is lead-stalls GI-004's
+#:      violation column verbatim and the same shape the Problem Statement
+#:      condemns in the entry this run rewrote.
+#:   2. "teammates are building" asserted while the roster read on the SAME
+#:      call had just measured that none are.
+#:   3. A crossing named WITHOUT the `Foundry-Gate(phase='inspect')` that
+#:      guards it — the gate the wave-complete branch above had just added.
+#:
+#: THE RULE: the CONTEXT of a branched action names no next call and no wait.
+#: It carries what the imperative cannot — the counts and readings this phase
+#: measured — and defers the sequence to the one surface that knows the run
+#: state. Declared once and appended, per the `_GATE_THEN_PHASE_NOTE` /
+#: `_WAITING_IS_NOT_STOPPING` discipline: two hand-typed copies of this is how
+#: lead-stalls FR-006's contradiction arose in the first place.
+#:
+#: Nothing is lost by deferring. The F1 crossing is named by
+#: `_CAST_WAVE_COMPLETE`, gate included; the F3 crossing by
+#: `_ACTION_IMPERATIVES["transition_to_inspect"]`, which is the action this
+#: router returns the instant the blocking-defect count reaches zero.
+_BRANCHED_ACTION_CONTEXT = (
+    " Your next call is the imperative printed ABOVE this block: it was chosen "
+    "from the progress ledgers this server read on THIS call, so it already "
+    "answers whether your teammates are still running. This block names no "
+    "sequence of its own — a second one here could only disagree with the one "
+    "above."
+)
+
+
 # --------------------------------------------------------------------------- #
 # lead-stalls FR-015 / GI-008 / CT-008 — AN IMPERATIVE THAT SERVES TWO RUN
 # STATES HOLDS
@@ -1261,18 +1306,36 @@ def _branch_state(liveness: object) -> str:
     imperative, which is the same rule `_waiting_on_agents` states about its own
     failure paths.
 
-    `roster_agents` and not `teams_active` alone is what answers "has this
-    phase's work been dispatched": a team is UNREGISTERED by the teardown the
-    wave-complete branch itself names, so between `Foundry-Team-Down` and
-    `Foundry-Phase(phase='cast')` a team scan reads exactly like a wave that was
-    never dispatched — and telling that lead to spawn a fresh CAST wave would
-    rebuild every casting it had just accepted. A progress ledger is written
-    once and stays written, so the roster still remembers.
+    `roster_agents` ALONE answers "has this phase's work been dispatched": a
+    team is UNREGISTERED by the teardown the wave-complete branch itself names,
+    so between `Foundry-Team-Down` and `Foundry-Phase(phase='cast')` a team scan
+    reads exactly like a wave that was never dispatched — and telling that lead
+    to spawn a fresh CAST wave would rebuild every casting it had just accepted.
+    A progress ledger is written once and stays written, so the roster still
+    remembers.
+
+    lead-stalls D-003 — AND `teams_active` IS NOT READ HERE, BECAUSE A
+    REGISTERED TEAM IS NOT DISPATCHED WORK.
+    ---------------------------------------------------------------------------
+    This line read `roster_agents or teams_active`, and the disjunct resolved
+    `{"waiting": False, "roster_agents": 0, "teams_active": True}` to `idle`.
+    That reading is the lead standing between `Foundry-Team-Up` and its FIRST
+    Agent spawn — between steps (4) and (6) of the `transition_to_cast` sequence
+    this same table hands out — so a lead with ZERO castings built was handed
+    `_CAST_WAVE_COMPLETE` and told to tear the team down, gate, and cross into
+    F2. lead-stalls FR-015 locks "the server substitutes the RIGHT one using
+    `_waiting_on_agents` at emission"; the disjunct substituted the wrong one.
+
+    The disjunct was added for the TEARDOWN reading, and `roster_agents` already
+    carries that one on its own: the ledger outlives the team. So the disjunct
+    only ever contributed the reading it got wrong. A registered team is
+    evidence that a TEAM exists; it is never evidence that work was dispatched
+    to it, and the ledgers are the only thing that answers that.
     """
     row = liveness if isinstance(liveness, dict) else {}
     if row.get("waiting"):
         return "live"
-    if row.get("roster_agents") or row.get("teams_active"):
+    if row.get("roster_agents"):
         return "idle"
     return "undispatched"
 
@@ -1341,6 +1404,15 @@ _CAST_WAVE_COMPLETE = (
 #: `build_castings` with nothing dispatched, and the entry this replaced covered
 #: that case with its first `IF` arm. Dropping it would leave that lead told to
 #: tear down a wave it never dispatched.
+#:
+#: lead-stalls D-003 — AND IT NOW SERVES THAT LEAD BOTH BEFORE AND AFTER IT
+#: REGISTERS THE TEAM. `_branch_state` stopped reading `teams_active`, so the
+#: half of this state where TeamCreate and Foundry-Team-Up have already been
+#: made routes here too — which is the whole point, because what that lead
+#: needs is step (3) onward, not the teardown it was being handed. The closing
+#: sentence therefore states only what the LEDGERS measured, and step (1) is
+#: made unconditionally: a `transition_to_cast` sequence half-completed is
+#: still a wave with nothing dispatched to it.
 _CAST_WAVE_UNDISPATCHED = (
     "YOUR NEXT CALLS (in order):\n"
     "  (1) TeamCreate('cast-{run}-wave-1')\n"
@@ -1355,8 +1427,12 @@ _CAST_WAVE_UNDISPATCHED = (
     "Foreground, never run_in_background=true. For the model: obey the model "
     "clause in the `instructions` Foundry-Cast-Wave returns — this server owns "
     "that decision; never re-derive it here.\n"
-    "No CAST team is registered and no teammate has written a progress line, "
-    "so this wave has not been dispatched yet."
+    "No teammate has written a progress line, so no casting of this wave has "
+    "been dispatched yet. Make all four calls in order. A TeamCreate or a "
+    "Foundry-Team-Up that answers 'already registered' has cost you nothing "
+    "and step (3) is still where the dispatch begins — that answer is what a "
+    "lead standing between steps (4) and (6) of transition_to_cast sees, and "
+    "it is the same wave either way."
 )
 
 #: The `fix_defects` idle branch, and its only one. This action is emitted ONLY
@@ -2585,9 +2661,9 @@ def _compute_next_action(project_root: str) -> dict:
                 "phase": "F1",
                 "action": "build_castings",
                 "instructions": (
-                    "CAST phase: teammates are building. Wait for all tasks to complete. "
-                    "When done: shut down team, TeamDelete, Foundry-Team-Down, "
-                    "then Foundry-Phase(phase='cast')."
+                    "CAST phase (F1): this wave's castings are the work, and "
+                    "`.cast-complete` is not written yet."
+                    + _BRANCHED_ACTION_CONTEXT
                 ),
                 "details": {"agent_config": CAST_AGENT_CONFIG},
             }
@@ -2833,6 +2909,26 @@ def _compute_next_action(project_root: str) -> dict:
             # state DELTA is reachable from. So it names the recorded width of
             # the cycle just verified and defers the next one to the crossing
             # that decides it.
+            #
+            # lead-stalls D-005 — AND IT NO LONGER NAMES THE CROSSING EITHER.
+            # `fix_defects` is a BRANCHED action, so the imperative printed
+            # above this block is chosen from the roster; this block used to
+            # carry "Teammates are fixing. Wait for completion." beside it —
+            # a bare wait naming no mechanism, under a header that had just
+            # said END YOUR TURN — and then a teardown-plus-
+            # `Foundry-Phase(phase='inspect_start')` sequence with no
+            # `Foundry-Gate(phase='inspect_start')` in it. Identical to the F1
+            # arm's defect, in the sibling. `_BRANCHED_ACTION_CONTEXT` states
+            # the rule once for both; the crossing is named by
+            # `_ACTION_IMPERATIVES["transition_to_inspect"]`, which is what
+            # this router returns the instant `open_count` reaches zero, and
+            # it takes its gate and its token from one `_ACTION_CROSSINGS`
+            # row so the two can never disagree.
+            #
+            # What STAYS is what the imperative cannot carry: the measured
+            # counts, the recorded width of the cycle just verified, and the
+            # `Foundry-Fix` argument shape above — bookkeeping for a call the
+            # lead makes per defect, not a next-call sequence.
             f3_mode = _recorded_inspect_mode(fdir) or {}
             return {
                 "phase": "F3",
@@ -2847,20 +2943,16 @@ def _compute_next_action(project_root: str) -> dict:
                         "otherwise. "
                         if latent_backlog else ""
                     )
-                    + "Teammates are fixing. Wait for completion. "
-                    "After each fix call Foundry-Fix(defect_id, cycle, "
+                    + "After each fix call Foundry-Fix(defect_id, cycle, "
                     "authored_by, ...): authored_by is 'teammate' (with the "
                     "prompt_hash and casting_id it was dispatched for) or "
                     "'lead' (with fix_commit). On a LIVE or untiered defect add "
                     "adjacent_path_statement and adjacent_path_test; on a "
                     "LATENT defect add regression_test alone — the "
                     "adjacent-path pair is NOT demanded there. "
-                    "When all done: shut down team, then "
-                    "Foundry-Phase(phase='inspect_start'), which decides and "
-                    "records the next INSPECT's width and names the roster to "
-                    "run — run exactly that roster. "
                     f"(The cycle just verified ran {f3_mode.get('mode') or 'FULL'} "
                     f"width, rule {f3_mode.get('rule') or 'unrecorded'}.)"
+                    + _BRANCHED_ACTION_CONTEXT
                 ),
                 "details": {
                     "open_defects": open_count,

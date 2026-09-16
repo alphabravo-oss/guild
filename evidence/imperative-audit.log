@@ -2,10 +2,20 @@
 # evidence-for: FR-007, FR-008, OT-002
 
 keys in _ACTION_IMPERATIVES: 22
-emission sites swept:        115
+emission sites swept:        138
 defective emissions:         0
 
-site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, undispatched, unmeasured
+site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured
+
+readings are the four roster_agents x teams_active combinations plus the unmeasured one,
+and each names the branch it is OWED so the sweep judges ROUTING and not only shape:
+
+  live                   waiting=True  roster_agents=-    teams_active=-     owed=live
+  idle                   waiting=False roster_agents=3    teams_active=True  owed=idle
+  torn-down              waiting=False roster_agents=3    teams_active=False owed=idle
+  registered-not-spawned waiting=False roster_agents=0    teams_active=True  owed=undispatched
+  undispatched           waiting=False roster_agents=0    teams_active=False owed=undispatched
+  unmeasured             waiting=False roster_agents=-    teams_active=-     owed=undispatched
 
   add_castings             ok
   assay_failed_loop_back   ok

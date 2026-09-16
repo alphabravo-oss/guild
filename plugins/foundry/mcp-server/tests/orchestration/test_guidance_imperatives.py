@@ -34,10 +34,12 @@ import re
 import pytest
 
 from tests.orchestration._env import (  # noqa: F401
+    _defect_ledger,
     _progressing_ledger,
     _stale_stall_clock,
     _stalled_ledger,
     _teams_active,
+    _tiered,
     _write_manifest_with_castings,
     _write_state,
     run_env,
@@ -49,9 +51,11 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _BRANCH_CLOSE,
     _BRANCH_FALLBACK,
     _BRANCH_OPEN,
+    _BRANCHED_ACTION_CONTEXT,
     _GATE_THEN_PHASE_NOTE,
     _WAITING_IS_NOT_STOPPING,
     _branch_state,
+    _compute_next_action,
     _format_imperative_header,
     _parse_branches,
     _select_branch,
@@ -98,13 +102,83 @@ _NAMES_NO_CALL = re.compile(r"YOUR NEXT CALL:\s*NONE")
 #: what the lead receives in EVERY run state rather than in the one state a bare
 #: call happens to resolve to. `None` is the reading a caller that measured
 #: nothing passes.
-_LIVENESS_READINGS: tuple[tuple[str, object], ...] = (
-    ("live", {"waiting": True, "count": 2, "detail": "oldest progress 1m 0s ago"}),
-    ("idle", {"waiting": False, "roster_agents": 3, "teams_active": True}),
-    ("torn-down", {"waiting": False, "roster_agents": 3, "teams_active": False}),
-    ("undispatched", {"waiting": False, "roster_agents": 0, "teams_active": False}),
-    ("unmeasured", None),
+#:
+#: lead-stalls D-004 — THE READINGS ARE THE PRODUCT, AND EACH ONE CARRIES THE
+#: BRANCH IT IS OWED.
+#: ---------------------------------------------------------------------------
+#: This tuple held four `roster_agents` x `teams_active` readings out of the
+#: four that exist, and the one it omitted was `(0, True)` — the reading
+#: lead-stalls D-003 misrouted. So the sweep's zero was computed over a space
+#: the defect could not appear in, and lead-stalls OT-002's stopping condition
+#: ("discharged when the sweep returns zero") was not actually met. The four
+#: combinations are enumerated here rather than sampled, and `unmeasured`
+#: rides alongside them as the reading a caller that measured nothing passes.
+#:
+#: WIDENING ALONE WOULD NOT HAVE CAUGHT IT, which is the other half of D-004.
+#: The three detectors below are SHAPE-only: they ask whether the emitted
+#: string names a literal call, hands over a condition, or leaks a marker.
+#: `_CAST_WAVE_COMPLETE` names four literal calls and hands over nothing, so a
+#: shape detector answers `ok` for it on EVERY reading — including the one that
+#: must never receive it. A sweep can only see a misrouting if it knows which
+#: branch each reading is OWED, so the third element of each row says so, and
+#: `WRONG_BRANCH` below compares it against the branch the lead actually got.
+#:
+#: The owed branch is the one the RUN STATE calls for, derived from the two
+#: fields by hand rather than from `_branch_state` — a table that asked the
+#: function under audit what the right answer is would agree with it by
+#: construction and could never disagree, which is the shape of a test that
+#: cannot fail. `fix_defects` declares no `undispatched` branch and resolves it
+#: through `_BRANCH_FALLBACK`; `_owed_branch` below is where that is reconciled.
+_LIVENESS_READINGS: tuple[tuple[str, object, str], ...] = (
+    # waiting -> live, whatever the other two fields say.
+    ("live", {"waiting": True, "count": 2, "detail": "oldest progress 1m 0s ago"}, "live"),
+    # roster 3 / team registered: the wave is dispatched and nothing advances.
+    ("idle", {"waiting": False, "roster_agents": 3, "teams_active": True}, "idle"),
+    # roster 3 / team torn down: between Foundry-Team-Down and the crossing.
+    # The ledger outlives the team, so this is still the wave-complete state.
+    ("torn-down", {"waiting": False, "roster_agents": 3, "teams_active": False}, "idle"),
+    # lead-stalls D-003's reading. Roster 0 / team registered: the lead is
+    # between steps (4) and (6) of `transition_to_cast` — Foundry-Team-Up made,
+    # first Agent not yet spawned. Nothing has been dispatched, so the dispatch
+    # branch is what it is owed; it was being handed the teardown.
+    ("registered-not-spawned", {"waiting": False, "roster_agents": 0, "teams_active": True}, "undispatched"),
+    # roster 0 / no team: nothing dispatched by either measure.
+    ("undispatched", {"waiting": False, "roster_agents": 0, "teams_active": False}, "undispatched"),
+    # the watchdog could not answer; a reading that failed must not be able to
+    # claim a wave is finished, so it owes the dispatch branch too.
+    ("unmeasured", None, "undispatched"),
 )
+
+
+def _owed_branch(action: str, owed: str) -> str:
+    """The branch name `action` is OWED on a reading whose run state is `owed`.
+
+    A state an entry declares no branch for resolves through `_BRANCH_FALLBACK`,
+    which is the `.get(..., default)` shape `_halt_cause` uses — so `fix_defects`
+    on an `undispatched` reading is owed its `idle` branch, and that is a
+    property of what the entry DECLARES rather than of what the selector did.
+    """
+    branches = _parse_branches(_ACTION_IMPERATIVES.get(action, ""))
+    return owed if branches.get(owed) else _BRANCH_FALLBACK
+
+
+def _emitted_branch(action: str, text: str, run_name: str) -> str:
+    """Which declared branch of `action` the lead ACTUALLY received.
+
+    Matched by equality against the branch bodies `_parse_branches` returns,
+    with the one placeholder a branched entry carries resolved the way
+    `_format_imperative_header` resolves it. Equality rather than a first-line
+    or keyword match because `_CAST_WAVE_COMPLETE` and `_CAST_WAVE_UNDISPATCHED`
+    open on the identical line — "YOUR NEXT CALLS (in order):" — and a
+    discriminator that could not tell those two apart is exactly the one
+    lead-stalls D-003 needed it to tell apart.
+
+    ``"?"`` when the text matches no declared branch, which is itself a finding.
+    """
+    for name, body in _parse_branches(_ACTION_IMPERATIVES.get(action, "")).items():
+        if body.replace("{run}", run_name) == text:
+            return name
+    return "?"
 
 
 def _emission_phases(action: str) -> tuple[str, ...]:
@@ -118,25 +192,39 @@ def _emission_phases(action: str) -> tuple[str, ...]:
     return crossings or ("F1",)
 
 
-def _audit_sites() -> list[tuple[str, str, str]]:
-    """(action, site label, emitted text) for every string the table can emit.
+#: The `run_name` every emission site is formatted with. Named once because
+#: `_emitted_branch` has to resolve `{run}` the same way the formatter did, and
+#: a second literal here is how those two drift apart.
+_AUDIT_RUN = "audit"
+
+
+def _audit_sites() -> list[tuple[str, str, str, str]]:
+    """(action, site label, emitted text, owed branch) for every string the
+    table can emit.
 
     One enumeration, two readers: the detector below and the report it feeds.
     A second copy of this loop in the evidence command would be a second
     spelling of what the audit's population IS.
+
+    The fourth element is lead-stalls D-004's addition — the branch this
+    reading is owed, so the sweep can judge ROUTING and not only shape.
+    ``""`` for the twenty unbranched entries, which have nothing to route.
     """
     return [
         (
             action,
             f"{action}@{phase}[{label}]",
             _format_imperative_header(
-                action, "", {}, run_name="audit", phase=phase,
+                action, "", {}, run_name=_AUDIT_RUN, phase=phase,
                 liveness=liveness,
             ),
+            _owed_branch(action, owed) if _parse_branches(
+                _ACTION_IMPERATIVES[action]
+            ) else "",
         )
         for action in sorted(_ACTION_IMPERATIVES)
         for phase in _emission_phases(action)
-        for label, liveness in _LIVENESS_READINGS
+        for label, liveness, owed in _LIVENESS_READINGS
     ]
 
 
@@ -150,7 +238,7 @@ def audit_action_imperatives() -> list[str]:
     byte-identically.
     """
     findings: list[str] = []
-    for _action, site, text in _audit_sites():
+    for action, site, text, owed in _audit_sites():
         hit = _HANDS_OVER_THE_CONDITION.search(text)
         if hit:
             quoted = " ".join(
@@ -169,6 +257,21 @@ def audit_action_imperatives() -> list[str]:
                 f"{site}: UNRESOLVED_BRANCH — a branch marker survived to the "
                 f"lead"
             )
+        # lead-stalls D-004 — THE ROUTING CHECK, WHICH IS THE ONE THE THREE
+        # ABOVE CANNOT MAKE. They judge the SHAPE of whatever arrived; this
+        # judges whether the thing that arrived is the thing this run state
+        # was owed. lead-stalls D-003 shipped an unconditional string naming
+        # four literal tool calls — clean on all three shape checks — to a
+        # lead with zero castings built, telling it to tear the team down and
+        # cross into F2. A sweep that cannot express "right text, wrong
+        # reading" returns zero over that.
+        if owed:
+            got = _emitted_branch(action, text, _AUDIT_RUN)
+            if got != owed:
+                findings.append(
+                    f"{site}: WRONG_BRANCH — the lead received the {got!r} "
+                    f"branch on a reading owed {owed!r}"
+                )
     return findings
 
 
@@ -189,9 +292,23 @@ def audit_report() -> list[str]:
         f"defective emissions:         {len(findings)}",
         "",
         "site = action@emitting-phase[liveness reading]; readings swept: "
-        + ", ".join(label for label, _ in _LIVENESS_READINGS),
+        + ", ".join(label for label, _, _ in _LIVENESS_READINGS),
+        "",
+        "readings are the four roster_agents x teams_active combinations plus "
+        "the unmeasured one,",
+        "and each names the branch it is OWED so the sweep judges ROUTING and "
+        "not only shape:",
         "",
     ]
+    for label, liveness, owed in _LIVENESS_READINGS:
+        row = liveness if isinstance(liveness, dict) else {}
+        lines.append(
+            f"  {label:<22} waiting={str(bool(row.get('waiting'))):<5} "
+            f"roster_agents={str(row.get('roster_agents', '-')):<4} "
+            f"teams_active={str(row.get('teams_active', '-')):<5} "
+            f"owed={owed}"
+        )
+    lines.append("")
     for action in sorted(_ACTION_IMPERATIVES):
         hits = [f for f in findings if f.startswith(f"{action}@")]
         lines.append(f"  {action:<24} {'DEFECTIVE' if hits else 'ok'}")
@@ -206,25 +323,39 @@ def audit_evidence() -> list[str]:
     lead-stalls OT-013 is a claim about the strings the lead RECEIVES, and a
     log reading "0 findings" asks the reader to take the detector's word for
     it. This dump is the population the detector judged, so the claim can be
-    read rather than trusted: 115 lines, one per emission site, each showing
-    whether that site answers with a call or with an explicit NONE and how its
-    text opens. lead-stalls GI-008 / CT-008 are the same claim from the other
+    read rather than trusted: one line per emission site, each showing whether
+    that site answers with a call or with an explicit NONE and how its text
+    opens. lead-stalls GI-008 / CT-008 are the same claim from the other
     end -- one unconditional string per site, chosen server-side -- and they are
     read off the same dump.
+
+    lead-stalls D-004 -- AND WHICH BRANCH ARRIVED, beside which one was owed.
+    "CALL" was true of the wave-complete teardown on the reading that must not
+    receive it, so the answer column alone cannot be read as evidence that the
+    routing is right. The branch column is what makes that readable.
     """
     lines = audit_report()
     lines += [
         "",
-        "EVERY EMITTED HEADER (site | answer | opening of its first line).",
+        "EVERY EMITTED HEADER (site | answer | branch | opening of its first line).",
         "'NONE' is an explicit 'YOUR NEXT CALL: NONE' -- the register `done` and",
         "`halted` use, and what the teammates-live branch answers. 'CALL' names a",
         "literal tool call. There is no third answer, which is the whole claim.",
+        "branch is 'received/owed' for the two branched entries, '-' for the",
+        "twenty that have nothing to route.",
         "",
     ]
-    for _action, site, text in _audit_sites():
+    for action, site, text, owed in _audit_sites():
         head = " ".join(text.split("\n", 1)[0].split())
         answer = "NONE" if _NAMES_NO_CALL.search(text) else "CALL"
-        lines.append(f"  {site:<42} {answer}  {head[:56]}")
+        branch = (
+            f"{_emitted_branch(action, text, _AUDIT_RUN)}/{owed}" if owed else "-"
+        )
+        # Two literal spaces on BOTH sides of the answer, independent of how
+        # far the site label padded: the floor test beside this reads the
+        # answer column by that separator, and a site label longer than the
+        # pad width would otherwise drop its own row out of the count.
+        lines.append(f"  {site:<48}  {answer}  {branch:<28} {head[:52]}")
     return lines
 
 
@@ -250,13 +381,16 @@ def turn_boundary_report() -> list[str]:
               imperative must name a literal call in every state where no agent
               is running, so ending the turn is never the only move on offer.
     """
+    # Derived from `_LIVENESS_READINGS` rather than re-typed, so the reading
+    # lead-stalls D-004 added to the audit is shown here too and the two
+    # populations cannot drift. `torn-down` and `unmeasured` carry the same
+    # lead-stalls ST-003 claim as the readings they resolve with, so the rows the log
+    # prints are the distinct RUN STATES and not every reading of them.
+    _TRANSITIONS = {"live": "ST-001 / ST-002"}
     rows = [
-        ("ST-001 / ST-002", "live",
-         {"waiting": True, "count": 2, "detail": "oldest progress 1m 0s ago"}),
-        ("ST-003", "idle",
-         {"waiting": False, "roster_agents": 3, "teams_active": True}),
-        ("ST-003", "undispatched",
-         {"waiting": False, "roster_agents": 0, "teams_active": False}),
+        (_TRANSITIONS.get(label, "ST-003"), label, liveness)
+        for label, liveness, _owed in _LIVENESS_READINGS
+        if label in ("live", "idle", "registered-not-spawned", "undispatched")
     ]
     lines = [
         "the server-side half of the turn boundary, per run state.",
@@ -272,7 +406,7 @@ def turn_boundary_report() -> list[str]:
                 action, "", {}, run_name="audit", phase="F1", liveness=liveness,
             )
             lines.append(
-                f"  {transitions:<16} {action:<15} {state:<13} "
+                f"  {transitions:<16} {action:<15} {state:<22} "
                 f"ends-turn={'yes' if _NAMES_NO_CALL.search(text) else 'no ':<3} "
                 f"names-wake={'yes' if 'completion notification' in text else 'no ':<3} "
                 f"names-call={'yes' if _NAMES_A_CALL.search(text) else 'no ':<3} "
@@ -317,17 +451,26 @@ def test_the_recorded_evidence_shows_the_population_it_judged():
     row per (audited action x run state).
     """
     dump = audit_evidence()
-    for _action, site, _text in _audit_sites():
+    for _action, site, _text, _owed in _audit_sites():
         assert any(site in line for line in dump), site
     assert sum(1 for l in dump if "  CALL  " in l or "  NONE  " in l) == len(
         _audit_sites()
     )
+    # lead-stalls D-004 — the readings table is IN the log, so a reader can see
+    # which run states the zero was computed over rather than trusting that it
+    # covered them. The reading D-003 misrouted is named in it.
+    for label, _liveness, owed in _LIVENESS_READINGS:
+        assert any(
+            line.strip().startswith(label) and f"owed={owed}" in line
+            for line in dump
+        ), label
+    assert any("registered-not-spawned" in line for line in dump)
 
     boundary = turn_boundary_report()
     for action in ("build_castings", "fix_defects"):
-        for state in ("live", "idle", "undispatched"):
+        for state in ("live", "idle", "undispatched", "registered-not-spawned"):
             assert any(
-                action in line and f" {state:<13}" in line for line in boundary
+                action in line and f" {state:<22}" in line for line in boundary
             ), (action, state)
     # The claim the log is bound to lead-stalls ST-003 for: wherever no agent
     # is running,
@@ -385,10 +528,37 @@ def test_every_action_is_swept_in_every_run_state():
     reading, every emission phase — so a `_LIVENESS_READINGS` that lost its
     branches or an `_emission_phases` that started answering `()` fails here
     instead of turning the audit green over nothing.
+
+    lead-stalls D-004 — AND THE PRODUCT IS PINNED AS A PRODUCT, not as a count.
+    The tuple held four of the four `roster_agents` x `teams_active`
+    combinations and was missing `(0, True)`, so `len(...) >= 4` passed while
+    the sweep's zero was being computed over a space the defect could not
+    appear in. A floor that counts rows cannot tell a complete product from an
+    incomplete one of the same size; this one enumerates the product and asks
+    for each cell by name.
     """
-    sites = [site for _, site, _ in _audit_sites()]
+    sites = [site for _, site, _, _ in _audit_sites()]
     assert len(sites) == len(set(sites)) >= 22 * len(_LIVENESS_READINGS)
-    assert len(_LIVENESS_READINGS) >= 4
+    # Every cell of the product, named. `unmeasured` rides alongside as the
+    # reading a caller that measured nothing passes.
+    cells = {
+        (bool(row.get("roster_agents")), bool(row.get("teams_active")))
+        for _label, liveness, _owed in _LIVENESS_READINGS
+        if isinstance(liveness, dict) and not liveness.get("waiting")
+        for row in (liveness,)
+    }
+    assert cells == {(False, False), (False, True), (True, False), (True, True)}, cells
+    assert any(liveness is None for _l, liveness, _o in _LIVENESS_READINGS)
+    assert any(
+        isinstance(liveness, dict) and liveness.get("waiting")
+        for _l, liveness, _o in _LIVENESS_READINGS
+    )
+    # Every reading names the branch it is owed, and both dispatch and
+    # wave-complete are among them — a table that owed one branch everywhere
+    # would make `WRONG_BRANCH` unfalsifiable.
+    assert {owed for _l, _lv, owed in _LIVENESS_READINGS} == {
+        "live", "idle", "undispatched",
+    }
     # `transition_to_inspect` is emitted from two phases, so the site count
     # must exceed a flat key-times-reading product.
     assert len(sites) > 22 * len(_LIVENESS_READINGS)
@@ -474,7 +644,7 @@ def test_fix_defects_no_longer_ends_in_a_bare_wait():
     why that is right.
     """
     assert "WAIT." not in _ACTION_IMPERATIVES["fix_defects"]
-    for _, liveness in _LIVENESS_READINGS:
+    for _label, liveness, _owed in _LIVENESS_READINGS:
         text = _format_imperative_header(
             "fix_defects", "", {}, run_name="r", phase="F3", liveness=liveness,
         )
@@ -709,6 +879,106 @@ def test_the_roster_outlives_the_teardown_the_imperative_itself_names(run_env):
 
 
 # --------------------------------------------------------------------------- #
+# lead-stalls D-003 / D-004 — the reading the selector misrouted, and the
+# sweep that can now see a misrouting at all
+# --------------------------------------------------------------------------- #
+
+
+def test_a_registered_team_with_nothing_spawned_is_not_a_finished_wave(run_env):
+    """lead-stalls FR-015 / CT-008 / US-001, and D-003.
+
+    `{"waiting": False, "roster_agents": 0, "teams_active": True}` is the lead
+    standing between steps (4) and (6) of the `transition_to_cast` sequence this
+    same server hands out: `Foundry-Team-Up` made, first Agent not yet spawned.
+    `_branch_state` read `roster_agents or teams_active`, so the registered team
+    alone answered "dispatched" and the lead was handed `_CAST_WAVE_COMPLETE` --
+    TeamDelete, Foundry-Team-Down, gate, and cross into F2 -- WITH ZERO CASTINGS
+    BUILT. lead-stalls FR-015 locks "the server substitutes the RIGHT one using
+    `_waiting_on_agents` at emission"; it substituted the wrong one.
+
+    Driven at both ends: off a synthetic reading, and through `_waiting_on_agents`
+    against a run with a registered team and no ledger, so the fix is pinned to
+    the reading the watchdog actually produces and not only to a dict shape.
+    """
+    assert _branch_state(
+        {"waiting": False, "roster_agents": 0, "teams_active": True}
+    ) == "undispatched"
+
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _teams_active(True)            # TeamCreate + Foundry-Team-Up have happened
+    # and no progress ledger: no Agent has been spawned yet.
+
+    reading = _waiting_on_agents(project_root)
+
+    assert reading["waiting"] is False
+    assert reading["teams_active"] is True
+    assert reading["roster_agents"] == 0
+    assert _branch_state(reading) == "undispatched"
+
+    text = _format_imperative_header(
+        "build_castings", "", {}, run_name="vm", phase="F1", liveness=reading,
+    )
+    # What it is owed: get the wave dispatched.
+    assert "Foundry-Cast-Wave(wave=1, phase='cast')" in text, text
+    assert "Agent(subagent_type='foundry:teammate'" in text, text
+    # What it must never be handed here: the teardown and the crossing.
+    assert "TeamDelete" not in text, text
+    assert "Foundry-Team-Down(" not in text, text
+    assert "Foundry-Gate(phase='inspect')" not in text, text
+    assert "Foundry-Phase(phase='cast')" not in text, text
+    # And the branch does not claim something the server just measured false.
+    assert "No CAST team is registered" not in text, text
+
+
+def test_the_audit_sees_a_misrouted_branch(monkeypatch):
+    """lead-stalls D-004 — the positive control for `WRONG_BRANCH`.
+
+    The other three detectors are SHAPE-only, and `_CAST_WAVE_COMPLETE` is a
+    clean shape: four literal calls, no conditional, no marker. So the sweep
+    answered `ok` for it on the one reading that must never receive it, and
+    lead-stalls FR-008's "discharged when the sweep returns zero" was being
+    satisfied by a sweep that could not express the defect.
+
+    Restores the `or teams_active` disjunct and asserts the sweep now BITES,
+    naming the reading and both branches. Without this control, `WRONG_BRANCH`
+    could be a check that never fires and nobody would know.
+    """
+    import foundry_mcp.tools.orchestration.guidance as _g
+
+    def _with_the_disjunct_back(liveness: object) -> str:
+        row = liveness if isinstance(liveness, dict) else {}
+        if row.get("waiting"):
+            return "live"
+        if row.get("roster_agents") or row.get("teams_active"):
+            return "idle"
+        return "undispatched"
+
+    monkeypatch.setattr(_g, "_branch_state", _with_the_disjunct_back)
+
+    findings = audit_action_imperatives()
+
+    misrouted = [f for f in findings if "WRONG_BRANCH" in f]
+    assert misrouted, findings
+    assert any(
+        "build_castings@F1[registered-not-spawned]" in f
+        and "'idle'" in f and "'undispatched'" in f
+        for f in misrouted
+    ), misrouted
+    # And it bites at exactly ONE site, which is the claim the defect report
+    # made off a side-by-side run of the shipped selector and a disjunct-free
+    # variant: the other readings agree either way, so the disjunct's only
+    # contribution was the reading it got wrong. `fix_defects` is untouched
+    # even on that reading -- it declares no `undispatched` branch, so both
+    # states resolve through `_BRANCH_FALLBACK` to its `idle` body and there is
+    # nothing for a misrouting to change. That is why removing the disjunct is
+    # safe rather than merely correct.
+    assert {f.split(":")[0] for f in misrouted} == {
+        "build_castings@F1[registered-not-spawned]",
+    }, sorted({f.split(":")[0] for f in misrouted})
+
+
+# --------------------------------------------------------------------------- #
 # lead-stalls FR-006 / GI-004 / OT-003 — the wait policy, one spelling, no poll
 # --------------------------------------------------------------------------- #
 
@@ -717,6 +987,16 @@ def test_the_roster_outlives_the_teardown_the_imperative_itself_names(run_env):
 #: would INSTRUCT
 #: one, not a word that merely mentions one -- the policy sentence itself has to
 #: be able to say 'do NOT poll'.
+#:
+#: lead-stalls D-005 -- THE BARE WAIT IS THE OTHER HALF, AND IT WAS NOT LISTED.
+#: Every spelling above names a MECHANISM the lead would use to pass the time,
+#: so the list could only catch a wait that said HOW. The `_compute_next_action`
+#: F1 arm said "Wait for all tasks to complete" and the F3 arm said "Wait for
+#: completion" -- no mechanism, so nothing here matched, and a lead trained to
+#: obey Foundry-Next literally was handed "wait" with no sanctioned way to do
+#: it, printed directly beneath an imperative that had just said END YOUR TURN.
+#: lead-stalls GI-004's violation column does not require the text to name the mechanism,
+#: and neither does this list any more.
 _INSTRUCTS_A_WAIT_LOOP = (
     "wait and call foundry-next again",
     "call foundry-next again",
@@ -726,16 +1006,57 @@ _INSTRUCTS_A_WAIT_LOOP = (
     "sleep for",
     "check again in",
     "re-call foundry-next until",
+    "wait for all",
+    "wait for completion",
+    "wait for them",
+    "wait for the team",
+    "wait until",
 )
 
 
-def _lead_facing_wait_prose(project_root: str) -> dict[str, str]:
-    """Every string this spec changed that a lead can read about waiting."""
+def _context_blocks(project_root, fdir) -> dict[str, str]:
+    """The raw `CONTEXT:` text `_compute_next_action` emits for each branched
+    action, keyed by action.
+
+    Driven through the router rather than read off a constant, because these
+    two strings are built inline from the counts the phase measured — that is
+    the whole reason they are not constants, and a test that read a constant
+    would not see what the lead is handed. Leaves the run at F3; callers that
+    need an earlier phase read it before calling.
+    """
+    blocks: dict[str, str] = {}
+
+    _write_state(fdir, phase="F1", cycle=0)
+    blocks["build_castings"] = _compute_next_action(project_root)["instructions"]
+
+    _write_state(fdir, phase="F3", cycle=2)
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE"), _tiered("D-002", "LATENT")])
+    blocks["fix_defects"] = _compute_next_action(project_root)["instructions"]
+
+    return blocks
+
+
+def _lead_facing_wait_prose(project_root, fdir) -> dict[str, str]:
+    """Every string this spec changed that a lead can read about waiting.
+
+    lead-stalls D-005 -- AND THE `CONTEXT:` BLOCKS OF THE BRANCHED ACTIONS,
+    WHICH SHIP IN THE SAME PAYLOAD AS THE IMPERATIVES ABOVE.
+    ---------------------------------------------------------------------------
+    This sweep read `_ACTION_IMPERATIVES` and the policy constant, so its
+    population was the half of the payload this run rewrote. The other half --
+    what `_compute_next_action` puts in `instructions`, printed beneath the
+    header under the literal line "CONTEXT:" -- was never in it, and that is
+    where the surviving bare wait was. A sweep over the surface that was fixed
+    cannot see a defect on the surface beside it.
+    """
     surfaces = {
         f"_ACTION_IMPERATIVES:{action}": text
         for action, text in sorted(_ACTION_IMPERATIVES.items())
     }
     surfaces["_WAITING_IS_NOT_STOPPING"] = _WAITING_IS_NOT_STOPPING
+    surfaces["_BRANCHED_ACTION_CONTEXT"] = _BRANCHED_ACTION_CONTEXT
+    for action, text in _context_blocks(project_root, fdir).items():
+        surfaces[f"CONTEXT:{action}"] = text
     return surfaces
 
 
@@ -750,6 +1071,9 @@ def test_no_lead_facing_string_instructs_a_sleep_a_poll_or_a_wait_loop(run_env):
     while waiting', the other ended 'otherwise wait and call Foundry-Next
     again'. lead-stalls GI-004 decides the direction -- the poll is what
     yields.
+
+    lead-stalls D-005: and over the `CONTEXT:` blocks that ship beneath the
+    imperatives in the same payload, which is where the bare wait survived.
     """
     project_root, fdir = run_env
     _write_state(fdir, phase="F1", cycle=0)
@@ -757,8 +1081,12 @@ def test_no_lead_facing_string_instructs_a_sleep_a_poll_or_a_wait_loop(run_env):
     _progressing_ledger(fdir)
     _stale_stall_clock(fdir, 600)
 
-    surfaces = _lead_facing_wait_prose(project_root)
-    surfaces["stall_notice"] = foundry_next_action(project_root)["instructions"]
+    # Taken FIRST: `_lead_facing_wait_prose` leaves the run at F3 to reach the
+    # `fix_defects` CONTEXT, and this notice is the F1 one.
+    surfaces = {
+        "stall_notice": foundry_next_action(project_root)["instructions"],
+    }
+    surfaces.update(_lead_facing_wait_prose(project_root, fdir))
 
     problems = {
         f"{name}:{spelling}": text
@@ -767,6 +1095,89 @@ def test_no_lead_facing_string_instructs_a_sleep_a_poll_or_a_wait_loop(run_env):
         if spelling in text.lower()
     }
     assert problems == {}, sorted(problems)
+    # Floor: the CONTEXT blocks the sweep gained are actually IN it. A helper
+    # that started answering `{}` would make this test pass over less.
+    assert "CONTEXT:build_castings" in surfaces
+    assert "CONTEXT:fix_defects" in surfaces
+    assert surfaces["CONTEXT:fix_defects"].strip(), surfaces
+
+
+def test_the_context_block_of_a_branched_action_names_no_sequence(run_env):
+    """lead-stalls FR-006 / US-002 / GI-004, and D-005.
+
+    ONE `Foundry-Next` payload carried both the new wait policy and its flat
+    contradiction. The imperative said "END YOUR TURN ... Do NOT sleep, do NOT
+    poll, do NOT re-call a tool in a loop"; the `CONTEXT:` block printed
+    directly beneath it, from `_compute_next_action`'s F1 arm, said "CAST phase:
+    teammates are building. Wait for all tasks to complete. When done: shut down
+    team, TeamDelete, Foundry-Team-Down, then Foundry-Phase(phase='cast')."
+
+    Three things wrong at once, and this pins all three:
+
+      * a bare wait naming no mechanism -- lead-stalls GI-004's violation column;
+      * "teammates are building" asserted on a reading where the same call had
+        just measured that none are;
+      * a crossing named WITHOUT `Foundry-Gate(phase='inspect')` -- two
+        sequences for one crossing, in one payload, and the gate-less one was
+        the unconditional one.
+
+    It shipped on EVERY F1 `Foundry-Next` call, not only past the stall
+    threshold, so it was read far more often than the WAITING arm this run had
+    already reconciled. The sibling F3 arm carried the same defect verbatim, so
+    both are driven here.
+    """
+    project_root, fdir = run_env
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+
+    blocks = _context_blocks(project_root, fdir)
+
+    for action, text in blocks.items():
+        lowered = text.lower()
+        # No bare wait, by any spelling.
+        assert "wait for" not in lowered, (action, text)
+        assert "wait." not in lowered, (action, text)
+        # No crossing, and so no second sequence to disagree with the one the
+        # imperative above chose from the roster.
+        assert "Foundry-Phase(" not in text, (action, text)
+        assert "TeamDelete" not in text, (action, text)
+        assert "Foundry-Team-Down" not in text, (action, text)
+        # It defers instead, in the one spelling both arms quote.
+        assert _BRANCHED_ACTION_CONTEXT in text, (action, text)
+
+    # The F1 block no longer asserts an activity the server has not measured.
+    assert "teammates are building" not in blocks["build_castings"].lower()
+    # The F3 block keeps what the imperative CANNOT carry: the measured counts
+    # and the per-defect bookkeeping call.
+    assert "blocking defect(s) to fix" in blocks["fix_defects"]
+    assert "Foundry-Fix(defect_id, cycle, authored_by, ...)" in blocks["fix_defects"]
+
+
+def test_the_payload_states_one_sequence_for_the_f1_crossing(run_env):
+    """lead-stalls D-005, driven end to end through the door the lead reads.
+
+    The header and the CONTEXT ship concatenated in `result["instructions"]`,
+    so "two sequences for one crossing" is a property of the WHOLE payload and
+    not of either half. With the wave complete, exactly one surface names the
+    F1 -> F2 crossing, and it is the one that names the gate that guards it.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _stalled_ledger(fdir)          # a roster that finished: the wave is done
+
+    instructions = foundry_next_action(project_root)["instructions"]
+
+    assert instructions.count("Foundry-Phase(phase='cast')") == 1, instructions
+    assert "Foundry-Gate(phase='inspect')" in instructions, instructions
+    # The gate is named BEFORE the phase call it guards, in the one place that
+    # names either.
+    assert instructions.index("Foundry-Gate(phase='inspect')") < instructions.index(
+        "Foundry-Phase(phase='cast')"
+    ), instructions
+    # And the CONTEXT half of that payload names neither.
+    context = instructions.split("CONTEXT:", 1)[1]
+    assert "Foundry-Phase(" not in context, context
+    assert "wait for" not in context.lower(), context
 
 
 def test_the_wait_policy_has_one_spelling():

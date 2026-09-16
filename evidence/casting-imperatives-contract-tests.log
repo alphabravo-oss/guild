@@ -3,7 +3,7 @@
 # evidence-volatile: (in )[0-9]+\.[0-9]+s
 
 ============================= test session starts ==============================
-collecting ... collected 24 items
+collecting ... collected 28 items
 
 test_the_audit_sweeps_every_key_and_returns_zero PASSED
 test_the_recorded_evidence_shows_the_population_it_judged PASSED
@@ -23,11 +23,15 @@ test_the_audited_action_payloads_carry_live_agent_status PASSED
 test_an_unaudited_action_pays_for_no_roster_scan PASSED
 test_the_liveness_reading_is_taken_once_and_shared_with_the_notice PASSED
 test_the_roster_outlives_the_teardown_the_imperative_itself_names PASSED
+test_a_registered_team_with_nothing_spawned_is_not_a_finished_wave PASSED
+test_the_audit_sees_a_misrouted_branch PASSED
 test_no_lead_facing_string_instructs_a_sleep_a_poll_or_a_wait_loop PASSED
+test_the_context_block_of_a_branched_action_names_no_sequence PASSED
+test_the_payload_states_one_sequence_for_the_f1_crossing PASSED
 test_the_wait_policy_has_one_spelling PASSED
 test_the_waiting_notice_quotes_the_policy_rather_than_rewording_it PASSED
 test_the_stall_accusation_arm_is_untouched PASSED
 test_transition_to_inspect_is_still_the_substitution_precedent PASSED
 test_the_wave_complete_branch_carries_the_gate_then_phase_note_once PASSED
 
-============================== 24 passed in 0.08s ==============================
+============================== 28 passed in 2.46s ==============================
