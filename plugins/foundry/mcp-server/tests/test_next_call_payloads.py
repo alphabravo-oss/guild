@@ -24,6 +24,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -653,6 +654,15 @@ _REFUSALS = {
     "warned": {"completion_report": "built the thing; the tests are deferred"},
 }
 
+#: The first call the router names for each refusal. A refused CALL leaves the
+#: casting done and unjudged, which owes acceptance made correctly — a fresh
+#: spec hash first. A refused CASTING owes its teammate: re-dispatch.
+_OWED_FIRST_CALL = {
+    "stale_spec_hash": "Foundry-Spec-Hash",
+    "stale_prompt_hash": "Foundry-Spawn-Teammate",
+    "warned": "Foundry-Spawn-Teammate",
+}
+
 
 def _refuse_then_follow(
     base: Path, monkeypatch, *, refusal: str | None, team_registered: bool
@@ -815,6 +825,54 @@ def test_following_next_call_off_a_refusal_returns_to_that_casting(
     assert _NEXT_WAVE_CALL not in drive["header"], drive
     assert "Foundry-Gate(phase='inspect')" not in drive["header"], drive
     assert _returns_to_casting_one(drive["header"]), drive
+    assert _first_call(drive["header"]) == _OWED_FIRST_CALL[refusal], drive
+    if _OWED_FIRST_CALL[refusal] == "Foundry-Spawn-Teammate":
+        assert "Foundry-Spawn-Teammate(casting_id=1, phase='cast')" in drive["header"], drive
+    else:
+        assert "Foundry-Accept-Casting(casting_id=1, " in drive["header"], drive
+
+
+def _refuse_then_rework_then_follow(base: Path, monkeypatch) -> dict:
+    """Casting 1 refused, then its teammate answers and writes done AGAIN.
+
+    The order is the real one, in real time: the refusal's record is written
+    by the door, and the done line after it by the ledger writer — nothing is
+    back-dated. Team torn down, so only the acceptance branches can answer.
+    """
+    with _scratch_run(base, monkeypatch) as (root, fdir, _teams_dir):
+        _arrange_waves(fdir, {1: ["1"], 2: ["2"]})
+        _worked_ledger(fdir, "1", done=True)
+        refused = _accept(root, fdir, "1", **_REFUSALS["warned"])
+        _worked_ledger(fdir, "1", done=True)
+        nxt = foundry_next_action(root)
+    return {
+        "payload": refused,
+        "destinations": _acceptance_destinations(fdir),
+        "action": nxt.get("action"),
+        "header": _header(nxt),
+    }
+
+
+def test_a_refusal_the_teammate_has_answered_is_owed_acceptance_again(
+    tmp_path, monkeypatch
+):
+    """lead-stalls ST-004 — "casting rejected -> lead RE-ACCEPTING".
+
+    A `-refused` verdict OLDER than the casting's latest done line has been
+    answered: the re-dispatched teammate reworked the casting and declared
+    itself done again. Re-dispatching it a second time would throw that work
+    away, so the router owes the acceptance call — the other half of the
+    refused/re-dispatch pair the route test above pins.
+    """
+    drive = _refuse_then_rework_then_follow(tmp_path, monkeypatch)
+
+    assert drive["payload"]["ok"] is False, drive
+    assert drive["destinations"] == ["casting-1-refused"], drive
+    assert _first_call(drive["header"]) == "Foundry-Spec-Hash", drive
+    assert "Foundry-Accept-Casting(casting_id=1, " in drive["header"], drive
+    assert "Foundry-Spawn-Teammate" not in drive["header"], drive
+    assert not _tears_down(drive["header"]), drive
+    assert _NEXT_WAVE_CALL not in drive["header"], drive
 
 
 @pytest.mark.parametrize("team_registered", [True, False], ids=["team_up", "team_down"])
@@ -940,8 +998,25 @@ def test_team_down_next_call_carries_a_finished_wave_to_the_next(tmp_path, monke
 
 
 def _tears_down(text: str) -> bool:
-    """True when ``text`` hands the lead a teardown of its team."""
+    """True when ``text`` hands the lead a teardown of its team.
+
+    Read from the YOUR NEXT ACTION marker onward when ``text`` carries one.
+    Every Foundry-Next payload opens with the standing CRITICAL RULES block,
+    which has always told the lead to "call TeamDelete immediately" once
+    teammates are done — a rule about HOW to tear down, present in every state,
+    not an instruction to do it now. The imperative, its CONTEXT and any
+    directive overlay all follow the marker, so the scope still covers every
+    place a teardown could be handed out.
+    """
+    if _NEXT_ACTION_MARKER in text:
+        text = text.split(_NEXT_ACTION_MARKER, 1)[1]
     return any(call in text for call in _TEARDOWN_CALLS) or "stop working" in text
+
+
+def _first_call(header: str) -> str:
+    """The name of the call a header numbers ``(1)``, or ``NONE``."""
+    match = re.search(r"\(1\) ([A-Za-z][A-Za-z-]*)", header)
+    return match.group(1) if match else "NONE"
 
 
 def _returns_to_casting_one(text: str) -> bool:
@@ -988,9 +1063,19 @@ def acceptance_route_report() -> list[str]:
             lines.append(f"    payload next_call           {drive['payload']['next_call']!r}")
             lines.append(f"    acceptance records          {drive['destinations']}")
             lines.append(f"    Foundry-Next action         {drive['action']}")
+            lines.append(f"    first call named            {_first_call(drive['header'])}")
             lines.append(f"    tears the team down         {_tears_down(drive['header'])}")
             lines.append(f"    dispatches wave 2           {_NEXT_WAVE_CALL in drive['header']}")
             lines.append(f"    returns to casting 1        {_returns_to_casting_one(drive['header'])}")
+
+    drive = _in_scratch(_refuse_then_rework_then_follow)
+    lines.append("")
+    lines.append("  warned, then the teammate reworked it and wrote done again")
+    lines.append(f"    acceptance records          {drive['destinations']}")
+    lines.append(f"    Foundry-Next action         {drive['action']}")
+    lines.append(f"    first call named            {_first_call(drive['header'])}")
+    lines.append(f"    re-dispatches casting 1     {'Foundry-Spawn-Teammate' in drive['header']}")
+    lines.append(f"    returns to casting 1        {_returns_to_casting_one(drive['header'])}")
 
     judged, unrecorded = _judged_return_lines()
     lines.append("")
@@ -1005,6 +1090,7 @@ def acceptance_route_report() -> list[str]:
         lines.append(f"  stall clock {'stale' if stall else 'fresh'}")
         lines.append(f"    Team-Up payload keys        {sorted(drive['team_up'])}")
         lines.append(f"    Foundry-Next action         {drive['action']}")
+        lines.append(f"    first call named            {_first_call(drive['header'])}")
         lines.append(f"    any teardown in the payload {_tears_down(drive['instructions'])}")
         lines.append(f"    header ends the turn        {'END YOUR TURN' in drive['header']}")
 
@@ -1023,7 +1109,10 @@ def test_the_route_report_agrees_with_the_tests_beside_it():
     joined = "\n".join(acceptance_route_report())
 
     assert "  recording no verdict          0" in joined, joined
-    assert joined.count("    returns to casting 1        True") == 6, joined
+    assert joined.count("    returns to casting 1        True") == 7, joined
+    assert joined.count("    first call named            Foundry-Spawn-Teammate") == 4, joined
+    assert joined.count("    first call named            Foundry-Spec-Hash") == 3, joined
+    assert "    re-dispatches casting 1     False" in joined, joined
     assert joined.count("    tears the team down         True") == 1, joined
     assert joined.count("    any teardown in the payload False") == 2, joined
     assert "  dispatches wave 2             True" in joined, joined
