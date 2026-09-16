@@ -2,20 +2,29 @@
 # evidence-for: FR-007, FR-008, OT-002
 
 keys in _ACTION_IMPERATIVES: 22
-emission sites swept:        138
+emission sites swept:        184
 defective emissions:         0
 
-site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured
+detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME
 
-readings are the four roster_agents x teams_active combinations plus the unmeasured one,
-and each names the branch it is OWED so the sweep judges ROUTING and not only shape:
+site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured, wave-boundary, final-wave-done
 
-  live                   waiting=True  roster_agents=-    teams_active=-     owed=live
-  idle                   waiting=False roster_agents=3    teams_active=True  owed=idle
-  torn-down              waiting=False roster_agents=3    teams_active=False owed=idle
-  registered-not-spawned waiting=False roster_agents=0    teams_active=True  owed=undispatched
-  undispatched           waiting=False roster_agents=0    teams_active=False owed=undispatched
-  unmeasured             waiting=False roster_agents=-    teams_active=-     owed=undispatched
+readings are the four roster_agents x teams_active combinations, the unmeasured one, and
+the two that vary WAVE POSITION; each names the branch it is OWED so the sweep judges
+ROUTING and not only shape:
+
+wave_pending is the lead-stalls D-009 column: '-' is a manifest that did not answer,
+0 is every wave done, and N>0 is the wave still to dispatch. A sweep that held this
+column constant could not tell 'wave 1 done, wave 2 pending' from 'the final wave is done'.
+
+  live                   waiting=True  roster_agents=-    teams_active=-     wave_pending=-    wave_built=-    owed=live
+  idle                   waiting=False roster_agents=3    teams_active=True  wave_pending=-    wave_built=-    owed=idle
+  torn-down              waiting=False roster_agents=3    teams_active=False wave_pending=-    wave_built=-    owed=idle
+  registered-not-spawned waiting=False roster_agents=0    teams_active=True  wave_pending=-    wave_built=-    owed=undispatched
+  undispatched           waiting=False roster_agents=0    teams_active=False wave_pending=-    wave_built=-    owed=undispatched
+  unmeasured             waiting=False roster_agents=-    teams_active=-     wave_pending=-    wave_built=-    owed=undispatched
+  wave-boundary          waiting=False roster_agents=2    teams_active=False wave_pending=2    wave_built=1    owed=undispatched
+  final-wave-done        waiting=False roster_agents=3    teams_active=True  wave_pending=0    wave_built=2    owed=idle
 
   add_castings             ok
   assay_failed_loop_back   ok

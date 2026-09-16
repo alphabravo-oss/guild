@@ -2,20 +2,29 @@
 # evidence-for: FR-007, FR-008, OT-002, OT-013, GI-008, CT-008
 
 keys in _ACTION_IMPERATIVES: 22
-emission sites swept:        138
+emission sites swept:        184
 defective emissions:         0
 
-site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured
+detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME
 
-readings are the four roster_agents x teams_active combinations plus the unmeasured one,
-and each names the branch it is OWED so the sweep judges ROUTING and not only shape:
+site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured, wave-boundary, final-wave-done
 
-  live                   waiting=True  roster_agents=-    teams_active=-     owed=live
-  idle                   waiting=False roster_agents=3    teams_active=True  owed=idle
-  torn-down              waiting=False roster_agents=3    teams_active=False owed=idle
-  registered-not-spawned waiting=False roster_agents=0    teams_active=True  owed=undispatched
-  undispatched           waiting=False roster_agents=0    teams_active=False owed=undispatched
-  unmeasured             waiting=False roster_agents=-    teams_active=-     owed=undispatched
+readings are the four roster_agents x teams_active combinations, the unmeasured one, and
+the two that vary WAVE POSITION; each names the branch it is OWED so the sweep judges
+ROUTING and not only shape:
+
+wave_pending is the lead-stalls D-009 column: '-' is a manifest that did not answer,
+0 is every wave done, and N>0 is the wave still to dispatch. A sweep that held this
+column constant could not tell 'wave 1 done, wave 2 pending' from 'the final wave is done'.
+
+  live                   waiting=True  roster_agents=-    teams_active=-     wave_pending=-    wave_built=-    owed=live
+  idle                   waiting=False roster_agents=3    teams_active=True  wave_pending=-    wave_built=-    owed=idle
+  torn-down              waiting=False roster_agents=3    teams_active=False wave_pending=-    wave_built=-    owed=idle
+  registered-not-spawned waiting=False roster_agents=0    teams_active=True  wave_pending=-    wave_built=-    owed=undispatched
+  undispatched           waiting=False roster_agents=0    teams_active=False wave_pending=-    wave_built=-    owed=undispatched
+  unmeasured             waiting=False roster_agents=-    teams_active=-     wave_pending=-    wave_built=-    owed=undispatched
+  wave-boundary          waiting=False roster_agents=2    teams_active=False wave_pending=2    wave_built=1    owed=undispatched
+  final-wave-done        waiting=False roster_agents=3    teams_active=True  wave_pending=0    wave_built=2    owed=idle
 
   add_castings             ok
   assay_failed_loop_back   ok
@@ -55,135 +64,181 @@ twenty that have nothing to route.
   add_castings@F1[registered-not-spawned]           CALL  -                            YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SIN
   add_castings@F1[undispatched]                     CALL  -                            YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SIN
   add_castings@F1[unmeasured]                       CALL  -                            YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SIN
+  add_castings@F1[wave-boundary]                    CALL  -                            YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SIN
+  add_castings@F1[final-wave-done]                  CALL  -                            YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SIN
   assay_failed_loop_back@F1[live]                   CALL  -                            YOUR NEXT CALLS (in order):
   assay_failed_loop_back@F1[idle]                   CALL  -                            YOUR NEXT CALLS (in order):
   assay_failed_loop_back@F1[torn-down]              CALL  -                            YOUR NEXT CALLS (in order):
   assay_failed_loop_back@F1[registered-not-spawned]  CALL  -                            YOUR NEXT CALLS (in order):
   assay_failed_loop_back@F1[undispatched]           CALL  -                            YOUR NEXT CALLS (in order):
   assay_failed_loop_back@F1[unmeasured]             CALL  -                            YOUR NEXT CALLS (in order):
+  assay_failed_loop_back@F1[wave-boundary]          CALL  -                            YOUR NEXT CALLS (in order):
+  assay_failed_loop_back@F1[final-wave-done]        CALL  -                            YOUR NEXT CALLS (in order):
   build_castings@F1[live]                           NONE  live/live                    YOUR NEXT CALL: NONE. Your CAST teammates are runnin
   build_castings@F1[idle]                           CALL  idle/idle                    YOUR NEXT CALLS (in order):
   build_castings@F1[torn-down]                      CALL  idle/idle                    YOUR NEXT CALLS (in order):
   build_castings@F1[registered-not-spawned]         CALL  undispatched/undispatched    YOUR NEXT CALLS (in order):
   build_castings@F1[undispatched]                   CALL  undispatched/undispatched    YOUR NEXT CALLS (in order):
   build_castings@F1[unmeasured]                     CALL  undispatched/undispatched    YOUR NEXT CALLS (in order):
+  build_castings@F1[wave-boundary]                  CALL  undispatched/undispatched    YOUR NEXT CALLS (in order):
+  build_castings@F1[final-wave-done]                CALL  idle/idle                    YOUR NEXT CALLS (in order):
   cleanup_teams@F1[live]                            CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
   cleanup_teams@F1[idle]                            CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
   cleanup_teams@F1[torn-down]                       CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
   cleanup_teams@F1[registered-not-spawned]          CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
   cleanup_teams@F1[undispatched]                    CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
   cleanup_teams@F1[unmeasured]                      CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
+  cleanup_teams@F1[wave-boundary]                   CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
+  cleanup_teams@F1[final-wave-done]                 CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
   done@F1[live]                                     NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
   done@F1[idle]                                     NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
   done@F1[torn-down]                                NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
   done@F1[registered-not-spawned]                   NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
   done@F1[undispatched]                             NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
   done@F1[unmeasured]                               NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
+  done@F1[wave-boundary]                            NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
+  done@F1[final-wave-done]                          NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
   fix_defects@F1[live]                              NONE  live/live                    YOUR NEXT CALL: NONE. Your GRIND teammates are runni
   fix_defects@F1[idle]                              CALL  idle/idle                    YOUR NEXT CALLS (in order):
   fix_defects@F1[torn-down]                         CALL  idle/idle                    YOUR NEXT CALLS (in order):
   fix_defects@F1[registered-not-spawned]            CALL  idle/idle                    YOUR NEXT CALLS (in order):
   fix_defects@F1[undispatched]                      CALL  idle/idle                    YOUR NEXT CALLS (in order):
   fix_defects@F1[unmeasured]                        CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  fix_defects@F1[wave-boundary]                     CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  fix_defects@F1[final-wave-done]                   CALL  idle/idle                    YOUR NEXT CALLS (in order):
   halted@F1[live]                                   NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
   halted@F1[idle]                                   NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
   halted@F1[torn-down]                              NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
   halted@F1[registered-not-spawned]                 NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
   halted@F1[undispatched]                           NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
   halted@F1[unmeasured]                             NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
+  halted@F1[wave-boundary]                          NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
+  halted@F1[final-wave-done]                        NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
   init@F1[live]                                     CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
   init@F1[idle]                                     CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
   init@F1[torn-down]                                CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
   init@F1[registered-not-spawned]                   CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
   init@F1[undispatched]                             CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
   init@F1[unmeasured]                               CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
+  init@F1[wave-boundary]                            CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
+  init@F1[final-wave-done]                          CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
   record_inspect_width@F1[live]                     CALL  -                            YOUR NEXT CALLS (in order):
   record_inspect_width@F1[idle]                     CALL  -                            YOUR NEXT CALLS (in order):
   record_inspect_width@F1[torn-down]                CALL  -                            YOUR NEXT CALLS (in order):
   record_inspect_width@F1[registered-not-spawned]   CALL  -                            YOUR NEXT CALLS (in order):
   record_inspect_width@F1[undispatched]             CALL  -                            YOUR NEXT CALLS (in order):
   record_inspect_width@F1[unmeasured]               CALL  -                            YOUR NEXT CALLS (in order):
+  record_inspect_width@F1[wave-boundary]            CALL  -                            YOUR NEXT CALLS (in order):
+  record_inspect_width@F1[final-wave-done]          CALL  -                            YOUR NEXT CALLS (in order):
   run_assay@F1[live]                                CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
   run_assay@F1[idle]                                CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
   run_assay@F1[torn-down]                           CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
   run_assay@F1[registered-not-spawned]              CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
   run_assay@F1[undispatched]                        CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
   run_assay@F1[unmeasured]                          CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
+  run_assay@F1[wave-boundary]                       CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
+  run_assay@F1[final-wave-done]                     CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
   run_nyquist@F1[live]                              CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
   run_nyquist@F1[idle]                              CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
   run_nyquist@F1[torn-down]                         CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
   run_nyquist@F1[registered-not-spawned]            CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
   run_nyquist@F1[undispatched]                      CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
   run_nyquist@F1[unmeasured]                        CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
+  run_nyquist@F1[wave-boundary]                     CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
+  run_nyquist@F1[final-wave-done]                   CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
   run_streams@F1[live]                              CALL  -                            YOUR NEXT CALLS: spawn every missing INSPECT stream 
   run_streams@F1[idle]                              CALL  -                            YOUR NEXT CALLS: spawn every missing INSPECT stream 
   run_streams@F1[torn-down]                         CALL  -                            YOUR NEXT CALLS: spawn every missing INSPECT stream 
   run_streams@F1[registered-not-spawned]            CALL  -                            YOUR NEXT CALLS: spawn every missing INSPECT stream 
   run_streams@F1[undispatched]                      CALL  -                            YOUR NEXT CALLS: spawn every missing INSPECT stream 
   run_streams@F1[unmeasured]                        CALL  -                            YOUR NEXT CALLS: spawn every missing INSPECT stream 
+  run_streams@F1[wave-boundary]                     CALL  -                            YOUR NEXT CALLS: spawn every missing INSPECT stream 
+  run_streams@F1[final-wave-done]                   CALL  -                            YOUR NEXT CALLS: spawn every missing INSPECT stream 
   run_temper@F1[live]                               CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
   run_temper@F1[idle]                               CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
   run_temper@F1[torn-down]                          CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
   run_temper@F1[registered-not-spawned]             CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
   run_temper@F1[undispatched]                       CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
   run_temper@F1[unmeasured]                         CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
+  run_temper@F1[wave-boundary]                      CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
+  run_temper@F1[final-wave-done]                    CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
   transition_to_assay@F1[live]                      CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_assay@F1[idle]                      CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_assay@F1[torn-down]                 CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_assay@F1[registered-not-spawned]    CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_assay@F1[undispatched]              CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_assay@F1[unmeasured]                CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_assay@F1[wave-boundary]             CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_assay@F1[final-wave-done]           CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_cast@F1[live]                       CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
   transition_to_cast@F1[idle]                       CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
   transition_to_cast@F1[torn-down]                  CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
   transition_to_cast@F1[registered-not-spawned]     CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
   transition_to_cast@F1[undispatched]               CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
   transition_to_cast@F1[unmeasured]                 CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
+  transition_to_cast@F1[wave-boundary]              CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
+  transition_to_cast@F1[final-wave-done]            CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
   transition_to_done@F1[live]                       CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
   transition_to_done@F1[idle]                       CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
   transition_to_done@F1[torn-down]                  CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
   transition_to_done@F1[registered-not-spawned]     CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
   transition_to_done@F1[undispatched]               CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
   transition_to_done@F1[unmeasured]                 CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
+  transition_to_done@F1[wave-boundary]              CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
+  transition_to_done@F1[final-wave-done]            CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
   transition_to_grind@F1[live]                      CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_grind@F1[idle]                      CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_grind@F1[torn-down]                 CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_grind@F1[registered-not-spawned]    CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_grind@F1[undispatched]              CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_grind@F1[unmeasured]                CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_grind@F1[wave-boundary]             CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_grind@F1[final-wave-done]           CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F1[live]                    CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F1[idle]                    CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F1[torn-down]               CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F1[registered-not-spawned]  CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F1[undispatched]            CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F1[unmeasured]              CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_inspect@F1[wave-boundary]           CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_inspect@F1[final-wave-done]         CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F3[live]                    CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F3[idle]                    CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F3[torn-down]               CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F3[registered-not-spawned]  CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F3[undispatched]            CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F3[unmeasured]              CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_inspect@F3[wave-boundary]           CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_inspect@F3[final-wave-done]         CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_nyquist@F1[live]                    CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_nyquist@F1[idle]                    CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_nyquist@F1[torn-down]               CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_nyquist@F1[registered-not-spawned]  CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_nyquist@F1[undispatched]            CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_nyquist@F1[unmeasured]              CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_nyquist@F1[wave-boundary]           CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_nyquist@F1[final-wave-done]         CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_temper@F1[live]                     CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_temper@F1[idle]                     CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_temper@F1[torn-down]                CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_temper@F1[registered-not-spawned]   CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_temper@F1[undispatched]             CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_temper@F1[unmeasured]               CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_temper@F1[wave-boundary]            CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_temper@F1[final-wave-done]          CALL  -                            YOUR NEXT CALLS (in order):
   unknown@F1[live]                                  CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
   unknown@F1[idle]                                  CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
   unknown@F1[torn-down]                             CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
   unknown@F1[registered-not-spawned]                CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
   unknown@F1[undispatched]                          CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
   unknown@F1[unmeasured]                            CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
+  unknown@F1[wave-boundary]                         CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
+  unknown@F1[final-wave-done]                       CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
   widen_inspect@F1[live]                            CALL  -                            YOUR NEXT CALLS (in order):
   widen_inspect@F1[idle]                            CALL  -                            YOUR NEXT CALLS (in order):
   widen_inspect@F1[torn-down]                       CALL  -                            YOUR NEXT CALLS (in order):
   widen_inspect@F1[registered-not-spawned]          CALL  -                            YOUR NEXT CALLS (in order):
   widen_inspect@F1[undispatched]                    CALL  -                            YOUR NEXT CALLS (in order):
   widen_inspect@F1[unmeasured]                      CALL  -                            YOUR NEXT CALLS (in order):
+  widen_inspect@F1[wave-boundary]                   CALL  -                            YOUR NEXT CALLS (in order):
+  widen_inspect@F1[final-wave-done]                 CALL  -                            YOUR NEXT CALLS (in order):

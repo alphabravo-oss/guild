@@ -3,7 +3,7 @@
 # evidence-volatile: (in )[0-9]+\.[0-9]+s
 
 ============================= test session starts ==============================
-collecting ... collected 28 items
+collecting ... collected 41 items
 
 test_the_audit_sweeps_every_key_and_returns_zero PASSED
 test_the_recorded_evidence_shows_the_population_it_judged PASSED
@@ -25,6 +25,19 @@ test_the_liveness_reading_is_taken_once_and_shared_with_the_notice PASSED
 test_the_roster_outlives_the_teardown_the_imperative_itself_names PASSED
 test_a_registered_team_with_nothing_spawned_is_not_a_finished_wave PASSED
 test_the_audit_sees_a_misrouted_branch PASSED
+test_a_finished_wave_with_a_wave_still_pending_is_not_a_finished_build PASSED
+test_the_final_wave_finishing_is_a_finished_build PASSED
+test_a_seeded_ledger_is_a_dispatch_and_not_a_built_wave PASSED
+test_an_unreadable_manifest_falls_back_rather_than_claims_a_finished_wave PASSED
+test_the_liveness_result_carries_the_field_the_branch_is_chosen_from PASSED
+test_fix_defects_is_unmoved_by_the_wave_field PASSED
+test_the_audit_sees_a_wave_boundary_handed_the_teardown PASSED
+test_no_emitted_header_leaves_a_substitution_slot_literal PASSED
+test_the_audit_sees_a_team_name_the_lead_cannot_create PASSED
+test_the_grind_team_name_is_a_number_the_lead_can_create PASSED
+test_transition_to_grind_names_the_same_cycle_the_dispatch_does PASSED
+test_the_cycle_slot_resolves_for_every_input PASSED
+test_the_wave_slots_resolve_for_every_input PASSED
 test_no_lead_facing_string_instructs_a_sleep_a_poll_or_a_wait_loop PASSED
 test_the_context_block_of_a_branched_action_names_no_sequence PASSED
 test_the_payload_states_one_sequence_for_the_f1_crossing PASSED
@@ -34,4 +47,4 @@ test_the_stall_accusation_arm_is_untouched PASSED
 test_transition_to_inspect_is_still_the_substitution_precedent PASSED
 test_the_wave_complete_branch_carries_the_gate_then_phase_note_once PASSED
 
-============================== 28 passed in 2.46s ==============================
+============================== 41 passed in 2.96s ==============================

@@ -29,6 +29,7 @@ spelling of the rule, which is the failure mode this package documents most.
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
@@ -58,6 +59,9 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _compute_next_action,
     _format_imperative_header,
     _parse_branches,
+    _built_cast_wave,
+    _cast_wave,
+    _grind_cycle,
     _select_branch,
     _waiting_on_agents,
     foundry_next_action,
@@ -97,6 +101,35 @@ _NAMES_A_CALL = re.compile(
     r"|\bAgent\("
 )
 _NAMES_NO_CALL = re.compile(r"YOUR NEXT CALL:\s*NONE")
+
+#: Every placeholder `_format_imperative_header` resolves. A slot still present
+#: in an emitted header is a call the lead cannot make -- `Foundry-Gate(phase=
+#: '{gate}')` and `TeamCreate('grind-r-cycle-{cycle}')` are both strings a lead
+#: trained to execute the first call mentioned will try to execute literally.
+#: Named rather than matched as `{...}`, because `add_castings` carries the
+#: literal prose `casting-{id}-prompt.md` and that is not a slot.
+_SUBSTITUTED_SLOTS = (
+    "{run}", "{gate}", "{token}", "{halt_cause}",
+    "{wave}", "{built_wave}", "{cycle}",
+)
+
+#: Every team name an emitted header QUOTES, and the shape one has to have for
+#: the lead to be able to create it (lead-stalls D-012).
+#:
+#: This is the decidable half of "a call the lead cannot make". A general hunt
+#: for placeholder-looking tokens is NOT decidable here and must not be
+#: attempted: `Foundry-Spawn-Teammate(casting_id=N, phase='grind')` uses the
+#: same `N` legitimately, as prose for "per casting", so a detector that flagged
+#: it would flag the correct entry and the defective one alike. A quoted TEAM
+#: NAME is different: it is a literal the lead passes to `TeamCreate`, it has
+#: one grammar, and `grind-{run}-cycle-N` fails that grammar while every
+#: correct spelling passes it.
+_QUOTED_TEAM_NAME = re.compile(
+    r"(?:TeamCreate\(|team_name=)'([^']*)'"
+)
+_CREATABLE_TEAM_NAME = re.compile(
+    r"^(?:cast|grind)-[A-Za-z0-9][A-Za-z0-9-]*-(?:wave|cycle)-\d+$"
+)
 
 #: Every liveness reading the branch selector can be handed, so the sweep judges
 #: what the lead receives in EVERY run state rather than in the one state a bare
@@ -147,6 +180,29 @@ _LIVENESS_READINGS: tuple[tuple[str, object, str], ...] = (
     # the watchdog could not answer; a reading that failed must not be able to
     # claim a wave is finished, so it owes the dispatch branch too.
     ("unmeasured", None, "undispatched"),
+    # lead-stalls D-009 — THE TWO READINGS THE SWEEP COULD NOT TELL APART, AND
+    # THE WHOLE REASON THE ROWS ABOVE WERE NOT ENOUGH.
+    # ------------------------------------------------------------------------
+    # Every row above varies `roster_agents` x `teams_active` and NOTHING ELSE,
+    # so the sweep's zero was computed over a space in which wave position does
+    # not exist -- and `{"waiting": False, "roster_agents": >0}` is byte-
+    # identical at "wave 1 finished, wave 2 never dispatched" and at "the final
+    # wave is done". The first of those is the state THIS run stood in between
+    # its own two waves while being handed the teardown. An audit that cannot
+    # vary wave position cannot discharge lead-stalls OT-002 for that class, so
+    # these two rows vary it and each names the branch it is owed.
+    (
+        "wave-boundary",
+        {"waiting": False, "roster_agents": 2, "teams_active": False,
+         "cast_wave_pending": 2, "cast_wave_built": 1},
+        "undispatched",
+    ),
+    (
+        "final-wave-done",
+        {"waiting": False, "roster_agents": 3, "teams_active": True,
+         "cast_wave_pending": 0, "cast_wave_built": 2},
+        "idle",
+    ),
 )
 
 
@@ -162,12 +218,16 @@ def _owed_branch(action: str, owed: str) -> str:
     return owed if branches.get(owed) else _BRANCH_FALLBACK
 
 
-def _emitted_branch(action: str, text: str, run_name: str) -> str:
+def _emitted_branch(
+    action: str, text: str, run_name: str, liveness: object = None
+) -> str:
     """Which declared branch of `action` the lead ACTUALLY received.
 
     Matched by equality against the branch bodies `_parse_branches` returns,
-    with the one placeholder a branched entry carries resolved the way
-    `_format_imperative_header` resolves it. Equality rather than a first-line
+    with every placeholder a branched entry carries resolved the way
+    `_format_imperative_header` resolves it -- through the SAME helpers, so a
+    slot added to an entry without a resolver here reads as `"?"` rather than
+    as a silent match (lead-stalls D-009 / D-012). Equality rather than a first-line
     or keyword match because `_CAST_WAVE_COMPLETE` and `_CAST_WAVE_UNDISPATCHED`
     open on the identical line — "YOUR NEXT CALLS (in order):" — and a
     discriminator that could not tell those two apart is exactly the one
@@ -176,7 +236,14 @@ def _emitted_branch(action: str, text: str, run_name: str) -> str:
     ``"?"`` when the text matches no declared branch, which is itself a finding.
     """
     for name, body in _parse_branches(_ACTION_IMPERATIVES.get(action, "")).items():
-        if body.replace("{run}", run_name) == text:
+        resolved = (
+            body
+            .replace("{wave}", _cast_wave(liveness))
+            .replace("{built_wave}", _built_cast_wave(liveness))
+            .replace("{cycle}", _grind_cycle(None))
+            .replace("{run}", run_name)
+        )
+        if resolved == text:
             return name
     return "?"
 
@@ -198,16 +265,19 @@ def _emission_phases(action: str) -> tuple[str, ...]:
 _AUDIT_RUN = "audit"
 
 
-def _audit_sites() -> list[tuple[str, str, str, str]]:
-    """(action, site label, emitted text, owed branch) for every string the
-    table can emit.
+def _audit_sites() -> list[tuple[str, str, str, str, object]]:
+    """(action, site label, emitted text, owed branch, reading) for every string
+    the table can emit.
 
     One enumeration, two readers: the detector below and the report it feeds.
     A second copy of this loop in the evidence command would be a second
     spelling of what the audit's population IS.
 
     The fourth element is lead-stalls D-004's addition — the branch this
-    reading is owed, so the sweep can judge ROUTING and not only shape.
+    reading is owed, so the sweep can judge ROUTING and not only shape. The
+    fifth is lead-stalls D-009's: the READING the site was emitted on, which
+    `_emitted_branch` needs to resolve the wave slots the same way the formatter
+    did. Carried rather than looked up by label, so the two cannot drift.
     ``""`` for the twenty unbranched entries, which have nothing to route.
     """
     return [
@@ -221,6 +291,7 @@ def _audit_sites() -> list[tuple[str, str, str, str]]:
             _owed_branch(action, owed) if _parse_branches(
                 _ACTION_IMPERATIVES[action]
             ) else "",
+            liveness,
         )
         for action in sorted(_ACTION_IMPERATIVES)
         for phase in _emission_phases(action)
@@ -238,7 +309,7 @@ def audit_action_imperatives() -> list[str]:
     byte-identically.
     """
     findings: list[str] = []
-    for action, site, text, owed in _audit_sites():
+    for action, site, text, owed, liveness in _audit_sites():
         hit = _HANDS_OVER_THE_CONDITION.search(text)
         if hit:
             quoted = " ".join(
@@ -257,6 +328,27 @@ def audit_action_imperatives() -> list[str]:
                 f"{site}: UNRESOLVED_BRANCH — a branch marker survived to the "
                 f"lead"
             )
+        # lead-stalls D-012 — THE SLOT THAT REACHED THE LEAD AS ITSELF.
+        # `_GRIND_DISPATCH` named `grind-{run}-cycle-N`, and `N` was a LITERAL:
+        # `{run}` resolved, `N` did not, and the `fix_defects` payload carries
+        # no cycle number in any field for the lead to resolve it from. So the
+        # lead was handed a TeamCreate it could not make and supplied the digit
+        # from its own reckoning, which is the judgment task lead-stalls FR-007
+        # defines as the defect. Every slot the formatter resolves is checked
+        # by name rather than by a `\{[a-z_]+\}` sweep, because `add_castings`
+        # legitimately carries the literal prose `casting-{id}-prompt.md`.
+        leaked = [slot for slot in _SUBSTITUTED_SLOTS if slot in text]
+        if leaked:
+            findings.append(
+                f"{site}: UNRESOLVED_SLOT — {', '.join(leaked)} survived to "
+                f"the lead"
+            )
+        for name in _QUOTED_TEAM_NAME.findall(text):
+            if not _CREATABLE_TEAM_NAME.match(name):
+                findings.append(
+                    f"{site}: UNCREATABLE_TEAM_NAME — the lead is told to pass "
+                    f"{name!r}, which is not a team name"
+                )
         # lead-stalls D-004 — THE ROUTING CHECK, WHICH IS THE ONE THE THREE
         # ABOVE CANNOT MAKE. They judge the SHAPE of whatever arrived; this
         # judges whether the thing that arrived is the thing this run state
@@ -266,7 +358,7 @@ def audit_action_imperatives() -> list[str]:
         # cross into F2. A sweep that cannot express "right text, wrong
         # reading" returns zero over that.
         if owed:
-            got = _emitted_branch(action, text, _AUDIT_RUN)
+            got = _emitted_branch(action, text, _AUDIT_RUN, liveness)
             if got != owed:
                 findings.append(
                     f"{site}: WRONG_BRANCH — the lead received the {got!r} "
@@ -291,13 +383,24 @@ def audit_report() -> list[str]:
         f"emission sites swept:        {len(sites)}",
         f"defective emissions:         {len(findings)}",
         "",
+        "detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, "
+        "UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME",
+        "",
         "site = action@emitting-phase[liveness reading]; readings swept: "
         + ", ".join(label for label, _, _ in _LIVENESS_READINGS),
         "",
-        "readings are the four roster_agents x teams_active combinations plus "
-        "the unmeasured one,",
-        "and each names the branch it is OWED so the sweep judges ROUTING and "
-        "not only shape:",
+        "readings are the four roster_agents x teams_active combinations, the "
+        "unmeasured one, and",
+        "the two that vary WAVE POSITION; each names the branch it is OWED so "
+        "the sweep judges",
+        "ROUTING and not only shape:",
+        "",
+        "wave_pending is the lead-stalls D-009 column: '-' is a manifest that "
+        "did not answer,",
+        "0 is every wave done, and N>0 is the wave still to dispatch. A sweep "
+        "that held this",
+        "column constant could not tell 'wave 1 done, wave 2 pending' from "
+        "'the final wave is done'.",
         "",
     ]
     for label, liveness, owed in _LIVENESS_READINGS:
@@ -306,6 +409,8 @@ def audit_report() -> list[str]:
             f"  {label:<22} waiting={str(bool(row.get('waiting'))):<5} "
             f"roster_agents={str(row.get('roster_agents', '-')):<4} "
             f"teams_active={str(row.get('teams_active', '-')):<5} "
+            f"wave_pending={str(row.get('cast_wave_pending', '-')):<4} "
+            f"wave_built={str(row.get('cast_wave_built', '-')):<4} "
             f"owed={owed}"
         )
     lines.append("")
@@ -345,11 +450,12 @@ def audit_evidence() -> list[str]:
         "twenty that have nothing to route.",
         "",
     ]
-    for action, site, text, owed in _audit_sites():
+    for action, site, text, owed, liveness in _audit_sites():
         head = " ".join(text.split("\n", 1)[0].split())
         answer = "NONE" if _NAMES_NO_CALL.search(text) else "CALL"
         branch = (
-            f"{_emitted_branch(action, text, _AUDIT_RUN)}/{owed}" if owed else "-"
+            f"{_emitted_branch(action, text, _AUDIT_RUN, liveness)}/{owed}"
+            if owed else "-"
         )
         # Two literal spaces on BOTH sides of the answer, independent of how
         # far the site label padded: the floor test beside this reads the
@@ -390,7 +496,13 @@ def turn_boundary_report() -> list[str]:
     rows = [
         (_TRANSITIONS.get(label, "ST-003"), label, liveness)
         for label, liveness, _owed in _LIVENESS_READINGS
-        if label in ("live", "idle", "registered-not-spawned", "undispatched")
+        if label in (
+            "live", "idle", "registered-not-spawned", "undispatched",
+            # lead-stalls D-009's state, which is a lead-stalls ST-003 state: no agent is
+            # running and a third of the castings are unbuilt, so what the lead
+            # is handed here decides whether the run moves or parks.
+            "wave-boundary",
+        )
     ]
     lines = [
         "the server-side half of the turn boundary, per run state.",
@@ -451,7 +563,7 @@ def test_the_recorded_evidence_shows_the_population_it_judged():
     row per (audited action x run state).
     """
     dump = audit_evidence()
-    for _action, site, _text, _owed in _audit_sites():
+    for _action, site, _text, _owed, _reading in _audit_sites():
         assert any(site in line for line in dump), site
     assert sum(1 for l in dump if "  CALL  " in l or "  NONE  " in l) == len(
         _audit_sites()
@@ -537,7 +649,7 @@ def test_every_action_is_swept_in_every_run_state():
     incomplete one of the same size; this one enumerates the product and asks
     for each cell by name.
     """
-    sites = [site for _, site, _, _ in _audit_sites()]
+    sites = [site for _, site, _, _, _ in _audit_sites()]
     assert len(sites) == len(set(sites)) >= 22 * len(_LIVENESS_READINGS)
     # Every cell of the product, named. `unmeasured` rides alongside as the
     # reading a caller that measured nothing passes.
@@ -559,6 +671,22 @@ def test_every_action_is_swept_in_every_run_state():
     assert {owed for _l, _lv, owed in _LIVENESS_READINGS} == {
         "live", "idle", "undispatched",
     }
+    # lead-stalls D-009 — AND THE WAVE POSITION IS VARIED, which is the axis the
+    # product above does not contain at all. The three values that matter are a
+    # manifest that did not answer (the roster fallback), every wave done, and a
+    # LATER wave still pending: the last is the only one in which "wave N
+    # finished" can be told from "wave N+1 not started", so a sweep missing it
+    # returns zero over a space D-009 cannot appear in.
+    positions = {
+        (liveness if isinstance(liveness, dict) else {}).get("cast_wave_pending")
+        for _l, liveness, _o in _LIVENESS_READINGS
+    }
+    assert None in positions, positions
+    assert 0 in positions, positions
+    assert any(
+        isinstance(value, int) and not isinstance(value, bool) and value > 1
+        for value in positions
+    ), positions
     # `transition_to_inspect` is emitted from two phases, so the site count
     # must exceed a flat key-times-reading product.
     assert len(sites) > 22 * len(_LIVENESS_READINGS)
@@ -947,9 +1075,16 @@ def test_the_audit_sees_a_misrouted_branch(monkeypatch):
     import foundry_mcp.tools.orchestration.guidance as _g
 
     def _with_the_disjunct_back(liveness: object) -> str:
+        # The SHIPPED selector with the disjunct put back and nothing else
+        # changed. A variant that also dropped the lead-stalls D-009 wave read
+        # would misroute the wave-boundary reading too, and this control would
+        # stop being a control for the disjunct.
         row = liveness if isinstance(liveness, dict) else {}
         if row.get("waiting"):
             return "live"
+        pending = row.get("cast_wave_pending")
+        if isinstance(pending, int) and not isinstance(pending, bool):
+            return "undispatched" if pending > 0 else "idle"
         if row.get("roster_agents") or row.get("teams_active"):
             return "idle"
         return "undispatched"
@@ -976,6 +1111,445 @@ def test_the_audit_sees_a_misrouted_branch(monkeypatch):
     assert {f.split(":")[0] for f in misrouted} == {
         "build_castings@F1[registered-not-spawned]",
     }, sorted({f.split(":")[0] for f in misrouted})
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls D-009 / D-010 / D-012 — wave position, and the slots that carry it
+# --------------------------------------------------------------------------- #
+
+#: A timestamp old enough that nothing here depends on wall-clock drift. A
+#: terminal `"done": true` line makes an agent DONE whatever its age, which is
+#: the property `_cast_wave_position` reads.
+_LONG_AGO = "2020-01-01T00:00:00+00:00"
+
+
+def _wave_manifest(fdir, waves: dict[int, list[str]]) -> None:
+    """A castings manifest with the given ``{wave number: [casting ids]}``."""
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({
+            "castings": [
+                {"id": cid, "title": cid, "wave": number}
+                for number, ids in sorted(waves.items()) for cid in ids
+            ],
+            "waves": [
+                {"wave": number, "casting_ids": list(ids)}
+                for number, ids in sorted(waves.items())
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+
+def _ledger(fdir, agent: str, *, done: bool) -> None:
+    """A casting's progress ledger, WORKED (``done``) or merely SEEDED.
+
+    The seeded form is what `Foundry-Cast-Wave` writes at dispatch, before the
+    lead has spawned a single Agent — which is why neither it nor `spawns.log`
+    can answer "was this wave built". The terminal `"done": true` line the
+    progress protocol requires is the only signal in the run that a teammate
+    actually worked the casting.
+    """
+    (fdir / "progress").mkdir(parents=True, exist_ok=True)
+    lines = [{"timestamp": _LONG_AGO, "phase": "cast", "step": "dispatched",
+              "agent": agent, "seeded_by": "server"}]
+    if done:
+        lines.append({"timestamp": _LONG_AGO, "phase": "cast",
+                      "step": "committed", "done": True})
+    (fdir / "progress" / f"{agent}.jsonl").write_text(
+        "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8",
+    )
+
+
+def test_a_finished_wave_with_a_wave_still_pending_is_not_a_finished_build(
+    run_env
+):
+    """lead-stalls US-001 / D-009 — THE READING THIS RUN ITSELF STOOD IN.
+
+    `spawns.log` records wave 1 dispatched at 00:58 and wave 2 at 02:03; in
+    between, the lead had accepted both wave-1 castings and torn the team down.
+    `_branch_state` read `roster_agents` alone, which counts every ledger in the
+    run, so that state read `idle` -- and the lead was handed
+    `_CAST_WAVE_COMPLETE`: TeamDelete, Foundry-Team-Down, gate, cross into F2,
+    with a third of the castings never built. lead-stalls US-001 requires the
+    opposite in the same turn: "the lead dispatches the next wave".
+
+    Driven through `_waiting_on_agents` against a real two-wave manifest rather
+    than off a synthetic dict, so what is pinned is the reading the watchdog
+    actually produces at that boundary.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _wave_manifest(fdir, {1: ["imperatives", "payloads"], 2: ["release"]})
+    _ledger(fdir, "casting-imperatives", done=True)
+    _ledger(fdir, "casting-payloads", done=True)
+    _teams_active(False)           # the team of wave 1 is already torn down
+
+    reading = _waiting_on_agents(project_root)
+
+    # The two fields the pre-change selector had, unchanged -- this is the
+    # reading it called `idle`, and it still looks exactly like that in them.
+    assert reading["waiting"] is False
+    assert reading["roster_agents"] == 2
+    # The field that tells the two states apart.
+    assert reading["cast_wave_pending"] == 2
+    assert reading["cast_wave_built"] == 1
+    assert _branch_state(reading) == "undispatched"
+
+    text = _format_imperative_header(
+        "build_castings", "", {}, run_name="vm", phase="F1", liveness=reading,
+    )
+    # What it is owed: wave TWO dispatched, named as a call it can make.
+    assert "TeamCreate('cast-vm-wave-2')" in text, text
+    assert "Foundry-Cast-Wave(wave=2, phase='cast')" in text, text
+    # What it must never be handed here: the teardown and the F2 crossing.
+    assert "TeamDelete" not in text, text
+    assert "Foundry-Gate(phase='inspect')" not in text, text
+    assert "Foundry-Phase(phase='cast')" not in text, text
+    # And never wave 1, whose castings are already accepted.
+    assert "wave-1" not in text and "wave=1" not in text, text
+
+
+def test_the_final_wave_finishing_is_a_finished_build(run_env):
+    """The other side of the same field: `cast_wave_pending == 0` is the only
+    reading that earns the teardown, and the team it names is the wave that was
+    actually built rather than the literal `wave-1` this branch carried.
+
+    Same run, same manifest, one more ledger -- so what the assertion isolates
+    is the wave position and not the fixture.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _wave_manifest(fdir, {1: ["imperatives", "payloads"], 2: ["release"]})
+    for cid in ("imperatives", "payloads", "release"):
+        _ledger(fdir, f"casting-{cid}", done=True)
+    _teams_active(True)
+
+    reading = _waiting_on_agents(project_root)
+
+    assert reading["cast_wave_pending"] == 0
+    assert reading["cast_wave_built"] == 2
+    assert _branch_state(reading) == "idle"
+
+    text = _format_imperative_header(
+        "build_castings", "", {}, run_name="vm", phase="F1", liveness=reading,
+    )
+    assert "Foundry-Team-Down(team_name='cast-vm-wave-2')" in text, text
+    assert "Foundry-Gate(phase='inspect')" in text, text
+    assert "Foundry-Phase(phase='cast')" in text, text
+    assert "TeamCreate(" not in text, text
+
+
+def test_a_seeded_ledger_is_a_dispatch_and_not_a_built_wave(run_env):
+    """Why the terminal `"done": true` and not `spawns.log`.
+
+    `Foundry-Cast-Wave` writes the spawn record AND seeds the ledger before the
+    lead spawns a single Agent (`foundry_spawn.py#foundry_cast_wave`, the
+    buffered `seeds` list). So a wave whose dispatch was recorded but whose
+    teammates never worked must still read as PENDING -- otherwise the lead is
+    sent to dispatch the NEXT wave over a wave nothing built, which is D-009's
+    own failure with the waves shifted by one.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _wave_manifest(fdir, {1: ["imperatives", "payloads"], 2: ["release"]})
+    _ledger(fdir, "casting-imperatives", done=True)
+    _ledger(fdir, "casting-payloads", done=False)   # seeded, never worked
+
+    reading = _waiting_on_agents(project_root)
+
+    assert reading["cast_wave_pending"] == 1, reading
+    assert _branch_state(reading) == "undispatched"
+    text = _format_imperative_header(
+        "build_castings", "", {}, run_name="vm", phase="F1", liveness=reading,
+    )
+    assert "Foundry-Cast-Wave(wave=1, phase='cast')" in text, text
+
+
+def test_an_unreadable_manifest_falls_back_rather_than_claims_a_finished_wave(
+    run_env
+):
+    """lead-stalls GI-008's totality, on the new field.
+
+    A manifest that does not answer must leave `cast_wave_pending` ABSENT and
+    not `0`: `0` reads as "every wave is done" and hands the lead the teardown,
+    which is the worst answer a failed read could give. Absent routes back to
+    the roster reading this selector shipped with, so a broken manifest degrades
+    to the pre-change behaviour rather than to a new guess.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text("{ truncated", encoding="utf-8")
+    _ledger(fdir, "casting-imperatives", done=True)
+
+    reading = _waiting_on_agents(project_root)
+
+    assert reading["cast_wave_pending"] is None, reading
+    assert reading["cast_wave_built"] is None, reading
+    assert reading["roster_agents"] == 1
+    assert _branch_state(reading) == "idle"
+
+    # And a manifest whose `waves` list holds nothing usable is the same case,
+    # not a run with no waves left.
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({"castings": [], "waves": [{"wave": "one"}, "junk"]}),
+        encoding="utf-8",
+    )
+    assert _waiting_on_agents(project_root)["cast_wave_pending"] is None
+
+
+def test_the_liveness_result_carries_the_field_the_branch_is_chosen_from(
+    run_env
+):
+    """lead-stalls FR-015 / CT-008 / D-010 — THE DECLARED INPUT HAS TO CONTAIN
+    THE ANSWER.
+
+    lead-stalls FR-015 is Locked: "the server substitutes the right one using
+    `_waiting_on_agents` at emission". lead-stalls CT-008 declares that result
+    as the whole input to the branch choice. The result carried no wave field
+    at all, so the declared input could not decide the branch the requirement
+    names -- lead-stalls GI-008
+    held (one unconditional string, well-formed) while the CHOICE was wrong,
+    which is a defect no shape check can see.
+
+    Pinned as a property of the RESULT rather than of the selector: the two run
+    states must differ in what `_waiting_on_agents` returns, or nothing
+    downstream of it can tell them apart however it is written.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F1", cycle=0)
+    _wave_manifest(fdir, {1: ["imperatives", "payloads"], 2: ["release"]})
+    _ledger(fdir, "casting-imperatives", done=True)
+    _ledger(fdir, "casting-payloads", done=True)
+    boundary = _waiting_on_agents(project_root)
+
+    _ledger(fdir, "casting-release", done=True)
+    finished = _waiting_on_agents(project_root)
+
+    # The fields the pre-change selector read agree on both readings, which is
+    # exactly why it could not tell them apart.
+    assert boundary["waiting"] == finished["waiting"] is False
+    assert bool(boundary["roster_agents"]) == bool(finished["roster_agents"])
+    # The declared input now distinguishes them.
+    assert boundary["cast_wave_pending"] != finished["cast_wave_pending"]
+    assert _branch_state(boundary) != _branch_state(finished)
+    # And it is on the payload the lead can read, not only in the selector.
+    for key in ("cast_wave_pending", "cast_wave_built"):
+        assert key in boundary and key in finished, key
+
+
+def test_fix_defects_is_unmoved_by_the_wave_field(run_env):
+    """The coupling lead-stalls D-009 introduces, bounded.
+
+    `_cast_wave_position` is measured for BOTH branched actions, because the
+    reading is taken once per call. In F3 the ledgers have been re-seeded for
+    the GRIND dispatch and carry no terminal line, so `cast_wave_pending` reads
+    as a pending wave on every `fix_defects` emission -- and that must change
+    nothing. It does not: `fix_defects` declares no `undispatched` branch, so
+    the state resolves through `_BRANCH_FALLBACK` to the same `idle` body every
+    other non-live reading gets. Pinned rather than argued, because "the new
+    field cannot reach the other action" is exactly the kind of claim that stops
+    being true when somebody adds the branch.
+    """
+    bodies = {
+        _format_imperative_header(
+            "fix_defects", "", {}, run_name="r", phase="F3", cycle=3,
+            liveness={"waiting": False, "roster_agents": 2, **extra},
+        )
+        for extra in (
+            {},
+            {"cast_wave_pending": 0, "cast_wave_built": 2},
+            {"cast_wave_pending": 1, "cast_wave_built": 1},
+            {"cast_wave_pending": 9, "cast_wave_built": 8},
+        )
+    }
+    assert len(bodies) == 1, bodies
+    assert "Foundry-Spawn-Teammate" in bodies.pop()
+
+
+def test_the_audit_sees_a_wave_boundary_handed_the_teardown(monkeypatch):
+    """lead-stalls D-009 — the positive control, and lead-stalls OT-002's
+    honesty.
+
+    The recorded audit's own `owed` column assigned `roster_agents=3 -> idle`,
+    which ENCODES the assumption the defective code made: 138/138 emissions
+    passed while wave position was never varied once, so the sweep's zero was
+    computed over a space the defect could not appear in. The
+    `wave-boundary` reading is what varies it; this asserts the sweep BITES
+    when the selector goes back to reading the roster alone, at that site and
+    nowhere else.
+    """
+    import foundry_mcp.tools.orchestration.guidance as _g
+
+    def _roster_only(liveness: object) -> str:
+        # The shipped selector as it stood before lead-stalls D-009: the wave
+        # field is simply not consulted.
+        row = liveness if isinstance(liveness, dict) else {}
+        if row.get("waiting"):
+            return "live"
+        if row.get("roster_agents"):
+            return "idle"
+        return "undispatched"
+
+    monkeypatch.setattr(_g, "_branch_state", _roster_only)
+
+    misrouted = [f for f in audit_action_imperatives() if "WRONG_BRANCH" in f]
+
+    assert misrouted, "the sweep cannot see a wave-position misrouting"
+    assert any(
+        "build_castings@F1[wave-boundary]" in f
+        and "'idle'" in f and "'undispatched'" in f
+        for f in misrouted
+    ), misrouted
+    assert {f.split(":")[0] for f in misrouted} == {
+        "build_castings@F1[wave-boundary]",
+    }, sorted({f.split(":")[0] for f in misrouted})
+
+
+def test_no_emitted_header_leaves_a_substitution_slot_literal():
+    """lead-stalls OT-013 / D-012 — a slot that reached the lead as itself.
+
+    `_GRIND_DISPATCH` named `grind-{run}-cycle-N`. `{run}` resolved and `N` did
+    not, because it was a literal character rather than a slot, and the
+    `fix_defects` payload carries no cycle number in any field for the lead to
+    resolve it from. Driven end-to-end in a real run, the lead received
+    `TeamCreate('grind-bold-wren-cycle-N')` -- a call it cannot make -- and
+    supplied the digit from its own reckoning, which is the judgment task
+    lead-stalls FR-007 defines as the defect. The controlled contrast in the
+    same run was `build_castings`, whose team name rendered fully literal.
+
+    Asserted over every emission site rather than over the one entry, because
+    which key held the literal is not what was wrong with it.
+    """
+    for _action, site, text, _owed, _reading in _audit_sites():
+        for slot in _SUBSTITUTED_SLOTS:
+            assert slot not in text, (site, slot)
+
+    # Positive control: the detector bites on the entry as it stood. A guard
+    # that stopped matching would report a clean table for the reason that it
+    # can no longer see one.
+    assert [s for s in _SUBSTITUTED_SLOTS if s in "TeamCreate('grind-{run}-cycle-{cycle}')"]
+
+
+def test_the_audit_sees_a_team_name_the_lead_cannot_create():
+    """lead-stalls FR-008 / D-012 — the positive control for
+    `UNCREATABLE_TEAM_NAME`, and the answer to "the audit must be able to catch
+    a recurrence".
+
+    The sweep returned zero over `TeamCreate('grind-bold-wren-cycle-N')` because
+    every detector it had was about CONDITIONALS and BRANCHES: the string names
+    a literal tool call, hands over no condition, leaks no marker and routes to
+    the right arm. What was wrong with it is that the argument is not a value.
+    So the audit gained the one check that expresses that decidably -- a quoted
+    team name has one grammar -- and this asserts it bites on the entry as it
+    stood rather than being a check that never fires.
+    """
+    import foundry_mcp.tools.orchestration.guidance as _g
+
+    original = _g._ACTION_IMPERATIVES["fix_defects"]
+    try:
+        _g._ACTION_IMPERATIVES["fix_defects"] = original.replace(
+            "grind-{run}-cycle-{cycle}", "grind-{run}-cycle-N"
+        )
+        assert "cycle-N" in _g._ACTION_IMPERATIVES["fix_defects"]
+        findings = [
+            f for f in audit_action_imperatives()
+            if "UNCREATABLE_TEAM_NAME" in f
+        ]
+    finally:
+        _g._ACTION_IMPERATIVES["fix_defects"] = original
+
+    assert findings, "the sweep cannot see an uncreatable team name"
+    assert all(f.startswith("fix_defects@") for f in findings), findings
+    assert any("grind-audit-cycle-N" in f for f in findings), findings
+    # And the restored table is clean again, so the control left nothing behind.
+    assert audit_action_imperatives() == []
+
+
+def test_the_grind_team_name_is_a_number_the_lead_can_create(run_env):
+    """lead-stalls D-012 — the cycle the server owns, not the one the lead
+    invents.
+
+    `current_cycle` is the counter `Foundry-Phase(phase='inspect_start')`
+    advances, the one `Foundry-Next` displays, and the one the same payload
+    tells the lead to pass as `Foundry-Fix(cycle=...)`. Substituting it makes
+    the team name agree with the `fixed_in_cycle` the ledger then records -- one
+    number, three places -- where the lead's own reckoning agreed with none of
+    them.
+
+    Driven through `foundry_next_action` and not only through the formatter, so
+    what is pinned is the string the lead RECEIVES on a real run.
+    """
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F3", cycle=4)
+    _defect_ledger(fdir, [_tiered("D-1", "LIVE", status="open")])
+
+    result = foundry_next_action(project_root)
+
+    assert result["action"] == "fix_defects", result["action"]
+    text = result["instructions"]
+    assert "grind-c3-test-run-cycle-4" in text, text
+    assert "cycle-N" not in text, text
+    # Every mention is the SAME number: step (1) tears down what steps (3) and
+    # (4) create, so a second spelling here would leave a team registered.
+    assert text.count("grind-c3-test-run-cycle-4") == 3, text
+
+
+def test_transition_to_grind_names_the_same_cycle_the_dispatch_does():
+    """The sibling entry carried the identical `cycle-N` literal, and
+    lead-stalls FR-007 is explicit that the audit fixes any others found. Both
+    resolve through one helper off one scalar, so the team the F2->F3 crossing
+    creates is the team the F3 dispatch tears down.
+    """
+    for action in ("transition_to_grind", "fix_defects"):
+        text = _format_imperative_header(
+            action, "", {}, run_name="r", phase="F2",
+            liveness={"waiting": False, "roster_agents": 0}, cycle=7,
+        )
+        assert "grind-r-cycle-7" in text, action
+        assert "cycle-N" not in text, action
+
+
+def test_the_cycle_slot_resolves_for_every_input(run_env):
+    """`_grind_cycle`'s totality, on `_halt_cause`'s side of the line. An
+    unresolved `{cycle}` would discard the imperative and take the generic
+    "Execute the first tool call mentioned. Do not deliberate." header -- the
+    conditional-judgment push lead-stalls GI-008 forbids -- over a branch the
+    lead never chose.
+    """
+    for hostile in (None, "4", -1, True, False, 2.5, [], {}, object()):
+        text = _format_imperative_header(
+            "fix_defects", "", {}, run_name="r", phase="F3",
+            liveness={"waiting": False, "roster_agents": 0}, cycle=hostile,
+        )
+        assert "{cycle}" not in text, hostile
+        assert "Execute the first tool call mentioned" not in text, hostile
+        assert "TeamCreate('grind-r-cycle-" in text, hostile
+
+
+def test_the_wave_slots_resolve_for_every_input():
+    """The same claim for `{wave}` and `{built_wave}`. `bool` is excluded on
+    purpose: `True` is not wave 1 and `False` is not "every wave is done", and
+    a selector that read them as such would route on a type accident.
+    """
+    for hostile in (
+        None, {}, "not a dict", {"cast_wave_pending": "2"},
+        {"cast_wave_pending": True}, {"cast_wave_built": False},
+        {"cast_wave_pending": -1}, {"cast_wave_built": None},
+    ):
+        for action in ("build_castings", "fix_defects"):
+            text = _format_imperative_header(
+                action, "", {}, run_name="r", phase="F1", liveness=hostile,
+            )
+            assert "{wave}" not in text and "{built_wave}" not in text, hostile
+            assert "Execute the first tool call mentioned" not in text, hostile
+    # `True` must not be read as wave 1 by accident of `isinstance(True, int)`:
+    # it is not a measurement, so it falls back to the roster reading.
+    assert _branch_state({"waiting": False, "cast_wave_pending": True}) == "undispatched"
+    assert _branch_state(
+        {"waiting": False, "roster_agents": 2, "cast_wave_pending": False}
+    ) == "idle"
 
 
 # --------------------------------------------------------------------------- #

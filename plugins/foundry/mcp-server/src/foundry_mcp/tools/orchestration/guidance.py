@@ -746,6 +746,14 @@ def foundry_next_action(
         # `agent_liveness` it can read on the same payload have to be one
         # answer, and two readings of a moving roster are not.
         liveness=agent_liveness,
+        # lead-stalls D-012 — the server-owned cycle counter, read the same way
+        # and at the same place as the run slug beside it. `current_cycle` is
+        # total and never raises, so this cannot take Foundry-Next down and
+        # cannot hand an entry an unresolvable `{cycle}`.
+        cycle=(
+            current_cycle(fdir_stall)
+            if fdir_stall and fdir_stall.exists() else None
+        ),
     )
 
     directives = _read_directives(project_root)
@@ -1306,13 +1314,29 @@ def _branch_state(liveness: object) -> str:
     imperative, which is the same rule `_waiting_on_agents` states about its own
     failure paths.
 
-    `roster_agents` ALONE answers "has this phase's work been dispatched": a
-    team is UNREGISTERED by the teardown the wave-complete branch itself names,
-    so between `Foundry-Team-Down` and `Foundry-Phase(phase='cast')` a team scan
-    reads exactly like a wave that was never dispatched — and telling that lead
-    to spawn a fresh CAST wave would rebuild every casting it had just accepted.
-    A progress ledger is written once and stays written, so the roster still
-    remembers.
+    `cast_wave_pending` IS THE FIELD THAT ANSWERS, AND `roster_agents` IS ONLY
+    ITS FALLBACK (lead-stalls D-009 / D-010).
+    ---------------------------------------------------------------------------
+    This read `roster_agents` alone, on the argument that a progress ledger is
+    written once and stays written so the roster remembers a wave the teardown
+    has already unregistered. That argument is sound and the field it chose is
+    not: the roster counts EVERY ledger in the run, so it cannot tell "wave N
+    finished" from "wave N+1 not started". The two readings are byte-identical
+    in it — `{"waiting": False, "roster_agents": >0, "teams_active": *}` — and
+    this run stood in the first of them between its own two waves while being
+    handed `_CAST_WAVE_COMPLETE`: tear the team down, gate, cross into F2, with
+    a third of the castings never built. lead-stalls US-001 requires the lead to
+    dispatch the NEXT WAVE in that turn, and lead-stalls FR-015 locks that the
+    server substitutes the RIGHT branch; a field that cannot express wave
+    position cannot choose it.
+
+    So `_waiting_on_agents` now measures the position and publishes it, and this
+    reads that answer: `cast_wave_pending` is the lowest manifest wave holding a
+    casting that has not declared itself done, `0` when every wave is done, and
+    ABSENT when the manifest could not be read. The absent case falls through to
+    the roster reading this function shipped with, which is right about the one
+    thing it ever knew — a non-empty roster means SOMETHING was dispatched — and
+    is the pre-change behaviour rather than a new guess.
 
     lead-stalls D-003 — AND `teams_active` IS NOT READ HERE, BECAUSE A
     REGISTERED TEAM IS NOT DISPATCHED WORK.
@@ -1335,6 +1359,12 @@ def _branch_state(liveness: object) -> str:
     row = liveness if isinstance(liveness, dict) else {}
     if row.get("waiting"):
         return "live"
+    # lead-stalls D-009 / D-010 — the wave position when the manifest answered,
+    # and only then the roster. `bool` is excluded for `current_cycle`'s reason:
+    # `True` is not wave 1, and `False` is not "every wave is done".
+    pending = row.get("cast_wave_pending")
+    if isinstance(pending, int) and not isinstance(pending, bool):
+        return "undispatched" if pending > 0 else "idle"
     if row.get("roster_agents"):
         return "idle"
     return "undispatched"
@@ -1353,6 +1383,72 @@ def _select_branch(text: str, state: str) -> str:
     # lead receives prose rather than a marker even if a later edit drops the
     # declared fallback. The suite pins that no shipped entry needs this.
     return next(iter(branches.values()))
+
+
+#: lead-stalls D-009 / D-012 — THE THREE SLOTS A BRANCH CAN CARRY, AND WHY EACH
+#: RESOLVES THROUGH A TOTAL HELPER RATHER THAN THROUGH A LOOKUP THAT CAN MISS.
+#:
+#: `{run}` was the only slot these entries had, so the wave and the cycle were
+#: LITERALS beside it: `cast-{run}-wave-1`, `grind-{run}-cycle-N`. The first is
+#: wrong the moment a run has two waves — corrected wave-2 routing would have
+#: re-dispatched wave 1 over castings already accepted — and the second reached
+#: the lead as the character `N`, which is not a team name and which the
+#: `fix_defects` payload carries nothing to resolve. The lead supplied a number
+#: from its own reckoning, which is the judgment task lead-stalls FR-007 defines
+#: as the defect.
+#:
+#: All three answer for EVERY input, on `_halt_cause`'s side of the line rather
+#: than `{gate}`'s: an unresolved slot here would discard the imperative and
+#: take the generic "Execute the first tool call mentioned. Do not deliberate."
+#: header, which is the conditional-judgment push lead-stalls GI-008 forbids.
+#: The declared defaults are the values the entries held as literals, so a
+#: reading that cannot answer emits exactly what shipped before this change.
+_CAST_WAVE_DEFAULT = "1"
+_GRIND_CYCLE_DEFAULT = "0"
+
+
+def _wave_number(value: object, default: str) -> str:
+    """A wave/cycle slot's value as a string, total over every input."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return default
+    return str(value) if value >= 1 else default
+
+
+def _cast_wave(liveness: object) -> str:
+    """`{wave}` — the CAST wave to DISPATCH, from the reading `_branch_state`
+    routed on (lead-stalls FR-015: the same `_waiting_on_agents` result, never
+    a second measurement of a roster that has moved since)."""
+    row = liveness if isinstance(liveness, dict) else {}
+    return _wave_number(row.get("cast_wave_pending"), _CAST_WAVE_DEFAULT)
+
+
+def _built_cast_wave(liveness: object) -> str:
+    """`{built_wave}` — the HIGHEST CAST wave that was dispatched, which is the
+    team the wave-complete branch tells the lead to tear down.
+
+    A separate slot from `{wave}` deliberately. The two are equal only in a
+    single-wave run, and one field meaning "the wave to dispatch" in one branch
+    and "the wave just finished" in another is the shape lead-stalls D-009 is:
+    a reading that two run states cannot be told apart in.
+    """
+    row = liveness if isinstance(liveness, dict) else {}
+    return _wave_number(row.get("cast_wave_built"), _CAST_WAVE_DEFAULT)
+
+
+def _grind_cycle(cycle: object) -> str:
+    """`{cycle}` — the server-owned GRIND cycle counter, substituted the way
+    `{run}` is: one run-level scalar the emitter reads once and every entry
+    holding the slot receives.
+
+    It is `current_cycle`'s answer unmodified, so the team name agrees with the
+    `cycle` argument the same payload tells the lead to pass to `Foundry-Fix`
+    and with the `fixed_in_cycle` the ledger then records. `0` is the default
+    for the same reason `current_cycle` returns it: a counter that cannot be
+    read is the run's first cycle as far as every other reader is concerned.
+    """
+    if isinstance(cycle, bool) or not isinstance(cycle, int):
+        return _GRIND_CYCLE_DEFAULT
+    return str(cycle) if cycle >= 0 else _GRIND_CYCLE_DEFAULT
 
 
 #: lead-stalls CT-002 / FR-002 — the teammates-live branch, for both audited
@@ -1386,16 +1482,17 @@ _GRIND_TEAMMATES_LIVE = (
 _CAST_WAVE_COMPLETE = (
     "YOUR NEXT CALLS (in order):\n"
     "  (1) TeamDelete for the CAST team.\n"
-    "  (2) Foundry-Team-Down(team_name='cast-{run}-wave-1') — the team name you "
-    "registered.\n"
+    "  (2) Foundry-Team-Down(team_name='cast-{run}-wave-{built_wave}') — the "
+    "team this run registered for its last CAST wave.\n"
     "  (3) Foundry-Gate(phase='inspect')\n"
     "  (4) Foundry-Phase(phase='cast') — the call that ENTERS F2. It sweeps the "
     "evidence corpus and RECORDS this INSPECT's width and roster; editing "
     "state.json by hand records no width at all, and every door that reads one "
     "then refuses.\n"
-    "No agent is running: this server read the roster on this call and nothing "
-    "is advancing, so the wave is finished and the teardown is yours to make "
-    "now." + _GATE_THEN_PHASE_NOTE
+    "Every casting of every wave has declared itself done and no agent is "
+    "running — this server read the manifest and the progress ledgers on this "
+    "call — so the build is finished and the teardown is yours to make now."
+    + _GATE_THEN_PHASE_NOTE
 )
 
 #: The third state, which `fix_defects` has no equivalent of. F1 has no sibling
@@ -1415,10 +1512,10 @@ _CAST_WAVE_COMPLETE = (
 #: still a wave with nothing dispatched to it.
 _CAST_WAVE_UNDISPATCHED = (
     "YOUR NEXT CALLS (in order):\n"
-    "  (1) TeamCreate('cast-{run}-wave-1')\n"
-    "  (2) Foundry-Team-Up(team_name='cast-{run}-wave-1')\n"
-    "  (3) Foundry-Cast-Wave(wave=1, phase='cast') — returns ALL wave-1 "
-    "dispatch blocks in ONE call.\n"
+    "  (1) TeamCreate('cast-{run}-wave-{wave}')\n"
+    "  (2) Foundry-Team-Up(team_name='cast-{run}-wave-{wave}')\n"
+    "  (3) Foundry-Cast-Wave(wave={wave}, phase='cast') — returns ALL "
+    "wave-{wave} dispatch blocks in ONE call.\n"
     "  (4) In a SINGLE message (parallel tool use), spawn one "
     "Agent(subagent_type='foundry:teammate', mode='bypassPermissions') per "
     "returned casting, passing that casting's `dispatch` field VERBATIM — it "
@@ -1427,8 +1524,10 @@ _CAST_WAVE_UNDISPATCHED = (
     "Foreground, never run_in_background=true. For the model: obey the model "
     "clause in the `instructions` Foundry-Cast-Wave returns — this server owns "
     "that decision; never re-derive it here.\n"
-    "No teammate has written a progress line, so no casting of this wave has "
-    "been dispatched yet. Make all four calls in order. A TeamCreate or a "
+    "Wave {wave} is the LOWEST wave holding a casting that has not declared "
+    "itself done — this server read the manifest and the progress ledgers on "
+    "this call — so it is the wave to dispatch, and no wave beneath it is left "
+    "open. Make all four calls in order. A TeamCreate or a "
     "Foundry-Team-Up that answers 'already registered' has cost you nothing "
     "and step (3) is still where the dispatch begins — that answer is what a "
     "lead standing between steps (4) and (6) of transition_to_cast sees, and "
@@ -1446,11 +1545,11 @@ _CAST_WAVE_UNDISPATCHED = (
 _GRIND_DISPATCH = (
     "YOUR NEXT CALLS (in order):\n"
     "  (1) TeamDelete for this cycle's GRIND team, then "
-    "Foundry-Team-Down(team_name='grind-{run}-cycle-N') for it — clears any "
-    "team still registered from a previous dispatch.\n"
+    "Foundry-Team-Down(team_name='grind-{run}-cycle-{cycle}') for it — clears "
+    "any team still registered from a previous dispatch.\n"
     "  (2) Foundry-Tasks\n"
-    "  (3) TeamCreate('grind-{run}-cycle-N')\n"
-    "  (4) Foundry-Team-Up(team_name='grind-{run}-cycle-N')\n"
+    "  (3) TeamCreate('grind-{run}-cycle-{cycle}')\n"
+    "  (4) Foundry-Team-Up(team_name='grind-{run}-cycle-{cycle}')\n"
     "  (5) Foundry-Spawn-Teammate(casting_id=N, phase='grind') for each casting "
     "carrying open defects.\n"
     "  (6) Spawn one foreground Agent(subagent_type='foundry:teammate', "
@@ -1684,8 +1783,8 @@ _ACTION_IMPERATIVES = {
         "  (1) Foundry-Tasks\n"
         "  (2) Foundry-Gate(phase='grind')\n"
         "  (3) Foundry-Phase(phase='grind_start')\n"
-        "  (4) TeamCreate('grind-{run}-cycle-N')\n"
-        "  (5) Foundry-Team-Up(team_name='grind-{run}-cycle-N')\n"
+        "  (4) TeamCreate('grind-{run}-cycle-{cycle}')\n"
+        "  (5) Foundry-Team-Up(team_name='grind-{run}-cycle-{cycle}')\n"
         "  (6) For each casting with open defects: Foundry-Spawn-Teammate(casting_id=N, phase='grind')\n"
         "  (7) Spawn Agent(subagent_type='foundry:teammate', mode='bypassPermissions', "
         "prompt=<the returned `dispatch` field VERBATIM \u2014 it names the prompt FILE and the sha256 the "
@@ -1887,6 +1986,7 @@ def _format_imperative_header(
     run_name: str = "",
     phase: str = "",
     liveness: object = None,
+    cycle: object = None,
 ) -> str:
     """Produce the one-line 'YOUR NEXT CALL' header for the given action.
     Falls back to a generic header if the action is unmapped.
@@ -1926,10 +2026,35 @@ def _format_imperative_header(
     that fell through to the generic header would hand the lead "Execute the
     first tool call mentioned. Do not deliberate." over an arm it never chose.
     `_select_branch` is total, so there is no reading for which that happens.
+
+    lead-stalls D-009 / D-012 — AND THE WAVE AND THE CYCLE ARE SLOTS, RESOLVED
+    ON THAT SAME SIDE OF THE LINE.
+
+    ``{wave}`` and ``{built_wave}`` come off the SAME ``liveness`` reading the
+    branch was chosen from, so the arm the lead receives and the wave number
+    inside it are one answer about one roster. ``{cycle}`` is a run-level scalar
+    and comes in like ``run_name`` does — read once by the caller, handed to
+    every entry that holds the slot — because it is not a liveness fact and a
+    router arm that forgot to publish it would leave the lead a literal `N`,
+    which is the defect D-012 is.
     """
     imperative = _ACTION_IMPERATIVES.get(action)
     if imperative:
         imperative = _select_branch(imperative, _branch_state(liveness))
+    if imperative:
+        # lead-stalls D-009 / D-012 — resolved beside `{halt_cause}` and BEFORE
+        # the `{gate}` fallback below, for the same reason: all three helpers
+        # are total, so no reading can leave one of these literal in the header
+        # and send a branched entry to the generic "Execute the first tool call
+        # mentioned. Do not deliberate." `{wave}` is replaced before
+        # `{built_wave}` and cannot chew on it — the character before `wave}`
+        # there is an underscore, not a brace.
+        imperative = (
+            imperative
+            .replace("{wave}", _cast_wave(liveness))
+            .replace("{built_wave}", _built_cast_wave(liveness))
+            .replace("{cycle}", _grind_cycle(cycle))
+        )
     if imperative and "{halt_cause}" in imperative:
         # fallout US-006 / FR-019 (D-147) — substituted from the RECORDED
         # member, which the halted branch publishes in `details` beside the
@@ -3331,11 +3456,99 @@ STALL_NOTICE_SECONDS = 180
 
 
 
+def _cast_wave_position(
+    project_root: str, roster_ids: set[str], done_ids: set[str]
+) -> dict:
+    """Where the run stands in its CAST waves (lead-stalls D-009 / D-010).
+
+    Returns ``{"cast_wave_pending": int | None, "cast_wave_built": int | None}``:
+
+      * ``cast_wave_pending`` — the LOWEST manifest wave holding a casting that
+        has not written a terminal ``"done": true`` line, and ``0`` when every
+        wave has. That is the branch question `_branch_state` asks, and the
+        number `{wave}` carries into the dispatch the lead is then handed.
+      * ``cast_wave_built`` — the HIGHEST wave with a casting in the roster at
+        all, which is the team name the wave-complete branch tears down.
+      * ``None`` for both when no manifest answered, which routes `_branch_state`
+        back to the roster reading it shipped with rather than to a guess.
+
+    WHY THE LEDGER'S OWN TERMINAL LINE AND NOT `spawns.log`. A dispatch record
+    and a seeded ledger are both written by `Foundry-Cast-Wave` BEFORE the lead
+    spawns a single Agent, so either one read as "this wave is dispatched" would
+    answer yes for a lead standing between steps (3) and (4) of its own
+    sequence — and the wave it would then be sent to dispatch is the NEXT one,
+    over a wave nothing has built. The teammate's own `"done": true` is the only
+    signal in the run that a casting was WORKED, and the progress protocol every
+    spawn prompt carries is what puts it there. A wave whose teammate died mid
+    work therefore stays pending and is re-dispatched, which is the answer that
+    state is owed.
+
+    NEVER RAISES, for `_waiting_on_agents`'s reason: a reader that cannot answer
+    must not be able to claim a wave is finished, so every failure path answers
+    ``None`` and the caller falls back.
+    """
+    blank = {"cast_wave_pending": None, "cast_wave_built": None}
+    try:
+        # Lazily, like the `foundry_liveness` import below it and for the same
+        # reason: this module is imported BY `foundry_spawn` at call time, and a
+        # ledger id spelled a second time here is how the two drift apart.
+        from foundry_mcp.tools.foundry_spawn import _agent_id_for_casting
+
+        fdir = get_run_dir(project_root)
+        if not fdir or not fdir.exists():
+            return blank
+        manifest = _load_json(fdir / "castings" / "manifest.json")
+        waves = manifest.get("waves") if isinstance(manifest, dict) else None
+        if not isinstance(waves, list):
+            return blank
+        numbered: list[tuple[int, list]] = []
+        for entry in waves:
+            if not isinstance(entry, dict):
+                continue
+            number = entry.get("wave")
+            ids = entry.get("casting_ids")
+            if isinstance(number, bool) or not isinstance(number, int):
+                continue
+            if number < 1 or not isinstance(ids, list) or not ids:
+                continue
+            numbered.append((number, ids))
+        # A `waves` list that held nothing usable is a manifest that did not
+        # answer, NOT a run with no waves left: `0` here would read as "every
+        # wave is done" and hand the lead the teardown.
+        if not numbered:
+            return blank
+        pending = [
+            number for number, ids in numbered
+            if any(_agent_id_for_casting(cid) not in done_ids for cid in ids)
+        ]
+        built = [
+            number for number, ids in numbered
+            if any(_agent_id_for_casting(cid) in roster_ids for cid in ids)
+        ]
+        return {
+            "cast_wave_pending": min(pending) if pending else 0,
+            "cast_wave_built": max(built) if built else 0,
+        }
+    except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
+        return blank
+
+
 def _waiting_on_agents(project_root: str) -> dict:
     """Is the lead waiting on live agents, or is it deliberating (FR-020)?
 
     Returns ``{"waiting": bool, "count": int, "detail": str, "agents": [...],
-    "teams_active": bool, "progressing_agents": int, "roster_agents": int}``.
+    "teams_active": bool, "progressing_agents": int, "roster_agents": int,
+    "cast_wave_pending": int | None, "cast_wave_built": int | None}``.
+
+    lead-stalls D-009 / D-010 — AND THE LAST TWO ARE WHY THIS ROUTINE ANSWERS
+    THE BRANCH QUESTION AT ALL. lead-stalls FR-015 is Locked on "the server
+    substitutes the right one using `_waiting_on_agents` at emission", and this
+    result carried no wave field, so CT-008's declared input could not decide
+    the branch FR-015 requires: `{"waiting": False, "roster_agents": >0}` is
+    byte-identical at "wave 1 done, wave 2 pending" and at "the final wave is
+    done". The position is measured here, on the ONE roster read this call
+    takes, rather than in a second scan the imperative and the payload could
+    disagree about.
 
     BOTH DECLARED INPUTS ARE READ; PROGRESS IS WHAT DECIDES (D-076, D-127).
     ----------------------------------------------------------------------
@@ -3400,6 +3613,7 @@ def _waiting_on_agents(project_root: str) -> dict:
 
     try:
         from foundry_mcp.tools.foundry_spawn import (
+            STATUS_DONE,
             STATUS_NO_PROGRESS,
             STATUS_PROGRESSING,
             foundry_liveness,
@@ -3429,7 +3643,20 @@ def _waiting_on_agents(project_root: str) -> dict:
         ]
 
     live_agents = []
+    # lead-stalls D-009 — the two id sets `_cast_wave_position` reads, collected
+    # in the loop that already walks the roster. Gathered HERE and not in the
+    # helper because `STATUS_DONE` is bound by the import above, which the
+    # failure path skips — and on that path `roster` is empty, so this loop does
+    # not run and the helper is handed two empty sets, which is honest: nothing
+    # was measured.
+    roster_ids: set[str] = set()
+    done_ids: set[str] = set()
     for row in roster:
+        agent_id = row.get("agent")
+        if isinstance(agent_id, str):
+            roster_ids.add(agent_id)
+            if row.get("status") == STATUS_DONE:
+                done_ids.add(agent_id)
         # PROGRESSING and NO_PROGRESS both mean lines are still ARRIVING;
         # they differ only in whether the `step` field moved. STALLED means
         # no line at all for the threshold, DONE means finished, and
@@ -3439,6 +3666,9 @@ def _waiting_on_agents(project_root: str) -> dict:
             live_agents.append(row)
 
     result["roster_agents"] = len(roster)
+    # Published on BOTH return paths below, because the branch question is
+    # asked in every run state and not only in the idle ones.
+    result.update(_cast_wave_position(project_root, roster_ids, done_ids))
 
     # D-127 / FR-020, stated once: PROGRESS decides. An EMPTY roster is the one
     # answer that lets the watchdog speak. A registered team with nothing

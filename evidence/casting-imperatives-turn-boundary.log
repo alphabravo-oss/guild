@@ -15,6 +15,8 @@ denies-poll: it forbids a sleep, a poll and a re-call loop by name.
   ST-003           fix_defects     registered-not-spawned ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
   ST-003           build_castings  undispatched           ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
   ST-003           fix_defects     undispatched           ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
+  ST-003           build_castings  wave-boundary          ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
+  ST-003           fix_defects     wave-boundary          ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
 
 ST-003 is discharged by 'names-call=yes in every state where no agent is
 running': a lead that is handed a call cannot park for want of a move.
