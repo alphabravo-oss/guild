@@ -38,14 +38,34 @@ PORT=9121
 # launchd plist) must go through `uvx --from "$SERENA_PKG" serena` rather than
 # naming either one alone.
 #
-# Pinned with `==`, and sourced from PyPI rather than a git URL, because uvx
-# resolves this specifier on EVERY daemon start — including the unattended
-# RunAtLoad start at login. A git URL made each of those starts require working
-# network AND git, and floating HEAD silently rode unreleased upstream changes
-# (e.g. the in-flight languages -> language_servers rename). An exact pin names
-# one immutable artifact that uv serves from its cache, so starts are
-# reproducible. Bump deliberately, and keep both launch sites in agreement.
-SERENA_PKG="serena-agent==1.6.1"
+# A RANGE, and sourced from PyPI rather than a git URL, because uvx resolves
+# this specifier on EVERY daemon start — including the unattended RunAtLoad
+# start at login. A git URL made each of those starts require working network
+# AND git, and floating HEAD silently rode unreleased upstream changes.
+#
+# The floor is 1.7.0 because that is where `languages` -> `language_servers`
+# LANDED. It was the in-flight rename the previous `==1.6.1` pin was set to
+# freeze against, and freezing stopped being the safe choice the moment serena
+# started WRITING project.yml files in the new shape: 1.6.1's ProjectConfig
+# declares FIELDS_WITHOUT_DEFAULTS = {"project_name", "languages"} and reads
+# data["languages"] unguarded, so it raises KeyError: 'languages' on every
+# config a 1.7.x serena has written and skips that project entirely — while
+# `doctor` still reports healthy, because it checks ports and handshake and
+# never whether a project loads. 1.7.0 carries the rename in RENAMED_FIELDS
+# ({"languages": "language_servers"}), so it reads BOTH shapes and old configs
+# keep working. The floor is the version that can read what is on disk.
+#
+# The ceiling is <2.0.0 on the same reasoning one major further out: a 2.x may
+# rename again, and an unattended login start is the worst place to discover it.
+#
+# What the range costs, stated rather than discovered: uvx may resolve a NEWER
+# 1.x than the one last used, so starts are no longer byte-identical across
+# machines and a 1.x release can change behaviour under a daemon nobody
+# restarted on purpose. That is accepted deliberately — the alternative froze
+# the config FORMAT, which is the failure this range exists to end. Keep both
+# launch sites in agreement; the plist below renders from this same constant,
+# so `install-service` is what propagates a change here.
+SERENA_PKG="serena-agent>=1.7.0,<2.0.0"
 PID_FILE="$HOME/.serena-daemon.pid"
 LOG_FILE="$HOME/.serena-daemon.log"
 # The launchd job label, and the ONE place it is spelled. launchd matches a job
@@ -1050,6 +1070,21 @@ render_service_definition() {
       # and the two carry an IDENTICAL flag set — a divergence between them is
       # what produced the original incident. launchd gives every token its own
       # <string> element, so an option and its value are two adjacent elements.
+      #
+      # SERENA_PKG is XML-ESCAPED before it is interpolated, because a range
+      # specifier contains `<` and this heredoc emits XML. `serena-agent
+      # >=1.7.0,<2.0.0` written raw renders `<string>serena-agent>=1.7.0,<2.0.0
+      # </string>`, where `<2.0.0` opens what the parser reads as a tag: the
+      # plist stops being well-formed and launchd cannot load the job. Only `&`
+      # and `<` are illegal in character data — `>` is fine — but both are
+      # escaped here so the rule does not have to be re-derived by whoever
+      # changes the specifier next. cmd_start()'s shell invocation needs none of
+      # this, which is exactly why the hazard belongs to this site alone.
+      # sed rather than ${var//<//&lt;}: bash 5.2 reads a bare `&` in a
+      # pattern-substitution REPLACEMENT as the matched text, so the obvious
+      # parameter-expansion spelling silently emits `<lt;` and the plist stops
+      # linting. Both `&` here are escaped for the same reason on sed's side.
+      serena_pkg_xml=$(printf '%s' "$SERENA_PKG" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g')
       cat << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -1062,7 +1097,7 @@ render_service_definition() {
   <array>
     <string>$uvx_path</string>
     <string>--from</string>
-    <string>$SERENA_PKG</string>
+    <string>$serena_pkg_xml</string>
     <string>serena</string>
     <string>start-mcp-server</string>
     <string>--context</string>
@@ -1609,6 +1644,7 @@ cmd_doctor() {
   local drift="n/a" rendered=""
   local last_exit="unknown"
   local dup_count=0 dup_line="" log_state="absent" top=""
+  local cfg_fail_block="" cfg_fail_count=0 cfg_fail_projects=""
 
   os="$(uname)"
 
@@ -1779,6 +1815,41 @@ cmd_doctor() {
       dup_count="${top%%$'\t'*}"
       dup_line="$(printf '%s' "${top#*$'\t'}" | cut -c1-120 || true)"
     fi
+
+    # (g2) Did any PROJECT fail to load on the most recent startup?
+    #
+    # THE GAP THIS CLOSES, driven on this machine. Every other dimension here
+    # asks whether the daemon is UP: port bound, handshake answered, process
+    # alive, definition current. A Serena that loads ZERO projects passes all of
+    # them — it binds the port and answers a valid MCP handshake — and then
+    # fails every symbol request with "No active project ... known projects:
+    # []". doctor reported `verdict: healthy` through an entire foundry run
+    # whose TRACE stream could not resolve a single symbol, and the preflight
+    # token that run recorded said HEALTHY because this command said so. A
+    # server that is running and cannot serve is the wedged case exit 3 already
+    # names; it was simply never measured.
+    #
+    # WHY THE LOG IS THE EVIDENCE, on a read-only command. Serena logs one
+    # `Failed to load project configuration for <path>: <reason>` line per
+    # rejected project at startup and then SKIPS it, so the log is where the
+    # skip is stated — there is no endpoint to ask, and asking would mean
+    # activating a project, which mutates state this command must not touch.
+    #
+    # SCOPED TO THE LAST STARTUP, which is what `buf=""` on the marker line
+    # does. Without the reset, a failure fixed three restarts ago keeps firing
+    # forever and the rung becomes noise a reader learns to skip — the precise
+    # fate of a check that cannot go green.
+    cfg_fail_block="$(tail -n 4000 "$LOG_FILE" 2>/dev/null \
+      | awk '/Initializing Serena MCP server/ { buf = ""; n = 0; next }
+             /Failed to load project configuration for / { buf = buf $0 ORS; n++ }
+             END { printf "%d\t%s", n+0, buf }' || true)"
+    cfg_fail_count="${cfg_fail_block%%$'\t'*}"
+    [ -n "$cfg_fail_count" ] || cfg_fail_count=0
+    if [ "$cfg_fail_count" -gt 0 ]; then
+      cfg_fail_projects="$(printf '%s' "${cfg_fail_block#*$'\t'}" \
+        | sed -e 's/.*configuration for \(.*\): .*/\1/' \
+        | head -3 | tr '\n' ' ' | sed 's/ $//' || true)"
+    fi
   fi
 
   # ── Report: one line per dimension, always all seven ──
@@ -1839,6 +1910,19 @@ cmd_doctor() {
     ok "repeating log error .. none in last 200 lines"
   fi
 
+  # (g2) project configs loadable? See the gather block for why the log is the
+  #      evidence and why this is scoped to the most recent startup.
+  if [ "$log_state" = "absent" ]; then
+    info "project configs ...... not scanned (no log file at $LOG_FILE)"
+  elif [ "$cfg_fail_count" -gt 0 ]; then
+    warn "project configs ...... ${cfg_fail_count} FAILED to load: $cfg_fail_projects"
+    warn "                       a daemon that loads no project answers the handshake and"
+    warn "                       then fails every symbol request — fix or delete the named"
+    warn "                       .serena/project.yml, or check the pinned serena can read it"
+  else
+    ok "project configs ...... all loaded on the last startup"
+  fi
+
   # (h) Derived finding: is this thing being restarted forever without ever
   #     succeeding? Dimensions (f) and (g) report raw observations; classifying
   #     them is detect_crash_loop's job, and it reads signals doctor does not —
@@ -1878,6 +1962,20 @@ cmd_doctor() {
   fi
   if [ "$health_rc" -ne 0 ]; then
     warn "verdict: running but unhealthy — run: serena-daemon.sh restart"
+    exit 3
+  fi
+  # A daemon that answers the handshake but loaded NO project it was asked to
+  # load is running and cannot serve, which is what exit 3 already names. It
+  # sits below the two checks above because a stopped daemon is the more
+  # actionable finding, and ABOVE drift for the reason the precedence block
+  # gives: drift is only worth reporting once health is established, and this
+  # is a health finding. No new exit code — the contract is machine-consumed by
+  # the SessionStart hook and the foundry preflight, and a sixth code would
+  # break both. `restart` is deliberately NOT the remedy named here: restarting
+  # re-reads the same unreadable config and lands in the same state.
+  if [ "$cfg_fail_count" -gt 0 ]; then
+    warn "verdict: running but unhealthy — ${cfg_fail_count} project config(s) failed to load"
+    warn "         fix the named .serena/project.yml, or confirm $SERENA_PKG can read it"
     exit 3
   fi
   if [ "$drift" = "drifted" ]; then
