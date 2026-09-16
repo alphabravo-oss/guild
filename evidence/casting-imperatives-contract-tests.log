@@ -3,7 +3,7 @@
 # evidence-volatile: (in )[0-9]+\.[0-9]+s
 
 ============================= test session starts ==============================
-collecting ... collected 41 items
+collecting ... collected 43 items
 
 test_the_audit_sweeps_every_key_and_returns_zero PASSED
 test_the_recorded_evidence_shows_the_population_it_judged PASSED
@@ -13,6 +13,8 @@ test_no_imperative_forbids_the_lead_to_call_foundry_next PASSED
 test_the_teammates_live_branch_says_ending_the_turn_is_correct[build_castings] PASSED
 test_the_teammates_live_branch_says_ending_the_turn_is_correct[fix_defects] PASSED
 test_the_wave_complete_branch_names_the_literal_next_calls PASSED
+test_an_unmeasured_position_never_reaches_the_wave_complete_branch PASSED
+test_the_wave_complete_sentence_is_true_wherever_it_is_emitted PASSED
 test_fix_defects_no_longer_ends_in_a_bare_wait PASSED
 test_fix_defects_holds_the_two_branches_and_build_castings_holds_three PASSED
 test_the_branch_selector_is_total_over_every_reading PASSED
@@ -47,4 +49,4 @@ test_the_stall_accusation_arm_is_untouched PASSED
 test_transition_to_inspect_is_still_the_substitution_precedent PASSED
 test_the_wave_complete_branch_carries_the_gate_then_phase_note_once PASSED
 
-============================== 41 passed in 2.96s ==============================
+============================== 43 passed in 0.18s ==============================

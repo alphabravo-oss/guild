@@ -38,7 +38,6 @@ from tests.orchestration._env import (  # noqa: F401
     _defect_ledger,
     _progressing_ledger,
     _stale_stall_clock,
-    _stalled_ledger,
     _teams_active,
     _tiered,
     _write_manifest_with_castings,
@@ -166,10 +165,18 @@ _LIVENESS_READINGS: tuple[tuple[str, object, str], ...] = (
     # waiting -> live, whatever the other two fields say.
     ("live", {"waiting": True, "count": 2, "detail": "oldest progress 1m 0s ago"}, "live"),
     # roster 3 / team registered: the wave is dispatched and nothing advances.
-    ("idle", {"waiting": False, "roster_agents": 3, "teams_active": True}, "idle"),
+    # lead-stalls D-013 — `cast_wave_pending: 0` is STATED rather than left
+    # absent. This row means "a measured reading showing every wave done", and
+    # an absent field says the opposite thing: the manifest did not answer. The
+    # row pinned the defect while it carried neither.
+    ("idle", {"waiting": False, "roster_agents": 3, "teams_active": True,
+              "cast_wave_pending": 0, "cast_wave_built": 1}, "idle"),
     # roster 3 / team torn down: between Foundry-Team-Down and the crossing.
-    # The ledger outlives the team, so this is still the wave-complete state.
-    ("torn-down", {"waiting": False, "roster_agents": 3, "teams_active": False}, "idle"),
+    # The ledger outlives the team, so this is still the wave-complete state --
+    # and what makes it the wave-complete state is the measured 0, not the
+    # roster count (lead-stalls D-013).
+    ("torn-down", {"waiting": False, "roster_agents": 3, "teams_active": False,
+                   "cast_wave_pending": 0, "cast_wave_built": 1}, "idle"),
     # lead-stalls D-003's reading. Roster 0 / team registered: the lead is
     # between steps (4) and (6) of `transition_to_cast` — Foundry-Team-Up made,
     # first Agent not yet spawned. Nothing has been dispatched, so the dispatch
@@ -202,6 +209,28 @@ _LIVENESS_READINGS: tuple[tuple[str, object, str], ...] = (
         {"waiting": False, "roster_agents": 3, "teams_active": True,
          "cast_wave_pending": 0, "cast_wave_built": 2},
         "idle",
+    ),
+    # lead-stalls D-013 — THE READING THE TABLE HAD NO HONEST ROW FOR, AND THE
+    # ONE THE DEFECT WAS DRIVEN ON.
+    # ------------------------------------------------------------------------
+    # A ROSTER that answered and a MANIFEST that did not. `unmeasured` above is
+    # the watchdog failing entirely (`liveness is None`); this is the watchdog
+    # succeeding and the castings manifest coming back unreadable underneath it
+    # -- truncated mid-write, `waves` reset to the `[]` Foundry-Init seeds, or
+    # wave numbers written as strings. The two rows the roster arm used to serve
+    # now state a measured 0, so without this row nothing in the sweep exercises
+    # an absent position at all, and lead-stalls FR-008's zero would once again
+    # be computed over a space the defect cannot appear in -- which is D-004's
+    # and D-009's failure a third time.
+    #
+    # It is owed `undispatched`, on the asymmetry `_branch_state`'s docstring
+    # states: a spurious dispatch costs a `TeamCreate` that answers "already
+    # registered", a spurious teardown crosses a phase gate over castings
+    # nothing built.
+    (
+        "unreadable-manifest",
+        {"waiting": False, "roster_agents": 3, "teams_active": False},
+        "undispatched",
     ),
 )
 
@@ -749,7 +778,12 @@ def test_the_wave_complete_branch_names_the_literal_next_calls():
     """
     text = _format_imperative_header(
         "build_castings", "", {}, run_name="vm", phase="F1",
-        liveness={"waiting": False, "roster_agents": 4, "teams_active": True},
+        # lead-stalls D-013 — the wave-complete branch is reached by a MEASURED
+        # position and by nothing else now, so the reading that stands on it
+        # here has to carry one. A bare roster used to reach this text, and the
+        # text it reached says "this server read the manifest".
+        liveness={"waiting": False, "roster_agents": 4, "teams_active": True,
+                  "cast_wave_pending": 0, "cast_wave_built": 1},
     )
     for call in (
         "TeamDelete",
@@ -760,6 +794,100 @@ def test_the_wave_complete_branch_names_the_literal_next_calls():
         assert call in text, (call, text)
     assert "{run}" not in text, text
     assert not _HANDS_OVER_THE_CONDITION.search(text), text
+
+
+#: lead-stalls D-013 — the readings a caller can hand the selector, beyond the
+#: ones the sweep already varies: hostile types, missing keys, and the two bool
+#: values `isinstance(x, int)` would otherwise read as wave 1 and wave 0.
+#: Enumerated here rather than in the test body so both claims below are made
+#: over the same space and cannot drift apart.
+_UNMEASURED_READINGS = (
+    None, {}, "not a dict", 0, [], {"waiting": None},
+    {"waiting": False},
+    {"waiting": False, "roster_agents": 0, "teams_active": False},
+    {"waiting": False, "roster_agents": 1, "teams_active": False},
+    {"waiting": False, "roster_agents": 9, "teams_active": True},
+    {"waiting": False, "roster_agents": 9, "cast_wave_pending": None},
+    {"waiting": False, "roster_agents": 9, "cast_wave_pending": True},
+    {"waiting": False, "roster_agents": 9, "cast_wave_pending": False},
+    {"waiting": False, "roster_agents": 9, "cast_wave_pending": "0"},
+    {"waiting": False, "roster_agents": 9, "cast_wave_built": 2},
+)
+
+
+def test_an_unmeasured_position_never_reaches_the_wave_complete_branch():
+    """lead-stalls D-013's remedy, as a property of the selector rather than of
+    one reading.
+
+    `idle` IS `_CAST_WAVE_COMPLETE` for `build_castings` -- tear the team down,
+    gate, cross into F2 -- so a reading that measured NO wave position must not
+    be able to produce it. The roster fallback could, and did: a non-empty
+    roster cannot tell "wave 1 done, wave 2 never dispatched" from "the final
+    wave is done", which is the reading D-009 and D-010 were filed against, and
+    the arm below it was left on the pre-change contract.
+
+    Swept over every unmeasured shape rather than asserted on one, because the
+    defect was never about a particular manifest failure -- a truncated write,
+    the `waves: []` Foundry-Init seeds, and wave numbers typed as strings all
+    arrive here as the same absence.
+    """
+    for reading in _UNMEASURED_READINGS:
+        assert _branch_state(reading) == "undispatched", reading
+        text = _format_imperative_header(
+            "build_castings", "", {}, run_name="vm", phase="F1",
+            liveness=reading,
+        )
+        # The two wrong results one emission carried, each pinned by what the
+        # lead would have been told to DO about it.
+        assert "this server read the manifest and the progress ledgers" not in (
+            text
+        ), reading
+        assert "Foundry-Team-Down(" not in text, reading
+        assert "Foundry-Gate(phase='inspect')" not in text, reading
+        assert "Foundry-Phase(phase='cast')" not in text, reading
+
+    # Not vacuous: a MEASURED zero still reaches it, so this is a claim about
+    # the measurement and not a claim that the branch became unreachable.
+    measured = _format_imperative_header(
+        "build_castings", "", {}, run_name="vm", phase="F1",
+        liveness={"waiting": False, "roster_agents": 9, "teams_active": False,
+                  "cast_wave_pending": 0, "cast_wave_built": 2},
+    )
+    assert "this server read the manifest and the progress ledgers" in measured
+    assert "Foundry-Team-Down(team_name='cast-vm-wave-2')" in measured, measured
+
+
+def test_the_wave_complete_sentence_is_true_wherever_it_is_emitted():
+    """lead-stalls D-013 remedy (4): `_CAST_WAVE_COMPLETE` closes with "this
+    server read the manifest and the progress ledgers on this call", and an
+    imperative that asserts a measurement it never made is a defect on its own
+    terms -- the lead is routed through a phase gate on the strength of it.
+
+    Read off the EMITTED headers rather than off the constant, over every
+    reading the sweep varies plus every unmeasured shape above: the claim is
+    about what reaches the lead, so the population is the emission sites and not
+    the table entry. Any site making the claim must carry a measured, non-bool
+    `cast_wave_pending` -- which is the only input from which
+    `_cast_wave_position` publishes a number at all.
+    """
+    claim = "this server read the manifest and the progress ledgers"
+    readings = [liveness for _l, liveness, _o in _LIVENESS_READINGS]
+    readings += list(_UNMEASURED_READINGS)
+    claimed = 0
+    for reading in readings:
+        for action in ("build_castings", "fix_defects"):
+            text = _format_imperative_header(
+                action, "", {}, run_name="vm", phase="F1", liveness=reading,
+            )
+            if claim not in text:
+                continue
+            claimed += 1
+            row = reading if isinstance(reading, dict) else {}
+            pending = row.get("cast_wave_pending")
+            assert isinstance(pending, int) and not isinstance(pending, bool), (
+                action, reading, "claims a manifest read it did not make",
+            )
+    assert claimed, "no emission makes the claim; the guard cannot bite"
 
 
 def test_fix_defects_no_longer_ends_in_a_bare_wait():
@@ -979,7 +1107,7 @@ def test_the_liveness_reading_is_taken_once_and_shared_with_the_notice(
 
 
 def test_the_roster_outlives_the_teardown_the_imperative_itself_names(run_env):
-    """Why `roster_agents` exists, and why `teams_active` could not stand in.
+    """Why the ROSTER is read, and why `teams_active` could not stand in.
 
     The wave-complete branch tells the lead to `Foundry-Team-Down` and THEN
     `Foundry-Phase(phase='cast')`. Between those two calls a team scan reads
@@ -987,17 +1115,32 @@ def test_the_roster_outlives_the_teardown_the_imperative_itself_names(run_env):
     team scan alone would answer 'undispatched' there and send the lead to spawn
     a fresh CAST wave over castings it had just accepted. A progress ledger is
     written once and stays written, so the roster still remembers.
+
+    lead-stalls D-013 -- AND WHAT THE ROSTER IS READ *FOR* IS THE WAVE POSITION,
+    NOT THE BRANCH.
+    ---------------------------------------------------------------------------
+    This stood on a bare `roster_agents >= 1` with no manifest at all, so what
+    it actually pinned was the fallback arm: an UNMEASURED reading answering
+    `idle`, which is the defect. The property it was written for is real and
+    survives -- the teardown unregisters the team and the ledger outlives it --
+    but the thing that carries it across the teardown is the terminal `"done":
+    true` line the position reader walks. So the run below is the same run state
+    with its manifest present: team torn down, ledger done, position measured 0.
     """
     project_root, fdir = run_env
     _write_state(fdir, phase="F1", cycle=0)
-    _stalled_ledger(fdir)          # finished/silent: in the roster, not live
-    _teams_active(False)           # torn down
+    _wave_manifest(fdir, {1: ["3"]})
+    _ledger(fdir, "casting-3", done=True)   # finished: in the roster, not live
+    _teams_active(False)                    # torn down
 
     reading = _waiting_on_agents(project_root)
 
     assert reading["waiting"] is False
     assert reading["teams_active"] is False
     assert reading["roster_agents"] >= 1
+    # The measured 0 is what makes this the wave-complete state; the roster is
+    # how the 0 was reached, not a second route to the same branch.
+    assert reading["cast_wave_pending"] == 0, reading
     assert _branch_state(reading) == "idle"
     text = _format_imperative_header(
         "build_castings", "", {}, run_name="vm", phase="F1", liveness=reading,
@@ -1079,13 +1222,22 @@ def test_the_audit_sees_a_misrouted_branch(monkeypatch):
         # changed. A variant that also dropped the lead-stalls D-009 wave read
         # would misroute the wave-boundary reading too, and this control would
         # stop being a control for the disjunct.
+        #
+        # lead-stalls D-013 — AND THAT RULE IS WHY THE DISJUNCT IS NOW THE WHOLE
+        # ARM. D-003's line read `roster_agents or teams_active`; D-013 deleted
+        # the `roster_agents` term from the shipped selector, so restoring the
+        # historical line verbatim would restore TWO defects and misroute the
+        # `unreadable-manifest` reading as well — the same "stops being a
+        # control for the disjunct" the paragraph above forbids. The disjunct
+        # was always the `teams_active` term; that term, alone, on today's
+        # selector, is D-003 and nothing else.
         row = liveness if isinstance(liveness, dict) else {}
         if row.get("waiting"):
             return "live"
         pending = row.get("cast_wave_pending")
         if isinstance(pending, int) and not isinstance(pending, bool):
             return "undispatched" if pending > 0 else "idle"
-        if row.get("roster_agents") or row.get("teams_active"):
+        if row.get("teams_active"):
             return "idle"
         return "undispatched"
 
@@ -1273,9 +1425,19 @@ def test_an_unreadable_manifest_falls_back_rather_than_claims_a_finished_wave(
 
     A manifest that does not answer must leave `cast_wave_pending` ABSENT and
     not `0`: `0` reads as "every wave is done" and hands the lead the teardown,
-    which is the worst answer a failed read could give. Absent routes back to
-    the roster reading this selector shipped with, so a broken manifest degrades
-    to the pre-change behaviour rather than to a new guess.
+    which is the worst answer a failed read could give.
+
+    lead-stalls D-013 — AND THE SELECTOR HAS TO HONOUR THE ABSENCE, WHICH IS THE
+    HALF THIS TEST USED TO ASSERT THE VIOLATION OF.
+    ---------------------------------------------------------------------------
+    The field went absent and the assertion below read `== "idle"`, because the
+    selector fell back to the roster and `idle` IS `_CAST_WAVE_COMPLETE`. So a
+    test named for "falls back rather than CLAIMS A FINISHED WAVE" pinned the
+    lead being handed exactly that -- tear the team down, gate, cross into F2 --
+    off a manifest read that failed. Absent now routes to the DISPATCH branch,
+    which is the cheap direction of the asymmetry: a redundant `TeamCreate` that
+    answers "already registered" against a phase crossing over unbuilt castings.
+    The name is what the assertion says now.
     """
     project_root, fdir = run_env
     _write_state(fdir, phase="F1", cycle=0)
@@ -1288,15 +1450,32 @@ def test_an_unreadable_manifest_falls_back_rather_than_claims_a_finished_wave(
     assert reading["cast_wave_pending"] is None, reading
     assert reading["cast_wave_built"] is None, reading
     assert reading["roster_agents"] == 1
-    assert _branch_state(reading) == "idle"
+    assert _branch_state(reading) == "undispatched"
+    # The two wrong results the roster arm produced together, both closed by the
+    # one branch. The lead is no longer told the manifest was read, and no
+    # longer told to tear down a team named from a defaulted wave number.
+    text = _format_imperative_header(
+        "build_castings", "", {}, run_name="vm", phase="F1", liveness=reading,
+    )
+    assert "this server read the manifest" not in text, text
+    assert "Foundry-Team-Down(" not in text, text
+    assert "Foundry-Gate(phase='inspect')" not in text, text
 
     # And a manifest whose `waves` list holds nothing usable is the same case,
-    # not a run with no waves left.
-    (fdir / "castings" / "manifest.json").write_text(
-        json.dumps({"castings": [], "waves": [{"wave": "one"}, "junk"]}),
-        encoding="utf-8",
-    )
-    assert _waiting_on_agents(project_root)["cast_wave_pending"] is None
+    # not a run with no waves left. So is the `waves: []` that Foundry-Init
+    # seeds, and so are wave numbers written as strings -- three shapes, one
+    # reading, one branch (lead-stalls D-013).
+    for hostile in (
+        {"castings": [], "waves": [{"wave": "one"}, "junk"]},
+        {"castings": [], "waves": []},
+        {"castings": [], "waves": [{"wave": "1", "casting_ids": ["imperatives"]}]},
+    ):
+        (fdir / "castings" / "manifest.json").write_text(
+            json.dumps(hostile), encoding="utf-8",
+        )
+        again = _waiting_on_agents(project_root)
+        assert again["cast_wave_pending"] is None, hostile
+        assert _branch_state(again) == "undispatched", hostile
 
 
 def test_the_liveness_result_carries_the_field_the_branch_is_chosen_from(
@@ -1402,8 +1581,17 @@ def test_the_audit_sees_a_wave_boundary_handed_the_teardown(monkeypatch):
         and "'idle'" in f and "'undispatched'" in f
         for f in misrouted
     ), misrouted
+    # lead-stalls D-013 — TWO SITES NOW, AND THE SECOND IS NOT SLACK IN THE
+    # CONTROL. The roster-only selector is the shipped code before D-009 AND
+    # before D-013, because D-013 is the deletion of that same roster arm: there
+    # is no variant that drops the wave read and keeps the D-013 fix, since
+    # without the wave read the arm is all that is left. So this control now
+    # reproduces both defects and bites at both readings that vary in exactly
+    # what each defect was about — wave position, and a position that was never
+    # measured. Both are named, so neither can go quiet unnoticed.
     assert {f.split(":")[0] for f in misrouted} == {
         "build_castings@F1[wave-boundary]",
+        "build_castings@F1[unreadable-manifest]",
     }, sorted({f.split(":")[0] for f in misrouted})
 
 
@@ -1544,12 +1732,15 @@ def test_the_wave_slots_resolve_for_every_input():
             )
             assert "{wave}" not in text and "{built_wave}" not in text, hostile
             assert "Execute the first tool call mentioned" not in text, hostile
-    # `True` must not be read as wave 1 by accident of `isinstance(True, int)`:
-    # it is not a measurement, so it falls back to the roster reading.
+    # `True` must not be read as wave 1 by accident of `isinstance(True, int)`,
+    # and `False` must not be read as "every wave is done". Neither is a
+    # measurement, so both owe the dispatch branch however full the roster is
+    # (lead-stalls D-013 -- the second of these asserted `idle`, which is the
+    # roster arm answering for a reading that measured no wave at all).
     assert _branch_state({"waiting": False, "cast_wave_pending": True}) == "undispatched"
     assert _branch_state(
         {"waiting": False, "roster_agents": 2, "cast_wave_pending": False}
-    ) == "idle"
+    ) == "undispatched"
 
 
 # --------------------------------------------------------------------------- #
@@ -1736,8 +1927,12 @@ def test_the_payload_states_one_sequence_for_the_f1_crossing(run_env):
     """
     project_root, fdir = run_env
     _write_state(fdir, phase="F1", cycle=0)
-    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
-    _stalled_ledger(fdir)          # a roster that finished: the wave is done
+    # lead-stalls D-013 — "the wave is done" is a claim about the MANIFEST and
+    # the ledgers, so the run below states both. A stalled ledger with no wave
+    # manifest is a roster that finished and a position that was never measured,
+    # and that reading is now owed the dispatch branch, not this crossing.
+    _wave_manifest(fdir, {1: ["3"]})
+    _ledger(fdir, "casting-3", done=True)   # the wave is done, and measurably
 
     instructions = foundry_next_action(project_root)["instructions"]
 

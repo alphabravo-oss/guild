@@ -1333,10 +1333,37 @@ def _branch_state(liveness: object) -> str:
     So `_waiting_on_agents` now measures the position and publishes it, and this
     reads that answer: `cast_wave_pending` is the lowest manifest wave holding a
     casting that has not declared itself done, `0` when every wave is done, and
-    ABSENT when the manifest could not be read. The absent case falls through to
-    the roster reading this function shipped with, which is right about the one
-    thing it ever knew — a non-empty roster means SOMETHING was dispatched — and
-    is the pre-change behaviour rather than a new guess.
+    ABSENT when the manifest could not be read.
+
+    lead-stalls D-013 — AND AN ABSENT POSITION OWES `undispatched`, BECAUSE THE
+    ROSTER FALLBACK WAS THE SAME DEFECT WITH THE MANIFEST TAKEN AWAY.
+    ---------------------------------------------------------------------------
+    The absent case used to fall through to `if row.get("roster_agents"): return
+    "idle"` — the pre-change reading, kept on the argument that a non-empty
+    roster is right about the one thing it ever knew. It is not, and the
+    argument is the one D-009 and D-010 were filed against, restated: a
+    non-empty roster cannot tell "wave 1 done, wave 2 never dispatched" from
+    "the final wave is done", and for `build_castings` `idle` IS
+    `_CAST_WAVE_COMPLETE` — tear the team down, gate, cross into F2. So a
+    manifest that did not answer was handed the teardown, and it was handed it
+    with TWO wrong results, not one: `_CAST_WAVE_COMPLETE`'s closing sentence
+    reads "this server read the manifest and the progress ledgers on this call"
+    — the manifest read FAILING is what put the reading on that arm — and
+    `{built_wave}` then defaulted to `_CAST_WAVE_DEFAULT`, naming
+    `cast-{run}-wave-1` on a run whose last CAST wave was 2.
+
+    THE ASYMMETRY IS WHAT DECIDES IT, and it is not close. A spurious
+    `undispatched` costs a redundant `TeamCreate` / `Foundry-Team-Up` that
+    answers "already registered" — `_CAST_WAVE_UNDISPATCHED` says so in as many
+    words, and step (3) is still where the dispatch begins. A spurious `idle`
+    crosses a phase gate over castings nothing built and tears down a team named
+    after the wrong wave. One direction wastes a call; the other loses a third
+    of the build. A watchdog that cannot answer takes the cheap direction.
+
+    Nothing reads `roster_agents` here any more. It is still measured and still
+    published on the result — `_cast_wave_position` needs the roster to place
+    the wave at all, and lead-stalls FR-005 puts the count on the payload — but
+    it decides no branch. The manifest and the ledgers do.
 
     lead-stalls D-003 — AND `teams_active` IS NOT READ HERE, BECAUSE A
     REGISTERED TEAM IS NOT DISPATCHED WORK.
@@ -1365,8 +1392,8 @@ def _branch_state(liveness: object) -> str:
     pending = row.get("cast_wave_pending")
     if isinstance(pending, int) and not isinstance(pending, bool):
         return "undispatched" if pending > 0 else "idle"
-    if row.get("roster_agents"):
-        return "idle"
+    # lead-stalls D-013 — a reading that did not MEASURE a wave position owes
+    # the dispatch branch, never the teardown. See the docstring above.
     return "undispatched"
 
 
@@ -1479,6 +1506,19 @@ _GRIND_TEAMMATES_LIVE = (
 #: already happened. That makes this branch the only lead-facing surface for the
 #: F1 -> F2 crossing, and it was sending the lead to `Foundry-Phase` past the
 #: gate that guards it.
+#:
+#: lead-stalls D-013 — THE CLOSING SENTENCE ASSERTS A MEASUREMENT, AND IT IS
+#: NOW TRUE ON EVERY PATH THAT REACHES IT. "this server read the manifest and
+#: the progress ledgers on this call" was false exactly where it mattered most:
+#: `_branch_state` fell back to the roster when the manifest did NOT answer, and
+#: a failed manifest read is what put the reading on this arm. The only route
+#: here now is `_branch_state` answering `idle`, which requires a measured
+#: `cast_wave_pending` of 0 — and `_cast_wave_position` publishes 0 only after
+#: loading the manifest AND walking the ledger-derived done set. `_select_branch`
+#: cannot reach this text any other way: `build_castings` declares all three
+#: states, so `_BRANCH_FALLBACK` never fires for it and neither does the total
+#: tail. The sentence is a claim about the reading, so it stays a claim the
+#: reading has to earn.
 _CAST_WAVE_COMPLETE = (
     "YOUR NEXT CALLS (in order):\n"
     "  (1) TeamDelete for the CAST team.\n"
@@ -1524,10 +1564,13 @@ _CAST_WAVE_UNDISPATCHED = (
     "Foreground, never run_in_background=true. For the model: obey the model "
     "clause in the `instructions` Foundry-Cast-Wave returns — this server owns "
     "that decision; never re-derive it here.\n"
-    "Wave {wave} is the LOWEST wave holding a casting that has not declared "
-    "itself done — this server read the manifest and the progress ledgers on "
-    "this call — so it is the wave to dispatch, and no wave beneath it is left "
-    "open. Make all four calls in order. A TeamCreate or a "
+    "Wave {wave} is the LOWEST wave this server could place as still holding a "
+    "casting that has not declared itself done, so it is the wave to dispatch "
+    "and no wave beneath it is left open. Where the castings manifest answers, "
+    "that placement is read from it and from the progress ledgers on this call; "
+    "where it does not answer, the number falls back to wave 1 and step (3) "
+    "refuses and names the manifest rather than dispatching the wrong wave. "
+    "Make all four calls in order either way. A TeamCreate or a "
     "Foundry-Team-Up that answers 'already registered' has cost you nothing "
     "and step (3) is still where the dispatch begins — that answer is what a "
     "lead standing between steps (4) and (6) of transition_to_cast sees, and "
@@ -3633,14 +3676,21 @@ def _waiting_on_agents(project_root: str) -> dict:
     # SUBSET.
     #
     # `live_agents` answers "is the lead waiting", which is this routine's own
-    # question. `roster` answers a different one that `_branch_state` needs:
-    # HAS THIS PHASE'S WORK BEEN DISPATCHED AT ALL. The two differ exactly where
-    # it matters — a teammate that finished is out of `live_agents` and still in
-    # the roster — and `teams_active` cannot stand in for it, because the
-    # teardown the wave-complete imperative itself names unregisters the team.
-    # Between `Foundry-Team-Down` and `Foundry-Phase(phase='cast')` a team scan
-    # reads identically to a wave that was never dispatched; a progress ledger
-    # is written once and stays written.
+    # question. `roster` answers a different one that `_cast_wave_position`
+    # needs: WHICH CASTINGS HAVE DECLARED THEMSELVES DONE. The two differ
+    # exactly where it matters — a teammate that finished is out of
+    # `live_agents` and still in the roster — and `teams_active` cannot stand in
+    # for it, because the teardown the wave-complete imperative itself names
+    # unregisters the team. Between `Foundry-Team-Down` and
+    # `Foundry-Phase(phase='cast')` a team scan reads identically to a wave that
+    # was never dispatched; a progress ledger is written once and stays written.
+    #
+    # lead-stalls D-013 — the roster is an INPUT to the position and no longer a
+    # branch of its own. `_branch_state` used to fall back to `len(roster)` when
+    # the manifest did not answer, and a count of every ledger in the run cannot
+    # express wave position, so that fallback handed a wave boundary the
+    # teardown. The count is still published for lead-stalls FR-005; it decides
+    # nothing.
     roster = []
     if liveness.get("ok"):
         roster = [
