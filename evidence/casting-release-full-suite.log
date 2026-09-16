@@ -1,0 +1,10 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -p no:cacheprovider --no-header --color=no --tb=no -q -rf 2>/dev/null | awk '$1=="FAILED"{nf++; print "FAILED " $2; next} $1=="ERROR"{ne++; print "ERROR " $2; next} {s=$0; gsub(/,/, " ", s); n=split(s, w, " "); for(i=2;i<=n;i++) if(w[i]=="passed") p=w[i-1]+0} END{printf "failed: %d\n", nf+0; printf "errors: %d\n", ne+0; printf "passed at or above floor 5000: %s\n", (p>=5000 ? "True" : "False"); printf "verdict: %s\n", (nf+0==0 && ne+0==0 && p>=5000 ? "GREEN" : "RED")}'
+# evidence-for: FR-012, GI-006, OT-010
+# evidence-timeout: 900
+
+FAILED tests/test_evidence.py::test_every_declared_grammar_has_a_live_witness
+FAILED tests/test_evidence.py::test_every_committed_evidence_command_parses_under_the_host_shell
+failed: 2
+errors: 0
+passed at or above floor 5000: True
+verdict: RED

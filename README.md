@@ -126,7 +126,7 @@
 </table>
 
 
-<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.11.0-F57C00?style=flat-square" alt="foundry 4.11.0"/> <img src="https://img.shields.io/badge/foundry--mcp-1.10.0-F57C00?style=flat-square" alt="foundry-mcp 1.10.0"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/> <img src="https://img.shields.io/badge/webster-0.11.0-6D4C41?style=flat-square" alt="webster 0.11.0"/></sub>
+<sub><img src="https://img.shields.io/badge/forge-4.4.1-1E88E5?style=flat-square" alt="forge 4.4.1"/> <img src="https://img.shields.io/badge/foundry-4.11.1-F57C00?style=flat-square" alt="foundry 4.11.1"/> <img src="https://img.shields.io/badge/foundry--mcp-1.10.1-F57C00?style=flat-square" alt="foundry-mcp 1.10.1"/> <img src="https://img.shields.io/badge/crucible-0.1.0-F57C00?style=flat-square" alt="crucible 0.1.0"/> <img src="https://img.shields.io/badge/crew-0.2.0-6D4C41?style=flat-square" alt="crew 0.2.0"/> <img src="https://img.shields.io/badge/adhoc-0.3.0-43A047?style=flat-square" alt="adhoc 0.3.0"/> <img src="https://img.shields.io/badge/tldr-0.1.0-43A047?style=flat-square" alt="tldr 0.1.0"/> <img src="https://img.shields.io/badge/holmes-0.1.0-00897B?style=flat-square" alt="holmes 0.1.0"/> <img src="https://img.shields.io/badge/ux--review-0.1.0-00897B?style=flat-square" alt="ux-review 0.1.0"/> <img src="https://img.shields.io/badge/damu-0.2.0-00897B?style=flat-square" alt="damu 0.2.0"/> <img src="https://img.shields.io/badge/tidy-0.1.0-6D4C41?style=flat-square" alt="tidy 0.1.0"/> <img src="https://img.shields.io/badge/e2e-0.1.0-6D4C41?style=flat-square" alt="e2e 0.1.0"/> <img src="https://img.shields.io/badge/weave-0.1.0-6D4C41?style=flat-square" alt="weave 0.1.0"/> <img src="https://img.shields.io/badge/webster-0.11.0-6D4C41?style=flat-square" alt="webster 0.11.0"/></sub>
 
 
 </div>
@@ -365,6 +365,16 @@ flowchart LR
 <summary><b>🆕 What's new</b></summary>
 
 <br/>
+
+### foundry 4.11.1 — the lead is never left without a next call
+
+A patch release on a single surface: the sentence the lead reads when it asks what to do next. Two guidance entries ended in a bare instruction to wait, and one forbade the very call that would have said when the wait was over — so a lead that obeyed had no move left and the run parked while teammates were still building. Fixed in prose and payload rather than machinery: those entries now resolve to exactly one unconditional imperative, selected by whether agents are actually live, and the doors a lead leaves a phase through carry the next call on the response itself.
+
+| Adds | Where |
+|---|---|
+| **One unconditional imperative, branch-selected** — `build_castings` and `fix_defects` resolve against live agent status before the lead sees them: the teammates-live branch says that ending the turn is correct, the wave-complete branch names the literal next calls. No entry forbids `Foundry-Next`, and no lead-facing string instructs a sleep, a poll or a wait loop | `guidance.py` · `_ACTION_IMPERATIVES` |
+| **`next_call` on the payloads** — `Foundry-Team-Down`'s success response and **every** `Foundry-Accept-Casting` return path, rejections included, carry the lead's next call as a response key. Additive: no existing key was renamed or removed | `Foundry-Team-Down` · `Foundry-Accept-Casting` |
+| **One spelling, one definition** — the string lives once, in `artifacts.py`, and both doors import it rather than each keeping a copy free to drift | `artifacts.py` · `LEAD_NEXT_CALL` |
 
 ### foundry 4.11.0 — the loop stops making work for itself
 

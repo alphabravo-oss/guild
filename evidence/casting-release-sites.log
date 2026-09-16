@@ -1,0 +1,19 @@
+# evidence-cmd: uv run --project plugins/foundry/mcp-server python -c "import ast,json,tomllib;from pathlib import Path;T=lambda q:Path(q).read_text(encoding='utf-8');C=lambda q,n:[a.value.value for a in ast.parse(T(q)).body if isinstance(a,ast.Assign) and getattr(a.targets[0],'id','')==n][0];pj=tomllib.loads(T('plugins/foundry/mcp-server/pyproject.toml'));fm=[p for p in tomllib.loads(T('plugins/foundry/mcp-server/uv.lock'))['package'] if p['name']=='foundry-mcp'][0];pm=json.loads(T('plugins/foundry/.claude-plugin/plugin.json'));mk=[e for e in json.loads(T('.claude-plugin/marketplace.json'))['plugins'] if e['name']=='foundry'][0];tf='plugins/foundry/mcp-server/tests/test_release_version.py';S,P,M=C(tf,'SERVER_VERSION'),C(tf,'PLUGIN_VERSION'),C(tf,'MCP_SPECIFIER');iv=C('plugins/foundry/mcp-server/src/foundry_mcp/__init__.py','__version__');pc=[d for d in pj['project']['dependencies'] if d.startswith('mcp')][0];lc=[e['specifier'] for e in fm['metadata']['requires-dist'] if e['name']=='mcp'][0];srv=[iv,pj['project']['version'],fm['version'],S];plg=[pm['version'],mk['version'],P];print('site 1  plugin.json version               '+pm['version']);print('site 2  marketplace.json foundry entry    '+mk['version']);print('site 3  __init__.py __version__          '+iv);print('site 4  pyproject.toml project.version   '+pj['project']['version']);print('site 5  uv.lock foundry-mcp entry        '+fm['version']);print('site 6  test_release_version.py literals SERVER_VERSION='+S+' PLUGIN_VERSION='+P);print('');print('server sites agree on 1.10.1            '+str(srv==['1.10.1']*4));print('plugin sites agree on 4.11.1            '+str(plg==['4.11.1']*3));print('mcp ceiling pyproject declares          '+pc);print('mcp ceiling uv.lock requires-dist       mcp'+lc);print('mcp ceiling unmoved in both objects     '+str(pc=='mcp'+M and lc==M));print('');print('NFR-003: the six readings above are the numbers ON DISK. A running');print('session keeps serving the version it loaded, so this release is not');print('observable until the session reloads.')" 2>/dev/null
+# evidence-for: US-004, FR-013, FR-014, FR-016, NFR-003, NFR-004, CT-007, GI-007, OT-011, OT-012
+
+site 1  plugin.json version               4.11.1
+site 2  marketplace.json foundry entry    4.11.1
+site 3  __init__.py __version__          1.10.1
+site 4  pyproject.toml project.version   1.10.1
+site 5  uv.lock foundry-mcp entry        1.10.1
+site 6  test_release_version.py literals SERVER_VERSION=1.10.1 PLUGIN_VERSION=4.11.1
+
+server sites agree on 1.10.1            True
+plugin sites agree on 4.11.1            True
+mcp ceiling pyproject declares          mcp>=1.0.0,<2.0.0
+mcp ceiling uv.lock requires-dist       mcp>=1.0.0,<2.0.0
+mcp ceiling unmoved in both objects     True
+
+NFR-003: the six readings above are the numbers ON DISK. A running
+session keeps serving the version it loaded, so this release is not
+observable until the session reloads.
