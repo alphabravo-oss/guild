@@ -1,5 +1,154 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -q -p no:cacheprovider tests/orchestration/test_guidance_imperatives.py -k "audit" 2>/dev/null | tail -1
-# evidence-for: FR-007, FR-008
-# evidence-volatile: (in )[0-9]+\.[0-9]+s
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.orchestration.test_guidance_imperatives import audit_evidence; [print(r) for r in audit_evidence()]' 2>/dev/null
+# evidence-for: FR-007, FR-008, OT-002, OT-013, GI-008, CT-008
 
-4 passed, 19 deselected in 0.05s
+keys in _ACTION_IMPERATIVES: 22
+emission sites swept:        115
+defective emissions:         0
+
+site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, undispatched, unmeasured
+
+  add_castings             ok
+  assay_failed_loop_back   ok
+  build_castings           ok
+  cleanup_teams            ok
+  done                     ok
+  fix_defects              ok
+  halted                   ok
+  init                     ok
+  record_inspect_width     ok
+  run_assay                ok
+  run_nyquist              ok
+  run_streams              ok
+  run_temper               ok
+  transition_to_assay      ok
+  transition_to_cast       ok
+  transition_to_done       ok
+  transition_to_grind      ok
+  transition_to_inspect    ok
+  transition_to_nyquist    ok
+  transition_to_temper     ok
+  unknown                  ok
+  widen_inspect            ok
+
+(no entry hands the lead a conditional)
+
+EVERY EMITTED HEADER (site | answer | opening of its first line).
+'NONE' is an explicit 'YOUR NEXT CALL: NONE' -- the register `done` and
+`halted` use, and what the teammates-live branch answers. 'CALL' names a
+literal tool call. There is no third answer, which is the whole claim.
+
+  add_castings@F1[live]                      CALL  YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SINGLE 
+  add_castings@F1[idle]                      CALL  YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SINGLE 
+  add_castings@F1[torn-down]                 CALL  YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SINGLE 
+  add_castings@F1[undispatched]              CALL  YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SINGLE 
+  add_castings@F1[unmeasured]                CALL  YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SINGLE 
+  assay_failed_loop_back@F1[live]            CALL  YOUR NEXT CALLS (in order):
+  assay_failed_loop_back@F1[idle]            CALL  YOUR NEXT CALLS (in order):
+  assay_failed_loop_back@F1[torn-down]       CALL  YOUR NEXT CALLS (in order):
+  assay_failed_loop_back@F1[undispatched]    CALL  YOUR NEXT CALLS (in order):
+  assay_failed_loop_back@F1[unmeasured]      CALL  YOUR NEXT CALLS (in order):
+  build_castings@F1[live]                    NONE  YOUR NEXT CALL: NONE. Your CAST teammates are running — 
+  build_castings@F1[idle]                    CALL  YOUR NEXT CALLS (in order):
+  build_castings@F1[torn-down]               CALL  YOUR NEXT CALLS (in order):
+  build_castings@F1[undispatched]            CALL  YOUR NEXT CALLS (in order):
+  build_castings@F1[unmeasured]              CALL  YOUR NEXT CALLS (in order):
+  cleanup_teams@F1[live]                     CALL  YOUR NEXT CALLS (in order — do NOT wait for shutdown ack
+  cleanup_teams@F1[idle]                     CALL  YOUR NEXT CALLS (in order — do NOT wait for shutdown ack
+  cleanup_teams@F1[torn-down]                CALL  YOUR NEXT CALLS (in order — do NOT wait for shutdown ack
+  cleanup_teams@F1[undispatched]             CALL  YOUR NEXT CALLS (in order — do NOT wait for shutdown ack
+  cleanup_teams@F1[unmeasured]               CALL  YOUR NEXT CALLS (in order — do NOT wait for shutdown ack
+  done@F1[live]                              NONE  YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.md a
+  done@F1[idle]                              NONE  YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.md a
+  done@F1[torn-down]                         NONE  YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.md a
+  done@F1[undispatched]                      NONE  YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.md a
+  done@F1[unmeasured]                        NONE  YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.md a
+  fix_defects@F1[live]                       NONE  YOUR NEXT CALL: NONE. Your GRIND teammates are running —
+  fix_defects@F1[idle]                       CALL  YOUR NEXT CALLS (in order):
+  fix_defects@F1[torn-down]                  CALL  YOUR NEXT CALLS (in order):
+  fix_defects@F1[undispatched]               CALL  YOUR NEXT CALLS (in order):
+  fix_defects@F1[unmeasured]                 CALL  YOUR NEXT CALLS (in order):
+  halted@F1[live]                            NONE  YOUR NEXT CALL: NONE. This run is HALTED — it stopped wi
+  halted@F1[idle]                            NONE  YOUR NEXT CALL: NONE. This run is HALTED — it stopped wi
+  halted@F1[torn-down]                       NONE  YOUR NEXT CALL: NONE. This run is HALTED — it stopped wi
+  halted@F1[undispatched]                    NONE  YOUR NEXT CALL: NONE. This run is HALTED — it stopped wi
+  halted@F1[unmeasured]                      NONE  YOUR NEXT CALL: NONE. This run is HALTED — it stopped wi
+  init@F1[live]                              CALL  YOUR NEXT CALL: Foundry-Init (start a new run)
+  init@F1[idle]                              CALL  YOUR NEXT CALL: Foundry-Init (start a new run)
+  init@F1[torn-down]                         CALL  YOUR NEXT CALL: Foundry-Init (start a new run)
+  init@F1[undispatched]                      CALL  YOUR NEXT CALL: Foundry-Init (start a new run)
+  init@F1[unmeasured]                        CALL  YOUR NEXT CALL: Foundry-Init (start a new run)
+  record_inspect_width@F1[live]              CALL  YOUR NEXT CALLS (in order):
+  record_inspect_width@F1[idle]              CALL  YOUR NEXT CALLS (in order):
+  record_inspect_width@F1[torn-down]         CALL  YOUR NEXT CALLS (in order):
+  record_inspect_width@F1[undispatched]      CALL  YOUR NEXT CALLS (in order):
+  record_inspect_width@F1[unmeasured]        CALL  YOUR NEXT CALLS (in order):
+  run_assay@F1[live]                         CALL  YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type='fo
+  run_assay@F1[idle]                         CALL  YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type='fo
+  run_assay@F1[torn-down]                    CALL  YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type='fo
+  run_assay@F1[undispatched]                 CALL  YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type='fo
+  run_assay@F1[unmeasured]                   CALL  YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type='fo
+  run_nyquist@F1[live]                       CALL  YOUR NEXT CALL: batch the VERIFIED requirements by 5 and
+  run_nyquist@F1[idle]                       CALL  YOUR NEXT CALL: batch the VERIFIED requirements by 5 and
+  run_nyquist@F1[torn-down]                  CALL  YOUR NEXT CALL: batch the VERIFIED requirements by 5 and
+  run_nyquist@F1[undispatched]               CALL  YOUR NEXT CALL: batch the VERIFIED requirements by 5 and
+  run_nyquist@F1[unmeasured]                 CALL  YOUR NEXT CALL: batch the VERIFIED requirements by 5 and
+  run_streams@F1[live]                       CALL  YOUR NEXT CALLS: spawn every missing INSPECT stream in a
+  run_streams@F1[idle]                       CALL  YOUR NEXT CALLS: spawn every missing INSPECT stream in a
+  run_streams@F1[torn-down]                  CALL  YOUR NEXT CALLS: spawn every missing INSPECT stream in a
+  run_streams@F1[undispatched]               CALL  YOUR NEXT CALLS: spawn every missing INSPECT stream in a
+  run_streams@F1[unmeasured]                 CALL  YOUR NEXT CALLS: spawn every missing INSPECT stream in a
+  run_temper@F1[live]                        CALL  YOUR NEXT CALL: spawn the TEMPER micro-domain agents. TE
+  run_temper@F1[idle]                        CALL  YOUR NEXT CALL: spawn the TEMPER micro-domain agents. TE
+  run_temper@F1[torn-down]                   CALL  YOUR NEXT CALL: spawn the TEMPER micro-domain agents. TE
+  run_temper@F1[undispatched]                CALL  YOUR NEXT CALL: spawn the TEMPER micro-domain agents. TE
+  run_temper@F1[unmeasured]                  CALL  YOUR NEXT CALL: spawn the TEMPER micro-domain agents. TE
+  transition_to_assay@F1[live]               CALL  YOUR NEXT CALLS (in order):
+  transition_to_assay@F1[idle]               CALL  YOUR NEXT CALLS (in order):
+  transition_to_assay@F1[torn-down]          CALL  YOUR NEXT CALLS (in order):
+  transition_to_assay@F1[undispatched]       CALL  YOUR NEXT CALLS (in order):
+  transition_to_assay@F1[unmeasured]         CALL  YOUR NEXT CALLS (in order):
+  transition_to_cast@F1[live]                CALL  YOUR NEXT CALLS (in order — bulk flow saves N-1 roundtri
+  transition_to_cast@F1[idle]                CALL  YOUR NEXT CALLS (in order — bulk flow saves N-1 roundtri
+  transition_to_cast@F1[torn-down]           CALL  YOUR NEXT CALLS (in order — bulk flow saves N-1 roundtri
+  transition_to_cast@F1[undispatched]        CALL  YOUR NEXT CALLS (in order — bulk flow saves N-1 roundtri
+  transition_to_cast@F1[unmeasured]          CALL  YOUR NEXT CALLS (in order — bulk flow saves N-1 roundtri
+  transition_to_done@F1[live]                CALL  YOUR NEXT CALLS (in order, and the order is the whole of
+  transition_to_done@F1[idle]                CALL  YOUR NEXT CALLS (in order, and the order is the whole of
+  transition_to_done@F1[torn-down]           CALL  YOUR NEXT CALLS (in order, and the order is the whole of
+  transition_to_done@F1[undispatched]        CALL  YOUR NEXT CALLS (in order, and the order is the whole of
+  transition_to_done@F1[unmeasured]          CALL  YOUR NEXT CALLS (in order, and the order is the whole of
+  transition_to_grind@F1[live]               CALL  YOUR NEXT CALLS (in order):
+  transition_to_grind@F1[idle]               CALL  YOUR NEXT CALLS (in order):
+  transition_to_grind@F1[torn-down]          CALL  YOUR NEXT CALLS (in order):
+  transition_to_grind@F1[undispatched]       CALL  YOUR NEXT CALLS (in order):
+  transition_to_grind@F1[unmeasured]         CALL  YOUR NEXT CALLS (in order):
+  transition_to_inspect@F1[live]             CALL  YOUR NEXT CALLS (in order):
+  transition_to_inspect@F1[idle]             CALL  YOUR NEXT CALLS (in order):
+  transition_to_inspect@F1[torn-down]        CALL  YOUR NEXT CALLS (in order):
+  transition_to_inspect@F1[undispatched]     CALL  YOUR NEXT CALLS (in order):
+  transition_to_inspect@F1[unmeasured]       CALL  YOUR NEXT CALLS (in order):
+  transition_to_inspect@F3[live]             CALL  YOUR NEXT CALLS (in order):
+  transition_to_inspect@F3[idle]             CALL  YOUR NEXT CALLS (in order):
+  transition_to_inspect@F3[torn-down]        CALL  YOUR NEXT CALLS (in order):
+  transition_to_inspect@F3[undispatched]     CALL  YOUR NEXT CALLS (in order):
+  transition_to_inspect@F3[unmeasured]       CALL  YOUR NEXT CALLS (in order):
+  transition_to_nyquist@F1[live]             CALL  YOUR NEXT CALLS (in order):
+  transition_to_nyquist@F1[idle]             CALL  YOUR NEXT CALLS (in order):
+  transition_to_nyquist@F1[torn-down]        CALL  YOUR NEXT CALLS (in order):
+  transition_to_nyquist@F1[undispatched]     CALL  YOUR NEXT CALLS (in order):
+  transition_to_nyquist@F1[unmeasured]       CALL  YOUR NEXT CALLS (in order):
+  transition_to_temper@F1[live]              CALL  YOUR NEXT CALLS (in order):
+  transition_to_temper@F1[idle]              CALL  YOUR NEXT CALLS (in order):
+  transition_to_temper@F1[torn-down]         CALL  YOUR NEXT CALLS (in order):
+  transition_to_temper@F1[undispatched]      CALL  YOUR NEXT CALLS (in order):
+  transition_to_temper@F1[unmeasured]        CALL  YOUR NEXT CALLS (in order):
+  unknown@F1[live]                           CALL  YOUR NEXT CALL: Foundry-Context. The guidance engine doe
+  unknown@F1[idle]                           CALL  YOUR NEXT CALL: Foundry-Context. The guidance engine doe
+  unknown@F1[torn-down]                      CALL  YOUR NEXT CALL: Foundry-Context. The guidance engine doe
+  unknown@F1[undispatched]                   CALL  YOUR NEXT CALL: Foundry-Context. The guidance engine doe
+  unknown@F1[unmeasured]                     CALL  YOUR NEXT CALL: Foundry-Context. The guidance engine doe
+  widen_inspect@F1[live]                     CALL  YOUR NEXT CALLS (in order):
+  widen_inspect@F1[idle]                     CALL  YOUR NEXT CALLS (in order):
+  widen_inspect@F1[torn-down]                CALL  YOUR NEXT CALLS (in order):
+  widen_inspect@F1[undispatched]             CALL  YOUR NEXT CALLS (in order):
+  widen_inspect@F1[unmeasured]               CALL  YOUR NEXT CALLS (in order):

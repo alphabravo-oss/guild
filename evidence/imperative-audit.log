@@ -1,5 +1,5 @@
 # evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.orchestration.test_guidance_imperatives import audit_report; [print(r) for r in audit_report()]' 2>/dev/null
-# evidence-for: FR-007, FR-008
+# evidence-for: FR-007, FR-008, OT-002
 
 keys in _ACTION_IMPERATIVES: 22
 emission sites swept:        115

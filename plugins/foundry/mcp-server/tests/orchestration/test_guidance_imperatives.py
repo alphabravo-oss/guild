@@ -200,6 +200,99 @@ def audit_report() -> list[str]:
     return lines
 
 
+def audit_evidence() -> list[str]:
+    """The finding list, followed by every header the table can EMIT.
+
+    lead-stalls OT-013 is a claim about the strings the lead RECEIVES, and a
+    log reading "0 findings" asks the reader to take the detector's word for
+    it. This dump is the population the detector judged, so the claim can be
+    read rather than trusted: 115 lines, one per emission site, each showing
+    whether that site answers with a call or with an explicit NONE and how its
+    text opens. lead-stalls GI-008 / CT-008 are the same claim from the other
+    end -- one unconditional string per site, chosen server-side -- and they are
+    read off the same dump.
+    """
+    lines = audit_report()
+    lines += [
+        "",
+        "EVERY EMITTED HEADER (site | answer | opening of its first line).",
+        "'NONE' is an explicit 'YOUR NEXT CALL: NONE' -- the register `done` and",
+        "`halted` use, and what the teammates-live branch answers. 'CALL' names a",
+        "literal tool call. There is no third answer, which is the whole claim.",
+        "",
+    ]
+    for _action, site, text in _audit_sites():
+        head = " ".join(text.split("\n", 1)[0].split())
+        answer = "NONE" if _NAMES_NO_CALL.search(text) else "CALL"
+        lines.append(f"  {site:<42} {answer}  {head[:56]}")
+    return lines
+
+
+def turn_boundary_report() -> list[str]:
+    """What the server tells the lead at each end of the turn boundary.
+
+    lead-stalls ST-001 / ST-002 / ST-003 are transitions of the LEAD'S SESSION,
+    and a server test cannot drive them: nothing here can make a session idle,
+    and nothing here can deliver a completion notification. What this casting
+    contributes to all three is the INSTRUCTION the lead is standing on when it
+    decides whether to end its turn, and that is what this report shows --
+    the server-side half, named as such rather than as a proof of the whole.
+
+      lead-stalls ST-001  teammates live -> the lead ends its turn. The
+              imperative has to say ending it is CORRECT, or a lead trained
+              never to stop between phases will improvise over half-finished
+              work instead.
+      lead-stalls ST-002  the completion notification re-enters the lead. The
+              imperative has to name the notification as what resumes it, or
+              "end your turn" reads as "abandon the run".
+      lead-stalls ST-003  nothing running -> the run PARKS, and that is the
+              defect. The
+              imperative must name a literal call in every state where no agent
+              is running, so ending the turn is never the only move on offer.
+    """
+    rows = [
+        ("ST-001 / ST-002", "live",
+         {"waiting": True, "count": 2, "detail": "oldest progress 1m 0s ago"}),
+        ("ST-003", "idle",
+         {"waiting": False, "roster_agents": 3, "teams_active": True}),
+        ("ST-003", "undispatched",
+         {"waiting": False, "roster_agents": 0, "teams_active": False}),
+    ]
+    lines = [
+        "the server-side half of the turn boundary, per run state.",
+        "ends-turn: the imperative answers 'YOUR NEXT CALL: NONE'.",
+        "names-wake: it names the completion notification as what resumes the lead.",
+        "names-call: it names at least one literal tool call.",
+        "denies-poll: it forbids a sleep, a poll and a re-call loop by name.",
+        "",
+    ]
+    for transitions, state, liveness in rows:
+        for action in ("build_castings", "fix_defects"):
+            text = _format_imperative_header(
+                action, "", {}, run_name="audit", phase="F1", liveness=liveness,
+            )
+            lines.append(
+                f"  {transitions:<16} {action:<15} {state:<13} "
+                f"ends-turn={'yes' if _NAMES_NO_CALL.search(text) else 'no ':<3} "
+                f"names-wake={'yes' if 'completion notification' in text else 'no ':<3} "
+                f"names-call={'yes' if _NAMES_A_CALL.search(text) else 'no ':<3} "
+                f"denies-poll="
+                f"{'yes' if 'do NOT poll' in text else 'n/a'}"
+            )
+    lines += [
+        "",
+        "ST-003 is discharged by 'names-call=yes in every state where no agent is",
+        "running': a lead that is handed a call cannot park for want of a move.",
+        "ST-001 and ST-002 are discharged by 'ends-turn=yes AND names-wake=yes'",
+        "on the one state where an agent IS running -- ending the turn is stated",
+        "as correct, and the thing that ends the idle is named in the same breath.",
+        "The idle of ST-001 and the notification of ST-002 are the HARNESS's to",
+        "perform; this casting owns only what the lead is told, and that is all",
+        "this log claims.",
+    ]
+    return lines
+
+
 def test_the_audit_sweeps_every_key_and_returns_zero():
     """lead-stalls FR-008 verbatim: 'Builder fixes the two named, then
     re-runs the same audit across all 22 keys and records the finding list as
@@ -213,6 +306,35 @@ def test_the_audit_sweeps_every_key_and_returns_zero():
     """
     assert len(_ACTION_IMPERATIVES) == 22, sorted(_ACTION_IMPERATIVES)
     assert audit_action_imperatives() == []
+
+
+def test_the_recorded_evidence_shows_the_population_it_judged():
+    """Floor for the two report generators the evidence logs re-execute.
+
+    A generator that quietly stopped emitting rows would leave a log that still
+    re-executes byte-identically -- against its own emptiness. So the reports
+    are pinned to the population they claim: one row per emission site, and one
+    row per (audited action x run state).
+    """
+    dump = audit_evidence()
+    for _action, site, _text in _audit_sites():
+        assert any(site in line for line in dump), site
+    assert sum(1 for l in dump if "  CALL  " in l or "  NONE  " in l) == len(
+        _audit_sites()
+    )
+
+    boundary = turn_boundary_report()
+    for action in ("build_castings", "fix_defects"):
+        for state in ("live", "idle", "undispatched"):
+            assert any(
+                action in line and f" {state:<13}" in line for line in boundary
+            ), (action, state)
+    # The claim the log is bound to lead-stalls ST-003 for: wherever no agent
+    # is running,
+    # the lead is handed a call rather than only an invitation to stop.
+    for line in boundary:
+        if "ends-turn=no" in line:
+            assert "names-call=yes" in line, line
 
 
 def test_the_audit_is_not_vacuous_and_bites_on_the_entry_it_replaced():

@@ -1,5 +1,33 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -q -p no:cacheprovider tests/orchestration/test_guidance_imperatives.py 2>/dev/null | tail -1
-# evidence-for: US-002, FR-001, FR-002, FR-005, FR-006, FR-015
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -p no:cacheprovider --no-header -v tests/orchestration/test_guidance_imperatives.py 2>/dev/null | sed -E "s/ +\[ *[0-9]+%\]$//" | sed -E "s#^tests/orchestration/test_guidance_imperatives.py::##"
+# evidence-for: US-002, FR-001, FR-002, FR-005, FR-006, FR-015, CT-001, CT-002, CT-003, CT-006, CT-008, GI-004, GI-008, OT-001, OT-003, OT-004, OT-007, OT-013
 # evidence-volatile: (in )[0-9]+\.[0-9]+s
 
-23 passed in 0.07s
+============================= test session starts ==============================
+collecting ... collected 24 items
+
+test_the_audit_sweeps_every_key_and_returns_zero PASSED
+test_the_recorded_evidence_shows_the_population_it_judged PASSED
+test_the_audit_is_not_vacuous_and_bites_on_the_entry_it_replaced PASSED
+test_every_action_is_swept_in_every_run_state PASSED
+test_no_imperative_forbids_the_lead_to_call_foundry_next PASSED
+test_the_teammates_live_branch_says_ending_the_turn_is_correct[build_castings] PASSED
+test_the_teammates_live_branch_says_ending_the_turn_is_correct[fix_defects] PASSED
+test_the_wave_complete_branch_names_the_literal_next_calls PASSED
+test_fix_defects_no_longer_ends_in_a_bare_wait PASSED
+test_fix_defects_holds_the_two_branches_and_build_castings_holds_three PASSED
+test_the_branch_selector_is_total_over_every_reading PASSED
+test_an_unbranched_entry_passes_through_untouched PASSED
+test_a_state_with_no_branch_of_its_own_falls_back_rather_than_empties PASSED
+test_the_branch_reaches_the_lead_through_the_ordinary_instructions_string PASSED
+test_the_audited_action_payloads_carry_live_agent_status PASSED
+test_an_unaudited_action_pays_for_no_roster_scan PASSED
+test_the_liveness_reading_is_taken_once_and_shared_with_the_notice PASSED
+test_the_roster_outlives_the_teardown_the_imperative_itself_names PASSED
+test_no_lead_facing_string_instructs_a_sleep_a_poll_or_a_wait_loop PASSED
+test_the_wait_policy_has_one_spelling PASSED
+test_the_waiting_notice_quotes_the_policy_rather_than_rewording_it PASSED
+test_the_stall_accusation_arm_is_untouched PASSED
+test_transition_to_inspect_is_still_the_substitution_precedent PASSED
+test_the_wave_complete_branch_carries_the_gate_then_phase_note_once PASSED
+
+============================== 24 passed in 0.08s ==============================
