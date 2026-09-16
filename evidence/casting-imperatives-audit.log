@@ -1,0 +1,5 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -q -p no:cacheprovider tests/orchestration/test_guidance_imperatives.py -k "audit" 2>/dev/null | tail -1
+# evidence-for: FR-007, FR-008
+# evidence-volatile: (in )[0-9]+\.[0-9]+s
+
+4 passed, 19 deselected in 0.05s

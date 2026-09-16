@@ -1,0 +1,33 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.orchestration.test_guidance_imperatives import audit_report; [print(r) for r in audit_report()]' 2>/dev/null
+# evidence-for: FR-007, FR-008
+
+keys in _ACTION_IMPERATIVES: 22
+emission sites swept:        115
+defective emissions:         0
+
+site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, undispatched, unmeasured
+
+  add_castings             ok
+  assay_failed_loop_back   ok
+  build_castings           ok
+  cleanup_teams            ok
+  done                     ok
+  fix_defects              ok
+  halted                   ok
+  init                     ok
+  record_inspect_width     ok
+  run_assay                ok
+  run_nyquist              ok
+  run_streams              ok
+  run_temper               ok
+  transition_to_assay      ok
+  transition_to_cast       ok
+  transition_to_done       ok
+  transition_to_grind      ok
+  transition_to_inspect    ok
+  transition_to_nyquist    ok
+  transition_to_temper     ok
+  unknown                  ok
+  widen_inspect            ok
+
+(no entry hands the lead a conditional)

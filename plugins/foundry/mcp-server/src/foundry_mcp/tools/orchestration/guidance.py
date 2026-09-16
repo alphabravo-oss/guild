@@ -604,6 +604,36 @@ def foundry_next_action(
                         f"imperative below."
                     )
 
+    # lead-stalls FR-005 / FR-015 / CT-003 / CT-006 — THE ROSTER IS READ
+    # ONCE, FOR
+    # THE TWO ACTIONS WHOSE IMPERATIVE DEPENDS ON IT.
+    #
+    # Until now `_waiting_on_agents` was consulted ONLY inside the stall
+    # watchdog below, which fires only past `STALL_NOTICE_SECONDS` — so for the
+    # first three minutes of every wave the server held the answer to "are my
+    # teammates running" and never asked itself. lead-stalls FR-005's complaint
+    # is what that
+    # made `Foundry-Next` worth: a lead that re-called it during a wave got the
+    # same frozen conditional back and learned nothing, which is a no-op dressed
+    # as guidance.
+    #
+    # Read HERE and passed BOTH ways: down to `_format_imperative_header`, which
+    # picks the arm, and into the watchdog, which would otherwise take a second
+    # reading of the same roster and could disagree with the one the lead was
+    # just given. Published under its own key rather than folded into
+    # `waiting_on_agents`, which means something narrower and older — "the
+    # watchdog fired and found agents progressing" — and whose ABSENCE four
+    # tests read as "no stall notice was emitted".
+    #
+    # Scoped to the two audited actions so the other twenty cost no ledger scan
+    # (lead-stalls GI-001). `_waiting_on_agents` never raises and never blocks
+    # (lead-stalls CT-006), so
+    # this cannot take `Foundry-Next` down with it.
+    agent_liveness: dict | None = None
+    if _parse_branches(_ACTION_IMPERATIVES.get(result.get("action", ""), "")):
+        agent_liveness = _waiting_on_agents(project_root)
+        result["agent_liveness"] = agent_liveness
+
     # Stall watchdog. Read the previous `.last-next-at` timestamp BEFORE
     # overwriting it, compute the delta, and if the gap is large surface a
     # visible STALL WARNING at the very top of the instructions. This converts
@@ -647,19 +677,40 @@ def foundry_next_action(
                     # notice never asserts deliberation while an agent is
                     # progressing. Only when nothing is running is the silence
                     # the lead's own. It never blocks either way (CT-012).
-                    liveness = _waiting_on_agents(project_root)
+                    # lead-stalls FR-005 — the reading taken above when this
+                    # action has one, so the notice and the imperative
+                    # printed beside it can never be two different answers
+                    # about one roster.
+                    liveness = (
+                        agent_liveness if agent_liveness is not None
+                        else _waiting_on_agents(project_root)
+                    )
                     minutes = int(delta // 60)
                     seconds = int(delta % 60)
                     if liveness["waiting"]:
                         result["waiting_on_agents"] = liveness
+                        # lead-stalls FR-006 / GI-004 / OT-003 — THE TAIL
+                        # THAT TOLD THE LEAD TO WAIT AND THEN RE-ISSUE THE
+                        # GUIDANCE CALL IS A POLL, AND IT CONTRADICTED THE
+                        # IMPERATIVE PRINTED BELOW IT IN THE SAME PAYLOAD.
+                        #
+                        # One `Foundry-Next` response carried both that line
+                        # and a `build_castings` arm forbidding the very
+                        # same call while waiting, on the grounds that it
+                        # would re-emit the action. FR-006 requires the two
+                        # be reconciled and GI-004 decides the direction: no
+                        # surviving text instructs a sleep, a poll or a wait
+                        # loop, so this arm yields and QUOTES the one
+                        # spelling of the policy rather than wording it a
+                        # third time.
                         stall_warning = (
                             f"\u23f3 WAITING ON {liveness['count']} AGENT(S) "
                             f"({liveness['detail']}). {minutes}m {seconds}s since "
                             f"your last Foundry-Next call — that gap is the "
                             f"agents working, not you deliberating. Do NOT "
-                            f"improvise over their half-finished work. Call "
-                            f"Foundry-Liveness for per-agent detail, otherwise "
-                            f"wait and call Foundry-Next again."
+                            f"improvise over their half-finished work. "
+                            f"Foundry-Liveness answers per-agent detail. "
+                            + _WAITING_IS_NOT_STOPPING
                         )
                     else:
                         stall_warning = (
@@ -689,6 +740,12 @@ def foundry_next_action(
         # on the result, so this reads the router's own answer rather than
         # re-deriving one that could disagree with it.
         phase=str(result.get("phase", "")),
+        # lead-stalls FR-015 / CT-008 — the roster reading taken once above.
+        # PASSED,
+        # never re-measured here: the arm the lead is given and the
+        # `agent_liveness` it can read on the same payload have to be one
+        # answer, and two readings of a moving roster are not.
+        liveness=agent_liveness,
     )
 
     directives = _read_directives(project_root)
@@ -1108,6 +1165,232 @@ def _halt_cause(member: object) -> str:
     return _HALT_CAUSE_SENTENCES.get(member, _HALT_CAUSE_UNNAMED)
 
 
+#: lead-stalls GI-004 / FR-002 / FR-006 / OT-003 — ONE SPELLING OF THE WAIT
+#: POLICY.
+#:
+#: Three lead-facing surfaces state it: the `build_castings` and `fix_defects`
+#: teammates-live branches below, and the stall notice's WAITING arm in
+#: `foundry_next_action`. lead-stalls FR-006 exists because the third of those
+#: contradicted the first two: it ended by telling the lead to wait and then
+#: re-issue the guidance call, which is a poll, while the imperative forbade
+#: that same call outright while waiting. A lead reading ONE payload was handed
+#: both instructions at once, and they cannot both be followed.
+#:
+#: Declared once and referenced, per the `_GATE_THEN_PHASE_EXCEPTION` /
+#: `_STANDING_CRITICAL_RULES` discipline: this file's documented failure mode is
+#: a rule stated in N copies becoming a rule stated N different ways, and
+#: `tests/orchestration/test_guidance.py#test_the_optional_rule_has_one_spelling`
+#: is the guard that was written the last time it happened.
+#:
+#: lead-stalls GI-004's violation column is "replacement text that tells the
+#: lead to sleep,
+#: poll, or loop while waiting", so the sentence names all three and denies
+#: them. What replaces the poll is the harness's own completion notification
+#: (lead-stalls ST-001 / ST-002): the lead ends its turn, the session idles
+#: while the run
+#: advances, and the notification re-enters it. That is a WAKE, not a WAIT LOOP,
+#: which is why ending the turn here does not contradict the standing "NEVER
+#: stop between phases" rule — the lead is not stopping, it is yielding the turn
+#: and resuming on an event.
+_WAITING_IS_NOT_STOPPING = (
+    "Waiting on a running agent is not stopping the run and it is not a "
+    "stall: END YOUR TURN, and the harness wakes you with a completion "
+    "notification the moment an agent finishes. Do NOT sleep, do NOT poll, do "
+    "NOT re-call a tool in a loop to pass the time. When the notification "
+    "arrives, call Foundry-Next and follow what it says then."
+)
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls FR-015 / GI-008 / CT-008 — AN IMPERATIVE THAT SERVES TWO RUN
+# STATES HOLDS
+# BOTH TEXTS AND THE SERVER PICKS ONE.
+#
+# `build_castings` and `fix_defects` were the two entries that handed the LEAD
+# the conditional instead: "YOUR NEXT ACTION depends on wave state: - IF ... -
+# IF ...". lead-stalls FR-007's defect shape is exactly that — an entry that
+# hands the lead a conditional or a judgment task instead of naming a literal
+# tool call — and the FR-007 audit over all 22 keys found these two and
+# nothing else.
+#
+# WHY MARKERS INSIDE THE ENTRY RATHER THAN A SIDE TABLE. `{gate}` / `{token}`
+# keep their values in `_ACTION_CROSSINGS`, and the obvious mirror would put
+# these branch texts in a dict beside it. That would move the most-read
+# lead-facing prose in the run OUT of `_ACTION_IMPERATIVES.values()` — the
+# population `tests/test_lead_prose.py#_lead_facing_prose` sweeps for denied
+# spellings and `tests/test_model_config.py` sweeps for steerable-model claims.
+# D-226 is the defect where a scan window was narrower than the rule it stated,
+# and it was measured on THIS dict. So the entry holds every branch it can
+# emit, both sweeps keep seeing all of it, and only the selection is code.
+#
+# WHY IT RESOLVES LIKE `{halt_cause}` AND NOT LIKE `{gate}`. An unresolved
+# `{gate}` discards the imperative and takes the generic header, which reads
+# "Execute the first tool call mentioned. Do not deliberate." — the exact
+# conditional-judgment push lead-stalls GI-008 forbids the lead to receive.
+# `_select_branch`
+# is therefore TOTAL over every input, like `_halt_cause`: there is no liveness
+# reading for which a branched entry emits a marker or falls through.
+_BRANCH_OPEN = "[[branch:"
+_BRANCH_CLOSE = "]]"
+
+#: The branch every branched entry must declare, and the one a state with no
+#: text of its own resolves to. `fix_defects` declares `live` and `idle` only:
+#: it is emitted ONLY while blocking defects are open, so "no agent is running"
+#: means dispatch teammates whether they were never spawned or finished with
+#: work still open, and one text serves both.
+_BRANCH_FALLBACK = "idle"
+
+
+def _parse_branches(text: str) -> dict[str, str]:
+    """Split a branched imperative into ``{state: text}``; ``{}`` if unbranched."""
+    if _BRANCH_OPEN not in text:
+        return {}
+    branches: dict[str, str] = {}
+    for chunk in text.split(_BRANCH_OPEN)[1:]:
+        name, _, body = chunk.partition(_BRANCH_CLOSE)
+        branches[name.strip()] = body.strip("\n")
+    return branches
+
+
+def _branch_state(liveness: object) -> str:
+    """Which run state the lead stands in, from `_waiting_on_agents`
+    (lead-stalls CT-008).
+
+    TOTAL over every input, including ``None`` and a reading that failed: a
+    watchdog that cannot answer must not be able to leave the lead without an
+    imperative, which is the same rule `_waiting_on_agents` states about its own
+    failure paths.
+
+    `roster_agents` and not `teams_active` alone is what answers "has this
+    phase's work been dispatched": a team is UNREGISTERED by the teardown the
+    wave-complete branch itself names, so between `Foundry-Team-Down` and
+    `Foundry-Phase(phase='cast')` a team scan reads exactly like a wave that was
+    never dispatched — and telling that lead to spawn a fresh CAST wave would
+    rebuild every casting it had just accepted. A progress ledger is written
+    once and stays written, so the roster still remembers.
+    """
+    row = liveness if isinstance(liveness, dict) else {}
+    if row.get("waiting"):
+        return "live"
+    if row.get("roster_agents") or row.get("teams_active"):
+        return "idle"
+    return "undispatched"
+
+
+def _select_branch(text: str, state: str) -> str:
+    """The ONE branch of a multi-state imperative the lead receives
+    (lead-stalls GI-008)."""
+    branches = _parse_branches(text)
+    if not branches:
+        return text
+    for candidate in (state, _BRANCH_FALLBACK):
+        if branches.get(candidate):
+            return branches[candidate]
+    # Total tail: a branched entry always holds at least one branch, so the
+    # lead receives prose rather than a marker even if a later edit drops the
+    # declared fallback. The suite pins that no shipped entry needs this.
+    return next(iter(branches.values()))
+
+
+#: lead-stalls CT-002 / FR-002 — the teammates-live branch, for both audited
+#: actions. It
+#: names NO next call ON PURPOSE, in the same register as the `done` and
+#: `halted` terminals: "end your turn" IS the correct move here, and an
+#: imperative that named a tool call would be telling the lead to improvise over
+#: half-finished work. The survey counted `done` and `halted` among the 20
+#: already-correct entries for naming NONE, which is the precedent.
+_CAST_TEAMMATES_LIVE = (
+    "YOUR NEXT CALL: NONE. Your CAST teammates are running — this server read "
+    "their progress ledgers on this call and measured them advancing. "
+    + _WAITING_IS_NOT_STOPPING
+)
+
+_GRIND_TEAMMATES_LIVE = (
+    "YOUR NEXT CALL: NONE. Your GRIND teammates are running — this server read "
+    "their progress ledgers on this call and measured them advancing. "
+    + _WAITING_IS_NOT_STOPPING
+)
+
+#: lead-stalls CT-001 — the wave-complete branch: the literal calls, in order.
+#:
+#: `Foundry-Gate(phase='inspect')` is named here and was not named before. The
+#: F1 arm of `_compute_next_action` returns `build_castings` for the WHOLE of F1
+#: — `.cast-complete` is written BY the `cast` transition, so the sibling
+#: `transition_to_inspect` arm beside it is not reachable until the crossing has
+#: already happened. That makes this branch the only lead-facing surface for the
+#: F1 -> F2 crossing, and it was sending the lead to `Foundry-Phase` past the
+#: gate that guards it.
+_CAST_WAVE_COMPLETE = (
+    "YOUR NEXT CALLS (in order):\n"
+    "  (1) TeamDelete for the CAST team.\n"
+    "  (2) Foundry-Team-Down(team_name='cast-{run}-wave-1') — the team name you "
+    "registered.\n"
+    "  (3) Foundry-Gate(phase='inspect')\n"
+    "  (4) Foundry-Phase(phase='cast') — the call that ENTERS F2. It sweeps the "
+    "evidence corpus and RECORDS this INSPECT's width and roster; editing "
+    "state.json by hand records no width at all, and every door that reads one "
+    "then refuses.\n"
+    "No agent is running: this server read the roster on this call and nothing "
+    "is advancing, so the wave is finished and the teardown is yours to make "
+    "now." + _GATE_THEN_PHASE_NOTE
+)
+
+#: The third state, which `fix_defects` has no equivalent of. F1 has no sibling
+#: action to carry it: a lead that reaches F1 between `Foundry-Phase(
+#: phase='start_cast')` and its first Agent spawn is standing in
+#: `build_castings` with nothing dispatched, and the entry this replaced covered
+#: that case with its first `IF` arm. Dropping it would leave that lead told to
+#: tear down a wave it never dispatched.
+_CAST_WAVE_UNDISPATCHED = (
+    "YOUR NEXT CALLS (in order):\n"
+    "  (1) TeamCreate('cast-{run}-wave-1')\n"
+    "  (2) Foundry-Team-Up(team_name='cast-{run}-wave-1')\n"
+    "  (3) Foundry-Cast-Wave(wave=1, phase='cast') — returns ALL wave-1 "
+    "dispatch blocks in ONE call.\n"
+    "  (4) In a SINGLE message (parallel tool use), spawn one "
+    "Agent(subagent_type='foundry:teammate', mode='bypassPermissions') per "
+    "returned casting, passing that casting's `dispatch` field VERBATIM — it "
+    "names the prompt FILE and the sha256 the teammate must read that file to "
+    "obtain. The `prompt` field is null by default and is NOT what you pass. "
+    "Foreground, never run_in_background=true. For the model: obey the model "
+    "clause in the `instructions` Foundry-Cast-Wave returns — this server owns "
+    "that decision; never re-derive it here.\n"
+    "No CAST team is registered and no teammate has written a progress line, "
+    "so this wave has not been dispatched yet."
+)
+
+#: The `fix_defects` idle branch, and its only one. This action is emitted ONLY
+#: while blocking defects are open (`_compute_next_action`'s F3 arm returns
+#: `transition_to_inspect` the moment the count reaches zero), so "no agent is
+#: running" here always means the same thing: the work is open and nobody is on
+#: it. Steps (1) and (2) are harmless when no team is registered, which is what
+#: lets one text serve both the never-dispatched and the finished-with-work-open
+#: readings — lead-stalls FR-015's "both branches", with no second spelling of
+#: a sequence.
+_GRIND_DISPATCH = (
+    "YOUR NEXT CALLS (in order):\n"
+    "  (1) TeamDelete for this cycle's GRIND team, then "
+    "Foundry-Team-Down(team_name='grind-{run}-cycle-N') for it — clears any "
+    "team still registered from a previous dispatch.\n"
+    "  (2) Foundry-Tasks\n"
+    "  (3) TeamCreate('grind-{run}-cycle-N')\n"
+    "  (4) Foundry-Team-Up(team_name='grind-{run}-cycle-N')\n"
+    "  (5) Foundry-Spawn-Teammate(casting_id=N, phase='grind') for each casting "
+    "carrying open defects.\n"
+    "  (6) Spawn one foreground Agent(subagent_type='foundry:teammate', "
+    "mode='bypassPermissions') per casting in a SINGLE parallel message, "
+    "passing the returned `dispatch` field VERBATIM, then APPENDING BELOW it "
+    "(a) the `grind_cycle_context` block when the spawn response carries one, "
+    "(b) the defect list in a '## Defects to fix this cycle:' block, and (c) "
+    "that task's `alignment_block` from the Foundry-Tasks result of step (2) "
+    "when the task carries one. Never inside the dispatch block. For the "
+    "model: obey the model clause in the `instructions` Foundry-Spawn-Teammate "
+    "returns — this server owns that decision; never re-derive it here.\n"
+    "Blocking defects are open and no agent is running: this cycle's teammates "
+    "are yours to dispatch now."
+)
+
+
 _ACTION_IMPERATIVES = {
     "init": "YOUR NEXT CALL: Foundry-Init (start a new run)",
     # fallout FR-035 / AC-054 / CT-007: the one action whose imperative is to
@@ -1176,12 +1459,27 @@ _ACTION_IMPERATIVES = {
         "foundry:assayer, foundry:research-auditor, foundry:coverage-diff) whose frontmatter "
         "carries model/effort/tools." + _GATE_THEN_PHASE_NOTE
     ),
+    # lead-stalls FR-001 / FR-002 / FR-015 / GI-008 / CT-001 / CT-002 — THE
+    # LEAD RECEIVES ONE OF THESE, NEVER THE CHOICE BETWEEN THEM.
+    #
+    # This read "YOUR NEXT ACTION depends on wave state:" over two `IF` arms,
+    # the second of which forbade the lead to re-issue the guidance call while
+    # waiting, on the grounds that doing so would re-emit the action. Two
+    # defects in one entry. The first is lead-stalls FR-007's shape: the lead
+    # is handed the condition and has to evaluate it, and the FR-007 audit
+    # over all 22 keys found exactly this entry and `fix_defects`. The second
+    # is the stall itself — an imperative that forbids the one call the
+    # standing rules require after every step leaves a lead waiting on
+    # teammates with no sanctioned move at all, which is how a run parks with
+    # nothing running and nobody told (lead-stalls ST-003).
+    #
+    # `_waiting_on_agents` already knew the answer. It is read at emission and
+    # `_select_branch` substitutes one arm, so the condition is evaluated by the
+    # server that can measure it rather than by the reader that cannot.
     "build_castings": (
-        "YOUR NEXT ACTION depends on wave state:\n"
-        "  - IF no CAST team has been registered this wave yet (first entry to F1): follow the transition_to_cast sequence "
-        "(TeamCreate \u2192 Foundry-Team-Up \u2192 Foundry-Spawn-Teammate per casting \u2192 Agent spawn VERBATIM, foreground).\n"
-        "  - IF teammates are currently running: WAIT for all to complete, then TeamDelete + Foundry-Team-Down + "
-        "Foundry-Phase(phase='cast'). Do NOT call Foundry-Next while waiting \u2014 it will re-emit this action."
+        _BRANCH_OPEN + "live" + _BRANCH_CLOSE + _CAST_TEAMMATES_LIVE
+        + _BRANCH_OPEN + "idle" + _BRANCH_CLOSE + _CAST_WAVE_COMPLETE
+        + _BRANCH_OPEN + "undispatched" + _BRANCH_CLOSE + _CAST_WAVE_UNDISPATCHED
     ),
     # fallout D-058 / AC-059 — ONE ACTION, TWO CROSSINGS, AND THE STEPS ARE
     # SUBSTITUTED FROM ONE ROW SO THEY CANNOT NAME DOORS THAT DO NOT MATCH.
@@ -1355,12 +1653,25 @@ _ACTION_IMPERATIVES = {
     # 'inspect_start')` first, which is the same pair `transition_to_inspect`'s
     # F3 half carries; the lead reaching this crossing by any of the four routes
     # is told to make the same two calls in the same order.
+    # lead-stalls FR-015 / GI-008 / CT-003 / CT-008 — THE SAME TREATMENT AS
+    # `build_castings`, AND THE BARE `WAIT.` IS GONE.
+    #
+    # This read "IF teammates are running: WAIT." and named nothing the lead
+    # could execute while that was true, then described the teardown that
+    # follows completion as though it were the next call. A lead standing in
+    # the WAIT arm had one instruction — wait — which is not a tool call, and
+    # lead-stalls ST-003 is the run that parks there.
+    #
+    # The teardown-and-re-open sequence the old arm trailed is NOT reproduced
+    # here, and its absence is the point: `_compute_next_action` emits this
+    # action ONLY while blocking defects are open and returns
+    # `transition_to_inspect` the instant the count reaches zero, so the
+    # crossing this arm described belongs to the sibling arm that owns it. What
+    # is left for THIS action is the one thing true whenever no agent is
+    # running under it — the defects are open and somebody has to be on them.
     "fix_defects": (
-        "YOUR NEXT ACTION depends on GRIND state:\n"
-        "  - IF no GRIND team registered yet: follow the transition_to_grind sequence.\n"
-        "  - IF teammates are running: WAIT. When all report complete, TeamDelete + Foundry-Team-Down + "
-        "Foundry-Gate(phase='inspect_start') + Foundry-Phase(phase='inspect_start') + re-run INSPECT."
-        + _GATE_THEN_PHASE_NOTE
+        _BRANCH_OPEN + "live" + _BRANCH_CLOSE + _GRIND_TEAMMATES_LIVE
+        + _BRANCH_OPEN + "idle" + _BRANCH_CLOSE + _GRIND_DISPATCH
     ),
     "transition_to_assay": (
         "YOUR NEXT CALLS (in order):\n"
@@ -1499,6 +1810,7 @@ def _format_imperative_header(
     details: dict,
     run_name: str = "",
     phase: str = "",
+    liveness: object = None,
 ) -> str:
     """Produce the one-line 'YOUR NEXT CALL' header for the given action.
     Falls back to a generic header if the action is unmapped.
@@ -1525,8 +1837,23 @@ def _format_imperative_header(
     to "execute the first tool call mentioned", and `Foundry-Gate(phase=
     '{gate}')` is a call it would try to make. The fallback sends it to the
     CONTEXT below, which the branch already wrote for this phase.
+
+    lead-stalls FR-015 / GI-008 / CT-008 — AND ``liveness`` CHOOSES
+    THE ARM OF A
+    BRANCHED ENTRY, BEFORE AND OUTSIDE THAT FALLBACK.
+
+    ``liveness`` is the `_waiting_on_agents` result the caller already measured,
+    passed rather than recomputed so one `Foundry-Next` reads the roster once
+    and the payload the lead sees and the imperative it is given are the same
+    reading. Resolved on the `{halt_cause}` side of the line and not the
+    `{gate}` side, for the reason stated at `_select_branch`: a branched entry
+    that fell through to the generic header would hand the lead "Execute the
+    first tool call mentioned. Do not deliberate." over an arm it never chose.
+    `_select_branch` is total, so there is no reading for which that happens.
     """
     imperative = _ACTION_IMPERATIVES.get(action)
+    if imperative:
+        imperative = _select_branch(imperative, _branch_state(liveness))
     if imperative and "{halt_cause}" in imperative:
         # fallout US-006 / FR-019 (D-147) — substituted from the RECORDED
         # member, which the halted branch publishes in `details` beside the
@@ -2915,7 +3242,8 @@ STALL_NOTICE_SECONDS = 180
 def _waiting_on_agents(project_root: str) -> dict:
     """Is the lead waiting on live agents, or is it deliberating (FR-020)?
 
-    Returns ``{"waiting": bool, "count": int, "detail": str, "agents": [...]}``.
+    Returns ``{"waiting": bool, "count": int, "detail": str, "agents": [...],
+    "teams_active": bool, "progressing_agents": int, "roster_agents": int}``.
 
     BOTH DECLARED INPUTS ARE READ; PROGRESS IS WHAT DECIDES (D-076, D-127).
     ----------------------------------------------------------------------
@@ -2989,18 +3317,36 @@ def _waiting_on_agents(project_root: str) -> dict:
     except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
         liveness = {"ok": False}
 
-    live_agents = []
+    # lead-stalls FR-015 / CT-008 — THE WHOLE ROSTER, BESIDE THE PROGRESSING
+    # SUBSET.
+    #
+    # `live_agents` answers "is the lead waiting", which is this routine's own
+    # question. `roster` answers a different one that `_branch_state` needs:
+    # HAS THIS PHASE'S WORK BEEN DISPATCHED AT ALL. The two differ exactly where
+    # it matters — a teammate that finished is out of `live_agents` and still in
+    # the roster — and `teams_active` cannot stand in for it, because the
+    # teardown the wave-complete imperative itself names unregisters the team.
+    # Between `Foundry-Team-Down` and `Foundry-Phase(phase='cast')` a team scan
+    # reads identically to a wave that was never dispatched; a progress ledger
+    # is written once and stays written.
+    roster = []
     if liveness.get("ok"):
-        for row in liveness.get("agents", []) or []:
-            if not isinstance(row, dict):
-                continue
-            # PROGRESSING and NO_PROGRESS both mean lines are still ARRIVING;
-            # they differ only in whether the `step` field moved. STALLED means
-            # no line at all for the threshold, DONE means finished, and
-            # NO_LEDGER / UNKNOWN mean there is no evidence — none of which is
-            # an agent to wait for.
-            if row.get("status") in (STATUS_PROGRESSING, STATUS_NO_PROGRESS):
-                live_agents.append(row)
+        roster = [
+            row for row in (liveness.get("agents", []) or [])
+            if isinstance(row, dict)
+        ]
+
+    live_agents = []
+    for row in roster:
+        # PROGRESSING and NO_PROGRESS both mean lines are still ARRIVING;
+        # they differ only in whether the `step` field moved. STALLED means
+        # no line at all for the threshold, DONE means finished, and
+        # NO_LEDGER / UNKNOWN mean there is no evidence — none of which is
+        # an agent to wait for.
+        if row.get("status") in (STATUS_PROGRESSING, STATUS_NO_PROGRESS):
+            live_agents.append(row)
+
+    result["roster_agents"] = len(roster)
 
     # D-127 / FR-020, stated once: PROGRESS decides. An EMPTY roster is the one
     # answer that lets the watchdog speak. A registered team with nothing
