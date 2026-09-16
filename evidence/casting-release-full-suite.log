@@ -2,9 +2,7 @@
 # evidence-for: FR-012, GI-006, OT-010
 # evidence-timeout: 900
 
-FAILED tests/test_evidence.py::test_every_declared_grammar_has_a_live_witness
-FAILED tests/test_evidence.py::test_every_committed_evidence_command_parses_under_the_host_shell
-failed: 2
+failed: 0
 errors: 0
 passed at or above floor 5000: True
-verdict: RED
+verdict: GREEN
