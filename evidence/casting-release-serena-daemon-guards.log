@@ -1,0 +1,8 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -p no:cacheprovider --no-header --color=no --tb=no -q tests/test_serena_daemon.py 2>/dev/null | awk '$1=="FAILED"{nf++; print "FAILED " $2; next} $1=="ERROR"{ne++; print "ERROR " $2; next} {s=$0; gsub(/,/, " ", s); n=split(s, w, " "); for(i=2;i<=n;i++) if(w[i]=="passed") p=w[i-1]+0} END{printf "guards failed: %d\n", nf+0; printf "guards errored: %d\n", ne+0; printf "guards passed at or above floor 11: %s\n", (p>=11 ? "True" : "False"); printf "verdict: %s\n", (nf+0==0 && ne+0==0 && p>=11 ? "GREEN" : "RED")}'
+# evidence-for: FR-012, GI-006, OT-010
+# evidence-timeout: 300
+
+guards failed: 0
+guards errored: 0
+guards passed at or above floor 11: True
+verdict: GREEN
