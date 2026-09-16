@@ -54,6 +54,12 @@ from tests.orchestration._env import (  # noqa: F401
 
 from foundry_mcp.tools.orchestration.directives import (  # noqa: F401
     _annotate_co_dispatch,
+    # D-008 — the two manifest maps, read directly: a drive through
+    # Foundry-Tasks asserts the FIELDS and would pass over a map that dropped
+    # a casting silently, since a dropped casting and an unowned file are the
+    # same empty answer one layer up.
+    _casting_files,
+    _casting_requirement_ids,
     # fallout FR-009 (D-170) — the ownership resolver, called directly: a drive
     # through Foundry-Tasks would assert the FIELD and leave the two-pass
     # exact-beats-prefix ordering unexercised.
@@ -1061,3 +1067,206 @@ def test_a_decorated_file_still_resolves_the_casting_that_owns_the_fix(run_env):
         assert "not resolvable from the manifest" not in block, (spelling, block)
         assert "- casting 3:" not in block, (spelling, block)
         assert [r["casting"] for r in _grind_dispatch_records(fdir)] == [3], spelling
+
+
+
+
+# --------------------------------------------------------------------------- #
+# D-008 — A CASTING ID IS WHATEVER THE MANIFEST SPELLS IT.
+#
+# `directives.py` built both of its manifest maps with `int(casting.get("id"))`
+# and skipped every casting the coercion refused, so a manifest whose ids are
+# words produced two EMPTY maps and no refusal anywhere. The three tests below
+# drive the two entry points that rejoin those maps — the task-owner resolution
+# a lead dispatches from, and the cross-casting concern join — over a manifest
+# shaped like this run's own.
+# --------------------------------------------------------------------------- #
+
+
+def _word_id_manifest(fdir: Path) -> None:
+    """This run's own manifest shape: three castings whose ids are words."""
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(json.dumps({"castings": [
+        {"id": "imperatives", "requirement_ids": ["FR-001"], "key_files": [
+            "src/foundry_mcp/tools/orchestration/",
+            "tests/orchestration/test_guidance_imperatives.py",
+        ]},
+        {"id": "payloads", "requirement_ids": ["FR-001"], "key_files": [
+            "src/foundry_mcp/tools/evidence.py",
+        ]},
+        {"id": "release", "requirement_ids": ["FR-009"], "key_files": [
+            "pyproject.toml",
+        ]},
+    ]}), encoding="utf-8")
+
+
+def test_a_casting_id_the_manifest_spells_as_a_word_still_resolves_its_owner(run_env):
+    """D-008 — one door accepted the id another silently dropped.
+
+    Both manifest maps in `directives.py` coerced the id with `int()` and
+    `continue`d on failure, so every casting of a word-id manifest fell out of
+    both of them: `_owning_casting` answered None for every file it was asked
+    about, and `_co_dispatch_for` intersected an empty table while reporting
+    ids_declared True beside it — "no other casting owns this" asserted where
+    the truth was "nothing was read".
+
+    DRIVEN on this run before the fix: Foundry-Tasks returned a null owner for
+    all five generated tasks, three of them naming a file that IS a declared
+    key_file, and every alignment block read "Owning casting: not resolvable
+    from the manifest". Nothing refused the manifest on the way in — Init took
+    it, Validate-Castings passed every dimension on it, Cast-Wave dispatched by
+    word id and Accept-Casting accepted by word id — so exactly one consumer
+    required an integer while the schema of Spawn-Teammate publishes the field
+    as integer-or-string.
+
+    This is fallout FR-009 (D-170)'s symptom through a second cause one rung
+    up: that fix taught the resolver what a directory entry is, this one
+    teaches the map what an id is. Both fail in the direction that resolver's
+    docstring calls the worst one, because the lead dispatches from the field
+    and a None leaves the defects with no owner, no refusal and no warning.
+    """
+    project_root, fdir = run_env
+    _word_id_manifest(fdir)
+
+    for path, owner in (
+        # Inside the directory entry, which is the shape this run declares.
+        ("src/foundry_mcp/tools/orchestration/guidance.py", "imperatives"),
+        # ...and the exact entries beside it.
+        ("tests/orchestration/test_guidance_imperatives.py", "imperatives"),
+        ("src/foundry_mcp/tools/evidence.py", "payloads"),
+        ("pyproject.toml", "release"),
+        # A file no casting declares is still unowned: the fold widens what an
+        # id may be, it does not make every path resolve to somebody.
+        ("src/foundry_mcp/server.py", None),
+    ):
+        assert _owning_casting(fdir, [path]) == owner, (path, _owning_casting(fdir, [path]))
+
+    # The maps themselves, because a resolver that answers correctly off a
+    # half-built table would still be dropping castings silently.
+    assert sorted(_casting_files(fdir)) == ["imperatives", "payloads", "release"]
+    owned, declared = _casting_requirement_ids(fdir)
+    assert declared is True, owned
+    assert owned == {
+        "imperatives": {"FR-001"}, "payloads": {"FR-001"}, "release": {"FR-009"},
+    }
+
+
+def test_an_integer_casting_id_is_still_published_as_an_integer(run_env):
+    """D-008 — the fold preserves the type it was already returning.
+
+    `owning_casting` is a PUBLISHED field a lead dispatches from and a handoff
+    record carries, so a fold that keyed every id as a string would change what
+    every integer-id run emits — `9` becoming `"9"` in a payload two other
+    doors already read. An int keys as itself; a digit string that round-trips
+    is the same casting as the integer and folds to it, which is what the
+    ledger reader in `foundry_state.py` already assumes when it compares both
+    sides with str().
+    """
+    project_root, fdir = run_env
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(json.dumps({"castings": [
+        {"id": 2, "requirement_ids": ["FR-007"], "key_files": ["src/pkg/"]},
+        {"id": "9", "requirement_ids": ["FR-007"], "key_files": ["src/pkg/one.py"]},
+    ]}), encoding="utf-8")
+
+    owner = _owning_casting(fdir, ["src/pkg/two.py"])
+    assert owner == 2 and isinstance(owner, int), repr(owner)
+    # The digit string names the same casting the integer would, and the
+    # narrower claim still wins over the directory entry.
+    digits = _owning_casting(fdir, ["src/pkg/one.py"])
+    assert digits == 9 and isinstance(digits, int), repr(digits)
+
+
+def test_foundry_tasks_resolves_owner_and_co_dispatch_on_a_word_id_manifest(run_env):
+    """D-008 — the field the lead actually dispatched from, driven end to end.
+
+    The symbol-level test above proves the map; this proves what reaches the
+    lead. Before the fix every one of these was the empty answer: a null owner,
+    an empty set, and a block whose standing header told the lead the owner was
+    not resolvable from a manifest that names it on its first line.
+    """
+    project_root, fdir = run_env
+    _word_id_manifest(fdir)
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(
+            _tiered("D-900", "LIVE"),
+            file="src/foundry_mcp/tools/orchestration/guidance.py",
+            spec_ref="FR-001",
+        ),
+    ])
+
+    result = foundry_defects_to_tasks(project_root)
+    assert result["ok"] is True, result
+    task = next(t for t in result["tasks"] if "D-900" in t["defect_ids"])
+
+    assert task["owning_casting"] == "imperatives", task
+    # `release` owns a different id and stays out; the owner is excluded from
+    # its own set, which is only possible once both maps key the same way.
+    assert task["co_dispatch"] == ["payloads"], task
+    block = task["alignment_block"]
+    assert "Fixed in casting imperatives" in block, block
+    assert "not resolvable from the manifest" not in block, block
+    assert "- casting payloads: src/foundry_mcp/tools/evidence.py" in block, block
+    # ...and the dispatch record Team-Down and the F6 report read carries it.
+    record = _grind_dispatch_records(fdir)[0]
+    assert record["casting"] == "imperatives", record
+    assert record["co_dispatch"] == ["payloads"], record
+
+
+def test_a_cross_casting_concern_targeting_a_word_id_is_carried_and_marked(run_env):
+    """D-008 — the OTHER transition into the same map.
+
+    A concern record stores the casting id the manifest spells, verbatim, and
+    `directives.py` read it back through `int()` at four sites. DRIVEN before
+    the fix, this test failed with `co_dispatch == []`: the two guarded sites
+    dropped the word target as unresolvable, so the concern was never carried,
+    never marked, and stayed open with the Tasks-driven exit unreachable and
+    `inspect_start` refusing on a concern nothing could dispatch. The two
+    UNGUARDED sites, both inside the alignment-block render, never raised only
+    because that upstream skip is what keeps a target they cannot read from
+    ever reaching them — a raise held off by the same bug, which is why this
+    test pins the whole path rather than the coercion.
+
+    The concern targets a file belonging to a casting the REQUIREMENT join does
+    not reach, so it is carried for the one reason the ownership join cannot
+    supply — the case fallout ST-003 (D-054) exists for, one spelling over.
+    """
+    from foundry_mcp.tools.concerns import (
+        foundry_concern,
+        open_concerns_for_other_castings,
+    )
+
+    project_root, fdir = run_env
+    _word_id_manifest(fdir)
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(
+            _tiered("D-901", "LIVE"),
+            file="src/foundry_mcp/tools/orchestration/guidance.py",
+            spec_ref="FR-001",
+        ),
+    ])
+    opened = foundry_concern(
+        casting_id="imperatives", cycle=1, target="pyproject.toml",
+        text="the version floor I relied on is stated in the release casting too",
+        project_root=project_root,
+    )
+    assert opened.get("error") is None, opened
+    concern_id = opened["concern"]["id"]
+    assert opened["concern"]["target_casting_id"] == "release", opened
+
+    result = foundry_defects_to_tasks(project_root)
+    assert result["ok"] is True, result
+    task = next(t for t in result["tasks"] if "D-901" in t["defect_ids"])
+
+    # `payloads` owns the requirement; `release` is here because the concern
+    # names it. Both spellings sort, which a set holding two types cannot.
+    assert task["co_dispatch"] == ["payloads", "release"], task
+    assert task["concerns_co_dispatched"] == [concern_id], task
+    assert result["concerns_dispatched"] == [concern_id], result
+    block = task["alignment_block"]
+    assert concern_id in block, block
+    assert "-> casting release: pyproject.toml" in block, block
+    # ...and the door the concern was holding shut now opens.
+    assert open_concerns_for_other_castings(fdir) == [], "the concern is still open"

@@ -87,7 +87,78 @@ DISPATCHED_DEFECT_UNRECORDED = "DISPATCHED_DEFECT_UNRECORDED"
 
 
 
-def _casting_requirement_ids(fdir: Path) -> tuple[dict[int, set[str]], bool]:
+#: D-008 — A CASTING ID IS WHATEVER THE MANIFEST SPELLS IT, AND THIS MODULE WAS
+#: THE ONLY READER IN THE PACKAGE THAT DISAGREED.
+#:
+#: Both manifest maps below built their keys with `int(casting.get("id"))` and
+#: `continue`d on failure, so a manifest whose ids are words — this run's own
+#: are `imperatives`, `payloads` and `release` — came back as two EMPTY maps.
+#: DRIVEN: `Foundry-Tasks` returned a null `owning_casting` for all five
+#: generated tasks, three of them naming a file that IS a declared key_file,
+#: and every alignment block then read "Owning casting: not resolvable from the
+#: manifest". That is the failure `_owning_casting`'s docstring calls silent in
+#: the worst direction, reached a second way: the lead dispatches per casting
+#: from the field, gets nothing, and the defects land with no owner, no refusal
+#: and no warning.
+#:
+#: ACCEPTED HERE RATHER THAN REFUSED AT F0.9, because nothing else in the run
+#: refuses a word id and four doors accept one: `Foundry-Init` took the
+#: manifest, `Foundry-Validate-Castings` passed every dimension on it,
+#: `Foundry-Cast-Wave` dispatched by word id, `Foundry-Accept-Casting` accepted
+#: by word id, and `Foundry-Spawn-Teammate` publishes `casting_id` as
+#: integer-or-string in its own schema. Every other reader compares with
+#: `str(...)` — in `foundry_validate.py`, `foundry_spawn.py`, `evidence.py` and
+#: `concerns.py` — and `foundry_state.py`'s concern reader states the stance in
+#: prose: "a manifest may carry casting ids as integers and a filing may carry
+#: the same id as a string". Refusing at the validate door would have left five
+#: doors accepting what one refuses, which is the same disagreement moved.
+CastingId = int | str
+
+
+def _casting_key(value: object) -> CastingId | None:
+    """The canonical key for a casting id of either spelling, or None (D-008).
+
+    AN INT STAYS AN INT, so every integer-id run keys, orders and PUBLISHES
+    exactly what it published before: `owning_casting` is the same `7`, in the
+    task payload and in the handoff record two other doors read. A fold that
+    stringified every key would have changed a published field's type on every
+    run that never had this defect.
+
+    A DIGIT STRING THAT ROUND-TRIPS IS THE SAME CASTING AS THE INTEGER and
+    folds to it, because the joins against raw recorded ids compare `str()` of
+    both sides, where the two are already equal. One that does NOT round-trip
+    (`"07"`) keeps its own spelling, so `str(key)` is always the manifest's own
+    spelling and those joins cannot drift.
+
+    ONLY AN ABSENT OR EMPTY ID IS DROPPED, and a bool is not an id: `int(True)`
+    is 1, so a hand-edited `true` used to file itself under casting 1.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.lstrip("-").isdigit() and str(int(text)) == text:
+        return int(text)
+    return text
+
+
+def _casting_order(cid: CastingId) -> tuple[int, int, str]:
+    """A total sort key over casting ids of both spellings (D-008).
+
+    `sorted()` over a set holding an int and a string raises TypeError, and the
+    co-dispatch set is built from whatever the manifest holds — including a
+    manifest that mixes the two. Ints keep their numeric order, unchanged for
+    every integer-id run; word ids follow them in lexical order.
+    """
+    if isinstance(cid, int) and not isinstance(cid, bool):
+        return (0, cid, "")
+    return (1, 0, str(cid))
+
+
+def _casting_requirement_ids(fdir: Path) -> tuple[dict[CastingId, set[str]], bool]:
     """`{casting id: {requirement ids}}` from the manifest, and whether it CAN.
 
     The second element is False on a manifest whose castings carry no
@@ -96,12 +167,18 @@ def _casting_requirement_ids(fdir: Path) -> tuple[dict[int, set[str]], bool]:
     this requirement" and "nobody recorded who owns anything" are opposite
     facts, and a lead reading the first when the second is true dispatches one
     casting for a rule that lives in four.
+
+    D-008: keyed through `_casting_key`, so a word-id manifest maps rather than
+    coming back empty. This map's emptiness was the worse half of that defect —
+    `any_declared` stayed True beside it, so every task reported `co_dispatch:
+    []`, which states "no casting owns this requirement" in exactly the case
+    the paragraph above says must never be reported as an empty set.
     """
     manifest = _load_json(fdir / "castings" / "manifest.json")
     castings = manifest.get("castings")
     if not isinstance(castings, list):
         return {}, False
-    owned: dict[int, set[str]] = {}
+    owned: dict[CastingId, set[str]] = {}
     any_declared = False
     for casting in castings:
         if not isinstance(casting, dict):
@@ -110,9 +187,8 @@ def _casting_requirement_ids(fdir: Path) -> tuple[dict[int, set[str]], bool]:
         ids = {str(r) for r in raw if isinstance(r, str)} if isinstance(raw, list) else set()
         if raw is not None:
             any_declared = True
-        try:
-            cid = int(casting.get("id"))
-        except (TypeError, ValueError):
+        cid = _casting_key(casting.get("id"))
+        if cid is None:
             continue
         owned[cid] = ids
     return owned, any_declared
@@ -120,19 +196,23 @@ def _casting_requirement_ids(fdir: Path) -> tuple[dict[int, set[str]], bool]:
 
 
 
-def _casting_files(fdir: Path) -> dict[int, list[str]]:
-    """`{casting id: key_files}` — the sibling files an alignment block names."""
+def _casting_files(fdir: Path) -> dict[CastingId, list[str]]:
+    """`{casting id: key_files}` — the sibling files an alignment block names.
+
+    D-008: keyed through `_casting_key`, which is where the drive and the
+    reasoning for accepting a word id here rather than refusing it at the
+    validate door are written down.
+    """
     manifest = _load_json(fdir / "castings" / "manifest.json")
     castings = manifest.get("castings")
-    out: dict[int, list[str]] = {}
+    out: dict[CastingId, list[str]] = {}
     if not isinstance(castings, list):
         return out
     for casting in castings:
         if not isinstance(casting, dict):
             continue
-        try:
-            cid = int(casting.get("id"))
-        except (TypeError, ValueError):
+        cid = _casting_key(casting.get("id"))
+        if cid is None:
             continue
         files = casting.get("key_files")
         out[cid] = [f for f in files if isinstance(f, str)] if isinstance(files, list) else []
@@ -179,7 +259,9 @@ def _files_under(root: Path, entry: str) -> list[str]:
     return [spelling] if target.is_file() else []
 
 
-def _files_citing(fdir: Path, cid: int, requirement_ids: set[str]) -> list[str]:
+def _files_citing(
+    fdir: Path, cid: CastingId, requirement_ids: set[str]
+) -> list[str]:
     """The files casting `cid` owns that CITE one of `requirement_ids`.
 
     fallout FR-038 / CT-008 (D-217) — THE NARROWING THREE SURFACES PROMISED AND
@@ -235,7 +317,7 @@ def _files_citing(fdir: Path, cid: int, requirement_ids: set[str]) -> list[str]:
     return out
 
 
-def _owning_casting(fdir: Path, files: list[str]) -> int | None:
+def _owning_casting(fdir: Path, files: list[str]) -> CastingId | None:
     """The casting whose key_files own one of `files`, or None.
 
     fallout FR-009 (D-170, casting 7's concern C-079) — COVERAGE, NOT SET
@@ -264,6 +346,14 @@ def _owning_casting(fdir: Path, files: list[str]) -> int | None:
     every overlap, this one wants the single owner — so the shared statement is
     the coverage predicate and the tiebreak stays here, where the question is
     asked.
+
+    D-008 — THE SAME SYMPTOM, ONE RUNG UP, THROUGH THE MAP RATHER THAN THE
+    MATCH. Both passes below iterate `_casting_files`, and that map was built
+    with `int(casting.get("id"))`, so on a manifest whose ids are words it was
+    EMPTY and both passes iterated nothing. The paragraph above about the
+    failure being silent in the worst direction described the fix and the next
+    cause of it at once: `Foundry-Tasks` on this run returned None for all five
+    tasks, this time without a single key_file having been read.
     """
     # fallout AC-002 / FR-038 (D-270) — THE RECORDED `file` IS FOLDED FIRST.
     #
@@ -292,12 +382,25 @@ def _owning_casting(fdir: Path, files: list[str]) -> int | None:
 
 
 def _co_dispatch_for(
-    owned: dict[int, set[str]], requirement_ids: set[str], *, exclude: int | None = None
-) -> list[int]:
-    """Every casting whose `requirement_ids` intersect `requirement_ids`."""
+    owned: dict[CastingId, set[str]],
+    requirement_ids: set[str],
+    *,
+    exclude: CastingId | None = None,
+) -> list[CastingId]:
+    """Every casting whose `requirement_ids` intersect `requirement_ids`.
+
+    D-008: ordered by `_casting_order` rather than by `sorted`'s default, which
+    raises TypeError the moment a manifest carries an int id and a word id
+    together. `exclude` is the owner `_owning_casting` resolved, and the two
+    can only meet when both maps key an id the same way — which is why that
+    resolver and this table had to be folded in one change rather than one.
+    """
     return sorted(
-        cid for cid, ids in owned.items()
-        if cid != exclude and ids & requirement_ids
+        (
+            cid for cid, ids in owned.items()
+            if cid != exclude and ids & requirement_ids
+        ),
+        key=_casting_order,
     )
 
 
@@ -320,9 +423,9 @@ def _alignment_block(
     *,
     defect_ids: list[str],
     requirement_ids: set[str],
-    owning_casting: int | None,
+    owning_casting: CastingId | None,
     owning_files: list[str],
-    co_dispatch: list[int],
+    co_dispatch: list[CastingId],
     carried_concerns: list[dict] | None = None,
 ) -> str:
     """The block a lead pastes VERBATIM into each co-dispatched prompt.
@@ -386,8 +489,14 @@ def _alignment_block(
             "that casting's own idiom, in THIS cycle.",
             "",
         ])
+    # D-008: read through `_casting_key` like every other casting id in this
+    # module, and this site is the one that used to index `c["..."]` and coerce
+    # it with no guard at all. It never raised, and only because the two
+    # callers drop an unreadable target before it gets here — a raise held off
+    # by the very skip that was the defect.
     concern_castings = {
-        int(c["target_casting_id"]) for c in carried_concerns
+        key for c in carried_concerns
+        if (key := _casting_key(c.get("target_casting_id"))) is not None
     }
     for cid in co_dispatch:
         if cid in concern_castings:
@@ -434,7 +543,7 @@ def _alignment_block(
             "",
         ])
         for concern in carried_concerns:
-            cid = int(concern["target_casting_id"])
+            cid = _casting_key(concern.get("target_casting_id"))
             siblings = files.get(cid) or []
             lines.append(
                 f"- {concern.get('id', '?')} (raised by casting "
@@ -593,9 +702,14 @@ def _annotate_co_dispatch(
     # a carrier is chosen against `owning_casting`, which pass one is what
     # computes; rendering inside pass one would render before the set is final.
     for concern in concerns or []:
-        try:
-            target = int(concern["target_casting_id"])
-        except (KeyError, TypeError, ValueError):
+        # D-008: `_casting_key`, because `int()` here made "unresolvable" mean
+        # "not an integer". `Foundry-Concern` stores the id the MANIFEST
+        # spells, so a word-id run reached this line with a target that
+        # resolves perfectly well and was dropped for its spelling — the
+        # concern then stayed open, unmarkable, and `inspect_start` refused on
+        # it with the Tasks-driven exit unreachable.
+        target = _casting_key(concern.get("target_casting_id"))
+        if target is None:
             # An unresolvable target is refused at `Foundry-Concern`'s own door
             # (CT-001), so reaching one here means a hand-edited ledger. Skip
             # it: it stays open, and `inspect_start` keeps naming it, which is
@@ -603,7 +717,9 @@ def _annotate_co_dispatch(
             continue
         for task in _concern_carriers(tasks, concern):
             if target != task.get("owning_casting"):
-                task["co_dispatch"] = sorted(set(task["co_dispatch"]) | {target})
+                task["co_dispatch"] = sorted(
+                    set(task["co_dispatch"]) | {target}, key=_casting_order
+                )
             task.setdefault("concerns_co_dispatched", []).append(
                 str(concern.get("id", "?"))
             )
@@ -684,9 +800,10 @@ def _concern_only_tasks(
     files = _casting_files(fdir)
     out: list[dict] = []
     for concern in concerns:
-        try:
-            target = int(concern["target_casting_id"])
-        except (KeyError, TypeError, ValueError):
+        # D-008, as in the sibling walk above: the id the manifest spells, not
+        # the id an `int()` would accept.
+        target = _casting_key(concern.get("target_casting_id"))
+        if target is None:
             # Unresolvable targets are refused at `Foundry-Concern`'s own door
             # (CT-001), so one here is a hand-edited ledger. It stays open and
             # `inspect_start` keeps naming it, which is the honest end for a
@@ -743,8 +860,8 @@ def _append_grind_dispatch(
     defect_id: str,
     file_path: str,
     cycle: int,
-    casting: int | None,
-    co_dispatch: list[int] | None = None,
+    casting: CastingId | None,
+    co_dispatch: list[CastingId] | None = None,
     defect_ids: list[str] | None = None,
     requirement_ids: list[str] | None = None,
     phase: str = "",
@@ -924,13 +1041,23 @@ def _dispatch_open_concerns(
     concerns = open_concerns_for_other_castings(fdir) if concerns is None else concerns
     if not concerns:
         return []
-    reached_castings: set[int] = set()
+    # D-008 — `_casting_key`, and the reason is not tidiness: the two `int()`
+    # calls this replaces were a REACHABLE RAISE the moment the maps above
+    # started answering with word ids, because every member of `co_dispatch`
+    # then reaches them as a word. They never fired only because the empty map
+    # meant no member ever arrived. `reached_ids` below compares `str()` of
+    # both sides either way, so the fold changes no answer that already
+    # existed.
+    reached_castings: set[CastingId] = set()
     reached_files: set[str] = set()
     for task in tasks:
         for cid in task.get("co_dispatch") or []:
-            reached_castings.add(int(cid))
-        if task.get("owning_casting") is not None:
-            reached_castings.add(int(task["owning_casting"]))
+            key = _casting_key(cid)
+            if key is not None:
+                reached_castings.add(key)
+        owner = _casting_key(task.get("owning_casting"))
+        if owner is not None:
+            reached_castings.add(owner)
         for path in task.get("files") or []:
             reached_files.add(str(path))
     # fallout GI-004 (D-151) — `.get`, LIKE THIS MODULE'S TWO SIBLING CONCERN
