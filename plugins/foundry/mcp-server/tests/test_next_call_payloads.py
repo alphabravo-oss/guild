@@ -22,18 +22,28 @@ which the AST walk alone cannot say.
 from __future__ import annotations
 
 import ast
+import contextlib
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from foundry_mcp.tools import artifacts as _artifacts
 from foundry_mcp.tools import evidence as _evidence
+from foundry_mcp.tools import foundry_state as _foundry_state
+from foundry_mcp.tools.artifacts import _hash_file, foundry_spec_hash
 from foundry_mcp.tools.evidence import foundry_accept_casting
 from foundry_mcp.tools.orchestration import teams as _teams
-from foundry_mcp.tools.orchestration.teams import foundry_unregister_team
+from foundry_mcp.tools.orchestration.guidance import foundry_next_action
+from foundry_mcp.tools.orchestration.teams import (
+    foundry_register_team,
+    foundry_unregister_team,
+)
 
 from tests.orchestration._env import (  # noqa: F401
     _write_state,
+    patch_everywhere,
     run_env,
 )
 
@@ -493,3 +503,527 @@ def test_the_evidence_report_agrees_with_the_tests_beside_it():
     assert "  _argument_refusal itself carries it  False" in joined, joined
     for peer in ("Foundry-Team-Down", "Foundry-Init", "Foundry-Spec-Hash"):
         assert f"  {peer.ljust(36)}False" in joined, joined
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls ST-004 / US-003 / GI-008 (D-018, D-019, D-020) — WHERE THE KEY
+# LEADS, NOT ONLY THAT IT IS THERE.
+#
+# Everything above proves `next_call` is on the payload. D-020 drove the next
+# hop: a refused acceptance, then the `Foundry-Next` its key names, and the
+# lead was told to tear the wave down (team registered) or to dispatch the
+# NEXT wave over the refused casting (team torn down). A-014's premise was
+# "Foundry-Next already knows whether the casting was accepted", and nothing
+# in the server read acceptance: the one record this door wrote said
+# `casting-{id}-accepted` even on a warned `ok: False`.
+#
+# So these drive the real handlers in sequence — `foundry_register_team`,
+# `foundry_accept_casting`, `foundry_unregister_team`, `foundry_next_action` —
+# against a scratch HOME holding the team directory `TeamCreate` makes. Only
+# the tmux pane scan is stubbed. `run_env`'s team-scan fake is deliberately NOT
+# used: it answers the router's team question without the registration, which
+# is how every earlier suite stayed blind to the registered-team arm (D-015).
+# --------------------------------------------------------------------------- #
+
+_RUN = "payloads-route"
+_WAVE_ONE_TEAM = f"cast-{_RUN}-wave-1"
+_ROUTE_PROMPT = (
+    "# casting\n\n<spec_requirements>\n- build the thing\n</spec_requirements>\n"
+)
+_NEXT_ACTION_MARKER = "═══ YOUR NEXT ACTION ═══"
+
+#: What a lead is told when the router sends it to TEAR THE WAVE DOWN, and
+#: what it is told when the router sends it to DISPATCH THE NEXT WAVE. A
+#: refused or unaccepted casting owes neither: commands/start.md answers a
+#: refusal with "reject + re-dispatch".
+_TEARDOWN_CALLS = ("TeamDelete", "Foundry-Team-Down")
+_NEXT_WAVE_CALL = "Foundry-Cast-Wave(wave=2"
+
+
+@contextlib.contextmanager
+def _scratch_run(base: Path, monkeypatch):
+    """A live run under ``base`` whose team question is answered for real.
+
+    HOME is ``base/home``, so `Path.home() / ".claude" / "teams"` — where both
+    `foundry_register_team` and `foundry_state.active_teams` look — is a
+    directory this drive owns. Yields ``(project_root, fdir, teams_dir)``.
+    """
+    home = base / "home"
+    teams_dir = home / ".claude" / "teams"
+    teams_dir.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    patch_everywhere(monkeypatch, "live_teammate_panes", _no_panes)
+    root = base / "proj"
+    fdir = root / "foundry-archive" / _RUN
+    (fdir / "castings").mkdir(parents=True)
+    _foundry_state.set_active_run(_RUN)
+    try:
+        yield str(root), fdir, teams_dir
+    finally:
+        _foundry_state.clear_active_run()
+
+
+def _arrange_waves(fdir: Path, waves: dict[int, list[str]]) -> None:
+    """F1, a v2.0 spec, a waved manifest, and one prompt per casting.
+
+    v2.0 because that is the evidence rung's stream-skip branch: it answers
+    without a git repository, so the acceptance verdict these tests are about
+    is reached through the real handler and nothing else is synthesized.
+    """
+    _write_state(fdir, phase="F1", cycle=0)
+    (fdir / "spec.md").write_text("# Spec\n\n- build the thing\n", encoding="utf-8")
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({
+            "castings": [
+                {"id": cid, "title": cid, "wave": number}
+                for number, ids in sorted(waves.items()) for cid in ids
+            ],
+            "waves": [
+                {"wave": number, "casting_ids": list(ids)}
+                for number, ids in sorted(waves.items())
+            ],
+        }),
+        encoding="utf-8",
+    )
+    for ids in waves.values():
+        for cid in ids:
+            (fdir / "castings" / f"casting-{cid}-prompt.md").write_text(
+                _ROUTE_PROMPT, encoding="utf-8"
+            )
+
+
+def _worked_ledger(fdir: Path, cid: str, *, done: bool) -> None:
+    """A casting's progress ledger: still writing, or its terminal done line."""
+    now = _foundry_state.now_iso()
+    lines = [{"timestamp": now, "phase": "cast", "step": "writing the handler"}]
+    if done:
+        lines.append(
+            {"timestamp": now, "phase": "cast", "step": "committed", "done": True}
+        )
+    (fdir / "progress").mkdir(parents=True, exist_ok=True)
+    (fdir / "progress" / f"casting-{cid}.jsonl").write_text(
+        "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8"
+    )
+
+
+def _accept(root: str, fdir: Path, cid: str, **overrides) -> dict:
+    """`foundry_accept_casting` with every argument honest unless overridden."""
+    args = {
+        "casting_id": cid,
+        "spec_hash": foundry_spec_hash(project_root=root)["spec_hash"],
+        "prompt_hash": _hash_file(fdir / "castings" / f"casting-{cid}-prompt.md"),
+        "completion_report": "built the thing",
+        "project_root": root,
+        "casting_commit": "0" * 40,
+    }
+    args.update(overrides)
+    return foundry_accept_casting(**args)
+
+
+def _acceptance_destinations(fdir: Path) -> list[str]:
+    """Every `acceptance` record's destination, in the order it was written."""
+    path = fdir / "handoffs.jsonl"
+    if not path.exists():
+        return []
+    return [
+        record["destination"]
+        for record in (
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        if record.get("event") == "acceptance"
+    ]
+
+
+def _header(nxt: dict) -> str:
+    """The imperative the lead is handed: after the marker, before CONTEXT."""
+    text = nxt.get("instructions", "")
+    tail = text.split(_NEXT_ACTION_MARKER, 1)[1] if _NEXT_ACTION_MARKER in text else text
+    return tail.split("\nCONTEXT:", 1)[0]
+
+
+#: The acceptance outcomes these drives produce, as the overrides that produce
+#: them. `stale_spec_hash` is D-020's own drive: a refused CALL, which records
+#: nothing, so the casting reads as done and never accepted. The other two are
+#: verdicts on the CASTING and record `-refused`.
+_REFUSALS = {
+    "stale_spec_hash": {"spec_hash": "0" * 64},
+    "stale_prompt_hash": {"prompt_hash": "sha256:0000000000000000"},
+    "warned": {"completion_report": "built the thing; the tests are deferred"},
+}
+
+
+def _refuse_then_follow(
+    base: Path, monkeypatch, *, refusal: str | None, team_registered: bool
+) -> dict:
+    """Wave 1 = casting 1, worked and done; wave 2 = casting 2, not started.
+
+    Casting 1's acceptance is refused as ``refusal`` names (``None`` accepts
+    it), the team is registered or already torn down, and then the call the
+    payload's `next_call` names is made. Returns what each hop answered.
+    """
+    with _scratch_run(base, monkeypatch) as (root, fdir, teams_dir):
+        _arrange_waves(fdir, {1: ["1"], 2: ["2"]})
+        if team_registered:
+            (teams_dir / _WAVE_ONE_TEAM).mkdir()
+            up = foundry_register_team(_WAVE_ONE_TEAM, project_root=root)
+            assert up.get("ok") is True, up
+        _worked_ledger(fdir, "1", done=True)
+        payload = _accept(root, fdir, "1", **_REFUSALS.get(refusal, {}))
+        nxt = foundry_next_action(root)
+        return {
+            "payload": payload,
+            "destinations": _acceptance_destinations(fdir),
+            "action": nxt.get("action"),
+            "header": _header(nxt),
+        }
+
+
+@pytest.mark.parametrize(
+    "refusal, recorded",
+    [
+        ("stale_prompt_hash", ["casting-1-refused"]),
+        ("warned", ["casting-1-refused"]),
+        (None, ["casting-1-accepted"]),
+    ],
+    ids=["stale_prompt_hash", "warned", "accepted"],
+)
+def test_the_acceptance_verdict_is_recorded_as_the_payload_states_it(
+    tmp_path, monkeypatch, refusal, recorded
+):
+    """lead-stalls ST-004 / US-003 (D-020) — the WRITER half.
+
+    The warned row is the one that was wrong on disk: `ok: False`, "Do NOT
+    accept this casting", recorded as `casting-1-accepted`. The prompt-hash
+    row wrote nothing at all. A router cannot send a lead back to a refusal it
+    has no record of, whatever it is taught to read.
+    """
+    drive = _refuse_then_follow(
+        tmp_path, monkeypatch, refusal=refusal, team_registered=False
+    )
+
+    assert drive["payload"]["ok"] is (refusal is None), drive["payload"]
+    assert drive["payload"]["next_call"] == _artifacts.LEAD_NEXT_CALL, drive
+    assert drive["destinations"] == recorded, drive
+
+
+def test_a_refused_call_leaves_the_casting_verdict_standing(tmp_path, monkeypatch):
+    """lead-stalls ST-004 — a malformed CALL is not a verdict on the casting.
+
+    The rungs above the prompt load judge the call's own arguments. Recording
+    them would let a lead's stale re-call flip an accepted casting to refused
+    and send it to re-dispatch work that passed.
+    """
+    with _scratch_run(tmp_path, monkeypatch) as (root, fdir, _teams_dir):
+        _arrange_waves(fdir, {1: ["1"]})
+        assert _accept(root, fdir, "1")["ok"] is True
+        for overrides in (
+            {"spec_hash": "0" * 64},
+            {"casting_commit": None},
+        ):
+            refused = _accept(root, fdir, "1", **overrides)
+            assert refused["ok"] is False, refused
+            assert refused["next_call"] == _artifacts.LEAD_NEXT_CALL, refused
+
+        assert _acceptance_destinations(fdir) == ["casting-1-accepted"]
+
+
+def _judged_return_lines() -> tuple[list[int], list[int]]:
+    """``(judged, unrecorded)`` return lines of the SHIPPED `foundry_accept_casting`.
+
+    A return is JUDGED when it sits below the stale-spec-hash rung — the last
+    rung that refuses the CALL rather than the casting — and UNRECORDED when
+    the statement before it in its own block is not a
+    `_record_acceptance_verdict(...)` call.
+    """
+    source = Path(_evidence.__file__).read_text(encoding="utf-8")
+    fn = next(
+        node for node in ast.parse(source).body
+        if isinstance(node, ast.FunctionDef) and node.name == "foundry_accept_casting"
+    )
+    call_rung = max(
+        node.lineno for node in ast.walk(fn)
+        if isinstance(node, ast.Constant) and node.value == "stale_spec_hash"
+    )
+
+    def _records(stmt: ast.stmt) -> bool:
+        return (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Call)
+            and isinstance(stmt.value.func, ast.Name)
+            and stmt.value.func.id == "_record_acceptance_verdict"
+        )
+
+    judged: list[int] = []
+    unrecorded: list[int] = []
+    for node in ast.walk(fn):
+        for field in ("body", "orelse", "finalbody"):
+            block = getattr(node, field, None)
+            if not isinstance(block, list):
+                continue
+            for index, stmt in enumerate(block):
+                if not isinstance(stmt, ast.Return) or stmt.lineno < call_rung:
+                    continue
+                judged.append(stmt.lineno)
+                if index == 0 or not _records(block[index - 1]):
+                    unrecorded.append(stmt.lineno)
+    return sorted(judged), sorted(unrecorded)
+
+
+def test_every_judged_return_path_records_its_verdict_first():
+    """lead-stalls ST-004 / GI-005 — "every path" for the RECORD, as for the key.
+
+    The same argument as the `next_call` walk at the top of this module: most
+    of these paths cost a worktree and a re-executed command to reach, so a
+    suite that drove them all would still only prove the ones that existed on
+    the day it was written. Every judged `return` must be preceded, in its own
+    block, by a `_record_acceptance_verdict(...)` statement.
+    """
+    judged, unrecorded = _judged_return_lines()
+
+    assert len(judged) >= 8, judged
+    assert not unrecorded, (
+        f"return(s) at line(s) {unrecorded} in foundry_accept_casting judge the "
+        f"casting and record no verdict — the router reads that record to send "
+        f"a refused casting back to re-dispatch (lead-stalls ST-004, D-020)."
+    )
+
+
+@pytest.mark.parametrize("team_registered", [True, False], ids=["team_up", "team_down"])
+@pytest.mark.parametrize("refusal", sorted(_REFUSALS))
+def test_following_next_call_off_a_refusal_returns_to_that_casting(
+    tmp_path, monkeypatch, refusal, team_registered
+):
+    """lead-stalls ST-004 / US-003 (D-020) — the refusal routes back, not on.
+
+    ST-004 is "casting rejected -> lead re-accepting", triggered by "lead
+    follows the `next_call` on the reject payload". Driven at c5045c2 the
+    `Foundry-Next` that key names answered `cleanup_teams` with the team up —
+    shut the teammate down and delete its team — and, with the team down, the
+    wave-2 dispatch over a casting nothing had accepted. Neither is the move a
+    refusal owes. The router has to name casting 1 and the door that settles
+    it.
+    """
+    drive = _refuse_then_follow(
+        tmp_path, monkeypatch, refusal=refusal, team_registered=team_registered
+    )
+
+    assert drive["payload"]["next_call"] == _artifacts.LEAD_NEXT_CALL, drive
+    assert drive["action"] != "cleanup_teams", drive
+    assert not _tears_down(drive["header"]), drive
+    assert _NEXT_WAVE_CALL not in drive["header"], drive
+    assert "Foundry-Gate(phase='inspect')" not in drive["header"], drive
+    assert _returns_to_casting_one(drive["header"]), drive
+
+
+@pytest.mark.parametrize("team_registered", [True, False], ids=["team_up", "team_down"])
+def test_an_accepted_wave_still_moves_on(tmp_path, monkeypatch, team_registered):
+    """The adjacent path the reader must not block: casting 1 ACCEPTED.
+
+    Wave 1 is done and accepted and wave 2 is untouched, so the router owes the
+    wave boundary: with the team up, tear it down; with it down, dispatch wave
+    2. A reader that treated every recorded acceptance as outstanding would
+    park the run at exactly the boundary US-001 is about.
+    """
+    drive = _refuse_then_follow(
+        tmp_path, monkeypatch, refusal=None, team_registered=team_registered
+    )
+
+    assert drive["destinations"] == ["casting-1-accepted"], drive
+    if team_registered:
+        assert _tears_down(drive["header"]), drive
+    else:
+        assert drive["action"] == "build_castings", drive
+        assert _NEXT_WAVE_CALL in drive["header"], drive
+
+
+def _team_up_then_follow(
+    base: Path, monkeypatch, *, stall_clock_seconds: int | None
+) -> dict:
+    """A real Team-Up, casting 1 done and casting 2 still writing, then Foundry-Next.
+
+    The state the FIRST completion of a two-teammate wave leaves, which is the
+    wake `_WAITING_IS_NOT_STOPPING` tells the lead to answer with Foundry-Next.
+    """
+    with _scratch_run(base, monkeypatch) as (root, fdir, teams_dir):
+        _arrange_waves(fdir, {1: ["1", "2"]})
+        (teams_dir / _WAVE_ONE_TEAM).mkdir()
+        up = foundry_register_team(_WAVE_ONE_TEAM, project_root=root)
+        _worked_ledger(fdir, "1", done=True)
+        _worked_ledger(fdir, "2", done=False)
+        if stall_clock_seconds is not None:
+            stamp = datetime.now(timezone.utc) - timedelta(seconds=stall_clock_seconds)
+            (fdir / ".last-next-at").write_text(stamp.isoformat() + "\n", encoding="utf-8")
+        nxt = foundry_next_action(root)
+    return {
+        "team_up": up,
+        "action": nxt.get("action"),
+        "instructions": nxt.get("instructions", ""),
+        "header": _header(nxt),
+    }
+
+
+def test_team_up_success_names_no_call_at_all(tmp_path, monkeypatch):
+    """lead-stalls GI-003 / CT-004 (D-018) — Team-Up is not a door that routes.
+
+    lead-stalls GI-003 scopes the additive key to Team-Down and Accept-Casting.
+    Team-Up returns in the middle of the lead's own ordered sequence
+    (TeamCreate, Team-Up, Cast-Wave, spawn), so a `next_call` here would send
+    the lead to `Foundry-Next` BEFORE its teammates exist — the hop D-015
+    drove into a teardown. Its success payload is pinned to the three keys it
+    has always had.
+    """
+    up = _team_up_then_follow(tmp_path, monkeypatch, stall_clock_seconds=None)["team_up"]
+
+    assert set(up) == {"ok", "registered", "total_teams"}, up
+    assert up["registered"] == _WAVE_ONE_TEAM, up
+
+
+@pytest.mark.parametrize("stall_clock_seconds", [None, 600], ids=["fresh", "stale"])
+def test_foundry_next_after_team_up_leaves_running_teammates_running(
+    tmp_path, monkeypatch, stall_clock_seconds
+):
+    """lead-stalls ST-002 / GI-008 (D-018, D-019) — through the router, not the table.
+
+    The woken lead's `Foundry-Next` answered `cleanup_teams` — stop the
+    teammate that is still building — and, with the stall clock stale, put
+    that teardown directly under "END YOUR TURN" in the same payload. One
+    payload, one imperative, and never a teardown over a running teammate.
+    The whole instruction text is searched, not only the header, because
+    D-019's contradiction was between the header and the notice above it.
+    """
+    drive = _team_up_then_follow(
+        tmp_path, monkeypatch, stall_clock_seconds=stall_clock_seconds
+    )
+
+    assert drive["action"] != "cleanup_teams", drive["action"]
+    assert not _tears_down(drive["instructions"]), drive["instructions"]
+    assert "END YOUR TURN" in drive["header"], drive["header"]
+
+
+def _team_down_then_follow(base: Path, monkeypatch) -> dict:
+    """Wave 1 accepted through the real door, TeamDelete done, the real
+    Team-Down, then the call its `next_call` names."""
+    with _scratch_run(base, monkeypatch) as (root, fdir, teams_dir):
+        _arrange_waves(fdir, {1: ["1"], 2: ["2"]})
+        (teams_dir / _WAVE_ONE_TEAM).mkdir()
+        foundry_register_team(_WAVE_ONE_TEAM, project_root=root)
+        _worked_ledger(fdir, "1", done=True)
+        accepted = _accept(root, fdir, "1")
+        (teams_dir / _WAVE_ONE_TEAM).rmdir()
+        down = foundry_unregister_team(_WAVE_ONE_TEAM, root)
+        nxt = foundry_next_action(root)
+    return {
+        "accepted": accepted,
+        "team_down": down,
+        "action": nxt.get("action"),
+        "header": _header(nxt),
+    }
+
+
+def test_team_down_next_call_carries_a_finished_wave_to_the_next(tmp_path, monkeypatch):
+    """lead-stalls US-001 / CT-004 — Team-Down's key, followed, dispatches wave 2.
+
+    The adjacent path of the teardown half: the real `Foundry-Team-Down`
+    succeeds and names `Foundry-Next`, and that call must hand the lead the
+    next wave — not a second teardown of a team that no longer exists.
+    """
+    drive = _team_down_then_follow(tmp_path, monkeypatch)
+
+    assert drive["accepted"]["ok"] is True, drive
+    assert drive["team_down"].get("ok") is True, drive
+    assert drive["team_down"]["next_call"] == _artifacts.LEAD_NEXT_CALL, drive
+    assert drive["action"] == "build_castings", drive
+    assert _NEXT_WAVE_CALL in drive["header"], drive
+    assert not _tears_down(drive["header"]), drive
+
+
+def _tears_down(text: str) -> bool:
+    """True when ``text`` hands the lead a teardown of its team."""
+    return any(call in text for call in _TEARDOWN_CALLS) or "stop working" in text
+
+
+def _returns_to_casting_one(text: str) -> bool:
+    """True when ``text`` sends the lead back to settle casting 1's acceptance."""
+    return "Foundry-Accept-Casting" in text and (
+        "casting_id=1" in text or "casting 1" in text
+    )
+
+
+def acceptance_route_report() -> list[str]:
+    """The lines `evidence/casting-payloads-acceptance-route.log` carries.
+
+    Beside the tests for the reason `dispatch_refusal_report` is: the log and
+    the suite drive the SAME functions, so neither can drift alone —
+    `test_the_route_report_agrees_with_the_tests_beside_it` keeps it honest.
+    Every drive runs in its own temporary directory under its own
+    `MonkeyPatch`, undone before the next, and nothing printed is environmental:
+    no path, no timestamp, no duration.
+    """
+    import tempfile
+
+    def _in_scratch(drive, **kwargs) -> dict:
+        patch = pytest.MonkeyPatch()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                return drive(Path(tmp), patch, **kwargs)
+        finally:
+            patch.undo()
+
+    lines: list[str] = []
+    lines.append("Foundry-Accept-Casting, then the Foundry-Next its next_call names")
+    lines.append("  wave 1 = casting 1 (done); wave 2 = casting 2 (not started)")
+    for refusal in [None, *sorted(_REFUSALS)]:
+        for team_registered in (True, False):
+            drive = _in_scratch(
+                _refuse_then_follow, refusal=refusal, team_registered=team_registered
+            )
+            lines.append("")
+            lines.append(
+                f"  {refusal or 'accepted'}, team "
+                f"{'registered' if team_registered else 'torn down'}"
+            )
+            lines.append(f"    payload ok                  {drive['payload']['ok']}")
+            lines.append(f"    payload next_call           {drive['payload']['next_call']!r}")
+            lines.append(f"    acceptance records          {drive['destinations']}")
+            lines.append(f"    Foundry-Next action         {drive['action']}")
+            lines.append(f"    tears the team down         {_tears_down(drive['header'])}")
+            lines.append(f"    dispatches wave 2           {_NEXT_WAVE_CALL in drive['header']}")
+            lines.append(f"    returns to casting 1        {_returns_to_casting_one(drive['header'])}")
+
+    judged, unrecorded = _judged_return_lines()
+    lines.append("")
+    lines.append("foundry_accept_casting return paths that judge the casting")
+    lines.append(f"  judged                        {len(judged)}")
+    lines.append(f"  recording no verdict          {len(unrecorded)}")
+
+    lines.append("")
+    lines.append("a real Foundry-Team-Up, casting 1 done, casting 2 still writing")
+    for stall in (None, 600):
+        drive = _in_scratch(_team_up_then_follow, stall_clock_seconds=stall)
+        lines.append(f"  stall clock {'stale' if stall else 'fresh'}")
+        lines.append(f"    Team-Up payload keys        {sorted(drive['team_up'])}")
+        lines.append(f"    Foundry-Next action         {drive['action']}")
+        lines.append(f"    any teardown in the payload {_tears_down(drive['instructions'])}")
+        lines.append(f"    header ends the turn        {'END YOUR TURN' in drive['header']}")
+
+    drive = _in_scratch(_team_down_then_follow)
+    lines.append("")
+    lines.append("wave 1 accepted, TeamDelete, a real Foundry-Team-Down, then Foundry-Next")
+    lines.append(f"  Team-Down next_call           {drive['team_down'].get('next_call')!r}")
+    lines.append(f"  Foundry-Next action           {drive['action']}")
+    lines.append(f"  dispatches wave 2             {_NEXT_WAVE_CALL in drive['header']}")
+    lines.append(f"  tears the team down           {_tears_down(drive['header'])}")
+    return lines
+
+
+def test_the_route_report_agrees_with_the_tests_beside_it():
+    """The committed log's claims, re-derived here so neither can drift alone."""
+    joined = "\n".join(acceptance_route_report())
+
+    assert "  recording no verdict          0" in joined, joined
+    assert joined.count("    returns to casting 1        True") == 6, joined
+    assert joined.count("    tears the team down         True") == 1, joined
+    assert joined.count("    any teardown in the payload False") == 2, joined
+    assert "  dispatches wave 2             True" in joined, joined

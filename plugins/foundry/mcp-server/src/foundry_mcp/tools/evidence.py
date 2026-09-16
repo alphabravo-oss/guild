@@ -4570,6 +4570,60 @@ def sweep_evidence_at_head(
 # claim about it.
 
 
+def _record_acceptance_verdict(
+    casting_id: int | str,
+    project_root: str,
+    *,
+    refused: str | None,
+    information_loss: str = "",
+) -> None:
+    """Append the acceptance VERDICT this door reached to ``handoffs.jsonl``.
+
+    lead-stalls ST-004 / US-003 (D-020) — THE ROUTER CAN ONLY SEND A LEAD BACK
+    TO A CASTING IT CAN SEE WAS REFUSED.
+    ------------------------------------------------------------------------
+    A-014 put the refusal's routing in Foundry-Next: `next_call` is the same
+    literal on every path (FR-011), "Foundry-Next already knows whether the
+    casting was accepted". Driven at c5045c2 it did not. The only record this
+    door wrote was the final return's, with ``destination`` hard-wired to
+    ``casting-{id}-accepted`` — so a WARNED acceptance (`ok: False`, "Do NOT
+    accept this casting") was on disk as accepted, and no refusal wrote
+    anything at all. A refused casting was indistinguishable
+    from a built one, and following `next_call` sent the lead to tear the
+    wave down instead of back to reject + re-dispatch.
+
+    THE RECORD IS THE ONE THIS DOOR ALREADY WROTE, not a new file (GI-001):
+    same ``event``, same ``source``, and the verdict in the ``destination``
+    suffix, ``-accepted`` or ``-refused``. `guidance.py` reads the LAST such
+    record per manifest casting id and compares the whole string it builds
+    from that id, so the two sides never parse one another. The two spellings
+    live in two modules that may not import each other (AC-061);
+    `tests/test_next_call_payloads.py` drives this writer into that reader
+    end to end, which is what keeps them in step.
+
+    WRITTEN ONLY ONCE THE CALL IS ESTABLISHED. The rungs above the prompt
+    load — no run, no ``casting_commit``, an unhashable spec, a stale spec hash
+    — refuse the CALL, not the casting: nothing about the casting has been
+    judged yet, and a record there would let a malformed re-call flip an
+    accepted casting to refused. So those leave the casting's earlier state
+    standing, and ``source_reread`` is truthfully ``True`` on every record,
+    because each is written after the fresh spec hash matched.
+    """
+    outcome = "accepted" if refused is None else "refused"
+    record_handoff_event(
+        event="acceptance",
+        source=f"castings/casting-{casting_id}-prompt.md",
+        destination=f"casting-{casting_id}-{outcome}",
+        source_reread=True,
+        summary=(
+            f"casting {casting_id} acceptance {outcome}"
+            + (f": {refused}" if refused is not None else "")
+        ),
+        information_loss=information_loss,
+        project_root=project_root,
+    )
+
+
 def foundry_accept_casting(
     casting_id: int | str,
     spec_hash: str,
@@ -4585,7 +4639,9 @@ def foundry_accept_casting(
       1. Verifies spec_hash matches the current spec.md (forces re-read)
       2. Verifies prompt_hash matches the casting's prompt file (forces
          the lead to have read the authoritative prompt, not a memory)
-      3. Records the acceptance as a handoff entry
+      3. Records the verdict — ``casting-{id}-accepted`` or
+         ``casting-{id}-refused`` — as a handoff entry, on every path that
+         judged the casting (see ``_record_acceptance_verdict``)
       4. Returns the list of acceptance criteria from the casting's
          <spec_requirements> block so the lead can verify each against
          the completion report
@@ -4732,6 +4788,12 @@ def foundry_accept_casting(
     # Load the casting prompt
     prompt_path = fdir / "castings" / f"casting-{casting_id}-prompt.md"
     if not prompt_path.exists():
+        # D-020: from here down every return is a verdict on the casting, and
+        # each is recorded — see `_record_acceptance_verdict`.
+        _record_acceptance_verdict(
+            casting_id, project_root,
+            refused=f"casting-{casting_id}-prompt.md not found",
+        )
         return {
             "ok": False,
             "error": f"casting-{casting_id}-prompt.md not found",
@@ -4758,6 +4820,7 @@ def foundry_accept_casting(
         # undercounts: neither is a dict literal, so a sweep for `return {`
         # walks straight past them and leaves two refusal paths with no
         # `next_call` — the GI-005 violation, in the two places hardest to see.
+        _record_acceptance_verdict(casting_id, project_root, refused=prompt_problem)
         return {**document_refusal(prompt_path, prompt_problem), "next_call": LEAD_NEXT_CALL}
 
     # CT-011 / AC-030 — the hash rung is `check_reported_prompt_hash`, not a
@@ -4772,6 +4835,9 @@ def foundry_accept_casting(
         # Spread, not mutated: `check_reported_prompt_hash` hands the SAME dict
         # shape to `Foundry-Fix`, and an in-place `hash_refusal["next_call"] =`
         # would edit an object this door does not own. See the note above.
+        _record_acceptance_verdict(
+            casting_id, project_root, refused=str(hash_refusal.get("error"))
+        )
         return {**hash_refusal, "next_call": LEAD_NEXT_CALL}
 
     # Extract acceptance criteria from the <spec_requirements> block
@@ -4781,6 +4847,10 @@ def foundry_accept_casting(
         flags=re.DOTALL | re.IGNORECASE,
     )
     if not match:
+        _record_acceptance_verdict(
+            casting_id, project_root,
+            refused="casting prompt has no <spec_requirements> block",
+        )
         return {
             "ok": False,
             "error": "casting prompt has no <spec_requirements> block",
@@ -4930,6 +5000,9 @@ def foundry_accept_casting(
     # `ok: true`. A typo in one frontmatter line bought a green gate.
     if _read_spec_format_version(evidence_spec_path) is None:
         declared = _declared_spec_format_version(evidence_spec_path)
+        _record_acceptance_verdict(
+            casting_id, project_root, refused="malformed_spec_format_version"
+        )
         return {
             "ok": False,
             "casting_id": casting_id,
@@ -5020,6 +5093,10 @@ def foundry_accept_casting(
     # record is the audit signal that evidence verification was
     # structurally bypassed for this run.
     if evidence_verdict == "rejected":
+        _record_acceptance_verdict(
+            casting_id, project_root,
+            refused=str(evidence_result["failure_token"]),
+        )
         return {
             "ok": False,
             "casting_id": casting_id,
@@ -5072,6 +5149,10 @@ def foundry_accept_casting(
         unbound = sorted(set(casting_req_ids) - bound_ids)
         if unbound:
             # Hard-reject with named missing IDs (SC#4 satisfied).
+            _record_acceptance_verdict(
+                casting_id, project_root,
+                refused="EVIDENCE_REQUIREMENT_UNBOUND: " + ", ".join(unbound),
+            )
             return {
                 "ok": False,
                 "casting_id": casting_id,
@@ -5113,13 +5194,17 @@ def foundry_accept_casting(
     report_lower = completion_report.lower()
     scope_flags = [p for p in warning_phrases if p in report_lower]
     warning = None
+    # D-020: which warning fired, for the acceptance record below.
+    warning_reason: str | None = None
     if scope_flags:
+        warning_reason = "scope_flags: " + ", ".join(scope_flags)
         warning = (
             f"Teammate completion report contains scope-flag phrases: {scope_flags}. "
             f"Do NOT accept this casting. Re-dispatch with explicit instruction to "
             f"complete the missing work. Build-green is necessary but NOT sufficient."
         )
     elif missing_citations:
+        warning_reason = "missing_citations: " + ", ".join(missing_citations)
         warning = (
             f"Completion report is missing citations for "
             f"{len(missing_citations)} requirement(s): {', '.join(missing_citations)}. "
@@ -5133,6 +5218,7 @@ def foundry_accept_casting(
         # AC-006 — an unresolvable symbol is a defect, not a warning about
         # formatting. Named individually so the teammate can fix the cite
         # rather than re-scan the whole report.
+        warning_reason = "unresolved_symbol_cites"
         warning = (
             f"Completion report cites {len(unresolved_cites)} symbol(s) that resolve "
             f"nowhere in the tree: "
@@ -5144,17 +5230,19 @@ def foundry_accept_casting(
             f"run a cite-refresh sweep."
         )
 
-    # Record the acceptance attempt as a handoff entry.
+    # Record the acceptance verdict as a handoff entry.
     # Use the raw path string to avoid macOS /tmp ↔ /private/tmp symlink
     # mismatches during relative_to computation.
-    record_handoff_event(
-        event="acceptance",
-        source=f"castings/casting-{casting_id}-prompt.md",
-        destination=f"casting-{casting_id}-accepted",
-        source_reread=True,  # the MCP tool enforces it by requiring fresh hashes
-        summary=f"casting {casting_id} acceptance check",
+    #
+    # D-020: the verdict is `ok`'s, and `ok` below is `warning is None`. This
+    # wrote `casting-{id}-accepted` unconditionally, so a warned acceptance —
+    # the one commands/start.md answers with "reject + re-dispatch" — read on
+    # disk as accepted. Keyed on `warning` itself, so a warning branch added
+    # later without a reason of its own still records a refusal.
+    _record_acceptance_verdict(
+        casting_id, project_root,
+        refused=None if warning is None else (warning_reason or "warning"),
         information_loss=", ".join(scope_flags) if scope_flags else "",
-        project_root=project_root,
     )
 
     return {
