@@ -658,7 +658,9 @@ _REFUSALS = {
 #: casting done and unjudged, which owes acceptance made correctly — a fresh
 #: spec hash first. A refused CASTING goes back to the teammate that built it,
 #: by message, so the CAST dispatch block is never augmented (commands/start.md
-#: rule 1) — and the lead then ends its turn to wait for that teammate.
+#: rule 1). Only a send that cannot reach that teammate takes step (2), a
+#: re-dispatch whose dispatch block is passed with nothing appended, and step
+#: (3) ends the turn to wait.
 _OWED_FIRST_CALL = {
     "stale_spec_hash": "Foundry-Spec-Hash",
     "stale_prompt_hash": "SendMessage",
@@ -667,6 +669,22 @@ _OWED_FIRST_CALL = {
 
 #: The stable opening of the refused branch's step (1).
 _REFUSAL_TO_TEAMMATE = "(1) SendMessage(to=<the teammate you spawned for casting 1>"
+
+#: The refused branch's step (2), and the sentence closing it that the team
+#: state selects: whether step (1) should reach the teammate at all.
+_UNREACHABLE_REDISPATCH = (
+    "(2) Only a send that answers that the teammate cannot be reached takes "
+)
+_REFUSED_TEAM_SENTENCE = {
+    True: (
+        "Casting 1's team is still registered, so step (1) is expected to "
+        "reach its teammate"
+    ),
+    False: (
+        "Casting 1's team is no longer registered, so step (1) may answer "
+        "that its teammate cannot be reached"
+    ),
+}
 
 
 def _refuse_then_follow(
@@ -812,7 +830,7 @@ def test_following_next_call_off_a_refusal_returns_to_that_casting(
 ):
     """lead-stalls ST-004 / US-003 (D-020) — the refusal routes back, not on.
 
-    ST-004 is "casting rejected -> lead re-accepting", triggered by "lead
+    lead-stalls ST-004 is "casting rejected -> lead re-accepting", triggered by "lead
     follows the `next_call` on the reject payload". Driven at c5045c2 the
     `Foundry-Next` that key names answered `cleanup_teams` with the team up —
     shut the teammate down and delete its team — and, with the team down, the
@@ -832,9 +850,18 @@ def test_following_next_call_off_a_refusal_returns_to_that_casting(
     assert _returns_to_casting_one(drive["header"]), drive
     assert _first_call(drive["header"]) == _OWED_FIRST_CALL[refusal], drive
     if _OWED_FIRST_CALL[refusal] == "SendMessage":
-        assert _REFUSAL_TO_TEAMMATE in drive["header"], drive
-        assert "END YOUR TURN" in drive["header"], drive
-        assert "Foundry-Spawn-Teammate" not in drive["header"], drive
+        header = drive["header"]
+        assert _REFUSAL_TO_TEAMMATE in header, drive
+        assert _UNREACHABLE_REDISPATCH in header, drive
+        assert "Foundry-Spawn-Teammate(casting_id=1, phase='cast')" in header, drive
+        assert _REFUSED_TEAM_SENTENCE[team_registered] in header, drive
+        assert _REFUSED_TEAM_SENTENCE[not team_registered] not in header, drive
+        assert "(3) " in header and "END YOUR TURN" in header, drive
+        assert (
+            header.index(_REFUSAL_TO_TEAMMATE)
+            < header.index(_UNREACHABLE_REDISPATCH)
+            < header.index("END YOUR TURN")
+        ), drive
     else:
         assert "Foundry-Accept-Casting(casting_id=1, " in drive["header"], drive
 
@@ -889,7 +916,7 @@ def test_an_accepted_wave_still_moves_on(tmp_path, monkeypatch, team_registered)
     Wave 1 is done and accepted and wave 2 is untouched, so the router owes the
     wave boundary: with the team up, tear it down; with it down, dispatch wave
     2. A reader that treated every recorded acceptance as outstanding would
-    park the run at exactly the boundary US-001 is about.
+    park the run at exactly the boundary lead-stalls US-001 is about.
     """
     drive = _refuse_then_follow(
         tmp_path, monkeypatch, refusal=None, team_registered=team_registered
