@@ -1743,6 +1743,57 @@ def test_the_wave_slots_resolve_for_every_input():
     ) == "undispatched"
 
 
+def test_transition_to_cast_keeps_wave_one_as_a_literal():
+    """lead-stalls D-014 / D-009 — the literal `1` in `transition_to_cast` is
+    a decision, and until this test it was a decision only a comment held.
+
+    `_compute_next_action` returns `transition_to_cast` from F0 and from
+    nowhere else, so the only wave the entry can describe is the first, and the
+    comment above it in `guidance.py` forbids turning its `cast-{run}-wave-1`
+    into a `{wave}` slot: that slot would resolve off a liveness reading taken
+    before any wave exists. The entry that serves later waves is
+    `build_castings`'s dispatch branch, which carries the slot.
+
+    WHY THIS READS THE TABLE ENTRY AND NOT THE HEADER, AGAINST THIS MODULE'S
+    OWN RULE. The entry is unbranched, so `foundry_next_action` measures no
+    liveness for it and the formatter resolves `{wave}` and `{built_wave}`
+    through their totals' default -- `1`. The header a lead receives is
+    therefore byte-identical with or without the slot, which is exactly why
+    the whole suite, including `test_the_wave_slots_resolve_for_every_input`
+    and `test_the_audit_sees_a_team_name_the_lead_cannot_create` above, stayed
+    green over the forbidden edit: a resolvable slot is what they check for.
+    The only place the edit is visible is the template, so the template is what
+    this judges.
+    """
+    entry = _ACTION_IMPERATIVES["transition_to_cast"]
+    # Steps (3), (4) and (5): the three places the first wave is named.
+    literal_calls = (
+        "TeamCreate('cast-{run}-wave-1')",
+        "Foundry-Team-Up(team_name='cast-{run}-wave-1')",
+        "Foundry-Cast-Wave(wave=1, ",
+    )
+    # Derived from the one tuple of slots the formatter resolves, so a wave
+    # slot added later is forbidden here the day it lands.
+    wave_slots = tuple(s for s in _SUBSTITUTED_SLOTS if "wave" in s)
+    assert {"{wave}", "{built_wave}"} <= set(wave_slots), wave_slots
+
+    def findings(text: str) -> list[str]:
+        return (
+            [f"missing {call}" for call in literal_calls if call not in text]
+            + [f"holds {slot}" for slot in wave_slots if slot in text]
+        )
+
+    assert findings(entry) == [], findings(entry)
+
+    # Positive control: the edit the comment forbids, once per wave slot, is
+    # seen by the check above. A check that could not see it would pass a
+    # table that had made it.
+    for slot in ("{wave}", "{built_wave}"):
+        mutated = entry.replace("cast-{run}-wave-1'", "cast-{run}-wave-" + slot + "'")
+        assert mutated.count(slot) == 2, (slot, mutated)
+        assert f"holds {slot}" in findings(mutated), (slot, findings(mutated))
+
+
 # --------------------------------------------------------------------------- #
 # lead-stalls FR-006 / GI-004 / OT-003 — the wait policy, one spelling, no poll
 # --------------------------------------------------------------------------- #
