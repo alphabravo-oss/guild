@@ -819,6 +819,37 @@ _DIGIT_RUN_RE: re.Pattern[str] = re.compile(r"\d+")
 #: not a field, it is two different strings.
 _KNOWN_VARIATION_SITES: frozenset[str] = frozenset({"digits", "text"})  # 2 sites
 
+#: lead-stalls OT-010 (D-006) — THE TWO KINDS OF THING THAT MAY KEEP A GRAMMAR
+#: ALIVE, AND WHY NEITHER OF THEM IS THE RUN CORPUS.
+#:
+#: There used to be a third member, ``corpus``: a log under ``evidence/`` at the
+#: repository root. It was removed because it could not do the job. ``evidence/``
+#: is a PER-RUN artifact — foundry's own F6 DONE step ends every run with
+#: ``git rm -r evidence/`` — so a shipped registry entry pointed at a run log is
+#: pointed at something the protocol is guaranteed to delete before the next run
+#: reads it. That is not a risk, it is a schedule: at ce5b416 the strip took all
+#: 78 logs, and five entries here went on naming ``casting-5-both-doors.log``,
+#: ``casting-5-platform-witness.log`` and ``casting-5-corpus-witness.log`` into a
+#: tree that had held none of them since. D-051 had already recorded four
+#: entries rotting in exactly this way one run earlier, and the remedy it chose
+#: — repoint at a log the tree carries TODAY — bought one run and then rotted
+#: again, because the pointer was never the broken part. The LIFETIME was.
+#:
+#: So both surviving kinds are artifacts this registry ships WITH: a fixture log
+#: under ``tests/fixtures/evidence/``, which the suite carries and the strip does
+#: not touch, and the ``# evidence-volatile:`` example ``agents/teammate.md``
+#: documents to authors. Nothing about the sweep's mechanism is relaxed by the
+#: move — a witness is still RESOLVED BY NAME and the shape is still re-derived
+#: from that log's own declarations, so a repointed or edited witness still turns
+#: the sweep red. Only the artifact's lifetime changed, from the run's to the
+#: registry's.
+#:
+#: Closed and total over the registry, exactly as ``_KNOWN_VARIATION_SITES`` is:
+#: ``test_every_grammar_declares_a_known_witness_kind`` walks the registry and
+#: fails on any other value, and ``_grammar_witness_sweep``'s trailing ``else``
+#: REPORTS an unrecognised one rather than treating the entry as witnessed.
+_KNOWN_WITNESS_KINDS: frozenset[str] = frozenset({"fixture", "protocol"})  # 2 kinds
+
 
 @dataclass(frozen=True)
 class _EnvironmentalGrammar:
@@ -840,11 +871,12 @@ class _EnvironmentalGrammar:
     says whether it is where the run happened or what the command reported, so
     every path grammar is keyed.
 
-    ``witness_kind`` / ``witness`` record what keeps this entry alive:
-    ``corpus`` names a committed evidence log whose own declared pattern erases
-    a token of this shape, under this key, from its own body; ``protocol``
-    names the literal ``# evidence-volatile:`` example ``agents/teammate.md``
-    ships.
+    ``witness_kind`` / ``witness`` record what keeps this entry alive, and both
+    members of the pair are SHIPPED artifacts with this registry's own lifetime
+    (see ``_KNOWN_WITNESS_KINDS``): ``fixture`` names a log under
+    ``tests/fixtures/evidence/`` whose own declared pattern erases a token of
+    this shape, under this key, from its own body; ``protocol`` names the
+    literal ``# evidence-volatile:`` example ``agents/teammate.md`` ships.
 
     ``witness_pair`` is ``(key_context, side_a, side_b)`` — a REAL disagreement
     this grammar must ADMIT, taken from the cold corpus run rather than
@@ -877,17 +909,16 @@ class _EnvironmentalGrammar:
 #: but which no committed log varies and no teammate.md example declares.
 #: Adding one means adding its witness, which is the point.
 #:
-#: D-051: ``witness`` is checked BY NAME. The corpus rung used to ask only
-#: whether SOME committed log erased a token of the shape, so it never read
-#: the name beside it, and four entries went on citing `casting-1-pytest.log`,
+#: D-051: ``witness`` is checked BY NAME. The rung used to ask only whether
+#: SOME committed log erased a token of the shape, so it never read the name
+#: beside it, and four entries went on citing `casting-1-pytest.log`,
 #: `casting-3-observations.log` and `casting-8-suite.log` for cycles after the
 #: tree stopped holding them — the human-readable pointer outliving the corpus
 #: while the mechanical rung stayed green. ``_grammar_witness_sweep`` now
 #: RESOLVES the named log and re-derives the shape from THAT log's own
 #: declarations, so a repointed or retired witness turns the sweep red rather
-#: than passing on a sibling's evidence. Repointing an entry means naming a
-#: log the tree holds today which declares this shape today; the trailing
-#: comments below record where each pointer moved from.
+#: than passing on a sibling's evidence. That rung is unchanged by D-006 and
+#: still the one that matters; what D-006 changed is WHERE the name resolves.
 #:
 #: C-103: a witness must not be collateral damage. ``planning_root`` and
 #: ``archive_root`` used to cite ``casting-10-blast-radius.log``, a
@@ -898,19 +929,33 @@ class _EnvironmentalGrammar:
 #: have turned a test in this module's own suite red from a commit in another
 #: casting's file, and nothing in the log, the ruling or the recapture
 #: instructions said so. A witness wants to be narrow and stable; a
-#: blast-radius log wants to be wide and derived; one log cannot be both. The
-#: two entries moved to ``casting-5-corpus-witness.log``, whose only job is to
-#: be that witness and which states the obligation in its own body — the one
-#: place a recapture actually happens. Every corpus witness below now names a
-#: log owned by the same casting as this registry, which is what keeps a
-#: peer's commit from being able to kill a grammar's witness at all.
+#: blast-radius log wants to be wide and derived; one log cannot be both.
+#:
+#: lead-stalls OT-010 (D-006): C-103's "narrow and stable" is the whole of the
+#: answer, and a run-corpus log cannot be stable no matter how narrow it is —
+#: F6 DONE deletes the directory it lives in. C-103 got as far as ruling that a
+#: witness must be owned by the same CASTING as this registry, so a peer's
+#: commit could not kill it; the run after that, the OWNING casting's own logs
+#: were stripped along with everyone else's and all five corpus witnesses died
+#: together. The narrowest, most stable log available is therefore not an
+#: evidence log at all — it is a suite FIXTURE, which ships with this registry
+#: and is deleted when this registry is. ``evidence_log_environmental_witness
+#: .log`` is that fixture: its only job is to be this witness, its body carries
+#: real tokens captured from a detached-worktree run at 5fdd193, and it states
+#: the obligation in its own header. See ``_KNOWN_WITNESS_KINDS`` above for why
+#: ``corpus`` is no longer one of the kinds an entry may claim.
 _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
     "duration_seconds": _EnvironmentalGrammar(
         token=re.compile(r"\d+\.\d+s"),
         varies_in="digits",
         key=None,  # the `s` unit is in the token
-        witness_kind="corpus",
-        witness="casting-5-both-doors.log",  # D-051: was casting-1-pytest.log
+        # D-006: was the corpus log casting-5-both-doors.log (D-051: was
+        # casting-1-pytest.log). This is the ONE entry of the five that did not
+        # need a fixture: teammate.md already ships this exact pattern as the
+        # first of the four volatile examples it gives authors, so the protocol
+        # witnesses it directly and no second artifact has to.
+        witness_kind="protocol",
+        witness=r"# evidence-volatile: \d+\.\d+s",
         witness_pair=("", "0.47s", "0.76s"),
         falsifier=("", "0.47", "0.76"),  # strip the unit: a bare ratio-less number
         note=(
@@ -945,9 +990,12 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         token=re.compile(r"/\S*"),
         varies_in="text",
         key=re.compile(r"(?:^|\s)rootdir:$"),
-        witness_kind="corpus",
-        # D-051: was casting-3-observations.log
-        witness="casting-5-platform-witness.log",
+        # D-006: was casting-5-platform-witness.log (D-051: was
+        # casting-3-observations.log). Both were run-corpus logs; the fixture
+        # carries the same `rootdir:` line, captured in a detached worktree
+        # where the path is the relocated one this grammar exists to admit.
+        witness_kind="fixture",
+        witness="evidence_log_environmental_witness.log",
         witness_pair=(
             "rootdir:",
             "/Users/rayjanoka/ab/code/guild/plugins/foundry/mcp-server",
@@ -970,8 +1018,9 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         token=re.compile(r"/\S*"),
         varies_in="text",
         key=re.compile(r"(?:^|\s)platform \S+ -- Python \S+.* --$"),
-        witness_kind="corpus",
-        witness="casting-5-platform-witness.log",
+        # D-006: was casting-5-platform-witness.log, a run-corpus log.
+        witness_kind="fixture",
+        witness="evidence_log_environmental_witness.log",
         witness_pair=(
             "platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 --",
             "/Users/rayjanoka/.cache/uv/builds-v0/.tmphgnUSu/bin/python",
@@ -1011,10 +1060,12 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         token=re.compile(r"/\S*/\.planning/\S*"),
         varies_in="text",
         key=None,  # the `/.planning/` anchor is in the token
-        witness_kind="corpus",
-        # C-103: was casting-10-blast-radius.log (D-051: was
-        # casting-1-pytest.log). See the C-103 paragraph above the registry.
-        witness="casting-5-corpus-witness.log",
+        # D-006: was casting-5-corpus-witness.log (C-103: was
+        # casting-10-blast-radius.log; D-051: was casting-1-pytest.log). Three
+        # pointers, three run-corpus logs, three rots. See the D-006 paragraph
+        # above the registry.
+        witness_kind="fixture",
+        witness="evidence_log_environmental_witness.log",
         witness_pair=(
             "",
             "/private/var/folders/kq/T/tmp.X6ktF5/wt/.planning/phases/09",
@@ -1037,10 +1088,12 @@ _ENVIRONMENTAL_GRAMMARS: dict[str, _EnvironmentalGrammar] = {
         token=re.compile(r"/\S*/foundry-archive/\S*"),
         varies_in="text",
         key=None,  # the `/foundry-archive/` anchor is in the token
-        witness_kind="corpus",
-        # C-103: was casting-10-blast-radius.log (D-051: was
-        # casting-8-suite.log). See the C-103 paragraph above the registry.
-        witness="casting-5-corpus-witness.log",
+        # D-006: was casting-5-corpus-witness.log (C-103: was
+        # casting-10-blast-radius.log; D-051: was casting-8-suite.log). Sibling
+        # of `planning_root` in its pointer history too, and it rotted the same
+        # three times for the same one reason.
+        witness_kind="fixture",
+        witness="evidence_log_environmental_witness.log",
         witness_pair=(
             "",
             "/private/tmp/c3wt/foundry-archive/thunder-viper",

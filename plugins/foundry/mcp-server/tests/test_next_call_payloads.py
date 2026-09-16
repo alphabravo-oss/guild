@@ -260,3 +260,236 @@ def test_next_call_names_a_literal_tool_call_with_no_conditional(value):
 
     for stalling in ("sleep", "poll", "loop", "retry until", "wait"):
         assert stalling not in lowered.split() and stalling not in lowered, value
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-005 / CT-005 / OT-006 (D-002) — the response, not the function.
+# --------------------------------------------------------------------------- #
+
+
+def _call_over_the_dispatcher(tool: str, arguments: dict) -> dict:
+    """One `Foundry-*` call through `server.py#call_tool`, as a dict.
+
+    The MCP boundary, not the handler. That distinction IS the defect below:
+    everything the AST walk above proves is a property of
+    `foundry_accept_casting`, and the payload a schema-refused caller receives
+    is built before that function is entered.
+    """
+    import asyncio
+    import json
+
+    from foundry_mcp import server as _server
+    from foundry_mcp.tools.display import RESULT_JSON_MARKER
+
+    blocks = asyncio.run(_server.call_tool(tool, arguments))
+    text = blocks[0].text
+    # `format_result_blocks` emits the display half, then `RESULT_JSON_MARKER`,
+    # then the whole result as JSON — but ONLY for a tool that has a formatter
+    # (fallout D-173). An unformatted tool's text is the JSON and nothing else,
+    # so the marker is read when it is there and the whole text parsed when it
+    # is not, rather than assuming either shape.
+    if RESULT_JSON_MARKER in text:
+        text = text.split(RESULT_JSON_MARKER, 1)[1]
+    return json.loads(text)
+
+
+def test_a_schema_refused_accept_casting_still_names_the_next_call():
+    """lead-stalls GI-005 / CT-005 / OT-006 — the pre-dispatch refusal path.
+
+    THE DEFECT (D-002). `foundry_accept_casting` carries `LEAD_NEXT_CALL` on
+    every one of its own returns and the AST walk above proves it. That proof
+    is sound over the FUNCTION and says nothing about this payload, because
+    this payload is built in `server.py` by `_argument_refusal` and returned
+    BEFORE the handler runs — the refusal's own hint says so: "the server
+    rejects anything outside it before the handler runs". Driven live, an
+    `Foundry-Accept-Casting` call carrying `casting_id`, `spec_hash`,
+    `prompt_hash` and `completion_report` but omitting the required
+    `casting_commit` came back as exactly `{error, missing_fields,
+    invalid_fields, hint}`: the lead at the end of a unit of work, handed a
+    refusal plus a judgment task and no imperative, which is lead-stalls
+    ST-003's shape exactly. A refusal that parks the run is a worse outcome
+    than the refusal was meant to produce, which is why lead-stalls GI-005 says
+    every path and not every SUCCESSFUL path.
+
+    Driven over the dispatcher rather than asserted about `_argument_refusal`,
+    because the claim is about what a CALLER receives. A test that read the
+    helper directly would pass just as happily with the key added in the wrong
+    place.
+    """
+    payload = _call_over_the_dispatcher(
+        "Foundry-Accept-Casting",
+        {
+            "casting_id": "0",
+            "spec_hash": "x",
+            "prompt_hash": "x",
+            "completion_report": "x",
+        },
+    )
+
+    assert payload.get("missing_fields") == ["casting_commit"], payload
+    assert payload.get("next_call") == _artifacts.LEAD_NEXT_CALL, payload
+
+
+def test_the_shared_refusal_builder_is_left_byte_identical_for_other_tools():
+    """lead-stalls FR-004 / NFR-002 — the blast radius the call-site fix avoids.
+
+    `_argument_refusal` serves EVERY registered tool. The key could have been
+    added inside it in one line, and that one line would have put `next_call`
+    on ~40 other tools' refusal envelopes — payloads this spec does not name,
+    which is the non-additive change lead-stalls FR-004 / NFR-002 forbids. It
+    would also have changed the shape two other suites read from the helper
+    directly (`tests/test_foundry_init.py` against Foundry-Init,
+    `tests/test_defect_tier.py` against Foundry-Sync), which is how a fix
+    scoped to one door turns up as a diff in somebody else's.
+
+    So the negative half is pinned beside the positive one: a peer tool refused
+    on the SAME rung, by the SAME builder, for the SAME reason, must come back
+    without the key. `Foundry-Team-Down` is the peer chosen deliberately —
+    lead-stalls GI-003 / CT-004 scope ITS `next_call` to the success payload,
+    so a refusal carrying one would be this run's other door over-reaching.
+    """
+    from foundry_mcp import server as _server
+
+    assert "Foundry-Team-Down" not in _server._NEXT_CALL_TOOLS, (
+        _server._NEXT_CALL_TOOLS
+    )
+
+    payload = _call_over_the_dispatcher("Foundry-Team-Down", {})
+
+    assert payload.get("missing_fields"), payload
+    assert "next_call" not in payload, payload
+
+
+def test_the_unhandled_error_banner_names_the_next_call_too(monkeypatch):
+    """lead-stalls GI-005 / OT-006 — the refusal path's twin, one branch over.
+
+    `call_tool` wraps the handler in a net that exists precisely for the case
+    where the handler's own return never happened, so the banner it composes is
+    the SECOND payload a caller receives from `Foundry-Accept-Casting` that the
+    function's own returns cannot speak for. Covering the schema refusal and
+    leaving this one would have shipped the same defect on the same rung
+    against the same tool — and a lead reading an unhandled-error banner is, if
+    anything, more in need of somewhere to go than one reading a refusal.
+
+    The handler is replaced rather than provoked: what is being pinned is the
+    boundary's behaviour when a handler raises, not any particular way of
+    making one raise.
+    """
+    from foundry_mcp import server as _server
+
+    def _boom(_args):
+        raise RuntimeError("synthetic")
+
+    monkeypatch.setitem(_server._DISPATCH, "Foundry-Accept-Casting", _boom)
+
+    payload = _call_over_the_dispatcher(
+        "Foundry-Accept-Casting",
+        {
+            "casting_id": "0",
+            "spec_hash": "x",
+            "prompt_hash": "x",
+            "completion_report": "x",
+            "casting_commit": "0" * 40,
+        },
+    )
+
+    assert "RuntimeError: synthetic" in payload.get("error", ""), payload
+    assert payload.get("next_call") == _artifacts.LEAD_NEXT_CALL, payload
+
+
+def dispatch_refusal_report() -> list[str]:
+    """The lines `evidence/casting-payloads-dispatch-refusal.log` carries.
+
+    Here rather than inlined into a `# evidence-cmd:` one-liner so the evidence
+    and the tests read the SAME code: a report spelled out in a shell string is
+    a second implementation of the claim, free to drift from the one the suite
+    drives. `tests/orchestration/test_guidance_imperatives.py#audit_evidence`
+    is the same arrangement in the imperatives casting, and
+    `test_the_evidence_report_agrees_with_the_tests_beside_it` below keeps this
+    one from becoming dead code.
+
+    Every value is derived at call time and none of it is environmental — no
+    path, no duration, no count that depends on where the command ran — so the
+    log re-executes byte-identically in the detached worktree the acceptance
+    gate builds.
+    """
+    from foundry_mcp import server as _server
+
+    lines: list[str] = []
+    entered: list[int] = []
+
+    args = {
+        "casting_id": "0",
+        "spec_hash": "x",
+        "prompt_hash": "x",
+        "completion_report": "x",
+    }
+
+    real = _server._DISPATCH["Foundry-Accept-Casting"]
+    _server._DISPATCH["Foundry-Accept-Casting"] = (
+        lambda a: entered.append(1) or real(a)
+    )
+    try:
+        refusal = _call_over_the_dispatcher("Foundry-Accept-Casting", args)
+    finally:
+        _server._DISPATCH["Foundry-Accept-Casting"] = real
+
+    def _boom(_a):
+        raise RuntimeError("synthetic")
+
+    _server._DISPATCH["Foundry-Accept-Casting"] = _boom
+    try:
+        banner = _call_over_the_dispatcher(
+            "Foundry-Accept-Casting", dict(args, casting_commit="0" * 40)
+        )
+    finally:
+        _server._DISPATCH["Foundry-Accept-Casting"] = real
+
+    import asyncio
+
+    schema = asyncio.run(_server._tool_schema("Foundry-Accept-Casting"))
+    helper = _server._argument_refusal("Foundry-Accept-Casting", schema, args)
+
+    lines.append("the pre-dispatch schema refusal of Foundry-Accept-Casting")
+    lines.append("  missing_fields                       "
+                 + str(refusal.get("missing_fields")))
+    lines.append("  handler was entered                  " + str(bool(entered)))
+    lines.append("  next_call on the response            "
+                 + repr(refusal.get("next_call")))
+    lines.append("  it is the leaf artifacts.py constant "
+                 + str(refusal.get("next_call") == _artifacts.LEAD_NEXT_CALL))
+    lines.append("")
+    lines.append("the unhandled-error banner of the same tool")
+    lines.append("  error names the raise                "
+                 + str("RuntimeError: synthetic" in banner.get("error", "")))
+    lines.append("  next_call on the response            "
+                 + repr(banner.get("next_call")))
+    lines.append("")
+    lines.append("blast radius: the SAME rung, the other tools it serves")
+    lines.append("  _argument_refusal itself carries it  "
+                 + str("next_call" in helper))
+    for peer in ("Foundry-Team-Down", "Foundry-Init", "Foundry-Spec-Hash"):
+        payload = _call_over_the_dispatcher(peer, {})
+        lines.append("  " + peer.ljust(36) + str("next_call" in payload))
+    lines.append("  tools this boundary adds it for      "
+                 + str(sorted(_server._NEXT_CALL_TOOLS)))
+    return lines
+
+
+def test_the_evidence_report_agrees_with_the_tests_beside_it():
+    """The committed log's claims, re-derived here so neither can drift alone.
+
+    `dispatch_refusal_report` exists to be printed into an evidence log that
+    the acceptance gate re-executes. A report nothing drives is a second
+    implementation of the claims above, and the failure mode is quiet: the log
+    goes on reproducing byte-identically off code the suite never runs.
+    """
+    lines = dispatch_refusal_report()
+    joined = "\n".join(lines)
+
+    assert "  handler was entered                  False" in joined, joined
+    assert joined.count(f"  next_call on the response            "
+                        f"{_artifacts.LEAD_NEXT_CALL!r}") == 2, joined
+    assert "  _argument_refusal itself carries it  False" in joined, joined
+    for peer in ("Foundry-Team-Down", "Foundry-Init", "Foundry-Spec-Hash"):
+        assert f"  {peer.ljust(36)}False" in joined, joined

@@ -1,0 +1,13 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -p no:cacheprovider --no-header --color=no -v -k "witness or parses_under_the_host_shell or derived_floor" tests/test_evidence.py 2>/dev/null | awk '/^tests\/test_evidence.py::/ { n++; ok = ($0 ~ / PASSED/); if (ok) p++; split($0, a, "::"); split(a[2], b, " "); seen[b[1]] = ok } END { split("test_every_declared_grammar_has_a_live_witness test_every_grammar_declares_a_known_witness_kind test_a_grammar_with_no_live_witness_is_reported_by_name test_a_named_witness_pointer_must_name_a_log_that_still_witnesses_it test_every_committed_evidence_command_parses_under_the_host_shell test_the_derived_floor_reads_a_real_population_and_reports_a_shrink", want, " "); all = 1; for (i = 1; i <= 6; i++) { got = ((want[i] in seen) && seen[want[i]]) ? "PASSED" : "NOT PASSED"; if (got != "PASSED") all = 0; printf "%-11s %s\n", got, want[i] }; printf "\ndriven at or above the floor of 6: %s\n", (n >= 6 ? "True" : "False"); printf "every driven guard passed:        %s\n", (n > 0 && n == p ? "True" : "False"); printf "verdict:                          %s\n", (all && n >= 6 && n == p ? "GREEN" : "RED") }'
+# evidence-for: OT-010
+
+PASSED      test_every_declared_grammar_has_a_live_witness
+PASSED      test_every_grammar_declares_a_known_witness_kind
+PASSED      test_a_grammar_with_no_live_witness_is_reported_by_name
+PASSED      test_a_named_witness_pointer_must_name_a_log_that_still_witnesses_it
+PASSED      test_every_committed_evidence_command_parses_under_the_host_shell
+PASSED      test_the_derived_floor_reads_a_real_population_and_reports_a_shrink
+
+driven at or above the floor of 6: True
+every driven guard passed:        True
+verdict:                          GREEN
