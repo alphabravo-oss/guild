@@ -71,6 +71,7 @@ from foundry_mcp.tools.foundry_state import (
     get_run_dir,
     now_iso,
     read_document,
+    read_jsonl,
 )
 from pathlib import Path
 from foundry_mcp.tools.orchestration.escalation import (
@@ -625,12 +626,20 @@ def foundry_next_action(
     # watchdog fired and found agents progressing" — and whose ABSENCE four
     # tests read as "no stall notice was emitted".
     #
-    # Scoped to the two audited actions so the other twenty cost no ledger scan
-    # (lead-stalls GI-001). `_waiting_on_agents` never raises and never blocks
-    # (lead-stalls CT-006), so
-    # this cannot take `Foundry-Next` down with it.
-    agent_liveness: dict | None = None
-    if _parse_branches(_ACTION_IMPERATIVES.get(result.get("action", ""), "")):
+    # Scoped to the BRANCHED actions (lead-stalls D-019 made `run_streams` the
+    # third) and to the two phases the router itself now reads it for, so the
+    # rest cost no ledger scan (lead-stalls GI-001). `_waiting_on_agents` never
+    # raises and never blocks (lead-stalls CT-006), so this cannot take
+    # `Foundry-Next` down with it.
+    #
+    # lead-stalls D-015 / D-016 / D-017 — AND WHEN THE ROUTER ALREADY READ IT,
+    # THAT READING IS THE ONE. `_compute_next_action` now reads the roster in
+    # F1 and F3 to decide whether a registered team is still holding work, and
+    # a second reading here could disagree with the one that chose the arm.
+    agent_liveness: dict | None = result.get("agent_liveness")
+    if agent_liveness is None and _parse_branches(
+        _ACTION_IMPERATIVES.get(result.get("action", ""), "")
+    ):
         agent_liveness = _waiting_on_agents(project_root)
         result["agent_liveness"] = agent_liveness
 
@@ -703,14 +712,35 @@ def foundry_next_action(
                         # loop, so this arm yields and QUOTES the one
                         # spelling of the policy rather than wording it a
                         # third time.
+                        #
+                        # lead-stalls GI-008 (D-019) — AND IT SAYS SO ONLY
+                        # WHEN THE IMPERATIVE BELOW SAYS THE SAME. This arm
+                        # appended the policy for EVERY action, and only the
+                        # branched ones choose their imperative from this
+                        # reading: driven with a team registered it printed
+                        # "END YOUR TURN" directly above `cleanup_teams`, and
+                        # at F2 above "spawn every missing INSPECT stream" —
+                        # one payload, two imperatives. The notice now asks
+                        # `_chosen_branch`, the selection the header is
+                        # printed from; anywhere else it REPORTS the roster
+                        # and names no move, so the header stays the one.
+                        told_to_wait = (
+                            _chosen_branch(result.get("action", ""), liveness)
+                            == "live"
+                        )
                         stall_warning = (
                             f"\u23f3 WAITING ON {liveness['count']} AGENT(S) "
                             f"({liveness['detail']}). {minutes}m {seconds}s since "
                             f"your last Foundry-Next call — that gap is the "
-                            f"agents working, not you deliberating. Do NOT "
-                            f"improvise over their half-finished work. "
-                            f"Foundry-Liveness answers per-agent detail. "
-                            + _WAITING_IS_NOT_STOPPING
+                            f"agents working, not you deliberating. "
+                            + (
+                                "Do NOT improvise over their half-finished "
+                                "work. Foundry-Liveness answers per-agent "
+                                "detail. " + _WAITING_IS_NOT_STOPPING
+                                if told_to_wait
+                                else "Foundry-Liveness answers per-agent "
+                                "detail. " + _WAITING_REPORTS_ONLY
+                            )
                         )
                     else:
                         stall_warning = (
@@ -1208,6 +1238,19 @@ _WAITING_IS_NOT_STOPPING = (
     "arrives, call Foundry-Next and follow what it says then."
 )
 
+#: lead-stalls GI-008 (D-019) — WHAT THE WAITING NOTICE SAYS WHEN THE
+#: IMPERATIVE BENEATH IT WAS NOT CHOSEN FROM THE ROSTER IT REPORTS.
+#:
+#: The notice exists so a long gap with agents running is not called
+#: deliberation (FR-020 / FR-036), and that half holds for every action. The
+#: policy above is an IMPERATIVE, though, and appending it to a header that
+#: names calls is two imperatives in one payload. So beside any header other
+#: than a `live` branch the notice keeps its report and hands the move back.
+_WAITING_REPORTS_ONLY = (
+    "This notice is a report and names no move: the imperative below is this "
+    "run state's one next call."
+)
+
 
 #: lead-stalls FR-006 / GI-004 / US-002 / OT-003 (D-005) — WHAT THE `CONTEXT:`
 #: BLOCK OF A BRANCHED ACTION SAYS INSTEAD OF A SECOND SEQUENCE.
@@ -1244,7 +1287,8 @@ _WAITING_IS_NOT_STOPPING = (
 #: Nothing is lost by deferring. The F1 crossing is named by
 #: `_CAST_WAVE_COMPLETE`, gate included; the F3 crossing by
 #: `_ACTION_IMPERATIVES["transition_to_inspect"]`, which is the action this
-#: router returns the instant the blocking-defect count reaches zero.
+#: router returns once the blocking-defect count is zero and no GRIND agent is
+#: running (lead-stalls D-017).
 _BRANCHED_ACTION_CONTEXT = (
     " Your next call is the imperative printed ABOVE this block: it was chosen "
     "from the progress ledgers this server read on THIS call, so it already "
@@ -1288,9 +1332,9 @@ _BRANCH_CLOSE = "]]"
 
 #: The branch every branched entry must declare, and the one a state with no
 #: text of its own resolves to. `fix_defects` declares `live` and `idle` only:
-#: it is emitted ONLY while blocking defects are open, so "no agent is running"
-#: means dispatch teammates whether they were never spawned or finished with
-#: work still open, and one text serves both.
+#: with no agent running it is emitted ONLY while blocking defects are open, so
+#: "no agent is running" means dispatch teammates whether they were never
+#: spawned or finished with work still open, and one text serves both.
 _BRANCH_FALLBACK = "idle"
 
 
@@ -1397,19 +1441,104 @@ def _branch_state(liveness: object) -> str:
     return "undispatched"
 
 
-def _select_branch(text: str, state: str) -> str:
-    """The ONE branch of a multi-state imperative the lead receives
-    (lead-stalls GI-008)."""
-    branches = _parse_branches(text)
-    if not branches:
-        return text
-    for candidate in (state, _BRANCH_FALLBACK):
-        if branches.get(candidate):
-            return branches[candidate]
+def _casting_ids(value: object) -> list[str]:
+    """A reading's casting-id list, total over every input (lead-stalls D-020).
+
+    Only a non-empty string or a non-bool int is an id: `True` is not casting
+    1, for `current_cycle`'s reason. Anything else answers ``[]``, which reads
+    as "nothing owed", so a malformed reading can select neither acceptance
+    branch and can never leave a `{casting}` slot to be filled from nothing.
+    """
+    if not isinstance(value, list):
+        return []
+    return [
+        str(item) for item in value
+        if (isinstance(item, str) and item)
+        or (isinstance(item, int) and not isinstance(item, bool))
+    ]
+
+
+def _acceptance_state(liveness: object) -> str | None:
+    """`refused` / `unaccepted` when a CAST casting's acceptance is owed, else
+    ``None`` (lead-stalls ST-004 / D-020).
+
+    A-014's premise was "Foundry-Next already knows whether the casting was
+    accepted", and it did not: `_cast_wave_position` counted a casting built on
+    its own ledger `done` line, which the teammate writes BEFORE the lead calls
+    `Foundry-Accept-Casting`. So a refused casting read as built, and the
+    refusal's `next_call` — "Call Foundry-Next now." on every path, FR-011 —
+    sent the lead to tear the wave down (team up: `cleanup_teams`; team down:
+    `_CAST_WAVE_COMPLETE`), which is the one thing a refusal never owes.
+
+    The two lists come from `_cast_wave_position`, which reads the verdict
+    `foundry_accept_casting` records. `refused` outranks `unaccepted` because
+    re-accepting a casting nobody has touched since its refusal only buys the
+    same refusal again.
+    """
+    row = liveness if isinstance(liveness, dict) else {}
+    if _casting_ids(row.get("cast_refused")):
+        return "refused"
+    if _casting_ids(row.get("cast_unaccepted")):
+        return "unaccepted"
+    return None
+
+
+def _branch_states(liveness: object) -> tuple[str, ...]:
+    """Every run state the reading stands in, most urgent first
+    (lead-stalls FR-015 / CT-008 / ST-004).
+
+    LIVE COMES FIRST, AND ACCEPTANCE ONLY WHEN NOTHING IS RUNNING. A lead woken
+    by one teammate's completion while another is still building is owed END
+    YOUR TURN (lead-stalls FR-002 / ST-002): the finished casting's acceptance
+    is still owed when the last notification arrives, and the reading taken
+    then names it. Putting acceptance first would turn every mid-wave wake into
+    a second sequence beside a running wave, which is the shape lead-stalls
+    GI-008 forbids a payload to carry.
+
+    `_select_branch` takes the FIRST state the entry declares, so an entry that
+    declares no acceptance branch — `fix_defects`, `run_streams` — answers on
+    the base state exactly as it did before this reading existed.
+    """
+    base = _branch_state(liveness)
+    if base == "live":
+        return (base,)
+    owed = _acceptance_state(liveness)
+    return (owed, base) if owed else (base,)
+
+
+def _branch_name(branches: dict[str, str], states: tuple[str, ...]) -> str:
+    """The declared branch the first matching state resolves to. Total."""
+    for candidate in (*states, _BRANCH_FALLBACK):
+        if candidate and branches.get(candidate):
+            return candidate
     # Total tail: a branched entry always holds at least one branch, so the
     # lead receives prose rather than a marker even if a later edit drops the
     # declared fallback. The suite pins that no shipped entry needs this.
-    return next(iter(branches.values()))
+    return next(iter(branches))
+
+
+def _select_branch(text: str, *states: str) -> str:
+    """The ONE branch of a multi-state imperative the lead receives
+    (lead-stalls GI-008). ``states`` is a preference order; the first one the
+    entry declares wins, then `_BRANCH_FALLBACK`."""
+    branches = _parse_branches(text)
+    if not branches:
+        return text
+    return branches[_branch_name(branches, states)]
+
+
+def _chosen_branch(action: str, liveness: object) -> str | None:
+    """Which declared branch `_format_imperative_header` hands the lead for
+    ``action`` on this reading, or ``None`` for an unbranched entry.
+
+    lead-stalls GI-008 / D-019 — the stall notice asks THIS, so the notice and
+    the header are two readers of one selection and cannot disagree about
+    whether the lead was told to end its turn.
+    """
+    branches = _parse_branches(_ACTION_IMPERATIVES.get(action, ""))
+    if not branches:
+        return None
+    return _branch_name(branches, _branch_states(liveness))
 
 
 #: lead-stalls D-009 / D-012 — THE THREE SLOTS A BRANCH CAN CARRY, AND WHY EACH
@@ -1478,6 +1607,53 @@ def _grind_cycle(cycle: object) -> str:
     return str(cycle) if cycle >= 0 else _GRIND_CYCLE_DEFAULT
 
 
+#: lead-stalls D-020 — what `{casting}` resolves to when the reading names no
+#: casting. `_branch_states` selects an acceptance branch ONLY when its list is
+#: non-empty, and `_casting_slot` reads the same list first, so no shipped
+#: route reaches this. It is the `casting_id=N` register `_GRIND_DISPATCH`
+#: already uses, rather than an empty string that would print `casting_id=,`.
+_CASTING_DEFAULT = "N"
+
+
+#: lead-stalls D-020 — `{reach}`, the refused branch's statement of which
+#: re-dispatch step the lead should expect to need, from the reading's own
+#: `teams_active` (lead ruling, GRIND cycle 7). A reading that did not measure
+#: the team scan gets the torn-down sentence: expecting the fallback costs
+#: nothing when the send is delivered, and expecting delivery is how a lead ends
+#: its turn over a message nobody received.
+_REACH_TEAM_UP = (
+    "Casting {casting}'s team is still registered, so step (1) is expected to "
+    "reach its teammate and step (2) not to be needed."
+)
+_REACH_TEAM_DOWN = (
+    "Casting {casting}'s team is no longer registered, so step (1) may answer "
+    "that its teammate cannot be reached, and step (2) is then the re-dispatch."
+)
+
+
+def _refused_reach(liveness: object) -> str:
+    """`{reach}` — total over every input (lead-stalls D-020)."""
+    row = liveness if isinstance(liveness, dict) else {}
+    return _REACH_TEAM_UP if row.get("teams_active") is True else _REACH_TEAM_DOWN
+
+
+def _casting_slot(liveness: object) -> str:
+    """`{casting}` — the casting an acceptance branch is about, total.
+
+    Read in `_acceptance_state`'s order, so the id always belongs to the branch
+    that was chosen: `refused` is chosen exactly when `cast_refused` is
+    non-empty, and `unaccepted` only when it is empty. The FIRST id, because
+    `_cast_wave_position` lists them in manifest wave order, and settling the
+    lowest wave first is the order the waves were built in.
+    """
+    row = liveness if isinstance(liveness, dict) else {}
+    for key in ("cast_refused", "cast_unaccepted"):
+        ids = _casting_ids(row.get(key))
+        if ids:
+            return ids[0]
+    return _CASTING_DEFAULT
+
+
 #: lead-stalls CT-002 / FR-002 — the teammates-live branch, for both audited
 #: actions. It
 #: names NO next call ON PURPOSE, in the same register as the `done` and
@@ -1494,6 +1670,25 @@ _CAST_TEAMMATES_LIVE = (
 _GRIND_TEAMMATES_LIVE = (
     "YOUR NEXT CALL: NONE. Your GRIND teammates are running — this server read "
     "their progress ledgers on this call and measured them advancing. "
+    + _WAITING_IS_NOT_STOPPING
+)
+
+#: lead-stalls GI-008 / FR-007 (D-019) — `run_streams` IS THE THIRD ACTION
+#: WHOSE WORK IS AGENTS, AND THE ONE A LEAD RE-READS WHILE THEY RUN.
+#:
+#: Its streams are BACKGROUND agents, so unlike the foreground CAST and GRIND
+#: spawns the lead keeps its turn and calls Foundry-Next while they work. Every
+#: such call found the streams unrecorded — they record at the END — and was
+#: handed "spawn every missing INSPECT stream" beside a CONTEXT naming the very
+#: streams already running. Driven with `prove` and `trace` progressing and the
+#: stall clock stale, one payload carried the WAITING / END YOUR TURN notice
+#: listing both and, under it, the order to spawn them again. FR-007 is "fix
+#: any others found"; this is the other one, and it takes the same treatment.
+_STREAMS_RUNNING = (
+    "YOUR NEXT CALL: NONE. Your INSPECT streams are running — this server read "
+    "their progress ledgers on this call and measured them advancing. A stream "
+    "records itself when it finishes, so an unrecorded stream that is running "
+    "is not missing, and spawning it again runs it twice over one cycle. "
     + _WAITING_IS_NOT_STOPPING
 )
 
@@ -1515,10 +1710,12 @@ _GRIND_TEAMMATES_LIVE = (
 #: here now is `_branch_state` answering `idle`, which requires a measured
 #: `cast_wave_pending` of 0 — and `_cast_wave_position` publishes 0 only after
 #: loading the manifest AND walking the ledger-derived done set. `_select_branch`
-#: cannot reach this text any other way: `build_castings` declares all three
-#: states, so `_BRANCH_FALLBACK` never fires for it and neither does the total
-#: tail. The sentence is a claim about the reading, so it stays a claim the
-#: reading has to earn.
+#: cannot reach this text any other way: `build_castings` declares every state
+#: `_branch_states` can answer, so `_BRANCH_FALLBACK` never fires for it and
+#: neither does the total tail. lead-stalls D-020 adds one more condition on
+#: the same route: `refused` and `unaccepted` outrank `idle`, so the teardown
+#: is reached only once every done casting is also ACCEPTED. The sentence is a
+#: claim about the reading, so it stays a claim the reading has to earn.
 _CAST_WAVE_COMPLETE = (
     "YOUR NEXT CALLS (in order):\n"
     "  (1) TeamDelete for the CAST team.\n"
@@ -1577,10 +1774,86 @@ _CAST_WAVE_UNDISPATCHED = (
     "it is the same wave either way."
 )
 
-#: The `fix_defects` idle branch, and its only one. This action is emitted ONLY
-#: while blocking defects are open (`_compute_next_action`'s F3 arm returns
-#: `transition_to_inspect` the moment the count reaches zero), so "no agent is
-#: running" here always means the same thing: the work is open and nobody is on
+#: lead-stalls ST-004 / US-003 / D-020 — THE TWO STATES BETWEEN A CASTING'S
+#: DONE LINE AND ITS WAVE BEING BUILT.
+#:
+#: Before D-020 there were none: a done line WAS a built casting, so the only
+#: arms reachable once the teammates stopped were the teardown and the next
+#: wave. Driven at c5045c2, a refused acceptance followed by the `next_call`
+#: its payload names answered `cleanup_teams` with the team up and
+#: `_CAST_WAVE_COMPLETE` with it down, and neither mentioned
+#: `Foundry-Accept-Casting` at all, while commands/start.md answers a refusal
+#: with "reject + re-dispatch".
+#:
+#: `unaccepted`: done, and no verdict since. That is the ordinary state of a
+#: finished teammate AND the state a CALL-side refusal leaves (a stale spec
+#: hash records nothing, because nothing about the casting was judged), and
+#: one text serves both because both owe the same call made correctly.
+_CAST_ACCEPTANCE_DUE = (
+    "YOUR NEXT CALLS (in order):\n"
+    "  (1) Foundry-Spec-Hash — a fresh hash; acceptance refuses a stale one.\n"
+    "  (2) Foundry-Accept-Casting(casting_id={casting}, spec_hash=<the hash "
+    "step (1) returned>, prompt_hash=<the sha256 casting {casting}'s teammate "
+    "stated in its completion report>, completion_report=<that report>, "
+    "casting_commit=<the full SHA of casting {casting}'s commit>)\n"
+    "  (3) Foundry-Next — the call step (2) names on every path, accepted or "
+    "refused; the verdict it recorded is what that call reads.\n"
+    "Casting {casting} has declared itself done and holds no acceptance "
+    "verdict since — this server read the manifest, the progress ledgers and "
+    "handoffs.jsonl on this call, and no agent is running. Its wave is not "
+    "built until it is accepted, so neither a teardown nor the next wave is "
+    "yours to make yet."
+)
+
+#: `refused`: `Foundry-Accept-Casting` recorded `-refused` for this casting and
+#: its ledger has not moved since. Re-accepting it unchanged buys the same
+#: refusal; the refusal is answered by the TEAMMATE THAT BUILT IT, which still
+#: holds the casting's context — the way this run's own refusals were answered.
+#:
+#: WHY A MESSAGE FIRST, AND A FRESH SPAWN ONLY BEHIND IT. `Foundry-Spawn-
+#: Teammate` returns a dispatch block the lead must pass VERBATIM, and the
+#: standing CRITICAL RULES printed at the top of this same payload say GRIND is
+#: the ONLY exception to that, so the refusal can never ride INSIDE a CAST
+#: dispatch; it travels as a message. The teammate that built the casting is
+#: sent it first because it still holds the context. A teammate whose team was
+#: already torn down may not be reachable any more (lead ruling, GRIND cycle 7),
+#: so step (2) is the re-dispatch that does not depend on it — a fresh spawn,
+#: dispatch verbatim, and the same refusal as a SEPARATE message — and
+#: `{reach}` says, from the reading's own `teams_active`, which of the two the
+#: lead should expect to need. The resumed or re-spawned teammate writes its
+#: ledger again, so the casting reads as running rather than refused, and its
+#: next done line makes the refusal OLDER than the work — which is what routes
+#: the lead to accept again (`_owed_acceptances`) rather than to re-dispatch it
+#: twice.
+_CAST_REFUSED_REDISPATCH = (
+    "YOUR NEXT CALLS (in order):\n"
+    "  (1) SendMessage(to=<the teammate you spawned for casting {casting}>, "
+    "message=<the refusal Foundry-Accept-Casting returned for casting "
+    "{casting}, verbatim — its error or failure_token, failure_detail, warning "
+    "and hint>). Casting {casting} goes back to the teammate that built it, "
+    "which still holds its context, to fix what was refused and report "
+    "again.\n"
+    "  (2) Only a send that answers that the teammate cannot be reached takes "
+    "this step, and it is then the whole re-dispatch: "
+    "Foundry-Spawn-Teammate(casting_id={casting}, phase='cast'); one foreground "
+    "Agent(subagent_type='foundry:teammate', mode='bypassPermissions') passed "
+    "that call's `dispatch` field VERBATIM with nothing appended, obeying the "
+    "model clause in the `instructions` it returns; then SendMessage(to=<that "
+    "new teammate>, message=<the same refusal, verbatim>) as a separate "
+    "message. {reach}\n"
+    "  (3) " + _WAITING_IS_NOT_STOPPING + "\n"
+    "Foundry-Accept-Casting REFUSED casting {casting} and its ledger has not "
+    "moved since — this server read handoffs.jsonl and the progress ledgers on "
+    "this call, and no agent is running. A refused casting is re-dispatched to "
+    "be fixed: never torn down, never counted as built, never re-accepted "
+    "unchanged."
+)
+
+#: The `fix_defects` idle branch, and its only one. With no agent running this
+#: action is emitted ONLY while blocking defects are open (`_compute_next_action`'s
+#: F3 arm returns `transition_to_inspect` once the count is zero and nobody is
+#: running — lead-stalls D-017), so "no agent is running" here always means the
+#: same thing: the work is open and nobody is on
 #: it. Steps (1) and (2) are harmless when no team is registered, which is what
 #: lets one text serve both the never-dispatched and the finished-with-work-open
 #: readings — lead-stalls FR-015's "both branches", with no second spelling of
@@ -1700,10 +1973,17 @@ _ACTION_IMPERATIVES = {
     # `_waiting_on_agents` already knew the answer. It is read at emission and
     # `_select_branch` substitutes one arm, so the condition is evaluated by the
     # server that can measure it rather than by the reader that cannot.
+    #
+    # lead-stalls ST-004 / D-020 — AND TWO MORE, FOR THE CASTING THAT IS DONE
+    # BUT NOT YET BUILT. `refused` and `unaccepted` are chosen from the verdict
+    # `Foundry-Accept-Casting` records, and only while no agent is running
+    # (`_branch_states`).
     "build_castings": (
         _BRANCH_OPEN + "live" + _BRANCH_CLOSE + _CAST_TEAMMATES_LIVE
         + _BRANCH_OPEN + "idle" + _BRANCH_CLOSE + _CAST_WAVE_COMPLETE
         + _BRANCH_OPEN + "undispatched" + _BRANCH_CLOSE + _CAST_WAVE_UNDISPATCHED
+        + _BRANCH_OPEN + "refused" + _BRANCH_CLOSE + _CAST_REFUSED_REDISPATCH
+        + _BRANCH_OPEN + "unaccepted" + _BRANCH_CLOSE + _CAST_ACCEPTANCE_DUE
     ),
     # fallout D-058 / AC-059 — ONE ACTION, TWO CROSSINGS, AND THE STEPS ARE
     # SUBSTITUTED FROM ONE ROW SO THEY CANNOT NAME DOORS THAT DO NOT MATCH.
@@ -1735,7 +2015,11 @@ _ACTION_IMPERATIVES = {
         "width at all, and every door that reads one then refuses."
         + _GATE_THEN_PHASE_NOTE
     ),
+    # lead-stalls GI-008 / FR-007 (D-019) — branched like the two audited
+    # actions; see `_STREAMS_RUNNING`. The `idle` body is the entry as it stood.
     "run_streams": (
+        _BRANCH_OPEN + "live" + _BRANCH_CLOSE + _STREAMS_RUNNING
+        + _BRANCH_OPEN + "idle" + _BRANCH_CLOSE +
         "YOUR NEXT CALLS: spawn every missing INSPECT stream in a SINGLE parallel message. Stream-specific rules:\n"
         "All four streams spawn as BACKGROUND Agents (run_in_background=true) so SIGHT can run "
         "concurrently in the main thread instead of the main thread blocking on tool_results:\n"
@@ -1887,9 +2171,9 @@ _ACTION_IMPERATIVES = {
     # lead-stalls ST-003 is the run that parks there.
     #
     # The teardown-and-re-open sequence the old arm trailed is NOT reproduced
-    # here, and its absence is the point: `_compute_next_action` emits this
-    # action ONLY while blocking defects are open and returns
-    # `transition_to_inspect` the instant the count reaches zero, so the
+    # here, and its absence is the point: with nobody running,
+    # `_compute_next_action` emits this action ONLY while blocking defects are
+    # open and returns `transition_to_inspect` once the count is zero, so the
     # crossing this arm described belongs to the sibling arm that owns it. What
     # is left for THIS action is the one thing true whenever no agent is
     # running under it — the defects are open and somebody has to be on them.
@@ -2089,20 +2373,27 @@ def _format_imperative_header(
     """
     imperative = _ACTION_IMPERATIVES.get(action)
     if imperative:
-        imperative = _select_branch(imperative, _branch_state(liveness))
+        # lead-stalls D-020 — a preference order rather than one state, so the
+        # acceptance branches only `build_castings` declares are asked for
+        # without moving any other entry off the state it answered on before.
+        imperative = _select_branch(imperative, *_branch_states(liveness))
     if imperative:
         # lead-stalls D-009 / D-012 — resolved beside `{halt_cause}` and BEFORE
-        # the `{gate}` fallback below, for the same reason: all three helpers
+        # the `{gate}` fallback below, for the same reason: all four helpers
         # are total, so no reading can leave one of these literal in the header
         # and send a branched entry to the generic "Execute the first tool call
         # mentioned. Do not deliberate." `{wave}` is replaced before
         # `{built_wave}` and cannot chew on it — the character before `wave}`
-        # there is an underscore, not a brace.
+        # there is an underscore, not a brace. `{casting}` (lead-stalls D-020)
+        # comes off the same reading the branch was chosen from.
         imperative = (
             imperative
             .replace("{wave}", _cast_wave(liveness))
             .replace("{built_wave}", _built_cast_wave(liveness))
             .replace("{cycle}", _grind_cycle(cycle))
+            # `{reach}` first: its sentence carries a `{casting}` of its own.
+            .replace("{reach}", _refused_reach(liveness))
+            .replace("{casting}", _casting_slot(liveness))
         )
     if imperative and "{halt_cause}" in imperative:
         # fallout US-006 / FR-019 (D-147) — substituted from the RECORDED
@@ -2578,6 +2869,51 @@ def _still_escalated_notice(
 
 
 
+def _team_work_in_flight(
+    reading: object, team_names: list, run_name: str, *, cast_open: bool
+) -> bool:
+    """Is a registered team still holding work, so `cleanup_teams` must wait?
+
+    lead-stalls FR-002 / ST-002 / ST-004 (D-015 / D-017 / D-020). Asked of the
+    SAME `_waiting_on_agents` reading the branched imperative is chosen from,
+    and only where that reading was taken — F1 before the crossing and F3. In
+    every other phase a registered team is stale by construction (the gates
+    into them refuse an active team), so the arm keeps firing there exactly as
+    it did.
+
+    THE ASYMMETRY DECIDES EVERY UNCERTAIN CASE (lead-stalls D-013): a team
+    left up one call too long costs a redundant call; a team torn down under
+    running or owed work loses that work.
+
+      * an agent is running                       -> in flight (both phases)
+      * F1, a casting refused or owed acceptance  -> in flight: its teammate
+        is the one who answers a refusal
+      * F1, the pending wave's own team           -> in flight: Team-Up made,
+        spawns not yet (`transition_to_cast` steps 4 to 6)
+      * F1, no wave position measured             -> in flight
+      * F1, a pending wave and an EARLIER wave's team -> finished: the next
+        wave's Team-Up refuses while it stands
+      * F1 every wave built, F3 nobody running    -> finished
+    """
+    if not isinstance(reading, dict):
+        return False
+    states = _branch_states(reading)
+    if states[0] == "live":
+        return True
+    if not cast_open:
+        return False
+    if states[0] in ("refused", "unaccepted"):
+        return True
+    if states[0] == "idle":
+        return False
+    pending = reading.get("cast_wave_pending")
+    if isinstance(pending, bool) or not isinstance(pending, int) or pending < 1:
+        return True
+    # The name the dispatch branch told the lead to create for this wave,
+    # spelled from the same `{run}` / `{wave}` values the header substitutes.
+    return f"cast-{run_name}-wave-{_cast_wave(reading)}" in team_names
+
+
 def _compute_next_action(project_root: str) -> dict:
     """Internal: compute next action without directive overlay."""
     fdir = get_run_dir(project_root)
@@ -2719,9 +3055,33 @@ def _compute_next_action(project_root: str) -> dict:
             },
         }
 
+    # lead-stalls FR-002 / CT-003 / CT-006 / ST-002 / ST-004 (D-015..D-020) \u2014
+    # THE ROSTER IS READ BEFORE THE TEAM ARM, AND THE TEAM ARM ASKS IT.
+    #
+    # This arm returned `cleanup_teams` for ANY registered team, ahead of the
+    # F1 and F3 arms, and `transition_to_cast` / `transition_to_grind` order the
+    # lead to register one before it spawns a single teammate. So for the whole
+    # of a real wave the lead's `Foundry-Next` said "send shutdown to each
+    # teammate, TeamDelete, Foundry-Team-Down" over teammates that were still
+    # building; the branched `build_castings` / `fix_defects` answer, and the
+    # `agent_liveness` it carries, were reachable only with NO team registered,
+    # which is the one state the suite drove. `_WAITING_IS_NOT_STOPPING` then
+    # told a woken lead to call Foundry-Next, which walked it straight here.
+    #
+    # The reading is taken ONCE, here, for the two phases whose answer depends
+    # on it, published on the result and reused by `foundry_next_action`, so
+    # the arm chosen, the imperative printed and the `agent_liveness` beside
+    # them are one measurement of one roster.
+    cast_open = phase == "F1" and not (fdir / CAST_COMPLETE_MARKER).exists()
+    agent_liveness = (
+        _waiting_on_agents(project_root) if cast_open or phase == "F3" else None
+    )
+
     teams = _check_active_teams(project_root)
-    if teams["active"]:
-        return {
+    if teams["active"] and not _team_work_in_flight(
+        agent_liveness, teams.get("teams") or [], fdir.name, cast_open=cast_open,
+    ):
+        cleanup = {
             "phase": phase,
             "action": "cleanup_teams",
             "instructions": (
@@ -2733,6 +3093,9 @@ def _compute_next_action(project_root: str) -> dict:
             ),
             "details": {"active_teams": teams["teams"]},
         }
+        if agent_liveness is not None:
+            cleanup["agent_liveness"] = agent_liveness
+        return cleanup
 
     # FR-006 / AC-008 / D-055 — THE ROUTER IS TIER-AWARE, LIKE THE GATES.
     #
@@ -2830,7 +3193,7 @@ def _compute_next_action(project_root: str) -> dict:
         }
 
     elif phase == "F1":
-        if not (fdir / CAST_COMPLETE_MARKER).exists():
+        if cast_open:
             return {
                 "phase": "F1",
                 "action": "build_castings",
@@ -2840,6 +3203,7 @@ def _compute_next_action(project_root: str) -> dict:
                     + _BRANCHED_ACTION_CONTEXT
                 ),
                 "details": {"agent_config": CAST_AGENT_CONFIG},
+                "agent_liveness": agent_liveness,
             }
         # D-072 / GI-009 — THE F2 ENTRY IS A TOOL CALL, AND THIS ARM NAMES IT.
         #
@@ -3063,7 +3427,19 @@ def _compute_next_action(project_root: str) -> dict:
         }
 
     elif phase == "F3":
-        if open_count > 0:
+        # lead-stalls FR-002 / CT-003 — A GRIND TEAMMATE STILL RUNNING HOLDS
+        # THE PHASE, WHATEVER THE COUNT SAYS.
+        #
+        # Teammates record their own fixes with `Foundry-Fix` and THEN write
+        # their report and their done line, so the count reaches zero while the
+        # last of them is still committing. A lead woken in that window by an
+        # earlier teammate's notification was handed `transition_to_inspect` —
+        # shut the grind team down — over the one still writing. The branched
+        # answer is owed until nobody is running, and with a count of zero only
+        # its `live` branch is reachable, so `_GRIND_DISPATCH`'s "blocking
+        # defects are open" stays true wherever it is printed.
+        grind_live = bool((agent_liveness or {}).get("waiting"))
+        if open_count > 0 or grind_live:
             # D-056 / D-072 — EVERY IMPERATIVE NAMES A CALL THE SERVER ACCEPTS.
             #
             # This arm dictated `Foundry-Fix(defect_id, cycle,
@@ -3095,7 +3471,8 @@ def _compute_next_action(project_root: str) -> dict:
             # arm's defect, in the sibling. `_BRANCHED_ACTION_CONTEXT` states
             # the rule once for both; the crossing is named by
             # `_ACTION_IMPERATIVES["transition_to_inspect"]`, which is what
-            # this router returns the instant `open_count` reaches zero, and
+            # this router returns once `open_count` is zero and no GRIND agent
+            # is running, and
             # it takes its gate and its token from one `_ACTION_CROSSINGS`
             # row so the two can never disagree.
             #
@@ -3137,10 +3514,14 @@ def _compute_next_action(project_root: str) -> dict:
                     "inspect_rule": f3_mode.get("rule", ""),
                     "agent_config": GRIND_AGENT_CONFIG,
                 },
+                "agent_liveness": agent_liveness,
             }
         return {
             "phase": "F3",
             "action": "transition_to_inspect",
+            # Measured to decide this arm, so published like the one above:
+            # the stall notice reads it rather than taking a second reading.
+            "agent_liveness": agent_liveness,
             "instructions": (
                 "GRIND complete: all defects fixed. Shut down grind team, "
                 "Foundry-Team-Down, then Foundry-Gate(phase='inspect_start') — "
@@ -3505,12 +3886,122 @@ STALL_NOTICE_SECONDS = 180
 
 
 
+#: lead-stalls ST-004 / D-020 — THE VERDICT `Foundry-Accept-Casting` RECORDS,
+#: AS THIS READER SPELLS IT.
+#:
+#: `evidence.py#_record_acceptance_verdict` writes one `handoffs.jsonl` record
+#: per JUDGED acceptance, `event` "acceptance" and `destination`
+#: ``casting-{id}-accepted`` or ``casting-{id}-refused``; the rungs that refuse
+#: the CALL (no run, no `casting_commit`, a stale spec hash) write nothing. The
+#: writer is a verifier module and this one is lifecycle, so neither may import
+#: the other's spelling (AC-061): each is declared once on its own side and
+#: `tests/orchestration/test_guidance_imperatives.py` drives the real writer
+#: into this reader so the two cannot drift apart unseen.
+_ACCEPTANCE_EVENT = "acceptance"
+_ACCEPTANCE_VERDICTS = ("accepted", "refused")
+
+
+def _acceptance_destination(casting_id: str, verdict: str) -> str:
+    """The `destination` the writer records for ``verdict`` on ``casting_id``,
+    built whole from the manifest id — nothing parses an id back out."""
+    return f"casting-{casting_id}-{verdict}"
+
+
+def _acceptance_verdicts(fdir: Path) -> dict[str, tuple[int, object]] | None:
+    """``{destination: (file position, timestamp)}`` for the LAST acceptance
+    record per destination, or ``None`` when the ledger cannot be decoded."""
+    records, problem = read_jsonl(fdir / "handoffs.jsonl")
+    if problem is not None:
+        return None
+    latest: dict[str, tuple[int, object]] = {}
+    for position, record in enumerate(records):
+        destination = record.get("destination")
+        if record.get("event") == _ACCEPTANCE_EVENT and isinstance(destination, str):
+            latest[destination] = (position, record.get("timestamp"))
+    return latest
+
+
+def _moment(value: object) -> datetime | None:
+    """An ISO-8601 timestamp as an aware UTC datetime, or ``None``. Total."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _owed_acceptances(
+    fdir: Path, castings: list[tuple[str, str]], done_at: dict[str, object]
+) -> dict:
+    """``{"cast_refused": [...], "cast_unaccepted": [...]}`` — lead-stalls D-020.
+
+    For every casting whose ledger has declared itself done, the LAST verdict
+    recorded for it decides:
+
+      * ``-accepted``                              -> built; owes nothing.
+      * ``-refused`` no older than the done line   -> ``cast_refused``: nobody
+        has touched it since the refusal, so it is re-dispatched.
+      * ``-refused`` OLDER than the done line      -> ``cast_unaccepted``: the
+        teammate answered the refusal and declared itself done again.
+      * no verdict                                 -> ``cast_unaccepted``.
+
+    `>=` because the teammate's done line is written BEFORE the call that
+    refuses it and may carry only whole seconds. A pair that cannot be ordered
+    reads as ``cast_unaccepted``: re-accepting a refused casting buys one more
+    refusal, which records a verdict that CAN be ordered, while re-dispatching a
+    re-worked one buys a whole teammate cycle.
+
+    NOT a reading at all (both keys absent) when `handoffs.jsonl` cannot be
+    decoded — `_artifact_guard` refuses that run before the router is reached,
+    and a reader that guessed "nothing accepted" would re-open every casting.
+    """
+    latest = _acceptance_verdicts(fdir)
+    if latest is None:
+        return {}
+    refused: list[str] = []
+    unaccepted: list[str] = []
+    # `castings` is ``[(casting id, ledger agent id), ...]`` in manifest wave
+    # order. Published as CASTING ids — the value `Foundry-Accept-Casting` and
+    # `Foundry-Spawn-Teammate` take — never as ledger agent ids.
+    for casting_id, agent_id in castings:
+        if agent_id not in done_at:
+            continue
+        verdicts = [
+            (*latest[destination], verdict)
+            for verdict in _ACCEPTANCE_VERDICTS
+            if (destination := _acceptance_destination(casting_id, verdict)) in latest
+        ]
+        if not verdicts:
+            unaccepted.append(casting_id)
+            continue
+        _position, stamp, verdict = max(verdicts, key=lambda row: row[0])
+        if verdict == "accepted":
+            continue
+        refused_at = _moment(stamp)
+        finished_at = _moment(done_at[agent_id])
+        if refused_at and finished_at and refused_at >= finished_at:
+            refused.append(casting_id)
+        else:
+            unaccepted.append(casting_id)
+    return {"cast_refused": refused, "cast_unaccepted": unaccepted}
+
+
 def _cast_wave_position(
-    project_root: str, roster_ids: set[str], done_ids: set[str]
+    project_root: str,
+    roster_ids: set[str],
+    done_ids: set[str],
+    done_at: dict[str, object] | None = None,
 ) -> dict:
     """Where the run stands in its CAST waves (lead-stalls D-009 / D-010).
 
-    Returns ``{"cast_wave_pending": int | None, "cast_wave_built": int | None}``:
+    Returns ``{"cast_wave_pending": int | None, "cast_wave_built": int | None}``,
+    plus ``cast_refused`` / ``cast_unaccepted`` (lead-stalls D-020, see
+    `_owed_acceptances`) whenever the manifest answered and ``done_at`` — the
+    done line's timestamp per done agent — was supplied:
 
       * ``cast_wave_pending`` — the LOWEST manifest wave holding a casting that
         has not written a terminal ``"done": true`` line, and ``0`` when every
@@ -3574,10 +4065,24 @@ def _cast_wave_position(
             number for number, ids in numbered
             if any(_agent_id_for_casting(cid) in roster_ids for cid in ids)
         ]
-        return {
+        position = {
             "cast_wave_pending": min(pending) if pending else 0,
             "cast_wave_built": max(built) if built else 0,
         }
+        # lead-stalls D-020 — a done line is not a built casting until it is
+        # accepted. Measured over the SAME manifest castings the position was,
+        # in wave order, so `{casting}` names the lowest wave's first.
+        if done_at is not None:
+            position.update(_owed_acceptances(
+                fdir,
+                [
+                    (str(cid), _agent_id_for_casting(cid))
+                    for _number, ids in sorted(numbered, key=lambda w: w[0])
+                    for cid in ids
+                ],
+                done_at,
+            ))
+        return position
     except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
         return blank
 
@@ -3587,7 +4092,9 @@ def _waiting_on_agents(project_root: str) -> dict:
 
     Returns ``{"waiting": bool, "count": int, "detail": str, "agents": [...],
     "teams_active": bool, "progressing_agents": int, "roster_agents": int,
-    "cast_wave_pending": int | None, "cast_wave_built": int | None}``.
+    "cast_wave_pending": int | None, "cast_wave_built": int | None,
+    "cast_refused": [casting id, ...], "cast_unaccepted": [casting id, ...]}``
+    — the last two only when the manifest answered (lead-stalls D-020).
 
     lead-stalls D-009 / D-010 — AND THE LAST TWO ARE WHY THIS ROUTINE ANSWERS
     THE BRANCH QUESTION AT ALL. lead-stalls FR-015 is Locked on "the server
@@ -3707,12 +4214,16 @@ def _waiting_on_agents(project_root: str) -> dict:
     # was measured.
     roster_ids: set[str] = set()
     done_ids: set[str] = set()
+    # lead-stalls D-020 — WHEN each done agent declared itself done, which is
+    # what orders a refusal against the teammate's answer to it.
+    done_at: dict[str, object] = {}
     for row in roster:
         agent_id = row.get("agent")
         if isinstance(agent_id, str):
             roster_ids.add(agent_id)
             if row.get("status") == STATUS_DONE:
                 done_ids.add(agent_id)
+                done_at[agent_id] = row.get("last_timestamp")
         # PROGRESSING and NO_PROGRESS both mean lines are still ARRIVING;
         # they differ only in whether the `step` field moved. STALLED means
         # no line at all for the threshold, DONE means finished, and
@@ -3724,7 +4235,9 @@ def _waiting_on_agents(project_root: str) -> dict:
     result["roster_agents"] = len(roster)
     # Published on BOTH return paths below, because the branch question is
     # asked in every run state and not only in the idle ones.
-    result.update(_cast_wave_position(project_root, roster_ids, done_ids))
+    result.update(
+        _cast_wave_position(project_root, roster_ids, done_ids, done_at)
+    )
 
     # D-127 / FR-020, stated once: PROGRESS decides. An EMPTY roster is the one
     # answer that lets the watchdog speak. A registered team with nothing

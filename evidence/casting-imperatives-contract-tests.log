@@ -3,7 +3,7 @@
 # evidence-volatile: (in )[0-9]+\.[0-9]+s
 
 ============================= test session starts ==============================
-collecting ... collected 44 items
+collecting ... collected 73 items
 
 test_the_audit_sweeps_every_key_and_returns_zero PASSED
 test_the_recorded_evidence_shows_the_population_it_judged PASSED
@@ -49,5 +49,34 @@ test_the_waiting_notice_quotes_the_policy_rather_than_rewording_it PASSED
 test_the_stall_accusation_arm_is_untouched PASSED
 test_transition_to_inspect_is_still_the_substitution_precedent PASSED
 test_the_wave_complete_branch_carries_the_gate_then_phase_note_once PASSED
+test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-accepted-fresh] PASSED
+test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-accepted-stale] PASSED
+test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-owed-fresh] PASSED
+test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-owed-stale] PASSED
+test_team_up_with_nothing_spawned_is_handed_the_dispatch PASSED
+test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone[defect-open-fresh] PASSED
+test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone[defect-open-stale] PASSED
+test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone[last-fix-recorded-fresh] PASSED
+test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone[last-fix-recorded-stale] PASSED
+test_a_finished_or_stale_team_is_still_cleaned_up[wave-1-team-at-wave-2] PASSED
+test_a_finished_or_stale_team_is_still_cleaned_up[wave-built] PASSED
+test_a_finished_or_stale_team_is_still_cleaned_up[grind-finished] PASSED
+test_a_finished_or_stale_team_is_still_cleaned_up[f2-stale-team] PASSED
+test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-up] PASSED
+test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-down] PASSED
+test_a_refused_call_is_answered_by_accepting_again[team-up] PASSED
+test_a_refused_call_is_answered_by_accepting_again[team-down] PASSED
+test_a_refusal_the_teammate_has_answered_is_accepted_again PASSED
+test_an_accepted_casting_lets_the_wave_move_on[team-up] PASSED
+test_an_accepted_casting_lets_the_wave_move_on[team-down] PASSED
+test_the_reader_reads_the_verdict_the_acceptance_door_writes PASSED
+test_the_acceptance_reader_orders_a_refusal_against_the_done_line PASSED
+test_the_casting_slot_and_the_acceptance_state_are_total PASSED
+test_the_notice_and_the_header_are_one_selection PASSED
+test_the_waiting_notice_names_no_move_above_a_header_that_does[cleanup-over-stale-team] PASSED
+test_the_waiting_notice_names_no_move_above_a_header_that_does[unrecorded-width] PASSED
+test_running_streams_are_not_spawned_again PASSED
+test_the_payload_sweep_bites_when_the_team_arm_preempts_again PASSED
+test_the_payload_sweep_bites_when_the_notice_ignores_the_header PASSED
 
-============================== 44 passed in 2.90s ==============================
+============================== 73 passed in 1.41s ==============================

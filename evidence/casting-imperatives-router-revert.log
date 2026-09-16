@@ -1,0 +1,62 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && P=$(pwd) && T=$(mktemp -d) && trap 'find "$T" -delete' EXIT && cp -R src tests pyproject.toml "$T/" && G=src/foundry_mcp/tools/orchestration/guidance.py && N=tests/orchestration/test_guidance_imperatives.py && cd "$T" && for m in committed team-arm f3-live-arm acceptance-reader notice-gate streams-branch; do cp "$P/$G" "$G"; python3 -c 'import sys; m, g = sys.argv[1], sys.argv[2]; R = {"team-arm": ("and not _team_work_in_flight(", "and not (lambda *a, **k: False)("), "f3-live-arm": ("if open_count > 0 or grind_live:", "if open_count > 0:"), "acceptance-reader": ("if done_at is not None:", "if False:"), "notice-gate": ("told_to_wait = (", "told_to_wait = True or ("), "streams-branch": ("_BRANCH_OPEN + \"live\" + _BRANCH_CLOSE + _STREAMS_RUNNING", "\"\"")}; s = open(g, encoding="utf-8").read(); old, new = R.get(m, ("", "")); assert m == "committed" or s.count(old) == 1, m; open(g, "w", encoding="utf-8").write(s.replace(old, new) if old else s)' "$m" "$G"; echo "== revert: $m"; echo "  guidance.py lines differing from the committed file: $(diff "$P/$G" "$G" | grep -c '^>')"; uv run --project "$P" --with pytest pytest -p no:cacheprovider --no-header --color=no --tb=no -q -rf "$N" 2>/dev/null | awk '$1=="FAILED"{f++; n=$2; sub(/.*::/, "", n); print "  FAILED " n; next} $1=="ERROR"{e++; n=$2; sub(/.*::/, "", n); print "  ERROR " n; next} {s=$0; gsub(/,/, " ", s); k=split(s, w, " "); for(i=2;i<=k;i++) if(w[i]=="passed") p=w[i-1]+0} END{printf "  tests run: %d, failed: %d, errors: %d\n", p+f+e, f+0, e+0}'; done
+# evidence-for: FR-002, FR-005, CT-003, CT-006, GI-008, ST-001, ST-002, ST-003, ST-004
+# evidence-timeout: 300
+
+== revert: committed
+  guidance.py lines differing from the committed file: 0
+  tests run: 73, failed: 0, errors: 0
+== revert: team-arm
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_recorded_evidence_shows_the_population_it_judged
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-accepted-fresh]
+  FAILED test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-accepted-stale]
+  FAILED test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-owed-fresh]
+  FAILED test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-owed-stale]
+  FAILED test_team_up_with_nothing_spawned_is_handed_the_dispatch
+  FAILED test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone[defect-open-fresh]
+  FAILED test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone[defect-open-stale]
+  FAILED test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone[last-fix-recorded-fresh]
+  FAILED test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone[last-fix-recorded-stale]
+  FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-up]
+  FAILED test_a_refused_call_is_answered_by_accepting_again[team-up]
+  FAILED test_a_refusal_the_teammate_has_answered_is_accepted_again
+  FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
+  tests run: 73, failed: 16, errors: 0
+== revert: f3-live-arm
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_recorded_evidence_shows_the_population_it_judged
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone[last-fix-recorded-fresh]
+  FAILED test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone[last-fix-recorded-stale]
+  FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
+  tests run: 73, failed: 6, errors: 0
+== revert: acceptance-reader
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-up]
+  FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-down]
+  FAILED test_a_refused_call_is_answered_by_accepting_again[team-up]
+  FAILED test_a_refused_call_is_answered_by_accepting_again[team-down]
+  FAILED test_a_refusal_the_teammate_has_answered_is_accepted_again
+  tests run: 73, failed: 7, errors: 0
+== revert: notice-gate
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_waiting_notice_names_no_move_above_a_header_that_does[cleanup-over-stale-team]
+  FAILED test_the_waiting_notice_names_no_move_above_a_header_that_does[unrecorded-width]
+  tests run: 73, failed: 4, errors: 0
+== revert: streams-branch
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_recorded_evidence_shows_the_population_it_judged
+  FAILED test_fix_defects_holds_the_two_branches_and_build_castings_holds_three
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_wait_policy_has_one_spelling
+  FAILED test_running_streams_are_not_spawned_again
+  FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
+  tests run: 73, failed: 7, errors: 0

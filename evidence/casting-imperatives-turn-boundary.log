@@ -1,28 +1,59 @@
 # evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.orchestration.test_guidance_imperatives import turn_boundary_report; [print(r) for r in turn_boundary_report()]' 2>/dev/null
-# evidence-for: ST-001, ST-002, ST-003, CT-002, OT-004
+# evidence-for: ST-001, ST-002, ST-003, ST-004, CT-002, CT-006, GI-008, OT-004
 
-the server-side half of the turn boundary, per run state.
-ends-turn: the imperative answers 'YOUR NEXT CALL: NONE'.
+the server-side half of the turn boundary, per run state, through Foundry-Next.
+running: the reading the router routed on says an agent is progressing.
+ends-turn: the header answers 'YOUR NEXT CALL: NONE'.
 names-wake: it names the completion notification as what resumes the lead.
 names-call: it names at least one literal tool call.
 denies-poll: it forbids a sleep, a poll and a re-call loop by name.
+teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
 
-  ST-001 / ST-002  build_castings  live                   ends-turn=yes names-wake=yes names-call=yes denies-poll=yes
-  ST-001 / ST-002  fix_defects     live                   ends-turn=yes names-wake=yes names-call=yes denies-poll=yes
-  ST-003           build_castings  idle                   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
-  ST-003           fix_defects     idle                   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
-  ST-003           build_castings  registered-not-spawned ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
-  ST-003           fix_defects     registered-not-spawned ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
-  ST-003           build_castings  undispatched           ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
-  ST-003           fix_defects     undispatched           ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
-  ST-003           build_castings  wave-boundary          ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
-  ST-003           fix_defects     wave-boundary          ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a
+  ST-001  cast-live                fresh build_castings/live                running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-001  cast-live                stale build_castings/live                running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-002  cast-live-owed           fresh build_castings/live                running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-002  cast-live-owed           stale build_castings/live                running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-003  cast-not-spawned         fresh build_castings/undispatched        running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  ST-003  cast-not-spawned         stale build_castings/undispatched        running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  ST-004  cast-unaccepted          fresh build_castings/unaccepted          running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  ST-004  cast-unaccepted          stale build_castings/unaccepted          running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  ST-004  cast-refused             fresh build_castings/refused             running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-004  cast-refused             stale build_castings/refused             running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-004  cast-refusal-answered    fresh build_castings/unaccepted          running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  ST-004  cast-refusal-answered    stale build_castings/unaccepted          running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  ST-003  cast-boundary-team-up    fresh cleanup_teams/-                    running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  ST-003  cast-boundary-team-up    stale cleanup_teams/-                    running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  ST-003  cast-boundary            fresh build_castings/undispatched        running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  ST-003  cast-boundary            stale build_castings/undispatched        running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  ST-003  cast-built-team-up       fresh cleanup_teams/-                    running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  ST-003  cast-built-team-up       stale cleanup_teams/-                    running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  ST-003  cast-built               fresh build_castings/idle                running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  ST-003  cast-built               stale build_castings/idle                running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  ST-001  grind-live               fresh fix_defects/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-001  grind-live               stale fix_defects/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-001  grind-live-all-fixed     fresh fix_defects/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-001  grind-live-all-fixed     stale fix_defects/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-003  grind-finished-team-up   fresh cleanup_teams/-                    running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  ST-003  grind-finished-team-up   stale cleanup_teams/-                    running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  ST-003  grind-idle               fresh fix_defects/idle                   running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  ST-003  grind-idle               stale fix_defects/idle                   running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  ST-003  grind-all-fixed          fresh transition_to_inspect/-            running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  ST-003  grind-all-fixed          stale transition_to_inspect/-            running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  ST-001  inspect-live             fresh run_streams/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-001  inspect-live             stale run_streams/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-003  inspect-idle             fresh run_streams/idle                   running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=n/a teardown=no
+  ST-003  inspect-idle             stale run_streams/idle                   running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=n/a teardown=no
+  ST-003  inspect-stale-team       fresh cleanup_teams/-                    running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  ST-003  inspect-stale-team       stale cleanup_teams/-                    running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
 
-ST-003 is discharged by 'names-call=yes in every state where no agent is
-running': a lead that is handed a call cannot park for want of a move.
-ST-001 and ST-002 are discharged by 'ends-turn=yes AND names-wake=yes'
-on the one state where an agent IS running -- ending the turn is stated
-as correct, and the thing that ends the idle is named in the same breath.
+ST-001 and ST-002 are discharged by 'ends-turn=yes AND names-wake=yes AND
+teardown=no' on every row where running=yes: ending the turn is stated as
+correct, the thing that ends the idle is named in the same breath, and the
+call the woken lead is told to make stops nobody.
+ST-003 is discharged by 'names-call=yes' on every row where running is not
+yes: a lead that is handed a call cannot park for want of a move.
+ST-004 is the cast-refused and cast-refusal-answered rows: a refusal is
+re-dispatched, and a refusal the teammate has answered is accepted again.
 The idle of ST-001 and the notification of ST-002 are the HARNESS's to
 perform; this casting owns only what the lead is told, and that is all
 this log claims.

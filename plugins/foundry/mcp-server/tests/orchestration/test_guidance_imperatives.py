@@ -29,23 +29,35 @@ spelling of the rule, which is the failure mode this package documents most.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
 from tests.orchestration._env import (  # noqa: F401
     _defect_ledger,
     _progressing_ledger,
+    _record_full_inspect_mode,
     _stale_stall_clock,
     _teams_active,
     _tiered,
     _write_manifest_with_castings,
+    _write_spec,
     _write_state,
+    patch_everywhere,
     run_env,
 )
 
+from foundry_mcp.tools import foundry_state
+from foundry_mcp.tools.artifacts import _hash_file, foundry_spec_hash
+from foundry_mcp.tools.evidence import foundry_accept_casting
 from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
+    _ACCEPTANCE_EVENT,
+    _ACCEPTANCE_VERDICTS,
     _ACTION_CROSSINGS,
     _ACTION_IMPERATIVES,
     _BRANCH_CLOSE,
@@ -54,7 +66,16 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _BRANCHED_ACTION_CONTEXT,
     _GATE_THEN_PHASE_NOTE,
     _WAITING_IS_NOT_STOPPING,
+    _WAITING_REPORTS_ONLY,
+    _acceptance_destination,
+    _acceptance_verdicts,
     _branch_state,
+    _branch_states,
+    _REACH_TEAM_DOWN,
+    _REACH_TEAM_UP,
+    _casting_slot,
+    _chosen_branch,
+    _refused_reach,
     _compute_next_action,
     _format_imperative_header,
     _parse_branches,
@@ -65,6 +86,7 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _waiting_on_agents,
     foundry_next_action,
 )
+from foundry_mcp.tools.orchestration.teams import foundry_register_team
 
 
 # --------------------------------------------------------------------------- #
@@ -109,7 +131,7 @@ _NAMES_NO_CALL = re.compile(r"YOUR NEXT CALL:\s*NONE")
 #: literal prose `casting-{id}-prompt.md` and that is not a slot.
 _SUBSTITUTED_SLOTS = (
     "{run}", "{gate}", "{token}", "{halt_cause}",
-    "{wave}", "{built_wave}", "{cycle}",
+    "{wave}", "{built_wave}", "{cycle}", "{casting}", "{reach}",
 )
 
 #: Every team name an emitted header QUOTES, and the shape one has to have for
@@ -161,7 +183,7 @@ _CREATABLE_TEAM_NAME = re.compile(
 #: construction and could never disagree, which is the shape of a test that
 #: cannot fail. `fix_defects` declares no `undispatched` branch and resolves it
 #: through `_BRANCH_FALLBACK`; `_owed_branch` below is where that is reconciled.
-_LIVENESS_READINGS: tuple[tuple[str, object, str], ...] = (
+_LIVENESS_READINGS: tuple[tuple[str, object, str | tuple[str, ...]], ...] = (
     # waiting -> live, whatever the other two fields say.
     ("live", {"waiting": True, "count": 2, "detail": "oldest progress 1m 0s ago"}, "live"),
     # roster 3 / team registered: the wave is dispatched and nothing advances.
@@ -232,23 +254,67 @@ _LIVENESS_READINGS: tuple[tuple[str, object, str], ...] = (
         {"waiting": False, "roster_agents": 3, "teams_active": False},
         "undispatched",
     ),
+    # lead-stalls D-020 — THE ACCEPTANCE AXIS, WHICH NO ROW ABOVE VARIES.
+    # ------------------------------------------------------------------------
+    # A done line was a built casting, so every row above that measured
+    # `cast_wave_pending == 0` was owed the teardown — including the state a
+    # REFUSED acceptance leaves. These rows name a casting refused, a casting
+    # done and not yet accepted, and both under a running teammate. The owed
+    # column is a PREFERENCE ORDER here, derived by hand from the run state: an
+    # entry that declares the first name is owed it, and one that does not is
+    # owed the next — `fix_defects` and `run_streams` declare no acceptance
+    # branch, so they are owed the base state exactly as before.
+    (
+        "refused",
+        {"waiting": False, "roster_agents": 2, "teams_active": True,
+         "cast_wave_pending": 0, "cast_wave_built": 1,
+         "cast_refused": ["2"], "cast_unaccepted": ["1"]},
+        ("refused", "idle"),
+    ),
+    (
+        "unaccepted",
+        {"waiting": False, "roster_agents": 1, "teams_active": False,
+         "cast_wave_pending": 2, "cast_wave_built": 1,
+         "cast_refused": [], "cast_unaccepted": ["1"]},
+        ("unaccepted", "undispatched"),
+    ),
+    # A running teammate outranks both: the woken lead ends its turn, and the
+    # acceptance is still owed on the reading the last notification brings.
+    (
+        "live-with-owed-acceptance",
+        {"waiting": True, "count": 1, "detail": "oldest progress 0m 5s ago",
+         "cast_wave_pending": 1, "cast_wave_built": 1,
+         "cast_refused": ["2"], "cast_unaccepted": ["1"]},
+        "live",
+    ),
 )
 
 
-def _owed_branch(action: str, owed: str) -> str:
+def _owed_label(owed: str | tuple[str, ...]) -> str:
+    """One spelling of a row's owed column, for the report and its floor."""
+    return owed if isinstance(owed, str) else ">".join(owed)
+
+
+def _owed_branch(action: str, owed: str | tuple[str, ...]) -> str:
     """The branch name `action` is OWED on a reading whose run state is `owed`.
 
     A state an entry declares no branch for resolves through `_BRANCH_FALLBACK`,
     which is the `.get(..., default)` shape `_halt_cause` uses — so `fix_defects`
     on an `undispatched` reading is owed its `idle` branch, and that is a
     property of what the entry DECLARES rather than of what the selector did.
+    A tuple is a preference order (lead-stalls D-020): the first name the entry
+    declares.
     """
     branches = _parse_branches(_ACTION_IMPERATIVES.get(action, ""))
-    return owed if branches.get(owed) else _BRANCH_FALLBACK
+    for name in ((owed,) if isinstance(owed, str) else owed):
+        if branches.get(name):
+            return name
+    return _BRANCH_FALLBACK
 
 
 def _emitted_branch(
-    action: str, text: str, run_name: str, liveness: object = None
+    action: str, text: str, run_name: str, liveness: object = None,
+    cycle: object = None,
 ) -> str:
     """Which declared branch of `action` the lead ACTUALLY received.
 
@@ -269,7 +335,9 @@ def _emitted_branch(
             body
             .replace("{wave}", _cast_wave(liveness))
             .replace("{built_wave}", _built_cast_wave(liveness))
-            .replace("{cycle}", _grind_cycle(None))
+            .replace("{cycle}", _grind_cycle(cycle))
+            .replace("{reach}", _refused_reach(liveness))
+            .replace("{casting}", _casting_slot(liveness))
             .replace("{run}", run_name)
         )
         if resolved == text:
@@ -328,9 +396,346 @@ def _audit_sites() -> list[tuple[str, str, str, str, object]]:
     ]
 
 
-def audit_action_imperatives() -> list[str]:
+# --------------------------------------------------------------------------- #
+# lead-stalls D-015..D-020 — the ROUTER, driven with a REALLY registered team
+# --------------------------------------------------------------------------- #
+#
+# Every sweep above hands `_format_imperative_header` a synthetic reading, and
+# every `foundry_next_action` test before cycle 7 left the team scan inactive.
+# So the arm that preempted all of it — `_compute_next_action` answering
+# `cleanup_teams` for ANY registered team, ahead of F1 and F3 — was invisible:
+# the header sweep showed branches the router never served (D-018), and the
+# stall notice was never judged beside the header it was printed over (D-019).
+#
+# These drives go through the door the lead calls. The team is registered by
+# the real `Foundry-Team-Up` handler into a scratch HOME holding the directory
+# `TeamCreate` makes; only the tmux pane scan is stubbed. Plain functions, not
+# fixtures, so the evidence logs can re-execute them outside pytest.
+
+_ROUTE_RUN = "route"
+_CAST_TEAM = f"cast-{_ROUTE_RUN}-wave-1"
+_GRIND_TEAM = f"grind-{_ROUTE_RUN}-cycle-0"
+_NEXT_ACTION_MARKER = "═══ YOUR NEXT ACTION ═══"
+_NOTICE_OPENERS = ("⏳", "⚠", "✅")
+_TEARDOWN_WORDS = ("TeamDelete", "Foundry-Team-Down", "stop working")
+
+
+def _no_panes(*_args, **_kwargs) -> dict:
+    return {"available": False, "live": [], "zombie": [], "user": [], "lead": None}
+
+
+@contextlib.contextmanager
+def _router_run(base: Path):
+    """A live run under ``base`` whose team question is answered for real.
+
+    Yields ``(project_root, fdir, teams_dir)``. HOME is ``base/home``, so the
+    registration and the router's scan both look in a directory this drive
+    owns, and nothing the machine's own `~/.claude/teams` holds can leak in.
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        home = base / "home"
+        teams_dir = home / ".claude" / "teams"
+        teams_dir.mkdir(parents=True)
+        mp.setenv("HOME", str(home))
+        patch_everywhere(mp, "live_teammate_panes", _no_panes)
+        root = base / "proj"
+        fdir = root / "foundry-archive" / _ROUTE_RUN
+        (fdir / "castings").mkdir(parents=True)
+        previous = foundry_state.get_active_run()
+        foundry_state.set_active_run(_ROUTE_RUN)
+        try:
+            yield str(root), fdir, teams_dir
+        finally:
+            if previous:
+                foundry_state.set_active_run(previous)
+            else:
+                foundry_state.clear_active_run()
+
+
+def _register(root: str, teams_dir: Path, name: str) -> None:
+    """TeamCreate (the directory) and the real Foundry-Team-Up."""
+    (teams_dir / name).mkdir(exist_ok=True)
+    up = foundry_register_team(name, project_root=root)
+    assert up.get("ok") is True, up
+
+
+def _worked(fdir: Path, cid: str, *, done: bool, at: datetime | None = None) -> None:
+    """A casting ledger the teammate itself wrote, dated ``at`` (default now)."""
+    stamp = (at or datetime.now(timezone.utc)).isoformat()
+    lines = [{"timestamp": stamp, "phase": "cast", "step": "writing the handler"}]
+    if done:
+        lines.append({"timestamp": stamp, "phase": "cast", "step": "committed",
+                      "done": True})
+    (fdir / "progress").mkdir(parents=True, exist_ok=True)
+    (fdir / "progress" / f"casting-{cid}.jsonl").write_text(
+        "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8"
+    )
+
+
+def _cast(fdir: Path, waves: dict[int, list[str]]) -> None:
+    _write_state(fdir, phase="F1", cycle=0)
+    _wave_manifest(fdir, waves)
+
+
+def _grind(fdir: Path, *, open_defect: bool) -> None:
+    _write_state(fdir, phase="F3", cycle=0)
+    _defect_ledger(fdir, [
+        _tiered("D-001", "LIVE", status="open" if open_defect else "fixed")
+    ])
+
+
+def _inspect(fdir: Path) -> None:
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F2", cycle=1)
+    _record_full_inspect_mode(fdir, cycle=1)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+
+
+def _arrange_cast_live(root, fdir, teams):
+    _cast(fdir, {1: ["1", "2"]})
+    _register(root, teams, _CAST_TEAM)
+    _worked(fdir, "1", done=True)
+    _verdict(fdir, "1", "accepted")
+    _worked(fdir, "2", done=False)
+
+
+def _arrange_cast_live_owed(root, fdir, teams):
+    # PROVE's D-015 drive: casting 1's notification woke the lead, casting 2 is
+    # still writing, and casting 1 is not accepted yet.
+    _cast(fdir, {1: ["1", "2"]})
+    _register(root, teams, _CAST_TEAM)
+    _worked(fdir, "1", done=True)
+    _worked(fdir, "2", done=False)
+
+
+def _arrange_cast_not_spawned(root, fdir, teams):
+    _cast(fdir, {1: ["1", "2"]})
+    _register(root, teams, _CAST_TEAM)
+
+
+def _arrange_cast_unaccepted(root, fdir, teams):
+    _cast(fdir, {1: ["1"], 2: ["2"]})
+    _register(root, teams, _CAST_TEAM)
+    _worked(fdir, "1", done=True, at=datetime.now(timezone.utc) - timedelta(minutes=1))
+
+
+def _arrange_cast_refused(root, fdir, teams):
+    _arrange_cast_unaccepted(root, fdir, teams)
+    _verdict(fdir, "1", "refused")
+
+
+def _arrange_cast_refusal_answered(root, fdir, teams):
+    _cast(fdir, {1: ["1"], 2: ["2"]})
+    _register(root, teams, _CAST_TEAM)
+    now = datetime.now(timezone.utc)
+    _verdict(fdir, "1", "refused", at=(now - timedelta(minutes=5)).isoformat())
+    _worked(fdir, "1", done=True, at=now)
+
+
+def _arrange_cast_boundary_team_up(root, fdir, teams):
+    _cast(fdir, {1: ["1"], 2: ["2"]})
+    _register(root, teams, _CAST_TEAM)
+    _worked(fdir, "1", done=True)
+    _verdict(fdir, "1", "accepted")
+
+
+def _arrange_cast_boundary(root, fdir, teams):
+    _arrange_cast_boundary_team_up(root, fdir, teams)
+    (teams / _CAST_TEAM).rmdir()                    # TeamDelete
+
+
+def _arrange_cast_built_team_up(root, fdir, teams):
+    _cast(fdir, {1: ["1"]})
+    _register(root, teams, _CAST_TEAM)
+    _worked(fdir, "1", done=True)
+    _verdict(fdir, "1", "accepted")
+
+
+def _arrange_cast_built(root, fdir, teams):
+    _arrange_cast_built_team_up(root, fdir, teams)
+    (teams / _CAST_TEAM).rmdir()
+
+
+def _arrange_grind_live(root, fdir, teams):
+    _grind(fdir, open_defect=True)
+    _register(root, teams, _GRIND_TEAM)
+    _worked(fdir, "1", done=False)
+
+
+def _arrange_grind_live_all_fixed(root, fdir, teams):
+    # The window between a teammate's last Foundry-Fix and its done line.
+    _grind(fdir, open_defect=False)
+    _register(root, teams, _GRIND_TEAM)
+    _worked(fdir, "1", done=False)
+
+
+def _arrange_grind_finished_team_up(root, fdir, teams):
+    _grind(fdir, open_defect=True)
+    _register(root, teams, _GRIND_TEAM)
+    _worked(fdir, "1", done=True)
+
+
+def _arrange_grind_idle(root, fdir, teams):
+    _grind(fdir, open_defect=True)
+
+
+def _arrange_grind_all_fixed(root, fdir, teams):
+    _grind(fdir, open_defect=False)
+
+
+def _arrange_inspect_live(root, fdir, teams):
+    _inspect(fdir)
+    _progressing_ledger(fdir, agent="prove")
+    _progressing_ledger(fdir, agent="trace")
+
+
+def _arrange_inspect_idle(root, fdir, teams):
+    _inspect(fdir)
+
+
+def _arrange_inspect_stale_team(root, fdir, teams):
+    # A GRIND team nobody tore down, and streams running beside it. The team is
+    # stale by construction at F2; the streams are not its teammates.
+    _inspect(fdir)
+    _register(root, teams, _GRIND_TEAM)
+    _progressing_ledger(fdir, agent="prove")
+
+
+#: (state, the transition(s) it is the server-side half of, arrange, the
+#: action OWED, the branch OWED or None for an unbranched action). The owed
+#: columns are derived by hand from the run state, never from the router — a
+#: table that asked the function under audit would agree with it by
+#: construction (lead-stalls D-004).
+_ROUTER_STATES = (
+    ("cast-live", "ST-001", _arrange_cast_live, "build_castings", "live"),
+    ("cast-live-owed", "ST-002", _arrange_cast_live_owed, "build_castings", "live"),
+    ("cast-not-spawned", "ST-003", _arrange_cast_not_spawned, "build_castings", "undispatched"),
+    ("cast-unaccepted", "ST-004", _arrange_cast_unaccepted, "build_castings", "unaccepted"),
+    ("cast-refused", "ST-004", _arrange_cast_refused, "build_castings", "refused"),
+    ("cast-refusal-answered", "ST-004", _arrange_cast_refusal_answered, "build_castings", "unaccepted"),
+    ("cast-boundary-team-up", "ST-003", _arrange_cast_boundary_team_up, "cleanup_teams", None),
+    ("cast-boundary", "ST-003", _arrange_cast_boundary, "build_castings", "undispatched"),
+    ("cast-built-team-up", "ST-003", _arrange_cast_built_team_up, "cleanup_teams", None),
+    ("cast-built", "ST-003", _arrange_cast_built, "build_castings", "idle"),
+    ("grind-live", "ST-001", _arrange_grind_live, "fix_defects", "live"),
+    ("grind-live-all-fixed", "ST-001", _arrange_grind_live_all_fixed, "fix_defects", "live"),
+    ("grind-finished-team-up", "ST-003", _arrange_grind_finished_team_up, "cleanup_teams", None),
+    ("grind-idle", "ST-003", _arrange_grind_idle, "fix_defects", "idle"),
+    ("grind-all-fixed", "ST-003", _arrange_grind_all_fixed, "transition_to_inspect", None),
+    ("inspect-live", "ST-001", _arrange_inspect_live, "run_streams", "live"),
+    ("inspect-idle", "ST-003", _arrange_inspect_idle, "run_streams", "idle"),
+    ("inspect-stale-team", "ST-003", _arrange_inspect_stale_team, "cleanup_teams", None),
+)
+
+#: The two clocks every state is driven at: the lead's last Foundry-Next just
+#: now, and ten minutes ago — past `STALL_NOTICE_SECONDS`, where the notice
+#: that D-019 caught contradicting the header is printed.
+_CLOCKS = (("fresh", None), ("stale", 600))
+
+
+def _split_payload(instructions: str) -> tuple[str, str]:
+    """``(block, header)``: everything the lead is told between the marker and
+    CONTEXT, and the imperative header alone (the notice lines removed)."""
+    tail = instructions.split(_NEXT_ACTION_MARKER, 1)[-1]
+    block = tail.split("\nCONTEXT:", 1)[0].strip("\n")
+    lines = block.split("\n")
+    while lines and lines[0].startswith(_NOTICE_OPENERS):
+        lines.pop(0)
+    return block, "\n".join(lines).strip("\n")
+
+
+def drive_router(arrange, clock_seconds: int | None) -> dict:
+    """Build one run state in a scratch directory and call Foundry-Next on it."""
+    with tempfile.TemporaryDirectory() as tmp, _router_run(Path(tmp)) as (
+        root, fdir, teams,
+    ):
+        arrange(root, fdir, teams)
+        if clock_seconds is not None:
+            _stale_stall_clock(fdir, clock_seconds)
+        nxt = foundry_next_action(root)
+        cycle = foundry_state.current_cycle(fdir)
+    block, header = _split_payload(nxt.get("instructions", ""))
+    liveness = nxt.get("agent_liveness")
+    action = nxt.get("action", "")
+    branched = bool(_parse_branches(_ACTION_IMPERATIVES.get(action, "")))
+    return {
+        "action": action,
+        "branch": (
+            _emitted_branch(action, header, _ROUTE_RUN, liveness, cycle)
+            if branched else None
+        ),
+        "branched": branched,
+        "block": block,
+        "header": header,
+        "agent_liveness": liveness,
+        "waiting_on_agents": nxt.get("waiting_on_agents"),
+    }
+
+
+def _router_drives() -> list[tuple[str, str, str, str, object, dict]]:
+    """(site, state, transitions, owed action, owed branch, drive) per cell."""
+    return [
+        (f"payload:{state}[{clock}]", state, transitions, action, branch,
+         drive_router(arrange, seconds))
+        for state, transitions, arrange, action, branch in _ROUTER_STATES
+        for clock, seconds in _CLOCKS
+    ]
+
+
+def audit_assembled_payloads(drives=None) -> list[str]:
+    """lead-stalls GI-008 / D-018 / D-019 — the sweep over what the lead READS.
+
+    The header sweep judges `_format_imperative_header` alone, so it could not
+    see the router answering `cleanup_teams` ahead of every branch, nor the
+    stall notice printing END YOUR TURN above a header that names calls. This
+    judges the assembled payload, per run state, at both clocks.
+    """
+    findings: list[str] = []
+    for site, _state, _tr, owed_action, owed_branch, d in (
+        drives if drives is not None else _router_drives()
+    ):
+        if (d["action"], d["branch"]) != (owed_action, owed_branch):
+            findings.append(
+                f"{site}: WRONG_ROUTE — the lead received "
+                f"{d['action']!r}/{d['branch']!r} on a state owed "
+                f"{owed_action!r}/{owed_branch!r}"
+            )
+        # The NOTICE may tell the lead to end its turn only above a header
+        # that says so itself — the live branch, or the refused branch, whose
+        # one message is followed by the same yield. Anything else is two
+        # imperatives in one payload.
+        notice = d["block"][: len(d["block"]) - len(d["header"])]
+        if "END YOUR TURN" in notice and "END YOUR TURN" not in d["header"]:
+            findings.append(
+                f"{site}: CONTRADICTION — the notice says END YOUR TURN above a "
+                f"header that does not"
+            )
+        live = d["agent_liveness"] if isinstance(d["agent_liveness"], dict) else {}
+        if live.get("waiting") and any(w in d["block"] for w in _TEARDOWN_WORDS):
+            findings.append(
+                f"{site}: TEARDOWN_OVER_RUNNING_AGENTS — agents are progressing "
+                f"and the lead is told to tear down"
+            )
+        if d["branched"] and not isinstance(d["agent_liveness"], dict):
+            findings.append(
+                f"{site}: NO_LIVENESS — a branched action's payload carries no "
+                f"agent_liveness"
+            )
+        if (
+            isinstance(d["waiting_on_agents"], dict)
+            and isinstance(d["agent_liveness"], dict)
+            and d["waiting_on_agents"] != d["agent_liveness"]
+        ):
+            findings.append(
+                f"{site}: SPLIT_READING — the notice and the payload report "
+                f"two different readings"
+            )
+    return findings
+
+
+def audit_action_imperatives(drives=None) -> list[str]:
     """lead-stalls FR-007's audit over every string `_ACTION_IMPERATIVES`
-    can emit.
+    can emit, and over every payload the router serves (lead-stalls D-018).
 
     Returns one human-readable line per DEFECTIVE emission — empty when the
     table is clean, which is what lead-stalls FR-008 discharges on.
@@ -393,6 +798,10 @@ def audit_action_imperatives() -> list[str]:
                     f"{site}: WRONG_BRANCH — the lead received the {got!r} "
                     f"branch on a reading owed {owed!r}"
                 )
+    # lead-stalls D-018 / D-019 — and the payload the router actually serves,
+    # so the zero lead-stalls FR-008 discharges on is a zero over what the lead
+    # reads and not only over what the formatter would print for a reading.
+    findings.extend(audit_assembled_payloads(drives))
     return findings
 
 
@@ -405,15 +814,19 @@ def audit_report() -> list[str]:
     green-over-nothing state the floor test beside it exists to catch. So the
     record names every key it judged and what it judged there.
     """
-    findings = audit_action_imperatives()
+    drives = _router_drives()
+    findings = audit_action_imperatives(drives)
     sites = _audit_sites()
     lines = [
         f"keys in _ACTION_IMPERATIVES: {len(_ACTION_IMPERATIVES)}",
         f"emission sites swept:        {len(sites)}",
+        f"router payloads swept:       {len(drives)}",
         f"defective emissions:         {len(findings)}",
         "",
-        "detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, "
+        "header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, "
         "UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME",
+        "payload detectors: WRONG_ROUTE, CONTRADICTION, "
+        "TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING",
         "",
         "site = action@emitting-phase[liveness reading]; readings swept: "
         + ", ".join(label for label, _, _ in _LIVENESS_READINGS),
@@ -430,25 +843,58 @@ def audit_report() -> list[str]:
         "that held this",
         "column constant could not tell 'wave 1 done, wave 2 pending' from "
         "'the final wave is done'.",
+        "refused / unaccepted are the lead-stalls D-020 columns: castings done "
+        "and refused, and done",
+        "with no verdict since. owed 'a>b' is a preference order: the first "
+        "branch the entry declares.",
         "",
     ]
     for label, liveness, owed in _LIVENESS_READINGS:
         row = liveness if isinstance(liveness, dict) else {}
         lines.append(
-            f"  {label:<22} waiting={str(bool(row.get('waiting'))):<5} "
+            f"  {label:<26} waiting={str(bool(row.get('waiting'))):<5} "
             f"roster_agents={str(row.get('roster_agents', '-')):<4} "
             f"teams_active={str(row.get('teams_active', '-')):<5} "
             f"wave_pending={str(row.get('cast_wave_pending', '-')):<4} "
             f"wave_built={str(row.get('cast_wave_built', '-')):<4} "
-            f"owed={owed}"
+            f"refused={','.join(row.get('cast_refused') or []) or '-':<3} "
+            f"unaccepted={','.join(row.get('cast_unaccepted') or []) or '-':<3} "
+            f"owed={_owed_label(owed)}"
         )
     lines.append("")
     for action in sorted(_ACTION_IMPERATIVES):
         hits = [f for f in findings if f.startswith(f"{action}@")]
         lines.append(f"  {action:<24} {'DEFECTIVE' if hits else 'ok'}")
+    lines += [
+        "",
+        "ROUTER PAYLOADS — lead-stalls D-018 / D-019: Foundry-Next called on a real",
+        "run state (a real Foundry-Team-Up into a scratch HOME where a team is up),",
+        "at a fresh stall clock and at 600s. received and owed are action/branch;",
+        "notice is what printed above the header.",
+        "",
+    ]
+    for site, _state, _tr, owed_action, owed_branch, d in drives:
+        hits = [f for f in findings if f.startswith(f"{site}:")]
+        lines.append(
+            f"  {site:<38} received {d['action']}/{d['branch'] or '-'}"
+            f"  owed {owed_action}/{owed_branch or '-'}"
+            f"  notice {_notice_kind(d['block'])}"
+            f"  {'DEFECTIVE' if hits else 'ok'}"
+        )
     lines.append("")
     lines.extend(findings or ["(no entry hands the lead a conditional)"])
     return lines
+
+
+def _notice_kind(block: str) -> str:
+    """What printed above the header: nothing, the stall accusation, or the
+    waiting notice — with the wait policy, or as a report only."""
+    first = block.split("\n", 1)[0]
+    if first.startswith("⏳"):
+        return "waiting+end-turn" if "END YOUR TURN" in first else "waiting-report"
+    if first.startswith("⚠"):
+        return "stall"
+    return "none"
 
 
 def audit_evidence() -> list[str]:
@@ -494,73 +940,75 @@ def audit_evidence() -> list[str]:
     return lines
 
 
-def turn_boundary_report() -> list[str]:
+def turn_boundary_report(drives=None) -> list[str]:
     """What the server tells the lead at each end of the turn boundary.
 
-    lead-stalls ST-001 / ST-002 / ST-003 are transitions of the LEAD'S SESSION,
-    and a server test cannot drive them: nothing here can make a session idle,
-    and nothing here can deliver a completion notification. What this casting
-    contributes to all three is the INSTRUCTION the lead is standing on when it
-    decides whether to end its turn, and that is what this report shows --
-    the server-side half, named as such rather than as a proof of the whole.
+    lead-stalls ST-001 / ST-002 / ST-003 / ST-004 are transitions of the LEAD'S
+    SESSION, and a server test cannot drive the session: nothing here can make
+    it idle or deliver a completion notification. What this casting
+    contributes is the INSTRUCTION the lead is standing on when it decides
+    whether to end its turn, and that is what this report shows -- the
+    server-side half, named as such rather than as a proof of the whole.
 
-      lead-stalls ST-001  teammates live -> the lead ends its turn. The
-              imperative has to say ending it is CORRECT, or a lead trained
-              never to stop between phases will improvise over half-finished
-              work instead.
-      lead-stalls ST-002  the completion notification re-enters the lead. The
-              imperative has to name the notification as what resumes it, or
-              "end your turn" reads as "abandon the run".
-      lead-stalls ST-003  nothing running -> the run PARKS, and that is the
-              defect. The
-              imperative must name a literal call in every state where no agent
-              is running, so ending the turn is never the only move on offer.
+    lead-stalls D-018 — COMPUTED THROUGH THE ROUTER. This report handed
+    synthetic readings to `_format_imperative_header` and so showed branches
+    `Foundry-Next` never served: with a team registered — the state the
+    protocol produces — the router answered `cleanup_teams` ahead of every
+    one of them. Every row below is a real `Foundry-Next` call on a real run
+    state, a real `Foundry-Team-Up` included where a team is up.
+
+      lead-stalls ST-001  agents running -> the lead ends its turn:
+              ends-turn=yes.
+      lead-stalls ST-002  the completion notification re-enters the lead:
+              names-wake=yes, and the call the woken lead is told to make
+              tears nothing down (`cast-live-owed` is PROVE's D-015 state:
+              casting 1 just finished, casting 2 still writing, a real team
+              up).
+      lead-stalls ST-003  nothing running -> the run must not park:
+              names-call=yes.
+      lead-stalls ST-004  a refused casting -> re-dispatched, then
+              re-accepted: the `cast-refused` row names the re-dispatch and
+              the `cast-refusal-answered` row the acceptance.
     """
-    # Derived from `_LIVENESS_READINGS` rather than re-typed, so the reading
-    # lead-stalls D-004 added to the audit is shown here too and the two
-    # populations cannot drift. `torn-down` and `unmeasured` carry the same
-    # lead-stalls ST-003 claim as the readings they resolve with, so the rows the log
-    # prints are the distinct RUN STATES and not every reading of them.
-    _TRANSITIONS = {"live": "ST-001 / ST-002"}
-    rows = [
-        (_TRANSITIONS.get(label, "ST-003"), label, liveness)
-        for label, liveness, _owed in _LIVENESS_READINGS
-        if label in (
-            "live", "idle", "registered-not-spawned", "undispatched",
-            # lead-stalls D-009's state, which is a lead-stalls ST-003 state: no agent is
-            # running and a third of the castings are unbuilt, so what the lead
-            # is handed here decides whether the run moves or parks.
-            "wave-boundary",
-        )
-    ]
+    drives = drives if drives is not None else _router_drives()
     lines = [
-        "the server-side half of the turn boundary, per run state.",
-        "ends-turn: the imperative answers 'YOUR NEXT CALL: NONE'.",
+        "the server-side half of the turn boundary, per run state, through Foundry-Next.",
+        "running: the reading the router routed on says an agent is progressing.",
+        "ends-turn: the header answers 'YOUR NEXT CALL: NONE'.",
         "names-wake: it names the completion notification as what resumes the lead.",
         "names-call: it names at least one literal tool call.",
         "denies-poll: it forbids a sleep, a poll and a re-call loop by name.",
+        "teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.",
         "",
     ]
-    for transitions, state, liveness in rows:
-        for action in ("build_castings", "fix_defects"):
-            text = _format_imperative_header(
-                action, "", {}, run_name="audit", phase="F1", liveness=liveness,
-            )
-            lines.append(
-                f"  {transitions:<16} {action:<15} {state:<22} "
-                f"ends-turn={'yes' if _NAMES_NO_CALL.search(text) else 'no ':<3} "
-                f"names-wake={'yes' if 'completion notification' in text else 'no ':<3} "
-                f"names-call={'yes' if _NAMES_A_CALL.search(text) else 'no ':<3} "
-                f"denies-poll="
-                f"{'yes' if 'do NOT poll' in text else 'n/a'}"
-            )
+    for site, state, transitions, _oa, _ob, d in drives:
+        header = d["header"]
+        reading = d["agent_liveness"]
+        running = (
+            ("yes" if reading.get("waiting") else "no")
+            if isinstance(reading, dict) else "-"
+        )
+        clock = site.rsplit("[", 1)[1].rstrip("]")
+        lines.append(
+            f"  {transitions:<7} {state:<24} {clock:<5} "
+            f"{d['action'] + '/' + (d['branch'] or '-'):<34} "
+            f"running={running:<3} "
+            f"ends-turn={'yes' if _NAMES_NO_CALL.search(header) else 'no':<3} "
+            f"names-wake={'yes' if 'completion notification' in header else 'no':<3} "
+            f"names-call={'yes' if _NAMES_A_CALL.search(header) else 'no':<3} "
+            f"denies-poll={'yes' if 'do NOT poll' in header else 'n/a':<3} "
+            f"teardown={'yes' if any(w in d['block'] for w in _TEARDOWN_WORDS) else 'no'}"
+        )
     lines += [
         "",
-        "ST-003 is discharged by 'names-call=yes in every state where no agent is",
-        "running': a lead that is handed a call cannot park for want of a move.",
-        "ST-001 and ST-002 are discharged by 'ends-turn=yes AND names-wake=yes'",
-        "on the one state where an agent IS running -- ending the turn is stated",
-        "as correct, and the thing that ends the idle is named in the same breath.",
+        "ST-001 and ST-002 are discharged by 'ends-turn=yes AND names-wake=yes AND",
+        "teardown=no' on every row where running=yes: ending the turn is stated as",
+        "correct, the thing that ends the idle is named in the same breath, and the",
+        "call the woken lead is told to make stops nobody.",
+        "ST-003 is discharged by 'names-call=yes' on every row where running is not",
+        "yes: a lead that is handed a call cannot park for want of a move.",
+        "ST-004 is the cast-refused and cast-refusal-answered rows: a refusal is",
+        "re-dispatched, and a refusal the teammate has answered is accepted again.",
         "The idle of ST-001 and the notification of ST-002 are the HARNESS's to",
         "perform; this casting owns only what the lead is told, and that is all",
         "this log claims.",
@@ -602,22 +1050,26 @@ def test_the_recorded_evidence_shows_the_population_it_judged():
     # covered them. The reading D-003 misrouted is named in it.
     for label, _liveness, owed in _LIVENESS_READINGS:
         assert any(
-            line.strip().startswith(label) and f"owed={owed}" in line
+            line.strip().startswith(label)
+            and f"owed={_owed_label(owed)}" in line
             for line in dump
         ), label
     assert any("registered-not-spawned" in line for line in dump)
 
     boundary = turn_boundary_report()
-    for action in ("build_castings", "fix_defects"):
-        for state in ("live", "idle", "undispatched", "registered-not-spawned"):
-            assert any(
-                action in line and f" {state:<22}" in line for line in boundary
-            ), (action, state)
-    # The claim the log is bound to lead-stalls ST-003 for: wherever no agent
-    # is running,
-    # the lead is handed a call rather than only an invitation to stop.
-    for line in boundary:
-        if "ends-turn=no" in line:
+    rows = [line for line in boundary if "running=" in line and "names-call=" in line]
+    # One row per (router state x clock), each naming its state.
+    assert len(rows) == len(_ROUTER_STATES) * len(_CLOCKS), rows
+    for state, *_ in _ROUTER_STATES:
+        assert sum(f" {state} " in line for line in rows) == len(_CLOCKS), state
+    # The claims the log is bound to lead-stalls ST-001 / ST-002 / ST-003 for.
+    assert any("running=yes" in line for line in rows), rows
+    for line in rows:
+        if "running=yes" in line:
+            assert "ends-turn=yes" in line, line
+            assert "names-wake=yes" in line, line
+            assert "teardown=no" in line, line
+        else:
             assert "names-call=yes" in line, line
 
 
@@ -696,10 +1148,15 @@ def test_every_action_is_swept_in_every_run_state():
     )
     # Every reading names the branch it is owed, and both dispatch and
     # wave-complete are among them — a table that owed one branch everywhere
-    # would make `WRONG_BRANCH` unfalsifiable.
-    assert {owed for _l, _lv, owed in _LIVENESS_READINGS} == {
-        "live", "idle", "undispatched",
-    }
+    # would make `WRONG_BRANCH` unfalsifiable. lead-stalls D-020: and both
+    # acceptance states, each backed by a base state for the entries that do
+    # not declare them.
+    owed_names = set()
+    for _l, _lv, owed in _LIVENESS_READINGS:
+        owed_names.update((owed,) if isinstance(owed, str) else owed)
+    assert owed_names == {
+        "live", "idle", "undispatched", "refused", "unaccepted",
+    }, owed_names
     # lead-stalls D-009 — AND THE WAVE POSITION IS VARIED, which is the axis the
     # product above does not contain at all. The three values that matter are a
     # manifest that did not answer (the roster fallback), every wave done, and a
@@ -923,17 +1380,27 @@ def test_fix_defects_holds_the_two_branches_and_build_castings_holds_three():
     """
     grind = _parse_branches(_ACTION_IMPERATIVES["fix_defects"])
     cast = _parse_branches(_ACTION_IMPERATIVES["build_castings"])
+    streams = _parse_branches(_ACTION_IMPERATIVES["run_streams"])
     assert sorted(grind) == ["idle", "live"], sorted(grind)
-    assert sorted(cast) == ["idle", "live", "undispatched"], sorted(cast)
+    # lead-stalls D-020 — and the two acceptance states only F1 has: a casting
+    # done but refused, and a casting done and not yet accepted.
+    assert sorted(cast) == [
+        "idle", "live", "refused", "unaccepted", "undispatched",
+    ], sorted(cast)
+    # lead-stalls D-019 — `run_streams` is the third action whose work is
+    # agents, and it takes the `fix_defects` shape: running, or not.
+    assert sorted(streams) == ["idle", "live"], sorted(streams)
     # Every branched entry declares the fallback, so `_select_branch` never has
     # to reach its total tail on shipped input.
-    for action, branches in (("fix_defects", grind), ("build_castings", cast)):
+    for action, branches in (
+        ("fix_defects", grind), ("build_castings", cast), ("run_streams", streams),
+    ):
         assert branches.get(_BRANCH_FALLBACK), action
-    # And no OTHER entry is branched: the audit found these two and no more.
+    # And no OTHER entry is branched.
     branched = sorted(
         a for a, t in _ACTION_IMPERATIVES.items() if _parse_branches(t)
     )
-    assert branched == ["build_castings", "fix_defects"], branched
+    assert branched == ["build_castings", "fix_defects", "run_streams"], branched
 
 
 # --------------------------------------------------------------------------- #
@@ -1131,6 +1598,7 @@ def test_the_roster_outlives_the_teardown_the_imperative_itself_names(run_env):
     _write_state(fdir, phase="F1", cycle=0)
     _wave_manifest(fdir, {1: ["3"]})
     _ledger(fdir, "casting-3", done=True)   # finished: in the roster, not live
+    _verdict(fdir, "3", "accepted")         # and accepted (lead-stalls D-020)
     _teams_active(False)                    # torn down
 
     reading = _waiting_on_agents(project_root)
@@ -1313,6 +1781,26 @@ def _ledger(fdir, agent: str, *, done: bool) -> None:
     )
 
 
+def _verdict(
+    fdir, casting_id: str, verdict: str, *, at: str | None = None
+) -> None:
+    """Append the acceptance verdict `Foundry-Accept-Casting` records.
+
+    lead-stalls D-020 — a done line is not a built casting until it is
+    accepted, so every fixture below that means "this casting is BUILT" says so
+    the way the run does. The record's shape is pinned against the REAL writer
+    by `test_the_reader_reads_the_verdict_the_acceptance_door_writes`, so this
+    helper cannot drift into a spelling the door never writes.
+    """
+    with (fdir / "handoffs.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "event": _ACCEPTANCE_EVENT,
+            "source": f"castings/casting-{casting_id}-prompt.md",
+            "destination": _acceptance_destination(casting_id, verdict),
+            "timestamp": at or datetime.now(timezone.utc).isoformat(),
+        }) + "\n")
+
+
 def test_a_finished_wave_with_a_wave_still_pending_is_not_a_finished_build(
     run_env
 ):
@@ -1335,6 +1823,8 @@ def test_a_finished_wave_with_a_wave_still_pending_is_not_a_finished_build(
     _wave_manifest(fdir, {1: ["imperatives", "payloads"], 2: ["release"]})
     _ledger(fdir, "casting-imperatives", done=True)
     _ledger(fdir, "casting-payloads", done=True)
+    _verdict(fdir, "imperatives", "accepted")
+    _verdict(fdir, "payloads", "accepted")
     _teams_active(False)           # the team of wave 1 is already torn down
 
     reading = _waiting_on_agents(project_root)
@@ -1375,6 +1865,7 @@ def test_the_final_wave_finishing_is_a_finished_build(run_env):
     _wave_manifest(fdir, {1: ["imperatives", "payloads"], 2: ["release"]})
     for cid in ("imperatives", "payloads", "release"):
         _ledger(fdir, f"casting-{cid}", done=True)
+        _verdict(fdir, cid, "accepted")
     _teams_active(True)
 
     reading = _waiting_on_agents(project_root)
@@ -1406,6 +1897,7 @@ def test_a_seeded_ledger_is_a_dispatch_and_not_a_built_wave(run_env):
     _write_state(fdir, phase="F1", cycle=0)
     _wave_manifest(fdir, {1: ["imperatives", "payloads"], 2: ["release"]})
     _ledger(fdir, "casting-imperatives", done=True)
+    _verdict(fdir, "imperatives", "accepted")
     _ledger(fdir, "casting-payloads", done=False)   # seeded, never worked
 
     reading = _waiting_on_agents(project_root)
@@ -1984,6 +2476,7 @@ def test_the_payload_states_one_sequence_for_the_f1_crossing(run_env):
     # and that reading is now owed the dispatch branch, not this crossing.
     _wave_manifest(fdir, {1: ["3"]})
     _ledger(fdir, "casting-3", done=True)   # the wave is done, and measurably
+    _verdict(fdir, "3", "accepted")         # and accepted (lead-stalls D-020)
 
     instructions = foundry_next_action(project_root)["instructions"]
 
@@ -2014,13 +2507,17 @@ def test_the_wait_policy_has_one_spelling():
         action for action, text in _ACTION_IMPERATIVES.items()
         if _WAITING_IS_NOT_STOPPING in text
     ]
-    assert sorted(carriers) == ["build_castings", "fix_defects"], carriers
+    assert sorted(carriers) == [
+        "build_castings", "fix_defects", "run_streams",
+    ], carriers
     # No imperative says it in its own words: the denials that make the policy
-    # a policy appear exactly where the constant put them.
+    # a policy appear exactly where the constant put them — once per branch
+    # that yields (lead-stalls D-020 gave `build_castings` a second one).
     for action, text in sorted(_ACTION_IMPERATIVES.items()):
-        expected = 1 if _WAITING_IS_NOT_STOPPING in text else 0
+        expected = text.count(_WAITING_IS_NOT_STOPPING)
         assert text.count("Do NOT sleep") == expected, action
         assert text.count("do NOT poll") == expected, action
+    assert _ACTION_IMPERATIVES["build_castings"].count(_WAITING_IS_NOT_STOPPING) == 2
 
 
 def test_the_waiting_notice_quotes_the_policy_rather_than_rewording_it(run_env):
@@ -2099,3 +2596,474 @@ def test_the_wave_complete_branch_carries_the_gate_then_phase_note_once():
     branches = _parse_branches(entry)
     assert "OPTIONAL" not in branches["live"]
     assert "OPTIONAL" in branches["idle"]
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls D-015 / D-016 / D-017 / D-019 / D-020 — router-level regressions
+# --------------------------------------------------------------------------- #
+#
+# Each drives `foundry_next_action` on a run whose team was registered by the
+# REAL `Foundry-Team-Up` (see `_router_run`), because the defects these pin
+# were invisible to every test that answered the team question with a fake.
+
+_ROUTE_PROMPT = (
+    "# casting\n\n<spec_requirements>\n- build the thing\n</spec_requirements>\n"
+)
+
+
+def _drive(tmp_path, arrange, clock=None) -> dict:
+    """`drive_router` inside pytest's own scratch directory."""
+    with _router_run(tmp_path) as (root, fdir, teams):
+        arrange(root, fdir, teams)
+        if clock is not None:
+            _stale_stall_clock(fdir, clock)
+        nxt = foundry_next_action(root)
+        cycle = foundry_state.current_cycle(fdir)
+    block, header = _split_payload(nxt.get("instructions", ""))
+    action = nxt.get("action", "")
+    liveness = nxt.get("agent_liveness")
+    branch = (
+        _emitted_branch(action, header, _ROUTE_RUN, liveness, cycle)
+        if _parse_branches(_ACTION_IMPERATIVES.get(action, "")) else None
+    )
+    return {"nxt": nxt, "action": action, "branch": branch, "block": block,
+            "header": header, "liveness": liveness}
+
+
+def _accept(root: str, fdir: Path, cid: str, **overrides) -> dict:
+    """The REAL `Foundry-Accept-Casting`, honest unless overridden. A v2.0 spec
+    takes the evidence rung's stream-skip branch, so no git tree is needed and
+    the verdict is reached through the door itself."""
+    (fdir / "spec.md").write_text("# Spec\n\n- build the thing\n", encoding="utf-8")
+    prompt = fdir / "castings" / f"casting-{cid}-prompt.md"
+    prompt.write_text(_ROUTE_PROMPT, encoding="utf-8")
+    args = {
+        "casting_id": cid,
+        "spec_hash": foundry_spec_hash(project_root=root)["spec_hash"],
+        "prompt_hash": _hash_file(prompt),
+        "completion_report": "built the thing",
+        "project_root": root,
+        "casting_commit": "0" * 40,
+    }
+    args.update(overrides)
+    return foundry_accept_casting(**args)
+
+
+@pytest.mark.parametrize("clock", [None, 600], ids=["fresh", "stale"])
+@pytest.mark.parametrize(
+    "arrange", [_arrange_cast_live, _arrange_cast_live_owed],
+    ids=["casting-1-accepted", "casting-1-owed"],
+)
+def test_a_registered_team_leaves_teammates_that_are_still_building_alone(
+    tmp_path, arrange, clock
+):
+    """lead-stalls FR-002 / CT-006 / ST-002 — D-015 and D-016, as filed.
+
+    Wave 1 = castings 1 and 2, a real `Foundry-Team-Up`, casting 1 done,
+    casting 2 still writing. The router answered `cleanup_teams` — "send
+    shutdown to each teammate ... TeamDelete ... Foundry-Team-Down" — ahead of
+    the F1 arm, so the teammate still building was ordered stopped and the
+    payload carried no `agent_liveness` (the read was taken only for branched
+    actions, and `cleanup_teams` returned first). The same run with no team
+    registered got the live branch, which is the only state any test drove.
+
+    Casting 1 is driven both accepted and not: a woken lead is owed END YOUR
+    TURN while casting 2 runs either way, and the acceptance is named by the
+    reading the LAST notification brings.
+    """
+    d = _drive(tmp_path, arrange, clock)
+
+    assert d["action"] == "build_castings", d["action"]
+    assert d["branch"] == "live", d["header"]
+    assert "END YOUR TURN" in d["header"], d["header"]
+    for word in _TEARDOWN_WORDS:
+        assert word not in d["block"], (word, d["block"])
+    # lead-stalls CT-006: the status the lead actually receives, from the reading the
+    # router routed on, and it names the registered team as registered.
+    assert d["liveness"]["waiting"] is True, d["liveness"]
+    assert d["liveness"]["count"] == 1, d["liveness"]
+    assert d["liveness"]["teams_active"] is True, d["liveness"]
+    if clock:
+        assert "WAITING ON 1 AGENT" in d["block"], d["block"]
+        assert d["nxt"]["waiting_on_agents"] == d["liveness"]
+
+
+def test_team_up_with_nothing_spawned_is_handed_the_dispatch(tmp_path):
+    """lead-stalls FR-015 / D-015 — the D-003 fix, reachable through the door.
+
+    `transition_to_cast` steps (3)-(4) made — TeamCreate and a real Team-Up —
+    and no Agent spawned yet. The selector already routed this reading to the
+    dispatch branch, but the router tore the team down before the selector was
+    asked.
+    """
+    d = _drive(tmp_path, _arrange_cast_not_spawned)
+
+    assert (d["action"], d["branch"]) == ("build_castings", "undispatched"), d
+    assert f"Foundry-Team-Up(team_name='{_CAST_TEAM}')" in d["header"]
+    assert "Foundry-Cast-Wave(wave=1, phase='cast')" in d["header"]
+    for word in _TEARDOWN_WORDS:
+        assert word not in d["block"], word
+    assert d["liveness"]["teams_active"] is True
+
+
+@pytest.mark.parametrize("clock", [None, 600], ids=["fresh", "stale"])
+@pytest.mark.parametrize(
+    "arrange", [_arrange_grind_live, _arrange_grind_live_all_fixed],
+    ids=["defect-open", "last-fix-recorded"],
+)
+def test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone(
+    tmp_path, arrange, clock
+):
+    """lead-stalls CT-003 — D-017, and the window beside it.
+
+    F3, a real GRIND team registered, a teammate's ledger advancing. With a
+    LIVE defect open the router answered `cleanup_teams`. With the count at
+    zero — the teammate has recorded its last `Foundry-Fix` and is still
+    writing its report and done line — it answered `transition_to_inspect`,
+    whose CONTEXT opens "Shut down grind team". Both are a teardown over a
+    running teammate; the branched answer is owed until nobody runs.
+    """
+    d = _drive(tmp_path, arrange, clock)
+
+    assert (d["action"], d["branch"]) == ("fix_defects", "live"), d["header"]
+    assert "YOUR NEXT CALL: NONE. Your GRIND teammates are running" in d["header"]
+    assert d["liveness"]["waiting"] is True
+    for word in _TEARDOWN_WORDS:
+        assert word not in d["block"], word
+    context = d["nxt"]["instructions"].split("\nCONTEXT:", 1)[1]
+    assert "Shut down grind team" not in context, context
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        _arrange_cast_boundary_team_up,
+        _arrange_cast_built_team_up,
+        _arrange_grind_finished_team_up,
+        _arrange_inspect_stale_team,
+    ],
+    ids=["wave-1-team-at-wave-2", "wave-built", "grind-finished", "f2-stale-team"],
+)
+def test_a_finished_or_stale_team_is_still_cleaned_up(tmp_path, arrange):
+    """The adjacent path the gate must not close: `cleanup_teams` is RESERVED,
+    not retired. A team whose wave is accepted, a GRIND team nobody is running
+    under, and a team still standing at F2 are finished or stale, and the lead
+    is still told to take them down — the next wave's Team-Up refuses while a
+    previous wave's team stands."""
+    d = _drive(tmp_path, arrange)
+
+    assert d["action"] == "cleanup_teams", d["action"]
+    assert "TeamDelete" in d["header"], d["header"]
+
+
+@pytest.mark.parametrize("team_up", [True, False], ids=["team-up", "team-down"])
+def test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown(
+    tmp_path, team_up
+):
+    """lead-stalls ST-004 / US-003 — D-020, through the real acceptance door.
+
+    Casting 1 done, `Foundry-Accept-Casting` WARNED (ok False, "Do NOT accept
+    this casting"), and the lead follows the payload's `next_call` —
+    "Call Foundry-Next now." At c5045c2 that answered `cleanup_teams` with the
+    team up and the wave-complete teardown with it down; neither mentioned
+    Accept-Casting. The router now reads the verdict the door recorded.
+    """
+    with _router_run(tmp_path) as (root, fdir, teams):
+        _cast(fdir, {1: ["1"], 2: ["2"]})
+        if team_up:
+            _register(root, teams, _CAST_TEAM)
+        _worked(fdir, "1", done=True,
+                at=datetime.now(timezone.utc) - timedelta(minutes=1))
+        refused = _accept(root, fdir, "1",
+                          completion_report="built it; the tests are deferred")
+        nxt = foundry_next_action(root)
+    _block, header = _split_payload(nxt["instructions"])
+
+    assert refused["ok"] is False, refused
+    assert nxt["action"] == "build_castings", nxt["action"]
+    assert nxt["agent_liveness"]["cast_refused"] == ["1"], nxt["agent_liveness"]
+    # Back to the teammate that built it, with the refusal as the message —
+    # no prompt is augmented, which the standing rules above it forbid for a
+    # CAST dispatch — and then the yield its answer wakes the lead from.
+    assert header.startswith(
+        "YOUR NEXT CALLS (in order):\n  (1) SendMessage(to=<the teammate you "
+        "spawned for casting 1>"
+    ), header
+    assert "Foundry-Accept-Casting" in header and "casting 1" in header, header
+    assert _WAITING_IS_NOT_STOPPING in header, header
+    # The fallback for a teammate that can no longer be reached (lead ruling,
+    # GRIND cycle 7): a fresh dispatch passed verbatim, the refusal as a
+    # SEPARATE message, and a sentence saying which of the two to expect —
+    # read off the same reading's team scan.
+    assert "Foundry-Spawn-Teammate(casting_id=1, phase='cast')" in header, header
+    assert "VERBATIM with nothing appended" in header, header
+    assert "SendMessage(to=<that new teammate>" in header, header
+    expected = (_REACH_TEAM_UP if team_up else _REACH_TEAM_DOWN).replace(
+        "{casting}", "1"
+    )
+    assert expected in header, header
+    assert header.index("SendMessage(to=<the teammate you spawned") < header.index(
+        "Foundry-Spawn-Teammate"
+    ) < header.index("END YOUR TURN"), header
+    for forbidden in (*_TEARDOWN_WORDS, "Foundry-Cast-Wave(wave=2",
+                      "Foundry-Gate(phase='inspect')", "APPEND"):
+        assert forbidden not in header, (forbidden, header)
+
+
+@pytest.mark.parametrize("team_up", [True, False], ids=["team-up", "team-down"])
+def test_a_refused_call_is_answered_by_accepting_again(tmp_path, team_up):
+    """lead-stalls ST-004 — D-020's own drive: a STALE SPEC HASH.
+
+    That rung refuses the CALL and records nothing, so the casting reads as
+    done and never judged. What it owes is the acceptance made correctly —
+    Spec-Hash, then Accept-Casting — and not a re-dispatch of work nobody has
+    judged, nor the teardown it was handed.
+    """
+    with _router_run(tmp_path) as (root, fdir, teams):
+        _cast(fdir, {1: ["1"], 2: ["2"]})
+        if team_up:
+            _register(root, teams, _CAST_TEAM)
+        _worked(fdir, "1", done=True)
+        refused = _accept(root, fdir, "1", spec_hash="0" * 64)
+        nxt = foundry_next_action(root)
+    _block, header = _split_payload(nxt["instructions"])
+
+    assert refused["error"] == "stale_spec_hash", refused
+    assert nxt["action"] == "build_castings", nxt["action"]
+    assert header.startswith("YOUR NEXT CALLS (in order):\n  (1) Foundry-Spec-Hash")
+    assert "Foundry-Accept-Casting(casting_id=1, " in header, header
+    for forbidden in (*_TEARDOWN_WORDS, "Foundry-Cast-Wave(wave=2",
+                      "Foundry-Spawn-Teammate"):
+        assert forbidden not in header, (forbidden, header)
+
+
+def test_a_refusal_the_teammate_has_answered_is_accepted_again(tmp_path):
+    """lead-stalls ST-004 — "casting rejected -> lead re-accepting".
+
+    Once the re-dispatched teammate declares itself done again, the refusal is
+    older than its done line and the casting is owed the acceptance, not a
+    second re-dispatch — otherwise the refused branch would loop.
+    """
+    d = _drive(tmp_path, _arrange_cast_refusal_answered)
+
+    assert (d["action"], d["branch"]) == ("build_castings", "unaccepted"), d
+    assert d["liveness"]["cast_refused"] == [], d["liveness"]
+    assert d["liveness"]["cast_unaccepted"] == ["1"], d["liveness"]
+
+
+@pytest.mark.parametrize("team_up", [True, False], ids=["team-up", "team-down"])
+def test_an_accepted_casting_lets_the_wave_move_on(tmp_path, team_up):
+    """The adjacent path the reader must not block: casting 1 ACCEPTED through
+    the real door. With the wave-1 team up it is torn down; with it down, wave
+    2 is dispatched. A reader that treated a recorded acceptance as owed would
+    park the run at exactly the wave boundary lead-stalls US-001 is about."""
+    with _router_run(tmp_path) as (root, fdir, teams):
+        _cast(fdir, {1: ["1"], 2: ["2"]})
+        if team_up:
+            _register(root, teams, _CAST_TEAM)
+        _worked(fdir, "1", done=True)
+        assert _accept(root, fdir, "1")["ok"] is True
+        nxt = foundry_next_action(root)
+    _block, header = _split_payload(nxt["instructions"])
+
+    if team_up:
+        assert nxt["action"] == "cleanup_teams", nxt["action"]
+    else:
+        assert nxt["action"] == "build_castings", nxt["action"]
+        assert "Foundry-Cast-Wave(wave=2, phase='cast')" in header, header
+
+
+def test_the_reader_reads_the_verdict_the_acceptance_door_writes(tmp_path):
+    """lead-stalls D-020 — ONE SPELLING, PINNED FROM THIS SIDE TOO.
+
+    `evidence.py` (a verifier) writes the verdict and this module (lifecycle)
+    reads it; neither may import the other's spelling. So the pin is a drive:
+    the real door writes, and this reader must find exactly the destination it
+    builds from the manifest id.
+    """
+    with _router_run(tmp_path) as (root, fdir, _teams):
+        _cast(fdir, {1: ["1"]})
+        assert _accept(root, fdir, "1")["ok"] is True
+        after_accept = _acceptance_verdicts(fdir)
+        assert _accept(root, fdir, "1",
+                       completion_report="partial coverage only")["ok"] is False
+        after_refuse = _acceptance_verdicts(fdir)
+
+    assert _ACCEPTANCE_VERDICTS == ("accepted", "refused")
+    assert set(after_accept) == {_acceptance_destination("1", "accepted")}
+    assert set(after_refuse) == {
+        _acceptance_destination("1", "accepted"),
+        _acceptance_destination("1", "refused"),
+    }
+    # File order is what makes the refusal the LATEST verdict.
+    assert (
+        after_refuse[_acceptance_destination("1", "refused")][0]
+        > after_refuse[_acceptance_destination("1", "accepted")][0]
+    )
+    records = [
+        json.loads(line)
+        for line in (fdir / "handoffs.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert {r["event"] for r in records} >= {_ACCEPTANCE_EVENT}
+
+
+def test_the_acceptance_reader_orders_a_refusal_against_the_done_line(tmp_path):
+    """`_owed_acceptances` over every ordering it has to decide."""
+    from foundry_mcp.tools.orchestration.guidance import _owed_acceptances
+
+    fdir = tmp_path
+    now = datetime.now(timezone.utc)
+    early, late = (now - timedelta(minutes=5)).isoformat(), now.isoformat()
+    castings = [(c, f"casting-{c}") for c in ("a", "b", "c", "d", "e", "f", "g")]
+    _verdict(fdir, "a", "refused", at=late)          # done early: untouched since
+    _verdict(fdir, "b", "refused", at=early)         # done late: answered
+    _verdict(fdir, "c", "refused", at="not a time")  # cannot be ordered
+    _verdict(fdir, "d", "refused", at=early)
+    _verdict(fdir, "d", "accepted", at=late)         # accepted last: built
+    _verdict(fdir, "e", "accepted", at=early)
+    _verdict(fdir, "e", "refused", at=late)          # refused last: refused
+    # f: done, no verdict.  g: no verdict and not done — not owed at all.
+    done_at = {"casting-a": early, "casting-b": late, "casting-c": early,
+               "casting-d": early, "casting-e": early, "casting-f": early}
+
+    owed = _owed_acceptances(fdir, castings, done_at)
+
+    assert owed == {
+        "cast_refused": ["a", "e"],
+        "cast_unaccepted": ["b", "c", "f"],
+    }, owed
+
+    # A ledger that cannot be decoded is not "nothing accepted": the keys are
+    # absent, so no acceptance branch can be chosen off a failed read.
+    (fdir / "handoffs.jsonl").write_bytes(b"\xff\xfe\x00 not utf-8\n")
+    assert _owed_acceptances(fdir, castings, done_at) == {}
+
+
+def test_the_casting_slot_and_the_acceptance_state_are_total():
+    """`{casting}` resolves for every reading, and a malformed list selects no
+    acceptance branch — the `_halt_cause` side of the line
+    (lead-stalls GI-008)."""
+    hostile = (
+        None, {}, "x", [], {"cast_refused": None}, {"cast_refused": [True]},
+        {"cast_refused": [None, ""]}, {"cast_unaccepted": "1"},
+        {"cast_refused": [], "cast_unaccepted": [0]},
+        {"waiting": True, "cast_refused": ["2"]},
+    )
+    for reading in hostile:
+        slot = _casting_slot(reading)
+        assert slot and "{" not in slot, reading
+        for action in ("build_castings", "fix_defects", "run_streams"):
+            text = _format_imperative_header(
+                action, "", {}, run_name="r", phase="F1", liveness=reading,
+            )
+            assert "{casting}" not in text, (action, reading)
+            assert "Execute the first tool call mentioned" not in text, reading
+    assert _casting_slot({"cast_unaccepted": [0]}) == "0"
+    for reading in (*hostile, {"teams_active": "yes"}, {"teams_active": 1}):
+        assert _refused_reach(reading) == _REACH_TEAM_DOWN, reading
+    assert _refused_reach({"teams_active": True}) == _REACH_TEAM_UP
+    assert _branch_states({"waiting": False, "cast_refused": [True]}) == (
+        "undispatched",
+    )
+    # Live outranks both acceptance states.
+    assert _branch_states(
+        {"waiting": True, "cast_refused": ["2"], "cast_unaccepted": ["1"]}
+    ) == ("live",)
+
+
+def test_the_notice_and_the_header_are_one_selection():
+    """lead-stalls GI-008 / D-019 — the stall notice asks `_chosen_branch`, so
+    it must name the branch `_format_imperative_header` actually prints, on
+    every reading the sweep varies."""
+    for _label, reading, _owed in _LIVENESS_READINGS:
+        for action in sorted(_ACTION_IMPERATIVES):
+            chosen = _chosen_branch(action, reading)
+            text = _format_imperative_header(
+                action, "", {}, run_name=_AUDIT_RUN, phase="F1", liveness=reading,
+            )
+            if not _parse_branches(_ACTION_IMPERATIVES[action]):
+                assert chosen is None, action
+                continue
+            assert chosen == _emitted_branch(
+                action, text, _AUDIT_RUN, reading
+            ), (action, reading)
+
+
+@pytest.mark.parametrize(
+    "arrange, expect_action",
+    [
+        (_arrange_inspect_stale_team, "cleanup_teams"),
+        (lambda root, fdir, teams: (
+            _write_spec(fdir, ["FR-1"]),
+            _write_state(fdir, phase="F2", cycle=1),
+            _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True),
+            _progressing_ledger(fdir, agent="prove"),
+        ), "record_inspect_width"),
+    ],
+    ids=["cleanup-over-stale-team", "unrecorded-width"],
+)
+def test_the_waiting_notice_names_no_move_above_a_header_that_does(
+    tmp_path, arrange, expect_action
+):
+    """lead-stalls GI-008 — D-019 (1), on the actions that do not choose from
+    the roster. Agents progressing, the stall clock ten minutes old: the notice
+    still refuses to call the gap deliberation, and it no longer tells the lead
+    to END ITS TURN above a header that names calls — it reports, and hands the
+    move to the header."""
+    d = _drive(tmp_path, arrange, 600)
+
+    assert d["action"] == expect_action, d["action"]
+    assert d["block"].startswith("⏳ WAITING ON"), d["block"]
+    assert "END YOUR TURN" not in d["block"], d["block"]
+    assert _WAITING_REPORTS_ONLY in d["block"], d["block"]
+    assert "silently deliberating" not in d["block"]
+    assert not _NAMES_NO_CALL.search(d["header"]), d["header"]
+
+
+def test_running_streams_are_not_spawned_again(tmp_path):
+    """lead-stalls GI-008 / FR-007 — D-019 (2), as filed.
+
+    F2, FULL width recorded, `prove` and `trace` progressing and not yet
+    recorded, the stall clock ten minutes old. One payload carried the WAITING
+    notice listing both and, under it, "spawn every missing INSPECT stream in a
+    SINGLE parallel message" beside a CONTEXT naming them as missing.
+    """
+    d = _drive(tmp_path, _arrange_inspect_live, 600)
+
+    assert (d["action"], d["branch"]) == ("run_streams", "live"), d["header"]
+    assert "WAITING ON 2 AGENT" in d["block"], d["block"]
+    assert "END YOUR TURN" in d["header"], d["header"]
+    assert "spawn every missing INSPECT stream" not in d["block"], d["block"]
+    assert d["liveness"]["count"] == 2, d["liveness"]
+
+
+def test_the_payload_sweep_bites_when_the_team_arm_preempts_again(monkeypatch):
+    """Positive control for the payload sweep (lead-stalls D-018): put back the
+    unconditional team arm and the sweep must name the states it misroutes and
+    the teardown it prints over running teammates."""
+    import foundry_mcp.tools.orchestration.guidance as _g
+
+    monkeypatch.setattr(_g, "_team_work_in_flight", lambda *a, **k: False)
+    findings = audit_assembled_payloads()
+
+    misrouted = {f.split(":", 2)[1] for f in findings if "WRONG_ROUTE" in f}
+    for state in ("cast-live", "cast-live-owed", "cast-not-spawned",
+                  "cast-unaccepted", "cast-refused", "grind-live",
+                  "grind-live-all-fixed"):
+        assert f"{state}[fresh]" in misrouted, (state, sorted(misrouted))
+    assert any(
+        "TEARDOWN_OVER_RUNNING_AGENTS" in f and "cast-live-owed" in f
+        for f in findings
+    ), findings
+
+
+def test_the_payload_sweep_bites_when_the_notice_ignores_the_header(monkeypatch):
+    """Positive control for CONTRADICTION (lead-stalls D-019): a notice that
+    appends the wait policy whatever the header says must be seen."""
+    import foundry_mcp.tools.orchestration.guidance as _g
+
+    monkeypatch.setattr(_g, "_chosen_branch", lambda *a, **k: "live")
+    findings = [f for f in audit_assembled_payloads() if "CONTRADICTION" in f]
+
+    assert {f.split(":", 2)[1] for f in findings} == {"inspect-stale-team[stale]"}, findings
