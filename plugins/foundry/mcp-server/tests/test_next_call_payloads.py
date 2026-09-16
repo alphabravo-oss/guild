@@ -656,12 +656,17 @@ _REFUSALS = {
 
 #: The first call the router names for each refusal. A refused CALL leaves the
 #: casting done and unjudged, which owes acceptance made correctly — a fresh
-#: spec hash first. A refused CASTING owes its teammate: re-dispatch.
+#: spec hash first. A refused CASTING goes back to the teammate that built it,
+#: by message, so the CAST dispatch block is never augmented (commands/start.md
+#: rule 1) — and the lead then ends its turn to wait for that teammate.
 _OWED_FIRST_CALL = {
     "stale_spec_hash": "Foundry-Spec-Hash",
-    "stale_prompt_hash": "Foundry-Spawn-Teammate",
-    "warned": "Foundry-Spawn-Teammate",
+    "stale_prompt_hash": "SendMessage",
+    "warned": "SendMessage",
 }
+
+#: The stable opening of the refused branch's step (1).
+_REFUSAL_TO_TEAMMATE = "(1) SendMessage(to=<the teammate you spawned for casting 1>"
 
 
 def _refuse_then_follow(
@@ -723,7 +728,7 @@ def test_a_refused_call_leaves_the_casting_verdict_standing(tmp_path, monkeypatc
 
     The rungs above the prompt load judge the call's own arguments. Recording
     them would let a lead's stale re-call flip an accepted casting to refused
-    and send it to re-dispatch work that passed.
+    and send its teammate back to rework a casting that passed.
     """
     with _scratch_run(tmp_path, monkeypatch) as (root, fdir, _teams_dir):
         _arrange_waves(fdir, {1: ["1"]})
@@ -796,7 +801,7 @@ def test_every_judged_return_path_records_its_verdict_first():
     assert not unrecorded, (
         f"return(s) at line(s) {unrecorded} in foundry_accept_casting judge the "
         f"casting and record no verdict — the router reads that record to send "
-        f"a refused casting back to re-dispatch (lead-stalls ST-004, D-020)."
+        f"a refused casting back to its teammate (lead-stalls ST-004, D-020)."
     )
 
 
@@ -826,8 +831,10 @@ def test_following_next_call_off_a_refusal_returns_to_that_casting(
     assert "Foundry-Gate(phase='inspect')" not in drive["header"], drive
     assert _returns_to_casting_one(drive["header"]), drive
     assert _first_call(drive["header"]) == _OWED_FIRST_CALL[refusal], drive
-    if _OWED_FIRST_CALL[refusal] == "Foundry-Spawn-Teammate":
-        assert "Foundry-Spawn-Teammate(casting_id=1, phase='cast')" in drive["header"], drive
+    if _OWED_FIRST_CALL[refusal] == "SendMessage":
+        assert _REFUSAL_TO_TEAMMATE in drive["header"], drive
+        assert "END YOUR TURN" in drive["header"], drive
+        assert "Foundry-Spawn-Teammate" not in drive["header"], drive
     else:
         assert "Foundry-Accept-Casting(casting_id=1, " in drive["header"], drive
 
@@ -859,10 +866,10 @@ def test_a_refusal_the_teammate_has_answered_is_owed_acceptance_again(
     """lead-stalls ST-004 — "casting rejected -> lead RE-ACCEPTING".
 
     A `-refused` verdict OLDER than the casting's latest done line has been
-    answered: the re-dispatched teammate reworked the casting and declared
-    itself done again. Re-dispatching it a second time would throw that work
-    away, so the router owes the acceptance call — the other half of the
-    refused/re-dispatch pair the route test above pins.
+    answered: the teammate the refusal was sent to reworked the casting and
+    declared itself done again. Sending it the same refusal a second time would
+    throw that work away, so the router owes the acceptance call — the other
+    half of the refused/send-back pair the route test above pins.
     """
     drive = _refuse_then_rework_then_follow(tmp_path, monkeypatch)
 
@@ -870,7 +877,7 @@ def test_a_refusal_the_teammate_has_answered_is_owed_acceptance_again(
     assert drive["destinations"] == ["casting-1-refused"], drive
     assert _first_call(drive["header"]) == "Foundry-Spec-Hash", drive
     assert "Foundry-Accept-Casting(casting_id=1, " in drive["header"], drive
-    assert "Foundry-Spawn-Teammate" not in drive["header"], drive
+    assert _REFUSAL_TO_TEAMMATE not in drive["header"], drive
     assert not _tears_down(drive["header"]), drive
     assert _NEXT_WAVE_CALL not in drive["header"], drive
 
@@ -1074,7 +1081,7 @@ def acceptance_route_report() -> list[str]:
     lines.append(f"    acceptance records          {drive['destinations']}")
     lines.append(f"    Foundry-Next action         {drive['action']}")
     lines.append(f"    first call named            {_first_call(drive['header'])}")
-    lines.append(f"    re-dispatches casting 1     {'Foundry-Spawn-Teammate' in drive['header']}")
+    lines.append(f"    sends the refusal back      {_REFUSAL_TO_TEAMMATE in drive['header']}")
     lines.append(f"    returns to casting 1        {_returns_to_casting_one(drive['header'])}")
 
     judged, unrecorded = _judged_return_lines()
@@ -1110,9 +1117,9 @@ def test_the_route_report_agrees_with_the_tests_beside_it():
 
     assert "  recording no verdict          0" in joined, joined
     assert joined.count("    returns to casting 1        True") == 7, joined
-    assert joined.count("    first call named            Foundry-Spawn-Teammate") == 4, joined
+    assert joined.count("    first call named            SendMessage") == 4, joined
     assert joined.count("    first call named            Foundry-Spec-Hash") == 3, joined
-    assert "    re-dispatches casting 1     False" in joined, joined
+    assert "    sends the refusal back      False" in joined, joined
     assert joined.count("    tears the team down         True") == 1, joined
     assert joined.count("    any teardown in the payload False") == 2, joined
     assert "  dispatches wave 2             True" in joined, joined
