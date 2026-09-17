@@ -1126,7 +1126,18 @@ _STANDING_CRITICAL_RULES = (
     "\n- NEVER narrate progress as 'Checkpoint \u2014 X complete', 'Checkpoint reached', 'Milestone \u2014 X', or similar. Foundry has NO checkpoints. You are not a checkpointing orchestrator. Execute the next tool call silently and keep moving."
     "\n- NEVER skip SIGHT because 'no URL.' If frontend files exist, you need a URL. Gate will block."
     "\n- NEVER spawn foundry:teammate agents (CAST or GRIND) with run_in_background=true. They are foreground, TeamCreate-managed, and must run through Foundry-Cast-Wave or Foundry-Spawn-Teammate + verbatim Agent. Background-spawning bypasses the router architecture and breaks spec fidelity."
-    "\n- NEVER modify, paraphrase, or augment a prompt returned by Foundry-Spawn-Teammate. Pass it to Agent VERBATIM. GRIND is the only exception: append (a) the `grind_cycle_context` block if returned (prior-cycle file changes) and (b) the '## Defects to fix this cycle:' block BELOW the prompt, in that order. Never inside the prompt."
+    # lead-stalls GI-008 / ST-004 / US-003 (D-035) — THE RULE NAMES THE BLOCK
+    # EVERY SPAWN PASSES. This read "Pass it to Agent VERBATIM. GRIND is the
+    # only exception: append ...", printed on every payload — including above
+    # the CAST `redispatch` branch, whose step (2) orders the
+    # `progress_protocol` block appended BELOW the dispatch (D-030). The two
+    # could not both be obeyed, and a lead obeying this one spawned a teammate
+    # that was never told its ledger: its seed line read as a running agent for
+    # fifteen minutes, then as an undispatched wave, and re-acceptance was never
+    # reached. `commands/start.md` rule 1 and `Foundry-Spawn-Teammate`'s own
+    # `instructions` already say the block goes BELOW, LAST, in every phase, so
+    # the rule says it too and GRIND's exception is only the defect material.
+    "\n- NEVER modify, paraphrase, or augment a prompt returned by Foundry-Spawn-Teammate. Every spawn, CAST and GRIND, passes Agent the returned `dispatch` block VERBATIM and then, BELOW it and LAST, the returned `progress_protocol` block VERBATIM. GRIND is the only exception to what goes between the two: (a) the `grind_cycle_context` block when the spawn response carries one (prior-cycle file changes), (b) the '## Defects to fix this cycle:' block and (c) the task's `alignment_block`, in that order. Never inside the prompt."
     "\n- If the user typed a message, treat it as a directive. Absorb and keep going."
     # D-136 — THE THIRD ENDING. This read "The foundry runs until F6 DONE or an
     # error stops it", which ST-001 / CT-004 made false: a halt ends a run in a
@@ -2126,9 +2137,21 @@ _ACTION_IMPERATIVES = {
         "REPLACES the first rather than summing with it. A lead that records on "
         "an agent's behalf is asserting numbers it did not measure, and when the "
         "agent then records its own the cycle carries two accounts of one run. "
-        "If an AGENT stream finished and no record exists, that is a finding "
-        "about the stream \u2014 re-dispatch it, or file it \u2014 not a gap for you to "
-        "fill in.\n"
+        # lead-stalls GI-008 / OT-013 (D-033) \u2014 THE FINISHED-UNRECORDED STREAM
+        # IS A MISSING STREAM, SO THE LINE ABOVE ALREADY SPAWNS IT.
+        # This read "If an AGENT stream finished and no record exists, that is a
+        # finding about the stream \u2014 re-dispatch it, or file it \u2014 not a gap for
+        # you to fill in": a condition for the lead to evaluate and two calls to
+        # choose between, of which only one advances the run. A filed stream
+        # still has no record, the streams-complete rung stays short, and the
+        # next Foundry-Next hands back this same branch. The server already
+        # holds the answer \u2014 the CONTEXT below names every stream with no
+        # record this cycle \u2014 so the sentence states the one move: that stream
+        # is re-spawned by the parallel message this header opens with.
+        "An AGENT stream that finished without its own record is one of the "
+        "unrecorded streams the CONTEXT below names, and the parallel message "
+        "above re-spawns it with the rest: its own re-run is the one thing that "
+        "records it, and it is never a gap for you to fill in.\n"
         # fallout AC-031 / GI-016 / AC-030 (D-165) \u2014 AND THE ONE STREAM WHOSE
         # EXECUTOR IS YOU.
         #
@@ -2192,7 +2215,11 @@ _ACTION_IMPERATIVES = {
         "the sibling files THIS casting owns that cite those ids, which is how one fix reaches "
         "every surface of its rule in the same GRIND. Do not summarise it and do not compose "
         "your own. "
-        "Order: dispatch \u2192 cycle_context \u2192 defects \u2192 alignment. "
+        # lead-stalls D-035 — and the ledger protocol LAST, as the standing
+        # rule above every payload and `Foundry-Spawn-Teammate`'s own
+        # `instructions` both say; this order used to end at the alignment.
+        "then (d) the `progress_protocol` block from the spawn response, VERBATIM, LAST. "
+        "Order: dispatch \u2192 cycle_context \u2192 defects \u2192 alignment \u2192 progress_protocol. "
         "All appended BELOW the dispatch block, never inside it.>). "
         "Same foreground rule as CAST \u2014 never background-spawn GRIND teammates. "
         "For the model: obey the model clause in the `instructions` Foundry-Spawn-Teammate "

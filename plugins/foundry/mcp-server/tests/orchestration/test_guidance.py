@@ -2256,8 +2256,15 @@ def test_the_run_streams_imperative_leaves_sight_an_exit(run_env):
     assert "Every OTHER stream records its own and you only confirm." in imperative
 
     # The re-dispatch remedy is scoped to the streams that HAVE an agent, so it
-    # no longer names a move SIGHT cannot make.
-    assert "If an AGENT stream finished and no record exists" in imperative, imperative
+    # no longer names a move SIGHT cannot make. lead-stalls GI-008 (D-033): and
+    # it is stated as the one move, not as "if ... re-dispatch it, or file it"
+    # — a filed stream still has no record, so filing never advances the run.
+    assert (
+        "An AGENT stream that finished without its own record is one of the "
+        "unrecorded streams" in imperative
+    ), imperative
+    assert "re-spawns it with the rest" in imperative, imperative
+    assert "or file it" not in imperative, imperative
 
     # The same qualification reaches the `instructions` string, which is the
     # surface a lead reads FIRST and which stated the rule unqualified too.

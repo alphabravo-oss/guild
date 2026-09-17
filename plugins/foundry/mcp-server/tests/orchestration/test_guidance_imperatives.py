@@ -138,8 +138,14 @@ _CONDITIONAL_WORD = (
     r"|should|whether|depending|after|where|wherever|until|provided(?: that)?)"
 )
 _EARLIER_CALL = r"(?:step \(\d+\)|Foundry-[A-Z][A-Za-z-]*(?:\([^)]*\))?)"
-_HANDS_OVER_THE_CONDITION = re.compile(
-    r"(?m)^\s*(?:[-*•]|\(\d+\))?\s*IF\b"
+#: lead-stalls D-034 — the bare-IF alternative opens a SENTENCE, not a LINE.
+#: It was anchored `^`, so "... two accounts of one run. If an AGENT stream
+#: finished ..." — IF opening the third sentence of a line, as `run_streams`
+#: emitted it — passed while the same sentence on a line of its own was
+#: matched. Where a sentence starts is a fact about the emitted text, and a
+#: line break is only one of the ways it can start.
+_CONDITION_SHAPES = re.compile(
+    r"(?m)(?:^|(?<=[.!?:])[ \t]+)\s*(?:[-*•]|\(\d+\))?\s*(?:IF|UNLESS)\b"
     r"|\bdepends on\b"
     r"|\bwhichever\b"
     r"|\bdecide whether\b"
@@ -155,6 +161,66 @@ _HANDS_OVER_THE_CONDITION = re.compile(
     + r"(?:'s (?:answer|reply|result|response|verdict))?\s+(?!\()[A-Za-z]",
     re.IGNORECASE,
 )
+
+#: lead-stalls D-034 — AND A CONDITION THAT CHOOSES BETWEEN TWO MOVES, JUDGED
+#: PER SENTENCE AS EMITTED. Every alternative above keys on a spelling: IF at
+#: an opening, an outcome verb, or an earlier step as the subject. "If an AGENT
+#: stream finished and no record exists, that is a finding about the stream —
+#: re-dispatch it, or file it — not a gap for you to fill in" has an outcome
+#: in none of those spellings, and what makes it the defect is not its words
+#: but its shape: a sentence that OPENS on a condition and then offers the lead
+#: two moves joined by "or". So that shape is checked on its own, whatever the
+#: conditional word, over each sentence the lead reads. A move is a clause
+#: `_order_openers` reads as an order and that carries an object ("file it"),
+#: so a condition over a list of stream names ("trace, prove, or test") is not
+#: a choice. The wake event ("When the notification arrives, call Foundry-Next
+#: and follow what it says then.") names one move and stays legal.
+_EMITTED_SENTENCE = re.compile(r"(?<=[.!?])\s+|\n")
+_OPENS_ON_A_CONDITION = re.compile(
+    r"\s*(?:[-*•]|\(\d+\))?\s*" + _CONDITIONAL_WORD + r"\b", re.IGNORECASE,
+)
+_ALTERNATIVE = re.compile(r",?\s+or\s+")
+_CLAUSE_EDGE = re.compile(r"\s*[,;:—]\s*")
+
+
+def _is_a_move(clause: str) -> bool:
+    """A clause the lead would execute: an order with an object."""
+    return len(clause.split()) >= 2 and bool(_order_openers(clause))
+
+
+def _offers_a_choice(sentence: str) -> bool:
+    """Does ``sentence`` open on a condition and join two moves with "or"?"""
+    if not _OPENS_ON_A_CONDITION.match(sentence):
+        return False
+    parts = _ALTERNATIVE.split(sentence)
+    return any(
+        _is_a_move(_CLAUSE_EDGE.split(left)[-1])
+        and _is_a_move(_CLAUSE_EDGE.split(right.rstrip("."))[0])
+        for left, right in zip(parts, parts[1:])
+    )
+
+
+class _ConditionDetector:
+    """`_CONDITION_SHAPES`, then the per-sentence choice (lead-stalls D-034).
+
+    One object with the regex's `search` so every caller keeps asking one
+    question; a second detector beside the first is how D-023, D-032 and D-034
+    each found a conditional one of them could not see. The choice match is a
+    real `re.Match` over the sentence's span, so the audit quotes it the same
+    way.
+    """
+
+    def search(self, text: str) -> re.Match | None:
+        hit = _CONDITION_SHAPES.search(text)
+        if hit:
+            return hit
+        for sentence in _EMITTED_SENTENCE.split(text):
+            if _offers_a_choice(sentence):
+                return re.compile(re.escape(sentence.strip())).search(text)
+        return None
+
+
+_HANDS_OVER_THE_CONDITION = _ConditionDetector()
 
 #: The other half: something the lead can execute. Either a literal tool call,
 #: or an explicit declaration that there is none — which is how the correct
@@ -933,6 +999,20 @@ def audit_assembled_payloads(drives=None) -> list[str]:
         # that says so itself — the live branch, or the refused branch, whose
         # one message is followed by the same yield. Anything else is two
         # imperatives in one payload.
+        # lead-stalls D-034 — the header as the router SERVED it, judged by the
+        # same detector the table sweep uses. The run_streams idle branch
+        # handed the lead "If an AGENT stream finished ... re-dispatch it, or
+        # file it" and this sweep read its route and its notice, never its
+        # sentences.
+        hit = _HANDS_OVER_THE_CONDITION.search(d["header"])
+        if hit:
+            header = d["header"]
+            quoted = " ".join(
+                header[max(0, hit.start() - 40):hit.end() + 60].split()
+            )
+            findings.append(
+                f"{site}: CONDITIONAL — the lead must evaluate {quoted!r}"
+            )
         notice = d["block"][: len(d["block"]) - len(d["header"])]
         if "END YOUR TURN" in notice and "END YOUR TURN" not in d["header"]:
             findings.append(
@@ -1066,7 +1146,7 @@ def audit_report() -> list[str]:
         "",
         "header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, "
         "UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME",
-        "payload detectors: WRONG_ROUTE, CONTRADICTION, CONTEXT_SEQUENCE, "
+        "payload detectors: WRONG_ROUTE, CONDITIONAL, CONTRADICTION, CONTEXT_SEQUENCE, "
         "TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING",
         "",
         "site = action@emitting-phase[liveness reading]; readings swept: "
@@ -2966,6 +3046,8 @@ def test_a_registered_team_leaves_teammates_that_are_still_building_alone(
     assert d["liveness"]["waiting"] is True, d["liveness"]
     assert d["liveness"]["count"] == 1, d["liveness"]
     assert d["liveness"]["teams_active"] is True, d["liveness"]
+    # lead-stalls D-037 — and the live-agents return publishes the registry.
+    assert d["liveness"]["teams_registered"] == [_CAST_TEAM], d["liveness"]
     if clock:
         assert "WAITING ON 1 AGENT" in d["block"], d["block"]
         assert d["nxt"]["waiting_on_agents"] == d["liveness"]
@@ -3742,6 +3824,11 @@ def test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer():
         # And the vocabulary with a subject that is not a step.
         "(2) Unless the send is refused, END YOUR TURN.",
         "(2) Only a message that comes back rejected takes this step.",
+        # lead-stalls D-034 — mid-step, after a call, with a noun subject: the
+        # sentence-start IF/UNLESS alternative cannot see this one, so it is
+        # the refusal vocabulary's own control.
+        "(2) Foundry-Spawn-Teammate(casting_id=1), when the send is refused.",
+        "(2) END YOUR TURN, unless the message is rejected.",
     ):
         assert _HANDS_OVER_THE_CONDITION.search(text), text
 
@@ -3772,3 +3859,225 @@ def test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer():
     # the D-022 split is what makes that zero true rather than blind.
     for _action, site, text, _owed, _reading in _audit_sites():
         assert not _HANDS_OVER_THE_CONDITION.search(text), site
+
+
+#: The run_streams idle sentence as b358445 emitted it: the third sentence of
+#: its line, after two that open on nothing conditional (lead-stalls D-034).
+_RUN_STREAMS_AT_B358445 = (
+    "YOUR NEXT CALLS: spawn every missing INSPECT stream in a SINGLE parallel "
+    "message.\n"
+    "Every verifying stream calls Foundry-Stream itself, with the counts it "
+    "actually measured, and a second record for the same (stream, cycle) "
+    "REPLACES the first rather than summing with it. A lead that records on "
+    "an agent's behalf is asserting numbers it did not measure, and when the "
+    "agent then records its own the cycle carries two accounts of one run. "
+    "If an AGENT stream finished and no record exists, that is a finding "
+    "about the stream — re-dispatch it, or file it — not a gap for you to "
+    "fill in.\n"
+)
+
+
+def test_the_condition_detector_judges_the_sentence_where_it_was_emitted():
+    """lead-stalls D-034 — the third miss was POSITIONAL.
+
+    The D-033 sentence was matched on its own and missed where `run_streams`
+    printed it: mid-line, after two other sentences, with no outcome verb and
+    no step as its subject. Quoted here in that position, with rewordings that
+    keep the shape — a sentence opening on a condition that offers two moves —
+    and the one-move sentences that are not the defect.
+    """
+    hit = _HANDS_OVER_THE_CONDITION.search(_RUN_STREAMS_AT_B358445)
+    assert hit, _RUN_STREAMS_AT_B358445
+    assert _RUN_STREAMS_AT_B358445[hit.start():].lstrip().startswith(
+        "If an AGENT stream finished"
+    ), hit
+    # The choice shape sees it too, without the IF: the same sentence under
+    # "When" is still the defect.
+    assert _offers_a_choice(
+        "When an AGENT stream finished and no record exists, that is a finding "
+        "about the stream — re-dispatch it, or file it — not a gap for you to "
+        "fill in."
+    )
+
+    for text in (
+        # Mid-line IF with one move: a condition, whatever follows it.
+        "Spawn the streams. If one is missing, call Foundry-Next.",
+        # The choice shape under the other conditional words.
+        "Record nothing. When a stream finished unrecorded, re-spawn it or "
+        "file it.",
+        "Read the roster. Once the send fails over, message the teammate or "
+        "spawn a fresh one.",
+        "Confirm the record. Should a stream end silently, re-run the stream, "
+        "or file a defect.",
+    ):
+        assert _HANDS_OVER_THE_CONDITION.search(text), text
+
+    for fine in (
+        "Waiting is not stopping. When the notification arrives, call "
+        "Foundry-Next and follow what it says then.",
+        "After all complete, call Foundry-Validate-Castings.",
+        "When each background stream's completion notification fires: call "
+        "TaskOutput(task_id) to retrieve its findings.",
+        "When you have driven the sight skill, the numbers you report are "
+        "numbers YOU measured.",
+        # A condition over a list of streams is not a choice between moves.
+        "When the INSPECT is FULL, spawn trace, prove, or test in one message.",
+        # The replacement, which states the one move.
+        "An AGENT stream that finished without its own record is one of the "
+        "unrecorded streams the CONTEXT below names, and the parallel message "
+        "above re-spawns it with the rest.",
+    ):
+        assert not _HANDS_OVER_THE_CONDITION.search(fine), fine
+
+
+def test_the_payload_sweep_bites_on_the_run_streams_sentence(monkeypatch):
+    """lead-stalls D-034 — the router sweep reads the header's sentences.
+
+    At b358445 `audit_assembled_payloads` returned [] over a drive whose
+    header carried the D-033 sentence. With that sentence put back into the
+    `idle` branch, the payload sweep must name the served header CONDITIONAL.
+    """
+    shipped = _ACTION_IMPERATIVES["run_streams"]
+    reverted = shipped.replace(
+        "An AGENT stream that finished without its own record is one of the "
+        "unrecorded streams the CONTEXT below names, and the parallel message "
+        "above re-spawns it with the rest: its own re-run is the one thing that "
+        "records it, and it is never a gap for you to fill in.",
+        "If an AGENT stream finished and no record exists, that is a finding "
+        "about the stream — re-dispatch it, or file it — not a gap for you to "
+        "fill in.",
+    )
+    assert reverted != shipped, "the D-033 sentence moved; re-quote it here"
+    # One dict object, shared by the router and this module's resolver.
+    monkeypatch.setitem(_ACTION_IMPERATIVES, "run_streams", reverted)
+
+    drives = [
+        ("payload:inspect-idle[fresh]", "inspect-idle", "", "run_streams",
+         "idle", drive_router(_arrange_inspect_idle, None)),
+    ]
+    findings = audit_assembled_payloads(drives)
+
+    assert any(
+        f.startswith("payload:inspect-idle[fresh]: CONDITIONAL")
+        and "no record exists" in f
+        for f in findings
+    ), findings
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GRIND cycle 10 — D-035 .. D-037
+# --------------------------------------------------------------------------- #
+
+
+def _rules_of(instructions: str) -> str:
+    """The standing CRITICAL RULES block, as printed above the marker."""
+    return instructions.split(_NEXT_ACTION_MARKER, 1)[0]
+
+
+def _spawn_rule(rules: str) -> str:
+    """The one standing rule on passing a Foundry-Spawn-Teammate prompt."""
+    lines = [
+        line for line in rules.splitlines()
+        if "prompt returned by Foundry-Spawn-Teammate" in line
+    ]
+    assert len(lines) == 1, rules
+    return lines[0]
+
+
+def test_the_rules_above_a_redispatch_sanction_the_block_it_appends(tmp_path):
+    """lead-stalls GI-008 / ST-004 / US-003 (D-035) — one payload, one contract.
+
+    The no-team refusal route, through the real acceptance door: the payload's
+    `redispatch` step (2) orders the `progress_protocol` block BELOW the
+    dispatch, LAST, and at b358445 the standing rule printed above it on the
+    SAME payload said "Pass it to Agent VERBATIM. GRIND is the only exception".
+    A lead obeying the rule spawned a teammate that was never told its ledger
+    (D-030 again). Read off the assembled payload, not the constant, so a
+    rules block assembled from anything else is judged too.
+    """
+    with _router_run(tmp_path) as (root, fdir, teams):
+        _cast(fdir, {1: ["1"], 2: ["2"]})
+        _worked(fdir, "1", done=True,
+                at=datetime.now(timezone.utc) - timedelta(minutes=1))
+        refused = _accept(root, fdir, "1",
+                          completion_report="built it; the tests are deferred")
+        nxt = foundry_next_action(root)
+    _block, header = _split_payload(nxt["instructions"])
+    rule = _spawn_rule(_rules_of(nxt["instructions"]))
+
+    assert refused["ok"] is False, refused
+    assert nxt["action"] == "build_castings", nxt["action"]
+    assert _chosen_branch("build_castings", nxt["agent_liveness"]) == "redispatch"
+    assert "BELOW it and LAST, step (1)'s `progress_protocol` block" in header, header
+    # The rule sanctions that very append, for every phase...
+    assert "Every spawn, CAST and GRIND" in rule, rule
+    assert "BELOW it and LAST, the returned `progress_protocol` block VERBATIM" in rule, rule
+    # ...and no longer reserves every append to GRIND.
+    assert "Pass it to Agent VERBATIM. GRIND is the only exception" not in rule, rule
+    assert "GRIND is the only exception to what goes between the two" in rule, rule
+
+
+def test_the_grind_dispatch_order_ends_in_the_ledger_protocol():
+    """lead-stalls D-035 — the sibling surface on the same contract: the GRIND
+    dispatch order the rule quotes ends in the `progress_protocol` block."""
+    text = _ACTION_IMPERATIVES["transition_to_grind"]
+    assert (
+        "Order: dispatch → cycle_context → defects → alignment "
+        "→ progress_protocol." in text
+    ), text
+    assert "the `progress_protocol` block from the spawn response, VERBATIM, LAST" in text
+
+
+def _arrange_cast_refused_two_waves(root, fdir, teams):
+    # lead-stalls D-036 — castings 1 and 2 refused, one per wave, and only the
+    # LATER wave's team registered. `{casting}` names casting 1 (the first
+    # refused id), so the team the choice reads must be wave 1's.
+    _cast(fdir, {1: ["1"], 2: ["2"]})
+    _register(root, teams, f"cast-{_ROUTE_RUN}-wave-2")
+    earlier = datetime.now(timezone.utc) - timedelta(minutes=1)
+    _worked(fdir, "1", done=True, at=earlier)
+    _worked(fdir, "2", done=True, at=earlier)
+    for cid in ("2", "1"):
+        refused = _accept(root, fdir, cid,
+                          completion_report="built it; the tests are deferred")
+        assert refused["ok"] is False, refused
+
+
+def test_two_refusals_in_two_waves_key_on_the_named_castings_team(tmp_path):
+    """lead-stalls D-036 — the FIRST refused id's team, pinned.
+
+    8fa7740 names the wave of `refused[0]` "because that is the casting
+    `{casting}` names", and no drive had two refused castings in two waves, so
+    `refused[-1]` left every test green. Under that mutation this state reads
+    wave 2's team — registered — and hands the send-back to casting 1's
+    teammate, whose wave-1 team is gone: a message to nobody, then END YOUR
+    TURN over nothing running (ST-003).
+    """
+    d = _drive(tmp_path, _arrange_cast_refused_two_waves)
+
+    assert d["liveness"]["cast_refused"] == ["1", "2"], d["liveness"]
+    assert d["liveness"]["teams_registered"] == [f"cast-{_ROUTE_RUN}-wave-2"], d["liveness"]
+    assert d["liveness"]["cast_refused_team"] == f"cast-{_ROUTE_RUN}-wave-1", d["liveness"]
+    assert (d["action"], d["branch"]) == ("build_castings", "redispatch"), d["header"]
+    assert "Foundry-Spawn-Teammate(casting_id=1, phase='cast')" in d["header"], d["header"]
+    assert "casting 1's own wave team is not registered" in d["header"], d["header"]
+
+
+@pytest.mark.parametrize(
+    "arrange, waiting",
+    [(_arrange_cast_live, True), (_arrange_cast_not_spawned, False)],
+    ids=["live-agents", "no-live-agents"],
+)
+def test_both_liveness_returns_publish_the_registered_teams(tmp_path, arrange, waiting):
+    """lead-stalls D-037 — `teams_registered` on BOTH returns of
+    `_waiting_on_agents`, as its docstring's return contract lists it.
+
+    8fa7740 added the field to the no-live-agents early return and to the
+    live-agents `result.update`, and only the first was tested: deleting the
+    second left the suite green while Foundry-Next's `agent_liveness` in a live
+    CAST state stopped carrying the field.
+    """
+    d = _drive(tmp_path, arrange)
+
+    assert d["liveness"]["waiting"] is waiting, d["liveness"]
+    assert d["liveness"]["teams_registered"] == [_CAST_TEAM], d["liveness"]
