@@ -35,6 +35,7 @@ from foundry_mcp.tools import evidence as _evidence
 from foundry_mcp.tools import foundry_state as _foundry_state
 from foundry_mcp.tools.artifacts import _hash_file, foundry_spec_hash
 from foundry_mcp.tools.evidence import foundry_accept_casting
+from foundry_mcp.tools.foundry_spawn import foundry_spawn_teammate
 from foundry_mcp.tools.orchestration import teams as _teams
 from foundry_mcp.tools.orchestration.guidance import foundry_next_action
 from foundry_mcp.tools.orchestration.teams import (
@@ -680,11 +681,11 @@ def _refused_to_casting(header: str, cid: str) -> bool:
 #: as the calls it opens with and the reading it states. Each branch carries
 #: its own and none of the other's.
 _REFUSED_BRANCH = {
-    True: (_REFUSAL_TO_TEAMMATE, "the CAST team is still registered"),
+    True: (_REFUSAL_TO_TEAMMATE, "own wave team is still registered"),
     False: (
         "(1) Foundry-Spawn-Teammate(casting_id=1, phase='cast')",
         "(3) SendMessage(to=<the teammate step (2) spawned>",
-        "no CAST team is registered",
+        "own wave team is not registered",
     ),
 }
 
@@ -888,7 +889,9 @@ def test_following_next_call_off_a_refusal_returns_to_that_casting(
         assert "(3) " not in header, drive
     else:
         assert "casting 1>" not in header, drive
-        assert "VERBATIM with nothing appended" in header, drive
+        # lead-stalls D-030 — the re-spawned teammate is handed its ledger.
+        assert "nothing appended" not in _redispatch_step(header), drive
+        assert "`progress_protocol` block" in _redispatch_step(header), drive
         assert (
             header.index("(1) Foundry-Spawn-Teammate")
             < header.index("(2) One foreground Agent(")
@@ -1112,6 +1115,223 @@ def test_an_accepted_wave_still_moves_on(tmp_path, monkeypatch, team_registered)
         assert _NEXT_WAVE_CALL in drive["header"], drive
 
 
+#: Where a block handed to a teammate tells it to write its progress lines.
+_LEDGER_PATH = re.compile(r"`(foundry-archive/[^`]+/progress/[^`]+\.jsonl)`")
+
+
+def _redispatch_step(header: str) -> str:
+    """The redispatch branch's step (2): what the lead passes the Agent tool."""
+    return header.split("\n  (2) ", 1)[1].split("\n  (3) ", 1)[0]
+
+
+def _handed_to_teammate(root: str, header: str, spawned: dict) -> str:
+    """Everything a teammate spawned by step (2), made AS WRITTEN, reads.
+
+    The `dispatch` block, the prompt file it names, and the `progress_protocol`
+    block only when step (2) tells the lead to append it. A step that says
+    "with nothing appended" is taken at its word, which is what a lead obeying
+    lead-stalls GI-008's one unconditional imperative does.
+    """
+    step = _redispatch_step(header)
+    handed = [spawned["dispatch"], (Path(root) / spawned["prompt_path"]).read_text(
+        encoding="utf-8"
+    )]
+    if "progress_protocol" in step and "nothing appended" not in step:
+        handed.append(spawned["progress_protocol"])
+    return "\n\n".join(handed)
+
+
+def _teammate_does_what_it_was_told(root: str, handed: str) -> bool:
+    """Rework, then write the ledger lines ``handed`` asks for — and no others.
+
+    A teammate told of no ledger writes none: the server's own `dispatched`
+    seed line is then the last line its casting has.
+    """
+    match = _LEDGER_PATH.search(handed)
+    if match is None or '"done": true' not in handed:
+        return False
+    now = _foundry_state.now_iso()
+    with (Path(root) / match.group(1)).open("a", encoding="utf-8") as ledger:
+        ledger.write(json.dumps({"timestamp": now, "phase": "cast", "step": "fixed the refusal"}) + "\n")
+        ledger.write(
+            json.dumps({"timestamp": now, "phase": "cast", "step": "committed", "done": True})
+            + "\n"
+        )
+    return True
+
+
+def _refuse_then_respawn_then_follow(base: Path, monkeypatch) -> dict:
+    """lead-stalls D-030's drive: the no-team refusal route, every step real.
+
+    Casting 1 declared done half an hour ago and no CAST team is registered.
+    Foundry-Accept-Casting refuses it, Foundry-Next answers the redispatch
+    branch, the real Foundry-Spawn-Teammate seeds casting 1's ledger, and the
+    teammate step (2) spawned does what it was handed. Then Foundry-Next again,
+    as the woken lead calls it.
+    """
+    with _scratch_run(base, monkeypatch) as (root, fdir, _teams_dir):
+        _arrange_waves(fdir, {1: ["1"], 2: ["2"]})
+        earlier = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        _worked_ledger(fdir, "1", done=True, stamp=earlier)
+        refused = _accept(root, fdir, "1", **_REFUSALS["warned"])
+        routed = foundry_next_action(root)
+        header = _header(routed)
+        spawned = foundry_spawn_teammate(casting_id="1", phase="cast", project_root=root)
+        handed = _handed_to_teammate(root, header, spawned) if spawned.get("ok") else ""
+        wrote = _teammate_does_what_it_was_told(root, handed)
+        followed = foundry_next_action(root)
+    return {
+        "payload": refused,
+        "routed_action": routed.get("action"),
+        "routed_header": header,
+        "spawned_ok": spawned.get("ok"),
+        "wrote_done": wrote,
+        "action": followed.get("action"),
+        "header": _header(followed),
+    }
+
+
+def test_the_no_team_refusal_route_followed_as_written_reaches_acceptance(
+    tmp_path, monkeypatch
+):
+    """lead-stalls ST-004 / US-003 / ST-003 (D-030) — through the spawn door.
+
+    At fbbda01 step (2) said "VERBATIM with nothing appended", so the teammate
+    was never told where its ledger is: it wrote no done line, the server's
+    `dispatched` seed was the casting's last line, and the woken lead's
+    Foundry-Next answered the `live` park (END YOUR TURN, nothing running) —
+    or, 15 minutes on, a re-dispatch of all of wave 1. A route that reaches
+    re-acceptance only for a lead that disobeys its imperative is not a route.
+    """
+    drive = _refuse_then_respawn_then_follow(tmp_path, monkeypatch)
+
+    assert drive["payload"]["ok"] is False, drive
+    assert drive["routed_action"] == "build_castings", drive
+    assert _first_call(drive["routed_header"]) == "Foundry-Spawn-Teammate", drive
+    assert drive["spawned_ok"] is True, drive
+    # The route's outcome first, so a red run names what the lead was handed.
+    assert (drive["action"], _first_call(drive["header"])) == (
+        "build_castings", "Foundry-Spec-Hash"
+    ), drive
+    assert "Foundry-Accept-Casting(casting_id=1, " in drive["header"], drive
+    assert "Foundry-Cast-Wave(wave=1" not in drive["header"], drive
+    assert _NEXT_WAVE_CALL not in drive["header"], drive
+    assert not _tears_down(drive["header"]), drive
+    assert drive["wrote_done"] is True, drive
+    assert "nothing appended" not in _redispatch_step(drive["routed_header"]), drive
+    assert "progress_protocol" in _redispatch_step(drive["routed_header"]), drive
+
+
+#: A live Claude Code teammate pane in ANOTHER tmux session. `tmux list-panes
+#: -a` lists every session on the machine, so `live_teammate_panes` answers
+#: this for any other project with a team up (lead-stalls D-031).
+_FOREIGN_PANE = {
+    "available": True,
+    "live": [("other-project:1.1", "@researcher", "2.1.80")],
+    "zombie": [],
+    "user": [],
+    "lead": None,
+}
+
+
+def _refuse_beside_a_foreign_pane(base: Path, monkeypatch) -> dict:
+    """No CAST team ever registered; casting 1 refused; a foreign pane live."""
+    with _scratch_run(base, monkeypatch) as (root, fdir, _teams_dir):
+        patch_everywhere(monkeypatch, "live_teammate_panes", lambda *_a, **_k: _FOREIGN_PANE)
+        _arrange_waves(fdir, {1: ["1"], 2: ["2"]})
+        earlier = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+        _worked_ledger(fdir, "1", done=True, stamp=earlier)
+        refused = _accept(root, fdir, "1", **_REFUSALS["warned"])
+        registered = _foundry_state.registered_team_dirs(
+            fdir, teams_dir=Path.home() / ".claude" / "teams"
+        )
+        nxt = foundry_next_action(root)
+    return {
+        "payload": refused,
+        "registered": registered,
+        "action": nxt.get("action"),
+        "header": _header(nxt),
+    }
+
+
+def test_a_foreign_teammate_pane_does_not_choose_the_send_back(tmp_path, monkeypatch):
+    """lead-stalls FR-015 / ST-004 / US-003 (D-031) — the team is the WAVE's own.
+
+    D-022 sends a refusal back by message only while the refused casting's
+    team is registered. The choice read `teams_active`, which a live teammate
+    pane anywhere on the machine sets, so a team in another project told this
+    lead to message a teammate whose team was never created, claim "the CAST
+    team is still registered", and end its turn with nothing running.
+    """
+    drive = _refuse_beside_a_foreign_pane(tmp_path, monkeypatch)
+
+    assert drive["payload"]["ok"] is False, drive
+    assert drive["registered"] == [], drive
+    assert drive["action"] == "build_castings", drive
+    assert _first_call(drive["header"]) == "Foundry-Spawn-Teammate", drive
+    assert _refused_to_casting(drive["header"], "1"), drive
+    assert _REFUSAL_TO_TEAMMATE not in drive["header"], drive
+    assert "still registered" not in drive["header"], drive
+    assert not _tears_down(drive["header"]), drive
+
+
+def _refuse_under_a_split_scan(base: Path, monkeypatch, *, first_scan: str) -> dict:
+    """lead-stalls D-028's drive: the reading's team scan and the arm's disagree.
+
+    `cast-{run}-wave-1` is registered through the real Team-Up, casting 1 is
+    done and refused, wave 2 is pending. The FIRST `_check_active_teams` call
+    of the Foundry-Next — the reading's — raises (``raises``) or reads an
+    empty registry (``empty``, the registry changing between the scans); every
+    later call answers for real.
+    """
+    with _scratch_run(base, monkeypatch) as (root, fdir, teams_dir):
+        _arrange_waves(fdir, {1: ["1"], 2: ["2"]})
+        (teams_dir / _WAVE_ONE_TEAM).mkdir()
+        assert foundry_register_team(_WAVE_ONE_TEAM, project_root=root)["ok"]
+        _worked_ledger(fdir, "1", done=True)
+        refused = _accept(root, fdir, "1", **_REFUSALS["warned"])
+        real = _teams._check_active_teams
+        calls: list[str] = []
+
+        def _split(project_root: str) -> dict:
+            calls.append(project_root)
+            if len(calls) > 1:
+                return real(project_root)
+            if first_scan == "raises":
+                raise OSError("team scan failed")
+            return {"active": False, "teams": [], "live_panes": []}
+
+        patch_everywhere(monkeypatch, "_check_active_teams", _split)
+        nxt = foundry_next_action(root)
+    return {
+        "payload": refused,
+        "scans": len(calls),
+        "action": nxt.get("action"),
+        "header": _header(nxt),
+    }
+
+
+@pytest.mark.parametrize("first_scan", ["raises", "empty"])
+def test_a_refused_casting_keeps_its_team_when_the_scans_disagree(
+    tmp_path, monkeypatch, first_scan
+):
+    """lead-stalls FR-002 / ST-004 / US-003 (D-028) — never `cleanup_teams`.
+
+    The reading reads no team and answers `redispatch`; the cleanup arm's own
+    scan reads `cast-{run}-wave-1` registered. Whichever way the two are
+    reconciled, the team whose casting was just refused is not the lead's to
+    shut down: D-022's `redispatch` is owed work, exactly as `refused` is.
+    """
+    drive = _refuse_under_a_split_scan(tmp_path, monkeypatch, first_scan=first_scan)
+
+    assert drive["payload"]["ok"] is False, drive
+    assert drive["scans"] >= 1, drive
+    assert drive["action"] != "cleanup_teams", drive
+    assert not _tears_down(drive["header"]), drive
+    assert _NEXT_WAVE_CALL not in drive["header"], drive
+    assert _refused_to_casting(drive["header"], "1"), drive
+
+
 def _team_up_then_follow(
     base: Path, monkeypatch, *, stall_clock_seconds: int | None
 ) -> dict:
@@ -1321,6 +1541,33 @@ def acceptance_route_report() -> list[str]:
             lines.append(f"    forwards casting {owed_id}'s refusal  {_refused_to_casting(drive['header'], owed_id)}")
             lines.append(f"    names no other casting      {_names_only_casting(drive['header'], owed_id, others)}")
 
+    drive = _in_scratch(_refuse_then_respawn_then_follow)
+    lines.append("")
+    lines.append("warned, no team; the real Foundry-Spawn-Teammate, the teammate obeys (D-030)")
+    lines.append(f"    routed first call           {_first_call(drive['routed_header'])}")
+    lines.append(f"    step (2) appends the ledger {'progress_protocol' in _redispatch_step(drive['routed_header'])}")
+    lines.append(f"    teammate wrote done         {drive['wrote_done']}")
+    lines.append(f"    Foundry-Next action         {drive['action']}")
+    lines.append(f"    first call named            {_first_call(drive['header'])}")
+    lines.append(f"    returns to casting 1        {_returns_to_casting_one(drive['header'])}")
+
+    drive = _in_scratch(_refuse_beside_a_foreign_pane)
+    lines.append("")
+    lines.append("warned, no team registered, another project's teammate pane live (D-031)")
+    lines.append(f"    registered teams            {drive['registered']}")
+    lines.append(f"    Foundry-Next action         {drive['action']}")
+    lines.append(f"    first call named            {_first_call(drive['header'])}")
+    lines.append(f"    claims a registered team    {'still registered' in drive['header']}")
+
+    lines.append("")
+    lines.append("warned, wave-1 team registered, the reading's team scan disagrees (D-028)")
+    for first_scan in ("raises", "empty"):
+        drive = _in_scratch(_refuse_under_a_split_scan, first_scan=first_scan)
+        lines.append(f"  first scan {first_scan}")
+        lines.append(f"    Foundry-Next action         {drive['action']}")
+        lines.append(f"    tears the team down         {_tears_down(drive['header'])}")
+        lines.append(f"    sends casting 1 back        {_refused_to_casting(drive['header'], '1')}")
+
     judged, unrecorded = _judged_return_lines()
     lines.append("")
     lines.append("foundry_accept_casting return paths that judge the casting")
@@ -1353,13 +1600,19 @@ def test_the_route_report_agrees_with_the_tests_beside_it():
     joined = "\n".join(acceptance_route_report())
 
     assert "  recording no verdict          0" in joined, joined
-    assert joined.count("    returns to casting 1        True") == 7, joined
+    assert joined.count("    returns to casting 1        True") == 8, joined
     assert joined.count("    a step conditioned          False") == 8, joined
     assert joined.count("    first call named            SendMessage") == 5, joined
-    assert joined.count("    first call named            Foundry-Spawn-Teammate") == 5, joined
-    assert joined.count("    first call named            Foundry-Spec-Hash") == 3, joined
+    assert joined.count("    first call named            Foundry-Spawn-Teammate") == 6, joined
+    assert joined.count("    first call named            Foundry-Spec-Hash") == 4, joined
     assert joined.count("'s refusal  True\n    names no other casting      True") == 6, joined
     assert "    sends the refusal back      False" in joined, joined
     assert joined.count("    tears the team down         True") == 1, joined
     assert joined.count("    any teardown in the payload False") == 2, joined
     assert "  dispatches wave 2             True" in joined, joined
+    assert "    step (2) appends the ledger True" in joined, joined
+    assert "    teammate wrote done         True" in joined, joined
+    assert "    claims a registered team    False" in joined, joined
+    assert joined.count("    sends casting 1 back        True") == 2, joined
+    split = joined.split("the reading's team scan disagrees (D-028)", 1)[1]
+    assert "    Foundry-Next action         cleanup_teams" not in split, split

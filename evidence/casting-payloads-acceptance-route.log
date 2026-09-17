@@ -1,5 +1,5 @@
 # evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.test_next_call_payloads import acceptance_route_report; [print(r) for r in acceptance_route_report()]' 2>/dev/null
-# evidence-for: ST-004, US-003, GI-008, US-001, GI-005, CT-005, OT-006, FR-011, CT-004, GI-003
+# evidence-for: ST-004, US-003, GI-008, US-001, GI-005, CT-005, OT-006, FR-011, CT-004, GI-003, FR-015, FR-002, ST-003
 
 Foundry-Accept-Casting, then the Foundry-Next its next_call names
   wave 1 = casting 1 (done); wave 2 = casting 2 (not started)
@@ -130,6 +130,30 @@ more than one wave-1 casting done, then Foundry-Next (D-025..D-027)
     first call named            Foundry-Spawn-Teammate
     forwards casting 2's refusal  True
     names no other casting      True
+
+warned, no team; the real Foundry-Spawn-Teammate, the teammate obeys (D-030)
+    routed first call           Foundry-Spawn-Teammate
+    step (2) appends the ledger True
+    teammate wrote done         True
+    Foundry-Next action         build_castings
+    first call named            Foundry-Spec-Hash
+    returns to casting 1        True
+
+warned, no team registered, another project's teammate pane live (D-031)
+    registered teams            []
+    Foundry-Next action         build_castings
+    first call named            Foundry-Spawn-Teammate
+    claims a registered team    False
+
+warned, wave-1 team registered, the reading's team scan disagrees (D-028)
+  first scan raises
+    Foundry-Next action         build_castings
+    tears the team down         False
+    sends casting 1 back        True
+  first scan empty
+    Foundry-Next action         build_castings
+    tears the team down         False
+    sends casting 1 back        True
 
 foundry_accept_casting return paths that judge the casting
   judged                        8
