@@ -4051,7 +4051,7 @@ def test_two_refusals_in_two_waves_key_on_the_named_castings_team(tmp_path):
     `refused[-1]` left every test green. Under that mutation this state reads
     wave 2's team — registered — and hands the send-back to casting 1's
     teammate, whose wave-1 team is gone: a message to nobody, then END YOUR
-    TURN over nothing running (ST-003).
+    TURN over nothing running (lead-stalls ST-003).
     """
     d = _drive(tmp_path, _arrange_cast_refused_two_waves)
 
