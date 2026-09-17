@@ -58,9 +58,7 @@ SERVED_LIST_IS_ONE_MOVE = (
     "between two of its steps, because a Foundry-Next taken mid-list reads a "
     "run state the list has not finished moving and answers with the list "
     "again from step (1) or with a route past the steps still owed. A tool "
-    "answer received inside the list is followed by the list's next step, and "
-    "a spawn door and the Agent call it feeds are one step of that move (the "
-    "spawn rule below)."
+    "answer received inside the list is followed by the list's next step."
 )
 
 #: What `Foundry-Team-Down` answers on success. Not `LEAD_NEXT_CALL`: this

@@ -213,7 +213,7 @@ a real Foundry-Team-Up, casting 1 done, casting 2 still writing
     header ends the turn        True
 
 wave 1 accepted, TeamDelete, a real Foundry-Team-Down, then Foundry-Next
-  Team-Down next_call           "Foundry-Team-Down is one step of the list Foundry-Next served you: go on to that list's next step. A list of next calls Foundry-Next serves is ONE move: make every step it names, in order, through its last step (its END YOUR TURN, or its final call), and call Foundry-Next after that last step, never as a move between two of its steps, because a Foundry-Next taken mid-list reads a run state the list has not finished moving and answers with the list again from step (1) or with a route past the steps still owed. A tool answer received inside the list is followed by the list's next step, and a spawn door and the Agent call it feeds are one step of that move (the spawn rule below)."
+  Team-Down next_call           "Foundry-Team-Down is one step of the list Foundry-Next served you: go on to that list's next step. A list of next calls Foundry-Next serves is ONE move: make every step it names, in order, through its last step (its END YOUR TURN, or its final call), and call Foundry-Next after that last step, never as a move between two of its steps, because a Foundry-Next taken mid-list reads a run state the list has not finished moving and answers with the list again from step (1) or with a route past the steps still owed. A tool answer received inside the list is followed by the list's next step."
   Foundry-Next action           build_castings
   dispatches wave 2             True
   tears the team down           False

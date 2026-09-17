@@ -1472,6 +1472,14 @@ def _numbered_steps(header: str) -> list[str]:
     ]
 
 
+#: The rules block's clause naming the spawn pair one step of the served move.
+#: Kept out of `SERVED_LIST_IS_ONE_MOVE` itself, which Team-Down's answer also
+#: quotes and which has no spawn rule below it there.
+_SPAWN_STEP_OF_THE_MOVE = (
+    "A spawn door and the Agent call it feeds are one step of that move"
+)
+
+
 def _spawn_order_faults(drive: dict) -> list[str]:
     """Every way ``drive``'s dispatch step list breaks the one declared order.
 
@@ -1519,7 +1527,7 @@ def _spawn_order_faults(drive: dict) -> list[str]:
     if (
         "Foundry-Next after each step" in drive["rules"]
         or drive["rules"].count(_teams.SERVED_LIST_IS_ONE_MOVE) != 1
-        or "spawn door and the Agent call" not in _teams.SERVED_LIST_IS_ONE_MOVE
+        or _SPAWN_STEP_OF_THE_MOVE not in drive["rules"]
     ):
         faults.append("the rules do not state the served list as one move")
     return faults
