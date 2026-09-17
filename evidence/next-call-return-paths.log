@@ -1,5 +1,5 @@
-# evidence-cmd: PYTHONPATH=plugins/foundry/mcp-server/src python3 -c "import tempfile;from foundry_mcp.tools.artifacts import LEAD_NEXT_CALL as LEAF;from foundry_mcp.tools.evidence import foundry_accept_casting,LEAD_NEXT_CALL as A;from foundry_mcp.tools.orchestration.teams import foundry_unregister_team,LEAD_NEXT_CALL as B;d=tempfile.mkdtemp();r=foundry_accept_casting(casting_id=1,spec_hash='x',prompt_hash='x',completion_report='x',project_root=d,casting_commit='deadbeef');t=foundry_unregister_team('no-such-team',d);print('accept_casting refusal ok       =',r.get('ok'));print('accept_casting refusal keys     =',sorted(r));print('accept_casting refusal next_call=',repr(r.get('next_call')));print('team_down refusal keys          =',sorted(t));print('team_down refusal next_call     =',repr(t.get('next_call')));print('leaf LEAD_NEXT_CALL             =',repr(LEAF));print('evidence.py is the leaf object  =',A is LEAF);print('teams.py    is the leaf object  =',B is LEAF)"
-# evidence-for: US-003, FR-004, FR-011, NFR-002, GI-003, GI-005, CT-004, CT-005, ST-004, OT-006
+# evidence-cmd: PYTHONPATH=plugins/foundry/mcp-server/src python3 -c "import tempfile;from foundry_mcp.tools.artifacts import LEAD_NEXT_CALL as LEAF;from foundry_mcp.tools.evidence import foundry_accept_casting,LEAD_NEXT_CALL as A;from foundry_mcp.tools.orchestration.teams import foundry_unregister_team,TEAM_DOWN_NEXT_CALL as B,SERVED_LIST_IS_ONE_MOVE as RULE;d=tempfile.mkdtemp();r=foundry_accept_casting(casting_id=1,spec_hash='x',prompt_hash='x',completion_report='x',project_root=d,casting_commit='deadbeef');t=foundry_unregister_team('no-such-team',d);print('accept_casting refusal ok       =',r.get('ok'));print('accept_casting refusal keys     =',sorted(r));print('accept_casting refusal next_call=',repr(r.get('next_call')));print('team_down refusal keys          =',sorted(t));print('team_down refusal next_call     =',repr(t.get('next_call')));print('leaf LEAD_NEXT_CALL             =',repr(LEAF));print('evidence.py is the leaf object  =',A is LEAF);print('team_down next_call is the leaf=',B is LEAF);print('team_down next_call quotes rule=',B.endswith(RULE))"
+# evidence-for: US-003, FR-004, FR-011, FR-015, NFR-002, GI-003, GI-005, GI-008, CT-004, CT-005, ST-004, OT-006
 
 accept_casting refusal ok       = False
 accept_casting refusal keys     = ['error', 'next_call', 'ok']
@@ -8,4 +8,5 @@ team_down refusal keys          = ['error']
 team_down refusal next_call     = None
 leaf LEAD_NEXT_CALL             = 'Call Foundry-Next now.'
 evidence.py is the leaf object  = True
-teams.py    is the leaf object  = True
+team_down next_call is the leaf= False
+team_down next_call quotes rule= True
