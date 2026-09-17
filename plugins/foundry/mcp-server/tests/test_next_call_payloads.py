@@ -36,6 +36,8 @@ from foundry_mcp.tools import foundry_state as _foundry_state
 from foundry_mcp.tools.artifacts import _hash_file, foundry_spec_hash
 from foundry_mcp.tools.evidence import foundry_accept_casting
 from foundry_mcp.tools.foundry_spawn import foundry_cast_wave, foundry_spawn_teammate
+from foundry_mcp.tools.orchestration import guidance as _guidance
+from foundry_mcp.tools.orchestration.directives import foundry_defects_to_tasks
 from foundry_mcp.tools.orchestration import teams as _teams
 from foundry_mcp.tools.orchestration.guidance import foundry_next_action
 from foundry_mcp.tools.orchestration.teams import (
@@ -200,7 +202,7 @@ def test_team_down_success_payload_gains_exactly_one_key(run_env, monkeypatch):
     assert result.get("ok") is True, result
     assert set(result) - TEAM_DOWN_PRE_EXISTING_KEYS == {"next_call"}, result
     assert TEAM_DOWN_PRE_EXISTING_KEYS <= set(result), result
-    assert result["next_call"] == _teams.LEAD_NEXT_CALL, result
+    assert result["next_call"] == _teams.TEAM_DOWN_NEXT_CALL, result
 
 
 def test_team_down_refusal_does_not_claim_a_next_call(run_env, monkeypatch):
@@ -232,28 +234,34 @@ def test_team_down_refusal_does_not_claim_a_next_call(run_env, monkeypatch):
     assert "next_call" not in refused, refused
 
 
-def test_both_doors_name_the_same_next_call():
-    """lead-stalls FR-011 pins the wording, and both doors are pinned to ONE object.
+def test_each_door_names_its_one_declared_next_call():
+    """lead-stalls FR-011 pins Accept-Casting's wording; D-044 moved Team-Down's.
 
     `is`, not `==`. `teams.py` is LIFECYCLE and `evidence.py` is a VERIFIER and
     neither may import the other at any depth (fallout AC-061), so a per-module copy
-    was the first shape tried here — and
+    of Accept-Casting's sentence was the first shape tried here — and
     `test_no_top_level_symbol_is_defined_in_two_shipped_modules` refused it.
-    The constant lives in `tools/artifacts.py`, the leaf BOTH doors already
-    import from, and an identity check is what says so: two equal strings would
-    pass `==` on the day someone re-forks the literal, which is the whole
-    failure that guard exists to prevent.
+    The constant lives in `tools/artifacts.py`, the leaf the door imports from,
+    and an identity check is what says so: two equal strings would pass `==` on
+    the day someone re-forks the literal.
+
+    Team-Down no longer says "Call Foundry-Next now." (D-044): it is a MIDDLE
+    step of two served lists, and that sentence sent the lead out of both. Its
+    answer quotes the served-list rule the standing rules block renders, by
+    identity with the one declaration in `teams.py`.
     """
     assert _artifacts.LEAD_NEXT_CALL == "Call Foundry-Next now.", (
         _artifacts.LEAD_NEXT_CALL
     )
     assert _evidence.LEAD_NEXT_CALL is _artifacts.LEAD_NEXT_CALL
-    assert _teams.LEAD_NEXT_CALL is _artifacts.LEAD_NEXT_CALL
+    assert _teams.TEAM_DOWN_NEXT_CALL != _artifacts.LEAD_NEXT_CALL
+    assert _teams.TEAM_DOWN_NEXT_CALL.endswith(_teams.SERVED_LIST_IS_ONE_MOVE)
+    assert _guidance.SERVED_LIST_IS_ONE_MOVE is _teams.SERVED_LIST_IS_ONE_MOVE
 
 
 @pytest.mark.parametrize(
     "value",
-    [_evidence.LEAD_NEXT_CALL, _teams.LEAD_NEXT_CALL],
+    [_evidence.LEAD_NEXT_CALL, _teams.TEAM_DOWN_NEXT_CALL],
     ids=["accept_casting", "team_down"],
 )
 def test_next_call_names_a_literal_tool_call_with_no_conditional(value):
@@ -1505,14 +1513,15 @@ def _spawn_order_faults(drive: dict) -> list[str]:
         faults.append("the rules block's spawn sentence does not end in progress_protocol")
     if "no Foundry-Next between" not in drive["rules"]:
         faults.append("the rules block does not state the one move")
-    # D-039's shape one rule up: "call Foundry-Next after each step" must name
-    # the door-and-Agent move as one step, or the payload carries two answers.
-    after_each = [
-        line for line in drive["rules"].splitlines()
-        if "Call Foundry-Next after each step" in line
-    ]
-    if len(after_each) != 1 or "spawn door and the Agent call" not in after_each[0]:
-        faults.append("the after-each-step rule does not except the spawn move")
+    # D-039's shape one rule up, as D-044 / D-045 left it: the rules state
+    # the served list as ONE move, naming the door-and-Agent pair as one of
+    # its steps, and no "after each step" sentence is left to disagree.
+    if (
+        "Foundry-Next after each step" in drive["rules"]
+        or drive["rules"].count(_teams.SERVED_LIST_IS_ONE_MOVE) != 1
+        or "spawn door and the Agent call" not in _teams.SERVED_LIST_IS_ONE_MOVE
+    ):
+        faults.append("the rules do not state the served list as one move")
     return faults
 
 
@@ -1593,12 +1602,13 @@ def test_the_spawn_order_check_catches_the_shipped_shapes(
     drive["next_calls"].insert(-1, {"tool": "Foundry-Next", "prompt_blocks": []})
     assert any("Foundry-Next step" in f for f in _spawn_order_faults(drive))
 
-    # The 5abd2be rules line: "follow it." and no word on the spawn move.
-    drive["rules"] = re.sub(
-        r"(Call Foundry-Next after each step and follow it)[^.]*\.",
-        r"\1.", drive["rules"],
+    # The 373e2d1 rules line (D-044): "after each step", the spawn move excepted.
+    drive["rules"] = drive["rules"].replace(
+        _teams.SERVED_LIST_IS_ONE_MOVE,
+        "Call Foundry-Next after each step and follow it; a spawn door and the "
+        "Agent call it feeds are one step (the spawn rule below).",
     )
-    assert "the after-each-step rule does not except the spawn move" in (
+    assert "the rules do not state the served list as one move" in (
         _spawn_order_faults(drive)
     ), drive["rules"]
 
@@ -1805,10 +1815,318 @@ def test_team_down_next_call_carries_a_finished_wave_to_the_next(tmp_path, monke
 
     assert drive["accepted"]["ok"] is True, drive
     assert drive["team_down"].get("ok") is True, drive
-    assert drive["team_down"]["next_call"] == _artifacts.LEAD_NEXT_CALL, drive
+    assert drive["team_down"]["next_call"] == _teams.TEAM_DOWN_NEXT_CALL, drive
     assert drive["action"] == "build_castings", drive
     assert _NEXT_WAVE_CALL in drive["header"], drive
     assert not _tears_down(drive["header"]), drive
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls FR-015 / GI-008 / US-003 / ST-004 (D-044, D-045) — A SERVED LIST,
+# WALKED STEP BY STEP BY A LEAD THAT OBEYS WHAT IT READS.
+# --------------------------------------------------------------------------- #
+#
+# The standing rule "Call Foundry-Next after each step" and Team-Down's
+# "Call Foundry-Next now." each sent the lead to Foundry-Next in the MIDDLE of
+# a served list, and three lists went wrong there: the CAST teardown and the
+# GRIND dispatch were re-served from step (1), the CAST re-dispatch was
+# answered END YOUR TURN before its SendMessage. The walker below reads both
+# signals as a lead does, makes every step through the real door that step
+# names, and takes a mid-list Foundry-Next exactly when one of them orders
+# it — so restoring either sentence turns these drives red.
+
+
+def _orders_mid_list_next(rules: str) -> bool:
+    """True when the rules above a served list order a Foundry-Next between
+    two of its steps: the pre-D-044 "after each step" sentence, or no
+    statement of the one-move rule at all."""
+    return (
+        "Foundry-Next after each step" in rules
+        or _teams.SERVED_LIST_IS_ONE_MOVE not in rules
+    )
+
+
+def _quoted(args: str | None) -> str:
+    """The first single-quoted value in a step's ``args``."""
+    match = re.search(r"'([^']+)'", args or "")
+    assert match, args
+    return match.group(1)
+
+
+def _make_step(root: str, fdir: Path, teams_dir: Path, call: dict, sent: list) -> dict:
+    """One served step, made through the real door it names; its answer.
+
+    Only the tools a lead runs outside this server are simulated: TeamCreate
+    and TeamDelete are the team directory, an Agent is its teammate's first
+    ledger line over each seed its door wrote, a SendMessage is recorded.
+    """
+    tool, args = call["tool"], call.get("args")
+    if tool == "TeamDelete":
+        for team in list(teams_dir.iterdir()):
+            team.rmdir()
+        return {"ok": True}
+    if tool == "TeamCreate":
+        (teams_dir / _quoted(args)).mkdir(exist_ok=True)
+        return {"ok": True}
+    if tool == "Foundry-Team-Up":
+        return foundry_register_team(_quoted(args), project_root=root)
+    if tool == "Foundry-Team-Down":
+        if args:
+            return foundry_unregister_team(_quoted(args), root)
+        # `cleanup_teams` names no team: "for each team name" registered.
+        state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+        answer: dict = {}
+        for team in list(state.get("active_teams") or []):
+            answer = foundry_unregister_team(team, root)
+            if not answer.get("ok"):
+                break
+        return answer
+    if tool == "Foundry-Tasks":
+        return foundry_defects_to_tasks(root)
+    if tool == "Foundry-Spawn-Teammate":
+        phase = _quoted(args)
+        return foundry_spawn_teammate(casting_id="1", phase=phase, project_root=root)
+    if tool == "Foundry-Cast-Wave":
+        wave = int(re.search(r"wave=(\d+)", args).group(1))
+        return foundry_cast_wave(wave, "cast", project_root=root)
+    if tool == "Agent":
+        now = _foundry_state.now_iso()
+        for path in sorted((fdir / "progress").glob("casting-*.jsonl")):
+            last = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+            if last.get("seeded_by") == "server":
+                with path.open("a", encoding="utf-8") as ledger:
+                    ledger.write(json.dumps(
+                        {"timestamp": now, "phase": "cast", "step": "reading the prompt"}
+                    ) + "\n")
+        return {}
+    if tool == "SendMessage":
+        sent.append(args)
+        return {}
+    raise AssertionError(f"the walker has no door for {tool}: {call}")
+
+
+#: Where each walked list ends as its lead reaches it: the call the list
+#: exists to reach. A Foundry-Gate is not made here — the list has done its
+#: job once the lead stands at it with nothing re-served.
+_LIST_ENDS = ("Foundry-Gate", "END YOUR TURN")
+
+#: The one step pair the one-move rule has always declared a single move.
+_SPAWN_DOORS = ("Foundry-Cast-Wave", "Foundry-Spawn-Teammate")
+
+
+def _walk_served_list(root: str, fdir: Path, teams_dir: Path, *, hops: int = 4) -> dict:
+    """Foundry-Next, then each list it serves, step by step, as the lead reads it.
+
+    A list whose last step is made is followed by the Foundry-Next the rules
+    place there, and the lead walks what that call serves. A Foundry-Next is
+    taken MID-list only when the rules or a step's answer order one; the lead
+    then starts again on whatever list that call serves. The walk stops at a
+    list's end (`_LIST_ENDS`) or after ``hops`` lists; once ended, the
+    Foundry-Next that follows the yield is made too.
+    """
+    served = foundry_next_action(root)
+    walked: list[str] = []
+    actions = [served.get("action")]
+    answers: list[dict] = []
+    sent: list[str] = []
+    ended = False
+    for _ in range(hops):
+        calls = served.get("next_calls") or []
+        mid_list = _orders_mid_list_next(
+            served.get("instructions", "").split(_NEXT_ACTION_MARKER, 1)[0]
+        )
+        for index, call in enumerate(calls):
+            tool = call["tool"]
+            walked.append(tool if tool != "Foundry-Gate" else f"Foundry-Gate({call['args']})")
+            if tool in _LIST_ENDS:
+                ended = True
+                break
+            answer = _make_step(root, fdir, teams_dir, call, sent)
+            answers.append({"tool": tool, **answer})
+            following = calls[index + 1]["tool"] if index + 1 < len(calls) else None
+            told_now = answer.get("next_call") == _artifacts.LEAD_NEXT_CALL
+            one_move = tool in _SPAWN_DOORS and following == "Agent"
+            if following is not None and (told_now or (mid_list and not one_move)):
+                break
+        if ended or not calls:
+            break
+        served = foundry_next_action(root)
+        actions.append(served.get("action"))
+        walked.append("Foundry-Next")
+    after = foundry_next_action(root) if ended else {}
+    return {
+        "walked": walked,
+        "actions": actions,
+        "answers": answers,
+        "sent": sent,
+        "ended": ended,
+        "after_action": after.get("action"),
+        "after_header": _header(after) if after else "",
+        "after_next_calls": after.get("next_calls"),
+    }
+
+
+def _built_wave_team_up(root: str, fdir: Path, teams_dir: Path) -> None:
+    """F1, the only wave built and accepted, its team still registered."""
+    _arrange_waves(fdir, {1: ["1"]})
+    (teams_dir / _WAVE_ONE_TEAM).mkdir()
+    assert foundry_register_team(_WAVE_ONE_TEAM, project_root=root)["ok"]
+    _worked_ledger(fdir, "1", done=True)
+    assert _accept(root, fdir, "1")["ok"] is True
+
+
+def _grind_open_no_team(root: str, fdir: Path, teams_dir: Path) -> None:
+    """F3, D-001 open LIVE on casting 1, no team, nothing running."""
+    _arrange_waves(fdir, {1: ["1"]})
+    _write_state(fdir, phase="F3", cycle=0)
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE", status="open")])
+
+
+def _refused_no_team(root: str, fdir: Path, teams_dir: Path) -> None:
+    """F1, casting 1 done a minute ago and refused, no team registered."""
+    _redispatch_route(root, fdir, teams_dir)
+
+
+#: Each D-044 / D-045 list: its arrange, the actions serving the walk, and the
+#: calls a lead obeying the one-move rule makes, in order, to the list's end.
+_SERVED_LISTS = {
+    # The team still stands, so `cleanup_teams` is served first; its last
+    # step is Team-Down, the Foundry-Next after it serves D-044's list.
+    "cast_wave_complete": (
+        _built_wave_team_up, ["cleanup_teams", "build_castings"],
+        ["SendMessage", "TeamDelete", "Foundry-Team-Down", "Foundry-Next",
+         "TeamDelete", "Foundry-Team-Down", "Foundry-Gate(phase='inspect')"],
+    ),
+    "grind_dispatch": (
+        _grind_open_no_team, ["fix_defects"],
+        ["TeamDelete", "Foundry-Team-Down", "Foundry-Tasks", "TeamCreate",
+         "Foundry-Team-Up", "Foundry-Spawn-Teammate", "Agent", "END YOUR TURN"],
+    ),
+    "cast_refused_redispatch": (
+        _refused_no_team, ["build_castings"],
+        ["Foundry-Spawn-Teammate", "Agent", "SendMessage", "END YOUR TURN"],
+    ),
+}
+
+
+def _walk(base: Path, monkeypatch, *, served_list: str) -> dict:
+    arrange, _actions, _calls = _SERVED_LISTS[served_list]
+    with _scratch_run(base, monkeypatch) as (root, fdir, teams_dir):
+        arrange(root, fdir, teams_dir)
+        return _walk_served_list(root, fdir, teams_dir)
+
+
+@pytest.mark.parametrize("served_list", sorted(_SERVED_LISTS))
+def test_a_served_list_walked_as_one_move_reaches_its_end(
+    tmp_path, monkeypatch, served_list
+):
+    """lead-stalls FR-015 / US-003 / ST-004 / CT-003 (D-044, D-045).
+
+    Every step made through its real door, Foundry-Next only after the last:
+    the teardown stands at Foundry-Gate(inspect), the GRIND dispatch has made
+    Foundry-Tasks and spawned, the re-dispatch has SENT the refusal — and the
+    list is walked once, with no re-served prefix and no Foundry-Next inside.
+    """
+    _arrange, actions, calls = _SERVED_LISTS[served_list]
+    drive = _walk(tmp_path, monkeypatch, served_list=served_list)
+
+    assert drive["walked"] == calls, drive
+    assert drive["actions"] == actions, drive
+    assert drive["ended"] is True, drive
+    for answer in drive["answers"]:
+        assert answer.get("ok", True) is True, (answer, drive)
+
+
+def test_the_redispatch_walk_sends_the_refusal_and_reads_live(tmp_path, monkeypatch):
+    """lead-stalls D-045a — the SendMessage after the spawn is made, then the
+    woken Foundry-Next leaves the re-spawned teammate running."""
+    drive = _walk(tmp_path, monkeypatch, served_list="cast_refused_redispatch")
+
+    assert drive["sent"] and "casting 1" in drive["sent"][0], drive
+    assert drive["after_action"] == "build_castings", drive
+    assert drive["after_next_calls"] == [], drive
+    assert "Foundry-Spawn-Teammate(" not in drive["after_header"], drive
+
+
+def test_the_grind_walk_keeps_the_team_it_registered(tmp_path, monkeypatch):
+    """lead-stalls D-045b — the team TeamCreate + Team-Up registered is not
+    torn down, and the Foundry-Next after the yield reads the cycle live."""
+    drive = _walk(tmp_path, monkeypatch, served_list="grind_dispatch")
+
+    assert drive["after_action"] == "fix_defects", drive
+    assert drive["after_next_calls"] == [], drive
+    assert not _tears_down(drive["after_header"]), drive
+    tasks = [a for a in drive["answers"] if a["tool"] == "Foundry-Tasks"]
+    assert tasks and tasks[0].get("count") == 1, drive
+
+
+@pytest.mark.parametrize("served_list", ["cast_wave_complete", "grind_dispatch"])
+def test_the_walk_goes_red_when_team_down_says_call_foundry_next_now(
+    tmp_path, monkeypatch, served_list
+):
+    """Revert control for D-044's payload hunk: Team-Down's pre-D-044 answer,
+    obeyed, re-serves the list and never reaches its end."""
+    monkeypatch.setattr(_teams, "TEAM_DOWN_NEXT_CALL", _artifacts.LEAD_NEXT_CALL)
+    drive = _walk(tmp_path, monkeypatch, served_list=served_list)
+
+    assert drive["ended"] is False, drive
+
+
+@pytest.mark.parametrize("served_list", sorted(_SERVED_LISTS))
+def test_the_walk_goes_red_under_the_after_each_step_rule(
+    tmp_path, monkeypatch, served_list
+):
+    """Revert control for the rules hunk: a lead told to call Foundry-Next
+    after each step leaves every one of the three lists short of its end."""
+    monkeypatch.setattr(
+        _teams, "SERVED_LIST_IS_ONE_MOVE", "a sentence no rules block carries"
+    )
+    _arrange, _actions, calls = _SERVED_LISTS[served_list]
+    drive = _walk(tmp_path, monkeypatch, served_list=served_list)
+
+    assert drive["walked"] != calls, drive
+
+
+#: An unresolved template slot: `{name}` with no space inside. JSON-ish braces
+#: never reach these strings, so any match is a slot the renderer left.
+_UNRESOLVED_SLOT = re.compile(r"\{[A-Za-z_][^{}\s]*\}")
+
+
+def _unresolved_slots(base: Path, monkeypatch, *, served_list: str) -> list[str]:
+    """Every text a walked list hands the lead that keeps a `{slot}`: its
+    header, its next_calls, and every Team-Up / Team-Down answer."""
+    arrange, _actions, _calls = _SERVED_LISTS[served_list]
+    with _scratch_run(base, monkeypatch) as (root, fdir, teams_dir):
+        arrange(root, fdir, teams_dir)
+        served = foundry_next_action(root)
+        drive = _walk_served_list(root, fdir, teams_dir)
+    texts = [_header(served)] + [
+        str(call.get(key) or "")
+        for call in served.get("next_calls") or []
+        for key in ("tool", "args", "each", "note")
+    ] + [
+        json.dumps(answer) for answer in drive["answers"]
+        if answer["tool"] in ("Foundry-Team-Up", "Foundry-Team-Down")
+    ]
+    return [text for text in texts if _UNRESOLVED_SLOT.search(text)]
+
+
+@pytest.mark.parametrize("served_list", sorted(_SERVED_LISTS))
+def test_no_served_step_or_team_answer_carries_an_unresolved_slot(
+    tmp_path, monkeypatch, served_list
+):
+    """lead-stalls D-046, the payload mirror: nothing a walked list hands the
+    lead — its next_calls, its header, a Team-Up or Team-Down answer — keeps a
+    `{slot}` the renderer did not fill."""
+    leftovers = _unresolved_slots(tmp_path, monkeypatch, served_list=served_list)
+    assert leftovers == [], leftovers
+
+
+def test_the_slot_check_catches_a_left_slot():
+    """Positive control: D-046's mutation output is caught."""
+    assert _UNRESOLVED_SLOT.search("Foundry-Gate(phase='{gate}')")
+    assert _UNRESOLVED_SLOT.search('{"next_call": "{token}"}')
+    assert not _UNRESOLVED_SLOT.search('{"ok": true}')
 
 
 def _tears_down(text: str) -> bool:
@@ -2082,3 +2400,82 @@ def test_the_route_report_agrees_with_the_tests_beside_it():
     assert joined.count("    door ok, ledger last lines  True ") == 3, joined
     split = joined.split("the reading's team scan disagrees (D-028)", 1)[1]
     assert "    Foundry-Next action         cleanup_teams" not in split, split
+
+
+def served_list_route_report() -> list[str]:
+    """The lines `evidence/casting-payloads-served-list-route.log` carries.
+
+    lead-stalls D-044 / D-045 / D-046: each served list walked as the rules
+    and the step answers read, then the same walk under each pre-fix
+    sentence. Scratch directories only; nothing printed is environmental.
+    """
+    import tempfile
+
+    def _in_scratch(served_list: str, **patches) -> dict:
+        patch = pytest.MonkeyPatch()
+        try:
+            for name, value in patches.items():
+                patch.setattr(_teams, name, value)
+            with tempfile.TemporaryDirectory() as tmp:
+                return _walk(Path(tmp), patch, served_list=served_list)
+        finally:
+            patch.undo()
+
+    def _slots(served_list: str) -> list[str]:
+        patch = pytest.MonkeyPatch()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                return _unresolved_slots(Path(tmp), patch, served_list=served_list)
+        finally:
+            patch.undo()
+
+    reverts = {
+        "Team-Down says 'Call Foundry-Next now.'": {
+            "TEAM_DOWN_NEXT_CALL": _artifacts.LEAD_NEXT_CALL,
+        },
+        "rules lack the one-move sentence": {
+            "SERVED_LIST_IS_ONE_MOVE": "a sentence no rules block carries",
+        },
+    }
+    lines = ["each served list, walked step by step, Foundry-Next after its last step"]
+    lines.append(f"  Team-Down next_call is LEAD_NEXT_CALL   "
+                 f"{_teams.TEAM_DOWN_NEXT_CALL == _artifacts.LEAD_NEXT_CALL}")
+    lines.append(f"  Team-Down next_call quotes the rule     "
+                 f"{_teams.TEAM_DOWN_NEXT_CALL.endswith(_teams.SERVED_LIST_IS_ONE_MOVE)}")
+    lines.append(f"  guidance renders the same object        "
+                 f"{_guidance.SERVED_LIST_IS_ONE_MOVE is _teams.SERVED_LIST_IS_ONE_MOVE}")
+    for served_list in sorted(_SERVED_LISTS):
+        _arrange, actions, calls = _SERVED_LISTS[served_list]
+        drive = _in_scratch(served_list)
+        lines.append("")
+        lines.append(f"  {served_list}")
+        lines.append(f"    walked                    {drive['walked']}")
+        lines.append(f"    as the one move           {drive['walked'] == calls}")
+        lines.append(f"    actions served            {drive['actions']}")
+        lines.append(f"    every door answered ok    "
+                     f"{all(a.get('ok', True) is True for a in drive['answers'])}")
+        lines.append(f"    refusal sent              {bool(drive['sent']) and 'casting 1' in drive['sent'][-1]}")
+        lines.append(f"    unresolved {{slot}} texts   {len(_slots(served_list))}")
+        lines.append(f"    after the end: action     {drive['after_action']}")
+        lines.append(f"    after the end: calls      "
+                     f"{[c['tool'] for c in drive['after_next_calls'] or []]}")
+        for label, patches in reverts.items():
+            reverted = _in_scratch(served_list, **patches)
+            lines.append(f"    reverted, {label}")
+            lines.append(f"      reaches its end         {reverted['walked'] == calls}")
+    return lines
+
+
+def test_the_served_list_report_agrees_with_the_tests_beside_it():
+    """The committed log's claims, re-derived here so neither can drift alone."""
+    joined = "\n".join(served_list_route_report())
+
+    assert "  Team-Down next_call is LEAD_NEXT_CALL   False" in joined, joined
+    assert "  Team-Down next_call quotes the rule     True" in joined, joined
+    assert "  guidance renders the same object        True" in joined, joined
+    assert joined.count("    as the one move           True") == 3, joined
+    assert joined.count("    every door answered ok    True") == 3, joined
+    assert joined.count("      reaches its end         False") == 5, joined
+    assert joined.count("      reaches its end         True") == 1, joined
+    assert joined.count("    after the end: calls      []") == 2, joined
+    assert joined.count("    unresolved {slot} texts   0") == 3, joined

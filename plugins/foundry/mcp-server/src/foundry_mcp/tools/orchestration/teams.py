@@ -14,7 +14,6 @@ from foundry_mcp.tools.orchestration.keyfiles import DIRECTORY_ENTRY_SUFFIX
 from foundry_mcp.tools.artifacts import (
     CAST_BASELINE_SHA_MARKER,
     INSPECT_BOUNDARY_SHA_MARKER,
-    LEAD_NEXT_CALL,
     TRACE_CLEAN_AT_MARKER,
     # fallout GI-033 / AC-061 (D-080, concern C-060) — ALIASED, and the alias
     # is load-bearing rather than a leftover: D-134's scan recognises a manifest
@@ -39,6 +38,38 @@ from foundry_mcp.tools.foundry_state import (
     sight_required,
 )
 from pathlib import Path
+
+
+#: lead-stalls FR-015 / GI-008 / US-003 / ST-004 (D-044, D-045) — A SERVED
+#: STEP LIST IS ONE MOVE.
+#:
+#: The standing rule used to read "Call Foundry-Next after each step", and a
+#: lead that obeyed it mid-list was answered from the state its own half-done
+#: list had left: a teardown list re-served from step (1), a re-dispatch
+#: answered END YOUR TURN before its SendMessage, a GRIND team torn down right
+#: after it was registered. Declared HERE rather than in `guidance.py`, which
+#: renders its rules line from it, because `guidance.py` imports this module
+#: and this door's `next_call` has to quote the same sentence: the two
+#: surfaces are one string by construction.
+SERVED_LIST_IS_ONE_MOVE = (
+    "A list of next calls Foundry-Next serves is ONE move: make every step it "
+    "names, in order, through its last step (its END YOUR TURN, or its final "
+    "call), and call Foundry-Next after that last step, never as a move "
+    "between two of its steps, because a Foundry-Next taken mid-list reads a "
+    "run state the list has not finished moving and answers with the list "
+    "again from step (1) or with a route past the steps still owed. A tool "
+    "answer received inside the list is followed by the list's next step, and "
+    "a spawn door and the Agent call it feeds are one step of that move (the "
+    "spawn rule below)."
+)
+
+#: What `Foundry-Team-Down` answers on success. Not `LEAD_NEXT_CALL`: this
+#: door is a middle step of `_CAST_WAVE_COMPLETE` and `_GRIND_DISPATCH`, and
+#: "Call Foundry-Next now." sent the lead out of both (D-044).
+TEAM_DOWN_NEXT_CALL = (
+    "Foundry-Team-Down is one step of the list Foundry-Next served you: go on "
+    "to that list's next step. " + SERVED_LIST_IS_ONE_MOVE
+)
 
 
 
@@ -658,13 +689,20 @@ def foundry_unregister_team(
     # refusals above already name their own remedy in `hint` — a refusal that
     # also said "Call Foundry-Next now." would be telling the lead to move on
     # from a door that just refused to let it.
+    #
+    # lead-stalls FR-015 / US-003 / ST-004 (D-044) — `TEAM_DOWN_NEXT_CALL`, not
+    # `LEAD_NEXT_CALL`. This door is never a list's last step but in
+    # `cleanup_teams`, and the lead took "Call Foundry-Next now." as an order
+    # to leave the list it was on: `_CAST_WAVE_COMPLETE` and `_GRIND_DISPATCH`
+    # were re-served from step (1) after it, and Foundry-Gate / Foundry-Tasks
+    # were never reached.
     return {
         "ok": True,
         "unregistered": team_name,
         "remaining_teams": len(teams),
         "tmux_panes_killed": killed,
         "verified_clean": True,
-        "next_call": LEAD_NEXT_CALL,
+        "next_call": TEAM_DOWN_NEXT_CALL,
     }
 
 
