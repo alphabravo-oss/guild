@@ -130,10 +130,17 @@ more than one wave-1 casting done, then Foundry-Next (D-025..D-027)
     first call named            Foundry-Spawn-Teammate
     forwards casting 2's refusal  True
     names no other casting      True
+  2 then 1 refused across two waves, only wave 2's team registered (D-036)
+    teams registered            ['cast-payloads-route-wave-2']
+    refused casting's team      cast-payloads-route-wave-1
+    first call named            Foundry-Spawn-Teammate
+    forwards casting 1's refusal  True
+    sends the refusal back      False
 
 warned, no team; the real Foundry-Spawn-Teammate, the teammate obeys (D-030)
     routed first call           Foundry-Spawn-Teammate
     step (2) appends the ledger True
+    rules above sanction it     True
     teammate wrote done         True
     Foundry-Next action         build_castings
     first call named            Foundry-Spec-Hash

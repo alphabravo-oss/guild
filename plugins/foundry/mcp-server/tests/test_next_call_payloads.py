@@ -968,26 +968,30 @@ def _owed_then_follow(
     refused: list[str],
     team_registered: bool,
     same_second: bool = False,
+    team_wave: int = 1,
 ) -> dict:
-    """Every wave-1 casting worked and done; ``refused`` refused through the
-    real door, in the order listed; every other one never accepted. Then
-    Foundry-Next.
+    """Every casting in waves 1..``team_wave`` worked and done; ``refused`` refused
+    through the real door, in the order listed; every other one never
+    accepted. Then Foundry-Next.
 
     ``same_second`` stamps each done line and each refusal record with the one
     whole second both writers would print inside a single second — the done
-    line written first, as a teammate's is.
+    line written first, as a teammate's is. ``team_wave`` is the wave whose
+    CAST team ``team_registered`` registers; every wave up to it is worked.
     """
     with _scratch_run(base, monkeypatch) as (root, fdir, teams_dir):
         _arrange_waves(fdir, waves)
         if team_registered:
-            (teams_dir / _WAVE_ONE_TEAM).mkdir()
-            assert foundry_register_team(_WAVE_ONE_TEAM, project_root=root)["ok"]
+            team = f"cast-{_RUN}-wave-{team_wave}"
+            (teams_dir / team).mkdir()
+            assert foundry_register_team(team, project_root=root)["ok"]
         stamp = None
         if same_second:
             monkeypatch.setattr(_artifacts, "datetime", _SameSecond)
             stamp = _SameSecond.frozen.isoformat()
-        for cid in waves[1]:
-            _worked_ledger(fdir, cid, done=True, stamp=stamp)
+        for number in range(1, team_wave + 1):
+            for cid in waves[number]:
+                _worked_ledger(fdir, cid, done=True, stamp=stamp)
         payloads = {
             cid: _accept(root, fdir, cid, **_REFUSALS["warned"]) for cid in refused
         }
@@ -1003,6 +1007,7 @@ def _owed_then_follow(
         "stamps": [r.get("timestamp") for r in records if r.get("event") == "acceptance"],
         "done_stamp": stamp,
         "action": nxt.get("action"),
+        "liveness": nxt.get("agent_liveness") or {},
         "header": _header(nxt),
     }
 
@@ -1091,6 +1096,35 @@ def test_a_refusal_goes_to_its_own_casting_beside_an_unaccepted_one(
     assert drive["destinations"] == ["casting-2-refused"], drive
     assert _refused_to_casting(drive["header"], "2"), drive
     assert _names_only_casting(drive["header"], "2", ["1", "3"]), drive
+    assert not _tears_down(drive["header"]), drive
+
+
+def test_a_refusal_is_sent_back_by_its_own_waves_team_not_a_later_one(
+    tmp_path, monkeypatch
+):
+    """lead-stalls FR-015 / ST-004 / US-003 (D-036) — the FIRST refused id's wave.
+
+    Casting 1 (wave 1) and casting 2 (wave 2) are both done and refused, and
+    only `cast-{run}-wave-2` is registered: wave 1's team came down before
+    wave 2 went up. `{casting}` is casting 1, so the send-back choice has to
+    read casting 1's wave team. Reading the LAST refused id's wave finds wave
+    2's team standing, and the lead messages a casting-1 teammate whose team
+    is gone and ends its turn with nothing running (lead-stalls ST-003).
+    """
+    drive = _owed_then_follow(
+        tmp_path, monkeypatch, waves={1: ["1"], 2: ["2"]}, refused=["2", "1"],
+        team_registered=True, team_wave=2,
+    )
+
+    assert drive["destinations"] == ["casting-2-refused", "casting-1-refused"], drive
+    assert drive["liveness"].get("teams_registered") == [f"cast-{_RUN}-wave-2"], drive
+    assert drive["liveness"].get("cast_refused_team") == _WAVE_ONE_TEAM, drive
+    assert (drive["action"], _first_call(drive["header"])) == (
+        "build_castings", "Foundry-Spawn-Teammate"
+    ), drive
+    assert _refused_to_casting(drive["header"], "1"), drive
+    assert _REFUSAL_TO_TEAMMATE not in drive["header"], drive
+    assert "own wave team is not registered" in drive["header"], drive
     assert not _tears_down(drive["header"]), drive
 
 
@@ -1183,6 +1217,7 @@ def _refuse_then_respawn_then_follow(base: Path, monkeypatch) -> dict:
     return {
         "payload": refused,
         "routed_action": routed.get("action"),
+        "routed_rules": routed.get("instructions", "").split(_NEXT_ACTION_MARKER, 1)[0],
         "routed_header": header,
         "spawned_ok": spawned.get("ok"),
         "wrote_done": wrote,
@@ -1220,6 +1255,38 @@ def test_the_no_team_refusal_route_followed_as_written_reaches_acceptance(
     assert drive["wrote_done"] is True, drive
     assert "nothing appended" not in _redispatch_step(drive["routed_header"]), drive
     assert "progress_protocol" in _redispatch_step(drive["routed_header"]), drive
+
+
+def _spawn_prompt_rule(rules: str) -> str:
+    """The standing rule, above the marker, on passing a Foundry-Spawn-Teammate prompt."""
+    return "\n".join(
+        line for line in rules.splitlines()
+        if "Foundry-Spawn-Teammate" in line and "VERBATIM" in line
+    )
+
+
+def test_the_rules_above_the_redispatch_step_sanction_what_it_appends(
+    tmp_path, monkeypatch
+):
+    """lead-stalls GI-008 / US-003 / ST-004 (D-035) — one payload, one contract.
+
+    Every Foundry-Next payload opens with the standing CRITICAL RULES, and at
+    b358445 the one on a Foundry-Spawn-Teammate prompt said "Pass it to Agent
+    VERBATIM. GRIND is the only exception" — printed above a CAST redispatch
+    step (2) that orders the `progress_protocol` block appended BELOW the
+    dispatch. A lead obeying the rule passes the dispatch alone, which is
+    D-030's drive: the teammate is never told its ledger and re-acceptance is
+    never reached. So the rule has to name the block every spawn passes
+    (commands/start.md rule 1), and the check reads the rules as printed on the
+    same payload as the step, not the constant they are built from.
+    """
+    drive = _refuse_then_respawn_then_follow(tmp_path, monkeypatch)
+
+    assert drive["routed_action"] == "build_castings", drive
+    assert "progress_protocol" in _redispatch_step(drive["routed_header"]), drive
+    rule = _spawn_prompt_rule(drive["routed_rules"])
+    assert rule, drive["routed_rules"]
+    assert "progress_protocol" in rule, rule
 
 
 #: A live Claude Code teammate pane in ANOTHER tmux session. `tmux list-panes
@@ -1353,6 +1420,7 @@ def _team_up_then_follow(
     return {
         "team_up": up,
         "action": nxt.get("action"),
+        "liveness": nxt.get("agent_liveness") or {},
         "instructions": nxt.get("instructions", ""),
         "header": _header(nxt),
     }
@@ -1394,6 +1462,14 @@ def test_foundry_next_after_team_up_leaves_running_teammates_running(
     assert drive["action"] != "cleanup_teams", drive["action"]
     assert not _tears_down(drive["instructions"]), drive["instructions"]
     assert "END YOUR TURN" in drive["header"], drive["header"]
+    # lead-stalls FR-015 / CT-012 (D-037) — the live reading publishes the
+    # registered teams too. `_waiting_on_agents` has two returns and documents
+    # `teams_registered` on both; only the no-live-agents one was pinned, so
+    # the live one could drop the key with every route still green.
+    assert drive["liveness"].get("waiting") is True, drive["liveness"]
+    assert drive["liveness"].get("teams_registered") == [_WAVE_ONE_TEAM], (
+        drive["liveness"]
+    )
 
 
 def _team_down_then_follow(base: Path, monkeypatch) -> dict:
@@ -1449,9 +1525,61 @@ def _tears_down(text: str) -> bool:
     return any(call in text for call in _TEARDOWN_CALLS) or "stop working" in text
 
 
+#: A condition that opens a SENTENCE, wherever the sentence sits on its line:
+#: at the start of the text, after a newline, after a numbered or bulleted
+#: step's marker, or after the sentence before it on the same line.
+#: lead-stalls D-034 found the audit's condition detector anchored to the
+#: start of a LINE, so "... two accounts of one run. If an AGENT stream
+#: finished and no record exists, ... re-dispatch it, or file it" passed it
+#: mid-line (D-033). A phrase list alone is blind the same way — it names the
+#: conditions it has already met — so the header is also judged per sentence.
+#: "When the notification arrives, call Foundry-Next" is a wake event, not a
+#: choice, and `when` is deliberately absent.
+_CONDITION_OPENS_A_SENTENCE = re.compile(
+    r"(?:\A|\n|(?<=[.!?;:])[ \t]+)[ \t]*(?:(?:[-*•]|\(\d+\))[ \t]+)?"
+    r"(?:if|unless|whether|otherwise|in case)\b",
+    re.IGNORECASE,
+)
+
+
 def _conditioned(header: str) -> bool:
-    """True when ``header`` carries a step that waits on an earlier call's answer."""
-    return any(phrase in header for phrase in _CONDITIONED_STEP)
+    """True when ``header`` carries a step that waits on an earlier call's answer,
+    or a sentence that opens on a condition the lead must evaluate."""
+    return any(phrase in header for phrase in _CONDITIONED_STEP) or bool(
+        _CONDITION_OPENS_A_SENTENCE.search(header)
+    )
+
+
+@pytest.mark.parametrize(
+    "text, conditioned",
+    [
+        # lead-stalls D-033's sentence in its emitted position: mid-line.
+        (
+            "Both are two accounts of one run. If an AGENT stream finished and "
+            "no record exists, that is a finding about the stream — re-dispatch "
+            "it, or file it — not a gap for you to fill in.",
+            True,
+        ),
+        ("If the teammate answers, call Foundry-Next.", True),
+        ("  (2) If step (1) refused, call Foundry-Spawn-Teammate.", True),
+        ("Casting 1 was refused.\nUnless it reworks, call Foundry-Next.", True),
+        # The wake event and the parked step every refused branch carries.
+        ("When the notification arrives, call Foundry-Next and follow what it says then.", False),
+        ("  (4) Waiting on a running agent is not stopping. END YOUR TURN.", False),
+        # A word that only starts with a condition is not one.
+        ("Ifs are not the point. Call Foundry-Next now.", False),
+    ],
+    ids=["d033_mid_line", "line_start", "numbered_step", "after_newline",
+         "wake_event", "parked_step", "prefix_word"],
+)
+def test_the_route_condition_check_judges_each_sentence(text, conditioned):
+    """lead-stalls OT-002 / GI-008 (D-034) — the check the route headers pass.
+
+    Every `a step conditioned  False` line in the route report, and every
+    `not _conditioned(header)` above, is only as good as this check, so its
+    positive controls quote the shape it was blind to.
+    """
+    assert _conditioned(text) is conditioned, text
 
 
 def _first_call(header: str) -> str:
@@ -1541,11 +1669,23 @@ def acceptance_route_report() -> list[str]:
             lines.append(f"    forwards casting {owed_id}'s refusal  {_refused_to_casting(drive['header'], owed_id)}")
             lines.append(f"    names no other casting      {_names_only_casting(drive['header'], owed_id, others)}")
 
+    drive = _in_scratch(
+        _owed_then_follow, waves={1: ["1"], 2: ["2"]}, refused=["2", "1"],
+        team_registered=True, same_second=False, team_wave=2,
+    )
+    lines.append("  2 then 1 refused across two waves, only wave 2's team registered (D-036)")
+    lines.append(f"    teams registered            {drive['liveness'].get('teams_registered')}")
+    lines.append(f"    refused casting's team      {drive['liveness'].get('cast_refused_team')}")
+    lines.append(f"    first call named            {_first_call(drive['header'])}")
+    lines.append(f"    forwards casting 1's refusal  {_refused_to_casting(drive['header'], '1')}")
+    lines.append(f"    sends the refusal back      {_REFUSAL_TO_TEAMMATE in drive['header']}")
+
     drive = _in_scratch(_refuse_then_respawn_then_follow)
     lines.append("")
     lines.append("warned, no team; the real Foundry-Spawn-Teammate, the teammate obeys (D-030)")
     lines.append(f"    routed first call           {_first_call(drive['routed_header'])}")
     lines.append(f"    step (2) appends the ledger {'progress_protocol' in _redispatch_step(drive['routed_header'])}")
+    lines.append(f"    rules above sanction it     {'progress_protocol' in _spawn_prompt_rule(drive['routed_rules'])}")
     lines.append(f"    teammate wrote done         {drive['wrote_done']}")
     lines.append(f"    Foundry-Next action         {drive['action']}")
     lines.append(f"    first call named            {_first_call(drive['header'])}")
@@ -1603,14 +1743,16 @@ def test_the_route_report_agrees_with_the_tests_beside_it():
     assert joined.count("    returns to casting 1        True") == 8, joined
     assert joined.count("    a step conditioned          False") == 8, joined
     assert joined.count("    first call named            SendMessage") == 5, joined
-    assert joined.count("    first call named            Foundry-Spawn-Teammate") == 6, joined
+    assert joined.count("    first call named            Foundry-Spawn-Teammate") == 7, joined
     assert joined.count("    first call named            Foundry-Spec-Hash") == 4, joined
     assert joined.count("'s refusal  True\n    names no other casting      True") == 6, joined
-    assert "    sends the refusal back      False" in joined, joined
+    assert joined.count("    sends the refusal back      False") == 2, joined
+    assert f"    refused casting's team      {_WAVE_ONE_TEAM}" in joined, joined
     assert joined.count("    tears the team down         True") == 1, joined
     assert joined.count("    any teardown in the payload False") == 2, joined
     assert "  dispatches wave 2             True" in joined, joined
     assert "    step (2) appends the ledger True" in joined, joined
+    assert "    rules above sanction it     True" in joined, joined
     assert "    teammate wrote done         True" in joined, joined
     assert "    claims a registered team    False" in joined, joined
     assert joined.count("    sends casting 1 back        True") == 2, joined
