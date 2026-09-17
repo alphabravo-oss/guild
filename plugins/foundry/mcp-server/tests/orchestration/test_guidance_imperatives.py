@@ -29,6 +29,7 @@ spelling of the rule, which is the failure mode this package documents most.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import re
@@ -55,6 +56,8 @@ from tests.orchestration._env import (  # noqa: F401
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools.artifacts import _hash_file, foundry_spec_hash
 from foundry_mcp.tools.evidence import foundry_accept_casting
+from foundry_mcp.tools.foundry_spawn import foundry_cast_wave, foundry_spawn_teammate
+from foundry_mcp.tools.orchestration import guidance as _guidance
 from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _ACCEPTANCE_EVENT,
     _ACCEPTANCE_VERDICTS,
@@ -64,7 +67,13 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _BRANCH_FALLBACK,
     _BRANCH_OPEN,
     _BRANCHED_ACTION_CONTEXT,
+    _END_TURN,
     _GATE_THEN_PHASE_NOTE,
+    _IMPERATIVES,
+    _LEAD_CALLS,
+    _SPAWN_DOORS,
+    _SPAWN_IS_ONE_MOVE,
+    _Step,
     _WAITING_IS_NOT_STOPPING,
     _WAITING_REPORTS_ONLY,
     _acceptance_destination,
@@ -74,12 +83,13 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _branch_states,
     _casting_slot,
     _chosen_branch,
+    _call_record,
     _compute_next_action,
+    _emitted_imperative,
     _format_imperative_header,
     _parse_branches,
-    _built_cast_wave,
-    _cast_wave,
-    _grind_cycle,
+    _render_call,
+    _resolved_imperative,
     _select_branch,
     _waiting_on_agents,
     foundry_next_action,
@@ -466,32 +476,27 @@ def _owed_branch(action: str, owed: str | tuple[str, ...]) -> str:
 
 def _emitted_branch(
     action: str, text: str, run_name: str, liveness: object = None,
-    cycle: object = None,
+    cycle: object = None, details: dict | None = None,
 ) -> str:
     """Which declared branch of `action` the lead ACTUALLY received.
 
-    Matched by equality against the branch bodies `_parse_branches` returns,
-    with every placeholder a branched entry carries resolved the way
-    `_format_imperative_header` resolves it -- through the SAME helpers, so a
-    slot added to an entry without a resolver here reads as `"?"` rather than
-    as a silent match (lead-stalls D-009 / D-012). Equality rather than a first-line
-    or keyword match because `_CAST_WAVE_COMPLETE` and `_CAST_WAVE_UNDISPATCHED`
-    open on the identical line — "YOUR NEXT CALLS (in order):" — and a
-    discriminator that could not tell those two apart is exactly the one
-    lead-stalls D-003 needed it to tell apart.
+    Every declared branch is rendered for this reading through
+    `_resolved_imperative` — the resolver the lead's header takes, so a slot
+    added to an entry resolves here the same way — and matched by EQUALITY
+    against the served header. Equality rather than a first-line or keyword
+    match because `_CAST_WAVE_COMPLETE` and `_CAST_WAVE_UNDISPATCHED` open on
+    the identical line, and a discriminator that could not tell those two
+    apart is exactly the one lead-stalls D-003 needed. What the branch is OWED
+    is never asked of the router: the owed columns are written by hand.
 
     ``"?"`` when the text matches no declared branch, which is itself a finding.
     """
-    for name, body in _parse_branches(_ACTION_IMPERATIVES.get(action, "")).items():
-        resolved = (
-            body
-            .replace("{wave}", _cast_wave(liveness))
-            .replace("{built_wave}", _built_cast_wave(liveness))
-            .replace("{cycle}", _grind_cycle(cycle))
-            .replace("{casting}", _casting_slot(liveness))
-            .replace("{run}", run_name)
-        )
-        if resolved == text:
+    entry = _IMPERATIVES.get(action)
+    for name, branch in (entry.items() if isinstance(entry, dict) else ()):
+        rendered = _resolved_imperative(
+            branch, action, details or {}, run_name, "", liveness, cycle,
+        )[1]
+        if rendered == text:
             return name
     return "?"
 
@@ -505,6 +510,21 @@ def _emission_phases(action: str) -> tuple[str, ...]:
     """
     crossings = tuple(_ACTION_CROSSINGS.get(action, {}))
     return crossings or ("F1",)
+
+
+#: lead-stalls D-040 — the roster this run's own cycle-10 INSPECT recorded,
+#: which is the reading the idle `run_streams` header was driven on and named
+#: no call for `test01` under.
+_C10_ROSTER = ("trace", "prove", "test", "test01")
+
+
+def _site_details(action: str) -> dict:
+    """The `details` an emission site is formatted with: the router's own
+    shape, so the stream steps expand from a roster and not from the
+    template fallback."""
+    if action == "run_streams":
+        return {"missing_streams": list(_C10_ROSTER)}
+    return {}
 
 
 def _audit_sites() -> list[tuple[str, str, str, str, object]]:
@@ -527,8 +547,8 @@ def _audit_sites() -> list[tuple[str, str, str, str, object]]:
             action,
             f"{action}@{phase}[{label}]",
             _format_imperative_header(
-                action, "", {}, run_name=_AUDIT_RUN, phase=phase,
-                liveness=liveness,
+                action, "", _site_details(action), run_name=_AUDIT_RUN,
+                phase=phase, liveness=liveness,
             ),
             _owed_branch(action, owed) if _parse_branches(
                 _ACTION_IMPERATIVES[action]
@@ -639,10 +659,10 @@ def _grind(fdir: Path, *, open_defect: bool) -> None:
     ])
 
 
-def _inspect(fdir: Path) -> None:
+def _inspect(fdir: Path, roster: tuple[str, ...] = ("trace", "prove", "test")) -> None:
     _write_spec(fdir, ["FR-1"])
     _write_state(fdir, phase="F2", cycle=1)
-    _record_full_inspect_mode(fdir, cycle=1)
+    _record_full_inspect_mode(fdir, cycle=1, required_streams=roster)
     _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
 
 
@@ -787,7 +807,50 @@ def _arrange_inspect_live(root, fdir, teams):
 
 
 def _arrange_inspect_idle(root, fdir, teams):
-    _inspect(fdir)
+    # lead-stalls D-040 — this run's own cycle-10 roster, test01 included.
+    _inspect(fdir, _C10_ROSTER)
+
+
+def _prompt_files(fdir: Path, ids) -> None:
+    for cid in ids:
+        (fdir / "castings" / f"casting-{cid}-prompt.md").write_text(
+            _ROUTE_PROMPT, encoding="utf-8",
+        )
+
+
+#: lead-stalls D-038 — THE THREE STATES A SPAWN DOOR LEAVES BEFORE ITS AGENT
+#: HAS WRITTEN A LINE, each reached through the REAL door, so the only ledger
+#: line each casting has is the FRESH seed the door wrote. Under
+#: `_SPAWN_IS_ONE_MOVE` the Agent call was made in the same move as the door,
+#: so each is owed the `live` branch — and the audit's ONE_MOVE and SPAWN
+#: checks are what hold the header that named the door to saying so.
+def _arrange_cast_dispatched_fresh_seed(root, fdir, teams):
+    # (A) CAST: wave 1 = castings 1 and 2, a real Team-Up, a real Cast-Wave.
+    _cast(fdir, {1: ["1", "2"]})
+    _prompt_files(fdir, ["1", "2"])
+    _register(root, teams, _CAST_TEAM)
+    assert foundry_cast_wave(1, "cast", project_root=root)["ok"] is True
+
+
+def _arrange_grind_dispatched_fresh_seed(root, fdir, teams):
+    # (B) GRIND: D-001 open, a real Team-Up, a real Spawn-Teammate(grind).
+    _grind(fdir, open_defect=True)
+    _wave_manifest(fdir, {1: ["1"]})
+    _prompt_files(fdir, ["1"])
+    _register(root, teams, _GRIND_TEAM)
+    assert foundry_spawn_teammate(1, "grind", project_root=root)["ok"] is True
+
+
+def _arrange_cast_redispatched_fresh_seed(root, fdir, teams):
+    # (C) The refusal route: casting 1 done a minute ago, refused, no team, and
+    # the redispatch branch's step (1) — the real Spawn-Teammate(cast) — made,
+    # which appends the seed after the done line.
+    _cast(fdir, {1: ["1"], 2: ["2"]})
+    _prompt_files(fdir, ["1", "2"])
+    _worked(fdir, "1", done=True,
+            at=datetime.now(timezone.utc) - timedelta(minutes=1))
+    _verdict(fdir, "1", "refused")
+    assert foundry_spawn_teammate(1, "cast", project_root=root)["ok"] is True
 
 
 def _arrange_inspect_stale_team(root, fdir, teams):
@@ -818,10 +881,13 @@ _ROUTER_STATES = (
     ("cast-boundary", "ST-003", _arrange_cast_boundary, "build_castings", "undispatched"),
     ("cast-built-team-up", "ST-003", _arrange_cast_built_team_up, "cleanup_teams", None),
     ("cast-built", "ST-003", _arrange_cast_built, "build_castings", "idle"),
+    ("cast-dispatched-fresh-seed", "ST-001", _arrange_cast_dispatched_fresh_seed, "build_castings", "live"),
+    ("cast-redispatched-fresh-seed", "ST-004", _arrange_cast_redispatched_fresh_seed, "build_castings", "live"),
     ("grind-live", "ST-001", _arrange_grind_live, "fix_defects", "live"),
     ("grind-live-all-fixed", "ST-001", _arrange_grind_live_all_fixed, "fix_defects", "live"),
     ("grind-finished-team-up", "ST-003", _arrange_grind_finished_team_up, "cleanup_teams", None),
     ("grind-idle", "ST-003", _arrange_grind_idle, "fix_defects", "idle"),
+    ("grind-dispatched-fresh-seed", "ST-001", _arrange_grind_dispatched_fresh_seed, "fix_defects", "live"),
     ("grind-all-fixed", "ST-003", _arrange_grind_all_fixed, "transition_to_inspect", None),
     ("inspect-live", "ST-001", _arrange_inspect_live, "run_streams", "live"),
     ("inspect-idle", "ST-003", _arrange_inspect_idle, "run_streams", "idle"),
@@ -952,12 +1018,18 @@ def drive_router(arrange, clock_seconds: int | None) -> dict:
     liveness = nxt.get("agent_liveness")
     action = nxt.get("action", "")
     branched = bool(_parse_branches(_ACTION_IMPERATIVES.get(action, "")))
+    details = nxt.get("details") or {}
     return {
         "action": action,
         "branch": (
-            _emitted_branch(action, header, _ROUTE_RUN, liveness, cycle)
+            _emitted_branch(action, header, _ROUTE_RUN, liveness, cycle, details)
             if branched else None
         ),
+        # lead-stalls GI-008 / OT-013 — the structure the header was rendered
+        # from, and the rules printed above it, for the structure audit.
+        "next_calls": nxt.get("next_calls"),
+        "rules": _rules_of(nxt.get("instructions", "")),
+        "details": details,
         "branched": branched,
         "block": block,
         "header": header,
@@ -975,6 +1047,290 @@ def _router_drives() -> list[tuple[str, str, str, str, object, dict]]:
         for state, transitions, arrange, action, branch in _ROUTER_STATES
         for clock, seconds in _CLOCKS
     ]
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 / OT-002 / OT-013 / FR-008 — THE STRUCTURE AUDIT
+# (D-038..D-043, on the user's ruling of 2026-09-17)
+# --------------------------------------------------------------------------- #
+#
+# The sweep below used to discharge lead-stalls FR-008 on a prose detector, and its zero was
+# false five times over a space the defect could not appear in (D-004, D-023,
+# D-032, D-034, D-041). The lead's next calls are now a `_Step` list the router
+# emits and publishes as `next_calls`, and THIS is what the zero is computed
+# over: at every emission site and every router state, the list the header was
+# rendered from is judged as data.
+#
+#   STEP_LIST         a mapped action served no step list at all
+#   RENDERING         the header's numbered lines are not exactly the list
+#   NONE              an empty list without "YOUR NEXT CALL: NONE", or the reverse
+#   UNKNOWN_TOOL      a step names a tool outside `_LEAD_CALLS`, or a Foundry door
+#                     the MCP server does not register
+#   YIELD_NOT_LAST    a step follows END YOUR TURN
+#   CALL_IN_PROSE     a lead call written in call syntax outside the step lines,
+#                     which is the only way prose could add or choose a call
+#   RULE_*            the standing spawn rule printed on the payload lacks a
+#                     phase's order, ends one anywhere but progress_protocol, or
+#                     lacks the one-move sentence (D-038 / D-039)
+#   DOOR_WITHOUT_SPAWN / SPAWN_WITHOUT_DOOR
+#                     a spawn door and its teammate Agent call are not adjacent
+#   SPAWN_ORDER       a teammate spawn's block order is not the order the rule
+#                     printed ABOVE it names for its phase (D-039). Found by
+#                     tool name over whatever is served, and compared with the
+#                     order parsed OUT OF THE RULE TEXT, so a sixth dispatch
+#                     step is judged the day it is written.
+#   SPAWN_NOT_ONE_MOVE / SPAWN_NOT_YIELDED
+#                     a spawn step without the one-move sentence, or a list that
+#                     spawns a teammate and does not end in the yield (D-038)
+#   STREAM_*          an unrecorded roster stream with no call, the wrong agent,
+#                     or no `agent_configs` entry; or a call for a stream the
+#                     roster does not owe (D-040)
+#
+# The prose detector `_HANDS_OVER_THE_CONDITION` still runs beside these as a
+# BACKSTOP and is not widened again (D-043): a sentence that names no call
+# cannot add a step or reorder one, which the D-043 test below pins.
+
+#: lead-stalls D-040 — the agent each stream is OWED, written by hand from
+#: `agents/*.md` and commands/start.md's F2 roster rather than read off the
+#: table under audit, which would agree with itself by construction.
+_OWED_STREAM_AGENT = {
+    "trace": "foundry:tracer",
+    "flow_trace": "foundry:flow-tracer",
+    "prove": "foundry:assayer",
+    "research_audit": "foundry:research-auditor",
+    "coverage_diff": "foundry:coverage-diff",
+    "test01": "foundry:spec-test-deriver",
+    "test": "general-purpose",
+    "probe": "general-purpose",
+}
+_STEP_LINE = re.compile(r"^  \((\d+)\) (.*)$", re.MULTILINE)
+_RULE_ORDER = re.compile(r"\b(CAST|GRIND): its prompt is .*?Order: ([^.]*)\.")
+_STEP_ORDER = re.compile(r"Order: ([^.]*)\.")
+_ARG_PHASE = re.compile(r"phase='([a-z_]+)'")
+_ARG_SUBAGENT = re.compile(r"subagent_type='([^']+)'")
+#: A call written as one: a Foundry door or a harness tool, then "(".
+_CALL_SYNTAX = re.compile(
+    r"\b(Foundry-[A-Z][A-Za-z-]*|Agent|Skill|Bash|SendMessage|TeamCreate"
+    r"|TeamDelete|TaskOutput)\("
+)
+_TEAMMATE = "foundry:teammate"
+
+
+def _mcp_tool_names() -> frozenset[str]:
+    """Every tool the MCP server registers, asked of the server itself."""
+    from foundry_mcp import server
+
+    return frozenset(tool.name for tool in asyncio.run(server.list_tools()))
+
+
+def _spawn_rule_line(rules: str) -> str:
+    """The standing rule on passing a spawn prompt, or ``""``."""
+    return next(
+        (line for line in rules.splitlines()
+         if "prompt returned by Foundry-Spawn-Teammate" in line),
+        "",
+    )
+
+
+def _order_of(text: str) -> tuple[str, ...]:
+    return tuple(label.strip() for label in text.split("→"))
+
+
+def _as_step(call: object) -> _Step:
+    """A `next_calls` record, or a `_Step`, as a `_Step`."""
+    if isinstance(call, _Step):
+        return call
+    row = call if isinstance(call, dict) else {}
+    return _Step(
+        str(row.get("tool")), row.get("args"), row.get("each") or "",
+        tuple(row.get("prompt_blocks") or ()), row.get("note") or "",
+    )
+
+
+def judge_next_calls(
+    site: str,
+    action: str,
+    calls: object,
+    header: str,
+    rules: str,
+    details: dict,
+    configs: dict | None,
+    tools: frozenset[str],
+) -> list[str]:
+    """The structure findings for one served step list (see the table above)."""
+    if action not in _IMPERATIVES:
+        return []
+    if not isinstance(calls, (list, tuple)):
+        return [f"{site}: STEP_LIST — the lead's header was rendered from no step list"]
+    steps = [_as_step(call) for call in calls]
+    findings: list[str] = []
+
+    served = _STEP_LINE.findall(header)
+    if [int(n) for n, _ in served] != list(range(1, len(served) + 1)) or [
+        line for _n, line in served
+    ] != [_render_call(step) for step in steps]:
+        findings.append(
+            f"{site}: RENDERING — the header's call lines are not the "
+            f"{len(steps)}-step list it was served with"
+        )
+    if bool(steps) == bool(_NAMES_NO_CALL.search(header)):
+        findings.append(
+            f"{site}: NONE — {len(steps)} step(s) beside "
+            f"{'a' if _NAMES_NO_CALL.search(header) else 'no'} NONE"
+        )
+    for number, step in enumerate(steps, 1):
+        if step.tool not in _LEAD_CALLS or (
+            step.tool.startswith("Foundry-") and step.tool not in tools
+        ):
+            findings.append(
+                f"{site}: UNKNOWN_TOOL — step ({number}) names {step.tool!r}"
+            )
+        if step.tool == _END_TURN and number != len(steps):
+            findings.append(
+                f"{site}: YIELD_NOT_LAST — step ({number}) yields and "
+                f"{len(steps) - number} step(s) follow it"
+            )
+    for call in sorted(set(_CALL_SYNTAX.findall(_STEP_LINE.sub("", header)))):
+        findings.append(
+            f"{site}: CALL_IN_PROSE — {call}( is written outside the step list"
+        )
+
+    # D-038 / D-039 — every teammate spawn against the rule printed above it.
+    rule = _spawn_rule_line(rules)
+    orders = {
+        phase.lower(): _order_of(order)
+        for phase, order in _RULE_ORDER.findall(rule)
+    }
+    spawns = [
+        (number, step) for number, step in enumerate(steps, 1)
+        if step.tool == "Agent"
+        and _ARG_SUBAGENT.search(step.args or "")
+        and _ARG_SUBAGENT.search(step.args or "").group(1) == _TEAMMATE
+    ]
+    if spawns:
+        if _SPAWN_IS_ONE_MOVE not in rule:
+            findings.append(
+                f"{site}: RULE_WITHOUT_ONE_MOVE — the spawn rule above the "
+                f"header does not say a door and its Agent call are one move"
+            )
+        if not steps or steps[-1].tool != _END_TURN:
+            findings.append(
+                f"{site}: SPAWN_NOT_YIELDED — a teammate is spawned and the "
+                f"list does not end in END YOUR TURN"
+            )
+    for number, step in enumerate(steps, 1):
+        if step.tool in _SPAWN_DOORS and not (
+            number < len(steps) and (number + 1, steps[number]) in spawns
+        ):
+            findings.append(
+                f"{site}: DOOR_WITHOUT_SPAWN — step ({number}) {step.tool} is "
+                f"not followed by its teammate Agent call"
+            )
+    lines = dict((int(n), line) for n, line in served)
+    for number, step in spawns:
+        door = steps[number - 2] if number > 1 else None
+        if door is None or door.tool not in _SPAWN_DOORS:
+            findings.append(
+                f"{site}: SPAWN_WITHOUT_DOOR — step ({number}) spawns a "
+                f"teammate with no spawn door straight before it"
+            )
+            continue
+        phase_match = _ARG_PHASE.search(door.args or "")
+        phase = phase_match.group(1) if phase_match else "?"
+        owed = orders.get(phase)
+        order_match = _STEP_ORDER.search(lines.get(number, ""))
+        got = _order_of(order_match.group(1)) if order_match else ()
+        if owed is None:
+            findings.append(
+                f"{site}: RULE_WITHOUT_PHASE — the spawn rule names no "
+                f"{phase!r} order for step ({number})"
+            )
+        elif owed[-1:] != ("progress_protocol",):
+            findings.append(
+                f"{site}: RULE_NOT_LEDGER_LAST — the rule's {phase} order is "
+                f"{' → '.join(owed)}"
+            )
+        elif got != owed:
+            findings.append(
+                f"{site}: SPAWN_ORDER — step ({number}) passes "
+                f"{' → '.join(got) or 'no block order'} under a rule naming "
+                f"{' → '.join(owed)}"
+            )
+        if _SPAWN_IS_ONE_MOVE not in lines.get(number, ""):
+            findings.append(
+                f"{site}: SPAWN_NOT_ONE_MOVE — step ({number}) does not say it "
+                f"is one move with step ({number - 1})"
+            )
+
+    # D-040 — one call per unrecorded roster stream, and a config for each.
+    if action == "run_streams" and steps:
+        roster = details.get("missing_streams") or []
+        named: dict[str, _Step] = {}
+        for step in steps:
+            if step.tool == "Agent" and step.each.startswith("for "):
+                named[step.each[len("for "):]] = step
+        sight = any(
+            step.tool == "Skill" and "foundry:sight" in (step.args or "")
+            for step in steps
+        )
+        for stream in roster:
+            if stream == "sight":
+                if not sight:
+                    findings.append(f"{site}: STREAM_WITHOUT_CALL — sight")
+                continue
+            step = named.get(stream)
+            if step is None:
+                findings.append(f"{site}: STREAM_WITHOUT_CALL — {stream}")
+            else:
+                agent = _ARG_SUBAGENT.search(step.args or "")
+                if not agent or agent.group(1) != _OWED_STREAM_AGENT.get(stream):
+                    findings.append(
+                        f"{site}: STREAM_WRONG_AGENT — {stream} is spawned as "
+                        f"{agent.group(1) if agent else None!r}"
+                    )
+            if configs is not None and (configs.get(stream) or {}).get(
+                "subagent_type"
+            ) != _OWED_STREAM_AGENT.get(stream):
+                findings.append(
+                    f"{site}: STREAM_WITHOUT_CONFIG — agent_configs has no "
+                    f"{_OWED_STREAM_AGENT.get(stream)} entry for {stream}"
+                )
+        for stream in sorted(set(named) - set(roster)):
+            findings.append(
+                f"{site}: STREAM_NOT_OWED — a call for {stream}, which the "
+                f"roster does not list as unrecorded"
+            )
+    return findings
+
+
+def audit_next_call_structure(drives=None) -> list[str]:
+    """The structure audit over every emission site and every router payload."""
+    tools = _mcp_tool_names()
+    findings: list[str] = []
+    for action, site, text, _owed, liveness in _audit_sites():
+        phase = site.split("@", 1)[1].split("[", 1)[0]
+        details = _site_details(action)
+        calls, header = _emitted_imperative(
+            action, details, run_name=_AUDIT_RUN, phase=phase, liveness=liveness,
+        )
+        if header != text:
+            findings.append(f"{site}: RENDERING — the site's header moved")
+        findings += judge_next_calls(
+            site, action, calls, header, _guidance._STANDING_CRITICAL_RULES,
+            details, None, tools,
+        )
+    for site, _state, _tr, _oa, _ob, d in (
+        drives if drives is not None else _router_drives()
+    ):
+        configs = (
+            d["details"].get("agent_configs") or {}
+            if d["action"] == "run_streams" else None
+        )
+        findings += judge_next_calls(
+            site, d["action"], d["next_calls"], d["header"], d["rules"],
+            d["details"], configs, tools,
+        )
+    return findings
 
 
 def audit_assembled_payloads(drives=None) -> list[str]:
@@ -1113,7 +1469,9 @@ def audit_action_imperatives(drives=None) -> list[str]:
         # cross into F2. A sweep that cannot express "right text, wrong
         # reading" returns zero over that.
         if owed:
-            got = _emitted_branch(action, text, _AUDIT_RUN, liveness)
+            got = _emitted_branch(
+                action, text, _AUDIT_RUN, liveness, None, _site_details(action)
+            )
             if got != owed:
                 findings.append(
                     f"{site}: WRONG_BRANCH — the lead received the {got!r} "
@@ -1123,6 +1481,9 @@ def audit_action_imperatives(drives=None) -> list[str]:
     # so the zero lead-stalls FR-008 discharges on is a zero over what the lead
     # reads and not only over what the formatter would print for a reading.
     findings.extend(audit_assembled_payloads(drives))
+    # lead-stalls D-038..D-043 — and the STEP LIST both were rendered from,
+    # which is what the zero is computed over now (see the structure audit).
+    findings.extend(audit_next_call_structure(drives))
     return findings
 
 
@@ -1148,6 +1509,15 @@ def audit_report() -> list[str]:
         "UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME",
         "payload detectors: WRONG_ROUTE, CONDITIONAL, CONTRADICTION, CONTEXT_SEQUENCE, "
         "TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING",
+        "step-list detectors (every site and every payload, lead-stalls D-038..D-043): "
+        "STEP_LIST, RENDERING, NONE, UNKNOWN_TOOL, YIELD_NOT_LAST, CALL_IN_PROSE, "
+        "RULE_WITHOUT_PHASE, RULE_NOT_LEDGER_LAST, RULE_WITHOUT_ONE_MOVE, "
+        "DOOR_WITHOUT_SPAWN, SPAWN_WITHOUT_DOOR, SPAWN_ORDER, SPAWN_NOT_ONE_MOVE, "
+        "SPAWN_NOT_YIELDED, STREAM_WITHOUT_CALL, STREAM_WRONG_AGENT, "
+        "STREAM_WITHOUT_CONFIG, STREAM_NOT_OWED",
+        "CONDITIONAL is the prose backstop; the zero is computed over the step lists.",
+        "run_streams sites expand the stream steps from this run's cycle-10 roster: "
+        + ", ".join(_C10_ROSTER),
         "",
         "site = action@emitting-phase[liveness reading]; readings swept: "
         + ", ".join(label for label, _, _ in _LIVENESS_READINGS),
@@ -1205,6 +1575,7 @@ def audit_report() -> list[str]:
             f"  {site:<38} received {d['action']}/{d['branch'] or '-'}"
             f"  owed {owed_action}/{owed_branch or '-'}"
             f"  notice {_notice_kind(d['block'])}"
+            f"  calls {'>'.join(c['tool'] for c in d['next_calls'] or []) or 'NONE'}"
             f"  {'DEFECTIVE' if hits else 'ok'}"
         )
     lines.append("")
@@ -1264,7 +1635,7 @@ def audit_evidence() -> list[str]:
         head = " ".join(text.split("\n", 1)[0].split())
         answer = "NONE" if _NAMES_NO_CALL.search(text) else "CALL"
         branch = (
-            f"{_emitted_branch(action, text, _AUDIT_RUN, liveness)}/{owed}"
+            f"{_emitted_branch(action, text, _AUDIT_RUN, liveness, None, _site_details(action))}/{owed}"
             if owed else "-"
         )
         # Two literal spaces on BOTH sides of the answer, independent of how
@@ -2468,20 +2839,22 @@ def test_the_audit_sees_a_team_name_the_lead_cannot_create():
     team name has one grammar -- and this asserts it bites on the entry as it
     stood rather than being a check that never fires.
     """
-    import foundry_mcp.tools.orchestration.guidance as _g
-
-    original = _g._ACTION_IMPERATIVES["fix_defects"]
+    branches = _IMPERATIVES["fix_defects"]
+    original = branches["idle"]
     try:
-        _g._ACTION_IMPERATIVES["fix_defects"] = original.replace(
-            "grind-{run}-cycle-{cycle}", "grind-{run}-cycle-N"
-        )
-        assert "cycle-N" in _g._ACTION_IMPERATIVES["fix_defects"]
+        branches["idle"] = original._replace(steps=tuple(
+            step._replace(args=step.args.replace(
+                "grind-{run}-cycle-{cycle}", "grind-{run}-cycle-N"
+            )) if step.args else step
+            for step in original.steps
+        ))
+        assert branches["idle"] != original
         findings = [
             f for f in audit_action_imperatives()
             if "UNCREATABLE_TEAM_NAME" in f
         ]
     finally:
-        _g._ACTION_IMPERATIVES["fix_defects"] = original
+        branches["idle"] = original
 
     assert findings, "the sweep cannot see an uncreatable team name"
     assert all(f.startswith("fix_defects@") for f in findings), findings
@@ -2868,8 +3241,11 @@ def test_the_wait_policy_has_one_spelling():
         action for action, text in _ACTION_IMPERATIVES.items()
         if _WAITING_IS_NOT_STOPPING in text
     ]
+    # lead-stalls D-038 — every list that spawns an agent now ends in the
+    # yield, so the dispatch sequences carry it too.
     assert sorted(carriers) == [
-        "build_castings", "fix_defects", "run_streams",
+        "add_castings", "build_castings", "fix_defects", "run_streams",
+        "transition_to_cast", "transition_to_grind",
     ], carriers
     # No imperative says it in its own words: the denials that make the policy
     # a policy appear exactly where the constant put them — once per branch
@@ -2879,7 +3255,8 @@ def test_the_wait_policy_has_one_spelling():
         expected = text.count(_WAITING_IS_NOT_STOPPING)
         assert text.count("Do NOT sleep") == expected, action
         assert text.count("do NOT poll") == expected, action
-    assert _ACTION_IMPERATIVES["build_castings"].count(_WAITING_IS_NOT_STOPPING) == 3
+    # live, undispatched, refused and redispatch.
+    assert _ACTION_IMPERATIVES["build_castings"].count(_WAITING_IS_NOT_STOPPING) == 4
 
 
 def test_the_waiting_notice_quotes_the_policy_rather_than_rewording_it(run_env):
@@ -2916,7 +3293,14 @@ def test_the_stall_accusation_arm_is_untouched(run_env):
     assert nxt["stall_detected_seconds"] >= 600
     assert "STALL DETECTED" in nxt["instructions"]
     assert "NO agent is running" in nxt["instructions"]
-    assert _WAITING_IS_NOT_STOPPING not in nxt["instructions"]
+    # The NOTICE is the accusation and nothing softer. The header beneath it
+    # is the dispatch, whose last step is the yield after the spawn
+    # (lead-stalls D-038), so the policy is judged on the notice alone.
+    block, header = _split_payload(nxt["instructions"])
+    notice = block[: len(block) - len(header)]
+    assert "STALL DETECTED" in notice, block
+    assert _WAITING_IS_NOT_STOPPING not in notice, notice
+    assert _chosen_branch("build_castings", nxt["agent_liveness"]) == "undispatched"
 
 
 # --------------------------------------------------------------------------- #
@@ -2985,7 +3369,8 @@ def _drive(tmp_path, arrange, clock=None) -> dict:
     action = nxt.get("action", "")
     liveness = nxt.get("agent_liveness")
     branch = (
-        _emitted_branch(action, header, _ROUTE_RUN, liveness, cycle)
+        _emitted_branch(action, header, _ROUTE_RUN, liveness, cycle,
+                        nxt.get("details") or {})
         if _parse_branches(_ACTION_IMPERATIVES.get(action, "")) else None
     )
     return {"nxt": nxt, "action": action, "branch": branch, "block": block,
@@ -3178,11 +3563,13 @@ def test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown(
         # commands/start.md rule 1's order: the done line that block makes the
         # teammate write is what routes the lead back to acceptance.
         assert "VERBATIM with nothing appended" not in header, header
+        # lead-stalls D-039 — in the CAST order the rule above declares.
         assert (
-            "`dispatch` field VERBATIM and then, BELOW it and LAST, step (1)'s "
-            "`progress_protocol` block VERBATIM"
-        ) in header, header
-        assert "Append nothing else: the refusal is step (3)." in header, header
+            "(a) the returned `dispatch` field VERBATIM" in header
+            and "(b) LAST, the returned `progress_protocol` block VERBATIM" in header
+            and "Order: dispatch → progress_protocol." in header
+        ), header
+        assert "the refusal never rides inside the dispatch" in header, header
         assert "(3) SendMessage(to=<the teammate step (2) spawned>" in header
         assert "(4) " + _WAITING_IS_NOT_STOPPING in header, header
         assert "casting 1's own wave team is not registered" in header, header
@@ -3930,38 +4317,82 @@ def test_the_condition_detector_judges_the_sentence_where_it_was_emitted():
         assert not _HANDS_OVER_THE_CONDITION.search(fine), fine
 
 
-def test_the_payload_sweep_bites_on_the_run_streams_sentence(monkeypatch):
-    """lead-stalls D-034 — the router sweep reads the header's sentences.
+#: lead-stalls D-043 — the six probe strings the filing drove through the
+#: prose detector, five of which it did not match. Quoted as filed.
+_D043_PROBES = (
+    "Record nothing yourself; when an AGENT stream finished with no record, "
+    "re-dispatch it or file it.",
+    "Record nothing yourself; if an AGENT stream finished with no record, "
+    "re-dispatch it or file it.",
+    "Record nothing yourself. When an AGENT stream finished with no record, "
+    "re-dispatch it or file it.",
+    "Record nothing yourself — when a stream finished with no record, "
+    "re-dispatch it or file it.",
+    "Re-dispatch the stream or file it when it finished with no record.",
+    "Call Foundry-Stream. (If a stream has no record, re-dispatch it, or file "
+    "it.)",
+)
 
-    At b358445 `audit_assembled_payloads` returned [] over a drive whose
-    header carried the D-033 sentence. With that sentence put back into the
-    `idle` branch, the payload sweep must name the served header CONDITIONAL.
+
+def _with_idle_trailer(sentence: str):
+    """`run_streams`' idle branch with ``sentence`` appended to its prose."""
+    idle = _IMPERATIVES["run_streams"]["idle"]
+    return idle._replace(trailer=idle.trailer + "\n" + sentence)
+
+
+def test_a_conditional_sentence_cannot_add_or_move_a_call(monkeypatch):
+    """lead-stalls D-043 — CLOSED THROUGH THE STRUCTURE, NOT A WIDER REGEX (the
+    user's ruling of 2026-09-17).
+
+    The D-033 sentence the filing targeted is gone: the move it stated is now
+    `run_streams`' step list, one Agent call per unrecorded stream (D-040),
+    and the payload publishes that list as `next_calls`. So each of the six
+    probe sentences, put back into the served header, changes NO step: the
+    lead's calls are the list, and the list is identical with or without it.
+    A probe that DOES write a call — in the only form a lead can make one — is
+    a CALL_IN_PROSE finding, which is the half of the shape the structure can
+    decide. What it cannot decide is an English order with no call in it, and
+    the prose detector stays beside it as an unwidened backstop for that.
     """
-    shipped = _ACTION_IMPERATIVES["run_streams"]
-    reverted = shipped.replace(
-        "An AGENT stream that finished without its own record is one of the "
-        "unrecorded streams the CONTEXT below names, and the parallel message "
-        "above re-spawns it with the rest: its own re-run is the one thing that "
-        "records it, and it is never a gap for you to fill in.",
-        "If an AGENT stream finished and no record exists, that is a finding "
-        "about the stream — re-dispatch it, or file it — not a gap for you to "
-        "fill in.",
-    )
-    assert reverted != shipped, "the D-033 sentence moved; re-quote it here"
-    # One dict object, shared by the router and this module's resolver.
-    monkeypatch.setitem(_ACTION_IMPERATIVES, "run_streams", reverted)
+    baseline = drive_router(_arrange_inspect_idle, None)
+    assert baseline["branch"] == "idle", baseline["header"]
+    assert baseline["next_calls"], baseline
 
-    drives = [
-        ("payload:inspect-idle[fresh]", "inspect-idle", "", "run_streams",
-         "idle", drive_router(_arrange_inspect_idle, None)),
-    ]
-    findings = audit_assembled_payloads(drives)
+    for probe in _D043_PROBES:
+        monkeypatch.setitem(
+            _IMPERATIVES["run_streams"], "idle", _with_idle_trailer(probe),
+        )
+        driven = drive_router(_arrange_inspect_idle, None)
+        assert probe in driven["header"], probe
+        assert driven["next_calls"] == baseline["next_calls"], probe
+        # The probe that names Foundry-Stream only names it; it is not a call.
+        calls_in_prose = [
+            f for f in audit_next_call_structure([
+                ("payload:inspect-idle[fresh]", "inspect-idle", "",
+                 "run_streams", "idle", driven),
+            ]) if "payload:" in f and "CALL_IN_PROSE" in f
+        ]
+        assert calls_in_prose == [], (probe, calls_in_prose)
 
-    assert any(
-        f.startswith("payload:inspect-idle[fresh]: CONDITIONAL")
-        and "no record exists" in f
-        for f in findings
-    ), findings
+    # And the same shape spelled as calls is seen, whatever the conditional.
+    for probe in (
+        "When an AGENT stream finished with no record, "
+        "Agent(subagent_type='foundry:tracer') or Foundry-Next().",
+        "Record nothing yourself; if a stream has no record, "
+        "SendMessage(to=<it>) or TeamDelete().",
+    ):
+        monkeypatch.setitem(
+            _IMPERATIVES["run_streams"], "idle", _with_idle_trailer(probe),
+        )
+        driven = drive_router(_arrange_inspect_idle, None)
+        findings = audit_next_call_structure([
+            ("payload:inspect-idle[fresh]", "inspect-idle", "", "run_streams",
+             "idle", driven),
+        ])
+        assert any(
+            f.startswith("payload:inspect-idle[fresh]: CALL_IN_PROSE")
+            for f in findings
+        ), (probe, findings)
 
 
 # --------------------------------------------------------------------------- #
@@ -4008,24 +4439,31 @@ def test_the_rules_above_a_redispatch_sanction_the_block_it_appends(tmp_path):
     assert refused["ok"] is False, refused
     assert nxt["action"] == "build_castings", nxt["action"]
     assert _chosen_branch("build_castings", nxt["agent_liveness"]) == "redispatch"
-    assert "BELOW it and LAST, step (1)'s `progress_protocol` block" in header, header
+    assert "LAST, the returned `progress_protocol` block VERBATIM" in header, header
     # The rule sanctions that very append, for every phase...
     assert "Every spawn, CAST and GRIND" in rule, rule
-    assert "BELOW it and LAST, the returned `progress_protocol` block VERBATIM" in rule, rule
+    assert "CAST: its prompt is" in rule and "GRIND: its prompt is" in rule, rule
+    assert "Order: dispatch → progress_protocol." in rule, rule
     # ...and no longer reserves every append to GRIND.
     assert "Pass it to Agent VERBATIM. GRIND is the only exception" not in rule, rule
-    assert "GRIND is the only exception to what goes between the two" in rule, rule
+    # lead-stalls D-039 — and the step under it is the rule's own rendering.
+    assert "Order: dispatch → progress_protocol." in header, header
 
 
 def test_the_grind_dispatch_order_ends_in_the_ledger_protocol():
     """lead-stalls D-035 — the sibling surface on the same contract: the GRIND
     dispatch order the rule quotes ends in the `progress_protocol` block."""
-    text = _ACTION_IMPERATIVES["transition_to_grind"]
-    assert (
+    order = (
         "Order: dispatch → cycle_context → defects → alignment "
-        "→ progress_protocol." in text
-    ), text
-    assert "the `progress_protocol` block from the spawn response, VERBATIM, LAST" in text
+        "→ progress_protocol."
+    )
+    # lead-stalls D-039 — BOTH GRIND dispatch sequences, not only this one.
+    for text in (
+        _ACTION_IMPERATIVES["transition_to_grind"],
+        _parse_branches(_ACTION_IMPERATIVES["fix_defects"])["idle"],
+    ):
+        assert order in text, text
+        assert "LAST, the returned `progress_protocol` block VERBATIM" in text
 
 
 def _arrange_cast_refused_two_waves(root, fdir, teams):
@@ -4081,3 +4519,472 @@ def test_both_liveness_returns_publish_the_registered_teams(tmp_path, arrange, w
 
     assert d["liveness"]["waiting"] is waiting, d["liveness"]
     assert d["liveness"]["teams_registered"] == [_CAST_TEAM], d["liveness"]
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GRIND cycle 10 — D-038 .. D-043, the structural remedy
+# --------------------------------------------------------------------------- #
+
+
+def _drives_for(*states: str) -> list:
+    """`_router_drives` rows for the named router states only."""
+    return [
+        (f"payload:{state}[{clock}]", state, transitions, action, branch,
+         drive_router(arrange, seconds))
+        for state, transitions, arrange, action, branch in _ROUTER_STATES
+        if state in states
+        for clock, seconds in _CLOCKS
+    ]
+
+
+def _replace_spawns(imperative, **changes):
+    """``imperative`` with every teammate spawn step changed by ``changes``."""
+    return imperative._replace(steps=tuple(
+        step._replace(**changes) if step.blocks else step
+        for step in imperative.steps
+    ))
+
+
+def test_every_site_and_every_payload_is_judged_as_a_step_list():
+    """lead-stalls OT-002 / FR-008 — the floor under the structure audit.
+
+    Every emission site and every router payload carries the step list its
+    header was rendered from, and the router states include the three a
+    spawn door leaves before its Agent has written a line (D-038 / D-041).
+    """
+    for action, site, text, _owed, liveness in _audit_sites():
+        phase = site.split("@", 1)[1].split("[", 1)[0]
+        calls, header = _emitted_imperative(
+            action, _site_details(action), run_name=_AUDIT_RUN, phase=phase,
+            liveness=liveness,
+        )
+        assert isinstance(calls, tuple), site
+        assert header == text, site
+    states = {state for state, *_ in _ROUTER_STATES}
+    assert {
+        "cast-dispatched-fresh-seed", "grind-dispatched-fresh-seed",
+        "cast-redispatched-fresh-seed",
+    } <= states, sorted(states)
+    drives = _router_drives()
+    for site, _s, _t, _a, _b, d in drives:
+        assert isinstance(d["next_calls"], list), site
+        assert d["rules"].strip(), site
+    assert audit_next_call_structure(drives) == []
+
+
+def test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps(monkeypatch):
+    """lead-stalls D-039 — positive control, the shipped defect put back.
+
+    `transition_to_cast`, `build_castings`/undispatched and `fix_defects`/idle
+    passed the `dispatch` block alone under a rule naming the ledger block
+    LAST. With those three steps reverted, the audit names SPAWN_ORDER at every
+    site and payload that serves them, and at nothing else — the redispatch
+    and `transition_to_grind` steps still agree with the rule.
+    """
+    monkeypatch.setitem(
+        _IMPERATIVES, "transition_to_cast",
+        _replace_spawns(_IMPERATIVES["transition_to_cast"], blocks=("dispatch",)),
+    )
+    for action, branch in (("build_castings", "undispatched"), ("fix_defects", "idle")):
+        monkeypatch.setitem(
+            _IMPERATIVES[action], branch,
+            _replace_spawns(_IMPERATIVES[action][branch], blocks=("dispatch",)),
+        )
+    findings = audit_next_call_structure(
+        _drives_for("cast-not-spawned", "grind-idle", "cast-refused-team-down")
+    )
+    order = {f.split(":")[0] if not f.startswith("payload:") else ":".join(f.split(":")[:2])
+             for f in findings if "SPAWN_ORDER" in f}
+
+    assert order, findings
+    assert {site.split("@")[0] for site in order if "@" in site} == {
+        "transition_to_cast", "build_castings", "fix_defects",
+    }, sorted(order)
+    assert {
+        "payload:cast-not-spawned[fresh]", "payload:grind-idle[fresh]",
+    } <= order, sorted(order)
+    assert not any("cast-refused-team-down" in site for site in order), order
+    assert not any(site.startswith("transition_to_grind@") for site in order)
+    # And the audit lead-stalls FR-008 discharges on carries the finding.
+    assert any("SPAWN_ORDER" in f for f in audit_action_imperatives(drives=[]))
+    assert all("passes dispatch under a rule naming dispatch →" in f
+               for f in findings if "SPAWN_ORDER" in f), findings
+
+
+def test_the_structure_audit_reads_the_rule_printed_above_the_step(monkeypatch):
+    """lead-stalls D-039 / D-041 — the rule side of the comparison is the TEXT
+    on the payload, so a rules block that says something else is seen with no
+    step changed: the D-035-era sentence, and one without the one-move rule."""
+    before_d035 = _guidance._STANDING_CRITICAL_RULES.replace(
+        _guidance._SPAWN_PROMPT_RULE,
+        "Pass it to Agent VERBATIM. GRIND is the only exception: append the "
+        "'## Defects to fix this cycle:' block BELOW the dispatch.",
+    )
+    monkeypatch.setattr(_guidance, "_STANDING_CRITICAL_RULES", before_d035)
+    findings = audit_next_call_structure(_drives_for("cast-not-spawned"))
+    assert any(
+        f.startswith("payload:cast-not-spawned[fresh]: RULE_WITHOUT_PHASE")
+        for f in findings
+    ), findings
+    assert any(
+        f.startswith("build_castings@F1[undispatched]: RULE_WITHOUT_PHASE")
+        for f in findings
+    ), findings
+
+    monkeypatch.undo()
+    stripped = _guidance._STANDING_CRITICAL_RULES.replace(_SPAWN_IS_ONE_MOVE, "")
+    assert stripped != _guidance._STANDING_CRITICAL_RULES
+    monkeypatch.setattr(_guidance, "_STANDING_CRITICAL_RULES", stripped)
+    findings = audit_next_call_structure(_drives_for("grind-idle"))
+    assert any(
+        f.startswith("payload:grind-idle[fresh]: RULE_WITHOUT_ONE_MOVE")
+        for f in findings
+    ), findings
+    assert _guidance._SPAWN_PROMPT_RULE in stripped
+
+
+def test_the_structure_audit_bites_on_a_spawn_that_is_not_one_move(monkeypatch):
+    """lead-stalls D-038 — positive control for SPAWN_NOT_ONE_MOVE and
+    SPAWN_NOT_YIELDED: the undispatched branch with the sentence dropped from
+    its spawn step, and with its yield removed."""
+    undispatched = _IMPERATIVES["build_castings"]["undispatched"]
+    monkeypatch.setitem(
+        _IMPERATIVES["build_castings"], "undispatched",
+        _replace_spawns(undispatched, note="")._replace(
+            steps=_replace_spawns(undispatched, note="").steps[:-1],
+        ),
+    )
+    findings = audit_next_call_structure(_drives_for("cast-not-spawned"))
+    for kind in ("SPAWN_NOT_ONE_MOVE", "SPAWN_NOT_YIELDED"):
+        assert any(
+            f.startswith(f"payload:cast-not-spawned[fresh]: {kind}")
+            for f in findings
+        ), (kind, findings)
+
+
+def test_the_structure_audit_bites_when_a_stream_has_no_call(monkeypatch):
+    """lead-stalls D-040 — positive control: `test01` with no step and no
+    `agent_configs` entry, which is the idle header as it shipped."""
+    real_steps = _guidance._stream_steps
+    real_config = _guidance._stream_agent_config
+    monkeypatch.setattr(
+        _guidance, "_stream_steps",
+        lambda streams: real_steps(
+            [s for s in (streams or []) if s != "test01"] or None
+        ),
+    )
+    monkeypatch.setattr(
+        _guidance, "_stream_agent_config",
+        lambda stream: {} if stream == "test01" else real_config(stream),
+    )
+    findings = audit_next_call_structure(_drives_for("inspect-idle"))
+
+    for kind in ("STREAM_WITHOUT_CALL — test01", "STREAM_WITHOUT_CONFIG"):
+        assert any(
+            f.startswith("payload:inspect-idle[fresh]: ") and kind in f
+            for f in findings
+        ), (kind, findings)
+    assert any(
+        f.startswith("run_streams@F1[idle]: STREAM_WITHOUT_CALL — test01")
+        for f in findings
+    ), findings
+
+
+def test_the_idle_streams_header_names_one_call_per_unrecorded_stream(tmp_path):
+    """lead-stalls GI-008 / OT-013 / D-040, as filed: F2, FULL width, this
+    run's own roster (trace, prove, test, test01), nothing recorded."""
+    d = _drive(tmp_path, _arrange_inspect_idle)
+
+    assert (d["action"], d["branch"]) == ("run_streams", "idle"), d["header"]
+    calls = d["nxt"]["next_calls"]
+    assert [c["each"] for c in calls if c["tool"] == "Agent"] == [
+        "for trace", "for prove", "for test", "for test01",
+    ], calls
+    assert calls[-1]["tool"] == _END_TURN, calls
+    assert "subagent_type='foundry:spec-test-deriver'" in d["header"], d["header"]
+    # TEST keeps its baseline model and type (test_model_config.py's pin).
+    assert "Agent(model='opus', subagent_type='general-purpose'" in d["header"]
+    configs = d["nxt"]["details"]["agent_configs"]
+    assert configs["test01"]["subagent_type"] == "foundry:spec-test-deriver"
+    # The qualifiers the recorded roster settles are gone.
+    for qualifier in ("MIGRATION only", "may also run", "TEST / PROBE",
+                      "COVERAGE_DIFF", "RESEARCH_AUDIT"):
+        assert qualifier not in d["header"], (qualifier, d["header"])
+
+
+#: lead-stalls D-038 — (A), (B) and (C): the state before the door, the door,
+#: and the payload after it. Each tuple is (the before-door arrange, the owed
+#: action/branch before, the door call, the owed action after).
+def _before_cast_wave(root, fdir, teams):
+    _arrange_cast_not_spawned(root, fdir, teams)
+    _prompt_files(fdir, ["1", "2"])
+
+
+def _before_grind_spawn(root, fdir, teams):
+    _grind(fdir, open_defect=True)
+    _wave_manifest(fdir, {1: ["1"]})
+    _prompt_files(fdir, ["1"])
+
+
+def _before_redispatch(root, fdir, teams):
+    _cast(fdir, {1: ["1"], 2: ["2"]})
+    _prompt_files(fdir, ["1", "2"])
+    _worked(fdir, "1", done=True,
+            at=datetime.now(timezone.utc) - timedelta(minutes=1))
+    _verdict(fdir, "1", "refused")
+
+
+_DOOR_ROUTES = {
+    "A-cast-wave": (
+        _before_cast_wave, ("build_castings", "undispatched"),
+        lambda root, teams: foundry_cast_wave(1, "cast", project_root=root),
+        "build_castings", "Foundry-Cast-Wave",
+    ),
+    "B-grind-spawn": (
+        _before_grind_spawn, ("fix_defects", "idle"),
+        lambda root, teams: (
+            _register(root, teams, _GRIND_TEAM),
+            foundry_spawn_teammate(1, "grind", project_root=root),
+        )[1],
+        "fix_defects", "Foundry-Spawn-Teammate",
+    ),
+    "C-redispatch": (
+        _before_redispatch, ("build_castings", "redispatch"),
+        lambda root, teams: foundry_spawn_teammate(1, "cast", project_root=root),
+        "build_castings", "Foundry-Spawn-Teammate",
+    ),
+}
+
+
+@pytest.mark.parametrize("route", sorted(_DOOR_ROUTES))
+def test_a_fresh_seed_is_the_teammate_the_one_move_spawned(tmp_path, route):
+    """lead-stalls D-038 — drives (A), (B) and (C) with a FRESH seed.
+
+    THE REMEDY CHOSEN, AND WHY. A seed-only ledger is both "door returned, no
+    Agent yet" and "Agent spawned, still reading its prompt", and nothing a
+    guidance read can see separates them — `seeded_by: server` is on the line
+    in both. Answering the seed with "spawn it now" would duplicate EVERY spawn
+    on the ordinary path, where the lead calls Foundry-Next seconds after its
+    Agent call. So the header that names the door names the Agent call as the
+    same move, with no Foundry-Next between them and the yield after it, and
+    the rules above say so too; under that rule a fresh seed IS a spawned
+    teammate, and `live` is the true answer for it.
+    """
+    before, owed_before, door, owed_after, door_tool = _DOOR_ROUTES[route]
+    with _router_run(tmp_path) as (root, fdir, teams):
+        before(root, fdir, teams)
+        routed = foundry_next_action(root)
+        header = _split_payload(routed["instructions"])[1]
+        calls = routed["next_calls"]
+        opened = door(root, teams)
+        after = foundry_next_action(root)
+    rules = _spawn_rule(_rules_of(routed["instructions"]))
+
+    assert (routed["action"], _chosen_branch(
+        routed["action"], routed["agent_liveness"]
+    )) == owed_before, header
+    tools = [c["tool"] for c in calls]
+    at = tools.index(door_tool)
+    assert tools[at + 1] == "Agent", calls
+    assert _SPAWN_IS_ONE_MOVE in calls[at + 1]["note"], calls[at + 1]
+    assert calls[at + 1]["prompt_blocks"][-1] == "progress_protocol", calls
+    assert tools[-1] == _END_TURN and "Foundry-Next" not in tools[at:], calls
+    assert _SPAWN_IS_ONE_MOVE in rules, rules
+
+    assert opened["ok"] is True, opened
+    live = after["agent_liveness"]
+    assert after["action"] == owed_after, after["action"]
+    assert _chosen_branch(owed_after, live) == "live", live
+    assert live["waiting"] is True, live
+    assert {a["step"] for a in live["agents"]} == {"dispatched"}, live
+    assert after["next_calls"] == [], after["next_calls"]
+    assert "END YOUR TURN" in _split_payload(after["instructions"])[1]
+
+
+def test_the_naive_seed_fix_would_spawn_every_teammate_twice(monkeypatch):
+    """lead-stalls D-038 / D-041 — positive control for the fresh-seed rows.
+
+    The alternative the defect record warns about — read a seed-only reading as
+    not dispatched — sends the lead to dispatch again over teammates its own
+    Agent call already made. The payload sweep names that at all three rows.
+    """
+    real = _guidance._branch_state
+
+    def _seeds_ignored(liveness: object) -> str:
+        row = liveness if isinstance(liveness, dict) else {}
+        agents = row.get("agents") or []
+        if row.get("waiting") and agents and all(
+            a.get("step") == "dispatched" for a in agents
+        ):
+            return "undispatched"
+        return real(liveness)
+
+    monkeypatch.setattr(_guidance, "_branch_state", _seeds_ignored)
+    states = ("cast-dispatched-fresh-seed", "grind-dispatched-fresh-seed",
+              "cast-redispatched-fresh-seed")
+    findings = [
+        f for f in audit_assembled_payloads(_drives_for(*states))
+        if "WRONG_ROUTE" in f
+    ]
+    assert {f.split(":", 2)[1].split("[")[0] for f in findings} == set(states), findings
+
+
+def test_the_payload_publishes_the_steps_its_header_renders(run_env):
+    """lead-stalls GI-008 / OT-013 — `next_calls` beside the header, as data:
+    one record per numbered line, in order, for an unbranched action too."""
+    project_root, fdir = run_env
+    _write_state(fdir, phase="F0", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+
+    nxt = foundry_next_action(project_root)
+    header = _split_payload(nxt["instructions"])[1]
+
+    assert nxt["action"] == "transition_to_cast", nxt["action"]
+    assert [c["tool"] for c in nxt["next_calls"]] == [
+        "Foundry-Validate-Castings", "Foundry-Gate", "Foundry-Phase",
+        "TeamCreate", "Foundry-Team-Up", "Foundry-Cast-Wave", "Agent", _END_TURN,
+    ], nxt["next_calls"]
+    assert [line for _n, line in _STEP_LINE.findall(header)] == [
+        _render_call(_as_step(c)) for c in nxt["next_calls"]
+    ]
+    assert set(nxt["next_calls"][0]) == {"tool", "args", "each", "prompt_blocks", "note"}
+    assert {c["tool"] for c in nxt["next_calls"]} <= _LEAD_CALLS
+    assert _call_record(_as_step(nxt["next_calls"][6])) == nxt["next_calls"][6]
+
+
+#: lead-stalls GI-008 / FR-007 — every entry's calls, in order, written by
+#: hand. The structure audit judges SHAPE (a real tool, no step after the
+#: yield, spawns against the rule); this is the table of WHAT each run state
+#: owes, so a step dropped, split, merged or reordered is named by key.
+_OWED_CALLS = {
+    "init": ["Foundry-Init"],
+    "halted": [],
+    "done": [],
+    "unknown": ["Foundry-Context", "Foundry-Next"],
+    "cleanup_teams": ["SendMessage", "TeamDelete", "Foundry-Team-Down"],
+    # The validation "after all complete" is the next action's first step,
+    # never a step behind the yield.
+    "add_castings": ["Agent", _END_TURN],
+    "transition_to_cast": [
+        "Foundry-Validate-Castings", "Foundry-Gate", "Foundry-Phase",
+        "TeamCreate", "Foundry-Team-Up", "Foundry-Cast-Wave", "Agent", _END_TURN,
+    ],
+    "build_castings/live": [],
+    "build_castings/idle": [
+        "TeamDelete", "Foundry-Team-Down", "Foundry-Gate", "Foundry-Phase",
+    ],
+    "build_castings/undispatched": [
+        "TeamCreate", "Foundry-Team-Up", "Foundry-Cast-Wave", "Agent", _END_TURN,
+    ],
+    "build_castings/refused": ["SendMessage", _END_TURN],
+    "build_castings/redispatch": [
+        "Foundry-Spawn-Teammate", "Agent", "SendMessage", _END_TURN,
+    ],
+    "build_castings/unaccepted": [
+        "Foundry-Spec-Hash", "Foundry-Accept-Casting", "Foundry-Next",
+    ],
+    "transition_to_inspect": ["Foundry-Gate", "Foundry-Phase"],
+    "run_streams/live": [],
+    # The template expands every stream (the prose sweeps read all of them).
+    "run_streams/idle": ["Agent"] * 8 + ["Skill", _END_TURN],
+    "transition_to_grind": [
+        "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase", "TeamCreate",
+        "Foundry-Team-Up", "Foundry-Spawn-Teammate", "Agent", _END_TURN,
+    ],
+    "fix_defects/live": [],
+    "fix_defects/idle": [
+        "TeamDelete", "Foundry-Team-Down", "Foundry-Tasks", "TeamCreate",
+        "Foundry-Team-Up", "Foundry-Spawn-Teammate", "Agent", _END_TURN,
+    ],
+    # The gate before the transition it guards, and no "update state" step.
+    "transition_to_assay": ["Foundry-Gate", "Foundry-Phase", "Agent"],
+    "run_assay": ["Agent"],
+    # The strip and its commit are two calls.
+    "transition_to_done": [
+        "Foundry-Report", "Foundry-Gate", "Bash", "Bash", "Foundry-Phase",
+    ],
+    "transition_to_temper": ["Foundry-Gate", "Foundry-Phase"],
+    "run_temper": ["Skill"],
+    "transition_to_nyquist": ["Foundry-Gate", "Foundry-Phase"],
+    "run_nyquist": ["Agent"],
+    "assay_failed_loop_back": ["Foundry-Tasks", "Foundry-Gate", "Foundry-Phase"],
+    "widen_inspect": ["Foundry-Gate", "Foundry-Phase"],
+    "record_inspect_width": ["Foundry-Gate", "Foundry-Phase"],
+}
+
+
+def _served_tables() -> dict[str, list[str]]:
+    served = {}
+    for action, entry in _IMPERATIVES.items():
+        for name, imperative in (
+            entry.items() if isinstance(entry, dict) else (("", entry),)
+        ):
+            key = f"{action}/{name}" if name else action
+            served[key] = [
+                step.tool for step in _guidance._template_steps(imperative.steps)
+            ]
+    return served
+
+
+def test_every_imperative_names_its_calls_in_order():
+    """lead-stalls GI-008 / FR-007 / FR-008 — the owed call table, per branch."""
+    assert _served_tables() == _OWED_CALLS
+
+
+def test_every_gate_step_precedes_the_transition_it_guards():
+    """lead-stalls FR-007 — `transition_to_assay` named the ASSAY gate AFTER
+    the `inspect_clean` transition it guards. Every list that holds both a
+    gate and a phase call names the gate first, and the gate guards it."""
+    from foundry_mcp.tools.orchestration.gates import GATE_TO_TRANSITION
+
+    checked = 0
+    for action, entry in _IMPERATIVES.items():
+        for imperative in (entry.values() if isinstance(entry, dict) else (entry,)):
+            tools = [step.tool for step in imperative.steps]
+            if "Foundry-Gate" not in tools or "Foundry-Phase" not in tools:
+                continue
+            checked += 1
+            gate = imperative.steps[tools.index("Foundry-Gate")]
+            phase = imperative.steps[tools.index("Foundry-Phase")]
+            assert tools.index("Foundry-Gate") < tools.index("Foundry-Phase"), action
+            if "{" in (gate.args or ""):
+                continue      # transition_to_inspect: one crossing row, pinned elsewhere
+            guarded = GATE_TO_TRANSITION[_ARG_PHASE.search(gate.args).group(1)]
+            assert _ARG_PHASE.search(phase.args).group(1) in guarded, action
+    assert checked >= 9, checked
+
+
+def test_the_prose_the_structure_moved_still_says_what_it_said():
+    """The sentences the rework rewrote or moved, pinned where they now live:
+    the live branch's seed sentence (D-038), the dispatch branch's stale-seed
+    sentence and its dropped claim (D-038), the rules line's one-step clause
+    (D-038), and the two trailers that lost a call written in prose."""
+    live = _parse_branches(_ACTION_IMPERATIVES["build_castings"])["live"]
+    assert "holds only the line its spawn door wrote counts as running" in live
+    assert "holds only the line its spawn door wrote counts as running" in (
+        _parse_branches(_ACTION_IMPERATIVES["fix_defects"])["live"]
+    )
+    undispatched = _parse_branches(_ACTION_IMPERATIVES["build_castings"])["undispatched"]
+    assert "reads here only once its seeds are stale" in undispatched
+    assert "between steps (4) and (6)" not in undispatched
+    rule = next(
+        line for line in _guidance._STANDING_CRITICAL_RULES.splitlines()
+        if line.startswith("- NEVER stop between phases")
+    )
+    assert "a spawn door and the Agent call it feeds are one step" in rule, rule
+    assert "the Foundry-Next the last notification wakes you for opens the " \
+        "validation" in _ACTION_IMPERATIVES["add_castings"]
+    assert "No team is needed" in _ACTION_IMPERATIVES["add_castings"]
+    assert "cleanup failure mode" in _ACTION_IMPERATIVES["cleanup_teams"]
+    assert "Do NOT wait for 'shutdown_response' events" in (
+        _ACTION_IMPERATIVES["cleanup_teams"]
+    )
+    for action in ("add_castings", "run_streams"):
+        assert "TaskOutput(" not in _ACTION_IMPERATIVES[action], action
+    streams = _ACTION_IMPERATIVES["run_streams"]
+    # lead-stalls D-033 / D-040 — the finished-unrecorded stream is in the list.
+    assert "A stream that finished without its own record is in that list" in streams
+    # fallout D-169 — the snapshot rule rides in every reading stream's prompt.
+    trace = _guidance._stream_agent_step("trace").args
+    assert "`git archive HEAD`" in trace and "cite that sha" in trace, trace
+    assert "PIN ITS WORK TO A SNAPSHOT" in streams

@@ -2259,11 +2259,13 @@ def test_the_run_streams_imperative_leaves_sight_an_exit(run_env):
     # no longer names a move SIGHT cannot make. lead-stalls GI-008 (D-033): and
     # it is stated as the one move, not as "if ... re-dispatch it, or file it"
     # — a filed stream still has no record, so filing never advances the run.
+    # lead-stalls D-040: the move is now the step list itself, one Agent call
+    # per unrecorded stream, and the sentence says the finished one is in it.
     assert (
-        "An AGENT stream that finished without its own record is one of the "
-        "unrecorded streams" in imperative
+        "A stream that finished without its own record is in that list, "
+        "because its own re-run is the one thing that records it." in imperative
     ), imperative
-    assert "re-spawns it with the rest" in imperative, imperative
+    assert "Each Agent step above is a stream this INSPECT's recorded roster" in imperative
     assert "or file it" not in imperative, imperative
 
     # The same qualification reaches the `instructions` string, which is the

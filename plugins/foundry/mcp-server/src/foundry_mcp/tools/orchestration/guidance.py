@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 from datetime import (
     datetime,
@@ -762,8 +763,8 @@ def foundry_next_action(
     action = result.get("action", "")
     original_instructions = result.get("instructions", "")
     run_name_for_imperative = fdir_stall.name if fdir_stall and fdir_stall.exists() else ""
-    imperative_header = _format_imperative_header(
-        action, original_instructions, result.get("details", {}),
+    next_calls, imperative_header = _emitted_imperative(
+        action, result.get("details", {}),
         run_name=run_name_for_imperative,
         # fallout D-058 — the phase the action was emitted FROM, which is the
         # other half of the question for `transition_to_inspect`. It is already
@@ -785,6 +786,12 @@ def foundry_next_action(
             if fdir_stall and fdir_stall.exists() else None
         ),
     )
+
+    # lead-stalls GI-008 / OT-013 (D-038..D-043) — THE STEPS THE HEADER WAS
+    # RENDERED FROM, published beside it. `None` only where the header is the
+    # generic fallback, which names no step list of its own.
+    if next_calls is not None:
+        result["next_calls"] = [_call_record(step) for step in next_calls]
 
     directives = _read_directives(project_root)
     directive_block = ""
@@ -1099,6 +1106,119 @@ _GATE_THEN_PHASE_NOTE = "\n" + _GATE_THEN_PHASE_EXCEPTION
 
 
 
+#: lead-stalls GI-008 / ST-003 / ST-004 / US-003 (D-039) — THE SPAWN-PROMPT
+#: ORDER, DECLARED ONCE.
+#:
+#: The standing rule said every spawn passes the `dispatch` block and then,
+#: LAST, the `progress_protocol` block (D-035). Three of the five dispatch
+#: steps printed under that rule still said the dispatch block alone:
+#: `transition_to_cast` (6), `build_castings`/undispatched (4) and
+#: `fix_defects`/idle (6). Each payload therefore carried two answers to "what
+#: is the Agent prompt", and a lead obeying the step spawned a teammate that
+#: was never told its ledger. Driven, that parked a CAST wave (END YOUR TURN
+#: over nothing, then a re-dispatch of a wave already accepted) and left a
+#: GRIND cycle reading as live over no running agent.
+#:
+#: Five hand-typed copies of one order is how three of them went stale, so the
+#: order is DATA here: each phase names its blocks, each block has one label
+#: and one description, and `_spawn_prompt` renders both the rules block's
+#: sentence and every spawn step's prompt clause. The two cannot disagree,
+#: because they are one rendering of one tuple.
+_PROMPT_BLOCKS: dict[str, tuple[str, str]] = {
+    "dispatch": (
+        "dispatch",
+        "the returned `dispatch` field VERBATIM, which names the prompt FILE "
+        "and the sha256 the teammate must read that file to obtain (the "
+        "`prompt` field is null by default and is NOT what you pass)",
+    ),
+    "grind_cycle_context": (
+        "cycle_context",
+        "the returned `grind_cycle_context` block VERBATIM (the files earlier "
+        "cycles changed; a response without one adds nothing here)",
+    ),
+    "defects": (
+        "defects",
+        "the defect list, in a '## Defects to fix this cycle:' block",
+    ),
+    "alignment_block": (
+        "alignment",
+        "that task's `alignment_block` from the Foundry-Tasks result, "
+        "VERBATIM — server-generated, it names the originating defects, the "
+        "requirement ids, the owning casting and file of the fix, and the "
+        "sibling files this casting owns that cite those ids, so never "
+        "summarise it and never compose your own (a task without one adds "
+        "nothing here)",
+    ),
+    "progress_protocol": (
+        "progress_protocol",
+        "LAST, the returned `progress_protocol` block VERBATIM, which is what "
+        "makes the teammate write its progress ledger and its done line",
+    ),
+}
+
+_SPAWN_PROMPT_ORDER: dict[str, tuple[str, ...]] = {
+    "cast": ("dispatch", "progress_protocol"),
+    "grind": (
+        "dispatch", "grind_cycle_context", "defects", "alignment_block",
+        "progress_protocol",
+    ),
+}
+
+
+def _spawn_prompt(blocks: tuple[str, ...]) -> str:
+    """The prompt clause for a spawn passing ``blocks``, in their order."""
+    listed = "; ".join(
+        f"({chr(ord('a') + index)}) {_PROMPT_BLOCKS[block][1]}"
+        for index, block in enumerate(blocks)
+    )
+    order = " → ".join(_PROMPT_BLOCKS[block][0] for block in blocks)
+    return (
+        "its prompt is these blocks, each BELOW the one before and never "
+        f"inside another: {listed}. Order: {order}."
+    )
+
+
+#: lead-stalls FR-015 / US-003 / ST-004 / CT-003 (D-038) — A SPAWN DOOR AND
+#: ITS AGENT CALL ARE ONE MOVE.
+#:
+#: Both spawn doors write each teammate's first ledger line
+#: (`{"step": "dispatched", "seeded_by": "server"}`) before they return, and a
+#: fresh line reads as a progressing agent. A lead that called Foundry-Next
+#: between the door and its Agent call — which the standing "call Foundry-Next
+#: after each step" told it to — was answered END YOUR TURN with no Agent
+#: running: a CAST wave, a GRIND cycle and a refused casting's re-dispatch all
+#: parked that way when driven.
+#:
+#: THE READING SIDE CANNOT SEPARATE THE TWO STATES, WHICH IS WHY THE REMEDY IS
+#: THIS SENTENCE. A seed-only ledger is both "door returned, no Agent yet" and
+#: "Agent spawned, still reading its prompt file", and nothing this server
+#: records tells them apart: the seed is identical in both, and the Agent call
+#: leaves no trace a guidance read can see. Answering the seed with "spawn it
+#: now" would duplicate EVERY spawn on the ordinary path, where the lead calls
+#: Foundry-Next seconds after its Agent call and before the teammate's first
+#: line. So the reading keeps a fresh seed as running, and this makes that
+#: true: the lead never stands between the door and the Agent, and the step
+#: after the spawn is END YOUR TURN rather than a Foundry-Next. Quoted by the
+#: rules block and by every spawn step, per the `_GATE_THEN_PHASE_EXCEPTION`
+#: discipline.
+_SPAWN_IS_ONE_MOVE = (
+    "A spawn door (Foundry-Cast-Wave, Foundry-Spawn-Teammate) and the Agent "
+    "call its answer feeds are ONE move: the Agent call comes straight after "
+    "the door, with no Foundry-Next between them, because the door has "
+    "already written each teammate's first ledger line and a Foundry-Next "
+    "taken in between reads that teammate as running while no Agent exists."
+)
+
+#: The rules block's spawn sentence, rendered from the same declaration.
+_SPAWN_PROMPT_RULE = (
+    "Every spawn, CAST and GRIND, passes Agent exactly these blocks. CAST: "
+    + _spawn_prompt(_SPAWN_PROMPT_ORDER["cast"])
+    + " GRIND: "
+    + _spawn_prompt(_SPAWN_PROMPT_ORDER["grind"])
+)
+
+
+
 
 #: D-136 — the standing rules block, named once so the HALTED branch in
 #: `foundry_next_action` can stand beside it instead of inside it.
@@ -1117,8 +1237,11 @@ _STANDING_CRITICAL_RULES = (
     # This line used to end at "follow it." full stop, which a lead reading
     # top-to-bottom took as unconditional and which contradicted the note
     # `_GATE_THEN_PHASE_NOTE` carries at the tail of the same payload.
+    # lead-stalls D-038 — and a spawn door with its Agent call is ONE step,
+    # which is what the spawn rule below says in full.
     "\n- NEVER stop between phases. Call Foundry-Next after each step and "
-    "follow it. REQUIRED everywhere except exactly one place: "
+    "follow it; a spawn door and the Agent call it feeds are one step (the "
+    "spawn rule below). REQUIRED everywhere except exactly one place: "
     + _GATE_THEN_PHASE_EXCEPTION
     + " Skipping it there is correct and is not a shortcut; skipping it "
     "anywhere else is."
@@ -1137,8 +1260,14 @@ _STANDING_CRITICAL_RULES = (
     # reached. `commands/start.md` rule 1 and `Foundry-Spawn-Teammate`'s own
     # `instructions` already say the block goes BELOW, LAST, in every phase, so
     # the rule says it too and GRIND's exception is only the defect material.
-    "\n- NEVER modify, paraphrase, or augment a prompt returned by Foundry-Spawn-Teammate. Every spawn, CAST and GRIND, passes Agent the returned `dispatch` block VERBATIM and then, BELOW it and LAST, the returned `progress_protocol` block VERBATIM. GRIND is the only exception to what goes between the two: (a) the `grind_cycle_context` block when the spawn response carries one (prior-cycle file changes), (b) the '## Defects to fix this cycle:' block and (c) the task's `alignment_block`, in that order. Never inside the prompt."
-    "\n- If the user typed a message, treat it as a directive. Absorb and keep going."
+    #
+    # lead-stalls D-039 / D-038 — rendered from `_SPAWN_PROMPT_ORDER` and
+    # quoting `_SPAWN_IS_ONE_MOVE`, the two declarations every spawn step
+    # renders from too, so this line and the steps under it are one text.
+    "\n- NEVER modify, paraphrase, or augment a prompt returned by "
+    "Foundry-Spawn-Teammate or Foundry-Cast-Wave. "
+    + _SPAWN_PROMPT_RULE + " " + _SPAWN_IS_ONE_MOVE
+    + "\n- If the user typed a message, treat it as a directive. Absorb and keep going."
     # D-136 — THE THIRD ENDING. This read "The foundry runs until F6 DONE or an
     # error stops it", which ST-001 / CT-004 made false: a halt ends a run in a
     # named HALTED state reached by a SUCCESSFUL transition, which is neither
@@ -1674,718 +1803,1122 @@ def _casting_slot(liveness: object) -> str:
     return _CASTING_DEFAULT
 
 
-#: lead-stalls CT-002 / FR-002 — the teammates-live branch, for both audited
-#: actions. It
-#: names NO next call ON PURPOSE, in the same register as the `done` and
-#: `halted` terminals: "end your turn" IS the correct move here, and an
-#: imperative that named a tool call would be telling the lead to improvise over
-#: half-finished work. The survey counted `done` and `halted` among the 20
-#: already-correct entries for naming NONE, which is the precedent.
-_CAST_TEAMMATES_LIVE = (
-    "YOUR NEXT CALL: NONE. Your CAST teammates are running — this server read "
-    "their progress ledgers on this call and measured them advancing. "
-    + _WAITING_IS_NOT_STOPPING
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 / FR-007 / FR-008 / FR-015 / OT-002 / OT-013 — THE NEXT
+# CALLS ARE A STEP LIST THE ROUTER EMITS, AND THE HEADER IS ITS RENDERING
+# (D-038..D-043, on the user's ruling of 2026-09-17).
+#
+# Every imperative was a string, and the audit FR-008 discharges on judged the
+# string with a prose detector: a syntactic guard over a semantic property. It
+# took six repairs (D-023, D-029, D-032, D-034, D-041, D-043), each a
+# conditional shaped so the last widening could not see it, and the user ruled
+# for a structure rather than a seventh widening.
+#
+# So a lead's next calls are `_Step`s: one tool, its literal arguments, how
+# many, the prompt blocks a spawn passes, and a note. No field holds a
+# condition, and a choice between two calls cannot be written down, because a
+# step list only says "this, then this". `_emitted_imperative` picks the
+# branch, expands and substitutes the steps, and renders the header from them;
+# Foundry-Next publishes the same steps as `next_calls`, so the payload and the
+# prose are one answer. The audit judges the steps.
+#
+# `_ACTION_IMPERATIVES` stays a table of STRINGS rendered from this one: two
+# suites sweep its values for denied spellings and steerable-model claims, and
+# D-226 is the defect where such a window was narrower than the rule. It is a
+# rendering of `_IMPERATIVES`, never a second source.
+# --------------------------------------------------------------------------- #
+
+
+class _Step(NamedTuple):
+    """One call the lead makes, in order. There is no field for a condition."""
+
+    tool: str
+    #: The literal argument list, rendered inside the parentheses; ``None``
+    #: renders the bare tool name (TeamDelete takes none).
+    args: str | None = None
+    #: How many and in what message, e.g. "once per returned casting".
+    each: str = ""
+    #: A spawn's prompt blocks, keys of `_PROMPT_BLOCKS`, in order.
+    blocks: tuple[str, ...] = ()
+    note: str = ""
+
+
+class _Imperative(NamedTuple):
+    """One run state's next calls and the statement printed under them.
+    An empty ``steps`` is the explicit NONE the terminals and the live
+    branches answer with."""
+
+    steps: tuple[_Step, ...]
+    trailer: str = ""
+
+
+#: The yield. Not a tool, and the only step with no call: it renders as the
+#: wait policy, and it is always LAST, because whatever follows the wake is
+#: the Foundry-Next that the policy itself names.
+_END_TURN = "END YOUR TURN"
+_YIELD = _Step(_END_TURN)
+
+#: The step a `run_streams` idle branch holds in place of its stream calls,
+#: expanded at emission from the roster the router published (D-040).
+_EACH_UNRECORDED_STREAM = "{unrecorded streams}"
+
+#: Every name a step may carry as its tool. Closed, so a step naming something
+#: the lead cannot call is caught where it is written, and pinned by the audit
+#: against the MCP server's own tool list.
+_LEAD_CALLS = frozenset({
+    "Agent", "Bash", "SendMessage", "Skill", "TeamCreate", "TeamDelete",
+    "Foundry-Accept-Casting", "Foundry-Cast-Wave", "Foundry-Context",
+    "Foundry-Gate", "Foundry-Init", "Foundry-Next", "Foundry-Phase",
+    "Foundry-Report", "Foundry-Spawn-Teammate", "Foundry-Spec-Hash",
+    "Foundry-Tasks", "Foundry-Team-Down", "Foundry-Team-Up",
+    "Foundry-Validate-Castings",
+    _END_TURN,
+})
+
+#: The two doors that seed a ledger before they return (D-038).
+_SPAWN_DOORS = ("Foundry-Cast-Wave", "Foundry-Spawn-Teammate")
+
+
+def _render_call(step: _Step) -> str:
+    """One step as the lead reads it."""
+    if step.tool == _END_TURN:
+        return _WAITING_IS_NOT_STOPPING
+    call = step.tool if step.args is None else f"{step.tool}({step.args})"
+    pieces = [f"{call} {step.each}" if step.each else call]
+    if step.blocks:
+        pieces.append(_spawn_prompt(step.blocks))
+    if step.note:
+        pieces.append(step.note)
+    return " — ".join(pieces)
+
+
+def _render_imperative(imperative: _Imperative) -> str:
+    """The header for one run state: its numbered steps, then its trailer."""
+    steps = imperative.steps
+    if not steps:
+        head = "YOUR NEXT CALL: NONE. "
+    else:
+        head = (
+            "YOUR NEXT CALL:\n" if len(steps) == 1
+            else "YOUR NEXT CALLS (in order):\n"
+        ) + "".join(
+            f"  ({number}) {_render_call(step)}\n"
+            for number, step in enumerate(steps, 1)
+        )
+    return head + imperative.trailer
+
+
+def _call_record(step: _Step) -> dict:
+    """A step as `next_calls` publishes it."""
+    return {
+        "tool": step.tool,
+        "args": step.args,
+        "each": step.each,
+        "prompt_blocks": list(step.blocks),
+        "note": step.note,
+    }
+
+
+#: lead-stalls D-040 — ONE LITERAL CALL PER STREAM THE RECORDED ROSTER NAMES.
+#:
+#: The idle branch listed TRACE and PROVE with calls, three more with
+#: qualifiers ("MIGRATION only"), and "TEST / PROBE: may also run as background
+#: Agents" with no subagent_type and no prompt, and it never named `test01` at
+#: all. Driven on this run's own roster (trace, prove, test, test01), the lead
+#: had to find test01's agent type outside the payload, write TEST's prompt
+#: itself, and check each bullet's qualifier against the CONTEXT — conditions
+#: and a judgment task to find its next calls.
+#:
+#: The server already holds the recorded roster and which of it is
+#: unrecorded, so the steps are that list: `(subagent_type, prompt)` per
+#: stream, the reading streams told to pin a snapshot IN their prompt (D-169)
+#: rather than asking the lead to add it. `sight` is the one stream the lead
+#: executes, through its skill.
+_PIN_A_SNAPSHOT = (
+    " Pin your work to a snapshot: take the HEAD sha once at start, verify "
+    "every finding against `git archive HEAD` rather than the live tree, and "
+    "cite that sha in your report."
+)
+_STREAM_AGENTS: dict[str, tuple[str, str]] = {
+    "trace": (
+        "foundry:tracer",
+        "Run TRACE wiring verification for the active foundry run."
+        + _PIN_A_SNAPSHOT,
+    ),
+    "flow_trace": (
+        "foundry:flow-tracer",
+        "Run FLOW_TRACE (flow-delta wiring verification) for the active "
+        "foundry run." + _PIN_A_SNAPSHOT,
+    ),
+    "prove": (
+        "foundry:assayer",
+        "Run PROVE (spec-to-code citation verification) for the active "
+        "foundry run." + _PIN_A_SNAPSHOT,
+    ),
+    "research_audit": (
+        "foundry:research-auditor",
+        "Run RESEARCH_AUDIT for the active foundry run." + _PIN_A_SNAPSHOT,
+    ),
+    "coverage_diff": (
+        "foundry:coverage-diff",
+        "Run COVERAGE_DIFF for the active foundry run." + _PIN_A_SNAPSHOT,
+    ),
+    "test01": (
+        "foundry:spec-test-deriver",
+        "Run TEST-01 (spec-derived contract tests) for the active foundry "
+        "run.",
+    ),
+    "test": (
+        "general-purpose",
+        "Run the TEST stream for the active foundry run: run the test suite, "
+        "verify each GRIND fix by reverting it and re-running, and record the "
+        "counts you measured through Foundry-Stream with stream 'test'.",
+    ),
+    "probe": (
+        "general-purpose",
+        "Run the PROBE stream for the active foundry run: smoke the API at the "
+        "run's target_url, and record the counts you measured through "
+        "Foundry-Stream with stream 'probe'.",
+    ),
+}
+
+#: The baseline `general-purpose` stream agents keep (test_model_config.py
+#: pins it; the model option steers only `STEERABLE_SUBAGENT_TYPES`).
+_GENERAL_STREAM_MODEL = "opus"
+
+_SIGHT_STEP = _Step(
+    "Skill",
+    "skill='foundry:sight'",
+    note=(
+        "SIGHT runs in this main thread, beside the background streams, "
+        "because Playwright works nowhere else."
+    ),
 )
 
-_GRIND_TEAMMATES_LIVE = (
-    "YOUR NEXT CALL: NONE. Your GRIND teammates are running — this server read "
-    "their progress ledgers on this call and measured them advancing. "
-    + _WAITING_IS_NOT_STOPPING
+#: Every stream a step can name, in the order the template renders them. The
+#: expansion falls back to it for a reading that published no roster, which
+#: the router never does; it is the `{wave}` default's register, and it keeps
+#: every stream prompt inside `_ACTION_IMPERATIVES` for the prose sweeps.
+_STREAM_TEMPLATE_ROSTER = (*_STREAM_AGENTS, "sight")
+
+
+def _stream_agent_step(stream: str) -> _Step:
+    """The Agent call for one stream, total over every name."""
+    subagent_type, prompt = _STREAM_AGENTS.get(
+        stream,
+        (
+            "general-purpose",
+            f"Run the {stream} verification stream for the active foundry run.",
+        ),
+    )
+    model = (
+        f"model='{_GENERAL_STREAM_MODEL}', "
+        if subagent_type == "general-purpose" else ""
+    )
+    return _Step(
+        "Agent",
+        f"{model}subagent_type='{subagent_type}', run_in_background=true, "
+        f'prompt="{prompt}"',
+        each=f"for {stream}",
+    )
+
+
+def _stream_agent_config(stream: str) -> dict:
+    """`details.agent_configs[stream]`, from the same row the step reads."""
+    subagent_type = _STREAM_AGENTS.get(stream, ("general-purpose", ""))[0]
+    if subagent_type == "general-purpose":
+        return {
+            **agent_model(subagent_type, baseline=_GENERAL_STREAM_MODEL),
+            "subagent_type": subagent_type,
+        }
+    return {
+        "subagent_type": subagent_type,
+        "run_in_background": True,
+        "description": f"{stream}: verification stream",
+    }
+
+
+def _stream_steps(streams: object) -> tuple[_Step, ...]:
+    """The calls for the unrecorded streams, in roster order. Total.
+
+    The yield closes the list whenever an agent was spawned: a stream writes no
+    ledger line until it starts, so a Foundry-Next taken straight after the
+    spawn reads it as unrecorded and would spawn it twice. The completion
+    notification is the wake. SIGHT alone spawns nothing to wait for, so its
+    list ends at the skill.
+    """
+    names: list[str] = []
+    for name in streams if isinstance(streams, (list, tuple)) else ():
+        if isinstance(name, str) and name and name not in names:
+            names.append(name)
+    if not names:
+        names = list(_STREAM_TEMPLATE_ROSTER)
+    agents = [_stream_agent_step(name) for name in names if name != "sight"]
+    steps = list(agents)
+    if "sight" in names:
+        steps.append(_SIGHT_STEP)
+    if agents:
+        steps.append(_YIELD)
+    return tuple(steps)
+
+
+#: lead-stalls CT-002 / FR-002 — the teammates-live branch, for both audited
+#: actions. It names NO next call ON PURPOSE, in the same register as the
+#: `done` and `halted` terminals: "end your turn" IS the correct move here,
+#: and an imperative that named a tool call would be telling the lead to
+#: improvise over half-finished work. The survey counted `done` and `halted`
+#: among the 20 already-correct entries for naming NONE, which is the
+#: precedent.
+#:
+#: lead-stalls D-038 — the sentence says what "running" covers, because a
+#: ledger holding only its door's seed counts: under `_SPAWN_IS_ONE_MOVE` that
+#: teammate's Agent was made in the same move as the door.
+_SEED_COUNTS_AS_RUNNING = (
+    "A teammate whose ledger holds only the line its spawn door wrote counts "
+    "as running, because the door and its Agent call are one move. "
 )
+_CAST_TEAMMATES_LIVE = _Imperative((), (
+    "Your CAST teammates are running — this server read their progress "
+    "ledgers on this call and measured them advancing. "
+    + _SEED_COUNTS_AS_RUNNING + _WAITING_IS_NOT_STOPPING
+))
+
+_GRIND_TEAMMATES_LIVE = _Imperative((), (
+    "Your GRIND teammates are running — this server read their progress "
+    "ledgers on this call and measured them advancing. "
+    + _SEED_COUNTS_AS_RUNNING + _WAITING_IS_NOT_STOPPING
+))
 
 #: lead-stalls GI-008 / FR-007 (D-019) — `run_streams` IS THE THIRD ACTION
 #: WHOSE WORK IS AGENTS, AND THE ONE A LEAD RE-READS WHILE THEY RUN.
 #:
-#: Its streams are BACKGROUND agents, so unlike the foreground CAST and GRIND
-#: spawns the lead keeps its turn and calls Foundry-Next while they work. Every
-#: such call found the streams unrecorded — they record at the END — and was
-#: handed "spawn every missing INSPECT stream" beside a CONTEXT naming the very
-#: streams already running. Driven with `prove` and `trace` progressing and the
-#: stall clock stale, one payload carried the WAITING / END YOUR TURN notice
-#: listing both and, under it, the order to spawn them again. FR-007 is "fix
-#: any others found"; this is the other one, and it takes the same treatment.
-_STREAMS_RUNNING = (
-    "YOUR NEXT CALL: NONE. Your INSPECT streams are running — this server read "
-    "their progress ledgers on this call and measured them advancing. A stream "
-    "records itself when it finishes, so an unrecorded stream that is running "
-    "is not missing, and spawning it again runs it twice over one cycle. "
+#: Its streams are BACKGROUND agents, and every Foundry-Next taken while they
+#: worked found them unrecorded — they record at the END — and was handed
+#: "spawn every missing INSPECT stream" beside a CONTEXT naming the very
+#: streams already running. FR-007 is "fix any others found"; this is the
+#: other one, and it takes the same treatment.
+_STREAMS_RUNNING = _Imperative((), (
+    "Your INSPECT streams are running — this server read their progress "
+    "ledgers on this call and measured them advancing. A stream records "
+    "itself when it finishes, so an unrecorded stream that is running is not "
+    "missing, and spawning it again runs it twice over one cycle. "
     + _WAITING_IS_NOT_STOPPING
+))
+
+#: The model clause every teammate spawn carries (test_model_config.py pins
+#: the deferral on both transition entries).
+_MODEL_CLAUSE = (
+    "For the model: obey the model clause in the `instructions` {door} "
+    "returned — this server owns that decision; never re-derive it here."
+)
+
+
+def _teammate_spawn(phase: str, each: str, door: str) -> _Step:
+    """The Agent step a spawn door feeds, for ``phase`` (D-038 / D-039)."""
+    return _Step(
+        "Agent",
+        "subagent_type='foundry:teammate', mode='bypassPermissions'",
+        each=each,
+        blocks=_SPAWN_PROMPT_ORDER[phase],
+        note=_SPAWN_IS_ONE_MOVE + " " + _MODEL_CLAUSE.format(door=door),
+    )
+
+
+_CAST_WAVE_SPAWN = _teammate_spawn(
+    "cast",
+    "for each returned casting, all in a SINGLE message (parallel tool use), "
+    "foreground, never run_in_background=true",
+    "Foundry-Cast-Wave",
 )
 
 #: lead-stalls CT-001 — the wave-complete branch: the literal calls, in order.
 #:
-#: `Foundry-Gate(phase='inspect')` is named here and was not named before. The
-#: F1 arm of `_compute_next_action` returns `build_castings` for the WHOLE of F1
-#: — `.cast-complete` is written BY the `cast` transition, so the sibling
-#: `transition_to_inspect` arm beside it is not reachable until the crossing has
-#: already happened. That makes this branch the only lead-facing surface for the
-#: F1 -> F2 crossing, and it was sending the lead to `Foundry-Phase` past the
-#: gate that guards it.
+#: `Foundry-Gate(phase='inspect')` is named here because the F1 arm returns
+#: `build_castings` for the WHOLE of F1 — `.cast-complete` is written BY the
+#: `cast` transition — so this branch is the only lead-facing surface for the
+#: F1 -> F2 crossing.
 #:
 #: lead-stalls D-013 — THE CLOSING SENTENCE ASSERTS A MEASUREMENT, AND IT IS
-#: NOW TRUE ON EVERY PATH THAT REACHES IT. "this server read the manifest and
-#: the progress ledgers on this call" was false exactly where it mattered most:
-#: `_branch_state` fell back to the roster when the manifest did NOT answer, and
-#: a failed manifest read is what put the reading on this arm. The only route
-#: here now is `_branch_state` answering `idle`, which requires a measured
-#: `cast_wave_pending` of 0 — and `_cast_wave_position` publishes 0 only after
-#: loading the manifest AND walking the ledger-derived done set. `_select_branch`
-#: cannot reach this text any other way: `build_castings` declares every state
-#: `_branch_states` can answer, so `_BRANCH_FALLBACK` never fires for it and
-#: neither does the total tail. lead-stalls D-020 adds one more condition on
-#: the same route: `refused` and `unaccepted` outrank `idle`, so the teardown
-#: is reached only once every done casting is also ACCEPTED. The sentence is a
-#: claim about the reading, so it stays a claim the reading has to earn.
-_CAST_WAVE_COMPLETE = (
-    "YOUR NEXT CALLS (in order):\n"
-    "  (1) TeamDelete for the CAST team.\n"
-    "  (2) Foundry-Team-Down(team_name='cast-{run}-wave-{built_wave}') — the "
-    "team this run registered for its last CAST wave.\n"
-    "  (3) Foundry-Gate(phase='inspect')\n"
-    "  (4) Foundry-Phase(phase='cast') — the call that ENTERS F2. It sweeps the "
-    "evidence corpus and RECORDS this INSPECT's width and roster; editing "
-    "state.json by hand records no width at all, and every door that reads one "
-    "then refuses.\n"
+#: TRUE ON EVERY PATH THAT REACHES IT. The only route here is `_branch_state`
+#: answering `idle`, which requires a measured `cast_wave_pending` of 0, and
+#: `_cast_wave_position` publishes 0 only after loading the manifest AND
+#: walking the ledger-derived done set. `refused` and `unaccepted` outrank
+#: `idle` (D-020), so the teardown is reached only once every done casting is
+#: also ACCEPTED.
+_CAST_WAVE_COMPLETE = _Imperative(
+    (
+        _Step("TeamDelete", each="for the CAST team"),
+        _Step(
+            "Foundry-Team-Down", "team_name='cast-{run}-wave-{built_wave}'",
+            note="the team this run registered for its last CAST wave",
+        ),
+        _Step("Foundry-Gate", "phase='inspect'"),
+        _Step(
+            "Foundry-Phase", "phase='cast'",
+            note=(
+                "the call that ENTERS F2. It sweeps the evidence corpus and "
+                "RECORDS this INSPECT's width and roster; editing state.json "
+                "by hand records no width at all, and every door that reads "
+                "one then refuses."
+            ),
+        ),
+    ),
     "Every casting of every wave has declared itself done and no agent is "
     "running — this server read the manifest and the progress ledgers on this "
     "call — so the build is finished and the teardown is yours to make now."
-    + _GATE_THEN_PHASE_NOTE
+    + _GATE_THEN_PHASE_NOTE,
 )
 
-#: The third state, which `fix_defects` has no equivalent of. F1 has no sibling
-#: action to carry it: a lead that reaches F1 between `Foundry-Phase(
-#: phase='start_cast')` and its first Agent spawn is standing in
-#: `build_castings` with nothing dispatched, and the entry this replaced covered
-#: that case with its first `IF` arm. Dropping it would leave that lead told to
-#: tear down a wave it never dispatched.
+#: The dispatch state, which `fix_defects` has no equivalent of: a lead between
+#: `Foundry-Phase(phase='start_cast')` and its first Agent spawn stands in
+#: `build_castings` with nothing dispatched, and so does a lead at a wave
+#: boundary.
 #:
-#: lead-stalls D-003 — AND IT NOW SERVES THAT LEAD BOTH BEFORE AND AFTER IT
-#: REGISTERS THE TEAM. `_branch_state` stopped reading `teams_active`, so the
-#: half of this state where TeamCreate and Foundry-Team-Up have already been
-#: made routes here too — which is the whole point, because what that lead
-#: needs is step (3) onward, not the teardown it was being handed. The closing
-#: sentence therefore states only what the LEDGERS measured, and step (1) is
-#: made unconditionally: a `transition_to_cast` sequence half-completed is
-#: still a wave with nothing dispatched to it.
-_CAST_WAVE_UNDISPATCHED = (
-    "YOUR NEXT CALLS (in order):\n"
-    "  (1) TeamCreate('cast-{run}-wave-{wave}')\n"
-    "  (2) Foundry-Team-Up(team_name='cast-{run}-wave-{wave}')\n"
-    "  (3) Foundry-Cast-Wave(wave={wave}, phase='cast') — returns ALL "
-    "wave-{wave} dispatch blocks in ONE call.\n"
-    "  (4) In a SINGLE message (parallel tool use), spawn one "
-    "Agent(subagent_type='foundry:teammate', mode='bypassPermissions') per "
-    "returned casting, passing that casting's `dispatch` field VERBATIM — it "
-    "names the prompt FILE and the sha256 the teammate must read that file to "
-    "obtain. The `prompt` field is null by default and is NOT what you pass. "
-    "Foreground, never run_in_background=true. For the model: obey the model "
-    "clause in the `instructions` Foundry-Cast-Wave returns — this server owns "
-    "that decision; never re-derive it here.\n"
+#: lead-stalls D-003 — it serves that lead before AND after it registers the
+#: team, so step (1) is made unconditionally: a TeamCreate or Foundry-Team-Up
+#: that answers "already registered" costs a call, and step (3) is still where
+#: the dispatch begins.
+_CAST_WAVE_UNDISPATCHED = _Imperative(
+    (
+        _Step("TeamCreate", "'cast-{run}-wave-{wave}'"),
+        _Step("Foundry-Team-Up", "team_name='cast-{run}-wave-{wave}'"),
+        _Step(
+            "Foundry-Cast-Wave", "wave={wave}, phase='cast'",
+            note="returns ALL wave-{wave} dispatch blocks in ONE call",
+        ),
+        _CAST_WAVE_SPAWN,
+        _YIELD,
+    ),
     "Wave {wave} is the LOWEST wave this server could place as still holding a "
     "casting that has not declared itself done, so it is the wave to dispatch "
     "and no wave beneath it is left open. Where the castings manifest answers, "
-    "that placement is read from it and from the progress ledgers on this call; "
-    "where it does not answer, the number falls back to wave 1 and step (3) "
-    "refuses and names the manifest rather than dispatching the wrong wave. "
-    "Make all four calls in order either way. A TeamCreate or a "
-    "Foundry-Team-Up that answers 'already registered' has cost you nothing "
-    "and step (3) is still where the dispatch begins — that answer is what a "
-    "lead standing between steps (4) and (6) of transition_to_cast sees, and "
-    "it is the same wave either way."
+    "that placement is read from it and from the progress ledgers on this "
+    "call; where it does not answer, the number falls back to wave 1 and step "
+    "(3) refuses and names the manifest rather than dispatching the wrong "
+    "wave. A TeamCreate or a Foundry-Team-Up that answers 'already registered' "
+    "has cost one call, and the dispatch still begins at step (3). A wave "
+    "whose door already returned reads here only once its seeds are stale — "
+    "no teammate wrote a line in the stall window — and that wave is "
+    "dispatched again.",
 )
 
-#: lead-stalls ST-004 / US-003 / D-020 — THE TWO STATES BETWEEN A CASTING'S
-#: DONE LINE AND ITS WAVE BEING BUILT.
-#:
-#: Before D-020 there were none: a done line WAS a built casting, so the only
-#: arms reachable once the teammates stopped were the teardown and the next
-#: wave. Driven at c5045c2, a refused acceptance followed by the `next_call`
-#: its payload names answered `cleanup_teams` with the team up and
-#: `_CAST_WAVE_COMPLETE` with it down, and neither mentioned
-#: `Foundry-Accept-Casting` at all, while commands/start.md answers a refusal
-#: with "reject + re-dispatch".
+#: lead-stalls ST-004 / US-003 / D-020 — THE STATES BETWEEN A CASTING'S DONE
+#: LINE AND ITS WAVE BEING BUILT.
 #:
 #: `unaccepted`: done, and no verdict since. That is the ordinary state of a
 #: finished teammate AND the state a CALL-side refusal leaves (a stale spec
-#: hash records nothing, because nothing about the casting was judged), and
-#: one text serves both because both owe the same call made correctly.
-_CAST_ACCEPTANCE_DUE = (
-    "YOUR NEXT CALLS (in order):\n"
-    "  (1) Foundry-Spec-Hash — a fresh hash; acceptance refuses a stale one.\n"
-    "  (2) Foundry-Accept-Casting(casting_id={casting}, spec_hash=<the hash "
-    "step (1) returned>, prompt_hash=<the sha256 casting {casting}'s teammate "
-    "stated in its completion report>, completion_report=<that report>, "
-    "casting_commit=<the full SHA of casting {casting}'s commit>)\n"
-    "  (3) Foundry-Next — the call step (2) names on every path, accepted or "
-    "refused; the verdict it recorded is what that call reads.\n"
+#: hash records nothing), and both owe the same call made correctly.
+_CAST_ACCEPTANCE_DUE = _Imperative(
+    (
+        _Step(
+            "Foundry-Spec-Hash",
+            note="a fresh hash; acceptance refuses a stale one",
+        ),
+        _Step(
+            "Foundry-Accept-Casting",
+            "casting_id={casting}, spec_hash=<the hash step (1) returned>, "
+            "prompt_hash=<the sha256 casting {casting}'s teammate stated in "
+            "its completion report>, completion_report=<that report>, "
+            "casting_commit=<the full SHA of casting {casting}'s commit>",
+        ),
+        _Step(
+            "Foundry-Next",
+            note=(
+                "the call step (2) names on every path, accepted or refused; "
+                "the verdict it recorded is what that call reads"
+            ),
+        ),
+    ),
     "Casting {casting} has declared itself done and holds no acceptance "
     "verdict since — this server read the manifest, the progress ledgers and "
     "handoffs.jsonl on this call, and no agent is running. Its wave is not "
     "built until it is accepted, so neither a teardown nor the next wave is "
-    "yours to make yet."
+    "yours to make yet.",
 )
 
 #: `refused` and `redispatch`: `Foundry-Accept-Casting` recorded `-refused`
-#: for this casting and its ledger has not moved since. Re-accepting it
-#: unchanged buys the same refusal; the refusal goes to a TEAMMATE, as a
-#: message. `Foundry-Spawn-Teammate` returns a dispatch block the lead must pass
-#: VERBATIM, and the standing CRITICAL RULES printed at the top of this same
-#: payload say GRIND is the ONLY exception to that, so the refusal can never
-#: ride INSIDE a CAST dispatch. The resumed or re-spawned teammate writes its
-#: ledger again, so the casting reads as running rather than refused, and its
-#: next done line makes the refusal OLDER than the work — which is what routes
-#: the lead to accept again (`_owed_acceptances`) rather than to re-dispatch it
-#: twice.
+#: for this casting and its ledger has not moved since. The refusal goes to a
+#: TEAMMATE, as a message, never inside a CAST dispatch block. The resumed or
+#: re-spawned teammate writes its ledger again, and its next done line makes
+#: the refusal OLDER than the work, which routes the lead to accept again.
 #:
 #: lead-stalls D-022 — TWO BRANCHES, BECAUSE ONE BRANCH HELD A CONDITIONAL.
-#: The single refused branch read "(1) SendMessage ... (2) Only a send that
-#: answers that the teammate cannot be reached takes this step ... (3) END
-#: YOUR TURN", with a sentence predicting from `teams_active` which of (2) and
-#: (3) came next. So the lead's call after the send depended on the lead
-#: reading the send's answer — the shape lead-stalls GI-008 / CT-008 / OT-013
-#: forbid, one step down. The prediction's input is the server's, so the server
-#: chooses (`_acceptance_state`): with the team registered, the teammate that
-#: built the casting still holds its context and is sent the refusal (lead
-#: ruling, GRIND cycle 7); with it torn down, that teammate went with it, and a
-#: fresh one is dispatched and sent the same refusal as a SEPARATE message.
-#: Neither branch names a step whose execution waits on an earlier call's
-#: answer, and the reason each was chosen is stated as a reading, not a guess.
-#: "Registered" means the refused casting's OWN wave team (lead-stalls D-031),
-#: so the sentence each branch closes on is a claim about that one name.
+#: The server chooses (`_acceptance_state`): with the refused casting's own
+#: wave team registered (D-031), the teammate that built it is sent the
+#: refusal; with it torn down, a fresh one is dispatched and sent the same
+#: refusal as a separate message.
 #:
-#: lead-stalls D-030 — THE RE-SPAWNED TEAMMATE IS HANDED ITS LEDGER PROTOCOL.
-#: Step (2) read "the `dispatch` field VERBATIM with nothing appended", while
-#: step (1)'s own `instructions` and commands/start.md rule 1 both say the
-#: `progress_protocol` block goes BELOW the dispatch, LAST. Obeyed as written,
-#: the teammate was never told where its ledger is, so the re-write the
-#: paragraph above relies on never happened: `Foundry-Spawn-Teammate`'s seed
-#: line read as a running agent for fifteen minutes (END YOUR TURN over
-#: nothing), and after that as an undispatched wave. The step now appends the
-#: block in start.md's order, and the refusal still rides in step (3), outside
-#: the dispatch.
+#: lead-stalls D-030 — the re-spawned teammate is handed its ledger protocol;
+#: the step renders the CAST order like every other spawn (D-039).
 _REFUSED_IS_REWORKED = (
     "A refused casting is re-dispatched to be fixed: never torn down, never "
     "counted as built, never re-accepted unchanged."
 )
 
-_CAST_REFUSED_SEND_BACK = (
-    "YOUR NEXT CALLS (in order):\n"
-    "  (1) SendMessage(to=<the teammate you spawned for casting {casting}>, "
+_REFUSAL_MESSAGE = (
     "message=<the refusal Foundry-Accept-Casting returned for casting "
     "{casting}, verbatim — its error or failure_token, failure_detail, warning "
-    "and hint>). Casting {casting} goes back to the teammate that built it, "
-    "which still holds its context, to fix what was refused and report "
-    "again.\n"
-    "  (2) " + _WAITING_IS_NOT_STOPPING + "\n"
+    "and hint>"
+)
+
+_CAST_REFUSED_SEND_BACK = _Imperative(
+    (
+        _Step(
+            "SendMessage",
+            "to=<the teammate you spawned for casting {casting}>, "
+            + _REFUSAL_MESSAGE,
+            note=(
+                "casting {casting} goes back to the teammate that built it, "
+                "which still holds its context, to fix what was refused and "
+                "report again."
+            ),
+        ),
+        _YIELD,
+    ),
     "Foundry-Accept-Casting REFUSED casting {casting} and its ledger has not "
     "moved since — this server read handoffs.jsonl, the progress ledgers and "
     "the team registry on this call: no agent is running and casting "
     "{casting}'s own wave team is still registered, so the teammate that built "
-    "it is the one to send it to. " + _REFUSED_IS_REWORKED
+    "it is the one to send it to. " + _REFUSED_IS_REWORKED,
 )
 
-_CAST_REFUSED_REDISPATCH = (
-    "YOUR NEXT CALLS (in order):\n"
-    "  (1) Foundry-Spawn-Teammate(casting_id={casting}, phase='cast')\n"
-    "  (2) One foreground Agent(subagent_type='foundry:teammate', "
-    "mode='bypassPermissions'), passed step (1)'s `dispatch` field VERBATIM "
-    "and then, BELOW it and LAST, step (1)'s `progress_protocol` block "
-    "VERBATIM — that block is what makes the teammate write its progress "
-    "ledger and its done line, which is what routes you back to accept casting "
-    "{casting}. Append nothing else: the refusal is step (3). Obey the model "
-    "clause in the `instructions` step (1) returned.\n"
-    "  (3) SendMessage(to=<the teammate step (2) spawned>, message=<the "
-    "refusal Foundry-Accept-Casting returned for casting {casting}, verbatim — "
-    "its error or failure_token, failure_detail, warning and hint>), as a "
-    "separate message.\n"
-    "  (4) " + _WAITING_IS_NOT_STOPPING + "\n"
+_CAST_REFUSED_REDISPATCH = _Imperative(
+    (
+        _Step("Foundry-Spawn-Teammate", "casting_id={casting}, phase='cast'"),
+        _teammate_spawn(
+            "cast",
+            "for casting {casting} alone, foreground, never "
+            "run_in_background=true",
+            "step (1)",
+        ),
+        _Step(
+            "SendMessage",
+            "to=<the teammate step (2) spawned>, " + _REFUSAL_MESSAGE,
+            each="as a separate message",
+            note="the refusal never rides inside the dispatch",
+        ),
+        _YIELD,
+    ),
     "Foundry-Accept-Casting REFUSED casting {casting} and its ledger has not "
     "moved since — this server read handoffs.jsonl, the progress ledgers and "
     "the team registry on this call: no agent is running and casting "
     "{casting}'s own wave team is not registered, so the teammate that built "
     "it went with that team and casting {casting} goes to a fresh one. "
-    + _REFUSED_IS_REWORKED
+    + _REFUSED_IS_REWORKED,
 )
 
 
 #: The `fix_defects` idle branch, and its only one. With no agent running this
-#: action is emitted ONLY while blocking defects are open (`_compute_next_action`'s
-#: F3 arm returns `transition_to_inspect` once the count is zero and nobody is
-#: running — lead-stalls D-017), so "no agent is running" here always means the
-#: same thing: the work is open and nobody is on
-#: it. Steps (1) and (2) are harmless when no team is registered, which is what
-#: lets one text serve both the never-dispatched and the finished-with-work-open
-#: readings — lead-stalls FR-015's "both branches", with no second spelling of
-#: a sequence.
-_GRIND_DISPATCH = (
-    "YOUR NEXT CALLS (in order):\n"
-    "  (1) TeamDelete for this cycle's GRIND team, then "
-    "Foundry-Team-Down(team_name='grind-{run}-cycle-{cycle}') for it — clears "
-    "any team still registered from a previous dispatch.\n"
-    "  (2) Foundry-Tasks\n"
-    "  (3) TeamCreate('grind-{run}-cycle-{cycle}')\n"
-    "  (4) Foundry-Team-Up(team_name='grind-{run}-cycle-{cycle}')\n"
-    "  (5) Foundry-Spawn-Teammate(casting_id=N, phase='grind') for each casting "
-    "carrying open defects.\n"
-    "  (6) Spawn one foreground Agent(subagent_type='foundry:teammate', "
-    "mode='bypassPermissions') per casting in a SINGLE parallel message, "
-    "passing the returned `dispatch` field VERBATIM, then APPENDING BELOW it "
-    "(a) the `grind_cycle_context` block when the spawn response carries one, "
-    "(b) the defect list in a '## Defects to fix this cycle:' block, and (c) "
-    "that task's `alignment_block` from the Foundry-Tasks result of step (2) "
-    "when the task carries one. Never inside the dispatch block. For the "
-    "model: obey the model clause in the `instructions` Foundry-Spawn-Teammate "
-    "returns — this server owns that decision; never re-derive it here.\n"
-    "Blocking defects are open and no agent is running: this cycle's teammates "
-    "are yours to dispatch now."
+#: action is emitted ONLY while blocking defects are open (lead-stalls D-017),
+#: so "no agent is running" always means the work is open and nobody is on
+#: it. Steps (1) and (2) cost nothing when no team is registered, which lets
+#: one list serve both the never-dispatched and the finished-with-work-open
+#: readings.
+_GRIND_SPAWN_STEPS = (
+    _Step("TeamCreate", "'grind-{run}-cycle-{cycle}'"),
+    _Step("Foundry-Team-Up", "team_name='grind-{run}-cycle-{cycle}'"),
+    _Step(
+        "Foundry-Spawn-Teammate", "casting_id=N, phase='grind'",
+        each="for each casting carrying open defects",
+    ),
+    _teammate_spawn(
+        "grind",
+        "for each casting the step above dispatched, all in a SINGLE parallel "
+        "message, foreground, never run_in_background=true",
+        "Foundry-Spawn-Teammate",
+    ),
+    _YIELD,
+)
+
+_GRIND_DISPATCH = _Imperative(
+    (
+        _Step("TeamDelete", each="for this cycle's GRIND team"),
+        _Step(
+            "Foundry-Team-Down", "team_name='grind-{run}-cycle-{cycle}'",
+            note="clears any team still registered from a previous dispatch",
+        ),
+        _Step("Foundry-Tasks"),
+        *_GRIND_SPAWN_STEPS,
+    ),
+    "Blocking defects are open and no agent is running: this cycle's "
+    "teammates are yours to dispatch now.",
 )
 
 
-_ACTION_IMPERATIVES = {
-    "init": "YOUR NEXT CALL: Foundry-Init (start a new run)",
+_IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
+    "init": _Imperative(
+        (_Step("Foundry-Init", note="start a new run"),),
+    ),
     # fallout FR-035 / AC-054 / CT-007: the one action whose imperative is to
-    # STOP. The generic
-    # fallback header says "Execute the first tool call mentioned. Do not
-    # deliberate.", which on a halted run would push the lead straight back into
-    # the loop the cap ended — so this action gets an explicit entry.
+    # STOP. The generic fallback header says "Execute the first tool call
+    # mentioned. Do not deliberate.", which on a halted run would push the
+    # lead straight back into the loop the cap ended.
     #
     # fallout US-006 (D-147): `{halt_cause}` is substituted from the RECORDED
-    # reason member. Unlike `{gate}` / `{token}`, an unresolved `{halt_cause}`
-    # may NOT fall back to the generic header — that header says "Execute the
-    # first tool call mentioned. Do not deliberate.", which is the exact push
-    # back into the loop this entry exists to stop — so `_halt_cause` is total
-    # over every input and always resolves.
-    "halted": (
-        "YOUR NEXT CALL: NONE. This run is HALTED — {halt_cause}. The report is "
-        "generated. Do NOT dispatch a wave, do NOT call Foundry-Phase, do NOT "
-        "call Foundry-Next in a loop. Read REPORT.md, tell the user what "
-        "remains open by tier, and stop."
+    # reason member through `_halt_cause`, which is total, so it never falls
+    # back to the generic header.
+    "halted": _Imperative((), (
+        "This run is HALTED — {halt_cause}. The report is generated. Do NOT "
+        "dispatch a wave, do NOT call Foundry-Phase, do NOT call Foundry-Next "
+        "in a loop. Read REPORT.md, tell the user what remains open by tier, "
+        "and stop."
+    )),
+    "cleanup_teams": _Imperative(
+        (
+            _Step(
+                "SendMessage",
+                "to=<teammate>, message='All work complete, stop working.'",
+                each="for each teammate, all in ONE parallel-tool-use message",
+                note=(
+                    "never a structured message with to='*' broadcast, which "
+                    "rejects structured payloads"
+                ),
+            ),
+            _Step(
+                "TeamDelete",
+                each="for each active team, immediately",
+                note=(
+                    "idle / terminated panes ARE the shutdown signal, and "
+                    "TeamDelete cleans zombie panes"
+                ),
+            ),
+            _Step("Foundry-Team-Down", each="for each team name"),
+        ),
+        "Do NOT wait for 'shutdown_response' events, 'shutdown_ack' events, "
+        "idle confirmations, or any teammate reply. Stalling here is the #1 "
+        "cleanup failure mode: the lead sends shutdown, sees panes idle, and "
+        "waits forever for a reply that never comes.",
     ),
-    "cleanup_teams": (
-        "YOUR NEXT CALLS (in order \u2014 do NOT wait for shutdown acks):\n"
-        "  (1) Send shutdown to each teammate: SendMessage(to=<teammate>, message='All work complete, stop working.') "
-        "\u2014 one SendMessage per teammate in ONE parallel-tool-use message. Do not use structured messages with "
-        "to='*' broadcast \u2014 broadcast rejects structured payloads.\n"
-        "  (2) Immediately call TeamDelete for each active team. Do NOT wait for 'shutdown_response' events, "
-        "'shutdown_ack' events, idle confirmations, or any teammate reply. Idle / terminated panes ARE the "
-        "shutdown signal. TeamDelete cleans zombie panes.\n"
-        "  (3) Foundry-Team-Down for each team name.\n"
-        "Stalling here is the #1 cleanup failure mode: the lead sends shutdown, sees panes idle, and waits "
-        "forever for a reply that never comes."
+    # lead-stalls FR-007 — the validation "after all complete" is no longer a
+    # step behind a wait: the yield ends this list, and `transition_to_cast`,
+    # which is what the woken Foundry-Next answers, opens with it.
+    "add_castings": _Imperative(
+        (
+            _Step(
+                "Agent",
+                "model='opus', subagent_type='general-purpose', "
+                "mode='bypassPermissions', run_in_background=true, "
+                "prompt=<per commands/start.md §F0.5 DECOMPOSE: write the "
+                "domain's entry into manifest.json AND write "
+                "casting-{id}-prompt.md to foundry-archive/{run}/castings/ "
+                "following the layout in start.md §6>",
+                each=(
+                    "for each domain identified from the spec (1-5 of them), "
+                    "all in a SINGLE parallel message"
+                ),
+            ),
+            _YIELD,
+        ),
+        "No team is needed: these are short-lived file writers, so the "
+        "TeamCreate ceremony is skipped. Each writer's return message is its "
+        "TaskOutput, and the Foundry-Next the last notification wakes you for "
+        "opens the validation of what they wrote.",
     ),
-    "add_castings": (
-        "YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SINGLE parallel message \u2014 one per "
-        "domain identified from the spec. Per-Agent params: model='opus', "
-        "subagent_type='general-purpose', mode='bypassPermissions', run_in_background=true, "
-        "prompt=<per commands/start.md \u00a7F0.5 DECOMPOSE: write the domain's entry into "
-        "manifest.json AND write casting-{id}-prompt.md to foundry-archive/{run}/castings/ "
-        "following the layout in start.md \u00a76>. "
-        "No team needed \u2014 these are short-lived file writers; TeamCreate ceremony is skipped. "
-        "You'll be notified as each completes; use TaskOutput(task_id) to retrieve any return "
-        "message. After all complete, call Foundry-Validate-Castings."
-    ),
-    # lead-stalls D-009 — AND THE LITERAL `1` BELOW IS CORRECT HERE, WHICH IS
-    # WHY IT IS NOT `{wave}`. `_compute_next_action` returns this action from F0
-    # and from nowhere else, so the only wave it can ever describe is the
-    # first. The entry that DOES serve later waves is `build_castings`'s
-    # dispatch branch, which carries the slot. Making this one a slot too would
-    # resolve it off a liveness reading taken before any wave exists.
-    "transition_to_cast": (
-        "YOUR NEXT CALLS (in order — bulk flow saves N-1 roundtrips):\n"
-        "  (1) Foundry-Gate(phase='validate')\n"
-        "  (2) Foundry-Phase(phase='start_cast')\n"
-        "  (3) TeamCreate('cast-{run}-wave-1')\n"
-        "  (4) Foundry-Team-Up(team_name='cast-{run}-wave-1')\n"
-        "  (5) Foundry-Cast-Wave(wave=1, phase='cast') \u2014 returns ALL wave-1 dispatch blocks in ONE call.\n"
-        "  (6) In a SINGLE message (parallel tool use), spawn one Agent per returned casting: "
-        "subagent_type='foundry:teammate', mode='bypassPermissions', "
-        "prompt=<that casting's `dispatch` field VERBATIM \u2014 it names the prompt FILE and the "
-        "sha256 the teammate must read that file to obtain. The `prompt` field is null by "
-        "default and is NOT what you pass; do not paste, summarise or augment the prompt text "
-        "yourself>. "
-        "For the model: obey the model clause in the `instructions` Foundry-Cast-Wave just "
-        "returned \u2014 it names the model to pass when the foundry `model` option is configured "
-        "(foundry:teammate follows that option) and tells you to pass no model parameter when it "
-        "is not. This server owns that decision; never re-derive it here. (foundry:teammate's "
-        "frontmatter carries effort=xhigh + all tools.) "
-        "Do NOT send multiple messages with one Agent each \u2014 that serializes what should be parallel.\n"
-        "Rules still apply: NEVER run_in_background=true for foundry:teammate. NEVER "
-        "subagent_type='Explore' or 'general-purpose' for CAST. F0.5 DECOMPOSE uses background "
-        "general-purpose Agents; F2 INSPECT and F4 ASSAY use named agents (foundry:tracer, "
-        "foundry:assayer, foundry:research-auditor, foundry:coverage-diff) whose frontmatter "
-        "carries model/effort/tools." + _GATE_THEN_PHASE_NOTE
+    # lead-stalls D-009 — the literal `1` is correct here: `_compute_next_action`
+    # returns this action from F0 and from nowhere else, so the only wave it
+    # describes is the first. `build_castings`'s dispatch branch carries the
+    # slot for every later wave.
+    "transition_to_cast": _Imperative(
+        (
+            _Step(
+                "Foundry-Validate-Castings",
+                note="the check of what the decomposition wrote",
+            ),
+            _Step("Foundry-Gate", "phase='validate'"),
+            _Step("Foundry-Phase", "phase='start_cast'"),
+            _Step("TeamCreate", "'cast-{run}-wave-1'"),
+            _Step("Foundry-Team-Up", "team_name='cast-{run}-wave-1'"),
+            _Step(
+                "Foundry-Cast-Wave", "wave=1, phase='cast'",
+                note="returns ALL wave-1 dispatch blocks in ONE call",
+            ),
+            _CAST_WAVE_SPAWN,
+            _YIELD,
+        ),
+        "(foundry:teammate's frontmatter carries effort=xhigh + all tools.) "
+        "Do NOT send multiple messages with one Agent each — that serializes "
+        "what should be parallel.\n"
+        "Rules still apply: NEVER run_in_background=true for foundry:teammate. "
+        "NEVER subagent_type='Explore' or 'general-purpose' for CAST. F0.5 "
+        "DECOMPOSE uses background general-purpose Agents; F2 INSPECT and F4 "
+        "ASSAY use named agents (foundry:tracer, foundry:assayer, "
+        "foundry:research-auditor, foundry:coverage-diff) whose frontmatter "
+        "carries model/effort/tools." + _GATE_THEN_PHASE_NOTE,
     ),
     # lead-stalls FR-001 / FR-002 / FR-015 / GI-008 / CT-001 / CT-002 — THE
     # LEAD RECEIVES ONE OF THESE, NEVER THE CHOICE BETWEEN THEM.
     #
-    # This read "YOUR NEXT ACTION depends on wave state:" over two `IF` arms,
-    # the second of which forbade the lead to re-issue the guidance call while
-    # waiting, on the grounds that doing so would re-emit the action. Two
-    # defects in one entry. The first is lead-stalls FR-007's shape: the lead
-    # is handed the condition and has to evaluate it, and the FR-007 audit
-    # over all 22 keys found exactly this entry and `fix_defects`. The second
-    # is the stall itself — an imperative that forbids the one call the
-    # standing rules require after every step leaves a lead waiting on
-    # teammates with no sanctioned move at all, which is how a run parks with
-    # nothing running and nobody told (lead-stalls ST-003).
-    #
-    # `_waiting_on_agents` already knew the answer. It is read at emission and
-    # `_select_branch` substitutes one arm, so the condition is evaluated by the
-    # server that can measure it rather than by the reader that cannot.
-    #
-    # lead-stalls ST-004 / D-020 — AND TWO MORE, FOR THE CASTING THAT IS DONE
-    # BUT NOT YET BUILT. `refused`, `redispatch` (lead-stalls D-022) and
-    # `unaccepted` are chosen from the verdict `Foundry-Accept-Casting`
-    # records, and only while no agent is running (`_branch_states`).
-    "build_castings": (
-        _BRANCH_OPEN + "live" + _BRANCH_CLOSE + _CAST_TEAMMATES_LIVE
-        + _BRANCH_OPEN + "idle" + _BRANCH_CLOSE + _CAST_WAVE_COMPLETE
-        + _BRANCH_OPEN + "undispatched" + _BRANCH_CLOSE + _CAST_WAVE_UNDISPATCHED
-        + _BRANCH_OPEN + "refused" + _BRANCH_CLOSE + _CAST_REFUSED_SEND_BACK
-        + _BRANCH_OPEN + "redispatch" + _BRANCH_CLOSE + _CAST_REFUSED_REDISPATCH
-        + _BRANCH_OPEN + "unaccepted" + _BRANCH_CLOSE + _CAST_ACCEPTANCE_DUE
+    # This read "YOUR NEXT ACTION depends on wave state:" over two `IF` arms.
+    # `_waiting_on_agents` already knew the answer, so it is read at emission
+    # and one branch is chosen by the server that can measure the condition.
+    # lead-stalls ST-004 / D-020 / D-022 add the acceptance branches, chosen
+    # from the verdict `Foundry-Accept-Casting` records and only while no agent
+    # is running (`_branch_states`).
+    "build_castings": {
+        "live": _CAST_TEAMMATES_LIVE,
+        "idle": _CAST_WAVE_COMPLETE,
+        "undispatched": _CAST_WAVE_UNDISPATCHED,
+        "refused": _CAST_REFUSED_SEND_BACK,
+        "redispatch": _CAST_REFUSED_REDISPATCH,
+        "unaccepted": _CAST_ACCEPTANCE_DUE,
+    },
+    # fallout D-058 / AC-059 — ONE ACTION, TWO CROSSINGS: `{gate}` and
+    # `{token}` come from ONE `_ACTION_CROSSINGS` row chosen by the emitting
+    # phase, so step (1) and step (2) are two fields of one fact.
+    "transition_to_inspect": _Imperative(
+        (
+            _Step("Foundry-Gate", "phase='{gate}'"),
+            _Step(
+                "Foundry-Phase", "phase='{token}'",
+                note=(
+                    "the transition that OPENS this INSPECT, and the gate "
+                    "above is the one that guards it. That call sweeps the "
+                    "evidence corpus and RECORDS this INSPECT's width and the "
+                    "roster every stream then runs; from F3 it also advances "
+                    "the server-side cycle counter, so skipping it files the "
+                    "next cycle's stream records, defects and roll-up entries "
+                    "under the last one and the recurring-class escalation "
+                    "never accumulates. Editing state.json by hand records no "
+                    "width at all, and every door that reads one then refuses."
+                ),
+            ),
+        ),
+        _GATE_THEN_PHASE_NOTE.lstrip("\n"),
     ),
-    # fallout D-058 / AC-059 — ONE ACTION, TWO CROSSINGS, AND THE STEPS ARE
-    # SUBSTITUTED FROM ONE ROW SO THEY CANNOT NAME DOORS THAT DO NOT MATCH.
-    #
-    # This named `Foundry-Gate(phase='inspect')` above
-    # `Foundry-Phase(phase='inspect_start')` — a pair refused at BOTH emission
-    # sites, because that gate guards the `cast` transition and the call is
-    # `inspect_start`. From F3 the gate is refused ("accepted from F1 and from
-    # nowhere else"); from F1 the phase call is ("accepted from F3, and from
-    # F2"). Its explanatory tail was F3's, printed verbatim to a lead standing in
-    # F1 about a transition F1 does not take.
-    #
-    # `{gate}` and `{token}` come from ONE `_ACTION_CROSSINGS` row, chosen by the
-    # phase the action was emitted from, so step (1) and step (2) are two fields
-    # of one fact rather than two strings that have to be kept in agreement. The
-    # phase-specific detail — what THIS crossing also does — is already on the
-    # branch's own `instructions`, which is where it belongs: this header's job
-    # is the two call names.
-    "transition_to_inspect": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Gate(phase='{gate}')\n"
-        "  (2) Foundry-Phase(phase='{token}') — the transition that OPENS this "
-        "INSPECT, and the gate above is the one that guards it. That call sweeps "
-        "the evidence corpus and RECORDS this INSPECT's width and the roster "
-        "every stream then runs; from F3 it also advances the server-side cycle "
-        "counter, so skipping it files the next cycle's stream records, defects "
-        "and roll-up entries under the last one and the recurring-class "
-        "escalation never accumulates. Editing state.json by hand records no "
-        "width at all, and every door that reads one then refuses."
-        + _GATE_THEN_PHASE_NOTE
+    # lead-stalls GI-008 / FR-007 (D-019, D-040) — branched like the two
+    # audited actions, and its idle steps are the recorded roster's.
+    "run_streams": {
+        "live": _STREAMS_RUNNING,
+        "idle": _Imperative(
+            (_Step(_EACH_UNRECORDED_STREAM),),
+            "Each Agent step above is a stream this INSPECT's recorded roster "
+            "requires and that has no record this cycle — the CONTEXT below "
+            "lists the same streams — and the Agent steps go out together in "
+            "ONE parallel message as BACKGROUND agents, so SIGHT can run in "
+            "the main thread meanwhile. A stream that finished without its "
+            "own record is in that list, because its own re-run is the one "
+            "thing that records it. A stream's completion notification is the "
+            "wake, and Foundry-Context shows the cycle's roll-up, which is "
+            "where a stream's own record is confirmed.\n"
+            "\n"
+            # fallout AC-031 / GI-016 / FR-049 (D-169) — THE READING STREAMS
+            # ARE TOLD THAT ONE OF THEIR PEERS REWRITES THE TREE. Driven in
+            # cycle 5 of that run, TRACE hit an AttributeError that did not
+            # reproduce at HEAD while TEST was reverting fixes in the shared
+            # tree. Named rather than serialised, per GI-007: the parallel
+            # dispatch is what makes an INSPECT one wall-clock unit. D-040
+            # moved the order to pin INTO each reading stream's prompt.
+            "THE TREE MOVES UNDER YOU WHILE THESE RUN. TEST verifies a "
+            "GRIND's fixes by REVERTING each one and re-running, in the same "
+            "working tree TRACE and PROVE are reading, so every reading "
+            "stream's prompt above tells it to PIN ITS WORK TO A SNAPSHOT and "
+            "cite that sha. A finding read off the live tree during an INSPECT "
+            "may be a peer's mutation that is about to be reverted, and that "
+            "is indistinguishable in the ledger from an honest one.\n"
+            "\n"
+            "fallout FR-023 / FR-049 / GI-016 — YOU DO NOT RECORD A STREAM. "
+            "THE AGENT DOES.\n"
+            "Every verifying stream calls Foundry-Stream itself, with the "
+            "counts it actually measured, and a second record for the same "
+            "(stream, cycle) REPLACES the first rather than summing with it. "
+            "A lead that records on an agent's behalf is asserting numbers it "
+            "did not measure, and when the agent then records its own the "
+            "cycle carries two accounts of one run.\n"
+            # fallout AC-031 / GI-016 / AC-030 (D-165) — AND THE ONE STREAM
+            # WHOSE EXECUTOR IS YOU. SIGHT runs in the lead's own thread, so
+            # the rule above, stated unqualified, closed every exit it had.
+            "\n"
+            "SIGHT IS THE ONE STREAM YOU EXECUTE, SO YOU ARE ITS EXECUTOR AND "
+            "ITS RECORD IS YOURS. Playwright runs only in the main thread; "
+            "there is no sight agent to re-dispatch and you must not spawn "
+            "one. When you have driven the sight skill, the numbers you "
+            "report are numbers YOU measured, which is the whole of what the "
+            "rule above protects — it forbids recording on an AGENT's behalf, "
+            "and there is no agent here. Every OTHER stream records its own "
+            "and you only confirm.",
+        ),
+    },
+    "transition_to_grind": _Imperative(
+        (
+            _Step("Foundry-Tasks"),
+            _Step("Foundry-Gate", "phase='grind'"),
+            _Step("Foundry-Phase", "phase='grind_start'"),
+            *_GRIND_SPAWN_STEPS,
+        ),
+        # fallout FR-038 / GI-021 / CT-008 / AC-002 — the alignment block
+        # reaches the prompt through the step that builds it: step (1) is the
+        # Foundry-Tasks call the block comes back on.
+        "Same foreground rule as CAST: GRIND teammates are never "
+        "background-spawned." + _GATE_THEN_PHASE_NOTE,
     ),
-    # lead-stalls GI-008 / FR-007 (D-019) — branched like the two audited
-    # actions; see `_STREAMS_RUNNING`. The `idle` body is the entry as it stood.
-    "run_streams": (
-        _BRANCH_OPEN + "live" + _BRANCH_CLOSE + _STREAMS_RUNNING
-        + _BRANCH_OPEN + "idle" + _BRANCH_CLOSE +
-        "YOUR NEXT CALLS: spawn every missing INSPECT stream in a SINGLE parallel message. Stream-specific rules:\n"
-        "All four streams spawn as BACKGROUND Agents (run_in_background=true) so SIGHT can run "
-        "concurrently in the main thread instead of the main thread blocking on tool_results:\n"
-        "  - TRACE: Agent(subagent_type='foundry:tracer', run_in_background=true, prompt='Run TRACE wiring verification for the active foundry run.')\n"
-        "  - PROVE: Agent(subagent_type='foundry:assayer', run_in_background=true, prompt='Run PROVE (spec-to-code citation verification) for the active foundry run.')\n"
-        "  - RESEARCH_AUDIT: Agent(subagent_type='foundry:research-auditor', run_in_background=true, prompt='Run RESEARCH_AUDIT for the active foundry run.')\n"
-        "  - COVERAGE_DIFF (MIGRATION only): Agent(subagent_type='foundry:coverage-diff', run_in_background=true, prompt='Run COVERAGE_DIFF for the active foundry run.')\n"
-        "  - SIGHT: runs in MAIN THREAD via Playwright \u2014 execute while the four background streams run\n"
-        "  - TEST / PROBE: may also run as background Agents\n"
-        "When each background stream's completion notification fires: call TaskOutput(task_id) "
-        "to retrieve its findings, then CONFIRM THE STREAM'S OWN RECORD EXISTS \u2014 "
-        "Foundry-Context shows the cycle's roll-up. Do NOT poll \u2014 the harness notifies you.\n"
-        "\n"
-        # fallout AC-031 / GI-016 / FR-049 (D-169) \u2014 THE READING STREAMS ARE
-        # TOLD THAT ONE OF THEIR PEERS REWRITES THE TREE.
-        #
-        # This imperative dispatches every stream in ONE parallel message and
-        # named no ordering, no exclusion and no snapshot discipline \u2014 while
-        # TEST verifies a GRIND's fixes by REVERTING each one and re-running,
-        # in the shared working tree the reading streams are walking.
-        #
-        # DRIVEN in cycle 5 of this run by following the imperative literally:
-        # TRACE hit an AttributeError that did not reproduce at HEAD, and
-        # independently reported the tree churning between 04:20 and 04:26 UTC
-        # with `tools/foundry_validate.py` showing a PRE-bac2c12 state and six
-        # orchestration modules modified, before settling clean. It recovered
-        # ONLY because it re-verified everything against a `git archive HEAD`
-        # snapshot on its own initiative and pinned its findings to 13164ab.
-        # Nothing here required that recovery or would have caught its absence:
-        # a stream that trusted the tree would have filed a phantom defect
-        # against a mutation a peer was about to revert, or missed a real one
-        # masked by it, and neither is distinguishable in the ledger from an
-        # honest finding.
-        #
-        # Same shared-mutable-state family as D-155 (concurrent evidence
-        # recapture), one rung in: there the racing writers were recapture
-        # teammates, here they are the verification streams this imperative
-        # dispatches together. Named rather than serialised, per GI-007: the
-        # parallel dispatch is what makes an INSPECT one wall-clock unit, and
-        # the hazard is answered by telling every reader to pin.
-        "THE TREE MOVES UNDER YOU WHILE THESE RUN. TEST verifies a GRIND's "
-        "fixes by REVERTING each one and re-running, in the same working tree "
-        "TRACE and PROVE are reading. Tell every reading stream, in its own "
-        "dispatch, to PIN ITS WORK TO A SNAPSHOT: take the HEAD sha once at "
-        "start, verify findings against `git archive HEAD` (or an equivalent "
-        "detached checkout) rather than the live tree, and cite that sha in "
-        "the report. A finding read off the live tree during an INSPECT may be "
-        "a peer's mutation that is about to be reverted, and that is "
-        "indistinguishable in the ledger from an honest one.\n"
-        "\n"
-        "fallout FR-023 / FR-049 / GI-016 \u2014 YOU DO NOT RECORD A STREAM. THE AGENT "
-        "DOES.\n"
-        "Every verifying stream calls Foundry-Stream itself, with the counts it "
-        "actually measured, and a second record for the same (stream, cycle) "
-        "REPLACES the first rather than summing with it. A lead that records on "
-        "an agent's behalf is asserting numbers it did not measure, and when the "
-        "agent then records its own the cycle carries two accounts of one run. "
-        # lead-stalls GI-008 / OT-013 (D-033) \u2014 THE FINISHED-UNRECORDED STREAM
-        # IS A MISSING STREAM, SO THE LINE ABOVE ALREADY SPAWNS IT.
-        # This read "If an AGENT stream finished and no record exists, that is a
-        # finding about the stream \u2014 re-dispatch it, or file it \u2014 not a gap for
-        # you to fill in": a condition for the lead to evaluate and two calls to
-        # choose between, of which only one advances the run. A filed stream
-        # still has no record, the streams-complete rung stays short, and the
-        # next Foundry-Next hands back this same branch. The server already
-        # holds the answer \u2014 the CONTEXT below names every stream with no
-        # record this cycle \u2014 so the sentence states the one move: that stream
-        # is re-spawned by the parallel message this header opens with.
-        "An AGENT stream that finished without its own record is one of the "
-        "unrecorded streams the CONTEXT below names, and the parallel message "
-        "above re-spawns it with the rest: its own re-run is the one thing that "
-        "records it, and it is never a gap for you to fill in.\n"
-        # fallout AC-031 / GI-016 / AC-030 (D-165) \u2014 AND THE ONE STREAM WHOSE
-        # EXECUTOR IS YOU.
-        #
-        # The rule above is sound and AC-030 requires its wording, but stated
-        # unqualified it closed every exit SIGHT has. SIGHT runs in the lead's
-        # own thread \u2014 `commands/start.md`'s F2 roster calls it "the only
-        # exception to 'lead never does work'", and Playwright MCP works
-        # nowhere else \u2014 so it has no agent to re-dispatch and this same
-        # imperative forbids spawning one. Meanwhile `skills/sight/SKILL.md`,
-        # which the lead is executing, says "Mark the stream complete via the
-        # foundry MCP `Foundry-Stream` tool with `stream='sight'`" and "You
-        # record your own stream". So on a --url run the lead executed the
-        # skill, read this imperative, and every exit was closed: with no sight
-        # record the streams-complete rung stays short and
-        # `Foundry-Phase('inspect_clean')` refuses with no sanctioned move \u2014 a
-        # STALLED INSPECT rather than a wrong number.
-        #
-        # What GI-016 protects is that nobody reports numbers they did not
-        # measure. The lead driving Playwright MEASURED them. So the rule is
-        # stated as what it is \u2014 never on an AGENT's behalf \u2014 and the one
-        # stream the lead executes is named with its reason, which is the
-        # sentence that was missing rather than a carve-out.
-        "\n"
-        "SIGHT IS THE ONE STREAM YOU EXECUTE, SO YOU ARE ITS EXECUTOR AND ITS "
-        "RECORD IS YOURS. Playwright runs only in the main thread; there is no "
-        "sight agent to re-dispatch and you must not spawn one. When you have "
-        "driven the sight skill, the numbers you report are numbers YOU "
-        "measured, which is the whole of what the rule above protects \u2014 it "
-        "forbids recording on an AGENT's behalf, and there is no agent here. "
-        "Every OTHER stream records its own and you only confirm."
-    ),
-    "transition_to_grind": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Tasks\n"
-        "  (2) Foundry-Gate(phase='grind')\n"
-        "  (3) Foundry-Phase(phase='grind_start')\n"
-        "  (4) TeamCreate('grind-{run}-cycle-{cycle}')\n"
-        "  (5) Foundry-Team-Up(team_name='grind-{run}-cycle-{cycle}')\n"
-        "  (6) For each casting with open defects: Foundry-Spawn-Teammate(casting_id=N, phase='grind')\n"
-        "  (7) Spawn Agent(subagent_type='foundry:teammate', mode='bypassPermissions', "
-        "prompt=<the returned `dispatch` field VERBATIM \u2014 it names the prompt FILE and the sha256 the "
-        "teammate must read that file to obtain; the `prompt` field is null by default and is NOT what "
-        "you pass. Then APPEND (a) the `grind_cycle_context` block from the spawn "
-        "response if present \u2014 lists files changed in prior cycles so the teammate reads current state "
-        "before acting, then (b) the defect list in a '## Defects to fix this cycle:' block, "
-        # fallout FR-038 / GI-021 / CT-008 / AC-002 \u2014 THE ALIGNMENT BLOCK REACHES
-        # THE PROMPT THROUGH THE STEP THAT BUILDS IT.
-        #
-        # `Foundry-Tasks` computes the block correctly and named it to
-        # nobody: grep over src/, tests/, commands/ and agents/ returned
-        # its definition, its one assignment and one test assertion, and
-        # no consumer at all. FR-038 ends "the lead pastes it verbatim
-        # into the dispatch prompt", and the lead pastes what THIS
-        # imperative names \u2014 which is how `grind_cycle_context` and
-        # `progress_protocol` already reach a teammate. Step (1) of this
-        # same sequence is the Foundry-Tasks call the block comes back on,
-        # so nothing has to be remembered between calls.
-        "then (c) that task's `alignment_block` from the Foundry-Tasks result of step (1), "
-        "VERBATIM, whenever the task carries one \u2014 it is server-generated and names the "
-        "originating defects, the requirement ids, the owning casting and file of the fix, and "
-        "the sibling files THIS casting owns that cite those ids, which is how one fix reaches "
-        "every surface of its rule in the same GRIND. Do not summarise it and do not compose "
-        "your own. "
-        # lead-stalls D-035 — and the ledger protocol LAST, as the standing
-        # rule above every payload and `Foundry-Spawn-Teammate`'s own
-        # `instructions` both say; this order used to end at the alignment.
-        "then (d) the `progress_protocol` block from the spawn response, VERBATIM, LAST. "
-        "Order: dispatch \u2192 cycle_context \u2192 defects \u2192 alignment \u2192 progress_protocol. "
-        "All appended BELOW the dispatch block, never inside it.>). "
-        "Same foreground rule as CAST \u2014 never background-spawn GRIND teammates. "
-        "For the model: obey the model clause in the `instructions` Foundry-Spawn-Teammate "
-        "returned \u2014 pass the model it names, or no model parameter when it names none. This "
-        "server owns that decision; never re-derive it here." + _GATE_THEN_PHASE_NOTE
-    ),
-    # fallout D-059 / GI-001 / AC-059 — AND THE THREE ARMS THAT REACHED
-    # `inspect_start` WITHOUT NAMING ITS GATE.
-    #
-    # GI-001's violation column reads "a casting that ... lets a transition skip
-    # its gate". AC-059 added `inspect_start` to `GATE_TO_TRANSITION` precisely
-    # so that crossing would have one, and these three told the lead to make the
-    # transition call with no gate before it — so the token existed and no
-    # lead-facing surface named it. Each now names `Foundry-Gate(phase=
-    # 'inspect_start')` first, which is the same pair `transition_to_inspect`'s
-    # F3 half carries; the lead reaching this crossing by any of the four routes
-    # is told to make the same two calls in the same order.
     # lead-stalls FR-015 / GI-008 / CT-003 / CT-008 — THE SAME TREATMENT AS
-    # `build_castings`, AND THE BARE `WAIT.` IS GONE.
-    #
-    # This read "IF teammates are running: WAIT." and named nothing the lead
-    # could execute while that was true, then described the teardown that
-    # follows completion as though it were the next call. A lead standing in
-    # the WAIT arm had one instruction — wait — which is not a tool call, and
-    # lead-stalls ST-003 is the run that parks there.
-    #
-    # The teardown-and-re-open sequence the old arm trailed is NOT reproduced
-    # here, and its absence is the point: with nobody running,
-    # `_compute_next_action` emits this action ONLY while blocking defects are
-    # open and returns `transition_to_inspect` once the count is zero, so the
-    # crossing this arm described belongs to the sibling arm that owns it. What
-    # is left for THIS action is the one thing true whenever no agent is
-    # running under it — the defects are open and somebody has to be on them.
-    "fix_defects": (
-        _BRANCH_OPEN + "live" + _BRANCH_CLOSE + _GRIND_TEAMMATES_LIVE
-        + _BRANCH_OPEN + "idle" + _BRANCH_CLOSE + _GRIND_DISPATCH
+    # `build_castings`, AND THE BARE `WAIT.` IS GONE. With nobody running this
+    # action is emitted only while blocking defects are open, and the crossing
+    # the old arm trailed belongs to `transition_to_inspect`.
+    "fix_defects": {
+        "live": _GRIND_TEAMMATES_LIVE,
+        "idle": _GRIND_DISPATCH,
+    },
+    # lead-stalls FR-007 — this read "(1) Foundry-Phase(phase='inspect_clean')
+    # (2) Foundry-Gate(phase='assay') (3) Update state to F4": the gate after
+    # the transition it guards (GATE_TO_TRANSITION maps `assay` to
+    # `inspect_clean`), and a third step naming no tool at all. The
+    # transition itself is what enters F4.
+    "transition_to_assay": _Imperative(
+        (
+            _Step("Foundry-Gate", "phase='assay'"),
+            _Step(
+                "Foundry-Phase", "phase='inspect_clean'",
+                note="the transition that enters F4 (ASSAY)",
+            ),
+            _Step(
+                "Agent",
+                "subagent_type='foundry:assayer', prompt='Assay requirement "
+                "group N of 4 for the active foundry run. Spec-before-code; "
+                "default posture is find the failure.'",
+                each="four times, N = 1 to 4, all in a SINGLE message",
+            ),
+        ),
+        "The assayer's frontmatter carries model=opus and effort=max."
+        + _GATE_THEN_PHASE_NOTE,
     ),
-    "transition_to_assay": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Phase(phase='inspect_clean')\n"
-        "  (2) Foundry-Gate(phase='assay')\n"
-        "  (3) Update state to F4\n"
-        "  (4) Spawn 4 parallel Agent(subagent_type='foundry:assayer', "
-        "prompt='Assay requirement group N of 4 for the active foundry run. "
-        "Spec-before-code; default posture is find the failure.') in a SINGLE message. "
-        "(The assayer's frontmatter carries model=opus and effort=max.)"
+    "run_assay": _Imperative(
+        (
+            _Step(
+                "Agent",
+                "subagent_type='foundry:assayer', prompt='Assay requirement "
+                "group N of 4 for the active foundry run. Spec-before-code; "
+                "default posture is find the failure.'",
+                each="four times, N = 1 to 4, all in a SINGLE message",
+            ),
+        ),
+        "Each reads the spec FIRST, forms expectations, then reads code. The "
+        "assayer's frontmatter carries model=opus and effort=max.",
     ),
-    "run_assay": (
-        "YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type='foundry:assayer', "
-        "prompt='Assay requirement group N of 4 for the active foundry run. "
-        "Spec-before-code; default posture is find the failure.') in a SINGLE message. "
-        "Each reads the spec FIRST, forms expectations, then reads code. "
-        "(The assayer's frontmatter carries model=opus and effort=max.)"
-    ),
-    # fallout FR-035 / AC-054 — THE F6 ORDER, STATED EXACTLY.
-    #
-    # This read "YOUR NEXT CALL: Foundry-Phase(phase='done')", which contradicts
-    # the sequence the doors actually enforce: the DONE evaluation REQUIRES the
-    # generated report, and it sweeps the committed evidence corpus — so a lead
-    # that stripped `evidence/` before generating the report is refused for a
-    # missing document, and one that strips AFTER the gate passes has changed
-    # the tree the gate judged. Report, Gate, strip, Phase, in that order, is
-    # the only sequence in which each step's precondition is still true when the
-    # next one runs.
-    "transition_to_done": (
-        "YOUR NEXT CALLS (in order, and the order is the whole of it):\n"
-        "  (1) Foundry-Report — DONE is refused without the generated report, "
-        "and it is generated, never hand-written.\n"
-        "  (2) Foundry-Gate(phase='done') — this is where the evidence corpus is "
-        "re-executed at HEAD. It must pass BEFORE the strip, on the tree the "
-        "corpus was captured against.\n"
-        "  (3) `git rm -r --cached evidence/ && rm -rf evidence/` then commit — "
-        "the strip, AFTER the gate has judged the corpus and not before.\n"
-        "  (4) Foundry-Phase(phase='done') — seals F6, carries your appended "
-        "prose into the report and archives the run.\n"
+    # fallout FR-035 / AC-054 — THE F6 ORDER, STATED EXACTLY. The DONE
+    # evaluation REQUIRES the generated report and sweeps the committed
+    # evidence corpus, so Report, Gate, strip, Phase is the only order in
+    # which each step's precondition still holds when the next one runs.
+    "transition_to_done": _Imperative(
+        (
+            _Step(
+                "Foundry-Report",
+                note=(
+                    "DONE is refused without the generated report, and it is "
+                    "generated, never hand-written."
+                ),
+            ),
+            _Step(
+                "Foundry-Gate", "phase='done'",
+                note=(
+                    "this is where the evidence corpus is re-executed at HEAD. "
+                    "It must pass BEFORE the strip, on the tree the corpus was "
+                    "captured against."
+                ),
+            ),
+            _Step(
+                "Bash",
+                "command='git rm -r --cached evidence/ && rm -rf evidence/'",
+                note="the strip, AFTER the gate has judged the corpus and not before.",
+            ),
+            _Step(
+                "Bash",
+                "command='git commit -m \"chore: strip the evidence corpus\"'",
+                note="commits the strip.",
+            ),
+            _Step(
+                "Foundry-Phase", "phase='done'",
+                note=(
+                    "seals F6, carries your appended prose into the report and "
+                    "archives the run."
+                ),
+            ),
+        ),
         "Stripping before (2) refuses the gate for a corpus that is no longer "
-        "there; stripping after (4) leaves the run sealed against a tree that "
-        "no longer exists." + _GATE_THEN_PHASE_NOTE
+        "there; stripping after (5) leaves the run sealed against a tree that "
+        "no longer exists." + _GATE_THEN_PHASE_NOTE,
     ),
-    # fallout FR-035 / AC-054 — THE NINE THE SURVEY COUNTED.
-    #
-    # `_compute_next_action` emitted these and `_ACTION_IMPERATIVES` had no
-    # entry for any of them, so each fell through to the generic header —
-    # "Execute the first tool call mentioned. Do not deliberate." — over an
-    # instructions body that, for several of them, mentions no tool call at all.
-    # An imperative table with holes is worse than none: the holes are invisible
-    # and they are exactly where the lead improvises. The invariant test derives
-    # the emitted set from this function's own AST, so the tenth is caught the
-    # day it is written.
-    "transition_to_temper": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Gate(phase='temper')\n"
-        "  (2) Foundry-Phase(phase='temper') — that call enters F5, records "
-        "TEMPER's own INSPECT at FULL width and sweeps the whole evidence "
-        "corpus. Editing state.json by hand leaves the phase's first INSPECT "
-        "with no recorded mode." + _GATE_THEN_PHASE_NOTE
+    # fallout FR-035 / AC-054 — the nine the survey counted, each of which fell
+    # through to the generic header. The invariant test derives the emitted
+    # set from `_compute_next_action`'s own AST.
+    "transition_to_temper": _Imperative(
+        (
+            _Step("Foundry-Gate", "phase='temper'"),
+            _Step(
+                "Foundry-Phase", "phase='temper'",
+                note=(
+                    "that call enters F5, records TEMPER's own INSPECT at FULL "
+                    "width and sweeps the whole evidence corpus. Editing "
+                    "state.json by hand leaves the phase's first INSPECT with "
+                    "no recorded mode."
+                ),
+            ),
+        ),
+        _GATE_THEN_PHASE_NOTE.lstrip("\n"),
     ),
-    "run_temper": (
-        "YOUR NEXT CALL: spawn the TEMPER micro-domain agents. TEMPER zooms into "
-        "individual functions, single pages and specific flows and asks whether "
-        "they actually work — its roster is the open TEMPER_CANDIDATE "
-        "observations plus its own micro-domains. Each agent records its OWN "
-        "run with Foundry-Stream and files what it finds; a probe driven and "
-        "found clean is a result, not a blank."
+    "run_temper": _Imperative(
+        (
+            _Step(
+                "Skill", "skill='foundry:temper'",
+                note=(
+                    "it spawns the TEMPER micro-domain agents, which zoom into "
+                    "individual functions, single pages and specific flows and "
+                    "ask whether they actually work."
+                ),
+            ),
+        ),
+        "TEMPER's roster is the open TEMPER_CANDIDATE observations plus its "
+        "own micro-domains. Each agent records its OWN run with Foundry-Stream "
+        "and files what it finds; a probe driven and found clean is a result, "
+        "not a blank.",
     ),
-    "transition_to_nyquist": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Gate(phase='nyquist')\n"
-        "  (2) Foundry-Phase(phase='nyquist') — that call enters F5.5 and sweeps "
-        "the whole evidence corpus first. It is refused unless this run was "
-        "started with --nyquist and every requirement is VERIFIED."
-        + _GATE_THEN_PHASE_NOTE
+    "transition_to_nyquist": _Imperative(
+        (
+            _Step("Foundry-Gate", "phase='nyquist'"),
+            _Step(
+                "Foundry-Phase", "phase='nyquist'",
+                note=(
+                    "that call enters F5.5 and sweeps the whole evidence "
+                    "corpus first. It is refused unless this run was started "
+                    "with --nyquist and every requirement is VERIFIED."
+                ),
+            ),
+        ),
+        _GATE_THEN_PHASE_NOTE.lstrip("\n"),
     ),
-    "run_nyquist": (
-        "YOUR NEXT CALL: batch the VERIFIED requirements by 5 and spawn one "
-        "Agent(subagent_type='foundry:nyquist-auditor') per batch in a SINGLE "
-        "parallel message. Each classifies COVERED / UNTESTED / UNDERTESTED, "
-        "generates minimal behavioural tests, runs them and commits the passing "
-        "ones. Any ESCALATE_IMPL_BUG result starts a new GRIND cycle. Never mark "
-        "an untested requirement as passing."
+    "run_nyquist": _Imperative(
+        (
+            _Step(
+                "Agent", "subagent_type='foundry:nyquist-auditor'",
+                each=(
+                    "for each batch of 5 VERIFIED requirements, all in a "
+                    "SINGLE parallel message"
+                ),
+            ),
+        ),
+        "Each classifies COVERED / UNTESTED / UNDERTESTED, generates minimal "
+        "behavioural tests, runs them and commits the passing ones. An "
+        "ESCALATE_IMPL_BUG result starts a new GRIND cycle. An untested "
+        "requirement is never marked as passing.",
     ),
-    "assay_failed_loop_back": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Tasks\n"
-        "  (2) Foundry-Gate(phase='grind')\n"
-        "  (3) Foundry-Phase(phase='assay_fail') — the ASSAY-rejection door into "
-        "F3. It is the same transition `grind_start` is, through the other door, "
-        "and it is bounded by the same --max-cycles cap." + _GATE_THEN_PHASE_NOTE
+    "assay_failed_loop_back": _Imperative(
+        (
+            _Step("Foundry-Tasks"),
+            _Step("Foundry-Gate", "phase='grind'"),
+            _Step(
+                "Foundry-Phase", "phase='assay_fail'",
+                note=(
+                    "the ASSAY-rejection door into F3. It is the same "
+                    "transition `grind_start` is, through the other door, and "
+                    "it is bounded by the same --max-cycles cap."
+                ),
+            ),
+        ),
+        _GATE_THEN_PHASE_NOTE.lstrip("\n"),
     ),
-    "widen_inspect": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Gate(phase='inspect_start')\n"
-        "  (2) Foundry-Phase(phase='inspect_start') AGAIN, from F2. "
-        "The DELTA cycle came back clean, which earns the widening re-open "
-        "rather than the ASSAY gate: that crossing advances the cycle counter, "
-        "sweeps the whole evidence corpus, records FULL and requires the full "
-        "roster. Then run every stream it names — a spot check is not a FULL "
-        "INSPECT."
-        + _GATE_THEN_PHASE_NOTE
+    "widen_inspect": _Imperative(
+        (
+            _Step("Foundry-Gate", "phase='inspect_start'"),
+            _Step(
+                "Foundry-Phase", "phase='inspect_start'",
+                note=(
+                    "AGAIN, from F2. The DELTA cycle came back clean, which "
+                    "earns the widening re-open rather than the ASSAY gate: "
+                    "that crossing advances the cycle counter, sweeps the "
+                    "whole evidence corpus, records FULL and requires the full "
+                    "roster. Then run every stream it names — a spot check is "
+                    "not a FULL INSPECT."
+                ),
+            ),
+        ),
+        _GATE_THEN_PHASE_NOTE.lstrip("\n"),
     ),
-    "record_inspect_width": (
-        "YOUR NEXT CALLS (in order):\n"
-        "  (1) Foundry-Gate(phase='inspect_start')\n"
-        "  (2) Foundry-Phase(phase='inspect_start') from F2. This "
-        "INSPECT has no recorded width, so the roster, the rule and the evidence "
-        "sweep it was opened with are all unknown, and every door that reads the "
-        "width refuses. Do NOT edit state.json by hand — the transition is what "
-        "records the decision."
-        + _GATE_THEN_PHASE_NOTE
+    "record_inspect_width": _Imperative(
+        (
+            _Step("Foundry-Gate", "phase='inspect_start'"),
+            _Step(
+                "Foundry-Phase", "phase='inspect_start'",
+                note=(
+                    "from F2. This INSPECT has no recorded width, so the "
+                    "roster, the rule and the evidence sweep it was opened "
+                    "with are all unknown, and every door that reads the width "
+                    "refuses. Do NOT edit state.json by hand — the transition "
+                    "is what records the decision."
+                ),
+            ),
+        ),
+        _GATE_THEN_PHASE_NOTE.lstrip("\n"),
     ),
-    "done": (
-        "YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.md and tell the "
-        "user what shipped. Do NOT dispatch a wave, do NOT call Foundry-Phase, "
-        "do NOT call Foundry-Next in a loop. Start a NEW run with Foundry-Init "
-        "if there is more work."
-    ),
-    "unknown": (
-        "YOUR NEXT CALL: Foundry-Context. The guidance engine does not recognise "
-        "this run's phase, which means `state.json` carries a value no "
-        "transition writes. Read the run's state, then Foundry-Next again. Do "
-        "NOT guess a transition token — an unrecognised phase is a state to "
-        "diagnose, not one to advance out of."
+    "done": _Imperative((), (
+        "This run is DONE. Read REPORT.md and tell the user what shipped. Do "
+        "NOT dispatch a wave, do NOT call Foundry-Phase, do NOT call "
+        "Foundry-Next in a loop. Start a NEW run with Foundry-Init if there is "
+        "more work."
+    )),
+    "unknown": _Imperative(
+        (
+            _Step(
+                "Foundry-Context",
+                note=(
+                    "the guidance engine does not recognise this run's phase, "
+                    "which means `state.json` carries a value no transition "
+                    "writes."
+                ),
+            ),
+            _Step("Foundry-Next"),
+        ),
+        "Do NOT guess a transition token — an unrecognised phase is a state to "
+        "diagnose, not one to advance out of.",
     ),
 }
 
 
+def _template_steps(steps: tuple[_Step, ...]) -> tuple[_Step, ...]:
+    """``steps`` with the stream placeholder expanded over every stream."""
+    expanded: list[_Step] = []
+    for step in steps:
+        if step.tool == _EACH_UNRECORDED_STREAM:
+            expanded.extend(_stream_steps(None))
+        else:
+            expanded.append(step)
+    return tuple(expanded)
+
+
+def _template(imperative: _Imperative) -> str:
+    return _render_imperative(
+        imperative._replace(steps=_template_steps(imperative.steps))
+    )
+
+
+#: The lead-facing TEMPLATE table, rendered from `_IMPERATIVES`: a branched
+#: entry holds every branch between `_BRANCH_OPEN` / `_BRANCH_CLOSE` markers,
+#: so the prose sweeps keep seeing all of it (see the section note above).
+_ACTION_IMPERATIVES: dict[str, str] = {
+    action: (
+        "".join(
+            _BRANCH_OPEN + name + _BRANCH_CLOSE + _template(branch)
+            for name, branch in entry.items()
+        )
+        if isinstance(entry, dict) else _template(entry)
+    )
+    for action, entry in _IMPERATIVES.items()
+}
+
+
+def _chosen_imperative(action: str, liveness: object) -> _Imperative | None:
+    """The one `_Imperative` the lead receives for ``action``, before slots."""
+    entry = _IMPERATIVES.get(action)
+    if isinstance(entry, dict):
+        return entry[_branch_name(entry, _branch_states(liveness))]
+    return entry
+
+
+def _emitted_imperative(
+    action: str,
+    details: dict,
+    run_name: str = "",
+    phase: str = "",
+    liveness: object = None,
+    cycle: object = None,
+) -> tuple[tuple[_Step, ...] | None, str]:
+    """``(steps, header)`` for the lead: the chosen branch, expanded and
+    substituted, and its rendering. ``(None, generic header)`` for an action
+    with no entry or an unresolved crossing.
+
+    Substitutes `{run}` with the active run slug so team names
+    (cast-{run}-wave-{wave}, grind-{run}-cycle-{cycle}) are distinguishable
+    across concurrent runs, and `active` when no run is active.
+
+    fallout D-058 — ``{gate}`` / ``{token}`` ARE SUBSTITUTED FROM THE CROSSING
+    THE EMITTING PHASE NAMES, from one `_ACTION_CROSSINGS` row, and a
+    placeholder that does not resolve takes the generic fallback: printing a
+    literal `{gate}` would hand the lead a call it would try to make.
+
+    lead-stalls FR-015 / GI-008 / CT-008 — ``liveness`` CHOOSES THE BRANCH,
+    before and outside that fallback. It is the `_waiting_on_agents` result the
+    caller already measured, passed rather than recomputed so the payload the
+    lead sees and the imperative it is given are one reading. `_branch_name` is
+    total, like `_halt_cause`, so no reading sends a branched entry to the
+    generic "Execute the first tool call mentioned. Do not deliberate."
+
+    lead-stalls D-009 / D-012 / D-020 — ``{wave}``, ``{built_wave}`` and
+    ``{casting}`` come off that same reading, and ``{cycle}`` is the run-level
+    counter the caller read once; all four helpers are total, so no reading
+    leaves one literal. `{wave}` is replaced before `{built_wave}` and cannot
+    chew on it — the character before `wave}` there is an underscore.
+
+    lead-stalls D-040 — the stream placeholder expands from
+    ``details["missing_streams"]``, the roster the `run_streams` arm published
+    beside this header.
+    """
+    imperative = _chosen_imperative(action, liveness)
+    if imperative is None:
+        return None, _generic_header(action)
+    return _resolved_imperative(
+        imperative, action, details, run_name, phase, liveness, cycle,
+    )
+
+
+def _generic_header(action: str) -> str:
+    return (
+        f"YOUR NEXT CALL: follow the CONTEXT below (action='{action}'). "
+        "Execute the first tool call mentioned. Do not deliberate."
+    )
+
+
+def _resolved_imperative(
+    imperative: _Imperative,
+    action: str,
+    details: dict,
+    run_name: str,
+    phase: str,
+    liveness: object,
+    cycle: object,
+) -> tuple[tuple[_Step, ...] | None, str]:
+    """`_emitted_imperative`'s second half, for one given `_Imperative`: its
+    steps expanded and substituted, and its rendering. Split out so the audit
+    can render every declared branch through the one resolver the lead's
+    header takes, and name which branch arrived by equality."""
+    crossing = _ACTION_CROSSINGS.get(action, {}).get(phase) or {}
+    halt_cause = _halt_cause((details or {}).get("halted_reason_member"))
+
+    def resolve(text: str) -> str:
+        text = (
+            text
+            .replace("{wave}", _cast_wave(liveness))
+            .replace("{built_wave}", _built_cast_wave(liveness))
+            .replace("{cycle}", _grind_cycle(cycle))
+            .replace("{casting}", _casting_slot(liveness))
+            .replace("{halt_cause}", halt_cause)
+        )
+        if crossing:
+            text = (
+                text
+                .replace("{gate}", crossing["gate"])
+                .replace("{token}", crossing["token"])
+            )
+        return text.replace("{run}", run_name or "active")
+
+    steps: list[_Step] = []
+    for step in imperative.steps:
+        if step.tool == _EACH_UNRECORDED_STREAM:
+            steps.extend(_stream_steps((details or {}).get("missing_streams")))
+        else:
+            steps.append(step)
+    resolved = tuple(
+        step._replace(
+            args=None if step.args is None else resolve(step.args),
+            each=resolve(step.each),
+            note=resolve(step.note),
+        )
+        for step in steps
+    )
+    header = _render_imperative(
+        _Imperative(resolved, resolve(imperative.trailer))
+    )
+    if "{gate}" in header or "{token}" in header:
+        return None, _generic_header(action)
+    return resolved, header
 
 
 def _format_imperative_header(
@@ -2397,101 +2930,13 @@ def _format_imperative_header(
     liveness: object = None,
     cycle: object = None,
 ) -> str:
-    """Produce the one-line 'YOUR NEXT CALL' header for the given action.
-    Falls back to a generic header if the action is unmapped.
-
-    Substitutes `{run}` in the imperative with the active run slug so team
-    names (cast-{run}-wave-{wave}, grind-{run}-cycle-{cycle}) are
-    distinguishable across concurrent runs. DECOMPOSE no longer uses a team — it spawns background
-    Agents (per commands/start.md \u00a7F0.5).
-    If no run is active, `{run}` is replaced with `active` as a safe default.
-
-    fallout D-058 — AND ``{gate}`` / ``{token}`` ARE SUBSTITUTED FROM THE
-    CROSSING THE EMITTING PHASE NAMES.
-
-    `transition_to_inspect` is emitted from F1 and from F3, and the two are
-    different crossings: F1 gates `inspect` and calls `Foundry-Phase('cast')`,
-    F3 gates `inspect_start` and calls `Foundry-Phase('inspect_start')`. One
-    frozen pair of literals is refused at BOTH sites, so the pair is taken from
-    one `_ACTION_CROSSINGS` row at emission time. Step (1) and step (2) are two
-    fields of that row, which is what makes them agree by construction rather
-    than by anyone remembering to change both.
-
-    A PLACEHOLDER THAT DOES NOT RESOLVE TAKES THE GENERIC FALLBACK. Printing a
-    literal `{gate}` would be worse than saying nothing — the lead is instructed
-    to "execute the first tool call mentioned", and `Foundry-Gate(phase=
-    '{gate}')` is a call it would try to make. The fallback sends it to the
-    CONTEXT below, which the branch already wrote for this phase.
-
-    lead-stalls FR-015 / GI-008 / CT-008 — AND ``liveness`` CHOOSES
-    THE ARM OF A
-    BRANCHED ENTRY, BEFORE AND OUTSIDE THAT FALLBACK.
-
-    ``liveness`` is the `_waiting_on_agents` result the caller already measured,
-    passed rather than recomputed so one `Foundry-Next` reads the roster once
-    and the payload the lead sees and the imperative it is given are the same
-    reading. Resolved on the `{halt_cause}` side of the line and not the
-    `{gate}` side, for the reason stated at `_select_branch`: a branched entry
-    that fell through to the generic header would hand the lead "Execute the
-    first tool call mentioned. Do not deliberate." over an arm it never chose.
-    `_select_branch` is total, so there is no reading for which that happens.
-
-    lead-stalls D-009 / D-012 — AND THE WAVE AND THE CYCLE ARE SLOTS, RESOLVED
-    ON THAT SAME SIDE OF THE LINE.
-
-    ``{wave}`` and ``{built_wave}`` come off the SAME ``liveness`` reading the
-    branch was chosen from, so the arm the lead receives and the wave number
-    inside it are one answer about one roster. ``{cycle}`` is a run-level scalar
-    and comes in like ``run_name`` does — read once by the caller, handed to
-    every entry that holds the slot — because it is not a liveness fact and a
-    router arm that forgot to publish it would leave the lead a literal `N`,
-    which is the defect D-012 is.
-    """
-    imperative = _ACTION_IMPERATIVES.get(action)
-    if imperative:
-        # lead-stalls D-020 — a preference order rather than one state, so the
-        # acceptance branches only `build_castings` declares are asked for
-        # without moving any other entry off the state it answered on before.
-        imperative = _select_branch(imperative, *_branch_states(liveness))
-    if imperative:
-        # lead-stalls D-009 / D-012 — resolved beside `{halt_cause}` and BEFORE
-        # the `{gate}` fallback below, for the same reason: all four helpers
-        # are total, so no reading can leave one of these literal in the header
-        # and send a branched entry to the generic "Execute the first tool call
-        # mentioned. Do not deliberate." `{wave}` is replaced before
-        # `{built_wave}` and cannot chew on it — the character before `wave}`
-        # there is an underscore, not a brace. `{casting}` (lead-stalls D-020)
-        # comes off the same reading the branch was chosen from.
-        imperative = (
-            imperative
-            .replace("{wave}", _cast_wave(liveness))
-            .replace("{built_wave}", _built_cast_wave(liveness))
-            .replace("{cycle}", _grind_cycle(cycle))
-            .replace("{casting}", _casting_slot(liveness))
-        )
-    if imperative and "{halt_cause}" in imperative:
-        # fallout US-006 / FR-019 (D-147) — substituted from the RECORDED
-        # member, which the halted branch publishes in `details` beside the
-        # sentence. Resolved BEFORE the crossing substitution and outside the
-        # unresolved-placeholder fallback below, because `_halt_cause` is total:
-        # there is no input for which this leaves a literal `{halt_cause}` in
-        # the header, and a halted run must never take the generic fallback.
-        imperative = imperative.replace(
-            "{halt_cause}", _halt_cause(details.get("halted_reason_member"))
-        )
-    if imperative:
-        crossing = _ACTION_CROSSINGS.get(action, {}).get(phase)
-        if crossing:
-            imperative = (
-                imperative
-                .replace("{gate}", crossing["gate"])
-                .replace("{token}", crossing["token"])
-            )
-        if "{gate}" in imperative or "{token}" in imperative:
-            imperative = None
-    if imperative:
-        return imperative.replace("{run}", run_name or "active")
-    return f"YOUR NEXT CALL: follow the CONTEXT below (action='{action}'). Execute the first tool call mentioned. Do not deliberate."
+    """The 'YOUR NEXT CALL(S)' header for ``action`` — `_emitted_imperative`'s
+    rendering. ``instructions`` is unused and kept for the callers that pass
+    the CONTEXT beside it."""
+    return _emitted_imperative(
+        action, details, run_name=run_name, phase=phase, liveness=liveness,
+        cycle=cycle,
+    )[1]
 
 
 
@@ -3396,12 +3841,20 @@ def _compute_next_action(project_root: str) -> dict:
                     "inspect_mode": streams.get("inspect_mode", ""),
                     "inspect_rule": streams.get("inspect_rule", ""),
                     "stream_scope": streams.get("stream_scope", {}),
+                    # lead-stalls D-040 — one config per AGENT stream the
+                    # recorded roster requires, from the row its step reads,
+                    # so `test01` has one. SIGHT is the lead's own skill.
                     "agent_configs": {
                         "trace": INSPECT_TRACE_CONFIG,
                         "prove": INSPECT_PROVE_CONFIG,
                         "test": {
                             **agent_model("general-purpose", baseline="opus"),
                             "subagent_type": "general-purpose",
+                        },
+                        **{
+                            stream: _stream_agent_config(stream)
+                            for stream in streams["required"]
+                            if stream not in ("trace", "prove", "test", "sight")
                         },
                     },
                 },
