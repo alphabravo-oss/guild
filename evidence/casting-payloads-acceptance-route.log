@@ -1,5 +1,5 @@
 # evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.test_next_call_payloads import acceptance_route_report; [print(r) for r in acceptance_route_report()]' 2>/dev/null
-# evidence-for: ST-004, US-003, US-001, GI-005, CT-005, OT-006, FR-011, CT-004, GI-003
+# evidence-for: ST-004, US-003, GI-008, US-001, GI-005, CT-005, OT-006, FR-011, CT-004, GI-003
 
 Foundry-Accept-Casting, then the Foundry-Next its next_call names
   wave 1 = casting 1 (done); wave 2 = casting 2 (not started)
@@ -13,6 +13,7 @@ Foundry-Accept-Casting, then the Foundry-Next its next_call names
     tears the team down         True
     dispatches wave 2           False
     returns to casting 1        False
+    a step conditioned          False
 
   accepted, team torn down
     payload ok                  True
@@ -23,6 +24,7 @@ Foundry-Accept-Casting, then the Foundry-Next its next_call names
     tears the team down         False
     dispatches wave 2           True
     returns to casting 1        False
+    a step conditioned          False
 
   stale_prompt_hash, team registered
     payload ok                  False
@@ -33,16 +35,18 @@ Foundry-Accept-Casting, then the Foundry-Next its next_call names
     tears the team down         False
     dispatches wave 2           False
     returns to casting 1        True
+    a step conditioned          False
 
   stale_prompt_hash, team torn down
     payload ok                  False
     payload next_call           'Call Foundry-Next now.'
     acceptance records          ['casting-1-refused']
     Foundry-Next action         build_castings
-    first call named            SendMessage
+    first call named            Foundry-Spawn-Teammate
     tears the team down         False
     dispatches wave 2           False
     returns to casting 1        True
+    a step conditioned          False
 
   stale_spec_hash, team registered
     payload ok                  False
@@ -53,6 +57,7 @@ Foundry-Accept-Casting, then the Foundry-Next its next_call names
     tears the team down         False
     dispatches wave 2           False
     returns to casting 1        True
+    a step conditioned          False
 
   stale_spec_hash, team torn down
     payload ok                  False
@@ -63,6 +68,7 @@ Foundry-Accept-Casting, then the Foundry-Next its next_call names
     tears the team down         False
     dispatches wave 2           False
     returns to casting 1        True
+    a step conditioned          False
 
   warned, team registered
     payload ok                  False
@@ -73,16 +79,18 @@ Foundry-Accept-Casting, then the Foundry-Next its next_call names
     tears the team down         False
     dispatches wave 2           False
     returns to casting 1        True
+    a step conditioned          False
 
   warned, team torn down
     payload ok                  False
     payload next_call           'Call Foundry-Next now.'
     acceptance records          ['casting-1-refused']
     Foundry-Next action         build_castings
-    first call named            SendMessage
+    first call named            Foundry-Spawn-Teammate
     tears the team down         False
     dispatches wave 2           False
     returns to casting 1        True
+    a step conditioned          False
 
   warned, then the teammate reworked it and wrote done again
     acceptance records          ['casting-1-refused']
@@ -90,6 +98,38 @@ Foundry-Accept-Casting, then the Foundry-Next its next_call names
     first call named            Foundry-Spec-Hash
     sends the refusal back      False
     returns to casting 1        True
+
+more than one wave-1 casting done, then Foundry-Next (D-025..D-027)
+  1 refused in the done line's second, team registered
+    acceptance records          ['casting-1-refused']
+    first call named            SendMessage
+    forwards casting 1's refusal  True
+    names no other casting      True
+  1 refused in the done line's second, team torn down
+    acceptance records          ['casting-1-refused']
+    first call named            Foundry-Spawn-Teammate
+    forwards casting 1's refusal  True
+    names no other casting      True
+  2 then 1 refused, team registered
+    acceptance records          ['casting-2-refused', 'casting-1-refused']
+    first call named            SendMessage
+    forwards casting 1's refusal  True
+    names no other casting      True
+  2 then 1 refused, team torn down
+    acceptance records          ['casting-2-refused', 'casting-1-refused']
+    first call named            Foundry-Spawn-Teammate
+    forwards casting 1's refusal  True
+    names no other casting      True
+  2 refused, 1 never accepted, team registered
+    acceptance records          ['casting-2-refused']
+    first call named            SendMessage
+    forwards casting 2's refusal  True
+    names no other casting      True
+  2 refused, 1 never accepted, team torn down
+    acceptance records          ['casting-2-refused']
+    first call named            Foundry-Spawn-Teammate
+    forwards casting 2's refusal  True
+    names no other casting      True
 
 foundry_accept_casting return paths that judge the casting
   judged                        8

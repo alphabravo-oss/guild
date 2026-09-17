@@ -593,9 +593,9 @@ def _arrange_waves(fdir: Path, waves: dict[int, list[str]]) -> None:
             )
 
 
-def _worked_ledger(fdir: Path, cid: str, *, done: bool) -> None:
+def _worked_ledger(fdir: Path, cid: str, *, done: bool, stamp: str | None = None) -> None:
     """A casting's progress ledger: still writing, or its terminal done line."""
-    now = _foundry_state.now_iso()
+    now = stamp or _foundry_state.now_iso()
     lines = [{"timestamp": now, "phase": "cast", "step": "writing the handler"}]
     if done:
         lines.append(
@@ -654,37 +654,54 @@ _REFUSALS = {
     "warned": {"completion_report": "built the thing; the tests are deferred"},
 }
 
-#: The first call the router names for each refusal. A refused CALL leaves the
-#: casting done and unjudged, which owes acceptance made correctly — a fresh
-#: spec hash first. A refused CASTING goes back to the teammate that built it,
-#: by message, so the CAST dispatch block is never augmented (commands/start.md
-#: rule 1). Only a send that cannot reach that teammate takes step (2), a
-#: re-dispatch whose dispatch block is passed with nothing appended, and step
-#: (3) ends the turn to wait.
-_OWED_FIRST_CALL = {
-    "stale_spec_hash": "Foundry-Spec-Hash",
-    "stale_prompt_hash": "SendMessage",
-    "warned": "SendMessage",
-}
+#: The first call the router names for each refusal, by whether casting 1's
+#: team is still registered. A refused CALL leaves the casting done and
+#: unjudged, which owes acceptance made correctly — a fresh spec hash first,
+#: whatever the team state. A refused CASTING goes back to a teammate by
+#: message, so the CAST dispatch block is never augmented (commands/start.md
+#: rule 1): to the teammate that built it while its team stands, and to a
+#: fresh one, dispatched first, once the team is gone (lead-stalls D-022).
+def _owed_first_call(refusal: str, team_registered: bool) -> str:
+    if refusal == "stale_spec_hash":
+        return "Foundry-Spec-Hash"
+    return "SendMessage" if team_registered else "Foundry-Spawn-Teammate"
 
-#: The stable opening of the refused branch's step (1).
+
+#: The stable opening of the send-back branch's step (1).
 _REFUSAL_TO_TEAMMATE = "(1) SendMessage(to=<the teammate you spawned for casting 1>"
 
-#: The refused branch's step (2), and the sentence closing it that the team
-#: state selects: whether step (1) should reach the teammate at all.
-_UNREACHABLE_REDISPATCH = (
-    "(2) Only a send that answers that the teammate cannot be reached takes "
-)
-_REFUSED_TEAM_SENTENCE = {
-    True: (
-        "Casting 1's team is still registered, so step (1) is expected to "
-        "reach its teammate"
-    ),
+
+def _refused_to_casting(header: str, cid: str) -> bool:
+    """True when ``header`` is a refused branch, forwarding casting ``cid``'s refusal."""
+    return f"the refusal Foundry-Accept-Casting returned for casting {cid}" in header
+
+
+#: The two refused branches the team state selects (lead-stalls D-022), each
+#: as the calls it opens with and the reading it states. Each branch carries
+#: its own and none of the other's.
+_REFUSED_BRANCH = {
+    True: (_REFUSAL_TO_TEAMMATE, "the CAST team is still registered"),
     False: (
-        "Casting 1's team is no longer registered, so step (1) may answer "
-        "that its teammate cannot be reached"
+        "(1) Foundry-Spawn-Teammate(casting_id=1, phase='cast')",
+        "(3) SendMessage(to=<the teammate step (2) spawned>",
+        "no CAST team is registered",
     ),
 }
+
+#: What D-022's single refused branch said: a step taken only on the answer an
+#: earlier call returned, and a sentence predicting that answer. Under
+#: lead-stalls GI-008 / CT-008 the lead receives one unconditional imperative,
+#: so no header either branch emits may carry any of them.
+_CONDITIONED_STEP = (
+    "Only a send",
+    "cannot be reached",
+    "is expected to reach",
+    "may answer",
+    " unless ",
+    "whether",
+    "otherwise",
+    "depending",
+)
 
 
 def _refuse_then_follow(
@@ -828,7 +845,7 @@ def test_every_judged_return_path_records_its_verdict_first():
 def test_following_next_call_off_a_refusal_returns_to_that_casting(
     tmp_path, monkeypatch, refusal, team_registered
 ):
-    """lead-stalls ST-004 / US-003 (D-020) — the refusal routes back, not on.
+    """lead-stalls ST-004 / US-003 (D-020, D-022) — the refusal routes back, not on.
 
     lead-stalls ST-004 is "casting rejected -> lead re-accepting", triggered by "lead
     follows the `next_call` on the reject payload". Driven at c5045c2 the
@@ -836,7 +853,9 @@ def test_following_next_call_off_a_refusal_returns_to_that_casting(
     shut the teammate down and delete its team — and, with the team down, the
     wave-2 dispatch over a casting nothing had accepted. Neither is the move a
     refusal owes. The router has to name casting 1 and the door that settles
-    it.
+    it — and, for a refused casting, name ONE branch: D-022 found the send-back
+    and the re-dispatch in one header, the second taken "only" on the first's
+    answer, which is a conditional lead-stalls GI-008 / CT-008 forbid.
     """
     drive = _refuse_then_follow(
         tmp_path, monkeypatch, refusal=refusal, team_registered=team_registered
@@ -848,22 +867,34 @@ def test_following_next_call_off_a_refusal_returns_to_that_casting(
     assert _NEXT_WAVE_CALL not in drive["header"], drive
     assert "Foundry-Gate(phase='inspect')" not in drive["header"], drive
     assert _returns_to_casting_one(drive["header"]), drive
-    assert _first_call(drive["header"]) == _OWED_FIRST_CALL[refusal], drive
-    if _OWED_FIRST_CALL[refusal] == "SendMessage":
-        header = drive["header"]
-        assert _REFUSAL_TO_TEAMMATE in header, drive
-        assert _UNREACHABLE_REDISPATCH in header, drive
-        assert "Foundry-Spawn-Teammate(casting_id=1, phase='cast')" in header, drive
-        assert _REFUSED_TEAM_SENTENCE[team_registered] in header, drive
-        assert _REFUSED_TEAM_SENTENCE[not team_registered] not in header, drive
-        assert "(3) " in header and "END YOUR TURN" in header, drive
-        assert (
-            header.index(_REFUSAL_TO_TEAMMATE)
-            < header.index(_UNREACHABLE_REDISPATCH)
-            < header.index("END YOUR TURN")
-        ), drive
+    header = drive["header"]
+    first = _owed_first_call(refusal, team_registered)
+    assert _first_call(header) == first, drive
+    assert not _conditioned(header), drive
+    if first == "Foundry-Spec-Hash":
+        assert "Foundry-Accept-Casting(casting_id=1, " in header, drive
+        return
+    # lead-stalls D-022 — exactly ONE refused branch, the one this team state
+    # selects, and no step of it waits on the answer to an earlier one.
+    assert _refused_to_casting(header, "1"), drive
+    for marker in _REFUSED_BRANCH[team_registered]:
+        assert marker in header, (marker, drive)
+    for marker in _REFUSED_BRANCH[not team_registered]:
+        assert marker not in header, (marker, drive)
+    assert "END YOUR TURN" in header, drive
+    if team_registered:
+        assert "Foundry-Spawn-Teammate" not in header, drive
+        assert "(2) " + "Waiting on a running agent" in header, drive
+        assert "(3) " not in header, drive
     else:
-        assert "Foundry-Accept-Casting(casting_id=1, " in drive["header"], drive
+        assert "casting 1>" not in header, drive
+        assert "VERBATIM with nothing appended" in header, drive
+        assert (
+            header.index("(1) Foundry-Spawn-Teammate")
+            < header.index("(2) One foreground Agent(")
+            < header.index("(3) SendMessage(")
+            < header.index("(4) Waiting on a running agent")
+        ), drive
 
 
 def _refuse_then_rework_then_follow(base: Path, monkeypatch) -> dict:
@@ -905,8 +936,159 @@ def test_a_refusal_the_teammate_has_answered_is_owed_acceptance_again(
     assert _first_call(drive["header"]) == "Foundry-Spec-Hash", drive
     assert "Foundry-Accept-Casting(casting_id=1, " in drive["header"], drive
     assert _REFUSAL_TO_TEAMMATE not in drive["header"], drive
+    assert "Foundry-Spawn-Teammate" not in drive["header"], drive
     assert not _tears_down(drive["header"]), drive
     assert _NEXT_WAVE_CALL not in drive["header"], drive
+
+
+class _SameSecond(datetime):
+    """`datetime` whose `now` is one whole second, for `artifacts`' handoff writer.
+
+    `record_handoff_event` stamps `datetime.now(timezone.utc).isoformat()`, so
+    frozen at `microsecond=0` it writes the same whole-second string a done
+    line carries — the tie `_owed_acceptances` documents and D-025 found
+    unpinned.
+    """
+
+    frozen: datetime = datetime(2026, 9, 16, 12, 0, 0, tzinfo=timezone.utc)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls.frozen if tz is None else cls.frozen.astimezone(tz)
+
+
+def _owed_then_follow(
+    base: Path,
+    monkeypatch,
+    *,
+    waves: dict[int, list[str]],
+    refused: list[str],
+    team_registered: bool,
+    same_second: bool = False,
+) -> dict:
+    """Every wave-1 casting worked and done; ``refused`` refused through the
+    real door, in the order listed; every other one never accepted. Then
+    Foundry-Next.
+
+    ``same_second`` stamps each done line and each refusal record with the one
+    whole second both writers would print inside a single second — the done
+    line written first, as a teammate's is.
+    """
+    with _scratch_run(base, monkeypatch) as (root, fdir, teams_dir):
+        _arrange_waves(fdir, waves)
+        if team_registered:
+            (teams_dir / _WAVE_ONE_TEAM).mkdir()
+            assert foundry_register_team(_WAVE_ONE_TEAM, project_root=root)["ok"]
+        stamp = None
+        if same_second:
+            monkeypatch.setattr(_artifacts, "datetime", _SameSecond)
+            stamp = _SameSecond.frozen.isoformat()
+        for cid in waves[1]:
+            _worked_ledger(fdir, cid, done=True, stamp=stamp)
+        payloads = {
+            cid: _accept(root, fdir, cid, **_REFUSALS["warned"]) for cid in refused
+        }
+        nxt = foundry_next_action(root)
+        records = [
+            json.loads(line)
+            for line in (fdir / "handoffs.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    return {
+        "payloads": payloads,
+        "destinations": _acceptance_destinations(fdir),
+        "stamps": [r.get("timestamp") for r in records if r.get("event") == "acceptance"],
+        "done_stamp": stamp,
+        "action": nxt.get("action"),
+        "header": _header(nxt),
+    }
+
+
+def _names_only_casting(header: str, cid: str, others: list[str]) -> bool:
+    """True when every casting ``header`` names is ``cid``.
+
+    Both spellings the branches use — `casting_id=N` in a call and `casting N`
+    in prose — so a header that names the right casting in its call and the
+    wrong one in the refusal it forwards is still caught.
+    """
+    def _named(some: str) -> bool:
+        return bool(
+            re.search(rf"casting_id={re.escape(some)}\b", header)
+            or re.search(rf"casting {re.escape(some)}\b", header)
+        )
+
+    return _named(cid) and not any(_named(other) for other in others)
+
+
+@pytest.mark.parametrize("team_registered", [True, False], ids=["team_up", "team_down"])
+def test_a_refusal_stamped_in_the_done_lines_second_is_still_refused(
+    tmp_path, monkeypatch, team_registered
+):
+    """lead-stalls ST-004 / US-003 (D-025) — the tie goes to the teammate.
+
+    The done line is written BEFORE the call that refuses it and may carry
+    only whole seconds, so a refusal inside that second prints the same
+    timestamp. That refusal has not been answered: the router must send it
+    back to the teammate, not owe a re-acceptance of a casting nobody changed.
+    `refused_at > finished_at` reads the tie the other way.
+    """
+    drive = _owed_then_follow(
+        tmp_path, monkeypatch, waves={1: ["1"], 2: ["2"]}, refused=["1"],
+        team_registered=team_registered, same_second=True,
+    )
+
+    assert drive["destinations"] == ["casting-1-refused"], drive
+    assert drive["stamps"] == [drive["done_stamp"]], drive
+    assert drive["payloads"]["1"]["next_call"] == _artifacts.LEAD_NEXT_CALL, drive
+    assert _first_call(drive["header"]) != "Foundry-Spec-Hash", drive
+    assert "Foundry-Accept-Casting(casting_id=1, " not in drive["header"], drive
+    assert _refused_to_casting(drive["header"], "1"), drive
+    assert not _tears_down(drive["header"]), drive
+    assert _NEXT_WAVE_CALL not in drive["header"], drive
+
+
+@pytest.mark.parametrize("team_registered", [True, False], ids=["team_up", "team_down"])
+def test_two_refused_castings_are_settled_in_manifest_order(
+    tmp_path, monkeypatch, team_registered
+):
+    """lead-stalls ST-004 / US-003 (D-026) — `{casting}` is the FIRST owed.
+
+    Both wave-1 castings are refused; casting 2 is refused first, so neither
+    "the latest refusal" nor "the earliest" would agree with manifest order by
+    accident. The branch names casting 1, and only casting 1, everywhere.
+    """
+    drive = _owed_then_follow(
+        tmp_path, monkeypatch, waves={1: ["1", "2"], 2: ["3"]}, refused=["2", "1"],
+        team_registered=team_registered,
+    )
+
+    assert drive["destinations"] == ["casting-2-refused", "casting-1-refused"], drive
+    assert _refused_to_casting(drive["header"], "1"), drive
+    assert _names_only_casting(drive["header"], "1", ["2", "3"]), drive
+    assert not _tears_down(drive["header"]), drive
+
+
+@pytest.mark.parametrize("team_registered", [True, False], ids=["team_up", "team_down"])
+def test_a_refusal_goes_to_its_own_casting_beside_an_unaccepted_one(
+    tmp_path, monkeypatch, team_registered
+):
+    """lead-stalls ST-004 / US-003 (D-027) — `{casting}` belongs to the branch.
+
+    Casting 1 is done and never accepted; casting 2 is done and refused;
+    nobody is running. The refused branch is chosen, so the casting it names
+    and whose refusal it forwards is casting 2 — casting 1 comes FIRST in the
+    manifest, which is exactly the id a slot reading the unaccepted list first
+    would send casting 2's refusal to.
+    """
+    drive = _owed_then_follow(
+        tmp_path, monkeypatch, waves={1: ["1", "2"], 2: ["3"]}, refused=["2"],
+        team_registered=team_registered,
+    )
+
+    assert drive["destinations"] == ["casting-2-refused"], drive
+    assert _refused_to_casting(drive["header"], "2"), drive
+    assert _names_only_casting(drive["header"], "2", ["1", "3"]), drive
+    assert not _tears_down(drive["header"]), drive
 
 
 @pytest.mark.parametrize("team_registered", [True, False], ids=["team_up", "team_down"])
@@ -1047,6 +1229,11 @@ def _tears_down(text: str) -> bool:
     return any(call in text for call in _TEARDOWN_CALLS) or "stop working" in text
 
 
+def _conditioned(header: str) -> bool:
+    """True when ``header`` carries a step that waits on an earlier call's answer."""
+    return any(phrase in header for phrase in _CONDITIONED_STEP)
+
+
 def _first_call(header: str) -> str:
     """The name of the call a header numbers ``(1)``, or ``NONE``."""
     match = re.search(r"\(1\) ([A-Za-z][A-Za-z-]*)", header)
@@ -1101,6 +1288,7 @@ def acceptance_route_report() -> list[str]:
             lines.append(f"    tears the team down         {_tears_down(drive['header'])}")
             lines.append(f"    dispatches wave 2           {_NEXT_WAVE_CALL in drive['header']}")
             lines.append(f"    returns to casting 1        {_returns_to_casting_one(drive['header'])}")
+            lines.append(f"    a step conditioned          {_conditioned(drive['header'])}")
 
     drive = _in_scratch(_refuse_then_rework_then_follow)
     lines.append("")
@@ -1110,6 +1298,28 @@ def acceptance_route_report() -> list[str]:
     lines.append(f"    first call named            {_first_call(drive['header'])}")
     lines.append(f"    sends the refusal back      {_REFUSAL_TO_TEAMMATE in drive['header']}")
     lines.append(f"    returns to casting 1        {_returns_to_casting_one(drive['header'])}")
+
+    lines.append("")
+    lines.append("more than one wave-1 casting done, then Foundry-Next (D-025..D-027)")
+    owed = (
+        ("1 refused in the done line's second", {1: ["1"], 2: ["2"]}, ["1"], True, "1"),
+        ("2 then 1 refused", {1: ["1", "2"], 2: ["3"]}, ["2", "1"], False, "1"),
+        ("2 refused, 1 never accepted", {1: ["1", "2"], 2: ["3"]}, ["2"], False, "2"),
+    )
+    for label, waves, refused, same_second, owed_id in owed:
+        others = [c for ids in waves.values() for c in ids if c != owed_id]
+        for team_registered in (True, False):
+            drive = _in_scratch(
+                _owed_then_follow, waves=waves, refused=refused,
+                team_registered=team_registered, same_second=same_second,
+            )
+            lines.append(
+                f"  {label}, team {'registered' if team_registered else 'torn down'}"
+            )
+            lines.append(f"    acceptance records          {drive['destinations']}")
+            lines.append(f"    first call named            {_first_call(drive['header'])}")
+            lines.append(f"    forwards casting {owed_id}'s refusal  {_refused_to_casting(drive['header'], owed_id)}")
+            lines.append(f"    names no other casting      {_names_only_casting(drive['header'], owed_id, others)}")
 
     judged, unrecorded = _judged_return_lines()
     lines.append("")
@@ -1144,8 +1354,11 @@ def test_the_route_report_agrees_with_the_tests_beside_it():
 
     assert "  recording no verdict          0" in joined, joined
     assert joined.count("    returns to casting 1        True") == 7, joined
-    assert joined.count("    first call named            SendMessage") == 4, joined
+    assert joined.count("    a step conditioned          False") == 8, joined
+    assert joined.count("    first call named            SendMessage") == 5, joined
+    assert joined.count("    first call named            Foundry-Spawn-Teammate") == 5, joined
     assert joined.count("    first call named            Foundry-Spec-Hash") == 3, joined
+    assert joined.count("'s refusal  True\n    names no other casting      True") == 6, joined
     assert "    sends the refusal back      False" in joined, joined
     assert joined.count("    tears the team down         True") == 1, joined
     assert joined.count("    any teardown in the payload False") == 2, joined
