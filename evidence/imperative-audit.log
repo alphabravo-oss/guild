@@ -7,7 +7,7 @@ router payloads swept:       44
 defective emissions:         0
 
 header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME
-payload detectors: WRONG_ROUTE, CONTRADICTION, CONTEXT_SEQUENCE, TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING
+payload detectors: WRONG_ROUTE, CONDITIONAL, CONTRADICTION, CONTEXT_SEQUENCE, TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING
 
 site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured, wave-boundary, final-wave-done, unreadable-manifest, refused, refused-team-down, refused-foreign-pane, refused-other-team, unaccepted, live-with-owed-acceptance
 

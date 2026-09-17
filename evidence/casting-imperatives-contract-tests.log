@@ -3,7 +3,7 @@
 # evidence-volatile: (in )[0-9]+\.[0-9]+s
 
 ============================= test session starts ==============================
-collecting ... collected 90 items
+collecting ... collected 97 items
 
 test_the_audit_sweeps_every_key_and_returns_zero PASSED
 test_the_recorded_evidence_shows_the_population_it_judged PASSED
@@ -95,5 +95,12 @@ test_the_casting_slot_names_a_casting_from_the_chosen_branch[False-redispatch] P
 test_the_refusal_choice_and_the_team_arm_read_one_scan[answers] PASSED
 test_the_refusal_choice_and_the_team_arm_read_one_scan[raises] PASSED
 test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer PASSED
+test_the_condition_detector_judges_the_sentence_where_it_was_emitted PASSED
+test_the_payload_sweep_bites_on_the_run_streams_sentence PASSED
+test_the_rules_above_a_redispatch_sanction_the_block_it_appends PASSED
+test_the_grind_dispatch_order_ends_in_the_ledger_protocol PASSED
+test_two_refusals_in_two_waves_key_on_the_named_castings_team PASSED
+test_both_liveness_returns_publish_the_registered_teams[live-agents] PASSED
+test_both_liveness_returns_publish_the_registered_teams[no-live-agents] PASSED
 
-============================== 90 passed in 2.16s ==============================
+============================== 97 passed in 2.40s ==============================
