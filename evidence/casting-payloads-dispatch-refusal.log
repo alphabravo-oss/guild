@@ -17,3 +17,7 @@ blast radius: the SAME rung, the other tools it serves
   Foundry-Init                        False
   Foundry-Spec-Hash                   False
   tools this boundary adds it for      ['Foundry-Accept-Casting']
+
+the peers ran against a scratch project root
+  run archives added under the cwd     0
+  active run left as it was            True

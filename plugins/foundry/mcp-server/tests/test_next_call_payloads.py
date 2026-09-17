@@ -286,14 +286,33 @@ def _call_over_the_dispatcher(tool: str, arguments: dict) -> dict:
     everything the AST walk above proves is a property of
     `foundry_accept_casting`, and the payload a schema-refused caller receives
     is built before that function is entered.
+
+    D-042: every call runs with `server._project_root` pointed at a temporary
+    directory and the active run name put back afterwards. The root's default
+    is ".", so a peer that passes the schema and does its work — `Foundry-Init`
+    with no arguments — wrote a real F0 run archive into whatever cwd pytest or
+    the evidence command ran in, once per suite run and once per acceptance
+    re-execution. The report runs outside pytest too, so the restore is a
+    try/finally rather than a monkeypatch.
     """
     import asyncio
     import json
+    import tempfile
 
     from foundry_mcp import server as _server
     from foundry_mcp.tools.display import RESULT_JSON_MARKER
 
-    blocks = asyncio.run(_server.call_tool(tool, arguments))
+    root, active = _server._project_root, _foundry_state.get_active_run()
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            _server._project_root = scratch
+            blocks = asyncio.run(_server.call_tool(tool, arguments))
+    finally:
+        _server._project_root = root
+        if active is None:
+            _foundry_state.clear_active_run()
+        else:
+            _foundry_state.set_active_run(active)
     text = blocks[0].text
     # `format_result_blocks` emits the display half, then `RESULT_JSON_MARKER`,
     # then the whole result as JSON — but ONLY for a tool that has a formatter
@@ -480,11 +499,23 @@ def dispatch_refusal_report() -> list[str]:
     lines.append("blast radius: the SAME rung, the other tools it serves")
     lines.append("  _argument_refusal itself carries it  "
                  + str("next_call" in helper))
+    archives = Path.cwd() / "foundry-archive"
+    before = set(archives.iterdir()) if archives.is_dir() else set()
+    active = _foundry_state.get_active_run()
     for peer in ("Foundry-Team-Down", "Foundry-Init", "Foundry-Spec-Hash"):
         payload = _call_over_the_dispatcher(peer, {})
         lines.append("  " + peer.ljust(36) + str("next_call" in payload))
     lines.append("  tools this boundary adds it for      "
                  + str(sorted(_server._NEXT_CALL_TOOLS)))
+    # D-042 — counted as NEW entries, not as "no foundry-archive at all": the
+    # shared tree already holds orphans an earlier report left, and those are
+    # the user's to clear, not this report's.
+    after = set(archives.iterdir()) if archives.is_dir() else set()
+    lines.append("")
+    lines.append("the peers ran against a scratch project root")
+    lines.append("  run archives added under the cwd     " + str(len(after - before)))
+    lines.append("  active run left as it was            "
+                 + str(_foundry_state.get_active_run() == active))
     return lines
 
 
@@ -505,6 +536,28 @@ def test_the_evidence_report_agrees_with_the_tests_beside_it():
     assert "  _argument_refusal itself carries it  False" in joined, joined
     for peer in ("Foundry-Team-Down", "Foundry-Init", "Foundry-Spec-Hash"):
         assert f"  {peer.ljust(36)}False" in joined, joined
+    assert "  run archives added under the cwd     0" in joined, joined
+    assert "  active run left as it was            True" in joined, joined
+
+
+def test_the_report_leaves_no_run_archive_in_the_cwd(tmp_path, monkeypatch):
+    """D-042 — the report, run from a clean cwd, leaves that cwd clean.
+
+    Driven from an empty directory so the check is absolute rather than a
+    before/after count: a `foundry-archive/` here at all is the leak. The
+    active run is set first, so a report that let `Foundry-Init` replace it
+    is caught too.
+    """
+    monkeypatch.chdir(tmp_path)
+    _foundry_state.set_active_run("the-run-the-caller-had")
+    try:
+        dispatch_refusal_report()
+        assert not (tmp_path / "foundry-archive").exists(), sorted(
+            p.name for p in (tmp_path / "foundry-archive").iterdir()
+        )
+        assert _foundry_state.get_active_run() == "the-run-the-caller-had"
+    finally:
+        _foundry_state.clear_active_run()
 
 
 # --------------------------------------------------------------------------- #
