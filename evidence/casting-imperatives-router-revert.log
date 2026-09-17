@@ -1,10 +1,10 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && P=$(pwd) && T=$(mktemp -d) && trap 'find "$T" -delete' EXIT && cp -R src tests pyproject.toml "$T/" && G=src/foundry_mcp/tools/orchestration/guidance.py && N=tests/orchestration/test_guidance_imperatives.py && cd "$T" && for m in committed team-arm f3-live-arm acceptance-reader notice-gate streams-branch in-flight-unmeasured refusal-one-branch streams-context refusal-boundary casting-slot-last casting-slot-order condition-detector in-flight-redispatch one-scan refusal-own-team respawn-protocol context-structure refusal-vocabulary condition-structure run-streams-sentence sentence-anchor choice-shape standing-rule grind-order refused-first live-teams-registered; do cp "$P/$G" "$G"; cp "$P/$N" "$N"; F=$(python3 -c 'import sys; m, g, n = sys.argv[1:4]; R = {"team-arm": (g, "and not _team_work_in_flight(", "and not (lambda *a, **k: False)("), "f3-live-arm": (g, "if open_count > 0 or grind_live:", "if open_count > 0:"), "acceptance-reader": (g, "if done_at is not None:", "if False:"), "notice-gate": (g, "told_to_wait = (", "told_to_wait = True or ("), "streams-branch": (g, "_BRANCH_OPEN + \"live\" + _BRANCH_CLOSE + _STREAMS_RUNNING", "\"\""), "in-flight-unmeasured": (g, "or pending < 1:\n        return True", "or pending < 1:\n        return False"), "refusal-one-branch": (g, "else \"redispatch\"\n        )", "else \"refused\"\n        )"), "streams-context": (g, "not the live tree.\"\n                    + _BRANCHED_ACTION_CONTEXT", "not the live tree. Spawn agents using the agent_configs below.\""), "refusal-boundary": (g, "refused_at >= finished_at", "refused_at > finished_at"), "casting-slot-last": (g, "return ids[0]", "return ids[-1]"), "casting-slot-order": (g, "for key in (\"cast_refused\", \"cast_unaccepted\"):", "for key in (\"cast_unaccepted\", \"cast_refused\"):"), "condition-detector": (n, "(?:if|unless|when|whenever|only|once|in case|should|whether|depending)", "(?:NEVERMATCHES)"), "in-flight-redispatch": (g, "(\"refused\", \"redispatch\", \"unaccepted\")", "(\"refused\", \"unaccepted\")"), "one-scan": (g, "_waiting_on_agents(project_root, teams=teams)", "_waiting_on_agents(project_root)"), "refusal-own-team": (g, "if isinstance(own, str) and isinstance(registered, list)\n            and own in registered", "if row.get(\"teams_active\") is True"), "respawn-protocol": (g, "\"and then, BELOW it and LAST, step (1)", "\"with nothing appended, and not step (1)"), "context-structure": (n, "if lowered in _CLAUSE_OPENERS:", "if True:"), "refusal-vocabulary": (n, "r\"|refused|refuses|rejected|rejects|errors|errored|ok (?:False|True)\"\n", ""), "condition-structure": (n, "_EARLIER_CALL = r\"", "_EARLIER_CALL = r\"NEVERMATCHES"), "run-streams-sentence": (g, "\"An AGENT stream that finished without its own record is one of the \"\n        \"unrecorded streams the CONTEXT below names, and the parallel message \"\n        \"above re-spawns it with the rest: its own re-run is the one thing that \"\n        \"records it, and it is never a gap for you to fill in.\\n\"", "\"If an AGENT stream finished and no record exists, that is a finding \"\n        \"about the stream \\u2014 re-dispatch it, or file it \\u2014 not a gap for you to \"\n        \"fill in.\\n\""), "sentence-anchor": (n, "(?:^|(?<=[.!?:])[ \\t]+)\\s*(?:[-*", "^\\s*(?:[-*"), "choice-shape": (n, "if _offers_a_choice(sentence):", "if False:"), "standing-rule": (g, "Every spawn, CAST and GRIND, passes Agent the returned `dispatch` block VERBATIM and then, BELOW it and LAST, the returned `progress_protocol` block VERBATIM. GRIND is the only exception to what goes between the two:", "Pass it to Agent VERBATIM. GRIND is the only exception:"), "grind-order": (g, " \\u2192 alignment \\u2192 progress_protocol. ", " \\u2192 alignment. "), "refused-first": (g, "if refused and refused[0] in", "if refused and refused[-1] in"), "live-teams-registered": (g, "\"teams_registered\": teams_registered,\n", "")}; f, old, new = R.get(m, (g, "", "")); s = open(f, encoding="utf-8").read(); assert m == "committed" or s.count(old) == 1, m; open(f, "w", encoding="utf-8").write(s.replace(old, new) if old else s); print(f)' "$m" "$G" "$N"); echo "== revert: $m"; echo "  $(basename "$F") lines differing from the committed file: $(diff "$P/$F" "$F" | grep -c '^>')"; uv run --project "$P" --with pytest pytest -p no:cacheprovider --no-header --color=no --tb=no -q -rf "$N" 2>/dev/null | awk '$1=="FAILED"{f++; n=$2; sub(/.*::/, "", n); print "  FAILED " n; next} $1=="ERROR"{e++; n=$2; sub(/.*::/, "", n); print "  ERROR " n; next} {s=$0; gsub(/,/, " ", s); k=split(s, w, " "); for(i=2;i<=k;i++) if(w[i]=="passed") p=w[i-1]+0} END{printf "  tests run: %d, failed: %d, errors: %d\n", p+f+e, f+0, e+0}'; done
+# evidence-cmd: cd plugins/foundry/mcp-server && P=$(pwd) && T=$(mktemp -d) && trap 'find "$T" -delete' EXIT && cp -R src tests pyproject.toml "$T/" && G=src/foundry_mcp/tools/orchestration/guidance.py && N=tests/orchestration/test_guidance_imperatives.py && cd "$T" && for m in committed team-arm f3-live-arm acceptance-reader notice-gate in-flight-unmeasured refusal-one-branch streams-context refusal-boundary casting-slot-last casting-slot-order condition-detector in-flight-redispatch one-scan refusal-own-team context-structure refusal-vocabulary condition-structure sentence-anchor choice-shape refused-first live-teams-registered streams-branch spawn-order standing-rule grind-order run-streams-sentence one-move-rule one-move-step one-step-clause dispatch-yield seed-running stale-seed stream-call stream-config stream-yield stream-snapshot stream-model next-calls yield-render castings-taskoutput validate-step assay-gate done-commit audit-structure audit-spawns audit-roster audit-fresh-seed audit-call-prose; do cp "$P/$G" "$G"; cp "$P/$N" "$N"; F=$(python3 -c 'import sys; m, g, n = sys.argv[1:4]; R = {"team-arm": (g, "and not _team_work_in_flight(", "and not (lambda *a, **k: False)("), "f3-live-arm": (g, "if open_count > 0 or grind_live:", "if open_count > 0:"), "acceptance-reader": (g, "if done_at is not None:", "if False:"), "notice-gate": (g, "told_to_wait = (", "told_to_wait = True or ("), "in-flight-unmeasured": (g, "or pending < 1:\n        return True", "or pending < 1:\n        return False"), "refusal-one-branch": (g, "else \"redispatch\"\n        )", "else \"refused\"\n        )"), "streams-context": (g, "not the live tree.\"\n                    + _BRANCHED_ACTION_CONTEXT", "not the live tree. Spawn agents using the agent_configs below.\""), "refusal-boundary": (g, "refused_at >= finished_at", "refused_at > finished_at"), "casting-slot-last": (g, "return ids[0]", "return ids[-1]"), "casting-slot-order": (g, "for key in (\"cast_refused\", \"cast_unaccepted\"):", "for key in (\"cast_unaccepted\", \"cast_refused\"):"), "condition-detector": (n, "(?:if|unless|when|whenever|only|once|in case|should|whether|depending)", "(?:NEVERMATCHES)"), "in-flight-redispatch": (g, "(\"refused\", \"redispatch\", \"unaccepted\")", "(\"refused\", \"unaccepted\")"), "one-scan": (g, "_waiting_on_agents(project_root, teams=teams)", "_waiting_on_agents(project_root)"), "refusal-own-team": (g, "if isinstance(own, str) and isinstance(registered, list)\n            and own in registered", "if row.get(\"teams_active\") is True"), "context-structure": (n, "if lowered in _CLAUSE_OPENERS:", "if True:"), "refusal-vocabulary": (n, "r\"|refused|refuses|rejected|rejects|errors|errored|ok (?:False|True)\"\n", ""), "condition-structure": (n, "_EARLIER_CALL = r\"", "_EARLIER_CALL = r\"NEVERMATCHES"), "sentence-anchor": (n, "(?:^|(?<=[.!?:])[ \\t]+)\\s*(?:[-*", "^\\s*(?:[-*"), "choice-shape": (n, "if _offers_a_choice(sentence):", "if False:"), "refused-first": (g, "if refused and refused[0] in", "if refused and refused[-1] in"), "live-teams-registered": (g, "\"teams_registered\": teams_registered,\n", ""), "streams-branch": (g, "        \"live\": _STREAMS_RUNNING,\n", ""), "spawn-order": (g, "        blocks=_SPAWN_PROMPT_ORDER[phase],\n", "        blocks=(\"dispatch\",),\n"), "standing-rule": (g, "    + \" GRIND: \"\n    + _spawn_prompt(_SPAWN_PROMPT_ORDER[\"grind\"])\n", ""), "grind-order": (g, "\"dispatch\", \"grind_cycle_context\", \"defects\", \"alignment_block\",\n        \"progress_protocol\",\n", "\"dispatch\", \"grind_cycle_context\", \"defects\", \"alignment_block\",\n"), "run-streams-sentence": (g, "\"own record is in that list, because its own re-run is the one \"\n            \"thing that records it. ", "\"own record is a finding. If an AGENT stream finished and no record \"\n            \"exists, re-dispatch it, or file it. "), "one-move-rule": (g, "    + _SPAWN_PROMPT_RULE + \" \" + _SPAWN_IS_ONE_MOVE\n", "    + _SPAWN_PROMPT_RULE\n"), "one-move-step": (g, "        note=_SPAWN_IS_ONE_MOVE + \" \" + _MODEL_CLAUSE.format(door=door),\n", "        note=_MODEL_CLAUSE.format(door=door),\n"), "one-step-clause": (g, "\"follow it; a spawn door and the Agent call it feeds are one step (the \"\n    \"spawn rule below). REQUIRED", "\"follow it. REQUIRED"), "dispatch-yield": (g, "        _CAST_WAVE_SPAWN,\n        _YIELD,\n    ),\n    \"Wave {wave}", "        _CAST_WAVE_SPAWN,\n    ),\n    \"Wave {wave}"), "seed-running": (g, "    \"A teammate whose ledger holds only the line its spawn door wrote counts \"\n    \"as running, because the door and its Agent call are one move. \"\n", "    \"\"\n"), "stale-seed": (g, "\"has cost one call, and the dispatch still begins at step (3). A wave \"\n    \"whose door already returned reads here only once its seeds are stale \u2014 \"\n    \"no teammate wrote a line in the stall window \u2014 and that wave is \"\n    \"dispatched again.\",", "\"has cost one call, and the dispatch still begins at step (3).\","), "stream-call": (g, "agents = [_stream_agent_step(name) for name in names if name != \"sight\"]", "agents = [_stream_agent_step(name) for name in names if name not in (\"sight\", \"test01\")]"), "stream-config": (g, "                            if stream not in (\"trace\", \"prove\", \"test\", \"sight\")\n", "                            if False\n"), "stream-yield": (g, "    if agents:\n        steps.append(_YIELD)\n", ""), "stream-snapshot": (g, "    \"every finding against `git archive HEAD` rather than the live tree, and \"\n    \"cite that sha in your report.\"\n", "    \"every finding.\"\n"), "stream-model": (g, "        f\"{model}subagent_type=\u0027{subagent_type}\u0027, run_in_background=true, \"\n", "        f\"subagent_type=\u0027{subagent_type}\u0027, run_in_background=true, \"\n"), "next-calls": (g, "        result[\"next_calls\"] = [_call_record(step) for step in next_calls]\n", "        pass\n"), "yield-render": (g, "    if step.tool == _END_TURN:\n        return _WAITING_IS_NOT_STOPPING\n", ""), "castings-taskoutput": (g, "\"TeamCreate ceremony is skipped. Each writer\u0027s return message is its \"\n        \"TaskOutput,", "\"TeamCreate ceremony is skipped. Each writer\u0027s return message is its \"\n        \"TaskOutput(task_id),"), "validate-step": (g, "            _Step(\n                \"Foundry-Validate-Castings\",\n                note=\"the check of what the decomposition wrote\",\n            ),\n", ""), "assay-gate": (g, "            _Step(\"Foundry-Gate\", \"phase=\u0027assay\u0027\"),\n", "            _Step(\"Update state to F4\"),\n"), "done-commit": (g, "            _Step(\n                \"Bash\",\n                \"command=\u0027git commit -m \\\"chore: strip the evidence corpus\\\"\u0027\",\n                note=\"commits the strip.\",\n            ),\n", ""), "audit-structure": (n, "    findings.extend(audit_next_call_structure(drives))\n", ""), "audit-spawns": (n, "    if spawns:\n        if _SPAWN_IS_ONE_MOVE not in rule:", "    if False:\n        if _SPAWN_IS_ONE_MOVE not in rule:"), "audit-roster": (n, "    if action == \"run_streams\" and steps:\n", "    if False:\n"), "audit-fresh-seed": (n, "    (\"cast-dispatched-fresh-seed\", \"ST-001\", _arrange_cast_dispatched_fresh_seed, \"build_castings\", \"live\"),\n", ""), "audit-call-prose": (n, "    r\"\\b(Foundry-[A-Z]", "    r\"\\bNEVERMATCHES(Foundry-[A-Z]")}; f, old, new = R.get(m, (g, "", "")); s = open(f, encoding="utf-8").read(); assert m == "committed" or s.count(old) == 1, m; open(f, "w", encoding="utf-8").write(s.replace(old, new) if old else s); print(f)' "$m" "$G" "$N"); echo "== revert: $m"; echo "  $(basename "$F") lines differing from the committed file: $(diff "$P/$F" "$F" | grep -c '^>')"; uv run --project "$P" --with pytest pytest -p no:cacheprovider --no-header --color=no --tb=no -q -rf "$N" 2>/dev/null | awk '$1=="FAILED"{f++; n=$2; sub(/.*::/, "", n); print "  FAILED " n; next} $1=="ERROR"{e++; n=$2; sub(/.*::/, "", n); print "  ERROR " n; next} {s=$0; gsub(/,/, " ", s); k=split(s, w, " "); for(i=2;i<=k;i++) if(w[i]=="passed") p=w[i-1]+0} END{printf "  tests run: %d, failed: %d, errors: %d\n", p+f+e, f+0, e+0}'; done
 # evidence-for: FR-002, FR-005, FR-008, CT-003, CT-006, CT-008, GI-008, OT-002, OT-013, ST-001, ST-002, ST-003, ST-004, US-003
 # evidence-timeout: 300
 
 == revert: committed
   guidance.py lines differing from the committed file: 0
-  tests run: 97, failed: 0, errors: 0
+  tests run: 111, failed: 0, errors: 0
 == revert: team-arm
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -30,7 +30,12 @@
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
   FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[answers]
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 97, failed: 23, errors: 0
+  FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
+  FAILED test_the_structure_audit_reads_the_rule_printed_above_the_step
+  FAILED test_the_structure_audit_bites_on_a_spawn_that_is_not_one_move
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[A-cast-wave]
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[B-grind-spawn]
+  tests run: 111, failed: 28, errors: 0
 == revert: f3-live-arm
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -42,7 +47,7 @@
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  tests run: 97, failed: 9, errors: 0
+  tests run: 111, failed: 9, errors: 0
 == revert: acceptance-reader
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -59,26 +64,16 @@
   FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[raises]
   FAILED test_the_rules_above_a_redispatch_sanction_the_block_it_appends
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 97, failed: 14, errors: 0
+  FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch]
+  tests run: 111, failed: 16, errors: 0
 == revert: notice-gate
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_waiting_notice_names_no_move_above_a_header_that_does[cleanup-over-stale-team]
   FAILED test_the_waiting_notice_names_no_move_above_a_header_that_does[unrecorded-width]
-  tests run: 97, failed: 4, errors: 0
-== revert: streams-branch
-  guidance.py lines differing from the committed file: 1
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_recorded_evidence_shows_the_population_it_judged
-  FAILED test_fix_defects_holds_the_two_branches_and_build_castings_holds_three
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_wait_policy_has_one_spelling
-  FAILED test_running_streams_are_not_spawned_again
-  FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
-  FAILED test_running_streams_get_a_context_that_spawns_nothing[fresh]
-  FAILED test_running_streams_get_a_context_that_spawns_nothing[stale]
-  tests run: 97, failed: 9, errors: 0
+  tests run: 111, failed: 4, errors: 0
 == revert: in-flight-unmeasured
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -89,7 +84,7 @@
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  tests run: 97, failed: 8, errors: 0
+  tests run: 111, failed: 8, errors: 0
 == revert: refusal-one-branch
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -102,7 +97,8 @@
   FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[raises]
   FAILED test_the_rules_above_a_redispatch_sanction_the_block_it_appends
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 97, failed: 10, errors: 0
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch]
+  tests run: 111, failed: 11, errors: 0
 == revert: streams-context
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -110,26 +106,26 @@
   FAILED test_the_context_block_of_a_branched_action_names_no_sequence
   FAILED test_running_streams_get_a_context_that_spawns_nothing[fresh]
   FAILED test_running_streams_get_a_context_that_spawns_nothing[stale]
-  tests run: 97, failed: 5, errors: 0
+  tests run: 111, failed: 5, errors: 0
 == revert: refusal-boundary
   guidance.py lines differing from the committed file: 1
   FAILED test_a_refusal_stamped_at_the_done_line_is_still_unanswered
-  tests run: 97, failed: 1, errors: 0
+  tests run: 111, failed: 1, errors: 0
 == revert: casting-slot-last
   guidance.py lines differing from the committed file: 1
   FAILED test_the_casting_slot_names_the_first_owed_casting[cast_refused-refused]
   FAILED test_the_casting_slot_names_the_first_owed_casting[cast_unaccepted-unaccepted]
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 97, failed: 3, errors: 0
+  tests run: 111, failed: 3, errors: 0
 == revert: casting-slot-order
   guidance.py lines differing from the committed file: 1
   FAILED test_the_casting_slot_names_a_casting_from_the_chosen_branch[True-refused]
   FAILED test_the_casting_slot_names_a_casting_from_the_chosen_branch[False-redispatch]
-  tests run: 97, failed: 2, errors: 0
+  tests run: 111, failed: 2, errors: 0
 == revert: condition-detector
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
-  tests run: 97, failed: 1, errors: 0
+  tests run: 111, failed: 1, errors: 0
 == revert: in-flight-redispatch
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -137,12 +133,12 @@
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  tests run: 97, failed: 5, errors: 0
+  tests run: 111, failed: 5, errors: 0
 == revert: one-scan
   guidance.py lines differing from the committed file: 1
   FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[answers]
   FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[raises]
-  tests run: 97, failed: 2, errors: 0
+  tests run: 111, failed: 2, errors: 0
 == revert: refusal-own-team
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -151,54 +147,34 @@
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_casting_slot_and_the_acceptance_state_are_total
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 97, failed: 6, errors: 0
-== revert: respawn-protocol
-  guidance.py lines differing from the committed file: 1
-  FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-down]
-  FAILED test_the_rules_above_a_redispatch_sanction_the_block_it_appends
-  tests run: 97, failed: 2, errors: 0
+  tests run: 111, failed: 6, errors: 0
 == revert: context-structure
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_context_check_reads_the_structure_of_an_order
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
   FAILED test_the_condition_detector_judges_the_sentence_where_it_was_emitted
-  tests run: 97, failed: 4, errors: 0
+  tests run: 111, failed: 4, errors: 0
 == revert: refusal-vocabulary
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
-  tests run: 97, failed: 1, errors: 0
+  tests run: 111, failed: 1, errors: 0
 == revert: condition-structure
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
-  tests run: 97, failed: 1, errors: 0
-== revert: run-streams-sentence
-  guidance.py lines differing from the committed file: 3
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
-  FAILED test_the_payload_sweep_bites_on_the_run_streams_sentence
-  tests run: 97, failed: 4, errors: 0
+  tests run: 111, failed: 1, errors: 0
 == revert: sentence-anchor
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_condition_detector_judges_the_sentence_where_it_was_emitted
-  tests run: 97, failed: 1, errors: 0
+  tests run: 111, failed: 1, errors: 0
 == revert: choice-shape
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_condition_detector_judges_the_sentence_where_it_was_emitted
-  tests run: 97, failed: 1, errors: 0
-== revert: standing-rule
-  guidance.py lines differing from the committed file: 1
-  FAILED test_the_rules_above_a_redispatch_sanction_the_block_it_appends
-  tests run: 97, failed: 1, errors: 0
-== revert: grind-order
-  guidance.py lines differing from the committed file: 1
-  FAILED test_the_grind_dispatch_order_ends_in_the_ledger_protocol
-  tests run: 97, failed: 1, errors: 0
+  tests run: 111, failed: 1, errors: 0
 == revert: refused-first
   guidance.py lines differing from the committed file: 1
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 97, failed: 1, errors: 0
+  tests run: 111, failed: 1, errors: 0
 == revert: live-teams-registered
   guidance.py lines differing from the committed file: 1
   FAILED test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-accepted-fresh]
@@ -206,4 +182,188 @@
   FAILED test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-owed-fresh]
   FAILED test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-owed-stale]
   FAILED test_both_liveness_returns_publish_the_registered_teams[live-agents]
-  tests run: 97, failed: 5, errors: 0
+  tests run: 111, failed: 5, errors: 0
+== revert: streams-branch
+  guidance.py lines differing from the committed file: 0
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_recorded_evidence_shows_the_population_it_judged
+  FAILED test_fix_defects_holds_the_two_branches_and_build_castings_holds_three
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_running_streams_are_not_spawned_again
+  FAILED test_running_streams_get_a_context_that_spawns_nothing[fresh]
+  FAILED test_running_streams_get_a_context_that_spawns_nothing[stale]
+  FAILED test_every_imperative_names_its_calls_in_order
+  tests run: 111, failed: 8, errors: 0
+== revert: spawn-order
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-down]
+  FAILED test_the_rules_above_a_redispatch_sanction_the_block_it_appends
+  FAILED test_the_grind_dispatch_order_ends_in_the_ledger_protocol
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[A-cast-wave]
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[B-grind-spawn]
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch]
+  tests run: 111, failed: 10, errors: 0
+== revert: standing-rule
+  guidance.py lines differing from the committed file: 0
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_rules_above_a_redispatch_sanction_the_block_it_appends
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
+  tests run: 111, failed: 5, errors: 0
+== revert: grind-order
+  guidance.py lines differing from the committed file: 0
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_grind_dispatch_order_ends_in_the_ledger_protocol
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[B-grind-spawn]
+  tests run: 111, failed: 6, errors: 0
+== revert: run-streams-sentence
+  guidance.py lines differing from the committed file: 2
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
+  FAILED test_the_prose_the_structure_moved_still_says_what_it_said
+  tests run: 111, failed: 4, errors: 0
+== revert: one-move-rule
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_structure_audit_reads_the_rule_printed_above_the_step
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[A-cast-wave]
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[B-grind-spawn]
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch]
+  tests run: 111, failed: 7, errors: 0
+== revert: one-move-step
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[A-cast-wave]
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[B-grind-spawn]
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch]
+  tests run: 111, failed: 6, errors: 0
+== revert: one-step-clause
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_prose_the_structure_moved_still_says_what_it_said
+  tests run: 111, failed: 1, errors: 0
+== revert: dispatch-yield
+  guidance.py lines differing from the committed file: 0
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_wait_policy_has_one_spelling
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_structure_audit_bites_on_a_spawn_that_is_not_one_move
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[A-cast-wave]
+  FAILED test_every_imperative_names_its_calls_in_order
+  tests run: 111, failed: 7, errors: 0
+== revert: seed-running
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_prose_the_structure_moved_still_says_what_it_said
+  tests run: 111, failed: 1, errors: 0
+== revert: stale-seed
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_prose_the_structure_moved_still_says_what_it_said
+  tests run: 111, failed: 1, errors: 0
+== revert: stream-call
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_idle_streams_header_names_one_call_per_unrecorded_stream
+  FAILED test_every_imperative_names_its_calls_in_order
+  tests run: 111, failed: 5, errors: 0
+== revert: stream-config
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_idle_streams_header_names_one_call_per_unrecorded_stream
+  tests run: 111, failed: 4, errors: 0
+== revert: stream-yield
+  guidance.py lines differing from the committed file: 0
+  FAILED test_the_idle_streams_header_names_one_call_per_unrecorded_stream
+  FAILED test_every_imperative_names_its_calls_in_order
+  tests run: 111, failed: 2, errors: 0
+== revert: stream-snapshot
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_prose_the_structure_moved_still_says_what_it_said
+  tests run: 111, failed: 1, errors: 0
+== revert: stream-model
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_idle_streams_header_names_one_call_per_unrecorded_stream
+  tests run: 111, failed: 1, errors: 0
+== revert: next-calls
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_a_conditional_sentence_cannot_add_or_move_a_call
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
+  FAILED test_the_structure_audit_reads_the_rule_printed_above_the_step
+  FAILED test_the_structure_audit_bites_on_a_spawn_that_is_not_one_move
+  FAILED test_the_structure_audit_bites_when_a_stream_has_no_call
+  FAILED test_the_idle_streams_header_names_one_call_per_unrecorded_stream
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[A-cast-wave]
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[B-grind-spawn]
+  FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch]
+  FAILED test_the_payload_publishes_the_steps_its_header_renders
+  tests run: 111, failed: 13, errors: 0
+== revert: yield-render
+  guidance.py lines differing from the committed file: 0
+  FAILED test_the_wait_policy_has_one_spelling
+  FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-up]
+  FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-down]
+  tests run: 111, failed: 3, errors: 0
+== revert: castings-taskoutput
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_prose_the_structure_moved_still_says_what_it_said
+  tests run: 111, failed: 4, errors: 0
+== revert: validate-step
+  guidance.py lines differing from the committed file: 0
+  FAILED test_the_payload_publishes_the_steps_its_header_renders
+  FAILED test_every_imperative_names_its_calls_in_order
+  tests run: 111, failed: 2, errors: 0
+== revert: assay-gate
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_every_imperative_names_its_calls_in_order
+  tests run: 111, failed: 4, errors: 0
+== revert: done-commit
+  guidance.py lines differing from the committed file: 0
+  FAILED test_every_imperative_names_its_calls_in_order
+  tests run: 111, failed: 1, errors: 0
+== revert: audit-structure
+  test_guidance_imperatives.py lines differing from the committed file: 0
+  FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
+  tests run: 111, failed: 1, errors: 0
+== revert: audit-spawns
+  test_guidance_imperatives.py lines differing from the committed file: 1
+  FAILED test_the_structure_audit_reads_the_rule_printed_above_the_step
+  FAILED test_the_structure_audit_bites_on_a_spawn_that_is_not_one_move
+  tests run: 111, failed: 2, errors: 0
+== revert: audit-roster
+  test_guidance_imperatives.py lines differing from the committed file: 1
+  FAILED test_the_structure_audit_bites_when_a_stream_has_no_call
+  tests run: 111, failed: 1, errors: 0
+== revert: audit-fresh-seed
+  test_guidance_imperatives.py lines differing from the committed file: 0
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_naive_seed_fix_would_spawn_every_teammate_twice
+  tests run: 111, failed: 2, errors: 0
+== revert: audit-call-prose
+  test_guidance_imperatives.py lines differing from the committed file: 1
+  FAILED test_a_conditional_sentence_cannot_add_or_move_a_call
+  tests run: 111, failed: 1, errors: 0

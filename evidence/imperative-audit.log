@@ -3,11 +3,14 @@
 
 keys in _ACTION_IMPERATIVES: 22
 emission sites swept:        345
-router payloads swept:       44
+router payloads swept:       50
 defective emissions:         0
 
 header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME
 payload detectors: WRONG_ROUTE, CONDITIONAL, CONTRADICTION, CONTEXT_SEQUENCE, TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING
+step-list detectors (every site and every payload, lead-stalls D-038..D-043): STEP_LIST, RENDERING, NONE, UNKNOWN_TOOL, YIELD_NOT_LAST, CALL_IN_PROSE, RULE_WITHOUT_PHASE, RULE_NOT_LEDGER_LAST, RULE_WITHOUT_ONE_MOVE, DOOR_WITHOUT_SPAWN, SPAWN_WITHOUT_DOOR, SPAWN_ORDER, SPAWN_NOT_ONE_MOVE, SPAWN_NOT_YIELDED, STREAM_WITHOUT_CALL, STREAM_WRONG_AGENT, STREAM_WITHOUT_CONFIG, STREAM_NOT_OWED
+CONDITIONAL is the prose backstop; the zero is computed over the step lists.
+run_streams sites expand the stream steps from this run's cycle-10 roster: trace, prove, test, test01
 
 site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured, wave-boundary, final-wave-done, unreadable-manifest, refused, refused-team-down, refused-foreign-pane, refused-other-team, unaccepted, live-with-owed-acceptance
 
@@ -67,49 +70,55 @@ run state (a real Foundry-Team-Up into a scratch HOME where a team is up),
 at a fresh stall clock and at 600s. received and owed are action/branch;
 notice is what printed above the header.
 
-  payload:cast-live[fresh]               received build_castings/live  owed build_castings/live  notice none  ok
-  payload:cast-live[stale]               received build_castings/live  owed build_castings/live  notice waiting+end-turn  ok
-  payload:cast-live-owed[fresh]          received build_castings/live  owed build_castings/live  notice none  ok
-  payload:cast-live-owed[stale]          received build_castings/live  owed build_castings/live  notice waiting+end-turn  ok
-  payload:cast-not-spawned[fresh]        received build_castings/undispatched  owed build_castings/undispatched  notice none  ok
-  payload:cast-not-spawned[stale]        received build_castings/undispatched  owed build_castings/undispatched  notice stall  ok
-  payload:cast-unaccepted[fresh]         received build_castings/unaccepted  owed build_castings/unaccepted  notice none  ok
-  payload:cast-unaccepted[stale]         received build_castings/unaccepted  owed build_castings/unaccepted  notice stall  ok
-  payload:cast-refused[fresh]            received build_castings/refused  owed build_castings/refused  notice none  ok
-  payload:cast-refused[stale]            received build_castings/refused  owed build_castings/refused  notice stall  ok
-  payload:cast-refused-team-down[fresh]  received build_castings/redispatch  owed build_castings/redispatch  notice none  ok
-  payload:cast-refused-team-down[stale]  received build_castings/redispatch  owed build_castings/redispatch  notice stall  ok
-  payload:cast-refused-foreign-pane[fresh] received build_castings/redispatch  owed build_castings/redispatch  notice none  ok
-  payload:cast-refused-foreign-pane[stale] received build_castings/redispatch  owed build_castings/redispatch  notice stall  ok
-  payload:cast-refused-other-team[fresh] received build_castings/redispatch  owed build_castings/redispatch  notice none  ok
-  payload:cast-refused-other-team[stale] received build_castings/redispatch  owed build_castings/redispatch  notice stall  ok
-  payload:cast-unmeasured-team-up[fresh] received build_castings/undispatched  owed build_castings/undispatched  notice none  ok
-  payload:cast-unmeasured-team-up[stale] received build_castings/undispatched  owed build_castings/undispatched  notice stall  ok
-  payload:cast-refusal-answered[fresh]   received build_castings/unaccepted  owed build_castings/unaccepted  notice none  ok
-  payload:cast-refusal-answered[stale]   received build_castings/unaccepted  owed build_castings/unaccepted  notice stall  ok
-  payload:cast-boundary-team-up[fresh]   received cleanup_teams/-  owed cleanup_teams/-  notice none  ok
-  payload:cast-boundary-team-up[stale]   received cleanup_teams/-  owed cleanup_teams/-  notice stall  ok
-  payload:cast-boundary[fresh]           received build_castings/undispatched  owed build_castings/undispatched  notice none  ok
-  payload:cast-boundary[stale]           received build_castings/undispatched  owed build_castings/undispatched  notice stall  ok
-  payload:cast-built-team-up[fresh]      received cleanup_teams/-  owed cleanup_teams/-  notice none  ok
-  payload:cast-built-team-up[stale]      received cleanup_teams/-  owed cleanup_teams/-  notice stall  ok
-  payload:cast-built[fresh]              received build_castings/idle  owed build_castings/idle  notice none  ok
-  payload:cast-built[stale]              received build_castings/idle  owed build_castings/idle  notice stall  ok
-  payload:grind-live[fresh]              received fix_defects/live  owed fix_defects/live  notice none  ok
-  payload:grind-live[stale]              received fix_defects/live  owed fix_defects/live  notice waiting+end-turn  ok
-  payload:grind-live-all-fixed[fresh]    received fix_defects/live  owed fix_defects/live  notice none  ok
-  payload:grind-live-all-fixed[stale]    received fix_defects/live  owed fix_defects/live  notice waiting+end-turn  ok
-  payload:grind-finished-team-up[fresh]  received cleanup_teams/-  owed cleanup_teams/-  notice none  ok
-  payload:grind-finished-team-up[stale]  received cleanup_teams/-  owed cleanup_teams/-  notice stall  ok
-  payload:grind-idle[fresh]              received fix_defects/idle  owed fix_defects/idle  notice none  ok
-  payload:grind-idle[stale]              received fix_defects/idle  owed fix_defects/idle  notice stall  ok
-  payload:grind-all-fixed[fresh]         received transition_to_inspect/-  owed transition_to_inspect/-  notice none  ok
-  payload:grind-all-fixed[stale]         received transition_to_inspect/-  owed transition_to_inspect/-  notice stall  ok
-  payload:inspect-live[fresh]            received run_streams/live  owed run_streams/live  notice none  ok
-  payload:inspect-live[stale]            received run_streams/live  owed run_streams/live  notice waiting+end-turn  ok
-  payload:inspect-idle[fresh]            received run_streams/idle  owed run_streams/idle  notice none  ok
-  payload:inspect-idle[stale]            received run_streams/idle  owed run_streams/idle  notice stall  ok
-  payload:inspect-stale-team[fresh]      received cleanup_teams/-  owed cleanup_teams/-  notice none  ok
-  payload:inspect-stale-team[stale]      received cleanup_teams/-  owed cleanup_teams/-  notice waiting-report  ok
+  payload:cast-live[fresh]               received build_castings/live  owed build_castings/live  notice none  calls NONE  ok
+  payload:cast-live[stale]               received build_castings/live  owed build_castings/live  notice waiting+end-turn  calls NONE  ok
+  payload:cast-live-owed[fresh]          received build_castings/live  owed build_castings/live  notice none  calls NONE  ok
+  payload:cast-live-owed[stale]          received build_castings/live  owed build_castings/live  notice waiting+end-turn  calls NONE  ok
+  payload:cast-not-spawned[fresh]        received build_castings/undispatched  owed build_castings/undispatched  notice none  calls TeamCreate>Foundry-Team-Up>Foundry-Cast-Wave>Agent>END YOUR TURN  ok
+  payload:cast-not-spawned[stale]        received build_castings/undispatched  owed build_castings/undispatched  notice stall  calls TeamCreate>Foundry-Team-Up>Foundry-Cast-Wave>Agent>END YOUR TURN  ok
+  payload:cast-unaccepted[fresh]         received build_castings/unaccepted  owed build_castings/unaccepted  notice none  calls Foundry-Spec-Hash>Foundry-Accept-Casting>Foundry-Next  ok
+  payload:cast-unaccepted[stale]         received build_castings/unaccepted  owed build_castings/unaccepted  notice stall  calls Foundry-Spec-Hash>Foundry-Accept-Casting>Foundry-Next  ok
+  payload:cast-refused[fresh]            received build_castings/refused  owed build_castings/refused  notice none  calls SendMessage>END YOUR TURN  ok
+  payload:cast-refused[stale]            received build_castings/refused  owed build_castings/refused  notice stall  calls SendMessage>END YOUR TURN  ok
+  payload:cast-refused-team-down[fresh]  received build_castings/redispatch  owed build_castings/redispatch  notice none  calls Foundry-Spawn-Teammate>Agent>SendMessage>END YOUR TURN  ok
+  payload:cast-refused-team-down[stale]  received build_castings/redispatch  owed build_castings/redispatch  notice stall  calls Foundry-Spawn-Teammate>Agent>SendMessage>END YOUR TURN  ok
+  payload:cast-refused-foreign-pane[fresh] received build_castings/redispatch  owed build_castings/redispatch  notice none  calls Foundry-Spawn-Teammate>Agent>SendMessage>END YOUR TURN  ok
+  payload:cast-refused-foreign-pane[stale] received build_castings/redispatch  owed build_castings/redispatch  notice stall  calls Foundry-Spawn-Teammate>Agent>SendMessage>END YOUR TURN  ok
+  payload:cast-refused-other-team[fresh] received build_castings/redispatch  owed build_castings/redispatch  notice none  calls Foundry-Spawn-Teammate>Agent>SendMessage>END YOUR TURN  ok
+  payload:cast-refused-other-team[stale] received build_castings/redispatch  owed build_castings/redispatch  notice stall  calls Foundry-Spawn-Teammate>Agent>SendMessage>END YOUR TURN  ok
+  payload:cast-unmeasured-team-up[fresh] received build_castings/undispatched  owed build_castings/undispatched  notice none  calls TeamCreate>Foundry-Team-Up>Foundry-Cast-Wave>Agent>END YOUR TURN  ok
+  payload:cast-unmeasured-team-up[stale] received build_castings/undispatched  owed build_castings/undispatched  notice stall  calls TeamCreate>Foundry-Team-Up>Foundry-Cast-Wave>Agent>END YOUR TURN  ok
+  payload:cast-refusal-answered[fresh]   received build_castings/unaccepted  owed build_castings/unaccepted  notice none  calls Foundry-Spec-Hash>Foundry-Accept-Casting>Foundry-Next  ok
+  payload:cast-refusal-answered[stale]   received build_castings/unaccepted  owed build_castings/unaccepted  notice stall  calls Foundry-Spec-Hash>Foundry-Accept-Casting>Foundry-Next  ok
+  payload:cast-boundary-team-up[fresh]   received cleanup_teams/-  owed cleanup_teams/-  notice none  calls SendMessage>TeamDelete>Foundry-Team-Down  ok
+  payload:cast-boundary-team-up[stale]   received cleanup_teams/-  owed cleanup_teams/-  notice stall  calls SendMessage>TeamDelete>Foundry-Team-Down  ok
+  payload:cast-boundary[fresh]           received build_castings/undispatched  owed build_castings/undispatched  notice none  calls TeamCreate>Foundry-Team-Up>Foundry-Cast-Wave>Agent>END YOUR TURN  ok
+  payload:cast-boundary[stale]           received build_castings/undispatched  owed build_castings/undispatched  notice stall  calls TeamCreate>Foundry-Team-Up>Foundry-Cast-Wave>Agent>END YOUR TURN  ok
+  payload:cast-built-team-up[fresh]      received cleanup_teams/-  owed cleanup_teams/-  notice none  calls SendMessage>TeamDelete>Foundry-Team-Down  ok
+  payload:cast-built-team-up[stale]      received cleanup_teams/-  owed cleanup_teams/-  notice stall  calls SendMessage>TeamDelete>Foundry-Team-Down  ok
+  payload:cast-built[fresh]              received build_castings/idle  owed build_castings/idle  notice none  calls TeamDelete>Foundry-Team-Down>Foundry-Gate>Foundry-Phase  ok
+  payload:cast-built[stale]              received build_castings/idle  owed build_castings/idle  notice stall  calls TeamDelete>Foundry-Team-Down>Foundry-Gate>Foundry-Phase  ok
+  payload:cast-dispatched-fresh-seed[fresh] received build_castings/live  owed build_castings/live  notice none  calls NONE  ok
+  payload:cast-dispatched-fresh-seed[stale] received build_castings/live  owed build_castings/live  notice waiting+end-turn  calls NONE  ok
+  payload:cast-redispatched-fresh-seed[fresh] received build_castings/live  owed build_castings/live  notice none  calls NONE  ok
+  payload:cast-redispatched-fresh-seed[stale] received build_castings/live  owed build_castings/live  notice waiting+end-turn  calls NONE  ok
+  payload:grind-live[fresh]              received fix_defects/live  owed fix_defects/live  notice none  calls NONE  ok
+  payload:grind-live[stale]              received fix_defects/live  owed fix_defects/live  notice waiting+end-turn  calls NONE  ok
+  payload:grind-live-all-fixed[fresh]    received fix_defects/live  owed fix_defects/live  notice none  calls NONE  ok
+  payload:grind-live-all-fixed[stale]    received fix_defects/live  owed fix_defects/live  notice waiting+end-turn  calls NONE  ok
+  payload:grind-finished-team-up[fresh]  received cleanup_teams/-  owed cleanup_teams/-  notice none  calls SendMessage>TeamDelete>Foundry-Team-Down  ok
+  payload:grind-finished-team-up[stale]  received cleanup_teams/-  owed cleanup_teams/-  notice stall  calls SendMessage>TeamDelete>Foundry-Team-Down  ok
+  payload:grind-idle[fresh]              received fix_defects/idle  owed fix_defects/idle  notice none  calls TeamDelete>Foundry-Team-Down>Foundry-Tasks>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:grind-idle[stale]              received fix_defects/idle  owed fix_defects/idle  notice stall  calls TeamDelete>Foundry-Team-Down>Foundry-Tasks>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:grind-dispatched-fresh-seed[fresh] received fix_defects/live  owed fix_defects/live  notice none  calls NONE  ok
+  payload:grind-dispatched-fresh-seed[stale] received fix_defects/live  owed fix_defects/live  notice waiting+end-turn  calls NONE  ok
+  payload:grind-all-fixed[fresh]         received transition_to_inspect/-  owed transition_to_inspect/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
+  payload:grind-all-fixed[stale]         received transition_to_inspect/-  owed transition_to_inspect/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
+  payload:inspect-live[fresh]            received run_streams/live  owed run_streams/live  notice none  calls NONE  ok
+  payload:inspect-live[stale]            received run_streams/live  owed run_streams/live  notice waiting+end-turn  calls NONE  ok
+  payload:inspect-idle[fresh]            received run_streams/idle  owed run_streams/idle  notice none  calls Agent>Agent>Agent>Agent>END YOUR TURN  ok
+  payload:inspect-idle[stale]            received run_streams/idle  owed run_streams/idle  notice stall  calls Agent>Agent>Agent>Agent>END YOUR TURN  ok
+  payload:inspect-stale-team[fresh]      received cleanup_teams/-  owed cleanup_teams/-  notice none  calls SendMessage>TeamDelete>Foundry-Team-Down  ok
+  payload:inspect-stale-team[stale]      received cleanup_teams/-  owed cleanup_teams/-  notice waiting-report  calls SendMessage>TeamDelete>Foundry-Team-Down  ok
 
 (no entry hands the lead a conditional)

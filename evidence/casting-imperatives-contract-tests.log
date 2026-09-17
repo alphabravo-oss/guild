@@ -3,7 +3,7 @@
 # evidence-volatile: (in )[0-9]+\.[0-9]+s
 
 ============================= test session starts ==============================
-collecting ... collected 97 items
+collecting ... collected 111 items
 
 test_the_audit_sweeps_every_key_and_returns_zero PASSED
 test_the_recorded_evidence_shows_the_population_it_judged PASSED
@@ -96,11 +96,25 @@ test_the_refusal_choice_and_the_team_arm_read_one_scan[answers] PASSED
 test_the_refusal_choice_and_the_team_arm_read_one_scan[raises] PASSED
 test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer PASSED
 test_the_condition_detector_judges_the_sentence_where_it_was_emitted PASSED
-test_the_payload_sweep_bites_on_the_run_streams_sentence PASSED
+test_a_conditional_sentence_cannot_add_or_move_a_call PASSED
 test_the_rules_above_a_redispatch_sanction_the_block_it_appends PASSED
 test_the_grind_dispatch_order_ends_in_the_ledger_protocol PASSED
 test_two_refusals_in_two_waves_key_on_the_named_castings_team PASSED
 test_both_liveness_returns_publish_the_registered_teams[live-agents] PASSED
 test_both_liveness_returns_publish_the_registered_teams[no-live-agents] PASSED
+test_every_site_and_every_payload_is_judged_as_a_step_list PASSED
+test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps PASSED
+test_the_structure_audit_reads_the_rule_printed_above_the_step PASSED
+test_the_structure_audit_bites_on_a_spawn_that_is_not_one_move PASSED
+test_the_structure_audit_bites_when_a_stream_has_no_call PASSED
+test_the_idle_streams_header_names_one_call_per_unrecorded_stream PASSED
+test_a_fresh_seed_is_the_teammate_the_one_move_spawned[A-cast-wave] PASSED
+test_a_fresh_seed_is_the_teammate_the_one_move_spawned[B-grind-spawn] PASSED
+test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch] PASSED
+test_the_naive_seed_fix_would_spawn_every_teammate_twice PASSED
+test_the_payload_publishes_the_steps_its_header_renders PASSED
+test_every_imperative_names_its_calls_in_order PASSED
+test_every_gate_step_precedes_the_transition_it_guards PASSED
+test_the_prose_the_structure_moved_still_says_what_it_said PASSED
 
-============================== 97 passed in 2.40s ==============================
+============================= 111 passed in 4.75s ==============================

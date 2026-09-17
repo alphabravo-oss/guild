@@ -13,8 +13,8 @@ teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
   ST-001  cast-live                stale build_castings/live                running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-002  cast-live-owed           fresh build_castings/live                running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-002  cast-live-owed           stale build_castings/live                running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
-  ST-003  cast-not-spawned         fresh build_castings/undispatched        running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
-  ST-003  cast-not-spawned         stale build_castings/undispatched        running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  ST-003  cast-not-spawned         fresh build_castings/undispatched        running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-003  cast-not-spawned         stale build_castings/undispatched        running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-004  cast-unaccepted          fresh build_castings/unaccepted          running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   ST-004  cast-unaccepted          stale build_castings/unaccepted          running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   ST-004  cast-refused             fresh build_castings/refused             running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
@@ -25,32 +25,38 @@ teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
   ST-004  cast-refused-foreign-pane stale build_castings/redispatch          running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-004  cast-refused-other-team  fresh build_castings/redispatch          running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-004  cast-refused-other-team  stale build_castings/redispatch          running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
-  ST-003  cast-unmeasured-team-up  fresh build_castings/undispatched        running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
-  ST-003  cast-unmeasured-team-up  stale build_castings/undispatched        running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  ST-003  cast-unmeasured-team-up  fresh build_castings/undispatched        running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-003  cast-unmeasured-team-up  stale build_castings/undispatched        running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-004  cast-refusal-answered    fresh build_castings/unaccepted          running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   ST-004  cast-refusal-answered    stale build_castings/unaccepted          running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   ST-003  cast-boundary-team-up    fresh cleanup_teams/-                    running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
   ST-003  cast-boundary-team-up    stale cleanup_teams/-                    running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
-  ST-003  cast-boundary            fresh build_castings/undispatched        running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
-  ST-003  cast-boundary            stale build_castings/undispatched        running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  ST-003  cast-boundary            fresh build_castings/undispatched        running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-003  cast-boundary            stale build_castings/undispatched        running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-003  cast-built-team-up       fresh cleanup_teams/-                    running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
   ST-003  cast-built-team-up       stale cleanup_teams/-                    running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
   ST-003  cast-built               fresh build_castings/idle                running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
   ST-003  cast-built               stale build_castings/idle                running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  ST-001  cast-dispatched-fresh-seed fresh build_castings/live                running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-001  cast-dispatched-fresh-seed stale build_castings/live                running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-004  cast-redispatched-fresh-seed fresh build_castings/live                running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-004  cast-redispatched-fresh-seed stale build_castings/live                running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-001  grind-live               fresh fix_defects/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-001  grind-live               stale fix_defects/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-001  grind-live-all-fixed     fresh fix_defects/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-001  grind-live-all-fixed     stale fix_defects/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-003  grind-finished-team-up   fresh cleanup_teams/-                    running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
   ST-003  grind-finished-team-up   stale cleanup_teams/-                    running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
-  ST-003  grind-idle               fresh fix_defects/idle                   running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
-  ST-003  grind-idle               stale fix_defects/idle                   running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  ST-003  grind-idle               fresh fix_defects/idle                   running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=yes
+  ST-003  grind-idle               stale fix_defects/idle                   running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=yes
+  ST-001  grind-dispatched-fresh-seed fresh fix_defects/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-001  grind-dispatched-fresh-seed stale fix_defects/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-003  grind-all-fixed          fresh transition_to_inspect/-            running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   ST-003  grind-all-fixed          stale transition_to_inspect/-            running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   ST-001  inspect-live             fresh run_streams/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-001  inspect-live             stale run_streams/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
-  ST-003  inspect-idle             fresh run_streams/idle                   running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=n/a teardown=no
-  ST-003  inspect-idle             stale run_streams/idle                   running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=n/a teardown=no
+  ST-003  inspect-idle             fresh run_streams/idle                   running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-003  inspect-idle             stale run_streams/idle                   running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-003  inspect-stale-team       fresh cleanup_teams/-                    running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
   ST-003  inspect-stale-team       stale cleanup_teams/-                    running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
 
