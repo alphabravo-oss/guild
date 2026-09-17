@@ -2974,7 +2974,7 @@ def test_transition_to_cast_keeps_wave_one_as_a_literal():
     this judges.
     """
     entry = _ACTION_IMPERATIVES["transition_to_cast"]
-    # Steps (3), (4) and (5): the three places the first wave is named.
+    # Steps (4), (5) and (6): the three places the first wave is named.
     literal_calls = (
         "TeamCreate('cast-{run}-wave-1')",
         "Foundry-Team-Up(team_name='cast-{run}-wave-1')",
