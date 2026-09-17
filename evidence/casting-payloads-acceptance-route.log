@@ -1,5 +1,5 @@
 # evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.test_next_call_payloads import acceptance_route_report; [print(r) for r in acceptance_route_report()]' 2>/dev/null
-# evidence-for: ST-004, US-003, GI-008, US-001, GI-005, CT-005, OT-006, FR-011, CT-004, GI-003, FR-015, FR-002, ST-003
+# evidence-for: ST-004, US-003, GI-008, US-001, GI-005, CT-005, OT-006, FR-011, CT-004, GI-003, FR-015, FR-002, ST-003, CT-003
 
 Foundry-Accept-Casting, then the Foundry-Next its next_call names
   wave 1 = casting 1 (done); wave 2 = casting 2 (not started)
@@ -9,7 +9,7 @@ Foundry-Accept-Casting, then the Foundry-Next its next_call names
     payload next_call           'Call Foundry-Next now.'
     acceptance records          ['casting-1-accepted']
     Foundry-Next action         cleanup_teams
-    first call named            Send
+    first call named            SendMessage
     tears the team down         True
     dispatches wave 2           False
     returns to casting 1        False
@@ -145,6 +145,38 @@ warned, no team; the real Foundry-Spawn-Teammate, the teammate obeys (D-030)
     Foundry-Next action         build_castings
     first call named            Foundry-Spec-Hash
     returns to casting 1        True
+
+each dispatch route, then its door, then Foundry-Next (D-038, D-039)
+  cast_wave
+    Foundry-Next action         build_castings
+    next_calls                  ['TeamCreate', 'Foundry-Team-Up', 'Foundry-Cast-Wave', 'Agent', 'END YOUR TURN']
+    Agent prompt blocks         [['dispatch', 'progress_protocol']]
+    spawn-order faults          []
+    door ok, ledger last lines  True ['server', 'server']
+    seed only: action, calls    build_castings []
+    seed only: counts running   True
+    woken: action               build_castings
+    woken: counts running       True
+  grind
+    Foundry-Next action         fix_defects
+    next_calls                  ['TeamDelete', 'Foundry-Team-Down', 'Foundry-Tasks', 'TeamCreate', 'Foundry-Team-Up', 'Foundry-Spawn-Teammate', 'Agent', 'END YOUR TURN']
+    Agent prompt blocks         [['dispatch', 'grind_cycle_context', 'defects', 'alignment_block', 'progress_protocol']]
+    spawn-order faults          []
+    door ok, ledger last lines  True ['server']
+    seed only: action, calls    fix_defects []
+    seed only: counts running   True
+    woken: action               fix_defects
+    woken: counts running       True
+  redispatch
+    Foundry-Next action         build_castings
+    next_calls                  ['Foundry-Spawn-Teammate', 'Agent', 'SendMessage', 'END YOUR TURN']
+    Agent prompt blocks         [['dispatch', 'progress_protocol']]
+    spawn-order faults          []
+    door ok, ledger last lines  True ['server']
+    seed only: action, calls    build_castings []
+    seed only: counts running   True
+    woken: action               build_castings
+    woken: counts running       True
 
 warned, no team registered, another project's teammate pane live (D-031)
     registered teams            []

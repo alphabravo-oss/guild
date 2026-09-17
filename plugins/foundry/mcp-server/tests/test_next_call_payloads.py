@@ -35,7 +35,7 @@ from foundry_mcp.tools import evidence as _evidence
 from foundry_mcp.tools import foundry_state as _foundry_state
 from foundry_mcp.tools.artifacts import _hash_file, foundry_spec_hash
 from foundry_mcp.tools.evidence import foundry_accept_casting
-from foundry_mcp.tools.foundry_spawn import foundry_spawn_teammate
+from foundry_mcp.tools.foundry_spawn import foundry_cast_wave, foundry_spawn_teammate
 from foundry_mcp.tools.orchestration import teams as _teams
 from foundry_mcp.tools.orchestration.guidance import foundry_next_action
 from foundry_mcp.tools.orchestration.teams import (
@@ -44,6 +44,8 @@ from foundry_mcp.tools.orchestration.teams import (
 )
 
 from tests.orchestration._env import (  # noqa: F401
+    _defect_ledger,
+    _tiered,
     _write_state,
     patch_everywhere,
     run_env,
@@ -947,7 +949,7 @@ def test_following_next_call_off_a_refusal_returns_to_that_casting(
         assert "`progress_protocol` block" in _redispatch_step(header), drive
         assert (
             header.index("(1) Foundry-Spawn-Teammate")
-            < header.index("(2) One foreground Agent(")
+            < header.index("(2) Agent(")
             < header.index("(3) SendMessage(")
             < header.index("(4) Waiting on a running agent")
         ), drive
@@ -1354,6 +1356,253 @@ _FOREIGN_PANE = {
 }
 
 
+#: lead-stalls FR-015 / GI-008 / ST-004 / CT-003 (D-038, D-039) — THE THREE
+#: DISPATCH ROUTES, EACH AS THE LEAD REACHES IT AND AS ITS DOOR LEAVES IT.
+#:
+#: Every one is a real door: the real Foundry-Team-Up where a team stands, the
+#: real Foundry-Cast-Wave / Foundry-Spawn-Teammate for the dispatch. Only the
+#: tmux pane scan is stubbed. The seed the door writes is the server's own,
+#: stamped now — D-038's drive, where the imperatives suite's seed was dated
+#: 2020 and so never read as anything but stalled.
+_GRIND_TEAM = f"grind-{_RUN}-cycle-0"
+
+
+def _cast_wave_route(root: str, fdir: Path, teams_dir: Path) -> dict:
+    """F1, wave 1 = castings 1 and 2, its team up and nothing spawned."""
+    _arrange_waves(fdir, {1: ["1", "2"]})
+    (teams_dir / _WAVE_ONE_TEAM).mkdir()
+    assert foundry_register_team(_WAVE_ONE_TEAM, project_root=root)["ok"]
+    return {"door": lambda: foundry_cast_wave(1, "cast", project_root=root)}
+
+
+def _grind_route(root: str, fdir: Path, teams_dir: Path) -> dict:
+    """F3, D-001 open LIVE, nothing running; the step list's team is registered
+    before the spawn door, as its own steps (4) and (5) do."""
+    _arrange_waves(fdir, {1: ["1"]})
+    _write_state(fdir, phase="F3", cycle=0)
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE", status="open")])
+
+    def _door() -> dict:
+        (teams_dir / _GRIND_TEAM).mkdir()
+        assert foundry_register_team(_GRIND_TEAM, project_root=root)["ok"]
+        return foundry_spawn_teammate(casting_id="1", phase="grind", project_root=root)
+
+    return {"door": _door}
+
+
+def _redispatch_route(root: str, fdir: Path, teams_dir: Path) -> dict:
+    """F1, casting 1 done a minute ago and refused, no team registered."""
+    _arrange_waves(fdir, {1: ["1"], 2: ["2"]})
+    earlier = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    _worked_ledger(fdir, "1", done=True, stamp=earlier)
+    assert _accept(root, fdir, "1", **_REFUSALS["warned"])["ok"] is False
+    return {
+        "door": lambda: foundry_spawn_teammate(
+            casting_id="1", phase="cast", project_root=root
+        )
+    }
+
+
+_DISPATCH_ROUTES = {
+    "cast_wave": (_cast_wave_route, "build_castings", "Foundry-Cast-Wave"),
+    "grind": (_grind_route, "fix_defects", "Foundry-Spawn-Teammate"),
+    "redispatch": (_redispatch_route, "build_castings", "Foundry-Spawn-Teammate"),
+}
+
+
+def _dispatch_then_follow(base: Path, monkeypatch, *, route: str) -> dict:
+    """Foundry-Next at ``route``, then the door its step list names, then
+    Foundry-Next again with the door's fresh seed the casting's last line
+    and no Agent made."""
+    arrange, _action, _door = _DISPATCH_ROUTES[route]
+    with _scratch_run(base, monkeypatch) as (root, fdir, teams_dir):
+        door = arrange(root, fdir, teams_dir)["door"]
+        before = foundry_next_action(root)
+        opened = door()
+        seeds = sorted(
+            json.loads(path.read_text(encoding="utf-8").splitlines()[-1]).get("seeded_by")
+            or "agent"
+            for path in (fdir / "progress").glob("casting-*.jsonl")
+        )
+        after = foundry_next_action(root)
+        # The Agent call is made in the same move (a teammate is not
+        # simulated beyond its ledger), and the teammate's first line lands.
+        now = _foundry_state.now_iso()
+        for path in sorted((fdir / "progress").glob("casting-*.jsonl")):
+            with path.open("a", encoding="utf-8") as ledger:
+                ledger.write(json.dumps(
+                    {"timestamp": now, "phase": "cast", "step": "reading the prompt"}
+                ) + "\n")
+        woken_lines = sorted(
+            json.loads(path.read_text(encoding="utf-8").splitlines()[-1]).get("seeded_by")
+            or "agent"
+            for path in (fdir / "progress").glob("casting-*.jsonl")
+        )
+        woken = foundry_next_action(root)
+    return {
+        "action": before.get("action"),
+        "rules": before.get("instructions", "").split(_NEXT_ACTION_MARKER, 1)[0],
+        "header": _header(before),
+        "next_calls": before.get("next_calls"),
+        "door_ok": opened.get("ok"),
+        "seeds": seeds,
+        "after_action": after.get("action"),
+        "after_rules": after.get("instructions", "").split(_NEXT_ACTION_MARKER, 1)[0],
+        "after_header": _header(after),
+        "after_next_calls": after.get("next_calls"),
+        "woken_lines": woken_lines,
+        "woken_action": woken.get("action"),
+        "woken_header": _header(woken),
+    }
+
+
+def _numbered_steps(header: str) -> list[str]:
+    """The header's `(n) ...` steps, each as its own text."""
+    return [
+        step.strip()
+        for step in re.split(r"\n  \(\d+\) ", "\n" + header.split("\n", 1)[-1])[1:]
+    ]
+
+
+def _spawn_order_faults(drive: dict) -> list[str]:
+    """Every way ``drive``'s dispatch step list breaks the one declared order.
+
+    Read off the published `next_calls` AND the rendered step, because D-039
+    was the prose disagreeing with the rule above it: a payload whose list
+    is right and whose text still says "the dispatch alone" is the defect.
+    """
+    faults: list[str] = []
+    calls = drive["next_calls"] or []
+    tools = [call["tool"] for call in calls]
+    steps = _numbered_steps(drive["header"])
+    if len(steps) != len(calls):
+        faults.append(f"{len(steps)} rendered steps for {len(calls)} next_calls")
+    spawns = [i for i, tool in enumerate(tools) if tool == "Agent"]
+    if not spawns:
+        faults.append(f"no Agent step in {tools}")
+    for i in spawns:
+        blocks = calls[i]["prompt_blocks"]
+        if blocks[:1] != ["dispatch"] or blocks[-1:] != ["progress_protocol"]:
+            faults.append(f"step ({i + 1}) blocks {blocks}")
+        text = steps[i] if i < len(steps) else ""
+        if not (0 <= text.find("`dispatch`") < text.find("`progress_protocol`")):
+            faults.append(f"step ({i + 1}) does not render dispatch before progress_protocol")
+        order = re.search(r"Order: ([^.]*)\.", text)
+        if order is None or not order.group(1).endswith("progress_protocol"):
+            faults.append(f"step ({i + 1}) order does not end in progress_protocol")
+        # One move (D-038): the door is the step right before its Agent, and
+        # nothing between the Agent and the yield sends the lead to Foundry-Next.
+        if i == 0 or tools[i - 1] not in ("Foundry-Cast-Wave", "Foundry-Spawn-Teammate"):
+            faults.append(f"step ({i + 1}) is not fed by the step before it: {tools}")
+        if "no Foundry-Next between" not in text:
+            faults.append(f"step ({i + 1}) does not state the one move")
+    if "Foundry-Next" in tools:
+        faults.append(f"a Foundry-Next step in the dispatch sequence: {tools}")
+    if tools[-1:] != ["END YOUR TURN"]:
+        faults.append(f"the sequence does not end in the yield: {tools}")
+    rule = _spawn_prompt_rule(drive["rules"])
+    if not (0 <= rule.find("dispatch") < rule.rfind("progress_protocol")):
+        faults.append("the rules block's spawn sentence does not end in progress_protocol")
+    if "no Foundry-Next between" not in drive["rules"]:
+        faults.append("the rules block does not state the one move")
+    # D-039's shape one rule up: "call Foundry-Next after each step" must name
+    # the door-and-Agent move as one step, or the payload carries two answers.
+    after_each = [
+        line for line in drive["rules"].splitlines()
+        if "Call Foundry-Next after each step" in line
+    ]
+    if len(after_each) != 1 or "spawn door and the Agent call" not in after_each[0]:
+        faults.append("the after-each-step rule does not except the spawn move")
+    return faults
+
+
+@pytest.mark.parametrize("route", sorted(_DISPATCH_ROUTES))
+def test_every_dispatch_route_spawns_in_the_one_declared_order(
+    tmp_path, monkeypatch, route
+):
+    """lead-stalls GI-008 (D-039) — one spawn-prompt contract per payload.
+
+    At 5abd2be the rules block said every spawn passes `dispatch` and then,
+    LAST, `progress_protocol`, while three of the five dispatch steps under it
+    said the dispatch alone — so a lead held two answers to "what is the Agent
+    prompt", and the one the step gave left the teammate with no ledger. Each
+    route is checked for the ordered blocks, for the rule above it agreeing,
+    and for the door and its Agent being one move ending in the yield.
+    """
+    _arrange, action, door = _DISPATCH_ROUTES[route]
+    drive = _dispatch_then_follow(tmp_path, monkeypatch, route=route)
+
+    assert drive["action"] == action, drive
+    assert door in [call["tool"] for call in drive["next_calls"] or []], drive
+    assert _spawn_order_faults(drive) == [], (_spawn_order_faults(drive), drive)
+    assert drive["door_ok"] is True, drive
+
+
+#: The live trailer's seed-only sentence (lead-stalls D-038).
+_SEED_ONLY_RUNNING = "counts as running, because the door and its Agent call are one move"
+
+
+@pytest.mark.parametrize("route", sorted(_DISPATCH_ROUTES))
+def test_a_dispatch_followed_as_written_reads_live_until_the_wake(
+    tmp_path, monkeypatch, route
+):
+    """lead-stalls FR-015 / US-003 / ST-004 / CT-003 (D-038) — the ONE-MOVE ruling.
+
+    A seed-only ledger is "no Agent yet" and "Agent reading its prompt" at
+    once, and answering it with a spawn would duplicate every ordinary one; so
+    the lead is told the door and its Agent are one move, and the reading
+    keeps a fresh seed as running. Followed as written — door, Agent, the
+    teammate's first line, Foundry-Next — every route answers `live`, whose
+    trailer says the seed-only case counts, and never re-opens the door.
+    """
+    _arrange, action, door = _DISPATCH_ROUTES[route]
+    drive = _dispatch_then_follow(tmp_path, monkeypatch, route=route)
+
+    assert drive["seeds"] and set(drive["seeds"]) == {"server"}, drive
+    # The wake hop reads the teammate's own line, not the seed a second time.
+    assert set(drive["woken_lines"]) == {"agent"}, drive
+    for when in ("after", "woken"):
+        header = drive[f"{when}_header"]
+        assert drive[f"{when}_action"] == action, (when, drive)
+        assert header.lstrip().startswith("YOUR NEXT CALL: NONE."), (when, header)
+        assert _SEED_ONLY_RUNNING in header, (when, header)
+        assert "END YOUR TURN" in header, (when, header)
+        assert f"{door}(" not in header, (when, header)
+    assert drive["after_next_calls"] == [], drive
+
+
+@pytest.mark.parametrize(
+    "fault, mutate",
+    [
+        ("dispatch alone", lambda c: c.update(prompt_blocks=["dispatch"])),
+        ("ledger first", lambda c: c.update(
+            prompt_blocks=["progress_protocol", "dispatch"])),
+    ],
+    ids=["dispatch_alone", "ledger_first"],
+)
+def test_the_spawn_order_check_catches_the_shipped_shapes(
+    tmp_path, monkeypatch, fault, mutate
+):
+    """Positive controls: the D-039 shapes, planted on a real payload, are caught."""
+    drive = _dispatch_then_follow(tmp_path, monkeypatch, route="grind")
+    for call in drive["next_calls"]:
+        if call["tool"] == "Agent":
+            mutate(call)
+    assert _spawn_order_faults(drive), fault
+
+    drive["next_calls"].insert(-1, {"tool": "Foundry-Next", "prompt_blocks": []})
+    assert any("Foundry-Next step" in f for f in _spawn_order_faults(drive))
+
+    # The 5abd2be rules line: "follow it." and no word on the spawn move.
+    drive["rules"] = re.sub(
+        r"(Call Foundry-Next after each step and follow it)[^.]*\.",
+        r"\1.", drive["rules"],
+    )
+    assert "the after-each-step rule does not except the spawn move" in (
+        _spawn_order_faults(drive)
+    ), drive["rules"]
+
+
 def _refuse_beside_a_foreign_pane(base: Path, monkeypatch) -> dict:
     """No CAST team ever registered; casting 1 refused; a foreign pane live."""
     with _scratch_run(base, monkeypatch) as (root, fdir, _teams_dir):
@@ -1744,6 +1993,22 @@ def acceptance_route_report() -> list[str]:
     lines.append(f"    first call named            {_first_call(drive['header'])}")
     lines.append(f"    returns to casting 1        {_returns_to_casting_one(drive['header'])}")
 
+    lines.append("")
+    lines.append("each dispatch route, then its door, then Foundry-Next (D-038, D-039)")
+    for route in sorted(_DISPATCH_ROUTES):
+        drive = _in_scratch(_dispatch_then_follow, route=route)
+        spawns = [c["prompt_blocks"] for c in drive["next_calls"] if c["tool"] == "Agent"]
+        lines.append(f"  {route}")
+        lines.append(f"    Foundry-Next action         {drive['action']}")
+        lines.append(f"    next_calls                  {[c['tool'] for c in drive['next_calls']]}")
+        lines.append(f"    Agent prompt blocks         {spawns}")
+        lines.append(f"    spawn-order faults          {_spawn_order_faults(drive)}")
+        lines.append(f"    door ok, ledger last lines  {drive['door_ok']} {drive['seeds']}")
+        lines.append(f"    seed only: action, calls    {drive['after_action']} {drive['after_next_calls']}")
+        lines.append(f"    seed only: counts running   {_SEED_ONLY_RUNNING in drive['after_header']}")
+        lines.append(f"    woken: action               {drive['woken_action']}")
+        lines.append(f"    woken: counts running       {_SEED_ONLY_RUNNING in drive['woken_header']}")
+
     drive = _in_scratch(_refuse_beside_a_foreign_pane)
     lines.append("")
     lines.append("warned, no team registered, another project's teammate pane live (D-031)")
@@ -1795,7 +2060,9 @@ def test_the_route_report_agrees_with_the_tests_beside_it():
     assert "  recording no verdict          0" in joined, joined
     assert joined.count("    returns to casting 1        True") == 8, joined
     assert joined.count("    a step conditioned          False") == 8, joined
-    assert joined.count("    first call named            SendMessage") == 5, joined
+    # 5 refused send-backs, plus the accepted-with-team-up drive's teardown,
+    # whose step (1) is now the literal `SendMessage(` call (D-040's step list).
+    assert joined.count("    first call named            SendMessage") == 6, joined
     assert joined.count("    first call named            Foundry-Spawn-Teammate") == 7, joined
     assert joined.count("    first call named            Foundry-Spec-Hash") == 4, joined
     assert joined.count("'s refusal  True\n    names no other casting      True") == 6, joined
@@ -1809,5 +2076,9 @@ def test_the_route_report_agrees_with_the_tests_beside_it():
     assert "    teammate wrote done         True" in joined, joined
     assert "    claims a registered team    False" in joined, joined
     assert joined.count("    sends casting 1 back        True") == 2, joined
+    assert joined.count("    spawn-order faults          []") == 3, joined
+    assert joined.count("    seed only: counts running   True") == 3, joined
+    assert joined.count("    woken: counts running       True") == 3, joined
+    assert joined.count("    door ok, ledger last lines  True ") == 3, joined
     split = joined.split("the reading's team scan disagrees (D-028)", 1)[1]
     assert "    Foundry-Next action         cleanup_teams" not in split, split
