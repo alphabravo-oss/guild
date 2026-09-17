@@ -1476,7 +1476,7 @@ def _acceptance_state(liveness: object) -> str | None:
     same refusal again.
 
     lead-stalls D-022 — AND A REFUSAL IS TWO STATES, CHOSEN FROM THE SAME
-    READING'S `teams_active`. The refused branch used to hold both answers —
+    READING'S TEAM SCAN. The refused branch used to hold both answers —
     "send it back; only a send that answers that the teammate cannot be
     reached takes the re-dispatch step" — and a sentence predicting which one
     the lead would need. That is the conditional lead-stalls GI-008 forbids:
@@ -1487,10 +1487,28 @@ def _acceptance_state(liveness: object) -> str | None:
     that did not measure the team scan owes `redispatch`, on the D-013
     asymmetry: a spare teammate costs a spawn, a message sent to a torn-down
     team parks the run with nobody told.
+
+    lead-stalls D-031 — AND THE TEAM ASKED ABOUT IS THE REFUSED CASTING'S OWN.
+    `teams_active` is any registered team directory OR any live teammate pane
+    ON THE MACHINE, so one teammate pane in another project's tmux session read
+    as "the CAST team is still registered" over a run that had registered
+    none, and the lead was told to message a teammate that did not exist and
+    end its turn. The choice is now the one `_team_work_in_flight` already
+    makes: is `cast-{run}-wave-{W}`, W the refused casting's own wave, among
+    the REGISTERED names. The panes decide nothing here. A name the reading did
+    not publish, or a registry it did not read, answers `redispatch`, on the
+    asymmetry above.
     """
     row = liveness if isinstance(liveness, dict) else {}
     if _casting_ids(row.get("cast_refused")):
-        return "refused" if row.get("teams_active") is True else "redispatch"
+        own = row.get("cast_refused_team")
+        registered = row.get("teams_registered")
+        return (
+            "refused"
+            if isinstance(own, str) and isinstance(registered, list)
+            and own in registered
+            else "redispatch"
+        )
     if _casting_ids(row.get("cast_unaccepted")):
         return "unaccepted"
     return None
@@ -1821,6 +1839,19 @@ _CAST_ACCEPTANCE_DUE = (
 #: fresh one is dispatched and sent the same refusal as a SEPARATE message.
 #: Neither branch names a step whose execution waits on an earlier call's
 #: answer, and the reason each was chosen is stated as a reading, not a guess.
+#: "Registered" means the refused casting's OWN wave team (lead-stalls D-031),
+#: so the sentence each branch closes on is a claim about that one name.
+#:
+#: lead-stalls D-030 — THE RE-SPAWNED TEAMMATE IS HANDED ITS LEDGER PROTOCOL.
+#: Step (2) read "the `dispatch` field VERBATIM with nothing appended", while
+#: step (1)'s own `instructions` and commands/start.md rule 1 both say the
+#: `progress_protocol` block goes BELOW the dispatch, LAST. Obeyed as written,
+#: the teammate was never told where its ledger is, so the re-write the
+#: paragraph above relies on never happened: `Foundry-Spawn-Teammate`'s seed
+#: line read as a running agent for fifteen minutes (END YOUR TURN over
+#: nothing), and after that as an undispatched wave. The step now appends the
+#: block in start.md's order, and the refusal still rides in step (3), outside
+#: the dispatch.
 _REFUSED_IS_REWORKED = (
     "A refused casting is re-dispatched to be fixed: never torn down, never "
     "counted as built, never re-accepted unchanged."
@@ -1837,9 +1868,9 @@ _CAST_REFUSED_SEND_BACK = (
     "  (2) " + _WAITING_IS_NOT_STOPPING + "\n"
     "Foundry-Accept-Casting REFUSED casting {casting} and its ledger has not "
     "moved since — this server read handoffs.jsonl, the progress ledgers and "
-    "the team registry on this call: no agent is running and the CAST team is "
-    "still registered, so the teammate that built it is the one to send it "
-    "to. " + _REFUSED_IS_REWORKED
+    "the team registry on this call: no agent is running and casting "
+    "{casting}'s own wave team is still registered, so the teammate that built "
+    "it is the one to send it to. " + _REFUSED_IS_REWORKED
 )
 
 _CAST_REFUSED_REDISPATCH = (
@@ -1847,8 +1878,11 @@ _CAST_REFUSED_REDISPATCH = (
     "  (1) Foundry-Spawn-Teammate(casting_id={casting}, phase='cast')\n"
     "  (2) One foreground Agent(subagent_type='foundry:teammate', "
     "mode='bypassPermissions'), passed step (1)'s `dispatch` field VERBATIM "
-    "with nothing appended, obeying the model clause in the `instructions` "
-    "step (1) returned.\n"
+    "and then, BELOW it and LAST, step (1)'s `progress_protocol` block "
+    "VERBATIM — that block is what makes the teammate write its progress "
+    "ledger and its done line, which is what routes you back to accept casting "
+    "{casting}. Append nothing else: the refusal is step (3). Obey the model "
+    "clause in the `instructions` step (1) returned.\n"
     "  (3) SendMessage(to=<the teammate step (2) spawned>, message=<the "
     "refusal Foundry-Accept-Casting returned for casting {casting}, verbatim — "
     "its error or failure_token, failure_detail, warning and hint>), as a "
@@ -1856,9 +1890,10 @@ _CAST_REFUSED_REDISPATCH = (
     "  (4) " + _WAITING_IS_NOT_STOPPING + "\n"
     "Foundry-Accept-Casting REFUSED casting {casting} and its ledger has not "
     "moved since — this server read handoffs.jsonl, the progress ledgers and "
-    "the team registry on this call: no agent is running and no CAST team is "
-    "registered, so the teammate that built it went with its team and casting "
-    "{casting} goes to a fresh one. " + _REFUSED_IS_REWORKED
+    "the team registry on this call: no agent is running and casting "
+    "{casting}'s own wave team is not registered, so the teammate that built "
+    "it went with that team and casting {casting} goes to a fresh one. "
+    + _REFUSED_IS_REWORKED
 )
 
 
@@ -2914,6 +2949,10 @@ def _team_work_in_flight(
         return True
     if not cast_open:
         return False
+    # `redispatch` too (lead-stalls D-022 / D-028): the refused casting's own
+    # team is not registered, but the arm fired on SOMETHING — another team, or
+    # a live pane the scan cannot attribute — and tearing that down is not the
+    # refusal's answer.
     if states[0] in ("refused", "redispatch", "unaccepted"):
         return True
     if states[0] == "idle":
@@ -3085,11 +3124,22 @@ def _compute_next_action(project_root: str) -> dict:
     # the arm chosen, the imperative printed and the `agent_liveness` beside
     # them are one measurement of one roster.
     cast_open = phase == "F1" and not (fdir / CAST_COMPLETE_MARKER).exists()
+    # lead-stalls D-028 — ONE team scan, read by the reading and by the arm.
+    # Two scans could disagree (the first failing and reading as "no team",
+    # or the registry changing between them), and the reading then chose
+    # `redispatch` while the arm saw the refused casting's team registered.
+    # A scan that cannot answer reads as "no team" for BOTH, on the D-013
+    # asymmetry: a team left up one call longer costs a redundant call, while
+    # an exception here would take Foundry-Next down with it.
+    try:
+        teams = _check_active_teams(project_root)
+    except Exception:  # noqa: BLE001 - the router never raises into the lead
+        teams = {"active": False, "teams": []}
     agent_liveness = (
-        _waiting_on_agents(project_root) if cast_open or phase == "F3" else None
+        _waiting_on_agents(project_root, teams=teams)
+        if cast_open or phase == "F3" else None
     )
 
-    teams = _check_active_teams(project_root)
     if teams["active"] and not _team_work_in_flight(
         agent_liveness, teams.get("teams") or [], fdir.name, cast_open=cast_open,
     ):
@@ -4103,19 +4153,42 @@ def _cast_wave_position(
                 ],
                 done_at,
             ))
+        # lead-stalls D-031 — the team the refusal's teammate belongs to, named
+        # the way `_CAST_WAVE_UNDISPATCHED` told the lead to create it, for the
+        # FIRST refused id because that is the casting `{casting}` names.
+        refused = position.get("cast_refused") or []
+        own_wave = next(
+            (
+                number for number, ids in sorted(numbered, key=lambda w: w[0])
+                if refused and refused[0] in {str(cid) for cid in ids}
+            ),
+            None,
+        )
+        if own_wave is not None:
+            position["cast_refused_team"] = f"cast-{fdir.name}-wave-{own_wave}"
         return position
     except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
         return blank
 
 
-def _waiting_on_agents(project_root: str) -> dict:
+def _waiting_on_agents(project_root: str, teams: dict | None = None) -> dict:
     """Is the lead waiting on live agents, or is it deliberating (FR-020)?
 
     Returns ``{"waiting": bool, "count": int, "detail": str, "agents": [...],
-    "teams_active": bool, "progressing_agents": int, "roster_agents": int,
+    "teams_active": bool, "teams_registered": [team name, ...],
+    "progressing_agents": int, "roster_agents": int,
     "cast_wave_pending": int | None, "cast_wave_built": int | None,
-    "cast_refused": [casting id, ...], "cast_unaccepted": [casting id, ...]}``
-    — the last two only when the manifest answered (lead-stalls D-020).
+    "cast_refused": [casting id, ...], "cast_unaccepted": [casting id, ...],
+    "cast_refused_team": str}`` — the refusal and acceptance lists only when
+    the manifest answered (lead-stalls D-020), and `cast_refused_team` only
+    when `cast_refused` is non-empty (lead-stalls D-031).
+
+    lead-stalls D-028 / D-031 — ``teams`` is a `_check_active_teams` answer the
+    caller already holds. The router passes the one it routes on, so the
+    refusal branch chosen here and the team arm that reads the same scan can
+    never be two answers about one registry: with two scans, a first scan that
+    failed (read as "no team") and a second that saw the refused casting's team
+    handed the lead `cleanup_teams` over the team its refusal was owed to.
 
     lead-stalls D-009 / D-010 — AND THE LAST TWO ARE WHY THIS ROUTINE ANSWERS
     THE BRANCH QUESTION AT ALL. lead-stalls FR-015 is Locked on "the server
@@ -4182,11 +4255,20 @@ def _waiting_on_agents(project_root: str) -> dict:
     # CT-012's second declared input. Read FIRST and never raised through: a
     # scan that cannot answer must not be able to suppress a stall warning
     # either, so an unusable answer reads as "no active team".
-    try:
-        teams = _check_active_teams(project_root)
-    except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
-        teams = {"active": False, "teams": []}
+    if not isinstance(teams, dict):
+        try:
+            teams = _check_active_teams(project_root)
+        except Exception:  # noqa: BLE001 - a watchdog never raises into its caller
+            teams = {"active": False, "teams": []}
     teams_active = bool(teams.get("active"))
+    # lead-stalls D-031 — the REGISTRY half alone, which is the only half that
+    # can name a team. A live pane says some teammate somewhere is up; it
+    # cannot say whose.
+    registered = teams.get("teams")
+    teams_registered = [
+        name for name in (registered if isinstance(registered, list) else [])
+        if isinstance(name, str)
+    ]
 
     try:
         from foundry_mcp.tools.foundry_spawn import (
@@ -4267,6 +4349,7 @@ def _waiting_on_agents(project_root: str) -> dict:
     # this line on its own.
     if not live_agents:
         result["teams_active"] = teams_active
+        result["teams_registered"] = teams_registered
         result["progressing_agents"] = 0
         return result
 
@@ -4286,6 +4369,7 @@ def _waiting_on_agents(project_root: str) -> dict:
         # so the field carries what the scan actually answered and CT-012's
         # input set stays visible to every reader.
         "teams_active": teams_active,
+        "teams_registered": teams_registered,
         "progressing_agents": len(live_agents),
         "count": len(live_agents),
         "detail": f"oldest progress {oldest // 60}m {oldest % 60}s ago",

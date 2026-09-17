@@ -21,6 +21,10 @@ teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
   ST-004  cast-refused             stale build_castings/refused             running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-004  cast-refused-team-down   fresh build_castings/redispatch          running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-004  cast-refused-team-down   stale build_castings/redispatch          running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-004  cast-refused-foreign-pane fresh build_castings/redispatch          running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-004  cast-refused-foreign-pane stale build_castings/redispatch          running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-004  cast-refused-other-team  fresh build_castings/redispatch          running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-004  cast-refused-other-team  stale build_castings/redispatch          running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-003  cast-unmeasured-team-up  fresh build_castings/undispatched        running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   ST-003  cast-unmeasured-team-up  stale build_castings/undispatched        running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   ST-004  cast-refusal-answered    fresh build_castings/unaccepted          running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
@@ -56,10 +60,11 @@ correct, the thing that ends the idle is named in the same breath, and the
 call the woken lead is told to make stops nobody.
 ST-003 is discharged by 'names-call=yes' on every row where running is not
 yes: a lead that is handed a call cannot park for want of a move.
-ST-004 is the cast-refused, cast-refused-team-down and cast-refusal-answered
-rows: a refusal goes back to a teammate (the one that built it while its team
-is registered, a fresh one once it is not), and a refusal the teammate has
-answered is accepted again.
+ST-004 is the cast-refused, cast-refused-team-down, cast-refused-foreign-pane,
+cast-refused-other-team and cast-refusal-answered rows: a refusal goes back to
+a teammate (the one that built it while its OWN wave team is registered, a
+fresh one otherwise, whatever else the machine's team scan sees), and a
+refusal the teammate has answered is accepted again.
 The idle of ST-001 and the notification of ST-002 are the HARNESS's to
 perform; this casting owns only what the lead is told, and that is all
 this log claims.

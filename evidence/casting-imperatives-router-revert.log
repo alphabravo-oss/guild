@@ -1,10 +1,10 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && P=$(pwd) && T=$(mktemp -d) && trap 'find "$T" -delete' EXIT && cp -R src tests pyproject.toml "$T/" && G=src/foundry_mcp/tools/orchestration/guidance.py && N=tests/orchestration/test_guidance_imperatives.py && cd "$T" && for m in committed team-arm f3-live-arm acceptance-reader notice-gate streams-branch in-flight-unmeasured refusal-one-branch streams-context refusal-boundary casting-slot-last casting-slot-order condition-detector; do cp "$P/$G" "$G"; cp "$P/$N" "$N"; F=$(python3 -c 'import sys; m, g, n = sys.argv[1:4]; R = {"team-arm": (g, "and not _team_work_in_flight(", "and not (lambda *a, **k: False)("), "f3-live-arm": (g, "if open_count > 0 or grind_live:", "if open_count > 0:"), "acceptance-reader": (g, "if done_at is not None:", "if False:"), "notice-gate": (g, "told_to_wait = (", "told_to_wait = True or ("), "streams-branch": (g, "_BRANCH_OPEN + \"live\" + _BRANCH_CLOSE + _STREAMS_RUNNING", "\"\""), "in-flight-unmeasured": (g, "or pending < 1:\n        return True", "or pending < 1:\n        return False"), "refusal-one-branch": (g, "return \"refused\" if row.get(\"teams_active\") is True else \"redispatch\"", "return \"refused\""), "streams-context": (g, "not the live tree.\"\n                    + _BRANCHED_ACTION_CONTEXT", "not the live tree. Spawn agents using the agent_configs below.\""), "refusal-boundary": (g, "refused_at >= finished_at", "refused_at > finished_at"), "casting-slot-last": (g, "return ids[0]", "return ids[-1]"), "casting-slot-order": (g, "for key in (\"cast_refused\", \"cast_unaccepted\"):", "for key in (\"cast_unaccepted\", \"cast_refused\"):"), "condition-detector": (n, "(?:if|unless|when|whenever|only|once|in case|should|whether|depending)", "(?:NEVERMATCHES)")}; f, old, new = R.get(m, (g, "", "")); s = open(f, encoding="utf-8").read(); assert m == "committed" or s.count(old) == 1, m; open(f, "w", encoding="utf-8").write(s.replace(old, new) if old else s); print(f)' "$m" "$G" "$N"); echo "== revert: $m"; echo "  $(basename "$F") lines differing from the committed file: $(diff "$P/$F" "$F" | grep -c '^>')"; uv run --project "$P" --with pytest pytest -p no:cacheprovider --no-header --color=no --tb=no -q -rf "$N" 2>/dev/null | awk '$1=="FAILED"{f++; n=$2; sub(/.*::/, "", n); print "  FAILED " n; next} $1=="ERROR"{e++; n=$2; sub(/.*::/, "", n); print "  ERROR " n; next} {s=$0; gsub(/,/, " ", s); k=split(s, w, " "); for(i=2;i<=k;i++) if(w[i]=="passed") p=w[i-1]+0} END{printf "  tests run: %d, failed: %d, errors: %d\n", p+f+e, f+0, e+0}'; done
+# evidence-cmd: cd plugins/foundry/mcp-server && P=$(pwd) && T=$(mktemp -d) && trap 'find "$T" -delete' EXIT && cp -R src tests pyproject.toml "$T/" && G=src/foundry_mcp/tools/orchestration/guidance.py && N=tests/orchestration/test_guidance_imperatives.py && cd "$T" && for m in committed team-arm f3-live-arm acceptance-reader notice-gate streams-branch in-flight-unmeasured refusal-one-branch streams-context refusal-boundary casting-slot-last casting-slot-order condition-detector in-flight-redispatch one-scan refusal-own-team respawn-protocol context-structure refusal-vocabulary condition-structure; do cp "$P/$G" "$G"; cp "$P/$N" "$N"; F=$(python3 -c 'import sys; m, g, n = sys.argv[1:4]; R = {"team-arm": (g, "and not _team_work_in_flight(", "and not (lambda *a, **k: False)("), "f3-live-arm": (g, "if open_count > 0 or grind_live:", "if open_count > 0:"), "acceptance-reader": (g, "if done_at is not None:", "if False:"), "notice-gate": (g, "told_to_wait = (", "told_to_wait = True or ("), "streams-branch": (g, "_BRANCH_OPEN + \"live\" + _BRANCH_CLOSE + _STREAMS_RUNNING", "\"\""), "in-flight-unmeasured": (g, "or pending < 1:\n        return True", "or pending < 1:\n        return False"), "refusal-one-branch": (g, "else \"redispatch\"\n        )", "else \"refused\"\n        )"), "streams-context": (g, "not the live tree.\"\n                    + _BRANCHED_ACTION_CONTEXT", "not the live tree. Spawn agents using the agent_configs below.\""), "refusal-boundary": (g, "refused_at >= finished_at", "refused_at > finished_at"), "casting-slot-last": (g, "return ids[0]", "return ids[-1]"), "casting-slot-order": (g, "for key in (\"cast_refused\", \"cast_unaccepted\"):", "for key in (\"cast_unaccepted\", \"cast_refused\"):"), "condition-detector": (n, "(?:if|unless|when|whenever|only|once|in case|should|whether|depending)", "(?:NEVERMATCHES)"), "in-flight-redispatch": (g, "(\"refused\", \"redispatch\", \"unaccepted\")", "(\"refused\", \"unaccepted\")"), "one-scan": (g, "_waiting_on_agents(project_root, teams=teams)", "_waiting_on_agents(project_root)"), "refusal-own-team": (g, "if isinstance(own, str) and isinstance(registered, list)\n            and own in registered", "if row.get(\"teams_active\") is True"), "respawn-protocol": (g, "\"and then, BELOW it and LAST, step (1)", "\"with nothing appended, and not step (1)"), "context-structure": (n, "if lowered in _CLAUSE_OPENERS:", "if True:"), "refusal-vocabulary": (n, "r\"|refused|refuses|rejected|rejects|errors|errored|ok (?:False|True)\"\n", ""), "condition-structure": (n, "_EARLIER_CALL = r\"", "_EARLIER_CALL = r\"NEVERMATCHES")}; f, old, new = R.get(m, (g, "", "")); s = open(f, encoding="utf-8").read(); assert m == "committed" or s.count(old) == 1, m; open(f, "w", encoding="utf-8").write(s.replace(old, new) if old else s); print(f)' "$m" "$G" "$N"); echo "== revert: $m"; echo "  $(basename "$F") lines differing from the committed file: $(diff "$P/$F" "$F" | grep -c '^>')"; uv run --project "$P" --with pytest pytest -p no:cacheprovider --no-header --color=no --tb=no -q -rf "$N" 2>/dev/null | awk '$1=="FAILED"{f++; n=$2; sub(/.*::/, "", n); print "  FAILED " n; next} $1=="ERROR"{e++; n=$2; sub(/.*::/, "", n); print "  ERROR " n; next} {s=$0; gsub(/,/, " ", s); k=split(s, w, " "); for(i=2;i<=k;i++) if(w[i]=="passed") p=w[i-1]+0} END{printf "  tests run: %d, failed: %d, errors: %d\n", p+f+e, f+0, e+0}'; done
 # evidence-for: FR-002, FR-005, FR-008, CT-003, CT-006, CT-008, GI-008, OT-002, OT-013, ST-001, ST-002, ST-003, ST-004, US-003
 # evidence-timeout: 300
 
 == revert: committed
   guidance.py lines differing from the committed file: 0
-  tests run: 85, failed: 0, errors: 0
+  tests run: 90, failed: 0, errors: 0
 == revert: team-arm
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -26,7 +26,10 @@
   FAILED test_a_registered_team_over_an_unmeasured_wave_is_left_up[fresh]
   FAILED test_a_registered_team_over_an_unmeasured_wave_is_left_up[stale]
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 85, failed: 19, errors: 0
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[answers]
+  tests run: 90, failed: 22, errors: 0
 == revert: f3-live-arm
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -36,7 +39,9 @@
   FAILED test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone[last-fix-recorded-stale]
   FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 85, failed: 7, errors: 0
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  tests run: 90, failed: 9, errors: 0
 == revert: acceptance-reader
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -47,14 +52,18 @@
   FAILED test_a_refused_call_is_answered_by_accepting_again[team-down]
   FAILED test_a_refusal_the_teammate_has_answered_is_accepted_again
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 85, failed: 8, errors: 0
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[answers]
+  FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[raises]
+  tests run: 90, failed: 12, errors: 0
 == revert: notice-gate
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_waiting_notice_names_no_move_above_a_header_that_does[cleanup-over-stale-team]
   FAILED test_the_waiting_notice_names_no_move_above_a_header_that_does[unrecorded-width]
-  tests run: 85, failed: 4, errors: 0
+  tests run: 90, failed: 4, errors: 0
 == revert: streams-branch
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -66,7 +75,7 @@
   FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
   FAILED test_running_streams_get_a_context_that_spawns_nothing[fresh]
   FAILED test_running_streams_get_a_context_that_spawns_nothing[stale]
-  tests run: 85, failed: 9, errors: 0
+  tests run: 90, failed: 9, errors: 0
 == revert: in-flight-unmeasured
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -75,7 +84,9 @@
   FAILED test_a_registered_team_over_an_unmeasured_wave_is_left_up[stale]
   FAILED test_the_in_flight_rung_for_an_unmeasured_position_keeps_the_team
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 85, failed: 6, errors: 0
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  tests run: 90, failed: 8, errors: 0
 == revert: refusal-one-branch
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -85,7 +96,8 @@
   FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-down]
   FAILED test_the_casting_slot_and_the_acceptance_state_are_total
   FAILED test_the_casting_slot_names_a_casting_from_the_chosen_branch[False-redispatch]
-  tests run: 85, failed: 7, errors: 0
+  FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[raises]
+  tests run: 90, failed: 8, errors: 0
 == revert: streams-context
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -93,22 +105,61 @@
   FAILED test_the_context_block_of_a_branched_action_names_no_sequence
   FAILED test_running_streams_get_a_context_that_spawns_nothing[fresh]
   FAILED test_running_streams_get_a_context_that_spawns_nothing[stale]
-  tests run: 85, failed: 5, errors: 0
+  tests run: 90, failed: 5, errors: 0
 == revert: refusal-boundary
   guidance.py lines differing from the committed file: 1
   FAILED test_a_refusal_stamped_at_the_done_line_is_still_unanswered
-  tests run: 85, failed: 1, errors: 0
+  tests run: 90, failed: 1, errors: 0
 == revert: casting-slot-last
   guidance.py lines differing from the committed file: 1
   FAILED test_the_casting_slot_names_the_first_owed_casting[cast_refused-refused]
   FAILED test_the_casting_slot_names_the_first_owed_casting[cast_unaccepted-unaccepted]
-  tests run: 85, failed: 2, errors: 0
+  tests run: 90, failed: 2, errors: 0
 == revert: casting-slot-order
   guidance.py lines differing from the committed file: 1
   FAILED test_the_casting_slot_names_a_casting_from_the_chosen_branch[True-refused]
   FAILED test_the_casting_slot_names_a_casting_from_the_chosen_branch[False-redispatch]
-  tests run: 85, failed: 2, errors: 0
+  tests run: 90, failed: 2, errors: 0
 == revert: condition-detector
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
-  tests run: 85, failed: 1, errors: 0
+  tests run: 90, failed: 1, errors: 0
+== revert: in-flight-redispatch
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  tests run: 90, failed: 5, errors: 0
+== revert: one-scan
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[answers]
+  FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[raises]
+  tests run: 90, failed: 2, errors: 0
+== revert: refusal-own-team
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_misrouted_branch
+  FAILED test_the_audit_sees_a_wave_boundary_handed_the_teardown
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_casting_slot_and_the_acceptance_state_are_total
+  tests run: 90, failed: 5, errors: 0
+== revert: respawn-protocol
+  guidance.py lines differing from the committed file: 1
+  FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-down]
+  tests run: 90, failed: 1, errors: 0
+== revert: context-structure
+  test_guidance_imperatives.py lines differing from the committed file: 1
+  FAILED test_the_context_check_reads_the_structure_of_an_order
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  tests run: 90, failed: 3, errors: 0
+== revert: refusal-vocabulary
+  test_guidance_imperatives.py lines differing from the committed file: 1
+  FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
+  tests run: 90, failed: 1, errors: 0
+== revert: condition-structure
+  test_guidance_imperatives.py lines differing from the committed file: 1
+  FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
+  tests run: 90, failed: 1, errors: 0

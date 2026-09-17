@@ -2,14 +2,14 @@
 # evidence-for: FR-007, FR-008, OT-002
 
 keys in _ACTION_IMPERATIVES: 22
-emission sites swept:        299
-router payloads swept:       40
+emission sites swept:        345
+router payloads swept:       44
 defective emissions:         0
 
 header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME
 payload detectors: WRONG_ROUTE, CONTRADICTION, CONTEXT_SEQUENCE, TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING
 
-site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured, wave-boundary, final-wave-done, unreadable-manifest, refused, refused-team-down, unaccepted, live-with-owed-acceptance
+site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured, wave-boundary, final-wave-done, unreadable-manifest, refused, refused-team-down, refused-foreign-pane, refused-other-team, unaccepted, live-with-owed-acceptance
 
 readings are the four roster_agents x teams_active combinations, the unmeasured one, and
 the two that vary WAVE POSITION; each names the branch it is OWED so the sweep judges
@@ -20,21 +20,24 @@ wave_pending is the lead-stalls D-009 column: '-' is a manifest that did not ans
 column constant could not tell 'wave 1 done, wave 2 pending' from 'the final wave is done'.
 refused / unaccepted are the lead-stalls D-020 columns: castings done and refused, and done
 with no verdict since. owed 'a>b' is a preference order: the first branch the entry declares.
-A refusal owes 'refused' (send back) with teams_active True and 'redispatch' otherwise (D-022).
+A refusal owes 'refused' (send back) when the refused casting's own wave team is among
+teams_registered, and 'redispatch' otherwise, whatever teams_active says (D-022, D-031).
 
-  live                       waiting=True  roster_agents=-    teams_active=-     wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=live
-  idle                       waiting=False roster_agents=3    teams_active=True  wave_pending=0    wave_built=1    refused=-   unaccepted=-   owed=idle
-  torn-down                  waiting=False roster_agents=3    teams_active=False wave_pending=0    wave_built=1    refused=-   unaccepted=-   owed=idle
-  registered-not-spawned     waiting=False roster_agents=0    teams_active=True  wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
-  undispatched               waiting=False roster_agents=0    teams_active=False wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
-  unmeasured                 waiting=False roster_agents=-    teams_active=-     wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
-  wave-boundary              waiting=False roster_agents=2    teams_active=False wave_pending=2    wave_built=1    refused=-   unaccepted=-   owed=undispatched
-  final-wave-done            waiting=False roster_agents=3    teams_active=True  wave_pending=0    wave_built=2    refused=-   unaccepted=-   owed=idle
-  unreadable-manifest        waiting=False roster_agents=3    teams_active=False wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
-  refused                    waiting=False roster_agents=2    teams_active=True  wave_pending=0    wave_built=1    refused=2   unaccepted=1   owed=refused>idle
-  refused-team-down          waiting=False roster_agents=2    teams_active=False wave_pending=0    wave_built=1    refused=2   unaccepted=1   owed=redispatch>idle
-  unaccepted                 waiting=False roster_agents=1    teams_active=False wave_pending=2    wave_built=1    refused=-   unaccepted=1   owed=unaccepted>undispatched
-  live-with-owed-acceptance  waiting=True  roster_agents=-    teams_active=-     wave_pending=1    wave_built=1    refused=2   unaccepted=1   owed=live
+  live                       waiting=True  roster_agents=-    teams_active=-     own_team_registered=-   wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=live
+  idle                       waiting=False roster_agents=3    teams_active=True  own_team_registered=-   wave_pending=0    wave_built=1    refused=-   unaccepted=-   owed=idle
+  torn-down                  waiting=False roster_agents=3    teams_active=False own_team_registered=-   wave_pending=0    wave_built=1    refused=-   unaccepted=-   owed=idle
+  registered-not-spawned     waiting=False roster_agents=0    teams_active=True  own_team_registered=-   wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
+  undispatched               waiting=False roster_agents=0    teams_active=False own_team_registered=-   wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
+  unmeasured                 waiting=False roster_agents=-    teams_active=-     own_team_registered=-   wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
+  wave-boundary              waiting=False roster_agents=2    teams_active=False own_team_registered=-   wave_pending=2    wave_built=1    refused=-   unaccepted=-   owed=undispatched
+  final-wave-done            waiting=False roster_agents=3    teams_active=True  own_team_registered=-   wave_pending=0    wave_built=2    refused=-   unaccepted=-   owed=idle
+  unreadable-manifest        waiting=False roster_agents=3    teams_active=False own_team_registered=-   wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
+  refused                    waiting=False roster_agents=2    teams_active=True  own_team_registered=yes wave_pending=0    wave_built=1    refused=2   unaccepted=1   owed=refused>idle
+  refused-team-down          waiting=False roster_agents=2    teams_active=False own_team_registered=no  wave_pending=0    wave_built=1    refused=2   unaccepted=1   owed=redispatch>idle
+  refused-foreign-pane       waiting=False roster_agents=2    teams_active=True  own_team_registered=no  wave_pending=0    wave_built=1    refused=2   unaccepted=1   owed=redispatch>idle
+  refused-other-team         waiting=False roster_agents=2    teams_active=True  own_team_registered=no  wave_pending=0    wave_built=2    refused=2   unaccepted=-   owed=redispatch>idle
+  unaccepted                 waiting=False roster_agents=1    teams_active=False own_team_registered=-   wave_pending=2    wave_built=1    refused=-   unaccepted=1   owed=unaccepted>undispatched
+  live-with-owed-acceptance  waiting=True  roster_agents=-    teams_active=-     own_team_registered=-   wave_pending=1    wave_built=1    refused=2   unaccepted=1   owed=live
 
   add_castings             ok
   assay_failed_loop_back   ok
@@ -76,6 +79,10 @@ notice is what printed above the header.
   payload:cast-refused[stale]            received build_castings/refused  owed build_castings/refused  notice stall  ok
   payload:cast-refused-team-down[fresh]  received build_castings/redispatch  owed build_castings/redispatch  notice none  ok
   payload:cast-refused-team-down[stale]  received build_castings/redispatch  owed build_castings/redispatch  notice stall  ok
+  payload:cast-refused-foreign-pane[fresh] received build_castings/redispatch  owed build_castings/redispatch  notice none  ok
+  payload:cast-refused-foreign-pane[stale] received build_castings/redispatch  owed build_castings/redispatch  notice stall  ok
+  payload:cast-refused-other-team[fresh] received build_castings/redispatch  owed build_castings/redispatch  notice none  ok
+  payload:cast-refused-other-team[stale] received build_castings/redispatch  owed build_castings/redispatch  notice stall  ok
   payload:cast-unmeasured-team-up[fresh] received build_castings/undispatched  owed build_castings/undispatched  notice none  ok
   payload:cast-unmeasured-team-up[stale] received build_castings/undispatched  owed build_castings/undispatched  notice stall  ok
   payload:cast-refusal-answered[fresh]   received build_castings/unaccepted  owed build_castings/unaccepted  notice none  ok

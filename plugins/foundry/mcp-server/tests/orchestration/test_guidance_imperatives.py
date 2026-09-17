@@ -117,6 +117,27 @@ from foundry_mcp.tools.orchestration.teams import foundry_register_team
 #: and "answer" are nouns in steps that are fine ("cite that sha in the
 #: report"). `[^.\n]` keeps it to one sentence, so a qualifier in one
 #: sentence and a call's return value named in the next are not joined.
+#:
+#: lead-stalls D-032 — AND THE SERVER'S OWN WORDS FOR NO, AND THE CONDITION'S
+#: SHAPE RATHER THAN ITS VERB. The answer-verb list above left out the
+#: vocabulary every refusal door here answers in (refused, rejected, errors,
+#: ok False), so "(2) Unless step (1) is refused, END YOUR TURN." passed —
+#: D-023's word list, one list over. Two changes. The vocabulary is added to
+#: the list. And a last alternative keys on STRUCTURE: a conditional word
+#: whose subject is an earlier STEP or a named CALL ("after step (1) ...",
+#: "where Foundry-Gate ...", "in the event step (2) ..."), followed by any
+#: predicate at all. A subject spelled as a noun ("when the spawn response
+#: carries one") is a qualifier on data the lead appends, not a step waiting
+#: on a step, and stays with the verb alternative above. What the step did is then irrelevant — a step made to wait on
+#: another step's outcome is the defect however that outcome is spelled.
+#: The subject has to follow the conditional word directly, so "where it does
+#: not answer, the number falls back ... and step (3) refuses" — a fact about
+#: the manifest the lead is told to ignore ("either way") — is not one.
+_CONDITIONAL_WORD = (
+    r"(?:if|unless|when|whenever|only|once|in case|in the event(?: that)?"
+    r"|should|whether|depending|after|where|wherever|until|provided(?: that)?)"
+)
+_EARLIER_CALL = r"(?:step \(\d+\)|Foundry-[A-Z][A-Za-z-]*(?:\([^)]*\))?)"
 _HANDS_OVER_THE_CONDITION = re.compile(
     r"(?m)^\s*(?:[-*•]|\(\d+\))?\s*IF\b"
     r"|\bdepends on\b"
@@ -127,7 +148,11 @@ _HANDS_OVER_THE_CONDITION = re.compile(
     r"[^.\n]{0,160}?"
     r"\b(?:answers|answered|reports|reported|returns|returned|replies|replied"
     r"|responds|responded|fails|failed|succeeds|succeeded|unreachable"
-    r"|cannot be reached|can(?:no|')t reach|not (?:be )?(?:reached|delivered))\b",
+    r"|refused|refuses|rejected|rejects|errors|errored|ok (?:False|True)"
+    r"|comes back|came back"
+    r"|cannot be reached|can(?:no|')t reach|not (?:be )?(?:reached|delivered))\b"
+    r"|\b" + _CONDITIONAL_WORD + r"\s+" + _EARLIER_CALL
+    + r"(?:'s (?:answer|reply|result|response|verdict))?\s+(?!\()[A-Za-z]",
     re.IGNORECASE,
 )
 
@@ -170,6 +195,12 @@ _QUOTED_TEAM_NAME = re.compile(
 _CREATABLE_TEAM_NAME = re.compile(
     r"^(?:cast|grind)-[A-Za-z0-9][A-Za-z0-9-]*-(?:wave|cycle)-\d+$"
 )
+
+#: The `run_name` every emission site is formatted with. Named once because
+#: `_emitted_branch` has to resolve `{run}` the same way the formatter did, and
+#: a second literal here is how those two drift apart.
+_AUDIT_RUN = "audit"
+
 
 #: Every liveness reading the branch selector can be handed, so the sweep judges
 #: what the lead receives in EVERY run state rather than in the one state a bare
@@ -286,18 +317,44 @@ _LIVENESS_READINGS: tuple[tuple[str, object, str | tuple[str, ...]], ...] = (
     (
         "refused",
         {"waiting": False, "roster_agents": 2, "teams_active": True,
+         "teams_registered": [f"cast-{_AUDIT_RUN}-wave-1"],
          "cast_wave_pending": 0, "cast_wave_built": 1,
-         "cast_refused": ["2"], "cast_unaccepted": ["1"]},
+         "cast_refused": ["2"], "cast_unaccepted": ["1"],
+         "cast_refused_team": f"cast-{_AUDIT_RUN}-wave-1"},
         ("refused", "idle"),
     ),
     # lead-stalls D-022 — the same refusal with the team torn down. The two
-    # rows differ in `teams_active` ONLY, and each is owed its own branch: the
+    # rows differ in the team scan ONLY, and each is owed its own branch: the
     # server picks send-back or re-dispatch, so the lead never has to.
     (
         "refused-team-down",
         {"waiting": False, "roster_agents": 2, "teams_active": False,
+         "teams_registered": [],
          "cast_wave_pending": 0, "cast_wave_built": 1,
-         "cast_refused": ["2"], "cast_unaccepted": ["1"]},
+         "cast_refused": ["2"], "cast_unaccepted": ["1"],
+         "cast_refused_team": f"cast-{_AUDIT_RUN}-wave-1"},
+        ("redispatch", "idle"),
+    ),
+    # lead-stalls D-031 — `teams_active` True with the refused casting's OWN
+    # team absent: a live pane in another project's tmux session, or another
+    # wave's team. Owed the re-dispatch, because the teammate the send-back
+    # would address is not registered anywhere.
+    (
+        "refused-foreign-pane",
+        {"waiting": False, "roster_agents": 2, "teams_active": True,
+         "teams_registered": [],
+         "cast_wave_pending": 0, "cast_wave_built": 1,
+         "cast_refused": ["2"], "cast_unaccepted": ["1"],
+         "cast_refused_team": f"cast-{_AUDIT_RUN}-wave-1"},
+        ("redispatch", "idle"),
+    ),
+    (
+        "refused-other-team",
+        {"waiting": False, "roster_agents": 2, "teams_active": True,
+         "teams_registered": [f"cast-{_AUDIT_RUN}-wave-2"],
+         "cast_wave_pending": 0, "cast_wave_built": 2,
+         "cast_refused": ["2"], "cast_unaccepted": [],
+         "cast_refused_team": f"cast-{_AUDIT_RUN}-wave-1"},
         ("redispatch", "idle"),
     ),
     (
@@ -384,12 +441,6 @@ def _emission_phases(action: str) -> tuple[str, ...]:
     return crossings or ("F1",)
 
 
-#: The `run_name` every emission site is formatted with. Named once because
-#: `_emitted_branch` has to resolve `{run}` the same way the formatter did, and
-#: a second literal here is how those two drift apart.
-_AUDIT_RUN = "audit"
-
-
 def _audit_sites() -> list[tuple[str, str, str, str, object]]:
     """(action, site label, emitted text, owed branch, reading) for every string
     the table can emit.
@@ -448,7 +499,17 @@ _NOTICE_OPENERS = ("⏳", "⚠", "✅")
 _TEARDOWN_WORDS = ("TeamDelete", "Foundry-Team-Down", "stop working")
 
 
+#: Where an arrange writes the machine's tmux answer, under the scratch HOME.
+_PANES_FILE = "live-panes.json"
+
+
 def _no_panes(*_args, **_kwargs) -> dict:
+    """The tmux pane scan, stubbed: no tmux, unless the arrange wrote the
+    live panes this machine answers with (lead-stalls D-031)."""
+    written = Path.home() / _PANES_FILE
+    if written.is_file():
+        live = [tuple(row) for row in json.loads(written.read_text(encoding="utf-8"))]
+        return {"available": True, "live": live, "zombie": [], "user": [], "lead": None}
     return {"available": False, "live": [], "zombie": [], "user": [], "lead": None}
 
 
@@ -558,6 +619,30 @@ def _arrange_cast_refused_team_down(root, fdir, teams):
     (teams / _CAST_TEAM).rmdir()
 
 
+def _arrange_cast_refused_foreign_pane(root, fdir, teams):
+    # lead-stalls D-031 / D-028 — PROVE's drive: no team registered at all, and
+    # one live teammate pane in ANOTHER project's tmux session. `teams_active`
+    # reads True; the refused casting's own team is not up, so the send-back
+    # has nobody to address. The cleanup arm fires on the pane, and only
+    # `redispatch` counting as owed work keeps it from answering the teardown.
+    _cast(fdir, {1: ["1"], 2: ["2"]})
+    _worked(fdir, "1", done=True, at=datetime.now(timezone.utc) - timedelta(minutes=1))
+    _verdict(fdir, "1", "refused")
+    (teams.parent.parent / _PANES_FILE).write_text(
+        json.dumps([["other-project:1.1", "@researcher", "claude"]]),
+        encoding="utf-8",
+    )
+
+
+def _arrange_cast_refused_other_team(root, fdir, teams):
+    # lead-stalls D-031 / D-028 — a team IS registered, but it is not the
+    # refused casting's: wave 2's. The name is the reading's, not the scan's.
+    _cast(fdir, {1: ["1"], 2: ["2"]})
+    _register(root, teams, f"cast-{_ROUTE_RUN}-wave-2")
+    _worked(fdir, "1", done=True, at=datetime.now(timezone.utc) - timedelta(minutes=1))
+    _verdict(fdir, "1", "refused")
+
+
 def _arrange_cast_unmeasured_team_up(root, fdir, teams):
     # lead-stalls D-021 — a registered CAST team and a manifest that does not
     # answer: the `waves: []` Foundry-Init seeds, so no wave position is
@@ -659,6 +744,8 @@ _ROUTER_STATES = (
     ("cast-unaccepted", "ST-004", _arrange_cast_unaccepted, "build_castings", "unaccepted"),
     ("cast-refused", "ST-004", _arrange_cast_refused, "build_castings", "refused"),
     ("cast-refused-team-down", "ST-004", _arrange_cast_refused_team_down, "build_castings", "redispatch"),
+    ("cast-refused-foreign-pane", "ST-004", _arrange_cast_refused_foreign_pane, "build_castings", "redispatch"),
+    ("cast-refused-other-team", "ST-004", _arrange_cast_refused_other_team, "build_castings", "redispatch"),
     ("cast-unmeasured-team-up", "ST-003", _arrange_cast_unmeasured_team_up, "build_castings", "undispatched"),
     ("cast-refusal-answered", "ST-004", _arrange_cast_refusal_answered, "build_castings", "unaccepted"),
     ("cast-boundary-team-up", "ST-003", _arrange_cast_boundary_team_up, "cleanup_teams", None),
@@ -681,12 +768,92 @@ _ROUTER_STATES = (
 _CLOCKS = (("fresh", None), ("stale", 600))
 
 
-#: lead-stalls D-005 / D-024 — what the CONTEXT of a branched action may not
-#: say: the moves the header chose between. A sequence here is a second
-#: imperative beside the one chosen from the roster.
-_CONTEXT_MOVES = (
-    "Spawn ", "spawn every", "Foundry-Phase(", "TeamDelete", "Foundry-Team-Down",
+#: lead-stalls D-005 / D-024 / D-029 — what the CONTEXT of a branched action
+#: may not say: an ORDER. A sequence here is a second imperative beside the one
+#: chosen from the roster.
+#:
+#: This was a word list — `("Spawn ", "spawn every", "Foundry-Phase(",
+#: "TeamDelete", "Foundry-Team-Down")` — and so it saw only the orders someone
+#: had already written down. Re-inserting the acdc00b sentence "SIGHT runs in
+#: MAIN THREAD ... — navigate to URL, snapshot every page, exercise all
+#: elements, check console." or rewording "every reading stream is bound to
+#: pin its findings" back to "tell every reading stream to pin its findings"
+#: left the whole suite green (D-029), which is D-023's word-list failure one
+#: detector over.
+#:
+#: So the check is now the STRUCTURE of an English order: a clause with no
+#: subject, which opens on an open-class word the way "navigate to URL",
+#: "tell every reading stream" and "Spawn agents" do, or on a call name the way
+#: a header step does ("Then TeamDelete + Foundry-Team-Down"). What CAN open a
+#: declarative clause is a CLOSED grammatical class (articles, determiners,
+#: pronouns, prepositions, conjunctions, negation), listed below; that list is
+#: the grammar's, not a list of moves, so a new verb is caught the day it is
+#: written. A prohibition ("never record on an AGENT's behalf") opens on
+#: negation and names no move, so it stays legal — that standing rule is
+#: fallout D-165's. Identifiers, numbers and ALL-CAPS phase names open on no
+#: word at all. A call named INSIDE a statement ("records its OWN run with
+#: Foundry-Stream") is a fact about a door, not a step, and is not an order.
+_CLAUSE_OPENERS = frozenset("""
+    a an the this that these those each every all any no some both either
+    neither its their your our his her my it they you we he she there here
+    nothing nobody none one which what who whose
+    after before on in at for from to with without by of under over between
+    during until since per as unlike like into onto than
+    so and then but or yet because while where when whenever if unless once
+    whereas though although
+    never not do don't also just now still already only even
+""".split())
+_STRIPPED_OPENERS = frozenset(("so", "and", "then", "but", "or", "yet",
+                               "also", "just", "now", "still", "already",
+                               "even"))
+#: Where a new clause starts: a sentence end, a dash, a semicolon, and a comma
+#: before `so` / `then` / `but` / `yet` — the coordinators that open an
+#: independent clause and never close a list, unlike `and` / `or` ("trace,
+#: prove, and test" is one noun phrase).
+_SENTENCE_BREAK = re.compile(
+    r"(?<=[.!?])\s+(?=[A-Z`'\"(0-9])|\s+—\s+|;\s*"
+    r"|,\s+(?=(?:so|then|but|yet)\s)"
 )
+_PARENTHESISED = re.compile(r"\([^()]*\)")
+_OPENING_WORD = re.compile(r"[A-Za-z][A-Za-z'-]*")
+
+
+def _order_openers(context: str) -> list[str]:
+    """Every clause of ``context`` that opens as an order, quoted from its
+    first words (lead-stalls D-029). Empty when the text only states facts."""
+    text = context
+    while _PARENTHESISED.search(text):
+        text = _PARENTHESISED.sub("", text)
+    orders: list[str] = []
+    for clause in _SENTENCE_BREAK.split(text):
+        words = clause.strip().split()
+        while words and words[0].lower().strip(",") in _STRIPPED_OPENERS:
+            words = words[1:]
+        if not words:
+            continue
+        first = words[0]
+        if _NAMES_A_CALL.match(first):
+            orders.append(" ".join(words[:4]))
+            continue
+        word = _OPENING_WORD.fullmatch(first.rstrip(",:"))
+        if not word:
+            continue      # an identifier, a number, a quoted or backticked term
+        spelled = word.group(0)
+        if spelled.isupper() and len(spelled) > 1:
+            continue      # a phase or stream name: CAST, GRIND, SIGHT, TEST
+        lowered = spelled.lower()
+        if lowered in _CLAUSE_OPENERS:
+            continue
+        if len(lowered) > 4 and lowered.endswith(("ed", "ing")) and not lowered.endswith("eed"):
+            continue      # a participle: "Required this cycle", "Waiting on"
+        orders.append(" ".join(words[:4]))
+    return orders
+
+
+def _context_orders(context: str) -> list[str]:
+    """What a branched action's CONTEXT orders, with the deferral sentence the
+    check requires removed first (it states a fact about the header)."""
+    return _order_openers(context.replace(_BRANCHED_ACTION_CONTEXT, " "))
 
 
 def _context_of(instructions: str) -> str:
@@ -784,7 +951,7 @@ def audit_assembled_payloads(drives=None) -> list[str]:
         # are running ... spawning it again runs it twice". The D-005 rule was
         # asserted for two of the three branched actions and read by no sweep.
         if d["branched"]:
-            moves = [m for m in _CONTEXT_MOVES if m in d["context"]]
+            moves = _context_orders(d["context"])
             if moves or _BRANCHED_ACTION_CONTEXT not in d["context"]:
                 findings.append(
                     f"{site}: CONTEXT_SEQUENCE — a branched action's CONTEXT "
@@ -921,8 +1088,10 @@ def audit_report() -> list[str]:
         "and refused, and done",
         "with no verdict since. owed 'a>b' is a preference order: the first "
         "branch the entry declares.",
-        "A refusal owes 'refused' (send back) with teams_active True and "
-        "'redispatch' otherwise (D-022).",
+        "A refusal owes 'refused' (send back) when the refused casting's own "
+        "wave team is among",
+        "teams_registered, and 'redispatch' otherwise, whatever teams_active "
+        "says (D-022, D-031).",
         "",
     ]
     for label, liveness, owed in _LIVENESS_READINGS:
@@ -931,6 +1100,7 @@ def audit_report() -> list[str]:
             f"  {label:<26} waiting={str(bool(row.get('waiting'))):<5} "
             f"roster_agents={str(row.get('roster_agents', '-')):<4} "
             f"teams_active={str(row.get('teams_active', '-')):<5} "
+            f"own_team_registered={_own_team_label(row):<3} "
             f"wave_pending={str(row.get('cast_wave_pending', '-')):<4} "
             f"wave_built={str(row.get('cast_wave_built', '-')):<4} "
             f"refused={','.join(row.get('cast_refused') or []) or '-':<3} "
@@ -960,6 +1130,15 @@ def audit_report() -> list[str]:
     lines.append("")
     lines.extend(findings or ["(no entry hands the lead a conditional)"])
     return lines
+
+
+def _own_team_label(row: dict) -> str:
+    """The D-031 column: is the refused casting's own wave team registered?
+    ``-`` when the reading names no refused casting's team."""
+    own = row.get("cast_refused_team")
+    if not isinstance(own, str):
+        return "-"
+    return "yes" if own in (row.get("teams_registered") or []) else "no"
 
 
 def _notice_kind(block: str) -> str:
@@ -1045,7 +1224,10 @@ def turn_boundary_report(drives=None) -> list[str]:
       lead-stalls ST-004  a refused casting -> re-dispatched, then
               re-accepted: the `cast-refused` row names the send-back to the
               registered team's teammate, `cast-refused-team-down` the fresh
-              dispatch (D-022), and `cast-refusal-answered` the acceptance.
+              dispatch (D-022), `cast-refused-foreign-pane` and
+              `cast-refused-other-team` the fresh dispatch while some OTHER
+              team or pane is up (D-031), and `cast-refusal-answered` the
+              acceptance.
     """
     drives = drives if drives is not None else _router_drives()
     lines = [
@@ -1084,10 +1266,11 @@ def turn_boundary_report(drives=None) -> list[str]:
         "call the woken lead is told to make stops nobody.",
         "ST-003 is discharged by 'names-call=yes' on every row where running is not",
         "yes: a lead that is handed a call cannot park for want of a move.",
-        "ST-004 is the cast-refused, cast-refused-team-down and cast-refusal-answered",
-        "rows: a refusal goes back to a teammate (the one that built it while its team",
-        "is registered, a fresh one once it is not), and a refusal the teammate has",
-        "answered is accepted again.",
+        "ST-004 is the cast-refused, cast-refused-team-down, cast-refused-foreign-pane,",
+        "cast-refused-other-team and cast-refusal-answered rows: a refusal goes back to",
+        "a teammate (the one that built it while its OWN wave team is registered, a",
+        "fresh one otherwise, whatever else the machine's team scan sees), and a",
+        "refusal the teammate has answered is accepted again.",
         "The idle of ST-001 and the notification of ST-002 are the HARNESS's to",
         "perform; this casting owns only what the lead is told, and that is all",
         "this log claims.",
@@ -1641,9 +1824,9 @@ def test_the_liveness_reading_is_taken_once_and_shared_with_the_notice(
     calls: list[str] = []
     real = _g._waiting_on_agents
 
-    def _counted(pr):
+    def _counted(pr, **kwargs):
         calls.append(pr)
-        return real(pr)
+        return real(pr, **kwargs)
 
     monkeypatch.setattr(_g, "_waiting_on_agents", _counted)
     nxt = foundry_next_action(project_root)
@@ -2900,7 +3083,7 @@ def test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown(
             "you spawned for casting 1>"
         ), header
         assert "(2) " + _WAITING_IS_NOT_STOPPING in header, header
-        assert "the CAST team is still registered" in header, header
+        assert "casting 1's own wave team is still registered" in header, header
         assert "Foundry-Spawn-Teammate" not in header, header
     else:
         # Its team is gone, so a fresh dispatch passed verbatim, and the
@@ -2909,10 +3092,18 @@ def test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown(
             "YOUR NEXT CALLS (in order):\n"
             "  (1) Foundry-Spawn-Teammate(casting_id=1, phase='cast')\n"
         ), header
-        assert "VERBATIM with nothing appended" in header, header
+        # lead-stalls D-030 — and the ledger protocol under it, LAST, in
+        # commands/start.md rule 1's order: the done line that block makes the
+        # teammate write is what routes the lead back to acceptance.
+        assert "VERBATIM with nothing appended" not in header, header
+        assert (
+            "`dispatch` field VERBATIM and then, BELOW it and LAST, step (1)'s "
+            "`progress_protocol` block VERBATIM"
+        ) in header, header
+        assert "Append nothing else: the refusal is step (3)." in header, header
         assert "(3) SendMessage(to=<the teammate step (2) spawned>" in header
         assert "(4) " + _WAITING_IS_NOT_STOPPING in header, header
-        assert "no CAST team is registered" in header, header
+        assert "casting 1's own wave team is not registered" in header, header
         assert "<the teammate you spawned for casting 1>" not in header, header
         assert header.index("Foundry-Spawn-Teammate") < header.index(
             "SendMessage(to="
@@ -3073,15 +3264,26 @@ def test_the_casting_slot_and_the_acceptance_state_are_total():
             assert "{casting}" not in text, (action, reading)
             assert "Execute the first tool call mentioned" not in text, reading
     assert _casting_slot({"cast_unaccepted": [0]}) == "0"
-    # lead-stalls D-022 — only a MEASURED registered team sends the refusal
-    # back; anything else that is not `True` owes the fresh dispatch.
-    for team in ("yes", 1, None, False, [True]):
-        reading = {"cast_refused": ["1"], "teams_active": team}
-        assert _acceptance_state(reading) == "redispatch", team
+    # lead-stalls D-022 / D-031 — only the refused casting's OWN team, among
+    # the MEASURED registered names, sends the refusal back; anything else owes
+    # the fresh dispatch, and `teams_active` decides nothing.
+    own = "cast-r-wave-1"
+    for own_team, registered in (
+        (own, "yes"), (own, None), (own, [True]), (own, own), (None, [own]),
+        (1, [1]), (own, []), (own, ["cast-r-wave-2"]),
+    ):
+        reading = {"cast_refused": ["1"], "teams_active": True,
+                   "cast_refused_team": own_team, "teams_registered": registered}
+        assert _acceptance_state(reading) == "redispatch", reading
     assert _acceptance_state({"cast_refused": ["1"]}) == "redispatch"
-    assert _acceptance_state({"cast_refused": ["1"], "teams_active": True}) == "refused"
+    assert _acceptance_state({"cast_refused": ["1"], "teams_active": True}) == "redispatch"
     assert _acceptance_state(
-        {"cast_refused": [], "cast_unaccepted": ["1"], "teams_active": True}
+        {"cast_refused": ["1"], "teams_active": False,
+         "cast_refused_team": own, "teams_registered": ["x", own]}
+    ) == "refused"
+    assert _acceptance_state(
+        {"cast_refused": [], "cast_unaccepted": ["1"],
+         "cast_refused_team": own, "teams_registered": [own]}
     ) == "unaccepted"
     assert _branch_states({"waiting": False, "cast_refused": [True]}) == (
         "undispatched",
@@ -3253,8 +3455,7 @@ def test_running_streams_get_a_context_that_spawns_nothing(tmp_path, clock):
     assert _BRANCHED_ACTION_CONTEXT in context, context
     assert "spawn" not in context.lower(), context
     assert "Missing:" not in context, context
-    for move in _CONTEXT_MOVES:
-        assert move not in context, (move, context)
+    assert _context_orders(context) == [], context
     # What the header cannot carry is still here: the counts, the enforced
     # configs, and the two standing rules (fallout D-165 / D-169).
     assert "Required this cycle: " in context, context
@@ -3275,6 +3476,84 @@ def test_the_payload_sweep_bites_when_a_context_stops_deferring(monkeypatch):
     named = {f.split(":", 2)[1].split("[")[0] for f in findings}
     branched = {state for state, _t, _a, _action, branch in _ROUTER_STATES if branch}
     assert named == branched, (sorted(named), sorted(branched))
+
+
+#: lead-stalls D-029 — the two acdc00b CONTEXT sentences the word list let
+#: back in, quoted as they shipped.
+_ACDC00B_SIGHT = (
+    "SIGHT runs in MAIN THREAD (Playwright MCP only works here) — navigate to "
+    "URL, snapshot every page, exercise all elements, check console."
+)
+_ACDC00B_PIN = (
+    "TEST rewrites the shared tree to verify the GRIND's fixes, so tell every "
+    "reading stream to pin its findings to the HEAD sha and verify them "
+    "against a snapshot, not the live tree."
+)
+
+
+def test_the_context_check_reads_the_structure_of_an_order():
+    """lead-stalls D-029 — positive and negative controls for `_order_openers`.
+
+    The word list returned nothing for either acdc00b sentence. The structural
+    check must name both, and the older moves the list held, while every
+    statement the shipped CONTEXTs carry — a prohibition, a fact about a door
+    named mid-sentence, a participle, a phase name — stays clean.
+    """
+    for order, opens in (
+        (_ACDC00B_SIGHT, "navigate to URL, snapshot"),
+        (_ACDC00B_PIN, "tell every reading stream"),
+        ("Missing: trace prove test. Spawn agents using the agent_configs "
+         "below.", "Spawn agents using the"),
+        ("The wave is built. Then TeamDelete + Foundry-Team-Down + "
+         "Foundry-Phase(phase='cast').", "TeamDelete + Foundry-Team-Down +"),
+        ("Two streams are unrecorded, so spawn every missing INSPECT stream.",
+         "spawn every missing INSPECT"),
+        ("Streams run in the background; pin each finding to the HEAD sha.",
+         "pin each finding to"),
+    ):
+        assert opens in _order_openers(order), (order, _order_openers(order))
+
+    for statement in (
+        "Each AGENT stream records its OWN run with Foundry-Stream (fallout "
+        "GI-016); never record on an AGENT's behalf.",
+        "SIGHT is the exception and the reason is that you EXECUTED it: there "
+        "is no sight agent, so its record is yours to make from what you "
+        "measured.",
+        "TEST rewrites the shared tree to verify the GRIND's fixes, so every "
+        "reading stream is bound to pin its findings to the HEAD sha.",
+        "Required this cycle: trace, prove, test.",
+        "GRIND phase: 1 blocking defect(s) to fix (1 LIVE, 0 untiered). After "
+        "each fix call Foundry-Fix(defect_id, cycle, authored_by, ...): "
+        "authored_by is 'teammate' or 'lead'.",
+        _BRANCHED_ACTION_CONTEXT,
+    ):
+        assert _order_openers(statement) == [], statement
+
+
+@pytest.mark.parametrize("sentence", [_ACDC00B_SIGHT, _ACDC00B_PIN],
+                         ids=["sight-main-thread", "tell-every-stream"])
+def test_the_payload_sweep_bites_on_the_acdc00b_context_sentences(
+    monkeypatch, sentence
+):
+    """lead-stalls D-029 — the mutations TEST drove, through the payload sweep.
+
+    Either sentence back in a branched CONTEXT, under a header that says END
+    YOUR TURN, must be a CONTEXT_SEQUENCE finding on every branched router
+    state that prints it. The deferral sentence is kept, so the finding is
+    the order itself and not a missing deferral.
+    """
+    import foundry_mcp.tools.orchestration.guidance as _g
+
+    monkeypatch.setattr(
+        _g, "_BRANCHED_ACTION_CONTEXT",
+        " " + sentence + _BRANCHED_ACTION_CONTEXT,
+    )
+    findings = [f for f in audit_assembled_payloads() if "CONTEXT_SEQUENCE" in f]
+
+    named = {f.split(":", 2)[1].split("[")[0] for f in findings}
+    branched = {state for state, _t, _a, _action, branch in _ROUTER_STATES if branch}
+    assert named == branched, (sorted(named), sorted(branched))
+    assert all("no deferral" not in f for f in findings), findings
 
 
 def test_a_refusal_stamped_at_the_done_line_is_still_unanswered(tmp_path):
@@ -3316,7 +3595,9 @@ def test_the_casting_slot_names_the_first_owed_casting(key, branch):
     owed, because `_cast_wave_position` lists them in manifest wave order and
     the lowest wave is settled first. Every earlier drive owed one id."""
     reading = {"waiting": False, "teams_active": True, "cast_wave_pending": 2,
-               "cast_wave_built": 1, key: ["3", "7", "5"]}
+               "cast_wave_built": 1, key: ["3", "7", "5"],
+               "teams_registered": [f"cast-{_AUDIT_RUN}-wave-1"],
+               "cast_refused_team": f"cast-{_AUDIT_RUN}-wave-1"}
 
     assert _casting_slot(reading) == "3", reading
     header = _format_imperative_header(
@@ -3341,6 +3622,8 @@ def test_the_casting_slot_names_a_casting_from_the_chosen_branch(team_up, branch
     than asked of `_casting_slot` — the sweep's resolver calls that same
     function, so it agrees with it by construction and cannot see this."""
     reading = {"waiting": False, "teams_active": team_up,
+               "teams_registered": [f"cast-{_AUDIT_RUN}-wave-1"] if team_up else [],
+               "cast_refused_team": f"cast-{_AUDIT_RUN}-wave-1",
                "cast_wave_pending": 0, "cast_wave_built": 1,
                "cast_refused": ["a"], "cast_unaccepted": ["b"]}
 
@@ -3357,6 +3640,55 @@ def test_the_casting_slot_names_a_casting_from_the_chosen_branch(team_up, branch
         assert "<the teammate you spawned for casting a>" in header, header
     else:
         assert "Foundry-Spawn-Teammate(casting_id=a, phase='cast')" in header
+
+
+@pytest.mark.parametrize("scan", ["answers", "raises"])
+def test_the_refusal_choice_and_the_team_arm_read_one_scan(tmp_path, scan):
+    """lead-stalls D-028 / D-031 — ONE `_check_active_teams` call per
+    Foundry-Next, read by the reading AND by the cleanup arm.
+
+    With two scans, the reading's could fail (read as "no team") while the
+    arm's saw `cast-{run}-wave-1` registered: the reading chose `redispatch`,
+    and the arm's answer then hung on one tuple member. One scan cannot
+    disagree with itself. A scan that raises reads as "no team" for both, so
+    the refused casting's team is never torn down and the router does not
+    raise; the reading and the arm agree on what they were told.
+    """
+    from foundry_mcp.tools.orchestration import teams as _teams
+
+    calls: list[str] = []
+    with _router_run(tmp_path) as (root, fdir, teams), \
+            pytest.MonkeyPatch.context() as mp:
+        _arrange_cast_refused(root, fdir, teams)
+        real = _teams._check_active_teams
+
+        def _counted(project_root: str) -> dict:
+            calls.append(project_root)
+            if scan == "raises":
+                raise OSError("team scan failed")
+            return real(project_root)
+
+        patch_everywhere(mp, "_check_active_teams", _counted)
+        # The ROUTER alone is counted: the status display beside the header
+        # takes its own scan to print the team list, and decides nothing.
+        nxt = _compute_next_action(root)
+    reading = nxt["agent_liveness"]
+    header = _format_imperative_header(
+        nxt["action"], "", {}, run_name=_ROUTE_RUN, phase="F1", liveness=reading,
+    )
+
+    assert len(calls) == 1, calls
+    assert nxt["action"] == "build_castings", nxt["action"]
+    assert not any(w in header for w in _TEARDOWN_WORDS), header
+    if scan == "answers":
+        assert reading["teams_registered"] == [_CAST_TEAM], reading
+        assert reading["cast_refused_team"] == _CAST_TEAM, reading
+        assert _chosen_branch("build_castings", reading) == "refused", reading
+    else:
+        assert reading["teams_registered"] == [], reading
+        assert reading["teams_active"] is False, reading
+        assert _chosen_branch("build_castings", reading) == "redispatch", reading
+        assert "casting 1's own wave team is not registered" in header, header
 
 
 def test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer():
@@ -3391,6 +3723,28 @@ def test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer():
     for text in (shipped, *rewordings):
         assert _HANDS_OVER_THE_CONDITION.search(text), text
 
+    # lead-stalls D-032 — the seven refusal-conditioned steps PROVE probed at
+    # fbbda01, of which the detector matched only the IF-opening one.
+    for text in (
+        "(2) If step (1) is refused, Foundry-Spawn-Teammate(casting_id=1)",
+        "(2) Unless step (1) is refused, END YOUR TURN.",
+        "(3) Foundry-Spawn-Teammate(casting_id=1), but only after step (1) is "
+        "refused.",
+        "(2) After step (1) errors, Foundry-Spawn-Teammate(casting_id=1)",
+        "(2) In the event step (1) is rejected, "
+        "Foundry-Spawn-Teammate(casting_id=1)",
+        "(2) Where step (1) refuses, Foundry-Spawn-Teammate(casting_id=1)",
+        "(2) Foundry-Spawn-Teammate(casting_id=1), whenever step (1) comes "
+        "back with ok False.",
+        # And the structure with no outcome word at all.
+        "(3) Once Foundry-Accept-Casting has spoken, Foundry-Next",
+        "(2) Provided that step (1) went through, END YOUR TURN.",
+        # And the vocabulary with a subject that is not a step.
+        "(2) Unless the send is refused, END YOUR TURN.",
+        "(2) Only a message that comes back rejected takes this step.",
+    ):
+        assert _HANDS_OVER_THE_CONDITION.search(text), text
+
     for fine in (
         "(2) One foreground Agent(...), passed step (1)'s `dispatch` field "
         "VERBATIM, obeying the model clause in the `instructions` step (1) "
@@ -3400,6 +3754,17 @@ def test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer():
         "(a) the `grind_cycle_context` block when the spawn response carries "
         "one",
         "take the HEAD sha once at start, and cite that sha in the report.",
+        # A refusal named as a FACT, not as a condition on a step.
+        "(3) Foundry-Next — the call step (2) names on every path, accepted "
+        "or refused; the verdict it recorded is what that call reads.",
+        "Foundry-Accept-Casting REFUSED casting 1 and its ledger has not moved "
+        "since.",
+        # A condition on the server's own reading, with every call made anyway.
+        "where it does not answer, the number falls back to wave 1 and step "
+        "(3) refuses and names the manifest. Make all four calls in order "
+        "either way.",
+        "passed step (1)'s `dispatch` field VERBATIM and then, BELOW it and "
+        "LAST, step (1)'s `progress_protocol` block VERBATIM.",
     ):
         assert not _HANDS_OVER_THE_CONDITION.search(fine), fine
 

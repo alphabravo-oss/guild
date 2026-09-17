@@ -2,14 +2,14 @@
 # evidence-for: FR-007, FR-008, OT-002, OT-013, GI-008, CT-008
 
 keys in _ACTION_IMPERATIVES: 22
-emission sites swept:        299
-router payloads swept:       40
+emission sites swept:        345
+router payloads swept:       44
 defective emissions:         0
 
 header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME
 payload detectors: WRONG_ROUTE, CONTRADICTION, CONTEXT_SEQUENCE, TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING
 
-site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured, wave-boundary, final-wave-done, unreadable-manifest, refused, refused-team-down, unaccepted, live-with-owed-acceptance
+site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured, wave-boundary, final-wave-done, unreadable-manifest, refused, refused-team-down, refused-foreign-pane, refused-other-team, unaccepted, live-with-owed-acceptance
 
 readings are the four roster_agents x teams_active combinations, the unmeasured one, and
 the two that vary WAVE POSITION; each names the branch it is OWED so the sweep judges
@@ -20,21 +20,24 @@ wave_pending is the lead-stalls D-009 column: '-' is a manifest that did not ans
 column constant could not tell 'wave 1 done, wave 2 pending' from 'the final wave is done'.
 refused / unaccepted are the lead-stalls D-020 columns: castings done and refused, and done
 with no verdict since. owed 'a>b' is a preference order: the first branch the entry declares.
-A refusal owes 'refused' (send back) with teams_active True and 'redispatch' otherwise (D-022).
+A refusal owes 'refused' (send back) when the refused casting's own wave team is among
+teams_registered, and 'redispatch' otherwise, whatever teams_active says (D-022, D-031).
 
-  live                       waiting=True  roster_agents=-    teams_active=-     wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=live
-  idle                       waiting=False roster_agents=3    teams_active=True  wave_pending=0    wave_built=1    refused=-   unaccepted=-   owed=idle
-  torn-down                  waiting=False roster_agents=3    teams_active=False wave_pending=0    wave_built=1    refused=-   unaccepted=-   owed=idle
-  registered-not-spawned     waiting=False roster_agents=0    teams_active=True  wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
-  undispatched               waiting=False roster_agents=0    teams_active=False wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
-  unmeasured                 waiting=False roster_agents=-    teams_active=-     wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
-  wave-boundary              waiting=False roster_agents=2    teams_active=False wave_pending=2    wave_built=1    refused=-   unaccepted=-   owed=undispatched
-  final-wave-done            waiting=False roster_agents=3    teams_active=True  wave_pending=0    wave_built=2    refused=-   unaccepted=-   owed=idle
-  unreadable-manifest        waiting=False roster_agents=3    teams_active=False wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
-  refused                    waiting=False roster_agents=2    teams_active=True  wave_pending=0    wave_built=1    refused=2   unaccepted=1   owed=refused>idle
-  refused-team-down          waiting=False roster_agents=2    teams_active=False wave_pending=0    wave_built=1    refused=2   unaccepted=1   owed=redispatch>idle
-  unaccepted                 waiting=False roster_agents=1    teams_active=False wave_pending=2    wave_built=1    refused=-   unaccepted=1   owed=unaccepted>undispatched
-  live-with-owed-acceptance  waiting=True  roster_agents=-    teams_active=-     wave_pending=1    wave_built=1    refused=2   unaccepted=1   owed=live
+  live                       waiting=True  roster_agents=-    teams_active=-     own_team_registered=-   wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=live
+  idle                       waiting=False roster_agents=3    teams_active=True  own_team_registered=-   wave_pending=0    wave_built=1    refused=-   unaccepted=-   owed=idle
+  torn-down                  waiting=False roster_agents=3    teams_active=False own_team_registered=-   wave_pending=0    wave_built=1    refused=-   unaccepted=-   owed=idle
+  registered-not-spawned     waiting=False roster_agents=0    teams_active=True  own_team_registered=-   wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
+  undispatched               waiting=False roster_agents=0    teams_active=False own_team_registered=-   wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
+  unmeasured                 waiting=False roster_agents=-    teams_active=-     own_team_registered=-   wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
+  wave-boundary              waiting=False roster_agents=2    teams_active=False own_team_registered=-   wave_pending=2    wave_built=1    refused=-   unaccepted=-   owed=undispatched
+  final-wave-done            waiting=False roster_agents=3    teams_active=True  own_team_registered=-   wave_pending=0    wave_built=2    refused=-   unaccepted=-   owed=idle
+  unreadable-manifest        waiting=False roster_agents=3    teams_active=False own_team_registered=-   wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
+  refused                    waiting=False roster_agents=2    teams_active=True  own_team_registered=yes wave_pending=0    wave_built=1    refused=2   unaccepted=1   owed=refused>idle
+  refused-team-down          waiting=False roster_agents=2    teams_active=False own_team_registered=no  wave_pending=0    wave_built=1    refused=2   unaccepted=1   owed=redispatch>idle
+  refused-foreign-pane       waiting=False roster_agents=2    teams_active=True  own_team_registered=no  wave_pending=0    wave_built=1    refused=2   unaccepted=1   owed=redispatch>idle
+  refused-other-team         waiting=False roster_agents=2    teams_active=True  own_team_registered=no  wave_pending=0    wave_built=2    refused=2   unaccepted=-   owed=redispatch>idle
+  unaccepted                 waiting=False roster_agents=1    teams_active=False own_team_registered=-   wave_pending=2    wave_built=1    refused=-   unaccepted=1   owed=unaccepted>undispatched
+  live-with-owed-acceptance  waiting=True  roster_agents=-    teams_active=-     own_team_registered=-   wave_pending=1    wave_built=1    refused=2   unaccepted=1   owed=live
 
   add_castings             ok
   assay_failed_loop_back   ok
@@ -76,6 +79,10 @@ notice is what printed above the header.
   payload:cast-refused[stale]            received build_castings/refused  owed build_castings/refused  notice stall  ok
   payload:cast-refused-team-down[fresh]  received build_castings/redispatch  owed build_castings/redispatch  notice none  ok
   payload:cast-refused-team-down[stale]  received build_castings/redispatch  owed build_castings/redispatch  notice stall  ok
+  payload:cast-refused-foreign-pane[fresh] received build_castings/redispatch  owed build_castings/redispatch  notice none  ok
+  payload:cast-refused-foreign-pane[stale] received build_castings/redispatch  owed build_castings/redispatch  notice stall  ok
+  payload:cast-refused-other-team[fresh] received build_castings/redispatch  owed build_castings/redispatch  notice none  ok
+  payload:cast-refused-other-team[stale] received build_castings/redispatch  owed build_castings/redispatch  notice stall  ok
   payload:cast-unmeasured-team-up[fresh] received build_castings/undispatched  owed build_castings/undispatched  notice none  ok
   payload:cast-unmeasured-team-up[stale] received build_castings/undispatched  owed build_castings/undispatched  notice stall  ok
   payload:cast-refusal-answered[fresh]   received build_castings/unaccepted  owed build_castings/unaccepted  notice none  ok
@@ -125,6 +132,8 @@ twenty that have nothing to route.
   add_castings@F1[unreadable-manifest]              CALL  -                            YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SIN
   add_castings@F1[refused]                          CALL  -                            YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SIN
   add_castings@F1[refused-team-down]                CALL  -                            YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SIN
+  add_castings@F1[refused-foreign-pane]             CALL  -                            YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SIN
+  add_castings@F1[refused-other-team]               CALL  -                            YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SIN
   add_castings@F1[unaccepted]                       CALL  -                            YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SIN
   add_castings@F1[live-with-owed-acceptance]        CALL  -                            YOUR NEXT CALL: Spawn 1-5 BACKGROUND Agents in a SIN
   assay_failed_loop_back@F1[live]                   CALL  -                            YOUR NEXT CALLS (in order):
@@ -138,6 +147,8 @@ twenty that have nothing to route.
   assay_failed_loop_back@F1[unreadable-manifest]    CALL  -                            YOUR NEXT CALLS (in order):
   assay_failed_loop_back@F1[refused]                CALL  -                            YOUR NEXT CALLS (in order):
   assay_failed_loop_back@F1[refused-team-down]      CALL  -                            YOUR NEXT CALLS (in order):
+  assay_failed_loop_back@F1[refused-foreign-pane]   CALL  -                            YOUR NEXT CALLS (in order):
+  assay_failed_loop_back@F1[refused-other-team]     CALL  -                            YOUR NEXT CALLS (in order):
   assay_failed_loop_back@F1[unaccepted]             CALL  -                            YOUR NEXT CALLS (in order):
   assay_failed_loop_back@F1[live-with-owed-acceptance]  CALL  -                            YOUR NEXT CALLS (in order):
   build_castings@F1[live]                           NONE  live/live                    YOUR NEXT CALL: NONE. Your CAST teammates are runnin
@@ -151,6 +162,8 @@ twenty that have nothing to route.
   build_castings@F1[unreadable-manifest]            CALL  undispatched/undispatched    YOUR NEXT CALLS (in order):
   build_castings@F1[refused]                        CALL  refused/refused              YOUR NEXT CALLS (in order):
   build_castings@F1[refused-team-down]              CALL  redispatch/redispatch        YOUR NEXT CALLS (in order):
+  build_castings@F1[refused-foreign-pane]           CALL  redispatch/redispatch        YOUR NEXT CALLS (in order):
+  build_castings@F1[refused-other-team]             CALL  redispatch/redispatch        YOUR NEXT CALLS (in order):
   build_castings@F1[unaccepted]                     CALL  unaccepted/unaccepted        YOUR NEXT CALLS (in order):
   build_castings@F1[live-with-owed-acceptance]      NONE  live/live                    YOUR NEXT CALL: NONE. Your CAST teammates are runnin
   cleanup_teams@F1[live]                            CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
@@ -164,6 +177,8 @@ twenty that have nothing to route.
   cleanup_teams@F1[unreadable-manifest]             CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
   cleanup_teams@F1[refused]                         CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
   cleanup_teams@F1[refused-team-down]               CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
+  cleanup_teams@F1[refused-foreign-pane]            CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
+  cleanup_teams@F1[refused-other-team]              CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
   cleanup_teams@F1[unaccepted]                      CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
   cleanup_teams@F1[live-with-owed-acceptance]       CALL  -                            YOUR NEXT CALLS (in order — do NOT wait for shutdown
   done@F1[live]                                     NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
@@ -177,6 +192,8 @@ twenty that have nothing to route.
   done@F1[unreadable-manifest]                      NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
   done@F1[refused]                                  NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
   done@F1[refused-team-down]                        NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
+  done@F1[refused-foreign-pane]                     NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
+  done@F1[refused-other-team]                       NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
   done@F1[unaccepted]                               NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
   done@F1[live-with-owed-acceptance]                NONE  -                            YOUR NEXT CALL: NONE. This run is DONE. Read REPORT.
   fix_defects@F1[live]                              NONE  live/live                    YOUR NEXT CALL: NONE. Your GRIND teammates are runni
@@ -190,6 +207,8 @@ twenty that have nothing to route.
   fix_defects@F1[unreadable-manifest]               CALL  idle/idle                    YOUR NEXT CALLS (in order):
   fix_defects@F1[refused]                           CALL  idle/idle                    YOUR NEXT CALLS (in order):
   fix_defects@F1[refused-team-down]                 CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  fix_defects@F1[refused-foreign-pane]              CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  fix_defects@F1[refused-other-team]                CALL  idle/idle                    YOUR NEXT CALLS (in order):
   fix_defects@F1[unaccepted]                        CALL  idle/idle                    YOUR NEXT CALLS (in order):
   fix_defects@F1[live-with-owed-acceptance]         NONE  live/live                    YOUR NEXT CALL: NONE. Your GRIND teammates are runni
   halted@F1[live]                                   NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
@@ -203,6 +222,8 @@ twenty that have nothing to route.
   halted@F1[unreadable-manifest]                    NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
   halted@F1[refused]                                NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
   halted@F1[refused-team-down]                      NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
+  halted@F1[refused-foreign-pane]                   NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
+  halted@F1[refused-other-team]                     NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
   halted@F1[unaccepted]                             NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
   halted@F1[live-with-owed-acceptance]              NONE  -                            YOUR NEXT CALL: NONE. This run is HALTED — it stoppe
   init@F1[live]                                     CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
@@ -216,6 +237,8 @@ twenty that have nothing to route.
   init@F1[unreadable-manifest]                      CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
   init@F1[refused]                                  CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
   init@F1[refused-team-down]                        CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
+  init@F1[refused-foreign-pane]                     CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
+  init@F1[refused-other-team]                       CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
   init@F1[unaccepted]                               CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
   init@F1[live-with-owed-acceptance]                CALL  -                            YOUR NEXT CALL: Foundry-Init (start a new run)
   record_inspect_width@F1[live]                     CALL  -                            YOUR NEXT CALLS (in order):
@@ -229,6 +252,8 @@ twenty that have nothing to route.
   record_inspect_width@F1[unreadable-manifest]      CALL  -                            YOUR NEXT CALLS (in order):
   record_inspect_width@F1[refused]                  CALL  -                            YOUR NEXT CALLS (in order):
   record_inspect_width@F1[refused-team-down]        CALL  -                            YOUR NEXT CALLS (in order):
+  record_inspect_width@F1[refused-foreign-pane]     CALL  -                            YOUR NEXT CALLS (in order):
+  record_inspect_width@F1[refused-other-team]       CALL  -                            YOUR NEXT CALLS (in order):
   record_inspect_width@F1[unaccepted]               CALL  -                            YOUR NEXT CALLS (in order):
   record_inspect_width@F1[live-with-owed-acceptance]  CALL  -                            YOUR NEXT CALLS (in order):
   run_assay@F1[live]                                CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
@@ -242,6 +267,8 @@ twenty that have nothing to route.
   run_assay@F1[unreadable-manifest]                 CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
   run_assay@F1[refused]                             CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
   run_assay@F1[refused-team-down]                   CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
+  run_assay@F1[refused-foreign-pane]                CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
+  run_assay@F1[refused-other-team]                  CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
   run_assay@F1[unaccepted]                          CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
   run_assay@F1[live-with-owed-acceptance]           CALL  -                            YOUR NEXT CALL: spawn 4 parallel Agent(subagent_type
   run_nyquist@F1[live]                              CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
@@ -255,6 +282,8 @@ twenty that have nothing to route.
   run_nyquist@F1[unreadable-manifest]               CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
   run_nyquist@F1[refused]                           CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
   run_nyquist@F1[refused-team-down]                 CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
+  run_nyquist@F1[refused-foreign-pane]              CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
+  run_nyquist@F1[refused-other-team]                CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
   run_nyquist@F1[unaccepted]                        CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
   run_nyquist@F1[live-with-owed-acceptance]         CALL  -                            YOUR NEXT CALL: batch the VERIFIED requirements by 5
   run_streams@F1[live]                              NONE  live/live                    YOUR NEXT CALL: NONE. Your INSPECT streams are runni
@@ -268,6 +297,8 @@ twenty that have nothing to route.
   run_streams@F1[unreadable-manifest]               CALL  idle/idle                    YOUR NEXT CALLS: spawn every missing INSPECT stream 
   run_streams@F1[refused]                           CALL  idle/idle                    YOUR NEXT CALLS: spawn every missing INSPECT stream 
   run_streams@F1[refused-team-down]                 CALL  idle/idle                    YOUR NEXT CALLS: spawn every missing INSPECT stream 
+  run_streams@F1[refused-foreign-pane]              CALL  idle/idle                    YOUR NEXT CALLS: spawn every missing INSPECT stream 
+  run_streams@F1[refused-other-team]                CALL  idle/idle                    YOUR NEXT CALLS: spawn every missing INSPECT stream 
   run_streams@F1[unaccepted]                        CALL  idle/idle                    YOUR NEXT CALLS: spawn every missing INSPECT stream 
   run_streams@F1[live-with-owed-acceptance]         NONE  live/live                    YOUR NEXT CALL: NONE. Your INSPECT streams are runni
   run_temper@F1[live]                               CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
@@ -281,6 +312,8 @@ twenty that have nothing to route.
   run_temper@F1[unreadable-manifest]                CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
   run_temper@F1[refused]                            CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
   run_temper@F1[refused-team-down]                  CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
+  run_temper@F1[refused-foreign-pane]               CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
+  run_temper@F1[refused-other-team]                 CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
   run_temper@F1[unaccepted]                         CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
   run_temper@F1[live-with-owed-acceptance]          CALL  -                            YOUR NEXT CALL: spawn the TEMPER micro-domain agents
   transition_to_assay@F1[live]                      CALL  -                            YOUR NEXT CALLS (in order):
@@ -294,6 +327,8 @@ twenty that have nothing to route.
   transition_to_assay@F1[unreadable-manifest]       CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_assay@F1[refused]                   CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_assay@F1[refused-team-down]         CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_assay@F1[refused-foreign-pane]      CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_assay@F1[refused-other-team]        CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_assay@F1[unaccepted]                CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_assay@F1[live-with-owed-acceptance]  CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_cast@F1[live]                       CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
@@ -307,6 +342,8 @@ twenty that have nothing to route.
   transition_to_cast@F1[unreadable-manifest]        CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
   transition_to_cast@F1[refused]                    CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
   transition_to_cast@F1[refused-team-down]          CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
+  transition_to_cast@F1[refused-foreign-pane]       CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
+  transition_to_cast@F1[refused-other-team]         CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
   transition_to_cast@F1[unaccepted]                 CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
   transition_to_cast@F1[live-with-owed-acceptance]  CALL  -                            YOUR NEXT CALLS (in order — bulk flow saves N-1 roun
   transition_to_done@F1[live]                       CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
@@ -320,6 +357,8 @@ twenty that have nothing to route.
   transition_to_done@F1[unreadable-manifest]        CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
   transition_to_done@F1[refused]                    CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
   transition_to_done@F1[refused-team-down]          CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
+  transition_to_done@F1[refused-foreign-pane]       CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
+  transition_to_done@F1[refused-other-team]         CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
   transition_to_done@F1[unaccepted]                 CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
   transition_to_done@F1[live-with-owed-acceptance]  CALL  -                            YOUR NEXT CALLS (in order, and the order is the whol
   transition_to_grind@F1[live]                      CALL  -                            YOUR NEXT CALLS (in order):
@@ -333,6 +372,8 @@ twenty that have nothing to route.
   transition_to_grind@F1[unreadable-manifest]       CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_grind@F1[refused]                   CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_grind@F1[refused-team-down]         CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_grind@F1[refused-foreign-pane]      CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_grind@F1[refused-other-team]        CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_grind@F1[unaccepted]                CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_grind@F1[live-with-owed-acceptance]  CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F1[live]                    CALL  -                            YOUR NEXT CALLS (in order):
@@ -346,6 +387,8 @@ twenty that have nothing to route.
   transition_to_inspect@F1[unreadable-manifest]     CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F1[refused]                 CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F1[refused-team-down]       CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_inspect@F1[refused-foreign-pane]    CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_inspect@F1[refused-other-team]      CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F1[unaccepted]              CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F1[live-with-owed-acceptance]  CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F3[live]                    CALL  -                            YOUR NEXT CALLS (in order):
@@ -359,6 +402,8 @@ twenty that have nothing to route.
   transition_to_inspect@F3[unreadable-manifest]     CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F3[refused]                 CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F3[refused-team-down]       CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_inspect@F3[refused-foreign-pane]    CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_inspect@F3[refused-other-team]      CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F3[unaccepted]              CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_inspect@F3[live-with-owed-acceptance]  CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_nyquist@F1[live]                    CALL  -                            YOUR NEXT CALLS (in order):
@@ -372,6 +417,8 @@ twenty that have nothing to route.
   transition_to_nyquist@F1[unreadable-manifest]     CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_nyquist@F1[refused]                 CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_nyquist@F1[refused-team-down]       CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_nyquist@F1[refused-foreign-pane]    CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_nyquist@F1[refused-other-team]      CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_nyquist@F1[unaccepted]              CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_nyquist@F1[live-with-owed-acceptance]  CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_temper@F1[live]                     CALL  -                            YOUR NEXT CALLS (in order):
@@ -385,6 +432,8 @@ twenty that have nothing to route.
   transition_to_temper@F1[unreadable-manifest]      CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_temper@F1[refused]                  CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_temper@F1[refused-team-down]        CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_temper@F1[refused-foreign-pane]     CALL  -                            YOUR NEXT CALLS (in order):
+  transition_to_temper@F1[refused-other-team]       CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_temper@F1[unaccepted]               CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_temper@F1[live-with-owed-acceptance]  CALL  -                            YOUR NEXT CALLS (in order):
   unknown@F1[live]                                  CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
@@ -398,6 +447,8 @@ twenty that have nothing to route.
   unknown@F1[unreadable-manifest]                   CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
   unknown@F1[refused]                               CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
   unknown@F1[refused-team-down]                     CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
+  unknown@F1[refused-foreign-pane]                  CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
+  unknown@F1[refused-other-team]                    CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
   unknown@F1[unaccepted]                            CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
   unknown@F1[live-with-owed-acceptance]             CALL  -                            YOUR NEXT CALL: Foundry-Context. The guidance engine
   widen_inspect@F1[live]                            CALL  -                            YOUR NEXT CALLS (in order):
@@ -411,5 +462,7 @@ twenty that have nothing to route.
   widen_inspect@F1[unreadable-manifest]             CALL  -                            YOUR NEXT CALLS (in order):
   widen_inspect@F1[refused]                         CALL  -                            YOUR NEXT CALLS (in order):
   widen_inspect@F1[refused-team-down]               CALL  -                            YOUR NEXT CALLS (in order):
+  widen_inspect@F1[refused-foreign-pane]            CALL  -                            YOUR NEXT CALLS (in order):
+  widen_inspect@F1[refused-other-team]              CALL  -                            YOUR NEXT CALLS (in order):
   widen_inspect@F1[unaccepted]                      CALL  -                            YOUR NEXT CALLS (in order):
   widen_inspect@F1[live-with-owed-acceptance]       CALL  -                            YOUR NEXT CALLS (in order):
