@@ -2,14 +2,14 @@
 # evidence-for: FR-007, FR-008, OT-002
 
 keys in _ACTION_IMPERATIVES: 22
-emission sites swept:        276
-router payloads swept:       36
+emission sites swept:        299
+router payloads swept:       40
 defective emissions:         0
 
 header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME
-payload detectors: WRONG_ROUTE, CONTRADICTION, TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING
+payload detectors: WRONG_ROUTE, CONTRADICTION, CONTEXT_SEQUENCE, TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING
 
-site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured, wave-boundary, final-wave-done, unreadable-manifest, refused, unaccepted, live-with-owed-acceptance
+site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured, wave-boundary, final-wave-done, unreadable-manifest, refused, refused-team-down, unaccepted, live-with-owed-acceptance
 
 readings are the four roster_agents x teams_active combinations, the unmeasured one, and
 the two that vary WAVE POSITION; each names the branch it is OWED so the sweep judges
@@ -20,6 +20,7 @@ wave_pending is the lead-stalls D-009 column: '-' is a manifest that did not ans
 column constant could not tell 'wave 1 done, wave 2 pending' from 'the final wave is done'.
 refused / unaccepted are the lead-stalls D-020 columns: castings done and refused, and done
 with no verdict since. owed 'a>b' is a preference order: the first branch the entry declares.
+A refusal owes 'refused' (send back) with teams_active True and 'redispatch' otherwise (D-022).
 
   live                       waiting=True  roster_agents=-    teams_active=-     wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=live
   idle                       waiting=False roster_agents=3    teams_active=True  wave_pending=0    wave_built=1    refused=-   unaccepted=-   owed=idle
@@ -31,6 +32,7 @@ with no verdict since. owed 'a>b' is a preference order: the first branch the en
   final-wave-done            waiting=False roster_agents=3    teams_active=True  wave_pending=0    wave_built=2    refused=-   unaccepted=-   owed=idle
   unreadable-manifest        waiting=False roster_agents=3    teams_active=False wave_pending=-    wave_built=-    refused=-   unaccepted=-   owed=undispatched
   refused                    waiting=False roster_agents=2    teams_active=True  wave_pending=0    wave_built=1    refused=2   unaccepted=1   owed=refused>idle
+  refused-team-down          waiting=False roster_agents=2    teams_active=False wave_pending=0    wave_built=1    refused=2   unaccepted=1   owed=redispatch>idle
   unaccepted                 waiting=False roster_agents=1    teams_active=False wave_pending=2    wave_built=1    refused=-   unaccepted=1   owed=unaccepted>undispatched
   live-with-owed-acceptance  waiting=True  roster_agents=-    teams_active=-     wave_pending=1    wave_built=1    refused=2   unaccepted=1   owed=live
 
@@ -72,6 +74,10 @@ notice is what printed above the header.
   payload:cast-unaccepted[stale]         received build_castings/unaccepted  owed build_castings/unaccepted  notice stall  ok
   payload:cast-refused[fresh]            received build_castings/refused  owed build_castings/refused  notice none  ok
   payload:cast-refused[stale]            received build_castings/refused  owed build_castings/refused  notice stall  ok
+  payload:cast-refused-team-down[fresh]  received build_castings/redispatch  owed build_castings/redispatch  notice none  ok
+  payload:cast-refused-team-down[stale]  received build_castings/redispatch  owed build_castings/redispatch  notice stall  ok
+  payload:cast-unmeasured-team-up[fresh] received build_castings/undispatched  owed build_castings/undispatched  notice none  ok
+  payload:cast-unmeasured-team-up[stale] received build_castings/undispatched  owed build_castings/undispatched  notice stall  ok
   payload:cast-refusal-answered[fresh]   received build_castings/unaccepted  owed build_castings/unaccepted  notice none  ok
   payload:cast-refusal-answered[stale]   received build_castings/unaccepted  owed build_castings/unaccepted  notice stall  ok
   payload:cast-boundary-team-up[fresh]   received cleanup_teams/-  owed cleanup_teams/-  notice none  ok

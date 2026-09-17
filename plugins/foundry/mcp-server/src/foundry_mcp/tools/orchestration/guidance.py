@@ -1292,7 +1292,7 @@ _WAITING_REPORTS_ONLY = (
 _BRANCHED_ACTION_CONTEXT = (
     " Your next call is the imperative printed ABOVE this block: it was chosen "
     "from the progress ledgers this server read on THIS call, so it already "
-    "answers whether your teammates are still running. This block names no "
+    "answers whether your agents are still running. This block names no "
     "sequence of its own — a second one here could only disagree with the one "
     "above."
 )
@@ -1459,8 +1459,8 @@ def _casting_ids(value: object) -> list[str]:
 
 
 def _acceptance_state(liveness: object) -> str | None:
-    """`refused` / `unaccepted` when a CAST casting's acceptance is owed, else
-    ``None`` (lead-stalls ST-004 / D-020).
+    """`refused` / `redispatch` / `unaccepted` when a CAST casting's acceptance
+    is owed, else ``None`` (lead-stalls ST-004 / D-020).
 
     A-014's premise was "Foundry-Next already knows whether the casting was
     accepted", and it did not: `_cast_wave_position` counted a casting built on
@@ -1474,10 +1474,23 @@ def _acceptance_state(liveness: object) -> str | None:
     `foundry_accept_casting` records. `refused` outranks `unaccepted` because
     re-accepting a casting nobody has touched since its refusal only buys the
     same refusal again.
+
+    lead-stalls D-022 — AND A REFUSAL IS TWO STATES, CHOSEN FROM THE SAME
+    READING'S `teams_active`. The refused branch used to hold both answers —
+    "send it back; only a send that answers that the teammate cannot be
+    reached takes the re-dispatch step" — and a sentence predicting which one
+    the lead would need. That is the conditional lead-stalls GI-008 forbids:
+    the lead's call after the send depended on reading the send's answer. The
+    server already held the input the prediction was made from, so it picks:
+    `refused` (the team is registered, the teammate that built it is sent the
+    refusal) or `redispatch` (it is not, and a fresh teammate is). A reading
+    that did not measure the team scan owes `redispatch`, on the D-013
+    asymmetry: a spare teammate costs a spawn, a message sent to a torn-down
+    team parks the run with nobody told.
     """
     row = liveness if isinstance(liveness, dict) else {}
     if _casting_ids(row.get("cast_refused")):
-        return "refused"
+        return "refused" if row.get("teams_active") is True else "redispatch"
     if _casting_ids(row.get("cast_unaccepted")):
         return "unaccepted"
     return None
@@ -1615,34 +1628,12 @@ def _grind_cycle(cycle: object) -> str:
 _CASTING_DEFAULT = "N"
 
 
-#: lead-stalls D-020 — `{reach}`, the refused branch's statement of which
-#: re-dispatch step the lead should expect to need, from the reading's own
-#: `teams_active` (lead ruling, GRIND cycle 7). A reading that did not measure
-#: the team scan gets the torn-down sentence: expecting the fallback costs
-#: nothing when the send is delivered, and expecting delivery is how a lead ends
-#: its turn over a message nobody received.
-_REACH_TEAM_UP = (
-    "Casting {casting}'s team is still registered, so step (1) is expected to "
-    "reach its teammate and step (2) not to be needed."
-)
-_REACH_TEAM_DOWN = (
-    "Casting {casting}'s team is no longer registered, so step (1) may answer "
-    "that its teammate cannot be reached, and step (2) is then the re-dispatch."
-)
-
-
-def _refused_reach(liveness: object) -> str:
-    """`{reach}` — total over every input (lead-stalls D-020)."""
-    row = liveness if isinstance(liveness, dict) else {}
-    return _REACH_TEAM_UP if row.get("teams_active") is True else _REACH_TEAM_DOWN
-
-
 def _casting_slot(liveness: object) -> str:
     """`{casting}` — the casting an acceptance branch is about, total.
 
     Read in `_acceptance_state`'s order, so the id always belongs to the branch
-    that was chosen: `refused` is chosen exactly when `cast_refused` is
-    non-empty, and `unaccepted` only when it is empty. The FIRST id, because
+    that was chosen: `refused` or `redispatch` is chosen exactly when
+    `cast_refused` is non-empty, and `unaccepted` only when it is empty. The FIRST id, because
     `_cast_wave_position` lists them in manifest wave order, and settling the
     lowest wave first is the order the waves were built in.
     """
@@ -1805,27 +1796,37 @@ _CAST_ACCEPTANCE_DUE = (
     "yours to make yet."
 )
 
-#: `refused`: `Foundry-Accept-Casting` recorded `-refused` for this casting and
-#: its ledger has not moved since. Re-accepting it unchanged buys the same
-#: refusal; the refusal is answered by the TEAMMATE THAT BUILT IT, which still
-#: holds the casting's context — the way this run's own refusals were answered.
-#:
-#: WHY A MESSAGE FIRST, AND A FRESH SPAWN ONLY BEHIND IT. `Foundry-Spawn-
-#: Teammate` returns a dispatch block the lead must pass VERBATIM, and the
-#: standing CRITICAL RULES printed at the top of this same payload say GRIND is
-#: the ONLY exception to that, so the refusal can never ride INSIDE a CAST
-#: dispatch; it travels as a message. The teammate that built the casting is
-#: sent it first because it still holds the context. A teammate whose team was
-#: already torn down may not be reachable any more (lead ruling, GRIND cycle 7),
-#: so step (2) is the re-dispatch that does not depend on it — a fresh spawn,
-#: dispatch verbatim, and the same refusal as a SEPARATE message — and
-#: `{reach}` says, from the reading's own `teams_active`, which of the two the
-#: lead should expect to need. The resumed or re-spawned teammate writes its
+#: `refused` and `redispatch`: `Foundry-Accept-Casting` recorded `-refused`
+#: for this casting and its ledger has not moved since. Re-accepting it
+#: unchanged buys the same refusal; the refusal goes to a TEAMMATE, as a
+#: message. `Foundry-Spawn-Teammate` returns a dispatch block the lead must pass
+#: VERBATIM, and the standing CRITICAL RULES printed at the top of this same
+#: payload say GRIND is the ONLY exception to that, so the refusal can never
+#: ride INSIDE a CAST dispatch. The resumed or re-spawned teammate writes its
 #: ledger again, so the casting reads as running rather than refused, and its
 #: next done line makes the refusal OLDER than the work — which is what routes
 #: the lead to accept again (`_owed_acceptances`) rather than to re-dispatch it
 #: twice.
-_CAST_REFUSED_REDISPATCH = (
+#:
+#: lead-stalls D-022 — TWO BRANCHES, BECAUSE ONE BRANCH HELD A CONDITIONAL.
+#: The single refused branch read "(1) SendMessage ... (2) Only a send that
+#: answers that the teammate cannot be reached takes this step ... (3) END
+#: YOUR TURN", with a sentence predicting from `teams_active` which of (2) and
+#: (3) came next. So the lead's call after the send depended on the lead
+#: reading the send's answer — the shape lead-stalls GI-008 / CT-008 / OT-013
+#: forbid, one step down. The prediction's input is the server's, so the server
+#: chooses (`_acceptance_state`): with the team registered, the teammate that
+#: built the casting still holds its context and is sent the refusal (lead
+#: ruling, GRIND cycle 7); with it torn down, that teammate went with it, and a
+#: fresh one is dispatched and sent the same refusal as a SEPARATE message.
+#: Neither branch names a step whose execution waits on an earlier call's
+#: answer, and the reason each was chosen is stated as a reading, not a guess.
+_REFUSED_IS_REWORKED = (
+    "A refused casting is re-dispatched to be fixed: never torn down, never "
+    "counted as built, never re-accepted unchanged."
+)
+
+_CAST_REFUSED_SEND_BACK = (
     "YOUR NEXT CALLS (in order):\n"
     "  (1) SendMessage(to=<the teammate you spawned for casting {casting}>, "
     "message=<the refusal Foundry-Accept-Casting returned for casting "
@@ -1833,21 +1834,33 @@ _CAST_REFUSED_REDISPATCH = (
     "and hint>). Casting {casting} goes back to the teammate that built it, "
     "which still holds its context, to fix what was refused and report "
     "again.\n"
-    "  (2) Only a send that answers that the teammate cannot be reached takes "
-    "this step, and it is then the whole re-dispatch: "
-    "Foundry-Spawn-Teammate(casting_id={casting}, phase='cast'); one foreground "
-    "Agent(subagent_type='foundry:teammate', mode='bypassPermissions') passed "
-    "that call's `dispatch` field VERBATIM with nothing appended, obeying the "
-    "model clause in the `instructions` it returns; then SendMessage(to=<that "
-    "new teammate>, message=<the same refusal, verbatim>) as a separate "
-    "message. {reach}\n"
-    "  (3) " + _WAITING_IS_NOT_STOPPING + "\n"
+    "  (2) " + _WAITING_IS_NOT_STOPPING + "\n"
     "Foundry-Accept-Casting REFUSED casting {casting} and its ledger has not "
-    "moved since — this server read handoffs.jsonl and the progress ledgers on "
-    "this call, and no agent is running. A refused casting is re-dispatched to "
-    "be fixed: never torn down, never counted as built, never re-accepted "
-    "unchanged."
+    "moved since — this server read handoffs.jsonl, the progress ledgers and "
+    "the team registry on this call: no agent is running and the CAST team is "
+    "still registered, so the teammate that built it is the one to send it "
+    "to. " + _REFUSED_IS_REWORKED
 )
+
+_CAST_REFUSED_REDISPATCH = (
+    "YOUR NEXT CALLS (in order):\n"
+    "  (1) Foundry-Spawn-Teammate(casting_id={casting}, phase='cast')\n"
+    "  (2) One foreground Agent(subagent_type='foundry:teammate', "
+    "mode='bypassPermissions'), passed step (1)'s `dispatch` field VERBATIM "
+    "with nothing appended, obeying the model clause in the `instructions` "
+    "step (1) returned.\n"
+    "  (3) SendMessage(to=<the teammate step (2) spawned>, message=<the "
+    "refusal Foundry-Accept-Casting returned for casting {casting}, verbatim — "
+    "its error or failure_token, failure_detail, warning and hint>), as a "
+    "separate message.\n"
+    "  (4) " + _WAITING_IS_NOT_STOPPING + "\n"
+    "Foundry-Accept-Casting REFUSED casting {casting} and its ledger has not "
+    "moved since — this server read handoffs.jsonl, the progress ledgers and "
+    "the team registry on this call: no agent is running and no CAST team is "
+    "registered, so the teammate that built it went with its team and casting "
+    "{casting} goes to a fresh one. " + _REFUSED_IS_REWORKED
+)
+
 
 #: The `fix_defects` idle branch, and its only one. With no agent running this
 #: action is emitted ONLY while blocking defects are open (`_compute_next_action`'s
@@ -1975,14 +1988,15 @@ _ACTION_IMPERATIVES = {
     # server that can measure it rather than by the reader that cannot.
     #
     # lead-stalls ST-004 / D-020 — AND TWO MORE, FOR THE CASTING THAT IS DONE
-    # BUT NOT YET BUILT. `refused` and `unaccepted` are chosen from the verdict
-    # `Foundry-Accept-Casting` records, and only while no agent is running
-    # (`_branch_states`).
+    # BUT NOT YET BUILT. `refused`, `redispatch` (lead-stalls D-022) and
+    # `unaccepted` are chosen from the verdict `Foundry-Accept-Casting`
+    # records, and only while no agent is running (`_branch_states`).
     "build_castings": (
         _BRANCH_OPEN + "live" + _BRANCH_CLOSE + _CAST_TEAMMATES_LIVE
         + _BRANCH_OPEN + "idle" + _BRANCH_CLOSE + _CAST_WAVE_COMPLETE
         + _BRANCH_OPEN + "undispatched" + _BRANCH_CLOSE + _CAST_WAVE_UNDISPATCHED
-        + _BRANCH_OPEN + "refused" + _BRANCH_CLOSE + _CAST_REFUSED_REDISPATCH
+        + _BRANCH_OPEN + "refused" + _BRANCH_CLOSE + _CAST_REFUSED_SEND_BACK
+        + _BRANCH_OPEN + "redispatch" + _BRANCH_CLOSE + _CAST_REFUSED_REDISPATCH
         + _BRANCH_OPEN + "unaccepted" + _BRANCH_CLOSE + _CAST_ACCEPTANCE_DUE
     ),
     # fallout D-058 / AC-059 — ONE ACTION, TWO CROSSINGS, AND THE STEPS ARE
@@ -2391,8 +2405,6 @@ def _format_imperative_header(
             .replace("{wave}", _cast_wave(liveness))
             .replace("{built_wave}", _built_cast_wave(liveness))
             .replace("{cycle}", _grind_cycle(cycle))
-            # `{reach}` first: its sentence carries a `{casting}` of its own.
-            .replace("{reach}", _refused_reach(liveness))
             .replace("{casting}", _casting_slot(liveness))
         )
     if imperative and "{halt_cause}" in imperative:
@@ -2902,7 +2914,7 @@ def _team_work_in_flight(
         return True
     if not cast_open:
         return False
-    if states[0] in ("refused", "unaccepted"):
+    if states[0] in ("refused", "redispatch", "unaccepted"):
         return True
     if states[0] == "idle":
         return False
@@ -3266,30 +3278,39 @@ def _compute_next_action(project_root: str) -> dict:
             return {
                 "phase": "F2",
                 "action": "run_streams",
+                # lead-stalls GI-008 / D-024 — `run_streams` is BRANCHED (D-019),
+                # so this block takes the `_BRANCHED_ACTION_CONTEXT` rule the two
+                # other branched arms took in D-005: it names no next call. It
+                # read "Missing: trace prove test ... Spawn agents using the
+                # agent_configs below" directly beneath a `live` header saying
+                # those streams were running and that spawning them again runs
+                # them twice — one payload, two imperatives. A stream records
+                # itself when it FINISHES, so "unrecorded" is what the count
+                # measures, not "missing"; the header says which of running or
+                # unspawned it is. The spawn rules live in the `idle` branch.
                 "instructions": (
                     f"INSPECT phase ({streams.get('inspect_mode') or 'FULL'} width"
                     f"{', rule ' + streams['inspect_rule'] if streams.get('inspect_rule') else ''}): "
-                    f"verification streams incomplete. Missing: {streams['missing']}. "
+                    f"verification streams with no record this cycle: {streams['missing']}. "
                     f"Required this cycle: {', '.join(streams['required'])}. "
-                    "Spawn agents using the agent_configs below (model and type are ENFORCED). "
-                    "SIGHT runs in MAIN THREAD (Playwright MCP only works here) \u2014 "
-                    "navigate to URL, snapshot every page, exercise all elements, check console. "
+                    "The agent_configs below are ENFORCED (model and type) for "
+                    "every stream agent. "
                     # fallout AC-031 / GI-016 (D-165) — the same qualification the
                     # `run_streams` imperative carries, on the OTHER surface that
                     # states this rule. Left unqualified here it would re-close the
                     # exits the imperative just opened, one field along, and this is
                     # the string a lead reads FIRST.
                     "Each AGENT stream records its OWN run with Foundry-Stream "
-                    "(fallout GI-016) — confirm the record exists when the stream "
-                    "reports; never record on an AGENT's behalf. SIGHT is the "
-                    "exception and the reason is that you EXECUTED it: there is no "
-                    "sight agent, so its record is yours to make from what you "
+                    "(fallout GI-016); never record on an AGENT's behalf. SIGHT is "
+                    "the exception and the reason is that you EXECUTED it: there is "
+                    "no sight agent, so its record is yours to make from what you "
                     "measured. "
                     # fallout AC-031 (D-169) — and the hazard the parallel dispatch
-                    # creates, named where the dispatch is described.
+                    # creates, stated as the rule every reading stream is bound by.
                     "TEST rewrites the shared tree to verify the GRIND's fixes, so "
-                    "tell every reading stream to pin its findings to the HEAD sha "
-                    "and verify them against a snapshot, not the live tree."
+                    "every reading stream is bound to pin its findings to the HEAD "
+                    "sha and verify them against a snapshot, not the live tree."
+                    + _BRANCHED_ACTION_CONTEXT
                 ),
                 "details": {
                     "missing_streams": streams["missing"].split(),
