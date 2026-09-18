@@ -259,6 +259,44 @@ def test_each_door_names_its_one_declared_next_call():
     assert _guidance.SERVED_LIST_IS_ONE_MOVE is _teams.SERVED_LIST_IS_ONE_MOVE
 
 
+#: What Team-Down's answer must never carry (D-047): the spawn clause and its
+#: pointer at a rule printed only beneath it in the rules block.
+_SPAWN_CLAUSE_FRAGMENTS = ("spawn rule below", "spawn door", "Agent call it feeds")
+
+
+@pytest.mark.parametrize(
+    "name", ["SERVED_LIST_IS_ONE_MOVE", "TEAM_DOWN_NEXT_CALL"]
+)
+def test_the_shared_sentence_carries_no_spawn_clause(name):
+    """lead-stalls FR-015 (D-047) — pins 6080974.
+
+    The sentence is quoted by Team-Down's `next_call`, which has no spawn rule
+    beneath it, and by the rules block, which adds the spawn clause itself. A
+    clause put back into the shared sentence points Team-Down at a rule it
+    does not carry, and states the clause twice in the rules block.
+    """
+    value = getattr(_teams, name)
+    for fragment in _SPAWN_CLAUSE_FRAGMENTS:
+        assert fragment not in value, (name, fragment, value)
+
+
+def test_team_down_next_call_opens_by_sending_the_lead_on_down_the_list():
+    """lead-stalls FR-015 (D-047, D-044) — the sentence the answer exists for.
+
+    `endswith` pinned only the quoted tail, so deleting the opening sentence
+    stayed green (INSPECT c12). That sentence is the one telling the lead that
+    Team-Down is a MIDDLE step and the list, not Foundry-Next, comes next.
+    """
+    opening = _teams.TEAM_DOWN_NEXT_CALL[
+        : -len(_teams.SERVED_LIST_IS_ONE_MOVE)
+    ].strip()
+    assert opening.startswith("Foundry-Team-Down is one step of the list "
+                              "Foundry-Next served you"), opening
+    assert opening.endswith("go on to that list's next step."), opening
+    assert opening.count(". ") == 0, opening
+    assert _teams.TEAM_DOWN_NEXT_CALL == opening + " " + _teams.SERVED_LIST_IS_ONE_MOVE
+
+
 @pytest.mark.parametrize(
     "value",
     [_evidence.LEAD_NEXT_CALL, _teams.TEAM_DOWN_NEXT_CALL],
@@ -1474,9 +1512,11 @@ def _numbered_steps(header: str) -> list[str]:
 
 #: The rules block's clause naming the spawn pair one step of the served move.
 #: Kept out of `SERVED_LIST_IS_ONE_MOVE` itself, which Team-Down's answer also
-#: quotes and which has no spawn rule below it there.
+#: quotes and which has no spawn rule below it there. Without its article:
+#: the 6080974-reverted sentence carried it mid-sentence as "a spawn door",
+#: which a capitalised needle never counted (D-047).
 _SPAWN_STEP_OF_THE_MOVE = (
-    "A spawn door and the Agent call it feeds are one step of that move"
+    "spawn door and the Agent call it feeds are one step of that move"
 )
 
 
@@ -1524,10 +1564,12 @@ def _spawn_order_faults(drive: dict) -> list[str]:
     # D-039's shape one rule up, as D-044 / D-045 left it: the rules state
     # the served list as ONE move, naming the door-and-Agent pair as one of
     # its steps, and no "after each step" sentence is left to disagree.
+    # D-047: the spawn clause EXACTLY once — `in` stayed green with it twice,
+    # once from the shared sentence and once from the rules block's own add.
     if (
         "Foundry-Next after each step" in drive["rules"]
         or drive["rules"].count(_teams.SERVED_LIST_IS_ONE_MOVE) != 1
-        or _SPAWN_STEP_OF_THE_MOVE not in drive["rules"]
+        or drive["rules"].count(_SPAWN_STEP_OF_THE_MOVE) != 1
     ):
         faults.append("the rules do not state the served list as one move")
     return faults
@@ -1609,6 +1651,16 @@ def test_the_spawn_order_check_catches_the_shipped_shapes(
 
     drive["next_calls"].insert(-1, {"tool": "Foundry-Next", "prompt_blocks": []})
     assert any("Foundry-Next step" in f for f in _spawn_order_faults(drive))
+
+    # The 6080974-reverted rules line (D-047): the shared sentence carrying
+    # the spawn clause too, so the block states it twice.
+    doubled = dict(drive, rules=drive["rules"].replace(
+        _teams.SERVED_LIST_IS_ONE_MOVE,
+        _teams.SERVED_LIST_IS_ONE_MOVE + " A " + _SPAWN_STEP_OF_THE_MOVE + ".",
+    ))
+    assert "the rules do not state the served list as one move" in (
+        _spawn_order_faults(doubled)
+    ), doubled["rules"]
 
     # The 373e2d1 rules line (D-044): "after each step", the spawn move excepted.
     drive["rules"] = drive["rules"].replace(
