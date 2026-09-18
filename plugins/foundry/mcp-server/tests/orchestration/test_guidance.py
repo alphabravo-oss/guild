@@ -1156,7 +1156,9 @@ def test_the_rules_block_and_the_gate_note_are_the_same_string(run_env):
         if line.startswith("- NEVER stop between phases")
     )
     assert "OPTIONAL" in rule_line
-    assert "REQUIRED everywhere except exactly one place" in rule_line
+    # lead-stalls D-044 / D-045 — the exception is now the one read a served
+    # list tolerates, stated beside the one-move sentence it qualifies.
+    assert "The one Foundry-Next a list tolerates between two of its steps" in rule_line
     assert not rule_line.endswith("Call Foundry-Next after each step and follow it.")
 
 

@@ -89,6 +89,7 @@ from foundry_mcp.tools.orchestration.streams import (
     _prove_is_clean,
 )
 from foundry_mcp.tools.orchestration.teams import (
+    SERVED_LIST_IS_ONE_MOVE,
     _check_active_teams,
     agent_model,
 )
@@ -1091,13 +1092,21 @@ def foundry_next_action(
 # fired") because commands/start.md calls it the INSPECT "mode" while the
 # imperatives called it the "width and rule", and a lead reading the two
 # surfaces had to work out they meant the same field.
+#
+# lead-stalls D-044 / D-045 — IT IS A READ INSIDE A MOVE, NOT A MOVE. Every
+# gate-then-phase pair sits inside a served list, and the rules block now says
+# that list is one move (`_A_SERVED_LIST_IS_ONE_MOVE`). A Foundry-Next taken
+# here answers with the same list from step (1), so "call it there when you
+# want them" read as licence to restart the list; the sentence now says its
+# answer replaces nothing and names the step that still comes next.
 _GATE_THEN_PHASE_EXCEPTION = (
     "Foundry-Next between a passing Foundry-Gate and its Foundry-Phase is "
     "OPTIONAL — the gate no longer consumes the ordering token, so "
-    "Foundry-Phase straight after a passing Foundry-Gate is accepted. That is "
-    "where the INSPECT mode (its width) and the rule that fired are announced, "
-    "so call it there when you want them; never call it to satisfy the "
-    "protocol."
+    "Foundry-Phase straight after a passing Foundry-Gate is accepted. It is a "
+    "read and not a move: that is where the INSPECT mode (its width) and the "
+    "rule that fired are announced, its answer never replaces the list you "
+    "are making, and the step after it is still that list's Foundry-Phase. "
+    "Never call it to satisfy the protocol."
 )
 
 
@@ -1198,7 +1207,8 @@ def _spawn_prompt(blocks: tuple[str, ...]) -> str:
 #: Foundry-Next seconds after its Agent call and before the teammate's first
 #: line. So the reading keeps a fresh seed as running, and this makes that
 #: true: the lead never stands between the door and the Agent, and the step
-#: after the spawn is END YOUR TURN rather than a Foundry-Next. Quoted by the
+#: after the spawn is the served list's next step — END YOUR TURN, or the
+#: `redispatch` list's SendMessage (D-045) — never a Foundry-Next. Quoted by the
 #: rules block and by every spawn step, per the `_GATE_THEN_PHASE_EXCEPTION`
 #: discipline.
 _SPAWN_IS_ONE_MOVE = (
@@ -1207,6 +1217,35 @@ _SPAWN_IS_ONE_MOVE = (
     "the door, with no Foundry-Next between them, because the door has "
     "already written each teammate's first ledger line and a Foundry-Next "
     "taken in between reads that teammate as running while no Agent exists."
+)
+
+#: lead-stalls GI-008 / FR-015 / CT-003 / US-003 (D-044, D-045) — THE WHOLE
+#: SERVED LIST IS ONE MOVE, THE SPAWN PAIR ABOVE BEING ONE CASE OF IT.
+#:
+#: The rules block read "Call Foundry-Next after each step and follow it", and
+#: a Foundry-Next answers from the run state, not from how far through a list
+#: the lead has got. Driven at 373e2d1, three lists went wrong on it: the CAST
+#: wave-complete and GRIND dispatch lists were served again from step (1)
+#: after their Team-Down, so Foundry-Gate and Foundry-Tasks were never
+#: reached; the refused casting's re-dispatch was answered END YOUR TURN after
+#: its Agent call, so its SendMessage never went; and the GRIND dispatch was
+#: answered `cleanup_teams` after its Team-Up, tearing down the team it had
+#: just registered.
+#:
+#: The reading side cannot tell "step 2 of 8 made" from "nothing made yet" —
+#: it has the same files either way — so, as for the spawn pair, the remedy is
+#: the sentence: Foundry-Next comes after the list's last step. The
+#: gate-then-phase read is the one Foundry-Next a list tolerates inside it,
+#: and `_GATE_THEN_PHASE_EXCEPTION` says its answer replaces nothing.
+#:
+#: The sentence itself is `teams.py#SERVED_LIST_IS_ONE_MOVE`, because
+#: Team-Down's `next_call` — a tool answer received mid-list — quotes it too,
+#: and this module imports that one, never the reverse. Only the spawn clause,
+#: which points at the rule printed beneath it here, is added on this side.
+_A_SERVED_LIST_IS_ONE_MOVE = (
+    SERVED_LIST_IS_ONE_MOVE
+    + " A spawn door and the Agent call it feeds are one step of that move "
+    "(the spawn rule below)."
 )
 
 #: The rules block's spawn sentence, rendered from the same declaration.
@@ -1239,13 +1278,16 @@ _STANDING_CRITICAL_RULES = (
     # `_GATE_THEN_PHASE_NOTE` carries at the tail of the same payload.
     # lead-stalls D-038 — and a spawn door with its Agent call is ONE step,
     # which is what the spawn rule below says in full.
-    "\n- NEVER stop between phases. Call Foundry-Next after each step and "
-    "follow it; a spawn door and the Agent call it feeds are one step (the "
-    "spawn rule below). REQUIRED everywhere except exactly one place: "
-    + _GATE_THEN_PHASE_EXCEPTION
-    + " Skipping it there is correct and is not a shortcut; skipping it "
-    "anywhere else is."
-    "\n- NEVER deliberate for more than 30 seconds between tool calls. If you catch yourself thinking, call Foundry-Next and execute whatever it says."
+    # lead-stalls D-044 / D-045 — "Call Foundry-Next after each step" is gone:
+    # the whole served list is the move, and the one Foundry-Next inside it is
+    # the gate-then-phase read, which changes no step.
+    "\n- NEVER stop between phases. " + _A_SERVED_LIST_IS_ONE_MOVE
+    + " The one Foundry-Next a list tolerates between two of its steps is "
+    "the gate-then-phase read: " + _GATE_THEN_PHASE_EXCEPTION
+    + " Skipping it there is correct and is not a shortcut."
+    "\n- NEVER deliberate for more than 30 seconds between tool calls. If you "
+    "catch yourself thinking, make the next step of the list you were served, "
+    "and call Foundry-Next after its last step."
     "\n- NEVER narrate progress as 'Checkpoint \u2014 X complete', 'Checkpoint reached', 'Milestone \u2014 X', or similar. Foundry has NO checkpoints. You are not a checkpointing orchestrator. Execute the next tool call silently and keep moving."
     "\n- NEVER skip SIGHT because 'no URL.' If frontend files exist, you need a URL. Gate will block."
     "\n- NEVER spawn foundry:teammate agents (CAST or GRIND) with run_in_background=true. They are foreground, TeamCreate-managed, and must run through Foundry-Cast-Wave or Foundry-Spawn-Teammate + verbatim Agent. Background-spawning bypasses the router architecture and breaks spec fidelity."

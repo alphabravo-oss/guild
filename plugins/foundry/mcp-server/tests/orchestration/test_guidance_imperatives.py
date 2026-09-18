@@ -63,6 +63,7 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _ACCEPTANCE_VERDICTS,
     _ACTION_CROSSINGS,
     _ACTION_IMPERATIVES,
+    _A_SERVED_LIST_IS_ONE_MOVE,
     _BRANCH_CLOSE,
     _BRANCH_FALLBACK,
     _BRANCH_OPEN,
@@ -87,6 +88,7 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _compute_next_action,
     _emitted_imperative,
     _format_imperative_header,
+    _generic_header,
     _parse_branches,
     _render_call,
     _resolved_imperative,
@@ -94,7 +96,10 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _waiting_on_agents,
     foundry_next_action,
 )
-from foundry_mcp.tools.orchestration.teams import foundry_register_team
+from foundry_mcp.tools.orchestration.teams import (
+    foundry_register_team,
+    foundry_unregister_team,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -1082,6 +1087,13 @@ def _router_drives() -> list[tuple[str, str, str, str, object, dict]]:
 #   SPAWN_NOT_ONE_MOVE / SPAWN_NOT_YIELDED
 #                     a spawn step without the one-move sentence, or a list that
 #                     spawns a teammate and does not end in the yield (D-038)
+#   RULE_WITHOUT_LIST_MOVE / *_ORDERS_NEXT_MID_LIST / NEXT_MID_LIST
+#                     the rules, the header prose or a step orders a
+#                     Foundry-Next before the served list's last step, or the
+#                     rules lack the one-move sentence (D-044 / D-045)
+#   ANSWER_BREAKS_LIST
+#                     a step's door, driven for real, answers with an order to
+#                     call Foundry-Next while the list's next step is not one
 #   STREAM_*          an unrecorded roster stream with no call, the wrong agent,
 #                     or no `agent_configs` entry; or a call for a stream the
 #                     roster does not owe (D-040)
@@ -1147,6 +1159,58 @@ def _as_step(call: object) -> _Step:
     )
 
 
+#: lead-stalls GI-008 / FR-015 / CT-003 / US-003 (D-044, D-045) — THE ONE-MOVE
+#: WALK. The rules block said "Call Foundry-Next after each step and follow
+#: it", and a Foundry-Next answers from the run state rather than from how far
+#: through a list the lead has got: driven, the CAST wave-complete and GRIND
+#: dispatch lists came back from step (1) after their Team-Down (whose own
+#: answer said "Call Foundry-Next now."), the re-dispatch lost its SendMessage
+#: and the GRIND dispatch was torn down after its Team-Up. No detector walked a
+#: list step by step. This one does, over every site and every payload: an
+#: order to call Foundry-Next is legal only where it places the call after a
+#: list's LAST step, or as the last step itself. A prohibition ("do NOT call
+#: Foundry-Next in a loop") orders nothing.
+_CALLS_FOUNDRY_NEXT = re.compile(
+    r"(?<!not )(?<!never )\bcall Foundry-Next\b", re.IGNORECASE
+)
+_AFTER_THE_LAST_STEP = "last step"
+
+
+def _orders_foundry_next_mid_list(text: str) -> list[str]:
+    """Each sentence of ``text`` that orders a Foundry-Next without placing it
+    after a served list's last step."""
+    return [
+        sentence.strip() for sentence in _EMITTED_SENTENCE.split(text)
+        if _CALLS_FOUNDRY_NEXT.search(sentence)
+        and _AFTER_THE_LAST_STEP not in sentence
+    ]
+
+
+def _step_answers() -> dict[str, object]:
+    """The `next_call` a list step's door REALLY answers with, per tool.
+
+    Read off the real handlers in a scratch run rather than typed here, so a
+    door whose answer reverts to "Call Foundry-Next now." is judged the day it
+    does: Team-Down succeeding on a torn-down team, and Accept-Casting refusing
+    a casting (its answer is the same on every path, lead-stalls FR-011).
+    """
+    with tempfile.TemporaryDirectory() as tmp, _router_run(Path(tmp)) as (
+        root, fdir, teams,
+    ):
+        _cast(fdir, {1: ["1"]})
+        _worked(fdir, "1", done=True)
+        _register(root, teams, _CAST_TEAM)
+        (teams / _CAST_TEAM).rmdir()
+        down = foundry_unregister_team(_CAST_TEAM, project_root=root)
+        refused = _accept(root, fdir, "1", prompt_hash="sha256:" + "0" * 16)
+    assert down.get("ok") is True, down
+    assert refused.get("next_call"), refused
+    return {
+        "Foundry-Team-Down": down.get("next_call"),
+        "Foundry-Accept-Casting": refused.get("next_call"),
+    }
+
+
 def judge_next_calls(
     site: str,
     action: str,
@@ -1156,8 +1220,11 @@ def judge_next_calls(
     details: dict,
     configs: dict | None,
     tools: frozenset[str],
+    answers: dict[str, object] | None = None,
 ) -> list[str]:
-    """The structure findings for one served step list (see the table above)."""
+    """The structure findings for one served step list (see the table above).
+    ``answers`` maps a step's tool to the `next_call` its door really answers
+    with (`_step_answers`)."""
     if action not in _IMPERATIVES:
         return []
     if not isinstance(calls, (list, tuple)):
@@ -1194,6 +1261,46 @@ def judge_next_calls(
         findings.append(
             f"{site}: CALL_IN_PROSE — {call}( is written outside the step list"
         )
+
+    # D-044 / D-045 — the served list is ONE move: nothing it names, nothing
+    # the rules above it say, and nothing a step's own door answers may put a
+    # Foundry-Next before its last step.
+    if steps:
+        if _A_SERVED_LIST_IS_ONE_MOVE not in rules:
+            findings.append(
+                f"{site}: RULE_WITHOUT_LIST_MOVE — the rules above the header "
+                f"do not say the served list is one move"
+            )
+        for sentence in _orders_foundry_next_mid_list(rules):
+            findings.append(
+                f"{site}: RULE_ORDERS_NEXT_MID_LIST — {sentence[:72]!r}"
+            )
+        for sentence in _orders_foundry_next_mid_list(_STEP_LINE.sub("", header)):
+            findings.append(
+                f"{site}: PROSE_ORDERS_NEXT_MID_LIST — {sentence[:72]!r}"
+            )
+    for number, step in enumerate(steps[:-1], 1):
+        if step.tool == "Foundry-Next":
+            findings.append(
+                f"{site}: NEXT_MID_LIST — step ({number}) is a Foundry-Next "
+                f"and {len(steps) - number} step(s) follow it"
+            )
+        for sentence in _orders_foundry_next_mid_list(_render_call(step)):
+            findings.append(
+                f"{site}: STEP_ORDERS_NEXT_MID_LIST — step ({number}) says "
+                f"{sentence[:72]!r}"
+            )
+        answer = (answers or {}).get(step.tool)
+        if (
+            isinstance(answer, str)
+            and _orders_foundry_next_mid_list(answer)
+            and steps[number].tool != "Foundry-Next"
+        ):
+            findings.append(
+                f"{site}: ANSWER_BREAKS_LIST — step ({number}) {step.tool} "
+                f"answers {answer!r} and step ({number + 1}) is "
+                f"{steps[number].tool}"
+            )
 
     # D-038 / D-039 — every teammate spawn against the rule printed above it.
     rule = _spawn_rule_line(rules)
@@ -1306,6 +1413,7 @@ def judge_next_calls(
 def audit_next_call_structure(drives=None) -> list[str]:
     """The structure audit over every emission site and every router payload."""
     tools = _mcp_tool_names()
+    answers = _step_answers()
     findings: list[str] = []
     for action, site, text, _owed, liveness in _audit_sites():
         phase = site.split("@", 1)[1].split("[", 1)[0]
@@ -1317,7 +1425,7 @@ def audit_next_call_structure(drives=None) -> list[str]:
             findings.append(f"{site}: RENDERING — the site's header moved")
         findings += judge_next_calls(
             site, action, calls, header, _guidance._STANDING_CRITICAL_RULES,
-            details, None, tools,
+            details, None, tools, answers,
         )
     for site, _state, _tr, _oa, _ob, d in (
         drives if drives is not None else _router_drives()
@@ -1328,7 +1436,7 @@ def audit_next_call_structure(drives=None) -> list[str]:
         )
         findings += judge_next_calls(
             site, d["action"], d["next_calls"], d["header"], d["rules"],
-            d["details"], configs, tools,
+            d["details"], configs, tools, answers,
         )
     return findings
 
@@ -1515,6 +1623,14 @@ def audit_report() -> list[str]:
         "DOOR_WITHOUT_SPAWN, SPAWN_WITHOUT_DOOR, SPAWN_ORDER, SPAWN_NOT_ONE_MOVE, "
         "SPAWN_NOT_YIELDED, STREAM_WITHOUT_CALL, STREAM_WRONG_AGENT, "
         "STREAM_WITHOUT_CONFIG, STREAM_NOT_OWED",
+        "one-move walk (every site and every payload, lead-stalls D-044 / D-045): "
+        "RULE_WITHOUT_LIST_MOVE, RULE_ORDERS_NEXT_MID_LIST, "
+        "PROSE_ORDERS_NEXT_MID_LIST, NEXT_MID_LIST, STEP_ORDERS_NEXT_MID_LIST, "
+        "ANSWER_BREAKS_LIST",
+        "door answers the walk judged, read off the real handlers: "
+        + "; ".join(
+            f"{tool} -> {answer!r}" for tool, answer in sorted(_step_answers().items())
+        ),
         "CONDITIONAL is the prose backstop; the zero is computed over the step lists.",
         "run_streams sites expand the stream steps from this run's cycle-10 roster: "
         + ", ".join(_C10_ROSTER),
@@ -4958,7 +5074,8 @@ def test_the_prose_the_structure_moved_still_says_what_it_said():
     """The sentences the rework rewrote or moved, pinned where they now live:
     the live branch's seed sentence (D-038), the dispatch branch's stale-seed
     sentence and its dropped claim (D-038), the rules line's one-step clause
-    (D-038), and the two trailers that lost a call written in prose."""
+    (D-038, now inside the one-move sentence of D-044), and the two trailers
+    that lost a call written in prose."""
     live = _parse_branches(_ACTION_IMPERATIVES["build_castings"])["live"]
     assert "holds only the line its spawn door wrote counts as running" in live
     assert "holds only the line its spawn door wrote counts as running" in (
@@ -4971,7 +5088,9 @@ def test_the_prose_the_structure_moved_still_says_what_it_said():
         line for line in _guidance._STANDING_CRITICAL_RULES.splitlines()
         if line.startswith("- NEVER stop between phases")
     )
-    assert "a spawn door and the Agent call it feeds are one step" in rule, rule
+    assert "A spawn door and the Agent call it feeds are one step of that move" in (
+        rule
+    ), rule
     assert "the Foundry-Next the last notification wakes you for opens the " \
         "validation" in _ACTION_IMPERATIVES["add_castings"]
     assert "No team is needed" in _ACTION_IMPERATIVES["add_castings"]
@@ -4988,3 +5107,198 @@ def test_the_prose_the_structure_moved_still_says_what_it_said():
     trace = _guidance._stream_agent_step("trace").args
     assert "`git archive HEAD`" in trace and "cite that sha" in trace, trace
     assert "PIN ITS WORK TO A SNAPSHOT" in streams
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 / FR-015 / CT-003 / US-003 (D-044, D-045) — ONE LIST, ONE MOVE
+# --------------------------------------------------------------------------- #
+
+#: The rules line as it stood at 373e2d1, which the one-move walk must refuse.
+_AFTER_EACH_STEP_RULE = (
+    "\n- NEVER stop between phases. Call Foundry-Next after each step and "
+    "follow it; a spawn door and the Agent call it feeds are one step (the "
+    "spawn rule below). REQUIRED everywhere except exactly one place: "
+)
+
+#: The three lists PROVE drove wrong at 373e2d1, each with a step after a
+#: call whose answer, or the old rule, put a Foundry-Next in the middle.
+_ONE_MOVE_STATES = {
+    "cast-built": _arrange_cast_built,
+    "grind-idle": _arrange_grind_idle,
+    "cast-refused-team-down": _arrange_cast_refused_team_down,
+}
+
+
+def _one_move_drive(state: str) -> dict:
+    return drive_router(_ONE_MOVE_STATES[state], None)
+
+
+def _one_move_findings(d: dict, answers: dict, rules: str | None = None,
+                       calls: list | None = None) -> list[str]:
+    return judge_next_calls(
+        "one-move", d["action"],
+        d["next_calls"] if calls is None else calls,
+        d["header"], d["rules"] if rules is None else rules,
+        d["details"], None, _mcp_tool_names(), answers,
+    )
+
+
+def test_a_served_list_is_one_move_in_the_rules_and_in_every_answer():
+    """lead-stalls D-044 / D-045 — the rules, the lists and the door answers
+    agree that Foundry-Next comes after a served list's last step.
+
+    At 373e2d1 the rules said "Call Foundry-Next after each step", Team-Down
+    answered "Call Foundry-Next now." from the middle of two lists, and a
+    Foundry-Next taken there re-served each list from step (1). The walk
+    reads Team-Down's answer off the real door."""
+    from foundry_mcp.tools.orchestration.teams import (
+        SERVED_LIST_IS_ONE_MOVE,
+        TEAM_DOWN_NEXT_CALL,
+    )
+
+    rules = _guidance._STANDING_CRITICAL_RULES
+    assert _A_SERVED_LIST_IS_ONE_MOVE in rules
+    assert SERVED_LIST_IS_ONE_MOVE in _A_SERVED_LIST_IS_ONE_MOVE
+    assert "after each step" not in rules
+    assert _orders_foundry_next_mid_list(rules) == []
+    # The one Foundry-Next a list tolerates is a read that replaces nothing;
+    # "call it there when you want them" read as licence to restart the list.
+    exception = _guidance._GATE_THEN_PHASE_EXCEPTION
+    assert "its answer never replaces the list you are making" in exception
+    assert "the step after it is still that list's Foundry-Phase" in exception
+    assert "call it there when you want them" not in exception
+
+    answers = _step_answers()
+    assert answers["Foundry-Team-Down"] == TEAM_DOWN_NEXT_CALL
+    assert _orders_foundry_next_mid_list(TEAM_DOWN_NEXT_CALL) == []
+
+    for state in _ONE_MOVE_STATES:
+        d = _one_move_drive(state)
+        tools = [call["tool"] for call in d["next_calls"]]
+        assert "Foundry-Next" not in tools[:-1], (state, tools)
+        assert _one_move_findings(d, answers) == [], state
+        assert _A_SERVED_LIST_IS_ONE_MOVE in d["rules"], state
+    # D-045 (1): the refusal is a step of the move the spawn opened, before
+    # the yield, with no Foundry-Next anywhere in between.
+    tools = [c["tool"] for c in _one_move_drive("cast-refused-team-down")["next_calls"]]
+    assert tools == [
+        "Foundry-Spawn-Teammate", "Agent", "SendMessage", _END_TURN,
+    ], tools
+
+
+def test_the_one_move_walk_bites_on_every_shape_the_defects_took():
+    """Positive controls for the D-044 / D-045 walk, on real served lists."""
+    answers = _step_answers()
+    for state in ("cast-built", "grind-idle"):
+        d = _one_move_drive(state)
+        assert _one_move_findings(d, answers) == [], state
+
+        # The 373e2d1 rules line restored.
+        old = d["rules"].replace(
+            "\n- NEVER stop between phases. " + _A_SERVED_LIST_IS_ONE_MOVE,
+            _AFTER_EACH_STEP_RULE,
+        )
+        assert old != d["rules"], state
+        kinds = " ".join(_one_move_findings(d, answers, rules=old))
+        assert "RULE_WITHOUT_LIST_MOVE" in kinds, state
+        assert "RULE_ORDERS_NEXT_MID_LIST" in kinds, state
+
+        # Team-Down's 373e2d1 answer.
+        reverted = {**answers, "Foundry-Team-Down": "Call Foundry-Next now."}
+        assert any(
+            "ANSWER_BREAKS_LIST — step (2) Foundry-Team-Down" in f
+            for f in _one_move_findings(d, reverted)
+        ), state
+
+        # A Foundry-Next step, and a step note ordering one, mid-list.
+        calls = list(d["next_calls"])
+        assert any(
+            "NEXT_MID_LIST — step (2)" in f
+            for f in _one_move_findings(
+                d, answers, calls=calls[:1] + [{"tool": "Foundry-Next"}] + calls[1:]
+            )
+        ), state
+        noted = [dict(calls[0], note="then call Foundry-Next and follow it")]
+        assert any(
+            "STEP_ORDERS_NEXT_MID_LIST — step (1)" in f
+            for f in _one_move_findings(d, answers, calls=noted + calls[1:])
+        ), state
+
+    # Negative control: Accept-Casting's "Call Foundry-Next now." is the
+    # acceptance list's own next and last step, so it breaks nothing.
+    d = drive_router(_arrange_cast_unaccepted, None)
+    assert [c["tool"] for c in d["next_calls"]][1:] == [
+        "Foundry-Accept-Casting", "Foundry-Next",
+    ]
+    assert answers["Foundry-Accept-Casting"] == "Call Foundry-Next now."
+    assert _one_move_findings(d, answers) == []
+    # And a prohibition orders nothing.
+    assert _orders_foundry_next_mid_list(
+        "Do NOT call Foundry-Next in a loop. never call Foundry-Next twice."
+    ) == []
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 (D-046) — THE UNRESOLVED-CROSSING FALLBACK, PINNED
+# --------------------------------------------------------------------------- #
+
+#: Every phase the router knows, the empty one a caller that read nothing
+#: passes, and one no ladder names — so the sweep reaches the crossings'
+#: misses, which no router path does today (D-046's reachability note).
+_ANY_PHASE = ("", "F0", "F0.5", "F1", "F2", "F3", "F4", "F5", "F5.5", "F6",
+              "HALTED", "F9")
+
+#: Any `{word}` left in text the lead receives. `{id}` is the one literal:
+#: `add_castings` names the file `casting-{id}-prompt.md` the decomposition
+#: writer fills in, and no resolver owns it.
+_ANY_SLOT = re.compile(r"\{[a-z_ ]+\}")
+_LITERAL_PROSE_SLOTS = frozenset({"{id}"})
+
+
+def test_an_unresolved_crossing_takes_the_generic_header():
+    """D-046: deleting `_resolved_imperative`'s `{gate}`/`{token}` fallback
+    left the suite green, and `transition_to_inspect` from F2, F0 or ''
+    then published `phase='{gate}'` in the header AND in next_calls."""
+    crossings = _ACTION_CROSSINGS["transition_to_inspect"]
+    missed = [phase for phase in _ANY_PHASE if phase not in crossings]
+    assert {"", "F0", "F2"} <= set(missed)
+    for phase in missed:
+        steps, header = _emitted_imperative(
+            "transition_to_inspect", {}, run_name="r", phase=phase,
+        )
+        assert steps is None, phase
+        assert header == _generic_header("transition_to_inspect"), phase
+        assert _format_imperative_header(
+            "transition_to_inspect", "", {}, run_name="r", phase=phase,
+        ) == header, phase
+        assert "{" not in header, phase
+        nxt_calls = [_call_record(step) for step in steps or ()]
+        assert nxt_calls == [], phase
+
+
+def test_no_emission_carries_an_unresolved_slot_in_any_phase():
+    """D-046's structural half: a guard no router path reaches is unpinned,
+    so every action is emitted from every phase and every reading, and
+    neither the header nor any published call field may keep a `{slot}`."""
+    leaks: dict[str, list[str]] = {}
+    for action in sorted(_IMPERATIVES):
+        for phase in _ANY_PHASE:
+            for label, liveness, _owed in _LIVENESS_READINGS:
+                steps, header = _emitted_imperative(
+                    action, _site_details(action), run_name=_AUDIT_RUN,
+                    phase=phase, liveness=liveness,
+                )
+                texts = [header] + [
+                    str(value)
+                    for step in steps or ()
+                    for value in _call_record(step).values()
+                ]
+                found = sorted({
+                    slot for text in texts for slot in _ANY_SLOT.findall(text)
+                } - _LITERAL_PROSE_SLOTS)
+                if found:
+                    leaks[f"{action}@{phase}[{label}]"] = found
+    assert leaks == {}, leaks
+
+    # Positive control: the sweep sees the leak D-046's mutation produced.
+    assert _ANY_SLOT.findall("Foundry-Gate(phase='{gate}')") == ["{gate}"]
