@@ -2282,7 +2282,13 @@ def test_an_unrecorded_inspect_width_is_refused_at_every_door(run_env):
     #    stream roster it cannot know.
     action = _guidance._compute_next_action(project_root)
     assert action["action"] == "record_inspect_width", action
-    assert "inspect_start" in action["instructions"], action
+    # lead-stalls GI-008 / FR-007 — named by the list the lead is served; the
+    # CONTEXT beside it states the reason and writes out no call.
+    header = _guidance._format_imperative_header(
+        action["action"], "", action["details"], phase=action["phase"],
+    )
+    assert "Foundry-Phase(phase='inspect_start')" in header, header
+    assert "Foundry-Phase(" not in action["instructions"], action
     assert action["details"]["unrecorded_width"] is True
 
 

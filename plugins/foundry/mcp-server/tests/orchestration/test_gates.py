@@ -1692,17 +1692,27 @@ def test_the_halted_next_action_does_not_claim_an_unwritten_report(run_env, monk
     assert "verdicts.json" in action["instructions"], (
         "the recorded error is what tells the lead WHAT to repair"
     )
-    assert "Foundry-Report" in action["instructions"], (
+    # lead-stalls GI-008 / FR-007 — named where the lead takes calls from: the
+    # served list, whose one step it is. The CONTEXT beside it states the error
+    # and orders nothing, so the header's NONE and a call in the CONTEXT can no
+    # longer answer the same question two ways.
+    header = _guidance._format_imperative_header(
+        "halted", "", action["details"], phase=action["phase"],
+    )
+    assert "YOUR NEXT CALL:\n  (1) Foundry-Report" in header, (
         "HALTED has no exit, so the one call that can still write the report "
         "must be named or the lead has no next move at all"
     )
+    assert "NONE" not in header, header
+    assert "Foundry-Report" not in action["instructions"], action["instructions"]
     # The field is named as what it IS, so a caller cannot read a promise out
     # of its presence — the same shape `_halted_refusal` uses.
     assert action["details"]["report"] is None, action["details"]
     assert action["details"]["report_generated"] is False, action["details"]
     assert action["details"]["report_error"], action["details"]
-    # ...and it still stops dispatching, which is the rest of FR-052.
-    assert "Do NOT dispatch another wave" in action["instructions"]
+    # ...and it still stops dispatching, which is the rest of FR-052 — said
+    # by the header, beneath its one step.
+    assert "Do NOT dispatch a wave" in header, header
 
 
 

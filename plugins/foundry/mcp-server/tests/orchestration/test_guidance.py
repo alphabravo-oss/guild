@@ -590,6 +590,9 @@ def test_a_halted_run_issues_no_dispatch(run_env):
         halted_at_cycle=2, halted_reason="--max-cycles 2 reached",
     )
     _defect_ledger(fdir, [_tiered("D-001", "LIVE")])
+    # The halt wrote its report; one it could not write is served as the one
+    # step `Foundry-Report` (test_gates.py, lead-stalls GI-008 / FR-007).
+    (fdir / "REPORT.md").write_text("# report\n", encoding="utf-8")
 
     nxt = foundry_next_action(project_root)
 
@@ -997,8 +1000,12 @@ def test_the_f1_imperative_names_the_tool_that_enters_f2(run_env):
     action = _compute_next_action(project_root)
 
     assert action["action"] == "transition_to_inspect"
-    assert "Foundry-Phase(phase='cast')" in action["instructions"]
-    assert "update state to F2" not in action["instructions"]
+    # lead-stalls D-051..D-053 — the tool is named by the step list the lead is
+    # served, and the CONTEXT beside it names no call of its own.
+    served = foundry_next_action(project_root)["instructions"]
+    assert "(2) Foundry-Phase(phase='cast')" in served, served
+    assert "Foundry-Phase(" not in action["instructions"], action["instructions"]
+    assert "update state to F2" not in served
 
 
 
@@ -1309,7 +1316,7 @@ def test_the_halted_notice_renders_the_reason_as_prose_not_a_dict(run_env):
     assert nxt["details"]["halted_reason"] == "lead_ruling: the lead stopped it", nxt
     assert "lead_ruling: the lead stopped it" in nxt["instructions"], nxt["instructions"]
     # ...and the cycle beside it is the recorded number, not "?".
-    assert "Run HALTED at cycle 2" in nxt["instructions"], nxt["instructions"]
+    assert "This run HALTED at cycle 2" in nxt["instructions"], nxt["instructions"]
     assert nxt["details"]["halted_at_cycle"] == 2, nxt["details"]
 
 

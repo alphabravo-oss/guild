@@ -41,6 +41,8 @@ import pytest
 
 from tests.orchestration._env import (  # noqa: F401
     _defect_ledger,
+    _escalated_fixture,
+    _halted_run,
     _progressing_ledger,
     _record_full_inspect_mode,
     _stale_stall_clock,
@@ -49,12 +51,14 @@ from tests.orchestration._env import (  # noqa: F401
     _write_manifest_with_castings,
     _write_spec,
     _write_state,
+    _write_verdicts,
     patch_everywhere,
     run_env,
 )
 
 from foundry_mcp.tools import foundry_state
 from foundry_mcp.tools.artifacts import (
+    CAST_COMPLETE_MARKER,
     GATE_PASSED_MARKER,
     _hash_file,
     foundry_spec_hash,
@@ -101,6 +105,7 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     foundry_next_action,
 )
 from foundry_mcp.tools.orchestration.teams import (
+    SERVED_LIST_IS_ONE_MOVE,
     foundry_register_team,
     foundry_unregister_team,
 )
@@ -926,6 +931,161 @@ def _arrange_nyquist_filed(root, fdir, teams):
     _post_assay(fdir, "F5.5", temper=False, nyquist=True, filed=True)
 
 
+#: lead-stalls GI-008 / FR-007 (D-051..D-053) — EVERY OTHER ACTION THE ROUTER
+#: RETURNS. The rows above reached six of the twenty-two, so the CONTEXT of
+#: F0, of a clean or filed F2, and of every F4 crossing was never read: the
+#: ASSAY crossing's CONTEXT ordered the calls the opposite way from its header
+#: (D-051), the F4 -> F6 CONTEXT opened on the gate its report must precede
+#: (D-052), and the ASSAY-rejection list could not succeed with nothing filed
+#: (D-053). Each state is built the way the run leaves it.
+def _arrange_no_run(root, fdir, teams):
+    foundry_state.clear_active_run()
+
+
+def _arrange_decompose_empty(root, fdir, teams):
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F0", cycle=0)
+
+
+def _arrange_decompose_done(root, fdir, teams):
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F0", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+
+
+def _arrange_cast_complete(root, fdir, teams):
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F1", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    (fdir / CAST_COMPLETE_MARKER).write_text("x\n", encoding="utf-8")
+
+
+def _arrange_inspect_width_unrecorded(root, fdir, teams):
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+
+
+def _clean_inspect(fdir: Path, mode: str, *, filed: bool = False) -> None:
+    """Every stream the recorded roster requires has recorded this cycle."""
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase="F2", cycle=1)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    recorded = _record_full_inspect_mode(fdir, cycle=1)
+    if mode != "FULL":
+        state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+        state["inspect_modes"][-1].update(mode=mode, rule="delta")
+        (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    for stream in recorded["required_streams"]:
+        (fdir / f".{stream}-complete").write_text(
+            "2020-01-01T00:00:00+00:00 cycle=1\nitems_checked=10\n"
+            "items_total=10\ncoverage=100%\nfindings=0\n",
+            encoding="utf-8",
+        )
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")] if filed else [])
+
+
+def _arrange_inspect_filed(root, fdir, teams):
+    _clean_inspect(fdir, "FULL", filed=True)
+
+
+def _arrange_inspect_clean_full(root, fdir, teams):
+    _clean_inspect(fdir, "FULL")
+
+
+def _arrange_inspect_clean_delta(root, fdir, teams):
+    _clean_inspect(fdir, "DELTA")
+
+
+def _escalated(fdir: Path, *, tier: str) -> None:
+    """The class FDC persisted ESCALATED over three instances of ``tier``.
+
+    A LATENT backlog leaves a clean INSPECT that convergence ST-010 still
+    holds DONE open for, which is where `_still_escalated_notice` rides the
+    CONTEXT; LIVE instances are the GRIND arm's `_escalation_notice`."""
+    _escalated_fixture(fdir, open_instances=True)
+    ledger = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    for record in ledger["defects"]:
+        record["tier"] = tier
+    (fdir / "defects.json").write_text(json.dumps(ledger), encoding="utf-8")
+
+
+def _arrange_inspect_escalated_full(root, fdir, teams):
+    _clean_inspect(fdir, "FULL")
+    _escalated(fdir, tier="LATENT")
+
+
+def _arrange_inspect_escalated_delta(root, fdir, teams):
+    _clean_inspect(fdir, "DELTA")
+    _escalated(fdir, tier="LATENT")
+
+
+def _arrange_inspect_escalated_filed(root, fdir, teams):
+    _clean_inspect(fdir, "FULL")
+    _escalated(fdir, tier="LIVE")
+
+
+def _assay(
+    fdir: Path, verdicts: list[str], *, temper: bool = False,
+    nyquist: bool = False, filed: bool = False,
+) -> None:
+    """F4 with the verdicts ASSAY recorded, one per requirement FR-1..FR-n."""
+    ids = [f"FR-{n}" for n in range(1, max(len(verdicts), 1) + 1)]
+    _write_spec(fdir, ids)
+    _write_state(fdir, phase="F4", cycle=1, temper=temper, nyquist=nyquist)
+    _write_verdicts(fdir, [
+        {"id": rid, "verdict": verdict, "evidence": "read at HEAD"}
+        for rid, verdict in zip(ids, verdicts)
+    ])
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE")] if filed else [])
+
+
+def _arrange_assay_empty(root, fdir, teams):
+    _assay(fdir, [])
+
+
+def _arrange_assay_failed_filed(root, fdir, teams):
+    _assay(fdir, ["VERIFIED", "PARTIAL"], filed=True)
+
+
+def _arrange_assay_failed_unfiled(root, fdir, teams):
+    # PROVE's D-053 state: a verdict recorded, and no defect filed for it.
+    _assay(fdir, ["VERIFIED", "PARTIAL"])
+
+
+def _arrange_assay_passed(root, fdir, teams):
+    _assay(fdir, ["VERIFIED"])
+
+
+def _arrange_assay_passed_temper(root, fdir, teams):
+    _assay(fdir, ["VERIFIED"], temper=True)
+
+
+def _arrange_assay_passed_nyquist(root, fdir, teams):
+    _assay(fdir, ["VERIFIED"], nyquist=True)
+
+
+def _arrange_assay_passed_both(root, fdir, teams):
+    _assay(fdir, ["VERIFIED"], temper=True, nyquist=True)
+
+
+def _arrange_halted_reported(root, fdir, teams):
+    _halted_run(fdir)
+    (fdir / "REPORT.md").write_text("# report\n", encoding="utf-8")
+
+
+def _arrange_halted_unreported(root, fdir, teams):
+    _halted_run(fdir)
+
+
+def _arrange_done(root, fdir, teams):
+    _write_state(fdir, phase="F6", cycle=1)
+
+
+def _arrange_unknown_phase(root, fdir, teams):
+    _write_state(fdir, phase="F9", cycle=1)
+
+
 #: (state, the transition(s) it is the server-side half of, arrange, the
 #: action OWED, the branch OWED or None for an unbranched action). The owed
 #: columns are derived by hand from the run state, never from the router — a
@@ -967,6 +1127,30 @@ _ROUTER_STATES = (
     ("nyquist-owed", "GI-008", _arrange_nyquist_owed, "run_nyquist", None),
     ("nyquist-gate-passed", "GI-008", _arrange_nyquist_gate_passed, "transition_to_done", None),
     ("nyquist-filed", "GI-008", _arrange_nyquist_filed, "transition_to_grind", None),
+    # lead-stalls D-051..D-053 — the rest of the population, so every action
+    # the router returns is served here at least once and its CONTEXT judged.
+    ("no-run", "GI-008", _arrange_no_run, "init", None),
+    ("decompose-empty", "GI-008", _arrange_decompose_empty, "add_castings", None),
+    ("decompose-done", "GI-008", _arrange_decompose_done, "transition_to_cast", None),
+    ("cast-complete", "GI-008", _arrange_cast_complete, "transition_to_inspect", None),
+    ("inspect-width-unrecorded", "GI-008", _arrange_inspect_width_unrecorded, "record_inspect_width", None),
+    ("inspect-filed", "GI-008", _arrange_inspect_filed, "transition_to_grind", None),
+    ("inspect-clean-full", "GI-008", _arrange_inspect_clean_full, "transition_to_assay", None),
+    ("inspect-clean-delta", "GI-008", _arrange_inspect_clean_delta, "widen_inspect", None),
+    ("inspect-escalated-full", "GI-008", _arrange_inspect_escalated_full, "transition_to_assay", None),
+    ("inspect-escalated-delta", "GI-008", _arrange_inspect_escalated_delta, "widen_inspect", None),
+    ("inspect-escalated-filed", "GI-008", _arrange_inspect_escalated_filed, "transition_to_grind", None),
+    ("assay-empty", "GI-008", _arrange_assay_empty, "run_assay", None),
+    ("assay-failed-filed", "GI-008", _arrange_assay_failed_filed, "assay_failed_loop_back", None),
+    ("assay-failed-unfiled", "GI-008", _arrange_assay_failed_unfiled, "assay_failed_loop_back", None),
+    ("assay-passed", "GI-008", _arrange_assay_passed, "transition_to_done", None),
+    ("assay-passed-temper", "GI-008", _arrange_assay_passed_temper, "transition_to_temper", None),
+    ("assay-passed-nyquist", "GI-008", _arrange_assay_passed_nyquist, "transition_to_nyquist", None),
+    ("assay-passed-both", "GI-008", _arrange_assay_passed_both, "transition_to_temper", None),
+    ("halted-reported", "GI-008", _arrange_halted_reported, "halted", None),
+    ("halted-unreported", "GI-008", _arrange_halted_unreported, "halted", None),
+    ("done", "GI-008", _arrange_done, "done", None),
+    ("unknown-phase", "GI-008", _arrange_unknown_phase, "unknown", None),
 )
 
 #: The two clocks every state is driven at: the lead's last Foundry-Next just
@@ -1055,6 +1239,17 @@ def _order_openers(context: str) -> list[str]:
             continue      # a participle: "Required this cycle", "Waiting on"
         orders.append(" ".join(words[:4]))
     return orders
+
+
+#: lead-stalls D-051..D-053 — the one verbless HEADING a CONTEXT carries: the
+#: convergence ST-010 notice's distances, which
+#: `escalation._escalation_exit_distances` renders as "Distance to each exit —
+#: <class>: ..." (a module outside this casting's files, and outside
+#: lead-stalls NFR-001's source cap). The order detector reads a clause by its
+#: first word, and a heading's first word is a noun, so the heading is removed
+#: before the judgement; the escalated router states pin that the renderer
+#: still opens with exactly this text.
+_DISTANCES_HEADING = "Distance to each exit —"
 
 
 def _context_orders(context: str) -> list[str]:
@@ -1336,7 +1531,10 @@ def judge_next_calls(
     # the rules above it say, and nothing a step's own door answers may put a
     # Foundry-Next before its last step.
     if steps:
-        if _A_SERVED_LIST_IS_ONE_MOVE not in rules:
+        # The sentence itself, which every rules block carrying a list states;
+        # the spawn clause `_A_SERVED_LIST_IS_ONE_MOVE` adds to the standing
+        # one is judged below, on the lists that spawn.
+        if SERVED_LIST_IS_ONE_MOVE not in rules:
             findings.append(
                 f"{site}: RULE_WITHOUT_LIST_MOVE — the rules above the header "
                 f"do not say the served list is one move"
@@ -1571,6 +1769,35 @@ def audit_assembled_payloads(drives=None) -> list[str]:
                     f"{site}: CONTEXT_SEQUENCE — a branched action's CONTEXT "
                     f"names {moves or 'no deferral to the header'}"
                 )
+        # lead-stalls GI-008 / FR-007 (D-051..D-053) — AND EVERY OTHER
+        # ACTION'S CONTEXT. The rule above was asserted for the branched
+        # actions alone, so twelve step-list arms kept a sequence of their own
+        # beneath the header: `transition_to_assay` in the opposite order,
+        # `transition_to_done` opening on a gate its report must precede, and
+        # `assay_failed_loop_back` naming a filing no step made. Judged by the
+        # same order detector, plus two it could not stand in for: a call
+        # written in call syntax, and the prose conditional backstop.
+        if not d["branched"]:
+            moves = _order_openers(d["context"].replace(_DISTANCES_HEADING, " "))
+            if moves:
+                findings.append(
+                    f"{site}: CONTEXT_SEQUENCE — the CONTEXT orders {moves}"
+                )
+        written = sorted(set(_CALL_SYNTAX.findall(d["context"])))
+        if written:
+            findings.append(
+                f"{site}: CONTEXT_CALL — the CONTEXT writes out "
+                f"{', '.join(name + '(' for name in written)}"
+            )
+        hit = _HANDS_OVER_THE_CONDITION.search(d["context"])
+        if hit:
+            context = d["context"]
+            quoted = " ".join(
+                context[max(0, hit.start() - 40):hit.end() + 60].split()
+            )
+            findings.append(
+                f"{site}: CONTEXT_CONDITIONAL — the lead must evaluate {quoted!r}"
+            )
         if d["branched"] and not isinstance(d["agent_liveness"], dict):
             findings.append(
                 f"{site}: NO_LIVENESS — a branched action's payload carries no "
@@ -1686,7 +1913,11 @@ def audit_report() -> list[str]:
         "header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, "
         "UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME",
         "payload detectors: WRONG_ROUTE, CONDITIONAL, CONTRADICTION, CONTEXT_SEQUENCE, "
-        "TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING",
+        "CONTEXT_CALL, CONTEXT_CONDITIONAL, TEARDOWN_OVER_RUNNING_AGENTS, "
+        "NO_LIVENESS, SPLIT_READING",
+        "CONTEXT_SEQUENCE, CONTEXT_CALL and CONTEXT_CONDITIONAL judge the CONTEXT of "
+        "EVERY payload (lead-stalls D-051..D-053): it states the run state and "
+        "names no call, no order and no condition.",
         "step-list detectors (every site and every payload, lead-stalls D-038..D-043): "
         "STEP_LIST, RENDERING, NONE, UNKNOWN_TOOL, YIELD_NOT_LAST, CALL_IN_PROSE, "
         "RULE_WITHOUT_PHASE, RULE_NOT_LEDGER_LAST, RULE_WITHOUT_ONE_MOVE, "
@@ -1902,7 +2133,8 @@ def turn_boundary_report(drives=None) -> list[str]:
         "correct, the thing that ends the idle is named in the same breath, and the",
         "call the woken lead is told to make stops nobody.",
         "ST-003 is discharged by 'names-call=yes' on every row where running is not",
-        "yes: a lead that is handed a call cannot park for want of a move.",
+        "yes and the run is not DONE or HALTED: a lead that is handed a call cannot",
+        "park for want of a move.",
         "ST-004 is the cast-refused, cast-refused-team-down, cast-refused-foreign-pane,",
         "cast-refused-other-team and cast-refusal-answered rows: a refusal goes back to",
         "a teammate (the one that built it while its OWN wave team is registered, a",
@@ -1968,6 +2200,10 @@ def test_the_recorded_evidence_shows_the_population_it_judged():
             assert "ends-turn=yes" in line, line
             assert "names-wake=yes" in line, line
             assert "teardown=no" in line, line
+        elif " done/" in line or " halted/" in line:
+            # lead-stalls ST-003's guard is "run not DONE or HALTED": a
+            # terminal ends the run, and names a call only when one is owed.
+            assert "ends-turn=yes" in line or "names-call=yes" in line, line
         else:
             assert "names-call=yes" in line, line
 
@@ -3368,9 +3604,14 @@ def test_the_context_block_of_a_branched_action_names_no_sequence(run_env):
     # The F1 block no longer asserts an activity the server has not measured.
     assert "teammates are building" not in blocks["build_castings"].lower()
     # The F3 block keeps what the imperative CANNOT carry: the measured counts
-    # and the per-defect bookkeeping call.
+    # and the per-defect bookkeeping door's argument shape — stated as a fact
+    # about the door, never written out as a call (lead-stalls D-051..D-053).
     assert "blocking defect(s) to fix" in blocks["fix_defects"]
-    assert "Foundry-Fix(defect_id, cycle, authored_by, ...)" in blocks["fix_defects"]
+    assert (
+        "Foundry-Fix door, whose required arguments are defect_id, cycle and "
+        "authored_by"
+    ) in blocks["fix_defects"]
+    assert "Foundry-Fix(" not in blocks["fix_defects"]
     # lead-stalls D-024 — the F2 block names no spawn: the header above it
     # says whether the unrecorded streams are running or owed a dispatch.
     streams = blocks["run_streams"]
@@ -5044,7 +5285,9 @@ def test_the_payload_publishes_the_steps_its_header_renders(run_env):
 #: owes, so a step dropped, split, merged or reordered is named by key.
 _OWED_CALLS = {
     "init": ["Foundry-Init"],
-    "halted": [],
+    # The template shows the report a halt could not write; with it written
+    # the served list is empty and the header reads NONE.
+    "halted": ["Foundry-Report"],
     "done": [],
     "unknown": ["Foundry-Context", "Foundry-Next"],
     "cleanup_teams": ["SendMessage", "TeamDelete", "Foundry-Team-Down"],
@@ -5095,7 +5338,11 @@ _OWED_CALLS = {
     "run_temper": ["Skill", "Foundry-Report", "Foundry-Gate"],
     "transition_to_nyquist": ["Foundry-Gate", "Foundry-Phase"],
     "run_nyquist": ["Agent", "Foundry-Report", "Foundry-Gate"],
-    "assay_failed_loop_back": ["Foundry-Tasks", "Foundry-Gate", "Foundry-Phase"],
+    # lead-stalls D-053 — the template shows the filing its list opens with
+    # when no open defect carries ASSAY's verdicts.
+    "assay_failed_loop_back": [
+        "Foundry-Sync", "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
+    ],
     "widen_inspect": ["Foundry-Gate", "Foundry-Phase"],
     "record_inspect_width": ["Foundry-Gate", "Foundry-Phase"],
 }
@@ -5598,6 +5845,7 @@ def _walk_served_lists(root: str, *, filed_by_phase_work: Path | None = None,
 
     from foundry_mcp.tools.foundry_report import foundry_report
     from foundry_mcp.tools.orchestration.directives import foundry_defects_to_tasks
+    from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
     from foundry_mcp.tools.orchestration.gates import foundry_gate
     from foundry_mcp.tools.orchestration.transitions import (
         foundry_mark_phase_complete,
@@ -5633,6 +5881,20 @@ def _walk_served_lists(root: str, *, filed_by_phase_work: Path | None = None,
                 assert foundry_report(project_root=root)["ok"]
             elif tool == "Foundry-Tasks":
                 foundry_defects_to_tasks(project_root=root)
+            elif tool == "Foundry-Sync":
+                # lead-stalls D-053 — the filing, made with exactly the fields
+                # the step names, one finding per requirement it lists.
+                filed = foundry_sync_defects(
+                    int(args.split("cycle=", 1)[1].split(",", 1)[0]),
+                    [
+                        {"source": "assay", "tier": "LIVE", "type": "PARTIAL",
+                         "spec_ref": rid, "class": rid,
+                         "description": f"ASSAY recorded {rid} PARTIAL: read at HEAD"}
+                        for rid in nxt["details"]["unfiled_verdicts"]
+                    ],
+                    project_root=root,
+                )
+                assert "error" not in filed, filed
             elif tool == "Bash":
                 command = args.split("command='", 1)[1].rsplit("'", 1)[0]
                 subprocess.run(command, shell=True, cwd=root, check=True,
@@ -5675,6 +5937,11 @@ _DONE_LIST = ["Foundry-Report", "Foundry-Gate", "Bash", "Bash", "Foundry-Phase"]
             ("F5.5", "run_nyquist", ["Agent", "Foundry-Report", "Foundry-Gate"]),
             ("F5.5", "transition_to_done", _DONE_LIST),
         ]),
+        # lead-stalls D-052 — and neither flag: F4 -> F6 by the list whose
+        # CONTEXT used to open on the gate its report must precede.
+        (False, False, [
+            ("F4", "transition_to_done", _DONE_LIST),
+        ]),
         # and --nyquist alone, which reaches F5.5 from F4.
         (False, True, [
             ("F4", "transition_to_nyquist", ["Foundry-Gate", "Foundry-Phase"]),
@@ -5682,7 +5949,7 @@ _DONE_LIST = ["Foundry-Report", "Foundry-Gate", "Bash", "Bash", "Foundry-Phase"]
             ("F5.5", "transition_to_done", _DONE_LIST),
         ]),
     ],
-    ids=["temper", "temper-nyquist", "nyquist"],
+    ids=["temper", "temper-nyquist", "done", "nyquist"],
 )
 def test_a_post_assay_run_reaches_f6_by_the_served_lists_alone(
     run_env, temper, nyquist, owed,
@@ -5767,3 +6034,149 @@ def test_the_post_assay_context_names_no_call_and_no_condition(run_env):
     old = "When clean, call Foundry-Gate(phase='done'), update to F6."
     assert _CALL_SYNTAX.findall(old) == ["Foundry-Gate"]
     assert _HANDS_OVER_THE_CONDITION.search(old) is None
+
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 / FR-007 (D-051..D-053) — EVERY CONTEXT, AND THE THREE
+# LISTS ITS SEQUENCES DISAGREED WITH, WALKED
+# --------------------------------------------------------------------------- #
+
+
+def test_every_action_the_router_returns_is_served_by_a_router_state():
+    """Floor for the CONTEXT sweep: D-051..D-053 sat at F2 and F4 states no
+    row reached, so no detector ever read their CONTEXT. Every action the
+    table holds is owed by at least one router state, and each state is driven
+    at both clocks by `audit_assembled_payloads`."""
+    owed = {action for _s, _t, _a, action, _b in _ROUTER_STATES}
+    assert owed == set(_IMPERATIVES), sorted(set(_IMPERATIVES) ^ owed)
+    # ...and F4 in every flag combination, both ASSAY-rejection states.
+    states = {state for state, *_ in _ROUTER_STATES}
+    assert {
+        "assay-passed", "assay-passed-temper", "assay-passed-nyquist",
+        "assay-passed-both", "assay-failed-filed", "assay-failed-unfiled",
+        "inspect-clean-full", "inspect-clean-delta", "decompose-done",
+    } <= states, sorted(states)
+
+
+def test_the_heading_the_context_sweep_removes_is_the_one_printed():
+    """`_DISTANCES_HEADING` is removed before the order judgement, so it must
+    be the heading the convergence ST-010 notice really prints — at both widths — and
+    nothing else in that CONTEXT may open as an order."""
+    for arrange in (_arrange_inspect_escalated_full, _arrange_inspect_escalated_delta):
+        context = drive_router(arrange, None)["context"]
+        assert context.count(_DISTANCES_HEADING) == 1, context
+        assert _order_openers(context.replace(_DISTANCES_HEADING, " ")) == [], context
+        assert _CALL_SYNTAX.findall(context) == [], context
+
+
+def test_the_context_sweep_bites_on_the_three_filed_contexts():
+    """Positive control: each CONTEXT the three defects were filed on, as it
+    shipped at 810009d, is flagged by the sweep that now reads every payload."""
+    d051 = (
+        "INSPECT clean: zero blocking defects, at FULL width (rule "
+        "final_gate). Call Foundry-Phase(phase='inspect_clean'), then "
+        "Foundry-Gate(phase='assay'). Spawn 4 parallel assayer agents using "
+        "the config below."
+    )
+    d052 = (
+        "ASSAY passed: all requirements verified. Call "
+        "Foundry-Gate(phase='done'), update state to F6. Generate report, "
+        "append lessons, archive."
+    )
+    d053 = (
+        "ASSAY found 1/2 non-verified requirements. Sync findings as defects "
+        "(Foundry-Sync), call Foundry-Gate(phase='grind') then "
+        "Foundry-Phase(phase='assay_fail') — the ASSAY-rejection door into F3."
+    )
+    for text in (d051, d052, d053):
+        drive = {
+            "action": "transition_to_done", "branch": None, "branched": False,
+            "block": "", "header": "", "context": text,
+            "agent_liveness": None, "waiting_on_agents": None,
+        }
+        findings = audit_assembled_payloads(
+            [("payload:x[fresh]", "x", "GI-008", "transition_to_done", None, drive)]
+        )
+        kinds = {f.split(": ", 1)[1].split(" ", 1)[0] for f in findings}
+        assert {"CONTEXT_SEQUENCE", "CONTEXT_CALL"} <= kinds, (text, findings)
+
+
+def test_the_assay_crossing_is_walked_in_its_header_order(run_env):
+    """D-051, driven: following the CONTEXT's order the Phase call passed and
+    the Gate was then refused. The served list, followed alone from a clean
+    FULL F2, enters F4."""
+    root, fdir = run_env
+    _post_assay_run(root, fdir, phase="F2", temper=False, nyquist=False)
+    _clean_inspect(fdir, "FULL")
+
+    served = _walk_served_lists(root, lists=1)
+
+    assert served[0] == ("F2", "transition_to_assay", [
+        "Foundry-Gate", "Foundry-Phase", "Agent",
+    ]), served
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "F4", served
+
+
+def test_an_unfiled_assay_rejection_leaves_f4_by_the_served_list(run_env):
+    """D-053, driven: a non-VERIFIED verdict with no defect filed. The list
+    served was Tasks, Gate(grind), Phase(assay_fail); Tasks returned nothing,
+    the gate refused "No open defects to grind", and the next Foundry-Next
+    served the same list, so the run never left F4. The list now opens by
+    filing ASSAY's findings and the run enters F3 on it alone."""
+    root, fdir = run_env
+    _post_assay_run(root, fdir, phase="F4", temper=False, nyquist=False)
+    _assay(fdir, ["VERIFIED", "PARTIAL"])
+
+    served = _walk_served_lists(root)
+
+    assert served[0] == ("F4", "assay_failed_loop_back", [
+        "Foundry-Sync", "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
+    ]), served
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "F3", served
+    defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    assert [d.get("spec_ref") for d in defects["defects"]] == ["FR-2"], defects
+
+
+def test_a_filed_assay_rejection_is_not_served_a_second_filing(run_env):
+    """D-053's other state: ASSAY filed its findings (any tier counts, as it
+    does at the GRIND gate), so the list is the rejection door alone and names
+    no requirement to file twice."""
+    root, fdir = run_env
+    for tier in ("LIVE", "LATENT"):
+        _assay(fdir, ["VERIFIED", "PARTIAL"])
+        _defect_ledger(fdir, [_tiered(
+            "D-001", tier, reproduction_attempted="AST sweep finds 0 sites",
+        )])
+        nxt = foundry_next_action(root)
+        assert nxt["action"] == "assay_failed_loop_back", nxt["action"]
+        assert nxt["details"]["unfiled_verdicts"] == [], (tier, nxt["details"])
+        assert [c["tool"] for c in nxt["next_calls"]] == [
+            "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
+        ], tier
+    # And the filing names exactly the non-VERIFIED requirements when none is.
+    _assay(fdir, ["PARTIAL", "VERIFIED", "HOLLOW"])
+    nxt = foundry_next_action(root)
+    assert nxt["details"]["unfiled_verdicts"] == ["FR-1", "FR-3"], nxt["details"]
+    assert "(FR-1, FR-3)" in nxt["next_calls"][0]["args"], nxt["next_calls"][0]
+
+
+def test_a_halt_without_its_report_is_served_the_report_and_nothing_else(run_env):
+    """The halted payload's CONTEXT ordered Foundry-Report beneath a header
+    reading NONE and "The report is generated." The call is the header's one
+    step now, and the rules block no longer asserts the missing report."""
+    root, fdir = run_env
+    _halted_run(fdir)
+    missing = foundry_next_action(root)
+    assert [c["tool"] for c in missing["next_calls"]] == ["Foundry-Report"]
+    assert "The report is generated" not in missing["instructions"]
+    assert "The report has been generated" not in missing["instructions"]
+    assert "Foundry-Report" not in _context_of(missing["instructions"])
+
+    (fdir / "REPORT.md").write_text("# report\n", encoding="utf-8")
+    written = foundry_next_action(root)
+    assert written["next_calls"] == [], written["next_calls"]
+    assert "YOUR NEXT CALL: NONE" in written["instructions"]
+    assert "The report has been generated" in written["instructions"]

@@ -390,7 +390,10 @@ def test_f4_routes_to_nyquist_when_set(run_env) -> None:
     result = _compute_next_action(project_root)
 
     assert result["action"] == "transition_to_nyquist"
-    assert "Foundry-Gate(phase='nyquist')" in result["instructions"]
+    # lead-stalls D-051..D-053 — the call is in the header the lead is served,
+    # and the CONTEXT beside it names none of its own.
+    assert "(1) Foundry-Gate(phase='nyquist')" in _served_header(result)
+    assert "Foundry-Gate(" not in result["instructions"], result["instructions"]
 
 
 def test_f4_routes_to_done_when_unset(run_env) -> None:
