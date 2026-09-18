@@ -600,12 +600,8 @@ def foundry_next_action(
                         "passed_gate": expected_gate,
                         "action": result.get("action", ""),
                     }
-                    gate_advance_note = (
-                        f"✅ Foundry-Gate(phase='{expected_gate}') ALREADY "
-                        f"PASSED — do NOT re-run it. Proceed directly to the "
-                        f"transition step (Foundry-Phase / state update) in the "
-                        f"imperative below."
-                    )
+                    # Rendered below, once the steps it points into exist.
+                    gate_advance_note = expected_gate
 
     # lead-stalls FR-005 / FR-015 / CT-003 / CT-006 — THE ROSTER IS READ
     # ONCE, FOR
@@ -793,6 +789,8 @@ def foundry_next_action(
     # generic fallback, which names no step list of its own.
     if next_calls is not None:
         result["next_calls"] = [_call_record(step) for step in next_calls]
+    if gate_advance_note:
+        gate_advance_note = _gate_advance_notice(gate_advance_note, next_calls)
 
     directives = _read_directives(project_root)
     directive_block = ""
@@ -1099,14 +1097,23 @@ def foundry_next_action(
 # here answers with the same list from step (1), so "call it there when you
 # want them" read as licence to restart the list; the sentence now says its
 # answer replaces nothing and names the step that still comes next.
+#
+# lead-stalls GI-008 (D-048) — THE STEP AFTER THE READ IS THE LIST'S, NOT
+# ALWAYS A Foundry-Phase. This said "the step after it is still that list's
+# Foundry-Phase", true on the ten lists whose gate and phase are adjacent and
+# false on `transition_to_done`, whose gate is followed by the strip and its
+# commit. Driven, a lead obeying it sealed F6 with the corpus still committed:
+# the note and the list gave two next calls. One sentence serves every list, so
+# it names the step by its place in the list rather than by its tool, and the
+# gate advance notice in `foundry_next_action` names the concrete step.
 _GATE_THEN_PHASE_EXCEPTION = (
-    "Foundry-Next between a passing Foundry-Gate and its Foundry-Phase is "
-    "OPTIONAL — the gate no longer consumes the ordering token, so "
-    "Foundry-Phase straight after a passing Foundry-Gate is accepted. It is a "
-    "read and not a move: that is where the INSPECT mode (its width) and the "
-    "rule that fired are announced, its answer never replaces the list you "
-    "are making, and the step after it is still that list's Foundry-Phase. "
-    "Never call it to satisfy the protocol."
+    "Foundry-Next straight after a passing Foundry-Gate is OPTIONAL — the "
+    "gate no longer consumes the ordering token, so the list's Foundry-Phase "
+    "is accepted without it. It is a read and not a move: that is where the "
+    "INSPECT mode (its width) and the rule that fired are announced, its "
+    "answer never replaces the list you are making, and the step after it is "
+    "still the step your list numbers after that Foundry-Gate. Never call it "
+    "to satisfy the protocol."
 )
 
 
@@ -1948,6 +1955,37 @@ def _render_imperative(imperative: _Imperative) -> str:
             for number, step in enumerate(steps, 1)
         )
     return head + imperative.trailer
+
+
+def _gate_advance_notice(gate: str, steps: tuple[_Step, ...] | None) -> str:
+    """The notice a passed gate prints above its list: which numbered step
+    comes next.
+
+    lead-stalls GI-008 (D-048) — this said "Proceed directly to the transition
+    step (Foundry-Phase / state update)", which is the step after the gate on
+    ten lists and not on `transition_to_done`, where the strip and its commit
+    come between them. So it names the list's own step after the gate, read
+    off the steps the header below was rendered from, and falls back to the
+    step's place in the list — never to a tool the list may not put there.
+    """
+    head = (
+        f"✅ Foundry-Gate(phase='{gate}') ALREADY PASSED — do NOT re-run it. "
+        "Proceed directly to "
+    )
+    calls = [
+        (number, step) for number, step in enumerate(steps or (), 1)
+        if step.tool == "Foundry-Gate"
+    ]
+    named = [pair for pair in calls if pair[1].args == f"phase='{gate}'"]
+    for number, _ in named or calls:
+        if number < len(steps):
+            after = steps[number]
+            call = after.tool if after.args is None else f"{after.tool}({after.args})"
+            return (
+                f"{head}step ({number + 1}) {call} in the imperative below, "
+                "the step it numbers after that gate."
+            )
+    return f"{head}the step the imperative below numbers after that gate."
 
 
 def _call_record(step: _Step) -> dict:

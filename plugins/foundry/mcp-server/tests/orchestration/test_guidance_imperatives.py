@@ -5165,7 +5165,8 @@ def test_a_served_list_is_one_move_in_the_rules_and_in_every_answer():
     # "call it there when you want them" read as licence to restart the list.
     exception = _guidance._GATE_THEN_PHASE_EXCEPTION
     assert "its answer never replaces the list you are making" in exception
-    assert "the step after it is still that list's Foundry-Phase" in exception
+    assert "the step after it is still the step your list numbers after that Foundry-Gate" in exception
+    assert "that list's Foundry-Phase" not in exception
     assert "call it there when you want them" not in exception
 
     answers = _step_answers()
@@ -5236,6 +5237,199 @@ def test_the_one_move_walk_bites_on_every_shape_the_defects_took():
     assert _orders_foundry_next_mid_list(
         "Do NOT call Foundry-Next in a loop. never call Foundry-Next twice."
     ) == []
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 (D-048) — THE GATE-THEN-PHASE NOTE, WALKED PAST ITS GATE
+# --------------------------------------------------------------------------- #
+#
+# The note said "the step after it is still that list's Foundry-Phase" and
+# "Foundry-Phase straight after a passing Foundry-Gate is accepted". Ten of the
+# eleven lists carrying it put the phase straight after the gate; the eleventh,
+# `transition_to_done`, puts the strip and its commit there, and a lead obeying
+# the note sealed F6 over a committed corpus. The one-move test only asked
+# whether the clause was present and the payload walk stopped AT the gate, so
+# nothing read the list past it. This walk does, for the note and for the
+# advance notice a passed gate prints.
+
+#: The note's claim about the step after the read, captured to its full stop.
+_STEP_AFTER_THE_READ = re.compile(r"the step after it is still (?P<claim>[^.]+)\.")
+#: A tool the note puts "straight after a passing Foundry-Gate". Foundry-Next
+#: there is the read itself, not a claim about the list.
+_STRAIGHT_AFTER_THE_GATE = re.compile(
+    r"(?P<tool>Foundry-[A-Za-z-]+) straight after a passing Foundry-Gate"
+)
+
+
+def _note_carrying_lists() -> list[tuple[str, tuple]]:
+    """(site, steps) for every rendered branch whose header carries the note."""
+    note = _GATE_THEN_PHASE_NOTE.lstrip("\n")
+    sites = []
+    for action, entry in sorted(_IMPERATIVES.items()):
+        branches = entry.items() if isinstance(entry, dict) else (("-", entry),)
+        for name, imperative in branches:
+            for phase in _emission_phases(action):
+                steps, header = _resolved_imperative(
+                    imperative, action, _site_details(action), _AUDIT_RUN,
+                    phase, None, 3,
+                )
+                if steps and note in header:
+                    sites.append((f"{action}[{name}]@{phase}", steps))
+    return sites
+
+
+def _gate_of(step) -> str:
+    match = re.search(r"phase='([a-z_]+)'", step.args or "")
+    return match.group(1) if match else ""
+
+
+def _past_the_gate_findings(site: str, steps: tuple, note: str,
+                            notice=None) -> list[str]:
+    """Every claim the note or the advance notice makes about the step after a
+    list's Foundry-Gate that the list itself contradicts."""
+    notice = notice or _guidance._gate_advance_notice
+    claim = _STEP_AFTER_THE_READ.search(note)
+    if claim is None:
+        return [f"{site}: the note names no step after the read"]
+    # Foundry-Gate in the claim is its anchor ("after that Foundry-Gate"),
+    # never the step it names.
+    named = {
+        tool for tool in _LEAD_CALLS
+        if tool in claim["claim"] and tool != "Foundry-Gate"
+    }
+    named |= {
+        match["tool"] for match in _STRAIGHT_AFTER_THE_GATE.finditer(note)
+        if match["tool"] != "Foundry-Next"
+    }
+    findings = []
+    gates = [n for n, step in enumerate(steps, 1) if step.tool == "Foundry-Gate"]
+    if not gates:
+        findings.append(f"{site}: carries the note and names no Foundry-Gate")
+    for number in gates:
+        if number == len(steps):
+            findings.append(f"{site}: Foundry-Gate is the list's last step")
+            continue
+        after = steps[number]
+        for tool in sorted(named - {after.tool}):
+            findings.append(
+                f"NOTE_CLAIM_FALSE {site}: the note puts {tool} after the "
+                f"read, the list numbers ({number + 1}) {after.tool}"
+            )
+        call = after.tool if after.args is None else f"{after.tool}({after.args})"
+        told = notice(_gate_of(steps[number - 1]), steps)
+        if f"step ({number + 1}) {call} " not in told:
+            findings.append(
+                f"NOTICE_CLAIM_FALSE {site}: the advance notice does not name "
+                f"({number + 1}) {call}: {told}"
+            )
+    return findings
+
+
+#: The two sentences D-048 found, as 621318d shipped them.
+_NOTE_AT_621318D = (
+    "Foundry-Next between a passing Foundry-Gate and its Foundry-Phase is "
+    "OPTIONAL — the gate no longer consumes the ordering token, so "
+    "Foundry-Phase straight after a passing Foundry-Gate is accepted. It is a "
+    "read and not a move: that is where the INSPECT mode (its width) and the "
+    "rule that fired are announced, its answer never replaces the list you "
+    "are making, and the step after it is still that list's Foundry-Phase. "
+    "Never call it to satisfy the protocol."
+)
+
+
+def _notice_at_621318d(gate: str, _steps) -> str:
+    return (
+        f"✅ Foundry-Gate(phase='{gate}') ALREADY PASSED — do NOT re-run it. "
+        "Proceed directly to the transition step (Foundry-Phase / state "
+        "update) in the imperative below."
+    )
+
+
+def test_the_gate_then_phase_note_holds_past_the_gate_on_every_list():
+    """D-048: walked past its Foundry-Gate, every list that carries the note
+    has the next step the note and the advance notice say it has."""
+    sites = _note_carrying_lists()
+    assert len(sites) >= 11, [site for site, _ in sites]
+    note = _guidance._GATE_THEN_PHASE_EXCEPTION
+    findings = [
+        finding for site, steps in sites
+        for finding in _past_the_gate_findings(site, steps, note)
+    ]
+    assert findings == [], findings
+
+    # transition_to_done by name: the strip, not the phase, follows the gate.
+    done = dict(sites)["transition_to_done[-]@F1"]
+    assert [step.tool for step in done] == [
+        "Foundry-Report", "Foundry-Gate", "Bash", "Bash", "Foundry-Phase",
+    ]
+    told = _guidance._gate_advance_notice("done", done)
+    assert "step (3) Bash(command='git rm -r --cached evidence/" in told, told
+    assert "Foundry-Phase" not in told.split("Proceed directly to", 1)[1], told
+
+
+def test_the_past_the_gate_walk_bites_on_the_621318d_sentences():
+    """Revert controls: the shipped note and the shipped notice are each
+    flagged on transition_to_done and on no other list."""
+    sites = _note_carrying_lists()
+    for reverted in (
+        {"note": _NOTE_AT_621318D},
+        {"note": _guidance._GATE_THEN_PHASE_EXCEPTION,
+         "notice": _notice_at_621318d},
+    ):
+        flagged = {
+            site for site, steps in sites
+            if _past_the_gate_findings(site, steps, **reverted)
+        }
+        if "notice" in reverted:
+            # The old notice named no step number on ANY list.
+            assert "transition_to_done[-]@F1" in flagged, flagged
+        else:
+            assert flagged == {"transition_to_done[-]@F1"}, flagged
+
+
+def test_a_passed_done_gate_points_the_lead_at_the_strip():
+    """D-048, driven through Foundry-Next: at F4 with Gate(done) passed, the
+    tolerated read answers with a notice naming step (3), the strip."""
+    from tests.orchestration._env import _write_verdicts
+
+    with tempfile.TemporaryDirectory() as tmp, _router_run(Path(tmp)) as (
+        root, fdir, _teams,
+    ):
+        _write_spec(fdir, ["FR-1"])
+        _write_state(fdir, phase="F4", cycle=3)
+        _write_verdicts(fdir, [{
+            "id": "FR-1", "verdict": "VERIFIED", "evidence": "x",
+            "spec_text_cited": "x", "cycle": 3,
+        }])
+        (fdir / ".gate-passed").write_text(
+            json.dumps({"phase": "done", "at": "2026-09-18T03:00:00+00:00"}),
+            encoding="utf-8",
+        )
+        nxt = foundry_next_action(root)
+    assert nxt["action"] == "transition_to_done", nxt["action"]
+    assert nxt["gate_advanced"]["passed_gate"] == "done"
+    tools = [call["tool"] for call in nxt["next_calls"]]
+    assert tools[1:3] == ["Foundry-Gate", "Bash"], tools
+    notice = next(
+        line for line in nxt["instructions"].split("\n")
+        if "ALREADY PASSED" in line
+    )
+    assert "step (3) Bash(command='git rm -r --cached evidence/" in notice, notice
+    assert "(Foundry-Phase / state update)" not in nxt["instructions"]
+
+
+def test_the_rules_block_states_the_one_move_and_spawn_clauses_once():
+    """D-047, this side: the rules block `guidance.py` renders carries the
+    served-list sentence and the spawn-pair clause exactly once. With
+    6080974's teams.py hunk reverted the shared sentence carried the clause
+    too, and the block printed it twice."""
+    from foundry_mcp.tools.orchestration.teams import SERVED_LIST_IS_ONE_MOVE
+
+    rules = _guidance._STANDING_CRITICAL_RULES
+    assert rules.count(SERVED_LIST_IS_ONE_MOVE) == 1, rules
+    spawn_clause = "a spawn door and the agent call it feeds are one step"
+    assert rules.lower().count(spawn_clause) == 1, rules
+    assert rules.count("spawn rule below") == 1, rules
 
 
 # --------------------------------------------------------------------------- #
