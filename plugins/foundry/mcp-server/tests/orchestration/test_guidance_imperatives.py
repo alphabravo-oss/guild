@@ -5883,15 +5883,10 @@ def _walk_served_lists(root: str, *, filed_by_phase_work: Path | None = None,
                 foundry_defects_to_tasks(project_root=root)
             elif tool == "Foundry-Sync":
                 # lead-stalls D-053 — the filing, made with exactly the fields
-                # the step names, one finding per requirement it lists.
+                # the step names and nothing else (`_sync_findings`).
                 filed = foundry_sync_defects(
                     int(args.split("cycle=", 1)[1].split(",", 1)[0]),
-                    [
-                        {"source": "assay", "tier": "LIVE", "type": "PARTIAL",
-                         "spec_ref": rid, "class": rid,
-                         "description": f"ASSAY recorded {rid} PARTIAL: read at HEAD"}
-                        for rid in nxt["details"]["unfiled_verdicts"]
-                    ],
+                    _sync_findings(args, root),
                     project_root=root,
                 )
                 assert "error" not in filed, filed
@@ -5900,6 +5895,43 @@ def _walk_served_lists(root: str, *, filed_by_phase_work: Path | None = None,
                 subprocess.run(command, shell=True, cwd=root, check=True,
                                capture_output=True)
     return served
+
+
+#: One field a Foundry-Sync step names: `key='literal'` or `key=<recipe>`.
+_SYNC_FIELD = re.compile(r"\b([a-z_]+)=(?:'([^']*)'|<([^>]*)>)")
+
+
+def _sync_findings(args: str, root: str) -> list[dict]:
+    """The findings a lead builds by following a Foundry-Sync step to the
+    letter: one per requirement the step lists, each carrying the step's
+    fields — a literal as written, a `<recipe>` resolved from that
+    requirement's row in verdicts.json. A field the step omits is omitted
+    here, so the door's refusal is the step's own."""
+    listed = args.split("per requirement (", 1)[1].split(")", 1)[0].split(", ")
+    fields = _SYNC_FIELD.findall(args.split("findings=", 1)[1])
+    rows = {
+        row.get("id"): row
+        for row in json.loads(
+            (foundry_state.get_run_dir(root) / "verdicts.json").read_text(
+                encoding="utf-8",
+            )
+        )["requirements"]
+    }
+    findings = []
+    for rid in listed:
+        row = rows[rid]
+        recipes = {
+            "that requirement id": rid,
+            "that requirement's verdict": row["verdict"],
+        }
+        finding = {}
+        for key, literal, recipe in fields:
+            if recipe.startswith("that requirement's verdict and evidence"):
+                finding[key] = f"{row['verdict']}: {row.get('evidence', '')}"
+            else:
+                finding[key] = literal if not recipe else recipes[recipe]
+        findings.append(finding)
+    return findings
 
 
 def _post_assay_run(root: str, fdir: Path, *, phase: str, temper: bool,
@@ -6180,3 +6212,112 @@ def test_a_halt_without_its_report_is_served_the_report_and_nothing_else(run_env
     assert written["next_calls"] == [], written["next_calls"]
     assert "YOUR NEXT CALL: NONE" in written["instructions"]
     assert "The report has been generated" in written["instructions"]
+
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls D-051..D-053 — EVERY SOURCE HUNK, REVERTED ON ITS OWN
+# --------------------------------------------------------------------------- #
+
+
+def _diff_hunks(base: str, head: str, path: str) -> list[dict]:
+    """The unified-diff hunks of ``path`` between two commits: each one's
+    header and the text of its new and old sides."""
+    import subprocess
+
+    diff = subprocess.run(
+        ["git", "diff", "--no-color", "-U3", base, head, "--", f":(top){path}"],
+        cwd=Path(__file__).parent, capture_output=True, text=True, check=True,
+    ).stdout
+    hunks: list[dict] = []
+    for line in diff.splitlines():
+        if line.startswith("@@"):
+            hunks.append({"header": line.split(" @@", 1)[0] + " @@", "lines": []})
+        elif hunks and line[:1] in (" ", "+", "-"):
+            hunks[-1]["lines"].append(line)
+    for hunk in hunks:
+        hunk["new"] = "".join(l[1:] + "\n" for l in hunk["lines"] if l[0] in " +")
+        hunk["old"] = "".join(l[1:] + "\n" for l in hunk["lines"] if l[0] in " -")
+        changed = [l[1:].strip() for l in hunk["lines"] if l[0] in "+-"]
+        hunk["comment_only"] = all(not c or c.startswith("#") for c in changed)
+    return hunks
+
+
+def _run_with(project: Path, rel: str, text: str) -> list[str]:
+    """Copy the project, replace ``rel`` with ``text``, and run this module
+    there: one line per failed test, then the counts."""
+    import shutil
+    import subprocess
+    import sys
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for part in ("src", "tests"):
+            shutil.copytree(
+                project / part, Path(tmp) / part,
+                ignore=shutil.ignore_patterns("__pycache__"),
+            )
+        shutil.copy(project / "pyproject.toml", tmp)
+        (Path(tmp) / rel).write_text(text, encoding="utf-8")
+        out = subprocess.run(
+            [sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
+             "--no-header", "--color=no", "--tb=no", "-q", "-rfE",
+             "tests/orchestration/test_guidance_imperatives.py"],
+            cwd=tmp, capture_output=True, text=True,
+        ).stdout
+    # A test named after `::`; a module that no longer imports is an ERROR
+    # naming the file alone, and every test in it is red.
+    failed = sorted(
+        line.split(" ", 1)[1].split("::", 1)[1].split(" - ", 1)[0]
+        if "::" in line else
+        "collection of " + line.split(" ", 2)[1].rsplit("/", 1)[-1]
+        for line in out.splitlines()
+        if line.startswith(("FAILED ", "ERROR "))
+    )
+    passed = re.search(r"(\d+) passed", out)
+    ran = (int(passed.group(1)) if passed else 0) + len(failed)
+    return [f"  FAILED {name}" for name in failed] + [
+        f"  tests run: {ran}, failed or errored: {len(failed)}"
+    ]
+
+
+def hunk_revert_report(base: str, head: str) -> list[str]:
+    """lead-stalls D-051..D-053's revert evidence: every hunk of
+    `guidance.py` between ``base`` and ``head``, reverted ALONE on the current
+    tree, and the tests of this module that go red for it. A hunk that
+    changes only comments cannot change behaviour and is named as such
+    rather than run."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    project = Path(__file__).resolve().parents[2]
+    rel = "src/foundry_mcp/tools/orchestration/guidance.py"
+    current = (project / rel).read_text(encoding="utf-8")
+    hunks = _diff_hunks(base, head, f"plugins/foundry/mcp-server/{rel}")
+    assert hunks, (base, head)
+    for hunk in hunks:
+        assert current.count(hunk["new"]) == 1, hunk["header"]
+
+    def judged(hunk: dict) -> list[str]:
+        if hunk["comment_only"]:
+            return ["  comment-only: no behaviour to revert"]
+        return _run_with(project, rel, current.replace(hunk["new"], hunk["old"]))
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(judged, hunks))
+    lines = [
+        f"guidance.py hunks {base}..{head}: {len(hunks)}",
+        f"comment-only: {sum(h['comment_only'] for h in hunks)}",
+        "",
+    ]
+    for number, (hunk, result) in enumerate(zip(hunks, results), 1):
+        first = next(
+            (l[1:].strip() for l in hunk["lines"] if l[0] in "+-" and l[1:].strip()),
+            "",
+        )
+        lines.append(f"== hunk {number:02d} {hunk['header']} {first[:60]}")
+        lines.extend(result)
+    green = [
+        f"hunk {n:02d}" for n, (h, r) in enumerate(zip(hunks, results), 1)
+        if not h["comment_only"] and not any(l.startswith("  FAILED") for l in r)
+    ]
+    lines += ["", f"code hunks with no test red when reverted: {', '.join(green) or 'none'}"]
+    return lines
