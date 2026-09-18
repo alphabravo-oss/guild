@@ -412,6 +412,13 @@ def test_f4_prefers_temper_when_both_are_set(run_env) -> None:
     assert _compute_next_action(project_root)["action"] == "transition_to_temper"
 
 
+def _served_header(result: dict) -> str:
+    """The header the lead is served for a router result."""
+    return _guidance._format_imperative_header(
+        result["action"], "", result["details"], phase=result["phase"],
+    )
+
+
 def test_f5_points_at_nyquist_when_set(run_env) -> None:
     """The --temper --nyquist composition: without this, setting both silently
     dropped F5.5 because TEMPER's exit hardcoded the DONE gate."""
@@ -421,7 +428,9 @@ def test_f5_points_at_nyquist_when_set(run_env) -> None:
     result = _compute_next_action(project_root)
 
     assert result["action"] == "run_temper"
-    assert "Foundry-Gate(phase='nyquist')" in result["instructions"]
+    # lead-stalls D-050 — the gate is the served list's last step, not a
+    # "When clean" tail in the CONTEXT.
+    assert "Foundry-Gate(phase='nyquist')" in _served_header(result)
 
 
 def test_f5_points_at_done_when_nyquist_unset(run_env) -> None:
@@ -430,7 +439,7 @@ def test_f5_points_at_done_when_nyquist_unset(run_env) -> None:
 
     result = _compute_next_action(project_root)
 
-    assert "Foundry-Gate(phase='done')" in result["instructions"]
+    assert "Foundry-Gate(phase='done')" in _served_header(result)
 
 
 def test_f5_5_emits_the_auditor_step(run_env) -> None:
@@ -441,7 +450,10 @@ def test_f5_5_emits_the_auditor_step(run_env) -> None:
 
     assert result["action"] == "run_nyquist"
     assert result["details"]["agent_config"]["subagent_type"] == "foundry:nyquist-auditor"
-    assert "nyquist_done" in result["instructions"]
+    # lead-stalls D-050 — the list ends in the gate out of F5.5; `done` is
+    # accepted from F5.5 on a --nyquist run, so the crossing it leads to is
+    # `transition_to_done` itself rather than a CONTEXT naming `nyquist_done`.
+    assert "Foundry-Gate(phase='done')" in _served_header(result)
 
 
 def test_f5_5_agent_config_carries_no_model_key(run_env) -> None:

@@ -264,6 +264,74 @@ def _nyquist_transition(from_phase: str) -> dict:
     }
 
 
+def _post_assay_crossing(
+    fdir: Path, phase: str, name: str, gate: str, grind_config: dict,
+) -> dict | None:
+    """The crossing out of F5 or F5.5, or ``None`` while the phase's own list
+    (`run_temper` / `run_nyquist`) is still owed.
+
+    lead-stalls GI-008 / FR-007 (D-050) — both arms returned their phase's
+    work unconditionally and left the exit in the CONTEXT ("When clean, call
+    Foundry-Gate(phase='done'), update to F6."), so the Foundry-Next owed after
+    that list re-served the same list and no run with --temper or --nyquist
+    reached F6 by following the served steps.
+
+    WHAT SAYS THE WORK IS FINISHED. Each phase's list ends in ``gate``, the
+    gate out of the phase, and a passing evaluation records it in
+    `.gate-passed`, which every transition unlinks — so a record naming
+    ``gate`` was written by the server in THIS phase, after the list's work.
+    The ledgers cannot say it: a TEMPER pass that filed nothing leaves them
+    exactly as ASSAY did, `temper` is not a stream wire id, and F5's recorded
+    INSPECT roster names five streams no F5 list dispatches. Blocking defects
+    are read FIRST, because a gate that passed before TEMPER filed does not
+    make what it filed go away.
+
+    The crossings are the existing lists, never a restatement: GRIND is
+    `transition_to_grind` (`grind_start` has no source-phase rung, and the
+    F5 / F5.5 hints in `transitions.py` name it), F5.5 is `_nyquist_transition`,
+    and F6 is `transition_to_done`, whose `done` token is accepted from F5 on a
+    --temper run and from F5.5 on a --nyquist one. D-048's advance notice then
+    points past the gate the record names. The CONTEXT names no sequence.
+    ``grind_config`` is the router's `GRIND_AGENT_CONFIG`, a local of
+    `_compute_next_action`, passed so the two GRIND crossings carry one config.
+    """
+    blocking = _open_by_blocking_tier(fdir)
+    if blocking["blocking"] > 0:
+        return {
+            "phase": phase,
+            "action": "transition_to_grind",
+            "instructions": (
+                f"{name} left {blocking['blocking']} blocking defect(s) open "
+                f"({len(blocking['live'])} LIVE, "
+                f"{len(blocking['unknown'])} untiered). GRIND fixes them, and "
+                "the run comes back through INSPECT and ASSAY."
+            ),
+            "details": {
+                "open_defects": blocking["blocking"],
+                "live_defects": blocking["live"],
+                "unknown_tier_defects": blocking["unknown"],
+                "latent_backlog": blocking["latent"],
+                "agent_config": grind_config,
+            },
+        }
+    marker = fdir / GATE_PASSED_MARKER
+    passed = read_document(marker)[0].get("phase") if marker.exists() else None
+    if passed != gate:
+        return None
+    finished = (
+        f"{name} is finished: the gate out of {phase}, `{gate}`, passed in "
+        f"{phase} and no blocking defect is open."
+    )
+    if gate == "nyquist":
+        return {**_nyquist_transition(phase), "instructions": finished}
+    return {
+        "phase": phase,
+        "action": "transition_to_done",
+        "instructions": finished,
+        "details": {},
+    }
+
+
 
 
 # --- The big one: next action ---
@@ -2736,6 +2804,17 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
         ),
         _GATE_THEN_PHASE_NOTE.lstrip("\n"),
     ),
+    # lead-stalls GI-008 / FR-007 (D-050) — THE LIST ENDS IN THE GATE OUT OF
+    # F5, BECAUSE THAT GATE'S RECORD IS HOW THE ROUTER KNOWS TEMPER RAN.
+    # This list was the Skill alone, and the exit sat in the CONTEXT as "When
+    # clean, call Foundry-Gate(phase='done'), update to F6." The Foundry-Next
+    # owed after the Skill re-served the Skill, so no sequence of served lists
+    # reached F6. The ledgers cannot answer "has TEMPER run" — a pass that
+    # filed nothing leaves them as ASSAY left them, and `temper` is not a
+    # stream wire id — so the list's last step is the crossing gate, whose
+    # `.gate-passed` record only the server's own evaluation in F5 can write
+    # (every transition unlinks it). `{gate}` comes on `details["crossing"]`.
+    # Foundry-Report comes before it because the DONE gate refuses without one.
     "run_temper": _Imperative(
         (
             _Step(
@@ -2744,6 +2823,21 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
                     "it spawns the TEMPER micro-domain agents, which zoom into "
                     "individual functions, single pages and specific flows and "
                     "ask whether they actually work."
+                ),
+            ),
+            _Step(
+                "Foundry-Report",
+                note=(
+                    "generated from the ledgers TEMPER has just written, and "
+                    "the DONE gate refuses without it."
+                ),
+            ),
+            _Step(
+                "Foundry-Gate", "phase='{gate}'",
+                note=(
+                    "the gate out of F5. Its record is what the next "
+                    "Foundry-Next reads to serve the crossing; a blocking "
+                    "defect TEMPER filed is served the GRIND crossing instead."
                 ),
             ),
         ),
@@ -2766,6 +2860,11 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
         ),
         _GATE_THEN_PHASE_NOTE.lstrip("\n"),
     ),
+    # lead-stalls GI-008 / FR-007 (D-050) — the `run_temper` shape, for the
+    # same reason: nothing an auditor writes is a server record, so the list
+    # ends in the gate out of F5.5 and the router reads that. `done` is
+    # accepted from F5.5 on a --nyquist run, so the crossing it leads to is
+    # `transition_to_done` itself.
     "run_nyquist": _Imperative(
         (
             _Step(
@@ -2773,6 +2872,19 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
                 each=(
                     "for each batch of 5 VERIFIED requirements, all in a "
                     "SINGLE parallel message"
+                ),
+            ),
+            _Step(
+                "Foundry-Report",
+                note="the DONE gate refuses without the generated report.",
+            ),
+            _Step(
+                "Foundry-Gate", "phase='done'",
+                note=(
+                    "the gate out of F5.5. Its record is what the next "
+                    "Foundry-Next reads to serve the crossing; a blocking "
+                    "defect filed from an ESCALATE_IMPL_BUG result is served "
+                    "the GRIND crossing instead."
                 ),
             ),
         ),
@@ -2958,8 +3070,19 @@ def _resolved_imperative(
     """`_emitted_imperative`'s second half, for one given `_Imperative`: its
     steps expanded and substituted, and its rendering. Split out so the audit
     can render every declared branch through the one resolver the lead's
-    header takes, and name which branch arrived by equality."""
-    crossing = _ACTION_CROSSINGS.get(action, {}).get(phase) or {}
+    header takes, and name which branch arrived by equality.
+
+    lead-stalls GI-008 / FR-007 (D-050) — a crossing that turns on the run's
+    FLAGS rather than on the emitting phase comes on ``details["crossing"]``,
+    the same `{"gate", "token"}` row shape: `run_temper` ends in the gate out
+    of F5, which is `nyquist` on a --nyquist run and `done` otherwise, and F5
+    is the only phase it is emitted from. A row that is absent still takes the
+    generic fallback below, as an unresolved phase-keyed row does."""
+    crossing = (
+        _ACTION_CROSSINGS.get(action, {}).get(phase)
+        or (details or {}).get("crossing")
+        or {}
+    )
     halt_cause = _halt_cause((details or {}).get("halted_reason_member"))
 
     def resolve(text: str) -> str:
@@ -4319,24 +4442,35 @@ def _compute_next_action(project_root: str) -> dict:
     elif phase == "F5":
         # A --temper --nyquist run reaches F5.5 from here; --temper alone goes
         # straight to F6. Same guard as the F4 path so the two options compose.
-        tail = (
-            "When clean, call Foundry-Gate(phase='nyquist'), update to F5.5."
-            if state.get("nyquist", False)
-            else "When clean, call Foundry-Gate(phase='done'), update to F6."
+        # lead-stalls GI-008 / FR-007 (D-050) — and the crossing is SERVED, as
+        # a step list, once `run_temper`'s own list has ended in its gate.
+        gate = "nyquist" if state.get("nyquist", False) else "done"
+        crossing = _post_assay_crossing(
+            fdir, "F5", "TEMPER", gate, GRIND_AGENT_CONFIG,
         )
+        if crossing is not None:
+            return crossing
         return {
             "phase": "F5",
             "action": "run_temper",
             "instructions": (
                 "TEMPER phase: micro-domain stress testing. "
                 "Decompose into domains (min 15), probe each, cross-domain test, "
-                "continuous sweep. Defects go through GRIND \u2192 INSPECT \u2192 ASSAY loop. "
-                + tail
+                "continuous sweep. What TEMPER files is fixed through the "
+                "GRIND \u2192 INSPECT \u2192 ASSAY loop. The list above ends in the "
+                f"gate out of F5, `{gate}`, and the next Foundry-Next reads "
+                "that gate's record beside the defect ledger to serve the "
+                "crossing."
             ),
-            "details": {},
+            "details": {"crossing": {"gate": gate, "token": gate}},
         }
 
     elif phase == "F5.5":
+        crossing = _post_assay_crossing(
+            fdir, "F5.5", "NYQUIST", "done", GRIND_AGENT_CONFIG,
+        )
+        if crossing is not None:
+            return crossing
         return {
             "phase": "F5.5",
             "action": "run_nyquist",
@@ -4348,8 +4482,9 @@ def _compute_next_action(project_root: str) -> dict:
                 "tests, runs them, and commits the passing ones. Any "
                 "ESCALATE_IMPL_BUG result goes through the GRIND \u2192 INSPECT \u2192 "
                 "ASSAY loop. Never mark an untested requirement as passing. "
-                "When done, call Foundry-Gate(phase='done'), then "
-                "Foundry-Phase(phase='nyquist_done') to enter F6."
+                "The list above ends in the gate out of F5.5, `done`, and the "
+                "next Foundry-Next reads that gate's record beside the defect "
+                "ledger to serve the crossing."
             ),
             "details": {
                 "agent_config": {

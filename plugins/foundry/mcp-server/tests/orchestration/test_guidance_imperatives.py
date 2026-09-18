@@ -54,7 +54,11 @@ from tests.orchestration._env import (  # noqa: F401
 )
 
 from foundry_mcp.tools import foundry_state
-from foundry_mcp.tools.artifacts import _hash_file, foundry_spec_hash
+from foundry_mcp.tools.artifacts import (
+    GATE_PASSED_MARKER,
+    _hash_file,
+    foundry_spec_hash,
+)
 from foundry_mcp.tools.evidence import foundry_accept_casting
 from foundry_mcp.tools.foundry_spawn import foundry_cast_wave, foundry_spawn_teammate
 from foundry_mcp.tools.orchestration import guidance as _guidance
@@ -529,6 +533,10 @@ def _site_details(action: str) -> dict:
     template fallback."""
     if action == "run_streams":
         return {"missing_streams": list(_C10_ROSTER)}
+    # lead-stalls D-050 — `run_temper` ends in the gate out of F5, which the
+    # router names on `details["crossing"]`: `done` on a --temper run.
+    if action == "run_temper":
+        return {"crossing": {"gate": "done", "token": "done"}}
     return {}
 
 
@@ -866,6 +874,58 @@ def _arrange_inspect_stale_team(root, fdir, teams):
     _progressing_ledger(fdir, agent="prove")
 
 
+#: lead-stalls D-050 — F5 and F5.5, each at the three points the router must
+#: tell apart: the phase's own list owed, its gate passed (the record the
+#: server writes, dropped here as the gate writes it), and a blocking defect
+#: filed — which outranks a gate that passed before it was filed.
+def _post_assay(
+    fdir: Path, phase: str, *, temper: bool, nyquist: bool,
+    passed: str | None = None, filed: bool = False,
+) -> None:
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase=phase, cycle=1, temper=temper, nyquist=nyquist)
+    _defect_ledger(
+        fdir, [_tiered("D-001", "LIVE", status="open")] if filed else [],
+    )
+    if passed:
+        (fdir / GATE_PASSED_MARKER).write_text(
+            json.dumps({"phase": passed, "at": _LONG_AGO}), encoding="utf-8",
+        )
+
+
+def _arrange_temper_owed(root, fdir, teams):
+    _post_assay(fdir, "F5", temper=True, nyquist=False)
+
+
+def _arrange_temper_other_gate(root, fdir, teams):
+    # A passed gate that is not the one out of F5 is not the exit.
+    _post_assay(fdir, "F5", temper=True, nyquist=False, passed="grind")
+
+
+def _arrange_temper_gate_passed(root, fdir, teams):
+    _post_assay(fdir, "F5", temper=True, nyquist=False, passed="done")
+
+
+def _arrange_temper_nyquist_passed(root, fdir, teams):
+    _post_assay(fdir, "F5", temper=True, nyquist=True, passed="nyquist")
+
+
+def _arrange_temper_filed(root, fdir, teams):
+    _post_assay(fdir, "F5", temper=True, nyquist=False, passed="done", filed=True)
+
+
+def _arrange_nyquist_owed(root, fdir, teams):
+    _post_assay(fdir, "F5.5", temper=True, nyquist=True)
+
+
+def _arrange_nyquist_gate_passed(root, fdir, teams):
+    _post_assay(fdir, "F5.5", temper=True, nyquist=True, passed="done")
+
+
+def _arrange_nyquist_filed(root, fdir, teams):
+    _post_assay(fdir, "F5.5", temper=False, nyquist=True, filed=True)
+
+
 #: (state, the transition(s) it is the server-side half of, arrange, the
 #: action OWED, the branch OWED or None for an unbranched action). The owed
 #: columns are derived by hand from the run state, never from the router — a
@@ -897,6 +957,16 @@ _ROUTER_STATES = (
     ("inspect-live", "ST-001", _arrange_inspect_live, "run_streams", "live"),
     ("inspect-idle", "ST-003", _arrange_inspect_idle, "run_streams", "idle"),
     ("inspect-stale-team", "ST-003", _arrange_inspect_stale_team, "cleanup_teams", None),
+    # lead-stalls D-050 — the post-ASSAY phases, which no row reached, so the
+    # sweep never asked what Foundry-Next answers after `run_temper`'s list.
+    ("temper-owed", "GI-008", _arrange_temper_owed, "run_temper", None),
+    ("temper-other-gate", "GI-008", _arrange_temper_other_gate, "run_temper", None),
+    ("temper-gate-passed", "GI-008", _arrange_temper_gate_passed, "transition_to_done", None),
+    ("temper-nyquist-passed", "GI-008", _arrange_temper_nyquist_passed, "transition_to_nyquist", None),
+    ("temper-filed", "GI-008", _arrange_temper_filed, "transition_to_grind", None),
+    ("nyquist-owed", "GI-008", _arrange_nyquist_owed, "run_nyquist", None),
+    ("nyquist-gate-passed", "GI-008", _arrange_nyquist_gate_passed, "transition_to_done", None),
+    ("nyquist-filed", "GI-008", _arrange_nyquist_filed, "transition_to_grind", None),
 )
 
 #: The two clocks every state is driven at: the lead's last Foundry-Next just
@@ -5020,9 +5090,11 @@ _OWED_CALLS = {
         "Foundry-Report", "Foundry-Gate", "Bash", "Bash", "Foundry-Phase",
     ],
     "transition_to_temper": ["Foundry-Gate", "Foundry-Phase"],
-    "run_temper": ["Skill"],
+    # lead-stalls D-050 — each post-ASSAY phase's list ends in the gate out
+    # of it, whose record is what the router reads to serve the crossing.
+    "run_temper": ["Skill", "Foundry-Report", "Foundry-Gate"],
     "transition_to_nyquist": ["Foundry-Gate", "Foundry-Phase"],
-    "run_nyquist": ["Agent"],
+    "run_nyquist": ["Agent", "Foundry-Report", "Foundry-Gate"],
     "assay_failed_loop_back": ["Foundry-Tasks", "Foundry-Gate", "Foundry-Phase"],
     "widen_inspect": ["Foundry-Gate", "Foundry-Phase"],
     "record_inspect_width": ["Foundry-Gate", "Foundry-Phase"],
@@ -5496,3 +5568,202 @@ def test_no_emission_carries_an_unresolved_slot_in_any_phase():
 
     # Positive control: the sweep sees the leak D-046's mutation produced.
     assert _ANY_SLOT.findall("Foundry-Gate(phase='{gate}')") == ["{gate}"]
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 / FR-007 (D-050) — THE POST-ASSAY PHASES LEAVE BY A LIST
+# --------------------------------------------------------------------------- #
+#
+# `run_temper` and `run_nyquist` each named one literal call, so every sweep
+# above read them as clean; the exit sat in the CONTEXT ("When clean, call
+# Foundry-Gate(phase='done'), update to F6.") and the Foundry-Next owed after
+# the list re-served the same list. Driven at 67c58b5, B4, B5, B6 and B9 all
+# answered `run_temper`, so no --temper run reached F6 by following the served
+# steps. The walk below is that drive, through the real doors, with the lead
+# doing exactly what the rules say: every step of a served list, then
+# Foundry-Next. A step no door can take in a test (the Skill, the auditor
+# Agent, TeamCreate) is the lead's harness and is passed over; the defect
+# ledger is written where TEMPER would have filed.
+
+
+def _walk_served_lists(root: str, *, filed_by_phase_work: Path | None = None,
+                       lists: int = 8) -> list[tuple[str, str, list[str]]]:
+    """Follow served lists until F6 or a teammate spawn; return what was served.
+
+    ``filed_by_phase_work`` is the run dir whose ledger gets a LIVE defect the
+    first time a `run_temper` / `run_nyquist` list's phase-work step is made —
+    what TEMPER or an ESCALATE_IMPL_BUG filing leaves.
+    """
+    import subprocess
+
+    from foundry_mcp.tools.foundry_report import foundry_report
+    from foundry_mcp.tools.orchestration.directives import foundry_defects_to_tasks
+    from foundry_mcp.tools.orchestration.gates import foundry_gate
+    from foundry_mcp.tools.orchestration.transitions import (
+        foundry_mark_phase_complete,
+    )
+
+    served: list[tuple[str, str, list[str]]] = []
+    for _ in range(lists):
+        nxt = foundry_next_action(root)
+        calls = nxt.get("next_calls") or []
+        served.append((str(nxt.get("phase")), nxt.get("action", ""),
+                       [c["tool"] for c in calls]))
+        if nxt.get("action") in ("init", "done", "halted"):
+            break
+        start = 0
+        if nxt.get("gate_advanced"):
+            start = [c["tool"] for c in calls].index("Foundry-Gate") + 1
+        for call in calls[start:]:
+            tool, args = call["tool"], call["args"] or ""
+            arg = args.split("'")[1] if "'" in args else ""
+            if tool in ("Skill", "Agent") and filed_by_phase_work is not None:
+                _defect_ledger(
+                    filed_by_phase_work, [_tiered("D-001", "LIVE", status="open")],
+                )
+                filed_by_phase_work = None
+            if tool == "TeamCreate":
+                return served
+            if tool == "Foundry-Gate":
+                if not foundry_gate(arg, project_root=root)["passed"]:
+                    break
+            elif tool == "Foundry-Phase":
+                assert foundry_mark_phase_complete(arg, project_root=root)["ok"], arg
+            elif tool == "Foundry-Report":
+                assert foundry_report(project_root=root)["ok"]
+            elif tool == "Foundry-Tasks":
+                foundry_defects_to_tasks(project_root=root)
+            elif tool == "Bash":
+                command = args.split("command='", 1)[1].rsplit("'", 1)[0]
+                subprocess.run(command, shell=True, cwd=root, check=True,
+                               capture_output=True)
+    return served
+
+
+def _post_assay_run(root: str, fdir: Path, *, phase: str, temper: bool,
+                    nyquist: bool) -> None:
+    from tests.orchestration._env import (
+        _committed_evidence, _evidence_repo, _write_verdicts,
+    )
+
+    _evidence_repo(root)
+    _committed_evidence(root, "casting-1-handler.log", "echo reproduces",
+                        "reproduces\n")
+    _write_spec(fdir, ["FR-1"])
+    _write_state(fdir, phase=phase, cycle=1, temper=temper, nyquist=nyquist)
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    _defect_ledger(fdir, [])
+
+
+_DONE_LIST = ["Foundry-Report", "Foundry-Gate", "Bash", "Bash", "Foundry-Phase"]
+
+
+@pytest.mark.parametrize(
+    "temper, nyquist, owed",
+    [
+        # B1..B9 of the drive: F4 -> F5 -> F6 on a --temper run.
+        (True, False, [
+            ("F4", "transition_to_temper", ["Foundry-Gate", "Foundry-Phase"]),
+            ("F5", "run_temper", ["Skill", "Foundry-Report", "Foundry-Gate"]),
+            ("F5", "transition_to_done", _DONE_LIST),
+        ]),
+        # drive_nyquist_exit.py: the --temper --nyquist composition.
+        (True, True, [
+            ("F4", "transition_to_temper", ["Foundry-Gate", "Foundry-Phase"]),
+            ("F5", "run_temper", ["Skill", "Foundry-Report", "Foundry-Gate"]),
+            ("F5", "transition_to_nyquist", ["Foundry-Gate", "Foundry-Phase"]),
+            ("F5.5", "run_nyquist", ["Agent", "Foundry-Report", "Foundry-Gate"]),
+            ("F5.5", "transition_to_done", _DONE_LIST),
+        ]),
+        # and --nyquist alone, which reaches F5.5 from F4.
+        (False, True, [
+            ("F4", "transition_to_nyquist", ["Foundry-Gate", "Foundry-Phase"]),
+            ("F5.5", "run_nyquist", ["Agent", "Foundry-Report", "Foundry-Gate"]),
+            ("F5.5", "transition_to_done", _DONE_LIST),
+        ]),
+    ],
+    ids=["temper", "temper-nyquist", "nyquist"],
+)
+def test_a_post_assay_run_reaches_f6_by_the_served_lists_alone(
+    run_env, temper, nyquist, owed,
+):
+    """lead-stalls GI-008 / FR-007 (D-050): 'the LEAD always receives one
+    unconditional imperative', and no sequence of them reached F6 from F5."""
+    root, fdir = run_env
+    _post_assay_run(root, fdir, phase="F4", temper=temper, nyquist=nyquist)
+
+    served = _walk_served_lists(root)
+
+    assert served[: len(owed)] == owed, served
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "F6", served
+
+
+@pytest.mark.parametrize(
+    "phase, temper, nyquist, work",
+    [("F5", True, False, "run_temper"), ("F5.5", False, True, "run_nyquist")],
+    ids=["temper", "nyquist"],
+)
+def test_what_the_phase_work_files_is_served_the_grind_crossing(
+    run_env, phase, temper, nyquist, work,
+):
+    """B6: a blocking defect filed during the phase's work refuses its gate,
+    and the Foundry-Next owed after that refusal is the GRIND crossing — the
+    `transition_to_grind` list, whose `grind_start` enters F3 from here."""
+    root, fdir = run_env
+    _post_assay_run(root, fdir, phase=phase, temper=temper, nyquist=nyquist)
+
+    served = _walk_served_lists(root, filed_by_phase_work=fdir)
+
+    assert [action for _p, action, _c in served[:2]] == [
+        work, "transition_to_grind",
+    ], served
+    assert served[1][2][:3] == [
+        "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
+    ], served
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "F3", served
+
+
+def test_the_gate_out_of_f5_is_the_one_the_run_flags_name(run_env):
+    """`run_temper` ends in `done` on a --temper run and in `nyquist` on a
+    --temper --nyquist one, resolved from `details["crossing"]` by the one
+    resolver the header takes — never a literal `{gate}`."""
+    root, fdir = run_env
+    for nyquist, gate in ((False, "done"), (True, "nyquist")):
+        _post_assay(fdir, "F5", temper=True, nyquist=nyquist)
+        nxt = foundry_next_action(root)
+        assert nxt["action"] == "run_temper", nxt["action"]
+        assert nxt["next_calls"][-1]["tool"] == "Foundry-Gate", nxt["next_calls"]
+        assert nxt["next_calls"][-1]["args"] == f"phase='{gate}'", nyquist
+        assert f"Foundry-Gate(phase='{gate}')" in nxt["instructions"], nyquist
+    # Without the row the entry takes the generic header, as an unresolved
+    # phase-keyed crossing does, rather than handing the lead `{gate}`.
+    steps, header = _emitted_imperative("run_temper", {}, run_name="r", phase="F5")
+    assert steps is None and header == _generic_header("run_temper"), header
+
+
+def test_the_post_assay_context_names_no_call_and_no_condition(run_env):
+    """D-050's defect sat in the CONTEXT, so it is judged here directly: at
+    every F5 / F5.5 state the router serves, the CONTEXT writes out no call at
+    all — the header's list is the move, and the "When clean" tail is gone."""
+    root, fdir = run_env
+    contexts = {}
+    for state, _transitions, arrange, _action, _branch in _ROUTER_STATES:
+        if not state.startswith(("temper-", "nyquist-")):
+            continue
+        arrange(root, fdir, None)
+        contexts[state] = _context_of(foundry_next_action(root)["instructions"])
+        (fdir / GATE_PASSED_MARKER).unlink(missing_ok=True)
+    assert len(contexts) == 8, sorted(contexts)
+    problems = {
+        state: _CALL_SYNTAX.findall(text)
+        for state, text in contexts.items() if _CALL_SYNTAX.search(text)
+    }
+    assert problems == {}, problems
+    # Positive control: the tail the defect was filed on writes out a call.
+    # (The prose backstop does not match it, which is why this checks the
+    # call and not the condition.)
+    old = "When clean, call Foundry-Gate(phase='done'), update to F6."
+    assert _CALL_SYNTAX.findall(old) == ["Foundry-Gate"]
+    assert _HANDS_OVER_THE_CONDITION.search(old) is None
