@@ -3,7 +3,7 @@
 # evidence-volatile: (in )[0-9]+\.[0-9]+s
 
 ============================= test session starts ==============================
-collecting ... collected 115 items
+collecting ... collected 119 items
 
 test_the_audit_sweeps_every_key_and_returns_zero PASSED
 test_the_recorded_evidence_shows_the_population_it_judged PASSED
@@ -118,7 +118,11 @@ test_every_gate_step_precedes_the_transition_it_guards PASSED
 test_the_prose_the_structure_moved_still_says_what_it_said PASSED
 test_a_served_list_is_one_move_in_the_rules_and_in_every_answer PASSED
 test_the_one_move_walk_bites_on_every_shape_the_defects_took PASSED
+test_the_gate_then_phase_note_holds_past_the_gate_on_every_list PASSED
+test_the_past_the_gate_walk_bites_on_the_621318d_sentences PASSED
+test_a_passed_done_gate_points_the_lead_at_the_strip PASSED
+test_the_rules_block_states_the_one_move_and_spawn_clauses_once PASSED
 test_an_unresolved_crossing_takes_the_generic_header PASSED
 test_no_emission_carries_an_unresolved_slot_in_any_phase PASSED
 
-============================= 115 passed in 6.27s ==============================
+============================= 119 passed in 8.94s ==============================
