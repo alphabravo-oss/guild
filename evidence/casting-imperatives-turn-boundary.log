@@ -59,6 +59,22 @@ teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
   ST-003  inspect-idle             stale run_streams/idle                   running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-003  inspect-stale-team       fresh cleanup_teams/-                    running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
   ST-003  inspect-stale-team       stale cleanup_teams/-                    running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
+  GI-008  temper-owed              fresh run_temper/-                       running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-owed              stale run_temper/-                       running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-other-gate        fresh run_temper/-                       running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-other-gate        stale run_temper/-                       running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-gate-passed       fresh transition_to_done/-               running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-gate-passed       stale transition_to_done/-               running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-nyquist-passed    fresh transition_to_nyquist/-            running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-nyquist-passed    stale transition_to_nyquist/-            running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-filed             fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  temper-filed             stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  nyquist-owed             fresh run_nyquist/-                      running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  nyquist-owed             stale run_nyquist/-                      running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  nyquist-gate-passed      fresh transition_to_done/-               running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  nyquist-gate-passed      stale transition_to_done/-               running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  nyquist-filed            fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  nyquist-filed            stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
 
 ST-001 and ST-002 are discharged by 'ends-turn=yes AND names-wake=yes AND
 teardown=no' on every row where running=yes: ending the turn is stated as

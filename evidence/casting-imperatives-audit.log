@@ -3,7 +3,7 @@
 
 keys in _ACTION_IMPERATIVES: 22
 emission sites swept:        345
-router payloads swept:       50
+router payloads swept:       66
 defective emissions:         0
 
 header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME
@@ -122,6 +122,22 @@ notice is what printed above the header.
   payload:inspect-idle[stale]            received run_streams/idle  owed run_streams/idle  notice stall  calls Agent>Agent>Agent>Agent>END YOUR TURN  ok
   payload:inspect-stale-team[fresh]      received cleanup_teams/-  owed cleanup_teams/-  notice none  calls SendMessage>TeamDelete>Foundry-Team-Down  ok
   payload:inspect-stale-team[stale]      received cleanup_teams/-  owed cleanup_teams/-  notice waiting-report  calls SendMessage>TeamDelete>Foundry-Team-Down  ok
+  payload:temper-owed[fresh]             received run_temper/-  owed run_temper/-  notice none  calls Skill>Foundry-Report>Foundry-Gate  ok
+  payload:temper-owed[stale]             received run_temper/-  owed run_temper/-  notice stall  calls Skill>Foundry-Report>Foundry-Gate  ok
+  payload:temper-other-gate[fresh]       received run_temper/-  owed run_temper/-  notice none  calls Skill>Foundry-Report>Foundry-Gate  ok
+  payload:temper-other-gate[stale]       received run_temper/-  owed run_temper/-  notice stall  calls Skill>Foundry-Report>Foundry-Gate  ok
+  payload:temper-gate-passed[fresh]      received transition_to_done/-  owed transition_to_done/-  notice none  calls Foundry-Report>Foundry-Gate>Bash>Bash>Foundry-Phase  ok
+  payload:temper-gate-passed[stale]      received transition_to_done/-  owed transition_to_done/-  notice stall  calls Foundry-Report>Foundry-Gate>Bash>Bash>Foundry-Phase  ok
+  payload:temper-nyquist-passed[fresh]   received transition_to_nyquist/-  owed transition_to_nyquist/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
+  payload:temper-nyquist-passed[stale]   received transition_to_nyquist/-  owed transition_to_nyquist/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
+  payload:temper-filed[fresh]            received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:temper-filed[stale]            received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:nyquist-owed[fresh]            received run_nyquist/-  owed run_nyquist/-  notice none  calls Agent>Foundry-Report>Foundry-Gate  ok
+  payload:nyquist-owed[stale]            received run_nyquist/-  owed run_nyquist/-  notice stall  calls Agent>Foundry-Report>Foundry-Gate  ok
+  payload:nyquist-gate-passed[fresh]     received transition_to_done/-  owed transition_to_done/-  notice none  calls Foundry-Report>Foundry-Gate>Bash>Bash>Foundry-Phase  ok
+  payload:nyquist-gate-passed[stale]     received transition_to_done/-  owed transition_to_done/-  notice stall  calls Foundry-Report>Foundry-Gate>Bash>Bash>Foundry-Phase  ok
+  payload:nyquist-filed[fresh]           received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:nyquist-filed[stale]           received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
 
 (no entry hands the lead a conditional)
 
@@ -282,21 +298,21 @@ twenty that have nothing to route.
   run_assay@F1[refused-other-team]                  CALL  -                            YOUR NEXT CALL:
   run_assay@F1[unaccepted]                          CALL  -                            YOUR NEXT CALL:
   run_assay@F1[live-with-owed-acceptance]           CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[live]                              CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[idle]                              CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[torn-down]                         CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[registered-not-spawned]            CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[undispatched]                      CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[unmeasured]                        CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[wave-boundary]                     CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[final-wave-done]                   CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[unreadable-manifest]               CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[refused]                           CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[refused-team-down]                 CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[refused-foreign-pane]              CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[refused-other-team]                CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[unaccepted]                        CALL  -                            YOUR NEXT CALL:
-  run_nyquist@F1[live-with-owed-acceptance]         CALL  -                            YOUR NEXT CALL:
+  run_nyquist@F1[live]                              CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[idle]                              CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[torn-down]                         CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[registered-not-spawned]            CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[undispatched]                      CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[unmeasured]                        CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[wave-boundary]                     CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[final-wave-done]                   CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[unreadable-manifest]               CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[refused]                           CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[refused-team-down]                 CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[refused-foreign-pane]              CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[refused-other-team]                CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[unaccepted]                        CALL  -                            YOUR NEXT CALLS (in order):
+  run_nyquist@F1[live-with-owed-acceptance]         CALL  -                            YOUR NEXT CALLS (in order):
   run_streams@F1[live]                              NONE  live/live                    YOUR NEXT CALL: NONE. Your INSPECT streams are runni
   run_streams@F1[idle]                              CALL  idle/idle                    YOUR NEXT CALLS (in order):
   run_streams@F1[torn-down]                         CALL  idle/idle                    YOUR NEXT CALLS (in order):
@@ -312,21 +328,21 @@ twenty that have nothing to route.
   run_streams@F1[refused-other-team]                CALL  idle/idle                    YOUR NEXT CALLS (in order):
   run_streams@F1[unaccepted]                        CALL  idle/idle                    YOUR NEXT CALLS (in order):
   run_streams@F1[live-with-owed-acceptance]         NONE  live/live                    YOUR NEXT CALL: NONE. Your INSPECT streams are runni
-  run_temper@F1[live]                               CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[idle]                               CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[torn-down]                          CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[registered-not-spawned]             CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[undispatched]                       CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[unmeasured]                         CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[wave-boundary]                      CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[final-wave-done]                    CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[unreadable-manifest]                CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[refused]                            CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[refused-team-down]                  CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[refused-foreign-pane]               CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[refused-other-team]                 CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[unaccepted]                         CALL  -                            YOUR NEXT CALL:
-  run_temper@F1[live-with-owed-acceptance]          CALL  -                            YOUR NEXT CALL:
+  run_temper@F1[live]                               CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[idle]                               CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[torn-down]                          CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[registered-not-spawned]             CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[undispatched]                       CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[unmeasured]                         CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[wave-boundary]                      CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[final-wave-done]                    CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[unreadable-manifest]                CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[refused]                            CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[refused-team-down]                  CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[refused-foreign-pane]               CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[refused-other-team]                 CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[unaccepted]                         CALL  -                            YOUR NEXT CALLS (in order):
+  run_temper@F1[live-with-owed-acceptance]          CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_assay@F1[live]                      CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_assay@F1[idle]                      CALL  -                            YOUR NEXT CALLS (in order):
   transition_to_assay@F1[torn-down]                 CALL  -                            YOUR NEXT CALLS (in order):

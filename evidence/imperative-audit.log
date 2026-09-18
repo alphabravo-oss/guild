@@ -3,7 +3,7 @@
 
 keys in _ACTION_IMPERATIVES: 22
 emission sites swept:        345
-router payloads swept:       50
+router payloads swept:       66
 defective emissions:         0
 
 header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME
@@ -122,5 +122,21 @@ notice is what printed above the header.
   payload:inspect-idle[stale]            received run_streams/idle  owed run_streams/idle  notice stall  calls Agent>Agent>Agent>Agent>END YOUR TURN  ok
   payload:inspect-stale-team[fresh]      received cleanup_teams/-  owed cleanup_teams/-  notice none  calls SendMessage>TeamDelete>Foundry-Team-Down  ok
   payload:inspect-stale-team[stale]      received cleanup_teams/-  owed cleanup_teams/-  notice waiting-report  calls SendMessage>TeamDelete>Foundry-Team-Down  ok
+  payload:temper-owed[fresh]             received run_temper/-  owed run_temper/-  notice none  calls Skill>Foundry-Report>Foundry-Gate  ok
+  payload:temper-owed[stale]             received run_temper/-  owed run_temper/-  notice stall  calls Skill>Foundry-Report>Foundry-Gate  ok
+  payload:temper-other-gate[fresh]       received run_temper/-  owed run_temper/-  notice none  calls Skill>Foundry-Report>Foundry-Gate  ok
+  payload:temper-other-gate[stale]       received run_temper/-  owed run_temper/-  notice stall  calls Skill>Foundry-Report>Foundry-Gate  ok
+  payload:temper-gate-passed[fresh]      received transition_to_done/-  owed transition_to_done/-  notice none  calls Foundry-Report>Foundry-Gate>Bash>Bash>Foundry-Phase  ok
+  payload:temper-gate-passed[stale]      received transition_to_done/-  owed transition_to_done/-  notice stall  calls Foundry-Report>Foundry-Gate>Bash>Bash>Foundry-Phase  ok
+  payload:temper-nyquist-passed[fresh]   received transition_to_nyquist/-  owed transition_to_nyquist/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
+  payload:temper-nyquist-passed[stale]   received transition_to_nyquist/-  owed transition_to_nyquist/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
+  payload:temper-filed[fresh]            received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:temper-filed[stale]            received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:nyquist-owed[fresh]            received run_nyquist/-  owed run_nyquist/-  notice none  calls Agent>Foundry-Report>Foundry-Gate  ok
+  payload:nyquist-owed[stale]            received run_nyquist/-  owed run_nyquist/-  notice stall  calls Agent>Foundry-Report>Foundry-Gate  ok
+  payload:nyquist-gate-passed[fresh]     received transition_to_done/-  owed transition_to_done/-  notice none  calls Foundry-Report>Foundry-Gate>Bash>Bash>Foundry-Phase  ok
+  payload:nyquist-gate-passed[stale]     received transition_to_done/-  owed transition_to_done/-  notice stall  calls Foundry-Report>Foundry-Gate>Bash>Bash>Foundry-Phase  ok
+  payload:nyquist-filed[fresh]           received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:nyquist-filed[stale]           received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
 
 (no entry hands the lead a conditional)
