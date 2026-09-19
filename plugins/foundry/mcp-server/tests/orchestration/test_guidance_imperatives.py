@@ -6383,6 +6383,11 @@ def test_a_filed_assay_rejection_is_not_served_a_second_filing(run_env):
         ], record
         assert "(FR-2)" in nxt["next_calls"][0]["args"], nxt["next_calls"][0]
         assert "carry ASSAY's findings" not in nxt["instructions"], record
+        # The step's own reason is the per-requirement one: the GRIND gate
+        # counting open records is exactly what let the unrelated one pass.
+        note = nxt["next_calls"][0]["note"]
+        assert "no open blocking defect carries them" in note, note
+        assert "counts open defects" not in note, note
 
     # PROVE's s1b: FR-2 filed, FR-3 not — the filing names FR-3 alone, and the
     # CONTEXT's counts are the same comparison's.
@@ -6440,7 +6445,14 @@ def test_a_held_class_with_a_record_open_closes_a_clean_cycle_by_the_served_list
     _record_full_inspect_mode(fdir, cycle=4)
     _escalated(fdir, tier="LATENT")
 
-    served = _walk_served_lists(root, lists=2)
+    served = _walk_served_lists(root, lists=1)
+    # At F3 nothing blocks and nothing was dispatched: the CONTEXT says so,
+    # rather than "all defects fixed" over a LATENT backlog still open.
+    context = _context_of(foundry_next_action(root)["instructions"])
+    assert "all defects fixed" not in context, context
+    assert "no blocking defect is open" in context, context
+    assert "3 LATENT defect(s) stay open and block nothing" in context, context
+    served += _walk_served_lists(root, lists=1)
 
     assert served == [
         ("F2", "transition_to_grind", ["Foundry-Tasks", "Foundry-Gate", "Foundry-Phase"]),
