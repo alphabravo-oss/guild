@@ -133,6 +133,12 @@ teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
   GI-008  assay-passed-nyquist     stale transition_to_nyquist/-            running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-passed-both        fresh transition_to_temper/-             running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-passed-both        stale transition_to_temper/-             running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-passed-filed       fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  assay-passed-filed       stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  assay-passed-temper-filed fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  assay-passed-temper-filed stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  assay-passed-nyquist-untiered fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  assay-passed-nyquist-untiered stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   GI-008  halted-reported          fresh halted/-                           running=-   ends-turn=yes names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  halted-reported          stale halted/-                           running=-   ends-turn=yes names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  halted-unreported        fresh halted/-                           running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no

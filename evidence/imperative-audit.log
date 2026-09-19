@@ -3,7 +3,7 @@
 
 keys in _ACTION_IMPERATIVES: 23
 emission sites swept:        360
-router payloads swept:       132
+router payloads swept:       138
 defective emissions:         0
 
 header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME
@@ -198,6 +198,12 @@ notice is what printed above the header.
   payload:assay-passed-nyquist[stale]    received transition_to_nyquist/-  owed transition_to_nyquist/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
   payload:assay-passed-both[fresh]       received transition_to_temper/-  owed transition_to_temper/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
   payload:assay-passed-both[stale]       received transition_to_temper/-  owed transition_to_temper/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
+  payload:assay-passed-filed[fresh]      received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:assay-passed-filed[stale]      received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:assay-passed-temper-filed[fresh] received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:assay-passed-temper-filed[stale] received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:assay-passed-nyquist-untiered[fresh] received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:assay-passed-nyquist-untiered[stale] received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
   payload:halted-reported[fresh]         received halted/-  owed halted/-  notice none  calls NONE  ok
   payload:halted-reported[stale]         received halted/-  owed halted/-  notice stall  calls NONE  ok
   payload:halted-unreported[fresh]       received halted/-  owed halted/-  notice none  calls Foundry-Report  ok
