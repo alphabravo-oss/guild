@@ -2375,11 +2375,18 @@ def audit_report() -> list[str]:
         f"router payloads swept:       {len(drives)}",
         f"defective emissions:         {len(findings)}",
         "",
-        "header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, "
-        "UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME",
-        "payload detectors: WRONG_ROUTE, CONDITIONAL, CONTRADICTION, CONTEXT_SEQUENCE, "
-        "CONTEXT_CALL, CONTEXT_CONDITIONAL, TEARDOWN_OVER_RUNNING_AGENTS, "
-        "NO_LIVENESS, SPLIT_READING",
+        "header detectors: CONDITIONAL, NO_LITERAL_CALL, PARKING_NONE, "
+        "UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, "
+        "UNCREATABLE_TEAM_NAME",
+        "payload detectors: WRONG_ROUTE, HEAD_GATE_REFUSES, CONDITIONAL, "
+        "CONTRADICTION, CONTEXT_SEQUENCE, CONTEXT_CALL, CONTEXT_CONDITIONAL, "
+        "TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING",
+        "HEAD_GATE_REFUSES is the one rung that EXECUTES a served step "
+        "(lead-stalls D-063): where a list OPENS with a Foundry-Gate, that "
+        "gate is called for real on the state the list was served for. "
+        "PARKING_NONE is NO_LITERAL_CALL's condition (lead-stalls D-064): "
+        "'YOUR NEXT CALL: NONE' is owed at the three terminals and at a "
+        "WAITING branch, and is a finding anywhere else.",
         "CONTEXT_SEQUENCE, CONTEXT_CALL and CONTEXT_CONDITIONAL judge the CONTEXT of "
         "EVERY payload (lead-stalls D-051..D-053): it states the run state and "
         "names no call, no order and no condition.",
@@ -7460,6 +7467,41 @@ def test_a_run_already_past_f4_on_a_short_ledger_is_served_the_assay(
         assert phase in nxt["instructions"], nxt["instructions"]
         state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
         assert state["phase"] == phase, state["phase"]
+
+
+def test_the_short_ledger_rung_is_one_body_asked_by_all_three_phases():
+    """lead-stalls D-062's remedy, as a property of the SOURCE.
+
+    D-060 wrote this rung inline in the F4 arm, and that is the whole of why
+    D-062 exists: a comparison one phase makes and its two successors do not
+    is a state the run can stand in with no answer. Re-inlining a copy into
+    any arm would pass every drive above on the day it landed and drift by the
+    next cycle — the argument `_all_verified_rung` and `_done_preconditions`
+    each make for themselves. So the router's three arms are held to ONE call
+    of one helper, and the spec climb that feeds it lives in the helper.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    source = textwrap.dedent(inspect.getsource(_compute_next_action))
+    tree = ast.parse(source)
+    calls = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "_short_ledger_assay"
+    ]
+    assert [
+        arg.value for call in calls for arg in call.args
+        if isinstance(arg, ast.Constant)
+    ] == ["F4", "F5", "F5.5"], ast.dump(tree)
+    # And no arm climbs the spec for itself: the one climb is the helper's.
+    climbs = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "_spec_requirement_ids"
+    ]
+    assert climbs == [], source
 
 
 @pytest.mark.parametrize(

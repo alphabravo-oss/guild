@@ -385,8 +385,11 @@ def _short_ledger_assay(
             )
             + " Each assayer records its verdicts through the "
             "Foundry-Verdict door, and the DONE gate refuses a ledger that "
-            "covers fewer requirements than the spec declares — from "
-            f"{phase} as surely as from F4."
+            "covers fewer requirements than the spec declares"
+            # Said only where it is news. At F4 the lead has not crossed
+            # anything yet; past it, the sentence answers the question this
+            # phase raises — why a run standing in F5 is being sent back.
+            + ("." if phase == "F4" else f" — from {phase} as surely as from F4.")
         ),
         # No `agent_config`: `foundry:assayer` holds its own opus /
         # effort=max frontmatter pin, the reason the empty-ledger arm gives.
