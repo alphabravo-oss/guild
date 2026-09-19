@@ -332,6 +332,73 @@ def _blocking_grind_crossing(
     return None
 
 
+def _short_ledger_assay(
+    fdir: Path, project_root: str, state: dict, phase: str,
+) -> dict | None:
+    """The ASSAY dispatch a SHORT verdict ledger owes, or ``None``.
+
+    lead-stalls GI-008 / FR-007 (D-060, D-062) — ONE BODY, ASKED BY F4, F5 AND
+    F5.5, for `_blocking_grind_crossing`'s reason.
+
+    D-060 gave this rung to the F4 arm alone. Past F4 the same ledger was
+    still reachable — `transitions._temper_preconditions` and
+    `_nyquist_preconditions` had no coverage comparison, so a short-and-clean
+    ledger entered F5 or F5.5 — and once in, `run_temper` / `run_nyquist` were
+    re-served every lap behind a DONE gate refusing "Only N verdicts but spec
+    has M requirements", with the exit named only inside that refusal's hint.
+    Driven at a4ded25, three laps at each of F5 and F5.5, the phase never
+    moved. Both doors now carry the rung (D-062) so the state cannot be
+    ENTERED; this is what a run ALREADY standing in one is served, which is
+    the other half — a door that refuses says nothing to a run already past
+    it.
+
+    Asked BEFORE the phase's own work and before its crossing, because ASSAY's
+    unfinished list is what is owed however far the run has walked, and after
+    `_escalation_hold` for the reason the F4 arm gives: the hold's road back is
+    shortest.
+
+    The count is `gates.py#_done_preconditions`' own comparison, over the ids
+    `artifacts._spec_requirement_ids` declares — the one climb, so the router
+    and the gate cannot disagree about how many requirements the spec has.
+    """
+    verdicts = _load_json(fdir / "verdicts.json")
+    requirements = verdicts.get("requirements", [])
+    declared = _spec_requirement_ids(project_root, fdir, state)[1]
+    if len(requirements) >= len(declared):
+        return None
+    recorded = {str(r.get("id")) for r in requirements}
+    unrecorded = sorted(declared - recorded)
+    non_verified = sum(
+        1 for r in requirements if r.get("verdict") != "VERIFIED"
+    )
+    return {
+        "phase": phase,
+        "action": "run_assay",
+        "instructions": (
+            f"ASSAY has NOT finished: verdicts.json records "
+            f"{len(requirements)} verdicts and the spec declares "
+            f"{len(declared)} requirements, so {len(unrecorded)} are "
+            f"unrecorded ({', '.join(unrecorded)}). "
+            + (
+                f"{non_verified} recorded verdict(s) are not VERIFIED."
+                if non_verified else "Every recorded verdict is VERIFIED."
+            )
+            + " Each assayer records its verdicts through the "
+            "Foundry-Verdict door, and the DONE gate refuses a ledger that "
+            "covers fewer requirements than the spec declares — from "
+            f"{phase} as surely as from F4."
+        ),
+        # No `agent_config`: `foundry:assayer` holds its own opus /
+        # effort=max frontmatter pin, the reason the empty-ledger arm gives.
+        "details": {
+            "non_verified": non_verified,
+            "total": len(requirements),
+            "spec_requirements": len(declared),
+            "unrecorded_requirements": unrecorded,
+        },
+    }
+
+
 def _post_assay_crossing(
     fdir: Path, phase: str, name: str, gate: str, grind_config: dict,
 ) -> dict | None:
@@ -4423,21 +4490,40 @@ def _compute_next_action(project_root: str) -> dict:
         # agents for this roster" would be an instruction to run a roster
         # nothing recorded — this arm exists so the lead is never told to.
         if streams.get("unrecorded_width"):
-            return {
-                "phase": "F2",
-                "action": "record_inspect_width",
-                # lead-stalls GI-008 / FR-007 — the reason, not the hint: the
-                # hint is the remedy written out as calls, and the header
-                # above is that remedy as the list the lead makes.
-                "instructions": f"INSPECT phase: {streams['reason']}.",
-                "details": {
-                    "unrecorded_width": True,
-                    "inspect_mode": "",
-                    "inspect_rule": "",
-                    "missing_streams": ["inspect_mode"],
-                },
-            }
-        if not streams["complete"]:
+            # lead-stalls GI-008 / FR-007 (D-063) — AND THE ONE READING WHERE
+            # THE RE-OPEN IS REFUSED IS SENT TO THE DOOR THAT ACCEPTS IT.
+            # ------------------------------------------------------------
+            # `record_inspect_width` serves `inspect_start`, and the widening
+            # crossing refuses while a blocking defect is open ("Widening an
+            # INSPECT over code the run is about to change re-verifies a tree
+            # that will not exist"). So on an unrecorded width WITH a defect
+            # filed, the list this arm served could not succeed either — the
+            # same shape one reading over. The GRIND crossing below is the
+            # move there, and it needs no recorded width: its door reads the
+            # defect ledger, the tasks marker and the team scan.
+            #
+            # Falling THROUGH rather than restating it, so the arm that
+            # already builds that payload — escalation notice, cap seal,
+            # latent backlog and all — stays the one builder of it. The
+            # `run_streams` arm below is stepped over on this reading for the
+            # reason this arm exists (D-117 / GI-009): a roster nothing
+            # recorded is not a roster the lead can be told to run.
+            if open_count == 0:
+                return {
+                    "phase": "F2",
+                    "action": "record_inspect_width",
+                    # lead-stalls GI-008 / FR-007 — the reason, not the hint:
+                    # the hint is the remedy written out as calls, and the
+                    # header above is that remedy as the list the lead makes.
+                    "instructions": f"INSPECT phase: {streams['reason']}.",
+                    "details": {
+                        "unrecorded_width": True,
+                        "inspect_mode": "",
+                        "inspect_rule": "",
+                        "missing_streams": ["inspect_mode"],
+                    },
+                }
+        elif not streams["complete"]:
             return {
                 "phase": "F2",
                 "action": "run_streams",
@@ -4927,31 +5013,13 @@ def _compute_next_action(project_root: str) -> dict:
         # declares, taken after the auto-pass above has had its chance to
         # fill the ledger. Asked before the held class and the GRIND crossing
         # because ASSAY's own list is the one still owed.
-        declared = _spec_requirement_ids(project_root, fdir, state)[1]
-        if total < len(declared):
-            recorded = {
-                str(r.get("id")) for r in verdicts.get("requirements", [])
-            }
-            unrecorded = sorted(declared - recorded)
-            return {
-                "phase": "F4",
-                "action": "run_assay",
-                "instructions": (
-                    f"ASSAY has NOT finished: verdicts.json records {total} "
-                    f"verdicts and the spec declares {len(declared)} "
-                    "requirements, so "
-                    f"{len(unrecorded)} are unrecorded "
-                    f"({', '.join(unrecorded)}). Every recorded verdict is "
-                    "VERIFIED. Each assayer records its verdicts through the "
-                    "Foundry-Verdict door, and the DONE gate refuses a ledger "
-                    "that covers fewer requirements than the spec declares."
-                ),
-                "details": {
-                    "non_verified": 0, "total": total,
-                    "spec_requirements": len(declared),
-                    "unrecorded_requirements": unrecorded,
-                },
-            }
+        # lead-stalls D-062 — ONE BODY, and F5 / F5.5 ask it too. The arm
+        # written here read the ledger inline; the state it answers is
+        # reachable from all three phases, and a rung only one of them makes is
+        # what D-062 was.
+        short = _short_ledger_assay(fdir, project_root, state, "F4")
+        if short is not None:
+            return short
 
         # lead-stalls GI-008 / FR-007 (D-055) — every crossing below walks on
         # toward a DONE gate that refuses a held class, so a held class is
@@ -5032,6 +5100,14 @@ def _compute_next_action(project_root: str) -> dict:
         )
         if held is not None:
             return held
+        # lead-stalls GI-008 / FR-007 (D-062) — a run ALREADY in F5 on a short
+        # ledger is served ASSAY's unfinished list, not F5's work behind a
+        # DONE gate that refuses it. The door now refuses the entry too
+        # (`transitions._ledger_coverage_rung`), and this is what the run that
+        # is already past it receives.
+        short = _short_ledger_assay(fdir, project_root, state, "F5")
+        if short is not None:
+            return short
         crossing = _post_assay_crossing(
             fdir, "F5", "TEMPER", gate, GRIND_AGENT_CONFIG,
         )
@@ -5060,6 +5136,13 @@ def _compute_next_action(project_root: str) -> dict:
         )
         if held is not None:
             return held
+        # lead-stalls GI-008 / FR-007 (D-062) — the F5 twin. NYQUIST generates
+        # regression tests for VERIFIED requirements, so a ledger missing the
+        # verdicts for some of them is exactly the state this phase must not
+        # run in.
+        short = _short_ledger_assay(fdir, project_root, state, "F5.5")
+        if short is not None:
+            return short
         crossing = _post_assay_crossing(
             fdir, "F5.5", "NYQUIST", "done", GRIND_AGENT_CONFIG,
         )

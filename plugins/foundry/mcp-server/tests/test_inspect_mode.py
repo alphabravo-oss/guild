@@ -5565,13 +5565,26 @@ def test_the_trace_skip_fence_fails_closed_on_a_width_from_another_cycle(run_env
 def test_the_widening_re_open_does_not_widen_another_cycles_delta(run_env):
     """ST-005 / AC-016 — a second adjacent path: a different TRANSITION.
 
-    The F2->F2 widening re-open exists to take a DELTA INSPECT to FULL before
-    ASSAY, and it is refused when this cycle's recorded width is not DELTA
-    because that call is then a stray second `inspect_start` (D-057). It read
-    the same unguarded value, so cycle 1's DELTA licensed a widening of cycle 2
-    — advancing the counter and stamping a FULL decision for a crossing whose
-    own width nothing had recorded. The counter is asserted unmoved, which is
-    the property AC-013 states for every refused crossing.
+    The F2->F2 widening re-open takes a DELTA INSPECT to FULL before ASSAY,
+    and D-057's defect was that it read an UNGUARDED width: cycle 1's DELTA
+    licensed a widening of cycle 2, stamping a FULL decision described as the
+    widening of a DELTA cycle that this crossing had nothing to do with.
+
+    THE ASSERTION MOVED WITH lead-stalls D-063, AND THE PROPERTY DID NOT.
+    This used to assert a refusal, because an unrecorded width was lumped in
+    with "nothing to widen". lead-stalls D-063 is what that cost: F2 with no
+    recorded width is the one state the router's `record_inspect_width` action
+    exists FOR, its served list opens with exactly this crossing, and the door
+    answered with the action's own precondition — a state no accepted
+    transition left. The re-open is the recovery there and it is accepted now.
+
+    What this test still holds is D-057's actual property: the crossing must
+    not be licensed by, or DESCRIBED as, another cycle's DELTA. The guarded
+    read answers `unrecorded` for cycle 2, so the arm that fires is the
+    unrecorded recovery, the entry it records says so in its own words, and
+    cycle 1's decision is left exactly as it was. A crossing that had read the
+    unguarded value would record the DELTA-widening sentence instead, which is
+    the byte-level difference between the two behaviours.
     """
     project_root, fdir = run_env
     _cycles_recorded_against(
@@ -5581,9 +5594,18 @@ def test_the_widening_re_open_does_not_widen_another_cycles_delta(run_env):
     _arm(fdir)
     result = foundry_mark_phase_complete("inspect_start", project_root)
 
-    assert result.get("ok") is not True, result
-    assert "unrecorded" in result["error"], result
-    assert _current_cycle(fdir) == 2, "a refused crossing advanced the counter"
+    assert result.get("ok") is True, result
+    assert _current_cycle(fdir) == 3, result
+    entries = _read_state(fdir)["inspect_modes"]
+    recorded = entries[-1]
+    assert recorded["cycle"] == 3 and recorded["mode"] == "FULL", recorded
+    assert "never recorded" in recorded["rule_detail"], recorded
+    assert "DELTA" not in recorded["rule_detail"], (
+        "the crossing described itself as the widening of another cycle's "
+        "DELTA, which is the unguarded read D-057 closed"
+    )
+    stamped = [e for e in entries if e["cycle"] == 1]
+    assert len(stamped) == 1 and stamped[0]["mode"] == "DELTA", entries
 
 
 def test_the_cycle_stamp_is_checked_in_the_one_width_read(run_env):

@@ -112,6 +112,15 @@ from foundry_mcp.tools.orchestration.teams import (
     foundry_register_team,
     foundry_unregister_team,
 )
+# lead-stalls GI-008 / FR-007 (D-062, D-063) — the real doors. Every detector
+# in this module until now judged what a served list LOOKS like;
+# `_head_gate_answer` asks the gate itself whether the list's first step can
+# be taken in the state it was served for, and the D-062 / D-063 contract
+# tests below drive the crossing behind it.
+from foundry_mcp.tools.orchestration.gates import foundry_gate
+from foundry_mcp.tools.orchestration.transitions import (
+    foundry_mark_phase_complete,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -259,6 +268,52 @@ _NAMES_A_CALL = re.compile(
     r"|\bAgent\("
 )
 _NAMES_NO_CALL = re.compile(r"YOUR NEXT CALL:\s*NONE")
+
+#: lead-stalls GI-008 / FR-007 / FR-008 (D-064) — WHERE 'YOUR NEXT CALL: NONE'
+#: IS OWED, WHICH IS THE CONDITION THE RUNG ABOVE DID NOT CARRY.
+#: ---------------------------------------------------------------------------
+#: `_NAMES_NO_CALL` was accepted from ANY action at ANY liveness reading, so
+#: the NO_LITERAL_CALL rung could not tell a legitimate NONE from a PARKING
+#: one — an action that still owes a move answering "there is nothing to do",
+#: which is lead-stalls ST-003, the defect this whole run exists to remove. Driven at
+#: a4ded25: `_IMPERATIVES["build_castings"]["idle"]` replaced by
+#: `_Imperative((), "Proceed as you judge best.")` emits 'YOUR NEXT CALL: NONE.
+#: Proceed as you judge best.' at the wave-complete branch, and
+#: `audit_action_imperatives(_router_drives())` returned 0 findings over all
+#: 360 sites and all 158 payloads. Three control mutations DID bite, so the
+#: sweep was live and this rung specifically was blind.
+#:
+#: The step-list NONE detector in `judge_next_calls` cannot stand in for it:
+#: it asks only whether an empty step list and a NONE header agree with EACH
+#: OTHER, which a planted parking NONE satisfies on both halves.
+#:
+#: DECLARED BY HAND, never derived from `_Imperative.steps`. A rung that asked
+#: the table under audit "may you answer NONE here" by reading its own step
+#: list would agree with it by construction and could never disagree — the
+#: argument `_owed_branch` and `_OWED_STREAM_AGENT` each make for their own
+#: hand-written columns. So a key added to `_IMPERATIVES` that answers NONE
+#: without being declared here is FLAGGED, which is precisely the gap
+#: lead-stalls FR-008's stopping condition was silent about.
+#:
+#: THE THREE TERMINALS: `done` (the run is sealed), `halted` (it stopped) and
+#: `escalation_held` (lead-stalls D-055 — the one non-terminal run state no
+#: accepted transition leaves, which the header says in the terminals'
+#: register). Every other NONE belongs to a WAITING branch, where the lead is
+#: told that ending the turn is correct and the completion notification wakes
+#: it (lead-stalls CT-002 / ST-001 / ST-002).
+_NONE_IS_OWED_ACTIONS = frozenset({"done", "halted", "escalation_held"})
+_NONE_IS_OWED_BRANCH = "live"
+
+
+def _none_is_owed(action: str, owed: str) -> bool:
+    """Is 'YOUR NEXT CALL: NONE' the RIGHT answer at this site?
+
+    ``owed`` is the branch the reading is owed (`_audit_sites`' fourth
+    element), ``""`` for the unbranched entries — written by hand in
+    `_LIVENESS_READINGS`, so this asks the table's declaration and never the
+    selector under audit.
+    """
+    return action in _NONE_IS_OWED_ACTIONS or owed == _NONE_IS_OWED_BRANCH
 
 #: Every placeholder `_format_imperative_header` resolves. A slot still present
 #: in an emitted header is a call the lead cannot make -- `Foundry-Gate(phase=
@@ -892,6 +947,15 @@ def _post_assay(
 ) -> None:
     _write_spec(fdir, ["FR-1"])
     _write_state(fdir, phase=phase, cycle=1, temper=temper, nyquist=nyquist)
+    # lead-stalls GI-008 / FR-007 (D-062) — THE LEDGER THE NAME CLAIMS.
+    # These rows are "past ASSAY", and they wrote no verdicts at all: a spec
+    # declaring FR-1 beside an EMPTY ledger, which is "ASSAY has not run"
+    # (D-070) and, at F4, the state the `run_assay` arm answers. F5 and F5.5
+    # had no such rung, so the fixture passed and the sweep's zero was
+    # computed over a phase pair that could not tell a finished ASSAY from an
+    # absent one. The verdict is recorded here so the rows mean what they say,
+    # and the short-ledger states are their own rows below.
+    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
     _defect_ledger(
         fdir, [_tiered("D-001", "LIVE", status="open")] if filed else [],
     )
@@ -1200,9 +1264,9 @@ def _arrange_assay_passed_nyquist_untiered(root, fdir, teams):
 #: (a PROVE record that is not clean, so the auto-pass leaves the ledger
 #: short), and its control (a clean PROVE, whose auto-pass fills it).
 def _assay_short(fdir: Path, *, temper: bool = False, nyquist: bool = False,
-                 prove_findings: int | None = None) -> None:
+                 prove_findings: int | None = None, phase: str = "F4") -> None:
     _write_spec(fdir, ["FR-1", "FR-2"])
-    _write_state(fdir, phase="F4", cycle=1, temper=temper, nyquist=nyquist)
+    _write_state(fdir, phase=phase, cycle=1, temper=temper, nyquist=nyquist)
     _write_verdicts(fdir, [
         {"id": "FR-1", "verdict": "VERIFIED", "evidence": "read at HEAD"},
     ])
@@ -1234,6 +1298,28 @@ def _arrange_assay_short_prove_filed(root, fdir, teams):
 
 def _arrange_assay_short_prove_clean(root, fdir, teams):
     _assay_short(fdir, prove_findings=0)
+
+
+#: lead-stalls D-062 — THE SAME SHORT LEDGER, ONE PHASE OVER.
+#:
+#: `_assay_short` is the only short-ledger builder in this module and it was
+#: F4-only, so no `_ROUTER_STATES` row held a short ledger at F5 or F5.5 and
+#: the sweep's zero never judged those two arms. It did not have to be a
+#: hand-edit to get there: at a4ded25 `Foundry-Gate('temper')` PASSED this
+#: ledger (checklist: entered_from_accepted_phase, all_verified,
+#: zero_blocking_defects, evidence_reproduces_at_head, temper_enabled — no
+#: coverage rung) and `Foundry-Phase('temper')` wrote F5, so the state below
+#: is one the server's own doors admitted. From there `run_temper` was
+#: re-served every lap behind a DONE gate refusing the short ledger.
+#:
+#: Both rows are owed `run_assay`: ASSAY's unfinished list is what a run in
+#: either phase still owes, and the phase it stands in does not change that.
+def _arrange_temper_short(root, fdir, teams):
+    _assay_short(fdir, temper=True, phase="F5")
+
+
+def _arrange_nyquist_short(root, fdir, teams):
+    _assay_short(fdir, nyquist=True, phase="F5.5")
 
 
 #: lead-stalls D-061 — PROVE's drive_cap states: a GRIND crossing served at
@@ -1378,6 +1464,12 @@ _ROUTER_STATES = (
     ("assay-short-both", "GI-008", _arrange_assay_short_both, "run_assay", None),
     ("assay-short-prove-filed", "GI-008", _arrange_assay_short_prove_filed, "run_assay", None),
     ("assay-short-prove-clean", "GI-008", _arrange_assay_short_prove_clean, "transition_to_done", None),
+    # lead-stalls D-062 — the same short ledger one phase over, which the
+    # temper and nyquist gates admitted until this cycle gave them the DONE
+    # gate's coverage rung. A run already standing there is owed ASSAY's
+    # unfinished list, not the phase's work behind a gate that refuses it.
+    ("temper-short", "GI-008", _arrange_temper_short, "run_assay", None),
+    ("nyquist-short", "GI-008", _arrange_nyquist_short, "run_assay", None),
     # lead-stalls D-061 — the GRIND crossing at the cap, from every phase that
     # serves it; the structure audit's SERVED_PAST_THE_SEAL judges its list.
     ("inspect-filed-capped", "GI-008", _arrange_inspect_filed_capped, "transition_to_grind", None),
@@ -1511,6 +1603,62 @@ def _split_payload(instructions: str) -> tuple[str, str]:
     return block, "\n".join(lines).strip("\n")
 
 
+def _head_gate_answer(root: str, nxt: dict) -> dict | None:
+    """`Foundry-Gate`'s REAL answer when the served list opens with one.
+
+    lead-stalls GI-008 / FR-007 (D-063) — THE RUNG THAT EXECUTES A STEP
+    INSTEAD OF READING IT.
+    ---------------------------------------------------------------------
+    Every detector in this module judges the SHAPE of a served list: does it
+    name real registered tools, does the header render it, is the yield last,
+    is the one-move rule printed. None of them ever EXECUTED a step, so a list
+    whose first gate always refuses is well-formed by every rung the audit
+    owns — and that is the gap D-053, D-060, D-061, D-062 and D-063 all came
+    through. `record_inspect_width` is the plainest instance: it served
+    `Foundry-Gate(phase='inspect_start')` into the one state the gate refuses
+    with the action's own precondition, three laps, phase never moving, the
+    exit reconstructable only from the refusal's hint.
+
+    WHY ONLY STEP (1), AND WHY THAT IS SOUND RATHER THAN TIMID. Nothing
+    precedes the first step, so the answer the door gives on the state the
+    list was served FOR is the answer the lead will get. A gate deeper in a
+    list is a different question: `transition_to_grind` serves
+    `Foundry-Gate(phase='grind')` at step (2), behind the `Foundry-Tasks` at
+    step (1) that writes the very marker that gate refuses without — calling
+    it here would report a refusal the lead never meets. A detector that
+    fires on a correct list is worse than one that misses an incorrect one
+    (the ruling this package records for the undecidable syntactic guards),
+    so the rung takes exactly the case it can decide. Six actions open on a
+    gate — `record_inspect_width`, `transition_to_assay`,
+    `transition_to_inspect`, `transition_to_nyquist`, `transition_to_temper`
+    and `widen_inspect` — which is every phase crossing whose first move is
+    the gate that guards it.
+
+    THE ORDERING TOKEN IS ARMED, because `foundry_next_action` was called on
+    this run immediately above. A gate called without one refuses "Must call
+    Foundry-Next before any gate check", which is the call-ordering protocol
+    and not a judgement about the state, and would make every row a finding.
+    """
+    calls = nxt.get("next_calls") or []
+    if not calls:
+        return None
+    step = _as_step(calls[0])
+    if step.tool != "Foundry-Gate":
+        return None
+    token = _ARG_PHASE.search(step.args or "")
+    if token is None:
+        return None
+    answer = foundry_gate(token.group(1), project_root=root)
+    return {
+        "phase": token.group(1),
+        "passed": bool(answer.get("passed")),
+        "reason": answer.get("reason") or "",
+        # How many steps the lead is still owed behind the refusal, so the
+        # finding says what the run loses rather than only that a gate said no.
+        "owes": len(calls) - 1,
+    }
+
+
 def drive_router(arrange, clock_seconds: int | None) -> dict:
     """Build one run state in a scratch directory and call Foundry-Next on it."""
     with tempfile.TemporaryDirectory() as tmp, _router_run(Path(tmp)) as (
@@ -1522,6 +1670,10 @@ def drive_router(arrange, clock_seconds: int | None) -> dict:
         capped = _at_cap(fdir)
         nxt = foundry_next_action(root)
         cycle = foundry_state.current_cycle(fdir)
+        # lead-stalls D-063 — taken INSIDE the live run, and last: the gate
+        # writes `.gate-passed`, so asking it after everything else has been
+        # read leaves no measurement above it reading a marker this call made.
+        head_gate = _head_gate_answer(root, nxt)
     block, header = _split_payload(nxt.get("instructions", ""))
     liveness = nxt.get("agent_liveness")
     action = nxt.get("action", "")
@@ -1545,6 +1697,8 @@ def drive_router(arrange, clock_seconds: int | None) -> dict:
         "agent_liveness": liveness,
         "waiting_on_agents": nxt.get("waiting_on_agents"),
         "capped": capped,
+        # lead-stalls D-063 — what the list's first door really answered.
+        "head_gate": head_gate,
     }
 
 
@@ -1619,6 +1773,16 @@ def _router_drives() -> list[tuple[str, str, str, str, object, dict]]:
 #   SERVED_PAST_THE_SEAL
 #                     at the --max-cycles cap, a step follows the GRIND door
 #                     that seals the run HALTED (D-061)
+#   HEAD_GATE_REFUSES the served list OPENS with a Foundry-Gate, and that gate,
+#                     called for real on the state the list was served for,
+#                     refuses (D-063). The one rung that executes a step
+#                     rather than reading it; `_head_gate_answer` says why it
+#                     stops at step (1).
+#   PARKING_NONE      "YOUR NEXT CALL: NONE" at a site that is neither a
+#                     terminal nor a WAITING branch, so the lead is parked
+#                     with a move still owed (D-064). Judged in
+#                     `audit_action_imperatives` beside NO_LITERAL_CALL,
+#                     whose condition it is.
 #
 # The prose detector `_HANDS_OVER_THE_CONDITION` still runs beside these as a
 # BACKSTOP and is not widened again (D-043): a sentence that names no call
@@ -2002,6 +2166,20 @@ def audit_assembled_payloads(drives=None) -> list[str]:
                 f"{d['action']!r}/{d['branch']!r} on a state owed "
                 f"{owed_action!r}/{owed_branch!r}"
             )
+        # lead-stalls D-063 — AND THE FIRST STEP, DRIVEN. Every rung above
+        # and below judges what the list says; this one is the gate's own
+        # answer on the state the list was served for (`_head_gate_answer`).
+        # A served list whose opening door refuses is a lap the run cannot
+        # take, and the only remedy is inside the refusal's hint — the
+        # judgment task lead-stalls FR-007 defines as the defect.
+        head_gate = d.get("head_gate")
+        if head_gate and not head_gate["passed"]:
+            findings.append(
+                f"{site}: HEAD_GATE_REFUSES — step (1) "
+                f"Foundry-Gate(phase='{head_gate['phase']}') refuses "
+                f"{head_gate['reason']!r} with {head_gate['owes']} step(s) "
+                f"still owed"
+            )
         # The NOTICE may tell the lead to end its turn only above a header
         # that says so itself — the live branch, or the refused branch, whose
         # one message is followed by the same yield. Anything else is two
@@ -2109,10 +2287,22 @@ def audit_action_imperatives(drives=None) -> list[str]:
             findings.append(
                 f"{site}: CONDITIONAL — the lead must evaluate {quoted!r}"
             )
-        if not (_NAMES_A_CALL.search(text) or _NAMES_NO_CALL.search(text)):
+        names_a_call = bool(_NAMES_A_CALL.search(text))
+        names_no_call = bool(_NAMES_NO_CALL.search(text))
+        if not (names_a_call or names_no_call):
             findings.append(
                 f"{site}: NO_LITERAL_CALL — names neither a tool call nor "
                 f"'YOUR NEXT CALL: NONE'"
+            )
+        # lead-stalls D-064 — AND A NONE THAT IS NOT OWED IS A PARKED LEAD.
+        # The rung above accepted NONE from anywhere, so it read a parking
+        # NONE at an action still owing a move as a discharge. `_none_is_owed`
+        # carries the condition the hand-written contract tests carried
+        # implicitly: the three terminals, and the WAITING branch.
+        elif names_no_call and not _none_is_owed(action, owed):
+            findings.append(
+                f"{site}: PARKING_NONE — 'YOUR NEXT CALL: NONE' where a move "
+                f"is owed"
             )
         if _BRANCH_OPEN in text or _BRANCH_CLOSE in text:
             findings.append(
@@ -6481,9 +6671,12 @@ def test_the_post_assay_context_names_no_call_and_no_condition(run_env):
         (fdir / GATE_PASSED_MARKER).unlink(missing_ok=True)
         (fdir / "escalation.json").unlink(missing_ok=True)
     # Eight D-050 states, the two lead-stalls D-055 added: a held class at
-    # F5 with nothing open, and at F5.5 with a record open; and the two
-    # lead-stalls D-061 added, a filed F5 and F5.5 at the --max-cycles cap.
-    assert len(contexts) == 12, sorted(contexts)
+    # F5 with nothing open, and at F5.5 with a record open; the two
+    # lead-stalls D-061 added, a filed F5 and F5.5 at the --max-cycles cap;
+    # and the two lead-stalls D-062 added, a SHORT verdict ledger at each of
+    # F5 and F5.5 — the state both gates admitted until this cycle gave them
+    # the DONE gate's coverage rung.
+    assert len(contexts) == 14, sorted(contexts)
     problems = {
         state: _CALL_SYNTAX.findall(text)
         for state, text in contexts.items() if _CALL_SYNTAX.search(text)
@@ -7150,6 +7343,383 @@ def test_the_seal_detector_bites_on_the_list_served_before_the_fix():
     ]
     assert judged(old, capped=False) == []
     assert judged({"open_defects": 1, "seals_halted": True}, capped=True) == []
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 / FR-007 (D-062) — THE SHORT LEDGER, ONE PHASE OVER
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "token, phase, flags",
+    [("temper", "F5", {"temper": True}), ("nyquist", "F5.5", {"nyquist": True})],
+    ids=["temper", "nyquist"],
+)
+def test_the_optional_phase_doors_refuse_a_short_verdict_ledger(
+    run_env, token, phase, flags,
+):
+    """lead-stalls D-062, the ENTRY half: D-060's remedy has two halves and
+    only one landed.
+
+    At a4ded25, on the F4 state D-060's own fix answers correctly — spec
+    declares FR-1 and FR-2, verdicts.json holds FR-1 VERIFIED, nothing open —
+    `Foundry-Gate('temper')` returned passed=True with a checklist holding no
+    coverage rung at all, `Foundry-Phase('temper')` wrote F5, and the DONE
+    gate then refused the same ledger a whole phase later. One door accepted
+    what another refuses. Both doors make the comparison now, so the state is
+    unreachable rather than merely answered.
+    """
+    root, fdir = run_env
+    _assay_short(fdir, **flags)
+    foundry_next_action(root)
+
+    gate = foundry_gate(token, project_root=root)
+
+    assert gate["passed"] is False, gate
+    assert gate["reason"] == (
+        "Only 1 verdicts but spec has 2 requirements. 1 skipped."
+    ), gate
+    assert "FR-2" in gate["hint"], gate["hint"]
+    row = next(
+        c for c in gate["checklist"] if c["check"].startswith("verdicts_cover")
+    )
+    assert row == {
+        "check": "verdicts_cover_the_spec (recorded=1 declared=2)",
+        "ok": False,
+        "unrecorded_requirements": ["FR-2"],
+    }, row
+
+    crossed = foundry_mark_phase_complete(token, project_root=root)
+
+    assert crossed.get("ok") is not True, crossed
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "F4", state["phase"]
+
+
+@pytest.mark.parametrize(
+    "token, phase, flags",
+    [("temper", "F5", {"temper": True}), ("nyquist", "F5.5", {"nyquist": True})],
+    ids=["temper", "nyquist"],
+)
+def test_the_optional_phase_doors_pass_a_complete_ledger(
+    run_env, token, phase, flags,
+):
+    """The control for the rung above: the SAME run with FR-2 recorded crosses.
+    A coverage rung that refused everything would satisfy the test above for
+    the reason that it can no longer tell the two ledgers apart."""
+    root, fdir = run_env
+    _assay_short(fdir, **flags)
+    _write_verdicts(fdir, [
+        {"id": "FR-1", "verdict": "VERIFIED", "evidence": "read at HEAD"},
+        {"id": "FR-2", "verdict": "VERIFIED", "evidence": "read at HEAD"},
+    ])
+    foundry_next_action(root)
+
+    gate = foundry_gate(token, project_root=root)
+
+    assert gate["passed"] is True, gate
+    row = next(
+        c for c in gate["checklist"] if c["check"].startswith("verdicts_cover")
+    )
+    assert row["ok"] is True and row["unrecorded_requirements"] == [], row
+    assert foundry_mark_phase_complete(token, project_root=root)["ok"] is True
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == phase, state["phase"]
+
+
+@pytest.mark.parametrize(
+    "phase, flags",
+    [("F5", {"temper": True}), ("F5.5", {"nyquist": True})],
+    ids=["f5", "f5.5"],
+)
+def test_a_run_already_past_f4_on_a_short_ledger_is_served_the_assay(
+    run_env, phase, flags,
+):
+    """lead-stalls D-062, the OTHER half: a door that refuses the entry says
+    nothing to a run already standing inside.
+
+    Driven at a4ded25 on this state: `Foundry-Next` served `run_temper` /
+    `run_nyquist` with the list ['Skill'|'Agent', 'Foundry-Report',
+    'Foundry-Gate'] on every one of three laps, `Foundry-Report` answered ok,
+    `Foundry-Gate('done')` refused 'Only 1 verdicts but spec has 2
+    requirements', and the phase never moved. Nothing any lap can do writes
+    the missing verdict, and no served step named the exit — it existed only
+    inside the DONE gate's refusal hint.
+    """
+    root, fdir = run_env
+    _assay_short(fdir, **flags)
+    _write_state(fdir, phase=phase, cycle=1, **flags)
+
+    for lap in range(3):
+        nxt = foundry_next_action(root)
+        assert (nxt["phase"], nxt["action"]) == (phase, "run_assay"), (lap, nxt)
+        assert [c["tool"] for c in nxt["next_calls"]] == ["Agent"], nxt["next_calls"]
+        assert nxt["details"]["unrecorded_requirements"] == ["FR-2"], nxt["details"]
+        assert nxt["details"]["spec_requirements"] == 2, nxt["details"]
+        # The phase it stands in is named, so the lead is not told this is F4.
+        assert phase in nxt["instructions"], nxt["instructions"]
+        state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+        assert state["phase"] == phase, state["phase"]
+
+
+@pytest.mark.parametrize(
+    "phase, flags",
+    [("F5", {"temper": True}), ("F5.5", {"nyquist": True})],
+    ids=["f5", "f5.5"],
+)
+def test_past_f4_a_complete_ledger_is_still_served_the_phase_work(
+    run_env, phase, flags,
+):
+    """The control: the short-ledger rung is asked of the LEDGER, not of the
+    phase. With FR-2 recorded, F5 and F5.5 serve their own work as before."""
+    root, fdir = run_env
+    _assay_short(fdir, **flags)
+    _write_verdicts(fdir, [
+        {"id": "FR-1", "verdict": "VERIFIED", "evidence": "read at HEAD"},
+        {"id": "FR-2", "verdict": "VERIFIED", "evidence": "read at HEAD"},
+    ])
+    _write_state(fdir, phase=phase, cycle=1, **flags)
+
+    nxt = foundry_next_action(root)
+
+    assert nxt["action"] == ("run_temper" if phase == "F5" else "run_nyquist"), nxt
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 / FR-007 (D-063) — F2 WITH NO RECORDED WIDTH
+# --------------------------------------------------------------------------- #
+
+
+def test_the_unrecorded_width_list_can_be_made(run_env):
+    """lead-stalls D-063: `record_inspect_width` served
+    `Foundry-Gate(phase='inspect_start')` into the ONE state that gate refused
+    with the action's own precondition — 'Cannot re-open INSPECT — this
+    cycle's recorded width is unrecorded, so there is nothing to widen.'
+
+    Driven at a4ded25, three laps: identical action, identical list, identical
+    refusal, phase F2 throughout. Step (1) could never pass in the only state
+    that reaches step (1), so step (2) was owed forever and the exit — choose
+    between `inspect_clean` and `grind_start` by reading your own ledger —
+    existed only inside the refused gate's hint. (And `inspect_clean` is
+    itself refused on an unrecorded width, so one arm of that hint was a
+    second dead end.)
+
+    The re-open is accepted now, so the list the router serves succeeds and
+    the run moves: width recorded FULL, and the next Foundry-Next names the
+    roster that crossing wrote.
+    """
+    root, fdir = run_env
+    _arrange_inspect_width_unrecorded(root, fdir, None)
+
+    nxt = foundry_next_action(root)
+    assert nxt["action"] == "record_inspect_width", nxt["action"]
+    assert [(c["tool"], c["args"]) for c in nxt["next_calls"]] == [
+        ("Foundry-Gate", "phase='inspect_start'"),
+        ("Foundry-Phase", "phase='inspect_start'"),
+    ], nxt["next_calls"]
+
+    gate = foundry_gate("inspect_start", project_root=root)
+    assert gate["passed"] is True, gate
+    row = next(
+        c for c in gate["checklist"] if c["check"].startswith("reopenable_cycle")
+    )
+    assert row["check"] == "reopenable_cycle (mode=unrecorded, held=0)", row
+    assert row["ok"] is True, row
+
+    assert foundry_mark_phase_complete(
+        "inspect_start", project_root=root,
+    )["ok"] is True
+    recorded = json.loads(
+        (fdir / "state.json").read_text(encoding="utf-8")
+    )["inspect_modes"][-1]
+    assert recorded["mode"] == "FULL", recorded
+    assert recorded["decided_by"] == "inspect_start", recorded
+    # D-063 / D-069 / D-152 — the recorded PROVENANCE is true of THIS arm: the
+    # decider's generic widening sentence names a preceding DELTA INSPECT, and
+    # there was no preceding INSPECT of any recorded width.
+    assert "never recorded" in recorded["rule_detail"], recorded
+    assert "DELTA" not in recorded["rule_detail"], recorded
+
+    after = foundry_next_action(root)
+    assert after["action"] == "run_streams", after["action"]
+    assert after["details"]["inspect_mode"] == "FULL", after["details"]
+
+
+def test_a_full_width_with_nothing_held_still_has_nothing_to_widen(run_env):
+    """The control: the third arm is an UNRECORDED width and nothing else. A
+    clean FULL cycle with no class held is still refused, with the sentence
+    D-057 wrote for it."""
+    root, fdir = run_env
+    _clean_inspect(fdir, "FULL")
+    foundry_next_action(root)
+
+    gate = foundry_gate("inspect_start", project_root=root)
+
+    assert gate["passed"] is False, gate
+    assert "nothing to widen" in gate["reason"], gate["reason"]
+
+
+def test_an_unrecorded_width_with_a_defect_open_is_served_the_grind(run_env):
+    """lead-stalls D-063, the reading the re-open does NOT accept.
+
+    `inspect_start`'s blocking-defect rung refuses a widening crossing while
+    anything blocks, so on an unrecorded width with a defect filed the
+    `record_inspect_width` list would be the same dead end one reading over.
+    The GRIND crossing is the move there and it needs no recorded width, so
+    the router serves that list instead — and its gate, which the walk below
+    does not judge because `Foundry-Tasks` precedes it, passes once step (1)
+    is made.
+    """
+    root, fdir = run_env
+    _arrange_inspect_width_unrecorded(root, fdir, None)
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE", status="open")])
+
+    nxt = foundry_next_action(root)
+
+    assert nxt["action"] == "transition_to_grind", nxt["action"]
+    assert [c["tool"] for c in nxt["next_calls"]][:3] == [
+        "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
+    ], nxt["next_calls"]
+    # And the widening crossing the other arm serves is indeed refused here,
+    # which is why this reading is routed away from it.
+    assert foundry_gate("inspect_start", project_root=root)["passed"] is False
+
+
+def test_the_walk_bites_on_a_served_gate_that_refuses(run_env):
+    """HEAD_GATE_REFUSES is not vacuous.
+
+    `_head_gate_answer` is the one rung in this module that EXECUTES a step
+    instead of reading it, so it is measured against a gate that really
+    refuses on the state it is asked about: `inspect_clean` from an F2 whose
+    width was never recorded. The control is the list the router actually
+    serves there, whose gate passes.
+    """
+    root, fdir = run_env
+    _arrange_inspect_width_unrecorded(root, fdir, None)
+    served = foundry_next_action(root)
+
+    refusing = _head_gate_answer(root, {
+        "next_calls": [
+            _call_record(_Step("Foundry-Gate", "phase='inspect_clean'")),
+            _call_record(_Step("Foundry-Phase", "phase='inspect_clean'")),
+        ],
+    })
+    assert refusing["passed"] is False, refusing
+    assert refusing["owes"] == 1, refusing
+    assert audit_assembled_payloads([
+        ("bite", "s", "GI-008", served["action"], None,
+         {**drive_shape(served), "head_gate": refusing}),
+    ]) == [
+        "bite: HEAD_GATE_REFUSES — step (1) "
+        "Foundry-Gate(phase='inspect_clean') refuses "
+        f"{refusing['reason']!r} with 1 step(s) still owed"
+    ]
+
+    passing = _head_gate_answer(root, served)
+    assert passing["passed"] is True, passing
+    assert [
+        f for f in audit_assembled_payloads([
+            ("bite", "s", "GI-008", served["action"], None,
+             {**drive_shape(served), "head_gate": passing}),
+        ]) if "HEAD_GATE_REFUSES" in f
+    ] == []
+
+
+def drive_shape(nxt: dict) -> dict:
+    """One `foundry_next_action` answer in `drive_router`'s shape, for the
+    payload audit. Only the keys that audit reads."""
+    block, header = _split_payload(nxt.get("instructions", ""))
+    return {
+        "action": nxt.get("action", ""),
+        "branch": None,
+        "next_calls": nxt.get("next_calls"),
+        "rules": _rules_of(nxt.get("instructions", "")),
+        "details": nxt.get("details") or {},
+        "branched": False,
+        "block": block,
+        "header": header,
+        "context": _context_of(nxt.get("instructions", "")),
+        "agent_liveness": nxt.get("agent_liveness"),
+        "waiting_on_agents": nxt.get("waiting_on_agents"),
+        "capped": False,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 / FR-007 / FR-008 (D-064) — THE NONE THAT IS NOT OWED
+# --------------------------------------------------------------------------- #
+
+
+def test_the_audit_sees_a_parking_none_at_an_action_that_owes_a_move():
+    """lead-stalls D-064: the NO_LITERAL_CALL rung accepted 'YOUR NEXT CALL:
+    NONE' from ANY action at ANY liveness reading, so it could not tell a
+    legitimate NONE from a parking one — which is lead-stalls ST-003, the
+    defect this run exists to remove.
+
+    The mutation is the one PROVE drove at a4ded25: `build_castings`'s
+    wave-complete branch replaced by an `_Imperative` with no steps, whose
+    emitted text becomes 'YOUR NEXT CALL: NONE. Proceed as you judge best.' —
+    a judgment task at the key this run exists to fix, in the branch the lead
+    reaches at a finished wave. The sweep returned 0 findings over all 360
+    emission sites.
+    """
+    branches = _IMPERATIVES["build_castings"]
+    original = branches["idle"]
+    branches["idle"] = _guidance._Imperative((), "Proceed as you judge best.")
+    try:
+        findings = [
+            f for f in audit_action_imperatives([])
+            if "PARKING_NONE" in f or "NO_LITERAL_CALL" in f
+        ]
+    finally:
+        branches["idle"] = original
+
+    assert findings, "the sweep cannot see a parking NONE"
+    assert all("PARKING_NONE" in f for f in findings), findings
+    assert all(f.startswith("build_castings@F1[") for f in findings), findings
+    # Every reading owed the idle branch, and none owed the live one.
+    owed_idle = [
+        label for label, _liveness, owed in _LIVENESS_READINGS
+        if _owed_branch("build_castings", owed) == "idle"
+    ]
+    assert sorted(f.split("[")[1].split("]")[0] for f in findings) == sorted(
+        owed_idle
+    ), findings
+    # And the restored table is clean again.
+    assert audit_action_imperatives([]) == []
+
+
+def test_the_none_the_terminals_and_the_waiting_branches_answer_is_owed():
+    """The control, and the reason the rung is a CONDITION rather than a ban.
+
+    The three terminals and every WAITING branch answer NONE legitimately, and
+    the shipped table contains exactly those: a sweep of all 360 emission
+    sites for a NONE that names no call returns only sites `_none_is_owed`
+    admits. `_NONE_IS_OWED_ACTIONS` is written by hand, so a key added to
+    `_IMPERATIVES` that answers NONE without being declared here is FLAGGED —
+    which is the gap lead-stalls FR-008's stopping condition was silent
+    about.
+    """
+    parked = [
+        (action, site, owed)
+        for action, site, text, owed, _liveness in _audit_sites()
+        if _NAMES_NO_CALL.search(text)
+    ]
+    assert parked, "no site answers NONE at all — the control is vacuous"
+    assert all(_none_is_owed(action, owed) for action, _site, owed in parked), [
+        site for _a, site, owed in parked if not _none_is_owed(_a, owed)
+    ]
+    # The three terminals, and the WAITING branch of each of the four branched
+    # entries. `_NAMES_A_CALL` does NOT tell these apart — `done` names
+    # Foundry-Init and Foundry-Phase inside PROHIBITIONS ("do NOT call
+    # Foundry-Phase"), so a site can name a call and answer NONE in one
+    # breath, which is exactly why the rung asks whether NONE is OWED rather
+    # than whether a call is mentioned anywhere.
+    assert {action for action, _s, _o in parked} == {
+        "add_castings", "build_castings", "done", "escalation_held",
+        "fix_defects", "halted", "run_streams",
+    }, sorted({action for action, _s, _o in parked})
+    assert _NONE_IS_OWED_ACTIONS == {"done", "halted", "escalation_held"}
 
 
 
