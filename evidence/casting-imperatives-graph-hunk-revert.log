@@ -32,12 +32,12 @@ red in the copy with nothing reverted, not charged to any hunk: 12
   FAILED test_transitions.py::test_the_f2_re_open_still_refuses_a_full_cycle_with_nothing_held
   FAILED test_transitions.py::test_the_f2_re_open_still_refuses_a_held_class_over_a_blocking_defect
   FAILED test_transitions.py::test_the_held_re_open_cannot_count_a_cycle_no_stream_inspected
-  tests run: 680, red beyond the baseline: 12
+  tests run: 691, red beyond the baseline: 12
 == hunk 02 @@ -738,10 +739,12 @@ F2, the widening re-open of a DELTA cycle — and both advance
   comment- or docstring-only: no behaviour to revert
 == hunk 03 @@ -765,7 +768,8 @@ "widening re-open of a DELTA cycle. It is the call that "
   FAILED test_transitions.py::test_the_source_refusal_names_both_f2_re_opens
-  tests run: 680, red beyond the baseline: 1
+  tests run: 691, red beyond the baseline: 1
 == hunk 04 @@ -784,30 +788,108 @@ held: list[str] = []
   FAILED test_escalation.py::test_a_class_whose_instances_were_all_fixed_clears_on_the_clean_arm
   FAILED test_escalation.py::test_a_latent_only_class_acquires_its_record_at_the_inspect_boundary
@@ -118,11 +118,11 @@ red in the copy with nothing reverted, not charged to any hunk: 12
   FAILED test_transitions.py::test_the_f2_re_open_still_refuses_a_held_class_over_a_blocking_defect
   FAILED test_transitions.py::test_the_held_re_open_cannot_count_a_cycle_no_stream_inspected
   FAILED test_transitions.py::test_the_source_refusal_names_both_f2_re_opens
-  tests run: 679, red beyond the baseline: 79
+  tests run: 690, red beyond the baseline: 79
 == hunk 05 @@ -974,6 +1056,20 @@ if held:
   FAILED test_transitions.py::test_the_f2_re_open_accepts_a_clean_full_cycle_with_a_class_held[latent-open]
   FAILED test_transitions.py::test_the_f2_re_open_accepts_a_clean_full_cycle_with_a_class_held[nothing-open]
-  tests run: 680, red beyond the baseline: 2
+  tests run: 691, red beyond the baseline: 2
 
 code hunks with no test red when reverted: none
 
@@ -145,7 +145,7 @@ red in the copy with nothing reverted, not charged to any hunk: 12
 
 == hunk 01 @@ -36,11 +36,23 @@ #: The crossing itself is always an `inspect_start` OUT OF F
   FAILED test_escalation.py::test_the_done_refusal_names_the_crossings_the_graph_accepts
-  tests run: 680, red beyond the baseline: 1
+  tests run: 691, red beyond the baseline: 1
 == hunk 02 @@ -1299,6 +1311,34 @@ def _still_escalated_classes(fdir: Path, project_root: str) 
   FAILED collection of test_escalation.py
   FAILED collection of test_escalation.py

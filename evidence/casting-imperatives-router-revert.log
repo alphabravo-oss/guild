@@ -1,10 +1,10 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && P=$(pwd) && T=$(mktemp -d) && trap 'find "$T" -delete' EXIT && cp -R src tests pyproject.toml "$T/" && G=src/foundry_mcp/tools/orchestration/guidance.py && N=tests/orchestration/test_guidance_imperatives.py && D=src/foundry_mcp/tools/orchestration/teams.py && cd "$T" && for m in committed team-arm f3-live-arm acceptance-reader notice-gate in-flight-unmeasured refusal-one-branch streams-context refusal-boundary casting-slot-last casting-slot-order condition-detector in-flight-redispatch one-scan refusal-own-team context-structure refusal-vocabulary condition-structure sentence-anchor choice-shape refused-first live-teams-registered streams-branch spawn-order standing-rule grind-order run-streams-sentence one-move-rule one-move-step one-step-clause dispatch-yield seed-running stale-seed stream-call stream-config stream-yield stream-snapshot stream-model next-calls yield-render castings-taskoutput validate-step assay-gate done-commit audit-structure audit-spawns audit-roster audit-fresh-seed audit-call-prose list-move-rule gate-read gate-note-claim advance-notice deliberate-line team-down-answer crossing-fallback audit-one-move audit-answers audit-rules-walk f5-crossing f55-crossing temper-gate-step nyquist-gate-step grind-first gate-record details-crossing temper-context post-assay-states held-full-reopen held-reopen-reason held-closing f4-grind f4-filed-states; do cp "$P/$G" "$G"; cp "$P/$N" "$N"; cp "$P/$D" "$D"; F=$(python3 -c 'import sys; m, g, n, d = sys.argv[1:5]; R = {"team-arm": (g, "and not _team_work_in_flight(", "and not (lambda *a, **k: False)("), "f3-live-arm": (g, "if open_count > 0 or grind_live:", "if open_count > 0:"), "acceptance-reader": (g, "if done_at is not None:", "if False:"), "notice-gate": (g, "told_to_wait = (", "told_to_wait = True or ("), "in-flight-unmeasured": (g, "or pending < 1:\n        return True", "or pending < 1:\n        return False"), "refusal-one-branch": (g, "else \"redispatch\"\n        )", "else \"refused\"\n        )"), "streams-context": (g, "not the live tree.\"\n                    + _BRANCHED_ACTION_CONTEXT", "not the live tree. Spawn agents using the agent_configs below.\""), "refusal-boundary": (g, "refused_at >= finished_at", "refused_at > finished_at"), "casting-slot-last": (g, "return ids[0]", "return ids[-1]"), "casting-slot-order": (g, "for key in (\"cast_refused\", \"cast_unaccepted\"):", "for key in (\"cast_unaccepted\", \"cast_refused\"):"), "condition-detector": (n, "(?:if|unless|when|whenever|only|once|in case|should|whether|depending)", "(?:NEVERMATCHES)"), "in-flight-redispatch": (g, "(\"refused\", \"redispatch\", \"unaccepted\")", "(\"refused\", \"unaccepted\")"), "one-scan": (g, "_waiting_on_agents(project_root, teams=teams)", "_waiting_on_agents(project_root)"), "refusal-own-team": (g, "if isinstance(own, str) and isinstance(registered, list)\n            and own in registered", "if row.get(\"teams_active\") is True"), "context-structure": (n, "if lowered in _CLAUSE_OPENERS:", "if True:"), "refusal-vocabulary": (n, "r\"|refused|refuses|rejected|rejects|errors|errored|ok (?:False|True)\"\n", ""), "condition-structure": (n, "_EARLIER_CALL = r\"", "_EARLIER_CALL = r\"NEVERMATCHES"), "sentence-anchor": (n, "(?:^|(?<=[.!?:])[ \\t]+)\\s*(?:[-*", "^\\s*(?:[-*"), "choice-shape": (n, "if _offers_a_choice(sentence):", "if False:"), "refused-first": (g, "if refused and refused[0] in", "if refused and refused[-1] in"), "live-teams-registered": (g, "\"teams_registered\": teams_registered,\n", ""), "streams-branch": (g, "        \"live\": _STREAMS_RUNNING,\n", ""), "spawn-order": (g, "        blocks=_SPAWN_PROMPT_ORDER[phase],\n", "        blocks=(\"dispatch\",),\n"), "standing-rule": (g, "    + \" GRIND: \"\n    + _spawn_prompt(_SPAWN_PROMPT_ORDER[\"grind\"])\n", ""), "grind-order": (g, "\"dispatch\", \"grind_cycle_context\", \"defects\", \"alignment_block\",\n        \"progress_protocol\",\n", "\"dispatch\", \"grind_cycle_context\", \"defects\", \"alignment_block\",\n"), "run-streams-sentence": (g, "\"own record is in that list, because its own re-run is the one \"\n            \"thing that records it. ", "\"own record is a finding. If an AGENT stream finished and no record \"\n            \"exists, re-dispatch it, or file it. "), "one-move-rule": (g, "    + _SPAWN_PROMPT_RULE + \" \" + _SPAWN_IS_ONE_MOVE\n", "    + _SPAWN_PROMPT_RULE\n"), "one-move-step": (g, "        note=_SPAWN_IS_ONE_MOVE + \" \" + _MODEL_CLAUSE.format(door=door),\n", "        note=_MODEL_CLAUSE.format(door=door),\n"), "one-step-clause": (g, "    + \" A spawn door and the Agent call it feeds are one step of that move \"\n    \"(the spawn rule below).\"\n", ""), "dispatch-yield": (g, "        _CAST_WAVE_SPAWN,\n        _YIELD,\n    ),\n    \"Wave {wave}", "        _CAST_WAVE_SPAWN,\n    ),\n    \"Wave {wave}"), "seed-running": (g, "    \"A teammate whose ledger holds only the line its spawn door wrote counts \"\n    \"as running, because the door and its Agent call are one move. \"\n", "    \"\"\n"), "stale-seed": (g, "\"has cost one call, and the dispatch still begins at step (3). A wave \"\n    \"whose door already returned reads here only once its seeds are stale \u2014 \"\n    \"no teammate wrote a line in the stall window \u2014 and that wave is \"\n    \"dispatched again.\",", "\"has cost one call, and the dispatch still begins at step (3).\","), "stream-call": (g, "agents = [_stream_agent_step(name) for name in names if name != \"sight\"]", "agents = [_stream_agent_step(name) for name in names if name not in (\"sight\", \"test01\")]"), "stream-config": (g, "                            if stream not in (\"trace\", \"prove\", \"test\", \"sight\")\n", "                            if False\n"), "stream-yield": (g, "    if agents:\n        steps.append(_YIELD)\n", ""), "stream-snapshot": (g, "    \"every finding against `git archive HEAD` rather than the live tree, and \"\n    \"cite that sha in your report.\"\n", "    \"every finding.\"\n"), "stream-model": (g, "        f\"{model}subagent_type=\u0027{subagent_type}\u0027, run_in_background=true, \"\n", "        f\"subagent_type=\u0027{subagent_type}\u0027, run_in_background=true, \"\n"), "next-calls": (g, "        result[\"next_calls\"] = [_call_record(step) for step in next_calls]\n", "        pass\n"), "yield-render": (g, "    if step.tool == _END_TURN:\n        return _WAITING_IS_NOT_STOPPING\n", ""), "castings-taskoutput": (g, "\"TeamCreate ceremony is skipped. Each writer\u0027s return message is its \"\n    \"TaskOutput,", "\"TeamCreate ceremony is skipped. Each writer\u0027s return message is its \"\n    \"TaskOutput(task_id),"), "validate-step": (g, "            _Step(\n                \"Foundry-Validate-Castings\",\n                note=\"the check of what the decomposition wrote\",\n            ),\n", ""), "assay-gate": (g, "            _Step(\"Foundry-Gate\", \"phase=\u0027assay\u0027\"),\n", "            _Step(\"Update state to F4\"),\n"), "done-commit": (g, "            _Step(\n                \"Bash\",\n                \"command=\u0027git commit -m \\\"chore: strip the evidence corpus\\\"\u0027\",\n                note=\"commits the strip.\",\n            ),\n", ""), "audit-structure": (n, "    findings.extend(audit_next_call_structure(drives))\n", ""), "audit-spawns": (n, "    if spawns:\n        if _SPAWN_IS_ONE_MOVE not in rule:", "    if False:\n        if _SPAWN_IS_ONE_MOVE not in rule:"), "audit-roster": (n, "    if action == \"run_streams\" and steps:\n", "    if False:\n"), "audit-fresh-seed": (n, "    (\"cast-dispatched-fresh-seed\", \"ST-001\", _arrange_cast_dispatched_fresh_seed, \"build_castings\", \"live\"),\n", ""), "audit-call-prose": (n, "    r\"\\b(Foundry-[A-Z]", "    r\"\\bNEVERMATCHES(Foundry-[A-Z]"), "list-move-rule": (g, "    \"\\n- NEVER stop between phases. \" + _A_SERVED_LIST_IS_ONE_MOVE\n    + \" The one Foundry-Next a list tolerates between two of its steps is \"\n    \"the gate-then-phase read: \" + _GATE_THEN_PHASE_EXCEPTION\n    + \" Skipping it there is correct and is not a shortcut.\"\n", "    \"\\n- NEVER stop between phases. Call Foundry-Next after each step and \"\n    \"follow it; a spawn door and the Agent call it feeds are one step (the \"\n    \"spawn rule below). REQUIRED everywhere except exactly one place: \"\n    + _GATE_THEN_PHASE_EXCEPTION\n    + \" Skipping it there is correct and is not a shortcut; skipping it \"\n    \"anywhere else is.\"\n"), "gate-read": (g, "    \"Foundry-Next straight after a passing Foundry-Gate is OPTIONAL \u2014 the \"\n    \"gate no longer consumes the ordering token, so the list\u0027s Foundry-Phase \"\n    \"is accepted without it. It is a read and not a move: that is where the \"\n    \"INSPECT mode (its width) and the rule that fired are announced, its \"\n    \"answer never replaces the list you are making, and the step after it is \"\n    \"still the step your list numbers after that Foundry-Gate. Never call it \"\n    \"to satisfy the protocol.\"\n", "    \"Foundry-Next between a passing Foundry-Gate and its Foundry-Phase is \"\n    \"OPTIONAL \u2014 the gate no longer consumes the ordering token, so \"\n    \"Foundry-Phase straight after a passing Foundry-Gate is accepted. That is \"\n    \"where the INSPECT mode (its width) and the rule that fired are announced, \"\n    \"so call it there when you want them; never call it to satisfy the \"\n    \"protocol.\"\n"), "gate-note-claim": (g, "    \"Foundry-Next straight after a passing Foundry-Gate is OPTIONAL \u2014 the \"\n    \"gate no longer consumes the ordering token, so the list\u0027s Foundry-Phase \"\n    \"is accepted without it. It is a read and not a move: that is where the \"\n    \"INSPECT mode (its width) and the rule that fired are announced, its \"\n    \"answer never replaces the list you are making, and the step after it is \"\n    \"still the step your list numbers after that Foundry-Gate. Never call it \"\n    \"to satisfy the protocol.\"\n", "    \"Foundry-Next between a passing Foundry-Gate and its Foundry-Phase is \"\n    \"OPTIONAL \u2014 the gate no longer consumes the ordering token, so \"\n    \"Foundry-Phase straight after a passing Foundry-Gate is accepted. It is a \"\n    \"read and not a move: that is where the INSPECT mode (its width) and the \"\n    \"rule that fired are announced, its answer never replaces the list you \"\n    \"are making, and the step after it is still that list\u0027s Foundry-Phase. \"\n    \"Never call it to satisfy the protocol.\"\n"), "advance-notice": (g, "        gate_advance_note = _gate_advance_notice(gate_advance_note, next_calls)\n", "        gate_advance_note = (\n            f\"\u2705 Foundry-Gate(phase=\u0027{gate_advance_note}\u0027) ALREADY PASSED \u2014 do NOT re-run it. \"\n            \"Proceed directly to the transition step (Foundry-Phase / state update) in the imperative below.\"\n        )\n"), "deliberate-line": (g, "    \"\\n- NEVER deliberate for more than 30 seconds between tool calls. If you \"\n    \"catch yourself thinking, make the next step of the list you were served, \"\n    \"and call Foundry-Next after its last step.\"\n", "    \"\\n- NEVER deliberate for more than 30 seconds between tool calls. If you catch yourself thinking, call Foundry-Next and execute whatever it says.\"\n"), "team-down-answer": (d, "\"next_call\": TEAM_DOWN_NEXT_CALL,", "\"next_call\": \"Call Foundry-Next now.\","), "crossing-fallback": (g, "    if \"{gate}\" in header or \"{token}\" in header:\n        return None, _generic_header(action)\n", ""), "audit-one-move": (n, "    for number, step in enumerate(steps[:-1], 1):\n        if step.tool == \"Foundry-Next\":", "    for number, step in enumerate(steps[:0], 1):\n        if step.tool == \"Foundry-Next\":"), "audit-answers": (n, "            and steps[number].tool != \"Foundry-Next\"\n", "            and False\n"), "audit-rules-walk": (n, "        for sentence in _orders_foundry_next_mid_list(rules):\n", "        for sentence in _orders_foundry_next_mid_list(\"\"):\n"), "f5-crossing": (g, "        crossing = _post_assay_crossing(\n            fdir, \"F5\", \"TEMPER\", gate, GRIND_AGENT_CONFIG,\n        )\n        if crossing is not None:\n            return crossing\n", ""), "f55-crossing": (g, "        crossing = _post_assay_crossing(\n            fdir, \"F5.5\", \"NYQUIST\", \"done\", GRIND_AGENT_CONFIG,\n        )\n        if crossing is not None:\n            return crossing\n", ""), "temper-gate-step": (g, "            _Step(\n                \"Foundry-Gate\", \"phase=\u0027{gate}\u0027\",\n", "            _Step(\n                \"Foundry-Report\",\n"), "nyquist-gate-step": (g, "            _Step(\n                \"Foundry-Gate\", \"phase=\u0027done\u0027\",\n                note=(\n                    \"the gate out of F5.5.", "            _Step(\n                \"Foundry-Report\",\n                note=(\n                    \"the gate out of F5.5."), "grind-first": (g, "    if blocking[\"blocking\"] > 0:\n        return {\n            \"phase\": phase,", "    if False:\n        return {\n            \"phase\": phase,"), "gate-record": (g, "    if passed != gate:\n        return None", "    if passed is None:\n        return None"), "details-crossing": (g, "        or (details or {}).get(\"crossing\")\n", ""), "temper-context": (g, "                f\"gate out of F5, `{gate}`, and the next Foundry-Next reads \"\n", "                f\"gate out of F5. When clean, call Foundry-Gate(phase=\u0027{gate}\u0027). \"\n"), "post-assay-states": (n, "    (\"temper-owed\", \"GI-008\", _arrange_temper_owed, \"run_temper\", None),\n", ""), "held-full-reopen": (g, "        if delta or still:\n", "        if delta:\n"), "held-reopen-reason": (g, "                        if delta else _HELD_CLASS_REOPEN\n", "                        if delta else \"\"\n"), "held-closing": (g, "            \"accepted from a clean FULL F2 and not from past ASSAY. The \"\n", "            \"accepted nowhere: a FULL INSPECT has nothing to widen. The \"\n"), "f4-grind": (g, "        grind = _blocking_grind_crossing(\n            \"F4\", \"ASSAY\", blocking, GRIND_AGENT_CONFIG,\n        )\n        if grind is not None:\n            return grind\n", ""), "f4-filed-states": (n, "    (\"assay-passed-filed\", \"GI-008\", _arrange_assay_passed_filed, \"transition_to_grind\", None),\n", "")}; f, old, new = R.get(m, (g, "", "")); s = open(f, encoding="utf-8").read(); assert m == "committed" or s.count(old) == 1, m; open(f, "w", encoding="utf-8").write(s.replace(old, new) if old else s); print(f)' "$m" "$G" "$N" "$D"); echo "== revert: $m"; echo "  $(basename "$F") lines differing from the committed file: $(diff "$P/$F" "$F" | grep -c '^>')"; uv run --project "$P" --with pytest pytest -p no:cacheprovider --no-header --color=no --tb=no -q -rf "$N" 2>/dev/null | awk '$1=="FAILED"{f++; n=$2; sub(/.*::/, "", n); print "  FAILED " n; next} $1=="ERROR"{e++; n=$2; sub(/.*::/, "", n); print "  ERROR " n; next} {s=$0; gsub(/,/, " ", s); k=split(s, w, " "); for(i=2;i<=k;i++) if(w[i]=="passed") p=w[i-1]+0} END{printf "  tests run: %d, failed: %d, errors: %d\n", p+f+e, f+0, e+0}'; done
+# evidence-cmd: cd plugins/foundry/mcp-server && P=$(pwd) && T=$(mktemp -d) && trap 'find "$T" -delete' EXIT && cp -R src tests pyproject.toml "$T/" && G=src/foundry_mcp/tools/orchestration/guidance.py && N=tests/orchestration/test_guidance_imperatives.py && D=src/foundry_mcp/tools/orchestration/teams.py && cd "$T" && for m in committed team-arm f3-live-arm acceptance-reader notice-gate in-flight-unmeasured refusal-one-branch streams-context refusal-boundary casting-slot-last casting-slot-order condition-detector in-flight-redispatch one-scan refusal-own-team context-structure refusal-vocabulary condition-structure sentence-anchor choice-shape refused-first live-teams-registered streams-branch spawn-order standing-rule grind-order run-streams-sentence one-move-rule one-move-step one-step-clause dispatch-yield seed-running stale-seed stream-call stream-config stream-yield stream-snapshot stream-model next-calls yield-render castings-taskoutput validate-step assay-gate done-commit audit-structure audit-spawns audit-roster audit-fresh-seed audit-call-prose list-move-rule gate-read gate-note-claim advance-notice deliberate-line team-down-answer crossing-fallback audit-one-move audit-answers audit-rules-walk f5-crossing f55-crossing temper-gate-step nyquist-gate-step grind-first gate-record details-crossing temper-context post-assay-states held-full-reopen held-reopen-reason held-closing f4-grind f4-filed-states f4-short short-states cap-slot capped-states seal-detector; do cp "$P/$G" "$G"; cp "$P/$N" "$N"; cp "$P/$D" "$D"; F=$(python3 -c 'import sys; m, g, n, d = sys.argv[1:5]; R = {"team-arm": (g, "and not _team_work_in_flight(", "and not (lambda *a, **k: False)("), "f3-live-arm": (g, "if open_count > 0 or grind_live:", "if open_count > 0:"), "acceptance-reader": (g, "if done_at is not None:", "if False:"), "notice-gate": (g, "told_to_wait = (", "told_to_wait = True or ("), "in-flight-unmeasured": (g, "or pending < 1:\n        return True", "or pending < 1:\n        return False"), "refusal-one-branch": (g, "else \"redispatch\"\n        )", "else \"refused\"\n        )"), "streams-context": (g, "not the live tree.\"\n                    + _BRANCHED_ACTION_CONTEXT", "not the live tree. Spawn agents using the agent_configs below.\""), "refusal-boundary": (g, "refused_at >= finished_at", "refused_at > finished_at"), "casting-slot-last": (g, "return ids[0]", "return ids[-1]"), "casting-slot-order": (g, "for key in (\"cast_refused\", \"cast_unaccepted\"):", "for key in (\"cast_unaccepted\", \"cast_refused\"):"), "condition-detector": (n, "(?:if|unless|when|whenever|only|once|in case|should|whether|depending)", "(?:NEVERMATCHES)"), "in-flight-redispatch": (g, "(\"refused\", \"redispatch\", \"unaccepted\")", "(\"refused\", \"unaccepted\")"), "one-scan": (g, "_waiting_on_agents(project_root, teams=teams)", "_waiting_on_agents(project_root)"), "refusal-own-team": (g, "if isinstance(own, str) and isinstance(registered, list)\n            and own in registered", "if row.get(\"teams_active\") is True"), "context-structure": (n, "if lowered in _CLAUSE_OPENERS:", "if True:"), "refusal-vocabulary": (n, "r\"|refused|refuses|rejected|rejects|errors|errored|ok (?:False|True)\"\n", ""), "condition-structure": (n, "_EARLIER_CALL = r\"", "_EARLIER_CALL = r\"NEVERMATCHES"), "sentence-anchor": (n, "(?:^|(?<=[.!?:])[ \\t]+)\\s*(?:[-*", "^\\s*(?:[-*"), "choice-shape": (n, "if _offers_a_choice(sentence):", "if False:"), "refused-first": (g, "if refused and refused[0] in", "if refused and refused[-1] in"), "live-teams-registered": (g, "\"teams_registered\": teams_registered,\n", ""), "streams-branch": (g, "        \"live\": _STREAMS_RUNNING,\n", ""), "spawn-order": (g, "        blocks=_SPAWN_PROMPT_ORDER[phase],\n", "        blocks=(\"dispatch\",),\n"), "standing-rule": (g, "    + \" GRIND: \"\n    + _spawn_prompt(_SPAWN_PROMPT_ORDER[\"grind\"])\n", ""), "grind-order": (g, "\"dispatch\", \"grind_cycle_context\", \"defects\", \"alignment_block\",\n        \"progress_protocol\",\n", "\"dispatch\", \"grind_cycle_context\", \"defects\", \"alignment_block\",\n"), "run-streams-sentence": (g, "\"own record is in that list, because its own re-run is the one \"\n            \"thing that records it. ", "\"own record is a finding. If an AGENT stream finished and no record \"\n            \"exists, re-dispatch it, or file it. "), "one-move-rule": (g, "    + _SPAWN_PROMPT_RULE + \" \" + _SPAWN_IS_ONE_MOVE\n", "    + _SPAWN_PROMPT_RULE\n"), "one-move-step": (g, "        note=_SPAWN_IS_ONE_MOVE + \" \" + _MODEL_CLAUSE.format(door=door),\n", "        note=_MODEL_CLAUSE.format(door=door),\n"), "one-step-clause": (g, "    + \" A spawn door and the Agent call it feeds are one step of that move \"\n    \"(the spawn rule below).\"\n", ""), "dispatch-yield": (g, "        _CAST_WAVE_SPAWN,\n        _YIELD,\n    ),\n    \"Wave {wave}", "        _CAST_WAVE_SPAWN,\n    ),\n    \"Wave {wave}"), "seed-running": (g, "    \"A teammate whose ledger holds only the line its spawn door wrote counts \"\n    \"as running, because the door and its Agent call are one move. \"\n", "    \"\"\n"), "stale-seed": (g, "\"has cost one call, and the dispatch still begins at step (3). A wave \"\n    \"whose door already returned reads here only once its seeds are stale \u2014 \"\n    \"no teammate wrote a line in the stall window \u2014 and that wave is \"\n    \"dispatched again.\",", "\"has cost one call, and the dispatch still begins at step (3).\","), "stream-call": (g, "agents = [_stream_agent_step(name) for name in names if name != \"sight\"]", "agents = [_stream_agent_step(name) for name in names if name not in (\"sight\", \"test01\")]"), "stream-config": (g, "                            if stream not in (\"trace\", \"prove\", \"test\", \"sight\")\n", "                            if False\n"), "stream-yield": (g, "    if agents:\n        steps.append(_YIELD)\n", ""), "stream-snapshot": (g, "    \"every finding against `git archive HEAD` rather than the live tree, and \"\n    \"cite that sha in your report.\"\n", "    \"every finding.\"\n"), "stream-model": (g, "        f\"{model}subagent_type=\u0027{subagent_type}\u0027, run_in_background=true, \"\n", "        f\"subagent_type=\u0027{subagent_type}\u0027, run_in_background=true, \"\n"), "next-calls": (g, "        result[\"next_calls\"] = [_call_record(step) for step in next_calls]\n", "        pass\n"), "yield-render": (g, "    if step.tool == _END_TURN:\n        return _WAITING_IS_NOT_STOPPING\n", ""), "castings-taskoutput": (g, "\"TeamCreate ceremony is skipped. Each writer\u0027s return message is its \"\n    \"TaskOutput,", "\"TeamCreate ceremony is skipped. Each writer\u0027s return message is its \"\n    \"TaskOutput(task_id),"), "validate-step": (g, "            _Step(\n                \"Foundry-Validate-Castings\",\n                note=\"the check of what the decomposition wrote\",\n            ),\n", ""), "assay-gate": (g, "            _Step(\"Foundry-Gate\", \"phase=\u0027assay\u0027\"),\n", "            _Step(\"Update state to F4\"),\n"), "done-commit": (g, "            _Step(\n                \"Bash\",\n                \"command=\u0027git commit -m \\\"chore: strip the evidence corpus\\\"\u0027\",\n                note=\"commits the strip.\",\n            ),\n", ""), "audit-structure": (n, "    findings.extend(audit_next_call_structure(drives))\n", ""), "audit-spawns": (n, "    if spawns:\n        if _SPAWN_IS_ONE_MOVE not in rule:", "    if False:\n        if _SPAWN_IS_ONE_MOVE not in rule:"), "audit-roster": (n, "    if action == \"run_streams\" and steps:\n", "    if False:\n"), "audit-fresh-seed": (n, "    (\"cast-dispatched-fresh-seed\", \"ST-001\", _arrange_cast_dispatched_fresh_seed, \"build_castings\", \"live\"),\n", ""), "audit-call-prose": (n, "    r\"\\b(Foundry-[A-Z]", "    r\"\\bNEVERMATCHES(Foundry-[A-Z]"), "list-move-rule": (g, "    \"\\n- NEVER stop between phases. \" + _A_SERVED_LIST_IS_ONE_MOVE\n    + \" The one Foundry-Next a list tolerates between two of its steps is \"\n    \"the gate-then-phase read: \" + _GATE_THEN_PHASE_EXCEPTION\n    + \" Skipping it there is correct and is not a shortcut.\"\n", "    \"\\n- NEVER stop between phases. Call Foundry-Next after each step and \"\n    \"follow it; a spawn door and the Agent call it feeds are one step (the \"\n    \"spawn rule below). REQUIRED everywhere except exactly one place: \"\n    + _GATE_THEN_PHASE_EXCEPTION\n    + \" Skipping it there is correct and is not a shortcut; skipping it \"\n    \"anywhere else is.\"\n"), "gate-read": (g, "    \"Foundry-Next straight after a passing Foundry-Gate is OPTIONAL \u2014 the \"\n    \"gate no longer consumes the ordering token, so the list\u0027s Foundry-Phase \"\n    \"is accepted without it. It is a read and not a move: that is where the \"\n    \"INSPECT mode (its width) and the rule that fired are announced, its \"\n    \"answer never replaces the list you are making, and the step after it is \"\n    \"still the step your list numbers after that Foundry-Gate. Never call it \"\n    \"to satisfy the protocol.\"\n", "    \"Foundry-Next between a passing Foundry-Gate and its Foundry-Phase is \"\n    \"OPTIONAL \u2014 the gate no longer consumes the ordering token, so \"\n    \"Foundry-Phase straight after a passing Foundry-Gate is accepted. That is \"\n    \"where the INSPECT mode (its width) and the rule that fired are announced, \"\n    \"so call it there when you want them; never call it to satisfy the \"\n    \"protocol.\"\n"), "gate-note-claim": (g, "    \"Foundry-Next straight after a passing Foundry-Gate is OPTIONAL \u2014 the \"\n    \"gate no longer consumes the ordering token, so the list\u0027s Foundry-Phase \"\n    \"is accepted without it. It is a read and not a move: that is where the \"\n    \"INSPECT mode (its width) and the rule that fired are announced, its \"\n    \"answer never replaces the list you are making, and the step after it is \"\n    \"still the step your list numbers after that Foundry-Gate. Never call it \"\n    \"to satisfy the protocol.\"\n", "    \"Foundry-Next between a passing Foundry-Gate and its Foundry-Phase is \"\n    \"OPTIONAL \u2014 the gate no longer consumes the ordering token, so \"\n    \"Foundry-Phase straight after a passing Foundry-Gate is accepted. It is a \"\n    \"read and not a move: that is where the INSPECT mode (its width) and the \"\n    \"rule that fired are announced, its answer never replaces the list you \"\n    \"are making, and the step after it is still that list\u0027s Foundry-Phase. \"\n    \"Never call it to satisfy the protocol.\"\n"), "advance-notice": (g, "        gate_advance_note = _gate_advance_notice(gate_advance_note, next_calls)\n", "        gate_advance_note = (\n            f\"\u2705 Foundry-Gate(phase=\u0027{gate_advance_note}\u0027) ALREADY PASSED \u2014 do NOT re-run it. \"\n            \"Proceed directly to the transition step (Foundry-Phase / state update) in the imperative below.\"\n        )\n"), "deliberate-line": (g, "    \"\\n- NEVER deliberate for more than 30 seconds between tool calls. If you \"\n    \"catch yourself thinking, make the next step of the list you were served, \"\n    \"and call Foundry-Next after its last step.\"\n", "    \"\\n- NEVER deliberate for more than 30 seconds between tool calls. If you catch yourself thinking, call Foundry-Next and execute whatever it says.\"\n"), "team-down-answer": (d, "\"next_call\": TEAM_DOWN_NEXT_CALL,", "\"next_call\": \"Call Foundry-Next now.\","), "crossing-fallback": (g, "    if \"{gate}\" in header or \"{token}\" in header:\n        return None, _generic_header(action)\n", ""), "audit-one-move": (n, "    for number, step in enumerate(steps[:-1], 1):\n        if step.tool == \"Foundry-Next\":", "    for number, step in enumerate(steps[:0], 1):\n        if step.tool == \"Foundry-Next\":"), "audit-answers": (n, "            and steps[number].tool != \"Foundry-Next\"\n", "            and False\n"), "audit-rules-walk": (n, "        for sentence in _orders_foundry_next_mid_list(rules):\n", "        for sentence in _orders_foundry_next_mid_list(\"\"):\n"), "f5-crossing": (g, "        crossing = _post_assay_crossing(\n            fdir, \"F5\", \"TEMPER\", gate, GRIND_AGENT_CONFIG,\n        )\n        if crossing is not None:\n            return crossing\n", ""), "f55-crossing": (g, "        crossing = _post_assay_crossing(\n            fdir, \"F5.5\", \"NYQUIST\", \"done\", GRIND_AGENT_CONFIG,\n        )\n        if crossing is not None:\n            return crossing\n", ""), "temper-gate-step": (g, "            _Step(\n                \"Foundry-Gate\", \"phase=\u0027{gate}\u0027\",\n", "            _Step(\n                \"Foundry-Report\",\n"), "nyquist-gate-step": (g, "            _Step(\n                \"Foundry-Gate\", \"phase=\u0027done\u0027\",\n                note=(\n                    \"the gate out of F5.5.", "            _Step(\n                \"Foundry-Report\",\n                note=(\n                    \"the gate out of F5.5."), "grind-first": (g, "    if blocking[\"blocking\"] > 0:\n        seals = _grind_start_seals(fdir)\n", "    if False:\n        seals = _grind_start_seals(fdir)\n"), "gate-record": (g, "    if passed != gate:\n        return None", "    if passed is None:\n        return None"), "details-crossing": (g, "        or (details or {}).get(\"crossing\")\n", ""), "temper-context": (g, "                f\"gate out of F5, `{gate}`, and the next Foundry-Next reads \"\n", "                f\"gate out of F5. When clean, call Foundry-Gate(phase=\u0027{gate}\u0027). \"\n"), "post-assay-states": (n, "    (\"temper-owed\", \"GI-008\", _arrange_temper_owed, \"run_temper\", None),\n", ""), "held-full-reopen": (g, "        if delta or still:\n", "        if delta:\n"), "held-reopen-reason": (g, "                        if delta else _HELD_CLASS_REOPEN\n", "                        if delta else \"\"\n"), "held-closing": (g, "            \"accepted from a clean FULL F2 and not from past ASSAY. The \"\n", "            \"accepted nowhere: a FULL INSPECT has nothing to widen. The \"\n"), "f4-grind": (g, "        grind = _blocking_grind_crossing(\n            \"F4\", \"ASSAY\", blocking, GRIND_AGENT_CONFIG, fdir,\n        )\n        if grind is not None:\n            return grind\n", ""), "f4-filed-states": (n, "    (\"assay-passed-filed\", \"GI-008\", _arrange_assay_passed_filed, \"transition_to_grind\", None),\n", ""), "f4-short": (g, "        if total < len(declared):\n", "        if False:\n"), "short-states": (n, "    (\"assay-short\", \"GI-008\", _arrange_assay_short, \"run_assay\", None),\n", ""), "cap-slot": (g, "        seals = not template and details.get(\"seals_halted\") is True\n", "        seals = False\n"), "capped-states": (n, "    (\"assay-passed-filed-capped\", \"GI-008\", _arrange_assay_passed_filed_capped, \"transition_to_grind\", None),\n", ""), "seal-detector": (n, "    if capped:\n        for number, step in enumerate(steps[:-1], 1):", "    if False:\n        for number, step in enumerate(steps[:-1], 1):")}; f, old, new = R.get(m, (g, "", "")); s = open(f, encoding="utf-8").read(); assert m == "committed" or s.count(old) == 1, m; open(f, "w", encoding="utf-8").write(s.replace(old, new) if old else s); print(f)' "$m" "$G" "$N" "$D"); echo "== revert: $m"; echo "  $(basename "$F") lines differing from the committed file: $(diff "$P/$F" "$F" | grep -c '^>')"; uv run --project "$P" --with pytest pytest -p no:cacheprovider --no-header --color=no --tb=no -q -rf "$N" 2>/dev/null | awk '$1=="FAILED"{f++; n=$2; sub(/.*::/, "", n); print "  FAILED " n; next} $1=="ERROR"{e++; n=$2; sub(/.*::/, "", n); print "  ERROR " n; next} {s=$0; gsub(/,/, " ", s); k=split(s, w, " "); for(i=2;i<=k;i++) if(w[i]=="passed") p=w[i-1]+0} END{printf "  tests run: %d, failed: %d, errors: %d\n", p+f+e, f+0, e+0}'; done
 # evidence-for: FR-002, FR-005, FR-008, CT-003, CT-006, CT-008, GI-008, OT-002, OT-013, ST-001, ST-002, ST-003, ST-004, US-003
 # evidence-timeout: 1800
 
 == revert: committed
   guidance.py lines differing from the committed file: 0
-  tests run: 152, failed: 0, errors: 0
+  tests run: 163, failed: 0, errors: 0
 == revert: team-arm
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -36,7 +36,7 @@
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[A-cast-wave]
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[B-grind-spawn]
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 152, failed: 29, errors: 0
+  tests run: 163, failed: 29, errors: 0
 == revert: f3-live-arm
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -48,7 +48,7 @@
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  tests run: 152, failed: 9, errors: 0
+  tests run: 163, failed: 9, errors: 0
 == revert: acceptance-reader
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -69,14 +69,14 @@
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch]
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 152, failed: 18, errors: 0
+  tests run: 163, failed: 18, errors: 0
 == revert: notice-gate
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_waiting_notice_names_no_move_above_a_header_that_does[cleanup-over-stale-team]
   FAILED test_the_waiting_notice_names_no_move_above_a_header_that_does[unrecorded-width]
-  tests run: 152, failed: 4, errors: 0
+  tests run: 163, failed: 4, errors: 0
 == revert: in-flight-unmeasured
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -87,7 +87,7 @@
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  tests run: 152, failed: 8, errors: 0
+  tests run: 163, failed: 8, errors: 0
 == revert: refusal-one-branch
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -102,7 +102,7 @@
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch]
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
-  tests run: 152, failed: 12, errors: 0
+  tests run: 163, failed: 12, errors: 0
 == revert: streams-context
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -110,26 +110,26 @@
   FAILED test_the_context_block_of_a_branched_action_names_no_sequence
   FAILED test_running_streams_get_a_context_that_spawns_nothing[fresh]
   FAILED test_running_streams_get_a_context_that_spawns_nothing[stale]
-  tests run: 152, failed: 5, errors: 0
+  tests run: 163, failed: 5, errors: 0
 == revert: refusal-boundary
   guidance.py lines differing from the committed file: 1
   FAILED test_a_refusal_stamped_at_the_done_line_is_still_unanswered
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: casting-slot-last
   guidance.py lines differing from the committed file: 1
   FAILED test_the_casting_slot_names_the_first_owed_casting[cast_refused-refused]
   FAILED test_the_casting_slot_names_the_first_owed_casting[cast_unaccepted-unaccepted]
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 152, failed: 3, errors: 0
+  tests run: 163, failed: 3, errors: 0
 == revert: casting-slot-order
   guidance.py lines differing from the committed file: 1
   FAILED test_the_casting_slot_names_a_casting_from_the_chosen_branch[True-refused]
   FAILED test_the_casting_slot_names_a_casting_from_the_chosen_branch[False-redispatch]
-  tests run: 152, failed: 2, errors: 0
+  tests run: 163, failed: 2, errors: 0
 == revert: condition-detector
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: in-flight-redispatch
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -137,12 +137,12 @@
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  tests run: 152, failed: 5, errors: 0
+  tests run: 163, failed: 5, errors: 0
 == revert: one-scan
   guidance.py lines differing from the committed file: 1
   FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[answers]
   FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[raises]
-  tests run: 152, failed: 2, errors: 0
+  tests run: 163, failed: 2, errors: 0
 == revert: refusal-own-team
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -151,7 +151,7 @@
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_casting_slot_and_the_acceptance_state_are_total
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 152, failed: 6, errors: 0
+  tests run: 163, failed: 6, errors: 0
 == revert: context-structure
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_context_check_reads_the_structure_of_an_order
@@ -159,27 +159,27 @@
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
   FAILED test_the_condition_detector_judges_the_sentence_where_it_was_emitted
   FAILED test_the_context_sweep_bites_on_the_three_filed_contexts
-  tests run: 152, failed: 5, errors: 0
+  tests run: 163, failed: 5, errors: 0
 == revert: refusal-vocabulary
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: condition-structure
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: sentence-anchor
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_condition_detector_judges_the_sentence_where_it_was_emitted
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: choice-shape
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_condition_detector_judges_the_sentence_where_it_was_emitted
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: refused-first
   guidance.py lines differing from the committed file: 1
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: live-teams-registered
   guidance.py lines differing from the committed file: 1
   FAILED test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-accepted-fresh]
@@ -187,7 +187,7 @@
   FAILED test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-owed-fresh]
   FAILED test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-owed-stale]
   FAILED test_both_liveness_returns_publish_the_registered_teams[live-agents]
-  tests run: 152, failed: 5, errors: 0
+  tests run: 163, failed: 5, errors: 0
 == revert: streams-branch
   guidance.py lines differing from the committed file: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -198,7 +198,7 @@
   FAILED test_running_streams_get_a_context_that_spawns_nothing[fresh]
   FAILED test_running_streams_get_a_context_that_spawns_nothing[stale]
   FAILED test_every_imperative_names_its_calls_in_order
-  tests run: 152, failed: 8, errors: 0
+  tests run: 163, failed: 8, errors: 0
 == revert: spawn-order
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -213,7 +213,7 @@
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch]
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 152, failed: 12, errors: 0
+  tests run: 163, failed: 12, errors: 0
 == revert: standing-rule
   guidance.py lines differing from the committed file: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -223,7 +223,7 @@
   FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 152, failed: 7, errors: 0
+  tests run: 163, failed: 7, errors: 0
 == revert: grind-order
   guidance.py lines differing from the committed file: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -234,14 +234,14 @@
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[B-grind-spawn]
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 152, failed: 8, errors: 0
+  tests run: 163, failed: 8, errors: 0
 == revert: run-streams-sentence
   guidance.py lines differing from the committed file: 2
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
   FAILED test_the_prose_the_structure_moved_still_says_what_it_said
-  tests run: 152, failed: 4, errors: 0
+  tests run: 163, failed: 4, errors: 0
 == revert: one-move-rule
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -253,7 +253,7 @@
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch]
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 152, failed: 9, errors: 0
+  tests run: 163, failed: 9, errors: 0
 == revert: one-move-step
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -264,12 +264,12 @@
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch]
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 152, failed: 8, errors: 0
+  tests run: 163, failed: 8, errors: 0
 == revert: one-step-clause
   guidance.py lines differing from the committed file: 0
   FAILED test_the_prose_the_structure_moved_still_says_what_it_said
   FAILED test_the_rules_block_states_the_one_move_and_spawn_clauses_once
-  tests run: 152, failed: 2, errors: 0
+  tests run: 163, failed: 2, errors: 0
 == revert: dispatch-yield
   guidance.py lines differing from the committed file: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -279,15 +279,15 @@
   FAILED test_the_structure_audit_bites_on_a_spawn_that_is_not_one_move
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[A-cast-wave]
   FAILED test_every_imperative_names_its_calls_in_order
-  tests run: 152, failed: 7, errors: 0
+  tests run: 163, failed: 7, errors: 0
 == revert: seed-running
   guidance.py lines differing from the committed file: 1
   FAILED test_the_prose_the_structure_moved_still_says_what_it_said
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: stale-seed
   guidance.py lines differing from the committed file: 1
   FAILED test_the_prose_the_structure_moved_still_says_what_it_said
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: stream-call
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -295,27 +295,27 @@
   FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
   FAILED test_the_idle_streams_header_names_one_call_per_unrecorded_stream
   FAILED test_every_imperative_names_its_calls_in_order
-  tests run: 152, failed: 5, errors: 0
+  tests run: 163, failed: 5, errors: 0
 == revert: stream-config
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
   FAILED test_the_idle_streams_header_names_one_call_per_unrecorded_stream
-  tests run: 152, failed: 4, errors: 0
+  tests run: 163, failed: 4, errors: 0
 == revert: stream-yield
   guidance.py lines differing from the committed file: 0
   FAILED test_the_idle_streams_header_names_one_call_per_unrecorded_stream
   FAILED test_every_imperative_names_its_calls_in_order
-  tests run: 152, failed: 2, errors: 0
+  tests run: 163, failed: 2, errors: 0
 == revert: stream-snapshot
   guidance.py lines differing from the committed file: 1
   FAILED test_the_prose_the_structure_moved_still_says_what_it_said
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: stream-model
   guidance.py lines differing from the committed file: 1
   FAILED test_the_idle_streams_header_names_one_call_per_unrecorded_stream
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: next-calls
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -359,26 +359,35 @@
   FAILED test_a_held_full_f2_is_told_why_it_re_opens_rather_than_opens_assay
   FAILED test_a_decomposition_is_not_validated_while_a_writer_is_still_writing
   FAILED test_a_halt_without_its_report_is_served_the_report_and_nothing_else
-  tests run: 152, failed: 41, errors: 0
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[done]
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper]
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[nyquist]
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper-nyquist]
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f2]
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f4]
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5]
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5.5]
+  FAILED test_below_the_cap_the_grind_crossing_still_dispatches
+  tests run: 163, failed: 50, errors: 0
 == revert: yield-render
   guidance.py lines differing from the committed file: 0
   FAILED test_the_wait_policy_has_one_spelling
   FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-up]
   FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-down]
-  tests run: 152, failed: 3, errors: 0
+  tests run: 163, failed: 3, errors: 0
 == revert: castings-taskoutput
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
   FAILED test_the_prose_the_structure_moved_still_says_what_it_said
-  tests run: 152, failed: 4, errors: 0
+  tests run: 163, failed: 4, errors: 0
 == revert: validate-step
   guidance.py lines differing from the committed file: 0
   FAILED test_the_payload_publishes_the_steps_its_header_renders
   FAILED test_every_imperative_names_its_calls_in_order
   FAILED test_a_decomposition_is_not_validated_while_a_writer_is_still_writing
-  tests run: 152, failed: 3, errors: 0
+  tests run: 163, failed: 3, errors: 0
 == revert: assay-gate
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -390,7 +399,7 @@
   FAILED test_the_assay_crossing_is_walked_in_its_header_order
   FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[nothing-open]
   FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[latent-open]
-  tests run: 152, failed: 9, errors: 0
+  tests run: 163, failed: 9, errors: 0
 == revert: done-commit
   guidance.py lines differing from the committed file: 0
   FAILED test_every_imperative_names_its_calls_in_order
@@ -401,31 +410,31 @@
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[nyquist]
   FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[nothing-open]
   FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[latent-open]
-  tests run: 152, failed: 8, errors: 0
+  tests run: 163, failed: 8, errors: 0
 == revert: audit-structure
   test_guidance_imperatives.py lines differing from the committed file: 0
   FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: audit-spawns
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_structure_audit_reads_the_rule_printed_above_the_step
   FAILED test_the_structure_audit_bites_on_a_spawn_that_is_not_one_move
-  tests run: 152, failed: 2, errors: 0
+  tests run: 163, failed: 2, errors: 0
 == revert: audit-roster
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_structure_audit_bites_when_a_stream_has_no_call
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: audit-fresh-seed
   test_guidance_imperatives.py lines differing from the committed file: 0
   FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
   FAILED test_the_naive_seed_fix_would_spawn_every_teammate_twice
-  tests run: 152, failed: 2, errors: 0
+  tests run: 163, failed: 2, errors: 0
 == revert: audit-call-prose
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_a_conditional_sentence_cannot_add_or_move_a_call
   FAILED test_the_post_assay_context_names_no_call_and_no_condition
   FAILED test_the_context_sweep_bites_on_the_three_filed_contexts
-  tests run: 152, failed: 3, errors: 0
+  tests run: 163, failed: 3, errors: 0
 == revert: list-move-rule
   guidance.py lines differing from the committed file: 6
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -435,21 +444,21 @@
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
   FAILED test_the_rules_block_states_the_one_move_and_spawn_clauses_once
-  tests run: 152, failed: 7, errors: 0
+  tests run: 163, failed: 7, errors: 0
 == revert: gate-read
   guidance.py lines differing from the committed file: 6
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_the_gate_then_phase_note_holds_past_the_gate_on_every_list
-  tests run: 152, failed: 2, errors: 0
+  tests run: 163, failed: 2, errors: 0
 == revert: gate-note-claim
   guidance.py lines differing from the committed file: 7
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_the_gate_then_phase_note_holds_past_the_gate_on_every_list
-  tests run: 152, failed: 2, errors: 0
+  tests run: 163, failed: 2, errors: 0
 == revert: advance-notice
   guidance.py lines differing from the committed file: 4
   FAILED test_a_passed_done_gate_points_the_lead_at_the_strip
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: deliberate-line
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -457,7 +466,7 @@
   FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 152, failed: 5, errors: 0
+  tests run: 163, failed: 5, errors: 0
 == revert: team-down-answer
   teams.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -465,25 +474,25 @@
   FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 152, failed: 5, errors: 0
+  tests run: 163, failed: 5, errors: 0
 == revert: crossing-fallback
   guidance.py lines differing from the committed file: 0
   FAILED test_an_unresolved_crossing_takes_the_generic_header
   FAILED test_no_emission_carries_an_unresolved_slot_in_any_phase
   FAILED test_the_gate_out_of_f5_is_the_one_the_run_flags_name
-  tests run: 152, failed: 3, errors: 0
+  tests run: 163, failed: 3, errors: 0
 == revert: audit-one-move
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: audit-answers
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: audit-rules-walk
   test_guidance_imperatives.py lines differing from the committed file: 1
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: f5-crossing
   guidance.py lines differing from the committed file: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -491,7 +500,10 @@
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper]
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper-nyquist]
   FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[temper]
-  tests run: 152, failed: 5, errors: 0
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper]
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper-nyquist]
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5]
+  tests run: 163, failed: 8, errors: 0
 == revert: f55-crossing
   guidance.py lines differing from the committed file: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -499,20 +511,27 @@
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper-nyquist]
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[nyquist]
   FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[nyquist]
-  tests run: 152, failed: 5, errors: 0
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[nyquist]
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper-nyquist]
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5.5]
+  tests run: 163, failed: 8, errors: 0
 == revert: temper-gate-step
   guidance.py lines differing from the committed file: 1
   FAILED test_every_imperative_names_its_calls_in_order
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper]
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper-nyquist]
   FAILED test_the_gate_out_of_f5_is_the_one_the_run_flags_name
-  tests run: 152, failed: 4, errors: 0
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper]
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper-nyquist]
+  tests run: 163, failed: 6, errors: 0
 == revert: nyquist-gate-step
   guidance.py lines differing from the committed file: 1
   FAILED test_every_imperative_names_its_calls_in_order
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper-nyquist]
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[nyquist]
-  tests run: 152, failed: 3, errors: 0
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[nyquist]
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper-nyquist]
+  tests run: 163, failed: 5, errors: 0
 == revert: grind-first
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -523,12 +542,16 @@
   FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[temper]
   FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[nyquist]
   FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[temper-nyquist]
-  tests run: 152, failed: 8, errors: 0
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f4]
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5]
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5.5]
+  FAILED test_below_the_cap_the_grind_crossing_still_dispatches
+  tests run: 163, failed: 12, errors: 0
 == revert: gate-record
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  tests run: 152, failed: 2, errors: 0
+  tests run: 163, failed: 2, errors: 0
 == revert: details-crossing
   guidance.py lines differing from the committed file: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -539,17 +562,19 @@
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper-nyquist]
   FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[temper]
   FAILED test_the_gate_out_of_f5_is_the_one_the_run_flags_name
-  tests run: 152, failed: 8, errors: 0
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper]
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper-nyquist]
+  tests run: 163, failed: 10, errors: 0
 == revert: temper-context
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_post_assay_context_names_no_call_and_no_condition
-  tests run: 152, failed: 3, errors: 0
+  tests run: 163, failed: 3, errors: 0
 == revert: post-assay-states
   test_guidance_imperatives.py lines differing from the committed file: 0
   FAILED test_the_post_assay_context_names_no_call_and_no_condition
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: held-full-reopen
   guidance.py lines differing from the committed file: 1
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -558,18 +583,18 @@
   FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[nothing-open]
   FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[latent-open]
   FAILED test_a_held_full_f2_is_told_why_it_re_opens_rather_than_opens_assay
-  tests run: 152, failed: 6, errors: 0
+  tests run: 163, failed: 6, errors: 0
 == revert: held-reopen-reason
   guidance.py lines differing from the committed file: 1
   FAILED test_a_held_full_f2_is_told_why_it_re_opens_rather_than_opens_assay
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
 == revert: held-closing
   guidance.py lines differing from the committed file: 1
   FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4]
   FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4-temper]
   FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f5]
   FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f5.5]
-  tests run: 152, failed: 4, errors: 0
+  tests run: 163, failed: 4, errors: 0
 == revert: f4-grind
   guidance.py lines differing from the committed file: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
@@ -579,8 +604,43 @@
   FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[nyquist]
   FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[temper-nyquist]
   FAILED test_every_arm_past_assay_asks_the_one_grind_question
-  tests run: 152, failed: 7, errors: 0
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f4]
+  FAILED test_below_the_cap_the_grind_crossing_still_dispatches
+  tests run: 163, failed: 9, errors: 0
 == revert: f4-filed-states
   test_guidance_imperatives.py lines differing from the committed file: 0
   FAILED test_every_action_the_router_returns_is_served_by_a_router_state
-  tests run: 152, failed: 1, errors: 0
+  tests run: 163, failed: 1, errors: 0
+== revert: f4-short
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[done]
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper]
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[nyquist]
+  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper-nyquist]
+  FAILED test_a_short_ledger_a_clean_prove_fills_is_not_sent_back_to_assay
+  tests run: 163, failed: 7, errors: 0
+== revert: short-states
+  test_guidance_imperatives.py lines differing from the committed file: 0
+  FAILED test_every_action_the_router_returns_is_served_by_a_router_state
+  tests run: 163, failed: 1, errors: 0
+== revert: cap-slot
+  guidance.py lines differing from the committed file: 1
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f2]
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f4]
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5]
+  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5.5]
+  FAILED test_the_seal_detector_bites_on_the_list_served_before_the_fix
+  tests run: 163, failed: 8, errors: 0
+== revert: capped-states
+  test_guidance_imperatives.py lines differing from the committed file: 0
+  FAILED test_every_action_the_router_returns_is_served_by_a_router_state
+  tests run: 163, failed: 1, errors: 0
+== revert: seal-detector
+  test_guidance_imperatives.py lines differing from the committed file: 1
+  FAILED test_the_seal_detector_bites_on_the_list_served_before_the_fix
+  tests run: 163, failed: 1, errors: 0

@@ -139,6 +139,26 @@ teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
   GI-008  assay-passed-temper-filed stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   GI-008  assay-passed-nyquist-untiered fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   GI-008  assay-passed-nyquist-untiered stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  assay-short              fresh run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-short              stale run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-short-temper       fresh run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-short-temper       stale run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-short-nyquist      fresh run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-short-nyquist      stale run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-short-both         fresh run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-short-both         stale run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-short-prove-filed  fresh run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-short-prove-filed  stale run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-short-prove-clean  fresh transition_to_done/-               running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-short-prove-clean  stale transition_to_done/-               running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  inspect-filed-capped     fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  inspect-filed-capped     stale transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-passed-filed-capped fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-passed-filed-capped stale transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-filed-capped      fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-filed-capped      stale transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  nyquist-filed-capped     fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  nyquist-filed-capped     stale transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  halted-reported          fresh halted/-                           running=-   ends-turn=yes names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  halted-reported          stale halted/-                           running=-   ends-turn=yes names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  halted-unreported        fresh halted/-                           running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no

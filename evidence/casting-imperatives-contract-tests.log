@@ -2,7 +2,7 @@
 # evidence-for: US-002, FR-001, FR-002, FR-005, FR-006, FR-015, CT-001, CT-002, CT-003, CT-006, CT-008, GI-004, GI-008, OT-001, OT-003, OT-004, OT-007, OT-013
 
 ============================= test session starts ==============================
-collecting ... collected 152 items
+collecting ... collected 163 items
 
 test_the_audit_sweeps_every_key_and_returns_zero PASSED
 test_the_recorded_evidence_shows_the_population_it_judged PASSED
@@ -156,5 +156,16 @@ test_the_router_and_the_re_open_door_read_one_held_class_union PASSED
 test_the_escalation_hold_is_asked_only_past_assay PASSED
 test_a_decomposition_is_not_validated_while_a_writer_is_still_writing PASSED
 test_a_halt_without_its_report_is_served_the_report_and_nothing_else PASSED
+test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[done] PASSED
+test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper] PASSED
+test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[nyquist] PASSED
+test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper-nyquist] PASSED
+test_a_short_ledger_a_clean_prove_fills_is_not_sent_back_to_assay PASSED
+test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f2] PASSED
+test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f4] PASSED
+test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5] PASSED
+test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5.5] PASSED
+test_below_the_cap_the_grind_crossing_still_dispatches PASSED
+test_the_seal_detector_bites_on_the_list_served_before_the_fix PASSED
 
-152 passed
+163 passed
