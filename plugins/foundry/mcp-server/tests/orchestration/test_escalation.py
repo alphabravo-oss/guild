@@ -304,7 +304,15 @@ def test_the_clean_f2_arms_name_a_persisted_escalated_class(run_env):
 
     nxt = foundry_next_action(project_root)
 
-    assert nxt["action"] == "transition_to_assay", nxt
+    # lead-stalls D-055 — named, and no longer sent on to ASSAY: every list
+    # past ASSAY ends at the DONE gate that refuses this class, and the one
+    # crossing that clears it is reachable from here. The LATENT instances
+    # are open, so the GRIND gate passes and that crossing is a GRIND that
+    # dispatches nobody, then `inspect_start` out of F3.
+    assert nxt["action"] == "transition_to_grind", nxt
+    assert [c["tool"] for c in nxt["next_calls"]] == [
+        "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
+    ], nxt["next_calls"]
     assert "FDC" in nxt["instructions"], nxt["instructions"]
     assert "ESCALATED" in nxt["instructions"]
     assert "ST-010" in nxt["instructions"]

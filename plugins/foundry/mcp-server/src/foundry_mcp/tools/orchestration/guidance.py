@@ -20,6 +20,7 @@ from foundry_mcp.schemas.vocab import (
     PHASE_LADDER,
     PHASE_NAMES,
     REPORT_MD_FILENAME,
+    REQUIREMENT_ID_RE,
     RUN_PHASE_HALTED,
     STREAM_WIRE_IDS,
     TIER_UNKNOWN,
@@ -689,8 +690,9 @@ def foundry_next_action(
     # tests read as "no stall notice was emitted".
     #
     # Scoped to the BRANCHED actions (lead-stalls D-019 made `run_streams` the
-    # third) and to the two phases the router itself now reads it for, so the
-    # rest cost no ledger scan (lead-stalls GI-001). `_waiting_on_agents` never
+    # third, D-056 `add_castings` the fourth) and to the phases the router
+    # itself now reads it for, so the rest cost no ledger scan (lead-stalls
+    # GI-001). `_waiting_on_agents` never
     # raises and never blocks (lead-stalls CT-006), so this cannot take
     # `Foundry-Next` down with it.
     #
@@ -2018,6 +2020,27 @@ _EACH_UNRECORDED_STREAM = "{unrecorded streams}"
 #: publishes the fact and the resolver turns it into steps.
 _EACH_UNFILED_VERDICT = "{unfiled verdicts}"
 
+#: lead-stalls GI-008 / FR-007 (D-055) — the step `transition_to_grind` holds
+#: in place of its teammate dispatch, expanded at emission from
+#: `details["open_defects"]`, the BLOCKING count the router published.
+#:
+#: The list is served in two run states. The ordinary one has blocking
+#: defects, and the dispatch is its point. The other is a clean INSPECT that a
+#: still-ESCALATED class holds DONE shut over (`_escalation_hold`): the class
+#: clears only at a crossing that advances the cycle counter, and from a FULL
+#: F2 or from past ASSAY the one such crossing the server accepts is a GRIND
+#: opened on whatever record is open, then `inspect_start` out of F3. There the
+#: open records are LATENT or HARDENING, which no teammate is dispatched for —
+#: the F3 arm answers `transition_to_inspect` as soon as nothing blocks — so a
+#: spawn step would hand the lead teammates for work the GRIND does not do.
+#:
+#: WHY A SLOT AND NOT A SECOND ACTION, for `_EACH_UNFILED_VERDICT`'s reason:
+#: the first three calls are the same calls in the same order, and a second
+#: action would restate them and grow the table the FR-008 sweep counts. Only
+#: an explicit integer 0 omits the dispatch; an absent or unreadable count
+#: keeps it, which is the list every other router arm serves.
+_BLOCKING_DISPATCH = "{blocking dispatch}"
+
 #: lead-stalls GI-008 / FR-007 — the step `halted` holds in place of the
 #: report the halt could not write, expanded from `details["report_generated"]`.
 #: The CONTEXT used to say "call Foundry-Report to write REPORT.md" beneath a
@@ -2265,8 +2288,8 @@ def _verdict_filing_steps(unfiled: object) -> tuple[_Step, ...]:
     """The filing `assay_failed_loop_back` owes first, or none. Total.
 
     ``unfiled`` is the router's `details["unfiled_verdicts"]`: the ids of the
-    non-VERIFIED verdicts, published only when the ledger holds no open defect
-    for the GRIND gate to count. No field is a choice handed over. The tier:
+    non-VERIFIED verdicts that no open BLOCKING defect's `spec_ref` names
+    (`_carried_requirements`, D-054). No field is a choice handed over. The tier:
     ASSAY's verdict names a requirement, so the filing is on-row — `HARDENING`
     refuses a `spec_ref`, and `LATENT` needs a reproduction the verdict does
     not carry. The type: every verdict but VERIFIED is a `DEFECT_TYPES` member
@@ -2287,8 +2310,9 @@ def _verdict_filing_steps(unfiled: object) -> tuple[_Step, ...]:
             "class=<that requirement id>, description=<that requirement's "
             "verdict and evidence, as verdicts.json records them>]",
             note=(
-                "ASSAY recorded these verdicts and no open defect carries "
-                "them, and the GRIND gate below counts open defects."
+                "ASSAY recorded these verdicts and no open blocking defect "
+                "carries them, so the GRIND below would have nothing to "
+                "dispatch for them."
             ),
         ),
     )
@@ -2325,6 +2349,13 @@ def _expanded_steps(step: _Step, details: dict | None) -> tuple[_Step, ...]:
         )
     if step.tool == _UNWRITTEN_REPORT:
         return _report_steps({"report_generated": False} if template else details)
+    if step.tool == _BLOCKING_DISPATCH:
+        count = details.get("open_defects")
+        nothing_blocks = (
+            not template and isinstance(count, int)
+            and not isinstance(count, bool) and count == 0
+        )
+        return () if nothing_blocks else _GRIND_SPAWN_STEPS
     return (step,)
 
 
@@ -2370,6 +2401,59 @@ _STREAMS_RUNNING = _Imperative((), (
     "missing, and spawning it again runs it twice over one cycle. "
     + _WAITING_IS_NOT_STOPPING
 ))
+
+#: lead-stalls GI-008 / FR-007 (D-056) — `add_castings` IS THE FOURTH ACTION
+#: WHOSE WORK IS AGENTS, AND IT READ NO ROSTER.
+#:
+#: The decomposition writers are BACKGROUND agents, one per domain, and their
+#: list ended in END YOUR TURN with a trailer saying the Foundry-Next "the last
+#: notification wakes you for" opens the validation. Every writer's
+#: notification wakes the lead, so the lead had to judge which one was the
+#: last — the conditional GI-008 forbids — and the router could not help it:
+#: F0 took no liveness reading, so the first writer's manifest entry turned
+#: the answer into `transition_to_cast` while the others were still writing.
+#: Driven, following that list validated one casting, crossed into F1 and
+#: dispatched wave 1 over a decomposition still in progress.
+#:
+#: So each writer keeps a progress ledger (the idle branch's prompt says
+#: where and how), F0 reads it through `_waiting_on_agents` like CAST and
+#: GRIND, and while any writer is advancing this branch answers END YOUR TURN.
+#: The ledger name is `decompose-<domain>`, which no casting's ledger
+#: (`casting-<id>`) and no stream's can collide with.
+_DECOMPOSITION_WRITERS_LIVE = _Imperative((), (
+    "Your decomposition writers are running — this server read their "
+    "progress ledgers on this call and measured them advancing, so the "
+    "castings manifest is not finished yet. " + _WAITING_IS_NOT_STOPPING
+))
+
+_DECOMPOSITION_WRITERS = _Imperative(
+    (
+        _Step(
+            "Agent",
+            "model='opus', subagent_type='general-purpose', "
+            "mode='bypassPermissions', run_in_background=true, "
+            "prompt=<per commands/start.md §F0.5 DECOMPOSE: write the "
+            "domain's entry into manifest.json AND write "
+            "casting-{id}-prompt.md to foundry-archive/{run}/castings/ "
+            "following the layout in start.md §6 — and keep a progress "
+            "ledger at foundry-archive/{run}/progress/decompose-<domain>.jsonl: "
+            "append one JSON line carrying timestamp (UTC ISO-8601), "
+            "phase 'decompose' and step as the FIRST act, again after each "
+            "file written, and a LAST line that also carries \"done\": true>",
+            each=(
+                "for each domain identified from the spec (1-5 of them), "
+                "all in a SINGLE parallel message"
+            ),
+        ),
+        _YIELD,
+    ),
+    "No team is needed: these are short-lived file writers, so the "
+    "TeamCreate ceremony is skipped. Each writer's return message is its "
+    "TaskOutput, and each keeps the progress ledger its prompt names, which "
+    "is what the Foundry-Next every notification wakes you for reads to tell "
+    "a finished decomposition from one still being written.",
+)
+
 
 #: The model clause every teammate spawn carries (test_model_config.py pins
 #: the deferral on both transition entries).
@@ -2661,28 +2745,15 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
     # lead-stalls FR-007 — the validation "after all complete" is no longer a
     # step behind a wait: the yield ends this list, and `transition_to_cast`,
     # which is what the woken Foundry-Next answers, opens with it.
-    "add_castings": _Imperative(
-        (
-            _Step(
-                "Agent",
-                "model='opus', subagent_type='general-purpose', "
-                "mode='bypassPermissions', run_in_background=true, "
-                "prompt=<per commands/start.md §F0.5 DECOMPOSE: write the "
-                "domain's entry into manifest.json AND write "
-                "casting-{id}-prompt.md to foundry-archive/{run}/castings/ "
-                "following the layout in start.md §6>",
-                each=(
-                    "for each domain identified from the spec (1-5 of them), "
-                    "all in a SINGLE parallel message"
-                ),
-            ),
-            _YIELD,
-        ),
-        "No team is needed: these are short-lived file writers, so the "
-        "TeamCreate ceremony is skipped. Each writer's return message is its "
-        "TaskOutput, and the Foundry-Next the last notification wakes you for "
-        "opens the validation of what they wrote.",
-    ),
+    #
+    # lead-stalls GI-008 / FR-007 (D-056) — and WHICH woken Foundry-Next that
+    # is, is the server's reading, not the lead's count of notifications:
+    # branched like the other three agent-running actions, on the writers'
+    # own progress ledgers.
+    "add_castings": {
+        "live": _DECOMPOSITION_WRITERS_LIVE,
+        "idle": _DECOMPOSITION_WRITERS,
+    },
     # lead-stalls D-009 — the literal `1` is correct here: `_compute_next_action`
     # returns this action from F0 and from nowhere else, so the only wave it
     # describes is the first. `build_castings`'s dispatch branch carries the
@@ -2807,12 +2878,14 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
             "and you only confirm.",
         ),
     },
+    # lead-stalls GI-008 / FR-007 (D-055) — the dispatch is a slot, so the
+    # clean-cycle GRIND a held escalation owes is this list without it.
     "transition_to_grind": _Imperative(
         (
             _Step("Foundry-Tasks"),
             _Step("Foundry-Gate", "phase='grind'"),
             _Step("Foundry-Phase", "phase='grind_start'"),
-            *_GRIND_SPAWN_STEPS,
+            _Step(_BLOCKING_DISPATCH),
         ),
         # fallout FR-038 / GI-021 / CT-008 / AC-002 — the alignment block
         # reaches the prompt through the step that builds it: step (1) is the
@@ -3066,6 +3139,37 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
         ),
         _GATE_THEN_PHASE_NOTE.lstrip("\n"),
     ),
+    # lead-stalls GI-008 / FR-007 (D-055) — THE RUN STATE NO ACCEPTED
+    # TRANSITION LEAVES, ANSWERED AS ONE.
+    #
+    # A class still ESCALATED holds DONE shut until ST-001's clean arm or
+    # ST-002's budget arm clears it, and the clean arm moves only at an
+    # `inspect_start` crossing that advances the cycle counter. With no defect
+    # open, from a FULL F2 or from anywhere past ASSAY, the server accepts no
+    # such crossing: `grind_start` / `assay_fail` refuse "No open defects to
+    # grind", `inspect_start` from a FULL F2 refuses "nothing to widen" and is
+    # not accepted from F4 on. Driven, the lists served there instead —
+    # `transition_to_assay`, then `transition_to_done` or `run_temper` —
+    # each ended in a refused gate and came back identical, forever, and the
+    # CONTEXT named `grind_start` then `inspect_start` from F2, both refused.
+    #
+    # Any list served here would be refused, so this answers NONE and says why,
+    # in the register of `done` and `halted`. The graph change that gives the
+    # state an exit is not this module's (a Foundry-Concern names it);
+    # meanwhile the operator's escalation override is the one way out, and it
+    # is the operator's, never a step of the lead's list — the CONTEXT names
+    # its text the way `_escalation_notice` does.
+    "escalation_held": _Imperative((), (
+        "A defect class is still ESCALATED, DONE is refused until it is "
+        "CLEARED, and from this run state no transition the server accepts "
+        "can clear it — the CONTEXT below names the class, the refusals and "
+        "the operator's override. That is a gap in the server's transition "
+        "graph, the error ending the rules above name, and not a step left to "
+        "you: do NOT file a defect to reopen a GRIND, do NOT call "
+        "Foundry-Phase, do NOT call Foundry-Next in a loop. Tell the user the "
+        "run is held on that escalation, and end your turn: nothing but the "
+        "user moves this run from here."
+    )),
     "done": _Imperative((), (
         "This run is DONE. Read REPORT.md and tell the user what shipped. Do "
         "NOT dispatch a wave, do NOT call Foundry-Phase, do NOT call "
@@ -3629,97 +3733,195 @@ def _still_escalated_classes(fdir: Path, project_root: str) -> list[str]:
 
 
 def _still_escalated_notice(
-    fdir: Path, project_root: str, *, inspect_mode: str = ""
+    fdir: Path, project_root: str, still: list[str], *, served: str
 ) -> str:
-    """One sentence naming any class ST-010 will still hold DONE open for.
+    """The facts about the classes ST-010 still holds DONE open for (D-129).
 
-    Empty string when nothing is escalated, so a clean cycle reads identically.
+    D-129 put this sentence on the clean path: a class the server has
+    PERSISTED as ESCALATED with every instance closed was named nowhere before
+    the F6 door, and `_escalation_notice` (the sentence above) is blind to it
+    twice over. It reads the same union `_done_preconditions` refuses on
+    (``still``, from `_still_escalated_classes`), and carries
+    `_escalation_exit_distances` so the reader sees how far each arm is.
 
-    D-129 — THE CLEAN PATH LEARNED OF THE ST-010 BLOCK AT THE F6 DOOR.
-    -----------------------------------------------------------------
-    `_escalation_notice` (the sentence above) is wired into ONE arm: the
-    `transition_to_grind` branch, which is reached only when
-    `open_count > 0`. It also reads `_escalated_classes`, which opens with
-    `if not bucket["open"]: continue` — so a class the server has PERSISTED as
-    ESCALATED with every instance closed is invisible to it twice over.
-
-    Driven: three LATENT filings of class FDC at cycles 1-3; the boundary
-    closing cycle 3 wrote escalation.json status ESCALATED, escalated_at 3,
-    packets 0; all five required streams marked, blocking 0.
-    `foundry_next_action` returned action transition_to_assay with "INSPECT
-    clean: zero blocking defects, at FULL width ... 3 LATENT defect(s) stay
-    open ... they block nothing" and named neither FDC, nor ESCALATED, nor
-    ST-010. Following it: inspect_clean ok, Gate assay passed, Gate temper
-    passed, Phase temper ok, Gate nyquist passed, Phase nyquist ok — and then
-    `Foundry-Gate('done')` refused "1 defect class(es) are still ESCALATED:
-    FDC". Each boundary the class still needs is then reached from a
-    post-verification phase and re-enters through final_gate FULL, ASSAY,
-    TEMPER and NYQUIST again: two extra post-verification loops for a class
-    that could have cleared in two INSPECT cycles from F2. NFR-001 targets
-    exactly that axis, and US-001's premise is that the exit is MECHANICAL —
-    which it is, and the lead could not see the meter running.
-
-    READS THE SAME UNION `_done_preconditions` REFUSES ON — `_escalated_classes`
-    (ledger recurrence) ∪ `_persisted_escalations` (the recorded status) — so
-    the notice and the refusal cannot name different sets. Overrides are
-    honoured by both halves, so a class the operator de-escalated is silent
-    here exactly as it is at the gate.
-
-    Carries `_escalation_exit_distances`, so the sentence states not just THAT
-    a class blocks but how far each arm is: a lead reading "1 more clean cycle"
-    at F2 crosses one boundary, where the same lead reading it at F5.5 pays a
-    full post-verification loop for the same crossing.
-
-    D-153 — AND IT NAMES THE CALL THE SERVER ACTUALLY ACCEPTS FROM HERE.
+    lead-stalls GI-008 / FR-007 (D-055) — IT STATES THE RUN STATE AND NAMES
+    NO CROSSING OF ITS OWN.
     -------------------------------------------------------------------
-    "The cheapest place to make those crossings is HERE, from F2" was true and
-    unactionable: the only crossing the sentence named was
-    "Foundry-Phase(phase='inspect_start') from F3", which is where the crossing
-    lands but not a call this arm's reader can make. Driven at cycle 8 on a run
-    at F2 whose recorded width was FULL / final_gate: `inspect_start` is
-    REFUSED — "this cycle's recorded width is FULL (rule final_gate), so there
-    is nothing to widen" — and `live_clean_cycles` stayed 0. The crossing that
-    works from a FULL F2 is `grind_start` and then `inspect_start`: a GRIND
-    opened with nothing to fix, which no arm named and which reads as a mistake
-    unless the prose says it is the crossing. The sibling `widen_inspect` arm
-    names ITS re-open; this one named none.
+    This rode in the CONTEXT of `transition_to_assay` saying "the cheapest
+    place to make those crossings is HERE, from F2" and naming `grind_start`
+    then `inspect_start` — a second sequence beside a header that served
+    ASSAY, which the lead had to weigh against it. D-153 had chosen that
+    spelling from the recorded width, and it was right only while some record
+    was open: driven on a FULL F2 with the class's instances all fixed, both
+    calls it named were refused, while the header's ASSAY list led on to a
+    DONE gate that refused the same class forever.
 
-    So ``inspect_mode`` — the width the transition RECORDED, which this arm's
-    caller has already read — selects the spelling, and the two spellings are
-    exactly the two the `inspect_start` refusal's own hint offers from F2.
-    Reported, never decided (GI-008): the width is read back, not computed.
+    The router now serves the crossing itself (`_escalation_hold`,
+    `widen_inspect`), so this says which list that is — ``served`` is
+    ``"widen"``, ``"grind"`` or ``"held"``, chosen by the caller that chose the
+    action — and the distances name the crossing by what it does, never as a
+    call: a counter-advancing INSPECT crossing is the only event the clean arm
+    counts, whichever door reaches it.
     """
-    still = _still_escalated_classes(fdir, project_root)
     if not still:
         return ""
-    #
-    # lead-stalls GI-008 / FR-007 — named as transition TOKENS, not written out
-    # as Foundry-Phase calls: this sentence rides in the CONTEXT of
-    # `transition_to_assay` and `widen_inspect`, which name no call of their
-    # own.
-    if (inspect_mode or "").upper() == "DELTA":
-        crossing = (
-            "from F2 at DELTA width that is the widening re-open, the "
-            "`inspect_start` transition, which advances the counter and closes "
-            "one"
-        )
-    else:
-        crossing = (
-            "from F2 at FULL width the `inspect_start` transition is REFUSED "
-            "(there is nothing to widen), so the crossing is the `grind_start` "
-            "transition — a GRIND with nothing to fix is what a clean cycle "
-            "IS — and then `inspect_start`, which advances the counter and "
-            "closes one"
-        )
+    names = ", ".join(still)
+    closing = {
+        "widen": (
+            " The widening re-open the list above makes is one of those "
+            "crossings."
+        ),
+        "grind": (
+            " No blocking defect is open, so the list above opens a GRIND that "
+            "dispatches nobody — the GRIND gate counts every open record, "
+            "whatever its tier — and the INSPECT crossing that closes it is "
+            "one of those crossings."
+        ),
+        "held": (
+            " No defect is open for a GRIND to open on, and no other "
+            "transition the server accepts from this phase advances the cycle "
+            "counter: a FULL INSPECT has nothing to widen, and past ASSAY "
+            "every road back to INSPECT runs through a GRIND. The operator's "
+            "override that de-escalates a class, which the DONE guard "
+            "honours, is the Foundry-Directive text "
+            + "; ".join(
+                f"`{text}`" if (text := _override_instruction(key)) is not None
+                else _override_offer(key)
+                for key in still
+            )
+            + "."
+        ),
+    }[served]
     return (
         f" ST-010: {len(still)} defect class(es) are still ESCALATED "
-        f"({', '.join(still)}) and DONE is refused until every one of them is "
-        "CLEARED — a LATENT-only backlog does not by itself clear a class. "
-        "Clearing it is a boundary crossing, and the cheapest place to make "
-        "those crossings is HERE, from F2: reaching ASSAY, TEMPER and NYQUIST "
-        "first means every remaining crossing is paid for twice."
-        + _escalation_exit_distances(fdir, project_root, still, crossing=crossing)
+        f"({names}) and DONE is refused until every one of them is "
+        "CLEARED — a LATENT-only backlog does not by itself clear a class."
+        + _escalation_exit_distances(
+            fdir, project_root, still, crossing=_CLEAN_CROSSING_PHRASE,
+        )
+        + closing
     )
+
+
+#: How the distances name ST-001's crossing from a guidance surface: by what
+#: it does, since which door reaches it depends on where the run stands and
+#: the list above the CONTEXT already names that door (D-055).
+_CLEAN_CROSSING_PHRASE = "each one an INSPECT crossing that advances the cycle counter"
+
+
+
+
+def _escalation_hold(
+    fdir: Path,
+    project_root: str,
+    phase: str,
+    blocking: dict,
+    opening: str,
+    grind_config: dict,
+) -> dict | None:
+    """The answer for a clean run state a still-ESCALATED class holds DONE
+    shut over, or ``None`` when no class is held or a blocking defect is open.
+
+    lead-stalls GI-008 / FR-007 (D-055). A held class clears only at an
+    `inspect_start` crossing that advances the cycle counter, so every list
+    that walks on toward DONE — `transition_to_assay` from a FULL F2, and from
+    F4, F5 and F5.5 the TEMPER, NYQUIST and DONE crossings — ends at a DONE
+    gate that refuses the class, and the next Foundry-Next served it again.
+    Driven, `run_temper` re-ran TEMPER every lap and `transition_to_done` ran
+    its strip and commit after the gate refused.
+
+    So wherever the run stands clean with a class held, this answers first,
+    with the one crossing the server accepts from there:
+
+      * some record is open (any tier; the GRIND gate counts them all)
+                         -> `transition_to_grind` with its dispatch slot at
+                            ``open_defects: 0``: Tasks, the GRIND gate and
+                            `grind_start`, and then the F3 arm's
+                            `transition_to_inspect` closes the cycle.
+      * nothing is open  -> `escalation_held`: no accepted transition advances
+                            the counter from here, and the header says so.
+
+    A DELTA F2 is not asked: its `widen_inspect` re-open IS the crossing. With
+    a blocking defect open the ordinary GRIND arms answer, and their crossing
+    counts too. ``opening`` is the caller's own first sentence about the phase
+    it measured; ``grind_config`` is the router's `GRIND_AGENT_CONFIG`.
+    """
+    if blocking["blocking"] > 0:
+        return None
+    still = _still_escalated_classes(fdir, project_root)
+    if not still:
+        return None
+    backlog = (
+        f" {len(blocking['latent'])} LATENT defect(s) stay open, tracked and "
+        "named in the F6 backlog; they block nothing."
+        if blocking["latent"] else ""
+    )
+    details = {
+        "open_defects": 0,
+        "live_defects": [],
+        "unknown_tier_defects": [],
+        "latent_backlog": blocking["latent"],
+        "still_escalated_classes": still,
+    }
+    if blocking["open"] > 0:
+        return {
+            "phase": phase,
+            "action": "transition_to_grind",
+            "instructions": (
+                opening + backlog
+                + _still_escalated_notice(fdir, project_root, still, served="grind")
+            ),
+            "details": {**details, "agent_config": grind_config},
+        }
+    return {
+        "phase": phase,
+        "action": "escalation_held",
+        "instructions": (
+            opening + backlog
+            + _still_escalated_notice(fdir, project_root, still, served="held")
+        ),
+        "details": details,
+    }
+
+
+
+
+def _carried_requirements(fdir: Path) -> dict[str, list[str]]:
+    """``{requirement id: [open BLOCKING defect ids whose spec_ref names it]}``.
+
+    lead-stalls GI-008 / FR-007 (D-054). The ASSAY-rejection arm published its
+    filing only when the ledger held no open record at all, a count that never
+    asked WHICH requirement a record carries — so an unrelated LATENT backlog
+    item, or one assayer's filing of another requirement, suppressed the filing
+    of every rejection. Driven: an open LATENT record on one requirement
+    beside an unfiled PARTIAL on another, two full laps, and the rejection
+    never reached the ledger.
+
+    BLOCKING, not any tier, because the question is whether the GRIND the list
+    opens has the rejection to work on, and a GRIND dispatches only for a
+    blocking defect: the F3 arm answers `transition_to_inspect` the moment the
+    blocking count is zero. A LATENT record naming the requirement leaves ASSAY
+    rejecting it on the next lap with nothing dispatched in between, which is
+    the lap D-054 drove. HARDENING refuses a `spec_ref` at filing, so it never
+    carries one.
+
+    `spec_ref` is prose — "GI-008, FR-007" is one — so the ids are read out of
+    it with the one requirement-id grammar, `vocab.REQUIREMENT_ID_RE`, and the
+    whole stripped value counts too, for an id that grammar does not spell.
+    Total: a record with no string `spec_ref` carries nothing.
+    """
+    buckets = open_defects_by_tier(
+        fdir, tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN, tier_of=defect_tier
+    )
+    carried: dict[str, list[str]] = {}
+    for tier in BLOCKING_TIERS:
+        for record in buckets.get(tier, []):
+            ref = record.get("spec_ref")
+            if not isinstance(ref, str) or not ref.strip():
+                continue
+            for rid in {*REQUIREMENT_ID_RE.findall(ref), ref.strip()}:
+                carried.setdefault(rid, []).append(str(record.get("id", "?")))
+    return carried
 
 
 
@@ -3948,9 +4150,12 @@ def _compute_next_action(project_root: str) -> dict:
         teams = _check_active_teams(project_root)
     except Exception:  # noqa: BLE001 - the router never raises into the lead
         teams = {"active": False, "teams": []}
+    # lead-stalls D-056 — and F0, whose decomposition writers are background
+    # agents the lead is woken by one at a time: the manifest cannot say
+    # whether the writer that has not written yet is still writing.
     agent_liveness = (
         _waiting_on_agents(project_root, teams=teams)
-        if cast_open or phase == "F3" else None
+        if cast_open or phase in ("F0", "F3") else None
     )
 
     if teams["active"] and not _team_work_in_flight(
@@ -4035,26 +4240,51 @@ def _compute_next_action(project_root: str) -> dict:
     if phase == "F0":
         manifest = _load_json(fdir / "castings" / "manifest.json")
         casting_count = len(manifest.get("castings", []))
-        if casting_count == 0:
+        # lead-stalls GI-008 / FR-007 (D-056) — THE MANIFEST HOLDING A CASTING
+        # IS NOT THE DECOMPOSITION BEING FINISHED. Each writer adds its own
+        # entry when it is done, so the first writer to finish made this arm
+        # answer `transition_to_cast` while the others were still writing,
+        # and following it validated, entered F1 and dispatched wave 1 over a
+        # partial manifest. The writers' progress ledgers answer instead: any
+        # writer advancing is `add_castings`, whose `live` branch is END YOUR
+        # TURN, whatever the manifest already holds.
+        writing = bool((agent_liveness or {}).get("waiting"))
+        if casting_count == 0 or writing:
             return {
                 "phase": "F0",
                 "action": "add_castings",
                 "instructions": (
-                    "DECOMPOSE (F0): the castings manifest lists no castings "
-                    f"yet. Every casting file goes under {fdir}/castings/, "
+                    f"DECOMPOSE (F0): the castings manifest lists "
+                    f"{casting_count} casting(s)"
+                    + (
+                        f", and {agent_liveness['count']} agent(s) are still "
+                        "writing — this server read their progress ledgers "
+                        "on this call."
+                        if writing else " and no agent is writing."
+                    )
+                    + f" Every casting file goes under {fdir}/castings/, "
                     "never castings/ at the project root, and the "
                     "agent_config below is ENFORCED for each writer."
+                    + _BRANCHED_ACTION_CONTEXT
                 ),
-                "details": {"foundry_dir": str(fdir), "agent_config": DECOMPOSE_AGENT_CONFIG},
+                "details": {
+                    "foundry_dir": str(fdir),
+                    "casting_count": casting_count,
+                    "agent_config": DECOMPOSE_AGENT_CONFIG,
+                },
+                "agent_liveness": agent_liveness,
             }
         return {
             "phase": "F0",
             "action": "transition_to_cast",
             "instructions": (
                 f"DECOMPOSE complete: {casting_count} casting(s) in the "
-                "manifest. One teammate builds one casting, never many."
+                "manifest, and no agent is writing — this server read the "
+                "progress ledgers on this call. One teammate builds one "
+                "casting, never many."
             ),
             "details": {"casting_count": casting_count, "agent_config": CAST_AGENT_CONFIG},
+            "agent_liveness": agent_liveness,
         }
 
     elif phase == "F1":
@@ -4230,12 +4460,9 @@ def _compute_next_action(project_root: str) -> dict:
         # D-129: and the ST-010 block a LATENT-only backlog does NOT clear,
         # said HERE — the last arm before the run leaves F2 — rather than at
         # the F6 door after ASSAY, TEMPER and NYQUIST have been spent.
-        # D-153: the RECORDED width selects which crossing the notice names,
-        # because it is the width that decides whether `inspect_start` from
-        # here is the widening re-open or a refusal.
-        still_escalated_note = _still_escalated_notice(
-            fdir, project_root, inspect_mode=f2_mode.get("mode", "")
-        )
+        # lead-stalls D-055: at DELTA width the widening re-open served below
+        # is itself a crossing that counts, so the notice only says so.
+        still = _still_escalated_classes(fdir, project_root)
         if f2_mode.get("mode") == "DELTA":
             return {
                 "phase": "F2",
@@ -4244,7 +4471,9 @@ def _compute_next_action(project_root: str) -> dict:
                     f"INSPECT clean at DELTA width (cycle {f2_mode.get('cycle', '?')}, "
                     f"rule {f2_mode.get('rule', '?')}): zero blocking defects."
                     + carried
-                    + still_escalated_note
+                    + _still_escalated_notice(
+                        fdir, project_root, still, served="widen",
+                    )
                     # D-169: the condition stated is the one both ASSAY doors
                     # evaluate — the recorded MODE — not the rule. A FULL
                     # INSPECT recorded with rule verifier_touched opens ASSAY,
@@ -4260,9 +4489,7 @@ def _compute_next_action(project_root: str) -> dict:
                     "latent_backlog": latent_backlog,
                     # D-129: machine-readable beside the sentence, so a reader
                     # never has to parse prose to learn what still blocks DONE.
-                    "still_escalated_classes": _still_escalated_classes(
-                        fdir, project_root
-                    ),
+                    "still_escalated_classes": still,
                     "inspect_mode": f2_mode.get("mode", ""),
                     "inspect_rule": f2_mode.get("rule", ""),
                     "agent_configs": {
@@ -4276,25 +4503,39 @@ def _compute_next_action(project_root: str) -> dict:
                 },
             }
 
+        opening = (
+            "INSPECT clean: zero blocking defects, at "
+            f"{f2_mode.get('mode') or 'FULL'} width "
+            f"(rule {f2_mode.get('rule') or 'unrecorded'})."
+        )
+        # lead-stalls GI-008 / FR-007 (D-055) — A HELD CLASS DOES NOT GO ON TO
+        # ASSAY. ASSAY, TEMPER and NYQUIST all lead to a DONE gate that refuses
+        # it, and from past ASSAY every road back to the one crossing that
+        # clears it is longer than from here.
+        held = _escalation_hold(
+            fdir, project_root, "F2", blocking, opening, GRIND_AGENT_CONFIG,
+        )
+        if held is not None:
+            held["details"].update(
+                inspect_mode=f2_mode.get("mode", ""),
+                inspect_rule=f2_mode.get("rule", ""),
+            )
+            return held
         return {
             "phase": "F2",
             "action": "transition_to_assay",
             "instructions": (
-                "INSPECT clean: zero blocking defects, at "
-                f"{f2_mode.get('mode') or 'FULL'} width "
-                f"(rule {f2_mode.get('rule') or 'unrecorded'})."
+                opening
                 + carried
-                + still_escalated_note
                 + " The agent_config below is the assayer's, and its "
                 "frontmatter carries opus and effort=max."
             ),
             "details": {
                 "open_defects": 0,
                 "latent_backlog": latent_backlog,
-                # D-129, same field on the arm that opens ASSAY.
-                "still_escalated_classes": _still_escalated_classes(
-                    fdir, project_root
-                ),
+                # D-129, same field on the arm that opens ASSAY — empty on
+                # every route here now, because a held class is answered above.
+                "still_escalated_classes": still,
                 "inspect_mode": f2_mode.get("mode", ""),
                 "inspect_rule": f2_mode.get("rule", ""),
                 "agent_config": ASSAY_AGENT_CONFIG,
@@ -4401,9 +4642,19 @@ def _compute_next_action(project_root: str) -> dict:
             # Measured to decide this arm, so published like the one above:
             # the stall notice reads it rather than taking a second reading.
             "agent_liveness": agent_liveness,
+            # lead-stalls D-054 / D-055 — "all defects fixed" was false with
+            # a LATENT record open, which is this arm's ordinary state after
+            # the clean-cycle GRIND `_escalation_hold` serves: nothing blocks,
+            # so nothing is dispatched, and the backlog is still there.
             "instructions": (
-                "GRIND complete: all defects fixed and no GRIND agent is "
-                "running. The crossing back into F2 is `inspect_start`, "
+                "GRIND complete: no blocking defect is open and no GRIND agent "
+                "is running."
+                + (
+                    f" {len(latent_backlog)} LATENT defect(s) stay open and "
+                    "block nothing."
+                    if latent_backlog else ""
+                )
+                + " The crossing back into F2 is `inspect_start`, "
                 "guarded by the gate of the same name — the `inspect` gate "
                 "guards the F1 entry and is refused from F3. That transition "
                 "advances the run's cycle counter, so without it every later "
@@ -4512,14 +4763,28 @@ def _compute_next_action(project_root: str) -> dict:
             # whose verdicts nothing carries are published instead, and the
             # header's first step files them (`_EACH_UNFILED_VERDICT`).
             #
-            # The gate counts EVERY open record (`status == "open"`, any tier),
-            # so this reads the same total — a LATENT defect ASSAY filed lets
-            # the gate pass, and a filing step served then would duplicate it.
-            unfiled = [
+            # lead-stalls GI-008 / FR-007 (D-054) — PER REQUIREMENT, AND ONLY A
+            # BLOCKING DEFECT CARRIES ONE. This published the filing only when
+            # the ledger held no open record at all, so one unrelated LATENT
+            # item — which the F2 arm lets through to ASSAY because it blocks
+            # nothing — suppressed the filing of every rejection, the gate
+            # passed on that item, the GRIND dispatched nobody, and ASSAY
+            # rejected the same requirement on the next lap: driven, two full
+            # laps and the rejection never filed. `_carried_requirements`
+            # answers for each requirement, and the CONTEXT's counts come from
+            # the same reading, so the sentence cannot claim a carrier the list
+            # lacks.
+            carried_by = _carried_requirements(fdir)
+            rejected = [
                 str(r.get("id"))
                 for r in verdicts.get("requirements", [])
                 if r.get("verdict") != "VERIFIED"
-            ] if blocking["open"] == 0 else []
+            ]
+            unfiled = [rid for rid in rejected if rid not in carried_by]
+            carriers = sorted({
+                did for rid in rejected for did in carried_by.get(rid, [])
+            })
+            carried_count = len(rejected) - len(unfiled)
             return {
                 "phase": "F4",
                 "action": "assay_failed_loop_back",
@@ -4527,11 +4792,16 @@ def _compute_next_action(project_root: str) -> dict:
                     f"ASSAY found {non_verified}/{total} non-verified "
                     "requirements. "
                     + (
-                        "No open defect carries them yet, so the list above "
+                        f"{carried_count} of them are carried by open "
+                        f"blocking defect(s) ({', '.join(carriers)}). "
+                        if carriers else ""
+                    )
+                    + (
+                        f"{len(unfiled)} are carried by no open blocking "
+                        f"defect ({', '.join(unfiled)}), so the list above "
                         "opens by filing them."
                         if unfiled else
-                        f"{blocking['open']} open defect(s) carry ASSAY's "
-                        "findings."
+                        "No requirement ASSAY rejected is left without one."
                     )
                     + " The ASSAY-rejection door into F3 clears every stream "
                     "marker and is bounded by the same --max-cycles cap "
@@ -4542,9 +4812,21 @@ def _compute_next_action(project_root: str) -> dict:
                 "details": {
                     "non_verified": non_verified, "total": total,
                     "unfiled_verdicts": unfiled,
+                    "carrying_defects": carriers,
                     "agent_config": GRIND_AGENT_CONFIG,
                 },
             }
+
+        # lead-stalls GI-008 / FR-007 (D-055) — every crossing below walks on
+        # toward a DONE gate that refuses a held class, so a held class is
+        # answered first, while the road back to its crossing is shortest.
+        held = _escalation_hold(
+            fdir, project_root, "F4",
+            blocking, "ASSAY passed: all requirements verified.",
+            GRIND_AGENT_CONFIG,
+        )
+        if held is not None:
+            return held
 
         temper = state.get("temper", False)
         if temper:
@@ -4585,6 +4867,17 @@ def _compute_next_action(project_root: str) -> dict:
         # lead-stalls GI-008 / FR-007 (D-050) — and the crossing is SERVED, as
         # a step list, once `run_temper`'s own list has ended in its gate.
         gate = "nyquist" if state.get("nyquist", False) else "done"
+        # lead-stalls D-055 — `run_temper`'s list ends in a gate whose road
+        # leads to a DONE gate that refuses a held class, so the Skill was
+        # re-served every lap. Answered before the phase's work and before
+        # its crossing, after blocking defects, which `_escalation_hold`
+        # leaves to `_post_assay_crossing`'s GRIND arm.
+        held = _escalation_hold(
+            fdir, project_root, "F5", blocking,
+            "TEMPER phase: no blocking defect is open.", GRIND_AGENT_CONFIG,
+        )
+        if held is not None:
+            return held
         crossing = _post_assay_crossing(
             fdir, "F5", "TEMPER", gate, GRIND_AGENT_CONFIG,
         )
@@ -4606,6 +4899,13 @@ def _compute_next_action(project_root: str) -> dict:
         }
 
     elif phase == "F5.5":
+        # lead-stalls D-055 — `run_nyquist` ends in the DONE gate itself.
+        held = _escalation_hold(
+            fdir, project_root, "F5.5", blocking,
+            "NYQUIST phase: no blocking defect is open.", GRIND_AGENT_CONFIG,
+        )
+        if held is not None:
+            return held
         crossing = _post_assay_crossing(
             fdir, "F5.5", "NYQUIST", "done", GRIND_AGENT_CONFIG,
         )

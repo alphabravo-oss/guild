@@ -2766,28 +2766,35 @@ def test_the_clean_f2_arm_names_the_crossing_the_server_accepts_from_f2(run_env)
     sends a lead to make it has to name a call the server takes.
 
     The recorded width here is FULL / final_gate, which is what a clean cycle
-    that reached ASSAY looks like. Driven at cycle 8:
-    `Foundry-Phase('inspect_start')` from that F2 is refused and the counter
-    does not move; the sequence that closes one clean cycle is `grind_start`
-    then `inspect_start`. Both halves are asserted — the arm names the working
-    sequence, and the call it used to name is shown to be the refusal it is.
+    that reached ASSAY looks like, and the class's instances are all fixed.
+    D-153 had this arm serve ASSAY and name `grind_start` then `inspect_start`
+    in its CONTEXT; lead-stalls D-055 drove both of those refused on this very
+    state ("No open defects to grind"; "nothing to widen"), and the ASSAY list
+    beside them led to a DONE gate that refused the class forever. No accepted
+    transition advances the counter from here, so the arm answers
+    `escalation_held` — NONE, and why — and names neither refused call.
     """
     project_root, fdir = run_env
     _escalated_fixture(fdir, open_instances=False)
     _clean_f2(project_root, fdir)
 
     nxt = foundry_next_action(project_root)
-    instructions = nxt["instructions"]
+    context = nxt["instructions"].split("\nCONTEXT:", 1)[1]
 
-    assert nxt["action"] == "transition_to_assay", nxt
-    assert "grind_start" in instructions, instructions
-    assert "REFUSED" in instructions, instructions
+    assert nxt["action"] == "escalation_held", nxt
+    assert "YOUR NEXT CALL: NONE" in nxt["instructions"]
+    assert "grind_start" not in context, context
+    assert "inspect_start" not in context, context
 
-    # ...and the call the arm used to name really is refused from here.
+    # ...and both crossings the arm used to name really are refused from here.
     _arm_ordering_token(fdir)
     refused = foundry_mark_phase_complete("inspect_start", project_root)
     assert refused.get("ok") is not True, refused
     assert "nothing to widen" in refused["error"], refused
+    _arm_ordering_token(fdir)
+    refused = foundry_mark_phase_complete("grind_start", project_root)
+    assert refused.get("ok") is not True, refused
+    assert "No open defects to grind" in refused["error"], refused
 
 
 

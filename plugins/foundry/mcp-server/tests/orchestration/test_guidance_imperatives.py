@@ -953,6 +953,41 @@ def _arrange_decompose_done(root, fdir, teams):
     _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
 
 
+#: lead-stalls D-056 — a decomposition writer's ledger, at the path and in the
+#: shape the `add_castings` idle branch's prompt tells each writer to keep.
+def _decompose_ledger(fdir: Path, domain: str, *, done: bool) -> None:
+    stamp = datetime.now(timezone.utc).isoformat()
+    lines = [{"timestamp": stamp, "phase": "decompose", "step": "reading the spec"}]
+    if done:
+        lines.append({"timestamp": stamp, "phase": "decompose",
+                      "step": "wrote the casting prompt", "done": True})
+    (fdir / "progress").mkdir(parents=True, exist_ok=True)
+    (fdir / "progress" / f"decompose-{domain}.jsonl").write_text(
+        "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8"
+    )
+
+
+def _arrange_decompose_writing(root, fdir, teams):
+    # Two writers spawned, neither has written its manifest entry yet.
+    _arrange_decompose_empty(root, fdir, teams)
+    _decompose_ledger(fdir, "api", done=False)
+    _decompose_ledger(fdir, "ui", done=False)
+
+
+def _arrange_decompose_first_writer_done(root, fdir, teams):
+    # PROVE's s3 state (D-056): writer A wrote casting 1 and its done line and
+    # its notification woke the lead; writer B is still writing.
+    _arrange_decompose_done(root, fdir, teams)
+    _decompose_ledger(fdir, "api", done=True)
+    _decompose_ledger(fdir, "ui", done=False)
+
+
+def _arrange_decompose_writers_done(root, fdir, teams):
+    _arrange_decompose_done(root, fdir, teams)
+    _decompose_ledger(fdir, "api", done=True)
+    _decompose_ledger(fdir, "ui", done=True)
+
+
 def _arrange_cast_complete(root, fdir, teams):
     _write_spec(fdir, ["FR-1"])
     _write_state(fdir, phase="F1", cycle=0)
@@ -1025,6 +1060,36 @@ def _arrange_inspect_escalated_filed(root, fdir, teams):
     _escalated(fdir, tier="LIVE")
 
 
+#: lead-stalls D-055 — THE CLASS PERSISTED ESCALATED WITH EVERY INSTANCE
+#: CLOSED, which is the ordinary state one INSPECT after a GRIND fixes an
+#: escalated class, and every phase a run can stand in with it: a clean FULL
+#: F2, and past ASSAY. Nothing is open, so no accepted transition advances the
+#: counter; with a record open the GRIND crossing does.
+def _arrange_inspect_escalated_closed(root, fdir, teams):
+    _clean_inspect(fdir, "FULL")
+    _escalated_fixture(fdir, open_instances=False)
+
+
+def _arrange_assay_passed_escalated(root, fdir, teams):
+    _assay(fdir, ["VERIFIED"], temper=True)
+    _escalated_fixture(fdir, open_instances=False)
+
+
+def _arrange_assay_passed_escalated_open(root, fdir, teams):
+    _assay(fdir, ["VERIFIED"])
+    _escalated(fdir, tier="LATENT")
+
+
+def _arrange_temper_escalated(root, fdir, teams):
+    _post_assay(fdir, "F5", temper=True, nyquist=False)
+    _escalated_fixture(fdir, open_instances=False)
+
+
+def _arrange_nyquist_escalated_open(root, fdir, teams):
+    _post_assay(fdir, "F5.5", temper=True, nyquist=True)
+    _escalated(fdir, tier="LATENT")
+
+
 def _assay(
     fdir: Path, verdicts: list[str], *, temper: bool = False,
     nyquist: bool = False, filed: bool = False,
@@ -1051,6 +1116,34 @@ def _arrange_assay_failed_filed(root, fdir, teams):
 def _arrange_assay_failed_unfiled(root, fdir, teams):
     # PROVE's D-053 state: a verdict recorded, and no defect filed for it.
     _assay(fdir, ["VERIFIED", "PARTIAL"])
+
+
+#: lead-stalls D-054 — PROVE's s1 and s1b states, and the HARDENING variant:
+#: a non-VERIFIED verdict that no open BLOCKING defect names, beside an open
+#: record the ledger-wide count used to read as "filed".
+def _arrange_assay_failed_unrelated_latent(root, fdir, teams):
+    _assay(fdir, ["VERIFIED", "PARTIAL"])
+    _defect_ledger(fdir, [_tiered(
+        "D-001", "LATENT", spec_ref="FR-1",
+        reproduction_attempted="drove every caller; none reach the branch",
+    )])
+
+
+def _arrange_assay_failed_unrelated_hardening(root, fdir, teams):
+    _assay(fdir, ["VERIFIED", "PARTIAL"])
+    record = _tiered(
+        "D-001", "HARDENING",
+        reproduction_attempted="drove an empty payload; the door answered 500",
+    )
+    record.pop("spec_ref")
+    _defect_ledger(fdir, [record])
+
+
+def _arrange_assay_failed_partly_filed(root, fdir, teams):
+    _assay(fdir, ["VERIFIED", "PARTIAL", "WRONG"])
+    _defect_ledger(fdir, [_tiered(
+        "D-002", "LIVE", spec_ref="FR-2", source="assay", type="PARTIAL",
+    )])
 
 
 def _arrange_assay_passed(root, fdir, teams):
@@ -1130,19 +1223,35 @@ _ROUTER_STATES = (
     # lead-stalls D-051..D-053 — the rest of the population, so every action
     # the router returns is served here at least once and its CONTEXT judged.
     ("no-run", "GI-008", _arrange_no_run, "init", None),
-    ("decompose-empty", "GI-008", _arrange_decompose_empty, "add_castings", None),
+    ("decompose-empty", "GI-008", _arrange_decompose_empty, "add_castings", "idle"),
     ("decompose-done", "GI-008", _arrange_decompose_done, "transition_to_cast", None),
+    # lead-stalls D-056 — the writers are agents, and while one is writing the
+    # decomposition is not finished, whatever the manifest already lists.
+    ("decompose-writing", "ST-001", _arrange_decompose_writing, "add_castings", "live"),
+    ("decompose-first-writer-done", "ST-002", _arrange_decompose_first_writer_done, "add_castings", "live"),
+    ("decompose-writers-done", "ST-003", _arrange_decompose_writers_done, "transition_to_cast", None),
     ("cast-complete", "GI-008", _arrange_cast_complete, "transition_to_inspect", None),
     ("inspect-width-unrecorded", "GI-008", _arrange_inspect_width_unrecorded, "record_inspect_width", None),
     ("inspect-filed", "GI-008", _arrange_inspect_filed, "transition_to_grind", None),
     ("inspect-clean-full", "GI-008", _arrange_inspect_clean_full, "transition_to_assay", None),
     ("inspect-clean-delta", "GI-008", _arrange_inspect_clean_delta, "widen_inspect", None),
-    ("inspect-escalated-full", "GI-008", _arrange_inspect_escalated_full, "transition_to_assay", None),
+    # lead-stalls D-055 — a held class is not sent on to ASSAY: with a record
+    # open the GRIND crossing closes a clean cycle, and with none the run is
+    # held, which the header says rather than serving a list that is refused.
+    ("inspect-escalated-full", "GI-008", _arrange_inspect_escalated_full, "transition_to_grind", None),
     ("inspect-escalated-delta", "GI-008", _arrange_inspect_escalated_delta, "widen_inspect", None),
     ("inspect-escalated-filed", "GI-008", _arrange_inspect_escalated_filed, "transition_to_grind", None),
+    ("inspect-escalated-closed", "GI-008", _arrange_inspect_escalated_closed, "escalation_held", None),
+    ("assay-passed-escalated", "GI-008", _arrange_assay_passed_escalated, "escalation_held", None),
+    ("assay-passed-escalated-open", "GI-008", _arrange_assay_passed_escalated_open, "transition_to_grind", None),
+    ("temper-escalated", "GI-008", _arrange_temper_escalated, "escalation_held", None),
+    ("nyquist-escalated-open", "GI-008", _arrange_nyquist_escalated_open, "transition_to_grind", None),
     ("assay-empty", "GI-008", _arrange_assay_empty, "run_assay", None),
     ("assay-failed-filed", "GI-008", _arrange_assay_failed_filed, "assay_failed_loop_back", None),
     ("assay-failed-unfiled", "GI-008", _arrange_assay_failed_unfiled, "assay_failed_loop_back", None),
+    ("assay-failed-unrelated-latent", "GI-008", _arrange_assay_failed_unrelated_latent, "assay_failed_loop_back", None),
+    ("assay-failed-unrelated-hardening", "GI-008", _arrange_assay_failed_unrelated_hardening, "assay_failed_loop_back", None),
+    ("assay-failed-partly-filed", "GI-008", _arrange_assay_failed_partly_filed, "assay_failed_loop_back", None),
     ("assay-passed", "GI-008", _arrange_assay_passed, "transition_to_done", None),
     ("assay-passed-temper", "GI-008", _arrange_assay_passed_temper, "transition_to_temper", None),
     ("assay-passed-nyquist", "GI-008", _arrange_assay_passed_nyquist, "transition_to_nyquist", None),
@@ -2134,7 +2243,9 @@ def turn_boundary_report(drives=None) -> list[str]:
         "call the woken lead is told to make stops nobody.",
         "ST-003 is discharged by 'names-call=yes' on every row where running is not",
         "yes and the run is not DONE or HALTED: a lead that is handed a call cannot",
-        "park for want of a move.",
+        "park for want of a move. The escalation_held rows are the exception, and the",
+        "header says why: a class still ESCALATED with no defect open, where no",
+        "transition the server accepts advances the cycle counter (lead-stalls D-055).",
         "ST-004 is the cast-refused, cast-refused-team-down, cast-refused-foreign-pane,",
         "cast-refused-other-team and cast-refusal-answered rows: a refusal goes back to",
         "a teammate (the one that built it while its OWN wave team is registered, a",
@@ -2157,9 +2268,32 @@ def test_the_audit_sweeps_every_key_and_returns_zero():
     liveness reading rather than the table entry: the fix itself is subject to
     the same audit, so a substituted branch that still held a conditional would
     be flagged here by the guard that flagged the entry it replaced.
+
+    lead-stalls D-055 — 22 IS THE POPULATION THE SPEC WAS WRITTEN AGAINST, AND
+    EVERY ONE OF THEM IS STILL SWEPT. The audit iterates the table, so "all 22
+    keys" is a floor on what it covers, not a ceiling on what the table may
+    hold: `escalation_held` joined for the one run state no accepted
+    transition leaves (a class still ESCALATED with nothing open), which has
+    no calls to share with any other entry and so could not be a slot in one.
+    The spec's 22 are pinned by name, so a key lost is caught as surely as by
+    the count, and the one key added is pinned too.
     """
-    assert len(_ACTION_IMPERATIVES) == 22, sorted(_ACTION_IMPERATIVES)
+    assert set(_ACTION_IMPERATIVES) == _SPEC_KEYS | {"escalation_held"}, sorted(
+        set(_ACTION_IMPERATIVES) ^ (_SPEC_KEYS | {"escalation_held"})
+    )
+    assert len(_SPEC_KEYS) == 22
     assert audit_action_imperatives() == []
+
+
+#: The 22 keys lead-stalls FR-008 / OT-002 counted, by name.
+_SPEC_KEYS = frozenset({
+    "init", "halted", "cleanup_teams", "add_castings", "transition_to_cast",
+    "build_castings", "transition_to_inspect", "run_streams",
+    "transition_to_grind", "fix_defects", "transition_to_assay", "run_assay",
+    "transition_to_done", "transition_to_temper", "run_temper",
+    "transition_to_nyquist", "run_nyquist", "assay_failed_loop_back",
+    "widen_inspect", "record_inspect_width", "done", "unknown",
+})
 
 
 def test_the_recorded_evidence_shows_the_population_it_judged():
@@ -2204,6 +2338,10 @@ def test_the_recorded_evidence_shows_the_population_it_judged():
             # lead-stalls ST-003's guard is "run not DONE or HALTED": a
             # terminal ends the run, and names a call only when one is owed.
             assert "ends-turn=yes" in line or "names-call=yes" in line, line
+        elif " escalation_held/" in line:
+            # lead-stalls D-055 — the one non-terminal state that ends the
+            # turn by design: no transition the server accepts leaves it.
+            assert "ends-turn=yes" in line, line
         else:
             assert "names-call=yes" in line, line
 
@@ -2526,17 +2664,24 @@ def test_fix_defects_holds_the_two_branches_and_build_castings_holds_three():
     # lead-stalls D-019 — `run_streams` is the third action whose work is
     # agents, and it takes the `fix_defects` shape: running, or not.
     assert sorted(streams) == ["idle", "live"], sorted(streams)
+    # lead-stalls D-056 — and `add_castings` the fourth: the decomposition
+    # writers are running, or none is.
+    castings = _parse_branches(_ACTION_IMPERATIVES["add_castings"])
+    assert sorted(castings) == ["idle", "live"], sorted(castings)
     # Every branched entry declares the fallback, so `_select_branch` never has
     # to reach its total tail on shipped input.
     for action, branches in (
         ("fix_defects", grind), ("build_castings", cast), ("run_streams", streams),
+        ("add_castings", castings),
     ):
         assert branches.get(_BRANCH_FALLBACK), action
     # And no OTHER entry is branched.
     branched = sorted(
         a for a, t in _ACTION_IMPERATIVES.items() if _parse_branches(t)
     )
-    assert branched == ["build_castings", "fix_defects", "run_streams"], branched
+    assert branched == [
+        "add_castings", "build_castings", "fix_defects", "run_streams",
+    ], branched
 
 
 # --------------------------------------------------------------------------- #
@@ -2663,16 +2808,23 @@ def test_an_unaudited_action_pays_for_no_roster_scan(run_env):
     """lead-stalls GI-001 -- 'a lightweight solution ... not a big lift'.
 
     The roster read is scoped to the actions whose imperative depends on it.
-    The other twenty emit exactly as they did and carry no new field, so a
-    Foundry-Next at F0 costs no ledger scan.
+    The rest emit exactly as they did and carry no new field, so a
+    Foundry-Next at F4 costs no ledger scan.
+
+    lead-stalls D-056 — this was pinned at F0, and F0 was the defect: its
+    decomposition writers are agents the lead is woken by one at a time, and
+    with no reading there the first writer's manifest entry sent the lead on
+    to validation while the rest were still writing. F0 is scanned now (see
+    the decompose router states), so the unscanned phase pinned here is one
+    whose answer no running agent changes.
     """
     project_root, fdir = run_env
-    _write_state(fdir, phase="F0", cycle=0)
+    _assay(fdir, ["VERIFIED"])
     _progressing_ledger(fdir)
 
     nxt = foundry_next_action(project_root)
 
-    assert nxt["action"] == "add_castings"
+    assert nxt["action"] == "transition_to_done"
     assert "agent_liveness" not in nxt
 
 
@@ -5292,8 +5444,10 @@ _OWED_CALLS = {
     "unknown": ["Foundry-Context", "Foundry-Next"],
     "cleanup_teams": ["SendMessage", "TeamDelete", "Foundry-Team-Down"],
     # The validation "after all complete" is the next action's first step,
-    # never a step behind the yield.
-    "add_castings": ["Agent", _END_TURN],
+    # never a step behind the yield; and while a writer runs, the answer is
+    # the yield alone (lead-stalls D-056).
+    "add_castings/live": [],
+    "add_castings/idle": ["Agent", _END_TURN],
     "transition_to_cast": [
         "Foundry-Validate-Castings", "Foundry-Gate", "Foundry-Phase",
         "TeamCreate", "Foundry-Team-Up", "Foundry-Cast-Wave", "Agent", _END_TURN,
@@ -5345,6 +5499,8 @@ _OWED_CALLS = {
     ],
     "widen_inspect": ["Foundry-Gate", "Foundry-Phase"],
     "record_inspect_width": ["Foundry-Gate", "Foundry-Phase"],
+    # lead-stalls D-055 — no accepted transition leaves this state.
+    "escalation_held": [],
 }
 
 
@@ -5410,9 +5566,14 @@ def test_the_prose_the_structure_moved_still_says_what_it_said():
     assert "A spawn door and the Agent call it feeds are one step of that move" in (
         rule
     ), rule
-    assert "the Foundry-Next the last notification wakes you for opens the " \
-        "validation" in _ACTION_IMPERATIVES["add_castings"]
+    # lead-stalls D-056 — the trailer handed the lead a count of
+    # notifications ("the last notification wakes you for"); the writers'
+    # ledgers answer that now, and the prompt says where they are.
+    assert "last notification" not in _ACTION_IMPERATIVES["add_castings"]
     assert "No team is needed" in _ACTION_IMPERATIVES["add_castings"]
+    writers = _parse_branches(_ACTION_IMPERATIVES["add_castings"])["idle"]
+    assert "progress/decompose-<domain>.jsonl" in writers, writers
+    assert '"done": true' in writers, writers
     assert "cleanup failure mode" in _ACTION_IMPERATIVES["cleanup_teams"]
     assert "Do NOT wait for 'shutdown_response' events" in (
         _ACTION_IMPERATIVES["cleanup_teams"]
@@ -6054,7 +6215,10 @@ def test_the_post_assay_context_names_no_call_and_no_condition(run_env):
         arrange(root, fdir, None)
         contexts[state] = _context_of(foundry_next_action(root)["instructions"])
         (fdir / GATE_PASSED_MARKER).unlink(missing_ok=True)
-    assert len(contexts) == 8, sorted(contexts)
+        (fdir / "escalation.json").unlink(missing_ok=True)
+    # Eight D-050 states, and the two lead-stalls D-055 added: a held class at
+    # F5 with nothing open, and at F5.5 with a record open.
+    assert len(contexts) == 10, sorted(contexts)
     problems = {
         state: _CALL_SYNTAX.findall(text)
         for state, text in contexts.items() if _CALL_SYNTAX.search(text)
@@ -6173,26 +6337,224 @@ def test_an_unfiled_assay_rejection_leaves_f4_by_the_served_list(run_env):
 
 
 def test_a_filed_assay_rejection_is_not_served_a_second_filing(run_env):
-    """D-053's other state: ASSAY filed its findings (any tier counts, as it
-    does at the GRIND gate), so the list is the rejection door alone and names
-    no requirement to file twice."""
+    """D-053's other state, and lead-stalls D-054's correction of it: a
+    rejection is FILED when an open BLOCKING defect's `spec_ref` names that
+    requirement — per requirement, never "some record is open".
+
+    This test used to hand the arm an open D-001 carrying FR-1, have ASSAY
+    reject FR-2, and assert the state was "filed". That is the gap PROVE drove:
+    the ledger-wide count read any open record as ASSAY's filing, so FR-2 was
+    carried by nothing, the gate passed on D-001, the GRIND dispatched nobody
+    and ASSAY rejected FR-2 again on the next lap.
+    """
     root, fdir = run_env
-    for tier in ("LIVE", "LATENT"):
-        _assay(fdir, ["VERIFIED", "PARTIAL"])
-        _defect_ledger(fdir, [_tiered(
-            "D-001", tier, reproduction_attempted="AST sweep finds 0 sites",
-        )])
+    # A LIVE defect naming the rejected requirement carries it: no filing.
+    _assay(fdir, ["VERIFIED", "PARTIAL"])
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE", spec_ref="FR-2")])
+    nxt = foundry_next_action(root)
+    assert nxt["action"] == "assay_failed_loop_back", nxt["action"]
+    assert nxt["details"]["unfiled_verdicts"] == [], nxt["details"]
+    assert nxt["details"]["carrying_defects"] == ["D-001"], nxt["details"]
+    assert [c["tool"] for c in nxt["next_calls"]] == [
+        "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
+    ]
+    context = _context_of(nxt["instructions"])
+    assert "1 of them are carried by open blocking defect(s) (D-001)" in context, context
+    # So does one naming it inside a list of ids.
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE", spec_ref="GI-008, FR-2")])
+    assert foundry_next_action(root)["details"]["unfiled_verdicts"] == []
+
+    # Nothing else carries it: a LATENT defect naming it (the GRIND dispatches
+    # nobody for LATENT), an unrelated LATENT or LIVE one, a HARDENING one.
+    hardening = _tiered("D-001", "HARDENING", reproduction_attempted="probe")
+    hardening.pop("spec_ref")
+    for record in (
+        _tiered("D-001", "LATENT", spec_ref="FR-2", reproduction_attempted="AST sweep finds 0 sites"),
+        _tiered("D-001", "LATENT", spec_ref="FR-1", reproduction_attempted="AST sweep finds 0 sites"),
+        _tiered("D-001", "LIVE", spec_ref="FR-1"),
+        _tiered("D-001", "LIVE", spec_ref="FR-20"),
+        hardening,
+    ):
+        _defect_ledger(fdir, [record])
         nxt = foundry_next_action(root)
-        assert nxt["action"] == "assay_failed_loop_back", nxt["action"]
-        assert nxt["details"]["unfiled_verdicts"] == [], (tier, nxt["details"])
+        assert nxt["details"]["unfiled_verdicts"] == ["FR-2"], (record, nxt["details"])
         assert [c["tool"] for c in nxt["next_calls"]] == [
-            "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
-        ], tier
+            "Foundry-Sync", "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
+        ], record
+        assert "(FR-2)" in nxt["next_calls"][0]["args"], nxt["next_calls"][0]
+        assert "carry ASSAY's findings" not in nxt["instructions"], record
+
+    # PROVE's s1b: FR-2 filed, FR-3 not — the filing names FR-3 alone, and the
+    # CONTEXT's counts are the same comparison's.
+    _assay(fdir, ["VERIFIED", "PARTIAL", "WRONG"])
+    _defect_ledger(fdir, [_tiered("D-002", "LIVE", spec_ref="FR-2", source="assay")])
+    nxt = foundry_next_action(root)
+    assert nxt["details"]["unfiled_verdicts"] == ["FR-3"], nxt["details"]
+    assert "(FR-3)" in nxt["next_calls"][0]["args"], nxt["next_calls"][0]
+    context = _context_of(nxt["instructions"])
+    assert "1 of them are carried by open blocking defect(s) (D-002)" in context, context
+    assert "1 are carried by no open blocking defect (FR-3)" in context, context
+
     # And the filing names exactly the non-VERIFIED requirements when none is.
     _assay(fdir, ["PARTIAL", "VERIFIED", "HOLLOW"])
     nxt = foundry_next_action(root)
     assert nxt["details"]["unfiled_verdicts"] == ["FR-1", "FR-3"], nxt["details"]
     assert "(FR-1, FR-3)" in nxt["next_calls"][0]["args"], nxt["next_calls"][0]
+
+
+def test_an_unrelated_backlog_item_no_longer_swallows_the_filing(run_env):
+    """lead-stalls D-054, driven the way PROVE drove it (s1): an open LATENT
+    D-001 on FR-1 beside FR-2 PARTIAL with nothing filed. At 6c350c0 the list
+    was Tasks, Gate, Phase, the GRIND that followed dispatched nobody, and two
+    full laps later FR-2 had still not reached the ledger. Following the
+    served list now files FR-2 as a LIVE defect, enters F3, and the F3 answer
+    is the dispatch of a GRIND that has it to fix."""
+    root, fdir = run_env
+    _post_assay_run(root, fdir, phase="F4", temper=False, nyquist=False)
+    _arrange_assay_failed_unrelated_latent(root, fdir, None)
+
+    served = _walk_served_lists(root, lists=2)
+
+    assert served[0] == ("F4", "assay_failed_loop_back", [
+        "Foundry-Sync", "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
+    ]), served
+    assert served[1][:2] == ("F3", "fix_defects"), served
+    defects = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    filed = [d for d in defects["defects"] if d.get("spec_ref") == "FR-2"]
+    assert [(d.get("tier"), d.get("status")) for d in filed] == [("LIVE", "open")], defects
+
+
+def test_a_held_class_with_a_record_open_closes_a_clean_cycle_by_the_served_lists(
+    run_env,
+):
+    """lead-stalls D-055, the half the server's graph already allows: a class
+    persisted ESCALATED at a clean FULL F2 with its LATENT instances open.
+    The CONTEXT used to name `grind_start` then `inspect_start` beside a header
+    serving ASSAY. The header serves that crossing now — Tasks, the GRIND gate
+    and `grind_start` with no teammate to dispatch — and the F3 answer after it
+    is `inspect_start`, which advances the counter and moves the clean arm."""
+    root, fdir = run_env
+    _post_assay_run(root, fdir, phase="F2", temper=False, nyquist=False)
+    _clean_inspect(fdir, "FULL")
+    _write_state(fdir, phase="F2", cycle=4)
+    _record_full_inspect_mode(fdir, cycle=4)
+    _escalated(fdir, tier="LATENT")
+
+    served = _walk_served_lists(root, lists=2)
+
+    assert served == [
+        ("F2", "transition_to_grind", ["Foundry-Tasks", "Foundry-Gate", "Foundry-Phase"]),
+        ("F3", "transition_to_inspect", ["Foundry-Gate", "Foundry-Phase"]),
+    ], served
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert (state["phase"], state["cycle"]) == ("F2", 5), state
+    entry = json.loads((fdir / "escalation.json").read_text(encoding="utf-8"))["classes"]["FDC"]
+    assert entry["live_clean_cycles_counted"] == [4], entry
+
+
+@pytest.mark.parametrize(
+    "phase, temper, nyquist",
+    [("F2", False, False), ("F4", False, False), ("F4", True, False),
+     ("F5", True, False), ("F5.5", True, True)],
+    ids=["f2-full", "f4", "f4-temper", "f5", "f5.5"],
+)
+def test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list(
+    run_env, phase, temper, nyquist,
+):
+    """lead-stalls D-055, the half the graph does not allow. With every
+    instance fixed, the lists served at 6c350c0 — `transition_to_assay` at F2,
+    then `transition_to_done` (whose strip and commit ran past the refused
+    gate) or `run_temper` (one whole TEMPER per lap) — each ended in a DONE
+    gate that refused the class, forever. From here every crossing that would
+    advance the counter is refused, which this test drives at the real doors,
+    so the honest answer is the one the header now gives: NONE, and why. The
+    CONTEXT names no crossing to make, and the evidence corpus is untouched."""
+    from foundry_mcp.tools.orchestration.gates import foundry_gate
+    from foundry_mcp.tools.orchestration.transitions import (
+        foundry_mark_phase_complete,
+    )
+
+    root, fdir = run_env
+    _post_assay_run(root, fdir, phase=phase, temper=temper, nyquist=nyquist)
+    if phase == "F2":
+        _clean_inspect(fdir, "FULL")
+    _escalated_fixture(fdir, open_instances=False)
+
+    nxt = foundry_next_action(root)
+
+    assert nxt["action"] == "escalation_held", nxt["action"]
+    assert nxt["next_calls"] == [], nxt["next_calls"]
+    assert "YOUR NEXT CALL: NONE" in nxt["instructions"]
+    assert nxt["details"]["still_escalated_classes"] == ["FDC"], nxt["details"]
+    context = _context_of(nxt["instructions"])
+    for token in ("grind_start", "inspect_start", "inspect_clean", "cheapest"):
+        assert token not in context, (token, context)
+    assert "`escalation-override: FDC`" in context, context
+    # The served list walks nowhere, so nothing strips the corpus.
+    served = _walk_served_lists(root, lists=2)
+    assert all(action == "escalation_held" for _p, action, _c in served), served
+    assert (Path(root) / "evidence" / "casting-1-handler.log").exists()
+    # And the state really is one no accepted transition leaves.
+    for gate, token in (("grind", "grind_start"), ("inspect_start", "inspect_start")):
+        assert foundry_gate(gate, project_root=root)["passed"] is False, gate
+        assert foundry_mark_phase_complete(token, project_root=root).get("ok") is not True, token
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == phase, state
+
+
+def test_the_held_class_leaves_the_route_once_it_is_cleared(run_env):
+    """The discrimination, so the hold is not a blanket stop: the same F4
+    state with the class CLEARED is served its ordinary crossing, and a DELTA
+    F2 with the class held keeps the widening re-open, which advances the
+    counter itself."""
+    root, fdir = run_env
+    _post_assay_run(root, fdir, phase="F4", temper=False, nyquist=False)
+    _escalated_fixture(fdir, open_instances=False)
+    entry = json.loads((fdir / "escalation.json").read_text(encoding="utf-8"))
+    entry["classes"]["FDC"].update(status="CLEARED", exit_reason="clean_cycles")
+    (fdir / "escalation.json").write_text(json.dumps(entry), encoding="utf-8")
+    assert foundry_next_action(root)["action"] == "transition_to_done"
+
+    _arrange_inspect_escalated_delta(root, fdir, None)
+    nxt = foundry_next_action(root)
+    assert nxt["action"] == "widen_inspect", nxt["action"]
+    assert "widening re-open the list above makes is one of those crossings" in (
+        _context_of(nxt["instructions"])
+    )
+
+
+def test_a_decomposition_is_not_validated_while_a_writer_is_still_writing(
+    run_env,
+):
+    """lead-stalls D-056, driven as PROVE drove it (s3). Two writers; writer A
+    finishes (casting 1 in the manifest, its prompt file, its done line) while
+    writer B is still writing, and A's notification wakes the lead. At
+    6c350c0 that Foundry-Next answered `transition_to_cast`, "DECOMPOSE
+    complete: 1 casting(s)", and following it entered F1 with B's domain
+    missing. The woken lead is answered END YOUR TURN now, and B's own
+    notification is the one whose Foundry-Next opens the validation."""
+    root, fdir = run_env
+    _arrange_decompose_empty(root, fdir, None)
+    nxt = foundry_next_action(root)
+    assert (nxt["action"], [c["tool"] for c in nxt["next_calls"]]) == (
+        "add_castings", ["Agent", _END_TURN],
+    ), nxt["action"]
+
+    _decompose_ledger(fdir, "api", done=False)
+    _decompose_ledger(fdir, "ui", done=False)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
+    _decompose_ledger(fdir, "api", done=True)
+    woken_by_a = foundry_next_action(root)
+    assert woken_by_a["action"] == "add_castings", woken_by_a["action"]
+    assert woken_by_a["next_calls"] == [], woken_by_a["next_calls"]
+    assert "END YOUR TURN" in woken_by_a["instructions"]
+    assert woken_by_a["agent_liveness"]["waiting"] is True
+    assert "DECOMPOSE complete" not in woken_by_a["instructions"]
+
+    _decompose_ledger(fdir, "ui", done=True)
+    woken_by_b = foundry_next_action(root)
+    assert woken_by_b["action"] == "transition_to_cast", woken_by_b["action"]
+    assert woken_by_b["next_calls"][0]["tool"] == "Foundry-Validate-Castings"
 
 
 def test_a_halt_without_its_report_is_served_the_report_and_nothing_else(run_env):
