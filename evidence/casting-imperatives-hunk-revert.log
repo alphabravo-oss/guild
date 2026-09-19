@@ -1,11 +1,12 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.orchestration.test_guidance_imperatives import hunk_revert_report; [print(r) for r in hunk_revert_report("810009d", "7c53dbf")]' 2>/dev/null
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.orchestration.test_guidance_imperatives import hunk_revert_report; [print(r) for r in hunk_revert_report("6c350c0", "7c0634b")]' 2>/dev/null
 # evidence-for: FR-007, FR-008, GI-008, OT-002, OT-013
 # evidence-timeout: 900
 
-guidance.py hunks 810009d..7c53dbf: 34
+guidance.py hunks 6c350c0..7c0634b: 23
 comment-only: 1
 
-== hunk 01 @@ -80,6 +80,7 @@ _override_instruction,
+== hunk 01 @@ -20,6 +20,7 @@ REQUIREMENT_ID_RE,
+  FAILED test_a_filed_assay_rejection_is_not_served_a_second_filing
   FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
   FAILED test_the_audit_sees_a_misrouted_branch
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
@@ -17,78 +18,166 @@ comment-only: 1
   FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
   FAILED test_the_payload_sweep_bites_when_the_team_arm_preempts_again
   FAILED test_the_recorded_evidence_shows_the_population_it_judged
-  tests run: 134, failed or errored: 11
-== hunk 02 @@ -246,13 +247,8 @@ "--nyquist is set. Call Foundry-Gate(phase='nyquist'), then 
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 03 @@ -929,6 +925,9 @@ report_owed = (
-  FAILED test_a_halt_without_its_report_is_served_the_report_and_nothing_else
-  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
-  FAILED test_the_audit_sees_a_misrouted_branch
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sees_a_wave_boundary_handed_the_teardown
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
-  FAILED test_the_payload_sweep_bites_when_the_team_arm_preempts_again
-  FAILED test_the_recorded_evidence_shows_the_population_it_judged
-  tests run: 134, failed or errored: 12
-== hunk 04 @@ -946,22 +945,38 @@ "\n- The report has been generated as part of the halt and n
-  FAILED test_a_halt_without_its_report_is_served_the_report_and_nothing_else
-  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  tests run: 134, failed or errored: 4
-== hunk 05 @@ -1535,6 +1550,11 @@ #: lead-stalls GI-008 / FR-007 (D-051..D-053) extend it to E
+  tests run: 143, failed or errored: 12
+== hunk 02 @@ -689,8 +690,9 @@ # third) and to the two phases the router itself now reads i
   comment-only: no behaviour to revert
-== hunk 06 @@ -1979,6 +1999,32 @@ #: lead-stalls GI-008 / FR-007 (D-053) — the step `assay_fai
+== hunk 03 @@ -2018,6 +2020,27 @@ #: lead-stalls GI-008 / FR-007 (D-055) — the step `transitio
   FAILED collection of test_guidance_imperatives.py
   tests run: 1, failed or errored: 1
-== hunk 07 @@ -1987,7 +2033,7 @@ "Foundry-Tasks", "Foundry-Team-Down", "Foundry-Team-Up",
-  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  tests run: 134, failed or errored: 3
-== hunk 08 @@ -2210,6 +2256,78 @@ #: What a template rendering of `_EACH_UNFILED_VERDICT` name
-  FAILED collection of test_guidance_imperatives.py
-  tests run: 1, failed or errored: 1
-== hunk 09 @@ -2505,11 +2623,14 @@ "halted": _Imperative((), (
-  FAILED test_a_halt_without_its_report_is_served_the_report_and_nothing_else
-  FAILED test_every_imperative_names_its_calls_in_order
-  tests run: 134, failed or errored: 2
-== hunk 10 @@ -2893,8 +3014,12 @@ # lead-stalls GI-008 / FR-007 (D-053) — the filing ASSAY's v
+== hunk 04 @@ -2265,8 +2288,8 @@ non-VERIFIED verdicts, published only when the ledger holds 
+  tests run: 143, failed or errored: 0
+== hunk 05 @@ -2287,8 +2310,9 @@ "ASSAY recorded these verdicts and no open defect carries "
   FAILED test_a_filed_assay_rejection_is_not_served_a_second_filing
-  FAILED test_an_unfiled_assay_rejection_leaves_f4_by_the_served_list
+  tests run: 143, failed or errored: 1
+== hunk 06 @@ -2325,6 +2349,13 @@ if step.tool == _BLOCKING_DISPATCH:
+  FAILED test_a_held_class_with_a_record_open_closes_a_clean_cycle_by_the_served_lists
   FAILED test_every_imperative_names_its_calls_in_order
-  tests run: 134, failed or errored: 3
-== hunk 11 @@ -2966,14 +3091,10 @@ """``steps`` with the stream placeholder expanded over every
-  FAILED test_every_imperative_names_its_calls_in_order
-  tests run: 134, failed or errored: 1
-== hunk 12 @@ -3102,12 +3223,10 @@ steps: list[_Step] = []
-  FAILED test_a_filed_assay_rejection_is_not_served_a_second_filing
-  FAILED test_a_halt_without_its_report_is_served_the_report_and_nothing_else
-  FAILED test_an_unfiled_assay_rejection_leaves_f4_by_the_served_list
   FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
   FAILED test_no_emission_carries_an_unresolved_slot_in_any_phase
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  tests run: 134, failed or errored: 7
-== hunk 13 @@ -3329,17 +3448,24 @@ #
+  FAILED test_the_grind_dispatch_order_ends_in_the_ledger_protocol
+  FAILED test_the_wait_policy_has_one_spelling
+  FAILED test_transition_to_grind_names_the_same_cycle_the_dispatch_does
+  tests run: 143, failed or errored: 9
+== hunk 07 @@ -2371,6 +2402,59 @@ #: lead-stalls GI-008 / FR-007 (D-056) — `add_castings` IS T
+  FAILED collection of test_guidance_imperatives.py
+  tests run: 1, failed or errored: 1
+== hunk 08 @@ -2661,28 +2745,15 @@ "add_castings": _Imperative(
+  FAILED test_a_decomposition_is_not_validated_while_a_writer_is_still_writing
+  FAILED test_every_imperative_names_its_calls_in_order
+  FAILED test_fix_defects_holds_the_two_branches_and_build_castings_holds_three
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  FAILED test_the_prose_the_structure_moved_still_says_what_it_said
+  FAILED test_the_recorded_evidence_shows_the_population_it_judged
+  tests run: 143, failed or errored: 8
+== hunk 09 @@ -2807,12 +2878,14 @@ # lead-stalls GI-008 / FR-007 (D-055) — the dispatch is a sl
+  FAILED test_a_held_class_with_a_record_open_closes_a_clean_cycle_by_the_served_lists
+  tests run: 143, failed or errored: 1
+== hunk 10 @@ -3066,6 +3139,37 @@ # lead-stalls GI-008 / FR-007 (D-055) — THE RUN STATE NO ACC
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f2-full]
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4-temper]
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4]
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f5.5]
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f5]
+  FAILED test_every_action_the_router_returns_is_served_by_a_router_state
+  FAILED test_every_imperative_names_its_calls_in_order
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_recorded_evidence_shows_the_population_it_judged
+  tests run: 143, failed or errored: 10
+== hunk 11 @@ -3629,99 +3733,197 @@ fdir: Path, project_root: str, *, inspect_mode: str = ""
+  FAILED test_a_filed_assay_rejection_is_not_served_a_second_filing
+  FAILED test_a_held_class_with_a_record_open_closes_a_clean_cycle_by_the_served_lists
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f2-full]
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4-temper]
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4]
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f5.5]
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f5]
+  FAILED test_a_passed_done_gate_points_the_lead_at_the_strip
+  FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[done]
+  FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[nyquist]
+  FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper-nyquist]
+  FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper]
+  FAILED test_an_unaudited_action_pays_for_no_roster_scan
+  FAILED test_an_unfiled_assay_rejection_leaves_f4_by_the_served_list
+  FAILED test_an_unrelated_backlog_item_no_longer_swallows_the_filing
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_assay_crossing_is_walked_in_its_header_order
+  FAILED test_the_audit_sees_a_misrouted_branch
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sees_a_wave_boundary_handed_the_teardown
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_gate_out_of_f5_is_the_one_the_run_flags_name
+  FAILED test_the_heading_the_context_sweep_removes_is_the_one_printed
+  FAILED test_the_held_class_leaves_the_route_once_it_is_cleared
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
+  FAILED test_the_payload_sweep_bites_when_the_team_arm_preempts_again
+  FAILED test_the_post_assay_context_names_no_call_and_no_condition
+  FAILED test_the_recorded_evidence_shows_the_population_it_judged
+  FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[nyquist]
+  FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[temper]
+  tests run: 143, failed or errored: 33
+== hunk 12 @@ -3948,9 +4150,12 @@ # lead-stalls D-056 — and F0, whose decomposition writers ar
+  FAILED test_a_decomposition_is_not_validated_while_a_writer_is_still_writing
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 14 @@ -3449,6 +3575,9 @@ # Every open record, whatever its tier: the count
+  tests run: 143, failed or errored: 6
+== hunk 13 @@ -4035,26 +4240,51 @@ if casting_count == 0:
+  FAILED test_a_decomposition_is_not_validated_while_a_writer_is_still_writing
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 143, failed or errored: 6
+== hunk 14 @@ -4230,12 +4460,9 @@ # D-153: the RECORDED width selects which crossing the notic
+  FAILED test_a_held_class_with_a_record_open_closes_a_clean_cycle_by_the_served_lists
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f2-full]
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_assay_crossing_is_walked_in_its_header_order
+  FAILED test_the_audit_sees_a_misrouted_branch
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sees_a_wave_boundary_handed_the_teardown
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_heading_the_context_sweep_removes_is_the_one_printed
+  FAILED test_the_held_class_leaves_the_route_once_it_is_cleared
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
+  FAILED test_the_payload_sweep_bites_when_the_team_arm_preempts_again
+  FAILED test_the_recorded_evidence_shows_the_population_it_judged
+  tests run: 143, failed or errored: 16
+== hunk 15 @@ -4244,7 +4471,9 @@ + still_escalated_note
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_audit_sees_a_misrouted_branch
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sees_a_wave_boundary_handed_the_teardown
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_heading_the_context_sweep_removes_is_the_one_printed
+  FAILED test_the_held_class_leaves_the_route_once_it_is_cleared
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
+  FAILED test_the_payload_sweep_bites_when_the_team_arm_preempts_again
+  FAILED test_the_recorded_evidence_shows_the_population_it_judged
+  tests run: 143, failed or errored: 13
+== hunk 16 @@ -4260,9 +4489,7 @@ "still_escalated_classes": _still_escalated_classes(
+  tests run: 143, failed or errored: 0
+== hunk 17 @@ -4276,25 +4503,39 @@ opening = (
+  FAILED test_a_held_class_with_a_record_open_closes_a_clean_cycle_by_the_served_lists
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f2-full]
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_assay_crossing_is_walked_in_its_header_order
+  FAILED test_the_audit_sees_a_misrouted_branch
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sees_a_wave_boundary_handed_the_teardown
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_heading_the_context_sweep_removes_is_the_one_printed
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
+  FAILED test_the_payload_sweep_bites_when_the_team_arm_preempts_again
+  FAILED test_the_recorded_evidence_shows_the_population_it_judged
+  tests run: 143, failed or errored: 15
+== hunk 18 @@ -4401,9 +4642,19 @@ # lead-stalls D-054 / D-055 — "all defects fixed" was false 
+  FAILED test_a_held_class_with_a_record_open_closes_a_clean_cycle_by_the_served_lists
+  tests run: 143, failed or errored: 1
+== hunk 19 @@ -4512,14 +4763,28 @@ # The gate counts EVERY open record (`status == "open"`, any
   FAILED test_a_filed_assay_rejection_is_not_served_a_second_filing
   FAILED test_an_unfiled_assay_rejection_leaves_f4_by_the_served_list
+  FAILED test_an_unrelated_backlog_item_no_longer_swallows_the_filing
   FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
   FAILED test_the_audit_sees_a_misrouted_branch
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
@@ -100,147 +189,26 @@ comment-only: 1
   FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
   FAILED test_the_payload_sweep_bites_when_the_team_arm_preempts_again
   FAILED test_the_recorded_evidence_shows_the_population_it_judged
-  tests run: 134, failed or errored: 13
-== hunk 15 @@ -3563,20 +3692,24 @@ #
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_heading_the_context_sweep_removes_is_the_one_printed
-  tests run: 134, failed or errored: 3
-== hunk 16 @@ -3648,7 +3781,14 @@ "instructions": "No active foundry run. Call Foundry-Init to
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 17 @@ -3732,28 +3872,26 @@ f"Run HALTED at cycle {halted_cycle if halted_cycle is not N
-  FAILED test_a_halt_without_its_report_is_served_the_report_and_nothing_else
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 6
-== hunk 18 @@ -3822,11 +3960,10 @@ f"Active teams detected: {', '.join(teams['teams'])}. "
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 19 @@ -3903,16 +4040,10 @@ f"DECOMPOSE: Spawn 1-5 BACKGROUND Agents to write casting fi
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 20 @@ -3920,11 +4051,8 @@ f"Decomposition complete ({casting_count} castings). "
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 21 @@ -3956,14 +4084,13 @@ "CAST complete. Call Foundry-Gate(phase='inspect') to valida
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 22 @@ -3989,9 +4116,10 @@ "instructions": (
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 23 @@ -4077,10 +4205,6 @@ + " Call Foundry-Tasks to generate task list, "
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 24 @@ -4127,11 +4251,9 @@ "is FULL, so call Foundry-Phase(phase='inspect_start') "
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_heading_the_context_sweep_removes_is_the_one_printed
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 6
-== hunk 25 @@ -4163,9 +4285,8 @@ + " Call Foundry-Phase(phase='inspect_clean'), then "
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_heading_the_context_sweep_removes_is_the_one_printed
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 6
-== hunk 26 @@ -4244,16 +4365,20 @@ "block nothing; fix them if they are cheap, carry them "
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_context_block_of_a_branched_action_names_no_sequence
-  tests run: 134, failed or errored: 3
-== hunk 27 @@ -4277,19 +4402,15 @@ "GRIND complete: all defects fixed. Shut down grind team, "
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 28 @@ -4365,13 +4486,11 @@ "yet to pass. Spawn 4 parallel foundry:assayer agents in a "
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 29 @@ -4381,21 +4500,48 @@ # lead-stalls GI-008 / FR-007 (D-053) — TWO STATES, TOLD APA
+  tests run: 143, failed or errored: 14
+== hunk 20 @@ -4527,11 +4792,16 @@ "No open defect carries them yet, so the list above "
   FAILED test_a_filed_assay_rejection_is_not_served_a_second_filing
-  FAILED test_an_unfiled_assay_rejection_leaves_f4_by_the_served_list
+  tests run: 143, failed or errored: 1
+== hunk 21 @@ -4542,10 +4812,22 @@ "carrying_defects": carriers,
+  FAILED test_a_filed_assay_rejection_is_not_served_a_second_filing
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4-temper]
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4]
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 7
-== hunk 30 @@ -4407,12 +4553,7 @@ "so F4 routes to F5. Call Foundry-Gate(phase='temper'), then
+  tests run: 143, failed or errored: 5
+== hunk 22 @@ -4585,6 +4867,17 @@ # lead-stalls D-055 — `run_temper`'s list ends in a gate who
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f5]
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 31 @@ -4432,9 +4573,8 @@ "ASSAY passed: all requirements verified. "
+  tests run: 143, failed or errored: 3
+== hunk 23 @@ -4606,6 +4899,13 @@ # lead-stalls D-055 — `run_nyquist` ends in the DONE gate it
+  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f5.5]
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 32 @@ -4454,9 +4594,9 @@ "TEMPER phase: micro-domain stress testing. "
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 33 @@ -4476,13 +4616,13 @@ "lack automated coverage. Batch requirements by 5 and spawn 
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
-== hunk 34 @@ -4499,14 +4639,20 @@ "instructions": "Foundry complete. Generate report, archive 
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 134, failed or errored: 5
+  tests run: 143, failed or errored: 3
 
-code hunks with no test red when reverted: none
+code hunks with no test red when reverted: hunk 04, hunk 16

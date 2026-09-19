@@ -1,9 +1,9 @@
 # evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.orchestration.test_guidance_imperatives import audit_report; [print(r) for r in audit_report()]' 2>/dev/null
 # evidence-for: FR-007, FR-008, OT-002
 
-keys in _ACTION_IMPERATIVES: 22
-emission sites swept:        345
-router payloads swept:       110
+keys in _ACTION_IMPERATIVES: 23
+emission sites swept:        360
+router payloads swept:       132
 defective emissions:         0
 
 header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME
@@ -50,6 +50,7 @@ teams_registered, and 'redispatch' otherwise, whatever teams_active says (D-022,
   build_castings           ok
   cleanup_teams            ok
   done                     ok
+  escalation_held          ok
   fix_defects              ok
   halted                   ok
   init                     ok
@@ -141,10 +142,16 @@ notice is what printed above the header.
   payload:nyquist-filed[stale]           received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
   payload:no-run[fresh]                  received init/-  owed init/-  notice none  calls Foundry-Init  ok
   payload:no-run[stale]                  received init/-  owed init/-  notice none  calls Foundry-Init  ok
-  payload:decompose-empty[fresh]         received add_castings/-  owed add_castings/-  notice none  calls Agent>END YOUR TURN  ok
-  payload:decompose-empty[stale]         received add_castings/-  owed add_castings/-  notice stall  calls Agent>END YOUR TURN  ok
+  payload:decompose-empty[fresh]         received add_castings/idle  owed add_castings/idle  notice none  calls Agent>END YOUR TURN  ok
+  payload:decompose-empty[stale]         received add_castings/idle  owed add_castings/idle  notice stall  calls Agent>END YOUR TURN  ok
   payload:decompose-done[fresh]          received transition_to_cast/-  owed transition_to_cast/-  notice none  calls Foundry-Validate-Castings>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Cast-Wave>Agent>END YOUR TURN  ok
   payload:decompose-done[stale]          received transition_to_cast/-  owed transition_to_cast/-  notice stall  calls Foundry-Validate-Castings>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Cast-Wave>Agent>END YOUR TURN  ok
+  payload:decompose-writing[fresh]       received add_castings/live  owed add_castings/live  notice none  calls NONE  ok
+  payload:decompose-writing[stale]       received add_castings/live  owed add_castings/live  notice waiting+end-turn  calls NONE  ok
+  payload:decompose-first-writer-done[fresh] received add_castings/live  owed add_castings/live  notice none  calls NONE  ok
+  payload:decompose-first-writer-done[stale] received add_castings/live  owed add_castings/live  notice waiting+end-turn  calls NONE  ok
+  payload:decompose-writers-done[fresh]  received transition_to_cast/-  owed transition_to_cast/-  notice none  calls Foundry-Validate-Castings>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Cast-Wave>Agent>END YOUR TURN  ok
+  payload:decompose-writers-done[stale]  received transition_to_cast/-  owed transition_to_cast/-  notice stall  calls Foundry-Validate-Castings>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Cast-Wave>Agent>END YOUR TURN  ok
   payload:cast-complete[fresh]           received transition_to_inspect/-  owed transition_to_inspect/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
   payload:cast-complete[stale]           received transition_to_inspect/-  owed transition_to_inspect/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
   payload:inspect-width-unrecorded[fresh] received record_inspect_width/-  owed record_inspect_width/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
@@ -155,18 +162,34 @@ notice is what printed above the header.
   payload:inspect-clean-full[stale]      received transition_to_assay/-  owed transition_to_assay/-  notice stall  calls Foundry-Gate>Foundry-Phase>Agent  ok
   payload:inspect-clean-delta[fresh]     received widen_inspect/-  owed widen_inspect/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
   payload:inspect-clean-delta[stale]     received widen_inspect/-  owed widen_inspect/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
-  payload:inspect-escalated-full[fresh]  received transition_to_assay/-  owed transition_to_assay/-  notice none  calls Foundry-Gate>Foundry-Phase>Agent  ok
-  payload:inspect-escalated-full[stale]  received transition_to_assay/-  owed transition_to_assay/-  notice stall  calls Foundry-Gate>Foundry-Phase>Agent  ok
+  payload:inspect-escalated-full[fresh]  received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:inspect-escalated-full[stale]  received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
   payload:inspect-escalated-delta[fresh] received widen_inspect/-  owed widen_inspect/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
   payload:inspect-escalated-delta[stale] received widen_inspect/-  owed widen_inspect/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
   payload:inspect-escalated-filed[fresh] received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
   payload:inspect-escalated-filed[stale] received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:inspect-escalated-closed[fresh] received escalation_held/-  owed escalation_held/-  notice none  calls NONE  ok
+  payload:inspect-escalated-closed[stale] received escalation_held/-  owed escalation_held/-  notice stall  calls NONE  ok
+  payload:assay-passed-escalated[fresh]  received escalation_held/-  owed escalation_held/-  notice none  calls NONE  ok
+  payload:assay-passed-escalated[stale]  received escalation_held/-  owed escalation_held/-  notice stall  calls NONE  ok
+  payload:assay-passed-escalated-open[fresh] received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:assay-passed-escalated-open[stale] received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:temper-escalated[fresh]        received escalation_held/-  owed escalation_held/-  notice none  calls NONE  ok
+  payload:temper-escalated[stale]        received escalation_held/-  owed escalation_held/-  notice stall  calls NONE  ok
+  payload:nyquist-escalated-open[fresh]  received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:nyquist-escalated-open[stale]  received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
   payload:assay-empty[fresh]             received run_assay/-  owed run_assay/-  notice none  calls Agent  ok
   payload:assay-empty[stale]             received run_assay/-  owed run_assay/-  notice stall  calls Agent  ok
-  payload:assay-failed-filed[fresh]      received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
-  payload:assay-failed-filed[stale]      received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:assay-failed-filed[fresh]      received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice none  calls Foundry-Sync>Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:assay-failed-filed[stale]      received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice stall  calls Foundry-Sync>Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
   payload:assay-failed-unfiled[fresh]    received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice none  calls Foundry-Sync>Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
   payload:assay-failed-unfiled[stale]    received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice stall  calls Foundry-Sync>Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:assay-failed-unrelated-latent[fresh] received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice none  calls Foundry-Sync>Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:assay-failed-unrelated-latent[stale] received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice stall  calls Foundry-Sync>Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:assay-failed-unrelated-hardening[fresh] received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice none  calls Foundry-Sync>Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:assay-failed-unrelated-hardening[stale] received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice stall  calls Foundry-Sync>Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:assay-failed-partly-filed[fresh] received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice none  calls Foundry-Sync>Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:assay-failed-partly-filed[stale] received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice stall  calls Foundry-Sync>Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
   payload:assay-passed[fresh]            received transition_to_done/-  owed transition_to_done/-  notice none  calls Foundry-Report>Foundry-Gate>Bash>Bash>Foundry-Phase  ok
   payload:assay-passed[stale]            received transition_to_done/-  owed transition_to_done/-  notice stall  calls Foundry-Report>Foundry-Gate>Bash>Bash>Foundry-Phase  ok
   payload:assay-passed-temper[fresh]     received transition_to_temper/-  owed transition_to_temper/-  notice none  calls Foundry-Gate>Foundry-Phase  ok

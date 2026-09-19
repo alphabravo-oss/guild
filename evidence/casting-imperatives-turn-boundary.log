@@ -77,10 +77,16 @@ teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
   GI-008  nyquist-filed            stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   GI-008  no-run                   fresh init/-                             running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  no-run                   stale init/-                             running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
-  GI-008  decompose-empty          fresh add_castings/-                     running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
-  GI-008  decompose-empty          stale add_castings/-                     running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
-  GI-008  decompose-done           fresh transition_to_cast/-               running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
-  GI-008  decompose-done           stale transition_to_cast/-               running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  decompose-empty          fresh add_castings/idle                  running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  decompose-empty          stale add_castings/idle                  running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  decompose-done           fresh transition_to_cast/-               running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  decompose-done           stale transition_to_cast/-               running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-001  decompose-writing        fresh add_castings/live                  running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-001  decompose-writing        stale add_castings/live                  running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-002  decompose-first-writer-done fresh add_castings/live                  running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-002  decompose-first-writer-done stale add_castings/live                  running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-003  decompose-writers-done   fresh transition_to_cast/-               running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-003  decompose-writers-done   stale transition_to_cast/-               running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   GI-008  cast-complete            fresh transition_to_inspect/-            running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  cast-complete            stale transition_to_inspect/-            running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  inspect-width-unrecorded fresh record_inspect_width/-             running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
@@ -91,18 +97,34 @@ teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
   GI-008  inspect-clean-full       stale transition_to_assay/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  inspect-clean-delta      fresh widen_inspect/-                    running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  inspect-clean-delta      stale widen_inspect/-                    running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
-  GI-008  inspect-escalated-full   fresh transition_to_assay/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
-  GI-008  inspect-escalated-full   stale transition_to_assay/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  inspect-escalated-full   fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  inspect-escalated-full   stale transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  inspect-escalated-delta  fresh widen_inspect/-                    running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  inspect-escalated-delta  stale widen_inspect/-                    running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  inspect-escalated-filed  fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   GI-008  inspect-escalated-filed  stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  inspect-escalated-closed fresh escalation_held/-                  running=-   ends-turn=yes names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  inspect-escalated-closed stale escalation_held/-                  running=-   ends-turn=yes names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-passed-escalated   fresh escalation_held/-                  running=-   ends-turn=yes names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-passed-escalated   stale escalation_held/-                  running=-   ends-turn=yes names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-passed-escalated-open fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-passed-escalated-open stale transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-escalated         fresh escalation_held/-                  running=-   ends-turn=yes names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-escalated         stale escalation_held/-                  running=-   ends-turn=yes names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  nyquist-escalated-open   fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  nyquist-escalated-open   stale transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-empty              fresh run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-empty              stale run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-failed-filed       fresh assay_failed_loop_back/-           running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-failed-filed       stale assay_failed_loop_back/-           running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-failed-unfiled     fresh assay_failed_loop_back/-           running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-failed-unfiled     stale assay_failed_loop_back/-           running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-failed-unrelated-latent fresh assay_failed_loop_back/-           running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-failed-unrelated-latent stale assay_failed_loop_back/-           running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-failed-unrelated-hardening fresh assay_failed_loop_back/-           running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-failed-unrelated-hardening stale assay_failed_loop_back/-           running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-failed-partly-filed fresh assay_failed_loop_back/-           running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  assay-failed-partly-filed stale assay_failed_loop_back/-           running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-passed             fresh transition_to_done/-               running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-passed             stale transition_to_done/-               running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-passed-temper      fresh transition_to_temper/-             running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
@@ -126,7 +148,9 @@ correct, the thing that ends the idle is named in the same breath, and the
 call the woken lead is told to make stops nobody.
 ST-003 is discharged by 'names-call=yes' on every row where running is not
 yes and the run is not DONE or HALTED: a lead that is handed a call cannot
-park for want of a move.
+park for want of a move. The escalation_held rows are the exception, and the
+header says why: a class still ESCALATED with no defect open, where no
+transition the server accepts advances the cycle counter (lead-stalls D-055).
 ST-004 is the cast-refused, cast-refused-team-down, cast-refused-foreign-pane,
 cast-refused-other-team and cast-refusal-answered rows: a refusal goes back to
 a teammate (the one that built it while its OWN wave team is registered, a
