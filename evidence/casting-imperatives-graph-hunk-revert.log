@@ -1,0 +1,157 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.orchestration.test_guidance_imperatives import hunk_revert_report as h; T=("tests/orchestration/test_transitions.py", "tests/orchestration/test_escalation.py", "tests/test_escalation.py", "tests/orchestration/test_guidance_imperatives.py"); [print(r) for f in ("transitions", "escalation") for r in h("3a24e45", "87a26ae", "src/foundry_mcp/tools/orchestration/" + f + ".py", T) + [""]]' 2>/dev/null
+# evidence-for: FR-007, GI-008
+# evidence-timeout: 900
+
+transitions.py hunks 3a24e45..87a26ae: 5
+comment- or docstring-only: 1
+judged by: tests/orchestration/test_transitions.py, tests/orchestration/test_escalation.py, tests/test_escalation.py, tests/orchestration/test_guidance_imperatives.py
+red in the copy with nothing reverted, not charged to any hunk: 12
+  FAILED test_escalation.py::test_no_shipped_module_partitions_the_tier_space_by_negating_a_literal
+  FAILED test_transitions.py::test_a_blind_read_recogniser_fails_the_decode_rule_by_name[load]
+  FAILED test_transitions.py::test_a_blind_read_recogniser_fails_the_decode_rule_by_name[read]
+  FAILED test_transitions.py::test_no_filed_surface_names_a_retired_mechanism_as_though_it_were_live
+  FAILED test_transitions.py::test_the_argument_refusal_block_argues_from_a_record_that_supports_it
+  FAILED test_transitions.py::test_the_derived_guard_table_catches_a_fresh_copy_anywhere
+  FAILED test_transitions.py::test_the_registry_exclusion_is_the_only_one
+  FAILED test_transitions.py::test_the_shipped_cli_loaders_do_not_raise_on_a_non_utf8_document[measure-run.py]
+  FAILED test_transitions.py::test_the_shipped_cli_loaders_do_not_raise_on_a_non_utf8_document[migrate-archive.py]
+  FAILED test_transitions.py::test_the_shipped_clis_all_read_through_the_one_primitive
+  FAILED test_transitions.py::test_the_shipped_clis_refuse_a_non_utf8_input_without_a_traceback
+  FAILED test_transitions.py::test_the_shipped_tree_decode_table_shows_the_raise_and_the_refusal
+
+== hunk 01 @@ -70,6 +70,7 @@ _still_escalated_classes,
+  FAILED test_escalation.py::test_a_second_inspect_start_in_one_cycle_cannot_count_a_clean_cycle_twice
+  FAILED test_guidance_imperatives.py::test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[latent-open]
+  FAILED test_guidance_imperatives.py::test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[nothing-open]
+  FAILED test_guidance_imperatives.py::test_the_router_and_the_re_open_door_read_one_held_class_union
+  FAILED test_transitions.py::test_a_gate_and_its_transition_refuse_the_same_check[inspect_start-_GATE_RANK_STREAMS]
+  FAILED test_transitions.py::test_a_gate_and_its_transition_refuse_the_same_check[inspect_start-_GATE_RANK_WIDTH]
+  FAILED test_transitions.py::test_the_clean_f2_arm_names_the_crossing_the_server_accepts_from_f2
+  FAILED test_transitions.py::test_the_f2_re_open_accepts_a_clean_full_cycle_with_a_class_held[latent-open]
+  FAILED test_transitions.py::test_the_f2_re_open_accepts_a_clean_full_cycle_with_a_class_held[nothing-open]
+  FAILED test_transitions.py::test_the_f2_re_open_still_refuses_a_full_cycle_with_nothing_held
+  FAILED test_transitions.py::test_the_f2_re_open_still_refuses_a_held_class_over_a_blocking_defect
+  FAILED test_transitions.py::test_the_held_re_open_cannot_count_a_cycle_no_stream_inspected
+  tests run: 675, red beyond the baseline: 12
+== hunk 02 @@ -738,10 +739,12 @@ F2, the widening re-open of a DELTA cycle — and both advance
+  comment- or docstring-only: no behaviour to revert
+== hunk 03 @@ -765,7 +768,8 @@ "widening re-open of a DELTA cycle. It is the call that "
+  FAILED test_transitions.py::test_the_source_refusal_names_both_f2_re_opens
+  tests run: 675, red beyond the baseline: 1
+== hunk 04 @@ -784,30 +788,108 @@ held: list[str] = []
+  FAILED test_escalation.py::test_a_class_whose_instances_were_all_fixed_clears_on_the_clean_arm
+  FAILED test_escalation.py::test_a_latent_only_class_acquires_its_record_at_the_inspect_boundary
+  FAILED test_escalation.py::test_a_latent_only_class_clears_on_the_clean_arm_within_the_promised_bound
+  FAILED test_escalation.py::test_a_later_filing_does_not_re_date_the_escalation_in_a_real_cycle
+  FAILED test_escalation.py::test_a_live_draw_between_two_clean_cycles_does_not_clear_the_class
+  FAILED test_escalation.py::test_a_normalised_entry_still_reaches_a_bounded_exit
+  FAILED test_escalation.py::test_a_real_escalation_cycle_is_never_overwritten_by_the_repair
+  FAILED test_escalation.py::test_a_second_inspect_start_in_one_cycle_cannot_count_a_clean_cycle_twice
+  FAILED test_escalation.py::test_an_escalated_class_with_no_stamp_is_stamped_and_then_clears[None]
+  FAILED test_escalation.py::test_an_escalated_class_with_no_stamp_is_stamped_and_then_clears[entry0]
+  FAILED test_escalation.py::test_an_escalated_class_with_no_stamp_is_stamped_and_then_clears[entry1]
+  FAILED test_escalation.py::test_an_open_live_instance_of_a_cleared_class_still_blocks_and_is_packeted
+  FAILED test_escalation.py::test_an_overridden_class_is_not_cleared_by_an_arm
+  FAILED test_escalation.py::test_cycles_skipped_under_an_override_break_the_streak_too
+  FAILED test_escalation.py::test_every_guidance_phase_but_the_two_crossings_refuses_inspect_start
+  FAILED test_escalation.py::test_grind_to_inspect_increments_the_counter
+  FAILED test_escalation.py::test_inspect_start_from_cast_is_refused_and_names_the_transition_that_works
+  FAILED test_escalation.py::test_inspect_start_is_a_recognized_phase_token
+  FAILED test_escalation.py::test_inspect_start_is_refused_from_every_phase_but_f3_and_f2[F0]
+  FAILED test_escalation.py::test_inspect_start_is_refused_from_every_phase_but_f3_and_f2[F1]
+  FAILED test_escalation.py::test_inspect_start_is_refused_from_every_phase_but_f3_and_f2[F4]
+  FAILED test_escalation.py::test_inspect_start_is_refused_from_every_phase_but_f3_and_f2[F5.5]
+  FAILED test_escalation.py::test_inspect_start_is_refused_from_every_phase_but_f3_and_f2[F5]
+  FAILED test_escalation.py::test_inspect_start_is_refused_from_every_phase_but_f3_and_f2[F6]
+  FAILED test_escalation.py::test_latent_instances_do_not_reset_the_clean_count
+  FAILED test_escalation.py::test_one_live_instance_in_a_cycle_resets_the_count
+  FAILED test_escalation.py::test_repeated_grind_inspect_loops_advance_one_cycle_each
+  FAILED test_escalation.py::test_the_advertised_gate_phases_all_resolve_to_a_real_branch
+  FAILED test_escalation.py::test_the_boundary_arms_normalise_a_non_mapping_entry_instead_of_raising[7]
+  FAILED test_escalation.py::test_the_boundary_arms_normalise_a_non_mapping_entry_instead_of_raising[None]
+  FAILED test_escalation.py::test_the_boundary_arms_normalise_a_non_mapping_entry_instead_of_raising[True]
+  FAILED test_escalation.py::test_the_boundary_arms_normalise_a_non_mapping_entry_instead_of_raising[entry1]
+  FAILED test_escalation.py::test_the_boundary_arms_normalise_a_non_mapping_entry_instead_of_raising[entry5]
+  FAILED test_escalation.py::test_the_boundary_arms_normalise_a_non_mapping_entry_instead_of_raising[just a string]
+  FAILED test_escalation.py::test_the_boundary_handler_takes_no_cycle_argument
+  FAILED test_escalation.py::test_the_budget_arm_never_retracts_a_packet_inside_its_own_cycle
+  FAILED test_escalation.py::test_the_clean_arm_fires_across_real_grind_cycles_not_just_boundaries
+  FAILED test_escalation.py::test_the_clean_arm_never_evaluates_a_cycle_still_in_flight
+  FAILED test_escalation.py::test_the_clean_arm_records_every_closed_cycle_it_evaluated
+  FAILED test_escalation.py::test_the_counted_cycles_are_the_current_streak_and_match_its_length
+  FAILED test_escalation.py::test_the_done_refusal_names_the_arm_and_the_cycles_remaining
+  FAILED test_escalation.py::test_the_done_refusal_stops_naming_a_class_that_can_now_exit
+  FAILED test_escalation.py::test_the_escalation_cycle_itself_is_never_counted_as_clean
+  FAILED test_escalation.py::test_the_escalation_record_carries_every_field_the_report_reads
+  FAILED test_escalation.py::test_the_finer_boundary_scenario_is_driven_and_clears_on_budget
+  FAILED test_escalation.py::test_the_persisted_guard_terminates_through_the_clean_arm
+  FAILED test_escalation.py::test_the_promised_crossings_are_the_crossings_the_arm_actually_takes
+  FAILED test_escalation.py::test_the_second_structural_packet_clears_the_class_when_it_closes
+  FAILED test_escalation.py::test_two_clean_cycles_clear_the_class_and_stop_the_structural_packet
+  FAILED test_guidance_imperatives.py::test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[latent-open]
+  FAILED test_guidance_imperatives.py::test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[nothing-open]
+  FAILED test_guidance_imperatives.py::test_a_held_class_with_a_record_open_closes_a_clean_cycle_by_the_served_lists
+  FAILED test_guidance_imperatives.py::test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4-temper]
+  FAILED test_guidance_imperatives.py::test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4]
+  FAILED test_guidance_imperatives.py::test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f5.5]
+  FAILED test_guidance_imperatives.py::test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f5]
+  FAILED test_transitions.py::test_a_concern_closed_with_a_reason_also_clears_the_door
+  FAILED test_transitions.py::test_a_gate_and_its_transition_refuse_the_same_check[inspect_start-_GATE_RANK_DEFECTS]
+  FAILED test_transitions.py::test_a_gate_and_its_transition_refuse_the_same_check[inspect_start-_GATE_RANK_EVIDENCE]
+  FAILED test_transitions.py::test_a_gate_and_its_transition_refuse_the_same_check[inspect_start-_GATE_RANK_MARKER]
+  FAILED test_transitions.py::test_a_gate_and_its_transition_refuse_the_same_check[inspect_start-_GATE_RANK_SOURCE]
+  FAILED test_transitions.py::test_a_gate_and_its_transition_refuse_the_same_check[inspect_start-_GATE_RANK_WIDTH]
+  FAILED test_transitions.py::test_a_wrong_shaped_concern_ledger_refuses_instead_of_answering_none
+  FAILED test_transitions.py::test_an_unusable_cycle_counter_does_not_open_the_concern_door[-3]
+  FAILED test_transitions.py::test_an_unusable_cycle_counter_does_not_open_the_concern_door[2.5]
+  FAILED test_transitions.py::test_an_unusable_cycle_counter_does_not_open_the_concern_door[None]
+  FAILED test_transitions.py::test_an_unusable_cycle_counter_does_not_open_the_concern_door[counter4]
+  FAILED test_transitions.py::test_an_unusable_cycle_counter_does_not_open_the_concern_door[counter5]
+  FAILED test_transitions.py::test_an_unusable_cycle_counter_does_not_open_the_concern_door[four]
+  FAILED test_transitions.py::test_inspect_start_is_refused_while_a_cross_casting_concern_is_open
+  FAILED test_transitions.py::test_no_advertised_phase_token_is_refused_by_the_handler
+  FAILED test_transitions.py::test_the_clean_f2_arm_names_the_crossing_the_server_accepts_from_f2
+  FAILED test_transitions.py::test_the_concern_scope_still_narrows_to_the_counter_the_leaf_reports
+  FAILED test_transitions.py::test_the_f2_re_open_accepts_a_clean_full_cycle_with_a_class_held[latent-open]
+  FAILED test_transitions.py::test_the_f2_re_open_accepts_a_clean_full_cycle_with_a_class_held[nothing-open]
+  FAILED test_transitions.py::test_the_f2_re_open_still_refuses_a_full_cycle_with_nothing_held
+  FAILED test_transitions.py::test_the_f2_re_open_still_refuses_a_held_class_over_a_blocking_defect
+  FAILED test_transitions.py::test_the_held_re_open_cannot_count_a_cycle_no_stream_inspected
+  FAILED test_transitions.py::test_the_source_refusal_names_both_f2_re_opens
+  tests run: 674, red beyond the baseline: 79
+== hunk 05 @@ -974,6 +1056,20 @@ if held:
+  FAILED test_transitions.py::test_the_f2_re_open_accepts_a_clean_full_cycle_with_a_class_held[latent-open]
+  FAILED test_transitions.py::test_the_f2_re_open_accepts_a_clean_full_cycle_with_a_class_held[nothing-open]
+  tests run: 675, red beyond the baseline: 2
+
+code hunks with no test red when reverted: none
+
+escalation.py hunks 3a24e45..87a26ae: 2
+comment- or docstring-only: 0
+judged by: tests/orchestration/test_transitions.py, tests/orchestration/test_escalation.py, tests/test_escalation.py, tests/orchestration/test_guidance_imperatives.py
+red in the copy with nothing reverted, not charged to any hunk: 12
+  FAILED test_escalation.py::test_no_shipped_module_partitions_the_tier_space_by_negating_a_literal
+  FAILED test_transitions.py::test_a_blind_read_recogniser_fails_the_decode_rule_by_name[load]
+  FAILED test_transitions.py::test_a_blind_read_recogniser_fails_the_decode_rule_by_name[read]
+  FAILED test_transitions.py::test_no_filed_surface_names_a_retired_mechanism_as_though_it_were_live
+  FAILED test_transitions.py::test_the_argument_refusal_block_argues_from_a_record_that_supports_it
+  FAILED test_transitions.py::test_the_derived_guard_table_catches_a_fresh_copy_anywhere
+  FAILED test_transitions.py::test_the_registry_exclusion_is_the_only_one
+  FAILED test_transitions.py::test_the_shipped_cli_loaders_do_not_raise_on_a_non_utf8_document[measure-run.py]
+  FAILED test_transitions.py::test_the_shipped_cli_loaders_do_not_raise_on_a_non_utf8_document[migrate-archive.py]
+  FAILED test_transitions.py::test_the_shipped_clis_all_read_through_the_one_primitive
+  FAILED test_transitions.py::test_the_shipped_clis_refuse_a_non_utf8_input_without_a_traceback
+  FAILED test_transitions.py::test_the_shipped_tree_decode_table_shows_the_raise_and_the_refusal
+
+== hunk 01 @@ -36,11 +36,23 @@ #: The crossing itself is always an `inspect_start` OUT OF F
+  FAILED test_escalation.py::test_the_done_refusal_names_the_crossings_the_graph_accepts
+  tests run: 675, red beyond the baseline: 1
+== hunk 02 @@ -1299,6 +1311,34 @@ def _still_escalated_classes(fdir: Path, project_root: str) 
+  FAILED collection of test_escalation.py
+  FAILED collection of test_escalation.py
+  FAILED collection of test_guidance_imperatives.py
+  FAILED collection of test_transitions.py
+  tests run: 4, red beyond the baseline: 4
+
+code hunks with no test red when reverted: none
+

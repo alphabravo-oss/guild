@@ -1,14 +1,16 @@
-# evidence-cmd: python3 -c "import sys;sys.path.insert(0,'plugins/foundry/mcp-server/tests');import test_containment as t;R=sorted(t.SANCTIONED_SOURCE_FILES);W=t._cited_source_files();X=sorted(W-t.SANCTIONED_SOURCE_FILES);L=sorted(t.SANCTIONED_SOURCE_FILES-t.UNCITED_SANCTIONED_FILES-W);E=['plugins/foundry/mcp-server/tests/test_release_version.py','plugins/foundry/mcp-server/tests/test_containment.py','plugins/foundry/mcp-server/src/foundry_mcp/__init__.py','plugins/foundry/mcp-server/pyproject.toml','plugins/foundry/mcp-server/uv.lock','.claude-plugin/marketplace.json','plugins/foundry/.claude-plugin/plugin.json','README.md'];print('cap declared by lead-stalls NFR-001         '+str(t.SOURCE_FILE_CAP));print('sanctioned non-exempt source files         '+str(len(R)));print('\n'.join('  '+t._cap_class(r).ljust(17)+r for r in R));print('count within cap                           '+str(len(R)<=t.SOURCE_FILE_CAP));print('exemption rule, applied to the exempt sites');print('\n'.join('  '+t._cap_class(r).ljust(17)+r for r in E));print('source files citing this run               '+str(len(W)));print('carved out, cite by other means            '+str(sorted(t.UNCITED_SANCTIONED_FILES)));print('cited but NOT sanctioned, the eighth file  '+str(X));print('sanctioned but citation lost               '+str(L));print('verdict                                    '+('GREEN' if len(R)<=t.SOURCE_FILE_CAP and not X and not L else 'RED'))"
+# evidence-cmd: python3 -c "import sys;sys.path.insert(0,'plugins/foundry/mcp-server/tests');import test_containment as t;R=sorted(t.SANCTIONED_SOURCE_FILES);W=t._cited_source_files();X=sorted(W-t.SANCTIONED_SOURCE_FILES);L=sorted(t.SANCTIONED_SOURCE_FILES-t.UNCITED_SANCTIONED_FILES-W);E=['plugins/foundry/mcp-server/tests/test_release_version.py','plugins/foundry/mcp-server/tests/test_containment.py','plugins/foundry/mcp-server/src/foundry_mcp/__init__.py','plugins/foundry/mcp-server/pyproject.toml','plugins/foundry/mcp-server/uv.lock','.claude-plugin/marketplace.json','plugins/foundry/.claude-plugin/plugin.json','README.md'];print('cap declared by lead-stalls NFR-001         '+str(t.SOURCE_FILE_CAP));print('sanctioned non-exempt source files         '+str(len(R)));print('\n'.join('  '+t._cap_class(r).ljust(17)+r for r in R));print('count within cap                           '+str(len(R)<=t.SOURCE_FILE_CAP));print('exemption rule, applied to the exempt sites');print('\n'.join('  '+t._cap_class(r).ljust(17)+r for r in E));print('source files citing this run               '+str(len(W)));print('carved out, cite by other means            '+str(sorted(t.UNCITED_SANCTIONED_FILES)));print('cited but NOT sanctioned, the tenth file   '+str(X));print('sanctioned but citation lost               '+str(L));print('verdict                                    '+('GREEN' if len(R)<=t.SOURCE_FILE_CAP and not X and not L else 'RED'))"
 # evidence-for: NFR-001, FR-012, GI-006
 
-cap declared by lead-stalls NFR-001         7
-sanctioned non-exempt source files         7
+cap declared by lead-stalls NFR-001         9
+sanctioned non-exempt source files         9
   source           plugins/foundry/mcp-server/src/foundry_mcp/server.py
   source           plugins/foundry/mcp-server/src/foundry_mcp/tools/artifacts.py
   source           plugins/foundry/mcp-server/src/foundry_mcp/tools/evidence.py
   source           plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/directives.py
+  source           plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/escalation.py
   source           plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/guidance.py
   source           plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/teams.py
+  source           plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/transitions.py
   source           plugins/foundry/scripts/serena-daemon.sh
 count within cap                           True
 exemption rule, applied to the exempt sites
@@ -20,8 +22,8 @@ exemption rule, applied to the exempt sites
   not-source       .claude-plugin/marketplace.json
   not-source       plugins/foundry/.claude-plugin/plugin.json
   not-source       README.md
-source files citing this run               5
+source files citing this run               7
 carved out, cite by other means            ['plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/directives.py', 'plugins/foundry/scripts/serena-daemon.sh']
-cited but NOT sanctioned, the eighth file  []
+cited but NOT sanctioned, the tenth file   []
 sanctioned but citation lost               []
 verdict                                    GREEN
