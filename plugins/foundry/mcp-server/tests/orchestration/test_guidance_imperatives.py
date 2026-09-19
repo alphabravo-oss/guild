@@ -49,6 +49,7 @@ from tests.orchestration._env import (  # noqa: F401
     _teams_active,
     _tiered,
     _write_manifest_with_castings,
+    _write_prove,
     _write_spec,
     _write_state,
     _write_verdicts,
@@ -78,6 +79,7 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _BRANCHED_ACTION_CONTEXT,
     _END_TURN,
     _GATE_THEN_PHASE_NOTE,
+    _GRIND_SEALS_AT_CAP,
     _IMPERATIVES,
     _LEAD_CALLS,
     _SPAWN_DOORS,
@@ -97,6 +99,7 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _emitted_imperative,
     _format_imperative_header,
     _generic_header,
+    _grind_start_seals,
     _parse_branches,
     _render_call,
     _resolved_imperative,
@@ -1189,6 +1192,81 @@ def _arrange_assay_passed_nyquist_untiered(root, fdir, teams):
     _assay_passed_filed(fdir, temper=False, nyquist=True, tier=None)
 
 
+#: lead-stalls D-060 — PROVE's drive_coverage state: every RECORDED verdict
+#: VERIFIED, nothing open, and fewer verdicts than the spec declares (an
+#: assayer group that recorded part of its ids). `_assay` writes one spec id
+#: per verdict, so no row held a short ledger and the DONE gate's coverage
+#: refusal was never judged. One row per flag combination, the on-route shape
+#: (a PROVE record that is not clean, so the auto-pass leaves the ledger
+#: short), and its control (a clean PROVE, whose auto-pass fills it).
+def _assay_short(fdir: Path, *, temper: bool = False, nyquist: bool = False,
+                 prove_findings: int | None = None) -> None:
+    _write_spec(fdir, ["FR-1", "FR-2"])
+    _write_state(fdir, phase="F4", cycle=1, temper=temper, nyquist=nyquist)
+    _write_verdicts(fdir, [
+        {"id": "FR-1", "verdict": "VERIFIED", "evidence": "read at HEAD"},
+    ])
+    _defect_ledger(fdir, [])
+    if prove_findings is not None:
+        _write_prove(fdir, items_checked=2, items_total=2,
+                     findings=prove_findings)
+
+
+def _arrange_assay_short(root, fdir, teams):
+    _assay_short(fdir)
+
+
+def _arrange_assay_short_temper(root, fdir, teams):
+    _assay_short(fdir, temper=True)
+
+
+def _arrange_assay_short_nyquist(root, fdir, teams):
+    _assay_short(fdir, nyquist=True)
+
+
+def _arrange_assay_short_both(root, fdir, teams):
+    _assay_short(fdir, temper=True, nyquist=True)
+
+
+def _arrange_assay_short_prove_filed(root, fdir, teams):
+    _assay_short(fdir, temper=True, prove_findings=1)
+
+
+def _arrange_assay_short_prove_clean(root, fdir, teams):
+    _assay_short(fdir, prove_findings=0)
+
+
+#: lead-stalls D-061 — PROVE's drive_cap states: a GRIND crossing served at
+#: the --max-cycles cap, where `grind_start` seals the run HALTED. No row was
+#: at the cap, so nothing judged the dispatch served after the sealing step.
+#: F2, F4, F5 and F5.5, each with one open LIVE defect.
+def _capped(fdir: Path) -> None:
+    """The run's cap set to the cycle it stands in: the next GRIND door seals."""
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    state["max_cycles"] = state["cycle"]
+    (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
+def _arrange_inspect_filed_capped(root, fdir, teams):
+    _clean_inspect(fdir, "FULL", filed=True)
+    _capped(fdir)
+
+
+def _arrange_assay_passed_filed_capped(root, fdir, teams):
+    _assay_passed_filed(fdir, temper=False, nyquist=False)
+    _capped(fdir)
+
+
+def _arrange_temper_filed_capped(root, fdir, teams):
+    _post_assay(fdir, "F5", temper=True, nyquist=False, passed="done", filed=True)
+    _capped(fdir)
+
+
+def _arrange_nyquist_filed_capped(root, fdir, teams):
+    _post_assay(fdir, "F5.5", temper=False, nyquist=True, filed=True)
+    _capped(fdir)
+
+
 def _arrange_halted_reported(root, fdir, teams):
     _halted_run(fdir)
     (fdir / "REPORT.md").write_text("# report\n", encoding="utf-8")
@@ -1291,6 +1369,21 @@ _ROUTER_STATES = (
     ("assay-passed-filed", "GI-008", _arrange_assay_passed_filed, "transition_to_grind", None),
     ("assay-passed-temper-filed", "GI-008", _arrange_assay_passed_temper_filed, "transition_to_grind", None),
     ("assay-passed-nyquist-untiered", "GI-008", _arrange_assay_passed_nyquist_untiered, "transition_to_grind", None),
+    # lead-stalls D-060 — a short ledger is an ASSAY that has not finished,
+    # whichever crossing the flags would otherwise pick; a clean PROVE's
+    # auto-pass fills it, and then the flags' crossing is owed.
+    ("assay-short", "GI-008", _arrange_assay_short, "run_assay", None),
+    ("assay-short-temper", "GI-008", _arrange_assay_short_temper, "run_assay", None),
+    ("assay-short-nyquist", "GI-008", _arrange_assay_short_nyquist, "run_assay", None),
+    ("assay-short-both", "GI-008", _arrange_assay_short_both, "run_assay", None),
+    ("assay-short-prove-filed", "GI-008", _arrange_assay_short_prove_filed, "run_assay", None),
+    ("assay-short-prove-clean", "GI-008", _arrange_assay_short_prove_clean, "transition_to_done", None),
+    # lead-stalls D-061 — the GRIND crossing at the cap, from every phase that
+    # serves it; the structure audit's SERVED_PAST_THE_SEAL judges its list.
+    ("inspect-filed-capped", "GI-008", _arrange_inspect_filed_capped, "transition_to_grind", None),
+    ("assay-passed-filed-capped", "GI-008", _arrange_assay_passed_filed_capped, "transition_to_grind", None),
+    ("temper-filed-capped", "GI-008", _arrange_temper_filed_capped, "transition_to_grind", None),
+    ("nyquist-filed-capped", "GI-008", _arrange_nyquist_filed_capped, "transition_to_grind", None),
     ("halted-reported", "GI-008", _arrange_halted_reported, "halted", None),
     ("halted-unreported", "GI-008", _arrange_halted_unreported, "halted", None),
     ("done", "GI-008", _arrange_done, "done", None),
@@ -1426,6 +1519,7 @@ def drive_router(arrange, clock_seconds: int | None) -> dict:
         arrange(root, fdir, teams)
         if clock_seconds is not None:
             _stale_stall_clock(fdir, clock_seconds)
+        capped = _at_cap(fdir)
         nxt = foundry_next_action(root)
         cycle = foundry_state.current_cycle(fdir)
     block, header = _split_payload(nxt.get("instructions", ""))
@@ -1450,7 +1544,23 @@ def drive_router(arrange, clock_seconds: int | None) -> dict:
         "context": _context_of(nxt.get("instructions", "")),
         "agent_liveness": liveness,
         "waiting_on_agents": nxt.get("waiting_on_agents"),
+        "capped": capped,
     }
+
+
+def _at_cap(fdir: Path) -> bool:
+    """lead-stalls D-061 — the next GRIND door seals the run HALTED: a cap is
+    set and the cycle has reached it. Read off the arranged state.json by
+    hand, never off the router or its outlook, which is what is judged."""
+    try:
+        state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    cap, cycle = state.get("max_cycles"), state.get("cycle", 0)
+    return (
+        isinstance(cap, int) and cap > 0
+        and isinstance(cycle, int) and cycle >= cap
+    )
 
 
 def _router_drives() -> list[tuple[str, str, str, str, object, dict]]:
@@ -1506,6 +1616,9 @@ def _router_drives() -> list[tuple[str, str, str, str, object, dict]]:
 #   STREAM_*          an unrecorded roster stream with no call, the wrong agent,
 #                     or no `agent_configs` entry; or a call for a stream the
 #                     roster does not owe (D-040)
+#   SERVED_PAST_THE_SEAL
+#                     at the --max-cycles cap, a step follows the GRIND door
+#                     that seals the run HALTED (D-061)
 #
 # The prose detector `_HANDS_OVER_THE_CONDITION` still runs beside these as a
 # BACKSTOP and is not widened again (D-043): a sentence that names no call
@@ -1620,6 +1733,11 @@ def _step_answers() -> dict[str, object]:
     }
 
 
+#: lead-stalls D-061 — the two GRIND doors, each bounded by the --max-cycles
+#: cap (`grind_start`, and `assay_fail` through the ASSAY-rejection door).
+_SEALING_AT_CAP = ("phase='grind_start'", "phase='assay_fail'")
+
+
 def judge_next_calls(
     site: str,
     action: str,
@@ -1630,10 +1748,11 @@ def judge_next_calls(
     configs: dict | None,
     tools: frozenset[str],
     answers: dict[str, object] | None = None,
+    capped: bool = False,
 ) -> list[str]:
     """The structure findings for one served step list (see the table above).
     ``answers`` maps a step's tool to the `next_call` its door really answers
-    with (`_step_answers`)."""
+    with (`_step_answers`). ``capped`` is `_at_cap` of the run state served."""
     if action not in _IMPERATIVES:
         return []
     if not isinstance(calls, (list, tuple)):
@@ -1713,6 +1832,18 @@ def judge_next_calls(
                 f"answers {answer!r} and step ({number + 1}) is "
                 f"{steps[number].tool}"
             )
+
+    # D-061 — nothing past a transition that seals the run. At the cap both
+    # GRIND doors seal HALTED, so a step after one registers a team or spawns
+    # a teammate into a sealed run, and no served step ever tears it down.
+    if capped:
+        for number, step in enumerate(steps[:-1], 1):
+            if step.tool == "Foundry-Phase" and step.args in _SEALING_AT_CAP:
+                findings.append(
+                    f"{site}: SERVED_PAST_THE_SEAL — step ({number}) "
+                    f"Foundry-Phase({step.args}) seals the run HALTED at its "
+                    f"cap and {len(steps) - number} step(s) follow it"
+                )
 
     # D-038 / D-039 — every teammate spawn against the rule printed above it.
     rule = _spawn_rule_line(rules)
@@ -1848,7 +1979,7 @@ def audit_next_call_structure(drives=None) -> list[str]:
         )
         findings += judge_next_calls(
             site, d["action"], d["next_calls"], d["header"], d["rules"],
-            d["details"], configs, tools, answers,
+            d["details"], configs, tools, answers, capped=d.get("capped", False),
         )
     return findings
 
@@ -2067,7 +2198,7 @@ def audit_report() -> list[str]:
         "RULE_WITHOUT_PHASE, RULE_NOT_LEDGER_LAST, RULE_WITHOUT_ONE_MOVE, "
         "DOOR_WITHOUT_SPAWN, SPAWN_WITHOUT_DOOR, SPAWN_ORDER, SPAWN_NOT_ONE_MOVE, "
         "SPAWN_NOT_YIELDED, STREAM_WITHOUT_CALL, STREAM_WRONG_AGENT, "
-        "STREAM_WITHOUT_CONFIG, STREAM_NOT_OWED",
+        "STREAM_WITHOUT_CONFIG, STREAM_NOT_OWED, SERVED_PAST_THE_SEAL",
         "one-move walk (every site and every payload, lead-stalls D-044 / D-045): "
         "RULE_WITHOUT_LIST_MOVE, RULE_ORDERS_NEXT_MID_LIST, "
         "PROSE_ORDERS_NEXT_MID_LIST, NEXT_MID_LIST, STEP_ORDERS_NEXT_MID_LIST, "
@@ -6349,9 +6480,10 @@ def test_the_post_assay_context_names_no_call_and_no_condition(run_env):
         contexts[state] = _context_of(foundry_next_action(root)["instructions"])
         (fdir / GATE_PASSED_MARKER).unlink(missing_ok=True)
         (fdir / "escalation.json").unlink(missing_ok=True)
-    # Eight D-050 states, and the two lead-stalls D-055 added: a held class at
-    # F5 with nothing open, and at F5.5 with a record open.
-    assert len(contexts) == 10, sorted(contexts)
+    # Eight D-050 states, the two lead-stalls D-055 added: a held class at
+    # F5 with nothing open, and at F5.5 with a record open; and the two
+    # lead-stalls D-061 added, a filed F5 and F5.5 at the --max-cycles cap.
+    assert len(contexts) == 12, sorted(contexts)
     problems = {
         state: _CALL_SYNTAX.findall(text)
         for state, text in contexts.items() if _CALL_SYNTAX.search(text)
@@ -6388,6 +6520,12 @@ def test_every_action_the_router_returns_is_served_by_a_router_state():
         # lead-stalls D-058 — the F4 state the zero used to be computed without.
         "assay-passed-filed", "assay-passed-temper-filed",
         "assay-passed-nyquist-untiered",
+        # lead-stalls D-060 — the short ledger, in every flag combination.
+        "assay-short", "assay-short-temper", "assay-short-nyquist",
+        "assay-short-both", "assay-short-prove-filed",
+        # lead-stalls D-061 — the GRIND crossing at the cap, F2 to F5.5.
+        "inspect-filed-capped", "assay-passed-filed-capped",
+        "temper-filed-capped", "nyquist-filed-capped",
     } <= states, sorted(states)
 
 
@@ -6840,6 +6978,178 @@ def test_a_halt_without_its_report_is_served_the_report_and_nothing_else(run_env
     assert written["next_calls"] == [], written["next_calls"]
     assert "YOUR NEXT CALL: NONE" in written["instructions"]
     assert "The report has been generated" in written["instructions"]
+
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 / FR-007 (D-060 / D-061) — THE SHORT LEDGER AND THE CAP
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "temper, nyquist",
+    [(False, False), (True, False), (False, True), (True, True)],
+    ids=["done", "temper", "nyquist", "temper-nyquist"],
+)
+def test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4(
+    run_env, temper, nyquist,
+):
+    """lead-stalls D-060, driven as PROVE drove it (drive_coverage): F4, the
+    spec declares FR-1 and FR-2, verdicts.json holds FR-1 VERIFIED, nothing
+    is open. At 3184d1c the list served was the flags' crossing: with no
+    flag, `transition_to_done`, whose strip and commit a lead following the
+    list ran after the DONE gate refused 'Only 1 verdicts but spec has 2
+    requirements'; with --temper or --nyquist, a gate with no coverage rung
+    and then `run_temper` / `run_nyquist` re-served behind the same refusal.
+    The exit — assay the unrecorded id — was only in the refusal hint. It is
+    the served list now, on every lap until the verdict is recorded, and once
+    the assayer records it through the Foundry-Verdict door the served lists
+    alone reach F6."""
+    from foundry_mcp.tools.foundry import foundry_add_verdict
+
+    root, fdir = run_env
+    _post_assay_run(root, fdir, phase="F4", temper=temper, nyquist=nyquist)
+    _write_spec(fdir, ["FR-1", "FR-2"])
+    _write_verdicts(fdir, [
+        {"id": "FR-1", "verdict": "VERIFIED", "evidence": "read at HEAD"},
+    ])
+
+    for _lap in range(2):
+        nxt = foundry_next_action(root)
+        assert (nxt["phase"], nxt["action"]) == ("F4", "run_assay"), nxt["action"]
+        assert [c["tool"] for c in nxt["next_calls"]] == ["Agent"], nxt["next_calls"]
+        assert nxt["details"]["unrecorded_requirements"] == ["FR-2"], nxt["details"]
+        assert nxt["details"]["spec_requirements"] == 2, nxt["details"]
+        assert "FR-2" in _context_of(nxt["instructions"]), nxt["instructions"]
+
+    recorded = foundry_add_verdict(
+        "FR-2", "VERIFIED", "read at HEAD", project_root=root,
+    )
+    assert "error" not in recorded, recorded
+
+    served = _walk_served_lists(root)
+
+    assert all(action != "run_assay" for _p, action, _c in served), served
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "F6", served
+
+
+def test_a_short_ledger_a_clean_prove_fills_is_not_sent_back_to_assay(run_env):
+    """The short-ledger answer is asked AFTER the auto-pass: a clean PROVE
+    tops the ledger up to every declared id, and the flags' crossing is then
+    owed. With a PROVE record that is not clean (PROVE's drive_coverage2
+    on-route shape, one HARDENING filing) the ledger stays short and ASSAY's
+    list is served."""
+    root, fdir = run_env
+    _assay_short(fdir, prove_findings=0)
+    assert foundry_next_action(root)["action"] == "transition_to_done"
+    rows = json.loads((fdir / "verdicts.json").read_text(encoding="utf-8"))
+    assert {r["id"] for r in rows["requirements"]} == {"FR-1", "FR-2"}, rows
+
+    _assay_short(fdir, prove_findings=1)
+    nxt = foundry_next_action(root)
+    assert nxt["action"] == "run_assay", nxt["action"]
+    assert nxt["details"]["unrecorded_requirements"] == ["FR-2"], nxt["details"]
+
+
+def _capped_run(root: str, fdir: Path, phase: str, *, temper: bool,
+                nyquist: bool) -> None:
+    """A committed evidence corpus, one open LIVE defect, and the cap at the
+    cycle the run stands in, at ``phase``."""
+    _post_assay_run(root, fdir, phase=phase, temper=temper, nyquist=nyquist)
+    if phase == "F2":
+        _clean_inspect(fdir, "FULL", filed=True)
+    else:
+        _defect_ledger(fdir, [_tiered("D-001", "LIVE", status="open")])
+    _capped(fdir)
+
+
+@pytest.mark.parametrize(
+    "phase, temper, nyquist",
+    [("F2", False, False), ("F4", False, False), ("F5", True, False),
+     ("F5.5", False, True)],
+    ids=["f2", "f4", "f5", "f5.5"],
+)
+def test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals(
+    run_env, phase, temper, nyquist,
+):
+    """lead-stalls D-061, driven as PROVE drove it (drive_cap): an open
+    blocking defect at the --max-cycles cap. At 3184d1c `transition_to_grind`
+    served Tasks, the GRIND gate, `grind_start` — which SEALS THE RUN
+    HALTED here — and then TeamCreate, Team-Up, Spawn-Teammate and the
+    teammate Agent: Team-Up registered a team on the HALTED run and the spawn
+    door answered with a dispatch. The list ends at the sealing call now, the
+    CONTEXT states the seal, and the next Foundry-Next is the halted answer."""
+    root, fdir = run_env
+    _capped_run(root, fdir, phase, temper=temper, nyquist=nyquist)
+    assert _grind_start_seals(fdir)
+
+    nxt = foundry_next_action(root)
+    assert nxt["details"]["seals_halted"] is True, nxt["details"]
+    assert nxt["heading_for"] == "HALTED" and nxt["cycles_to_cap"] == 0, nxt
+    assert _GRIND_SEALS_AT_CAP.strip() in _context_of(nxt["instructions"])
+
+    served = _walk_served_lists(root, lists=2)
+
+    assert served[0] == (phase, "transition_to_grind", [
+        "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
+    ]), served
+    assert [action for _p, action, _c in served] == [
+        "transition_to_grind", "halted",
+    ], served
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "HALTED", served
+
+
+def test_below_the_cap_the_grind_crossing_still_dispatches(run_env):
+    """The control: one cycle short of the cap, and with no cap at all, the
+    same state is served the dispatch after `grind_start`, and the CONTEXT
+    does not claim a seal."""
+    root, fdir = run_env
+    _capped_run(root, fdir, "F4", temper=False, nyquist=False)
+    for cap in (2, None):
+        state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+        if cap is None:
+            state.pop("max_cycles")
+        else:
+            state["max_cycles"] = cap
+        (fdir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        assert not _grind_start_seals(fdir), cap
+        nxt = foundry_next_action(root)
+        assert nxt["action"] == "transition_to_grind", cap
+        assert nxt["details"]["seals_halted"] is False, cap
+        tools = [c["tool"] for c in nxt["next_calls"]]
+        assert tools[3:5] == ["TeamCreate", "Foundry-Team-Up"], (cap, tools)
+        assert _GRIND_SEALS_AT_CAP.strip() not in nxt["instructions"], cap
+
+
+def test_the_seal_detector_bites_on_the_list_served_before_the_fix():
+    """SERVED_PAST_THE_SEAL is not vacuous: the `transition_to_grind` list as
+    3184d1c served it at the cap (no ``seals_halted`` published) is a finding
+    on a capped run and none below the cap, and the list the router serves
+    now is clean at the cap."""
+    tools = _mcp_tool_names()
+    rules = _guidance._STANDING_CRITICAL_RULES
+
+    def judged(details: dict, capped: bool) -> list[str]:
+        calls, header = _emitted_imperative(
+            "transition_to_grind", details, run_name=_AUDIT_RUN, phase="F4",
+        )
+        return [
+            finding for finding in judge_next_calls(
+                "bite", "transition_to_grind", calls, header, rules, details,
+                None, tools, capped=capped,
+            )
+            if "SERVED_PAST_THE_SEAL" in finding
+        ]
+
+    old = {"open_defects": 1}
+    assert judged(old, capped=True) == [
+        "bite: SERVED_PAST_THE_SEAL — step (3) Foundry-Phase(phase='grind_start') "
+        "seals the run HALTED at its cap and 5 step(s) follow it"
+    ]
+    assert judged(old, capped=False) == []
+    assert judged({"open_defects": 1, "seals_halted": True}, capped=True) == []
 
 
 

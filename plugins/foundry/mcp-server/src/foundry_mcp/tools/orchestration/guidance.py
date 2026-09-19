@@ -260,8 +260,35 @@ def _nyquist_transition(from_phase: str) -> dict:
     }
 
 
+#: lead-stalls GI-008 / FR-007 (D-061) — the fact a capped GRIND crossing's
+#: CONTEXT states. It names no call: the list above it ends at the sealing
+#: transition, and that is the whole of what the lead is served.
+_GRIND_SEALS_AT_CAP = (
+    " The run is at its --max-cycles cap, so `grind_start` seals it HALTED "
+    "with this work open, and no GRIND teammate is dispatched into a sealed run."
+)
+
+
+def _grind_start_seals(fdir: Path) -> bool:
+    """Whether `grind_start` from this run state seals the run HALTED.
+
+    lead-stalls GI-008 / FR-007 (D-061) — the `would_halt` arithmetic of
+    `transitions._grind_start_preconditions` (``opening > max_cycles``, with
+    ``opening`` one past the current cycle), which is `_terminal_outlook`'s
+    ``cycles_to_cap == 0`` on a capped run. `transition_to_grind` served its
+    teammate dispatch AFTER that transition, so at the cap a lead following
+    the list registered a team on the HALTED run and spawned a GRIND teammate
+    into it, and the halted arm, answered before `cleanup_teams`, never served
+    a teardown. The router publishes this as ``details["seals_halted"]`` and
+    the dispatch slot ends the list at the sealing call. Total: an unbounded
+    run (max_cycles 0) never seals here.
+    """
+    max_cycles = persisted_max_cycles(_load_json(fdir / "state.json"))
+    return max_cycles > 0 and current_cycle(fdir) >= max_cycles
+
+
 def _blocking_grind_crossing(
-    phase: str, name: str, blocking: dict, grind_config: dict,
+    phase: str, name: str, blocking: dict, grind_config: dict, fdir: Path,
 ) -> dict | None:
     """The GRIND crossing a blocking defect owes past ASSAY, or ``None`` while
     nothing blocks.
@@ -274,16 +301,24 @@ def _blocking_grind_crossing(
     RESEARCH_DEVIATION an assayer filed, or a DEFECT observation adjudicated
     to GRIND, got the same refused list on every lap. ``blocking`` is the
     router's one `_open_by_blocking_tier` reading.
+
+    lead-stalls D-061 — ``fdir`` answers whether `grind_start` seals the run
+    at its cap (`_grind_start_seals`); the served list then ends there.
     """
     if blocking["blocking"] > 0:
+        seals = _grind_start_seals(fdir)
         return {
             "phase": phase,
             "action": "transition_to_grind",
             "instructions": (
                 f"{name} left {blocking['blocking']} blocking defect(s) open "
                 f"({len(blocking['live'])} LIVE, "
-                f"{len(blocking['unknown'])} untiered). GRIND fixes them, and "
-                "the run comes back through INSPECT and ASSAY."
+                f"{len(blocking['unknown'])} untiered)."
+                + (
+                    _GRIND_SEALS_AT_CAP if seals else
+                    " GRIND fixes them, and the run comes back through "
+                    "INSPECT and ASSAY."
+                )
             ),
             "details": {
                 "open_defects": blocking["blocking"],
@@ -291,6 +326,7 @@ def _blocking_grind_crossing(
                 "unknown_tier_defects": blocking["unknown"],
                 "latent_backlog": blocking["latent"],
                 "agent_config": grind_config,
+                "seals_halted": seals,
             },
         }
     return None
@@ -329,7 +365,7 @@ def _post_assay_crossing(
     The GRIND half is `_blocking_grind_crossing`, which F4 asks too (D-058).
     """
     grind = _blocking_grind_crossing(
-        phase, name, _open_by_blocking_tier(fdir), grind_config,
+        phase, name, _open_by_blocking_tier(fdir), grind_config, fdir,
     )
     if grind is not None:
         return grind
@@ -2062,6 +2098,12 @@ _EACH_UNFILED_VERDICT = "{unfiled verdicts}"
 #: action would restate them and grow the table the FR-008 sweep counts. Only
 #: an explicit integer 0 omits the dispatch; an absent or unreadable count
 #: keeps it, which is the list every other router arm serves.
+#:
+#: lead-stalls GI-008 / FR-007 (D-061) — the third state is the cap. There
+#: step (3), `grind_start`, SEALS THE RUN HALTED, and the dispatch served after
+#: it registered a team and spawned a GRIND teammate into the sealed run. The
+#: router publishes ``details["seals_halted"]`` (`_grind_start_seals`), and an
+#: explicit True omits the dispatch, so the list ends at the sealing call.
 _BLOCKING_DISPATCH = "{blocking dispatch}"
 
 #: lead-stalls GI-008 / FR-007 — the step `halted` holds in place of the
@@ -2378,7 +2420,11 @@ def _expanded_steps(step: _Step, details: dict | None) -> tuple[_Step, ...]:
             not template and isinstance(count, int)
             and not isinstance(count, bool) and count == 0
         )
-        return () if nothing_blocks else _GRIND_SPAWN_STEPS
+        # lead-stalls D-061 — and nothing after a transition that seals the
+        # run: at the cap `grind_start` is the list's last step. Only an
+        # explicit True omits the dispatch, as only an explicit 0 does above.
+        seals = not template and details.get("seals_halted") is True
+        return () if nothing_blocks or seals else _GRIND_SPAWN_STEPS
     return (step,)
 
 
@@ -4456,6 +4502,9 @@ def _compute_next_action(project_root: str) -> dict:
             }
 
         if open_count > 0:
+            # lead-stalls D-061 — at the cap `grind_start` seals the run, and
+            # the list ends there (`_grind_start_seals`).
+            seals = _grind_start_seals(fdir)
             return {
                 "phase": "F2",
                 "action": "transition_to_grind",
@@ -4468,6 +4517,7 @@ def _compute_next_action(project_root: str) -> dict:
                         "and are carried to the F6 backlog."
                         if latent_backlog else ""
                     )
+                    + (_GRIND_SEALS_AT_CAP if seals else "")
                     + _escalation_notice(fdir, project_root)
                 ),
                 "details": {
@@ -4477,6 +4527,7 @@ def _compute_next_action(project_root: str) -> dict:
                     "latent_backlog": latent_backlog,
                     "agent_config": GRIND_AGENT_CONFIG,
                     "escalation": _escalated_classes(fdir, project_root),
+                    "seals_halted": seals,
                 },
             }
 
@@ -4861,6 +4912,47 @@ def _compute_next_action(project_root: str) -> dict:
                 },
             }
 
+        # lead-stalls GI-008 / FR-007 (D-060) — A SHORT LEDGER IS AN ASSAY
+        # THAT HAS NOT FINISHED, answered as the empty one above is.
+        #
+        # Every RECORDED verdict VERIFIED says nothing about the ones never
+        # recorded: an assayer group that recorded part of its ids leaves
+        # fewer verdicts than the spec declares, and the DONE gate refuses
+        # exactly that ("Only N verdicts but spec has M requirements"). Every
+        # crossing below walks on toward that gate: driven at 3184d1c,
+        # `transition_to_done` ran its strip and commit after the refusal and
+        # `run_temper` / `run_nyquist` were re-served every lap, with the exit
+        # (assay the unrecorded ids) named only in the refusal hint. The count
+        # is the gate's own comparison, over the ids `_spec_requirement_ids`
+        # declares, taken after the auto-pass above has had its chance to
+        # fill the ledger. Asked before the held class and the GRIND crossing
+        # because ASSAY's own list is the one still owed.
+        declared = _spec_requirement_ids(project_root, fdir, state)[1]
+        if total < len(declared):
+            recorded = {
+                str(r.get("id")) for r in verdicts.get("requirements", [])
+            }
+            unrecorded = sorted(declared - recorded)
+            return {
+                "phase": "F4",
+                "action": "run_assay",
+                "instructions": (
+                    f"ASSAY has NOT finished: verdicts.json records {total} "
+                    f"verdicts and the spec declares {len(declared)} "
+                    "requirements, so "
+                    f"{len(unrecorded)} are unrecorded "
+                    f"({', '.join(unrecorded)}). Every recorded verdict is "
+                    "VERIFIED. Each assayer records its verdicts through the "
+                    "Foundry-Verdict door, and the DONE gate refuses a ledger "
+                    "that covers fewer requirements than the spec declares."
+                ),
+                "details": {
+                    "non_verified": 0, "total": total,
+                    "spec_requirements": len(declared),
+                    "unrecorded_requirements": unrecorded,
+                },
+            }
+
         # lead-stalls GI-008 / FR-007 (D-055) — every crossing below walks on
         # toward a DONE gate that refuses a held class, so a held class is
         # answered first, while the road back to its crossing is shortest.
@@ -4885,7 +4977,7 @@ def _compute_next_action(project_root: str) -> dict:
         # above answers None whenever something blocks, so this is asked
         # after it, which is the order the F5 and F5.5 arms use.
         grind = _blocking_grind_crossing(
-            "F4", "ASSAY", blocking, GRIND_AGENT_CONFIG,
+            "F4", "ASSAY", blocking, GRIND_AGENT_CONFIG, fdir,
         )
         if grind is not None:
             return grind
