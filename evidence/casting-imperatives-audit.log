@@ -3,11 +3,12 @@
 
 keys in _ACTION_IMPERATIVES: 22
 emission sites swept:        345
-router payloads swept:       66
+router payloads swept:       110
 defective emissions:         0
 
 header detectors: CONDITIONAL, NO_LITERAL_CALL, UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME
-payload detectors: WRONG_ROUTE, CONDITIONAL, CONTRADICTION, CONTEXT_SEQUENCE, TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING
+payload detectors: WRONG_ROUTE, CONDITIONAL, CONTRADICTION, CONTEXT_SEQUENCE, CONTEXT_CALL, CONTEXT_CONDITIONAL, TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING
+CONTEXT_SEQUENCE, CONTEXT_CALL and CONTEXT_CONDITIONAL judge the CONTEXT of EVERY payload (lead-stalls D-051..D-053): it states the run state and names no call, no order and no condition.
 step-list detectors (every site and every payload, lead-stalls D-038..D-043): STEP_LIST, RENDERING, NONE, UNKNOWN_TOOL, YIELD_NOT_LAST, CALL_IN_PROSE, RULE_WITHOUT_PHASE, RULE_NOT_LEDGER_LAST, RULE_WITHOUT_ONE_MOVE, DOOR_WITHOUT_SPAWN, SPAWN_WITHOUT_DOOR, SPAWN_ORDER, SPAWN_NOT_ONE_MOVE, SPAWN_NOT_YIELDED, STREAM_WITHOUT_CALL, STREAM_WRONG_AGENT, STREAM_WITHOUT_CONFIG, STREAM_NOT_OWED
 one-move walk (every site and every payload, lead-stalls D-044 / D-045): RULE_WITHOUT_LIST_MOVE, RULE_ORDERS_NEXT_MID_LIST, PROSE_ORDERS_NEXT_MID_LIST, NEXT_MID_LIST, STEP_ORDERS_NEXT_MID_LIST, ANSWER_BREAKS_LIST
 door answers the walk judged, read off the real handlers: Foundry-Accept-Casting -> 'Call Foundry-Next now.'; Foundry-Team-Down -> "Foundry-Team-Down is one step of the list Foundry-Next served you: go on to that list's next step. A list of next calls Foundry-Next serves is ONE move: make every step it names, in order, through its last step (its END YOUR TURN, or its final call), and call Foundry-Next after that last step, never as a move between two of its steps, because a Foundry-Next taken mid-list reads a run state the list has not finished moving and answers with the list again from step (1) or with a route past the steps still owed. A tool answer received inside the list is followed by the list's next step."
@@ -138,6 +139,50 @@ notice is what printed above the header.
   payload:nyquist-gate-passed[stale]     received transition_to_done/-  owed transition_to_done/-  notice stall  calls Foundry-Report>Foundry-Gate>Bash>Bash>Foundry-Phase  ok
   payload:nyquist-filed[fresh]           received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
   payload:nyquist-filed[stale]           received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:no-run[fresh]                  received init/-  owed init/-  notice none  calls Foundry-Init  ok
+  payload:no-run[stale]                  received init/-  owed init/-  notice none  calls Foundry-Init  ok
+  payload:decompose-empty[fresh]         received add_castings/-  owed add_castings/-  notice none  calls Agent>END YOUR TURN  ok
+  payload:decompose-empty[stale]         received add_castings/-  owed add_castings/-  notice stall  calls Agent>END YOUR TURN  ok
+  payload:decompose-done[fresh]          received transition_to_cast/-  owed transition_to_cast/-  notice none  calls Foundry-Validate-Castings>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Cast-Wave>Agent>END YOUR TURN  ok
+  payload:decompose-done[stale]          received transition_to_cast/-  owed transition_to_cast/-  notice stall  calls Foundry-Validate-Castings>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Cast-Wave>Agent>END YOUR TURN  ok
+  payload:cast-complete[fresh]           received transition_to_inspect/-  owed transition_to_inspect/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
+  payload:cast-complete[stale]           received transition_to_inspect/-  owed transition_to_inspect/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
+  payload:inspect-width-unrecorded[fresh] received record_inspect_width/-  owed record_inspect_width/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
+  payload:inspect-width-unrecorded[stale] received record_inspect_width/-  owed record_inspect_width/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
+  payload:inspect-filed[fresh]           received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:inspect-filed[stale]           received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:inspect-clean-full[fresh]      received transition_to_assay/-  owed transition_to_assay/-  notice none  calls Foundry-Gate>Foundry-Phase>Agent  ok
+  payload:inspect-clean-full[stale]      received transition_to_assay/-  owed transition_to_assay/-  notice stall  calls Foundry-Gate>Foundry-Phase>Agent  ok
+  payload:inspect-clean-delta[fresh]     received widen_inspect/-  owed widen_inspect/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
+  payload:inspect-clean-delta[stale]     received widen_inspect/-  owed widen_inspect/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
+  payload:inspect-escalated-full[fresh]  received transition_to_assay/-  owed transition_to_assay/-  notice none  calls Foundry-Gate>Foundry-Phase>Agent  ok
+  payload:inspect-escalated-full[stale]  received transition_to_assay/-  owed transition_to_assay/-  notice stall  calls Foundry-Gate>Foundry-Phase>Agent  ok
+  payload:inspect-escalated-delta[fresh] received widen_inspect/-  owed widen_inspect/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
+  payload:inspect-escalated-delta[stale] received widen_inspect/-  owed widen_inspect/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
+  payload:inspect-escalated-filed[fresh] received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:inspect-escalated-filed[stale] received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:assay-empty[fresh]             received run_assay/-  owed run_assay/-  notice none  calls Agent  ok
+  payload:assay-empty[stale]             received run_assay/-  owed run_assay/-  notice stall  calls Agent  ok
+  payload:assay-failed-filed[fresh]      received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:assay-failed-filed[stale]      received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:assay-failed-unfiled[fresh]    received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice none  calls Foundry-Sync>Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:assay-failed-unfiled[stale]    received assay_failed_loop_back/-  owed assay_failed_loop_back/-  notice stall  calls Foundry-Sync>Foundry-Tasks>Foundry-Gate>Foundry-Phase  ok
+  payload:assay-passed[fresh]            received transition_to_done/-  owed transition_to_done/-  notice none  calls Foundry-Report>Foundry-Gate>Bash>Bash>Foundry-Phase  ok
+  payload:assay-passed[stale]            received transition_to_done/-  owed transition_to_done/-  notice stall  calls Foundry-Report>Foundry-Gate>Bash>Bash>Foundry-Phase  ok
+  payload:assay-passed-temper[fresh]     received transition_to_temper/-  owed transition_to_temper/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
+  payload:assay-passed-temper[stale]     received transition_to_temper/-  owed transition_to_temper/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
+  payload:assay-passed-nyquist[fresh]    received transition_to_nyquist/-  owed transition_to_nyquist/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
+  payload:assay-passed-nyquist[stale]    received transition_to_nyquist/-  owed transition_to_nyquist/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
+  payload:assay-passed-both[fresh]       received transition_to_temper/-  owed transition_to_temper/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
+  payload:assay-passed-both[stale]       received transition_to_temper/-  owed transition_to_temper/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
+  payload:halted-reported[fresh]         received halted/-  owed halted/-  notice none  calls NONE  ok
+  payload:halted-reported[stale]         received halted/-  owed halted/-  notice stall  calls NONE  ok
+  payload:halted-unreported[fresh]       received halted/-  owed halted/-  notice none  calls Foundry-Report  ok
+  payload:halted-unreported[stale]       received halted/-  owed halted/-  notice stall  calls Foundry-Report  ok
+  payload:done[fresh]                    received done/-  owed done/-  notice none  calls NONE  ok
+  payload:done[stale]                    received done/-  owed done/-  notice stall  calls NONE  ok
+  payload:unknown-phase[fresh]           received unknown/-  owed unknown/-  notice none  calls Foundry-Context>Foundry-Next  ok
+  payload:unknown-phase[stale]           received unknown/-  owed unknown/-  notice stall  calls Foundry-Context>Foundry-Next  ok
 
 (no entry hands the lead a conditional)
 

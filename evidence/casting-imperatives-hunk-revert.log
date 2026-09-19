@@ -1,0 +1,246 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.orchestration.test_guidance_imperatives import hunk_revert_report; [print(r) for r in hunk_revert_report("810009d", "7c53dbf")]' 2>/dev/null
+# evidence-for: FR-007, FR-008, GI-008, OT-002, OT-013
+# evidence-timeout: 900
+
+guidance.py hunks 810009d..7c53dbf: 34
+comment-only: 1
+
+== hunk 01 @@ -80,6 +80,7 @@ _override_instruction,
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_audit_sees_a_misrouted_branch
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sees_a_wave_boundary_handed_the_teardown
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
+  FAILED test_the_payload_sweep_bites_when_the_team_arm_preempts_again
+  FAILED test_the_recorded_evidence_shows_the_population_it_judged
+  tests run: 134, failed or errored: 11
+== hunk 02 @@ -246,13 +247,8 @@ "--nyquist is set. Call Foundry-Gate(phase='nyquist'), then 
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 03 @@ -929,6 +925,9 @@ report_owed = (
+  FAILED test_a_halt_without_its_report_is_served_the_report_and_nothing_else
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_audit_sees_a_misrouted_branch
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sees_a_wave_boundary_handed_the_teardown
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
+  FAILED test_the_payload_sweep_bites_when_the_team_arm_preempts_again
+  FAILED test_the_recorded_evidence_shows_the_population_it_judged
+  tests run: 134, failed or errored: 12
+== hunk 04 @@ -946,22 +945,38 @@ "\n- The report has been generated as part of the halt and n
+  FAILED test_a_halt_without_its_report_is_served_the_report_and_nothing_else
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  tests run: 134, failed or errored: 4
+== hunk 05 @@ -1535,6 +1550,11 @@ #: lead-stalls GI-008 / FR-007 (D-051..D-053) extend it to E
+  comment-only: no behaviour to revert
+== hunk 06 @@ -1979,6 +1999,32 @@ #: lead-stalls GI-008 / FR-007 (D-053) — the step `assay_fai
+  FAILED collection of test_guidance_imperatives.py
+  tests run: 1, failed or errored: 1
+== hunk 07 @@ -1987,7 +2033,7 @@ "Foundry-Tasks", "Foundry-Team-Down", "Foundry-Team-Up",
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  tests run: 134, failed or errored: 3
+== hunk 08 @@ -2210,6 +2256,78 @@ #: What a template rendering of `_EACH_UNFILED_VERDICT` name
+  FAILED collection of test_guidance_imperatives.py
+  tests run: 1, failed or errored: 1
+== hunk 09 @@ -2505,11 +2623,14 @@ "halted": _Imperative((), (
+  FAILED test_a_halt_without_its_report_is_served_the_report_and_nothing_else
+  FAILED test_every_imperative_names_its_calls_in_order
+  tests run: 134, failed or errored: 2
+== hunk 10 @@ -2893,8 +3014,12 @@ # lead-stalls GI-008 / FR-007 (D-053) — the filing ASSAY's v
+  FAILED test_a_filed_assay_rejection_is_not_served_a_second_filing
+  FAILED test_an_unfiled_assay_rejection_leaves_f4_by_the_served_list
+  FAILED test_every_imperative_names_its_calls_in_order
+  tests run: 134, failed or errored: 3
+== hunk 11 @@ -2966,14 +3091,10 @@ """``steps`` with the stream placeholder expanded over every
+  FAILED test_every_imperative_names_its_calls_in_order
+  tests run: 134, failed or errored: 1
+== hunk 12 @@ -3102,12 +3223,10 @@ steps: list[_Step] = []
+  FAILED test_a_filed_assay_rejection_is_not_served_a_second_filing
+  FAILED test_a_halt_without_its_report_is_served_the_report_and_nothing_else
+  FAILED test_an_unfiled_assay_rejection_leaves_f4_by_the_served_list
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_no_emission_carries_an_unresolved_slot_in_any_phase
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  tests run: 134, failed or errored: 7
+== hunk 13 @@ -3329,17 +3448,24 @@ #
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 14 @@ -3449,6 +3575,9 @@ # Every open record, whatever its tier: the count
+  FAILED test_a_filed_assay_rejection_is_not_served_a_second_filing
+  FAILED test_an_unfiled_assay_rejection_leaves_f4_by_the_served_list
+  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_the_audit_sees_a_misrouted_branch
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sees_a_wave_boundary_handed_the_teardown
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
+  FAILED test_the_payload_sweep_bites_when_the_team_arm_preempts_again
+  FAILED test_the_recorded_evidence_shows_the_population_it_judged
+  tests run: 134, failed or errored: 13
+== hunk 15 @@ -3563,20 +3692,24 @@ #
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_heading_the_context_sweep_removes_is_the_one_printed
+  tests run: 134, failed or errored: 3
+== hunk 16 @@ -3648,7 +3781,14 @@ "instructions": "No active foundry run. Call Foundry-Init to
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 17 @@ -3732,28 +3872,26 @@ f"Run HALTED at cycle {halted_cycle if halted_cycle is not N
+  FAILED test_a_halt_without_its_report_is_served_the_report_and_nothing_else
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 6
+== hunk 18 @@ -3822,11 +3960,10 @@ f"Active teams detected: {', '.join(teams['teams'])}. "
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 19 @@ -3903,16 +4040,10 @@ f"DECOMPOSE: Spawn 1-5 BACKGROUND Agents to write casting fi
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 20 @@ -3920,11 +4051,8 @@ f"Decomposition complete ({casting_count} castings). "
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 21 @@ -3956,14 +4084,13 @@ "CAST complete. Call Foundry-Gate(phase='inspect') to valida
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 22 @@ -3989,9 +4116,10 @@ "instructions": (
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 23 @@ -4077,10 +4205,6 @@ + " Call Foundry-Tasks to generate task list, "
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 24 @@ -4127,11 +4251,9 @@ "is FULL, so call Foundry-Phase(phase='inspect_start') "
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_heading_the_context_sweep_removes_is_the_one_printed
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 6
+== hunk 25 @@ -4163,9 +4285,8 @@ + " Call Foundry-Phase(phase='inspect_clean'), then "
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_heading_the_context_sweep_removes_is_the_one_printed
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 6
+== hunk 26 @@ -4244,16 +4365,20 @@ "block nothing; fix them if they are cheap, carry them "
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_context_block_of_a_branched_action_names_no_sequence
+  tests run: 134, failed or errored: 3
+== hunk 27 @@ -4277,19 +4402,15 @@ "GRIND complete: all defects fixed. Shut down grind team, "
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 28 @@ -4365,13 +4486,11 @@ "yet to pass. Spawn 4 parallel foundry:assayer agents in a "
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 29 @@ -4381,21 +4500,48 @@ # lead-stalls GI-008 / FR-007 (D-053) — TWO STATES, TOLD APA
+  FAILED test_a_filed_assay_rejection_is_not_served_a_second_filing
+  FAILED test_an_unfiled_assay_rejection_leaves_f4_by_the_served_list
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 7
+== hunk 30 @@ -4407,12 +4553,7 @@ "so F4 routes to F5. Call Foundry-Gate(phase='temper'), then
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 31 @@ -4432,9 +4573,8 @@ "ASSAY passed: all requirements verified. "
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 32 @@ -4454,9 +4594,9 @@ "TEMPER phase: micro-domain stress testing. "
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 33 @@ -4476,13 +4616,13 @@ "lack automated coverage. Batch requirements by 5 and spawn 
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+== hunk 34 @@ -4499,14 +4639,20 @@ "instructions": "Foundry complete. Generate report, archive 
+  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
+  FAILED test_the_audit_sweeps_every_key_and_returns_zero
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
+  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
+  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
+  tests run: 134, failed or errored: 5
+
+code hunks with no test red when reverted: none
