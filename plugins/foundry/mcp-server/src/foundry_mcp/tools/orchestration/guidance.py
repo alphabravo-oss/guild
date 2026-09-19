@@ -78,13 +78,12 @@ from foundry_mcp.tools.foundry_state import (
 from pathlib import Path
 from foundry_mcp.tools.orchestration.escalation import (
     ESCALATION_CYCLES,
-    ESCALATION_FILENAME,
     _escalated_classes,
     _escalation_exit_distances,
     _override_instruction,
     _override_offer,
     _override_report,
-    _persisted_escalations,
+    _still_escalated_classes,
 )
 from foundry_mcp.tools.orchestration.streams import (
     _check_streams_complete,
@@ -2027,9 +2026,10 @@ _EACH_UNFILED_VERDICT = "{unfiled verdicts}"
 #: The list is served in two run states. The ordinary one has blocking
 #: defects, and the dispatch is its point. The other is a clean INSPECT that a
 #: still-ESCALATED class holds DONE shut over (`_escalation_hold`): the class
-#: clears only at a crossing that advances the cycle counter, and from a FULL
-#: F2 or from past ASSAY the one such crossing the server accepts is a GRIND
-#: opened on whatever record is open, then `inspect_start` out of F3. There the
+#: clears only at a crossing that advances the cycle counter, and from past
+#: ASSAY the one such crossing the server accepts is a GRIND opened on
+#: whatever record is open, then `inspect_start` out of F3 (lead-stalls D-057:
+#: a clean FULL F2 is served the `widen_inspect` re-open instead). There the
 #: open records are LATENT or HARDENING, which no teammate is dispatched for —
 #: the F3 arm answers `transition_to_inspect` as soon as nothing blocks — so a
 #: spawn step would hand the lead teammates for work the GRIND does not do.
@@ -3111,13 +3111,17 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
             _Step("Foundry-Gate", "phase='inspect_start'"),
             _Step(
                 "Foundry-Phase", "phase='inspect_start'",
+                # lead-stalls D-057 — width-neutral, because this list is now
+                # served for two clean F2 states: a DELTA cycle, and a FULL one
+                # a still-ESCALATED class holds DONE shut over. "The DELTA cycle
+                # came back clean" was false for the second, in the one line
+                # the lead acts on.
                 note=(
-                    "AGAIN, from F2. The DELTA cycle came back clean, which "
-                    "earns the widening re-open rather than the ASSAY gate: "
-                    "that crossing advances the cycle counter, sweeps the "
-                    "whole evidence corpus, records FULL and requires the full "
-                    "roster. Then run every stream it names — a spot check is "
-                    "not a FULL INSPECT."
+                    "AGAIN, from F2: the re-open this clean INSPECT owes before "
+                    "ASSAY, not the ASSAY gate. That crossing advances the "
+                    "cycle counter, sweeps the whole evidence corpus, records "
+                    "FULL and requires the full roster. Then run every stream "
+                    "it names — a spot check is not a FULL INSPECT."
                 ),
             ),
         ),
@@ -3145,24 +3149,29 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
     # A class still ESCALATED holds DONE shut until ST-001's clean arm or
     # ST-002's budget arm clears it, and the clean arm moves only at an
     # `inspect_start` crossing that advances the cycle counter. With no defect
-    # open, from a FULL F2 or from anywhere past ASSAY, the server accepts no
-    # such crossing: `grind_start` / `assay_fail` refuse "No open defects to
-    # grind", `inspect_start` from a FULL F2 refuses "nothing to widen" and is
-    # not accepted from F4 on. Driven, the lists served there instead —
+    # open, from a FULL F2 or from anywhere past ASSAY, the server accepted no
+    # such crossing at 6c350c0: `grind_start` / `assay_fail` refuse "No open
+    # defects to grind", `inspect_start` from a FULL F2 refused "nothing to
+    # widen" and is not accepted from F4 on. Driven, the lists served there instead —
     # `transition_to_assay`, then `transition_to_done` or `run_temper` —
     # each ended in a refused gate and came back identical, forever, and the
     # CONTEXT named `grind_start` then `inspect_start` from F2, both refused.
     #
     # Any list served here would be refused, so this answers NONE and says why,
-    # in the register of `done` and `halted`. The graph change that gives the
-    # state an exit is not this module's (a Foundry-Concern names it);
-    # meanwhile the operator's escalation override is the one way out, and it
-    # is the operator's, never a step of the lead's list — the CONTEXT names
-    # its text the way `_escalation_notice` does.
+    # in the register of `done` and `halted`. The operator's escalation
+    # override is the one way out, and it is the operator's, never a step of
+    # the lead's list — the CONTEXT names its text the way `_escalation_notice`
+    # does.
+    #
+    # lead-stalls D-057 — AND IT IS NOW SERVED ONLY PAST ASSAY. The graph
+    # change C-008 named landed: `inspect_start` from a clean FULL F2 is
+    # accepted while a class is held, and the F2 arm serves it as
+    # `widen_inspect`. From F4, F5 and F5.5 with nothing open no transition
+    # reaches INSPECT, so this stays as the answer for a run standing there.
     "escalation_held": _Imperative((), (
         "A defect class is still ESCALATED, DONE is refused until it is "
-        "CLEARED, and from this run state no transition the server accepts "
-        "can clear it — the CONTEXT below names the class, the refusals and "
+        "CLEARED, and past ASSAY with no defect open no transition the server "
+        "accepts can clear it — the CONTEXT below names the class, the refusals and "
         "the operator's override. That is a gap in the server's transition "
         "graph, the error ending the rules above name, and not a step left to "
         "you: do NOT file a defect to reopen a GRIND, do NOT call "
@@ -3713,25 +3722,6 @@ def _recorded_inspect_mode(fdir: Path) -> dict | None:
 
 
 
-def _still_escalated_classes(fdir: Path, project_root: str) -> list[str]:
-    """The class keys ST-010 still holds DONE open for (D-129).
-
-    The SAME union `_done_preconditions` refuses on — ledger recurrence
-    (`_escalated_classes`) plus the persisted status (`_persisted_escalations`)
-    — read through one function so the guidance engine and the gate can never
-    name different sets. Overrides are honoured by both halves.
-    """
-    escalated_open = _escalated_classes(fdir, project_root)
-    persisted = _load_json(fdir / ESCALATION_FILENAME).get("classes", {})
-    if not isinstance(persisted, dict):
-        persisted = {}
-    return sorted(
-        set(escalated_open) | set(_persisted_escalations(fdir, project_root, persisted))
-    )
-
-
-
-
 def _still_escalated_notice(
     fdir: Path, project_root: str, still: list[str], *, served: str
 ) -> str:
@@ -3762,6 +3752,11 @@ def _still_escalated_notice(
     action — and the distances name the crossing by what it does, never as a
     call: a counter-advancing INSPECT crossing is the only event the clean arm
     counts, whichever door reaches it.
+
+    lead-stalls D-057: ``"widen"`` is every held class at F2 now, DELTA or a
+    clean FULL cycle, and ``"held"`` is served only past ASSAY, so its sentence
+    no longer says a FULL INSPECT has nothing to widen — the re-open is
+    accepted there, which is why F2 never answers ``"held"``.
     """
     if not still:
         return ""
@@ -3778,11 +3773,11 @@ def _still_escalated_notice(
             "one of those crossings."
         ),
         "held": (
-            " No defect is open for a GRIND to open on, and no other "
-            "transition the server accepts from this phase advances the cycle "
-            "counter: a FULL INSPECT has nothing to widen, and past ASSAY "
-            "every road back to INSPECT runs through a GRIND. The operator's "
-            "override that de-escalates a class, which the DONE guard "
+            " No defect is open for a GRIND to open on, and past ASSAY every "
+            "transition the server accepts back toward INSPECT runs through a "
+            "GRIND. The re-open that clears a held class with nothing open is "
+            "accepted from a clean FULL F2 and not from past ASSAY. The "
+            "operator's override that de-escalates a class, which the DONE guard "
             "honours, is the Foundry-Directive text "
             + "; ".join(
                 f"`{text}`" if (text := _override_instruction(key)) is not None
@@ -3808,6 +3803,18 @@ def _still_escalated_notice(
 #: the list above the CONTEXT already names that door (D-055).
 _CLEAN_CROSSING_PHRASE = "each one an INSPECT crossing that advances the cycle counter"
 
+#: lead-stalls GI-008 / FR-007 (D-057) — why a clean FULL F2 with a class held
+#: is served `widen_inspect` rather than ASSAY, as the F2 arm states it beside
+#: the DELTA arm's sentence. Facts about the doors, and no call of its own:
+#: the header's list is the move.
+_HELD_CLASS_REOPEN = (
+    " The DONE gate refuses every class still ESCALATED, so this clean "
+    "INSPECT does not open ASSAY. `inspect_start` from a clean FULL F2 with a "
+    "class held is the re-open that closes this cycle: it advances the cycle "
+    "counter, sweeps the WHOLE evidence corpus, records FULL and names the "
+    "full roster, and ST-001's clean arm counts the cycle it closes."
+)
+
 
 
 
@@ -3824,14 +3831,13 @@ def _escalation_hold(
 
     lead-stalls GI-008 / FR-007 (D-055). A held class clears only at an
     `inspect_start` crossing that advances the cycle counter, so every list
-    that walks on toward DONE — `transition_to_assay` from a FULL F2, and from
-    F4, F5 and F5.5 the TEMPER, NYQUIST and DONE crossings — ends at a DONE
-    gate that refuses the class, and the next Foundry-Next served it again.
-    Driven, `run_temper` re-ran TEMPER every lap and `transition_to_done` ran
-    its strip and commit after the gate refused.
+    that walks on toward DONE — from F4, F5 and F5.5 the TEMPER, NYQUIST and
+    DONE crossings — ends at a DONE gate that refuses the class, and the next
+    Foundry-Next served it again. Driven, `run_temper` re-ran TEMPER every lap
+    and `transition_to_done` ran its strip and commit after the gate refused.
 
-    So wherever the run stands clean with a class held, this answers first,
-    with the one crossing the server accepts from there:
+    So wherever the run stands clean past ASSAY with a class held, this
+    answers first, with the one crossing the server accepts from there:
 
       * some record is open (any tier; the GRIND gate counts them all)
                          -> `transition_to_grind` with its dispatch slot at
@@ -3841,8 +3847,13 @@ def _escalation_hold(
       * nothing is open  -> `escalation_held`: no accepted transition advances
                             the counter from here, and the header says so.
 
-    A DELTA F2 is not asked: its `widen_inspect` re-open IS the crossing. With
-    a blocking defect open the ordinary GRIND arms answer, and their crossing
+    lead-stalls D-057 — F2 IS NOT ASKED. Every held class at F2 is served the
+    `widen_inspect` re-open by the F2 arm, DELTA or a clean FULL cycle, since
+    `transitions._inspect_start_preconditions` accepts the FULL one too. So
+    `escalation_held` is reached only past ASSAY with nothing open, which a
+    run the router walked through F2 does not reach holding a class: the arm
+    stays as the honest answer for a run that got there anyway. With a
+    blocking defect open the ordinary GRIND arms answer, and their crossing
     counts too. ``opening`` is the caller's own first sentence about the phase
     it measured; ``grind_config`` is the router's `GRIND_AGENT_CONFIG`.
     """
@@ -4463,13 +4474,34 @@ def _compute_next_action(project_root: str) -> dict:
         # lead-stalls D-055: at DELTA width the widening re-open served below
         # is itself a crossing that counts, so the notice only says so.
         still = _still_escalated_classes(fdir, project_root)
-        if f2_mode.get("mode") == "DELTA":
+        opening = (
+            "INSPECT clean: zero blocking defects, at "
+            f"{f2_mode.get('mode') or 'FULL'} width "
+            f"(rule {f2_mode.get('rule') or 'unrecorded'})."
+        )
+        # lead-stalls GI-008 / FR-007 (D-057) — AND A HELD CLASS AT A CLEAN FULL
+        # F2 IS SERVED THE SAME RE-OPEN. `transitions._inspect_start_
+        # preconditions` accepts it now: FULL width, a class in the union the
+        # DONE gate refuses on, nothing blocking, every stream recorded — which
+        # is this arm's state by the time it is reached, since the streams and
+        # blocking arms above answer first. It was `_escalation_hold`'s
+        # `escalation_held` (NONE) with nothing open, and a GRIND that
+        # dispatched nobody with a LATENT record open; the re-open is one
+        # crossing where the GRIND was two, and it is the only one with
+        # nothing open. Built here rather than in `_escalation_hold` so the
+        # action has one payload builder.
+        delta = f2_mode.get("mode") == "DELTA"
+        if delta or still:
             return {
                 "phase": "F2",
                 "action": "widen_inspect",
                 "instructions": (
-                    f"INSPECT clean at DELTA width (cycle {f2_mode.get('cycle', '?')}, "
-                    f"rule {f2_mode.get('rule', '?')}): zero blocking defects."
+                    (
+                        f"INSPECT clean at DELTA width (cycle "
+                        f"{f2_mode.get('cycle', '?')}, rule "
+                        f"{f2_mode.get('rule', '?')}): zero blocking defects."
+                        if delta else opening
+                    )
                     + carried
                     + _still_escalated_notice(
                         fdir, project_root, still, served="widen",
@@ -4479,10 +4511,13 @@ def _compute_next_action(project_root: str) -> dict:
                     # INSPECT recorded with rule verifier_touched opens ASSAY,
                     # and telling the lead otherwise buys a widening cycle
                     # nothing asked for.
-                    + " ASSAY is only opened by an INSPECT whose recorded mode "
-                    "is FULL, and `inspect_start` from F2 is the widening "
-                    "re-open: it advances the cycle counter, sweeps the WHOLE "
-                    "evidence corpus, records FULL and names the full roster."
+                    + (
+                        " ASSAY is only opened by an INSPECT whose recorded mode "
+                        "is FULL, and `inspect_start` from F2 is the widening "
+                        "re-open: it advances the cycle counter, sweeps the WHOLE "
+                        "evidence corpus, records FULL and names the full roster."
+                        if delta else _HELD_CLASS_REOPEN
+                    )
                 ),
                 "details": {
                     "open_defects": 0,
@@ -4503,24 +4538,10 @@ def _compute_next_action(project_root: str) -> dict:
                 },
             }
 
-        opening = (
-            "INSPECT clean: zero blocking defects, at "
-            f"{f2_mode.get('mode') or 'FULL'} width "
-            f"(rule {f2_mode.get('rule') or 'unrecorded'})."
-        )
         # lead-stalls GI-008 / FR-007 (D-055) — A HELD CLASS DOES NOT GO ON TO
         # ASSAY. ASSAY, TEMPER and NYQUIST all lead to a DONE gate that refuses
-        # it, and from past ASSAY every road back to the one crossing that
-        # clears it is longer than from here.
-        held = _escalation_hold(
-            fdir, project_root, "F2", blocking, opening, GRIND_AGENT_CONFIG,
-        )
-        if held is not None:
-            held["details"].update(
-                inspect_mode=f2_mode.get("mode", ""),
-                inspect_rule=f2_mode.get("rule", ""),
-            )
-            return held
+        # it; the re-open above answers every held class here (D-057), so
+        # nothing reaching this return is held.
         return {
             "phase": "F2",
             "action": "transition_to_assay",

@@ -1063,8 +1063,9 @@ def _arrange_inspect_escalated_filed(root, fdir, teams):
 #: lead-stalls D-055 — THE CLASS PERSISTED ESCALATED WITH EVERY INSTANCE
 #: CLOSED, which is the ordinary state one INSPECT after a GRIND fixes an
 #: escalated class, and every phase a run can stand in with it: a clean FULL
-#: F2, and past ASSAY. Nothing is open, so no accepted transition advances the
-#: counter; with a record open the GRIND crossing does.
+#: F2, and past ASSAY. Nothing is open, so past ASSAY no accepted transition
+#: advances the counter; with a record open the GRIND crossing does. At F2 the
+#: re-open does either way (lead-stalls D-057).
 def _arrange_inspect_escalated_closed(root, fdir, teams):
     _clean_inspect(fdir, "FULL")
     _escalated_fixture(fdir, open_instances=False)
@@ -1238,10 +1239,13 @@ _ROUTER_STATES = (
     # lead-stalls D-055 — a held class is not sent on to ASSAY: with a record
     # open the GRIND crossing closes a clean cycle, and with none the run is
     # held, which the header says rather than serving a list that is refused.
-    ("inspect-escalated-full", "GI-008", _arrange_inspect_escalated_full, "transition_to_grind", None),
+    # lead-stalls D-057 — at F2 the re-open is accepted from a clean FULL
+    # cycle too, so every held class there is served it, record open or not;
+    # the GRIND crossing and the held answer are past ASSAY only.
+    ("inspect-escalated-full", "GI-008", _arrange_inspect_escalated_full, "widen_inspect", None),
     ("inspect-escalated-delta", "GI-008", _arrange_inspect_escalated_delta, "widen_inspect", None),
     ("inspect-escalated-filed", "GI-008", _arrange_inspect_escalated_filed, "transition_to_grind", None),
-    ("inspect-escalated-closed", "GI-008", _arrange_inspect_escalated_closed, "escalation_held", None),
+    ("inspect-escalated-closed", "GI-008", _arrange_inspect_escalated_closed, "widen_inspect", None),
     ("assay-passed-escalated", "GI-008", _arrange_assay_passed_escalated, "escalation_held", None),
     ("assay-passed-escalated-open", "GI-008", _arrange_assay_passed_escalated_open, "transition_to_grind", None),
     ("temper-escalated", "GI-008", _arrange_temper_escalated, "escalation_held", None),
@@ -2244,8 +2248,9 @@ def turn_boundary_report(drives=None) -> list[str]:
         "ST-003 is discharged by 'names-call=yes' on every row where running is not",
         "yes and the run is not DONE or HALTED: a lead that is handed a call cannot",
         "park for want of a move. The escalation_held rows are the exception, and the",
-        "header says why: a class still ESCALATED with no defect open, where no",
-        "transition the server accepts advances the cycle counter (lead-stalls D-055).",
+        "header says why: a class still ESCALATED past ASSAY with no defect open, where",
+        "no transition the server accepts advances the cycle counter (lead-stalls",
+        "D-055); at F2 the re-open is accepted and served instead (lead-stalls D-057).",
         "ST-004 is the cast-refused, cast-refused-team-down, cast-refused-foreign-pane,",
         "cast-refused-other-team and cast-refusal-answered rows: a refusal goes back to",
         "a teammate (the one that built it while its OWN wave team is registered, a",
@@ -5995,12 +6000,18 @@ def test_no_emission_carries_an_unresolved_slot_in_any_phase():
 
 
 def _walk_served_lists(root: str, *, filed_by_phase_work: Path | None = None,
-                       lists: int = 8) -> list[tuple[str, str, list[str]]]:
+                       lists: int = 8,
+                       record_streams: bool = False) -> list[tuple[str, str, list[str]]]:
     """Follow served lists until F6 or a teammate spawn; return what was served.
 
     ``filed_by_phase_work`` is the run dir whose ledger gets a LIVE defect the
     first time a `run_temper` / `run_nyquist` list's phase-work step is made —
     what TEMPER or an ESCALATE_IMPL_BUG filing leaves.
+
+    ``record_streams`` (lead-stalls D-057) stands in for the stream agents a
+    `run_streams` list spawns: each stream the payload names as missing records
+    a clean run of its own through the Foundry-Stream door, as the agent would,
+    and the walk moves on — so a walk can cross an INSPECT it opened.
     """
     import subprocess
 
@@ -6008,6 +6019,7 @@ def _walk_served_lists(root: str, *, filed_by_phase_work: Path | None = None,
     from foundry_mcp.tools.orchestration.directives import foundry_defects_to_tasks
     from foundry_mcp.tools.orchestration.fix_gate import foundry_sync_defects
     from foundry_mcp.tools.orchestration.gates import foundry_gate
+    from foundry_mcp.tools.orchestration.streams import foundry_mark_stream
     from foundry_mcp.tools.orchestration.transitions import (
         foundry_mark_phase_complete,
     )
@@ -6020,6 +6032,17 @@ def _walk_served_lists(root: str, *, filed_by_phase_work: Path | None = None,
                        [c["tool"] for c in calls]))
         if nxt.get("action") in ("init", "done", "halted"):
             break
+        if record_streams and nxt.get("action") == "run_streams":
+            cycle = json.loads(
+                (foundry_state.get_run_dir(root) / "state.json").read_text(encoding="utf-8")
+            )["cycle"]
+            for stream in nxt["details"]["missing_streams"]:
+                marked = foundry_mark_stream(
+                    stream=stream, cycle=cycle, items_checked=3, items_total=3,
+                    findings_count=0, project_root=root,
+                )
+                assert "error" not in marked, (stream, marked)
+            continue
         start = 0
         if nxt.get("gate_advanced"):
             start = [c["tool"] for c in calls].index("Foundry-Gate") + 1
@@ -6432,16 +6455,18 @@ def test_an_unrelated_backlog_item_no_longer_swallows_the_filing(run_env):
 def test_a_held_class_with_a_record_open_closes_a_clean_cycle_by_the_served_lists(
     run_env,
 ):
-    """lead-stalls D-055, the half the server's graph already allows: a class
-    persisted ESCALATED at a clean FULL F2 with its LATENT instances open.
-    The CONTEXT used to name `grind_start` then `inspect_start` beside a header
-    serving ASSAY. The header serves that crossing now — Tasks, the GRIND gate
-    and `grind_start` with no teammate to dispatch — and the F3 answer after it
-    is `inspect_start`, which advances the counter and moves the clean arm."""
+    """lead-stalls D-055, the half the server's graph already allowed: a class
+    persisted ESCALATED with its LATENT instances open. The CONTEXT used to
+    name `grind_start` then `inspect_start` beside a header serving ASSAY.
+
+    lead-stalls D-057 — past ASSAY that is still the crossing: the header
+    serves Tasks, the GRIND gate and `grind_start` with no teammate to
+    dispatch, and the F3 answer after it is `inspect_start`, which advances
+    the counter and moves the clean arm. At a clean FULL F2 the re-open is
+    one crossing where this was two, so F2 is served that instead."""
     root, fdir = run_env
-    _post_assay_run(root, fdir, phase="F2", temper=False, nyquist=False)
-    _clean_inspect(fdir, "FULL")
-    _write_state(fdir, phase="F2", cycle=4)
+    _post_assay_run(root, fdir, phase="F4", temper=False, nyquist=False)
+    _write_state(fdir, phase="F4", cycle=4)
     _record_full_inspect_mode(fdir, cycle=4)
     _escalated(fdir, tier="LATENT")
 
@@ -6455,7 +6480,7 @@ def test_a_held_class_with_a_record_open_closes_a_clean_cycle_by_the_served_list
     served += _walk_served_lists(root, lists=1)
 
     assert served == [
-        ("F2", "transition_to_grind", ["Foundry-Tasks", "Foundry-Gate", "Foundry-Phase"]),
+        ("F4", "transition_to_grind", ["Foundry-Tasks", "Foundry-Gate", "Foundry-Phase"]),
         ("F3", "transition_to_inspect", ["Foundry-Gate", "Foundry-Phase"]),
     ], served
     state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
@@ -6466,21 +6491,26 @@ def test_a_held_class_with_a_record_open_closes_a_clean_cycle_by_the_served_list
 
 @pytest.mark.parametrize(
     "phase, temper, nyquist",
-    [("F2", False, False), ("F4", False, False), ("F4", True, False),
+    [("F4", False, False), ("F4", True, False),
      ("F5", True, False), ("F5.5", True, True)],
-    ids=["f2-full", "f4", "f4-temper", "f5", "f5.5"],
+    ids=["f4", "f4-temper", "f5", "f5.5"],
 )
 def test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list(
     run_env, phase, temper, nyquist,
 ):
     """lead-stalls D-055, the half the graph does not allow. With every
-    instance fixed, the lists served at 6c350c0 — `transition_to_assay` at F2,
-    then `transition_to_done` (whose strip and commit ran past the refused
-    gate) or `run_temper` (one whole TEMPER per lap) — each ended in a DONE
-    gate that refused the class, forever. From here every crossing that would
-    advance the counter is refused, which this test drives at the real doors,
-    so the honest answer is the one the header now gives: NONE, and why. The
-    CONTEXT names no crossing to make, and the evidence corpus is untouched."""
+    instance fixed, the lists served at 6c350c0 — `transition_to_done` (whose
+    strip and commit ran past the refused gate) or `run_temper` (one whole
+    TEMPER per lap) — each ended in a DONE gate that refused the class,
+    forever. From here every crossing that would advance the counter is
+    refused, which this test drives at the real doors, so the honest answer is
+    the one the header now gives: NONE, and why. The CONTEXT names no crossing
+    to make, and the evidence corpus is untouched.
+
+    lead-stalls D-057 — PAST ASSAY ONLY. The clean FULL F2 this test also
+    drove is re-opened now (see the walk below), so NONE is the answer only
+    where the graph really has no exit, and the header and CONTEXT say so
+    without claiming a FULL INSPECT has nothing to widen."""
     from foundry_mcp.tools.orchestration.gates import foundry_gate
     from foundry_mcp.tools.orchestration.transitions import (
         foundry_mark_phase_complete,
@@ -6488,8 +6518,6 @@ def test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list(
 
     root, fdir = run_env
     _post_assay_run(root, fdir, phase=phase, temper=temper, nyquist=nyquist)
-    if phase == "F2":
-        _clean_inspect(fdir, "FULL")
     _escalated_fixture(fdir, open_instances=False)
 
     nxt = foundry_next_action(root)
@@ -6497,10 +6525,13 @@ def test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list(
     assert nxt["action"] == "escalation_held", nxt["action"]
     assert nxt["next_calls"] == [], nxt["next_calls"]
     assert "YOUR NEXT CALL: NONE" in nxt["instructions"]
+    assert "past ASSAY with no defect open" in nxt["instructions"]
     assert nxt["details"]["still_escalated_classes"] == ["FDC"], nxt["details"]
     context = _context_of(nxt["instructions"])
     for token in ("grind_start", "inspect_start", "inspect_clean", "cheapest"):
         assert token not in context, (token, context)
+    assert "nothing to widen" not in context, context
+    assert "accepted from a clean FULL F2 and not from past ASSAY" in context, context
     assert "`escalation-override: FDC`" in context, context
     # The served list walks nowhere, so nothing strips the corpus.
     served = _walk_served_lists(root, lists=2)
@@ -6512,6 +6543,54 @@ def test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list(
         assert foundry_mark_phase_complete(token, project_root=root).get("ok") is not True, token
     state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
     assert state["phase"] == phase, state
+
+
+@pytest.mark.parametrize(
+    "open_instances", [False, True], ids=["nothing-open", "latent-open"],
+)
+def test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists(
+    run_env, open_instances,
+):
+    """lead-stalls D-057, driven end to end through the real doors: a class
+    persisted ESCALATED (at cycle 3) at a clean FULL F2, cycle 4. At 3a24e45
+    this was `escalation_held`, NONE, and every crossing that would advance the
+    counter was refused. Following only what Foundry-Next serves — every step
+    of each list, and every stream the INSPECT it opens requires — the run now
+    re-opens INSPECT (cycle 4 closes, one clean cycle), re-opens it again once
+    that INSPECT has run (cycle 5 closes, the class CLEARS), opens ASSAY and
+    seals DONE with the DONE gate passing. With the class's LATENT instances
+    open the walk is the same: no GRIND is opened on work nobody is
+    dispatched for."""
+    root, fdir = run_env
+    _post_assay_run(root, fdir, phase="F2", temper=False, nyquist=False)
+    _clean_inspect(fdir, "FULL")
+    _write_state(fdir, phase="F2", cycle=4)
+    _record_full_inspect_mode(fdir, cycle=4)
+    if open_instances:
+        _escalated(fdir, tier="LATENT")
+    else:
+        _escalated_fixture(fdir, open_instances=False)
+
+    served = _walk_served_lists(root, lists=10, record_streams=True)
+
+    reopen = ("F2", "widen_inspect", ["Foundry-Gate", "Foundry-Phase"])
+    assert served[0] == reopen, served
+    assert served[1][:2] == ("F2", "run_streams"), served
+    assert served[2] == reopen, served
+    assert served[3][:2] == ("F2", "run_streams"), served
+    assert served[4] == ("F2", "transition_to_assay", ["Foundry-Gate", "Foundry-Phase", "Agent"]), served
+    assert served[5] == ("F4", "transition_to_done", _DONE_LIST), served
+    # The DONE list's own `done` transition sealed and archived the run, so the
+    # Foundry-Next after it finds no active run.
+    assert served[6][:2] == ("none", "init"), served
+    assert "escalation_held" not in [action for _p, action, _c in served], served
+
+    entry = json.loads((fdir / "escalation.json").read_text(encoding="utf-8"))["classes"]["FDC"]
+    assert (entry["status"], entry["exit_reason"]) == ("CLEARED", "clean_cycles"), entry
+    assert entry["live_clean_cycles_counted"] == [4, 5], entry
+    assert entry["cleared_at_cycle"] == 6, entry
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "F6", state
 
 
 def test_the_held_class_leaves_the_route_once_it_is_cleared(run_env):
@@ -6533,6 +6612,68 @@ def test_the_held_class_leaves_the_route_once_it_is_cleared(run_env):
     assert "widening re-open the list above makes is one of those crossings" in (
         _context_of(nxt["instructions"])
     )
+
+
+def test_a_held_full_f2_is_told_why_it_re_opens_rather_than_opens_assay(run_env):
+    """lead-stalls D-057 — the payload the lead reads at a clean FULL F2 with a
+    class held. The header's list is the DELTA re-open's, so its note may not
+    say "The DELTA cycle came back clean" over a FULL cycle, and the CONTEXT
+    states the FULL arm's reason — the DONE gate refuses the class — rather
+    than the DELTA arm's width sentence."""
+    root, fdir = run_env
+    _arrange_inspect_escalated_closed(root, fdir, None)
+
+    nxt = foundry_next_action(root)
+
+    assert nxt["action"] == "widen_inspect", nxt["action"]
+    note = nxt["next_calls"][1]["note"]
+    assert "The DELTA cycle came back clean" not in note, note
+    assert "the re-open this clean INSPECT owes before ASSAY" in note, note
+    context = _context_of(nxt["instructions"])
+    assert context.strip().startswith(
+        "INSPECT clean: zero blocking defects, at FULL width"
+    ), context
+    assert "The DONE gate refuses every class still ESCALATED" in context, context
+    assert "ST-001's clean arm counts the cycle it closes" in context, context
+    assert "at DELTA width" not in context, context
+    assert nxt["details"]["still_escalated_classes"] == ["FDC"], nxt["details"]
+    assert nxt["details"]["inspect_mode"] == "FULL", nxt["details"]
+
+
+def test_the_router_and_the_re_open_door_read_one_held_class_union():
+    """lead-stalls D-057 — the router serves the F2 re-open when a class is
+    held, and `transitions._inspect_start_preconditions` accepts it when a
+    class is held. Two spellings of "held" is how the router would serve a
+    re-open the door refuses, so both read the ONE function, in the leaf both
+    layers may import (fallout GI-033), and no second body of it survives in either."""
+    from foundry_mcp.tools.orchestration import escalation, guidance, transitions
+
+    assert guidance._still_escalated_classes is escalation._still_escalated_classes
+    assert transitions._still_escalated_classes is escalation._still_escalated_classes
+
+
+def test_the_escalation_hold_is_asked_only_past_assay():
+    """lead-stalls D-057 — `_escalation_hold` answers `escalation_held` (NONE)
+    with nothing open, which is honest only where no transition leaves: past
+    ASSAY. At F2 the re-open is accepted, so the F2 arm answers every held
+    class itself and never asks the hold; a call site passing F2 would put
+    NONE back on a state the server now leaves. Read off the router's source,
+    because the arm it forbids is one no fixture reaches while the re-open
+    branch above it holds."""
+    import ast
+    import inspect
+    import textwrap
+
+    from foundry_mcp.tools.orchestration import guidance
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(guidance._compute_next_action)))
+    phases = [
+        node.args[2].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "_escalation_hold"
+    ]
+    assert sorted(phases) == ["F4", "F5", "F5.5"], phases
 
 
 def test_a_decomposition_is_not_validated_while_a_writer_is_still_writing(
@@ -6594,13 +6735,23 @@ def test_a_halt_without_its_report_is_served_the_report_and_nothing_else(run_env
 # --------------------------------------------------------------------------- #
 
 
-def _diff_hunks(base: str, head: str, path: str) -> list[dict]:
-    """The unified-diff hunks of ``path`` between two commits: each one's
-    header and the text of its new and old sides."""
+#: What `hunk_revert_report` reverts and runs by default: this casting's source
+#: file, judged by this module. lead-stalls D-057 widened the report to the
+#: other two source files that fix touched, each judged by the suites that
+#: drive it, so the defaults are the D-051..D-053 report exactly.
+_GUIDANCE_REL = "src/foundry_mcp/tools/orchestration/guidance.py"
+_THIS_MODULE = "tests/orchestration/test_guidance_imperatives.py"
+
+
+def _diff_hunks(base: str, head: str | None, path: str) -> list[dict]:
+    """The unified-diff hunks of ``path`` between two commits — or, with no
+    ``head``, between ``base`` and the working tree: each one's header and
+    the text of its new and old sides."""
     import subprocess
 
     diff = subprocess.run(
-        ["git", "diff", "--no-color", "-U3", base, head, "--", f":(top){path}"],
+        ["git", "diff", "--no-color", "-U3", base, *([head] if head else []),
+         "--", f":(top){path}"],
         cwd=Path(__file__).parent, capture_output=True, text=True, check=True,
     ).stdout
     hunks: list[dict] = []
@@ -6612,13 +6763,44 @@ def _diff_hunks(base: str, head: str, path: str) -> list[dict]:
     for hunk in hunks:
         hunk["new"] = "".join(l[1:] + "\n" for l in hunk["lines"] if l[0] in " +")
         hunk["old"] = "".join(l[1:] + "\n" for l in hunk["lines"] if l[0] in " -")
-        changed = [l[1:].strip() for l in hunk["lines"] if l[0] in "+-"]
-        hunk["comment_only"] = all(not c or c.startswith("#") for c in changed)
     return hunks
 
 
-def _run_with(project: Path, rel: str, text: str) -> list[str]:
-    """Copy the project, replace ``rel`` with ``text``, and run this module
+def _without_docstrings(source: str) -> str | None:
+    """``source``'s syntax tree with every bare string statement removed —
+    docstrings and the like — dumped; ``None`` when it does not parse.
+
+    lead-stalls D-057 — two texts with equal dumps run identically, so a hunk
+    whose revert leaves the dump unchanged has no behaviour to revert. The
+    line-prefix test this replaces saw comments but not docstrings, so every
+    docstring-only hunk was run, went green, and was reported as a code hunk
+    no test pinned."""
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+
+    class _Strip(ast.NodeTransformer):
+        def visit_Expr(self, node):  # noqa: N802 - the ast visitor's own name
+            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                return None
+            return node
+
+        def generic_visit(self, node):
+            super().generic_visit(node)
+            # A body that held only a docstring keeps a statement, as it must.
+            if getattr(node, "body", None) == []:
+                node.body = [ast.Pass()]
+            return node
+
+    return ast.dump(_Strip().visit(tree))
+
+
+def _run_with(project: Path, rel: str, text: str,
+              tests: tuple[str, ...] = (_THIS_MODULE,)) -> list[str]:
+    """Copy the project, replace ``rel`` with ``text``, and run ``tests``
     there: one line per failed test, then the counts."""
     import shutil
     import subprocess
@@ -6634,14 +6816,20 @@ def _run_with(project: Path, rel: str, text: str) -> list[str]:
         (Path(tmp) / rel).write_text(text, encoding="utf-8")
         out = subprocess.run(
             [sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
-             "--no-header", "--color=no", "--tb=no", "-q", "-rfE",
-             "tests/orchestration/test_guidance_imperatives.py"],
+             "--no-header", "--color=no", "--tb=no", "-q", "-rfE", *tests],
             cwd=tmp, capture_output=True, text=True,
         ).stdout
     # A test named after `::`; a module that no longer imports is an ERROR
-    # naming the file alone, and every test in it is red.
+    # naming the file alone, and every test in it is red. With more than one
+    # module run, a test is named with its module so two same-named tests in
+    # different suites stay two lines.
+    qualified = len(tests) > 1
     failed = sorted(
-        line.split(" ", 1)[1].split("::", 1)[1].split(" - ", 1)[0]
+        (
+            (line.split(" ", 2)[1].split("::", 1)[0].rsplit("/", 1)[-1] + "::"
+             if qualified else "")
+            + line.split(" ", 1)[1].split("::", 1)[1].split(" - ", 1)[0]
+        )
         if "::" in line else
         "collection of " + line.split(" ", 2)[1].rsplit("/", 1)[-1]
         for line in out.splitlines()
@@ -6654,32 +6842,56 @@ def _run_with(project: Path, rel: str, text: str) -> list[str]:
     ]
 
 
-def hunk_revert_report(base: str, head: str) -> list[str]:
-    """lead-stalls D-051..D-053's revert evidence: every hunk of
-    `guidance.py` between ``base`` and ``head``, reverted ALONE on the current
-    tree, and the tests of this module that go red for it. A hunk that
-    changes only comments cannot change behaviour and is named as such
-    rather than run."""
+def hunk_revert_report(
+    base: str, head: str | None, rel: str = _GUIDANCE_REL,
+    tests: tuple[str, ...] = (_THIS_MODULE,),
+) -> list[str]:
+    """lead-stalls D-051..D-053's revert evidence: every hunk of ``rel``
+    (`guidance.py` by default) between ``base`` and ``head``, reverted ALONE
+    on the current tree, and the tests of ``tests`` that go red for it. A
+    hunk whose revert leaves the syntax tree unchanged but for docstrings —
+    comments and docstrings only — cannot change behaviour and is named as
+    such rather than run (lead-stalls D-057, which also opened ``rel`` and
+    ``tests`` to the transition-graph files that fix touched)."""
     from concurrent.futures import ThreadPoolExecutor
 
     project = Path(__file__).resolve().parents[2]
-    rel = "src/foundry_mcp/tools/orchestration/guidance.py"
     current = (project / rel).read_text(encoding="utf-8")
     hunks = _diff_hunks(base, head, f"plugins/foundry/mcp-server/{rel}")
     assert hunks, (base, head)
     for hunk in hunks:
         assert current.count(hunk["new"]) == 1, hunk["header"]
+        reverted = current.replace(hunk["new"], hunk["old"])
+        hunk["reverted"] = reverted
+        tree = _without_docstrings(current)
+        hunk["comment_only"] = tree is not None and tree == _without_docstrings(reverted)
+
+    # lead-stalls D-057 — THE COPY'S OWN FAILURES ARE NOT A HUNK'S. A suite
+    # that reads files outside `src` and `tests` (the shipped CLIs, the plugin
+    # prose) fails in the copy with nothing reverted, and a test that is red
+    # before the revert says nothing about the hunk. So the copy is run once
+    # unreverted, and only what goes red BEYOND that is charged to a hunk.
+    baseline = [
+        line for line in _run_with(project, rel, current, tests)
+        if line.startswith("  FAILED")
+    ]
 
     def judged(hunk: dict) -> list[str]:
         if hunk["comment_only"]:
-            return ["  comment-only: no behaviour to revert"]
-        return _run_with(project, rel, current.replace(hunk["new"], hunk["old"]))
+            return ["  comment- or docstring-only: no behaviour to revert"]
+        result = _run_with(project, rel, hunk["reverted"], tests)
+        red = [line for line in result if line.startswith("  FAILED") and line not in baseline]
+        ran = result[-1].split(",", 1)[0]
+        return red + [f"{ran}, red beyond the baseline: {len(red)}"]
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(judged, hunks))
     lines = [
-        f"guidance.py hunks {base}..{head}: {len(hunks)}",
-        f"comment-only: {sum(h['comment_only'] for h in hunks)}",
+        f"{Path(rel).name} hunks {base}..{head or 'working tree'}: {len(hunks)}",
+        f"comment- or docstring-only: {sum(h['comment_only'] for h in hunks)}",
+        f"judged by: {', '.join(tests)}",
+        f"red in the copy with nothing reverted, not charged to any hunk: {len(baseline)}",
+        *baseline,
         "",
     ]
     for number, (hunk, result) in enumerate(zip(hunks, results), 1):

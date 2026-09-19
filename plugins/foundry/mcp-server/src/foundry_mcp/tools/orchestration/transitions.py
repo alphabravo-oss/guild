@@ -70,6 +70,7 @@ from foundry_mcp.tools.orchestration.escalation import (
     _advance_escalation_exits,
     _escalated_classes,
     _record_escalation_proposals,
+    _still_escalated_classes,
 )
 from foundry_mcp.tools.orchestration.width import (
     NYQUIST_ENTRY_ROLLUP_KEY,
@@ -738,10 +739,12 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
     """Preconditions for `inspect_start`, the GRIND -> INSPECT crossing.
 
     Accepted from EXACTLY TWO source phases — F3, the crossing ST-005 names, and
-    F2, the widening re-open of a DELTA cycle — and both advance the counter.
-    The two widening arms (nothing to widen; blocking defects) apply only to the
-    F2 arm and are stated here rather than inside the transition, so
-    `Foundry-Gate('inspect_start')` answers the same question.
+    F2, the widening re-open of a DELTA cycle or (lead-stalls D-057) of a clean
+    FULL cycle a still-ESCALATED class holds DONE shut over — and both advance
+    the counter. The widening arms (nothing to widen; the held cycle's streams;
+    blocking defects) apply only to the F2 arm and are stated here rather than
+    inside the transition, so `Foundry-Gate('inspect_start')` answers the same
+    question.
 
     D-113 / D-114 / D-116 are why the source check exists at all; see
     `_PHASE_ENTRY_SOURCES` for the drives. It is written here as its own rung
@@ -765,7 +768,8 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
                 f"Cannot start an INSPECT from phase {phase or 'F0'} — "
                 "Foundry-Phase(phase='inspect_start') is the GRIND->INSPECT "
                 "crossing (ST-005), accepted from F3, and from F2 as the "
-                "widening re-open of a DELTA cycle. It is the call that "
+                "widening re-open of a DELTA cycle or of a clean FULL cycle "
+                "a still-ESCALATED class holds DONE shut over. It is the call that "
                 "ADVANCES the cycle counter, so from any other phase it "
                 "would record a second INSPECT decision against a cycle that "
                 "has not ended and evaluate the escalation exit arms on a "
@@ -784,30 +788,108 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
     })
 
     widening = phase == "F2"
+    held: list[str] = []
     if widening:
         recorded_now = current_inspect_mode(fdir, modes=INSPECT_MODES) or {}
-        if recorded_now.get("mode") != "DELTA":
+        recorded_width = recorded_now.get("mode")
+        # lead-stalls GI-008 / FR-007 (D-057) — A CLEAN FULL CYCLE A HELD
+        # CLASS HOLDS DONE SHUT OVER IS RE-OPENED TOO.
+        # --------------------------------------------------------------------
+        # A class still ESCALATED clears only at a crossing that advances the
+        # cycle counter (ST-001's clean arm), and this rung passed only a DELTA
+        # width. So a class persisted ESCALATED with every instance fixed, at a
+        # clean FULL F2 with nothing open, had no accepted crossing: this
+        # refused "nothing to widen", `grind_start` refused "No open defects to
+        # grind", and every list past ASSAY ends at a DONE gate that refuses
+        # the class. Driven at 3a24e45 (D-055's d055b scenario): the router
+        # answered `escalation_held`, NONE, a state nothing left.
+        #
+        # The FULL arm passes on the SAME union the DONE gate refuses on,
+        # through the leaf both read (`escalation._still_escalated_classes`),
+        # so this door and the router cannot disagree about whether a class is
+        # held. Asked only of a FULL width: a DELTA cycle is re-opened whatever
+        # is held, and an unrecorded one is refused as before. Blocking defects
+        # are the rung below, unchanged — the crossing it guards is the one
+        # the DELTA re-open makes, counter, sweep, escalation exits and all.
+        held = (
+            _still_escalated_classes(fdir, project_root)
+            if recorded_width == "FULL" else []
+        )
+        reopenable = recorded_width == "DELTA" or bool(held)
+        if not reopenable:
             ladder.fail(
                 _GATE_RANK_WIDTH,
                 (
                     "Cannot re-open INSPECT — this cycle's recorded width is "
-                    f"{recorded_now.get('mode') or 'unrecorded'}"
+                    f"{recorded_width or 'unrecorded'}"
                     + (f" (rule {recorded_now['rule']})"
                        if recorded_now.get("rule") else "")
+                    + (
+                        " and no defect class is still ESCALATED"
+                        if recorded_width == "FULL" else ""
+                    )
                     + ", so there is nothing to widen."
                 ),
                 (
-                    "The F2->F2 re-open exists to widen a DELTA INSPECT to "
-                    "FULL before ASSAY. From a FULL cycle, call "
-                    "Foundry-Phase(phase='inspect_clean') to open ASSAY, or "
-                    "Foundry-Phase(phase='grind_start') to open a GRIND. The "
-                    "cycle counter has NOT moved."
+                    # D-057: this named `grind_start` from a FULL cycle, which
+                    # is refused whenever nothing is open — the state a lead
+                    # reading this sentence is most often in.
+                    "The F2->F2 re-open widens a DELTA INSPECT to FULL before "
+                    "ASSAY, and closes a clean FULL cycle while a defect class "
+                    "is still ESCALATED. Neither is this cycle, so "
+                    "Foundry-Phase(phase='inspect_clean') is the crossing out "
+                    "of a clean FULL F2 — it opens ASSAY. A GRIND opens on an "
+                    "open defect, through Foundry-Phase(phase='grind_start'). "
+                    "The cycle counter has NOT moved."
                 ),
             )
         checklist.append({
-            "check": f"widening_a_delta_cycle (mode={recorded_now.get('mode') or 'unrecorded'})",
-            "ok": recorded_now.get("mode") == "DELTA",
+            # D-057: named for what passes it now — a DELTA width, or a FULL
+            # one with a class held — rather than for the DELTA arm alone.
+            "check": (
+                f"reopenable_cycle (mode={recorded_width or 'unrecorded'}"
+                f", held={len(held)})"
+            ),
+            "ok": reopenable,
+            "still_escalated_classes": held,
         })
+        if held:
+            # lead-stalls D-057 — AND THE CYCLE IT CLOSES WAS INSPECTED.
+            # ----------------------------------------------------------
+            # The DELTA arm limits itself: its crossing records FULL, and a
+            # FULL width refused the re-open, so it could fire once per DELTA
+            # cycle. The held arm has no such limit — every crossing it makes
+            # opens another FULL cycle with the class still held — so without
+            # this rung two back-to-back calls advance the counter twice and
+            # ST-001's clean arm clears the class over two cycles in which no
+            # stream ran. That is the old D-057 (a clean cycle counted by a
+            # call rather than by an INSPECT) through the new door. The streams
+            # this crossing clears are the ones that must have recorded first.
+            held_streams = _streams_complete(project_root)
+            if not held_streams["complete"]:
+                ladder.fail(
+                    _GATE_RANK_STREAMS,
+                    (
+                        "Cannot re-open INSPECT — "
+                        f"{', '.join(held)} still ESCALATED, and this FULL "
+                        "cycle's streams have not all recorded (missing: "
+                        f"{held_streams.get('missing') or 'unknown'}), so "
+                        "the cycle this crossing closes was never inspected."
+                    ),
+                    (
+                        "ST-001's clean arm counts the cycle this crossing "
+                        "closes as one that drew zero LIVE instances, which "
+                        "only an INSPECT that ran can show. Run every stream "
+                        "this INSPECT's recorded roster names; each AGENT "
+                        "stream records its own run with Foundry-Stream. The "
+                        "cycle counter has NOT moved."
+                    ),
+                )
+            checklist.append({
+                "check": "held_class_cycle_inspected",
+                "ok": bool(held_streams["complete"]),
+                "missing": held_streams.get("missing", ""),
+            })
         widen_blocking = _blocking_defects(fdir)
         if widen_blocking["blocking"] > 0:
             ladder.fail(
@@ -974,6 +1056,20 @@ def _inspect_start_preconditions(fdir: Path, project_root: str) -> dict:
         fdir, project_root, decided_by="inspect_start", phase="F2",
         cycle=current_cycle(fdir) + 1, widening=widening,
     )
+    if held:
+        # lead-stalls D-057 — THE RECORDED PROVENANCE NAMES THE ARM THAT FIRED.
+        # The decider's `final_gate` / widening rule is the right width and the
+        # right rule — this INSPECT precedes ASSAY — but its detail sentence
+        # says "the preceding DELTA INSPECT came back clean", which is false
+        # for a FULL cycle, and `Foundry-Context` shows the lead that sentence.
+        # D-069 and D-152 were this shape: a width that was right and a record
+        # of why that was not.
+        entry["rule_detail"] = (
+            "the F2->F2 re-open of a clean FULL INSPECT that still-ESCALATED "
+            f"class(es) {', '.join(held)} hold DONE shut over: this crossing "
+            "is the INSPECT before ASSAY, and ST-001's clean arm counts the "
+            "cycle it closes"
+        )
     evidence = _boundary_evidence_rung(
         ladder, checklist, fdir, project_root,
         entry=entry, full=entry["mode"] == "FULL", token="inspect_start",

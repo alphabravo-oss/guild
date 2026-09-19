@@ -244,7 +244,7 @@ def test_the_roster_walk_actually_sees_the_files_it_judges() -> None:
 # Everything above this line is a PROHIBITION, and a prohibition is a standing
 # property of the tree: "no new hook event" is answerable by reading
 # `hooks.json` today, with no reference to any other commit. The cap is not
-# that shape. "The change touches at most seven source files" is a claim about
+# that shape. "The change touches at most nine source files" is a claim about
 # a DIFF, and a diff needs two commits, only one of which a test can ever
 # stand on.
 #
@@ -269,18 +269,18 @@ def test_the_roster_walk_actually_sees_the_files_it_judges() -> None:
 #
 # WHAT THIS CAN SEE, AND WHAT IT CANNOT, PLAINLY
 # ----------------------------------------------
-# A recorded roster cannot by itself notice an eighth file: an edited file and
+# A recorded roster cannot by itself notice a tenth file: an edited file and
 # an untouched file are identical on disk. What DOES leave a mark is this
 # codebase's citation convention. `tests/test_spec_id_convention.py` enforces
 # it over every prose surface under `tests/`, and every non-obvious construct
 # in `src/` carries the same qualified id naming the requirement it serves. So
-# an eighth file is caught by its CITATION rather than by its mtime: a source
+# a tenth file is caught by its CITATION rather than by its mtime: a source
 # file in the walked roots that cites this run and is not on the roster fails
 # the rung below, whatever commit it arrived in.
 #
-# The gap is named rather than papered over. Two of the seven sanctioned files
+# The gap is named rather than papered over. Two of the nine sanctioned files
 # carry no qualified citation of this run, so they are pinned by name in
-# `UNCITED_SANCTIONED_FILES`, and they are themselves the proof that an eighth
+# `UNCITED_SANCTIONED_FILES`, and they are themselves the proof that a tenth
 # file could be edited in the same silent way and escape this walk. Nothing in
 # this module can see that file. Only a diff can, and a diff is the one thing
 # no durable test is able to hold.
@@ -295,16 +295,24 @@ def test_the_roster_walk_actually_sees_the_files_it_judges() -> None:
 #: and this one does not claim to: it supplies the enforcement the requirement
 #: never had.
 #:
+#: SECOND RULING, 2026-09-19, GRIND cycle 16: seven to NINE. lead-stalls D-057
+#: (concern C-008, filed by casting imperatives) is a state no accepted
+#: transition left -- a class still ESCALATED with nothing open at a clean
+#: FULL F2 -- and its fix is a rung of the transition graph, which none of the
+#: seven files holds. The user ruled to fix it in this run and authorised the
+#: cap past seven; the two files it compelled are named on the roster below.
+#:
 #: The cap is re-typed here because it cannot be read from the spec. Both spec
 #: paths are gitignored (`.gitignore:15-16`), so neither exists in the detached
 #: worktree the evidence gate re-executes in, and a rung that parses the spec
 #: would answer differently on two checkouts of one commit.
-SOURCE_FILE_CAP = 7
+SOURCE_FILE_CAP = 9
 
 #: The source files this release is sanctioned to touch, repo-relative and
 #: POSIX-spelled. Four were anticipated when lead-stalls NFR-001 was written;
-#: three were compelled afterwards and are the reason the cap moved. Each entry
-#: says which it is, because a roster nobody can audit is just a longer number.
+#: five were compelled afterwards and are the reason the cap moved, twice. Each
+#: entry says which it is, because a roster nobody can audit is just a longer
+#: number.
 SANCTIONED_SOURCE_FILES = frozenset(
     {
         # The four the requirement anticipated.
@@ -325,8 +333,14 @@ SANCTIONED_SOURCE_FILES = frozenset(
         # `languages` -> `language_servers` rename, and make `doctor` fail on a
         # project that cannot load.
         "plugins/foundry/scripts/serena-daemon.sh",
+        # Compelled by lead-stalls D-057 on the user's ruling of 2026-09-19:
+        # the F2 re-open of a clean FULL cycle a held class holds DONE shut
+        # over is a rung of `_inspect_start_preconditions`, and the held-class
+        # union it reads moved to the leaf both layers may import.
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/transitions.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/escalation.py",
     }
-)  # 7 items
+)  # 9 items
 
 #: The two sanctioned files that carry no `lead-stalls `-qualified citation, so
 #: the citation walk cannot see them. `directives.py` cites its work by the
@@ -461,7 +475,7 @@ def test_the_sanctioned_source_roster_fits_the_declared_cap() -> None:
 def test_every_sanctioned_source_file_is_present_and_counts_against_the_cap() -> None:
     """The roster's members are paths in this tree, not strings in this file.
 
-    A roster of seven names that resolve to nothing would satisfy the cap
+    A roster of nine names that resolve to nothing would satisfy the cap
     arithmetic above perfectly. Each entry has to exist, and has to classify as
     capped source under the exemption rule -- an entry that is really a test or
     a manifest is padding the count with something lead-stalls NFR-001 exempts.
@@ -499,7 +513,7 @@ def test_every_sanctioned_source_file_is_present_and_counts_against_the_cap() ->
 
 
 def test_no_unsanctioned_source_file_cites_this_run() -> None:
-    """The rung that can actually see an eighth file.
+    """The rung that can actually see a tenth file.
 
     lead-stalls NFR-001 bounds a DIFF, and the roster above is that diff
     recorded. This is the half that is not recorded: the tree is walked, and
@@ -510,7 +524,7 @@ def test_no_unsanctioned_source_file_cites_this_run() -> None:
     free with a message that names which direction went.
 
     Read the block above these declarations for what this cannot see: a source
-    file edited with no citation at all is invisible here, and two of the seven
+    file edited with no citation at all is invisible here, and two of the nine
     are exactly that shape.
     """
     cited = _cited_source_files()
@@ -522,7 +536,7 @@ def test_no_unsanctioned_source_file_cites_this_run() -> None:
         f"sanctioned roster: {unsanctioned}. That is "
         f"{len(SANCTIONED_SOURCE_FILES) + len(unsanctioned)} source files "
         f"against lead-stalls NFR-001's cap of {SOURCE_FILE_CAP}. Either the "
-        f"work belongs in one of the seven and should move there, or the cap "
+        f"work belongs in one of the nine and should move there, or the cap "
         f"needs amending in the spec and the roster needs the new path with a "
         f"note saying what compelled it."
     )
@@ -530,7 +544,7 @@ def test_no_unsanctioned_source_file_cites_this_run() -> None:
     lost_citation = sorted(expected - cited)
     assert not lost_citation, (
         f"{len(lost_citation)} sanctioned file(s) no longer cite this run: "
-        f"{lost_citation}. The walk is how this module detects an eighth file, "
+        f"{lost_citation}. The walk is how this module detects a tenth file, "
         f"and it can only detect one while the citation convention holds over "
         f"the files it already knows about. Restore the citation, or move the "
         f"path into the carve-out and say in its comment why it lost one."
@@ -540,7 +554,7 @@ def test_no_unsanctioned_source_file_cites_this_run() -> None:
 def test_the_exemption_rule_actually_exempts_and_actually_counts() -> None:
     """The guard on the exemption rule: prove it sorts known paths correctly.
 
-    `_cap_class` is what turns 36 changed paths into a count of seven, so a
+    `_cap_class` is what turns the changed paths into a count of nine, so a
     version of it that returned `source` for everything would report a wild
     overrun, and one that returned an exemption for everything would report
     zero and pass. Both directions are driven here on paths whose answer is
@@ -591,7 +605,7 @@ def test_the_exemption_rule_actually_exempts_and_actually_counts() -> None:
 
 
 def test_the_citation_walk_actually_catches_an_eighth_file(tmp_path: Path) -> None:
-    """The guard on the walk: plant an eighth file and prove it is found.
+    """The guard on the walk: plant a file past the roster and prove it is found.
 
     The rung above passes when the walk returns exactly the roster, which is
     also what a walk handed a stale root, or one whose read silently failed,
@@ -627,7 +641,7 @@ def test_the_citation_walk_actually_catches_an_eighth_file(tmp_path: Path) -> No
         "plugins/foundry/mcp-server/src/eighth_script.sh",
     }, (
         f"the walk returned {sorted(walked)}. It has to find both planted "
-        f"source files -- that is the whole of how an eighth file is detected "
+        f"source files -- that is the whole of how a tenth file is detected "
         f"-- and it has to leave out the uncited file, the non-source file, "
         f"and the test file lead-stalls GI-006 exempts."
     )

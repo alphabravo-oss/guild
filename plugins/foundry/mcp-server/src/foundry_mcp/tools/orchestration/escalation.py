@@ -36,11 +36,23 @@ from pathlib import Path
 
 
 #: D-153 — the clean-cycle crossing, spelled for the phase the reader is IN.
-#: The crossing itself is always an `inspect_start` OUT OF F3; what differs is
-#: what it takes to be standing in F3, and naming only the destination is what
-#: sent a lead at F2 into a refusal (see `_still_escalated_notice`).
+#: What differs by phase is what it takes to be standing where the crossing
+#: is accepted, and naming only the destination is what sent a lead at F2 into
+#: a refusal (see `_still_escalated_notice`).
+#:
+#: lead-stalls GI-008 / FR-007 (D-057) — BOTH DOORS THE GRAPH ACCEPTS, AND WHAT
+#: IT TAKES TO REACH EITHER FROM PAST ASSAY. This read "out of F3 closes one",
+#: printed by the DONE refusal at F4, F5 and F5.5, where a run holding a class
+#: with nothing open has no accepted transition into F3 at all: `grind_start`
+#: and `assay_fail` refuse "No open defects to grind". The crossing is accepted
+#: in two places now — out of F3, and from a clean FULL F2 as the re-open a
+#: held class earns (`transitions._inspect_start_preconditions`) — and from
+#: past ASSAY both are behind a GRIND, which the sentence says rather than
+#: leaving the reader to find by refusal.
 _CLEAN_CYCLE_CROSSING_DEFAULT = (
-    "Foundry-Phase(phase='inspect_start') out of F3 closes one"
+    "Foundry-Phase(phase='inspect_start') closes one, accepted out of F3 and "
+    "from a clean FULL F2 as the re-open a held class earns; past ASSAY both "
+    "are reached through a GRIND, and a GRIND opens on an open defect"
 )
 
 
@@ -1294,6 +1306,34 @@ def _persisted_escalations(
         # `{"status": ""}` and `{"status": "BOGUS"}` all still resolve to
         # ESCALATED and still block; `{"status": "CLEARED"}` still clears.
         and _escalation_status(entry) == ESCALATION_STATUS_ESCALATED
+    )
+
+
+
+
+def _still_escalated_classes(fdir: Path, project_root: str) -> list[str]:
+    """The class keys ST-010 still holds DONE open for (D-129).
+
+    The SAME union `_done_preconditions` refuses on — ledger recurrence
+    (`_escalated_classes`) plus the persisted status (`_persisted_escalations`)
+    — read through one function so the guidance engine and the gate can never
+    name different sets. Overrides are honoured by both halves.
+
+    lead-stalls GI-008 / FR-007 (D-057) — MOVED HERE FROM `guidance.py`, SO
+    THE TRANSITION THAT CLEARS A HELD CLASS ASKS THE SAME QUESTION THE ROUTER
+    DOES. `transitions._inspect_start_preconditions` now accepts the F2 re-open
+    from a clean FULL cycle while a class is held, and `guidance.py` is
+    lifecycle while `transitions.py` is a verifier (fallout GI-033): neither
+    may import the other, and this module is the leaf both already read. A
+    third spelling of the union at the door would be how the router serves a
+    re-open the door refuses.
+    """
+    escalated_open = _escalated_classes(fdir, project_root)
+    persisted = _load_json(fdir / ESCALATION_FILENAME).get("classes", {})
+    if not isinstance(persisted, dict):
+        persisted = {}
+    return sorted(
+        set(escalated_open) | set(_persisted_escalations(fdir, project_root, persisted))
     )
 
 
