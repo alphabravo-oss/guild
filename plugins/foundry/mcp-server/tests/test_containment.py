@@ -285,8 +285,10 @@ def test_the_roster_walk_actually_sees_the_files_it_judges() -> None:
 # this module can see that file. Only a diff can, and a diff is the one thing
 # no durable test is able to hold.
 
-#: lead-stalls NFR-001's cap, as the spec declares it AFTER the amendment of
-#: 2026-09-16. It read four until this cycle. The build overran it -- seven
+#: lead-stalls NFR-001's cap, as the spec declares it AFTER its second
+#: amendment, of 2026-09-19. It read four until the first, of 2026-09-16.
+#:
+#: FIRST RULING, 2026-09-16: four to seven. The build overran it -- seven
 #: non-exempt source files against a cap of four -- and nothing in the suite
 #: noticed, because nothing in the suite counted source files; that silence is
 #: the defect this block closes. The user was offered a halt, an amendment and
@@ -301,6 +303,11 @@ def test_the_roster_walk_actually_sees_the_files_it_judges() -> None:
 #: FULL F2 -- and its fix is a rung of the transition graph, which none of the
 #: seven files holds. The user ruled to fix it in this run and authorised the
 #: cap past seven; the two files it compelled are named on the roster below.
+#: This ruling landed in the WRONG ORDER: the number here moved in the D-057
+#: fix (87a26ae) while the spec still read seven -- the reverse of the order
+#: the first rung below demands. D-059 wrote the amendment into
+#: lead-stalls NFR-001 afterwards, naming both files and what compelled each,
+#: so the spec and this constant now state one number.
 #:
 #: The cap is re-typed here because it cannot be read from the spec. Both spec
 #: paths are gitignored (`.gitignore:15-16`), so neither exists in the detached
