@@ -1163,6 +1163,32 @@ def _arrange_assay_passed_both(root, fdir, teams):
     _assay(fdir, ["VERIFIED"], temper=True, nyquist=True)
 
 
+#: lead-stalls D-058 — PROVE's drive_s9 state: every requirement VERIFIED
+#: and a blocking defect open that no non-VERIFIED verdict carries, which is
+#: what an assayer's RESEARCH_DEVIATION filing or an adjudicated DEFECT
+#: observation leaves beside a passing ASSAY. No row reached it, so the
+#: F4 arm's crossings over an open blocking defect were never judged. One row
+#: per crossing the flags pick, and the untiered bucket, which blocks too.
+def _assay_passed_filed(fdir: Path, *, temper: bool, nyquist: bool,
+                        tier: str | None = "LIVE") -> None:
+    _assay(fdir, ["VERIFIED"], temper=temper, nyquist=nyquist)
+    _defect_ledger(fdir, [_tiered(
+        "D-001", tier, source="assay", type="RESEARCH_DEVIATION",
+    )])
+
+
+def _arrange_assay_passed_filed(root, fdir, teams):
+    _assay_passed_filed(fdir, temper=False, nyquist=False)
+
+
+def _arrange_assay_passed_temper_filed(root, fdir, teams):
+    _assay_passed_filed(fdir, temper=True, nyquist=False)
+
+
+def _arrange_assay_passed_nyquist_untiered(root, fdir, teams):
+    _assay_passed_filed(fdir, temper=False, nyquist=True, tier=None)
+
+
 def _arrange_halted_reported(root, fdir, teams):
     _halted_run(fdir)
     (fdir / "REPORT.md").write_text("# report\n", encoding="utf-8")
@@ -1260,6 +1286,11 @@ _ROUTER_STATES = (
     ("assay-passed-temper", "GI-008", _arrange_assay_passed_temper, "transition_to_temper", None),
     ("assay-passed-nyquist", "GI-008", _arrange_assay_passed_nyquist, "transition_to_nyquist", None),
     ("assay-passed-both", "GI-008", _arrange_assay_passed_both, "transition_to_temper", None),
+    # lead-stalls D-058 — a blocking defect open beside a passing ASSAY is the
+    # GRIND crossing, whichever crossing the flags would otherwise pick.
+    ("assay-passed-filed", "GI-008", _arrange_assay_passed_filed, "transition_to_grind", None),
+    ("assay-passed-temper-filed", "GI-008", _arrange_assay_passed_temper_filed, "transition_to_grind", None),
+    ("assay-passed-nyquist-untiered", "GI-008", _arrange_assay_passed_nyquist_untiered, "transition_to_grind", None),
     ("halted-reported", "GI-008", _arrange_halted_reported, "halted", None),
     ("halted-unreported", "GI-008", _arrange_halted_unreported, "halted", None),
     ("done", "GI-008", _arrange_done, "done", None),
@@ -6208,6 +6239,85 @@ def test_what_the_phase_work_files_is_served_the_grind_crossing(
     assert state["phase"] == "F3", served
 
 
+@pytest.mark.parametrize(
+    "temper, nyquist",
+    [(False, False), (True, False), (False, True), (True, True)],
+    ids=["done", "temper", "nyquist", "temper-nyquist"],
+)
+def test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list(
+    run_env, temper, nyquist,
+):
+    """lead-stalls D-058, driven as PROVE drove it (drive_s9): F4, every
+    requirement VERIFIED, and one open LIVE RESEARCH_DEVIATION an assayer
+    filed. At 62d2834 the list served was the flags' crossing:
+    `transition_to_temper`, whose `temper` gate refused the open defect, or
+    `transition_to_done`, whose strip and commit a lead following the list ran
+    after the DONE gate refused. The next Foundry-Next served the same list on
+    every lap, and the exit (Tasks, the GRIND gate and `grind_start`) was named
+    only in a refusal hint. That exit is the served list now. Following it
+    alone enters F3, and the evidence corpus is untouched."""
+    root, fdir = run_env
+    _post_assay_run(root, fdir, phase="F4", temper=temper, nyquist=nyquist)
+    _defect_ledger(fdir, [_tiered(
+        "D-001", "LIVE", source="assay", type="RESEARCH_DEVIATION",
+    )])
+
+    served = _walk_served_lists(root, lists=1)
+
+    assert served[0][:2] == ("F4", "transition_to_grind"), served
+    assert served[0][2][:3] == [
+        "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
+    ], served
+    state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "F3", served
+    assert (Path(root) / "evidence" / "casting-1-handler.log").exists()
+
+
+def test_every_arm_past_assay_asks_the_one_grind_question():
+    """lead-stalls D-058 — F5 and F5.5 read the blocking count before their
+    crossing, through `_post_assay_crossing`, and F4 did not. The GRIND answer
+    for a blocking defect past ASSAY now has one body,
+    `_blocking_grind_crossing`, asked by the F4 arm and by
+    `_post_assay_crossing`, so no two arms can answer that state in two ways.
+    This reads the source, because a copy of the body answers identically
+    until it drifts. The only other payloads serving `transition_to_grind`
+    are `_escalation_hold`'s clean-cycle GRIND, which has nothing blocking to
+    serve, and the F2 arm's, which is before ASSAY."""
+    import ast
+    import inspect
+
+    from foundry_mcp.tools.orchestration import guidance
+
+    functions = [
+        node for node in ast.walk(ast.parse(inspect.getsource(guidance)))
+        if isinstance(node, ast.FunctionDef)
+    ]
+    spelled = {
+        func.name
+        for func in functions
+        for node in ast.walk(func)
+        if isinstance(node, ast.Dict) and any(
+            isinstance(key, ast.Constant) and key.value == "action"
+            and isinstance(value, ast.Constant)
+            and value.value == "transition_to_grind"
+            for key, value in zip(node.keys, node.values)
+        )
+    }
+    assert spelled == {
+        "_blocking_grind_crossing", "_escalation_hold", "_compute_next_action",
+    }, spelled
+    asked = sorted(
+        (func.name, ast.unparse(node.args[0]))
+        for func in functions
+        for node in ast.walk(func)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "_blocking_grind_crossing"
+    )
+    assert asked == [
+        ("_compute_next_action", "'F4'"), ("_post_assay_crossing", "phase"),
+    ], asked
+
+
 def test_the_gate_out_of_f5_is_the_one_the_run_flags_name(run_env):
     """`run_temper` ends in `done` on a --temper run and in `nyquist` on a
     --temper --nyquist one, resolved from `details["crossing"]` by the one
@@ -6275,6 +6385,9 @@ def test_every_action_the_router_returns_is_served_by_a_router_state():
         "assay-passed", "assay-passed-temper", "assay-passed-nyquist",
         "assay-passed-both", "assay-failed-filed", "assay-failed-unfiled",
         "inspect-clean-full", "inspect-clean-delta", "decompose-done",
+        # lead-stalls D-058 — the F4 state the zero used to be computed without.
+        "assay-passed-filed", "assay-passed-temper-filed",
+        "assay-passed-nyquist-untiered",
     } <= states, sorted(states)
 
 

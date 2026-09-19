@@ -260,6 +260,42 @@ def _nyquist_transition(from_phase: str) -> dict:
     }
 
 
+def _blocking_grind_crossing(
+    phase: str, name: str, blocking: dict, grind_config: dict,
+) -> dict | None:
+    """The GRIND crossing a blocking defect owes past ASSAY, or ``None`` while
+    nothing blocks.
+
+    lead-stalls GI-008 / FR-007 (D-058) — ONE BODY, ASKED BY F4 AS WELL AS BY
+    F5 AND F5.5. This was the first half of `_post_assay_crossing`, which only
+    F5 and F5.5 call. The F4 arm, with every requirement VERIFIED and no class
+    held, served the crossing its flags named without reading the blocking
+    count, and every gate on that road refused the open defect. So a
+    RESEARCH_DEVIATION an assayer filed, or a DEFECT observation adjudicated
+    to GRIND, got the same refused list on every lap. ``blocking`` is the
+    router's one `_open_by_blocking_tier` reading.
+    """
+    if blocking["blocking"] > 0:
+        return {
+            "phase": phase,
+            "action": "transition_to_grind",
+            "instructions": (
+                f"{name} left {blocking['blocking']} blocking defect(s) open "
+                f"({len(blocking['live'])} LIVE, "
+                f"{len(blocking['unknown'])} untiered). GRIND fixes them, and "
+                "the run comes back through INSPECT and ASSAY."
+            ),
+            "details": {
+                "open_defects": blocking["blocking"],
+                "live_defects": blocking["live"],
+                "unknown_tier_defects": blocking["unknown"],
+                "latent_backlog": blocking["latent"],
+                "agent_config": grind_config,
+            },
+        }
+    return None
+
+
 def _post_assay_crossing(
     fdir: Path, phase: str, name: str, gate: str, grind_config: dict,
 ) -> dict | None:
@@ -290,26 +326,13 @@ def _post_assay_crossing(
     points past the gate the record names. The CONTEXT names no sequence.
     ``grind_config`` is the router's `GRIND_AGENT_CONFIG`, a local of
     `_compute_next_action`, passed so the two GRIND crossings carry one config.
+    The GRIND half is `_blocking_grind_crossing`, which F4 asks too (D-058).
     """
-    blocking = _open_by_blocking_tier(fdir)
-    if blocking["blocking"] > 0:
-        return {
-            "phase": phase,
-            "action": "transition_to_grind",
-            "instructions": (
-                f"{name} left {blocking['blocking']} blocking defect(s) open "
-                f"({len(blocking['live'])} LIVE, "
-                f"{len(blocking['unknown'])} untiered). GRIND fixes them, and "
-                "the run comes back through INSPECT and ASSAY."
-            ),
-            "details": {
-                "open_defects": blocking["blocking"],
-                "live_defects": blocking["live"],
-                "unknown_tier_defects": blocking["unknown"],
-                "latent_backlog": blocking["latent"],
-                "agent_config": grind_config,
-            },
-        }
+    grind = _blocking_grind_crossing(
+        phase, name, _open_by_blocking_tier(fdir), grind_config,
+    )
+    if grind is not None:
+        return grind
     marker = fdir / GATE_PASSED_MARKER
     passed = read_document(marker)[0].get("phase") if marker.exists() else None
     if passed != gate:
@@ -4848,6 +4871,24 @@ def _compute_next_action(project_root: str) -> dict:
         )
         if held is not None:
             return held
+
+        # lead-stalls GI-008 / FR-007 (D-058) — A PASSING ASSAY WITH A
+        # BLOCKING DEFECT OPEN IS THE GRIND CROSSING, not the crossing the
+        # flags pick. Every requirement VERIFIED says nothing about the
+        # ledger: an assayer mirrors a research deviation into it as a
+        # defect, and an adjudicated DEFECT observation is routed to GRIND,
+        # with no rejected verdict beside either. Driven at 62d2834,
+        # `transition_to_temper` was refused at its gate and
+        # `transition_to_done` ran its strip and commit after the refused
+        # DONE gate, and the next Foundry-Next served the same list again.
+        # The exit was named only in a refusal hint. `_escalation_hold`
+        # above answers None whenever something blocks, so this is asked
+        # after it, which is the order the F5 and F5.5 arms use.
+        grind = _blocking_grind_crossing(
+            "F4", "ASSAY", blocking, GRIND_AGENT_CONFIG,
+        )
+        if grind is not None:
+            return grind
 
         temper = state.get("temper", False)
         if temper:
