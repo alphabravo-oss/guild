@@ -1,83 +1,17 @@
-# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.orchestration.test_guidance_imperatives import hunk_revert_report; [print(r) for r in hunk_revert_report("a4ded25", "34602c0")]' 2>/dev/null
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.orchestration.test_guidance_imperatives import hunk_revert_report; [print(r) for r in hunk_revert_report("0eeb798", "dc44462")]' 2>/dev/null
 # evidence-for: FR-007, FR-008, GI-008, OT-002, OT-013
 # evidence-timeout: 900
 
-guidance.py hunks a4ded25..34602c0: 5
+guidance.py hunks 0eeb798..dc44462: 2
 comment- or docstring-only: 0
 judged by: tests/orchestration/test_guidance_imperatives.py
 red in the copy with nothing reverted, not charged to any hunk: 0
 
-== hunk 01 @@ -332,6 +332,76 @@ def _short_ledger_assay(
-  FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[done]
-  FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[nyquist]
-  FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[temper-nyquist]
-  FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[temper]
-  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f4]
-  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5.5]
-  FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5]
-  FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[latent-open]
-  FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[nothing-open]
-  FAILED test_a_held_class_with_a_record_open_closes_a_clean_cycle_by_the_served_lists
-  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4-temper]
-  FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4]
-  FAILED test_a_passed_done_gate_points_the_lead_at_the_strip
-  FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[done]
-  FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[nyquist]
-  FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper-nyquist]
-  FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper]
-  FAILED test_a_run_already_past_f4_on_a_short_ledger_is_served_the_assay[f5.5]
-  FAILED test_a_run_already_past_f4_on_a_short_ledger_is_served_the_assay[f5]
-  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[done]
-  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[nyquist]
-  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper-nyquist]
-  FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper]
-  FAILED test_a_short_ledger_a_clean_prove_fills_is_not_sent_back_to_assay
-  FAILED test_an_unaudited_action_pays_for_no_roster_scan
-  FAILED test_below_the_cap_the_grind_crossing_still_dispatches
-  FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
-  FAILED test_past_f4_a_complete_ledger_is_still_served_the_phase_work[f5.5]
-  FAILED test_past_f4_a_complete_ledger_is_still_served_the_phase_work[f5]
-  FAILED test_the_audit_sees_a_misrouted_branch
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sees_a_wave_boundary_handed_the_teardown
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_gate_out_of_f5_is_the_one_the_run_flags_name
-  FAILED test_the_held_class_leaves_the_route_once_it_is_cleared
-  FAILED test_the_optional_phase_doors_pass_a_complete_ledger[nyquist]
-  FAILED test_the_optional_phase_doors_pass_a_complete_ledger[temper]
-  FAILED test_the_optional_phase_doors_refuse_a_short_verdict_ledger[nyquist]
-  FAILED test_the_optional_phase_doors_refuse_a_short_verdict_ledger[temper]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
-  FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
-  FAILED test_the_payload_sweep_bites_when_the_team_arm_preempts_again
-  FAILED test_the_post_assay_context_names_no_call_and_no_condition
-  FAILED test_the_recorded_evidence_shows_the_population_it_judged
-  FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[nyquist]
-  FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[temper]
-  tests run: 179, red beyond the baseline: 48
-== hunk 02 @@ -4423,21 +4493,40 @@ return {
-  FAILED test_an_unrecorded_width_with_a_defect_open_is_served_the_grind
-  FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  tests run: 179, red beyond the baseline: 2
-== hunk 03 @@ -4927,31 +5016,13 @@ declared = _spec_requirement_ids(project_root, fdir, state)[
-  FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  FAILED test_the_short_ledger_rung_is_one_body_asked_by_all_three_phases
-  tests run: 179, red beyond the baseline: 2
-== hunk 04 @@ -5032,6 +5103,14 @@ # lead-stalls GI-008 / FR-007 (D-062) — a run ALREADY in F5 
-  FAILED test_a_run_already_past_f4_on_a_short_ledger_is_served_the_assay[f5]
-  FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_short_ledger_rung_is_one_body_asked_by_all_three_phases
-  tests run: 179, red beyond the baseline: 5
-== hunk 05 @@ -5060,6 +5139,13 @@ # lead-stalls GI-008 / FR-007 (D-062) — the F5 twin. NYQUIST
-  FAILED test_a_run_already_past_f4_on_a_short_ledger_is_served_the_assay[f5.5]
-  FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
-  FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  FAILED test_the_short_ledger_rung_is_one_body_asked_by_all_three_phases
-  tests run: 179, red beyond the baseline: 5
+== hunk 01 @@ -2354,6 +2354,44 @@ #: lead-stalls US-002 / FR-015 / CT-008 (D-065) — EVERY STRE
+  FAILED collection of test_guidance_imperatives.py
+  tests run: 1, red beyond the baseline: 1
+== hunk 02 @@ -2363,6 +2401,7 @@ prompt += _stream_ledger_clause(stream)
+  FAILED test_every_stream_the_lead_spawns_is_told_where_its_own_ledger_goes
+  tests run: 183, red beyond the baseline: 1
 
 code hunks with no test red when reverted: none

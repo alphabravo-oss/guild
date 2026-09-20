@@ -2,7 +2,7 @@
 # evidence-for: FR-002, FR-005, FR-008, CT-003, CT-006, CT-008, GI-008, OT-002, OT-013, ST-001, ST-002, ST-003, ST-004, US-003
 # evidence-timeout: 1800
 
-rules reverted one at a time: 86
+rules reverted one at a time: 87
 judged by: tests/orchestration/test_guidance_imperatives.py
 files mutated: guidance.py, teams.py, test_guidance_imperatives.py, transitions.py
 red in the control with nothing reverted: 0
@@ -38,7 +38,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
   FAILED test_the_structure_audit_reads_the_rule_printed_above_the_step
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 179, failed or errored: 30, red beyond the control: 30
+  tests run: 183, failed or errored: 30, red beyond the control: 30
 == revert: f3-live-arm (guidance.py)
   FAILED test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone[last-fix-recorded-fresh]
   FAILED test_a_registered_grind_team_leaves_teammates_that_are_still_fixing_alone[last-fix-recorded-stale]
@@ -50,7 +50,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
   FAILED test_the_payload_sweep_bites_when_the_notice_ignores_the_header
   FAILED test_the_recorded_evidence_shows_the_population_it_judged
-  tests run: 179, failed or errored: 10, red beyond the control: 10
+  tests run: 183, failed or errored: 10, red beyond the control: 10
 == revert: acceptance-reader (guidance.py)
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch]
   FAILED test_a_refusal_the_teammate_has_answered_is_accepted_again
@@ -71,14 +71,14 @@ red in the control with nothing reverted: 0
   FAILED test_the_rules_above_a_redispatch_sanction_the_block_it_appends
   FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 179, failed or errored: 19, red beyond the control: 19
+  tests run: 183, failed or errored: 19, red beyond the control: 19
 == revert: notice-gate (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_waiting_notice_names_no_move_above_a_header_that_does[cleanup-over-stale-team]
   FAILED test_the_waiting_notice_names_no_move_above_a_header_that_does[unrecorded-width]
-  tests run: 179, failed or errored: 5, red beyond the control: 5
+  tests run: 183, failed or errored: 5, red beyond the control: 5
 == revert: in-flight-unmeasured (guidance.py)
   FAILED test_a_registered_team_over_an_unmeasured_wave_is_left_up[fresh]
   FAILED test_a_registered_team_over_an_unmeasured_wave_is_left_up[stale]
@@ -89,7 +89,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 179, failed or errored: 9, red beyond the control: 9
+  tests run: 183, failed or errored: 9, red beyond the control: 9
 == revert: refusal-one-branch (guidance.py)
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[C-redispatch]
   FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-down]
@@ -105,7 +105,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[raises]
   FAILED test_the_rules_above_a_redispatch_sanction_the_block_it_appends
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 179, failed or errored: 14, red beyond the control: 14
+  tests run: 183, failed or errored: 14, red beyond the control: 14
 == revert: streams-context (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_running_streams_get_a_context_that_spawns_nothing[fresh]
@@ -113,26 +113,26 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_context_block_of_a_branched_action_names_no_sequence
-  tests run: 179, failed or errored: 6, red beyond the control: 6
+  tests run: 183, failed or errored: 6, red beyond the control: 6
 == revert: refusal-boundary (guidance.py)
   FAILED test_a_refusal_stamped_at_the_done_line_is_still_unanswered
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: casting-slot-last (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_casting_slot_names_the_first_owed_casting[cast_refused-refused]
   FAILED test_the_casting_slot_names_the_first_owed_casting[cast_unaccepted-unaccepted]
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 179, failed or errored: 4, red beyond the control: 4
+  tests run: 183, failed or errored: 4, red beyond the control: 4
 == revert: casting-slot-order (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_casting_slot_names_a_casting_from_the_chosen_branch[False-redispatch]
   FAILED test_the_casting_slot_names_a_casting_from_the_chosen_branch[True-refused]
-  tests run: 179, failed or errored: 3, red beyond the control: 3
+  tests run: 183, failed or errored: 3, red beyond the control: 3
 == revert: condition-detector (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: in-flight-redispatch (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
@@ -140,12 +140,12 @@ red in the control with nothing reverted: 0
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
   FAILED test_the_payload_sweep_bites_when_a_context_stops_deferring
-  tests run: 179, failed or errored: 6, red beyond the control: 6
+  tests run: 183, failed or errored: 6, red beyond the control: 6
 == revert: one-scan (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[answers]
   FAILED test_the_refusal_choice_and_the_team_arm_read_one_scan[raises]
-  tests run: 179, failed or errored: 3, red beyond the control: 3
+  tests run: 183, failed or errored: 3, red beyond the control: 3
 == revert: refusal-own-team (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_audit_sees_a_misrouted_branch
@@ -155,7 +155,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_casting_slot_and_the_acceptance_state_are_total
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 179, failed or errored: 8, red beyond the control: 8
+  tests run: 183, failed or errored: 8, red beyond the control: 8
 == revert: context-structure (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_condition_detector_judges_the_sentence_where_it_was_emitted
@@ -163,26 +163,26 @@ red in the control with nothing reverted: 0
   FAILED test_the_context_sweep_bites_on_the_three_filed_contexts
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[sight-main-thread]
   FAILED test_the_payload_sweep_bites_on_the_acdc00b_context_sentences[tell-every-stream]
-  tests run: 179, failed or errored: 6, red beyond the control: 6
+  tests run: 183, failed or errored: 6, red beyond the control: 6
 == revert: refusal-vocabulary (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: condition-structure (test_guidance_imperatives.py)
   FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
-  tests run: 179, failed or errored: 1, red beyond the control: 1
+  tests run: 183, failed or errored: 1, red beyond the control: 1
 == revert: sentence-anchor (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_condition_detector_judges_the_sentence_where_it_was_emitted
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: choice-shape (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_condition_detector_judges_the_sentence_where_it_was_emitted
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: refused-first (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_two_refusals_in_two_waves_key_on_the_named_castings_team
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: live-teams-registered (guidance.py)
   FAILED test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-accepted-fresh]
   FAILED test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-accepted-stale]
@@ -190,7 +190,7 @@ red in the control with nothing reverted: 0
   FAILED test_a_registered_team_leaves_teammates_that_are_still_building_alone[casting-1-owed-stale]
   FAILED test_both_liveness_returns_publish_the_registered_teams[live-agents]
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  tests run: 179, failed or errored: 6, red beyond the control: 6
+  tests run: 183, failed or errored: 6, red beyond the control: 6
 == revert: streams-branch (guidance.py)
   FAILED test_every_imperative_names_its_calls_in_order
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
@@ -202,7 +202,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_none_the_terminals_and_the_waiting_branches_answer_is_owed
   FAILED test_the_recorded_evidence_shows_the_population_it_judged
-  tests run: 179, failed or errored: 10, red beyond the control: 10
+  tests run: 183, failed or errored: 10, red beyond the control: 10
 == revert: spawn-order (guidance.py)
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[A-cast-wave]
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[B-grind-spawn]
@@ -218,7 +218,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
   FAILED test_the_rules_above_a_redispatch_sanction_the_block_it_appends
   FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
-  tests run: 179, failed or errored: 14, red beyond the control: 14
+  tests run: 183, failed or errored: 14, red beyond the control: 14
 == revert: standing-rule (guidance.py)
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
@@ -229,7 +229,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
   FAILED test_the_rules_above_a_redispatch_sanction_the_block_it_appends
   FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
-  tests run: 179, failed or errored: 9, red beyond the control: 9
+  tests run: 183, failed or errored: 9, red beyond the control: 9
 == revert: grind-order (guidance.py)
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[B-grind-spawn]
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
@@ -241,7 +241,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_grind_dispatch_order_ends_in_the_ledger_protocol
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
   FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
-  tests run: 179, failed or errored: 10, red beyond the control: 10
+  tests run: 183, failed or errored: 10, red beyond the control: 10
 == revert: run-streams-sentence (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_audit_sees_a_parking_none_at_an_action_that_owes_a_move
@@ -249,7 +249,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer
   FAILED test_the_prose_the_structure_moved_still_says_what_it_said
-  tests run: 179, failed or errored: 6, red beyond the control: 6
+  tests run: 183, failed or errored: 6, red beyond the control: 6
 == revert: one-move-rule (guidance.py)
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[A-cast-wave]
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[B-grind-spawn]
@@ -262,7 +262,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
   FAILED test_the_structure_audit_reads_the_rule_printed_above_the_step
-  tests run: 179, failed or errored: 11, red beyond the control: 11
+  tests run: 183, failed or errored: 11, red beyond the control: 11
 == revert: one-move-step (guidance.py)
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[A-cast-wave]
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[B-grind-spawn]
@@ -274,12 +274,12 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 179, failed or errored: 10, red beyond the control: 10
+  tests run: 183, failed or errored: 10, red beyond the control: 10
 == revert: one-step-clause (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_prose_the_structure_moved_still_says_what_it_said
   FAILED test_the_rules_block_states_the_one_move_and_spawn_clauses_once
-  tests run: 179, failed or errored: 3, red beyond the control: 3
+  tests run: 183, failed or errored: 3, red beyond the control: 3
 == revert: dispatch-yield (guidance.py)
   FAILED test_a_fresh_seed_is_the_teammate_the_one_move_spawned[A-cast-wave]
   FAILED test_every_imperative_names_its_calls_in_order
@@ -290,44 +290,45 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_structure_audit_bites_on_a_spawn_that_is_not_one_move
   FAILED test_the_wait_policy_has_one_spelling
-  tests run: 179, failed or errored: 9, red beyond the control: 9
+  tests run: 183, failed or errored: 9, red beyond the control: 9
 == revert: seed-running (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_prose_the_structure_moved_still_says_what_it_said
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: stale-seed (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_prose_the_structure_moved_still_says_what_it_said
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: stream-call (guidance.py)
   FAILED test_every_imperative_names_its_calls_in_order
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
+  FAILED test_every_stream_the_lead_spawns_is_told_where_its_own_ledger_goes
   FAILED test_the_audit_sees_a_parking_none_at_an_action_that_owes_a_move
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_idle_streams_header_names_one_call_per_unrecorded_stream
-  tests run: 179, failed or errored: 7, red beyond the control: 7
+  tests run: 183, failed or errored: 8, red beyond the control: 8
 == revert: stream-config (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_idle_streams_header_names_one_call_per_unrecorded_stream
-  tests run: 179, failed or errored: 5, red beyond the control: 5
+  tests run: 183, failed or errored: 5, red beyond the control: 5
 == revert: stream-yield (guidance.py)
   FAILED test_every_imperative_names_its_calls_in_order
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_idle_streams_header_names_one_call_per_unrecorded_stream
-  tests run: 179, failed or errored: 3, red beyond the control: 3
+  tests run: 183, failed or errored: 3, red beyond the control: 3
 == revert: stream-snapshot (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_prose_the_structure_moved_still_says_what_it_said
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: stream-model (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_idle_streams_header_names_one_call_per_unrecorded_stream
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: next-calls (guidance.py)
   FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[done]
   FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[nyquist]
@@ -385,13 +386,13 @@ red in the control with nothing reverted: 0
   FAILED test_the_walk_bites_on_a_served_gate_that_refuses
   FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[nyquist]
   FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[temper]
-  tests run: 179, failed or errored: 56, red beyond the control: 56
+  tests run: 183, failed or errored: 56, red beyond the control: 56
 == revert: yield-render (guidance.py)
   FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-down]
   FAILED test_a_refused_casting_goes_back_to_its_teammate_not_to_the_teardown[team-up]
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_wait_policy_has_one_spelling
-  tests run: 179, failed or errored: 4, red beyond the control: 4
+  tests run: 183, failed or errored: 4, red beyond the control: 4
 == revert: castings-taskoutput (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
@@ -399,13 +400,13 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_prose_the_structure_moved_still_says_what_it_said
-  tests run: 179, failed or errored: 6, red beyond the control: 6
+  tests run: 183, failed or errored: 6, red beyond the control: 6
 == revert: validate-step (guidance.py)
   FAILED test_a_decomposition_is_not_validated_while_a_writer_is_still_writing
   FAILED test_every_imperative_names_its_calls_in_order
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_payload_publishes_the_steps_its_header_renders
-  tests run: 179, failed or errored: 4, red beyond the control: 4
+  tests run: 183, failed or errored: 4, red beyond the control: 4
 == revert: assay-gate (guidance.py)
   FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[latent-open]
   FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[nothing-open]
@@ -418,7 +419,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_gate_then_phase_note_holds_past_the_gate_on_every_list
   FAILED test_the_past_the_gate_walk_bites_on_the_621318d_sentences
-  tests run: 179, failed or errored: 11, red beyond the control: 11
+  tests run: 183, failed or errored: 11, red beyond the control: 11
 == revert: done-commit (guidance.py)
   FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[latent-open]
   FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[nothing-open]
@@ -429,31 +430,31 @@ red in the control with nothing reverted: 0
   FAILED test_every_imperative_names_its_calls_in_order
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_gate_then_phase_note_holds_past_the_gate_on_every_list
-  tests run: 179, failed or errored: 9, red beyond the control: 9
+  tests run: 183, failed or errored: 9, red beyond the control: 9
 == revert: audit-structure (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_structure_audit_bites_on_the_dispatch_only_spawn_steps
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: audit-spawns (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_structure_audit_bites_on_a_spawn_that_is_not_one_move
   FAILED test_the_structure_audit_reads_the_rule_printed_above_the_step
-  tests run: 179, failed or errored: 3, red beyond the control: 3
+  tests run: 183, failed or errored: 3, red beyond the control: 3
 == revert: audit-roster (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_structure_audit_bites_when_a_stream_has_no_call
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: audit-fresh-seed (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_every_site_and_every_payload_is_judged_as_a_step_list
   FAILED test_the_naive_seed_fix_would_spawn_every_teammate_twice
-  tests run: 179, failed or errored: 3, red beyond the control: 3
+  tests run: 183, failed or errored: 3, red beyond the control: 3
 == revert: audit-call-prose (test_guidance_imperatives.py)
   FAILED test_a_conditional_sentence_cannot_add_or_move_a_call
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_context_sweep_bites_on_the_three_filed_contexts
   FAILED test_the_post_assay_context_names_no_call_and_no_condition
-  tests run: 179, failed or errored: 4, red beyond the control: 4
+  tests run: 183, failed or errored: 4, red beyond the control: 4
 == revert: list-move-rule (guidance.py)
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
@@ -464,21 +465,21 @@ red in the control with nothing reverted: 0
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
   FAILED test_the_prose_the_structure_moved_still_says_what_it_said
   FAILED test_the_rules_block_states_the_one_move_and_spawn_clauses_once
-  tests run: 179, failed or errored: 9, red beyond the control: 9
+  tests run: 183, failed or errored: 9, red beyond the control: 9
 == revert: gate-read (guidance.py)
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_gate_then_phase_note_holds_past_the_gate_on_every_list
-  tests run: 179, failed or errored: 3, red beyond the control: 3
+  tests run: 183, failed or errored: 3, red beyond the control: 3
 == revert: gate-note-claim (guidance.py)
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_gate_then_phase_note_holds_past_the_gate_on_every_list
-  tests run: 179, failed or errored: 3, red beyond the control: 3
+  tests run: 183, failed or errored: 3, red beyond the control: 3
 == revert: advance-notice (guidance.py)
   FAILED test_a_passed_done_gate_points_the_lead_at_the_strip
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: deliberate-line (guidance.py)
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
@@ -487,7 +488,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 179, failed or errored: 7, red beyond the control: 7
+  tests run: 183, failed or errored: 7, red beyond the control: 7
 == revert: team-down-answer (teams.py)
   FAILED test_a_served_list_is_one_move_in_the_rules_and_in_every_answer
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
@@ -496,25 +497,25 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 179, failed or errored: 7, red beyond the control: 7
+  tests run: 183, failed or errored: 7, red beyond the control: 7
 == revert: crossing-fallback (guidance.py)
   FAILED test_an_unresolved_crossing_takes_the_generic_header
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_no_emission_carries_an_unresolved_slot_in_any_phase
   FAILED test_the_gate_out_of_f5_is_the_one_the_run_flags_name
-  tests run: 179, failed or errored: 4, red beyond the control: 4
+  tests run: 183, failed or errored: 4, red beyond the control: 4
 == revert: audit-one-move (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: audit-answers (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: audit-rules-walk (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_one_move_walk_bites_on_every_shape_the_defects_took
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: f5-crossing (guidance.py)
   FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5]
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper-nyquist]
@@ -525,7 +526,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[temper]
-  tests run: 179, failed or errored: 9, red beyond the control: 9
+  tests run: 183, failed or errored: 9, red beyond the control: 9
 == revert: f55-crossing (guidance.py)
   FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f5.5]
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[nyquist]
@@ -536,7 +537,7 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[nyquist]
-  tests run: 179, failed or errored: 9, red beyond the control: 9
+  tests run: 183, failed or errored: 9, red beyond the control: 9
 == revert: temper-gate-step (guidance.py)
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper-nyquist]
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper]
@@ -545,7 +546,7 @@ red in the control with nothing reverted: 0
   FAILED test_every_imperative_names_its_calls_in_order
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_gate_out_of_f5_is_the_one_the_run_flags_name
-  tests run: 179, failed or errored: 7, red beyond the control: 7
+  tests run: 183, failed or errored: 7, red beyond the control: 7
 == revert: nyquist-gate-step (guidance.py)
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[nyquist]
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper-nyquist]
@@ -553,7 +554,7 @@ red in the control with nothing reverted: 0
   FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[temper-nyquist]
   FAILED test_every_imperative_names_its_calls_in_order
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  tests run: 179, failed or errored: 6, red beyond the control: 6
+  tests run: 183, failed or errored: 6, red beyond the control: 6
 == revert: grind-first (guidance.py)
   FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[done]
   FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[nyquist]
@@ -568,12 +569,12 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[nyquist]
   FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[temper]
-  tests run: 179, failed or errored: 13, red beyond the control: 13
+  tests run: 183, failed or errored: 13, red beyond the control: 13
 == revert: gate-record (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  tests run: 179, failed or errored: 3, red beyond the control: 3
+  tests run: 183, failed or errored: 3, red beyond the control: 3
 == revert: details-crossing (guidance.py)
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper-nyquist]
   FAILED test_a_post_assay_run_reaches_f6_by_the_served_lists_alone[temper]
@@ -587,17 +588,17 @@ red in the control with nothing reverted: 0
   FAILED test_the_gate_out_of_f5_is_the_one_the_run_flags_name
   FAILED test_the_recorded_evidence_shows_the_population_it_judged
   FAILED test_what_the_phase_work_files_is_served_the_grind_crossing[temper]
-  tests run: 179, failed or errored: 12, red beyond the control: 12
+  tests run: 183, failed or errored: 12, red beyond the control: 12
 == revert: temper-context (guidance.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_post_assay_context_names_no_call_and_no_condition
-  tests run: 179, failed or errored: 4, red beyond the control: 4
+  tests run: 183, failed or errored: 4, red beyond the control: 4
 == revert: post-assay-states (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_post_assay_context_names_no_call_and_no_condition
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: held-full-reopen (guidance.py)
   FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[latent-open]
   FAILED test_a_held_class_at_a_clean_full_f2_is_walked_to_done_by_the_served_lists[nothing-open]
@@ -606,18 +607,18 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_heading_the_context_sweep_removes_is_the_one_printed
-  tests run: 179, failed or errored: 7, red beyond the control: 7
+  tests run: 183, failed or errored: 7, red beyond the control: 7
 == revert: held-reopen-reason (guidance.py)
   FAILED test_a_held_full_f2_is_told_why_it_re_opens_rather_than_opens_assay
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: held-closing (guidance.py)
   FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4-temper]
   FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f4]
   FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f5.5]
   FAILED test_a_held_class_with_nothing_open_is_answered_none_not_a_refused_list[f5]
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  tests run: 179, failed or errored: 5, red beyond the control: 5
+  tests run: 183, failed or errored: 5, red beyond the control: 5
 == revert: f4-grind (guidance.py)
   FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[done]
   FAILED test_a_blocking_defect_beside_a_passing_assay_leaves_f4_by_the_served_list[nyquist]
@@ -629,11 +630,11 @@ red in the control with nothing reverted: 0
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
-  tests run: 179, failed or errored: 10, red beyond the control: 10
+  tests run: 183, failed or errored: 10, red beyond the control: 10
 == revert: f4-filed-states (test_guidance_imperatives.py)
   FAILED test_every_action_the_router_returns_is_served_by_a_router_state
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: f4-short (guidance.py)
   FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[done]
   FAILED test_a_short_assay_ledger_is_served_the_assay_and_then_leaves_f4[nyquist]
@@ -644,11 +645,12 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_short_ledger_rung_is_one_body_asked_by_all_three_phases
-  tests run: 179, failed or errored: 9, red beyond the control: 9
+  FAILED test_the_short_ledger_sentence_says_nothing_at_f4_it_has_not_earned[f4]
+  tests run: 183, failed or errored: 10, red beyond the control: 10
 == revert: short-states (test_guidance_imperatives.py)
   FAILED test_every_action_the_router_returns_is_served_by_a_router_state
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: cap-slot (guidance.py)
   FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f2]
   FAILED test_a_grind_crossing_at_the_cap_ends_at_the_transition_that_seals[f4]
@@ -659,61 +661,67 @@ red in the control with nothing reverted: 0
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_seal_detector_bites_on_the_list_served_before_the_fix
-  tests run: 179, failed or errored: 9, red beyond the control: 9
+  tests run: 183, failed or errored: 9, red beyond the control: 9
 == revert: capped-states (test_guidance_imperatives.py)
   FAILED test_every_action_the_router_returns_is_served_by_a_router_state
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: seal-detector (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_seal_detector_bites_on_the_list_served_before_the_fix
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: temper-coverage (transitions.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_optional_phase_doors_pass_a_complete_ledger[temper]
   FAILED test_the_optional_phase_doors_refuse_a_short_verdict_ledger[temper]
-  tests run: 179, failed or errored: 3, red beyond the control: 3
+  tests run: 183, failed or errored: 3, red beyond the control: 3
 == revert: nyquist-coverage (transitions.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_optional_phase_doors_pass_a_complete_ledger[nyquist]
   FAILED test_the_optional_phase_doors_refuse_a_short_verdict_ledger[nyquist]
-  tests run: 179, failed or errored: 3, red beyond the control: 3
+  tests run: 183, failed or errored: 3, red beyond the control: 3
 == revert: unrecorded-reopen (transitions.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_unrecorded_width_list_can_be_made
   FAILED test_the_walk_bites_on_a_served_gate_that_refuses
-  tests run: 179, failed or errored: 5, red beyond the control: 5
+  tests run: 183, failed or errored: 5, red beyond the control: 5
 == revert: f5-short (guidance.py)
   FAILED test_a_run_already_past_f4_on_a_short_ledger_is_served_the_assay[f5]
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_short_ledger_rung_is_one_body_asked_by_all_three_phases
-  tests run: 179, failed or errored: 5, red beyond the control: 5
+  FAILED test_the_short_ledger_sentence_says_nothing_at_f4_it_has_not_earned[f5]
+  tests run: 183, failed or errored: 6, red beyond the control: 6
 == revert: f55-short (guidance.py)
   FAILED test_a_run_already_past_f4_on_a_short_ledger_is_served_the_assay[f5.5]
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_the_short_ledger_rung_is_one_body_asked_by_all_three_phases
-  tests run: 179, failed or errored: 5, red beyond the control: 5
+  FAILED test_the_short_ledger_sentence_says_nothing_at_f4_it_has_not_earned[f5.5]
+  tests run: 183, failed or errored: 6, red beyond the control: 6
 == revert: width-grind-branch (guidance.py)
   FAILED test_an_unrecorded_width_with_a_defect_open_is_served_the_grind
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: none-owed (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_audit_sees_a_parking_none_at_an_action_that_owes_a_move
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: head-gate-walk (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_walk_bites_on_a_served_gate_that_refuses
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 == revert: short-phase-states (test_guidance_imperatives.py)
   FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_the_post_assay_context_names_no_call_and_no_condition
-  tests run: 179, failed or errored: 2, red beyond the control: 2
+  tests run: 183, failed or errored: 2, red beyond the control: 2
+== revert: short-ledger-earned (guidance.py)
+  FAILED test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
+  FAILED test_the_short_ledger_sentence_says_nothing_at_f4_it_has_not_earned[f4]
+  tests run: 183, failed or errored: 2, red beyond the control: 2
 
 rules with no test red when reverted: none

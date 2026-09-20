@@ -2,7 +2,7 @@
 # evidence-for: FR-007, FR-008, OT-002, OT-013, GI-008, CT-008
 
 keys in _ACTION_IMPERATIVES: 23
-emission sites swept:        360
+emission sites swept:        375
 router payloads swept:       162
 defective emissions:         0
 
@@ -15,6 +15,7 @@ one-move walk (every site and every payload, lead-stalls D-044 / D-045): RULE_WI
 door answers the walk judged, read off the real handlers: Foundry-Accept-Casting -> 'Call Foundry-Next now.'; Foundry-Team-Down -> "Foundry-Team-Down is one step of the list Foundry-Next served you: go on to that list's next step. A list of next calls Foundry-Next serves is ONE move: make every step it names, in order, through its last step (its END YOUR TURN, or its final call), and call Foundry-Next after that last step, never as a move between two of its steps, because a Foundry-Next taken mid-list reads a run state the list has not finished moving and answers with the list again from step (1) or with a route past the steps still owed. A tool answer received inside the list is followed by the list's next step."
 CONDITIONAL is the prose backstop; the zero is computed over the step lists.
 run_streams sites expand the stream steps from this run's cycle-10 roster: trace, prove, test, test01
+run_streams sites are ALSO swept over the full template roster (site suffix <full-roster>): trace, flow_trace, prove, research_audit, coverage_diff, test01, test, probe, sight
 
 site = action@emitting-phase[liveness reading]; readings swept: live, idle, torn-down, registered-not-spawned, undispatched, unmeasured, wave-boundary, final-wave-done, unreadable-manifest, refused, refused-team-down, refused-foreign-pane, refused-other-team, unaccepted, live-with-owed-acceptance
 
@@ -442,6 +443,21 @@ twenty that have nothing to route.
   run_streams@F1[refused-other-team]                CALL  idle/idle                    YOUR NEXT CALLS (in order):
   run_streams@F1[unaccepted]                        CALL  idle/idle                    YOUR NEXT CALLS (in order):
   run_streams@F1[live-with-owed-acceptance]         NONE  live/live                    YOUR NEXT CALL: NONE. Your INSPECT streams are runni
+  run_streams@F1[live]<full-roster>                 NONE  live/live                    YOUR NEXT CALL: NONE. Your INSPECT streams are runni
+  run_streams@F1[idle]<full-roster>                 CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  run_streams@F1[torn-down]<full-roster>            CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  run_streams@F1[registered-not-spawned]<full-roster>  CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  run_streams@F1[undispatched]<full-roster>         CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  run_streams@F1[unmeasured]<full-roster>           CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  run_streams@F1[wave-boundary]<full-roster>        CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  run_streams@F1[final-wave-done]<full-roster>      CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  run_streams@F1[unreadable-manifest]<full-roster>  CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  run_streams@F1[refused]<full-roster>              CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  run_streams@F1[refused-team-down]<full-roster>    CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  run_streams@F1[refused-foreign-pane]<full-roster>  CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  run_streams@F1[refused-other-team]<full-roster>   CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  run_streams@F1[unaccepted]<full-roster>           CALL  idle/idle                    YOUR NEXT CALLS (in order):
+  run_streams@F1[live-with-owed-acceptance]<full-roster>  NONE  live/live                    YOUR NEXT CALL: NONE. Your INSPECT streams are runni
   run_temper@F1[live]                               CALL  -                            YOUR NEXT CALLS (in order):
   run_temper@F1[idle]                               CALL  -                            YOUR NEXT CALLS (in order):
   run_temper@F1[torn-down]                          CALL  -                            YOUR NEXT CALLS (in order):
