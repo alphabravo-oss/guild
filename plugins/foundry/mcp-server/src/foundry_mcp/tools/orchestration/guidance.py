@@ -2354,6 +2354,44 @@ _SIGHT_STEP = _Step(
 _STREAM_TEMPLATE_ROSTER = (*_STREAM_AGENTS, "sight")
 
 
+#: lead-stalls US-002 / FR-015 / CT-008 (D-065) — EVERY STREAM PROMPT CARRIES
+#: THE LEDGER CLAUSE, BECAUSE A STREAM THE SERVER CANNOT SEE IS A STREAM IT
+#: TELLS THE LEAD TO SPAWN AGAIN.
+#:
+#: `run_streams` is branched on `_waiting_on_agents` (D-019), and that reading
+#: is taken from the progress ledgers under `{run}/progress/`. The stream
+#: prompts named no ledger, so `test` — a bare `general-purpose` agent with no
+#: agent file — and `test01` wrote none in any cycle and were invisible to the
+#: reading in EVERY cycle. Driven at 0eeb798 with five streams running, the
+#: reading returned `{"waiting": false, "count": 0, "agents": []}` and the lead
+#: was served the idle branch: the instruction to dispatch all five streams
+#: that were already running. The idle branch's own tail names the cost — TEST
+#: verifies a GRIND's fixes by REVERTING each one in the same tree TRACE and
+#: PROVE are reading, so a double-dispatched TEST reverts them twice.
+#:
+#: The clause is the one `_DECOMPOSITION_WRITERS` already hands its writers,
+#: for the same reason and in the same words: a BACKGROUND agent dispatched by
+#: a bare `Agent(...)` call passes through no door, so nothing but its own
+#: prompt can hand it the protocol. The path is per-stream because the reading
+#: is per-file: `_agent_liveness_record` keys a row off `path.stem`.
+_STREAM_LEDGER_CLAUSE_TAIL = (
+    ": append one JSON line carrying timestamp (UTC ISO-8601 with the "
+    "offset), phase 'inspect' and step as the FIRST act, again at each new "
+    "step, and a LAST line that also carries 'done': true. That ledger is "
+    "what this server reads to tell a stream that is running from one that "
+    "was never spawned."
+)
+
+
+def _stream_ledger_clause(stream: str) -> str:
+    """The progress-ledger clause for one stream's prompt (D-065). Total."""
+    return (
+        " Keep a progress ledger at "
+        f"foundry-archive/{{run}}/progress/{stream}.jsonl"
+        + _STREAM_LEDGER_CLAUSE_TAIL
+    )
+
+
 def _stream_agent_step(stream: str) -> _Step:
     """The Agent call for one stream, total over every name."""
     subagent_type, prompt = _STREAM_AGENTS.get(
@@ -2363,6 +2401,7 @@ def _stream_agent_step(stream: str) -> _Step:
             f"Run the {stream} verification stream for the active foundry run.",
         ),
     )
+    prompt += _stream_ledger_clause(stream)
     model = (
         f"model='{_GENERAL_STREAM_MODEL}', "
         if subagent_type == "general-purpose" else ""
