@@ -5764,6 +5764,47 @@ def test_the_idle_streams_header_names_one_call_per_unrecorded_stream(tmp_path):
         assert qualifier not in d["header"], (qualifier, d["header"])
 
 
+def test_every_stream_the_lead_spawns_is_told_where_its_own_ledger_goes():
+    """lead-stalls US-002 / FR-015 / CT-008 (D-065) — the branch the lead
+    receives is read off the progress ledgers, and nothing told a stream to
+    keep one.
+
+    `run_streams` is branched on `_waiting_on_agents` (D-019) and that reading
+    walks `{run}/progress/`. The prompts `_stream_agent_step` builds named no
+    ledger, so `test` — a bare `general-purpose` agent with no agent file at
+    all — and `test01` wrote none in any cycle. Driven on the executing server
+    at cycle 19 with five streams running, the reading returned
+    `{"waiting": false, "count": 0, "agents": []}` and the lead was served the
+    idle branch: dispatch all five streams that were already running. The idle
+    branch's own tail names the cost — TEST verifies a GRIND's fixes by
+    REVERTING each one in the same tree TRACE and PROVE are reading.
+
+    Asserted on the SUBSTITUTED HEADER and over the whole template roster, not
+    on `_STREAM_AGENTS` and not over this run's five: the clause has to reach
+    the string the lead pastes, with `{run}` resolved, for every stream a step
+    can be built for — which is the population D-067 widened the sweep to.
+    """
+    roster = [s for s in _STREAM_TEMPLATE_ROSTER if s != "sight"]
+    header = _format_imperative_header(
+        "run_streams", "", {"missing_streams": roster},
+        run_name=_AUDIT_RUN, phase="F1",
+        liveness={"waiting": False, "roster_agents": 0},
+    )
+    assert [
+        s for s in roster
+        if f"foundry-archive/{_AUDIT_RUN}/progress/{s}.jsonl" not in header
+    ] == [], header
+    # One spelling, appended by reference — the house rule for lead-facing
+    # prose that appears in more than one payload (`_GATE_THEN_PHASE_NOTE`'s
+    # precedent), so a hand-typed second copy cannot drift from this one.
+    assert header.count(_guidance._STREAM_LEDGER_CLAUSE_TAIL) == len(roster), header
+    # And the clause says the thing the reading needs: a FIRST act and a
+    # terminal line. A ledger written only at the end is the state D-065 was
+    # filed on.
+    assert "as the FIRST act" in _guidance._STREAM_LEDGER_CLAUSE_TAIL
+    assert "'done': true" in _guidance._STREAM_LEDGER_CLAUSE_TAIL
+
+
 #: lead-stalls D-038 — (A), (B) and (C): the state before the door, the door,
 #: and the payload after it. Each tuple is (the before-door arrange, the owed
 #: action/branch before, the door call, the owed action after).

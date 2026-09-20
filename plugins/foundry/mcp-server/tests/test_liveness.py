@@ -939,6 +939,107 @@ def test_an_expected_stream_can_be_queried_by_identifier(run_env) -> None:
     assert result["agents"][0]["status"] == fs.STATUS_NO_LEDGER
 
 
+def test_a_stream_that_finished_an_earlier_cycle_is_not_done_in_this_one(
+    run_env,
+) -> None:
+    """D-065 — a stream's ledger is ONE file for the whole run, and a terminal
+    line in it was written about a cycle that is over.
+
+    A stream passes through no spawn door, so nothing writes it a
+    ``spawns.log`` record and the D-058 supersede rung above could never fire
+    for one: measured on a real run, ``grep -cE "trace|prove|test01"`` over the
+    whole log returns 0, every line a ``casting_id``. So once ``prove`` wrote
+    ``"done": true`` in cycle 17 it read ``done`` in cycle 19 while it was
+    running, and the ``run_streams`` branch the lead is served reads that
+    roster. What stands in for the missing record is the INSPECT ENTRY: F2 is
+    re-entered once per cycle by ``inspect_start``, so its ``started_at`` dates
+    the moment this cycle's roster was asked for.
+    """
+    project_root, fdir = run_env
+    _enter_inspect(fdir, minutes_ago=40)
+    _write_ledger(fdir, "prove", [(90000, "inspect", "prove c17 swept")])
+    _append_terminal_line(fdir, "prove", 86400, "prove c17 recorded 14/14")
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["prove"]
+
+    assert record["status"] == fs.STATUS_STALLED
+    assert "detail" in record
+    assert record["dispatched_age_seconds"] < record["last_line_age_seconds"]
+
+
+def test_a_stream_that_finished_inside_this_inspect_still_reports_done(
+    run_env,
+) -> None:
+    """The control, and the one that keeps D-065's fix quiet.
+
+    Same ledger, opposite order: the stream answered THIS cycle's INSPECT and
+    then finished. Read as anything but ``done`` this would put every finished
+    stream back on the watchlist for the rest of the cycle — and the roster a
+    lead stops trusting is the roster D-022 names.
+    """
+    project_root, fdir = run_env
+    _enter_inspect(fdir, minutes_ago=40)
+    _write_ledger(fdir, "prove", [(1800, "inspect", "prove c19 swept")])
+    _append_terminal_line(fdir, "prove", 600, "prove c19 recorded 14/14")
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["prove"]
+
+    assert record["status"] == fs.STATUS_DONE
+    assert "detail" not in record
+
+
+def test_a_stream_terminal_line_is_left_alone_outside_inspect(run_env) -> None:
+    """The other control: the INSPECT entry dates nothing when the run is not
+    in INSPECT, so a finished stream stays finished through GRIND and past it.
+    """
+    project_root, fdir = run_env
+    _enter_phase(fdir, "F3", minutes_ago=40)
+    _write_ledger(fdir, "prove", [(90000, "inspect", "prove c17 swept")])
+    _append_terminal_line(fdir, "prove", 86400, "prove c17 recorded 14/14")
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["prove"]
+
+    assert record["status"] == fs.STATUS_DONE
+    assert "dispatched_at" not in record
+
+
+def test_a_stream_is_not_overruled_inside_the_first_threshold_of_its_inspect(
+    run_env,
+) -> None:
+    """"Too early to say" is silence, for a stream as for a teammate (D-058).
+
+    An INSPECT that opened two minutes ago has asked for nothing a moment's
+    patience would not answer, so the existing precedence stands and a
+    terminal line still outranks every age check.
+    """
+    project_root, fdir = run_env
+    _enter_inspect(fdir, minutes_ago=2)
+    _write_ledger(fdir, "prove", [(90000, "inspect", "prove c17 swept")])
+    _append_terminal_line(fdir, "prove", 86400, "prove c17 recorded 14/14")
+
+    record = _by_agent(fs.foundry_liveness(project_root=project_root))["prove"]
+
+    assert record["status"] == fs.STATUS_DONE
+
+
+def test_a_stream_with_no_ledger_gets_exactly_one_row(run_env) -> None:
+    """D-065's stream dispatches are kept OUT of ``overdue`` on purpose.
+
+    ``_missing_stream_records`` already reports a stream that has written
+    nothing, and it carries the ``progress_protocol`` block that fixes it.
+    Folded into ``overdue``, ``_missing_teammate_records`` would synthesize a
+    SECOND row for the same agent out of an artifact that does not exist.
+    """
+    project_root, fdir = run_env
+    _enter_inspect(fdir, minutes_ago=40)
+
+    agents = [r["agent"] for r in fs.foundry_liveness(project_root=project_root)["agents"]]
+
+    assert agents.count("prove") == 1, agents
+    assert agents.count("trace") == 1, agents
+    assert len(agents) == len(set(agents)), agents
+
+
 def test_the_empty_roster_case_survives_the_expected_roster(run_env) -> None:
     """Truth 2 is load-bearing and must not regress.
 
