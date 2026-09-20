@@ -1717,14 +1717,69 @@ def _at_cap(fdir: Path) -> bool:
     )
 
 
+#: The drives of the last `_router_drives()` call, under the fingerprint of the
+#: table they were taken against: `{fingerprint: drives}`.
+_DRIVE_CACHE: dict[str, list] = {}
+
+
+def _table_fingerprint() -> str:
+    """What every drive below is a function OF: the router, as it stands NOW.
+
+    lead-stalls GI-008 / FR-007 (D-063) — WHY THE CACHE IS KEYED AND NOT BARE.
+    ------------------------------------------------------------------------
+    `_router_drives` builds a scratch run per (state x clock) and calls the
+    real router on each, and D-063's walk adds a real `Foundry-Gate` call to
+    every list that opens with one. A whole-module run asks for the same 158
+    drives seven times over, and the evidence command that reverts each source
+    hunk re-runs that module once per mutation under a `# evidence-timeout:`
+    the gate enforces — so repeating the work is not a matter of taste here,
+    it is what decides whether the corpus re-executes inside its own budget.
+
+    ...WHICH IS EXACTLY WHY A BARE CACHE WOULD BE WRONG. A dozen tests in this
+    module PLANT a defect — in `_IMPERATIVES`, or by monkeypatching a function
+    on `guidance` itself — and ask the sweep to find it. A cache that served
+    the shipped router's drives to a mutated one would report a clean sweep
+    over a router that is not the one in memory, which is the
+    green-over-nothing failure this whole suite is built to refuse.
+
+    SO THE KEY IS THE ROUTER, DERIVED, NEVER A LIST SOMEBODY MAINTAINS. Two
+    readings, because the two kinds of mutation are invisible to each other's:
+    every module attribute by IDENTITY, which is what `monkeypatch.setattr`
+    replaces (a lambda planted over `_team_work_in_flight` or `_chosen_branch`
+    is a new object, so the key moves), and the two audited tables by VALUE,
+    because a branch planted into `_IMPERATIVES` mutates that dict IN PLACE and
+    leaves its identity untouched. A test that plants something neither reading
+    can see would be served a stale answer, so the invalidation is asserted
+    against a real mutation of each kind rather than argued for here.
+    """
+    identities = ";".join(
+        f"{name}={id(value)}"
+        for name, value in sorted(vars(_guidance).items())
+        if not name.startswith("__")
+    )
+    return "\x00".join(
+        (identities, repr(_IMPERATIVES), repr(_ACTION_IMPERATIVES))
+    )
+
+
 def _router_drives() -> list[tuple[str, str, str, str, object, dict]]:
     """(site, state, transitions, owed action, owed branch, drive) per cell."""
-    return [
+    key = _table_fingerprint()
+    cached = _DRIVE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    drives = [
         (f"payload:{state}[{clock}]", state, transitions, action, branch,
          drive_router(arrange, seconds))
         for state, transitions, arrange, action, branch in _ROUTER_STATES
         for clock, seconds in _CLOCKS
     ]
+    # One entry: the router as it stands right now. A mutation test restores
+    # what it planted, so the shipped router's entry is re-made rather than
+    # accumulated, and the cache never holds more than the current reading.
+    _DRIVE_CACHE.clear()
+    _DRIVE_CACHE[key] = drives
+    return drives
 
 
 # --------------------------------------------------------------------------- #
@@ -7776,6 +7831,11 @@ def test_the_none_the_terminals_and_the_waiting_branches_answer_is_owed():
 #: drive it, so the defaults are the D-051..D-053 report exactly.
 _GUIDANCE_REL = "src/foundry_mcp/tools/orchestration/guidance.py"
 _THIS_MODULE = "tests/orchestration/test_guidance_imperatives.py"
+#: The rules `router_revert_report` reverts, one per row, from the module that
+#: has to hold them: four of them revert text in THIS file, and a row quoting
+#: that text from inside it would make the text appear twice (see
+#: `tests/orchestration/_router_reverts.py`).
+from tests.orchestration._router_reverts import _ROUTER_REVERTS  # noqa: E402
 
 
 def _diff_hunks(base: str, head: str | None, path: str) -> list[dict]:
@@ -7875,6 +7935,142 @@ def _run_with(project: Path, rel: str, text: str,
     return [f"  FAILED {name}" for name in failed] + [
         f"  tests run: {ran}, failed or errored: {len(failed)}"
     ]
+
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 / FR-008 / OT-002 — EVERY GUARD, MUTATED ON ITS OWN
+# --------------------------------------------------------------------------- #
+#
+# One row per rule this casting has landed: the name the log prints, the file,
+# the text as it stands, and the text it is reverted to. Each is applied ALONE
+# to a copy of the tree and this module is run against it, so a rule with no
+# test red when it is removed is named as one — which is the only reading of
+# "the sweep returns zero" that is not green-over-nothing.
+#
+# WHY THIS IS A PYTHON TABLE AND NOT A `# evidence-cmd:` ONE-LINER.
+# ----------------------------------------------------------------
+# It was a 12KB shell line holding this dict inline, and two things made that
+# untenable at cycle 19. The rules are the smaller one: a mutation table
+# spelled out in a shell string is a second implementation of what the suite
+# drives, free to drift from it, which is the argument
+# `tests/test_next_call_payloads.py#dispatch_refusal_report` makes for its own
+# move into Python.
+#
+# THE BINDING ONE IS THE CLOCK. The line ran the mutations SERIALLY, one full
+# module run each, and `# evidence-timeout:` is capped at
+# `evidence.EVIDENCE_TIMEOUT_CEILING_SECONDS` = 1800 — which the gate enforces
+# per log at every INSPECT boundary. Measured on this tree: 4 mutations in
+# 2m27s, so 86 of them is ~53 minutes, and the log could not re-execute inside
+# a budget it is allowed to declare. Run through `_run_with`, which copies the
+# tree per mutation and so is safe to run in parallel, the same population fits
+# well inside it. `hunk_revert_report` beside this one already had that shape.
+#
+
+
+
+def test_every_router_revert_names_text_that_is_in_the_tree_exactly_once():
+    """The floor under `router_revert_report`, and the reason it is a TEST.
+
+    A row whose text has moved cannot be applied, so the rule it stands for is
+    silently unjudged — the log still re-executes, and still reports a zero,
+    over a population one smaller than it claims. That is the
+    green-over-nothing failure every sweep in this module is built to refuse,
+    and it is invisible in a log that names only what it DID run. So the table
+    is pinned here: every row applies, exactly once, in the file it names.
+
+    lead-stalls D-062 is what the absence of this pin already cost once: the
+    `f4-short` row quoted `if total < len(declared):`, the F4 arm moved onto
+    the shared `_short_ledger_assay` at cbd1500, and the row went from
+    matching once to matching nothing.
+    """
+    project = Path(__file__).resolve().parents[2]
+    counts = {
+        name: (project / rel).read_text(encoding="utf-8").count(old)
+        for name, rel, old, _new in _ROUTER_REVERTS
+    }
+    assert {n: c for n, c in counts.items() if c != 1} == {}, counts
+    names = [name for name, *_rest in _ROUTER_REVERTS]
+    assert len(set(names)) == len(names), names
+    # The rules this cycle added, by name, so a row dropped is caught as
+    # surely as a row that drifted.
+    assert {
+        "temper-coverage", "nyquist-coverage", "unrecorded-reopen",
+        "f5-short", "f55-short", "width-grind-branch", "none-owed",
+        "head-gate-walk", "short-phase-states",
+    } <= set(names), sorted(names)
+
+
+def router_revert_report(workers: int = 6) -> list[str]:
+    """`evidence/casting-imperatives-router-revert.log`: every rule in
+    `_ROUTER_REVERTS`, reverted alone, and the tests that go red for it.
+
+    The CONTROL is the unmutated tree, run first and subtracted: a suite that
+    is red before anything is reverted says nothing about any rule, and
+    charging its failures to a mutation is how a vacuous table reads as a
+    thorough one. `hunk_revert_report` states the same rule for its own hunks.
+
+    Deterministic in order and in content — the rows are walked in table
+    order and `_run_with` sorts its failures — so the log re-executes
+    byte-identically. ``workers`` only changes how long that takes.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    project = Path(__file__).resolve().parents[2]
+    sources = {
+        rel: (project / rel).read_text(encoding="utf-8")
+        for rel in {rel for _name, rel, _old, _new in _ROUTER_REVERTS}
+    }
+    baseline = [
+        line for line in _run_with(project, _GUIDANCE_REL, sources[_GUIDANCE_REL])
+        if line.startswith("  FAILED")
+    ]
+
+    def judged(row: tuple[str, str, str, str]) -> list[str]:
+        name, rel, old, new = row
+        text = sources[rel]
+        if text.count(old) != 1:
+            # NOT an exception: a rule whose text has moved is a finding about
+            # this table, and a report that raised here would take the whole
+            # log down with it and say nothing about the other 85.
+            return [
+                f"  the text this reverts appears {text.count(old)} times in "
+                f"{Path(rel).name} — the rule moved and this row did not"
+            ]
+        result = _run_with(project, rel, text.replace(old, new))
+        red = [
+            line for line in result
+            if line.startswith("  FAILED") and line not in baseline
+        ]
+        return red + [f"{result[-1]}, red beyond the control: {len(red)}"]
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        results = list(pool.map(judged, _ROUTER_REVERTS))
+
+    lines = [
+        f"rules reverted one at a time: {len(_ROUTER_REVERTS)}",
+        f"judged by: {_THIS_MODULE}",
+        "files mutated: " + ", ".join(sorted(
+            Path(rel).name for rel in
+            {rel for _n, rel, _o, _x in _ROUTER_REVERTS}
+        )),
+        f"red in the control with nothing reverted: {len(baseline)}",
+        *baseline,
+        "",
+    ]
+    for (name, rel, _old, _new), result in zip(_ROUTER_REVERTS, results):
+        lines.append(f"== revert: {name} ({Path(rel).name})")
+        lines.extend(result)
+    green = [
+        name for (name, _rel, _old, _new), result in
+        zip(_ROUTER_REVERTS, results)
+        if not any(line.startswith("  FAILED") for line in result)
+    ]
+    lines += [
+        "",
+        f"rules with no test red when reverted: {', '.join(green) or 'none'}",
+    ]
+    return lines
 
 
 def hunk_revert_report(
