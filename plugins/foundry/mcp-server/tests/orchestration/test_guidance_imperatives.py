@@ -84,6 +84,7 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _LEAD_CALLS,
     _SPAWN_DOORS,
     _SPAWN_IS_ONE_MOVE,
+    _STREAM_TEMPLATE_ROSTER,
     _Step,
     _WAITING_IS_NOT_STOPPING,
     _WAITING_REPORTS_ONLY,
@@ -589,13 +590,42 @@ def _emission_phases(action: str) -> tuple[str, ...]:
 #: no call for `test01` under.
 _C10_ROSTER = ("trace", "prove", "test", "test01")
 
+#: lead-stalls FR-007 / FR-008 / OT-002 (D-067) — THE SWEEP EXPANDS
+#: `run_streams` OVER EVERY ROSTER THE ENTRY CAN BE EMITTED UNDER, NOT OVER
+#: ONE.
+#:
+#: `run_streams`' steps are not one step — they are one step PER STREAM,
+#: expanded by `_expanded_steps` from whatever roster the router published in
+#: `details["missing_streams"]`. Swept over `_C10_ROSTER` alone, the four
+#: STREAM_* rungs judged four of the nine streams `_STREAM_TEMPLATE_ROSTER`
+#: declares, so the zero lead-stalls FR-008 discharges on was a zero over a
+#: population five streams short of the one the table emits. Driven at
+#: 0eeb798, one mutation per fresh process, replacing a stream's agent with
+#: the lead-stalls FR-007 defect shape ("Decide for yourself which agent to
+#: run and whether it is owed."): breaking `trace`, `prove`, `test` or
+#: `test01` raised 15-17
+#: findings, and breaking `flow_trace`, `research_audit`, `coverage_diff` or
+#: `probe` raised 0. The split was exactly fixture-roster membership — and
+#: `research_audit` is one of the five streams THIS run's INSPECT requires at
+#: every cycle, so the narrowing was blind to a step the lead was being served.
+#:
+#: `_C10_ROSTER` is kept and swept ALONGSIDE the full roster rather than
+#: replaced by it: it is the reading D-040's original site was filed on, and a
+#: sweep that stopped reproducing it would drop the control while widening the
+#: population. The pair is the axis; a stream added to `_STREAM_AGENTS` joins
+#: the sweep the day it lands, with no row to hand-write.
+_AUDIT_ROSTERS = (
+    ("", _C10_ROSTER),
+    ("<full-roster>", tuple(_STREAM_TEMPLATE_ROSTER)),
+)
 
-def _site_details(action: str) -> dict:
+
+def _site_details(action: str, roster: tuple[str, ...] = _C10_ROSTER) -> dict:
     """The `details` an emission site is formatted with: the router's own
     shape, so the stream steps expand from a roster and not from the
     template fallback."""
     if action == "run_streams":
-        return {"missing_streams": list(_C10_ROSTER)}
+        return {"missing_streams": list(roster)}
     # lead-stalls D-050 — `run_temper` ends in the gate out of F5, which the
     # router names on `details["crossing"]`: `done` on a --temper run.
     if action == "run_temper":
@@ -603,9 +633,19 @@ def _site_details(action: str) -> dict:
     return {}
 
 
-def _audit_sites() -> list[tuple[str, str, str, str, object]]:
-    """(action, site label, emitted text, owed branch, reading) for every string
-    the table can emit.
+def _site_rosters(action: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """The (label suffix, roster) pairs `action` is swept under (D-067).
+
+    Only `run_streams` expands its steps from a roster, so it is the only
+    entry with more than one; every other key is swept once, under a suffix
+    that keeps its site label exactly what it has always been.
+    """
+    return _AUDIT_ROSTERS if action == "run_streams" else (("", _C10_ROSTER),)
+
+
+def _audit_sites() -> list[tuple[str, str, str, str, object, dict]]:
+    """(action, site label, emitted text, owed branch, reading, details) for
+    every string the table can emit.
 
     One enumeration, two readers: the detector below and the report it feeds.
     A second copy of this loop in the evidence command would be a second
@@ -617,22 +657,31 @@ def _audit_sites() -> list[tuple[str, str, str, str, object]]:
     `_emitted_branch` needs to resolve the wave slots the same way the formatter
     did. Carried rather than looked up by label, so the two cannot drift.
     ``""`` for the twenty unbranched entries, which have nothing to route.
+
+    The sixth is lead-stalls D-067's: the DETAILS this site was formatted
+    with. Carried for the same reason the reading is — a site is now emitted
+    under more than one roster (`_site_rosters`), so a consumer that rebuilt
+    the details from the action name alone would judge the full-roster site's
+    text against the four-stream site's step list and never say so.
     """
     return [
         (
             action,
-            f"{action}@{phase}[{label}]",
+            f"{action}@{phase}[{label}]{suffix}",
             _format_imperative_header(
-                action, "", _site_details(action), run_name=_AUDIT_RUN,
+                action, "", details, run_name=_AUDIT_RUN,
                 phase=phase, liveness=liveness,
             ),
             _owed_branch(action, owed) if _parse_branches(
                 _ACTION_IMPERATIVES[action]
             ) else "",
             liveness,
+            details,
         )
         for action in sorted(_ACTION_IMPERATIVES)
         for phase in _emission_phases(action)
+        for suffix, roster in _site_rosters(action)
+        for details in (_site_details(action, roster),)
         for label, liveness, owed in _LIVENESS_READINGS
     ]
 
@@ -2177,9 +2226,8 @@ def audit_next_call_structure(drives=None) -> list[str]:
     tools = _mcp_tool_names()
     answers = _step_answers()
     findings: list[str] = []
-    for action, site, text, _owed, liveness in _audit_sites():
+    for action, site, text, _owed, liveness, details in _audit_sites():
         phase = site.split("@", 1)[1].split("[", 1)[0]
-        details = _site_details(action)
         calls, header = _emitted_imperative(
             action, details, run_name=_AUDIT_RUN, phase=phase, liveness=liveness,
         )
@@ -2333,7 +2381,7 @@ def audit_action_imperatives(drives=None) -> list[str]:
     byte-identically.
     """
     findings: list[str] = []
-    for action, site, text, owed, liveness in _audit_sites():
+    for action, site, text, owed, liveness, details in _audit_sites():
         hit = _HANDS_OVER_THE_CONDITION.search(text)
         if hit:
             quoted = " ".join(
@@ -2395,7 +2443,7 @@ def audit_action_imperatives(drives=None) -> list[str]:
         # reading" returns zero over that.
         if owed:
             got = _emitted_branch(
-                action, text, _AUDIT_RUN, liveness, None, _site_details(action)
+                action, text, _AUDIT_RUN, liveness, None, details
             )
             if got != owed:
                 findings.append(
@@ -2460,8 +2508,14 @@ def audit_report() -> list[str]:
             f"{tool} -> {answer!r}" for tool, answer in sorted(_step_answers().items())
         ),
         "CONDITIONAL is the prose backstop; the zero is computed over the step lists.",
+        # lead-stalls D-067 — BOTH rosters are named, because a log that named
+        # only the four would still be disclosing a narrowing rather than the
+        # population. The pair IS the axis: the cycle-10 reading D-040 was
+        # filed on, and every stream the table can emit a step for.
         "run_streams sites expand the stream steps from this run's cycle-10 roster: "
         + ", ".join(_C10_ROSTER),
+        "run_streams sites are ALSO swept over the full template roster "
+        "(site suffix <full-roster>): " + ", ".join(_STREAM_TEMPLATE_ROSTER),
         "",
         "site = action@emitting-phase[liveness reading]; readings swept: "
         + ", ".join(label for label, _, _ in _LIVENESS_READINGS),
@@ -2575,11 +2629,11 @@ def audit_evidence() -> list[str]:
         "twenty that have nothing to route.",
         "",
     ]
-    for action, site, text, owed, liveness in _audit_sites():
+    for action, site, text, owed, liveness, details in _audit_sites():
         head = " ".join(text.split("\n", 1)[0].split())
         answer = "NONE" if _NAMES_NO_CALL.search(text) else "CALL"
         branch = (
-            f"{_emitted_branch(action, text, _AUDIT_RUN, liveness, None, _site_details(action))}/{owed}"
+            f"{_emitted_branch(action, text, _AUDIT_RUN, liveness, None, details)}/{owed}"
             if owed else "-"
         )
         # Two literal spaces on BOTH sides of the answer, independent of how
@@ -2724,7 +2778,7 @@ def test_the_recorded_evidence_shows_the_population_it_judged():
     row per (audited action x run state).
     """
     dump = audit_evidence()
-    for _action, site, _text, _owed, _reading in _audit_sites():
+    for _action, site, _text, _owed, _reading, _d in _audit_sites():
         assert any(site in line for line in dump), site
     assert sum(1 for l in dump if "  CALL  " in l or "  NONE  " in l) == len(
         _audit_sites()
@@ -2822,7 +2876,7 @@ def test_every_action_is_swept_in_every_run_state():
     incomplete one of the same size; this one enumerates the product and asks
     for each cell by name.
     """
-    sites = [site for _, site, _, _, _ in _audit_sites()]
+    sites = [site for _, site, _, _, _, _ in _audit_sites()]
     assert len(sites) == len(set(sites)) >= 22 * len(_LIVENESS_READINGS)
     # Every cell of the product, named. `unmeasured` rides alongside as the
     # reading a caller that measured nothing passes.
@@ -3809,7 +3863,7 @@ def test_no_emitted_header_leaves_a_substitution_slot_literal():
     Asserted over every emission site rather than over the one entry, because
     which key held the literal is not what was wrong with it.
     """
-    for _action, site, text, _owed, _reading in _audit_sites():
+    for _action, site, text, _owed, _reading, _d in _audit_sites():
         for slot in _SUBSTITUTED_SLOTS:
             assert slot not in text, (site, slot)
 
@@ -5242,7 +5296,7 @@ def test_the_condition_detector_bites_on_a_step_that_waits_on_an_answer():
 
     # And over what the table emits today, on every reading, it finds nothing:
     # the D-022 split is what makes that zero true rather than blind.
-    for _action, site, text, _owed, _reading in _audit_sites():
+    for _action, site, text, _owed, _reading, _d in _audit_sites():
         assert not _HANDS_OVER_THE_CONDITION.search(text), site
 
 
@@ -5550,10 +5604,10 @@ def test_every_site_and_every_payload_is_judged_as_a_step_list():
     header was rendered from, and the router states include the three a
     spawn door leaves before its Agent has written a line (D-038 / D-041).
     """
-    for action, site, text, _owed, liveness in _audit_sites():
+    for action, site, text, _owed, liveness, details in _audit_sites():
         phase = site.split("@", 1)[1].split("[", 1)[0]
         calls, header = _emitted_imperative(
-            action, _site_details(action), run_name=_AUDIT_RUN, phase=phase,
+            action, details, run_name=_AUDIT_RUN, phase=phase,
             liveness=liveness,
         )
         assert isinstance(calls, tuple), site
@@ -7561,6 +7615,56 @@ def test_the_short_ledger_rung_is_one_body_asked_by_all_three_phases():
 
 @pytest.mark.parametrize(
     "phase, flags",
+    [("F4", {}), ("F5", {"temper": True}), ("F5.5", {"nyquist": True})],
+    ids=["f4", "f5", "f5.5"],
+)
+def test_the_short_ledger_sentence_says_nothing_at_f4_it_has_not_earned(
+    run_env, phase, flags,
+):
+    """lead-stalls GI-008 / OT-013 (D-069) — the CLAUSE, judged where the lead
+    reads it.
+
+    cbd1500 made the helper's closing clause conditional on the emitting
+    phase, and reverted alone the whole suite stayed byte-identically green:
+    5765 passed, 88 skipped, the shipped control's own counts. Not one test
+    discriminated "…the spec declares." from "…the spec declares — from F4 as
+    surely as from F4.", which is the sentence the F4 lead read before the
+    fix. The rung one test up is an AST walk over `_compute_next_action`: it
+    pins the three CALL SITES, which is 54e7aea's structure, and passes
+    unchanged with this sentence reverted. `_ROUTER_REVERTS` carried rows for
+    those same three call sites and none for the helper's body.
+
+    So this is the assertion the zero was missing: both arms of the one
+    conditional, driven through the router on the three states that reach it.
+    At F4 the lead has crossed nothing, so naming F4 as the phase the refusal
+    reaches "as surely as" F4 is a sentence about nothing; past F4 it answers
+    the question the phase raises — why a run standing in F5 is sent back.
+    """
+    root, fdir = run_env
+    _assay_short(fdir, phase=phase, **flags)
+
+    nxt = foundry_next_action(root)
+
+    assert (nxt["phase"], nxt["action"]) == (phase, "run_assay"), nxt
+    served = nxt["instructions"]
+    earned = (
+        "the DONE gate refuses a ledger that covers fewer requirements than "
+        "the spec declares"
+    )
+    assert earned in served, served
+    if phase == "F4":
+        assert served.endswith(earned + "."), served
+        # The whole of what the fix removed, said as its own claim: at F4 the
+        # comparative clause is not merely absent, it is unsayable.
+        assert "as surely as from F4" not in served, served
+    else:
+        assert served.endswith(
+            f"{earned} — from {phase} as surely as from F4."
+        ), served
+
+
+@pytest.mark.parametrize(
+    "phase, flags",
     [("F5", {"temper": True}), ("F5.5", {"nyquist": True})],
     ids=["f5", "f5.5"],
 )
@@ -7799,7 +7903,7 @@ def test_the_none_the_terminals_and_the_waiting_branches_answer_is_owed():
     """
     parked = [
         (action, site, owed)
-        for action, site, text, owed, _liveness in _audit_sites()
+        for action, site, text, owed, _liveness, _d in _audit_sites()
         if _NAMES_NO_CALL.search(text)
     ]
     assert parked, "no site answers NONE at all — the control is vacuous"
@@ -7992,12 +8096,14 @@ def test_every_router_revert_names_text_that_is_in_the_tree_exactly_once():
     assert {n: c for n, c in counts.items() if c != 1} == {}, counts
     names = [name for name, *_rest in _ROUTER_REVERTS]
     assert len(set(names)) == len(names), names
-    # The rules this cycle added, by name, so a row dropped is caught as
-    # surely as a row that drifted.
+    # The rules the last two cycles added, by name, so a row dropped is caught
+    # as surely as a row that drifted. `short-ledger-earned` is D-069's: the
+    # first row in this table that reverts what a helper SAYS rather than
+    # where it is asked.
     assert {
         "temper-coverage", "nyquist-coverage", "unrecorded-reopen",
         "f5-short", "f55-short", "width-grind-branch", "none-owed",
-        "head-gate-walk", "short-phase-states",
+        "head-gate-walk", "short-phase-states", "short-ledger-earned",
     } <= set(names), sorted(names)
 
 

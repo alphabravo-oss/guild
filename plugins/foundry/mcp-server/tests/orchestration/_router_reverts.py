@@ -281,4 +281,14 @@ _ROUTER_REVERTS = (
     ('short-phase-states', _THIS_MODULE,
      '    ("temper-short", "GI-008", _arrange_temper_short, "run_assay", None),\n',
      ''),
+    # lead-stalls GI-008 / OT-013 (D-069) — THE CLAUSE, NOT ITS CALL SITES.
+    # The three rows above revert where `_short_ledger_assay` is ASKED; this
+    # one reverts what it SAYS. cbd1500 made the closing clause conditional so
+    # the sentence says nothing at F4 it has not earned, and reverted alone
+    # the whole suite stayed byte-identically green — 5765 passed, 88 skipped,
+    # the shipped control's own counts. A zero over 86 rules none of which is
+    # this sentence is a zero over a population the change is not in.
+    ('short-ledger-earned', _GUIDANCE_REL,
+     '            + ("." if phase == "F4" else f" — from {phase} as surely as from F4.")\n',
+     '            + f" — from {phase} as surely as from F4."\n'),
 )
