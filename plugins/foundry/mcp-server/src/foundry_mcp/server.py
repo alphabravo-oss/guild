@@ -1310,6 +1310,34 @@ async def list_tools() -> list[Tool]:
                     "items_total": {"type": "integer"},
                     "findings_count": {"type": "integer", "default": 0},
                 },
+                # lead-stalls D-068 — THE ONLY CLOSED OBJECT IN THIS LIST, AND
+                # IT IS CLOSED BECAUSE THIS DOOR OVERWRITES RATHER THAN APPENDS.
+                #
+                # The set was open, and the dispatch lambda reads only the five
+                # properties named above, so an unknown one was neither refused
+                # by `_argument_refusal` nor read by the handler. Driven live on
+                # 1.10.1 during INSPECT c19: `Foundry-Stream(stream="prove",
+                # cycle=19, items_checked=66, items_total=66, findings=3)` — the
+                # misspelling, plus a `notes` property the schema likewise does
+                # not name — returned `"ok": true` with no mention of either,
+                # and recorded `"findings": 0` over a cycle that had three.
+                #
+                # WHY THAT IS WORSE THAN A DROPPED ARGUMENT, AND WHY THIS DOOR
+                # RATHER THAN THE FORTY OTHERS THAT ARE ALSO OPEN. The
+                # description two lines up says it: "Replaces this (stream,
+                # cycle)'s totals". A dropped argument fails to record; this one
+                # OVERWRITES the standing record with a zero, and nothing in
+                # stream-rollup.json distinguishes a truthful zero from a zeroed
+                # one — so the loss is invisible to the ledger that exists to
+                # catch it, and the reading a lead takes as licence to cross out
+                # of F2 is the one a typo manufactures.
+                #
+                # `additionalProperties: false` rather than accepting `findings`
+                # as an alias: the alias buys back one spelling and leaves every
+                # other one silent, while the refusal path already exists at the
+                # dispatch boundary, already runs before the handler is entered,
+                # and already names the property it did not expect.
+                "additionalProperties": False,
             },
         ),
         Tool(

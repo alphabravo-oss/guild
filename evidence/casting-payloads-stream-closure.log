@@ -1,0 +1,28 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.test_next_call_payloads import stream_closure_report; [print(r) for r in stream_closure_report()]' 2>/dev/null
+# evidence-for: FR-004, NFR-002, GI-001
+
+the shipped Foundry-Stream schema
+  object is closed                     True
+  properties it names                  ['cycle', 'findings_count', 'items_checked', 'items_total', 'stream']
+  the spelled call passes              True
+
+the misspelled call, over the real dispatcher
+  handler was entered                  False
+  response ok                          None
+  refusal names findings               True
+  refusal names notes                  True
+
+the same arguments against the schema as it STOOD
+  additionalProperties deleted         True
+  refusal                              None
+  findings_count the lambda would read 0
+
+what that zero does to a standing record
+  first record findings                3
+  second record findings               0
+  it REPLACED, and says what it took   3
+  records kept in history              2
+
+blast radius: every other door on this server stays open
+  tools with a closed object           ['Foundry-Stream']
+  Foundry-Fix declares none            True

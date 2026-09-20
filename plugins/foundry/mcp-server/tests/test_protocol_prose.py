@@ -4930,12 +4930,24 @@ def test_teammate_keeps_the_failing_then_passing_account_out_of_the_call() -> No
     The instruction shipped with a justification that was not true: it told
     the teammate the call would be "rejected at the MCP boundary before it
     reaches a handler" because "the schema declares no field for it". Driven:
-    `additionalProperties` occurs ZERO times in server.py, so Foundry-Fix's
-    published inputSchema does not close its property set; JSON Schema permits
-    extra properties by default; and the MCP SDK's boundary check is exactly
-    jsonschema.validate against that schema, which ACCEPTS the undeclared key.
-    The dispatch lambda then reads only its named arguments, so the account is
-    silently discarded and the call reports success.
+    Foundry-Fix's published inputSchema declares no `additionalProperties`, so
+    it does not close its property set; JSON Schema permits extra properties by
+    default; and the MCP SDK's boundary check is exactly jsonschema.validate
+    against that schema, which ACCEPTS the undeclared key. The dispatch lambda
+    then reads only its named arguments, so the account is silently discarded
+    and the call reports success.
+
+    The measurement, not the count (lead-stalls D-068). This read
+    "`additionalProperties` occurs ZERO times in server.py", which was true of
+    the whole file when it was written and stopped being true the day
+    `Foundry-Stream` was closed — that door REPLACES a standing record, so a
+    property it silently drops destroys data rather than failing to add any,
+    and it is the one tool in the list that earns the refusal. Every other
+    schema there, Foundry-Fix's included, is still open, and
+    `test_closing_the_stream_object_leaves_every_peer_door_open` in
+    `test_next_call_payloads.py` is what keeps that so. A justification stated
+    as a file-wide count is a justification the next correct fix falsifies, so
+    it is stated against the one schema the rule is about.
 
     That is the same defect shape FR-025 removes from the temper skill -- a
     document citing a guard that does not exist. The instruction was right and
@@ -4956,8 +4968,9 @@ def test_teammate_keeps_the_failing_then_passing_account_out_of_the_call() -> No
     assert "rejected at the MCP boundary" not in flat, (
         "teammate.md claims an undeclared Foundry-Fix argument is rejected at "
         "the MCP boundary. It is not: the tool's inputSchema sets no "
-        "`additionalProperties: false` (grep server.py -- zero occurrences), "
-        "so the boundary's jsonschema.validate accepts the key. Justify the "
+        "`additionalProperties: false` (Foundry-Stream is the only entry in "
+        "server.py that does), so the boundary's jsonschema.validate accepts "
+        "the key. Justify the "
         "rule by what actually happens, or the first teammate to check the "
         "reason stops trusting the rule."
     )

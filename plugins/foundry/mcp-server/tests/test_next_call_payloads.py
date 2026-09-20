@@ -1834,7 +1834,7 @@ def test_foundry_next_after_team_up_leaves_running_teammates_running(
     assert drive["action"] != "cleanup_teams", drive["action"]
     assert not _tears_down(drive["instructions"]), drive["instructions"]
     assert "END YOUR TURN" in drive["header"], drive["header"]
-    # lead-stalls FR-015 / CT-012 (D-037) — the live reading publishes the
+    # lead-stalls FR-015 / CT-006 (D-037) — the live reading publishes the
     # registered teams too. `_waiting_on_agents` has two returns and documents
     # `teams_registered` on both; only the no-live-agents one was pinned, so
     # the live one could drop the key with every route still green.
@@ -2539,3 +2539,268 @@ def test_the_served_list_report_agrees_with_the_tests_beside_it():
     assert joined.count("      reaches its end         True") == 1, joined
     assert joined.count("    after the end: calls      []") == 2, joined
     assert joined.count("    unresolved {slot} texts   0") == 3, joined
+
+
+# ---------------------------------------------------------------------------
+# lead-stalls D-068 — the one closed object on this server's tool list.
+#
+# Filed in INSPECT c19 and ruled into this run by the user. It is not a
+# `next_call` defect; it lands in this module because this module already owns
+# the dispatch boundary `_argument_refusal` composes at, and the driven harness
+# above (`_call_over_the_dispatcher`) is what proves what a CALLER receives
+# rather than what a helper returns.
+# ---------------------------------------------------------------------------
+
+
+def test_the_stream_door_refuses_a_property_its_schema_does_not_name(monkeypatch):
+    """lead-stalls D-068 — the misspelling that zeroed a real finding count.
+
+    THE DEFECT, DRIVEN LIVE ON 1.10.1 DURING THIS RUN'S OWN INSPECT c19.
+    `Foundry-Stream`'s `inputSchema` declared five properties and did not close
+    the object, and the dispatch lambda reads `args.get("findings_count", 0)`.
+    So `findings: 3` — one letter off the name the schema publishes — was
+    neither refused by `_argument_refusal` nor read by the handler. The call
+    returned `"ok": true`, mentioned neither `findings` nor the `notes`
+    property sent with it, and wrote `"findings": 0` over a prove/19 record
+    that already stood at 1.
+
+    WHY A DROPPED ARGUMENT IS NOT THE HARM HERE. The door's own advertised
+    description is "Replaces this (stream, cycle)'s totals". The zero does not
+    fail to record — it OVERWRITES. Only the echoed `replaced` block showed the
+    loss; `stream-rollup.json` keeps nothing that tells a truthful zero apart
+    from a zeroed one, so an INSPECT ledger cannot self-detect it and a lead
+    reads the clean 0-finding record as licence to cross out of F2.
+
+    THE HANDLER IS SENTINELLED, NOT JUST THE PAYLOAD ASSERTED. A refusal that
+    arrived after the handler had already replaced the record would satisfy
+    every assertion about the returned dict and still have destroyed the
+    standing count, which is the whole defect. `_argument_refusal` runs before
+    `_DISPATCH` is read; this pins that ordering rather than assuming it.
+    """
+    from foundry_mcp import server as _server
+
+    entered: list[dict] = []
+    monkeypatch.setitem(
+        _server._DISPATCH, "Foundry-Stream", lambda args: entered.append(args)
+    )
+
+    payload = _call_over_the_dispatcher(
+        "Foundry-Stream",
+        {
+            "stream": "prove",
+            "cycle": 19,
+            "items_checked": 66,
+            "items_total": 66,
+            "findings": 3,
+            "notes": "the two properties the schema never named",
+        },
+    )
+
+    assert entered == [], entered
+    assert payload.get("ok") is not True, payload
+    reasons = " ".join(
+        item.get("reason", "") for item in payload.get("invalid_fields") or []
+    )
+    assert "findings" in reasons, payload
+    assert "notes" in reasons, payload
+
+
+def test_the_stream_door_still_takes_the_five_properties_it_names():
+    """lead-stalls D-068 — the closure refuses the unknown and nothing else.
+
+    `additionalProperties: False` is a rung that can be over-tightened into a
+    door nobody can call. The correctly-spelled call — every one of the five
+    published properties, including the two optional ones — has to pass the
+    schema and reach the handler, or the remedy costs more than the defect.
+
+    What the handler then does with it is `streams.py`'s business and is pinned
+    there. Only the boundary is read here, against the schema this server
+    actually advertises rather than a copy of it, so the assertion follows the
+    published object if its property list ever moves.
+    """
+    import asyncio
+
+    from foundry_mcp import server as _server
+
+    schema = asyncio.run(_server._tool_schema("Foundry-Stream"))
+    refusal = _server._argument_refusal(
+        "Foundry-Stream",
+        schema,
+        {
+            "stream": "prove",
+            "cycle": 19,
+            "items_checked": 66,
+            "items_total": 66,
+            "findings_count": 3,
+        },
+    )
+
+    assert refusal is None, refusal
+
+
+def test_closing_the_stream_object_leaves_every_peer_door_open():
+    """lead-stalls FR-004 / NFR-002 — the blast radius, the same shape as D-002's.
+
+    `additionalProperties` occurred ZERO times in `server.py` before this fix,
+    and a sweep that closed every tool in the list would have been the cheap
+    reading of D-068. It is the wrong one: closing a door is a REFUSAL a caller
+    did not previously receive, and forty of those is a protocol change this
+    spec does not name. `Foundry-Stream` earns it alone because it is the door
+    that REPLACES a standing record — its own description says so — so on it a
+    silently-dropped property destroys data, while on a door that appends or
+    reads it merely fails to add any.
+
+    `Foundry-Fix` is the peer pinned by name: `test_protocol_prose.py`'s
+    `test_teammate_keeps_the_failing_then_passing_account_out_of_the_call`
+    turns on its schema staying open — teammate.md tells a fixer the
+    failing-then-passing account is DROPPED rather than refused, and that
+    sentence stops being true the day someone closes this one too.
+    """
+    import asyncio
+
+    from foundry_mcp import server as _server
+
+    tools = asyncio.run(_server.list_tools())
+    closed = sorted(
+        tool.name
+        for tool in tools
+        if (tool.inputSchema or {}).get("additionalProperties") is False
+    )
+
+    assert closed == ["Foundry-Stream"], closed
+
+    fix = next(tool for tool in tools if tool.name == "Foundry-Fix")
+    assert "additionalProperties" not in (fix.inputSchema or {}), fix.inputSchema
+
+
+def stream_closure_report() -> list[str]:
+    """The evidence log for lead-stalls D-068, printed by the committed command.
+
+    Four things in one place, because the defect is only legible as a chain:
+    the shipped schema closes, the misspelled call is refused before the
+    handler, the SAME arguments against the schema as it stood are accepted in
+    silence, and the zero that acceptance produces overwrites a standing
+    record rather than failing to add one.
+
+    The opened copy is the run's `reverted` idiom — the pre-fix schema is
+    reconstructed by deleting one key from the shipped object, so the
+    before/after is derived here rather than remembered from the day it was
+    driven. Every value is a bool, an int or a sorted list of literals; no
+    path, duration or clock reading, so the log re-executes byte-identically
+    in the detached worktree the acceptance gate builds.
+    """
+    import asyncio
+    import tempfile
+
+    from foundry_mcp import server as _server
+    from foundry_mcp.tools.orchestration.streams import foundry_mark_stream
+
+    lines: list[str] = []
+    entered: list[int] = []
+
+    schema = asyncio.run(_server._tool_schema("Foundry-Stream"))
+    opened = {k: v for k, v in schema.items() if k != "additionalProperties"}
+
+    # The call driven live during INSPECT c19: the real counts, `findings` one
+    # letter off the published name, and a `notes` property the schema has
+    # never named.
+    slipped = {
+        "stream": "prove",
+        "cycle": 19,
+        "items_checked": 66,
+        "items_total": 66,
+        "findings": 3,
+        "notes": "the two properties the schema never named",
+    }
+
+    real = _server._DISPATCH["Foundry-Stream"]
+    _server._DISPATCH["Foundry-Stream"] = lambda a: entered.append(1) or real(a)
+    try:
+        refusal = _call_over_the_dispatcher("Foundry-Stream", slipped)
+    finally:
+        _server._DISPATCH["Foundry-Stream"] = real
+
+    reasons = " ".join(
+        item.get("reason", "") for item in refusal.get("invalid_fields") or []
+    )
+    accepted = _server._argument_refusal("Foundry-Stream", opened, slipped)
+
+    lines.append("the shipped Foundry-Stream schema")
+    lines.append("  object is closed                     "
+                 + str(schema.get("additionalProperties") is False))
+    lines.append("  properties it names                  "
+                 + str(sorted(schema.get("properties", {}))))
+    lines.append("  the spelled call passes              "
+                 + str(_server._argument_refusal("Foundry-Stream", schema, {
+                     "stream": "prove", "cycle": 19, "items_checked": 66,
+                     "items_total": 66, "findings_count": 3,
+                 }) is None))
+    lines.append("")
+    lines.append("the misspelled call, over the real dispatcher")
+    lines.append("  handler was entered                  " + str(bool(entered)))
+    lines.append("  response ok                          " + str(refusal.get("ok")))
+    lines.append("  refusal names findings               " + str("findings" in reasons))
+    lines.append("  refusal names notes                  " + str("notes" in reasons))
+    lines.append("")
+    lines.append("the same arguments against the schema as it STOOD")
+    lines.append("  additionalProperties deleted         "
+                 + str("additionalProperties" not in opened))
+    lines.append("  refusal                              " + str(accepted))
+    lines.append("  findings_count the lambda would read "
+                 + str(slipped.get("findings_count", 0)))
+    lines.append("")
+    lines.append("what that zero does to a standing record")
+    patch = pytest.MonkeyPatch()
+    try:
+        with contextlib.ExitStack() as stack:
+            base = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            root, fdir, _teams_dir = stack.enter_context(_scratch_run(base, patch))
+            _write_state(fdir, phase="F2", cycle=19)
+            truthful = foundry_mark_stream("prove", 19, 66, 66, 3, root)
+            zeroed = foundry_mark_stream("prove", 19, 66, 66, 0, root)
+            lines.append("  first record findings                "
+                         + str(truthful.get("findings")))
+            lines.append("  second record findings               "
+                         + str(zeroed.get("findings")))
+            lines.append("  it REPLACED, and says what it took   "
+                         + str((zeroed.get("replaced") or {}).get("findings")))
+            lines.append("  records kept in history              "
+                         + str(zeroed.get("records_this_cycle")))
+    finally:
+        patch.undo()
+    lines.append("")
+    lines.append("blast radius: every other door on this server stays open")
+    tools = asyncio.run(_server.list_tools())
+    lines.append("  tools with a closed object           " + str(sorted(
+        tool.name for tool in tools
+        if (tool.inputSchema or {}).get("additionalProperties") is False
+    )))
+    lines.append("  Foundry-Fix declares none            " + str(
+        "additionalProperties" not in (next(
+            tool for tool in tools if tool.name == "Foundry-Fix"
+        ).inputSchema or {})
+    ))
+    return lines
+
+
+def test_the_stream_closure_report_agrees_with_the_tests_beside_it():
+    """The committed log's claims, re-derived so neither can drift alone.
+
+    Same rule as `test_the_evidence_report_agrees_with_the_tests_beside_it`
+    one section up: a report nothing drives goes on reproducing
+    byte-identically off code the suite never runs.
+    """
+    joined = "\n".join(stream_closure_report())
+
+    assert "  object is closed                     True" in joined, joined
+    assert "  the spelled call passes              True" in joined, joined
+    assert "  handler was entered                  False" in joined, joined
+    assert "  refusal names findings               True" in joined, joined
+    assert "  refusal names notes                  True" in joined, joined
+    assert "  refusal                              None" in joined, joined
+    assert "  findings_count the lambda would read 0" in joined, joined
+    assert "  first record findings                3" in joined, joined
+    assert "  second record findings               0" in joined, joined
+    assert "  it REPLACED, and says what it took   3" in joined, joined
+    assert "  tools with a closed object           ['Foundry-Stream']" in joined, joined
+    assert "  Foundry-Fix declares none            True" in joined, joined
