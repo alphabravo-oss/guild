@@ -151,6 +151,10 @@ teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
   GI-008  assay-short-prove-filed  stale run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-short-prove-clean  fresh transition_to_done/-               running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-short-prove-clean  stale transition_to_done/-               running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-short             fresh run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  temper-short             stale run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  nyquist-short            fresh run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  nyquist-short            stale run_assay/-                        running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  inspect-filed-capped     fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  inspect-filed-capped     stale transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  assay-passed-filed-capped fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
