@@ -41,18 +41,23 @@ THE SOURCE-FILE CAP, which is a claim about a DIFF
 lead-stalls NFR-001 also caps how many source files this release may touch, and
 that clause landed here unenforced: nothing in the suite counted source files,
 so the build overran the cap in silence and the overrun was found by reading a
-diff by hand. The cap rungs, and the long note on why the diff is RECORDED here
-rather than computed from git — the same ruling the digest above rests on, for
-the same reasons — are at the bottom of this file. That note also says plainly
-what those rungs cannot see, because a diff is the one thing no durable test is
-able to hold.
+diff by hand. It was then overrun a second time, in the same silence, by rungs
+that counted a hand-typed roster against a hand-typed cap — an arithmetic that
+is true by construction whatever the run did (D-071). The cap is now MEASURED
+from the change, with `git diff` against the same base commit the digest above
+is pinned to, and the roster is asserted equal to what that measurement returns
+rather than standing in for it. The rungs and the long note on why the earlier
+recorded-diff ruling was wrong are at the bottom of this file.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path, PurePosixPath
+
+import pytest
 
 # tests/test_containment.py -> [0]=tests, [1]=mcp-server, [2]=foundry,
 # [3]=plugins, [4]=repo-root. Mirrors test_release_version.py's precedent:
@@ -244,49 +249,78 @@ def test_the_roster_walk_actually_sees_the_files_it_judges() -> None:
 # Everything above this line is a PROHIBITION, and a prohibition is a standing
 # property of the tree: "no new hook event" is answerable by reading
 # `hooks.json` today, with no reference to any other commit. The cap is not
-# that shape. "The change touches at most nine source files" is a claim about
+# that shape. "The change touches at most ten source files" is a claim about
 # a DIFF, and a diff needs two commits, only one of which a test can ever
 # stand on.
 #
-# WHY THE DIFF IS RECORDED HERE RATHER THAN COMPUTED
-# --------------------------------------------------
-# `git diff dda6154 HEAD` answers the question exactly -- today. It stops
-# answering it the moment this branch lands. A squash or a rebase drops the
-# base commit; and even where the commit survives, `HEAD` keeps moving, so on
-# the default branch a month from now the same command reports every file every
-# later run touched, and this rung fails forever on work it was never about. A
-# merge-base against the default branch survives the rebase and then degrades
-# from the other side: once this work IS the default branch, the merge-base is
-# `HEAD`, the diff is empty, and the rung passes while measuring nothing.
-# Neither one is a test -- the first is a landmine, the second a tautology.
+# THE DIFF IS COMPUTED, AND THE RULING THAT SAID IT COULD NOT BE WAS WRONG
+# ------------------------------------------------------------------------
+# This block used to argue the opposite, and the argument cost the run a second
+# silent overrun, so it is left on the record rather than quietly replaced. It
+# ran: `git diff dda6154 HEAD` answers the question today and stops answering it
+# the moment this branch lands, because a squash or a rebase drops the base
+# commit and, where the commit survives, `HEAD` keeps moving -- so on the
+# default branch a month from now the same command reports every file every
+# later run touched, and the rung fails forever on work it was never about. A
+# merge-base against the default branch degrades from the other side: once this
+# work IS the default branch the merge-base is `HEAD`, the diff is empty, and
+# the rung passes while measuring nothing. A landmine and a tautology.
 #
-# The module docstring already ruled on exactly this, in the same words and
-# against the same commit: a live `git show dda6154:...` reads the right bytes
-# and fails in a shallow clone. The digest above is a literal for that reason,
-# and the roster beside it is a literal for that reason. A `git diff dda6154`
-# down here would contradict a ruling two shipped rungs already rest on. So the
-# diff is recorded the same way they are.
+# Both halves of that are true, and the conclusion drawn from them was still
+# wrong, for two reasons.
 #
-# WHAT THIS CAN SEE, AND WHAT IT CANNOT, PLAINLY
-# ----------------------------------------------
-# A recorded roster cannot by itself notice a tenth file: an edited file and
-# an untouched file are identical on disk. What DOES leave a mark is this
-# codebase's citation convention. `tests/test_spec_id_convention.py` enforces
-# it over every prose surface under `tests/`, and every non-obvious construct
-# in `src/` carries the same qualified id naming the requirement it serves. So
-# a tenth file is caught by its CITATION rather than by its mtime: a source
-# file in the walked roots that cites this run and is not on the roster fails
-# the rung below, whatever commit it arrived in.
+# THE FIRST: what it chose instead was the tautology it was trying to avoid.
+# With the diff recorded rather than computed, the count rung compared
+# `len(SANCTIONED_SOURCE_FILES)` against `SOURCE_FILE_CAP` -- nine against nine,
+# two hand-typed literals in this file, true by construction whatever the run
+# did. The one rung that could see past them walked the tree for a CITATION, so
+# it saw only files that name this run in their prose. `foundry_spawn.py` was
+# changed by this run in dc44462, +81/-3, and cites its work as a bare `D-065`;
+# `grep -c "lead-stalls"` over it returns 0. So the run stood at ten source
+# files while every rung here reported nine and passed. That is D-070 and
+# D-071. A counter keyed on citations cannot enforce a cap on changes.
 #
-# The gap is named rather than papered over. Two of the nine sanctioned files
-# carry no qualified citation of this run, so they are pinned by name in
-# `UNCITED_SANCTIONED_FILES`, and they are themselves the proof that a tenth
-# file could be edited in the same silent way and escape this walk. Nothing in
-# this module can see that file. Only a diff can, and a diff is the one thing
-# no durable test is able to hold.
+# THE SECOND: the lifetime objection is not an objection to the diff, because
+# two shipped rungs above already carry it. `PRE_CHANGE_HOOKS_JSON_SHA256` is
+# pinned to this same base commit, and the first future run that legitimately
+# edits a hook makes it fail -- on work it was never about, in exactly the shape
+# the argument called a landmine. `PRE_CHANGE_HOOKS_ROSTER` is the same. This
+# module is one release's containment record, pinned to one commit, and when a
+# later run needs the tree to move past it that run re-bases these constants or
+# retires them, the digest and the base sha together. The diff is no worse than
+# the digest, and the asymmetry was the error.
+#
+# WHAT IS GUARDED, AND WHAT A MISSING MEASUREMENT DOES
+# ----------------------------------------------------
+# The narrow half of the argument stands: the measurement is not always
+# available. `git` may be absent, the checkout may not be a repository, and a
+# shallow clone or a squash-merge drops `BASE_COMMIT` outright.
+# `_measured_source_files` returns `None` in each of those cases and the two
+# measured rungs SKIP, on a message that names all three so the reader can tell
+# which one this checkout is -- the helper does not report which probe refused,
+# and the message does not pretend it does. A skip is
+# reported by pytest and a pass is not, and the recorded roster's own rungs keep
+# running underneath -- so an unmeasurable checkout loses the measurement and
+# does not silently gain a green.
+#
+# The measurement reads the COMMITTED change, `BASE_COMMIT..HEAD`, which is what
+# the gate re-executes and what eventually lands. An edit not yet committed is
+# outside it by construction, and the citation walk is the rung that sees one:
+# it reads the working tree, so it catches a cited file the moment it is
+# written. The two are complements, and neither is the other's guard.
+#
+# THE ROSTER'S JOB, NOW THAT IT IS NOT THE MEASUREMENT
+# ----------------------------------------------------
+# `SANCTIONED_SOURCE_FILES` is no longer the count. It is the record of WHAT
+# COMPELLED each file past the original four, which is the half of
+# lead-stalls NFR-001 no diff can supply, and it is asserted EQUAL to the
+# measured set -- so a file that appears in the change and not in the record
+# fails, and a name kept in the record after its file stopped changing fails
+# too. `UNCITED_SANCTIONED_FILES` is narrower than it was: it now carves the
+# citation walk only, and the cap no longer depends on it.
 
-#: lead-stalls NFR-001's cap, as the spec declares it AFTER its second
-#: amendment, of 2026-09-19. It read four until the first, of 2026-09-16.
+#: lead-stalls NFR-001's cap, as the spec declares it AFTER its third
+#: amendment, of 2026-09-20. It read four until the first, of 2026-09-16.
 #:
 #: FIRST RULING, 2026-09-16: four to seven. The build overran it -- seven
 #: non-exempt source files against a cap of four -- and nothing in the suite
@@ -309,17 +343,33 @@ def test_the_roster_walk_actually_sees_the_files_it_judges() -> None:
 #: lead-stalls NFR-001 afterwards, naming both files and what compelled each,
 #: so the spec and this constant now state one number.
 #:
+#: THIRD RULING, 2026-09-20, GRIND cycle 21: nine to TEN, and this time the spec
+#: moved FIRST. lead-stalls D-070 found the change already standing at ten while
+#: every rung here reported nine: `tools/foundry_spawn.py` was changed in
+#: dc44462 by the D-065 fix, +81/-3, and the citation walk could not see it. Both
+#: halves of that fix land in the spawn layer and nowhere else -- the stream
+#: dispatch prompt is where a door-less stream's ledger path can be named at
+#: all, and `_inspect_stream_dispatches` is the record that stands in for the
+#: `spawns.log` entry a bare `Agent(...)` call never writes -- so it could not
+#: have landed inside the nine. Unlike the two rulings above, this one rests on
+#: D-070's own stated remedy rather than a separate user ruling: the only
+#: alternative the defect offers is reverting a shipped fix for a LIVE defect.
+#:
 #: The cap is re-typed here because it cannot be read from the spec. Both spec
 #: paths are gitignored (`.gitignore:15-16`), so neither exists in the detached
 #: worktree the evidence gate re-executes in, and a rung that parses the spec
-#: would answer differently on two checkouts of one commit.
-SOURCE_FILE_CAP = 9
+#: would answer differently on two checkouts of one commit. That is also why
+#: the number is checked against the MEASURED change below and not against the
+#: roster beside it: two literals in one file agree with each other by
+#: construction, which is the whole of D-071.
+SOURCE_FILE_CAP = 10
 
 #: The source files this release is sanctioned to touch, repo-relative and
 #: POSIX-spelled. Four were anticipated when lead-stalls NFR-001 was written;
-#: five were compelled afterwards and are the reason the cap moved, twice. Each
-#: entry says which it is, because a roster nobody can audit is just a longer
-#: number.
+#: six were compelled afterwards and are the reason the cap moved, three times.
+#: Each entry says which it is, because a roster nobody can audit is just a
+#: longer number -- and since D-071 the number comes from the measured change,
+#: so what this set contributes is exactly the part a diff cannot: WHY.
 SANCTIONED_SOURCE_FILES = frozenset(
     {
         # The four the requirement anticipated.
@@ -346,22 +396,39 @@ SANCTIONED_SOURCE_FILES = frozenset(
         # union it reads moved to the leaf both layers may import.
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/transitions.py",
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/escalation.py",
+        # Compelled by lead-stalls D-065, and found by lead-stalls D-070 only
+        # after the fact: a stream is spawned by a bare `Agent(...)` call from
+        # the `run_streams` list, so it passes through no door and no
+        # `spawns.log` record exists for it to supersede a terminal ledger line
+        # from an earlier cycle. Both halves of the fix -- the ledger path in
+        # the stream dispatch prompt, and `_inspect_stream_dispatches` standing
+        # in for the missing record -- live in the spawn layer, which none of
+        # the nine above holds.
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py",
     }
-)  # 9 items
+)  # 10 items
 
-#: The two sanctioned files that carry no `lead-stalls `-qualified citation, so
-#: the citation walk cannot see them. `directives.py` cites its work by the
-#: bare run-local defect id, which the convention in
+#: The three sanctioned files that carry no `lead-stalls `-qualified citation,
+#: so the citation walk cannot see them. `directives.py` and `foundry_spawn.py`
+#: cite their work by the bare run-local defect id, which the convention in
 #: `tests/test_spec_id_convention.py` permits and which is not scoped to this
 #: run; `serena-daemon.sh` carries no citation at all. Pinned by name so the
-#: rung below can assert EQUALITY rather than one-sided containment -- and left
-#: uncorrected here because both files belong to other castings of this run.
+#: citation rung can assert EQUALITY rather than one-sided containment -- and
+#: left uncorrected here because all three belong to other castings of this run.
+#:
+#: This set is the measure of the citation walk's blind spot, and it is what
+#: lead-stalls D-070 walked out through: `foundry_spawn.py` was a third file of
+#: exactly this shape that nobody had added, so it escaped the count instead of
+#: being counted and sanctioned. The cap no longer reads this set at all -- the
+#: measured rungs below see a changed file whether it cites anything or not --
+#: which is why a fourth entry can no longer hide a breach.
 UNCITED_SANCTIONED_FILES = frozenset(
     {
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/directives.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py",
         "plugins/foundry/scripts/serena-daemon.sh",
     }
-)  # 2 items
+)  # 3 items
 
 #: What counts as source at all. Anything else in the change -- a manifest, a
 #: lockfile, a README, an evidence log -- is outside the cap because the cap is
@@ -456,15 +523,247 @@ def _cited_source_files(
     return frozenset(found)
 
 
-def test_the_sanctioned_source_roster_fits_the_declared_cap() -> None:
-    """lead-stalls NFR-001's cap, counted.
+#: What the two measured rungs report when the change cannot be read in this
+#: checkout, spelled once so both rungs skip with the same sentence.
+_UNMEASURABLE = (
+    "lead-stalls NFR-001's cap is a claim about the change from "
+    f"{BASE_COMMIT[:7]}, and this checkout cannot produce it: git is absent, "
+    "this is not a repository, or that commit is not an ancestor of HEAD here "
+    "-- a shallow clone and a squash-merge both drop it. The measurement is "
+    "SKIPPED rather than passed, because a cap rung that reports green over a "
+    "change it never read is the whole of lead-stalls D-071. The recorded "
+    "roster's own rungs still ran."
+)
 
-    On its own this compares two literals, and it is written down as one rung
-    rather than dressed up as more: what stops it being a tautology is the
-    company it keeps. The rung below makes every member of the roster earn its
-    place against the tree, and the rung after that searches the tree for a
-    member the roster does not have. This one is the arithmetic those two make
-    meaningful.
+
+def _measured_source_files(
+    repo: Path = REPO_ROOT,
+    base: str = BASE_COMMIT,
+) -> frozenset[str] | None:
+    """The capped source files `base..HEAD` actually changed, or `None`.
+
+    This is lead-stalls NFR-001's count, taken from the change instead of from
+    a literal. `--name-only -z` so a path with a space or a non-ASCII byte in
+    it arrives whole rather than quoted, and every path is put through
+    `_cap_class`, so the two exemptions are applied by the same rule the
+    recorded rungs use and cannot drift from it.
+
+    `None` means the measurement is UNAVAILABLE, and it is a distinct answer
+    from the empty set: an empty set says the change touched no source file,
+    and `None` says nobody here can tell. Every git call is checked rather
+    than trusted -- a `git` that is missing, a directory that is not a
+    repository, and a `BASE_COMMIT` that this checkout does not carry all
+    return `None`, and the rungs that consume it skip.
+
+    `repo` and `base` are parameters so the measurement can be driven over a
+    planted repository whose answer is known in advance, without this module
+    ever committing anything to the tree it judges.
+    """
+
+    def _git(*args: str) -> subprocess.CompletedProcess[str] | None:
+        try:
+            return subprocess.run(
+                ["git", "-C", str(repo), *args],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            # `git` not on PATH, or `repo` gone. Unavailable, never green.
+            return None
+
+    for probe in (
+        ("rev-parse", "--verify", "--quiet", "HEAD"),
+        ("cat-file", "-e", f"{base}^{{commit}}"),
+        ("merge-base", "--is-ancestor", base, "HEAD"),
+    ):
+        done = _git(*probe)
+        if done is None or done.returncode != 0:
+            return None
+
+    changed = _git("diff", "--name-only", "-z", f"{base}..HEAD")
+    if changed is None or changed.returncode != 0:
+        return None
+
+    return frozenset(
+        rel
+        for rel in changed.stdout.split("\0")
+        if rel and _cap_class(rel) == "source"
+    )
+
+
+def test_the_measured_change_fits_the_declared_cap() -> None:
+    """lead-stalls NFR-001's cap, measured from the change it is a claim about.
+
+    This is the rung the cap did not have.
+    `test_the_sanctioned_source_roster_fits_the_declared_cap` compares the
+    recorded roster against the same number, and that comparison is two
+    literals in this file agreeing with each other; this one reads
+    `BASE_COMMIT..HEAD` and counts what the release actually touched, so a file
+    changed with no citation, no roster entry and no announcement is counted
+    all the same. lead-stalls D-070 is exactly that file.
+    """
+    measured = _measured_source_files()
+    if measured is None:
+        pytest.skip(_UNMEASURABLE)
+
+    assert len(measured) <= SOURCE_FILE_CAP, (
+        f"this release changed {len(measured)} non-exempt source files between "
+        f"{BASE_COMMIT[:7]} and HEAD, against lead-stalls NFR-001's cap of "
+        f"{SOURCE_FILE_CAP}: {sorted(measured)}. The cap is a ceiling on how "
+        f"far a payload-and-prose fix may spread. Move the work back inside "
+        f"it, or get the cap amended in the spec first and record on the "
+        f"roster which file was compelled and by what -- in that order, "
+        f"because a cap edited to match the code it failed to bound is not a "
+        f"cap."
+    )
+
+
+def test_the_sanctioned_roster_is_exactly_the_measured_change() -> None:
+    """The roster earns its place against the change, in both directions.
+
+    lead-stalls NFR-001 needs two things a diff cannot supply on its own: the
+    count, and WHY each file past the original four was compelled. The count is
+    measured above; the why is the roster's comments. This rung is what keeps
+    the second honest about the first.
+
+    Equality, for the same reason `PRE_CHANGE_HOOKS_ROSTER` is asserted as
+    equality. An unrecorded path is a file that spread without a reason on the
+    record -- lead-stalls D-070's shape, which the citation walk could not see.
+    A recorded path that no longer appears in the change is a roster that has
+    outlived its diff, and it inflates the documented count over the real one.
+    """
+    measured = _measured_source_files()
+    if measured is None:
+        pytest.skip(_UNMEASURABLE)
+
+    unrecorded = sorted(measured - SANCTIONED_SOURCE_FILES)
+    assert not unrecorded, (
+        f"{len(unrecorded)} source file(s) changed between {BASE_COMMIT[:7]} "
+        f"and HEAD and are not on the sanctioned roster: {unrecorded}. That is "
+        f"{len(measured)} source files against lead-stalls NFR-001's cap of "
+        f"{SOURCE_FILE_CAP}. Either the work belongs in a file already on the "
+        f"roster and should move there, or the cap needs amending in the spec "
+        f"and the roster needs the new path with a note saying what compelled "
+        f"it. Being uncited is not being exempt: this rung reads the change, "
+        f"not the prose."
+    )
+
+    stale = sorted(SANCTIONED_SOURCE_FILES - measured)
+    assert not stale, (
+        f"{len(stale)} roster entr(y/ies) are not in the change from "
+        f"{BASE_COMMIT[:7]} to HEAD: {stale}. The roster records which source "
+        f"files this release was allowed to touch and why; a name whose file "
+        f"this release never changed counts against the cap on paper and not "
+        f"in the tree. Drop it, or -- if the edit was reverted on purpose -- "
+        f"drop it and say so in the amendment note that admitted it."
+    )
+
+
+def test_the_measurement_actually_reads_the_change(tmp_path: Path) -> None:
+    """The guard on the measurement: drive it over a repository it must get right.
+
+    Every rung above passes when the measured set matches the roster, which is
+    also what a measurement that returned the roster for the wrong reason would
+    do -- a `git diff` against the working tree rather than the base, or a
+    filter that let the exemptions through. So the measurement is driven here
+    over a planted repository whose answer is settled in advance: two changed
+    source files it must find, one source file present at the base and never
+    touched that it must NOT find (the case no citation walk can decide), and
+    the three exemption shapes it must drop. Planted under `tmp_path`, and
+    committed there, so the tree this module judges is never written to.
+
+    Both unavailable answers are driven too -- a base commit the checkout does
+    not carry, and a path git cannot enter -- because `None` is what makes the
+    skip honest: if either came back as the empty set instead, the cap rung
+    would report a change of zero source files and pass.
+    """
+    src = tmp_path / "plugins" / "foundry" / "mcp-server" / "src" / "foundry_mcp"
+    scripts = tmp_path / "plugins" / "foundry" / "scripts"
+    tests = tmp_path / "plugins" / "foundry" / "mcp-server" / "tests"
+    for directory in (src, scripts, tests):
+        directory.mkdir(parents=True)
+
+    def _plant(path: Path, body: str) -> None:
+        path.write_text(body, encoding="utf-8")
+
+    # The base commit: everything exists, nothing has been changed yet.
+    _plant(src / "changed.py", "x = 1\n")
+    _plant(src / "untouched.py", "y = 1\n")
+    _plant(src / "__init__.py", '__version__ = "1.10.0"\n')
+    _plant(tests / "test_planted.py", "def test_x() -> None:\n    pass\n")
+    _plant(tmp_path / "README.md", "before\n")
+    _plant(scripts / "planted.sh", "#!/bin/sh\necho before\n")
+
+    def _git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(tmp_path), *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    _git("init", "-q")
+    _git("config", "user.email", "t@t")
+    _git("config", "user.name", "t")
+    _git("add", "-A")
+    _git("commit", "-qm", "base")
+    base = _git("rev-parse", "HEAD").stdout.strip()
+
+    # The change: one source file edited, one added, and one of each exemption
+    # shape touched. `untouched.py` is deliberately left alone.
+    _plant(src / "changed.py", "x = 2\n")
+    _plant(scripts / "planted.sh", "#!/bin/sh\necho after\n")
+    _plant(src / "added.py", "z = 1\n")
+    _plant(src / "__init__.py", '__version__ = "1.10.1"\n')
+    _plant(tests / "test_planted.py", "def test_x() -> None:\n    assert True\n")
+    _plant(tmp_path / "README.md", "after\n")
+    _git("add", "-A")
+    _git("commit", "-qm", "change")
+
+    measured = _measured_source_files(repo=tmp_path, base=base)
+
+    assert measured == {
+        "plugins/foundry/mcp-server/src/foundry_mcp/changed.py",
+        "plugins/foundry/mcp-server/src/foundry_mcp/added.py",
+        "plugins/foundry/scripts/planted.sh",
+    }, (
+        f"the measurement returned {sorted(measured or [])}. It has to find "
+        f"the edited source file, the added one and the changed `.sh` -- that "
+        f"is how a file past the roster is counted at all -- and it has to "
+        f"leave out the source file this change never touched, the test file "
+        f"lead-stalls GI-006 exempts, the `.py` release manifest, and the "
+        f"non-source file."
+    )
+
+    absent_base = _measured_source_files(repo=tmp_path, base="0" * 40)
+    assert absent_base is None, (
+        f"a base commit this checkout does not carry measured "
+        f"{sorted(absent_base or [])} instead of reporting itself "
+        f"unavailable. That is the shallow-clone and squash-merge case, and "
+        f"returning a set there turns a missing measurement into a green cap."
+    )
+
+    no_checkout = _measured_source_files(repo=tmp_path / "not-a-checkout", base=base)
+    assert no_checkout is None, (
+        f"a path git cannot enter measured {sorted(no_checkout or [])} instead "
+        f"of reporting itself unavailable. Every git call here is checked for "
+        f"its exit status rather than trusted for its stdout, and an empty "
+        f"stdout from a failed call reads as a change of nothing at all."
+    )
+
+
+def test_the_sanctioned_source_roster_fits_the_declared_cap() -> None:
+    """The recorded roster's own arithmetic, which is NOT the cap's enforcement.
+
+    On its own this compares two literals in this file, and lead-stalls D-071
+    is the record of what happens when that is mistaken for enforcement: nine
+    against nine is true by construction, and stayed true while the run stood
+    at ten. It is kept, narrowed to the job it can do, because it is the one
+    cap rung that runs in a checkout where the change cannot be measured -- the
+    two rungs above skip there, and this holds the documented count to the
+    documented cap so the recording at least contradicts itself out loud. The
+    enforcement is `test_the_measured_change_fits_the_declared_cap`.
     """
     count = len(SANCTIONED_SOURCE_FILES)
 
@@ -482,7 +781,7 @@ def test_the_sanctioned_source_roster_fits_the_declared_cap() -> None:
 def test_every_sanctioned_source_file_is_present_and_counts_against_the_cap() -> None:
     """The roster's members are paths in this tree, not strings in this file.
 
-    A roster of nine names that resolve to nothing would satisfy the cap
+    A roster of ten names that resolve to nothing would satisfy the cap
     arithmetic above perfectly. Each entry has to exist, and has to classify as
     capped source under the exemption rule -- an entry that is really a test or
     a manifest is padding the count with something lead-stalls NFR-001 exempts.
@@ -513,26 +812,31 @@ def test_every_sanctioned_source_file_is_present_and_counts_against_the_cap() ->
     uncited_strays = sorted(UNCITED_SANCTIONED_FILES - SANCTIONED_SOURCE_FILES)
     assert not uncited_strays, (
         f"{uncited_strays} are carved out of the citation walk but are not on "
-        f"the sanctioned roster. The carve-out exists to let the rung below "
+        f"the sanctioned roster. The carve-out exists to let the citation rung "
         f"assert equality; carving out a path that is not sanctioned widens "
         f"that rung's blind spot instead of explaining it."
     )
 
 
 def test_no_unsanctioned_source_file_cites_this_run() -> None:
-    """The rung that can actually see a tenth file.
+    """The rung that sees a file before it is committed.
 
-    lead-stalls NFR-001 bounds a DIFF, and the roster above is that diff
-    recorded. This is the half that is not recorded: the tree is walked, and
-    every capped source file that cites this run has to be on the roster.
+    The measured rungs above read `BASE_COMMIT..HEAD`, so a file edited and not
+    yet committed is outside them. This one reads the WORKING TREE: every
+    capped source file under the walked roots that cites this run has to be on
+    the roster, whether it has been committed, staged, or only written. That is
+    its job now -- it is no longer the cap's only eyes, which is what
+    lead-stalls D-070 exposed when a changed file that cites nothing walked
+    straight past it.
+
     Equality rather than containment, and for the same reason
     `PRE_CHANGE_HOOKS_ROSTER` is asserted as equality -- a sanctioned file that
     LOST its citation is the evidence base moving, and equality reports it for
     free with a message that names which direction went.
 
-    Read the block above these declarations for what this cannot see: a source
-    file edited with no citation at all is invisible here, and two of the nine
-    are exactly that shape.
+    What this cannot see is stated rather than papered over: a source file
+    edited with no citation at all is invisible here, and three of the ten are
+    exactly that shape. The measured rungs are what cover it.
     """
     cited = _cited_source_files()
     expected = SANCTIONED_SOURCE_FILES - UNCITED_SANCTIONED_FILES
@@ -540,28 +844,29 @@ def test_no_unsanctioned_source_file_cites_this_run() -> None:
     unsanctioned = sorted(cited - SANCTIONED_SOURCE_FILES)
     assert not unsanctioned, (
         f"{len(unsanctioned)} source file(s) cite this run and are not on the "
-        f"sanctioned roster: {unsanctioned}. That is "
+        f"sanctioned roster: {unsanctioned}. That is at least "
         f"{len(SANCTIONED_SOURCE_FILES) + len(unsanctioned)} source files "
         f"against lead-stalls NFR-001's cap of {SOURCE_FILE_CAP}. Either the "
-        f"work belongs in one of the nine and should move there, or the cap "
-        f"needs amending in the spec and the roster needs the new path with a "
-        f"note saying what compelled it."
+        f"work belongs in a file already on the roster and should move there, "
+        f"or the cap needs amending in the spec and the roster needs the new "
+        f"path with a note saying what compelled it."
     )
 
     lost_citation = sorted(expected - cited)
     assert not lost_citation, (
         f"{len(lost_citation)} sanctioned file(s) no longer cite this run: "
-        f"{lost_citation}. The walk is how this module detects a tenth file, "
-        f"and it can only detect one while the citation convention holds over "
-        f"the files it already knows about. Restore the citation, or move the "
-        f"path into the carve-out and say in its comment why it lost one."
+        f"{lost_citation}. The walk is how this module sees an uncommitted "
+        f"eleventh file, and it can only see one while the citation convention "
+        f"holds over the files it already knows about. Restore the citation, "
+        f"or move the path into the carve-out and say in its comment why it "
+        f"lost one."
     )
 
 
 def test_the_exemption_rule_actually_exempts_and_actually_counts() -> None:
     """The guard on the exemption rule: prove it sorts known paths correctly.
 
-    `_cap_class` is what turns the changed paths into a count of nine, so a
+    `_cap_class` is what turns the changed paths into a count of ten, so a
     version of it that returned `source` for everything would report a wild
     overrun, and one that returned an exemption for everything would report
     zero and pass. Both directions are driven here on paths whose answer is
@@ -611,10 +916,12 @@ def test_the_exemption_rule_actually_exempts_and_actually_counts() -> None:
     )
 
 
-def test_the_citation_walk_actually_catches_an_eighth_file(tmp_path: Path) -> None:
+def test_the_citation_walk_actually_catches_an_unsanctioned_file(
+    tmp_path: Path,
+) -> None:
     """The guard on the walk: plant a file past the roster and prove it is found.
 
-    The rung above passes when the walk returns exactly the roster, which is
+    The citation rung passes when the walk returns exactly the roster, which is
     also what a walk handed a stale root, or one whose read silently failed,
     would do on the `unsanctioned` limb. So the walk is driven here over a
     planted tree where the answer is known in advance: one cited source file
@@ -622,6 +929,12 @@ def test_the_citation_walk_actually_catches_an_eighth_file(tmp_path: Path) -> No
     TEST file that lead-stalls GI-006 exempts and that must not be, and one
     cited non-source file that must not be. Planted under `tmp_path` so the
     tree this module judges is never touched.
+
+    Note which file the walk misses here and the measurement does not:
+    `untouched.py` is left out for want of a citation, not for want of a
+    change. Read the other way round, a file that WAS changed and cites nothing
+    is missed the same way -- lead-stalls D-070 -- which is why this is a guard
+    on one of two rungs and not on the cap itself.
     """
     root = tmp_path / "plugins" / "foundry" / "mcp-server" / "src"
     tests = tmp_path / "plugins" / "foundry" / "mcp-server" / "tests"
@@ -629,8 +942,8 @@ def test_the_citation_walk_actually_catches_an_eighth_file(tmp_path: Path) -> No
     tests.mkdir(parents=True)
 
     cited = "# lead-stalls NFR-001: planted.\n"
-    (root / "eighth_file.py").write_text(cited, encoding="utf-8")
-    (root / "eighth_script.sh").write_text(f"#!/bin/sh\n{cited}", encoding="utf-8")
+    (root / "unsanctioned_file.py").write_text(cited, encoding="utf-8")
+    (root / "unsanctioned_script.sh").write_text(f"#!/bin/sh\n{cited}", encoding="utf-8")
     (root / "untouched.py").write_text("# unrelated.\n", encoding="utf-8")
     (root / "notes.md").write_text(cited, encoding="utf-8")
     (tests / "test_planted.py").write_text(cited, encoding="utf-8")
@@ -644,11 +957,11 @@ def test_the_citation_walk_actually_catches_an_eighth_file(tmp_path: Path) -> No
     )
 
     assert walked == {
-        "plugins/foundry/mcp-server/src/eighth_file.py",
-        "plugins/foundry/mcp-server/src/eighth_script.sh",
+        "plugins/foundry/mcp-server/src/unsanctioned_file.py",
+        "plugins/foundry/mcp-server/src/unsanctioned_script.sh",
     }, (
         f"the walk returned {sorted(walked)}. It has to find both planted "
-        f"source files -- that is the whole of how a tenth file is detected "
-        f"-- and it has to leave out the uncited file, the non-source file, "
-        f"and the test file lead-stalls GI-006 exempts."
+        f"source files -- that is how an uncommitted file past the roster is "
+        f"seen at all -- and it has to leave out the uncited file, the "
+        f"non-source file, and the test file lead-stalls GI-006 exempts."
     )
