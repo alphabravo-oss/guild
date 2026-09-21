@@ -1,0 +1,23 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest python -c 'import sys; sys.path[:0]=["src","."]; from tests.orchestration.test_tasks_codispatch import codispatch_revert_report; [print(r) for r in codispatch_revert_report()]' 2>/dev/null
+# evidence-for: FR-012, NFR-001
+# evidence-timeout: 600
+
+joins reverted one at a time: 3
+judged by: tests/orchestration/test_tasks_codispatch.py
+files mutated: directives.py
+red in the control with nothing reverted: 0
+
+== revert: requirement-join-order (directives.py)
+  FAILED test_a_manifest_mixing_an_int_id_and_a_word_id_still_orders_the_join
+  FAILED test_every_codispatch_revert_names_text_that_is_in_the_tree_exactly_once
+  tests run: 31, failed or errored: 2, red beyond the control: 2
+== revert: concern-join-order (directives.py)
+  FAILED test_a_word_id_concern_target_joins_an_int_id_co_dispatch_set
+  FAILED test_every_codispatch_revert_names_text_that_is_in_the_tree_exactly_once
+  tests run: 31, failed or errored: 2, red beyond the control: 2
+== revert: concern-only-target (directives.py)
+  FAILED test_a_clean_grind_dispatches_a_concern_whose_target_is_a_word_id
+  FAILED test_every_codispatch_revert_names_text_that_is_in_the_tree_exactly_once
+  tests run: 31, failed or errored: 2, red beyond the control: 2
+
+joins with no test red when reverted: none

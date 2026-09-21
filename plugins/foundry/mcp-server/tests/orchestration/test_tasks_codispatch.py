@@ -60,6 +60,10 @@ from foundry_mcp.tools.orchestration.directives import (  # noqa: F401
     # same empty answer one layer up.
     _casting_files,
     _casting_requirement_ids,
+    # D-075 — the requirement join, called directly beside the drive through
+    # Foundry-Tasks: the payload asserts the ORDER the join produced, and this
+    # asserts that the join is what can produce it at all on a mixed manifest.
+    _co_dispatch_for,
     # fallout FR-009 (D-170) — the ownership resolver, called directly: a drive
     # through Foundry-Tasks would assert the FIELD and leave the two-pass
     # exact-beats-prefix ordering unexercised.
@@ -1270,3 +1274,397 @@ def test_a_cross_casting_concern_targeting_a_word_id_is_carried_and_marked(run_e
     assert "-> casting release: pyproject.toml" in block, block
     # ...and the door the concern was holding shut now opens.
     assert open_concerns_for_other_castings(fdir) == [], "the concern is still open"
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls D-075 / D-076 — THE D-008 REMEDY, ON THE ONE MANIFEST SHAPE IT
+# IS OBSERVABLE ON.
+#
+# Three joins carry that fix and no test reached any of them. `_co_dispatch_for`
+# and `_annotate_co_dispatch`'s concern join both pass `key=_casting_order` to
+# `sorted`, and `_concern_only_tasks` reads its target through `_casting_key`.
+# Each of the three was reverted ALONE at 7c2f0a0 and judged by the WHOLE suite:
+# 5756 passed / 113 skipped / 0 failed every time, zero red beyond the control.
+#
+# THE REVERTS ARE NOT NO-OPS, which is what makes this a missing test rather
+# than a dead argument. `sorted({1, "payloads"})` raises TypeError, and
+# `int("imperatives")` raises ValueError onto a `continue` that drops the
+# concern — the exact D-008 symptom, restored, with nothing noticing. What hid
+# it is the fixtures: every manifest in the suite keys its castings all-int or
+# all-word, and over a homogeneous set `_casting_order` and `sorted`'s default
+# agree. The remedy's only observable behaviour is on a MIXED manifest, and
+# until these three tests no fixture built one.
+# --------------------------------------------------------------------------- #
+
+
+def _mixed_id_manifest(fdir: Path, castings: list[tuple]) -> None:
+    """`[(casting id, requirement_ids, key_files)]` as the F0.5 manifest, in
+    the order given, over ids that need NOT be all one type.
+
+    `_manifest_with_requirement_ids` cannot express this and never will:
+    it walks `sorted(spec.items())`, which raises the very TypeError
+    `_casting_order` exists to prevent. That helper builds most of the suite's
+    requirement-bearing manifests, which is part of why the mixed shape had no
+    fixture — the builder the suite reaches for first could not hold one.
+    """
+    (fdir / "castings").mkdir(parents=True, exist_ok=True)
+    (fdir / "castings" / "manifest.json").write_text(
+        json.dumps({
+            "no_ui": True,
+            "castings": [
+                {"id": cid, "title": f"casting {cid}",
+                 "requirement_ids": ids, "key_files": files}
+                for cid, ids, files in castings
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+
+def test_a_manifest_mixing_an_int_id_and_a_word_id_still_orders_the_join(run_env):
+    """D-075 — `key=_casting_order` on `_co_dispatch_for`'s `sorted`, pinned.
+
+    `_co_dispatch_for`'s own docstring says the key is there because plain
+    `sorted` "raises TypeError the moment a manifest carries an int id and a
+    word id together". Removing it left the whole suite green: the set the join
+    builds came from a homogeneous map in every fixture, and over one of those
+    the two orders agree. So the argument the docstring justifies was, until
+    this test, unjudged — and a later tidy reading the suite as the authority
+    on what is load-bearing would have been told it was free to drop.
+
+    The manifest below is this run's own spelling beside an integer one, which
+    is a shape F0.5 has no rule against: `_casting_key` accepts both, four
+    doors take either, and `Foundry-Spawn-Teammate` publishes the field as
+    integer-or-string. Mixed is therefore not a synthetic case but an
+    unrefused one, and it is the only case in which the key is visible.
+    """
+    project_root, fdir = run_env
+    _mixed_id_manifest(fdir, [
+        ("imperatives", ["FR-002"], ["src/imp.py"]),
+        (3, ["FR-001"], ["src/three.py"]),
+        ("payloads", ["FR-001"], ["src/payloads.py"]),
+    ])
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/imp.py", spec_ref="FR-001"),
+    ])
+
+    # The join itself, over the map this manifest produces: the set is
+    # {3, "payloads"} and an unkeyed `sorted` over it raises.
+    owned, declared = _casting_requirement_ids(fdir)
+    assert declared is True, owned
+    assert _co_dispatch_for(owned, {"FR-001"}) == [3, "payloads"], owned
+    # Ints keep their numeric order and word ids follow them, which is the
+    # order `_casting_order` declares; `exclude` still drops the owner.
+    assert _co_dispatch_for(owned, {"FR-001"}, exclude=3) == ["payloads"], owned
+
+    # ...and the field the lead dispatches from, end to end.
+    result = foundry_defects_to_tasks(project_root)
+    assert result["ok"] is True, result
+    task = next(t for t in result["tasks"] if "D-900" in t["defect_ids"])
+    assert task["owning_casting"] == "imperatives", task
+    assert task["co_dispatch"] == [3, "payloads"], task
+    block = task["alignment_block"]
+    assert "- casting 3: src/three.py" in block, block
+    assert "- casting payloads: src/payloads.py" in block, block
+
+
+def test_a_word_id_concern_target_joins_an_int_id_co_dispatch_set(run_env):
+    """D-075 — the SAME key on the OTHER join, `_annotate_co_dispatch`'s.
+
+    The concern join unions the target into the set the requirement join
+    computed, and the two sides come from different places: the set from the
+    manifest's `requirement_ids`, the target from a concern record. So a run
+    whose requirement join is homogeneous can still be handed a target of the
+    other spelling, and that union is where the second `sorted` stands.
+
+    Driven with the requirement join answering `[3]` — all-int, so it survives
+    its own revert untouched — and a concern naming `release`. Without the key
+    on THIS `sorted` the union of an int set and a word target raises, and the
+    two halves of one remedy are then judged separately rather than together,
+    which is what "red beyond the control: 0" on hunk 13 alone already showed.
+    """
+    from foundry_mcp.tools.concerns import (
+        foundry_concern,
+        open_concerns_for_other_castings,
+    )
+
+    project_root, fdir = run_env
+    _mixed_id_manifest(fdir, [
+        (1, ["FR-001"], ["src/one.py"]),
+        (3, ["FR-001"], ["src/three.py"]),
+        ("release", ["FR-009"], ["pyproject.toml"]),
+    ])
+    _write_state(fdir, phase="F3", cycle=1)
+    _defect_ledger(fdir, [
+        dict(_tiered("D-900", "LIVE"), file="src/one.py", spec_ref="FR-001"),
+    ])
+    opened = foundry_concern(
+        casting_id=1, cycle=1, target="pyproject.toml",
+        text="the version floor I relied on is stated in the release casting too",
+        project_root=project_root,
+    )
+    assert opened.get("error") is None, opened
+    concern_id = opened["concern"]["id"]
+    # The record stores the id the MANIFEST spells, which is the word here.
+    assert opened["concern"]["target_casting_id"] == "release", opened
+
+    result = foundry_defects_to_tasks(project_root)
+    assert result["ok"] is True, result
+    task = next(t for t in result["tasks"] if "D-900" in t["defect_ids"])
+
+    # `3` is here because it owns the requirement; `release` because the
+    # concern names it. One int, one word, in one sorted set.
+    assert task["co_dispatch"] == [3, "release"], task
+    assert task["concerns_co_dispatched"] == [concern_id], task
+    assert result["concerns_dispatched"] == [concern_id], result
+    block = task["alignment_block"]
+    assert "- casting 3: src/three.py" in block, block
+    assert "-> casting release: pyproject.toml" in block, block
+    assert open_concerns_for_other_castings(fdir) == [], "the concern is still open"
+
+
+def test_a_clean_grind_dispatches_a_concern_whose_target_is_a_word_id(run_env):
+    """D-076 — `_casting_key` in `_concern_only_tasks`, pinned.
+
+    This is the half of D-008 the user ruled had to be fixed in this run, and
+    it is the half no test reached. The walk read its target with
+    `int(concern["target_casting_id"])` and `continue`d on ValueError, so on a
+    word-id manifest every concern was dropped FOR ITS SPELLING: the concern
+    stayed open, `inspect_start` refused on it, and the exit that refusal names
+    — "call Foundry-Tasks, whose co-dispatch set carries the concern to the
+    casting it names" — was unreachable. The sibling walk in
+    `_annotate_co_dispatch` is pinned by
+    `test_a_cross_casting_concern_targeting_a_word_id_is_carried_and_marked`
+    above, and its comment says "as in the sibling walk above", so the gap was
+    one walk rather than the mechanism — which is exactly the shape a whole
+    green suite hides.
+
+    A CLEAN GRIND is the state that reaches this walk. With every defect fixed
+    there are no tasks for a concern to ride, so `_concern_only_tasks` makes
+    the concern the packet itself — and it is the only place the word target is
+    read without the sibling's cover.
+    """
+    from foundry_mcp.tools.concerns import (
+        foundry_concern,
+        open_concerns_for_other_castings,
+    )
+
+    project_root, fdir = run_env
+    _word_id_manifest(fdir)
+    _write_state(fdir, phase="F3", cycle=2)
+    # FIXED, not open: a GRIND that closed everything it was handed, which is
+    # the only state a lead calls `inspect_start` from.
+    _defect_ledger(fdir, [
+        dict(
+            _tiered("D-900", "LIVE"),
+            file="src/foundry_mcp/tools/orchestration/guidance.py",
+            spec_ref="FR-001", status="fixed",
+        ),
+    ])
+    opened = foundry_concern(
+        casting_id="imperatives", cycle=2, target="pyproject.toml",
+        text="the release casting's own floor states the ruling I applied",
+        project_root=project_root,
+    )
+    assert opened.get("error") is None, opened
+    concern_id = opened["concern"]["id"]
+    assert opened["concern"]["target_casting_id"] == "release", opened
+    assert len(open_concerns_for_other_castings(fdir)) == 1
+
+    result = foundry_defects_to_tasks(project_root)
+    assert result["ok"] is True, result
+    packets = [t for t in result["tasks"] if t.get("concern_only")]
+    assert len(packets) == 1, result["tasks"]
+    task = packets[0]
+    assert task["concern_id"] == concern_id, task
+    # The target, in the spelling the manifest uses, with that casting's own
+    # key_files as the work — a packet, not a cleared flag.
+    assert task["co_dispatch"] == ["release"], task
+    assert task["files"] == ["pyproject.toml"], task
+    assert task["owning_casting"] is None, task
+    assert result["concerns_dispatched"] == [concern_id], result
+    # ...and the door the concern was holding shut opens.
+    assert open_concerns_for_other_castings(fdir) == [], "the concern stayed open"
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls D-075 / D-076 — THE THREE JOINS, EACH REVERTED ALONE.
+#
+# The three tests above are the pins; this is the drive that shows each one
+# bites, and the one `evidence/casting-imperatives-codispatch-order-revert.log`
+# re-executes. TEST filed D-075 and D-076 by doing exactly this at 7c2f0a0 and
+# getting zero red on all three, so a fix whose only claim is "I wrote a test"
+# is a claim about the same thing measured the same way — with the answer now
+# expected to be one red per join.
+#
+# `_run_with` is IMPORTED from the sibling module rather than copied, for the
+# reason this module's header gives for the two suites it already imports: a
+# second implementation of "copy the tree, mutate one file, run the suite
+# there" is free to drift from the one the other evidence logs are drawn
+# through, and two drives over one tree must not be able to disagree about what
+# a revert did. The judge is THIS module, because these three pins live here.
+# --------------------------------------------------------------------------- #
+
+_DIRECTIVES_REL = "src/foundry_mcp/tools/orchestration/directives.py"
+_THIS_MODULE = "tests/orchestration/test_tasks_codispatch.py"
+
+#: One row per join the D-008 remedy stands on: the name the log prints, the
+#: file, the text as it stands, and the text TEST reverted it to. Kept as the
+#: reverts were FILED, so the log answers the filing rather than a paraphrase
+#: of it.
+_CODISPATCH_REVERTS = (
+    (
+        "requirement-join-order", _DIRECTIVES_REL,
+        "\n".join([
+            "    return sorted(",
+            "        (",
+            "            cid for cid, ids in owned.items()",
+            "            if cid != exclude and ids & requirement_ids",
+            "        ),",
+            "        key=_casting_order,",
+            "    )",
+        ]),
+        "\n".join([
+            "    return sorted(",
+            "        cid for cid, ids in owned.items()",
+            "        if cid != exclude and ids & requirement_ids",
+            "    )",
+        ]),
+    ),
+    (
+        "concern-join-order", _DIRECTIVES_REL,
+        "\n".join([
+            '                task["co_dispatch"] = sorted(',
+            '                    set(task["co_dispatch"]) | {target}, key=_casting_order',
+            "                )",
+        ]),
+        "\n".join([
+            '                task["co_dispatch"] = sorted(',
+            '                    set(task["co_dispatch"]) | {target}',
+            "                )",
+        ]),
+    ),
+    (
+        "concern-only-target", _DIRECTIVES_REL,
+        "\n".join([
+            '        target = _casting_key(concern.get("target_casting_id"))',
+            "        if target is None:",
+            "            # Unresolvable targets are refused at `Foundry-Concern`'s own door",
+            "            # (CT-001), so one here is a hand-edited ledger. It stays open and",
+            "            # `inspect_start` keeps naming it, which is the honest end for a",
+            "            # record nothing can resolve.",
+            "            continue",
+        ]),
+        "\n".join([
+            "        try:",
+            '            target = int(concern["target_casting_id"])',
+            "        except (KeyError, TypeError, ValueError):",
+            "            continue",
+        ]),
+    ),
+)
+
+
+def test_every_codispatch_revert_names_text_that_is_in_the_tree_exactly_once():
+    """The floor under `codispatch_revert_report`, and why it is a TEST.
+
+    A row whose text has moved cannot be applied, so the join it stands for is
+    silently unjudged: the log still re-executes, still reports its zero, over
+    a population one smaller than it claims. That is the green-over-nothing
+    failure D-075 and D-076 ARE — three joins nothing judged, under a suite
+    reporting 5756 passed — so the sweep that closes them must not be able to
+    fail the same way one layer up.
+
+    `concern-only-target` is the row this pin earns twice over: the text it
+    reverts is the second of two walks that read the same field the same way,
+    and the only thing distinguishing it from its sibling is the comment
+    underneath. A row quoting the coercion alone would match twice and apply
+    to neither.
+    """
+    project = Path(__file__).resolve().parents[2]
+    counts = {
+        name: (project / rel).read_text(encoding="utf-8").count(old)
+        for name, rel, old, _new in _CODISPATCH_REVERTS
+    }
+    assert {n: c for n, c in counts.items() if c != 1} == {}, counts
+    names = [name for name, *_rest in _CODISPATCH_REVERTS]
+    assert len(set(names)) == len(names), names
+    assert set(names) == {
+        "requirement-join-order", "concern-join-order", "concern-only-target",
+    }, sorted(names)
+
+
+def codispatch_revert_report(workers: int = 3) -> list[str]:
+    """`evidence/casting-imperatives-codispatch-order-revert.log`: each join of
+    the D-008 remedy reverted alone, and the tests that go red for it.
+
+    The CONTROL is the unmutated tree, run first and subtracted: a suite red
+    before anything is reverted says nothing about any join, and charging its
+    failures to a mutation is how a vacuous drive reads as a thorough one.
+    `test_guidance_imperatives.py`'s two reports state the same rule for their
+    own populations.
+
+    Deterministic in order and in content — the rows are walked in table order
+    and `_run_with` sorts its failures — so the log re-executes
+    byte-identically. ``workers`` only changes how long that takes.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tests.orchestration.test_guidance_imperatives import _run_with
+
+    project = Path(__file__).resolve().parents[2]
+    source = (project / _DIRECTIVES_REL).read_text(encoding="utf-8")
+    baseline = [
+        line for line in _run_with(
+            project, _DIRECTIVES_REL, source, (_THIS_MODULE,)
+        )
+        if line.startswith("  FAILED")
+    ]
+
+    def judged(row: tuple[str, str, str, str]) -> list[str]:
+        name, rel, old, new = row
+        if source.count(old) != 1:
+            # NOT an exception: a row whose text has moved is a finding about
+            # the table, and a report that raised here would take the whole
+            # log down with it and say nothing about the other two.
+            return [
+                f"  the text this reverts appears {source.count(old)} times in "
+                f"{Path(rel).name} — the join moved and this row did not"
+            ]
+        result = _run_with(
+            project, rel, source.replace(old, new), (_THIS_MODULE,)
+        )
+        red = [
+            line for line in result
+            if line.startswith("  FAILED") and line not in baseline
+        ]
+        return red + [f"{result[-1]}, red beyond the control: {len(red)}"]
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        results = list(pool.map(judged, _CODISPATCH_REVERTS))
+
+    lines = [
+        f"joins reverted one at a time: {len(_CODISPATCH_REVERTS)}",
+        f"judged by: {_THIS_MODULE}",
+        "files mutated: " + ", ".join(sorted(
+            Path(rel).name for rel in
+            {rel for _n, rel, _o, _x in _CODISPATCH_REVERTS}
+        )),
+        f"red in the control with nothing reverted: {len(baseline)}",
+        *baseline,
+        "",
+    ]
+    for (name, rel, _old, _new), result in zip(_CODISPATCH_REVERTS, results):
+        lines.append(f"== revert: {name} ({Path(rel).name})")
+        lines.extend(result)
+    green = [
+        name for (name, _rel, _old, _new), result in
+        zip(_CODISPATCH_REVERTS, results)
+        if not any(line.startswith("  FAILED") for line in result)
+    ]
+    lines += [
+        "",
+        f"joins with no test red when reverted: {', '.join(green) or 'none'}",
+    ]
+    return lines
