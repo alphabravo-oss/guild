@@ -881,6 +881,176 @@ def test_a_refused_call_leaves_the_casting_verdict_standing(tmp_path, monkeypatc
         assert _acceptance_destinations(fdir) == ["casting-1-accepted"]
 
 
+# --------------------------------------------------------------------------- #
+# lead-stalls ST-004 / US-003 (D-077) — WHICH warning refused the casting, not
+# only THAT one did.
+#
+# `foundry_accept_casting` has three warning branches — scope-flag phrases, a
+# requirement ID with no citation, and a `path#Symbol` cite that resolves
+# nowhere — and one record for all three: `refused=warning_reason or "warning"`.
+# The verdict tests above pin the `-refused` DESTINATION, which every branch
+# shares, so none of them could tell one warning from another and no test in
+# the tree named `warning_reason` at all.
+#
+# That absence hid a live fault. With the third branch's assignment gone the
+# whole suite stayed green, and a casting warned for unresolvable cites was on
+# disk as the bare string `"warning"` — the same anonymous reason any other
+# cause would leave — while its two siblings still recorded `scope_flags: ...`
+# and `missing_citations: ...`. The router reads these verdicts (D-020) to send
+# a refusal back to its teammate, and the one warning kind whose remedy the
+# teammate has to be told about individually (process-fixes AC-006 names the
+# symbols one by# one for exactly that reason) is the one whose reason was erased.
+#
+# So all three are pinned, each with the other two named as strings it must NOT
+# record. A test for one branch alone would leave the siblings in the state
+# that produced this defect, and — because the branches are an `elif` chain —
+# would not notice a reason that had slid onto the wrong arm.
+# --------------------------------------------------------------------------- #
+
+#: A prompt whose `<spec_requirements>` block DECLARES a requirement ID, in the
+#: bold-bullet shape `declared_requirement_ids` reads as a declaration. The
+#: missing-citation branch needs a casting that owes a citation; `_ROUTE_PROMPT`
+#: declares nothing, so under it that branch is unreachable.
+_DECLARING_PROMPT = (
+    "# casting\n\n<spec_requirements>\n"
+    "- **FR-003** [from A-006]: build the thing\n"
+    "</spec_requirements>\n"
+)
+
+#: A cite whose FILE does not exist in the scratch project root, so the symbol
+#: resolves nowhere (`symbol_cite_resolves` never resolves a missing file) and
+#: the process-fixes AC-006 guard fires. Deliberately not a real path: a cite
+#: that resolved would leave the third branch unreached and the test green for
+#: the wrong reason.
+_GHOST_CITE = "src/ghost.py#GhostSymbol"
+
+#: The three warning branches, as (prompt, completion report) -> the reason
+#: `_record_acceptance_verdict` must write. Each report is built to reach ONE
+#: branch: the chain is an `elif`, so a report carrying two triggers would only
+#: ever exercise the earlier arm.
+_WARNING_BRANCHES = {
+    "scope_flags": (
+        _ROUTE_PROMPT,
+        "built the thing; the tests are deferred",
+        "scope_flags: deferred",
+    ),
+    "missing_citations": (
+        _DECLARING_PROMPT,
+        "built the thing, FR-003 included",
+        "missing_citations: FR-003",
+    ),
+    "unresolved_symbol_cites": (
+        _ROUTE_PROMPT,
+        f"built the thing in {_GHOST_CITE}",
+        "unresolved_symbol_cites",
+    ),
+}
+
+
+def _acceptance_reasons(fdir: Path) -> list[str]:
+    """Each `acceptance` record's recorded REASON, in the order written.
+
+    The reason is what `_record_acceptance_verdict` appends to the summary
+    after `refused: `. Read off the summary rather than a field of its own
+    because the summary IS where the writer puts it — a test that read a
+    key the record does not carry would pass on a record that named nothing.
+    An accepted record carries no reason and contributes `""`.
+    """
+    path = fdir / "handoffs.jsonl"
+    if not path.exists():
+        return []
+    reasons = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        if record.get("event") != "acceptance":
+            continue
+        summary = record.get("summary", "")
+        head, _, tail = summary.partition(" acceptance refused: ")
+        reasons.append(tail if head != summary else "")
+    return reasons
+
+
+def _warned(base: Path, monkeypatch, *, branch: str) -> dict:
+    """Drive casting 1's acceptance into ONE warning branch.
+
+    The prompt is rewritten before the call and `_accept` hashes the file it
+    finds, so the declaring prompt is honest rather than a hash the drive has
+    to fake. Returns the payload and every recorded reason.
+    """
+    prompt, report, _expected = _WARNING_BRANCHES[branch]
+    with _scratch_run(base, monkeypatch) as (root, fdir, _teams_dir):
+        _arrange_waves(fdir, {1: ["1"]})
+        (fdir / "castings" / "casting-1-prompt.md").write_text(prompt, encoding="utf-8")
+        _worked_ledger(fdir, "1", done=True)
+        payload = _accept(root, fdir, "1", completion_report=report)
+        return {
+            "payload": payload,
+            "reasons": _acceptance_reasons(fdir),
+            "destinations": _acceptance_destinations(fdir),
+        }
+
+
+@pytest.mark.parametrize("branch", sorted(_WARNING_BRANCHES), ids=sorted(_WARNING_BRANCHES))
+def test_each_warning_branch_records_the_reason_it_fired_on(tmp_path, monkeypatch, branch):
+    """lead-stalls ST-004 / US-003 (D-077) — one recorded reason per branch.
+
+    `unresolved_symbol_cites` is the row the revert exposed: delete that
+    branch's assignment and the record reads `"warning"`, which is what every
+    unnamed cause would read as. The other two rows are here because the
+    absence was total — nothing in the tree named `warning_reason` — so the
+    branch that happened to be caught is not the only one that was unpinned.
+    """
+    _prompt, _report, expected = _WARNING_BRANCHES[branch]
+    drive = _warned(tmp_path, monkeypatch, branch=branch)
+
+    # The branch really fired: a warning, and `ok` false with it.
+    assert drive["payload"]["ok"] is False, drive["payload"]
+    assert drive["payload"]["warning"], drive["payload"]
+    assert drive["destinations"] == ["casting-1-refused"], drive
+    assert drive["reasons"] == [expected], drive
+
+
+@pytest.mark.parametrize("branch", sorted(_WARNING_BRANCHES), ids=sorted(_WARNING_BRANCHES))
+def test_no_warning_branch_records_another_branchs_reason(tmp_path, monkeypatch, branch):
+    """lead-stalls ST-004 / US-003 (D-077) — the three cannot be confused.
+
+    The reasons share no prefix, so a branch that slid onto the wrong arm of
+    the `elif` chain — or one falling through to the `or "warning"` fallback
+    while a sibling still names itself — is red here rather than merely
+    indistinguishable on disk.
+    """
+    _prompt, _report, expected = _WARNING_BRANCHES[branch]
+    others = [
+        reason for name, (_p, _r, reason) in _WARNING_BRANCHES.items() if name != branch
+    ]
+    drive = _warned(tmp_path, monkeypatch, branch=branch)
+
+    assert drive["reasons"] == [expected], drive
+    for other in others:
+        assert other not in drive["reasons"][0], (other, drive)
+    # The anonymous fallback is what the erased branch read as. No branch that
+    # has a reason of its own may record it.
+    assert drive["reasons"][0] != "warning", drive
+
+
+def test_an_accepted_casting_records_no_refusal_reason(tmp_path, monkeypatch):
+    """lead-stalls ST-004 (D-077) — the reason reader is not vacuously true.
+
+    `_acceptance_reasons` returns `""` for an accepted record, so the three
+    rows above would be green against a reader that found a reason nowhere.
+    This is the row that fails if it ever does.
+    """
+    with _scratch_run(tmp_path, monkeypatch) as (root, fdir, _teams_dir):
+        _arrange_waves(fdir, {1: ["1"]})
+        _worked_ledger(fdir, "1", done=True)
+        payload = _accept(root, fdir, "1")
+        assert payload["ok"] is True, payload
+        assert _acceptance_reasons(fdir) == [""], _acceptance_reasons(fdir)
+
+
+
 def _judged_return_lines() -> tuple[list[int], list[int]]:
     """``(judged, unrecorded)`` return lines of the SHIPPED `foundry_accept_casting`.
 

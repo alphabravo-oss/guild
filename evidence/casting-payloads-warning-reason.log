@@ -1,0 +1,15 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -p no:cacheprovider --no-header --color=no -v -k "warning_branch or refusal_reason" tests/test_next_call_payloads.py 2>/dev/null | awk '/^tests\/test_next_call_payloads.py::/ { n++; ok = ($0 ~ / PASSED/); if (ok) p++; split($0, a, "::"); split(a[2], b, " "); printf "%-11s %s\n", (ok ? "PASSED" : "NOT PASSED"), b[1] } END { printf "\ndriven at or above the floor of 7: %s\n", (n >= 7 ? "True" : "False"); printf "every driven guard passed:        %s\n", (n > 0 && n == p ? "True" : "False"); printf "verdict:                          %s\n", (n >= 7 && n == p ? "GREEN" : "RED") }'
+# evidence-for: ST-004, US-003
+# evidence-timeout: 300
+
+PASSED      test_each_warning_branch_records_the_reason_it_fired_on[missing_citations]
+PASSED      test_each_warning_branch_records_the_reason_it_fired_on[scope_flags]
+PASSED      test_each_warning_branch_records_the_reason_it_fired_on[unresolved_symbol_cites]
+PASSED      test_no_warning_branch_records_another_branchs_reason[missing_citations]
+PASSED      test_no_warning_branch_records_another_branchs_reason[scope_flags]
+PASSED      test_no_warning_branch_records_another_branchs_reason[unresolved_symbol_cites]
+PASSED      test_an_accepted_casting_records_no_refusal_reason
+
+driven at or above the floor of 7: True
+every driven guard passed:        True
+verdict:                          GREEN
