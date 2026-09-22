@@ -2528,6 +2528,23 @@ def _nyquist_batches(verdicts: object) -> list[list[str]]:
     ]
 
 
+def _nyquist_dispatch(project_root: str, fdir: Path, state: dict) -> dict:
+    """What the F5.5 arm publishes for the auditor steps to expand from:
+    the batches and the spec path, so no prompt is left for the lead to write
+    (D-079). The path comes from `_spec_requirement_ids`, the one climb the
+    short-ledger rung reads, so the auditors are pointed at the spec whose ids
+    the gate counted. Total: an unreadable ledger is no batches."""
+    spec_path = _spec_requirement_ids(project_root, fdir, state)[2]
+    try:
+        spec_path = spec_path.relative_to(project_root)
+    except (AttributeError, TypeError, ValueError):
+        pass
+    return {
+        "nyquist_batches": _nyquist_batches(_load_json(fdir / "verdicts.json")),
+        "spec_path": "" if spec_path is None else str(spec_path),
+    }
+
+
 def _nyquist_steps(details: dict) -> tuple[_Step, ...]:
     """One nyquist-auditor Agent call per published batch, or none. Total."""
     batches = details.get("nyquist_batches")
@@ -5248,13 +5265,6 @@ def _compute_next_action(project_root: str) -> dict:
         )
         if crossing is not None:
             return crossing
-        # lead-stalls D-079 — the batches and the spec path the auditor steps
-        # expand from, so no prompt is left for the lead to write.
-        spec_path = _spec_requirement_ids(project_root, fdir, state)[2]
-        try:
-            spec_path = spec_path.relative_to(project_root)
-        except (AttributeError, TypeError, ValueError):
-            pass
         return {
             "phase": "F5.5",
             "action": "run_nyquist",
@@ -5276,10 +5286,7 @@ def _compute_next_action(project_root: str) -> dict:
                     "description": "NYQUIST: regression tests for VERIFIED requirements",
                 },
                 "batch_size": _NYQUIST_BATCH_SIZE,
-                "nyquist_batches": _nyquist_batches(
-                    _load_json(fdir / "verdicts.json")
-                ),
-                "spec_path": "" if spec_path is None else str(spec_path),
+                **_nyquist_dispatch(project_root, fdir, state),
             },
         }
 

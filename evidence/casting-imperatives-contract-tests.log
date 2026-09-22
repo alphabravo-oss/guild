@@ -2,7 +2,7 @@
 # evidence-for: US-002, FR-001, FR-002, FR-005, FR-006, FR-015, CT-001, CT-002, CT-003, CT-006, CT-008, GI-004, GI-008, OT-001, OT-003, OT-004, OT-007, OT-013
 
 ============================= test session starts ==============================
-collecting ... collected 183 items
+collecting ... collected 189 items
 
 test_the_audit_sweeps_every_key_and_returns_zero PASSED
 test_the_recorded_evidence_shows_the_population_it_judged PASSED
@@ -187,5 +187,11 @@ test_the_walk_bites_on_a_served_gate_that_refuses PASSED
 test_the_audit_sees_a_parking_none_at_an_action_that_owes_a_move PASSED
 test_the_none_the_terminals_and_the_waiting_branches_answer_is_owed PASSED
 test_every_router_revert_names_text_that_is_in_the_tree_exactly_once PASSED
+test_the_nyquist_auditors_are_served_as_literal_calls PASSED
+test_a_nyquist_batch_holds_only_verified_requirements PASSED
+test_every_served_agent_call_carries_its_prompt PASSED
+test_the_prompt_rung_bites_on_the_nyquist_shape_it_was_filed_for PASSED
+test_the_prompt_rung_bites_on_a_stream_step_without_its_prompt PASSED
+test_the_prompt_rung_bites_on_an_assay_step_without_its_prompt PASSED
 
-183 passed
+189 passed
