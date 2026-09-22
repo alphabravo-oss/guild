@@ -633,12 +633,25 @@ def _site_details(action: str, roster: tuple[str, ...] = _C10_ROSTER) -> dict:
     # lead-stalls D-079 — `run_nyquist`'s auditors are one Agent call per
     # batch the router cut from verdicts.json; six ids is two batches, so the
     # site shows a full batch and a short one.
+    # lead-stalls D-081 — and each batch's result file, which the router
+    # publishes beside the batches (the AGENT_RESULT_UNCARRIED rung).
     if action == "run_nyquist":
         return {
             "nyquist_batches": [
                 ["FR-1", "FR-2", "FR-3", "FR-4", "FR-5"], ["FR-6"],
             ],
             "spec_path": "forge-specs/audit/spec.md",
+            "result_files": [
+                f"foundry-archive/{_AUDIT_RUN}/nyquist/cycle-0-batch-{n}.json"
+                for n in (1, 2)
+            ],
+        }
+    # lead-stalls D-082 — the decomposer's prompt names the spec and the
+    # procedure the F0 arm publishes.
+    if action == "add_castings":
+        return {
+            "spec_path": "forge-specs/audit/spec.md",
+            "procedure_path": "plugins/foundry/commands/start.md",
         }
     return {}
 
@@ -1415,6 +1428,39 @@ def _arrange_nyquist_filed_capped(root, fdir, teams):
     _capped(fdir)
 
 
+#: lead-stalls D-081 — an auditor's result file, at the path and in the shape
+#: `run_nyquist`'s prompt tells it to write: this cycle, batch 1.
+def _escalation_result(
+    fdir: Path, *, reason: str = "ESCALATE_IMPL_BUG", cycle: int = 1,
+    rid: str = "FR-1",
+) -> None:
+    path = fdir / "nyquist" / f"cycle-{cycle}-batch-1.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"escalated": [{
+        "req_id": rid, "reason": reason, "expected": "204",
+        "actual": "200 with an empty body", "test_file": "tests/test_a.py",
+        "iterations": 2,
+    }]}), encoding="utf-8")
+
+
+def _arrange_nyquist_escalated(root, fdir, teams):
+    # The move `run_nyquist` served is made: the auditor wrote its result and
+    # the gate out of F5.5 passed, which it does with nothing filed.
+    _post_assay(fdir, "F5.5", temper=True, nyquist=True, passed="done")
+    _escalation_result(fdir)
+
+
+def _arrange_nyquist_escalation_filed(root, fdir, teams):
+    # The same escalation, carried by an open blocking defect on FR-1.
+    _post_assay(fdir, "F5.5", temper=True, nyquist=True, passed="done", filed=True)
+    _escalation_result(fdir)
+
+
+def _arrange_nyquist_escalated_capped(root, fdir, teams):
+    _arrange_nyquist_escalated(root, fdir, teams)
+    _capped(fdir)
+
+
 def _arrange_halted_reported(root, fdir, teams):
     _halted_run(fdir)
     (fdir / "REPORT.md").write_text("# report\n", encoding="utf-8")
@@ -1473,6 +1519,11 @@ _ROUTER_STATES = (
     ("nyquist-owed", "GI-008", _arrange_nyquist_owed, "run_nyquist", None),
     ("nyquist-gate-passed", "GI-008", _arrange_nyquist_gate_passed, "transition_to_done", None),
     ("nyquist-filed", "GI-008", _arrange_nyquist_filed, "transition_to_grind", None),
+    # lead-stalls D-081 — an auditor's escalation, which it can only write to
+    # its result file: unfiled, it is the GRIND crossing opened by its
+    # filing, whatever the gate's record says; filed, the ordinary crossing.
+    ("nyquist-escalated", "GI-008", _arrange_nyquist_escalated, "transition_to_grind", None),
+    ("nyquist-escalation-filed", "GI-008", _arrange_nyquist_escalation_filed, "transition_to_grind", None),
     # lead-stalls D-051..D-053 — the rest of the population, so every action
     # the router returns is served here at least once and its CONTEXT judged.
     ("no-run", "GI-008", _arrange_no_run, "init", None),
@@ -1538,6 +1589,7 @@ _ROUTER_STATES = (
     ("assay-passed-filed-capped", "GI-008", _arrange_assay_passed_filed_capped, "transition_to_grind", None),
     ("temper-filed-capped", "GI-008", _arrange_temper_filed_capped, "transition_to_grind", None),
     ("nyquist-filed-capped", "GI-008", _arrange_nyquist_filed_capped, "transition_to_grind", None),
+    ("nyquist-escalated-capped", "GI-008", _arrange_nyquist_escalated_capped, "transition_to_grind", None),
     ("halted-reported", "GI-008", _arrange_halted_reported, "halted", None),
     ("halted-unreported", "GI-008", _arrange_halted_unreported, "halted", None),
     ("done", "GI-008", _arrange_done, "done", None),
@@ -1923,8 +1975,38 @@ _RULE_ORDER = re.compile(r"\b(CAST|GRIND): its prompt is .*?Order: ([^.]*)\.")
 _STEP_ORDER = re.compile(r"Order: ([^.]*)\.")
 _ARG_PHASE = re.compile(r"phase='([a-z_]+)'")
 _ARG_SUBAGENT = re.compile(r"subagent_type='([^']+)'")
-#: A `prompt=` argument with a value: a quoted string or a `<...>` placeholder.
-_PROMPT_ARG = re.compile(r"""\bprompt=(?:"[^"]+"|'[^']+'|<[^>]+>)""")
+#: A `prompt=` argument with a value: a quoted string, or a `<...>`
+#: placeholder that names a value a step RETURNED, verbatim.
+#:
+#: lead-stalls D-082 — the placeholder alternative was `<[^>]+>`, any text at
+#: all, so `add_castings` passed with `prompt=<per commands/start.md §F0.5
+#: DECOMPOSE: ...>`: a prompt the lead had to write, which is the judgment task
+#: D-040 and D-079 were filed for. Replaced by `prompt=<whatever you judge the
+#: decomposition needs>` it still passed. A placeholder the lead can fill
+#: without judging is one that copies a door's answer, and only that passes.
+_PROMPT_ARG = re.compile(
+    r"""\bprompt=(?:"[^"]+"|'[^']+'|<[^>]*\breturned\b[^>]*\bverbatim\b[^>]*>)"""
+)
+#: lead-stalls D-082 — an Agent step no spawn door feeds (it carries no
+#: prompt blocks) is made once per step, or a literal number of times ("four
+#: times"); "for each domain
+#: identified from the spec" hands the lead the count, and with it the
+#: reading of the spec that decides it. A list a door RETURNED is not a
+#: reading ("for each returned casting").
+_COUNT_HANDED_OVER = re.compile(r"\bfor each\b|\bas many\b|\bhowever many\b", re.I)
+#: lead-stalls D-081 — the agent types whose tools reach NO Foundry door,
+#: written by hand from each `agents/*.md` frontmatter `tools:` line rather
+#: than read off it here, because the revert reports run this module in a
+#: copy of `src` and `tests` alone, where no agent file exists; the pin
+#: `test_the_doorless_agents_are_the_agent_files_own` holds it to the files.
+_DOORLESS_AGENTS = frozenset({
+    "foundry:codebase-mapper", "foundry:flow-mapper", "foundry:intent-carrier",
+    "foundry:nyquist-auditor", "foundry:pattern-mapper",
+    "foundry:research-synthesizer", "foundry:researcher",
+    "foundry:test-observations-adjudicator",
+})
+#: A JSON file under a run directory, as a served prompt names one.
+_RUN_JSON = re.compile(r"foundry-archive/[^\s\"'<>]+\.json\b")
 #: A call written as one: a Foundry door or a harness tool, then "(".
 _CALL_SYNTAX = re.compile(
     r"\b(Foundry-[A-Z][A-Za-z-]*|Agent|Skill|Bash|SendMessage|TeamCreate"
@@ -2200,9 +2282,12 @@ def judge_next_calls(
     # and no prompt blocks hands the lead the prompt to write, which is the
     # judgment task D-040 was filed for. No rung asked it: `run_nyquist`
     # served its auditors bare, and stripping the prompt from every stream
-    # step, or from both ASSAY steps, left this sweep at zero. A `prompt=`
-    # whose value is a named placeholder (`<per commands/start.md ...>`)
-    # passes; this rung judges presence, not the prompt's content.
+    # step, or from both ASSAY steps, left this sweep at zero.
+    #
+    # D-082 — AND A PLACEHOLDER IS A PROMPT ONLY WHERE IT COPIES AN ANSWER.
+    # This rung let any `prompt=<...>` through, and judged presence alone, so
+    # `add_castings` handed the lead its decomposition prompt to write and
+    # the number of writers to decide, and the audit returned zero over it.
     for number, step in enumerate(steps, 1):
         if step.tool == "Agent" and not step.blocks and not _PROMPT_ARG.search(
             step.args or ""
@@ -2210,6 +2295,40 @@ def judge_next_calls(
             findings.append(
                 f"{site}: AGENT_WITHOUT_PROMPT — step ({number}) "
                 f"Agent({step.args}) names no prompt for the lead to pass"
+            )
+        if (
+            step.tool == "Agent" and not step.blocks
+            and _COUNT_HANDED_OVER.search(step.each)
+            and "returned" not in step.each
+        ):
+            findings.append(
+                f"{site}: AGENT_COUNT_JUDGED — step ({number}) is made "
+                f"{step.each!r}: how many agents to spawn is the lead's "
+                f"reading, not a served count"
+            )
+
+    # D-081 — AN AGENT THAT REACHES NO DOOR IS TOLD WHERE ITS RESULT GOES,
+    # AND THE PAYLOAD SAYS THE SERVER READS IT THERE. The nyquist auditor's
+    # tools reach no Foundry door, so what it escalates reached the lead's
+    # reply and nothing else: the list served over it filed nothing, and the
+    # run sealed DONE over an ESCALATE_IMPL_BUG. No rung asked what became of
+    # an agent's result, only whether its call was literal. The step's prompt
+    # must name a JSON file under the run directory that the payload's
+    # `details["result_files"]` publishes; the served-list walk
+    # (`test_what_the_phase_work_files_is_served_the_grind_crossing`) drives
+    # that the server reads it there.
+    published = details.get("result_files") if isinstance(details, dict) else None
+    published = set(published) if isinstance(published, (list, tuple)) else set()
+    for number, step in enumerate(steps, 1):
+        agent = _ARG_SUBAGENT.search(step.args or "") if step.tool == "Agent" else None
+        if (
+            agent and agent.group(1) in _DOORLESS_AGENTS
+            and not set(_RUN_JSON.findall(step.args or "")) & published
+        ):
+            findings.append(
+                f"{site}: AGENT_RESULT_UNCARRIED — step ({number}) spawns "
+                f"{agent.group(1)!r}, which reaches no Foundry door, and names "
+                f"no result file the payload publishes as read"
             )
 
     # D-040 — one call per unrecorded roster stream, and a config for each.
@@ -2531,7 +2650,7 @@ def audit_report() -> list[str]:
         "DOOR_WITHOUT_SPAWN, SPAWN_WITHOUT_DOOR, SPAWN_ORDER, SPAWN_NOT_ONE_MOVE, "
         "SPAWN_NOT_YIELDED, STREAM_WITHOUT_CALL, STREAM_WRONG_AGENT, "
         "STREAM_WITHOUT_CONFIG, STREAM_NOT_OWED, SERVED_PAST_THE_SEAL, "
-        "AGENT_WITHOUT_PROMPT",
+        "AGENT_WITHOUT_PROMPT, AGENT_COUNT_JUDGED, AGENT_RESULT_UNCARRIED",
         "one-move walk (every site and every payload, lead-stalls D-044 / D-045): "
         "RULE_WITHOUT_LIST_MOVE, RULE_ORDERS_NEXT_MID_LIST, "
         "PROSE_ORDERS_NEXT_MID_LIST, NEXT_MID_LIST, STEP_ORDERS_NEXT_MID_LIST, "
@@ -6017,9 +6136,13 @@ _OWED_CALLS = {
     "run_streams/live": [],
     # The template expands every stream (the prose sweeps read all of them).
     "run_streams/idle": ["Agent"] * 8 + ["Skill", _END_TURN],
+    # lead-stalls D-081 — the template shows the filing a nyquist auditor's
+    # unfiled escalation opens the list with; everywhere else it expands to
+    # nothing.
     "transition_to_grind": [
-        "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase", "TeamCreate",
-        "Foundry-Team-Up", "Foundry-Spawn-Teammate", "Agent", _END_TURN,
+        "Foundry-Sync", "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
+        "TeamCreate", "Foundry-Team-Up", "Foundry-Spawn-Teammate", "Agent",
+        _END_TURN,
     ],
     "fix_defects/live": [],
     "fix_defects/idle": [
@@ -6118,9 +6241,11 @@ def test_the_prose_the_structure_moved_still_says_what_it_said():
     # ledgers answer that now, and the prompt says where they are.
     assert "last notification" not in _ACTION_IMPERATIVES["add_castings"]
     assert "No team is needed" in _ACTION_IMPERATIVES["add_castings"]
+    # lead-stalls D-082 — one decomposer now, whose literal prompt names
+    # its one ledger.
     writers = _parse_branches(_ACTION_IMPERATIVES["add_castings"])["idle"]
-    assert "progress/decompose-<domain>.jsonl" in writers, writers
-    assert '"done": true' in writers, writers
+    assert "progress/decompose.jsonl" in writers, writers
+    assert "'done': true" in writers, writers
     assert "cleanup failure mode" in _ACTION_IMPERATIVES["cleanup_teams"]
     assert "Do NOT wait for 'shutdown_response' events" in (
         _ACTION_IMPERATIVES["cleanup_teams"]
@@ -6546,9 +6671,13 @@ def _walk_served_lists(root: str, *, filed_by_phase_work: Path | None = None,
                        record_streams: bool = False) -> list[tuple[str, str, list[str]]]:
     """Follow served lists until F6 or a teammate spawn; return what was served.
 
-    ``filed_by_phase_work`` is the run dir whose ledger gets a LIVE defect the
-    first time a `run_temper` / `run_nyquist` list's phase-work step is made —
-    what TEMPER or an ESCALATE_IMPL_BUG filing leaves.
+    ``filed_by_phase_work`` is the run dir whose phase work finds a bug the
+    first time a `run_temper` / `run_nyquist` list's phase-work step is made,
+    and the stand-in leaves it where that work CAN: TEMPER's agents file
+    through their own doors, so the ledger gets a LIVE defect; a nyquist
+    auditor reaches no door (lead-stalls D-081), so it writes an
+    ESCALATE_IMPL_BUG row to the result file its prompt names and to nothing
+    else, and the served lists have to carry it from there.
 
     ``record_streams`` (lead-stalls D-057) stands in for the stream agents a
     `run_streams` list spawns: each stream the payload names as missing records
@@ -6592,9 +6721,14 @@ def _walk_served_lists(root: str, *, filed_by_phase_work: Path | None = None,
             tool, args = call["tool"], call["args"] or ""
             arg = args.split("'")[1] if "'" in args else ""
             if tool in ("Skill", "Agent") and filed_by_phase_work is not None:
-                _defect_ledger(
-                    filed_by_phase_work, [_tiered("D-001", "LIVE", status="open")],
-                )
+                agent = _ARG_SUBAGENT.search(args) if tool == "Agent" else None
+                if agent and agent.group(1) in _DOORLESS_AGENTS:
+                    _write_escalation(root, args)
+                else:
+                    _defect_ledger(
+                        filed_by_phase_work,
+                        [_tiered("D-001", "LIVE", status="open")],
+                    )
                 filed_by_phase_work = None
             if tool == "TeamCreate":
                 return served
@@ -6623,6 +6757,28 @@ def _walk_served_lists(root: str, *, filed_by_phase_work: Path | None = None,
     return served
 
 
+def _write_escalation(root: str, args: str) -> None:
+    """What a nyquist auditor that found an implementation bug leaves, and
+    all it can leave (lead-stalls D-081): its JSON summary, in the Output
+    section's shape, escalating the first requirement its prompt names, at
+    every run-directory JSON path its prompt names. A prompt naming none
+    leaves the escalation in the auditor's reply alone."""
+    rid = re.search(r"Requirement IDs: ([^.]+)\.", args).group(1).split(", ")[0]
+    summary = {
+        "framework": "pytest",
+        "generated": [],
+        "escalated": [{
+            "req_id": rid, "reason": "ESCALATE_IMPL_BUG",
+            "expected": "the spec's answer", "actual": "the code's answer",
+            "test_file": "tests/test_nyquist_regression.py", "iterations": 1,
+        }],
+    }
+    for target in _RUN_JSON.findall(args):
+        path = Path(root) / target
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(summary), encoding="utf-8")
+
+
 #: One field a Foundry-Sync step names: `key='literal'` or `key=<recipe>`.
 _SYNC_FIELD = re.compile(r"\b([a-z_]+)=(?:'([^']*)'|<([^>]*)>)")
 
@@ -6643,6 +6799,15 @@ def _sync_findings(args: str, root: str) -> list[dict]:
             )
         )["requirements"]
     }
+    # lead-stalls D-081 — an escalation's row, read where its auditor wrote
+    # it: the result files under the run directory.
+    escalated = {
+        row.get("req_id"): row
+        for path in sorted(
+            (foundry_state.get_run_dir(root) / "nyquist").glob("*.json")
+        )
+        for row in json.loads(path.read_text(encoding="utf-8")).get("escalated", [])
+    }
     findings = []
     for rid in listed:
         row = rows[rid]
@@ -6654,6 +6819,12 @@ def _sync_findings(args: str, root: str) -> list[dict]:
         for key, literal, recipe in fields:
             if recipe.startswith("that requirement's verdict and evidence"):
                 finding[key] = f"{row['verdict']}: {row.get('evidence', '')}"
+            elif recipe.startswith("that requirement's escalated row"):
+                bug = escalated[rid]
+                finding[key] = (
+                    f"expected {bug['expected']}, actual {bug['actual']}, "
+                    f"test {bug['test_file']}"
+                )
             else:
                 finding[key] = literal if not recipe else recipes[recipe]
         findings.append(finding)
@@ -6728,16 +6899,30 @@ def test_a_post_assay_run_reaches_f6_by_the_served_lists_alone(
 
 
 @pytest.mark.parametrize(
-    "phase, temper, nyquist, work",
-    [("F5", True, False, "run_temper"), ("F5.5", False, True, "run_nyquist")],
+    "phase, temper, nyquist, work, head",
+    [
+        ("F5", True, False, "run_temper",
+         ["Foundry-Tasks", "Foundry-Gate", "Foundry-Phase"]),
+        # lead-stalls D-081 — the auditor filed nothing: its escalation is in
+        # its result file, and the crossing opens by filing it.
+        ("F5.5", False, True, "run_nyquist",
+         ["Foundry-Sync", "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase"]),
+    ],
     ids=["temper", "nyquist"],
 )
 def test_what_the_phase_work_files_is_served_the_grind_crossing(
-    run_env, phase, temper, nyquist, work,
+    run_env, phase, temper, nyquist, work, head,
 ):
-    """B6: a blocking defect filed during the phase's work refuses its gate,
-    and the Foundry-Next owed after that refusal is the GRIND crossing — the
-    `transition_to_grind` list, whose `grind_start` enters F3 from here."""
+    """B6: a bug the phase's work finds is served the GRIND crossing — the
+    `transition_to_grind` list, whose `grind_start` enters F3 from here.
+
+    lead-stalls D-081 — the phase work leaves the bug only where its agents
+    CAN (`_walk_served_lists`). TEMPER files it, which refuses the gate out of
+    F5. A nyquist auditor reaches no door, so this walk modelled a filing it
+    could not make and passed while a lead following the lists sealed DONE
+    over the escalation: driven now with the auditor writing its result file,
+    the gate out of F5.5 passes, and the Foundry-Next after it serves the
+    filing and the crossing."""
     root, fdir = run_env
     _post_assay_run(root, fdir, phase=phase, temper=temper, nyquist=nyquist)
 
@@ -6746,11 +6931,17 @@ def test_what_the_phase_work_files_is_served_the_grind_crossing(
     assert [action for _p, action, _c in served[:2]] == [
         work, "transition_to_grind",
     ], served
-    assert served[1][2][:3] == [
-        "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
-    ], served
+    assert served[1][2][:len(head)] == head, served
     state = json.loads((fdir / "state.json").read_text(encoding="utf-8"))
     assert state["phase"] == "F3", served
+    filed = [
+        (d["source"], d["tier"], d.get("type"), d.get("spec_ref"))
+        for d in json.loads((fdir / "defects.json").read_text(encoding="utf-8"))["defects"]
+        if d.get("status") == "open"
+    ]
+    assert filed and all(ref == "FR-1" for *_rest, ref in filed), filed
+    if nyquist:
+        assert filed == [("assay", "LIVE", "WRONG", "FR-1")], filed
 
 
 @pytest.mark.parametrize(
@@ -6796,7 +6987,10 @@ def test_every_arm_past_assay_asks_the_one_grind_question():
     This reads the source, because a copy of the body answers identically
     until it drifts. The only other payloads serving `transition_to_grind`
     are `_escalation_hold`'s clean-cycle GRIND, which has nothing blocking to
-    serve, and the F2 arm's, which is before ASSAY."""
+    serve, the F2 arm's, which is before ASSAY, and (lead-stalls D-081)
+    `_nyquist_escalation_crossing`'s, whose records are not filed yet: it
+    serves their filing, and once they are filed they are blocking and this
+    one body answers."""
     import ast
     import inspect
 
@@ -6819,6 +7013,7 @@ def test_every_arm_past_assay_asks_the_one_grind_question():
     }
     assert spelled == {
         "_blocking_grind_crossing", "_escalation_hold", "_compute_next_action",
+        "_nyquist_escalation_crossing",
     }, spelled
     asked = sorted(
         (func.name, ast.unparse(node.args[0]))
@@ -6863,13 +7058,16 @@ def test_the_post_assay_context_names_no_call_and_no_condition(run_env):
         contexts[state] = _context_of(foundry_next_action(root)["instructions"])
         (fdir / GATE_PASSED_MARKER).unlink(missing_ok=True)
         (fdir / "escalation.json").unlink(missing_ok=True)
+        for result in (fdir / "nyquist").glob("*.json"):
+            result.unlink()
     # Eight D-050 states, the two lead-stalls D-055 added: a held class at
     # F5 with nothing open, and at F5.5 with a record open; the two
     # lead-stalls D-061 added, a filed F5 and F5.5 at the --max-cycles cap;
-    # and the two lead-stalls D-062 added, a SHORT verdict ledger at each of
+    # the two lead-stalls D-062 added, a SHORT verdict ledger at each of
     # F5 and F5.5 — the state both gates admitted until this cycle gave them
-    # the DONE gate's coverage rung.
-    assert len(contexts) == 14, sorted(contexts)
+    # the DONE gate's coverage rung; and the three lead-stalls D-081 added,
+    # an auditor's escalation unfiled, filed, and unfiled at the cap.
+    assert len(contexts) == 17, sorted(contexts)
     problems = {
         state: _CALL_SYNTAX.findall(text)
         for state, text in contexts.items() if _CALL_SYNTAX.search(text)
@@ -8181,6 +8379,12 @@ def test_every_router_revert_names_text_that_is_in_the_tree_exactly_once():
         "temper-coverage", "nyquist-coverage", "unrecorded-reopen",
         "f5-short", "f55-short", "width-grind-branch", "none-owed",
         "head-gate-walk", "short-phase-states", "short-ledger-earned",
+        # lead-stalls D-080 / D-081 / D-082, cycle 24.
+        "nyquist-cap", "nyquist-parallel", "nyquist-result-file",
+        "nyquist-escalation-arm", "escalation-filing-slot", "impl-bug-only",
+        "escalation-carried", "escalation-this-cycle", "decomposer-spec",
+        "decompose-dispatch", "prompt-arg-narrow", "count-rung",
+        "result-rung", "honest-walk",
     } <= set(names), sorted(names)
 
 
@@ -8360,9 +8564,24 @@ def test_the_nyquist_auditors_are_served_as_literal_calls():
         assert "subagent_type='foundry:nyquist-auditor'" in args, args
         assert f"Run directory: foundry-archive/{_ROUTE_RUN}/." in args, args
         assert f"Spec file path: foundry-archive/{_ROUTE_RUN}/spec.md." in args, args
+        # lead-stalls D-080 — the fourth Input item the agent file lists.
+        assert f"Cap: {_guidance._NYQUIST_BATCH_SIZE}." in args, args
         assert "{" not in args, args
     assert "Requirement IDs: FR-1, FR-2, FR-3, FR-4, FR-5." in first, first
     assert "Requirement IDs: FR-6, FR-7." in second, second
+    # lead-stalls D-080 — the fan-out the replaced step served, carried.
+    for number, call in enumerate(calls[:2], 1):
+        assert call.each == (
+            f"for batch {number} of 2, every batch's call in ONE parallel message"
+        ), call.each
+    # lead-stalls D-081 — each auditor is told its own result file, the one
+    # the payload publishes as read.
+    results = [
+        f"foundry-archive/{_ROUTE_RUN}/nyquist/cycle-1-batch-{n}.json" for n in (1, 2)
+    ]
+    assert driven["details"]["result_files"] == results, driven["details"]
+    for args, result in zip((first, second), results):
+        assert f"Result file: {result} — write the JSON summary" in args, args
 
 
 def test_a_nyquist_batch_holds_only_verified_requirements():
@@ -8467,3 +8686,236 @@ def test_the_prompt_rung_bites_on_an_assay_step_without_its_prompt(monkeypatch):
     assert [f.split(":", 2)[1] for f in findings] == [
         "assay-empty[fresh]", "inspect-clean-full[fresh]",
     ], findings
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GRIND cycle 24 — D-080 / D-081 / D-082
+# --------------------------------------------------------------------------- #
+
+
+def _rung_findings(drives, rung: str) -> list[str]:
+    """``rung``'s findings on the payloads of ``drives`` alone."""
+    return [
+        f for f in audit_next_call_structure(drives)
+        if f.startswith("payload:") and f": {rung} " in f
+    ]
+
+
+def test_an_unfiled_auditor_escalation_is_served_its_filing_before_the_crossing():
+    """D-081 — the auditor wrote an ESCALATE_IMPL_BUG for FR-1 to its result
+    file and the gate out of F5.5 passed in the same move, as it does with
+    nothing filed. At 5871bc2 the next Foundry-Next served
+    `transition_to_done` on that record. Served now: the GRIND crossing,
+    opened by one literal filing whose every field but the transcribed
+    description is the server's."""
+    driven = drive_router(_arrange_nyquist_escalated, None)
+    assert driven["action"] == "transition_to_grind", driven["header"]
+    calls = [_as_step(call) for call in driven["next_calls"]]
+    assert [c.tool for c in calls] == [
+        "Foundry-Sync", "Foundry-Tasks", "Foundry-Gate", "Foundry-Phase",
+        "TeamCreate", "Foundry-Team-Up", "Foundry-Spawn-Teammate", "Agent",
+        _END_TURN,
+    ], driven["header"]
+    sync = calls[0].args
+    for field in (
+        "cycle=1,", "one finding per requirement (FR-1)", "source='assay'",
+        "tier='LIVE'", "type='WRONG'", "spec_ref=<that requirement id>",
+        "class=<that requirement id>",
+        f"foundry-archive/{_ROUTE_RUN}/nyquist/ records it>",
+    ):
+        assert field in sync, (field, sync)
+    assert driven["details"]["unfiled_escalations"] == ["FR-1"], driven["details"]
+    # The dispatch reads the count the filing leaves open.
+    assert driven["details"]["open_defects"] == 1, driven["details"]
+    assert "ESCALATE_IMPL_BUG (FR-1)" in driven["context"], driven["context"]
+
+
+def test_an_escalation_a_blocking_defect_carries_is_not_filed_again():
+    """D-081 — filed once, the escalation is carried by an open blocking
+    defect on its requirement, and the crossing is the ordinary one."""
+    driven = drive_router(_arrange_nyquist_escalation_filed, None)
+    assert driven["action"] == "transition_to_grind", driven["header"]
+    assert _as_step(driven["next_calls"][0]).tool == "Foundry-Tasks", driven["header"]
+    assert "unfiled_escalations" not in driven["details"], driven["details"]
+
+
+@pytest.mark.parametrize(
+    "reason, cycle",
+    [("ESCALATE_ENV", 1), ("ESCALATE_DEBUG_EXHAUSTED", 1),
+     ("ESCALATE_UNTESTABLE", 1), ("ESCALATE_IMPL_BUG", 0)],
+    ids=["env", "debug-exhausted", "untestable", "an-earlier-cycle"],
+)
+def test_only_an_impl_bug_from_this_cycle_is_filed(reason, cycle):
+    """D-081 — the auditor's contract: only ESCALATE_IMPL_BUG says the code
+    is wrong, and an escalation is owed its filing in the cycle it was found
+    in, after which the run left F5.5 through a GRIND. Neither of these holds
+    the run back from the crossing its gate record serves."""
+    def arrange(root, fdir, teams):
+        _post_assay(fdir, "F5.5", temper=True, nyquist=True, passed="done")
+        _escalation_result(fdir, reason=reason, cycle=cycle)
+
+    driven = drive_router(arrange, None)
+    assert driven["action"] == "transition_to_done", driven["header"]
+
+
+def test_the_escalation_reader_is_total(tmp_path):
+    """D-081 — a result file absent, unreadable or of another shape escalates
+    nothing and raises nothing; a batch beyond the count is not read; an id
+    is named once, in batch order."""
+    results = tmp_path / "nyquist"
+    results.mkdir()
+    (results / "cycle-2-batch-1.json").write_text("not json", encoding="utf-8")
+    (results / "cycle-2-batch-2.json").write_text(json.dumps({"escalated": [
+        "not a row", {"reason": "ESCALATE_IMPL_BUG"},
+        {"req_id": 7, "reason": "ESCALATE_IMPL_BUG"},
+        {"req_id": "FR-4", "reason": "ESCALATE_IMPL_BUG"},
+        {"req_id": "FR-2", "reason": "ESCALATE_ENV"},
+        {"req_id": "FR-4", "reason": "ESCALATE_IMPL_BUG"},
+    ]}), encoding="utf-8")
+    (results / "cycle-2-batch-3.json").write_text(json.dumps([1, 2]), encoding="utf-8")
+    (results / "cycle-2-batch-4.json").write_text(json.dumps({"escalated": [
+        {"req_id": "FR-9", "reason": "ESCALATE_IMPL_BUG"},
+    ]}), encoding="utf-8")
+    assert _guidance._nyquist_escalations(tmp_path, 2, 3) == ["FR-4"]
+    assert _guidance._nyquist_escalations(tmp_path, 2, 4) == ["FR-4", "FR-9"]
+    assert _guidance._nyquist_escalations(tmp_path, 1, 4) == []
+    assert _guidance._escalation_filing_steps(None) == ()
+    assert _guidance._escalation_filing_steps(["", 3]) == ()
+
+
+def test_the_result_rung_bites_on_an_auditor_told_no_result_file(monkeypatch):
+    """D-081 control — the auditor step as 5871bc2 served it, with no result
+    file in its prompt; and then the prompt kept and the router's
+    publication of the files dropped. Each is one finding per auditor."""
+    shipped = _guidance._nyquist_steps
+
+    def untold(details):
+        return tuple(
+            step._replace(args=step.args.split(" Result file: ", 1)[0] + '"')
+            for step in shipped(details)
+        )
+
+    monkeypatch.setattr(_guidance, "_nyquist_steps", untold)
+    driven = [_payload("nyquist-seven", _arrange_nyquist_seven, "run_nyquist")]
+    assert [
+        f.split(" — ", 1)[0] for f in _rung_findings(driven, "AGENT_RESULT_UNCARRIED")
+    ] == ["payload:nyquist-seven[fresh]: AGENT_RESULT_UNCARRIED"] * 2
+    monkeypatch.setattr(_guidance, "_nyquist_steps", shipped)
+
+    dispatch = _guidance._nyquist_dispatch
+
+    def unpublished(*args):
+        return {k: v for k, v in dispatch(*args).items() if k != "result_files"}
+
+    monkeypatch.setattr(_guidance, "_nyquist_dispatch", unpublished)
+    driven = [_payload("nyquist-seven", _arrange_nyquist_seven, "run_nyquist")]
+    assert len(_rung_findings(driven, "AGENT_RESULT_UNCARRIED")) == 2
+
+
+def test_the_doorless_agents_are_the_agent_files_own():
+    """D-081 — `_DOORLESS_AGENTS` against every `agents/*.md` frontmatter: an
+    agent whose `tools:` line names no Foundry MCP door. An agent file with no
+    `tools:` line has every tool."""
+    agents = Path(__file__).resolve().parents[3] / "agents"
+    if not agents.is_dir():
+        pytest.skip("run from a copy of src and tests, with no agents/ beside it")
+    doorless = set()
+    for path in agents.glob("*.md"):
+        front = path.read_text(encoding="utf-8").split("---", 2)[1]
+        tools = next(
+            (line for line in front.splitlines() if line.startswith("tools:")), None,
+        )
+        if tools is not None and not re.search(
+            r"\bmcp__(?:plugin_foundry_foundry|foundry)__", tools
+        ):
+            doorless.add(f"foundry:{path.stem}")
+    assert doorless == set(_DOORLESS_AGENTS), sorted(doorless ^ _DOORLESS_AGENTS)
+    assert "foundry:nyquist-auditor" in doorless
+
+
+def test_the_decomposer_is_served_as_one_literal_call():
+    """D-082 — `add_castings` handed the lead `prompt=<per commands/start.md
+    ...>` "for each domain identified from the spec (1-5 of them)". Served
+    now: one decomposer whose prompt names the spec, the run directory, the
+    procedure and its ledger, with no count and no placeholder."""
+    driven = drive_router(_arrange_decompose_empty, None)
+    assert (driven["action"], driven["branch"]) == ("add_castings", "idle")
+    calls = [_as_step(call) for call in driven["next_calls"]]
+    assert [c.tool for c in calls] == ["Agent", _END_TURN], driven["header"]
+    agent = calls[0]
+    assert agent.each == "", agent.each
+    procedure = driven["details"]["procedure_path"]
+    assert procedure == str(_guidance._DECOMPOSE_PROCEDURE), procedure
+    for clause in (
+        "subagent_type='general-purpose'", "run_in_background=true",
+        f'prompt="Run F0.5 DECOMPOSE for the foundry run in foundry-archive/{_ROUTE_RUN}/',
+        f"from the spec at foundry-archive/{_ROUTE_RUN}/spec.md",
+        f"the F0.5 DECOMPOSE section of {procedure} end to end",
+        "write every casting yourself rather than spawning writers",
+        f"foundry-archive/{_ROUTE_RUN}/progress/decompose.jsonl",
+    ):
+        assert clause in agent.args, (clause, agent.args)
+    for handed_over in ("{", "<", "for each", "1-5"):
+        assert handed_over not in agent.args, (handed_over, agent.args)
+    drives = [("payload:decompose-empty[fresh]", "", "", "add_castings", "idle", driven)]
+    assert _rung_findings(drives, "AGENT_WITHOUT_PROMPT") == []
+    assert _rung_findings(drives, "AGENT_COUNT_JUDGED") == []
+
+
+def test_the_decomposer_is_pointed_at_the_procedure_that_ships():
+    """D-082 — the path the decomposer is told is the plugin's own
+    commands/start.md, and it holds the F0.5 section the prompt names."""
+    procedure = _guidance._DECOMPOSE_PROCEDURE
+    if not procedure.parent.is_dir():
+        pytest.skip("run from a copy of src and tests, with no commands/ beside it")
+    assert procedure.is_file(), procedure
+    assert "### F0.5: DECOMPOSE" in procedure.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "prompt, each",
+    [
+        # the step 5871bc2 served
+        ("<per commands/start.md §F0.5 DECOMPOSE: write the domain's entry "
+         "into manifest.json>",
+         "for each domain identified from the spec (1-5 of them), all in a "
+         "SINGLE parallel message"),
+        # PROVE's mutation (drive_decompose_mutation.py)
+        ("<whatever you judge the decomposition needs>",
+         "for as many domains as you decide the spec has"),
+    ],
+    ids=["shipped", "prove-mutation"],
+)
+def test_the_prompt_rungs_bite_on_the_decomposition_hand_over(monkeypatch, prompt, each):
+    """D-082 control — both shapes audited to zero at 5871bc2. Each is now
+    an AGENT_WITHOUT_PROMPT (a placeholder no door returned) and an
+    AGENT_COUNT_JUDGED (a count the lead reads off the spec)."""
+    handed_over = _Step(
+        "Agent",
+        "model='opus', subagent_type='general-purpose', "
+        f"mode='bypassPermissions', run_in_background=true, prompt={prompt}",
+        each=each,
+    )
+    entry = _IMPERATIVES["add_castings"]
+    monkeypatch.setitem(_IMPERATIVES, "add_castings", {
+        **entry, "idle": entry["idle"]._replace(steps=(handed_over, _guidance._YIELD)),
+    })
+    drives = [_payload("decompose-empty", _arrange_decompose_empty, "add_castings")]
+    assert len(_rung_findings(drives, "AGENT_WITHOUT_PROMPT")) == 1
+    assert len(_rung_findings(drives, "AGENT_COUNT_JUDGED")) == 1
+
+
+def test_a_placeholder_that_copies_a_returned_prompt_is_a_prompt(monkeypatch):
+    """D-082 — the narrowing keeps the one placeholder a lead fills without
+    judging: a value a door returned, copied verbatim."""
+    copied = _Step(
+        "Agent",
+        "subagent_type='general-purpose', prompt=<the prompt Foundry-Context "
+        "returned, verbatim>",
+    )
+    entry = _IMPERATIVES["add_castings"]
+    monkeypatch.setitem(_IMPERATIVES, "add_castings", {
+        **entry, "idle": entry["idle"]._replace(steps=(copied, _guidance._YIELD)),
+    })
+    drives = [_payload("decompose-empty", _arrange_decompose_empty, "add_castings")]
+    assert _rung_findings(drives, "AGENT_WITHOUT_PROMPT") == []

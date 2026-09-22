@@ -402,6 +402,57 @@ def _short_ledger_assay(
     }
 
 
+def _nyquist_escalation_crossing(
+    fdir: Path, blocking: dict, grind_config: dict,
+) -> dict | None:
+    """The GRIND crossing an unfiled NYQUIST escalation owes, or ``None``.
+
+    lead-stalls GI-008 / FR-007 (D-081). The requirements this cycle's
+    auditors escalated as ESCALATE_IMPL_BUG (`_nyquist_escalations`, over the
+    result files `_nyquist_dispatch` names) that no open BLOCKING defect
+    carries (`_carried_requirements`, the reading the ASSAY-rejection arm
+    files by) are published as ``unfiled_escalations``, and
+    `transition_to_grind`'s first step files them. The rest of the payload is
+    `_blocking_grind_crossing`'s, with the filing counted into the blocking
+    count the dispatch slot reads, because by the dispatch those records are
+    open. Once filed they are carried, and the crossing is
+    `_post_assay_crossing`'s ordinary one.
+    """
+    batches = len(_nyquist_batches(_load_json(fdir / "verdicts.json")))
+    carried = _carried_requirements(fdir)
+    unfiled = [
+        rid for rid in _nyquist_escalations(fdir, current_cycle(fdir), batches)
+        if rid not in carried
+    ]
+    if not unfiled:
+        return None
+    seals = _grind_start_seals(fdir)
+    return {
+        "phase": "F5.5",
+        "action": "transition_to_grind",
+        "instructions": (
+            f"NYQUIST escalated {len(unfiled)} requirement(s) as "
+            f"ESCALATE_IMPL_BUG ({', '.join(unfiled)}) in this cycle's "
+            "result files, and no open blocking defect carries them, so the "
+            "list above opens by filing them."
+            + (
+                _GRIND_SEALS_AT_CAP if seals else
+                " GRIND fixes them, and the run comes back through INSPECT "
+                "and ASSAY."
+            )
+        ),
+        "details": {
+            "open_defects": blocking["blocking"] + len(unfiled),
+            "live_defects": blocking["live"],
+            "unknown_tier_defects": blocking["unknown"],
+            "latent_backlog": blocking["latent"],
+            "unfiled_escalations": unfiled,
+            "agent_config": grind_config,
+            "seals_halted": seals,
+        },
+    }
+
+
 def _post_assay_crossing(
     fdir: Path, phase: str, name: str, gate: str, grind_config: dict,
 ) -> dict | None:
@@ -2185,15 +2236,40 @@ _UNWRITTEN_REPORT = "{unwritten report}"
 
 #: lead-stalls GI-008 / FR-007 (D-079) — the step `run_nyquist` holds in place
 #: of its auditor dispatch, expanded from `details["nyquist_batches"]`: one
-#: Agent call per batch, its prompt naming the run directory, the spec path
-#: and the requirement ids, which is the whole of the Input section
-#: `agents/nyquist-auditor.md` says each auditor is told. The step served
-#: `subagent_type='foundry:nyquist-auditor'` "for each batch of 5 VERIFIED
-#: requirements" with no prompt, so the lead had to read verdicts.json, cut
-#: it into batches and write every prompt itself — D-040's judgment task, on
-#: a list the server already holds. `_EACH_UNFILED_VERDICT`'s shape: the
-#: router publishes the fact, the resolver turns it into steps.
+#: Agent call per batch, all in one parallel message, its prompt naming the
+#: four items the Input section of `agents/nyquist-auditor.md` lists — the
+#: run directory, the spec path, the requirement ids and the cap — and the
+#: result file its JSON summary goes to (D-081, `_EACH_UNFILED_ESCALATION`).
+#: The step served `subagent_type='foundry:nyquist-auditor'` "for each batch of
+#: 5 VERIFIED requirements" with no prompt, so the lead had to read
+#: verdicts.json, cut it into batches and write every prompt itself — D-040's
+#: judgment task, on a list the server already holds. `_EACH_UNFILED_VERDICT`'s
+#: shape: the router publishes the fact, the resolver turns it into steps.
 _EACH_NYQUIST_BATCH = "{nyquist batches}"
+
+#: lead-stalls GI-008 / FR-007 (D-081) — the step `transition_to_grind` opens
+#: with, expanded from `details["unfiled_escalations"]`: one Foundry-Sync
+#: filing the requirements a nyquist auditor escalated as ESCALATE_IMPL_BUG,
+#: or no step at all.
+#:
+#: WHY THE ESCALATION IS A SERVER FACT. `agents/nyquist-auditor.md` returns
+#: its escalations as JSON to the lead, and its tools reach no Foundry door,
+#: so the auditor cannot file one. `run_nyquist`'s trailer said "An
+#: ESCALATE_IMPL_BUG result starts a new GRIND cycle" over a list with no
+#: filing step: a lead making exactly what it was served passed the DONE gate
+#: and sealed F6 over the bug, and the only way to honour the trailer was to
+#: read every auditor's JSON for that reason and compose a filing no step
+#: named — a conditional and a judgment task. So each auditor's prompt names
+#: the result file its summary goes to, the F5.5 arm reads this cycle's files
+#: BEFORE the crossing its gate record would serve, and an escalation no open
+#: blocking defect carries is served here, ahead of the GRIND door, the way
+#: `_EACH_UNFILED_VERDICT` serves ASSAY's.
+_EACH_UNFILED_ESCALATION = "{unfiled escalations}"
+
+#: lead-stalls GI-008 / FR-007 (D-082) — the step `add_castings`' idle branch
+#: holds in place of its decomposer, expanded from the spec path and the
+#: procedure path the F0 arm publishes (`_decomposer_steps`).
+_DECOMPOSER = "{decomposer}"
 
 #: Every name a step may carry as its tool. Closed, so a step naming something
 #: the lead cannot call is caught where it is written, and pinned by the audit
@@ -2508,11 +2584,29 @@ def _verdict_filing_steps(unfiled: object) -> tuple[_Step, ...]:
 _NYQUIST_BATCH_SIZE = 5
 
 #: What a template rendering of `_EACH_NYQUIST_BATCH` names in place of the
-#: ids and the spec, so the prose sweeps over `_ACTION_IMPERATIVES` see it.
+#: ids, the spec and the result file, so the prose sweeps over
+#: `_ACTION_IMPERATIVES` see it.
 _NYQUIST_TEMPLATE = {
     "nyquist_batches": [["each batch of 5 VERIFIED requirement ids in verdicts.json"]],
     "spec_path": "<the run's spec path>",
+    "result_files": [
+        "foundry-archive/{run}/nyquist/cycle-{cycle}-batch-<its batch number>.json"
+    ],
 }
+
+#: lead-stalls D-081 — where each auditor's JSON summary goes, under the run
+#: directory: one file per batch per cycle. The cycle is in the name because
+#: an escalation is owed a filing in the cycle it was found in and in no
+#: other: once it is filed the run leaves F5.5 through a GRIND, and it comes
+#: back only after `inspect_start` has advanced the counter, so a later
+#: cycle's F5.5 never re-reads a file whose escalation is already filed.
+_NYQUIST_RESULTS_DIR = "nyquist"
+
+
+def _nyquist_result_name(cycle: object, number: int) -> str:
+    """One batch's result file, relative to the run directory. The cycle is
+    spelled by `_grind_cycle`, the spelling `{cycle}` resolves to."""
+    return f"{_NYQUIST_RESULTS_DIR}/cycle-{_grind_cycle(cycle)}-batch-{number}.json"
 
 
 def _nyquist_batches(verdicts: object) -> list[list[str]]:
@@ -2528,25 +2622,54 @@ def _nyquist_batches(verdicts: object) -> list[list[str]]:
     ]
 
 
+def _project_relative(project_root: str, path: object) -> str:
+    """``path`` as an agent the lead spawns is told it: relative to the
+    project root where it lies beneath it, as given otherwise, ``""`` for
+    none. Total."""
+    if path is None:
+        return ""
+    try:
+        return str(Path(path).relative_to(project_root))
+    except (TypeError, ValueError):
+        return str(path)
+
+
+def _run_spec_path(project_root: str, fdir: Path, state: dict) -> str:
+    """The run's spec, from `_spec_requirement_ids` — the one climb the
+    short-ledger rung reads, so an agent is pointed at the spec whose ids the
+    gate counts."""
+    return _project_relative(
+        project_root, _spec_requirement_ids(project_root, fdir, state)[2]
+    )
+
+
 def _nyquist_dispatch(project_root: str, fdir: Path, state: dict) -> dict:
     """What the F5.5 arm publishes for the auditor steps to expand from:
-    the batches and the spec path, so no prompt is left for the lead to write
-    (D-079). The path comes from `_spec_requirement_ids`, the one climb the
-    short-ledger rung reads, so the auditors are pointed at the spec whose ids
-    the gate counted. Total: an unreadable ledger is no batches."""
-    spec_path = _spec_requirement_ids(project_root, fdir, state)[2]
-    try:
-        spec_path = spec_path.relative_to(project_root)
-    except (AttributeError, TypeError, ValueError):
-        pass
+    the batches, the spec path and each batch's result file, so no prompt is
+    left for the lead to write (D-079) and every escalation lands where this
+    server reads it (D-081, `_nyquist_escalations`). Total: an unreadable
+    ledger is no batches."""
+    batches = _nyquist_batches(_load_json(fdir / "verdicts.json"))
+    run_dir = _project_relative(project_root, fdir)
+    cycle = current_cycle(fdir)
     return {
-        "nyquist_batches": _nyquist_batches(_load_json(fdir / "verdicts.json")),
-        "spec_path": "" if spec_path is None else str(spec_path),
+        "nyquist_batches": batches,
+        "spec_path": _run_spec_path(project_root, fdir, state),
+        "result_files": [
+            f"{run_dir}/{_nyquist_result_name(cycle, number)}"
+            for number in range(1, len(batches) + 1)
+        ],
     }
 
 
 def _nyquist_steps(details: dict) -> tuple[_Step, ...]:
-    """One nyquist-auditor Agent call per published batch, or none. Total."""
+    """One nyquist-auditor Agent call per published batch, or none. Total.
+
+    lead-stalls D-080 — the prompt names all four Input items, the cap
+    included, and the calls go out in ONE parallel message: the step this
+    replaced served "all in a SINGLE parallel message", and auditors sent one
+    after another cost the batches' whole run time in series.
+    """
     batches = details.get("nyquist_batches")
     rows = [
         [rid for rid in batch if isinstance(rid, str) and rid]
@@ -2555,18 +2678,172 @@ def _nyquist_steps(details: dict) -> tuple[_Step, ...]:
     rows = [row for row in rows if row]
     spec = details.get("spec_path")
     spec = spec if isinstance(spec, str) and spec else _NYQUIST_TEMPLATE["spec_path"]
+    published = details.get("result_files")
+    published = list(published) if isinstance(published, (list, tuple)) else []
+
+    def result_file(number: int) -> str:
+        path = published[number - 1] if number <= len(published) else None
+        return (
+            path if isinstance(path, str) and path
+            else _NYQUIST_TEMPLATE["result_files"][0]
+        )
+
     return tuple(
         _Step(
             "Agent",
             "subagent_type='foundry:nyquist-auditor', prompt=\"Run directory: "
             f"foundry-archive/{{run}}/. Spec file path: {spec}. Requirement "
-            f"IDs: {', '.join(row)}. Cap: {_NYQUIST_BATCH_SIZE}.\"",
+            f"IDs: {', '.join(row)}. Cap: {_NYQUIST_BATCH_SIZE}. Result file: "
+            f"{result_file(number)} — write the JSON summary your Output "
+            "section defines there before you return it; it is the one record "
+            "of your escalations this server reads.\"",
             each=(
                 f"for batch {number} of {len(rows)}, every batch's call in "
                 "ONE parallel message"
             ),
         )
         for number, row in enumerate(rows, 1)
+    )
+
+
+#: What a template rendering of `_EACH_UNFILED_ESCALATION` names in place of
+#: the requirement ids, so the prose sweeps over `_ACTION_IMPERATIVES` see it.
+_ESCALATION_TEMPLATE = (
+    "each requirement a nyquist auditor escalated as ESCALATE_IMPL_BUG",
+)
+
+
+def _nyquist_escalations(fdir: Path, cycle: object, batches: int) -> list[str]:
+    """The requirement ids this cycle's auditors escalated as
+    ESCALATE_IMPL_BUG, in batch order, each once (D-081).
+
+    Read from the result files `_nyquist_dispatch` names, one per batch, in
+    the shape the Output section of `agents/nyquist-auditor.md` defines:
+    ``escalated[]`` rows carrying ``req_id`` and ``reason``. Only
+    ESCALATE_IMPL_BUG is a defect — the auditor's own contract: its test
+    matches the spec and the code does not. ESCALATE_ENV,
+    ESCALATE_DEBUG_EXHAUSTED and ESCALATE_UNTESTABLE say the test could not be
+    made to judge the code, which is no claim about the code. Total: a file
+    absent, unreadable or of another shape escalates nothing.
+    """
+    ids: list[str] = []
+    for number in range(1, batches + 1):
+        summary = _load_json(fdir / _nyquist_result_name(cycle, number))
+        rows = summary.get("escalated") if isinstance(summary, dict) else None
+        for row in rows if isinstance(rows, list) else ():
+            if not isinstance(row, dict) or row.get("reason") != "ESCALATE_IMPL_BUG":
+                continue
+            rid = row.get("req_id")
+            if isinstance(rid, str) and rid.strip() and rid.strip() not in ids:
+                ids.append(rid.strip())
+    return ids
+
+
+def _escalation_filing_steps(unfiled: object) -> tuple[_Step, ...]:
+    """The filing `transition_to_grind` opens with, or none. Total (D-081).
+
+    ``unfiled`` is the F5.5 arm's `details["unfiled_escalations"]`: the
+    requirements an auditor escalated as ESCALATE_IMPL_BUG this cycle that no
+    open BLOCKING defect's `spec_ref` names (`_carried_requirements`). No
+    field is a choice handed over. The tier: the auditor ran a test and saw
+    the code answer wrong, which is LIVE. The type: the test matches the spec
+    and the code does not, which is WRONG. The source is `assay`: the
+    auditor's contract calls this "an ASSAY miss — the code is wrong but was
+    marked VERIFIED", and the closed vocabulary has no NYQUIST member; the
+    concern this casting filed names that gap.
+    """
+    ids = [
+        rid for rid in unfiled if isinstance(rid, str) and rid
+    ] if isinstance(unfiled, (list, tuple)) else []
+    if not ids:
+        return ()
+    return (
+        _Step(
+            "Foundry-Sync",
+            "cycle={cycle}, findings=[one finding per requirement ("
+            + ", ".join(ids)
+            + "), each with source='assay', tier='LIVE', type='WRONG', "
+            "spec_ref=<that requirement id>, class=<that requirement id>, "
+            "description=<that requirement's escalated row — its expected, "
+            "actual and test_file — as its auditor's result file under "
+            "foundry-archive/{run}/nyquist/ records it>]",
+            note=(
+                "a nyquist auditor escalated these requirements as "
+                "ESCALATE_IMPL_BUG — its test matches the spec and the code "
+                "does not — and no open blocking defect carries them, so the "
+                "GRIND below would have nothing to dispatch for them."
+            ),
+        ),
+    )
+
+
+#: lead-stalls D-082 — the procedure the decomposer is pointed at: the
+#: /foundry:start command of the plugin this server was imported from, whose
+#: §F0.5 DECOMPOSE is the procedure. `guidance.py` sits at
+#: `<plugin>/mcp-server/src/foundry_mcp/tools/orchestration/`, so the plugin
+#: directory is its sixth parent.
+_DECOMPOSE_PROCEDURE = (
+    Path(__file__).resolve().parents[5] / "commands" / "start.md"
+)
+
+#: What a template rendering of `_DECOMPOSER` names in place of the paths.
+_DECOMPOSER_TEMPLATE = {
+    "spec_path": "<the run's spec path>",
+    "procedure_path": "<the foundry plugin's commands/start.md>",
+}
+
+
+def _decompose_dispatch(project_root: str, fdir: Path, state: dict) -> dict:
+    """What the F0 arm publishes for the decomposer step to expand from
+    (D-082): the spec, and the procedure, both as the agent reads them."""
+    return {
+        "spec_path": _run_spec_path(project_root, fdir, state),
+        "procedure_path": _project_relative(project_root, _DECOMPOSE_PROCEDURE),
+    }
+
+
+def _decomposer_steps(details: dict) -> tuple[_Step, ...]:
+    """The one decomposer Agent call, its prompt literal. Total (D-082).
+
+    The step handed the lead `prompt=<per commands/start.md §F0.5 DECOMPOSE
+    ...>` "for each domain identified from the spec (1-5 of them)": the
+    prompt was the lead's to write, the domain split and so the number of
+    calls were its own reading of the spec, and the range disagreed with the
+    procedure it pointed at, which says 2-5. That is the judgment task D-040
+    and D-079 were fixed for, with the split on top of it. The server holds
+    the spec path and the run directory, so the split moves into the agent:
+    ONE decomposer, told where the spec and the procedure are, identifies the
+    domains and writes every casting itself — which also leaves one writer of
+    `manifest.json` rather than one per domain racing on it.
+    """
+    spec = details.get("spec_path")
+    spec = spec if isinstance(spec, str) and spec else _DECOMPOSER_TEMPLATE["spec_path"]
+    procedure = details.get("procedure_path")
+    procedure = (
+        procedure if isinstance(procedure, str) and procedure
+        else _DECOMPOSER_TEMPLATE["procedure_path"]
+    )
+    return (
+        _Step(
+            "Agent",
+            "model='opus', subagent_type='general-purpose', "
+            "mode='bypassPermissions', run_in_background=true, "
+            "prompt=\"Run F0.5 DECOMPOSE for the foundry run in "
+            f"foundry-archive/{{run}}/, from the spec at {spec}: follow the "
+            f"F0.5 DECOMPOSE section of {procedure} end to end, its mode "
+            "detection choosing the V2 or the V3 procedure, and stop before "
+            "the Foundry-Gate call it closes on, which is the lead's to make. "
+            "You are the one decomposer: identify the domains as its step 4 "
+            "says, and write every casting yourself rather than spawning "
+            "writers — its entry in "
+            "foundry-archive/{run}/castings/manifest.json and its prompt file "
+            "foundry-archive/{run}/castings/casting-N-prompt.md, N being that "
+            "casting's id. Keep a progress ledger at "
+            "foundry-archive/{run}/progress/decompose.jsonl: append one JSON "
+            "line carrying timestamp (UTC ISO-8601 with the offset), phase "
+            "'decompose' and step as the FIRST act, again after each file "
+            "written, and a LAST line that also carries 'done': true.\"",
+        ),
     )
 
 
@@ -2603,6 +2880,12 @@ def _expanded_steps(step: _Step, details: dict | None) -> tuple[_Step, ...]:
         return _report_steps({"report_generated": False} if template else details)
     if step.tool == _EACH_NYQUIST_BATCH:
         return _nyquist_steps(_NYQUIST_TEMPLATE if template else details)
+    if step.tool == _EACH_UNFILED_ESCALATION:
+        return _escalation_filing_steps(
+            _ESCALATION_TEMPLATE if template else details.get("unfiled_escalations")
+        )
+    if step.tool == _DECOMPOSER:
+        return _decomposer_steps(_DECOMPOSER_TEMPLATE if template else details)
     if step.tool == _BLOCKING_DISPATCH:
         count = details.get("open_defects")
         nothing_blocks = (
@@ -2673,43 +2956,30 @@ _STREAMS_RUNNING = _Imperative((), (
 #: Driven, following that list validated one casting, crossed into F1 and
 #: dispatched wave 1 over a decomposition still in progress.
 #:
-#: So each writer keeps a progress ledger (the idle branch's prompt says
-#: where and how), F0 reads it through `_waiting_on_agents` like CAST and
-#: GRIND, and while any writer is advancing this branch answers END YOUR TURN.
-#: The ledger name is `decompose-<domain>`, which no casting's ledger
-#: (`casting-<id>`) and no stream's can collide with.
+#: So the writer keeps a progress ledger (the idle branch's prompt says where
+#: and how), F0 reads it through `_waiting_on_agents` like CAST and GRIND, and
+#: while it is advancing this branch answers END YOUR TURN. The ledger name is
+#: `decompose`, which no casting's ledger (`casting-<id>`) and no stream's can
+#: collide with.
+#:
+#: lead-stalls GI-008 / FR-007 (D-082) — AND THERE IS ONE WRITER, THE
+#: DECOMPOSER, WHOSE PROMPT IS LITERAL. The idle branch handed the lead a
+#: placeholder prompt "for each domain identified from the spec (1-5 of
+#: them)": the prompt, the domain split and so the number of calls were all
+#: the lead's to decide (see `_decomposer_steps`).
 _DECOMPOSITION_WRITERS_LIVE = _Imperative((), (
-    "Your decomposition writers are running — this server read their "
-    "progress ledgers on this call and measured them advancing, so the "
-    "castings manifest is not finished yet. " + _WAITING_IS_NOT_STOPPING
+    "Your decomposer is running — this server read its progress ledger on "
+    "this call and measured it advancing, so the castings manifest is not "
+    "finished yet. " + _WAITING_IS_NOT_STOPPING
 ))
 
 _DECOMPOSITION_WRITERS = _Imperative(
-    (
-        _Step(
-            "Agent",
-            "model='opus', subagent_type='general-purpose', "
-            "mode='bypassPermissions', run_in_background=true, "
-            "prompt=<per commands/start.md §F0.5 DECOMPOSE: write the "
-            "domain's entry into manifest.json AND write "
-            "casting-{id}-prompt.md to foundry-archive/{run}/castings/ "
-            "following the layout in start.md §6 — and keep a progress "
-            "ledger at foundry-archive/{run}/progress/decompose-<domain>.jsonl: "
-            "append one JSON line carrying timestamp (UTC ISO-8601), "
-            "phase 'decompose' and step as the FIRST act, again after each "
-            "file written, and a LAST line that also carries \"done\": true>",
-            each=(
-                "for each domain identified from the spec (1-5 of them), "
-                "all in a SINGLE parallel message"
-            ),
-        ),
-        _YIELD,
-    ),
-    "No team is needed: these are short-lived file writers, so the "
-    "TeamCreate ceremony is skipped. Each writer's return message is its "
-    "TaskOutput, and each keeps the progress ledger its prompt names, which "
-    "is what the Foundry-Next every notification wakes you for reads to tell "
-    "a finished decomposition from one still being written.",
+    (_Step(_DECOMPOSER), _YIELD),
+    "No team is needed: the decomposer is a short-lived file writer, so the "
+    "TeamCreate ceremony is skipped. Its return message is its TaskOutput, "
+    "and it keeps the progress ledger its prompt names, which is what the "
+    "Foundry-Next its completion notification wakes you for reads to tell a "
+    "finished decomposition from one still being written.",
 )
 
 
@@ -3138,8 +3408,13 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
     },
     # lead-stalls GI-008 / FR-007 (D-055) — the dispatch is a slot, so the
     # clean-cycle GRIND a held escalation owes is this list without it.
+    #
+    # lead-stalls GI-008 / FR-007 (D-081) — and so is the filing a nyquist
+    # auditor's escalation owes, which opens the list the F5.5 arm serves for
+    # it and expands to nothing everywhere else (`_EACH_UNFILED_ESCALATION`).
     "transition_to_grind": _Imperative(
         (
+            _Step(_EACH_UNFILED_ESCALATION),
             _Step("Foundry-Tasks"),
             _Step("Foundry-Gate", "phase='grind'"),
             _Step("Foundry-Phase", "phase='grind_start'"),
@@ -3318,6 +3593,11 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
     # accepted from F5.5 on a --nyquist run, so the crossing it leads to is
     # `transition_to_done` itself. The auditors are one call per batch the
     # router cut from verdicts.json (D-079, `_EACH_NYQUIST_BATCH`).
+    #
+    # lead-stalls GI-008 / FR-007 (D-081) — the note and the trailer said an
+    # ESCALATE_IMPL_BUG "starts a new GRIND cycle" over a list that filed
+    # nothing, and nothing but the lead could: the auditor reaches no door.
+    # They now say where the escalation goes and what serves its filing.
     "run_nyquist": _Imperative(
         (
             _Step(_EACH_NYQUIST_BATCH),
@@ -3329,16 +3609,21 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
                 "Foundry-Gate", "phase='done'",
                 note=(
                     "the gate out of F5.5. Its record is what the next "
-                    "Foundry-Next reads to serve the crossing; a blocking "
-                    "defect filed from an ESCALATE_IMPL_BUG result is served "
-                    "the GRIND crossing instead."
+                    "Foundry-Next reads to serve the crossing, and it reads "
+                    "the auditors' result files first: an ESCALATE_IMPL_BUG "
+                    "row no open blocking defect carries is served as the "
+                    "filing that opens the GRIND crossing instead."
                 ),
             ),
         ),
         "Each classifies COVERED / UNTESTED / UNDERTESTED, generates minimal "
-        "behavioural tests, runs them and commits the passing ones. An "
-        "ESCALATE_IMPL_BUG result starts a new GRIND cycle. An untested "
-        "requirement is never marked as passing.",
+        "behavioural tests, runs them, commits the passing ones and writes "
+        "its JSON summary to the result file its prompt names. That file is "
+        "the only place an auditor's escalation reaches this server: the "
+        "auditor has no door to file through, so the list the next "
+        "Foundry-Next serves carries the filing, and you file nothing from "
+        "an auditor's reply. An untested requirement is never marked as "
+        "passing.",
     ),
     # lead-stalls GI-008 / FR-007 (D-053) — the filing ASSAY's verdicts may
     # still owe is the list's first step, so the list succeeds on the state it
@@ -4528,13 +4813,16 @@ def _compute_next_action(project_root: str) -> dict:
                     )
                     + f" Every casting file goes under {fdir}/castings/, "
                     "never castings/ at the project root, and the "
-                    "agent_config below is ENFORCED for each writer."
+                    "agent_config below is ENFORCED for the decomposer."
                     + _BRANCHED_ACTION_CONTEXT
                 ),
+                # lead-stalls D-082 — the spec and the procedure the
+                # decomposer's literal prompt names (`_decomposer_steps`).
                 "details": {
                     "foundry_dir": str(fdir),
                     "casting_count": casting_count,
                     "agent_config": DECOMPOSE_AGENT_CONFIG,
+                    **_decompose_dispatch(project_root, fdir, state),
                 },
                 "agent_liveness": agent_liveness,
             }
@@ -5246,6 +5534,18 @@ def _compute_next_action(project_root: str) -> dict:
         }
 
     elif phase == "F5.5":
+        # lead-stalls GI-008 / FR-007 (D-081) — WHAT THE AUDITORS ESCALATED
+        # IS READ FIRST. `run_nyquist`'s list ends in the DONE gate, which
+        # passes in the same move the auditors return in, so every rung below
+        # — the gate's record above all — would carry the run past an
+        # escalation nothing filed. Asked before the hold for the same reason:
+        # filing it is owed whatever else holds the run, and the GRIND the
+        # filing opens is also the road a held class takes.
+        escalated = _nyquist_escalation_crossing(
+            fdir, blocking, GRIND_AGENT_CONFIG,
+        )
+        if escalated is not None:
+            return escalated
         # lead-stalls D-055 — `run_nyquist` ends in the DONE gate itself.
         held = _escalation_hold(
             fdir, project_root, "F5.5", blocking,
@@ -5273,12 +5573,15 @@ def _compute_next_action(project_root: str) -> dict:
                 "lack automated coverage, batched by 5 with one "
                 "foundry:nyquist-auditor agent per batch. Each classifies "
                 "COVERED / UNTESTED / UNDERTESTED, generates minimal behavioral "
-                "tests, runs them, and commits the passing ones. Any "
-                "ESCALATE_IMPL_BUG result goes through the GRIND \u2192 INSPECT \u2192 "
-                "ASSAY loop, and an untested requirement is never marked as "
-                "passing. The list above ends in the gate out of F5.5, `done`, and the "
-                "next Foundry-Next reads that gate's record beside the defect "
-                "ledger to serve the crossing."
+                "tests, runs them, commits the passing ones and writes its "
+                "JSON summary to the result file its prompt names. An "
+                "ESCALATE_IMPL_BUG row in one of those files is filed by the "
+                "list the next Foundry-Next serves, which opens the GRIND "
+                "\u2192 INSPECT \u2192 ASSAY loop, and an untested requirement "
+                "is never marked as passing. The list above ends in the gate "
+                "out of F5.5, `done`, and the next Foundry-Next reads the "
+                "result files, then that gate's record beside the defect "
+                "ledger, to serve the crossing."
             ),
             "details": {
                 "agent_config": {
