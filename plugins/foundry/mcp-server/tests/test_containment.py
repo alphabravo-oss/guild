@@ -249,7 +249,7 @@ def test_the_roster_walk_actually_sees_the_files_it_judges() -> None:
 # Everything above this line is a PROHIBITION, and a prohibition is a standing
 # property of the tree: "no new hook event" is answerable by reading
 # `hooks.json` today, with no reference to any other commit. The cap is not
-# that shape. "The change touches at most ten source files" is a claim about
+# that shape. "The change touches at most eleven source files" is a claim about
 # a DIFF, and a diff needs two commits, only one of which a test can ever
 # stand on.
 #
@@ -319,8 +319,8 @@ def test_the_roster_walk_actually_sees_the_files_it_judges() -> None:
 # too. `UNCITED_SANCTIONED_FILES` is narrower than it was: it now carves the
 # citation walk only, and the cap no longer depends on it.
 
-#: lead-stalls NFR-001's cap, as the spec declares it AFTER its third
-#: amendment, of 2026-09-20. It read four until the first, of 2026-09-16.
+#: lead-stalls NFR-001's cap, as the spec declares it AFTER its fourth
+#: amendment, of 2026-09-22. It read four until the first, of 2026-09-16.
 #:
 #: FIRST RULING, 2026-09-16: four to seven. The build overran it -- seven
 #: non-exempt source files against a cap of four -- and nothing in the suite
@@ -355,6 +355,18 @@ def test_the_roster_walk_actually_sees_the_files_it_judges() -> None:
 #: D-070's own stated remedy rather than a separate user ruling: the only
 #: alternative the defect offers is reverting a shipped fix for a LIVE defect.
 #:
+#: FOURTH RULING, 2026-09-22, GRIND cycle 24: ten to ELEVEN, and the spec moved
+#: first again. The user ruled "Fix C-012 only" and authorised that one fix
+#: past the cap; the lead filed it as lead-stalls D-083 (fallout of D-081). Its
+#: fix, 441a24a, is a rung of `_done_preconditions` in
+#: `tools/orchestration/gates.py`: the one seal both F6 transitions and
+#: `Foundry-Gate('done')` share, which read none of the nyquist result files
+#: D-081 taught the router to serve an unfiled ESCALATE_IMPL_BUG from, so all
+#: three doors sealed F6 over it. None of the ten holds that seal. The list the
+#: rung refuses on went to the leaf `artifacts.py`, already on the roster,
+#: because the verifier and lifecycle layers may not reach each other at any
+#: depth (concern C-014) -- so the ruling moved the cap by exactly one file.
+#:
 #: The cap is re-typed here because it cannot be read from the spec. Both spec
 #: paths are gitignored (`.gitignore:15-16`), so neither exists in the detached
 #: worktree the evidence gate re-executes in, and a rung that parses the spec
@@ -362,11 +374,11 @@ def test_the_roster_walk_actually_sees_the_files_it_judges() -> None:
 #: the number is checked against the MEASURED change below and not against the
 #: roster beside it: two literals in one file agree with each other by
 #: construction, which is the whole of D-071.
-SOURCE_FILE_CAP = 10
+SOURCE_FILE_CAP = 11
 
 #: The source files this release is sanctioned to touch, repo-relative and
 #: POSIX-spelled. Four were anticipated when lead-stalls NFR-001 was written;
-#: six were compelled afterwards and are the reason the cap moved, three times.
+#: seven were compelled afterwards and are the reason the cap moved, four times.
 #: Each entry says which it is, because a roster nobody can audit is just a
 #: longer number -- and since D-071 the number comes from the measured change,
 #: so what this set contributes is exactly the part a diff cannot: WHY.
@@ -405,8 +417,15 @@ SANCTIONED_SOURCE_FILES = frozenset(
         # in for the missing record -- live in the spawn layer, which none of
         # the nine above holds.
         "plugins/foundry/mcp-server/src/foundry_mcp/tools/foundry_spawn.py",
+        # Compelled by lead-stalls D-083 on the user's ruling of 2026-09-22,
+        # "Fix C-012 only": the unfiled nyquist ESCALATE_IMPL_BUG rung of
+        # `_done_preconditions`, the one seal both F6 transitions and
+        # `Foundry-Gate('done')` share, which none of the ten above holds. The
+        # list it refuses on lives in `artifacts.py`, already on this roster,
+        # because the verifier and lifecycle layers may not reach each other.
+        "plugins/foundry/mcp-server/src/foundry_mcp/tools/orchestration/gates.py",
     }
-)  # 10 items
+)  # 11 items
 
 #: The three sanctioned files that carry no `lead-stalls `-qualified citation,
 #: so the citation walk cannot see them. `directives.py` and `foundry_spawn.py`
@@ -781,7 +800,7 @@ def test_the_sanctioned_source_roster_fits_the_declared_cap() -> None:
 def test_every_sanctioned_source_file_is_present_and_counts_against_the_cap() -> None:
     """The roster's members are paths in this tree, not strings in this file.
 
-    A roster of ten names that resolve to nothing would satisfy the cap
+    A roster of eleven names that resolve to nothing would satisfy the cap
     arithmetic above perfectly. Each entry has to exist, and has to classify as
     capped source under the exemption rule -- an entry that is really a test or
     a manifest is padding the count with something lead-stalls NFR-001 exempts.
@@ -835,7 +854,7 @@ def test_no_unsanctioned_source_file_cites_this_run() -> None:
     free with a message that names which direction went.
 
     What this cannot see is stated rather than papered over: a source file
-    edited with no citation at all is invisible here, and three of the ten are
+    edited with no citation at all is invisible here, and three of the eleven are
     exactly that shape. The measured rungs are what cover it.
     """
     cited = _cited_source_files()
@@ -856,7 +875,7 @@ def test_no_unsanctioned_source_file_cites_this_run() -> None:
     assert not lost_citation, (
         f"{len(lost_citation)} sanctioned file(s) no longer cite this run: "
         f"{lost_citation}. The walk is how this module sees an uncommitted "
-        f"eleventh file, and it can only see one while the citation convention "
+        f"twelfth file, and it can only see one while the citation convention "
         f"holds over the files it already knows about. Restore the citation, "
         f"or move the path into the carve-out and say in its comment why it "
         f"lost one."
@@ -866,7 +885,7 @@ def test_no_unsanctioned_source_file_cites_this_run() -> None:
 def test_the_exemption_rule_actually_exempts_and_actually_counts() -> None:
     """The guard on the exemption rule: prove it sorts known paths correctly.
 
-    `_cap_class` is what turns the changed paths into a count of ten, so a
+    `_cap_class` is what turns the changed paths into a count of eleven, so a
     version of it that returned `source` for everything would report a wild
     overrun, and one that returned an exemption for everything would report
     zero and pass. Both directions are driven here on paths whose answer is
