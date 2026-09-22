@@ -58,7 +58,7 @@ red in the copy with nothing reverted, not charged to any hunk: 12
   FAILED test_transitions.py::test_no_advertised_phase_token_is_refused_by_the_handler
   FAILED test_transitions.py::test_the_four_open_live_defects_are_closed_as_one_class
   FAILED test_transitions.py::test_the_temper_door_refuses_a_run_that_did_not_ask_for_temper
-  tests run: 711, red beyond the baseline: 38
+  tests run: 717, red beyond the baseline: 38
 == hunk 02 @@ -367,6 +373,86 @@ def _ledger_coverage_rung(
   FAILED test_escalation.py::test_an_open_live_instance_of_a_cleared_class_still_blocks_and_is_packeted
   FAILED test_escalation.py::test_the_advertised_gate_phases_all_resolve_to_a_real_branch
@@ -98,7 +98,7 @@ red in the copy with nothing reverted, not charged to any hunk: 12
   FAILED test_transitions.py::test_no_advertised_phase_token_is_refused_by_the_handler
   FAILED test_transitions.py::test_the_four_open_live_defects_are_closed_as_one_class
   FAILED test_transitions.py::test_the_temper_door_refuses_a_run_that_did_not_ask_for_temper
-  tests run: 711, red beyond the baseline: 38
+  tests run: 717, red beyond the baseline: 38
 == hunk 03 @@ -789,6 +875,10 @@ # D-063 — initialised here because the recorded PROVENANCE b
   FAILED test_escalation.py::test_a_class_whose_instances_were_all_fixed_clears_on_the_clean_arm
   FAILED test_escalation.py::test_a_latent_only_class_acquires_its_record_at_the_inspect_boundary
@@ -179,29 +179,29 @@ red in the copy with nothing reverted, not charged to any hunk: 12
   FAILED test_transitions.py::test_inspect_start_is_refused_while_a_cross_casting_concern_is_open
   FAILED test_transitions.py::test_the_concern_scope_still_narrows_to_the_counter_the_leaf_reports
   FAILED test_transitions.py::test_the_source_refusal_names_both_f2_re_opens
-  tests run: 711, red beyond the baseline: 79
+  tests run: 717, red beyond the baseline: 79
 == hunk 04 @@ -815,7 +905,41 @@ reopenable = recorded_width == "DELTA" or bool(held)
   FAILED test_guidance_imperatives.py::test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_guidance_imperatives.py::test_the_audit_sees_a_team_name_the_lead_cannot_create
   FAILED test_guidance_imperatives.py::test_the_audit_sweeps_every_key_and_returns_zero
   FAILED test_guidance_imperatives.py::test_the_unrecorded_width_list_can_be_made
   FAILED test_guidance_imperatives.py::test_the_walk_bites_on_a_served_gate_that_refuses
-  tests run: 711, red beyond the baseline: 5
+  tests run: 717, red beyond the baseline: 5
 == hunk 05 @@ -846,6 +970,8 @@ # D-063 adds the third: an UNRECORDED width, which prints as
   comment- or docstring-only: no behaviour to revert
 == hunk 06 @@ -1070,6 +1196,20 @@ elif unrecorded_width:
   FAILED test_guidance_imperatives.py::test_the_unrecorded_width_list_can_be_made
-  tests run: 711, red beyond the baseline: 1
+  tests run: 717, red beyond the baseline: 1
 == hunk 07 @@ -1307,6 +1447,9 @@ # lead-stalls GI-008 / FR-007 (D-062) — the DONE gate's cove
   FAILED test_guidance_imperatives.py::test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_guidance_imperatives.py::test_the_optional_phase_doors_pass_a_complete_ledger[temper]
   FAILED test_guidance_imperatives.py::test_the_optional_phase_doors_refuse_a_short_verdict_ledger[temper]
-  tests run: 711, red beyond the baseline: 3
+  tests run: 717, red beyond the baseline: 3
 == hunk 08 @@ -1378,6 +1521,9 @@ # lead-stalls GI-008 / FR-007 (D-062) — the temper twin's ru
   FAILED test_guidance_imperatives.py::test_every_router_revert_names_text_that_is_in_the_tree_exactly_once
   FAILED test_guidance_imperatives.py::test_the_optional_phase_doors_pass_a_complete_ledger[nyquist]
   FAILED test_guidance_imperatives.py::test_the_optional_phase_doors_refuse_a_short_verdict_ledger[nyquist]
-  tests run: 711, red beyond the baseline: 3
+  tests run: 717, red beyond the baseline: 3
 
 code hunks with no test red when reverted: none
 
@@ -224,7 +224,7 @@ red in the copy with nothing reverted, not charged to any hunk: 12
 
 == hunk 01 @@ -36,11 +36,23 @@ #: The crossing itself is always an `inspect_start` OUT OF F
   FAILED test_escalation.py::test_the_done_refusal_names_the_crossings_the_graph_accepts
-  tests run: 711, red beyond the baseline: 1
+  tests run: 717, red beyond the baseline: 1
 == hunk 02 @@ -1299,6 +1311,34 @@ def _still_escalated_classes(fdir: Path, project_root: str) 
   FAILED collection of test_escalation.py
   FAILED collection of test_escalation.py
