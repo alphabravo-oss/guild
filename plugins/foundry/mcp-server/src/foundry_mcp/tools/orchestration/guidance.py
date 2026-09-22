@@ -2183,6 +2183,18 @@ _BLOCKING_DISPATCH = "{blocking dispatch}"
 #: is two answers in one payload about one file.
 _UNWRITTEN_REPORT = "{unwritten report}"
 
+#: lead-stalls GI-008 / FR-007 (D-079) — the step `run_nyquist` holds in place
+#: of its auditor dispatch, expanded from `details["nyquist_batches"]`: one
+#: Agent call per batch, its prompt naming the run directory, the spec path
+#: and the requirement ids, which is the whole of the Input section
+#: `agents/nyquist-auditor.md` says each auditor is told. The step served
+#: `subagent_type='foundry:nyquist-auditor'` "for each batch of 5 VERIFIED
+#: requirements" with no prompt, so the lead had to read verdicts.json, cut
+#: it into batches and write every prompt itself — D-040's judgment task, on
+#: a list the server already holds. `_EACH_UNFILED_VERDICT`'s shape: the
+#: router publishes the fact, the resolver turns it into steps.
+_EACH_NYQUIST_BATCH = "{nyquist batches}"
+
 #: Every name a step may carry as its tool. Closed, so a step naming something
 #: the lead cannot call is caught where it is written, and pinned by the audit
 #: against the MCP server's own tool list.
@@ -2492,6 +2504,55 @@ def _verdict_filing_steps(unfiled: object) -> tuple[_Step, ...]:
     )
 
 
+#: The batch `agents/nyquist-auditor.md` caps one auditor at.
+_NYQUIST_BATCH_SIZE = 5
+
+#: What a template rendering of `_EACH_NYQUIST_BATCH` names in place of the
+#: ids and the spec, so the prose sweeps over `_ACTION_IMPERATIVES` see it.
+_NYQUIST_TEMPLATE = {
+    "nyquist_batches": [["each batch of 5 VERIFIED requirement ids in verdicts.json"]],
+    "spec_path": "<the run's spec path>",
+}
+
+
+def _nyquist_batches(verdicts: object) -> list[list[str]]:
+    """The VERIFIED requirement ids of ``verdicts``, in batches. Total."""
+    rows = verdicts.get("requirements") if isinstance(verdicts, dict) else None
+    ids = [
+        str(row["id"]) for row in rows if isinstance(row, dict)
+        and row.get("verdict") == "VERIFIED" and row.get("id")
+    ] if isinstance(rows, list) else []
+    return [
+        ids[start:start + _NYQUIST_BATCH_SIZE]
+        for start in range(0, len(ids), _NYQUIST_BATCH_SIZE)
+    ]
+
+
+def _nyquist_steps(details: dict) -> tuple[_Step, ...]:
+    """One nyquist-auditor Agent call per published batch, or none. Total."""
+    batches = details.get("nyquist_batches")
+    rows = [
+        [rid for rid in batch if isinstance(rid, str) and rid]
+        for batch in batches if isinstance(batch, (list, tuple))
+    ] if isinstance(batches, (list, tuple)) else []
+    rows = [row for row in rows if row]
+    spec = details.get("spec_path")
+    spec = spec if isinstance(spec, str) and spec else _NYQUIST_TEMPLATE["spec_path"]
+    return tuple(
+        _Step(
+            "Agent",
+            "subagent_type='foundry:nyquist-auditor', prompt=\"Run directory: "
+            f"foundry-archive/{{run}}/. Spec file path: {spec}. Requirement "
+            f"IDs: {', '.join(row)}. Cap: {_NYQUIST_BATCH_SIZE}.\"",
+            each=(
+                f"for batch {number} of {len(rows)}, every batch's call in "
+                "ONE parallel message"
+            ),
+        )
+        for number, row in enumerate(rows, 1)
+    )
+
+
 def _report_steps(details: object) -> tuple[_Step, ...]:
     """The Foundry-Report a halted run owes when its halt wrote no report,
     or none. Total: only an explicit ``report_generated: False`` owes it."""
@@ -2523,6 +2584,8 @@ def _expanded_steps(step: _Step, details: dict | None) -> tuple[_Step, ...]:
         )
     if step.tool == _UNWRITTEN_REPORT:
         return _report_steps({"report_generated": False} if template else details)
+    if step.tool == _EACH_NYQUIST_BATCH:
+        return _nyquist_steps(_NYQUIST_TEMPLATE if template else details)
     if step.tool == _BLOCKING_DISPATCH:
         count = details.get("open_defects")
         nothing_blocks = (
@@ -3236,16 +3299,11 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
     # same reason: nothing an auditor writes is a server record, so the list
     # ends in the gate out of F5.5 and the router reads that. `done` is
     # accepted from F5.5 on a --nyquist run, so the crossing it leads to is
-    # `transition_to_done` itself.
+    # `transition_to_done` itself. The auditors are one call per batch the
+    # router cut from verdicts.json (D-079, `_EACH_NYQUIST_BATCH`).
     "run_nyquist": _Imperative(
         (
-            _Step(
-                "Agent", "subagent_type='foundry:nyquist-auditor'",
-                each=(
-                    "for each batch of 5 VERIFIED requirements, all in a "
-                    "SINGLE parallel message"
-                ),
-            ),
+            _Step(_EACH_NYQUIST_BATCH),
             _Step(
                 "Foundry-Report",
                 note="the DONE gate refuses without the generated report.",
@@ -5190,6 +5248,13 @@ def _compute_next_action(project_root: str) -> dict:
         )
         if crossing is not None:
             return crossing
+        # lead-stalls D-079 — the batches and the spec path the auditor steps
+        # expand from, so no prompt is left for the lead to write.
+        spec_path = _spec_requirement_ids(project_root, fdir, state)[2]
+        try:
+            spec_path = spec_path.relative_to(project_root)
+        except (AttributeError, TypeError, ValueError):
+            pass
         return {
             "phase": "F5.5",
             "action": "run_nyquist",
@@ -5210,7 +5275,11 @@ def _compute_next_action(project_root: str) -> dict:
                     "subagent_type": "foundry:nyquist-auditor",
                     "description": "NYQUIST: regression tests for VERIFIED requirements",
                 },
-                "batch_size": 5,
+                "batch_size": _NYQUIST_BATCH_SIZE,
+                "nyquist_batches": _nyquist_batches(
+                    _load_json(fdir / "verdicts.json")
+                ),
+                "spec_path": "" if spec_path is None else str(spec_path),
             },
         }
 

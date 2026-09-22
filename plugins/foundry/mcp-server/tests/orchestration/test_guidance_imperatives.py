@@ -630,6 +630,16 @@ def _site_details(action: str, roster: tuple[str, ...] = _C10_ROSTER) -> dict:
     # router names on `details["crossing"]`: `done` on a --temper run.
     if action == "run_temper":
         return {"crossing": {"gate": "done", "token": "done"}}
+    # lead-stalls D-079 — `run_nyquist`'s auditors are one Agent call per
+    # batch the router cut from verdicts.json; six ids is two batches, so the
+    # site shows a full batch and a short one.
+    if action == "run_nyquist":
+        return {
+            "nyquist_batches": [
+                ["FR-1", "FR-2", "FR-3", "FR-4", "FR-5"], ["FR-6"],
+            ],
+            "spec_path": "forge-specs/audit/spec.md",
+        }
     return {}
 
 
@@ -1004,7 +1014,10 @@ def _post_assay(
     # computed over a phase pair that could not tell a finished ASSAY from an
     # absent one. The verdict is recorded here so the rows mean what they say,
     # and the short-ledger states are their own rows below.
-    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    # lead-stalls D-079 — `id`, the key the Foundry-Verdict door writes and
+    # the NYQUIST batches are read off; `requirement_id` expanded to no
+    # auditor call at all.
+    _write_verdicts(fdir, [{"id": "FR-1", "verdict": "VERIFIED"}])
     _defect_ledger(
         fdir, [_tiered("D-001", "LIVE", status="open")] if filed else [],
     )
@@ -1910,6 +1923,8 @@ _RULE_ORDER = re.compile(r"\b(CAST|GRIND): its prompt is .*?Order: ([^.]*)\.")
 _STEP_ORDER = re.compile(r"Order: ([^.]*)\.")
 _ARG_PHASE = re.compile(r"phase='([a-z_]+)'")
 _ARG_SUBAGENT = re.compile(r"subagent_type='([^']+)'")
+#: A `prompt=` argument with a value: a quoted string or a `<...>` placeholder.
+_PROMPT_ARG = re.compile(r"""\bprompt=(?:"[^"]+"|'[^']+'|<[^>]+>)""")
 #: A call written as one: a Foundry door or a harness tool, then "(".
 _CALL_SYNTAX = re.compile(
     r"\b(Foundry-[A-Z][A-Za-z-]*|Agent|Skill|Bash|SendMessage|TeamCreate"
@@ -2178,6 +2193,23 @@ def judge_next_calls(
             findings.append(
                 f"{site}: SPAWN_NOT_ONE_MOVE — step ({number}) does not say it "
                 f"is one move with step ({number - 1})"
+            )
+
+    # D-079 — EVERY AGENT CALL CARRIES ITS PROMPT. The Agent tool cannot be
+    # called without one, so a served Agent step with no `prompt=` argument
+    # and no prompt blocks hands the lead the prompt to write, which is the
+    # judgment task D-040 was filed for. No rung asked it: `run_nyquist`
+    # served its auditors bare, and stripping the prompt from every stream
+    # step, or from both ASSAY steps, left this sweep at zero. A `prompt=`
+    # whose value is a named placeholder (`<per commands/start.md ...>`)
+    # passes; this rung judges presence, not the prompt's content.
+    for number, step in enumerate(steps, 1):
+        if step.tool == "Agent" and not step.blocks and not _PROMPT_ARG.search(
+            step.args or ""
+        ):
+            findings.append(
+                f"{site}: AGENT_WITHOUT_PROMPT — step ({number}) "
+                f"Agent({step.args}) names no prompt for the lead to pass"
             )
 
     # D-040 — one call per unrecorded roster stream, and a config for each.
@@ -2498,7 +2530,8 @@ def audit_report() -> list[str]:
         "RULE_WITHOUT_PHASE, RULE_NOT_LEDGER_LAST, RULE_WITHOUT_ONE_MOVE, "
         "DOOR_WITHOUT_SPAWN, SPAWN_WITHOUT_DOOR, SPAWN_ORDER, SPAWN_NOT_ONE_MOVE, "
         "SPAWN_NOT_YIELDED, STREAM_WITHOUT_CALL, STREAM_WRONG_AGENT, "
-        "STREAM_WITHOUT_CONFIG, STREAM_NOT_OWED, SERVED_PAST_THE_SEAL",
+        "STREAM_WITHOUT_CONFIG, STREAM_NOT_OWED, SERVED_PAST_THE_SEAL, "
+        "AGENT_WITHOUT_PROMPT",
         "one-move walk (every site and every payload, lead-stalls D-044 / D-045): "
         "RULE_WITHOUT_LIST_MOVE, RULE_ORDERS_NEXT_MID_LIST, "
         "PROSE_ORDERS_NEXT_MID_LIST, NEXT_MID_LIST, STEP_ORDERS_NEXT_MID_LIST, "
@@ -6638,7 +6671,10 @@ def _post_assay_run(root: str, fdir: Path, *, phase: str, temper: bool,
                         "reproduces\n")
     _write_spec(fdir, ["FR-1"])
     _write_state(fdir, phase=phase, cycle=1, temper=temper, nyquist=nyquist)
-    _write_verdicts(fdir, [{"requirement_id": "FR-1", "verdict": "VERIFIED"}])
+    # lead-stalls D-079 — `id`, the key the Foundry-Verdict door writes and
+    # the NYQUIST batches are read off; `requirement_id` expanded to no
+    # auditor call at all.
+    _write_verdicts(fdir, [{"id": "FR-1", "verdict": "VERIFIED"}])
     _defect_ledger(fdir, [])
 
 
@@ -8285,3 +8321,149 @@ def hunk_revert_report(
     ]
     lines += ["", f"code hunks with no test red when reverted: {', '.join(green) or 'none'}"]
     return lines
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GRIND cycle 24 — D-079
+# --------------------------------------------------------------------------- #
+
+
+def _arrange_nyquist_seven(root, fdir, teams):
+    """F5.5 over seven VERIFIED requirements, two batches' worth."""
+    _post_assay(fdir, "F5.5", temper=True, nyquist=True)
+    ids = [f"FR-{n}" for n in range(1, 8)]
+    _write_spec(fdir, ids)
+    _write_verdicts(fdir, [
+        {"id": rid, "verdict": "VERIFIED", "evidence": "read at HEAD"}
+        for rid in ids
+    ])
+
+
+def test_the_nyquist_auditors_are_served_as_literal_calls():
+    """D-079 — `run_nyquist` step (1) was `Agent(subagent_type=
+    'foundry:nyquist-auditor')` "for each batch of 5 VERIFIED requirements"
+    with no prompt, so the lead read verdicts.json, cut the batches and wrote
+    each auditor's prompt itself. Served now: one call per batch of five, each
+    prompt naming the run directory, the spec path and the batch's ids, which
+    is the Input section of agents/nyquist-auditor.md."""
+    driven = drive_router(_arrange_nyquist_seven, None)
+    assert driven["action"] == "run_nyquist", driven["header"]
+    calls = [_as_step(call) for call in driven["next_calls"]]
+    assert [c.tool for c in calls] == [
+        "Agent", "Agent", "Foundry-Report", "Foundry-Gate",
+    ], driven["header"]
+    assert driven["details"]["nyquist_batches"] == [
+        ["FR-1", "FR-2", "FR-3", "FR-4", "FR-5"], ["FR-6", "FR-7"],
+    ], driven["details"]
+    first, second = calls[0].args, calls[1].args
+    for args in (first, second):
+        assert "subagent_type='foundry:nyquist-auditor'" in args, args
+        assert f"Run directory: foundry-archive/{_ROUTE_RUN}/." in args, args
+        assert f"Spec file path: foundry-archive/{_ROUTE_RUN}/spec.md." in args, args
+        assert "{" not in args, args
+    assert "Requirement IDs: FR-1, FR-2, FR-3, FR-4, FR-5." in first, first
+    assert "Requirement IDs: FR-6, FR-7." in second, second
+
+
+def test_a_nyquist_batch_holds_only_verified_requirements():
+    """D-079 — the auditor generates regression tests for VERIFIED
+    requirements, so an id whose verdict is anything else is in no batch."""
+    assert _guidance._nyquist_batches({"requirements": [
+        {"id": "FR-1", "verdict": "VERIFIED"},
+        {"id": "FR-2", "verdict": "PARTIAL"},
+        {"requirement_id": "FR-3", "verdict": "VERIFIED"},
+        "not a row",
+    ]}) == [["FR-1"]]
+    assert _guidance._nyquist_batches(None) == []
+    assert _guidance._nyquist_steps({}) == ()
+
+
+def _prompt_findings(drives) -> list[str]:
+    """The AGENT_WITHOUT_PROMPT findings on ``drives`` (the template sites the
+    structure audit also walks are left out: these tests judge payloads)."""
+    return [
+        f for f in audit_next_call_structure(drives)
+        if f.startswith("payload:") and "AGENT_WITHOUT_PROMPT" in f
+    ]
+
+
+def _payload(label: str, arrange, action: str) -> tuple:
+    return (f"payload:{label}[fresh]", label, "", action, None,
+            drive_router(arrange, None))
+
+
+def test_every_served_agent_call_carries_its_prompt():
+    """D-079 — the shipped table and router serve no Agent step without one,
+    on the three lists that spawn a non-teammate agent."""
+    drives = [
+        _payload("nyquist-owed", _arrange_nyquist_owed, "run_nyquist"),
+        _payload("inspect-idle", _arrange_inspect_idle, "run_streams"),
+        _payload("assay-empty", _arrange_assay_empty, "run_assay"),
+        _payload("inspect-clean-full", _arrange_inspect_clean_full,
+                 "transition_to_assay"),
+    ]
+    assert all(
+        any(_as_step(c).tool == "Agent" for c in d[-1]["next_calls"])
+        for d in drives
+    ), [d[-1]["action"] for d in drives]
+    assert _prompt_findings(drives) == []
+
+
+def test_the_prompt_rung_bites_on_the_nyquist_shape_it_was_filed_for(monkeypatch):
+    """D-079 control (iii) — the bare auditor step the table shipped."""
+    bare = _Step(
+        "Agent", "subagent_type='foundry:nyquist-auditor'",
+        each="for each batch of 5 VERIFIED requirements, all in a SINGLE "
+        "parallel message",
+    )
+    entry = _IMPERATIVES["run_nyquist"]
+    monkeypatch.setitem(
+        _IMPERATIVES, "run_nyquist",
+        entry._replace(steps=(bare,) + entry.steps[1:]),
+    )
+    findings = _prompt_findings(
+        [_payload("nyquist-owed", _arrange_nyquist_owed, "run_nyquist")]
+    )
+    assert findings == [
+        "payload:nyquist-owed[fresh]: AGENT_WITHOUT_PROMPT — step (1) "
+        "Agent(subagent_type='foundry:nyquist-auditor') names no prompt for "
+        "the lead to pass"
+    ], findings
+
+
+def test_the_prompt_rung_bites_on_a_stream_step_without_its_prompt(monkeypatch):
+    """D-079 control (i) — D-040's shape: every stream Agent step bare."""
+    shipped = _guidance._stream_agent_step
+
+    def bare(stream: str) -> _Step:
+        step = shipped(stream)
+        return step._replace(args=step.args.split(", prompt=", 1)[0])
+
+    monkeypatch.setattr(_guidance, "_stream_agent_step", bare)
+    driven = _payload("inspect-idle", _arrange_inspect_idle, "run_streams")
+    agents = [
+        c for c in map(_as_step, driven[-1]["next_calls"]) if c.tool == "Agent"
+    ]
+    assert agents, driven[-1]["header"]
+    findings = _prompt_findings([driven])
+    assert len(findings) == len(agents), findings
+
+
+def test_the_prompt_rung_bites_on_an_assay_step_without_its_prompt(monkeypatch):
+    """D-079 control (ii) — the run_assay and transition_to_assay Agent steps
+    with their prompt stripped."""
+    for action in ("run_assay", "transition_to_assay"):
+        entry = _IMPERATIVES[action]
+        monkeypatch.setitem(_IMPERATIVES, action, entry._replace(steps=tuple(
+            step._replace(args="subagent_type='foundry:assayer'")
+            if step.tool == "Agent" else step
+            for step in entry.steps
+        )))
+    findings = _prompt_findings([
+        _payload("assay-empty", _arrange_assay_empty, "run_assay"),
+        _payload("inspect-clean-full", _arrange_inspect_clean_full,
+                 "transition_to_assay"),
+    ])
+    assert [f.split(":", 2)[1] for f in findings] == [
+        "assay-empty[fresh]", "inspect-clean-full[fresh]",
+    ], findings
