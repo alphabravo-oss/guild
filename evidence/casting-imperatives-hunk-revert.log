@@ -12,6 +12,6 @@ red in the copy with nothing reverted, not charged to any hunk: 0
   tests run: 1, red beyond the baseline: 1
 == hunk 02 @@ -2363,6 +2401,7 @@ prompt += _stream_ledger_clause(stream)
   FAILED test_every_stream_the_lead_spawns_is_told_where_its_own_ledger_goes
-  tests run: 201, red beyond the baseline: 1
+  tests run: 210, red beyond the baseline: 1
 
 code hunks with no test red when reverted: none
