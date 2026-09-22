@@ -2,7 +2,7 @@
 # evidence-for: OT-002, FR-007, FR-008
 
 ============================= test session starts ==============================
-collecting ... collected 189 items / 183 deselected / 6 selected
+collecting ... collected 203 items / 197 deselected / 6 selected
 
 test_the_nyquist_auditors_are_served_as_literal_calls PASSED
 test_a_nyquist_batch_holds_only_verified_requirements PASSED
@@ -11,4 +11,4 @@ test_the_prompt_rung_bites_on_the_nyquist_shape_it_was_filed_for PASSED
 test_the_prompt_rung_bites_on_a_stream_step_without_its_prompt PASSED
 test_the_prompt_rung_bites_on_an_assay_step_without_its_prompt PASSED
 
-6 passed, 183 deselected
+6 passed, 197 deselected

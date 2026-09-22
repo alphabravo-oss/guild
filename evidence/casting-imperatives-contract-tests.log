@@ -2,7 +2,7 @@
 # evidence-for: US-002, FR-001, FR-002, FR-005, FR-006, FR-015, CT-001, CT-002, CT-003, CT-006, CT-008, GI-004, GI-008, OT-001, OT-003, OT-004, OT-007, OT-013
 
 ============================= test session starts ==============================
-collecting ... collected 189 items
+collecting ... collected 203 items
 
 test_the_audit_sweeps_every_key_and_returns_zero PASSED
 test_the_recorded_evidence_shows_the_population_it_judged PASSED
@@ -193,5 +193,19 @@ test_every_served_agent_call_carries_its_prompt PASSED
 test_the_prompt_rung_bites_on_the_nyquist_shape_it_was_filed_for PASSED
 test_the_prompt_rung_bites_on_a_stream_step_without_its_prompt PASSED
 test_the_prompt_rung_bites_on_an_assay_step_without_its_prompt PASSED
+test_an_unfiled_auditor_escalation_is_served_its_filing_before_the_crossing PASSED
+test_an_escalation_a_blocking_defect_carries_is_not_filed_again PASSED
+test_only_an_impl_bug_from_this_cycle_is_filed[env] PASSED
+test_only_an_impl_bug_from_this_cycle_is_filed[debug-exhausted] PASSED
+test_only_an_impl_bug_from_this_cycle_is_filed[untestable] PASSED
+test_only_an_impl_bug_from_this_cycle_is_filed[an-earlier-cycle] PASSED
+test_the_escalation_reader_is_total PASSED
+test_the_result_rung_bites_on_an_auditor_told_no_result_file PASSED
+test_the_doorless_agents_are_the_agent_files_own PASSED
+test_the_decomposer_is_served_as_one_literal_call PASSED
+test_the_decomposer_is_pointed_at_the_procedure_that_ships PASSED
+test_the_prompt_rungs_bite_on_the_decomposition_hand_over[shipped] PASSED
+test_the_prompt_rungs_bite_on_the_decomposition_hand_over[prove-mutation] PASSED
+test_a_placeholder_that_copies_a_returned_prompt_is_a_prompt PASSED
 
-189 passed
+203 passed

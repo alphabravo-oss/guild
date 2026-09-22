@@ -75,6 +75,10 @@ teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
   GI-008  nyquist-gate-passed      stale transition_to_done/-               running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  nyquist-filed            fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   GI-008  nyquist-filed            stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  nyquist-escalated        fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  nyquist-escalated        stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  nyquist-escalation-filed fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  GI-008  nyquist-escalation-filed stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   GI-008  no-run                   fresh init/-                             running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  no-run                   stale init/-                             running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  decompose-empty          fresh add_castings/idle                  running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
@@ -163,6 +167,8 @@ teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
   GI-008  temper-filed-capped      stale transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  nyquist-filed-capped     fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  nyquist-filed-capped     stale transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  nyquist-escalated-capped fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
+  GI-008  nyquist-escalated-capped stale transition_to_grind/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  halted-reported          fresh halted/-                           running=-   ends-turn=yes names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  halted-reported          stale halted/-                           running=-   ends-turn=yes names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  halted-unreported        fresh halted/-                           running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
