@@ -20,7 +20,6 @@ from foundry_mcp.schemas.vocab import (
     PHASE_LADDER,
     PHASE_NAMES,
     REPORT_MD_FILENAME,
-    REQUIREMENT_ID_RE,
     RUN_PHASE_HALTED,
     STREAM_WIRE_IDS,
     TIER_UNKNOWN,
@@ -39,6 +38,16 @@ from foundry_mcp.tools.artifacts import (
     _read_text,
     _spec_requirement_ids,
     _stream_marker,
+    # lead-stalls GI-008 / FR-007 (D-083) — the nyquist escalation reading
+    # lives in the leaf, because the DONE seal in `gates.py` reads it too and
+    # the two layers may not reach each other. See the block above
+    # `artifacts.py#unfiled_nyquist_escalations`.
+    _NYQUIST_BATCH_SIZE,
+    _carried_requirements,
+    _grind_cycle,
+    _nyquist_batches,
+    _nyquist_result_name,
+    unfiled_nyquist_escalations,
 )
 # fallout research/holmes-orchestrator.md#coh-8 (D-014) / GI-024 — THE PALETTE
 # AND THE PHASE VOCABULARY ARE READ, NOT DECLARED.
@@ -417,13 +426,13 @@ def _nyquist_escalation_crossing(
     count the dispatch slot reads, because by the dispatch those records are
     open. Once filed they are carried, and the crossing is
     `_post_assay_crossing`'s ordinary one.
+
+    lead-stalls D-083 — the list is `unfiled_nyquist_escalations`, the leaf's
+    one answer, and `gates.py#_done_preconditions` refuses DONE on the same
+    call. Before that the DONE seal read no result file, so a lead calling the
+    F6 doors off this list sealed the run over the escalation this list files.
     """
-    batches = len(_nyquist_batches(_load_json(fdir / "verdicts.json")))
-    carried = _carried_requirements(fdir)
-    unfiled = [
-        rid for rid in _nyquist_escalations(fdir, current_cycle(fdir), batches)
-        if rid not in carried
-    ]
+    unfiled = unfiled_nyquist_escalations(fdir)
     if not unfiled:
         return None
     seals = _grind_start_seals(fdir)
@@ -2048,8 +2057,12 @@ def _chosen_branch(action: str, liveness: object) -> str | None:
 #: header, which is the conditional-judgment push lead-stalls GI-008 forbids.
 #: The declared defaults are the values the entries held as literals, so a
 #: reading that cannot answer emits exactly what shipped before this change.
+#:
+#: lead-stalls D-083 — `_grind_cycle` and `_GRIND_CYCLE_DEFAULT` live in the
+#: leaf, `artifacts.py`, and are imported here unchanged. The same spelling
+#: names every nyquist result file, and the DONE seal reads those files from a
+#: layer that cannot import this module.
 _CAST_WAVE_DEFAULT = "1"
-_GRIND_CYCLE_DEFAULT = "0"
 
 
 def _wave_number(value: object, default: str) -> str:
@@ -2078,22 +2091,6 @@ def _built_cast_wave(liveness: object) -> str:
     """
     row = liveness if isinstance(liveness, dict) else {}
     return _wave_number(row.get("cast_wave_built"), _CAST_WAVE_DEFAULT)
-
-
-def _grind_cycle(cycle: object) -> str:
-    """`{cycle}` — the server-owned GRIND cycle counter, substituted the way
-    `{run}` is: one run-level scalar the emitter reads once and every entry
-    holding the slot receives.
-
-    It is `current_cycle`'s answer unmodified, so the team name agrees with the
-    `cycle` argument the same payload tells the lead to pass to `Foundry-Fix`
-    and with the `fixed_in_cycle` the ledger then records. `0` is the default
-    for the same reason `current_cycle` returns it: a counter that cannot be
-    read is the run's first cycle as far as every other reader is concerned.
-    """
-    if isinstance(cycle, bool) or not isinstance(cycle, int):
-        return _GRIND_CYCLE_DEFAULT
-    return str(cycle) if cycle >= 0 else _GRIND_CYCLE_DEFAULT
 
 
 #: lead-stalls D-020 — what `{casting}` resolves to when the reading names no
@@ -2580,9 +2577,6 @@ def _verdict_filing_steps(unfiled: object) -> tuple[_Step, ...]:
     )
 
 
-#: The batch `agents/nyquist-auditor.md` caps one auditor at.
-_NYQUIST_BATCH_SIZE = 5
-
 #: What a template rendering of `_EACH_NYQUIST_BATCH` names in place of the
 #: ids, the spec and the result file, so the prose sweeps over
 #: `_ACTION_IMPERATIVES` see it.
@@ -2593,33 +2587,6 @@ _NYQUIST_TEMPLATE = {
         "foundry-archive/{run}/nyquist/cycle-{cycle}-batch-<its batch number>.json"
     ],
 }
-
-#: lead-stalls D-081 — where each auditor's JSON summary goes, under the run
-#: directory: one file per batch per cycle. The cycle is in the name because
-#: an escalation is owed a filing in the cycle it was found in and in no
-#: other: once it is filed the run leaves F5.5 through a GRIND, and it comes
-#: back only after `inspect_start` has advanced the counter, so a later
-#: cycle's F5.5 never re-reads a file whose escalation is already filed.
-_NYQUIST_RESULTS_DIR = "nyquist"
-
-
-def _nyquist_result_name(cycle: object, number: int) -> str:
-    """One batch's result file, relative to the run directory. The cycle is
-    spelled by `_grind_cycle`, the spelling `{cycle}` resolves to."""
-    return f"{_NYQUIST_RESULTS_DIR}/cycle-{_grind_cycle(cycle)}-batch-{number}.json"
-
-
-def _nyquist_batches(verdicts: object) -> list[list[str]]:
-    """The VERIFIED requirement ids of ``verdicts``, in batches. Total."""
-    rows = verdicts.get("requirements") if isinstance(verdicts, dict) else None
-    ids = [
-        str(row["id"]) for row in rows if isinstance(row, dict)
-        and row.get("verdict") == "VERIFIED" and row.get("id")
-    ] if isinstance(rows, list) else []
-    return [
-        ids[start:start + _NYQUIST_BATCH_SIZE]
-        for start in range(0, len(ids), _NYQUIST_BATCH_SIZE)
-    ]
 
 
 def _project_relative(project_root: str, path: object) -> str:
@@ -2711,32 +2678,6 @@ def _nyquist_steps(details: dict) -> tuple[_Step, ...]:
 _ESCALATION_TEMPLATE = (
     "each requirement a nyquist auditor escalated as ESCALATE_IMPL_BUG",
 )
-
-
-def _nyquist_escalations(fdir: Path, cycle: object, batches: int) -> list[str]:
-    """The requirement ids this cycle's auditors escalated as
-    ESCALATE_IMPL_BUG, in batch order, each once (D-081).
-
-    Read from the result files `_nyquist_dispatch` names, one per batch, in
-    the shape the Output section of `agents/nyquist-auditor.md` defines:
-    ``escalated[]`` rows carrying ``req_id`` and ``reason``. Only
-    ESCALATE_IMPL_BUG is a defect — the auditor's own contract: its test
-    matches the spec and the code does not. ESCALATE_ENV,
-    ESCALATE_DEBUG_EXHAUSTED and ESCALATE_UNTESTABLE say the test could not be
-    made to judge the code, which is no claim about the code. Total: a file
-    absent, unreadable or of another shape escalates nothing.
-    """
-    ids: list[str] = []
-    for number in range(1, batches + 1):
-        summary = _load_json(fdir / _nyquist_result_name(cycle, number))
-        rows = summary.get("escalated") if isinstance(summary, dict) else None
-        for row in rows if isinstance(rows, list) else ():
-            if not isinstance(row, dict) or row.get("reason") != "ESCALATE_IMPL_BUG":
-                continue
-            rid = row.get("req_id")
-            if isinstance(rid, str) and rid.strip() and rid.strip() not in ids:
-                ids.append(rid.strip())
-    return ids
 
 
 def _escalation_filing_steps(unfiled: object) -> tuple[_Step, ...]:
@@ -4435,46 +4376,6 @@ def _escalation_hold(
 
 
 
-def _carried_requirements(fdir: Path) -> dict[str, list[str]]:
-    """``{requirement id: [open BLOCKING defect ids whose spec_ref names it]}``.
-
-    lead-stalls GI-008 / FR-007 (D-054). The ASSAY-rejection arm published its
-    filing only when the ledger held no open record at all, a count that never
-    asked WHICH requirement a record carries — so an unrelated LATENT backlog
-    item, or one assayer's filing of another requirement, suppressed the filing
-    of every rejection. Driven: an open LATENT record on one requirement
-    beside an unfiled PARTIAL on another, two full laps, and the rejection
-    never reached the ledger.
-
-    BLOCKING, not any tier, because the question is whether the GRIND the list
-    opens has the rejection to work on, and a GRIND dispatches only for a
-    blocking defect: the F3 arm answers `transition_to_inspect` the moment the
-    blocking count is zero. A LATENT record naming the requirement leaves ASSAY
-    rejecting it on the next lap with nothing dispatched in between, which is
-    the lap D-054 drove. HARDENING refuses a `spec_ref` at filing, so it never
-    carries one.
-
-    `spec_ref` is prose — "GI-008, FR-007" is one — so the ids are read out of
-    it with the one requirement-id grammar, `vocab.REQUIREMENT_ID_RE`, and the
-    whole stripped value counts too, for an id that grammar does not spell.
-    Total: a record with no string `spec_ref` carries nothing.
-    """
-    buckets = open_defects_by_tier(
-        fdir, tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN, tier_of=defect_tier
-    )
-    carried: dict[str, list[str]] = {}
-    for tier in BLOCKING_TIERS:
-        for record in buckets.get(tier, []):
-            ref = record.get("spec_ref")
-            if not isinstance(ref, str) or not ref.strip():
-                continue
-            for rid in {*REQUIREMENT_ID_RE.findall(ref), ref.strip()}:
-                carried.setdefault(rid, []).append(str(record.get("id", "?")))
-    return carried
-
-
-
-
 def _team_work_in_flight(
     reading: object, team_names: list, run_name: str, *, cast_open: bool
 ) -> bool:
@@ -5536,11 +5437,14 @@ def _compute_next_action(project_root: str) -> dict:
     elif phase == "F5.5":
         # lead-stalls GI-008 / FR-007 (D-081) — WHAT THE AUDITORS ESCALATED
         # IS READ FIRST. `run_nyquist`'s list ends in the DONE gate, which
-        # passes in the same move the auditors return in, so every rung below
+        # passed in the same move the auditors return in, so every rung below
         # — the gate's record above all — would carry the run past an
         # escalation nothing filed. Asked before the hold for the same reason:
         # filing it is owed whatever else holds the run, and the GRIND the
-        # filing opens is also the road a held class takes.
+        # filing opens is also the road a held class takes. lead-stalls D-083:
+        # that gate now refuses on the same `unfiled_nyquist_escalations`, and
+        # this arm is still asked first, because a gate record written before
+        # an auditor's result landed would otherwise carry the run past it.
         escalated = _nyquist_escalation_crossing(
             fdir, blocking, GRIND_AGENT_CONFIG,
         )

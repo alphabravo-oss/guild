@@ -62,6 +62,7 @@ from foundry_mcp.tools.artifacts import (
     CAST_COMPLETE_MARKER,
     GATE_PASSED_MARKER,
     _hash_file,
+    _nyquist_escalations,
     foundry_spec_hash,
 )
 from foundry_mcp.tools.evidence import foundry_accept_casting
@@ -1444,8 +1445,11 @@ def _escalation_result(
 
 
 def _arrange_nyquist_escalated(root, fdir, teams):
-    # The move `run_nyquist` served is made: the auditor wrote its result and
-    # the gate out of F5.5 passed, which it does with nothing filed.
+    # The move `run_nyquist` served is made: the auditor wrote its result, and
+    # a record says the gate out of F5.5 passed. Before lead-stalls D-083 the
+    # gate passed with nothing filed. It refuses on the escalation now, so the
+    # record stands for one written before the auditor's result landed, and
+    # the router still serves the filing first.
     _post_assay(fdir, "F5.5", temper=True, nyquist=True, passed="done")
     _escalation_result(fdir)
 
@@ -6920,9 +6924,9 @@ def test_what_the_phase_work_files_is_served_the_grind_crossing(
     CAN (`_walk_served_lists`). TEMPER files it, which refuses the gate out of
     F5. A nyquist auditor reaches no door, so this walk modelled a filing it
     could not make and passed while a lead following the lists sealed DONE
-    over the escalation: driven now with the auditor writing its result file,
-    the gate out of F5.5 passes, and the Foundry-Next after it serves the
-    filing and the crossing."""
+    over the escalation: driven now with the auditor writing its result file.
+    Since lead-stalls D-083 the gate out of F5.5 refuses on that file, and the
+    Foundry-Next after it serves the filing and the crossing."""
     root, fdir = run_env
     _post_assay_run(root, fdir, phase=phase, temper=temper, nyquist=nyquist)
 
@@ -8385,6 +8389,8 @@ def test_every_router_revert_names_text_that_is_in_the_tree_exactly_once():
         "escalation-carried", "escalation-this-cycle", "decomposer-spec",
         "decompose-dispatch", "prompt-arg-narrow", "count-rung",
         "result-rung", "honest-walk",
+        # lead-stalls D-083 — the DONE seal's rung over the same list.
+        "done-escalation-rung",
     } <= set(names), sorted(names)
 
 
@@ -8703,8 +8709,8 @@ def _rung_findings(drives, rung: str) -> list[str]:
 
 def test_an_unfiled_auditor_escalation_is_served_its_filing_before_the_crossing():
     """D-081 — the auditor wrote an ESCALATE_IMPL_BUG for FR-1 to its result
-    file and the gate out of F5.5 passed in the same move, as it does with
-    nothing filed. At 5871bc2 the next Foundry-Next served
+    file and the gate out of F5.5 passed in the same move, as it did with
+    nothing filed until lead-stalls D-083. At 5871bc2 the next Foundry-Next served
     `transition_to_done` on that record. Served now: the GRIND crossing,
     opened by one literal filing whose every field but the transcribed
     description is the server's."""
@@ -8776,9 +8782,9 @@ def test_the_escalation_reader_is_total(tmp_path):
     (results / "cycle-2-batch-4.json").write_text(json.dumps({"escalated": [
         {"req_id": "FR-9", "reason": "ESCALATE_IMPL_BUG"},
     ]}), encoding="utf-8")
-    assert _guidance._nyquist_escalations(tmp_path, 2, 3) == ["FR-4"]
-    assert _guidance._nyquist_escalations(tmp_path, 2, 4) == ["FR-4", "FR-9"]
-    assert _guidance._nyquist_escalations(tmp_path, 1, 4) == []
+    assert _nyquist_escalations(tmp_path, 2, 3) == ["FR-4"]
+    assert _nyquist_escalations(tmp_path, 2, 4) == ["FR-4", "FR-9"]
+    assert _nyquist_escalations(tmp_path, 1, 4) == []
     assert _guidance._escalation_filing_steps(None) == ()
     assert _guidance._escalation_filing_steps(["", 3]) == ()
 
@@ -8919,3 +8925,129 @@ def test_a_placeholder_that_copies_a_returned_prompt_is_a_prompt(monkeypatch):
     })
     drives = [_payload("decompose-empty", _arrange_decompose_empty, "add_castings")]
     assert _rung_findings(drives, "AGENT_WITHOUT_PROMPT") == []
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GRIND cycle 24 — D-083: the DONE seal reads what the auditors
+# escalated
+# --------------------------------------------------------------------------- #
+#
+# D-081 taught Foundry-Next to read the nyquist auditors' result files and to
+# serve an unfiled ESCALATE_IMPL_BUG as a filing plus a GRIND crossing. The
+# seal those doors share, `gates.py#_done_preconditions`, read none of them.
+# Driven at 1d46594 on this state: Foundry-Gate('done') passed once the report
+# was generated, and Foundry-Phase('nyquist_done') and Foundry-Phase('done')
+# each wrote F6 with the escalation unfiled. The seal and the router now read
+# ONE list, `artifacts.py#unfiled_nyquist_escalations`.
+
+#: The three doors `_done_preconditions` seals, as (kind, token).
+_F6_DOORS = (("gate", "done"), ("phase", "nyquist_done"), ("phase", "done"))
+_F6_DOOR_IDS = ["gate-done", "phase-nyquist_done", "phase-done"]
+
+
+def _escalated_at_f55(root: str, fdir: Path, *, defects: list[dict],
+                      cycle: int = 1) -> None:
+    """D-083's probe state, built as `_post_assay_run` builds F5.5 on a
+    --nyquist run: FR-1 VERIFIED and committed evidence that reproduces. Then
+    ``defects`` as the ledger, the counter at ``cycle``, cycle 1's batch-1
+    result file escalating FR-1 as ESCALATE_IMPL_BUG, and the report generated
+    last, so the only rungs left to speak are the ledgers'."""
+    from foundry_mcp.tools.foundry_report import foundry_report
+
+    _post_assay_run(root, fdir, phase="F5.5", temper=False, nyquist=True)
+    _write_state(fdir, phase="F5.5", cycle=cycle, temper=False, nyquist=True)
+    _defect_ledger(fdir, defects)
+    _escalation_result(fdir, cycle=1)
+    assert foundry_report(project_root=root)["ok"]
+
+
+def _knock(root: str, door: tuple[str, str]) -> dict:
+    """One F6 door, called the way a lead calls it: Foundry-Next first, which
+    arms the ordering token both doors ask for, then the door. Answers
+    ``{"passed", "reason", "refusals", "next"}`` whichever door it is, where
+    ``next`` is what that Foundry-Next served."""
+    served = foundry_next_action(root)
+    kind, token = door
+    if kind == "gate":
+        answer = foundry_gate(token, project_root=root)
+        passed, reason = answer["passed"], answer.get("reason", "")
+    else:
+        answer = foundry_mark_phase_complete(token, project_root=root)
+        passed, reason = answer.get("ok") is True, answer.get("error", "")
+    return {
+        "passed": passed, "reason": reason,
+        "refusals": answer.get("refusals") or [], "next": served,
+    }
+
+
+def _phase_of(fdir: Path) -> str:
+    return json.loads((fdir / "state.json").read_text(encoding="utf-8"))["phase"]
+
+
+@pytest.mark.parametrize("door", _F6_DOORS, ids=_F6_DOOR_IDS)
+def test_every_f6_door_refuses_an_escalation_nothing_filed(run_env, door):
+    """D-083 — FR-1 escalated as ESCALATE_IMPL_BUG this cycle, nothing filed.
+    At 1d46594 all three doors passed here and two of them wrote F6. Each one
+    refuses now, and the refusal that speaks names the requirement and the
+    call that files it. It is the list the Foundry-Next before it served."""
+    root, fdir = run_env
+    _escalated_at_f55(root, fdir, defects=[])
+
+    answer = _knock(root, door)
+
+    assert answer["next"]["action"] == "transition_to_grind", answer["next"]["action"]
+    assert answer["next"]["details"]["unfiled_escalations"] == ["FR-1"], answer["next"]["details"]
+    assert answer["passed"] is False, answer
+    assert "ESCALATE_IMPL_BUG" in answer["reason"], answer["reason"]
+    assert "FR-1" in answer["reason"], answer["reason"]
+    escalation = [r for r in answer["refusals"] if "ESCALATE_IMPL_BUG" in r["reason"]]
+    assert len(escalation) == 1, answer["refusals"]
+    assert escalation[0]["hint"].startswith("Call Foundry-Next"), escalation[0]
+    assert _phase_of(fdir) == "F5.5", door
+
+
+@pytest.mark.parametrize("door", _F6_DOORS, ids=_F6_DOOR_IDS)
+def test_an_escalation_its_filing_carries_leaves_the_f6_doors_to_the_ledger(
+    run_env, door,
+):
+    """D-083's adjacent path, the transition the served list makes next: the
+    escalation filed as an open LIVE defect on FR-1. The seal and the router
+    read one list, so neither names the escalation again. Foundry-Next serves
+    the ordinary GRIND crossing, and each door refuses on the open defect
+    alone. The escalation is carried, not waived."""
+    root, fdir = run_env
+    _escalated_at_f55(root, fdir, defects=[
+        _tiered("D-001", "LIVE", status="open", spec_ref="FR-1"),
+    ])
+
+    answer = _knock(root, door)
+
+    assert answer["next"]["action"] == "transition_to_grind", answer["next"]["action"]
+    assert "unfiled_escalations" not in answer["next"]["details"], answer["next"]["details"]
+    assert answer["passed"] is False, answer
+    assert "D-001" in answer["reason"], answer["reason"]
+    assert not [
+        r for r in answer["refusals"] if "ESCALATE_IMPL_BUG" in r["reason"]
+    ], answer["refusals"]
+    assert _phase_of(fdir) == "F5.5", door
+
+
+@pytest.mark.parametrize("door", _F6_DOORS, ids=_F6_DOOR_IDS)
+def test_a_filed_escalation_fixed_through_grind_opens_the_f6_doors_again(
+    run_env, door,
+):
+    """D-083's adjacent path, the transition after that: the filing fixed in
+    GRIND at cycle 1, and `inspect_start` moved the counter to 2. The run is
+    back at F5.5, and cycle 1's result file is still on disk. That file's
+    escalation was filed and fixed, so it holds nothing shut, and every door
+    passes. The phase doors write F6."""
+    root, fdir = run_env
+    _escalated_at_f55(root, fdir, cycle=2, defects=[
+        _tiered("D-001", "LIVE", status="fixed", spec_ref="FR-1", fixed_in_cycle=1),
+    ])
+
+    answer = _knock(root, door)
+
+    assert answer["passed"] is True, answer
+    if door[0] == "phase":
+        assert _phase_of(fdir) == "F6", door

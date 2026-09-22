@@ -99,6 +99,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from foundry_mcp.schemas.vocab import (
+    BLOCKING_TIERS,
+    DEFECT_TIERS,
     REPORT_JSON_FILENAME,
     REPORT_MD_FILENAME,
     REPORT_REQUIRED_SECTIONS,
@@ -112,9 +114,12 @@ from foundry_mcp.schemas.vocab import (
     REPORT_SECTION_TITLES,
     REQUIREMENT_ID_RE,
     STREAM_WIRE_IDS,
+    TIER_UNKNOWN,
+    defect_tier,
 )
 from foundry_mcp.tools.foundry_state import (
     ARCHIVE_DIR,
+    current_cycle,
     document_refusal,
     get_run_dir,
     # DERIVED FROM THE SEAL'S OWN SPLITTER, which is why the markdown read below
@@ -123,6 +128,7 @@ from foundry_mcp.tools.foundry_state import (
     # effective rule, free to part — so the gate could call a section present
     # that the seal did not treat as one.
     markdown_headings,
+    open_defects_by_tier,
     read_document,
     read_text_file,
 )
@@ -1373,6 +1379,173 @@ def count_spec_requirements(project_root: str) -> int:
     FAMILIES count is `schemas.vocab`'s declaration and never a literal here.
     """
     return len(_spec_requirement_ids(project_root)[1])
+
+
+# lead-stalls GI-008 / FR-007 (D-083, concerns C-012 and C-014) — THE NYQUIST
+# ESCALATION READING, HOISTED BECAUSE BOTH LAYERS READ IT NOW.
+#
+# D-081 taught `orchestration/guidance.py` to read the auditors' result files
+# and serve an unfiled ESCALATE_IMPL_BUG as a filing plus a GRIND crossing. The
+# DONE seal read none of them, so Foundry-Gate('done'), Foundry-Phase
+# ('nyquist_done') and Foundry-Phase('done') each sealed F6 over an escalation
+# the served list would have filed: driven on a probe run, and filed as D-083.
+# The seal is `orchestration/gates.py#_done_preconditions`, a VERIFIER module.
+# The reading lived in `guidance.py`, a LIFECYCLE one. GI-033 makes those two
+# mutually unreachable at any depth, a lazy import included
+# (`tests/orchestration/test_module_boundaries.py#test_no_verifier_module_reaches_a_lifecycle_module_lazily_either`).
+# So the reading comes to the leaf both may import, as `_spec_requirement_ids`
+# did for the same pair of readers, and `unfiled_nyquist_escalations` is the
+# ONE answer to "what did the auditors escalate that nothing filed". The router
+# serves a filing for it and the seal refuses on it, so the two cannot disagree.
+#
+# MOVED UNCHANGED. The bodies, docstrings and comments below are the ones
+# `guidance.py` held, and it imports every name it still reads. `_grind_cycle`
+# came with them because it spells the cycle in every result file's name, and
+# a second spelling here would name a file the dispatch never published. The
+# ledger half is still `foundry_state.open_defects_by_tier`'s: this module
+# composes that reader and defines no ledger container of its own.
+
+#: The `{cycle}` slot's default, and the cycle a result file is named for when
+#: the counter cannot be read. `guidance.py` states why every slot's helper is
+#: total, beside `_CAST_WAVE_DEFAULT`.
+_GRIND_CYCLE_DEFAULT = "0"
+
+
+def _grind_cycle(cycle: object) -> str:
+    """`{cycle}` — the server-owned GRIND cycle counter, substituted the way
+    `{run}` is: one run-level scalar the emitter reads once and every entry
+    holding the slot receives.
+
+    It is `current_cycle`'s answer unmodified, so the team name agrees with the
+    `cycle` argument the same payload tells the lead to pass to `Foundry-Fix`
+    and with the `fixed_in_cycle` the ledger then records. `0` is the default
+    for the same reason `current_cycle` returns it: a counter that cannot be
+    read is the run's first cycle as far as every other reader is concerned.
+    """
+    if isinstance(cycle, bool) or not isinstance(cycle, int):
+        return _GRIND_CYCLE_DEFAULT
+    return str(cycle) if cycle >= 0 else _GRIND_CYCLE_DEFAULT
+
+
+#: The batch `agents/nyquist-auditor.md` caps one auditor at.
+_NYQUIST_BATCH_SIZE = 5
+
+#: lead-stalls D-081 — where each auditor's JSON summary goes, under the run
+#: directory: one file per batch per cycle. The cycle is in the name because
+#: an escalation is owed a filing in the cycle it was found in and in no
+#: other: once it is filed the run leaves F5.5 through a GRIND, and it comes
+#: back only after `inspect_start` has advanced the counter, so a later
+#: cycle's F5.5 never re-reads a file whose escalation is already filed.
+_NYQUIST_RESULTS_DIR = "nyquist"
+
+
+def _nyquist_result_name(cycle: object, number: int) -> str:
+    """One batch's result file, relative to the run directory. The cycle is
+    spelled by `_grind_cycle`, the spelling `{cycle}` resolves to."""
+    return f"{_NYQUIST_RESULTS_DIR}/cycle-{_grind_cycle(cycle)}-batch-{number}.json"
+
+
+def _nyquist_batches(verdicts: object) -> list[list[str]]:
+    """The VERIFIED requirement ids of ``verdicts``, in batches. Total."""
+    rows = verdicts.get("requirements") if isinstance(verdicts, dict) else None
+    ids = [
+        str(row["id"]) for row in rows if isinstance(row, dict)
+        and row.get("verdict") == "VERIFIED" and row.get("id")
+    ] if isinstance(rows, list) else []
+    return [
+        ids[start:start + _NYQUIST_BATCH_SIZE]
+        for start in range(0, len(ids), _NYQUIST_BATCH_SIZE)
+    ]
+
+
+def _nyquist_escalations(fdir: Path, cycle: object, batches: int) -> list[str]:
+    """The requirement ids this cycle's auditors escalated as
+    ESCALATE_IMPL_BUG, in batch order, each once (D-081).
+
+    Read from the result files `_nyquist_dispatch` names, one per batch, in
+    the shape the Output section of `agents/nyquist-auditor.md` defines:
+    ``escalated[]`` rows carrying ``req_id`` and ``reason``. Only
+    ESCALATE_IMPL_BUG is a defect — the auditor's own contract: its test
+    matches the spec and the code does not. ESCALATE_ENV,
+    ESCALATE_DEBUG_EXHAUSTED and ESCALATE_UNTESTABLE say the test could not be
+    made to judge the code, which is no claim about the code. Total: a file
+    absent, unreadable or of another shape escalates nothing.
+    """
+    ids: list[str] = []
+    for number in range(1, batches + 1):
+        summary = _load_json(fdir / _nyquist_result_name(cycle, number))
+        rows = summary.get("escalated") if isinstance(summary, dict) else None
+        for row in rows if isinstance(rows, list) else ():
+            if not isinstance(row, dict) or row.get("reason") != "ESCALATE_IMPL_BUG":
+                continue
+            rid = row.get("req_id")
+            if isinstance(rid, str) and rid.strip() and rid.strip() not in ids:
+                ids.append(rid.strip())
+    return ids
+
+
+def _carried_requirements(fdir: Path) -> dict[str, list[str]]:
+    """``{requirement id: [open BLOCKING defect ids whose spec_ref names it]}``.
+
+    lead-stalls GI-008 / FR-007 (D-054). The ASSAY-rejection arm published its
+    filing only when the ledger held no open record at all, a count that never
+    asked WHICH requirement a record carries — so an unrelated LATENT backlog
+    item, or one assayer's filing of another requirement, suppressed the filing
+    of every rejection. Driven: an open LATENT record on one requirement
+    beside an unfiled PARTIAL on another, two full laps, and the rejection
+    never reached the ledger.
+
+    BLOCKING, not any tier, because the question is whether the GRIND the list
+    opens has the rejection to work on, and a GRIND dispatches only for a
+    blocking defect: the F3 arm answers `transition_to_inspect` the moment the
+    blocking count is zero. A LATENT record naming the requirement leaves ASSAY
+    rejecting it on the next lap with nothing dispatched in between, which is
+    the lap D-054 drove. HARDENING refuses a `spec_ref` at filing, so it never
+    carries one.
+
+    `spec_ref` is prose — "GI-008, FR-007" is one — so the ids are read out of
+    it with the one requirement-id grammar, `vocab.REQUIREMENT_ID_RE`, and the
+    whole stripped value counts too, for an id that grammar does not spell.
+    Total: a record with no string `spec_ref` carries nothing.
+    """
+    buckets = open_defects_by_tier(
+        fdir, tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN, tier_of=defect_tier
+    )
+    carried: dict[str, list[str]] = {}
+    for tier in BLOCKING_TIERS:
+        for record in buckets.get(tier, []):
+            ref = record.get("spec_ref")
+            if not isinstance(ref, str) or not ref.strip():
+                continue
+            for rid in {*REQUIREMENT_ID_RE.findall(ref), ref.strip()}:
+                carried.setdefault(rid, []).append(str(record.get("id", "?")))
+    return carried
+
+
+def unfiled_nyquist_escalations(fdir: Path) -> list[str]:
+    """The requirements this cycle's nyquist auditors escalated as
+    ESCALATE_IMPL_BUG that no open BLOCKING defect carries, in batch order.
+    Total (lead-stalls D-083).
+
+    `_nyquist_escalations` over THIS cycle's result files, one per batch of
+    the VERIFIED requirements in verdicts.json (the batches
+    `guidance.py#_nyquist_dispatch` publishes), minus `_carried_requirements`.
+    Two readers, one answer: `guidance.py#_nyquist_escalation_crossing` serves
+    the filing and the GRIND crossing for these ids, and
+    `gates.py#_done_preconditions` refuses DONE while any id is listed.
+
+    Carried means OPEN and BLOCKING, the ASSAY-rejection arm's reading. A
+    filed escalation leaves F5.5 through a GRIND and comes back only after
+    `inspect_start` has advanced the counter, so the next F5.5 reads the next
+    cycle's files and never asks again about the ones this cycle's filing
+    answered.
+    """
+    batches = len(_nyquist_batches(_load_json(fdir / "verdicts.json")))
+    carried = _carried_requirements(fdir)
+    return [
+        rid for rid in _nyquist_escalations(fdir, current_cycle(fdir), batches)
+        if rid not in carried
+    ]
 
 # fallout FR-063 / GI-033 (D-191, concern C-067) — THE THIRD HOISTED SYMBOL,
 # AND THE ONE THE FIRST PASS COULD NOT TAKE.

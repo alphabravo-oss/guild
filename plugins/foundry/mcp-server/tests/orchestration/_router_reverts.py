@@ -19,6 +19,10 @@ _GUIDANCE_REL = "src/foundry_mcp/tools/orchestration/guidance.py"
 _THIS_MODULE = "tests/orchestration/test_guidance_imperatives.py"
 _TEAMS_REL = "src/foundry_mcp/tools/orchestration/teams.py"
 _TRANSITIONS_REL = "src/foundry_mcp/tools/orchestration/transitions.py"
+#: lead-stalls D-083 — the nyquist escalation reading moved to the leaf, so
+#: the rows that revert it name the leaf, and the DONE seal's rung is in gates.
+_ARTIFACTS_REL = "src/foundry_mcp/tools/artifacts.py"
+_GATES_REL = "src/foundry_mcp/tools/orchestration/gates.py"
 
 
 _ROUTER_REVERTS = (
@@ -310,15 +314,20 @@ _ROUTER_REVERTS = (
     ('escalation-filing-slot', _GUIDANCE_REL,
      '            _Step(_EACH_UNFILED_ESCALATION),\n',
      ''),
-    ('impl-bug-only', _GUIDANCE_REL,
+    ('impl-bug-only', _ARTIFACTS_REL,
      'row.get("reason") != "ESCALATE_IMPL_BUG"',
      'not str(row.get("reason", "")).startswith("ESCALATE_")'),
-    ('escalation-carried', _GUIDANCE_REL,
+    ('escalation-carried', _ARTIFACTS_REL,
      '        if rid not in carried\n',
      ''),
-    ('escalation-this-cycle', _GUIDANCE_REL,
+    ('escalation-this-cycle', _ARTIFACTS_REL,
      '_nyquist_escalations(fdir, current_cycle(fdir), batches)',
      '_nyquist_escalations(fdir, 0, batches)'),
+    # lead-stalls D-083 — the DONE seal's reading of the same list, reverted
+    # alone: every F6 door seals over the escalation again.
+    ('done-escalation-rung', _GATES_REL,
+     '    unfiled_escalations = unfiled_nyquist_escalations(fdir)\n',
+     '    unfiled_escalations = []\n'),
     # lead-stalls D-082 — the decomposer's literal prompt, and what the F0
     # arm publishes for it.
     ('decomposer-spec', _GUIDANCE_REL,
