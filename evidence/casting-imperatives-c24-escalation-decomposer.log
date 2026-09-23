@@ -2,7 +2,7 @@
 # evidence-for: OT-002, FR-007, FR-008, GI-008
 
 ============================= test session starts ==============================
-collecting ... collected 212 items / 195 deselected / 17 selected
+collecting ... collected 220 items / 203 deselected / 17 selected
 
 test_what_the_phase_work_files_is_served_the_grind_crossing[temper] PASSED
 test_what_the_phase_work_files_is_served_the_grind_crossing[nyquist] PASSED
@@ -22,4 +22,4 @@ test_the_prompt_rungs_bite_on_the_decomposition_hand_over[shipped] PASSED
 test_the_prompt_rungs_bite_on_the_decomposition_hand_over[prove-mutation] PASSED
 test_a_placeholder_that_copies_a_returned_prompt_is_a_prompt PASSED
 
-17 passed, 195 deselected
+17 passed, 203 deselected

@@ -2,7 +2,7 @@
 # evidence-for: FR-007, GI-008
 
 ============================= test session starts ==============================
-collecting ... collected 212 items / 199 deselected / 13 selected
+collecting ... collected 220 items / 207 deselected / 13 selected
 
 test_every_router_revert_names_text_that_is_in_the_tree_exactly_once PASSED
 test_an_unfiled_auditor_escalation_is_served_its_filing_before_the_crossing PASSED
@@ -18,4 +18,4 @@ test_a_filed_escalation_fixed_through_grind_opens_the_f6_doors_again[gate-done] 
 test_a_filed_escalation_fixed_through_grind_opens_the_f6_doors_again[phase-nyquist_done] PASSED
 test_a_filed_escalation_fixed_through_grind_opens_the_f6_doors_again[phase-done] PASSED
 
-13 passed, 199 deselected
+13 passed, 207 deselected
