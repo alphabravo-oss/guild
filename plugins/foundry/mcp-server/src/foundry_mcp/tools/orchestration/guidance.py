@@ -105,7 +105,16 @@ from foundry_mcp.tools.orchestration.teams import (
 )
 from foundry_mcp.tools.orchestration.spend import _spend_summary
 
-from foundry_mcp.tools.orchestration.directives import _read_directives
+from foundry_mcp.tools.orchestration.directives import (
+    _casting_files,
+    _casting_requirement_ids,
+    _dispatch_file_path,
+    _owning_casting,
+    _project_root_of,
+    _read_directives,
+    _spec_ref_requirement_ids,
+)
+from foundry_mcp.tools.orchestration.keyfiles import manifest_spelling
 
 
 
@@ -294,6 +303,95 @@ def _grind_start_seals(fdir: Path) -> bool:
     """
     max_cycles = persisted_max_cycles(_load_json(fdir / "state.json"))
     return max_cycles > 0 and current_cycle(fdir) >= max_cycles
+
+
+def _shared_depth(path: str, key_files: list[str]) -> int:
+    """How many leading path segments ``path`` shares with the nearest of
+    ``key_files`` — the directory-neighbour half of `_grind_carriers`' route."""
+    segments = [part for part in path.split("/") if part]
+    best = 0
+    for entry in key_files:
+        shared = 0
+        for mine, theirs in zip(
+            segments, [p for p in manifest_spelling(entry).split("/") if p]
+        ):
+            if mine != theirs:
+                break
+            shared += 1
+        best = max(best, shared)
+    return best
+
+
+def _grind_carriers(fdir: Path, filing: object = None) -> list[dict] | None:
+    """Which casting carries each open BLOCKING defect, in manifest order, or
+    ``None`` when the manifest names no casting.
+
+    ``[{"casting": id, "defects": [ids], "routed": [{"defect", "file"}]}]``.
+    ``filing`` is the `unfiled_escalations` list `transition_to_grind` files
+    in its first step, each carried under the requirement it is filed for.
+
+    lead-stalls GI-008 / FR-007 / ST-003 (D-089) — THE DISPATCH NAMES WHO IT
+    REACHES. The GRIND spawn step said "for each casting carrying open
+    defects", and a defect whose file is in no casting's `key_files` is
+    carried by none: Foundry-Tasks returns its task with a null
+    `owning_casting`, so the step spawned nobody and the list's last step
+    still said END YOUR TURN, with no agent running — lead-stalls ST-003's
+    park. The next Foundry-Next answered `cleanup_teams`, then the same list,
+    forever. The way out was a lead ruling on adjacency (commands/start.md),
+    which no served step named: lead-stalls FR-007's judgment task. This run
+    reached it five times.
+
+    So the server makes the route and says so. A defect a casting owns
+    (`_owning_casting`, the lookup Foundry-Tasks uses) goes to that casting.
+    One nobody owns goes to the casting whose `key_files` share the most
+    leading directories with its file, then the most of the requirements it
+    was filed under, then the first in manifest order — total, so every
+    blocking defect has a carrier whenever the manifest has a casting. The
+    route is per FILE, so two defects on one unowned file never go to two
+    teammates editing it at once. `routed` names each one, and the spawn step
+    prints it, so the lead passes the defect to the teammate it was routed to
+    rather than deciding where it goes.
+    """
+    owned = _casting_files(fdir)
+    if not owned:
+        return None
+    requirements = _casting_requirement_ids(fdir)[0]
+    root = _project_root_of(fdir)
+    buckets = open_defects_by_tier(
+        fdir, tiers=DEFECT_TIERS, unknown_tier=TIER_UNKNOWN, tier_of=defect_tier
+    )
+    rows = [
+        (str(record.get("id", "?")), record.get("file"), [record.get("spec_ref")])
+        for tier in BLOCKING_TIERS for record in buckets.get(tier, [])
+    ]
+    rows += [
+        (f"the defect filed for {rid}", "", [rid])
+        for rid in (filing if isinstance(filing, (list, tuple)) else ())
+        if isinstance(rid, str) and rid
+    ]
+    carried: dict = {}
+    routed_by_file: dict[str, object] = {}
+    for label, file, refs in rows:
+        path = _dispatch_file_path(file, root)
+        owner = _owning_casting(fdir, [path]) if path else None
+        routed = owner is None
+        if routed:
+            owner = routed_by_file.get(path)
+        if owner is None:
+            wanted = _spec_ref_requirement_ids(refs)
+            owner = max(owned, key=lambda cid: (
+                _shared_depth(path, owned[cid]),
+                len(wanted & requirements.get(cid, set())),
+            ))
+            if path:
+                routed_by_file[path] = owner
+        row = carried.setdefault(
+            owner, {"casting": owner, "defects": [], "routed": []}
+        )
+        row["defects"].append(label)
+        if routed:
+            row["routed"].append({"defect": label, "file": path})
+    return [carried[cid] for cid in owned if cid in carried]
 
 
 def _blocking_grind_crossing(
@@ -1014,6 +1112,20 @@ def foundry_next_action(
     action = result.get("action", "")
     original_instructions = result.get("instructions", "")
     run_name_for_imperative = fdir_stall.name if fdir_stall and fdir_stall.exists() else ""
+    # lead-stalls GI-008 / FR-007 / ST-003 (D-089) — who the GRIND dispatch
+    # reaches, read here for both actions that serve it rather than at each of
+    # the router arms that return them, so no arm can serve the dispatch
+    # without it. Published on `details`, the surface the slot expands from.
+    details_out = result.get("details")
+    if (
+        action in _GRIND_DISPATCH_ACTIONS and isinstance(details_out, dict)
+        and fdir_stall and fdir_stall.exists()
+    ):
+        carriers = _grind_carriers(
+            fdir_stall, details_out.get("unfiled_escalations")
+        )
+        if carriers is not None:
+            details_out["grind_carriers"] = carriers
     next_calls, imperative_header = _emitted_imperative(
         action, result.get("details", {}),
         run_name=run_name_for_imperative,
@@ -2224,6 +2336,15 @@ _EACH_UNFILED_VERDICT = "{unfiled verdicts}"
 #: explicit True omits the dispatch, so the list ends at the sealing call.
 _BLOCKING_DISPATCH = "{blocking dispatch}"
 
+#: lead-stalls GI-008 / FR-007 / ST-003 (D-089) — the GRIND spawn door step,
+#: expanded from `details["grind_carriers"]` (`_grind_carriers`): the door
+#: once per casting the server names, each with the defects it carries, a
+#: defect no casting owns among them under the casting it was routed to. An
+#: absent or empty reading keeps the step every template shows.
+_EACH_CARRYING_CASTING = "{carrying castings}"
+#: The actions whose lists can carry that step.
+_GRIND_DISPATCH_ACTIONS = ("transition_to_grind", "fix_defects")
+
 #: lead-stalls GI-008 / FR-007 — the step `halted` holds in place of the
 #: report the halt could not write, expanded from `details["report_generated"]`.
 #: The CONTEXT used to say "call Foundry-Report to write REPORT.md" beneath a
@@ -2837,8 +2958,65 @@ def _expanded_steps(step: _Step, details: dict | None) -> tuple[_Step, ...]:
         # run: at the cap `grind_start` is the list's last step. Only an
         # explicit True omits the dispatch, as only an explicit 0 does above.
         seals = not template and details.get("seals_halted") is True
-        return () if nothing_blocks or seals else _GRIND_SPAWN_STEPS
+        if nothing_blocks or seals:
+            return ()
+        return tuple(
+            expanded for spawn in _GRIND_SPAWN_STEPS
+            for expanded in _expanded_steps(spawn, None if template else details)
+        )
+    if step.tool == _EACH_CARRYING_CASTING:
+        return _carrier_steps(None if template else details.get("grind_carriers"))
     return (step,)
+
+
+#: What `_EACH_CARRYING_CASTING` renders to with no reading to name castings
+#: from: the template, and a run whose manifest names none.
+_CARRIER_TEMPLATE = _Step(
+    "Foundry-Spawn-Teammate", "casting_id=N, phase='grind'",
+    each="for each casting carrying open defects",
+)
+
+
+def _carrier_steps(carriers: object) -> tuple[_Step, ...]:
+    """The GRIND spawn door, once per casting the reading names. Total.
+
+    One step, not one per casting: the Agent step after it is made for every
+    casting it dispatched in one parallel message, and the structure audit
+    holds a door and its spawn adjacent. Its `each` names the castings and the
+    defects each carries, so the lead copies them; a routed defect says why
+    it is there (D-089).
+    """
+    rows = [
+        row for row in (carriers if isinstance(carriers, list) else ())
+        if isinstance(row, dict) and row.get("defects")
+        and _casting_ids([row.get("casting")])
+    ]
+    if not rows:
+        return (_CARRIER_TEMPLATE,)
+    named = []
+    for row in rows:
+        clause = f"casting_id={row['casting']} for {', '.join(row['defects'])}"
+        routed = [
+            f"{item['defect']} ({item['file'] or 'no file recorded'})"
+            for item in row.get("routed") or () if isinstance(item, dict)
+        ]
+        if routed:
+            clause += (
+                f" — no casting's key_files cover {', '.join(routed)}, so "
+                "this server routed it to this casting, the nearest by "
+                "directory and requirement, and it goes in this teammate's "
+                "defects block"
+            )
+        named.append(clause)
+    return (
+        _Step(
+            "Foundry-Spawn-Teammate", "casting_id=N, phase='grind'",
+            each=(
+                "once per casting named here, all in ONE parallel-tool-use "
+                "message: " + "; ".join(named)
+            ),
+        ),
+    )
 
 
 #: lead-stalls CT-002 / FR-002 — the teammates-live branch, for both audited
@@ -3136,10 +3314,7 @@ _CAST_REFUSED_REDISPATCH = _Imperative(
 _GRIND_SPAWN_STEPS = (
     _Step("TeamCreate", "'grind-{run}-cycle-{cycle}'"),
     _Step("Foundry-Team-Up", "team_name='grind-{run}-cycle-{cycle}'"),
-    _Step(
-        "Foundry-Spawn-Teammate", "casting_id=N, phase='grind'",
-        each="for each casting carrying open defects",
-    ),
+    _Step(_EACH_CARRYING_CASTING),
     _teammate_spawn(
         "grind",
         "for each casting the step above dispatched, all in a SINGLE parallel "

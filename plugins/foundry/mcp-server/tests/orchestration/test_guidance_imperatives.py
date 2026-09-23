@@ -102,6 +102,7 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _emitted_imperative,
     _format_imperative_header,
     _generic_header,
+    _grind_carriers,
     _grind_start_seals,
     _parse_branches,
     _render_call,
@@ -802,10 +803,14 @@ def _cast(fdir: Path, waves: dict[int, list[str]]) -> None:
     _wave_manifest(fdir, waves)
 
 
-def _grind(fdir: Path, *, open_defect: bool) -> None:
+def _grind(fdir: Path, *, open_defect: bool, file: str = "src/api/a.py") -> None:
+    # lead-stalls D-089 — with the manifest a GRIND run always has, so the
+    # sweep asks who the dispatch reaches; it drove grind-idle with none.
     _write_state(fdir, phase="F3", cycle=0)
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
     _defect_ledger(fdir, [
-        _tiered("D-001", "LIVE", status="open" if open_defect else "fixed")
+        _tiered("D-001", "LIVE", status="open" if open_defect else "fixed",
+                file=file)
     ])
 
 
@@ -950,6 +955,23 @@ def _arrange_grind_all_fixed(root, fdir, teams):
     _grind(fdir, open_defect=False)
 
 
+#: lead-stalls GI-008 / FR-007 / ST-003 (D-089) — a blocking defect on a file
+#: no casting's key_files cover: `src/server.py`, beside the one casting that
+#: owns `src/api/a.py`. Foundry-Tasks gives it no owning casting, and a list
+#: that dispatched "each casting carrying open defects" spawned nobody and
+#: still ended END YOUR TURN.
+_UNOWNED_FILE = "src/server.py"
+
+
+def _arrange_grind_idle_unowned(root, fdir, teams):
+    _grind(fdir, open_defect=True, file=_UNOWNED_FILE)
+
+
+def _arrange_inspect_filed_unowned(root, fdir, teams):
+    _clean_inspect(fdir, "FULL", filed=True)
+    _defect_ledger(fdir, [_tiered("D-001", "LIVE", file=_UNOWNED_FILE)])
+
+
 def _arrange_inspect_live(root, fdir, teams):
     _inspect(fdir)
     _progressing_ledger(fdir, agent="prove")
@@ -1033,6 +1055,7 @@ def _post_assay(
     # the NYQUIST batches are read off; `requirement_id` expanded to no
     # auditor call at all.
     _write_verdicts(fdir, [{"id": "FR-1", "verdict": "VERIFIED"}])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
     _defect_ledger(
         fdir, [_tiered("D-001", "LIVE", status="open")] if filed else [],
     )
@@ -1247,6 +1270,7 @@ def _assay(
         {"id": rid, "verdict": verdict, "evidence": "read at HEAD"}
         for rid, verdict in zip(ids, verdicts)
     ])
+    _write_manifest_with_castings(fdir, ["src/api/a.py"], no_ui=True)
     _defect_ledger(fdir, [_tiered("D-001", "LIVE")] if filed else [])
 
 
@@ -1509,6 +1533,8 @@ _ROUTER_STATES = (
     ("grind-live-all-fixed", "ST-001", _arrange_grind_live_all_fixed, "fix_defects", "live"),
     ("grind-finished-team-up", "ST-003", _arrange_grind_finished_team_up, "cleanup_teams", None),
     ("grind-idle", "ST-003", _arrange_grind_idle, "fix_defects", "idle"),
+    # lead-stalls D-089 — the same dispatch over a defect no casting owns.
+    ("grind-idle-unowned", "ST-003", _arrange_grind_idle_unowned, "fix_defects", "idle"),
     ("grind-dispatched-fresh-seed", "ST-001", _arrange_grind_dispatched_fresh_seed, "fix_defects", "live"),
     ("grind-all-fixed", "ST-003", _arrange_grind_all_fixed, "transition_to_inspect", None),
     ("inspect-live", "ST-001", _arrange_inspect_live, "run_streams", "live"),
@@ -1542,6 +1568,7 @@ _ROUTER_STATES = (
     ("cast-complete", "GI-008", _arrange_cast_complete, "transition_to_inspect", None),
     ("inspect-width-unrecorded", "GI-008", _arrange_inspect_width_unrecorded, "record_inspect_width", None),
     ("inspect-filed", "GI-008", _arrange_inspect_filed, "transition_to_grind", None),
+    ("inspect-filed-unowned", "ST-003", _arrange_inspect_filed_unowned, "transition_to_grind", None),
     ("inspect-clean-full", "GI-008", _arrange_inspect_clean_full, "transition_to_assay", None),
     ("inspect-clean-delta", "GI-008", _arrange_inspect_clean_delta, "widen_inspect", None),
     # lead-stalls D-055 — a held class is not sent on to ASSAY: with a record
@@ -1787,6 +1814,7 @@ def drive_router(arrange, clock_seconds: int | None) -> dict:
         if clock_seconds is not None:
             _stale_stall_clock(fdir, clock_seconds)
         capped = _at_cap(fdir)
+        blocking, castings = _ledger_blocking(fdir), _manifest_casting_ids(fdir)
         nxt = foundry_next_action(root)
         cycle = foundry_state.current_cycle(fdir)
         # lead-stalls D-063 — taken INSIDE the live run, and last: the gate
@@ -1818,7 +1846,68 @@ def drive_router(arrange, clock_seconds: int | None) -> dict:
         "capped": capped,
         # lead-stalls D-063 — what the list's first door really answered.
         "head_gate": head_gate,
+        # lead-stalls D-089 — the arranged ledger and manifest, read by hand.
+        "blocking_defects": blocking,
+        "castings": castings,
     }
+
+
+def _ledger_blocking(fdir: Path) -> list[str]:
+    """The open LIVE and untiered defect ids, read off defects.json by hand
+    rather than through the router's reader, which is what is judged."""
+    try:
+        ledger = json.loads((fdir / "defects.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [
+        str(d.get("id")) for d in ledger.get("defects") or []
+        if isinstance(d, dict) and d.get("status") == "open"
+        and d.get("tier") not in ("LATENT", "HARDENING")
+    ]
+
+
+def _manifest_casting_ids(fdir: Path) -> list[str]:
+    try:
+        manifest = json.loads(
+            (fdir / "castings" / "manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return []
+    return [
+        str(c.get("id")) for c in manifest.get("castings") or []
+        if isinstance(c, dict)
+    ]
+
+
+#: lead-stalls D-089 — one casting the GRIND spawn step names, and the
+#: defects it carries: "casting_id=<id> for D-001, D-002[ — why routed]".
+_CARRIER_CLAUSE = re.compile(r"casting_id=([^\s,;]+) for ((?:[A-Z]+-\d+(?:, )?)+)")
+
+
+def _unreached_defects(d: dict) -> list[str]:
+    """Each blocking defect a GRIND dispatch list yields over without naming
+    it beside a manifest casting its spawn door dispatches (lead-stalls D-089).
+
+    The shape rungs judge whether a list is literal; none asked whether the
+    dispatch it serves reaches every open blocking defect, and a list whose
+    door step read "for each casting carrying open defects" reached none of
+    one whose file no casting owns. It spawned nobody and ended END YOUR TURN
+    with no agent running: lead-stalls ST-003's park, under a zero.
+    """
+    steps = [_as_step(call) for call in d.get("next_calls") or []]
+    if d["action"] not in ("transition_to_grind", "fix_defects") or not (
+        steps and steps[-1].tool == _END_TURN
+    ):
+        return []
+    reached: set[str] = set()
+    for step in steps:
+        if step.tool == "Foundry-Spawn-Teammate" and "phase='grind'" in (
+            step.args or ""
+        ):
+            for casting, ids in _CARRIER_CLAUSE.findall(step.each):
+                if casting in d.get("castings", []):
+                    reached.update(i.strip() for i in ids.split(",") if i.strip())
+    return [did for did in d.get("blocking_defects", []) if did not in reached]
 
 
 def _at_cap(fdir: Path) -> bool:
@@ -2545,6 +2634,13 @@ def audit_assembled_payloads(drives=None) -> list[str]:
         # A served list whose opening door refuses is a lap the run cannot
         # take, and the only remedy is inside the refusal's hint — the
         # judgment task lead-stalls FR-007 defines as the defect.
+        # lead-stalls D-089 — AND THE DISPATCH REACHES EVERY BLOCKING DEFECT.
+        for did in _unreached_defects(d):
+            findings.append(
+                f"{site}: DEFECT_UNDISPATCHED — {did} is open and blocking, "
+                f"and the list yields with no spawn door naming a casting "
+                f"for it"
+            )
         head_gate = d.get("head_gate")
         if head_gate and not head_gate["passed"]:
             findings.append(
@@ -2751,7 +2847,7 @@ def audit_report() -> list[str]:
         "header detectors: CONDITIONAL, NO_LITERAL_CALL, PARKING_NONE, "
         "UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, "
         "UNCREATABLE_TEAM_NAME",
-        "payload detectors: WRONG_ROUTE, HEAD_GATE_REFUSES, CONDITIONAL, "
+        "payload detectors: WRONG_ROUTE, DEFECT_UNDISPATCHED, HEAD_GATE_REFUSES, CONDITIONAL, "
         "CONTRADICTION, CONTEXT_SEQUENCE, CONTEXT_CALL, CONTEXT_CONDITIONAL, "
         "TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING",
         "HEAD_GATE_REFUSES is the one rung that EXECUTES a served step "
@@ -9529,3 +9625,127 @@ def test_the_foundry_next_after_the_widening_list_serves_every_roster_stream(sta
             stream, agent,
         )
     assert steps[-1].tool == _END_TURN, [step.tool for step in steps]
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GI-008 / FR-007 / ST-003 / OT-002 (D-089) — A BLOCKING DEFECT NO
+# CASTING OWNS IS DISPATCHED BY THE LIST SERVED FOR IT
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [_arrange_inspect_filed_unowned, _arrange_grind_idle_unowned],
+    ids=["F2-transition_to_grind", "F3-fix_defects"],
+)
+def test_a_defect_no_casting_owns_is_dispatched_by_the_list_served_for_it(arrange):
+    """D-089, driven as filed: every served step made through its real door.
+
+    Foundry-Tasks still returns the task with no owning casting — ownership
+    is the manifest's — and the spawn step names the casting the server
+    routed it to, so the door is called, its teammate's ledger is seeded, and
+    the next Foundry-Next reads a running agent. Before the fix the step read
+    "for each casting carrying open defects", nobody was spawned, the list
+    still ended END YOUR TURN, and the next Foundry-Next answered
+    `cleanup_teams`, then the same list, forever.
+    """
+    from foundry_mcp.tools.orchestration.directives import foundry_defects_to_tasks
+
+    with tempfile.TemporaryDirectory() as tmp, _router_run(Path(tmp)) as (
+        root, fdir, teams,
+    ):
+        arrange(root, fdir, teams)
+        _prompt_files(fdir, ["1"])
+        served = foundry_next_action(root)
+        spawned: list[tuple[str, str]] = []
+        owners: list[object] = []
+        for call in served["next_calls"]:
+            tool, args = call["tool"], call["args"] or ""
+            quoted = args.split("'")[1] if "'" in args else ""
+            if tool == "Foundry-Tasks":
+                tasks = foundry_defects_to_tasks(project_root=root)
+                owners = [task.get("owning_casting") for task in tasks["tasks"]]
+            elif tool == "Foundry-Gate":
+                assert foundry_gate(quoted, project_root=root)["passed"], quoted
+            elif tool == "Foundry-Phase":
+                assert foundry_mark_phase_complete(quoted, project_root=root)["ok"]
+            elif tool == "TeamCreate":
+                (teams / quoted).mkdir(exist_ok=True)
+            elif tool == "Foundry-Team-Up":
+                assert foundry_register_team(quoted, project_root=root)["ok"]
+            elif tool == "Foundry-Team-Down":
+                foundry_unregister_team(quoted, project_root=root)
+            elif tool == "Foundry-Spawn-Teammate":
+                for casting, ids in _CARRIER_CLAUSE.findall(call["each"]):
+                    door = foundry_spawn_teammate(casting, "grind", project_root=root)
+                    assert door["ok"] is True, door
+                    spawned.append((casting, ids))
+        after = foundry_next_action(root)
+
+    assert owners == [None], owners
+    assert spawned == [("1", "D-001")], (spawned, served["next_calls"])
+    assert served["next_calls"][-1]["tool"] == _END_TURN
+    assert (after["action"], after["next_calls"]) == ("fix_defects", []), (
+        after["action"], after.get("next_calls"),
+    )
+    assert after["agent_liveness"]["waiting"] is True, after["agent_liveness"]
+
+
+def test_the_defect_undispatched_rung_bites_on_the_step_that_named_no_casting(
+    monkeypatch,
+):
+    """DEFECT_UNDISPATCHED is not vacuous: served the step as it stood before
+    D-089 — "for each casting carrying open defects" — every state whose list
+    yields over a GRIND dispatch is a finding, the two unowned ones included.
+    """
+    monkeypatch.setattr(
+        _guidance, "_carrier_steps", lambda _carriers: (_guidance._CARRIER_TEMPLATE,)
+    )
+    findings = [
+        f for f in audit_assembled_payloads() if "DEFECT_UNDISPATCHED" in f
+    ]
+    for state in ("grind-idle-unowned", "inspect-filed-unowned", "grind-idle"):
+        assert any(f"payload:{state}[fresh]" in f for f in findings), (state, findings)
+
+
+def test_the_route_for_an_unowned_file_is_the_nearest_casting_and_one_per_file():
+    """`_grind_carriers`: an owned defect goes to its owner; an unowned file to
+    the casting sharing the most leading directories with it, then the most
+    of its requirements, then manifest order; and every defect on one file
+    to the same casting."""
+    with tempfile.TemporaryDirectory() as tmp:
+        fdir = Path(tmp) / "foundry-archive" / "carriers"
+        (fdir / "castings").mkdir(parents=True)
+        (fdir / "castings" / "manifest.json").write_text(json.dumps({
+            "castings": [
+                {"id": "api", "key_files": ["src/api/a.py"],
+                 "requirement_ids": ["FR-1"]},
+                {"id": "tools", "key_files": ["src/tools/orchestration/"],
+                 "requirement_ids": ["FR-2"]},
+                {"id": "docs", "key_files": ["docs/guide.md"],
+                 "requirement_ids": ["FR-3"]},
+            ],
+        }), encoding="utf-8")
+        _defect_ledger(fdir, [
+            _tiered("D-001", "LIVE", file="src/api/a.py#handle"),
+            _tiered("D-002", "LIVE", file="src/tools/server.py", spec_ref="FR-1"),
+            _tiered("D-003", "LIVE", file="src/tools/server.py", spec_ref="FR-3"),
+            _tiered("D-004", None, file="README.md", spec_ref="FR-3"),
+            _tiered("D-005", "LATENT", file="elsewhere.py"),
+        ])
+        carriers = _grind_carriers(fdir, ["FR-2"])
+
+    assert carriers == [
+        {"casting": "api", "defects": ["D-001"], "routed": []},
+        {"casting": "tools", "defects": [
+            "D-002", "D-003", "the defect filed for FR-2",
+        ], "routed": [
+            {"defect": "D-002", "file": "src/tools/server.py"},
+            {"defect": "D-003", "file": "src/tools/server.py"},
+            {"defect": "the defect filed for FR-2", "file": ""},
+        ]},
+        {"casting": "docs", "defects": ["D-004"], "routed": [
+            {"defect": "D-004", "file": "README.md"},
+        ]},
+    ], carriers
+
