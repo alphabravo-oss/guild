@@ -351,4 +351,15 @@ _ROUTER_REVERTS = (
     ('honest-walk', _THIS_MODULE,
      '                if agent and agent.group(1) in _DOORLESS_AGENTS:\n                    _write_escalation(root, args)\n',
      '                if False:\n                    _write_escalation(root, args)\n'),
+    # lead-stalls D-088 — the widening re-open's note, back to the move it
+    # ordered after the list's last step.
+    ('widen-note-declarative', _GUIDANCE_REL,
+     '                    "cycle counter, sweeps the whole evidence corpus and "\n'
+     '                    "RECORDS this INSPECT\'s width as FULL and the full roster "\n'
+     '                    "every stream then runs. The Foundry-Next after this "\n'
+     '                    "list\'s last step serves one call per stream that roster "\n'
+     '                    "names."\n',
+     '                    "cycle counter, sweeps the whole evidence corpus, records "\n'
+     '                    "FULL and requires the full roster. Then run every stream "\n'
+     '                    "it names — a spot check is not a FULL INSPECT."\n'),
 )

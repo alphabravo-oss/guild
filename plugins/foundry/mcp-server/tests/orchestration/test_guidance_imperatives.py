@@ -8574,6 +8574,8 @@ def test_every_router_revert_names_text_that_is_in_the_tree_exactly_once():
         "result-rung", "honest-walk",
         # lead-stalls D-083 — the DONE seal's rung over the same list.
         "done-escalation-rung",
+        # lead-stalls D-088 — the widening re-open's note orders no move.
+        "widen-note-declarative",
     } <= set(names), sorted(names)
 
 
@@ -9401,3 +9403,129 @@ def test_the_nyquist_prose_says_where_an_escalation_goes():
             "result goes through", "is served the GRIND crossing instead",
         ):
             assert false_claim not in text, (false_claim, text)
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GRIND cycle 28 — D-088: the widening re-open orders no move past
+# its last step
+# --------------------------------------------------------------------------- #
+#
+# `widen_inspect` step (2)'s note ended "Then run every stream it names": a
+# move after the list's last step that no step carried, beside the rules'
+# "call Foundry-Next after that last step". The sweep returned zero over it
+# because no rung reads a step line's note for an order, and a general one
+# cannot: `_order_openers` reads 11 other shipped note and each fields as
+# orders, every one of them a gloss of the step's own call ("start a new
+# run", "returns ALL wave-1 dispatch blocks", "seals F6"). So the pin is on
+# this entry, from both ends: the served note orders nothing, and what it says
+# the next Foundry-Next serves is what the router serves once the list's two
+# calls are made through the real doors.
+
+#: `widen_inspect` step (2)'s note as it shipped through 521a0c5.
+_D088_PRE_FIX_NOTE = (
+    "AGAIN, from F2: the re-open this clean INSPECT owes before ASSAY, not the "
+    "ASSAY gate. That crossing advances the cycle counter, sweeps the whole "
+    "evidence corpus, records FULL and requires the full roster. Then run "
+    "every stream it names — a spot check is not a FULL INSPECT."
+)
+
+#: What the note states the Foundry-Next the rules order after the list serves.
+_WIDEN_NEXT_CLAIM = (
+    "The Foundry-Next after this list's last step serves one call per stream "
+    "that roster names."
+)
+
+#: Every run state the F2 arm serves `widen_inspect` on, named as
+#: `_ROUTER_STATES` names them.
+_WIDEN_STATES = {
+    "inspect-clean-delta": _arrange_inspect_clean_delta,
+    "inspect-escalated-full": _arrange_inspect_escalated_full,
+    "inspect-escalated-delta": _arrange_inspect_escalated_delta,
+    "inspect-escalated-closed": _arrange_inspect_escalated_closed,
+}
+
+
+def _served_widen_note(arrange) -> str:
+    """Step (2)'s note as the router serves it on ``arrange``'s run state,
+    checked against the header line the lead reads it in."""
+    driven = drive_router(arrange, None)
+    assert driven["action"] == "widen_inspect", driven["header"]
+    calls = [_as_step(call) for call in driven["next_calls"]]
+    assert [(call.tool, call.args) for call in calls] == [
+        ("Foundry-Gate", "phase='inspect_start'"),
+        ("Foundry-Phase", "phase='inspect_start'"),
+    ], driven["header"]
+    assert f"  (2) {_render_call(calls[1])}\n" in driven["header"] + "\n", (
+        driven["header"]
+    )
+    return calls[1].note
+
+
+@pytest.mark.parametrize("state", sorted(_WIDEN_STATES))
+def test_the_widening_note_states_the_crossing_and_orders_no_move(state):
+    """lead-stalls GI-008 / FR-007 / OT-002 (D-088) — on every run state the
+    re-open is served on, its note says what the crossing records and what
+    the Foundry-Next after the list serves, and no clause of it is an order."""
+    note = _served_widen_note(_WIDEN_STATES[state])
+    assert _order_openers(note) == [], note
+    assert _WIDEN_NEXT_CLAIM in note, note
+    assert "RECORDS this INSPECT's width as FULL" in note, note
+    # lead-stalls D-057's pin, which this note still honours.
+    assert "the re-open this clean INSPECT owes before ASSAY" in note, note
+
+
+def test_the_widening_note_pin_bites_on_the_pre_fix_sentence(monkeypatch):
+    """lead-stalls D-088 — the control: the note as it shipped, planted where
+    the router reads it, is served and read as an order."""
+    shipped = _IMPERATIVES["widen_inspect"]
+    monkeypatch.setitem(_IMPERATIVES, "widen_inspect", shipped._replace(steps=(
+        shipped.steps[0],
+        shipped.steps[1]._replace(note=_D088_PRE_FIX_NOTE),
+    )))
+    planted = _served_widen_note(_arrange_inspect_clean_delta)
+    assert planted == _D088_PRE_FIX_NOTE, planted
+    assert _order_openers(planted) == ["run every stream it"], planted
+    assert _WIDEN_NEXT_CLAIM not in planted, planted
+
+
+@pytest.mark.parametrize("state", sorted(_WIDEN_STATES))
+def test_the_foundry_next_after_the_widening_list_serves_every_roster_stream(state):
+    """lead-stalls GI-008 / FR-007 (D-088) — the note's claim, driven. The
+    list's two calls are made through the real doors, then the Foundry-Next
+    the rules order after its last step: it serves `run_streams` at FULL width
+    on the advanced cycle, with one call per stream the recorded roster names,
+    each the agent the stream is owed, and the list yields."""
+    with tempfile.TemporaryDirectory() as tmp, _router_run(Path(tmp)) as (
+        root, fdir, teams,
+    ):
+        _WIDEN_STATES[state](root, fdir, teams)
+        cycle = foundry_state.current_cycle(fdir)
+        assert foundry_next_action(root)["action"] == "widen_inspect", state
+        gate = foundry_gate("inspect_start", project_root=root)
+        assert gate["passed"] is True, gate
+        crossed = foundry_mark_phase_complete("inspect_start", project_root=root)
+        assert crossed.get("ok") is True, crossed
+        after = foundry_next_action(root)
+        advanced = foundry_state.current_cycle(fdir)
+
+    assert after["action"] == "run_streams", after["action"]
+    assert advanced == cycle + 1, (cycle, advanced)
+    details = after["details"]
+    assert details["inspect_mode"] == "FULL", details
+    roster = details["required"]
+    assert roster and sorted(details["missing_streams"]) == sorted(roster), details
+    steps = [_as_step(call) for call in after["next_calls"]]
+    served = {
+        step.each[len("for "):]: _ARG_SUBAGENT.search(step.args or "").group(1)
+        for step in steps if step.tool == "Agent"
+    }
+    served.update(
+        ("sight", "foundry:sight") for step in steps
+        if step.tool == "Skill" and "foundry:sight" in (step.args or "")
+    )
+    assert sorted(served) == sorted(roster), (served, roster)
+    for stream, agent in served.items():
+        assert agent == _OWED_STREAM_AGENT.get(stream, "foundry:sight"), (
+            stream, agent,
+        )
+    assert steps[-1].tool == _END_TURN, [step.tool for step in steps]

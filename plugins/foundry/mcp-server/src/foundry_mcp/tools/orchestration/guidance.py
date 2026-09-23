@@ -3603,12 +3603,25 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
                 # a still-ESCALATED class holds DONE shut over. "The DELTA cycle
                 # came back clean" was false for the second, in the one line
                 # the lead acts on.
+                #
+                # lead-stalls GI-008 / FR-007 (D-088) — AND IT STATES WHAT THE
+                # CROSSING RECORDS; IT ORDERS NOTHING AFTER IT. This ended
+                # "Then run every stream it names": a move after the list's
+                # last step with no literal call, beside the rules' own "call
+                # Foundry-Next after that last step". Obeyed, the lead chose
+                # each stream's agent and wrote each prompt itself — D-040's
+                # judgment task, minus the snapshot pin and the ledger clause
+                # the served stream steps carry. That Foundry-Next serves
+                # those steps, so the note says so, in `transition_to_inspect`'s
+                # register.
                 note=(
                     "AGAIN, from F2: the re-open this clean INSPECT owes before "
                     "ASSAY, not the ASSAY gate. That crossing advances the "
-                    "cycle counter, sweeps the whole evidence corpus, records "
-                    "FULL and requires the full roster. Then run every stream "
-                    "it names — a spot check is not a FULL INSPECT."
+                    "cycle counter, sweeps the whole evidence corpus and "
+                    "RECORDS this INSPECT's width as FULL and the full roster "
+                    "every stream then runs. The Foundry-Next after this "
+                    "list's last step serves one call per stream that roster "
+                    "names."
                 ),
             ),
         ),
