@@ -3666,11 +3666,18 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
         "run is held on that escalation, and end your turn: nothing but the "
         "user moves this run from here."
     )),
+    # lead-stalls GI-008 / OT-013 (D-087) — the trailer used to end "Start a
+    # NEW run with Foundry-Init if there is more work.": a second move behind a
+    # condition, beside an empty step list, under standing rules that say
+    # never ask. A lead reading REPORT.md's open backlog as "more work"
+    # settled the condition itself and started a run nobody asked for. Whether
+    # there is more work is the user's call, so the trailer says so and names
+    # no call for the lead.
     "done": _Imperative((), (
         "This run is DONE. Read REPORT.md and tell the user what shipped. Do "
         "NOT dispatch a wave, do NOT call Foundry-Phase, do NOT call "
-        "Foundry-Next in a loop. Start a NEW run with Foundry-Init if there is "
-        "more work."
+        "Foundry-Next in a loop, and do NOT start another run: further work "
+        "is a new run the USER starts."
     )),
     "unknown": _Imperative(
         (

@@ -82,6 +82,7 @@ from foundry_mcp.tools.orchestration.guidance import (  # noqa: F401
     _GATE_THEN_PHASE_NOTE,
     _GRIND_SEALS_AT_CAP,
     _IMPERATIVES,
+    _Imperative,
     _LEAD_CALLS,
     _SPAWN_DOORS,
     _SPAWN_IS_ONE_MOVE,
@@ -1918,8 +1919,11 @@ def _router_drives() -> list[tuple[str, str, str, str, object, dict]]:
 #   UNKNOWN_TOOL      a step names a tool outside `_LEAD_CALLS`, or a Foundry door
 #                     the MCP server does not register
 #   YIELD_NOT_LAST    a step follows END YOUR TURN
-#   CALL_IN_PROSE     a lead call written in call syntax outside the step lines,
-#                     which is the only way prose could add or choose a call
+#   CALL_IN_PROSE     a lead call written in call syntax outside the step lines
+#   CALL_ORDERED_IN_PROSE
+#                     a prose clause that reads as an order and names a lead
+#                     call, parentheses or not (D-087): the bare-name spelling
+#                     of a move the list does not carry
 #   RULE_*            the standing spawn rule printed on the payload lacks a
 #                     phase's order, ends one anywhere but progress_protocol, or
 #                     lacks the one-move sentence (D-038 / D-039)
@@ -2134,6 +2138,42 @@ def _step_answers() -> dict[str, object]:
     }
 
 
+#: lead-stalls D-087 — A LEAD CALL ORDERED IN PROSE, PARENTHESES OR NOT.
+#: CALL_IN_PROSE sees a call only in call syntax (`Name(`), and the
+#: `_HANDS_OVER_THE_CONDITION` backstop sees three condition shapes, so `done`
+#: shipped "Start a NEW run with Foundry-Init if there is more work." beside
+#: `next_calls: []` and the sweep returned zero over it: a second move, behind
+#: a condition the lead settles itself. The structure here is the order, not
+#: the condition's wording: a prose clause `_order_openers` reads as an order,
+#: which names a lead call, is a move the step list does not carry. A clause
+#: that OPENS on the call name is left out, because in every emission it is a
+#: statement about the door ("Foundry-Next straight after a passing
+#: Foundry-Gate is OPTIONAL", "Foundry-Accept-Casting REFUSED casting 1"), and
+#: the call-syntax spelling of that shape is CALL_IN_PROSE's. A prohibition
+#: ("do NOT call Foundry-Phase") and the wake ("When the notification arrives,
+#: call Foundry-Next") open on closed-class words and are not orders.
+_LEAD_CALL_NAMED = re.compile(
+    r"(?<![\w-])(?:"
+    + "|".join(
+        re.escape(name)
+        for name in sorted(_LEAD_CALLS - {_END_TURN}, key=len, reverse=True)
+    )
+    + r")(?![\w-])"
+)
+
+
+def _calls_ordered_in_prose(prose: str) -> list[str]:
+    """Each clause of ``prose`` that orders a lead call (lead-stalls D-087)."""
+    return [
+        clause.strip() for clause in _SENTENCE_BREAK.split(prose)
+        if _LEAD_CALL_NAMED.search(clause)
+        and any(
+            not _NAMES_A_CALL.match(opener)
+            for opener in _order_openers(clause)
+        )
+    ]
+
+
 #: lead-stalls D-061 — the two GRIND doors, each bounded by the --max-cycles
 #: cap (`grind_start`, and `assay_fail` through the ASSAY-rejection door).
 _SEALING_AT_CAP = ("phase='grind_start'", "phase='assay_fail'")
@@ -2189,6 +2229,11 @@ def judge_next_calls(
     for call in sorted(set(_CALL_SYNTAX.findall(_STEP_LINE.sub("", header)))):
         findings.append(
             f"{site}: CALL_IN_PROSE — {call}( is written outside the step list"
+        )
+    for clause in _calls_ordered_in_prose(_STEP_LINE.sub("", header)):
+        findings.append(
+            f"{site}: CALL_ORDERED_IN_PROSE — {clause[:72]!r} orders a call "
+            f"the step list does not carry"
         )
 
     # D-044 / D-045 — the served list is ONE move: nothing it names, nothing
@@ -2720,6 +2765,7 @@ def audit_report() -> list[str]:
         "names no call, no order and no condition.",
         "step-list detectors (every site and every payload, lead-stalls D-038..D-043): "
         "STEP_LIST, RENDERING, NONE, UNKNOWN_TOOL, YIELD_NOT_LAST, CALL_IN_PROSE, "
+        "CALL_ORDERED_IN_PROSE, "
         "RULE_WITHOUT_PHASE, RULE_NOT_LEDGER_LAST, RULE_WITHOUT_ONE_MOVE, "
         "DOOR_WITHOUT_SPAWN, SPAWN_WITHOUT_DOOR, SPAWN_ORDER, SPAWN_NOT_ONE_MOVE, "
         "SPAWN_NOT_YIELDED, STREAM_WITHOUT_CALL, STREAM_WRONG_AGENT, "
@@ -5672,6 +5718,72 @@ def test_a_conditional_sentence_cannot_add_or_move_a_call(monkeypatch):
             f.startswith("payload:inspect-idle[fresh]: CALL_IN_PROSE")
             for f in findings
         ), (probe, findings)
+
+
+#: lead-stalls D-087 — the `done` trailer as it shipped through 3532f22, and
+#: the same move re-spelled the ways the rung has to see it too.
+_D087_PRE_FIX_DONE = (
+    "This run is DONE. Read REPORT.md and tell the user what shipped. Do "
+    "NOT dispatch a wave, do NOT call Foundry-Phase, do NOT call "
+    "Foundry-Next in a loop. Start a NEW run with Foundry-Init if there is "
+    "more work."
+)
+_D087_RESPELLED = (
+    "Start a NEW run (Foundry-Init) if there is more work.",
+    "Should there be more work, start a new run with Foundry-Init.",
+    "Begin the next run with Foundry-Init when the report lists open work.",
+)
+
+
+def _done_findings(trailer: str) -> list[str]:
+    """Every structure finding over the `done` payload and emission sites
+    with ``trailer`` in place of the shipped one."""
+    driven = drive_router(_arrange_done, None)
+    assert (driven["action"], driven["next_calls"]) == ("done", []), driven
+    return [
+        f for f in audit_next_call_structure([
+            ("payload:done[fresh]", "done", "", "done", None, driven),
+        ])
+        if f.startswith(("payload:done", "done@"))
+    ]
+
+
+def test_a_call_ordered_in_prose_is_seen_parentheses_or_not(monkeypatch):
+    """lead-stalls GI-008 / OT-013 / FR-007 (D-087) — the rung bites on the
+    pre-fix `done` sentence and on its re-spellings, and the shipped trailer
+    orders no call.
+
+    CALL_IN_PROSE matched only `Name(`, and the prose backstop's three shapes
+    missed a trailing "if <state>" after a call named bare, so the audit
+    returned 0 over a NONE header that handed the lead Foundry-Init behind a
+    condition.
+    """
+    assert "Foundry-Init" not in _IMPERATIVES["done"].trailer
+    assert _done_findings(_IMPERATIVES["done"].trailer) == []
+    assert "USER starts" in drive_router(_arrange_done, None)["header"]
+
+    for trailer in (_D087_PRE_FIX_DONE, *_D087_RESPELLED):
+        monkeypatch.setitem(_IMPERATIVES, "done", _Imperative((), trailer))
+        ordered = [f for f in _done_findings(trailer) if "CALL_ORDERED_IN_PROSE" in f]
+        assert any(f.startswith("payload:done[fresh]") for f in ordered), (
+            trailer, ordered,
+        )
+        assert any(f.startswith("done@") for f in ordered), (trailer, ordered)
+
+
+def test_a_prohibition_the_wake_and_a_statement_order_no_call():
+    """lead-stalls D-087 — the controls: what the rung must leave alone."""
+    for prose in (
+        "Do NOT dispatch a wave, do NOT call Foundry-Phase, do NOT call "
+        "Foundry-Next in a loop.",
+        "When the notification arrives, call Foundry-Next and follow what it "
+        "says then.",
+        "Foundry-Next straight after a passing Foundry-Gate is OPTIONAL.",
+        "Foundry-Accept-Casting REFUSED casting 1 and its ledger has not "
+        "moved since.",
+        "Read REPORT.md and tell the user what shipped.",
+    ):
+        assert _calls_ordered_in_prose(prose) == [], prose
 
 
 # --------------------------------------------------------------------------- #
