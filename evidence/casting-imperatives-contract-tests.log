@@ -2,7 +2,7 @@
 # evidence-for: US-002, FR-001, FR-002, FR-005, FR-006, FR-015, CT-001, CT-002, CT-003, CT-006, CT-008, GI-004, GI-008, OT-001, OT-003, OT-004, OT-007, OT-013
 
 ============================= test session starts ==============================
-collecting ... collected 222 items
+collecting ... collected 231 items
 
 test_the_audit_sweeps_every_key_and_returns_zero PASSED
 test_the_recorded_evidence_shows_the_population_it_judged PASSED
@@ -226,5 +226,14 @@ test_the_ledger_rung_asks_every_action_that_spawns PASSED
 test_the_ledger_rung_bites_on_a_stream_prompt_that_drops_its_door PASSED
 test_the_exit_ledger_doors_are_the_agent_files_own PASSED
 test_the_nyquist_prose_says_where_an_escalation_goes PASSED
+test_the_widening_note_states_the_crossing_and_orders_no_move[inspect-clean-delta] PASSED
+test_the_widening_note_states_the_crossing_and_orders_no_move[inspect-escalated-closed] PASSED
+test_the_widening_note_states_the_crossing_and_orders_no_move[inspect-escalated-delta] PASSED
+test_the_widening_note_states_the_crossing_and_orders_no_move[inspect-escalated-full] PASSED
+test_the_widening_note_pin_bites_on_the_pre_fix_sentence PASSED
+test_the_foundry_next_after_the_widening_list_serves_every_roster_stream[inspect-clean-delta] PASSED
+test_the_foundry_next_after_the_widening_list_serves_every_roster_stream[inspect-escalated-closed] PASSED
+test_the_foundry_next_after_the_widening_list_serves_every_roster_stream[inspect-escalated-delta] PASSED
+test_the_foundry_next_after_the_widening_list_serves_every_roster_stream[inspect-escalated-full] PASSED
 
-222 passed
+231 passed
