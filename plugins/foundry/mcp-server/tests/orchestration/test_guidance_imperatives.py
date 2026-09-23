@@ -2009,6 +2009,38 @@ _DOORLESS_AGENTS = frozenset({
     "foundry:research-synthesizer", "foundry:researcher",
     "foundry:test-observations-adjudicator",
 })
+#: lead-stalls D-084 — THE LEDGER EACH LIST'S EXIT IS READ OFF, AND WHAT
+#: WRITES IT: a Foundry door, or a run file a prompt names. Written by hand
+#: from the router arms rather than read off the table under audit. Every
+#: action that serves an Agent step must be here (AGENT_LEDGER_UNNAMED), so
+#: a new key that dispatches an agent has to name the record its exit reads.
+#: ``None`` is the doorless auditors' result files, which
+#: AGENT_RESULT_UNCARRIED judges.
+_EXIT_LEDGERS: dict[str, tuple[str, str | None]] = {
+    "transition_to_cast": ("the casting acceptances", "Foundry-Accept-Casting"),
+    "build_castings": ("the casting acceptances", "Foundry-Accept-Casting"),
+    "transition_to_grind": ("the defect ledger's fixes", "Foundry-Fix"),
+    "fix_defects": ("the defect ledger's fixes", "Foundry-Fix"),
+    "run_streams": ("the stream records", "Foundry-Stream"),
+    "transition_to_assay": ("verdicts.json", "Foundry-Verdict"),
+    "run_assay": ("verdicts.json", "Foundry-Verdict"),
+    "add_castings": ("castings/manifest.json", "castings/manifest.json"),
+    "run_nyquist": ("the auditors' result files", None),
+}
+#: lead-stalls D-084 — which of those writer doors each agent file tells its
+#: agent to call, by hand for `_DOORLESS_AGENTS`' reason and pinned against
+#: the files by `test_the_exit_ledger_doors_are_the_agent_files_own`. The
+#: assayer's names Foundry-Stream (its PROVE half) and not Foundry-Verdict,
+#: which is D-084: its ASSAY half returns a JSON report.
+_AGENT_FILE_WRITERS: dict[str, frozenset[str]] = {
+    "foundry:teammate": frozenset({"Foundry-Accept-Casting", "Foundry-Fix"}),
+    "foundry:assayer": frozenset({"Foundry-Stream"}),
+    "foundry:tracer": frozenset({"Foundry-Stream"}),
+    "foundry:flow-tracer": frozenset({"Foundry-Stream"}),
+    "foundry:research-auditor": frozenset({"Foundry-Stream"}),
+    "foundry:coverage-diff": frozenset({"Foundry-Stream"}),
+    "foundry:spec-test-deriver": frozenset({"Foundry-Stream"}),
+}
 #: A JSON file under a run directory, as a served prompt names one.
 _RUN_JSON = re.compile(r"foundry-archive/[^\s\"'<>]+\.json\b")
 #: A call written as one: a Foundry door or a harness tool, then "(".
@@ -2335,6 +2367,44 @@ def judge_next_calls(
                 f"no result file the payload publishes as read"
             )
 
+    # D-084 — AND AN AGENT THAT HAS THE DOOR IS TOLD TO USE IT. The rung above
+    # asked the question for the doorless agents alone, so the ASSAY lists
+    # passed with four assayers whose prompt and agent file named no
+    # Foundry-Verdict: the ledger F4 leaves on was written by nothing served,
+    # and the zero was computed over lists whose exit read a record no step
+    # made. D-079, D-081, D-082 and D-084 are one class, a list whose exit
+    # reads a ledger that nothing it serves writes, so the question is asked
+    # of every Agent step on every list: which served step, served prompt or
+    # agent file writes the ledger `_EXIT_LEDGERS` says the exit reads.
+    tools_served = {step.tool for step in steps}
+    for number, step in enumerate(steps, 1):
+        agent = _ARG_SUBAGENT.search(step.args or "") if step.tool == "Agent" else None
+        if agent is None:
+            continue
+        if action not in _EXIT_LEDGERS:
+            findings.append(
+                f"{site}: AGENT_LEDGER_UNNAMED — step ({number}) spawns "
+                f"{agent.group(1)!r} on a list whose exit ledger the audit "
+                f"does not know"
+            )
+            continue
+        ledger, writer = _EXIT_LEDGERS[action]
+        if agent.group(1) in _DOORLESS_AGENTS:
+            continue
+        if writer is not None and (
+            writer in tools_served
+            or writer in (step.args or "")
+            or writer in _AGENT_FILE_WRITERS.get(agent.group(1), ())
+        ):
+            continue
+        findings.append(
+            f"{site}: AGENT_LEDGER_UNWRITTEN — step ({number}) spawns "
+            f"{agent.group(1)!r}, and no served step, its prompt or its agent "
+            f"file writes {ledger}"
+            + (f" through {writer}" if writer else "")
+            + ", the record this list's exit is read off"
+        )
+
     # D-040 — one call per unrecorded roster stream, and a config for each.
     if action == "run_streams" and steps:
         roster = details.get("missing_streams") or []
@@ -2654,7 +2724,8 @@ def audit_report() -> list[str]:
         "DOOR_WITHOUT_SPAWN, SPAWN_WITHOUT_DOOR, SPAWN_ORDER, SPAWN_NOT_ONE_MOVE, "
         "SPAWN_NOT_YIELDED, STREAM_WITHOUT_CALL, STREAM_WRONG_AGENT, "
         "STREAM_WITHOUT_CONFIG, STREAM_NOT_OWED, SERVED_PAST_THE_SEAL, "
-        "AGENT_WITHOUT_PROMPT, AGENT_COUNT_JUDGED, AGENT_RESULT_UNCARRIED",
+        "AGENT_WITHOUT_PROMPT, AGENT_COUNT_JUDGED, AGENT_RESULT_UNCARRIED, "
+        "AGENT_LEDGER_UNNAMED, AGENT_LEDGER_UNWRITTEN",
         "one-move walk (every site and every payload, lead-stalls D-044 / D-045): "
         "RULE_WITHOUT_LIST_MOVE, RULE_ORDERS_NEXT_MID_LIST, "
         "PROSE_ORDERS_NEXT_MID_LIST, NEXT_MID_LIST, STEP_ORDERS_NEXT_MID_LIST, "
@@ -8859,6 +8930,11 @@ def test_the_decomposer_is_served_as_one_literal_call():
         f"the F0.5 DECOMPOSE section of {procedure} end to end",
         "write every casting yourself rather than spawning writers",
         f"foundry-archive/{_ROUTE_RUN}/progress/decompose.jsonl",
+        # D-086 — the procedure closes on a Foundry-Gate, and "end to end"
+        # without this clause has the background decomposer make it, arming
+        # the phase transition from outside the lead's served list.
+        "and stop before the Foundry-Gate call it closes on, which is the "
+        "lead's to make.",
     ):
         assert clause in agent.args, (clause, agent.args)
     for handed_over in ("{", "<", "for each", "1-5"):
@@ -9051,3 +9127,165 @@ def test_a_filed_escalation_fixed_through_grind_opens_the_f6_doors_again(
     assert answer["passed"] is True, answer
     if door[0] == "phase":
         assert _phase_of(fdir) == "F6", door
+
+
+# --------------------------------------------------------------------------- #
+# lead-stalls GRIND cycle 26 — D-084 / D-085 / D-086
+# --------------------------------------------------------------------------- #
+#
+# D-084: the ASSAY lists dispatched four assayers that nothing told to record
+# a verdict, while the F4 arm leaves ASSAY on verdicts.json. The fix names
+# Foundry-Verdict in the served prompt; the structural fix is the
+# AGENT_LEDGER_UNWRITTEN / AGENT_LEDGER_UNNAMED rung, which asks every Agent
+# step on every list which served surface writes the ledger its exit reads.
+
+#: The prompt both ASSAY lists served at c0532e0, which the rung must refuse.
+_ASSAYER_PROMPT_C0532E0 = (
+    "subagent_type='foundry:assayer', prompt='Assay requirement group N of 4 "
+    "for the active foundry run. Spec-before-code; default posture is find "
+    "the failure.'"
+)
+
+
+def _agent_payloads() -> list[tuple]:
+    """One router payload per action that serves a non-teammate Agent step,
+    plus the teammate dispatches of CAST and GRIND."""
+    return [
+        _payload("nyquist-owed", _arrange_nyquist_owed, "run_nyquist"),
+        _payload("inspect-idle", _arrange_inspect_idle, "run_streams"),
+        _payload("assay-empty", _arrange_assay_empty, "run_assay"),
+        _payload("assay-short", _arrange_assay_short, "run_assay"),
+        _payload("inspect-clean-full", _arrange_inspect_clean_full,
+                 "transition_to_assay"),
+        _payload("decompose-empty", _arrange_decompose_empty, "add_castings"),
+        _payload("cast-not-spawned", _arrange_cast_not_spawned, "build_castings"),
+        _payload("grind-idle", _arrange_grind_idle, "fix_defects"),
+    ]
+
+
+def test_every_served_agent_is_told_the_ledger_its_exit_reads():
+    """D-084 — on the shipped table and router, every Agent step's ledger has
+    a writer, and every action serving one names its exit ledger."""
+    drives = _agent_payloads()
+    assert all(
+        any(_as_step(c).tool == "Agent" for c in d[-1]["next_calls"] or ())
+        for d in drives
+    ), [(d[0], d[-1]["action"]) for d in drives]
+    assert _rung_findings(drives, "AGENT_LEDGER_UNWRITTEN") == []
+    assert _rung_findings(drives, "AGENT_LEDGER_UNNAMED") == []
+
+
+@pytest.mark.parametrize("action", ["run_assay", "transition_to_assay"])
+def test_the_assayer_is_told_the_door_its_verdicts_go_through(action):
+    """D-084 — both ASSAY lists serve the one assayer step, and its prompt
+    names Foundry-Verdict, the fields that door takes, and verdicts.json."""
+    agents = [s for s in _IMPERATIVES[action].steps if s.tool == "Agent"]
+    assert agents == [_guidance._ASSAYER_DISPATCH], agents
+    prompt = agents[0].args
+    for clause in (
+        "subagent_type='foundry:assayer'",
+        "one Foundry-Verdict call carrying requirement_id, verdict, evidence, "
+        "spec_text_cited and code_location",
+        "writes verdicts.json",
+        "a verdict that is only in your report reaches no ledger",
+    ):
+        assert clause in prompt, (clause, prompt)
+
+
+def test_the_ledger_rung_bites_on_the_assay_prompt_c0532e0_shipped(monkeypatch):
+    """D-084 control — the ASSAY step as it stood at c0532e0, on both lists
+    and on the short-ledger arm. The whole audit returned zero over it."""
+    old = _guidance._ASSAYER_DISPATCH._replace(args=_ASSAYER_PROMPT_C0532E0)
+    for action in ("run_assay", "transition_to_assay"):
+        entry = _IMPERATIVES[action]
+        monkeypatch.setitem(_IMPERATIVES, action, entry._replace(steps=tuple(
+            old if step.tool == "Agent" else step for step in entry.steps
+        )))
+    drives = [
+        _payload("assay-empty", _arrange_assay_empty, "run_assay"),
+        _payload("assay-short", _arrange_assay_short, "run_assay"),
+        _payload("inspect-clean-full", _arrange_inspect_clean_full,
+                 "transition_to_assay"),
+    ]
+    findings = _rung_findings(drives, "AGENT_LEDGER_UNWRITTEN")
+    assert [f.split(":", 2)[1] for f in findings] == [
+        "assay-empty[fresh]", "assay-short[fresh]", "inspect-clean-full[fresh]",
+    ], findings
+    assert all("verdicts.json through Foundry-Verdict" in f for f in findings), findings
+
+
+def test_the_ledger_rung_asks_every_action_that_spawns(monkeypatch):
+    """D-084 — the rung is total over `_IMPERATIVES`: an action serving an
+    Agent step that `_EXIT_LEDGERS` does not name is a finding, so a new key
+    cannot dispatch an agent without saying what its exit reads."""
+    monkeypatch.delitem(_EXIT_LEDGERS, "run_streams")
+    findings = _rung_findings(
+        [_payload("inspect-idle", _arrange_inspect_idle, "run_streams")],
+        "AGENT_LEDGER_UNNAMED",
+    )
+    assert len(findings) == len(_C10_ROSTER) - ("sight" in _C10_ROSTER), findings
+
+
+def test_the_ledger_rung_bites_on_a_stream_prompt_that_drops_its_door(monkeypatch):
+    """D-084 — the rung reads a prompt for a general-purpose agent, which has
+    no agent file: TEST's prompt without its Foundry-Stream clause."""
+    shipped = _guidance._stream_agent_step
+
+    def untold(stream: str) -> _Step:
+        step = shipped(stream)
+        return step._replace(args=step.args.replace("Foundry-Stream", "a note"))
+
+    monkeypatch.setattr(_guidance, "_stream_agent_step", untold)
+    findings = _rung_findings(
+        [_payload("inspect-idle", _arrange_inspect_idle, "run_streams")],
+        "AGENT_LEDGER_UNWRITTEN",
+    )
+    assert len(findings) == 1 and "'general-purpose'" in findings[0], findings
+
+
+def test_the_exit_ledger_doors_are_the_agent_files_own():
+    """D-084 — `_AGENT_FILE_WRITERS` against every `agents/*.md`: the writer
+    doors `_EXIT_LEDGERS` names that each agent file tells its agent about."""
+    agents = Path(__file__).resolve().parents[3] / "agents"
+    if not agents.is_dir():
+        pytest.skip("run from a copy of src and tests, with no agents/ beside it")
+    doors = {w for _l, w in _EXIT_LEDGERS.values() if w and w.startswith("Foundry-")}
+    told = {}
+    for path in agents.glob("*.md"):
+        named = doors & set(re.findall(r"Foundry-[A-Z][A-Za-z-]*", path.read_text(encoding="utf-8")))
+        if named:
+            told[f"foundry:{path.stem}"] = frozenset(named)
+    assert told == _AGENT_FILE_WRITERS, sorted(set(told.items()) ^ set(_AGENT_FILE_WRITERS.items()))
+    assert "Foundry-Verdict" not in told["foundry:assayer"]
+
+
+def test_the_nyquist_prose_says_where_an_escalation_goes():
+    """D-085 — fe3a291 rewrote the run_nyquist gate note and trailer and the
+    F5.5 CONTEXT, and reverse-applying either hunk left the suite green. They
+    say the escalation goes to a result file and the next Foundry-Next serves
+    its filing; none says an ESCALATE_IMPL_BUG result starts a GRIND itself."""
+    entry = _IMPERATIVES["run_nyquist"]
+    gate = next(s for s in entry.steps if s.tool == "Foundry-Gate")
+    for clause in (
+        "reads the auditors' result files first",
+        "is served as the filing that opens the GRIND crossing instead",
+    ):
+        assert clause in gate.note, (clause, gate.note)
+    for clause in (
+        "writes its JSON summary to the result file its prompt names",
+        "the list the next Foundry-Next serves carries the filing",
+        "you file nothing from an auditor's reply",
+    ):
+        assert clause in entry.trailer, (clause, entry.trailer)
+    context = drive_router(_arrange_nyquist_owed, None)["context"]
+    for clause in (
+        "writes its JSON summary to the result file its prompt names",
+        "is filed by the list the next Foundry-Next serves",
+    ):
+        assert clause in context, (clause, context)
+    for text in (gate.note, entry.trailer, context):
+        for false_claim in (
+            "starts a new GRIND", "goes through the GRIND",
+            "result goes through", "is served the GRIND crossing instead",
+        ):
+            assert false_claim not in text, (false_claim, text)

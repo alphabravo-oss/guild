@@ -3163,6 +3163,28 @@ _GRIND_DISPATCH = _Imperative(
     "teammates are yours to dispatch now.",
 )
 
+#: lead-stalls GI-008 / FR-007 (D-084) — THE ASSAYER IS TOLD THE DOOR ITS
+#: VERDICTS GO THROUGH. The F4 arm leaves ASSAY on what verdicts.json holds,
+#: and only Foundry-Verdict writes that ledger. The prompt said nothing of it,
+#: and `agents/assayer.md` returns its ASSAY verdicts as a JSON report, so the
+#: four dispatches recorded nothing: an empty ledger left F4 on PROVE's
+#: synthesized rows, a carried one filed cycles-old verdicts as LIVE, and the
+#: CONTEXT's "each assayer records its verdicts through the Foundry-Verdict
+#: door" was true of no surface. The one way left was for the lead to turn
+#: four reports into verdict calls no step named, which is FR-007's judgment
+#: task. One step, shared by both ASSAY lists, so the two cannot drift.
+_ASSAYER_DISPATCH = _Step(
+    "Agent",
+    "subagent_type='foundry:assayer', prompt='Assay requirement group N of 4 "
+    "for the active foundry run. Spec-before-code; default posture is find "
+    "the failure. Record every requirement you judge with one Foundry-Verdict "
+    "call carrying requirement_id, verdict, evidence, spec_text_cited and "
+    "code_location: that door writes verdicts.json, the ledger the next "
+    "Foundry-Next reads to serve the exit from ASSAY, and a verdict that is "
+    "only in your report reaches no ledger.'",
+    each="four times, N = 1 to 4, all in a SINGLE message",
+)
+
 
 _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
     "init": _Imperative(
@@ -3387,27 +3409,13 @@ _IMPERATIVES: dict[str, _Imperative | dict[str, _Imperative]] = {
                 "Foundry-Phase", "phase='inspect_clean'",
                 note="the transition that enters F4 (ASSAY)",
             ),
-            _Step(
-                "Agent",
-                "subagent_type='foundry:assayer', prompt='Assay requirement "
-                "group N of 4 for the active foundry run. Spec-before-code; "
-                "default posture is find the failure.'",
-                each="four times, N = 1 to 4, all in a SINGLE message",
-            ),
+            _ASSAYER_DISPATCH,
         ),
         "The assayer's frontmatter carries model=opus and effort=max."
         + _GATE_THEN_PHASE_NOTE,
     ),
     "run_assay": _Imperative(
-        (
-            _Step(
-                "Agent",
-                "subagent_type='foundry:assayer', prompt='Assay requirement "
-                "group N of 4 for the active foundry run. Spec-before-code; "
-                "default posture is find the failure.'",
-                each="four times, N = 1 to 4, all in a SINGLE message",
-            ),
-        ),
+        (_ASSAYER_DISPATCH,),
         "Each reads the spec FIRST, forms expectations, then reads code. The "
         "assayer's frontmatter carries model=opus and effort=max.",
     ),
