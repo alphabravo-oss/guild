@@ -1,0 +1,13 @@
+# evidence-cmd: cd plugins/foundry/mcp-server && uv run --with pytest pytest -p no:cacheprovider --no-header -v tests/orchestration/test_guidance_imperatives.py -k "no_casting_owns or defect_undispatched_rung or nearest_casting or sweeps_every_key" 2>/dev/null | sed -E "s/ +\[ *[0-9]+%\]$//" | sed -E "s#^tests/orchestration/test_guidance_imperatives.py::##" | sed -E "s/^=+ (.*) in [0-9]+\.[0-9]+s( \([0-9:]+\))? =+$/\1/"
+# evidence-for: FR-007, OT-002, ST-003
+
+============================= test session starts ==============================
+collecting ... collected 235 items / 230 deselected / 5 selected
+
+test_the_audit_sweeps_every_key_and_returns_zero PASSED
+test_a_defect_no_casting_owns_is_dispatched_by_the_list_served_for_it[F2-transition_to_grind] PASSED
+test_a_defect_no_casting_owns_is_dispatched_by_the_list_served_for_it[F3-fix_defects] PASSED
+test_the_defect_undispatched_rung_bites_on_the_step_that_named_no_casting PASSED
+test_the_route_for_an_unowned_file_is_the_nearest_casting_and_one_per_file PASSED
+
+5 passed, 230 deselected

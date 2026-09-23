@@ -3,11 +3,11 @@
 
 keys in _ACTION_IMPERATIVES: 23
 emission sites swept:        375
-router payloads swept:       168
+router payloads swept:       172
 defective emissions:         0
 
 header detectors: CONDITIONAL, NO_LITERAL_CALL, PARKING_NONE, UNRESOLVED_BRANCH, UNRESOLVED_SLOT, WRONG_BRANCH, UNCREATABLE_TEAM_NAME
-payload detectors: WRONG_ROUTE, HEAD_GATE_REFUSES, CONDITIONAL, CONTRADICTION, CONTEXT_SEQUENCE, CONTEXT_CALL, CONTEXT_CONDITIONAL, TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING
+payload detectors: WRONG_ROUTE, DEFECT_UNDISPATCHED, HEAD_GATE_REFUSES, CONDITIONAL, CONTRADICTION, CONTEXT_SEQUENCE, CONTEXT_CALL, CONTEXT_CONDITIONAL, TEARDOWN_OVER_RUNNING_AGENTS, NO_LIVENESS, SPLIT_READING
 HEAD_GATE_REFUSES is the one rung that EXECUTES a served step (lead-stalls D-063): where a list OPENS with a Foundry-Gate, that gate is called for real on the state the list was served for. PARKING_NONE is NO_LITERAL_CALL's condition (lead-stalls D-064): 'YOUR NEXT CALL: NONE' is owed at the three terminals and at a WAITING branch, and is a finding anywhere else.
 CONTEXT_SEQUENCE, CONTEXT_CALL and CONTEXT_CONDITIONAL judge the CONTEXT of EVERY payload (lead-stalls D-051..D-053): it states the run state and names no call, no order and no condition.
 step-list detectors (every site and every payload, lead-stalls D-038..D-043): STEP_LIST, RENDERING, NONE, UNKNOWN_TOOL, YIELD_NOT_LAST, CALL_IN_PROSE, CALL_ORDERED_IN_PROSE, RULE_WITHOUT_PHASE, RULE_NOT_LEDGER_LAST, RULE_WITHOUT_ONE_MOVE, DOOR_WITHOUT_SPAWN, SPAWN_WITHOUT_DOOR, SPAWN_ORDER, SPAWN_NOT_ONE_MOVE, SPAWN_NOT_YIELDED, STREAM_WITHOUT_CALL, STREAM_WRONG_AGENT, STREAM_WITHOUT_CONFIG, STREAM_NOT_OWED, SERVED_PAST_THE_SEAL, AGENT_WITHOUT_PROMPT, AGENT_COUNT_JUDGED, AGENT_RESULT_UNCARRIED, AGENT_LEDGER_UNNAMED, AGENT_LEDGER_UNWRITTEN
@@ -116,6 +116,8 @@ notice is what printed above the header.
   payload:grind-finished-team-up[stale]  received cleanup_teams/-  owed cleanup_teams/-  notice stall  calls SendMessage>TeamDelete>Foundry-Team-Down  ok
   payload:grind-idle[fresh]              received fix_defects/idle  owed fix_defects/idle  notice none  calls TeamDelete>Foundry-Team-Down>Foundry-Tasks>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
   payload:grind-idle[stale]              received fix_defects/idle  owed fix_defects/idle  notice stall  calls TeamDelete>Foundry-Team-Down>Foundry-Tasks>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:grind-idle-unowned[fresh]      received fix_defects/idle  owed fix_defects/idle  notice none  calls TeamDelete>Foundry-Team-Down>Foundry-Tasks>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:grind-idle-unowned[stale]      received fix_defects/idle  owed fix_defects/idle  notice stall  calls TeamDelete>Foundry-Team-Down>Foundry-Tasks>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
   payload:grind-dispatched-fresh-seed[fresh] received fix_defects/live  owed fix_defects/live  notice none  calls NONE  ok
   payload:grind-dispatched-fresh-seed[stale] received fix_defects/live  owed fix_defects/live  notice waiting+end-turn  calls NONE  ok
   payload:grind-all-fixed[fresh]         received transition_to_inspect/-  owed transition_to_inspect/-  notice none  calls Foundry-Gate>Foundry-Phase  ok
@@ -164,6 +166,8 @@ notice is what printed above the header.
   payload:inspect-width-unrecorded[stale] received record_inspect_width/-  owed record_inspect_width/-  notice stall  calls Foundry-Gate>Foundry-Phase  ok
   payload:inspect-filed[fresh]           received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
   payload:inspect-filed[stale]           received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:inspect-filed-unowned[fresh]   received transition_to_grind/-  owed transition_to_grind/-  notice none  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
+  payload:inspect-filed-unowned[stale]   received transition_to_grind/-  owed transition_to_grind/-  notice stall  calls Foundry-Tasks>Foundry-Gate>Foundry-Phase>TeamCreate>Foundry-Team-Up>Foundry-Spawn-Teammate>Agent>END YOUR TURN  ok
   payload:inspect-clean-full[fresh]      received transition_to_assay/-  owed transition_to_assay/-  notice none  calls Foundry-Gate>Foundry-Phase>Agent  ok
   payload:inspect-clean-full[stale]      received transition_to_assay/-  owed transition_to_assay/-  notice stall  calls Foundry-Gate>Foundry-Phase>Agent  ok
   payload:inspect-clean-delta[fresh]     received widen_inspect/-  owed widen_inspect/-  notice none  calls Foundry-Gate>Foundry-Phase  ok

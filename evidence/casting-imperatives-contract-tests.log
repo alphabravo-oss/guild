@@ -2,7 +2,7 @@
 # evidence-for: US-002, FR-001, FR-002, FR-005, FR-006, FR-015, CT-001, CT-002, CT-003, CT-006, CT-008, GI-004, GI-008, OT-001, OT-003, OT-004, OT-007, OT-013
 
 ============================= test session starts ==============================
-collecting ... collected 231 items
+collecting ... collected 235 items
 
 test_the_audit_sweeps_every_key_and_returns_zero PASSED
 test_the_recorded_evidence_shows_the_population_it_judged PASSED
@@ -235,5 +235,9 @@ test_the_foundry_next_after_the_widening_list_serves_every_roster_stream[inspect
 test_the_foundry_next_after_the_widening_list_serves_every_roster_stream[inspect-escalated-closed] PASSED
 test_the_foundry_next_after_the_widening_list_serves_every_roster_stream[inspect-escalated-delta] PASSED
 test_the_foundry_next_after_the_widening_list_serves_every_roster_stream[inspect-escalated-full] PASSED
+test_a_defect_no_casting_owns_is_dispatched_by_the_list_served_for_it[F2-transition_to_grind] PASSED
+test_a_defect_no_casting_owns_is_dispatched_by_the_list_served_for_it[F3-fix_defects] PASSED
+test_the_defect_undispatched_rung_bites_on_the_step_that_named_no_casting PASSED
+test_the_route_for_an_unowned_file_is_the_nearest_casting_and_one_per_file PASSED
 
-231 passed
+235 passed

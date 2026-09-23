@@ -362,4 +362,16 @@ _ROUTER_REVERTS = (
      '                    "cycle counter, sweeps the whole evidence corpus, records "\n'
      '                    "FULL and requires the full roster. Then run every stream "\n'
      '                    "it names — a spot check is not a FULL INSPECT."\n'),
+    # lead-stalls D-089 — the dispatch that names who it reaches: its reading
+    # unpublished, the route for an unowned file dropped, and the rung that
+    # asks whether every blocking defect is reached.
+    ('carriers-unpublished', _GUIDANCE_REL,
+     '        if carriers is not None:\n            details_out["grind_carriers"] = carriers\n',
+     '        if False:\n            details_out["grind_carriers"] = carriers\n'),
+    ('unowned-unrouted', _GUIDANCE_REL,
+     '        if routed:\n            owner = routed_by_file.get(path)\n',
+     '        if routed:\n            continue\n'),
+    ('undispatched-rung', _THIS_MODULE,
+     '        for did in _unreached_defects(d):\n',
+     '        for did in []:\n'),
 )

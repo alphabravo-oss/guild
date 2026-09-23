@@ -49,6 +49,8 @@ teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
   ST-003  grind-finished-team-up   stale cleanup_teams/-                    running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=yes
   ST-003  grind-idle               fresh fix_defects/idle                   running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=yes
   ST-003  grind-idle               stale fix_defects/idle                   running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=yes
+  ST-003  grind-idle-unowned       fresh fix_defects/idle                   running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=yes
+  ST-003  grind-idle-unowned       stale fix_defects/idle                   running=no  ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=yes
   ST-001  grind-dispatched-fresh-seed fresh fix_defects/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-001  grind-dispatched-fresh-seed stale fix_defects/live                   running=yes ends-turn=yes names-wake=yes names-call=yes denies-poll=yes teardown=no
   ST-003  grind-all-fixed          fresh transition_to_inspect/-            running=no  ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
@@ -97,6 +99,8 @@ teardown: TeamDelete, Foundry-Team-Down or a shutdown appears above CONTEXT.
   GI-008  inspect-width-unrecorded stale record_inspect_width/-             running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  inspect-filed            fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   GI-008  inspect-filed            stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-003  inspect-filed-unowned    fresh transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
+  ST-003  inspect-filed-unowned    stale transition_to_grind/-              running=-   ends-turn=no  names-wake=yes names-call=yes denies-poll=yes teardown=no
   GI-008  inspect-clean-full       fresh transition_to_assay/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  inspect-clean-full       stale transition_to_assay/-              running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
   GI-008  inspect-clean-delta      fresh widen_inspect/-                    running=-   ends-turn=no  names-wake=no  names-call=yes denies-poll=n/a teardown=no
